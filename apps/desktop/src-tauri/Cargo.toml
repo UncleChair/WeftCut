@@ -1,0 +1,72 @@
+[package]
+name = "videtor"
+version = "0.0.0"
+edition = "2021"
+description = "Videtor desktop app"
+authors = ["Videtor"]
+publish = false
+rust-version = "1.77"
+
+[lib]
+name = "videtor_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "videtor"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# Tauri shell
+tauri = { version = "2", features = ["webview-data-url"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-shell = "2"
+
+# Async + serialization
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "fs", "io-util", "signal", "process"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+schemars = "0.8"
+ts-rs = { version = "10", features = ["uuid-impl", "chrono-impl"] }
+
+# Domain primitives
+imbl = { version = "3", features = ["serde"] }
+uuid = { version = "1", features = ["v7", "serde"] }
+blake3 = "1"
+chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
+parking_lot = "0.12"
+
+# Errors / logs
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# --- Phase 0 spike deps. Pin/upgrade once verified to compile. ---
+ffmpeg-sidecar = "2"
+# libmpv2 is gated behind the `mpv` feature. Enabling the feature makes
+# `libmpv2-sys`'s build script emit `cargo:rustc-link-lib=mpv`, so the linker
+# needs `mpv.lib` on `LIB` and the runtime needs `libmpv-2.dll` on `PATH`.
+# See `docs/setup.md` for the install + bundling story. Default features
+# stay empty so plain `cargo build` works without libmpv installed.
+libmpv2 = { version = "4", optional = true }
+wry = "0.46"
+# Anthropic Rust MCP SDK. Streamable HTTP isn't published yet (as of rmcp 0.1.5);
+# Phase 0 spike uses SSE transport, which Claude Desktop also supports. Swap when
+# `transport-streamable-http-server` lands upstream.
+rmcp = { version = "0.1", features = ["server", "macros", "transport-sse-server"] }
+
+[dev-dependencies]
+insta = { version = "1", features = ["json", "yaml"] }
+tempfile = "3"
+
+[features]
+default = []
+custom-protocol = ["tauri/custom-protocol"]
+# Enable libmpv-backed preview. Requires `libmpv-2.dll` (runtime) and `mpv.lib`
+# (link time) on the host — see `docs/setup.md`. Build with
+# `cargo build --features mpv` or `tauri dev -- --features mpv` once installed.
+mpv = ["dep:libmpv2"]

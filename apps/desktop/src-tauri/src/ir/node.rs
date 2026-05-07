@@ -1,0 +1,145 @@
+//! Render graph IR nodes. One enum keeps the graph homogeneous so passes
+//! (lowering, optimization, validation, emit) can match exhaustively.
+//!
+//! Phase 1.10 MVP scope: just the variants needed for `Color` base, `VideoClip`,
+//! and `AudioParams`. Image/Text/Subs/Template/Fade lowering arrives with the
+//! relevant feature phases.
+
+use std::path::PathBuf;
+
+use serde::{Deserialize, Serialize};
+
+use crate::state::color::Rgba;
+
+/// Index into `IRGraph.nodes`. Stable for the lifetime of one graph.
+pub type NodeId = usize;
+
+/// Index into `IRGraph.inputs` (the `-i` flag list).
+pub type InputIdx = usize;
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum IRNode {
+    // --- Sources ---
+    /// Synthetic solid color. Becomes `color=...` source filter.
+    Color {
+        rgba: Rgba,
+        width: u32,
+        height: u32,
+        fps_num: u32,
+        fps_den: u32,
+        duration_us: i64,
+    },
+    /// Decode a range of video from one of the `-i` inputs.
+    DecodeV {
+        input: InputIdx,
+        src_in_us: i64,
+        src_out_us: i64,
+    },
+    /// Decode a range of audio.
+    DecodeA {
+        input: InputIdx,
+        src_in_us: i64,
+        src_out_us: i64,
+    },
+
+    // --- Transforms (1 → 1) ---
+    Scale {
+        in_: NodeId,
+        width: u32,
+        height: u32,
+    },
+    Fps {
+        in_: NodeId,
+        fps_num: u32,
+        fps_den: u32,
+    },
+    /// Place a stream onto the timeline at `offset_us`.
+    SetPts {
+        in_: NodeId,
+        offset_us: i64,
+    },
+    /// Place an audio stream on the timeline.
+    Adelay {
+        in_: NodeId,
+        offset_us: i64,
+    },
+    Opacity {
+        in_: NodeId,
+        alpha: f64,
+    },
+
+    // --- Composites (n → 1) ---
+    /// `top` overlaid onto `base` from `gate_start_us` to `gate_end_us`.
+    Overlay {
+        base: NodeId,
+        top: NodeId,
+        x: i32,
+        y: i32,
+        gate_start_us: i64,
+        gate_end_us: i64,
+    },
+    /// Mix multiple audio streams with longest-duration policy.
+    Amix {
+        inputs: Vec<NodeId>,
+    },
+
+    // --- Outputs ---
+    OutV {
+        in_: NodeId,
+        label: String,
+        pix_fmt: PixFmt,
+    },
+    OutA {
+        in_: NodeId,
+        label: String,
+        sample_rate: u32,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PixFmt {
+    Yuv420p,
+    Yuva420p,
+    Rgba,
+}
+
+impl PixFmt {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PixFmt::Yuv420p => "yuv420p",
+            PixFmt::Yuva420p => "yuva420p",
+            PixFmt::Rgba => "rgba",
+        }
+    }
+}
+
+/// Where this node sits in the dataflow — used by the emitter to label streams.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StreamKind {
+    Video,
+    Audio,
+}
+
+impl IRNode {
+    /// Whether this node produces a video or audio stream. Cheap classifier
+    /// the emitter uses to pick `[N:v]` vs `[N:a]` and `Amix` vs `Overlay`.
+    pub fn kind(&self) -> StreamKind {
+        match self {
+            IRNode::Color { .. }
+            | IRNode::DecodeV { .. }
+            | IRNode::Scale { .. }
+            | IRNode::Fps { .. }
+            | IRNode::Opacity { .. }
+            | IRNode::Overlay { .. }
+            | IRNode::OutV { .. } => StreamKind::Video,
+
+            IRNode::DecodeA { .. }
+            | IRNode::Adelay { .. }
+            | IRNode::Amix { .. }
+            | IRNode::OutA { .. } => StreamKind::Audio,
+
+            // SetPts is video-side; Adelay handles audio.
+            IRNode::SetPts { .. } => StreamKind::Video,
+        }
+    }
+}

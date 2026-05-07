@@ -1,0 +1,39 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Videtor",
+  "version": "0.0.0",
+  "identifier": "dev.videtor.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Videtor",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 960,
+        "minHeight": 600,
+        "transparent": false,
+        "decorations": true,
+        "resizable": true,
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": ["icons/icon.png", "icons/icon.ico"],
+    "category": "Video",
+    "shortDescription": "Video editor with an MCP tool surface for external AI agents",
+    "longDescription": "Videtor is a Tauri 2 desktop video editor that exposes itself as an MCP server on localhost so external agents (Claude Desktop, Cursor, custom clients) become co-editors of the open project."
+  }
+}

@@ -1,0 +1,62 @@
+# Node
+node_modules/
+.pnp/
+.pnp.js
+.npm/
+.yarn/
+.eslintcache
+
+# Build output
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# Vite
+.vite/
+
+# Rust / Cargo
+target/
+**/*.rs.bk
+*.pdb
+
+# Tauri
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/
+apps/desktop/src-tauri/WixTools/
+
+# Project caches
+.vproj/cache/
+**/raster-cache/
+**/proxy-cache/
+
+# Editor / IDE
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.recommended.json
+.idea/
+*.iml
+.fleet/
+.zed/
+
+# OS
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ffmpeg-sidecar download cache
+**/.ffmpeg-sidecar/

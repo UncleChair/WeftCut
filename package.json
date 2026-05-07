@@ -1,0 +1,17 @@
+{
+  "name": "videtor",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Tauri 2 desktop video editor with an MCP tool surface for external AI agents",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm --workspace apps/desktop run tauri:dev",
+    "build": "npm --workspace apps/desktop run tauri:build",
+    "typecheck": "npm --workspace apps/desktop run typecheck"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

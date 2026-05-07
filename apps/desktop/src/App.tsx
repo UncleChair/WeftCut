@@ -1,0 +1,615 @@
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
+import {
+  addDemoColorLayer,
+  addVideoTrack,
+  compileProject,
+  EXPORT_EVENTS,
+  exportProject,
+  importMedia,
+  mpvClosePreview,
+  mpvPlayMedia,
+  mpvPreviewProject,
+  mpvSeek,
+  mpvSetPaused,
+  ping,
+  projectOpen,
+  projectRedo,
+  projectSaveAs,
+  projectSummary,
+  projectUndo,
+  splitFirstLayer,
+  type CompiledGraph,
+  type ExportComplete,
+  type ExportProgress,
+  type MediaSummary,
+  type ProjectSummary,
+} from "./ipc";
+import { Timeline } from "./timeline/Timeline";
+import {
+  LOCALE_LABELS,
+  SUPPORTED_LOCALES,
+  type Locale,
+} from "./i18n";
+
+export function App() {
+  const { t, i18n } = useTranslation();
+  const [pong, setPong] = useState<string>("…");
+  const [summary, setSummary] = useState<ProjectSummary | null>(null);
+  const [compiled, setCompiled] = useState<CompiledGraph | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [exportState, setExportState] = useState<ExportState | null>(null);
+  const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
+  const [currentTimeUs, setCurrentTimeUs] = useState<number>(0);
+  const [paused, setPaused] = useState<boolean>(true);
+
+  const seekTo = useCallback(async (tUs: number) => {
+    setCurrentTimeUs(tUs);
+    try {
+      await mpvSeek(tUs);
+    } catch (err) {
+      console.warn("seek failed:", err);
+    }
+  }, []);
+
+  const togglePlay = useCallback(async () => {
+    const next = !paused;
+    setPaused(next);
+    try {
+      await mpvSetPaused(next);
+    } catch (err) {
+      console.warn("set paused failed:", err);
+    }
+  }, [paused]);
+
+  const refresh = useCallback(async () => {
+    try {
+      setSummary(await projectSummary());
+    } catch (e) {
+      setError(t("errors.refresh_failed", { detail: String(e) }));
+    }
+  }, [t]);
+
+  useEffect(() => {
+    ping().then(setPong).catch((e) => setPong(`error: ${String(e)}`));
+    refresh();
+  }, [refresh]);
+
+  // Export event subscriptions — kept up for the lifetime of the app so the
+  // panel can show progress for any in-flight render.
+  useEffect(() => {
+    const unlisteners: UnlistenFn[] = [];
+    let cancelled = false;
+    (async () => {
+      const onProgress = await listen<ExportProgress>(
+        EXPORT_EVENTS.progress,
+        (e) => {
+          setExportState((prev) =>
+            prev && prev.kind !== "complete" && prev.kind !== "error"
+              ? { kind: "progress", progress: e.payload }
+              : { kind: "progress", progress: e.payload },
+          );
+        },
+      );
+      const onComplete = await listen<ExportComplete>(
+        EXPORT_EVENTS.complete,
+        (e) => {
+          setExportState({ kind: "complete", payload: e.payload });
+          refresh();
+        },
+      );
+      const onError = await listen<string>(EXPORT_EVENTS.error, (e) => {
+        setExportState({ kind: "error", detail: e.payload });
+      });
+      if (cancelled) {
+        onProgress();
+        onComplete();
+        onError();
+        return;
+      }
+      unlisteners.push(onProgress, onComplete, onError);
+    })();
+    return () => {
+      cancelled = true;
+      for (const u of unlisteners) u();
+    };
+  }, [refresh]);
+
+  const run = useCallback(
+    async (action: () => Promise<unknown>) => {
+      if (busy) return;
+      setBusy(true);
+      setError(null);
+      try {
+        await action();
+        await refresh();
+      } catch (e) {
+        setError(String(e));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [busy, refresh],
+  );
+
+  const cycleLocale = useCallback(() => {
+    const current = i18n.language as Locale;
+    const idx = SUPPORTED_LOCALES.indexOf(current);
+    const next =
+      SUPPORTED_LOCALES[(idx + 1) % SUPPORTED_LOCALES.length] ?? "en-US";
+    i18n.changeLanguage(next);
+  }, [i18n]);
+
+  const fpsLabel =
+    summary &&
+    (summary.composition.fps_den === 1
+      ? t("project.fps_simple", { fps: summary.composition.fps_num })
+      : t("project.fps_rational", {
+          fps: (
+            summary.composition.fps_num / summary.composition.fps_den
+          ).toFixed(2),
+        }));
+
+  return (
+    <div className="app">
+      <header className="app-header">
+        <h1>{t("app.title")}</h1>
+        <div className="header-right">
+          <span className="ping">{t("app.core_status", { status: pong })}</span>
+          <button
+            className="locale-toggle"
+            onClick={cycleLocale}
+            title={t("language.switch_label")}
+          >
+            {LOCALE_LABELS[(i18n.resolvedLanguage ?? "en-US") as Locale] ??
+              "EN"}
+          </button>
+        </div>
+      </header>
+
+      <section className="project-bar">
+        {summary ? (
+          <>
+            <span className="project-name">{summary.name}</span>
+            <span className="meta">
+              {t("project.canvas", {
+                width: summary.composition.width,
+                height: summary.composition.height,
+                fps: fpsLabel,
+              })}
+            </span>
+            <span className="meta">
+              {t("project.tracks", { count: summary.track_count })} ·{" "}
+              {t("project.layers", { count: summary.layer_count })}
+            </span>
+            <span className="meta">
+              {t("project.duration_seconds", {
+                value: (summary.duration_us / 1_000_000).toFixed(2),
+              })}
+            </span>
+            <span className="meta">
+              {t("project.history_position", {
+                cursor: summary.history.cursor + 1,
+                len: summary.history.len,
+              })}
+            </span>
+          </>
+        ) : (
+          <span className="meta">{t("project.loading")}</span>
+        )}
+      </section>
+
+      <section className="actions">
+        <button onClick={() => run(addVideoTrack)} disabled={busy}>
+          {t("actions.add_track")}
+        </button>
+        <button onClick={() => run(addDemoColorLayer)} disabled={busy}>
+          {t("actions.add_color_layer")}
+        </button>
+        <button
+          onClick={() => run(splitFirstLayer)}
+          disabled={busy || !summary || summary.layer_count === 0}
+        >
+          {t("actions.split_first")}
+        </button>
+        <button
+          onClick={() => run(async () => setCompiled(await compileProject()))}
+          disabled={busy}
+        >
+          {t("actions.compile")}
+        </button>
+        <button
+          onClick={async () => {
+            const path = await saveDialog({
+              title: t("dialogs.export_title"),
+              defaultPath: t("dialogs.export_default_name"),
+              filters: [
+                {
+                  name: t("dialogs.export_filter"),
+                  extensions: ["mp4"],
+                },
+              ],
+            });
+            if (typeof path !== "string") return;
+            setExportState({ kind: "starting" });
+            try {
+              await exportProject(path);
+            } catch (e) {
+              setExportState({ kind: "error", detail: String(e) });
+            }
+          }}
+          disabled={
+            busy ||
+            (exportState?.kind === "starting" || exportState?.kind === "progress")
+          }
+        >
+          {t("actions.export")}
+        </button>
+        <span className="separator" />
+        <button
+          onClick={async () => {
+            const picked = await openDialog({
+              title: t("dialogs.import_title"),
+              multiple: true,
+              filters: [
+                {
+                  name: t("dialogs.media_filter"),
+                  extensions: [
+                    "mp4",
+                    "mov",
+                    "mkv",
+                    "webm",
+                    "avi",
+                    "wav",
+                    "mp3",
+                    "flac",
+                    "aac",
+                    "m4a",
+                    "ogg",
+                    "png",
+                    "jpg",
+                    "jpeg",
+                    "gif",
+                    "webp",
+                    "srt",
+                    "ass",
+                    "vtt",
+                  ],
+                },
+              ],
+            });
+            const paths = Array.isArray(picked)
+              ? picked
+              : typeof picked === "string"
+                ? [picked]
+                : [];
+            if (paths.length === 0) return;
+            await run(async () => {
+              for (const p of paths) {
+                await importMedia(p);
+              }
+            });
+          }}
+          disabled={busy}
+        >
+          {t("actions.import_media")}
+        </button>
+        <span className="separator" />
+        <button
+          onClick={async () => {
+            const path = await saveDialog({
+              title: t("dialogs.save_title"),
+              defaultPath: t("dialogs.save_default_name"),
+              filters: [
+                {
+                  name: t("dialogs.project_filter"),
+                  extensions: ["vproj"],
+                },
+              ],
+            });
+            if (typeof path === "string") {
+              await run(() => projectSaveAs(path));
+            }
+          }}
+          disabled={busy}
+        >
+          {t("actions.save_as")}
+        </button>
+        <button
+          onClick={async () => {
+            const path = await openDialog({
+              title: t("dialogs.open_title"),
+              directory: true,
+              multiple: false,
+            });
+            if (typeof path === "string") {
+              await run(() => projectOpen(path));
+            }
+          }}
+          disabled={busy}
+        >
+          {t("actions.open")}
+        </button>
+        <span className="separator" />
+        <button
+          onClick={async () => {
+            try {
+              await mpvPreviewProject();
+              setPaused(false);
+            } catch (err) {
+              setError(t("errors.preview_failed", { detail: String(err) }));
+            }
+          }}
+          disabled={busy}
+          title={t("transport.preview_project_hint")}
+        >
+          {t("transport.preview_project")}
+        </button>
+        <button
+          onClick={async () => {
+            try {
+              await mpvClosePreview();
+              setPaused(true);
+            } catch (err) {
+              console.warn("close preview failed:", err);
+            }
+          }}
+          title={t("transport.close_preview_hint")}
+        >
+          {t("transport.close_preview")}
+        </button>
+        <button onClick={togglePlay} title={t("transport.play_pause_hint")}>
+          {paused ? t("transport.play") : t("transport.pause")}
+        </button>
+        <span className="separator" />
+        <button
+          onClick={() => run(projectUndo)}
+          disabled={busy || !summary?.history.can_undo}
+        >
+          {t("actions.undo")}
+        </button>
+        <button
+          onClick={() => run(projectRedo)}
+          disabled={busy || !summary?.history.can_redo}
+        >
+          {t("actions.redo")}
+        </button>
+        {error && <span className="error">{error}</span>}
+      </section>
+
+      <main className="app-main">
+        <section className="preview">
+          <div id="video-surface" className="video-surface">
+            <span className="placeholder">
+              {t("preview.surface_placeholder")}
+            </span>
+          </div>
+        </section>
+
+        <section className="timeline">
+          <Timeline
+            tracks={summary?.tracks ?? []}
+            durationUs={summary?.duration_us ?? 0}
+            currentTimeUs={currentTimeUs}
+            selectedLayerId={selectedLayerId}
+            onSelect={setSelectedLayerId}
+            onSeek={seekTo}
+            onMutated={refresh}
+          />
+        </section>
+
+        <section className="media-pool">
+          <MediaPool media={summary?.media ?? []} />
+        </section>
+      </main>
+
+      {compiled && (
+        <CompiledPanel
+          graph={compiled}
+          onClose={() => setCompiled(null)}
+        />
+      )}
+      {exportState && (
+        <ExportPanel
+          state={exportState}
+          onClose={() => setExportState(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+type ExportState =
+  | { kind: "starting" }
+  | { kind: "progress"; progress: ExportProgress }
+  | { kind: "complete"; payload: ExportComplete }
+  | { kind: "error"; detail: string };
+
+function ExportPanel({
+  state,
+  onClose,
+}: {
+  state: ExportState;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  const inProgress = state.kind === "starting" || state.kind === "progress";
+
+  let body: React.ReactNode;
+  let percent = 0;
+  switch (state.kind) {
+    case "starting":
+      body = <span>{t("export.starting")}</span>;
+      break;
+    case "progress": {
+      percent = Math.round(state.progress.progress * 100);
+      body = (
+        <span>
+          {t("export.progress_label", {
+            percent,
+            frame: state.progress.frame,
+            fps: state.progress.fps.toFixed(1),
+            speed: state.progress.speed.toFixed(2),
+          })}
+        </span>
+      );
+      break;
+    }
+    case "complete":
+      percent = 100;
+      body = (
+        <span>{t("export.complete", { path: state.payload.outputPath })}</span>
+      );
+      break;
+    case "error":
+      body = (
+        <span className="error">
+          {t("export.failed", { detail: state.detail })}
+        </span>
+      );
+      break;
+  }
+
+  return (
+    <aside className="export-panel">
+      <header>
+        {body}
+        {!inProgress && (
+          <button onClick={onClose}>{t("export.dismiss")}</button>
+        )}
+      </header>
+      <div
+        className={`progress-track ${state.kind === "error" ? "is-error" : ""}`}
+      >
+        <div
+          className="progress-fill"
+          style={{
+            width: `${state.kind === "error" ? 100 : percent}%`,
+          }}
+        />
+      </div>
+    </aside>
+  );
+}
+
+function MediaPool({ media }: { media: MediaSummary[] }) {
+  const { t } = useTranslation();
+  if (media.length === 0) {
+    return (
+      <div className="media-pool-inner">
+        <h2>{t("media_pool.heading")}</h2>
+        <p className="placeholder">{t("media_pool.empty")}</p>
+      </div>
+    );
+  }
+  return (
+    <div className="media-pool-inner">
+      <h2>
+        {t("media_pool.heading")} ({media.length})
+      </h2>
+      <ul className="media-list">
+        {media.map((m) => (
+          <li
+            key={m.id}
+            className="media-item"
+            draggable
+            onDragStart={(e) => {
+              e.dataTransfer.setData(
+                "application/x-videtor-media",
+                JSON.stringify({ mediaId: m.id, kind: m.kind }),
+              );
+              e.dataTransfer.effectAllowed = "copy";
+            }}
+            title={t("media_pool.drag_hint", {
+              defaultValue: "Drag onto a timeline track to add",
+            })}
+          >
+            <span className={`media-kind kind-${m.kind.toLowerCase()}`}>
+              {t(`kinds.${m.kind.toLowerCase()}`, { defaultValue: m.kind })}
+            </span>
+            <span className="media-label" title={m.path}>
+              {m.label}
+            </span>
+            <span className="media-meta">
+              {m.duration_us !== null
+                ? t("media_pool.duration", {
+                    seconds: (m.duration_us / 1_000_000).toFixed(2),
+                  })
+                : t("media_pool.no_duration")}
+            </span>
+            {m.width !== null && m.height !== null && (
+              <span className="media-meta">
+                {m.width}×{m.height}
+              </span>
+            )}
+            <span className="media-meta">{formatBytes(m.size_bytes, t)}</span>
+            <button
+              className="media-preview-btn"
+              onClick={async (e) => {
+                e.stopPropagation();
+                try {
+                  await mpvPlayMedia(m.id);
+                } catch (err) {
+                  console.error("preview failed:", err);
+                }
+              }}
+              title={t("media_pool.preview")}
+            >
+              ▶
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function formatBytes(bytes: number, t: (k: string, v?: object) => string): string {
+  const KIB = 1024;
+  const MIB = KIB * 1024;
+  const GIB = MIB * 1024;
+  if (bytes >= GIB) {
+    return t("media_pool.size_gib", { value: (bytes / GIB).toFixed(2) });
+  }
+  if (bytes >= MIB) {
+    return t("media_pool.size_mib", { value: (bytes / MIB).toFixed(2) });
+  }
+  if (bytes >= KIB) {
+    return t("media_pool.size_kib", { value: (bytes / KIB).toFixed(0) });
+  }
+  return t("media_pool.size_bytes", { bytes });
+}
+
+function CompiledPanel({
+  graph,
+  onClose,
+}: {
+  graph: CompiledGraph;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <aside className="compiler-panel">
+      <header>
+        <strong>{t("compiler.panel_title", { count: graph.node_count })}</strong>
+        <button onClick={onClose}>{t("compiler.close")}</button>
+      </header>
+      <div className="compiler-meta">
+        <span>
+          {t("compiler.inputs_label")}:{" "}
+          {graph.inputs.length === 0
+            ? t("compiler.no_inputs")
+            : graph.inputs.join(", ")}
+        </span>
+        <span>
+          {t("compiler.maps_label")}: {graph.maps.join(" ")}
+        </span>
+      </div>
+      <pre className="compiler-graph">{graph.filter_graph}</pre>
+    </aside>
+  );
+}
+

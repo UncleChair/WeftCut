@@ -1,0 +1,1986 @@
+//! Single-writer project actor — all mutations funnel here.
+//!
+//! Phase 1.2 introduced two load-bearing commands (`add_layer`, `delete_layer`).
+//! Phase 1.3 layers undo/redo + named checkpoints on top via `History`.
+//! Future phases extend the mutation surface and add validation invariants.
+
+use std::sync::Arc;
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+use tokio::sync::{broadcast, mpsc, oneshot};
+
+use super::color::{ColorSpace, Rgba};
+use super::history::{History, HistoryEntry, NamedCheckpoint};
+use super::ids::{CheckpointId, LayerId, MarkerId, MediaId, OpId, TrackId, new_id};
+use super::layer::{Layer, LayerParams};
+use super::marker::Marker;
+use super::media::MediaItem;
+use super::project::Project;
+use super::time::{Rational, TimeUs};
+use super::track::{Track, TrackKind};
+use super::validate::{ValidationError, validate};
+
+const INBOX_CAPACITY: usize = 100;
+const BROADCAST_CAPACITY: usize = 256;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "client")]
+pub enum Actor {
+    User,
+    Agent { client: String },
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "id")]
+pub enum EntityRef {
+    Track(TrackId),
+    Layer(LayerId),
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "id")]
+pub enum DiffHint {
+    Coarse,
+    Layer(LayerId),
+    Composition,
+}
+
+/// Partial update for a layer's envelope. Only `Some(_)` fields are applied.
+/// Patches don't reach into kind-specific `LayerParams` for now — that's a
+/// next-phase typed surface (`update_video_clip`, `update_text`, ...).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct LayerPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub t_start_us: Option<TimeUs>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub t_end_us: Option<TimeUs>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locked: Option<bool>,
+}
+
+/// Partial update for the composition envelope. Only `Some(_)` fields apply.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct CompositionPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fps: Option<Rational>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_us: Option<TimeUs>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample_rate: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channels: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color_space: Option<ColorSpace>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<Rgba>,
+}
+
+/// Broadcast to UI + MCP change feed after every successful mutation.
+#[derive(Clone, Debug)]
+pub struct ChangeEvent {
+    pub op_id: OpId,
+    pub actor: Actor,
+    pub timestamp: DateTime<Utc>,
+    pub summary: String,
+    pub affected: Vec<EntityRef>,
+    pub new_snapshot: Arc<Project>,
+    pub diff_hint: DiffHint,
+}
+
+#[derive(Debug, Error, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "error", content = "detail")]
+pub enum CommandError {
+    #[error("track {track} not found")]
+    TrackNotFound { track: TrackId },
+    #[error("layer {layer} not found")]
+    LayerNotFound { layer: LayerId },
+    #[error("marker {marker} not found")]
+    MarkerNotFound { marker: MarkerId },
+    #[error("checkpoint {checkpoint} not found")]
+    CheckpointNotFound { checkpoint: CheckpointId },
+    #[error("track {track} is not empty (use force to delete anyway)")]
+    TrackNotEmpty { track: TrackId },
+    #[error("track {track} is not removable (default A-roll/B-roll)")]
+    TrackNotRemovable { track: TrackId },
+    #[error("split point {at_t}us is outside layer {layer} bounds")]
+    SplitOutsideLayer { layer: LayerId, at_t: TimeUs },
+    #[error("nothing to undo")]
+    NothingToUndo,
+    #[error("nothing to redo")]
+    NothingToRedo,
+    #[error("project invariant violated: {0}")]
+    ValidationFailed(ValidationError),
+}
+
+impl From<ValidationError> for CommandError {
+    fn from(value: ValidationError) -> Self {
+        Self::ValidationFailed(value)
+    }
+}
+
+enum Command {
+    AddTrack {
+        kind: TrackKind,
+        label: Option<String>,
+        actor: Actor,
+        reply: oneshot::Sender<Result<TrackId, CommandError>>,
+    },
+    DeleteTrack {
+        id: TrackId,
+        force: bool,
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
+    AddLayer {
+        track_id: TrackId,
+        params: LayerParams,
+        t_start_us: TimeUs,
+        t_end_us: TimeUs,
+        actor: Actor,
+        reply: oneshot::Sender<Result<LayerId, CommandError>>,
+    },
+    DeleteLayer {
+        id: LayerId,
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
+    SplitLayer {
+        id: LayerId,
+        at_t_us: TimeUs,
+        actor: Actor,
+        reply: oneshot::Sender<Result<(LayerId, LayerId), CommandError>>,
+    },
+    ReplaceState {
+        next: Box<Project>,
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
+    AddMediaItem {
+        item: Box<MediaItem>,
+        actor: Actor,
+        reply: oneshot::Sender<Result<MediaId, CommandError>>,
+    },
+    UpdateLayer {
+        id: LayerId,
+        patch: LayerPatch,
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
+    MoveLayer {
+        id: LayerId,
+        new_track_id: TrackId,
+        new_t_start_us: TimeUs,
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
+    DuplicateLayer {
+        id: LayerId,
+        t_offset_us: TimeUs,
+        actor: Actor,
+        reply: oneshot::Sender<Result<LayerId, CommandError>>,
+    },
+    SetComposition {
+        patch: CompositionPatch,
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
+    AddMarker {
+        t_us: TimeUs,
+        end_t_us: Option<TimeUs>,
+        label: String,
+        color: Rgba,
+        actor: Actor,
+        reply: oneshot::Sender<Result<MarkerId, CommandError>>,
+    },
+    Undo {
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
+    Redo {
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
+    Checkpoint {
+        label: String,
+        actor: Actor,
+        reply: oneshot::Sender<CheckpointId>,
+    },
+    ListCheckpoints {
+        reply: oneshot::Sender<Vec<NamedCheckpoint>>,
+    },
+    RestoreCheckpoint {
+        id: CheckpointId,
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
+    Snapshot {
+        reply: oneshot::Sender<Arc<Project>>,
+    },
+    HistoryStatus {
+        reply: oneshot::Sender<HistoryStatus>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct HistoryStatus {
+    pub cursor: usize,
+    pub len: usize,
+    pub can_undo: bool,
+    pub can_redo: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct ProjectHandle {
+    tx: mpsc::Sender<Command>,
+    events: broadcast::Sender<ChangeEvent>,
+}
+
+impl ProjectHandle {
+    pub fn subscribe(&self) -> broadcast::Receiver<ChangeEvent> {
+        self.events.subscribe()
+    }
+
+    pub async fn snapshot(&self) -> Arc<Project> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::Snapshot { reply })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    pub async fn history_status(&self) -> HistoryStatus {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::HistoryStatus { reply })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    pub async fn add_track(
+        &self,
+        actor: Actor,
+        kind: TrackKind,
+        label: Option<String>,
+    ) -> Result<TrackId, CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::AddTrack {
+                kind,
+                label,
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    pub async fn add_layer(
+        &self,
+        actor: Actor,
+        track_id: TrackId,
+        params: LayerParams,
+        t_start_us: TimeUs,
+        t_end_us: TimeUs,
+    ) -> Result<LayerId, CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::AddLayer {
+                track_id,
+                params,
+                t_start_us,
+                t_end_us,
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    pub async fn delete_layer(&self, actor: Actor, id: LayerId) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::DeleteLayer { id, actor, reply })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    pub async fn delete_track(
+        &self,
+        actor: Actor,
+        id: TrackId,
+        force: bool,
+    ) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::DeleteTrack {
+                id,
+                force,
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    pub async fn split_layer(
+        &self,
+        actor: Actor,
+        id: LayerId,
+        at_t_us: TimeUs,
+    ) -> Result<(LayerId, LayerId), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::SplitLayer {
+                id,
+                at_t_us,
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    pub async fn replace_state(
+        &self,
+        actor: Actor,
+        next: Project,
+    ) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::ReplaceState {
+                next: Box::new(next),
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    pub async fn add_media_item(
+        &self,
+        actor: Actor,
+        item: MediaItem,
+    ) -> Result<MediaId, CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::AddMediaItem {
+                item: Box::new(item),
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    pub async fn update_layer(
+        &self,
+        actor: Actor,
+        id: LayerId,
+        patch: LayerPatch,
+    ) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::UpdateLayer {
+                id,
+                patch,
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    pub async fn move_layer(
+        &self,
+        actor: Actor,
+        id: LayerId,
+        new_track_id: TrackId,
+        new_t_start_us: TimeUs,
+    ) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::MoveLayer {
+                id,
+                new_track_id,
+                new_t_start_us,
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    pub async fn duplicate_layer(
+        &self,
+        actor: Actor,
+        id: LayerId,
+        t_offset_us: TimeUs,
+    ) -> Result<LayerId, CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::DuplicateLayer {
+                id,
+                t_offset_us,
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    pub async fn set_composition(
+        &self,
+        actor: Actor,
+        patch: CompositionPatch,
+    ) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::SetComposition {
+                patch,
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    pub async fn add_marker(
+        &self,
+        actor: Actor,
+        t_us: TimeUs,
+        end_t_us: Option<TimeUs>,
+        label: impl Into<String>,
+        color: Rgba,
+    ) -> Result<MarkerId, CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::AddMarker {
+                t_us,
+                end_t_us,
+                label: label.into(),
+                color,
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    pub async fn undo(&self, actor: Actor) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::Undo { actor, reply })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    pub async fn redo(&self, actor: Actor) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::Redo { actor, reply })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    pub async fn checkpoint(&self, actor: Actor, label: impl Into<String>) -> CheckpointId {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::Checkpoint {
+                label: label.into(),
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    pub async fn list_checkpoints(&self) -> Vec<NamedCheckpoint> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::ListCheckpoints { reply })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    pub async fn restore_checkpoint(
+        &self,
+        actor: Actor,
+        id: CheckpointId,
+    ) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::RestoreCheckpoint { id, actor, reply })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+}
+
+pub struct ProjectActor {
+    history: History,
+    inbox: mpsc::Receiver<Command>,
+    events: broadcast::Sender<ChangeEvent>,
+}
+
+pub fn spawn(initial: Project) -> ProjectHandle {
+    let (cmd_tx, cmd_rx) = mpsc::channel(INBOX_CAPACITY);
+    let (event_tx, _) = broadcast::channel::<ChangeEvent>(BROADCAST_CAPACITY);
+    let actor = ProjectActor {
+        history: History::new(Arc::new(initial), Actor::User),
+        inbox: cmd_rx,
+        events: event_tx.clone(),
+    };
+    tauri::async_runtime::spawn(actor.run());
+    ProjectHandle {
+        tx: cmd_tx,
+        events: event_tx,
+    }
+}
+
+impl ProjectActor {
+    async fn run(mut self) {
+        while let Some(cmd) = self.inbox.recv().await {
+            self.handle(cmd);
+        }
+    }
+
+    fn handle(&mut self, cmd: Command) {
+        match cmd {
+            Command::AddTrack {
+                kind,
+                label,
+                actor,
+                reply,
+            } => {
+                let result = self.do_add_track(kind, label, actor);
+                let _ = reply.send(result);
+            }
+            Command::AddLayer {
+                track_id,
+                params,
+                t_start_us,
+                t_end_us,
+                actor,
+                reply,
+            } => {
+                let result = self.do_add_layer(track_id, params, t_start_us, t_end_us, actor);
+                let _ = reply.send(result);
+            }
+            Command::DeleteLayer { id, actor, reply } => {
+                let result = self.do_delete_layer(id, actor);
+                let _ = reply.send(result);
+            }
+            Command::DeleteTrack {
+                id,
+                force,
+                actor,
+                reply,
+            } => {
+                let result = self.do_delete_track(id, force, actor);
+                let _ = reply.send(result);
+            }
+            Command::SplitLayer {
+                id,
+                at_t_us,
+                actor,
+                reply,
+            } => {
+                let result = self.do_split_layer(id, at_t_us, actor);
+                let _ = reply.send(result);
+            }
+            Command::ReplaceState { next, actor, reply } => {
+                let result = self.do_replace_state(*next, actor);
+                let _ = reply.send(result);
+            }
+            Command::AddMediaItem { item, actor, reply } => {
+                let result = self.do_add_media_item(*item, actor);
+                let _ = reply.send(result);
+            }
+            Command::UpdateLayer {
+                id,
+                patch,
+                actor,
+                reply,
+            } => {
+                let result = self.do_update_layer(id, patch, actor);
+                let _ = reply.send(result);
+            }
+            Command::MoveLayer {
+                id,
+                new_track_id,
+                new_t_start_us,
+                actor,
+                reply,
+            } => {
+                let result = self.do_move_layer(id, new_track_id, new_t_start_us, actor);
+                let _ = reply.send(result);
+            }
+            Command::DuplicateLayer {
+                id,
+                t_offset_us,
+                actor,
+                reply,
+            } => {
+                let result = self.do_duplicate_layer(id, t_offset_us, actor);
+                let _ = reply.send(result);
+            }
+            Command::SetComposition {
+                patch,
+                actor,
+                reply,
+            } => {
+                let result = self.do_set_composition(patch, actor);
+                let _ = reply.send(result);
+            }
+            Command::AddMarker {
+                t_us,
+                end_t_us,
+                label,
+                color,
+                actor,
+                reply,
+            } => {
+                let result = self.do_add_marker(t_us, end_t_us, label, color, actor);
+                let _ = reply.send(result);
+            }
+            Command::Undo { actor, reply } => {
+                let result = self.do_undo(actor);
+                let _ = reply.send(result);
+            }
+            Command::Redo { actor, reply } => {
+                let result = self.do_redo(actor);
+                let _ = reply.send(result);
+            }
+            Command::Checkpoint {
+                label,
+                actor,
+                reply,
+            } => {
+                let id = self.history.checkpoint(label, actor);
+                let _ = reply.send(id);
+            }
+            Command::ListCheckpoints { reply } => {
+                let _ = reply.send(self.history.list_checkpoints());
+            }
+            Command::RestoreCheckpoint { id, actor, reply } => {
+                let result = self.do_restore_checkpoint(id, actor);
+                let _ = reply.send(result);
+            }
+            Command::Snapshot { reply } => {
+                let _ = reply.send(self.history.current());
+            }
+            Command::HistoryStatus { reply } => {
+                let _ = reply.send(HistoryStatus {
+                    cursor: self.history.cursor(),
+                    len: self.history.len(),
+                    can_undo: self.history.can_undo(),
+                    can_redo: self.history.can_redo(),
+                });
+            }
+        }
+    }
+
+    fn do_add_track(
+        &mut self,
+        kind: TrackKind,
+        label: Option<String>,
+        actor: Actor,
+    ) -> Result<TrackId, CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+        let mut track = Track::new(kind);
+        track.label = label;
+        let track_id = track.id;
+        next.tracks.push_back(track);
+        self.commit(
+            next,
+            actor,
+            format!("Added {kind:?} track {track_id}"),
+            vec![EntityRef::Track(track_id)],
+            DiffHint::Coarse,
+        )?;
+        Ok(track_id)
+    }
+
+    fn do_add_layer(
+        &mut self,
+        track_id: TrackId,
+        params: LayerParams,
+        t_start_us: TimeUs,
+        t_end_us: TimeUs,
+        actor: Actor,
+    ) -> Result<LayerId, CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+        let track_idx = next
+            .tracks
+            .iter()
+            .position(|t| t.id == track_id)
+            .ok_or(CommandError::TrackNotFound { track: track_id })?;
+
+        let layer_id = new_id();
+        let new_layer = Layer {
+            id: layer_id,
+            label: None,
+            t_start_us,
+            t_end_us,
+            enabled: true,
+            locked: false,
+            metadata: imbl::HashMap::new(),
+            effects: imbl::Vector::new(),
+            params,
+        };
+
+        let track = next
+            .tracks
+            .get_mut(track_idx)
+            .expect("index just verified");
+
+        // Insert in `t_start_us` order so iteration stays sorted; validation
+        // catches actual overlap and inverted ranges.
+        let insert_at = track
+            .layers
+            .iter()
+            .position(|l| l.t_start_us > t_start_us)
+            .unwrap_or(track.layers.len());
+        track.layers.insert(insert_at, new_layer);
+
+        if next.composition.duration_us < t_end_us {
+            next.composition.duration_us = t_end_us;
+        }
+
+        self.commit(
+            next,
+            actor,
+            format!("Added layer {layer_id} on track {track_id}"),
+            vec![EntityRef::Layer(layer_id), EntityRef::Track(track_id)],
+            DiffHint::Layer(layer_id),
+        )?;
+        Ok(layer_id)
+    }
+
+    fn do_delete_track(
+        &mut self,
+        id: TrackId,
+        force: bool,
+        actor: Actor,
+    ) -> Result<(), CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+        let track_idx = next
+            .tracks
+            .iter()
+            .position(|t| t.id == id)
+            .ok_or(CommandError::TrackNotFound { track: id })?;
+        if !next.tracks[track_idx].removable {
+            return Err(CommandError::TrackNotRemovable { track: id });
+        }
+        if !force && !next.tracks[track_idx].layers.is_empty() {
+            return Err(CommandError::TrackNotEmpty { track: id });
+        }
+        next.tracks.remove(track_idx);
+        self.commit(
+            next,
+            actor,
+            format!("Deleted track {id}"),
+            vec![EntityRef::Track(id)],
+            DiffHint::Coarse,
+        )?;
+        Ok(())
+    }
+
+    fn do_split_layer(
+        &mut self,
+        id: LayerId,
+        at_t_us: TimeUs,
+        actor: Actor,
+    ) -> Result<(LayerId, LayerId), CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+
+        // Locate the layer in some track.
+        let mut found: Option<(usize, usize)> = None;
+        for (ti, track) in next.tracks.iter().enumerate() {
+            if let Some(li) = track.layers.iter().position(|l| l.id == id) {
+                found = Some((ti, li));
+                break;
+            }
+        }
+        let (ti, li) = found.ok_or(CommandError::LayerNotFound { layer: id })?;
+
+        let original = next.tracks[ti].layers[li].clone();
+        if at_t_us <= original.t_start_us || at_t_us >= original.t_end_us {
+            return Err(CommandError::SplitOutsideLayer {
+                layer: id,
+                at_t: at_t_us,
+            });
+        }
+
+        let split_offset = at_t_us - original.t_start_us;
+
+        // Build the right half.
+        let mut right = original.clone();
+        right.id = new_id();
+        right.t_start_us = at_t_us;
+        right.t_end_us = original.t_end_us;
+        // Adjust source offsets for media-bearing variants. Speed=1 assumption
+        // for Phase 1 — Phase 2 will fold variable speed into the offset math.
+        match &mut right.params {
+            LayerParams::VideoClip(p) => {
+                p.src_in_us = p.src_in_us + split_offset;
+            }
+            LayerParams::Audio(p) => {
+                p.src_in_us = p.src_in_us + split_offset;
+            }
+            _ => {}
+        }
+
+        // Build the left half: clone original, truncate end. Adjust src_out
+        // similarly so its source range matches its timeline range.
+        let mut left = original.clone();
+        left.t_end_us = at_t_us;
+        match &mut left.params {
+            LayerParams::VideoClip(p) => {
+                p.src_out_us = p.src_in_us + split_offset;
+            }
+            LayerParams::Audio(p) => {
+                p.src_out_us = p.src_in_us + split_offset;
+            }
+            _ => {}
+        }
+
+        let track = &mut next.tracks[ti];
+        track.layers[li] = left;
+        // Insert right just after left, keeping `t_start_us` order.
+        let insert_at = li + 1;
+        track.layers.insert(insert_at, right.clone());
+
+        let left_id = id;
+        let right_id = right.id;
+        self.commit(
+            next,
+            actor,
+            format!("Split layer {id} at {at_t_us}us"),
+            vec![EntityRef::Layer(left_id), EntityRef::Layer(right_id)],
+            DiffHint::Coarse,
+        )?;
+        Ok((left_id, right_id))
+    }
+
+    fn do_add_media_item(
+        &mut self,
+        item: MediaItem,
+        actor: Actor,
+    ) -> Result<MediaId, CommandError> {
+        // Media imports live outside the editing undo/redo stack. We mutate
+        // the media pool of the current snapshot (and every other snapshot in
+        // history) so the pool is durable across undos and redos through
+        // unrelated edits. No new HistoryEntry is recorded.
+        let id = item.id;
+        let mut next_pool = self.history.current().media_pool.clone();
+        next_pool.insert(id, item);
+
+        // Validate against the resulting current state. Older snapshots can't
+        // be invalidated by *adding* media (no existing layer reference can
+        // break), so we skip re-validating them.
+        let mut probe: Project = (*self.history.current()).clone();
+        probe.media_pool = next_pool.clone();
+        validate(&probe)?;
+
+        self.history.replace_media_pool_everywhere(next_pool);
+        let snapshot = self.history.current();
+        self.broadcast_unrecorded(actor, format!("Imported media {id}"), snapshot);
+        Ok(id)
+    }
+
+    fn do_update_layer(
+        &mut self,
+        id: LayerId,
+        patch: LayerPatch,
+        actor: Actor,
+    ) -> Result<(), CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+        let mut found = false;
+        for track in next.tracks.iter_mut() {
+            if let Some(idx) = track.layers.iter().position(|l| l.id == id) {
+                let layer = track.layers.get_mut(idx).expect("index just verified");
+                if let Some(label) = patch.label.clone() {
+                    layer.label = Some(label);
+                }
+                if let Some(t_start) = patch.t_start_us {
+                    layer.t_start_us = t_start;
+                }
+                if let Some(t_end) = patch.t_end_us {
+                    layer.t_end_us = t_end;
+                }
+                if let Some(enabled) = patch.enabled {
+                    layer.enabled = enabled;
+                }
+                if let Some(locked) = patch.locked {
+                    layer.locked = locked;
+                }
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            return Err(CommandError::LayerNotFound { layer: id });
+        }
+        self.commit(
+            next,
+            actor,
+            format!("Updated layer {id}"),
+            vec![EntityRef::Layer(id)],
+            DiffHint::Layer(id),
+        )?;
+        Ok(())
+    }
+
+    fn do_move_layer(
+        &mut self,
+        id: LayerId,
+        new_track_id: TrackId,
+        new_t_start_us: TimeUs,
+        actor: Actor,
+    ) -> Result<(), CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+
+        // Pull the layer out of its current track first.
+        let mut moved: Option<Layer> = None;
+        for track in next.tracks.iter_mut() {
+            if let Some(idx) = track.layers.iter().position(|l| l.id == id) {
+                moved = Some(track.layers.remove(idx));
+                break;
+            }
+        }
+        let mut layer = moved.ok_or(CommandError::LayerNotFound { layer: id })?;
+
+        // Shift end by the same delta as start.
+        let delta = new_t_start_us - layer.t_start_us;
+        layer.t_start_us = new_t_start_us;
+        layer.t_end_us += delta;
+
+        let dest_idx = next
+            .tracks
+            .iter()
+            .position(|t| t.id == new_track_id)
+            .ok_or(CommandError::TrackNotFound {
+                track: new_track_id,
+            })?;
+        let dest = next
+            .tracks
+            .get_mut(dest_idx)
+            .expect("index just verified");
+        let insert_at = dest
+            .layers
+            .iter()
+            .position(|l| l.t_start_us > new_t_start_us)
+            .unwrap_or(dest.layers.len());
+        dest.layers.insert(insert_at, layer);
+
+        if next.composition.duration_us < new_t_start_us + delta {
+            // Not strictly needed (delta could be negative), but auto-extend the
+            // composition if the move pushes past it.
+            let max_end = next
+                .tracks
+                .iter()
+                .flat_map(|t| t.layers.iter().map(|l| l.t_end_us))
+                .max()
+                .unwrap_or(next.composition.duration_us);
+            if max_end > next.composition.duration_us {
+                next.composition.duration_us = max_end;
+            }
+        }
+
+        self.commit(
+            next,
+            actor,
+            format!("Moved layer {id}"),
+            vec![EntityRef::Layer(id), EntityRef::Track(new_track_id)],
+            DiffHint::Coarse,
+        )?;
+        Ok(())
+    }
+
+    fn do_duplicate_layer(
+        &mut self,
+        id: LayerId,
+        t_offset_us: TimeUs,
+        actor: Actor,
+    ) -> Result<LayerId, CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+        let mut new_id_out: Option<LayerId> = None;
+
+        // Locate the source. We need the track index too so we can insert after.
+        let mut location: Option<(usize, usize)> = None;
+        for (ti, track) in next.tracks.iter().enumerate() {
+            if let Some(li) = track.layers.iter().position(|l| l.id == id) {
+                location = Some((ti, li));
+                break;
+            }
+        }
+        let (ti, li) = location.ok_or(CommandError::LayerNotFound { layer: id })?;
+
+        let mut copy = next.tracks[ti].layers[li].clone();
+        let dup_id = new_id();
+        copy.id = dup_id;
+        copy.t_start_us += t_offset_us;
+        copy.t_end_us += t_offset_us;
+        new_id_out = Some(dup_id);
+
+        let track = next.tracks.get_mut(ti).expect("track index verified");
+        let insert_at = track
+            .layers
+            .iter()
+            .position(|l| l.t_start_us > copy.t_start_us)
+            .unwrap_or(track.layers.len());
+        track.layers.insert(insert_at, copy);
+
+        // Auto-extend duration if the duplicate reaches further.
+        let max_end = next
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter().map(|l| l.t_end_us))
+            .max()
+            .unwrap_or(next.composition.duration_us);
+        if max_end > next.composition.duration_us {
+            next.composition.duration_us = max_end;
+        }
+
+        let dup_id = new_id_out.expect("duplicate produced an id");
+        self.commit(
+            next,
+            actor,
+            format!("Duplicated layer {id} → {dup_id}"),
+            vec![EntityRef::Layer(dup_id)],
+            DiffHint::Layer(dup_id),
+        )?;
+        Ok(dup_id)
+    }
+
+    fn do_set_composition(
+        &mut self,
+        patch: CompositionPatch,
+        actor: Actor,
+    ) -> Result<(), CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+        let c = &mut next.composition;
+        if let Some(width) = patch.width {
+            c.width = width;
+        }
+        if let Some(height) = patch.height {
+            c.height = height;
+        }
+        if let Some(fps) = patch.fps {
+            c.fps = fps;
+        }
+        if let Some(duration) = patch.duration_us {
+            c.duration_us = duration;
+        }
+        if let Some(sr) = patch.sample_rate {
+            c.sample_rate = sr;
+        }
+        if let Some(ch) = patch.channels {
+            c.channels = ch;
+        }
+        if let Some(cs) = patch.color_space {
+            c.color_space = cs;
+        }
+        if let Some(bg) = patch.background {
+            c.background = bg;
+        }
+        self.commit(
+            next,
+            actor,
+            "Updated composition".to_string(),
+            Vec::new(),
+            DiffHint::Composition,
+        )?;
+        Ok(())
+    }
+
+    fn do_add_marker(
+        &mut self,
+        t_us: TimeUs,
+        end_t_us: Option<TimeUs>,
+        label: String,
+        color: Rgba,
+        actor: Actor,
+    ) -> Result<MarkerId, CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+        let id = new_id();
+        let marker = Marker {
+            id,
+            t_us,
+            end_t_us,
+            label,
+            color,
+            metadata: imbl::HashMap::new(),
+        };
+        // Insert in `t_us` order so the marker list is sorted.
+        let insert_at = next
+            .markers
+            .iter()
+            .position(|m| m.t_us > t_us)
+            .unwrap_or(next.markers.len());
+        next.markers.insert(insert_at, marker);
+
+        self.commit(
+            next,
+            actor,
+            format!("Added marker {id}"),
+            Vec::new(),
+            DiffHint::Coarse,
+        )?;
+        Ok(id)
+    }
+
+    fn do_replace_state(&mut self, next: Project, actor: Actor) -> Result<(), CommandError> {
+        // Carry the project_id through unchanged so listeners see "same project, new
+        // state" rather than a fresh project. Callers wanting a fresh project should
+        // construct one explicitly with `Project::new_blank`.
+        let mut to_commit = next;
+        to_commit.metadata.modified_at = Utc::now();
+        self.commit(
+            to_commit,
+            actor,
+            "Replaced project state".to_string(),
+            Vec::new(),
+            DiffHint::Coarse,
+        )?;
+        Ok(())
+    }
+
+    fn do_delete_layer(&mut self, id: LayerId, actor: Actor) -> Result<(), CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+        let mut removed = false;
+        for track in next.tracks.iter_mut() {
+            if let Some(idx) = track.layers.iter().position(|l| l.id == id) {
+                track.layers.remove(idx);
+                removed = true;
+                break;
+            }
+        }
+        if !removed {
+            return Err(CommandError::LayerNotFound { layer: id });
+        }
+        self.commit(
+            next,
+            actor,
+            format!("Deleted layer {id}"),
+            vec![EntityRef::Layer(id)],
+            DiffHint::Coarse,
+        )?;
+        Ok(())
+    }
+
+    fn do_undo(&mut self, actor: Actor) -> Result<(), CommandError> {
+        let snapshot = self.history.undo().ok_or(CommandError::NothingToUndo)?;
+        self.broadcast_unrecorded(actor, "Undo".to_string(), snapshot);
+        Ok(())
+    }
+
+    fn do_redo(&mut self, actor: Actor) -> Result<(), CommandError> {
+        let snapshot = self.history.redo().ok_or(CommandError::NothingToRedo)?;
+        self.broadcast_unrecorded(actor, "Redo".to_string(), snapshot);
+        Ok(())
+    }
+
+    fn do_restore_checkpoint(
+        &mut self,
+        id: CheckpointId,
+        actor: Actor,
+    ) -> Result<(), CommandError> {
+        let snapshot = self
+            .history
+            .restore_checkpoint(id)
+            .ok_or(CommandError::CheckpointNotFound { checkpoint: id })?;
+        // restore_checkpoint already records a new HistoryEntry; just broadcast.
+        let event = ChangeEvent {
+            op_id: new_id(),
+            actor,
+            timestamp: Utc::now(),
+            summary: format!("Restored checkpoint {id}"),
+            affected: Vec::new(),
+            new_snapshot: snapshot,
+            diff_hint: DiffHint::Coarse,
+        };
+        let _ = self.events.send(event);
+        Ok(())
+    }
+
+    fn commit(
+        &mut self,
+        next: Project,
+        actor: Actor,
+        summary: String,
+        affected: Vec<EntityRef>,
+        diff_hint: DiffHint,
+    ) -> Result<(), ValidationError> {
+        validate(&next)?;
+        let snapshot = Arc::new(next);
+        let op_id = new_id();
+        let timestamp = Utc::now();
+        self.history.record(HistoryEntry {
+            op_id,
+            actor: actor.clone(),
+            timestamp,
+            summary: summary.clone(),
+            affected: affected.clone(),
+            snapshot: snapshot.clone(),
+        });
+        let _ = self.events.send(ChangeEvent {
+            op_id,
+            actor,
+            timestamp,
+            summary,
+            affected,
+            new_snapshot: snapshot,
+            diff_hint,
+        });
+        Ok(())
+    }
+
+    /// Broadcast a state change that's already recorded in history (e.g. undo/redo
+    /// where we're moving the cursor without creating a new entry).
+    fn broadcast_unrecorded(&self, actor: Actor, summary: String, snapshot: Arc<Project>) {
+        let _ = self.events.send(ChangeEvent {
+            op_id: new_id(),
+            actor,
+            timestamp: Utc::now(),
+            summary,
+            affected: Vec::new(),
+            new_snapshot: snapshot,
+            diff_hint: DiffHint::Coarse,
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::{Animated, ColorParams, LayerParams, Project, Rgba, Track, TrackKind};
+
+    fn project_with_video_track() -> (Project, TrackId) {
+        // Start from a blank but strip the default A-roll/B-roll so each
+        // delete/insert/replace test has a clean slate to assert against.
+        let mut p = Project::new_blank("test");
+        p.tracks.clear();
+        let track = Track::new(TrackKind::Video);
+        let track_id = track.id;
+        p.tracks.push_back(track);
+        (p, track_id)
+    }
+
+    fn color_layer(rgba: Rgba) -> LayerParams {
+        LayerParams::Color(ColorParams {
+            color: Animated::Static(rgba),
+            width: 1920,
+            height: 1080,
+        })
+    }
+
+    #[tokio::test]
+    async fn add_layer_persists_and_extends_duration() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+
+        let layer_id = handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                color_layer(Rgba::WHITE),
+                0,
+                5_000_000,
+            )
+            .await
+            .expect("add_layer");
+
+        let snap = handle.snapshot().await;
+        let track = snap.tracks.iter().find(|t| t.id == track_id).unwrap();
+        assert_eq!(track.layers.len(), 1);
+        assert_eq!(track.layers[0].id, layer_id);
+        assert_eq!(snap.composition.duration_us, 5_000_000);
+    }
+
+    #[tokio::test]
+    async fn add_layer_rejects_overlap() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+
+        handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                color_layer(Rgba::BLACK),
+                1_000_000,
+                3_000_000,
+            )
+            .await
+            .expect("first add");
+
+        let err = handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                color_layer(Rgba::WHITE),
+                2_000_000,
+                4_000_000,
+            )
+            .await
+            .expect_err("second add should overlap");
+
+        assert!(matches!(
+            err,
+            CommandError::ValidationFailed(ValidationError::LayerOverlap { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn add_layer_rejects_inverted_range() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        let err = handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                color_layer(Rgba::WHITE),
+                5_000_000,
+                1_000_000,
+            )
+            .await
+            .expect_err("inverted range");
+        assert!(matches!(
+            err,
+            CommandError::ValidationFailed(ValidationError::InvalidLayerRange { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn delete_layer_round_trip() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        let id = handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                color_layer(Rgba::WHITE),
+                0,
+                1_000_000,
+            )
+            .await
+            .unwrap();
+
+        handle.delete_layer(Actor::User, id).await.expect("delete");
+
+        let snap = handle.snapshot().await;
+        let track = snap.tracks.iter().find(|t| t.id == track_id).unwrap();
+        assert!(track.layers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn change_event_broadcast() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        let mut events = handle.subscribe();
+
+        let layer_id = handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                color_layer(Rgba::WHITE),
+                0,
+                1_000_000,
+            )
+            .await
+            .unwrap();
+
+        let event = events.recv().await.expect("event");
+        assert!(event
+            .affected
+            .iter()
+            .any(|e| matches!(e, EntityRef::Layer(id) if *id == layer_id)));
+    }
+
+    #[tokio::test]
+    async fn undo_reverts_add_layer() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                color_layer(Rgba::WHITE),
+                0,
+                1_000_000,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(handle.history_status().await.can_undo, true);
+        handle.undo(Actor::User).await.expect("undo");
+
+        let snap = handle.snapshot().await;
+        let track = snap.tracks.iter().find(|t| t.id == track_id).unwrap();
+        assert!(track.layers.is_empty(), "undo should remove the added layer");
+
+        let status = handle.history_status().await;
+        assert!(!status.can_undo);
+        assert!(status.can_redo);
+    }
+
+    #[tokio::test]
+    async fn redo_reapplies_undone_change() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        let layer_id = handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                color_layer(Rgba::WHITE),
+                0,
+                1_000_000,
+            )
+            .await
+            .unwrap();
+
+        handle.undo(Actor::User).await.unwrap();
+        handle.redo(Actor::User).await.expect("redo");
+
+        let snap = handle.snapshot().await;
+        let track = snap.tracks.iter().find(|t| t.id == track_id).unwrap();
+        assert_eq!(track.layers.len(), 1);
+        assert_eq!(track.layers[0].id, layer_id);
+    }
+
+    #[tokio::test]
+    async fn new_commit_truncates_redo() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                color_layer(Rgba::WHITE),
+                0,
+                1_000_000,
+            )
+            .await
+            .unwrap();
+
+        handle.undo(Actor::User).await.unwrap();
+        // Redo available...
+        assert!(handle.history_status().await.can_redo);
+
+        // ...until a new commit truncates it.
+        handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                color_layer(Rgba::BLACK),
+                2_000_000,
+                3_000_000,
+            )
+            .await
+            .unwrap();
+
+        assert!(!handle.history_status().await.can_redo);
+    }
+
+    #[tokio::test]
+    async fn checkpoint_survives_undo_redo() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                color_layer(Rgba::WHITE),
+                0,
+                1_000_000,
+            )
+            .await
+            .unwrap();
+
+        let cp = handle.checkpoint(Actor::User, "after first add").await;
+
+        handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                color_layer(Rgba::BLACK),
+                2_000_000,
+                3_000_000,
+            )
+            .await
+            .unwrap();
+        handle.undo(Actor::User).await.unwrap(); // back to one layer
+        handle.undo(Actor::User).await.unwrap(); // back to zero
+
+        // Checkpoint still exists.
+        let list = handle.list_checkpoints().await;
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id, cp);
+
+        // Restore returns us to the one-layer state.
+        handle
+            .restore_checkpoint(Actor::User, cp)
+            .await
+            .expect("restore");
+        let snap = handle.snapshot().await;
+        let track = snap.tracks.iter().find(|t| t.id == track_id).unwrap();
+        assert_eq!(track.layers.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn undo_at_origin_errors() {
+        let (project, _) = project_with_video_track();
+        let handle = spawn(project);
+        let err = handle
+            .undo(Actor::User)
+            .await
+            .expect_err("undo before any commit");
+        assert!(matches!(err, CommandError::NothingToUndo));
+    }
+
+    #[tokio::test]
+    async fn delete_empty_track_succeeds() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        handle
+            .delete_track(Actor::User, track_id, false)
+            .await
+            .expect("delete empty track");
+        let snap = handle.snapshot().await;
+        assert!(snap.tracks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn delete_non_empty_track_rejects_without_force() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                color_layer(Rgba::WHITE),
+                0,
+                1_000_000,
+            )
+            .await
+            .unwrap();
+
+        let err = handle
+            .delete_track(Actor::User, track_id, false)
+            .await
+            .expect_err("delete non-empty track");
+        assert!(matches!(err, CommandError::TrackNotEmpty { .. }));
+
+        // With force, it succeeds.
+        handle
+            .delete_track(Actor::User, track_id, true)
+            .await
+            .expect("delete with force");
+        let snap = handle.snapshot().await;
+        assert!(snap.tracks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn split_layer_produces_two_halves() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        let layer_id = handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                color_layer(Rgba::WHITE),
+                0,
+                4_000_000,
+            )
+            .await
+            .unwrap();
+
+        let (left, right) = handle
+            .split_layer(Actor::User, layer_id, 1_500_000)
+            .await
+            .expect("split");
+        assert_eq!(left, layer_id);
+        assert_ne!(right, layer_id);
+
+        let snap = handle.snapshot().await;
+        let track = snap.tracks.iter().find(|t| t.id == track_id).unwrap();
+        assert_eq!(track.layers.len(), 2);
+        assert_eq!(track.layers[0].t_start_us, 0);
+        assert_eq!(track.layers[0].t_end_us, 1_500_000);
+        assert_eq!(track.layers[1].t_start_us, 1_500_000);
+        assert_eq!(track.layers[1].t_end_us, 4_000_000);
+    }
+
+    #[tokio::test]
+    async fn split_layer_at_endpoint_rejects() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        let layer_id = handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                color_layer(Rgba::WHITE),
+                1_000_000,
+                3_000_000,
+            )
+            .await
+            .unwrap();
+        // At the boundary — neither inside nor producing two valid halves.
+        for at in [1_000_000, 3_000_000, 0, 5_000_000] {
+            let err = handle
+                .split_layer(Actor::User, layer_id, at)
+                .await
+                .expect_err("split outside bounds");
+            assert!(
+                matches!(err, CommandError::SplitOutsideLayer { .. }),
+                "got {err:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn update_layer_applies_patch() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        let id = handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                color_layer(Rgba::WHITE),
+                0,
+                2_000_000,
+            )
+            .await
+            .unwrap();
+
+        handle
+            .update_layer(
+                Actor::User,
+                id,
+                LayerPatch {
+                    label: Some("intro".into()),
+                    t_end_us: Some(3_000_000),
+                    enabled: Some(false),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("update");
+
+        let snap = handle.snapshot().await;
+        let layer = snap.tracks.iter().flat_map(|t| t.layers.iter()).next().unwrap();
+        assert_eq!(layer.label.as_deref(), Some("intro"));
+        assert_eq!(layer.t_end_us, 3_000_000);
+        assert!(!layer.enabled);
+    }
+
+    #[tokio::test]
+    async fn move_layer_across_tracks() {
+        let (mut project, src_track) = project_with_video_track();
+        // Add a second track manually so we can move into it.
+        let dst_track = Track::new(TrackKind::Video);
+        let dst_track_id = dst_track.id;
+        project.tracks.push_back(dst_track);
+
+        let handle = spawn(project);
+        let id = handle
+            .add_layer(
+                Actor::User,
+                src_track,
+                color_layer(Rgba::WHITE),
+                0,
+                1_000_000,
+            )
+            .await
+            .unwrap();
+
+        handle
+            .move_layer(Actor::User, id, dst_track_id, 5_000_000)
+            .await
+            .expect("move");
+
+        let snap = handle.snapshot().await;
+        let src = snap.tracks.iter().find(|t| t.id == src_track).unwrap();
+        let dst = snap.tracks.iter().find(|t| t.id == dst_track_id).unwrap();
+        assert!(src.layers.is_empty());
+        assert_eq!(dst.layers.len(), 1);
+        assert_eq!(dst.layers[0].id, id);
+        assert_eq!(dst.layers[0].t_start_us, 5_000_000);
+        assert_eq!(dst.layers[0].t_end_us, 6_000_000); // delta preserved
+    }
+
+    #[tokio::test]
+    async fn duplicate_layer_creates_offset_copy() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        let id = handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                color_layer(Rgba::WHITE),
+                0,
+                1_000_000,
+            )
+            .await
+            .unwrap();
+
+        let dup = handle
+            .duplicate_layer(Actor::User, id, 1_500_000)
+            .await
+            .expect("duplicate");
+
+        assert_ne!(dup, id);
+        let snap = handle.snapshot().await;
+        let track = snap.tracks.iter().find(|t| t.id == track_id).unwrap();
+        assert_eq!(track.layers.len(), 2);
+        let copy = track.layers.iter().find(|l| l.id == dup).unwrap();
+        assert_eq!(copy.t_start_us, 1_500_000);
+        assert_eq!(copy.t_end_us, 2_500_000);
+    }
+
+    #[tokio::test]
+    async fn set_composition_changes_canvas() {
+        let (project, _) = project_with_video_track();
+        let handle = spawn(project);
+        handle
+            .set_composition(
+                Actor::User,
+                CompositionPatch {
+                    width: Some(3840),
+                    height: Some(2160),
+                    fps: Some(Rational::FPS_60),
+                    background: Some(Rgba::WHITE),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("set_composition");
+
+        let snap = handle.snapshot().await;
+        assert_eq!(snap.composition.width, 3840);
+        assert_eq!(snap.composition.height, 2160);
+        assert_eq!(snap.composition.fps, Rational::FPS_60);
+        assert_eq!(snap.composition.background, Rgba::WHITE);
+    }
+
+    #[tokio::test]
+    async fn set_composition_rejects_invalid_canvas() {
+        let (project, _) = project_with_video_track();
+        let handle = spawn(project);
+        let err = handle
+            .set_composition(
+                Actor::User,
+                CompositionPatch {
+                    width: Some(0),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect_err("zero width should fail");
+        assert!(matches!(
+            err,
+            CommandError::ValidationFailed(ValidationError::InvalidCanvas { width: 0, .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn add_marker_keeps_list_sorted() {
+        let (project, _) = project_with_video_track();
+        let handle = spawn(project);
+        let _ = handle
+            .add_marker(Actor::User, 5_000_000, None, "second", Rgba::WHITE)
+            .await
+            .unwrap();
+        let _ = handle
+            .add_marker(Actor::User, 1_000_000, None, "first", Rgba::BLACK)
+            .await
+            .unwrap();
+
+        let snap = handle.snapshot().await;
+        assert_eq!(snap.markers.len(), 2);
+        assert_eq!(snap.markers[0].label, "first");
+        assert_eq!(snap.markers[1].label, "second");
+    }
+
+    #[tokio::test]
+    async fn replace_state_swaps_project_in_one_commit() {
+        let (project, _) = project_with_video_track();
+        let handle = spawn(project);
+        let mut replacement = Project::new_blank("replaced");
+        replacement.tracks.clear();
+        replacement
+            .tracks
+            .push_back(super::Track::new(super::TrackKind::Audio));
+        let replacement_id = replacement.project_id;
+
+        handle
+            .replace_state(Actor::User, replacement)
+            .await
+            .expect("replace_state");
+
+        let snap = handle.snapshot().await;
+        assert_eq!(snap.project_id, replacement_id);
+        assert_eq!(snap.metadata.name, "replaced");
+        assert_eq!(snap.tracks.len(), 1);
+        assert!(matches!(snap.tracks[0].kind, super::TrackKind::Audio));
+
+        // Undo should bring back the original project.
+        handle.undo(Actor::User).await.expect("undo");
+        let snap = handle.snapshot().await;
+        assert_eq!(snap.metadata.name, "test");
+        assert!(matches!(snap.tracks[0].kind, super::TrackKind::Video));
+    }
+
+    #[tokio::test]
+    async fn blank_project_ships_with_a_b_roll() {
+        let p = Project::new_blank("untitled");
+        assert_eq!(p.tracks.len(), 2);
+        // Both video, both non-removable, labelled A roll / B roll.
+        let labels: Vec<String> = p
+            .tracks
+            .iter()
+            .map(|t| t.label.clone().unwrap_or_default())
+            .collect();
+        assert!(labels.contains(&"A roll".to_string()));
+        assert!(labels.contains(&"B roll".to_string()));
+        for t in p.tracks.iter() {
+            assert!(matches!(t.kind, super::TrackKind::Video));
+            assert!(!t.removable);
+        }
+    }
+
+    #[tokio::test]
+    async fn cannot_delete_non_removable_track() {
+        let handle = spawn(Project::new_blank("untitled"));
+        let snap = handle.snapshot().await;
+        let a_roll_id = snap.tracks[0].id;
+        let err = handle
+            .delete_track(Actor::User, a_roll_id, true)
+            .await
+            .expect_err("delete should fail on non-removable track");
+        assert!(matches!(err, CommandError::TrackNotRemovable { .. }));
+    }
+
+    #[tokio::test]
+    async fn import_media_does_not_grow_history() {
+        use crate::state::media::{MediaItem, MediaKind, MediaMetadata};
+        use chrono::Utc;
+        let (project, _) = project_with_video_track();
+        let handle = spawn(project);
+        let history_before = handle.history_status().await.len;
+        let item = MediaItem {
+            id: new_id(),
+            label: Some("intro.mp4".into()),
+            path_abs: "/m/intro.mp4".into(),
+            path_rel: None,
+            kind: MediaKind::Video,
+            metadata: MediaMetadata {
+                duration_us: Some(5_000_000),
+                video: None,
+                audio: None,
+            },
+            proxy_path: None,
+            waveform_path: None,
+            thumbnails_dir: None,
+            file_hash_blake3: "0".into(),
+            file_size: 0,
+            file_mtime: 0,
+            imported_at: Utc::now(),
+        };
+        handle
+            .add_media_item(Actor::User, item)
+            .await
+            .expect("import");
+        let history_after = handle.history_status().await.len;
+        assert_eq!(
+            history_before, history_after,
+            "media import must not push a history entry"
+        );
+        // But the snapshot must contain the new media.
+        let snap = handle.snapshot().await;
+        assert_eq!(snap.media_pool.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn imported_media_persists_across_undo() {
+        use crate::state::media::{MediaItem, MediaKind, MediaMetadata};
+        use chrono::Utc;
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+
+        // Edit 1: add a layer (this DOES push to history).
+        handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                color_layer(Rgba::WHITE),
+                0,
+                1_000_000,
+            )
+            .await
+            .unwrap();
+
+        // Import media (must NOT push to history).
+        let media_id = new_id();
+        let item = MediaItem {
+            id: media_id,
+            label: Some("clip.mp4".into()),
+            path_abs: "/m/clip.mp4".into(),
+            path_rel: None,
+            kind: MediaKind::Video,
+            metadata: MediaMetadata {
+                duration_us: Some(3_000_000),
+                video: None,
+                audio: None,
+            },
+            proxy_path: None,
+            waveform_path: None,
+            thumbnails_dir: None,
+            file_hash_blake3: "0".into(),
+            file_size: 0,
+            file_mtime: 0,
+            imported_at: Utc::now(),
+        };
+        handle
+            .add_media_item(Actor::User, item)
+            .await
+            .expect("import");
+
+        // Undo edit 1 — the media must still be in the pool.
+        handle.undo(Actor::User).await.expect("undo");
+        let snap = handle.snapshot().await;
+        assert!(
+            snap.media_pool.contains_key(&media_id),
+            "imported media must survive undo of unrelated edits"
+        );
+    }
+}
