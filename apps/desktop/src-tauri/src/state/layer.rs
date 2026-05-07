@@ -1,5 +1,9 @@
 //! Layer envelope + kind-specific params.
 
+// `Layer::duration_us` / `occupies` / `overlaps` are public helpers used by
+// validation and future agent-side queries; allow lib-only dead-code noise.
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

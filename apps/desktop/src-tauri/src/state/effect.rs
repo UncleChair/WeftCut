@@ -2,6 +2,9 @@
 //!
 //! `[ColorCorrect, Blur]` produces different pixels than `[Blur, ColorCorrect]`.
 
+// Effect family is Phase 2 scaffolding — types declared, lowering wired later.
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
 
 use super::animated::Animated;

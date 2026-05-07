@@ -1,6 +1,10 @@
 //! IRGraph — owned node arena. Lowering builds it; passes mutate it; the
 //! emitter walks it.
 
+// `IRGraph::kind` classifies nodes for emitter passes; future passes will
+// consume it. Suppress lib-only dead-code noise.
+#![allow(dead_code)]
+
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};

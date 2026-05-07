@@ -3,6 +3,10 @@
 //! Keyframe times are RELATIVE to the layer's `t_start_us`. Otherwise moving a
 //! layer breaks its animation.
 
+// `Animated::static` constructor is API for keyframe-aware mutators landing
+// with Phase 2 effects.
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
 
 use super::ids::KeyframeId;

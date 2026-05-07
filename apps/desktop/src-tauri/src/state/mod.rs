@@ -12,6 +12,11 @@
 //!   7. MCP resource serialization + tool wiring.
 //!   8. UI bridge.
 
+// The `pub use` block below re-exports the state crate's whole surface for
+// consumers (commands, MCP, tests, future phases). Many are not yet wired
+// in the lib build but are intentionally public.
+#![allow(unused_imports)]
+
 pub mod actor;
 pub mod animated;
 pub mod color;

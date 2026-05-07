@@ -5,7 +5,9 @@
 //! and `AudioParams`. Image/Text/Subs/Template/Fade lowering arrives with the
 //! relevant feature phases.
 
-use std::path::PathBuf;
+// `StreamKind` and `IRNode::kind` are API for future optimization /
+// validation passes that need to discriminate audio vs video edges.
+#![allow(dead_code)]
 
 use serde::{Deserialize, Serialize};
 

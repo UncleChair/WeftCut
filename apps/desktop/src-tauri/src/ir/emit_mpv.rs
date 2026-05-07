@@ -19,8 +19,6 @@
 //! order. Out of scope for the Phase 1 MVP fixture (uniform A/V mp4s); fix
 //! when the lowerer starts emitting graphs that mix kinds across inputs.
 
-use std::fmt::Write;
-
 use super::graph::IRGraph;
 use super::node::{IRNode, NodeId};
 

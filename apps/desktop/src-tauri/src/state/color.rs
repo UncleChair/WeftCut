@@ -1,5 +1,9 @@
 //! Color primitives.
 
+// `Rgba::WHITE` / `Rgba::TRANSPARENT` are convenience constants used by tests
+// and future UI/agent commands; not all wired in the lib build.
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

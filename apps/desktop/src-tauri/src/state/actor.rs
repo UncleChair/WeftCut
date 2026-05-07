@@ -1033,7 +1033,6 @@ impl ProjectActor {
         actor: Actor,
     ) -> Result<LayerId, CommandError> {
         let mut next: Project = (*self.history.current()).clone();
-        let mut new_id_out: Option<LayerId> = None;
 
         // Locate the source. We need the track index too so we can insert after.
         let mut location: Option<(usize, usize)> = None;
@@ -1050,7 +1049,6 @@ impl ProjectActor {
         copy.id = dup_id;
         copy.t_start_us += t_offset_us;
         copy.t_end_us += t_offset_us;
-        new_id_out = Some(dup_id);
 
         let track = next.tracks.get_mut(ti).expect("track index verified");
         let insert_at = track
@@ -1071,7 +1069,6 @@ impl ProjectActor {
             next.composition.duration_us = max_end;
         }
 
-        let dup_id = new_id_out.expect("duplicate produced an id");
         self.commit(
             next,
             actor,

@@ -10,6 +10,12 @@
 //!
 //! Design: `docs/rendering.md` part 1.
 
+// The `pub use` re-exports below expose the IR's public surface. Some are
+// only consumed by tests / future phases / external callers — silence
+// unused-import warnings for this re-export module rather than peppering
+// individual lines.
+#![allow(unused_imports)]
+
 pub mod emit_ffmpeg;
 pub mod emit_mpv;
 pub mod graph;

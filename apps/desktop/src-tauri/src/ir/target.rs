@@ -1,6 +1,11 @@
 //! Render-target parameterization. Same IR, two targets — preview at proxy
 //! resolution, export at full.
 
+// `RenderTarget::proxy` is the proxy-resolution constructor. Live preview
+// currently uses `full` (libmpv's vo handles scaling); proxy lands when
+// background-job thumbnails / waveform generation does.
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
 
 use crate::state::time::Rational;

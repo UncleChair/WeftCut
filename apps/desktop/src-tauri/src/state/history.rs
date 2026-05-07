@@ -4,6 +4,11 @@
 //! Cursor model: `snapshots[cursor]` is the current state. New commits truncate
 //! the redo tail. Checkpoints are stored separately so they survive truncation.
 
+// `HistoryEntry`/`NamedCheckpoint` fields (op_id, actor, timestamp, summary,
+// affected, id) are recorded for the agent change-feed and history-listing
+// API; not all read in the lib build.
+#![allow(dead_code)]
+
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 

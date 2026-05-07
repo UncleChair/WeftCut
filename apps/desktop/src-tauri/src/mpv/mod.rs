@@ -18,16 +18,19 @@
 //! window arrives in a follow-on slice once we have a place for the per-OS
 //! handle wiring (see architecture.md).
 
+// `ensure_init` is intentionally not re-exported — it's an internal helper
+// used by `play_file` / `play_graph` and shouldn't be called by callers
+// directly (they'd skip the lazy-init guard semantics).
 #[cfg(feature = "mpv")]
 pub use real::{
-    close, drain_events_and_close_if_shutdown, ensure_init, is_active, play_file, play_graph,
-    seek, set_paused, MpvSlot,
+    close, drain_events_and_close_if_shutdown, is_active, play_file, play_graph, seek,
+    set_paused, MpvSlot,
 };
 
 #[cfg(not(feature = "mpv"))]
 pub use stub::{
-    close, drain_events_and_close_if_shutdown, ensure_init, is_active, play_file, play_graph,
-    seek, set_paused, MpvSlot,
+    close, drain_events_and_close_if_shutdown, is_active, play_file, play_graph, seek,
+    set_paused, MpvSlot,
 };
 
 use crate::ir::MpvPlan;
