@@ -39,6 +39,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             commands::ping,
+            commands::get_mcp_info,
             commands::project_summary,
             commands::add_video_track,
             commands::add_demo_color_layer,
@@ -119,9 +120,19 @@ pub fn run() {
                     Err(e) => tracing::error!("ffmpeg bootstrap join failed: {e:?}"),
                 }
             });
+            // Shared cell the MCP server writes its connection details into
+            // once it's bound to a port. The connect-agent panel reads it via
+            // the `get_mcp_info` Tauri command.
+            let mcp_info_cell: mcp::McpInfoCell = std::sync::Arc::new(std::sync::RwLock::new(None));
+            app.manage(mcp_info_cell.clone());
             tauri::async_runtime::spawn(async move {
-                if let Err(e) = mcp::serve(project_for_mcp).await {
-                    tracing::error!("mcp serve failed: {e:?}");
+                match mcp::serve(project_for_mcp).await {
+                    Ok(info) => {
+                        if let Ok(mut slot) = mcp_info_cell.write() {
+                            *slot = Some(info);
+                        }
+                    }
+                    Err(e) => tracing::error!("mcp serve failed: {e:?}"),
                 }
             });
             tauri::async_runtime::spawn_blocking(mpv::spike);

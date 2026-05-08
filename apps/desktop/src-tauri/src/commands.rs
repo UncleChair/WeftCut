@@ -174,6 +174,28 @@ pub struct HistoryView {
     pub can_redo: bool,
 }
 
+#[derive(Serialize, Clone)]
+pub struct McpInfoView {
+    pub bind: String,
+    pub sse_url: String,
+    pub message_url: String,
+    pub events_url: String,
+    pub bearer_token: String,
+}
+
+/// Connect-agent panel reads this to render the connection snippet. Returns
+/// `None` if the MCP server is still starting (panel shows "starting…").
+#[tauri::command]
+pub fn get_mcp_info(cell: State<'_, crate::mcp::McpInfoCell>) -> Option<McpInfoView> {
+    cell.read().ok()?.as_ref().map(|info| McpInfoView {
+        bind: info.bind.to_string(),
+        sse_url: info.sse_url.clone(),
+        message_url: info.message_url.clone(),
+        events_url: info.events_url.clone(),
+        bearer_token: info.bearer_token.clone(),
+    })
+}
+
 #[tauri::command]
 pub fn ping() -> &'static str {
     "ok"

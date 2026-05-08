@@ -34,6 +34,9 @@ const zhCN: Resources = {
     redo: "重做",
     queue_export: "+ 排队",
     queue_export_hint: "将导出加入渲染队列（在当前任务后执行）。",
+    connect_agent: "🔌 连接代理…",
+    connect_agent_hint:
+      "显示外部代理（Claude Desktop、Cursor）通过 MCP 驱动 Videtor 所需的 URL 和令牌。",
   },
   compiler: {
     panel_title: "编译后的滤镜图（{{count}} 个节点）",
@@ -120,6 +123,30 @@ const zhCN: Resources = {
       Completed: "已完成",
       Failed: "失败",
       Cancelled: "已取消",
+    },
+  },
+  connect: {
+    heading: "连接代理",
+    blurb: "把下面任一片段粘贴到代理的 MCP 配置中。每次启动应用都会重新生成令牌。",
+    starting: "MCP 服务正在启动…",
+    close: "关闭",
+    copy: "复制",
+    copied: "已复制！",
+    reveal: "显示",
+    hide: "隐藏",
+    token_note:
+      "尚未启用令牌校验 — 仅本地回环绑定提供隔离。在正式认证就绪前，请勿对其它机器开放此端口。",
+    field: {
+      sse_url: "SSE URL",
+      events_url: "变更通知 URL",
+      bearer: "Bearer 令牌",
+    },
+    snippets_heading: "配置片段",
+    snippet: {
+      claude: "Claude Desktop（claude_desktop_config.json）",
+      cursor: "Cursor（mcp.json）",
+      curl: "curl — MCP 通道",
+      events_curl: "curl — 变更通知",
     },
   },
   property_panel: {

@@ -801,3 +801,166 @@ html, body, #root { height: 100%; margin: 0; }
   color: #fca5a5;
   border-color: #f87171;
 }
+
+/* ---- Connect-agent panel ---- */
+
+.connect-agent-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+}
+
+.connect-agent-panel {
+  width: min(640px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  background: #0b0d11;
+  border: 1px solid #374151;
+  border-radius: 8px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.connect-agent-panel header {
+  display: flex;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid #1f2937;
+}
+
+.connect-agent-panel header h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e5e7eb;
+}
+
+.connect-close {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: #9ca3af;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.connect-close:hover {
+  color: #e5e7eb;
+}
+
+.connect-agent-panel > p,
+.connect-agent-panel > h3,
+.connect-agent-panel > .connect-field,
+.connect-agent-panel > .connect-snippet {
+  padding: 0 16px;
+}
+
+.connect-blurb,
+.connect-status {
+  margin: 12px 0;
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+.connect-agent-panel h3 {
+  margin: 16px 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #d1d5db;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.connect-field {
+  margin: 8px 0;
+}
+
+.connect-field label {
+  display: block;
+  font-size: 11px;
+  color: #9ca3af;
+  margin-bottom: 4px;
+}
+
+.connect-field-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.connect-value {
+  flex: 1;
+  background: #1f2937;
+  padding: 4px 8px;
+  border-radius: 3px;
+  font-size: 12px;
+  color: #e5e7eb;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.connect-field-row button,
+.connect-snippet-header button {
+  background: #1f2937;
+  border: 1px solid #374151;
+  color: #d1d5db;
+  padding: 4px 10px;
+  font-size: 11px;
+  border-radius: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.connect-field-row button:hover,
+.connect-snippet-header button:hover {
+  background: #374151;
+}
+
+.connect-reveal {
+  font-variant: small-caps;
+}
+
+.connect-snippet {
+  margin: 12px 0;
+}
+
+.connect-snippet-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: #9ca3af;
+  margin-bottom: 4px;
+}
+
+.connect-snippet pre {
+  margin: 0;
+  background: #07090c;
+  border: 1px solid #1f2937;
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: #e5e7eb;
+  overflow-x: auto;
+  max-height: 180px;
+}
+
+.connect-snippet code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.connect-note {
+  margin: 12px 16px 16px;
+  font-size: 11px;
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 4px;
+  padding: 8px 10px;
+}

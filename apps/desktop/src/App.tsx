@@ -40,6 +40,7 @@ import {
 } from "./ipc";
 import { Timeline } from "./timeline/Timeline";
 import { PropertyPanel } from "./properties/PropertyPanel";
+import { ConnectAgentPanel } from "./connect/ConnectAgentPanel";
 import {
   LOCALE_LABELS,
   SUPPORTED_LOCALES,
@@ -60,6 +61,7 @@ export function App() {
   const [preset, setPreset] = useState<ExportPreset>("H264Mp4_1080p");
   const [queue, setQueue] = useState<ExportQueueItem[]>([]);
   const [hwProbe, setHwProbe] = useState<HwEncoderProbe | null>(null);
+  const [connectOpen, setConnectOpen] = useState(false);
 
   const seekTo = useCallback(async (tUs: number) => {
     setCurrentTimeUs(tUs);
@@ -456,6 +458,13 @@ export function App() {
         >
           {t("actions.redo")}
         </button>
+        <span className="separator" />
+        <button
+          onClick={() => setConnectOpen(true)}
+          title={t("actions.connect_agent_hint")}
+        >
+          {t("actions.connect_agent")}
+        </button>
         {error && <span className="error">{error}</span>}
       </section>
 
@@ -517,6 +526,9 @@ export function App() {
             setQueue(await exportQueueList());
           }}
         />
+      )}
+      {connectOpen && (
+        <ConnectAgentPanel onClose={() => setConnectOpen(false)} />
       )}
     </div>
   );

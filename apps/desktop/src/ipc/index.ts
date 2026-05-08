@@ -467,3 +467,17 @@ export async function mpvPreviewProject(): Promise<MpvPreviewStatus> {
 export async function mpvClosePreview(): Promise<void> {
   return invoke<void>("mpv_close_preview");
 }
+
+export interface McpInfoView {
+  bind: string;
+  sse_url: string;
+  message_url: string;
+  events_url: string;
+  bearer_token: string;
+}
+
+/// Returns the live MCP server connection details, or `null` if the server is
+/// still starting. Used by the connect-agent panel.
+export async function getMcpInfo(): Promise<McpInfoView | null> {
+  return invoke<McpInfoView | null>("get_mcp_info");
+}

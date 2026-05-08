@@ -31,6 +31,9 @@ const enUS = {
     redo: "Redo",
     queue_export: "+ Queue",
     queue_export_hint: "Add an export to the render queue (runs after current job).",
+    connect_agent: "🔌 Connect agent…",
+    connect_agent_hint:
+      "Show the URL + token an external agent (Claude Desktop, Cursor) needs to drive Videtor over MCP.",
   },
   compiler: {
     panel_title: "Compiled filter graph ({{count}} nodes)",
@@ -118,6 +121,31 @@ const enUS = {
       Completed: "Completed",
       Failed: "Failed",
       Cancelled: "Cancelled",
+    },
+  },
+  connect: {
+    heading: "Connect an agent",
+    blurb:
+      "Paste one of these snippets into the agent's MCP config. Token is regenerated on every app launch.",
+    starting: "MCP server starting…",
+    close: "Close",
+    copy: "Copy",
+    copied: "Copied!",
+    reveal: "Reveal",
+    hide: "Hide",
+    token_note:
+      "Token enforcement isn't on yet — localhost-only binding is the active isolation. Don't expose the port to other machines until proper auth ships.",
+    field: {
+      sse_url: "SSE URL",
+      events_url: "Change-feed URL",
+      bearer: "Bearer token",
+    },
+    snippets_heading: "Config snippets",
+    snippet: {
+      claude: "Claude Desktop (claude_desktop_config.json)",
+      cursor: "Cursor (mcp.json)",
+      curl: "curl — MCP transport",
+      events_curl: "curl — change feed",
     },
   },
   property_panel: {

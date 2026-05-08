@@ -74,6 +74,13 @@ const HISTORY_LIMIT: usize = 100;
 
 const APP_JSON: &str = "application/json";
 
+/// Tauri-managed cell holding the MCP server's connection details once it's
+/// bound. Set once at startup; read by the connect-agent panel via the
+/// `get_mcp_info` Tauri command. `Arc<RwLock<Option<McpInfo>>>` rather than
+/// a OnceLock so the panel gracefully renders "starting…" while the MCP
+/// server is still binding its port.
+pub type McpInfoCell = std::sync::Arc<std::sync::RwLock<Option<McpInfo>>>;
+
 /// Connection details surfaced to the UI / logs so the user can wire up Claude Desktop.
 #[derive(Debug, Clone, Serialize)]
 pub struct McpInfo {
