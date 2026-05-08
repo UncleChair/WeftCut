@@ -164,7 +164,7 @@ Tauri events the UI can listen for (not yet wired into a media-pool progress str
 | Proxy auto-selection (libmpv plays the proxy when original is too heavy) | Needs a heuristic ("source is 4K + proxy exists → use proxy"). Not yet wired into `mpv::play_*`. |
 | ffmpeg behind SOCKS proxy auto-download | Pre-existing Phase 0 issue; manual `winget install Gyan.FFmpeg` is the documented workaround. |
 
-Forward motion: Phase 1.x closed. **Phase 6 (cloud transcription + TTS) in progress** — Stage 1 (keyring + Settings UI) complete; revised scope adds provider-agnostic abstraction and a TTS surface for `/voiceover`. Other open slices: Phase 5 (rasterized templates), or pick at remaining Phase 2 deferrals (mpv drawtext live preview, crossfade, layer composition order).
+Forward motion: Phase 1.x closed. **Phase 6 (cloud transcription + TTS) in progress** — Stages 1–3 complete (keyring + Settings UI, inline-subtitle materialization, `apply_subtitles` tool). Stage 4 (cloud client foundation: Transcriber/Synthesizer traits + reqwest + audio extract) is next when work resumes. Other open slices: Phase 5 (rasterized templates), or pick at remaining Phase 2 deferrals (mpv drawtext live preview, crossfade, layer composition order).
 
 ## Phase 2 — Native overlays (2 weeks)
 
@@ -298,15 +298,31 @@ Surfaces:
   Future: ElevenLabs, Deepgram Aura.
 
 Stages (advisor-blessed sequence; numbers are cumulative):
-1. **Keyring + Settings UI** — done. Provider enum starts at `OpenAi`;
-   Settings panel renders one row per configured provider, scales to N.
-2. **Inline-subtitle materialization pass** — pure
-   `materialize_inline_subtitles(project, cache) -> Project` that hashes
-   inline body with blake3, writes content-addressably, swaps to file
-   path. Run before `lower()` at every call site. Project state stays
-   `InlineSrt(String)` on disk; the pass only flows in the lowering path.
-3. **`apply_subtitles` MCP tool** — adds a Subtitles layer pointing at an
-   existing SRT/ASS file path. Standalone primitive, no cloud needed.
+1. ✅ **Keyring + Settings UI** (commit `9b84059`). `cloud/keys.rs` with
+   `Provider::OpenAi` enum, 3 Tauri commands
+   (`settings_set/clear/get_api_key_status` — never returns key material
+   on read), `SettingsPanel.tsx` modal with reveal-free password entry,
+   configured/not-configured badge, EN + zh-CN strings. Keyring service
+   `"videtor"`, username = lowercase provider tag. Panel iterates
+   `Provider::all()` so it scales to N variants automatically.
+2. ✅ **Inline-subtitle materialization pass** (commit `8cf55f6`).
+   `ir/materialize.rs` walks every Subtitles layer with an inline body,
+   blake3-hashes, writes atomically (`temp_path → write → promote_temp`)
+   to `<cache>/inline-subs/<hash>.<srt|ass>`. Output is
+   `imbl::HashMap<LayerId, PathBuf>` threaded into `lower()` as a third
+   arg; the lower step stays pure. Five call sites updated
+   (`compile_project`, `mpv_preview_project`, `project://compiled`, mpv
+   hot-reload, export `run_render`). Persistence unchanged — `.vproj`
+   keeps `InlineSrt(String)`. End-to-end smoke test invokes real ffmpeg
+   through materialize → lower → emit_ffmpeg.
+3. ✅ **`apply_subtitles` MCP tool** (commit `05fa8df`). Body-based
+   contract — agent passes the SRT/ASS document inline, not a path, so
+   `transcribe_clip` returns the body and the agent can inspect/edit
+   before applying. Format auto-sniffed (`[Script Info]` → ASS, else
+   SRT, BOM-tolerant) when omitted. Auto-finds or creates a Subtitle
+   track via new `VidetorServer::ensure_subtitle_track` (mirrors the
+   Tauri-command behavior so both surfaces target the same track).
+   Stage 3 is a thin wrapper — heavy lifting lives in Stage 2.
 4. **Cloud client foundation** — `cloud::Transcriber` and
    `cloud::Synthesizer` traits + reqwest scaffolding + audio-extract
    helper (ffmpeg slice → mono 16 kHz WAV for transcription, raw text
