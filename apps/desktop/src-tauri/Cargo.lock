@@ -4625,6 +4625,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -5116,9 +5117,11 @@ name = "videtor"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "axum",
  "blake3",
  "chrono",
  "ffmpeg-sidecar",
+ "futures",
  "imbl",
  "insta",
  "libmpv2",
@@ -5135,6 +5138,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-stream",
  "tracing",
  "tracing-subscriber",
  "ts-rs",

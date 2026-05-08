@@ -22,9 +22,14 @@
 //! - `project://history`     — recent ops + checkpoints (snapshot-free)
 //! - `project://compiled`    — compiled IRGraph (JSON)
 //!
-//! Edit tools and the SSE change feed land in later Phase 4 stages.
+//! Edit tools (Stage 3) and workflow tools (Stage 4) live alongside `ping`
+//! in the `VidetorServer` impl block. The change feed (Stage 5) lives on its
+//! own axum-backed `/events` endpoint — see `events.rs`. Both servers spawn
+//! from `serve(...)`.
 //!
 //! Design: `docs/mcp.md`.
+
+mod events;
 
 use std::net::SocketAddr;
 
@@ -76,6 +81,10 @@ pub struct McpInfo {
     pub sse_url: String,
     pub message_url: String,
     pub bearer_token: String,
+    /// Separate /events SSE endpoint for the change feed (Stage 5). Carries
+    /// snapshot-free `ChangeEventSummary` notifications. Agents subscribe to
+    /// this and re-fetch `project://current` after each change.
+    pub events_url: String,
 }
 
 /// The MCP server identity. Carries a `ProjectHandle` so resources can read
@@ -899,16 +908,21 @@ pub async fn serve(project: ProjectHandle) -> Result<McpInfo> {
     let project_for_factory = project.clone();
     let _ct = server.with_service(move || VidetorServer::new(project_for_factory.clone()));
 
+    let events_info = events::serve(project)
+        .await
+        .context("start change-feed events server")?;
+
     let info = McpInfo {
         bind,
         sse_url: format!("http://{bind}/sse"),
         message_url: format!("http://{bind}/message"),
         bearer_token,
+        events_url: events_info.events_url,
     };
 
     info!(
-        "MCP server listening — sse: {} message: {} bearer: {}",
-        info.sse_url, info.message_url, info.bearer_token
+        "MCP server listening — sse: {} message: {} events: {} bearer: {}",
+        info.sse_url, info.message_url, info.events_url, info.bearer_token
     );
     Ok(info)
 }

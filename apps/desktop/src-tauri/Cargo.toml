@@ -58,6 +58,13 @@ wry = "0.46"
 # Phase 0 spike uses SSE transport, which Claude Desktop also supports. Swap when
 # `transport-streamable-http-server` lands upstream.
 rmcp = { version = "0.1", features = ["server", "macros", "transport-sse-server"] }
+# Phase 4 Stage 5 ships an MCP-side change-feed on a separate /events SSE
+# endpoint so it doesn't compete with rmcp's notification surface (which
+# 0.1.x doesn't expose anyway). Both crates land via rmcp's transitive
+# dependency tree; pinning here so we can use them directly.
+axum = "0.8"
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures = "0.3"
 
 [dev-dependencies]
 insta = { version = "1", features = ["json", "yaml"] }
