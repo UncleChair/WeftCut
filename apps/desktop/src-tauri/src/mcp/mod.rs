@@ -66,8 +66,8 @@ use crate::jobs;
 use crate::state::{
     Actor, Animated, BlendMode, ColorParams, CommandError, CompositionPatch, LayerId, LayerParams,
     LayerParamsPatch, LayerPatch, MarkerId, MarkerPatch, MediaId, MediaItem, MediaKind,
-    ProjectHandle, Rational, Rgba, TrackId, TrackKind, Transform, ValidationError,
-    VideoClipParams, new_id,
+    ProjectHandle, Rational, Rgba, SubtitlesParams, SubtitlesSource, TrackId, TrackKind,
+    Transform, ValidationError, VideoClipParams, new_id,
 };
 
 const URI_PROJECT: &str = "project://current";
@@ -239,6 +239,62 @@ impl VidetorServer {
         let id = self
             .project
             .add_layer(agent_actor(), track_id, params, args.t_start_us, args.t_end_us)
+            .await
+            .map_err(map_command_error)?;
+        Ok(ok_text(id.to_string()))
+    }
+
+    #[tool(description = "Add a Subtitles layer that burns an inline SRT or ASS body onto the timeline. \
+                          The body is stored in the project (so it round-trips through .vproj) and \
+                          materialized to a content-addressed file in the OS app cache before render. \
+                          `format` is 'srt' or 'ass'; if omitted it sniffs from the body. \
+                          `track_id` is optional — if omitted, picks the first existing Subtitle track \
+                          or creates one named 'Subtitles'. Returns the new layer id.")]
+    async fn apply_subtitles(
+        &self,
+        #[tool(aggr)] args: ApplySubtitlesArgs,
+    ) -> Result<CallToolResult, McpError> {
+        if args.body.trim().is_empty() {
+            return Err(McpError::invalid_params(
+                "subtitles body is empty",
+                None,
+            ));
+        }
+        if args.t_end_us <= args.t_start_us.unwrap_or(0) {
+            return Err(McpError::invalid_params(
+                "t_end_us must be greater than t_start_us",
+                None,
+            ));
+        }
+        let format = match args.format.as_deref() {
+            Some("srt") | Some("SRT") => SubFormat::Srt,
+            Some("ass") | Some("ASS") => SubFormat::Ass,
+            None => sniff_subtitle_format(&args.body),
+            Some(other) => {
+                return Err(McpError::invalid_params(
+                    format!("unknown subtitle format '{other}' — expected 'srt' or 'ass'"),
+                    None,
+                ));
+            }
+        };
+        let source = match format {
+            SubFormat::Srt => SubtitlesSource::InlineSrt(args.body),
+            SubFormat::Ass => SubtitlesSource::InlineAss(args.body),
+        };
+        let track_id = match args.track_id.as_deref() {
+            Some(s) => parse_uuid(s, "track_id")?,
+            None => self.ensure_subtitle_track().await?,
+        };
+        let params = LayerParams::Subtitles(SubtitlesParams { source });
+        let id = self
+            .project
+            .add_layer(
+                agent_actor(),
+                track_id,
+                params,
+                args.t_start_us.unwrap_or(0),
+                args.t_end_us,
+            )
             .await
             .map_err(map_command_error)?;
         Ok(ok_text(id.to_string()))
@@ -572,6 +628,21 @@ pub struct AddVideoLayerArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct ApplySubtitlesArgs {
+    /// Subtitle document body (SRT or ASS).
+    pub body: String,
+    /// 'srt' or 'ass'. Sniffed from body when omitted.
+    pub format: Option<String>,
+    /// Target Subtitle track id. If omitted, the first existing Subtitle
+    /// track is used, or a new one is created.
+    pub track_id: Option<String>,
+    /// Layer start in timeline microseconds. Defaults to 0.
+    pub t_start_us: Option<i64>,
+    /// Layer end in timeline microseconds. Required.
+    pub t_end_us: i64,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct UpdateLayerArgs {
     pub layer_id: String,
     pub patch: LayerPatch,
@@ -705,6 +776,25 @@ fn parse_track_kind(s: &str) -> Result<TrackKind, McpError> {
             format!("unknown track kind '{other}' (expected video|audio|subtitle)"),
             None,
         )),
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum SubFormat {
+    Srt,
+    Ass,
+}
+
+/// Best-effort SRT/ASS sniffer. ASS scripts begin with the `[Script Info]`
+/// section header (even minimal SSA files); SRT cues begin with a digit
+/// (cue index 1). When neither pattern matches we default to SRT — Whisper's
+/// `response_format=srt` is the common case.
+fn sniff_subtitle_format(body: &str) -> SubFormat {
+    let trimmed = body.trim_start_matches('\u{feff}').trim_start();
+    if trimmed.starts_with('[') || trimmed.to_ascii_lowercase().starts_with("[script info]") {
+        SubFormat::Ass
+    } else {
+        SubFormat::Srt
     }
 }
 
@@ -910,6 +1000,24 @@ impl ServerHandler for VidetorServer {
 }
 
 impl VidetorServer {
+    /// Find an existing Subtitle track or create one labeled "Subtitles".
+    /// Mirrors `commands::ensure_subtitle_track` so the apply_subtitles MCP
+    /// tool and the Tauri add_subtitles_layer command target the same track.
+    async fn ensure_subtitle_track(&self) -> Result<TrackId, McpError> {
+        let snap = self.project.snapshot().await;
+        if let Some(t) = snap
+            .tracks
+            .iter()
+            .find(|t| matches!(t.kind, TrackKind::Subtitle))
+        {
+            return Ok(t.id);
+        }
+        self.project
+            .add_track(agent_actor(), TrackKind::Subtitle, Some("Subtitles".into()))
+            .await
+            .map_err(map_command_error)
+    }
+
     /// Dispatch handler for `media://{id}/...` URIs. Returns binary content
     /// (image/jpeg, application/octet-stream) base64-encoded into rmcp's
     /// `BlobResourceContents.blob` field per the MCP spec.
@@ -1154,4 +1262,36 @@ fn fastrand_seed_from_addr() -> u32 {
     // Stack-address bits — varies across runs thanks to ASLR, no extra deps needed.
     let local = 0u8;
     (&local as *const u8 as usize) as u32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sniff_format_picks_ass_for_script_info_header() {
+        assert!(matches!(
+            sniff_subtitle_format("[Script Info]\nTitle: t\n"),
+            SubFormat::Ass
+        ));
+    }
+
+    #[test]
+    fn sniff_format_picks_srt_for_cue_index() {
+        assert!(matches!(
+            sniff_subtitle_format("1\n00:00:00,000 --> 00:00:01,000\nhi\n"),
+            SubFormat::Srt
+        ));
+    }
+
+    #[test]
+    fn sniff_format_skips_bom_and_whitespace() {
+        let with_bom = "\u{feff}  \n[Script Info]\n";
+        assert!(matches!(sniff_subtitle_format(with_bom), SubFormat::Ass));
+    }
+
+    #[test]
+    fn sniff_format_defaults_to_srt_when_unclear() {
+        assert!(matches!(sniff_subtitle_format("hello\nworld\n"), SubFormat::Srt));
+    }
 }

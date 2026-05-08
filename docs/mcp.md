@@ -96,7 +96,7 @@ Each maps 1:1 to a project actor command (see [data-model.md](data-model.md) "Mu
 - `add_marker`, `update_marker`, `remove_marker`
 - `set_composition`
 - `add_template` — uses templated overlay; rasterization may be async, returns immediately with `state: "rasterizing"`
-- `apply_subtitles(srt_or_ass)` — agent generates the SRT/ASS, pushes whole
+- `apply_subtitles(body, format?, track_id?, t_start_us?, t_end_us)` — pushes a SRT/ASS body inline; format auto-sniffed from body when omitted; auto-finds or creates a Subtitle track. Body is materialized to a content-addressed cache file before render.
 
 ### Workflow / safety
 
@@ -189,7 +189,7 @@ fall back to the first configured one that can serve the surface.
 
 **Capabilities surfaces:**
 
-- **Transcription** (`Transcriber` trait) — `transcribe_clip(media_id, in_us?, out_us?, provider?, language?) → SRT path`. Slices the clip's audio, posts to the picked provider, returns a timeline-absolute SRT file path that drops straight into `apply_subtitles`. v1 provider: OpenAI Whisper. Future: Deepgram, AssemblyAI.
+- **Transcription** (`Transcriber` trait) — `transcribe_clip(media_id, in_us?, out_us?, provider?, language?) → SRT body`. Slices the clip's audio, posts to the picked provider, returns a timeline-absolute SRT body that drops straight into `apply_subtitles` via its `body` arg. The agent sees the transcript and can edit before applying. v1 provider: OpenAI Whisper. Future: Deepgram, AssemblyAI.
 - **Text-to-speech** (`Synthesizer` trait) — `synthesize_speech(text, voice, speed?, track_id?, provider?) → AudioLayer`. Synthesizes audio for an agent-supplied script (or a Text layer's body), writes a content-addressed file under `<project>/voiceover/<hash>.<ext>`, creates an Audio layer on the picked or first audio track. v1 provider: OpenAI tts-1 (same key as Whisper). Future: ElevenLabs, Deepgram Aura.
 - **Image gen for thumbnails** (deferred; v2).
 

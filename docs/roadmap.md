@@ -312,9 +312,10 @@ Stages (advisor-blessed sequence; numbers are cumulative):
    helper (ffmpeg slice → mono 16 kHz WAV for transcription, raw text
    for TTS).
 5. **OpenAI Whisper transcription** + `transcribe_clip` MCP tool. Returns
-   timeline-absolute SRT path. 25 MB upload cap surfaces as a clean
-   `PayloadTooLarge` error pointing at `in_us`/`out_us` slicing rather
-   than auto-chunking.
+   the SRT body inline (timeline-absolute timestamps after `in_us` shift)
+   so the agent can inspect / edit before piping into `apply_subtitles`.
+   25 MB upload cap surfaces as a clean `PayloadTooLarge` error pointing
+   at `in_us`/`out_us` slicing rather than auto-chunking.
 6. **OpenAI TTS** + `synthesize_speech` MCP tool. Args: text, voice
    (`alloy|echo|fable|onyx|nova|shimmer`), optional speed, optional
    target track. Writes `<project>/voiceover/<hash>.mp3` content-addressably,
