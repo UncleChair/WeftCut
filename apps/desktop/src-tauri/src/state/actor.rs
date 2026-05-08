@@ -172,6 +172,18 @@ pub struct AudioPatch {
 }
 
 
+/// Patch for a media item's derivative paths (proxy / thumbnails / waveform).
+/// Background jobs apply these when generation completes. `Some(path)` sets
+/// the field; `None` leaves it alone. There's no clear-path here because once
+/// a derivative exists, it persists — content-addressed cache invalidation
+/// happens by hash mismatch on re-import, not by clearing fields.
+#[derive(Clone, Debug, Default)]
+pub struct MediaDerivativesPatch {
+    pub proxy_path: Option<std::path::PathBuf>,
+    pub waveform_path: Option<std::path::PathBuf>,
+    pub thumbnails_dir: Option<std::path::PathBuf>,
+}
+
 /// Partial update for a marker. Only `Some(_)` fields apply. Setting
 /// `end_t_us` to `Some(None)` is impossible through this shape; clearing the
 /// region must round-trip through `remove_marker` + `add_marker`.
@@ -369,6 +381,12 @@ enum Command {
     RemoveMedia {
         id: MediaId,
         force: bool,
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
+    SetMediaDerivatives {
+        id: MediaId,
+        patch: MediaDerivativesPatch,
         actor: Actor,
         reply: oneshot::Sender<Result<(), CommandError>>,
     },
@@ -760,6 +778,29 @@ impl ProjectHandle {
         rx.await.expect("project actor terminated")
     }
 
+    /// Apply a derivatives patch to a media item — used by background jobs
+    /// when proxy / thumbnails / waveform generation completes. Sits outside
+    /// the editing undo stack (mirrors `add_media_item` semantics) so undoing
+    /// past a generation event doesn't toggle the cached path on/off.
+    pub async fn set_media_derivatives(
+        &self,
+        actor: Actor,
+        id: MediaId,
+        patch: MediaDerivativesPatch,
+    ) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::SetMediaDerivatives {
+                id,
+                patch,
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
     pub async fn undo(&self, actor: Actor) -> Result<(), CommandError> {
         let (reply, rx) = oneshot::channel();
         self.tx
@@ -979,6 +1020,15 @@ impl ProjectActor {
                 reply,
             } => {
                 let result = self.do_remove_media(id, force, actor);
+                let _ = reply.send(result);
+            }
+            Command::SetMediaDerivatives {
+                id,
+                patch,
+                actor,
+                reply,
+            } => {
+                let result = self.do_set_media_derivatives(id, patch, actor);
                 let _ = reply.send(result);
             }
             Command::Undo { actor, reply } => {
@@ -1655,6 +1705,37 @@ impl ProjectActor {
         let affected: Vec<EntityRef> =
             referencing.iter().map(|l| EntityRef::Layer(*l)).collect();
         self.commit(next, actor, summary, affected, DiffHint::Coarse)?;
+        Ok(())
+    }
+
+    fn do_set_media_derivatives(
+        &mut self,
+        id: MediaId,
+        patch: MediaDerivativesPatch,
+        actor: Actor,
+    ) -> Result<(), CommandError> {
+        // Mirrors `do_add_media_item`: derivatives sit outside the editing
+        // undo stack. We patch every snapshot's `media_pool` so cached paths
+        // remain consistent across undo cursors of unrelated edits, then
+        // broadcast a non-recorded ChangeEvent so subscribers (UI, libmpv
+        // hot-reload) re-fetch.
+        let current = self.history.current();
+        let mut next_pool = current.media_pool.clone();
+        let item = next_pool
+            .get_mut(&id)
+            .ok_or(CommandError::MediaNotFound { media: id })?;
+        if let Some(p) = patch.proxy_path {
+            item.proxy_path = Some(p);
+        }
+        if let Some(p) = patch.waveform_path {
+            item.waveform_path = Some(p);
+        }
+        if let Some(p) = patch.thumbnails_dir {
+            item.thumbnails_dir = Some(p);
+        }
+        self.history.replace_media_pool_everywhere(next_pool);
+        let snapshot = self.history.current();
+        self.broadcast_unrecorded(actor, format!("Updated derivatives for media {id}"), snapshot);
         Ok(())
     }
 
@@ -2998,6 +3079,63 @@ mod tests {
         let view = handle.history_view(2).await;
         assert_eq!(view.len, 3, "len reports the full history depth");
         assert_eq!(view.ops.len(), 2, "ops is capped to the limit");
+    }
+
+    #[tokio::test]
+    async fn set_media_derivatives_patches_in_place_outside_history() {
+        use std::path::PathBuf;
+        let (project, _) = project_with_video_track();
+        let handle = spawn(project);
+        let item = dummy_video_media(5_000_000);
+        let media_id = item.id;
+        handle.add_media_item(Actor::User, item).await.unwrap();
+        let history_before = handle.history_status().await.len;
+
+        handle
+            .set_media_derivatives(
+                Actor::User,
+                media_id,
+                MediaDerivativesPatch {
+                    proxy_path: Some(PathBuf::from("/cache/proxies/abc.mp4")),
+                    thumbnails_dir: Some(PathBuf::from("/cache/thumbnails/abc")),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("set derivatives");
+
+        let history_after = handle.history_status().await.len;
+        assert_eq!(
+            history_before, history_after,
+            "derivatives must not push to undo stack"
+        );
+
+        let snap = handle.snapshot().await;
+        let m = snap.media_pool.get(&media_id).unwrap();
+        assert_eq!(
+            m.proxy_path.as_deref(),
+            Some(std::path::Path::new("/cache/proxies/abc.mp4"))
+        );
+        assert_eq!(
+            m.thumbnails_dir.as_deref(),
+            Some(std::path::Path::new("/cache/thumbnails/abc"))
+        );
+        assert!(m.waveform_path.is_none(), "untouched fields stay None");
+    }
+
+    #[tokio::test]
+    async fn set_media_derivatives_unknown_id_errors() {
+        let (project, _) = project_with_video_track();
+        let handle = spawn(project);
+        let err = handle
+            .set_media_derivatives(
+                Actor::User,
+                new_id(),
+                MediaDerivativesPatch::default(),
+            )
+            .await
+            .expect_err("unknown media");
+        assert!(matches!(err, CommandError::MediaNotFound { .. }));
     }
 
     #[tokio::test]

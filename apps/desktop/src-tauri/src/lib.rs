@@ -8,6 +8,7 @@
 // nested `Arc<Project>`.
 #![recursion_limit = "512"]
 
+mod cache;
 mod cloud;
 mod commands;
 mod export;
@@ -92,6 +93,21 @@ pub fn run() {
             #[cfg(feature = "mpv")]
             let mpv_slot_for_events = mpv_slot.clone();
             app.manage(mpv_slot);
+
+            // Cache layout for media derivatives (proxies / thumbnails /
+            // waveforms / on-demand frames). Lives in the OS app-cache dir
+            // rather than per-`.vproj` because content-addressed entries can
+            // be shared across projects. See `cache/mod.rs` for the
+            // deviation rationale + atomicity rules.
+            let cache_root = app
+                .path()
+                .app_cache_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from("./cache"));
+            let cache_layout = cache::CacheLayout::new(cache_root);
+            if let Err(e) = cache_layout.ensure_dirs() {
+                tracing::warn!("cache dir setup failed: {e:#}");
+            }
+            app.manage(cache_layout);
 
             // Render queue. Single-task FIFO; emits `export:queue` events on
             // every state change. Lives for the app lifetime.
