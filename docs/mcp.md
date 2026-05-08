@@ -1,5 +1,7 @@
 # MCP Server & Agent UX
 
+> **Implementation status:** This is the design spec. Current implementation reality (what's wired, what's intentionally deferred to Phase 4.x or later) lives in [`roadmap.md`'s Phase 4 closeout](roadmap.md#phase-4-status-2026-05-08). Notable deltas at time of writing: SSE transport instead of Streamable HTTP (rmcp 0.1.x); token surfaced but not enforced (rmcp lacks middleware; localhost-only is the active isolation); change feed lives on a separate `/events` axum endpoint rather than as MCP notifications; effects/keyframe MCP tools and `dry_run` deferred until their IR-lowering / actor-refactor prerequisites land.
+
 Videtor exposes itself as an MCP server. External agents (Claude Desktop, Cursor, Cline, custom Python clients) connect over a localhost HTTP server and edit the project through a structured tool surface.
 
 ## Transport & deployment

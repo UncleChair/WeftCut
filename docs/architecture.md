@@ -1,5 +1,7 @@
 # Architecture
 
+> **Implementation status:** This is the design spec. Phase-by-phase implementation status lives in [`roadmap.md`](roadmap.md). At time of writing the MCP transport is SSE rather than Streamable HTTP (rmcp 0.1.x hasn't shipped streamable-http yet) and the change-feed lives on a separate axum-backed `/events` endpoint rather than riding the MCP transport — both pragmatic deltas, see `roadmap.md`'s Phase 4 closeout.
+
 Videtor is a Tauri 2 desktop app. The Rust core owns all state and side effects; the webview is a thin UI; external agents connect over MCP.
 
 ## Component map

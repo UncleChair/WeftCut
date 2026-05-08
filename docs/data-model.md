@@ -1,5 +1,7 @@
 # Data Model
 
+> **Implementation status:** This is the design spec for the type tree, mutation surface, and on-disk format. Implementation status (which mutation commands are wired today, which deferred) lives in [`roadmap.md`'s Phase 4 closeout](roadmap.md#phase-4-status-2026-05-08). At time of writing: layer / track / marker / media / composition / checkpoint / undo+redo / replace_state actor commands are all in; `update_marker`, `remove_marker`, `move_track`, `remove_media` shipped in Phase 4 Stage 1. Effect and keyframe commands remain intentionally absent until their IR lowering lands (see `project_phase4_scope.md`).
+
 The project state is the single source of truth. UI, IR compiler, MCP server, and persistence are all clients of it.
 
 ## Foundational decisions
