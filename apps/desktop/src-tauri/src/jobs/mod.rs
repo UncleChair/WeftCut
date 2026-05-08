@@ -20,9 +20,11 @@
 
 mod proxy;
 mod thumbnails;
+mod waveform;
 
 pub use proxy::run as run_proxy;
 pub use thumbnails::run as run_thumbnails;
+pub use waveform::{read_peaks_file, run as run_waveform};
 
 use std::sync::OnceLock;
 
@@ -85,10 +87,14 @@ pub fn enqueue_for_media(
         MediaKind::Video => {
             spawn_thumbnails(app.clone(), cache.clone(), project.clone(), media.clone());
             spawn_proxy(app.clone(), cache.clone(), project.clone(), media.clone());
-            // Waveform lands in Stage 5 (also Audio kind).
+            // Waveform: only spawn if the video actually has an audio stream
+            // (avoids a guaranteed-fail spawn for silent footage).
+            if media.metadata.audio.is_some() {
+                spawn_waveform(app.clone(), cache.clone(), project.clone(), media.clone());
+            }
         }
         MediaKind::Audio => {
-            // Waveform job lands in Stage 5.
+            spawn_waveform(app.clone(), cache.clone(), project.clone(), media.clone());
         }
         MediaKind::Image | MediaKind::Subtitle => {
             // No derivatives needed.
@@ -207,6 +213,65 @@ fn spawn_proxy(
                 emit(&app, EVENT_ERROR, &JobError {
                     media_id: media_id.to_string(),
                     kind: JobKind::Proxy,
+                    error: format!("{e:#}"),
+                });
+            }
+        }
+    });
+}
+
+fn spawn_waveform(
+    app: AppHandle,
+    cache: CacheLayout,
+    project: ProjectHandle,
+    media: MediaItem,
+) {
+    tokio::spawn(async move {
+        let media_id = media.id;
+        emit(&app, EVENT_STARTED, &JobStarted {
+            media_id: media_id.to_string(),
+            kind: JobKind::Waveform,
+        });
+
+        let permit = ffmpeg_sem().acquire().await;
+        if permit.is_err() {
+            warn!("waveform job: semaphore closed; skipping {media_id}");
+            return;
+        }
+        let result = waveform::run(&cache, &media).await;
+        drop(permit);
+
+        match result {
+            Ok(waveform_path) => {
+                let path_str = waveform_path.display().to_string();
+                let patch = MediaDerivativesPatch {
+                    waveform_path: Some(waveform_path),
+                    ..Default::default()
+                };
+                if let Err(e) = project
+                    .set_media_derivatives(actor_for_jobs(), media_id, patch)
+                    .await
+                {
+                    warn!("waveform commit failed for {media_id}: {e}");
+                    emit(&app, EVENT_ERROR, &JobError {
+                        media_id: media_id.to_string(),
+                        kind: JobKind::Waveform,
+                        error: format!("commit: {e}"),
+                    });
+                    return;
+                }
+                info!("waveform ready for {media_id}");
+                emit(&app, EVENT_COMPLETE, &JobComplete {
+                    media_id: media_id.to_string(),
+                    kind: JobKind::Waveform,
+                    path: Some(path_str),
+                });
+            }
+            Err(e) => {
+                warn!("waveform job failed for {media_id}: {e:#}");
+                emit(&app, EVENT_ERROR, &JobError {
+                    media_id: media_id.to_string(),
+                    kind: JobKind::Waveform,
                     error: format!("{e:#}"),
                 });
             }
