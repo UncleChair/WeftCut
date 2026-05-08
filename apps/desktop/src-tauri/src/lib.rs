@@ -15,6 +15,7 @@ mod export;
 mod ffmpeg;
 mod io;
 mod ir;
+mod jobs;
 mod mcp;
 mod mpv;
 mod raster;
