@@ -410,6 +410,63 @@ impl VidetorServer {
             .map_err(map_command_error)?;
         Ok(ok_void())
     }
+
+    // ============================================================
+    // Workflow tools
+    // ============================================================
+
+    #[tool(description = "Undo the most recent edit (linear history). Errors with NothingToUndo at the origin. \
+                          Note: media imports sit OUTSIDE the undo stack — undoing past an import keeps the media in the pool.")]
+    async fn undo(&self) -> Result<CallToolResult, McpError> {
+        self.project
+            .undo(agent_actor())
+            .await
+            .map_err(map_command_error)?;
+        Ok(ok_void())
+    }
+
+    #[tool(description = "Redo the next edit. Errors with NothingToRedo if no redo is available. \
+                          A new commit truncates the redo tail.")]
+    async fn redo(&self) -> Result<CallToolResult, McpError> {
+        self.project
+            .redo(agent_actor())
+            .await
+            .map_err(map_command_error)?;
+        Ok(ok_void())
+    }
+
+    #[tool(description = "Create an explicit named checkpoint of the current state. \
+                          Checkpoints survive new commits (they don't get truncated like the redo tail) \
+                          and persist in the .vproj save file. Returns the new checkpoint id.")]
+    async fn checkpoint(
+        &self,
+        #[tool(aggr)] args: CheckpointArgs,
+    ) -> Result<CallToolResult, McpError> {
+        let id = self.project.checkpoint(agent_actor(), args.label).await;
+        Ok(ok_text(id.to_string()))
+    }
+
+    #[tool(description = "List all named checkpoints, oldest first. Returns id, label, actor, created_at \
+                          per checkpoint (no project snapshot).")]
+    async fn list_checkpoints(&self) -> Result<CallToolResult, McpError> {
+        // Reuse history_view (limit doesn't affect the checkpoints field).
+        let view = self.project.history_view(0).await;
+        ok_json(&view.checkpoints)
+    }
+
+    #[tool(description = "Restore a named checkpoint. Records a new history entry — undo will return to the \
+                          pre-restore state. Errors with CheckpointNotFound if the id doesn't exist.")]
+    async fn restore_checkpoint(
+        &self,
+        #[tool(aggr)] args: RestoreCheckpointArgs,
+    ) -> Result<CallToolResult, McpError> {
+        let id = parse_uuid(&args.checkpoint_id, "checkpoint_id")?;
+        self.project
+            .restore_checkpoint(agent_actor(), id)
+            .await
+            .map_err(map_command_error)?;
+        Ok(ok_void())
+    }
 }
 
 // ============================================================
@@ -538,6 +595,17 @@ pub struct RemoveMediaArgs {
     pub media_id: String,
     /// If true, also deletes layers that reference this media. Default false.
     pub force: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CheckpointArgs {
+    /// Human-readable label for the checkpoint.
+    pub label: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RestoreCheckpointArgs {
+    pub checkpoint_id: String,
 }
 
 // ============================================================
