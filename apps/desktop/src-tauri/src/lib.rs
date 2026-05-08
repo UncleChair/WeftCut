@@ -79,6 +79,7 @@ pub fn run() {
             // UI commands (now) and the MCP tool surface.
             let project_handle = state::spawn(state::Project::new_blank("untitled"));
             let project_for_mcp = project_handle.clone();
+            let project_for_ui_events = project_handle.clone();
             #[cfg(feature = "mpv")]
             let project_for_preview = project_handle.clone();
             app.manage(project_handle);
@@ -120,6 +121,47 @@ pub fn run() {
                     Err(e) => tracing::error!("ffmpeg bootstrap join failed: {e:?}"),
                 }
             });
+            // Bridge actor ChangeEvents to a Tauri event the React UI listens
+            // for. Without this, MCP-driven mutations land in state but the
+            // UI panels (project bar, timeline, property panel, media pool)
+            // stay frozen until the user clicks something. The payload is a
+            // tiny summary — the UI just calls `projectSummary()` again on
+            // any signal.
+            let app_handle_for_ui_events = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                use tokio::sync::broadcast::error::RecvError;
+                use tauri::Emitter;
+                let mut rx = project_for_ui_events.subscribe();
+                loop {
+                    match rx.recv().await {
+                        Ok(event) => {
+                            let actor_label = match &event.actor {
+                                state::Actor::User => "User".to_string(),
+                                state::Actor::Agent { client } => {
+                                    format!("Agent({client})")
+                                }
+                            };
+                            let _ = app_handle_for_ui_events.emit(
+                                "project:changed",
+                                serde_json::json!({
+                                    "op_id": event.op_id.to_string(),
+                                    "actor": actor_label,
+                                    "summary": event.summary,
+                                }),
+                            );
+                        }
+                        Err(RecvError::Lagged(n)) => {
+                            tracing::warn!(
+                                "ui-event bridge: lagged {n} events; emitting refresh signal"
+                            );
+                            let _ = app_handle_for_ui_events
+                                .emit("project:changed", serde_json::json!({ "lagged": n }));
+                        }
+                        Err(RecvError::Closed) => break,
+                    }
+                }
+            });
+
             // Shared cell the MCP server writes its connection details into
             // once it's bound to a port. The connect-agent panel reads it via
             // the `get_mcp_info` Tauri command.

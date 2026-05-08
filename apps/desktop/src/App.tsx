@@ -117,6 +117,29 @@ export function App() {
     };
   }, []);
 
+  // Project-change subscription — fired by the actor whenever a commit lands,
+  // regardless of source (UI command, MCP tool call, undo/redo, checkpoint
+  // restore). Without this, MCP-driven edits land in state but the panels
+  // stay frozen until the user clicks something.
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+    (async () => {
+      const u = await listen<unknown>("project:changed", () => {
+        refresh();
+      });
+      if (cancelled) {
+        u();
+        return;
+      }
+      unlisten = u;
+    })();
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
+  }, [refresh]);
+
   // Export event subscriptions — kept up for the lifetime of the app so the
   // panel can show progress for any in-flight render.
   useEffect(() => {
