@@ -164,7 +164,7 @@ Tauri events the UI can listen for (not yet wired into a media-pool progress str
 | Proxy auto-selection (libmpv plays the proxy when original is too heavy) | Needs a heuristic ("source is 4K + proxy exists → use proxy"). Not yet wired into `mpv::play_*`. |
 | ffmpeg behind SOCKS proxy auto-download | Pre-existing Phase 0 issue; manual `winget install Gyan.FFmpeg` is the documented workaround. |
 
-Forward motion: Phase 1.x closed. Next slice options: **Phase 5 (rasterized templates)**, **Phase 6 (cloud transcription)**, or pick at remaining Phase 2 deferrals (mpv drawtext live preview, crossfade, layer composition order).
+Forward motion: Phase 1.x closed. **Phase 6 (cloud transcription + TTS) in progress** — Stage 1 (keyring + Settings UI) complete; revised scope adds provider-agnostic abstraction and a TTS surface for `/voiceover`. Other open slices: Phase 5 (rasterized templates), or pick at remaining Phase 2 deferrals (mpv drawtext live preview, crossfade, layer composition order).
 
 ## Phase 2 — Native overlays (2 weeks)
 
@@ -259,7 +259,7 @@ Tool count today: **23** (`ping` + 17 edit + 5 workflow). Spec target was ~25; t
 | **`media://{id}/thumbnail` / `media://{id}/frame/{time}` / `media://{id}/waveform`** | Needs Phase 1's deferred proxy/thumbnails/waveform background-job phase. Multimodal agents lose the "see the video" affordance until then; they can still reason structurally via `project://current` + `project://compiled`. |
 | **`templates://*` resources, `add_template` tool** | Phase 5 — depends on the rasterized-template runtime. |
 | **MCP activity panel in UI** | Quality-of-life polish. No spec dependency on it; Phase 4.x. |
-| **MCP prompts** (`/cut-silences`, `/auto-caption`, `/highlight-reel`, `/jump-cut`, `/translate-subtitles`) | Phase 4.x for `/cut-silences` and `/highlight-reel` (analysis tools first). `/auto-caption` and `/translate-subtitles` are Phase 6 (cloud transcription). |
+| **MCP prompts** (`/cut-silences`, `/auto-caption`, `/voiceover`, `/highlight-reel`, `/jump-cut`, `/translate-subtitles`) | Phase 4.x for `/cut-silences` and `/highlight-reel` (analysis tools first). `/auto-caption`, `/voiceover`, and `/translate-subtitles` are Phase 6 (cloud transcription + TTS). |
 
 **Strict exit-criteria check** — "Claude Desktop connected, 'make a 30-second highlight from this clip' successfully edits the open project":
 - Claude Desktop can connect ✅ — connect-agent panel emits the exact `claude_desktop_config.json` snippet.
@@ -281,15 +281,64 @@ Tool count today: **23** (`ping` + 17 edit + 5 workflow). Spec target was ~25; t
 
 **Exit criteria:** agent picks a template, fills props, sees it appear on the timeline within seconds; preview matches export pixel-for-pixel.
 
-## Phase 6 — Cloud transcription + auto-caption (1 week)
+## Phase 6 — Cloud transcription + TTS + auto-caption / voiceover (1–1.5 weeks)
 
-- Whisper API client (OpenAI + optional Deepgram).
-- API key storage in OS keyring.
-- `transcribe_clip` MCP tool returning ASS.
-- `/auto-caption` MCP prompt: chains transcribe → `apply_subtitles`.
-- Settings UI for keys.
+Cloud-side AI lives behind a provider-agnostic trait surface so the agent
+sees capabilities ("transcribe this clip", "synthesize this line") rather
+than vendor names. v1 ships one transcription provider and one TTS
+provider; the abstraction is what makes adding a second of either trivial
+later.
 
-**Exit criteria:** "/auto-caption" in Claude Desktop adds correctly-timed subtitles to a 5-minute clip.
+Surfaces:
+- **Transcription** (`Transcriber` trait): audio → SRT with timestamps.
+  v1 provider: OpenAI Whisper. Provider slot already wired (Stage 1).
+  Future: Deepgram, AssemblyAI — drop-in once trait is settled.
+- **Text-to-speech** (`Synthesizer` trait): text + voice → audio file.
+  v1 provider: OpenAI tts-1 (same key reuses the OpenAI keyring slot).
+  Future: ElevenLabs, Deepgram Aura.
+
+Stages (advisor-blessed sequence; numbers are cumulative):
+1. **Keyring + Settings UI** — done. Provider enum starts at `OpenAi`;
+   Settings panel renders one row per configured provider, scales to N.
+2. **Inline-subtitle materialization pass** — pure
+   `materialize_inline_subtitles(project, cache) -> Project` that hashes
+   inline body with blake3, writes content-addressably, swaps to file
+   path. Run before `lower()` at every call site. Project state stays
+   `InlineSrt(String)` on disk; the pass only flows in the lowering path.
+3. **`apply_subtitles` MCP tool** — adds a Subtitles layer pointing at an
+   existing SRT/ASS file path. Standalone primitive, no cloud needed.
+4. **Cloud client foundation** — `cloud::Transcriber` and
+   `cloud::Synthesizer` traits + reqwest scaffolding + audio-extract
+   helper (ffmpeg slice → mono 16 kHz WAV for transcription, raw text
+   for TTS).
+5. **OpenAI Whisper transcription** + `transcribe_clip` MCP tool. Returns
+   timeline-absolute SRT path. 25 MB upload cap surfaces as a clean
+   `PayloadTooLarge` error pointing at `in_us`/`out_us` slicing rather
+   than auto-chunking.
+6. **OpenAI TTS** + `synthesize_speech` MCP tool. Args: text, voice
+   (`alloy|echo|fable|onyx|nova|shimmer`), optional speed, optional
+   target track. Writes `<project>/voiceover/<hash>.mp3` content-addressably,
+   creates an Audio layer on the picked or first audio track.
+7. **MCP prompts**: `/auto-caption` (transcribe → apply_subtitles) and
+   `/voiceover` (synthesize_speech for a script with a single voice).
+8. **Hardening**: rate-limit-aware retries, key-validation feedback in
+   Settings ("Test connection" → 1-token call), missing-key tool gating
+   (`Unavailable` if no provider supports the requested surface).
+
+Provider model: keyring slot is keyed by **API provider** (`OpenAi`,
+`Deepgram`, `ElevenLabs`, ...), not by feature surface. A single OpenAI
+key covers both Whisper and tts-1. Each provider declares which surfaces
+it supports (`Capabilities { transcription: bool, tts: bool }`); the
+default-provider picker for each tool falls back to the first configured
+provider that can serve the surface.
+
+**Exit criteria:**
+- `/auto-caption` adds correctly-timed subtitles to a 5-minute clip.
+- `/voiceover` produces an audio layer from an agent-supplied script,
+  played back in preview at the right place on the timeline.
+- Adding a second transcription provider (Deepgram) is a single-file
+  change against `cloud::Transcriber` — proven by spiking it in a
+  branch (don't ship in v1).
 
 ## Phase 7 — Polish (2 weeks)
 

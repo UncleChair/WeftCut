@@ -37,6 +37,9 @@ const zhCN: Resources = {
     connect_agent: "🔌 连接代理…",
     connect_agent_hint:
       "显示外部代理（Claude Desktop、Cursor）通过 MCP 驱动 Videtor 所需的 URL 和令牌。",
+    settings: "⚙ 设置…",
+    settings_hint:
+      "管理云服务 API 密钥（转写、未来的 TTS）。密钥存储在系统密钥环中。",
   },
   compiler: {
     panel_title: "编译后的滤镜图（{{count}} 个节点）",
@@ -148,6 +151,23 @@ const zhCN: Resources = {
       curl: "curl — MCP 通道",
       events_curl: "curl — 变更通知",
     },
+  },
+  settings: {
+    heading: "设置",
+    close: "关闭",
+    api_keys_heading: "云服务 API 密钥",
+    api_keys_blurb:
+      "密钥保存在系统密钥环中（Windows 凭据管理器 / macOS 钥匙串 / Linux Secret Service）。设置匹配的密钥后，相应的云服务工具（Whisper 转写等）即可使用。",
+    configured: "已配置",
+    not_configured: "未配置",
+    placeholder_set: "替换密钥…",
+    placeholder_unset: "粘贴 API 密钥",
+    save: "保存",
+    saving: "保存中…",
+    clear: "清除",
+    clearing: "清除中…",
+    saved: "已保存！",
+    cleared: "已清除！",
   },
   property_panel: {
     heading: "属性",

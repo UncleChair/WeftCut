@@ -70,6 +70,15 @@ futures = "0.3"
 # resources. Already transitively present via tauri/rmcp; pinning for direct
 # use.
 base64 = "0.22"
+# Phase 6 cloud transcription stores per-provider API keys in the OS native
+# keyring (Windows Credential Manager, macOS Keychain, Linux Secret Service).
+# Linux needs a Secret-Service daemon at runtime — fine for desktop, gate
+# tests behind a flag if CI ever lands.
+keyring = "3"
+# HTTP client for Whisper / Deepgram / future cloud providers. Pinning rustls
+# features explicitly avoids pulling in a second native-tls stack alongside
+# the one tauri already brings in via its plugin transitives.
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "stream"] }
 
 [dev-dependencies]
 insta = { version = "1", features = ["json", "yaml"] }

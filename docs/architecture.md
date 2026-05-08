@@ -122,7 +122,10 @@ videtor/
         raster/               ← offscreen rasterizer, JS shim, cache
         mcp/                  ← rmcp server, tool definitions, resources
         io/                   ← project save/load, schema migrations
-        cloud/                ← optional API integrations (whisper, etc.)
+        cloud/                ← provider-agnostic cloud APIs:
+                              ←   Transcriber / Synthesizer traits,
+                              ←   keyring-backed key storage,
+                              ←   one module per concrete provider
         main.rs
       Cargo.toml
       tauri.conf.json

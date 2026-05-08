@@ -201,6 +201,50 @@ pub fn ping() -> &'static str {
     "ok"
 }
 
+#[derive(Serialize, Clone)]
+pub struct ApiKeyStatus {
+    pub provider: String,
+    pub label: String,
+    pub configured: bool,
+}
+
+/// Settings panel reads this to render which providers are configured. Never
+/// returns key material — the keyring exposure stays one-way.
+#[tauri::command]
+pub fn settings_get_api_key_status() -> Vec<ApiKeyStatus> {
+    crate::cloud::keys::Provider::all()
+        .iter()
+        .map(|p| ApiKeyStatus {
+            provider: p.as_str().to_string(),
+            label: p.label().to_string(),
+            configured: crate::cloud::keys::has_key(*p),
+        })
+        .collect()
+}
+
+fn parse_provider(s: &str) -> Result<crate::cloud::keys::Provider, String> {
+    match s {
+        "openai" => Ok(crate::cloud::keys::Provider::OpenAi),
+        other => Err(format!("unknown provider: {other}")),
+    }
+}
+
+#[tauri::command]
+pub fn settings_set_api_key(provider: String, key: String) -> Result<(), String> {
+    let p = parse_provider(&provider)?;
+    let trimmed = key.trim();
+    if trimmed.is_empty() {
+        return Err("api key is empty".into());
+    }
+    crate::cloud::keys::set_key(p, trimmed).map_err(|e| format!("keyring: {e}"))
+}
+
+#[tauri::command]
+pub fn settings_clear_api_key(provider: String) -> Result<(), String> {
+    let p = parse_provider(&provider)?;
+    crate::cloud::keys::clear_key(p).map_err(|e| format!("keyring: {e}"))
+}
+
 #[tauri::command]
 pub async fn project_summary(handle: State<'_, ProjectHandle>) -> Result<ProjectSummary, ()> {
     let snap = handle.snapshot().await;

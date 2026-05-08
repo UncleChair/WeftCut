@@ -34,6 +34,9 @@ const enUS = {
     connect_agent: "🔌 Connect agent…",
     connect_agent_hint:
       "Show the URL + token an external agent (Claude Desktop, Cursor) needs to drive Videtor over MCP.",
+    settings: "⚙ Settings…",
+    settings_hint:
+      "Manage cloud-provider API keys (transcription, future TTS). Keys live in the OS keyring.",
   },
   compiler: {
     panel_title: "Compiled filter graph ({{count}} nodes)",
@@ -147,6 +150,23 @@ const enUS = {
       curl: "curl — MCP transport",
       events_curl: "curl — change feed",
     },
+  },
+  settings: {
+    heading: "Settings",
+    close: "Close",
+    api_keys_heading: "Cloud API keys",
+    api_keys_blurb:
+      "Keys are stored in the OS keyring (Windows Credential Manager / macOS Keychain / Linux Secret Service). Cloud-backed tools (Whisper transcription, future TTS) become available once a matching key is set.",
+    configured: "Configured",
+    not_configured: "Not configured",
+    placeholder_set: "Replace key…",
+    placeholder_unset: "Paste API key",
+    save: "Save",
+    saving: "Saving…",
+    clear: "Clear",
+    clearing: "Clearing…",
+    saved: "Saved!",
+    cleared: "Cleared!",
   },
   property_panel: {
     heading: "Properties",

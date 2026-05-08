@@ -181,10 +181,21 @@ Agents can fetch the full new state by reading `project://current` after a chang
 
 ## Cloud APIs (optional, user-supplied)
 
-For things agents can't do well themselves:
+For things agents can't do well themselves. The cloud surface is
+provider-agnostic: keys live in the OS keyring keyed by **API provider**
+(OpenAI, Deepgram, ElevenLabs, …), and each provider declares which
+capabilities it supports. Tools pick a provider via an explicit arg or
+fall back to the first configured one that can serve the surface.
 
-- **Transcription** (`transcribe_clip(media_id) → SRT/ASS`) — calls Whisper API / Deepgram / AssemblyAI on the user's behalf using a key configured in app settings. If no key configured, tool returns `Unavailable` with a hint to configure one.
+**Capabilities surfaces:**
+
+- **Transcription** (`Transcriber` trait) — `transcribe_clip(media_id, in_us?, out_us?, provider?, language?) → SRT path`. Slices the clip's audio, posts to the picked provider, returns a timeline-absolute SRT file path that drops straight into `apply_subtitles`. v1 provider: OpenAI Whisper. Future: Deepgram, AssemblyAI.
+- **Text-to-speech** (`Synthesizer` trait) — `synthesize_speech(text, voice, speed?, track_id?, provider?) → AudioLayer`. Synthesizes audio for an agent-supplied script (or a Text layer's body), writes a content-addressed file under `<project>/voiceover/<hash>.<ext>`, creates an Audio layer on the picked or first audio track. v1 provider: OpenAI tts-1 (same key as Whisper). Future: ElevenLabs, Deepgram Aura.
 - **Image gen for thumbnails** (deferred; v2).
+
+**Single-key, multi-surface:** an OpenAI key activates BOTH `transcribe_clip` and `synthesize_speech`. The Settings panel lists providers (one row per `Provider` enum variant), not surfaces — so the user thinks in terms of "configure OpenAI" once.
+
+**Tool gating:** if no configured provider supports a requested surface, the tool either returns `Unavailable` (with a hint to configure a key) or — preferred — is omitted from `list_tools` entirely so the agent doesn't see it. Decision per-tool; transcribe/synthesize lean toward "always listed, fail with helpful error" so the agent can surface the gap to the user instead of silently working around it.
 
 These are MCP tools like any other; the agent doesn't see "cloud vs local" — just "this tool exists or doesn't."
 

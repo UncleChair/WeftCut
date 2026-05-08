@@ -481,3 +481,21 @@ export interface McpInfoView {
 export async function getMcpInfo(): Promise<McpInfoView | null> {
   return invoke<McpInfoView | null>("get_mcp_info");
 }
+
+export interface ApiKeyStatus {
+  provider: string;
+  label: string;
+  configured: boolean;
+}
+
+export async function settingsGetApiKeyStatus(): Promise<ApiKeyStatus[]> {
+  return invoke<ApiKeyStatus[]>("settings_get_api_key_status");
+}
+
+export async function settingsSetApiKey(provider: string, key: string): Promise<void> {
+  return invoke<void>("settings_set_api_key", { provider, key });
+}
+
+export async function settingsClearApiKey(provider: string): Promise<void> {
+  return invoke<void>("settings_clear_api_key", { provider });
+}

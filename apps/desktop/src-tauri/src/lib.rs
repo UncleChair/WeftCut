@@ -75,6 +75,9 @@ pub fn run() {
             commands::mpv_preview_project,
             commands::mpv_seek,
             commands::mpv_set_paused,
+            commands::settings_get_api_key_status,
+            commands::settings_set_api_key,
+            commands::settings_clear_api_key,
         ])
         .setup(|app| {
             // Project actor — single writer for all state mutations, shared by

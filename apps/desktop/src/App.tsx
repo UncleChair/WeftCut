@@ -41,6 +41,7 @@ import {
 import { Timeline } from "./timeline/Timeline";
 import { PropertyPanel } from "./properties/PropertyPanel";
 import { ConnectAgentPanel } from "./connect/ConnectAgentPanel";
+import { SettingsPanel } from "./settings/SettingsPanel";
 import {
   LOCALE_LABELS,
   SUPPORTED_LOCALES,
@@ -62,6 +63,7 @@ export function App() {
   const [queue, setQueue] = useState<ExportQueueItem[]>([]);
   const [hwProbe, setHwProbe] = useState<HwEncoderProbe | null>(null);
   const [connectOpen, setConnectOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const seekTo = useCallback(async (tUs: number) => {
     setCurrentTimeUs(tUs);
@@ -488,6 +490,12 @@ export function App() {
         >
           {t("actions.connect_agent")}
         </button>
+        <button
+          onClick={() => setSettingsOpen(true)}
+          title={t("actions.settings_hint")}
+        >
+          {t("actions.settings")}
+        </button>
         {error && <span className="error">{error}</span>}
       </section>
 
@@ -552,6 +560,9 @@ export function App() {
       )}
       {connectOpen && (
         <ConnectAgentPanel onClose={() => setConnectOpen(false)} />
+      )}
+      {settingsOpen && (
+        <SettingsPanel onClose={() => setSettingsOpen(false)} />
       )}
     </div>
   );
