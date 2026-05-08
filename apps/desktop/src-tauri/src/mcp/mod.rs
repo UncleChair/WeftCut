@@ -1,17 +1,28 @@
 //! MCP server: tool surface, resources, prompts, SSE change feed.
 //!
-//! Transport: Streamable HTTP on `127.0.0.1:<auto-port>` per the architecture doc.
-//! Phase 0 spike falls back to **SSE** because `rmcp` (0.1.x) hasn't shipped
-//! Streamable HTTP yet — Claude Desktop accepts both. Swap to streamable-http when
-//! the upstream feature lands.
+//! Transport: SSE on `127.0.0.1:<auto-port>`. Streamable HTTP is the spec
+//! target but rmcp 0.1.x hasn't shipped it yet — Claude Desktop accepts both.
+//! Swap to streamable-http when upstream lands.
 //!
 //! Per-session bearer token, regenerated on each app launch unless pinned.
-//! Phase 0 spike: token is generated and logged but **NOT enforced** — `rmcp`'s
-//! `SseServer` doesn't expose middleware injection. Bind is localhost-only, which
-//! provides single-host isolation. Real auth is a Phase 4 concern (`docs/mcp.md`).
+//! rmcp 0.1.x's `SseServer` doesn't expose middleware injection, so the
+//! token is generated and surfaced (UI panel + log) but **NOT enforced** on
+//! incoming requests. Localhost-only binding is the real isolation on a
+//! single-user machine; flipping to 0.0.0.0 must wait for proper auth.
 //!
-//! Phase 1.8 layers in a single read-only resource: `project://current` returns
-//! the project snapshot as JSON. Edit tools are still Phase 4 work.
+//! Resource surface (read-only, Phase 4 Stage 2):
+//! - `project://current`     — full Project JSON
+//! - `project://composition` — Composition only
+//! - `project://media`       — media pool
+//! - `project://tracks`      — tracks + layer envelopes
+//! - `project://layers/{id}` — one Layer in detail
+//! - `project://layers/{id}/effects` — effects on that layer (always [] today;
+//!   effects deferred per `project_phase4_scope.md`)
+//! - `project://markers`     — markers
+//! - `project://history`     — recent ops + checkpoints (snapshot-free)
+//! - `project://compiled`    — compiled IRGraph (JSON)
+//!
+//! Edit tools and the SSE change feed land in later Phase 4 stages.
 //!
 //! Design: `docs/mcp.md`.
 
@@ -30,11 +41,25 @@ use rmcp::{
     transport::sse_server::SseServer,
 };
 use serde::Serialize;
+use serde_json::Value;
 use tracing::info;
+use uuid::Uuid;
 
-use crate::state::ProjectHandle;
+use crate::ir::{self, RenderTarget};
+use crate::state::{LayerId, ProjectHandle, Rational};
 
-const PROJECT_URI: &str = "project://current";
+const URI_PROJECT: &str = "project://current";
+const URI_COMPOSITION: &str = "project://composition";
+const URI_MEDIA: &str = "project://media";
+const URI_TRACKS: &str = "project://tracks";
+const URI_MARKERS: &str = "project://markers";
+const URI_HISTORY: &str = "project://history";
+const URI_COMPILED: &str = "project://compiled";
+const PREFIX_LAYERS: &str = "project://layers/";
+
+const HISTORY_LIMIT: usize = 100;
+
+const APP_JSON: &str = "application/json";
 
 /// Connection details surfaced to the UI / logs so the user can wire up Claude Desktop.
 #[derive(Debug, Clone, Serialize)]
@@ -70,8 +95,8 @@ impl ServerHandler for VidetorServer {
         ServerInfo {
             instructions: Some(
                 "Videtor exposes the open project as an MCP tool surface. \
-                 Phase 1: read `project://current` for the full project state; \
-                 `ping` confirms reachability. Edit tools land in Phase 4."
+                 Read-only resources cover the project state under `project://*`. \
+                 Edit tools and change-feed events land in later Phase 4 stages."
                     .to_string(),
             ),
             capabilities: ServerCapabilities::builder()
@@ -87,18 +112,21 @@ impl ServerHandler for VidetorServer {
         _request: PaginatedRequestParam,
         _context: RequestContext<rmcp::RoleServer>,
     ) -> Result<ListResourcesResult, McpError> {
-        let resource = RawResource {
-            uri: PROJECT_URI.to_string(),
-            name: "Current project".to_string(),
-            description: Some(
-                "The open Videtor project as JSON. Re-fetch after change events.".to_string(),
-            ),
-            mime_type: Some("application/json".to_string()),
-            size: None,
-        }
-        .no_annotation();
+        let resources = STATIC_RESOURCES
+            .iter()
+            .map(|d| {
+                RawResource {
+                    uri: d.uri.to_string(),
+                    name: d.name.to_string(),
+                    description: Some(d.description.to_string()),
+                    mime_type: Some(APP_JSON.to_string()),
+                    size: None,
+                }
+                .no_annotation()
+            })
+            .collect();
         Ok(ListResourcesResult {
-            resources: vec![resource],
+            resources,
             next_cursor: None,
         })
     }
@@ -108,29 +136,140 @@ impl ServerHandler for VidetorServer {
         request: ReadResourceRequestParam,
         _context: RequestContext<rmcp::RoleServer>,
     ) -> Result<ReadResourceResult, McpError> {
-        match request.uri.as_str() {
-            PROJECT_URI => {
-                let snap = self.project.snapshot().await;
-                let json = serde_json::to_string_pretty(&*snap).map_err(|e| {
-                    McpError::internal_error(
-                        format!("serialize project: {e}"),
+        let snap = self.project.snapshot().await;
+        let uri = request.uri.as_str();
+
+        let body: Value = match uri {
+            URI_PROJECT => serde_json::to_value(&*snap).map_err(serialize_err)?,
+            URI_COMPOSITION => serde_json::to_value(&snap.composition).map_err(serialize_err)?,
+            URI_MEDIA => serde_json::to_value(&snap.media_pool).map_err(serialize_err)?,
+            URI_TRACKS => serde_json::to_value(&snap.tracks).map_err(serialize_err)?,
+            URI_MARKERS => serde_json::to_value(&snap.markers).map_err(serialize_err)?,
+            URI_HISTORY => {
+                let view = self.project.history_view(HISTORY_LIMIT).await;
+                serde_json::to_value(&view).map_err(serialize_err)?
+            }
+            URI_COMPILED => {
+                let target = RenderTarget::full(
+                    snap.composition.width,
+                    snap.composition.height,
+                    Rational::new(snap.composition.fps.num, snap.composition.fps.den),
+                    snap.composition.sample_rate,
+                    snap.composition.channels,
+                );
+                match ir::lower(&snap, target) {
+                    Ok(graph) => serde_json::to_value(&graph).map_err(serialize_err)?,
+                    Err(e) => {
+                        return Err(McpError::internal_error(
+                            format!("compile project: {e}"),
+                            None,
+                        ));
+                    }
+                }
+            }
+            other if other.starts_with(PREFIX_LAYERS) => {
+                let tail = &other[PREFIX_LAYERS.len()..];
+                let (id_part, want_effects) = match tail.split_once('/') {
+                    Some((id, "effects")) => (id, true),
+                    Some((_, suffix)) => {
+                        return Err(McpError::resource_not_found(
+                            format!("unsupported layer sub-resource '{suffix}'"),
+                            None,
+                        ));
+                    }
+                    None => (tail, false),
+                };
+                let layer_id: LayerId = Uuid::parse_str(id_part).map_err(|_| {
+                    McpError::resource_not_found(
+                        format!("layer URI has invalid UUID: {id_part}"),
                         None,
                     )
                 })?;
-                Ok(ReadResourceResult {
-                    contents: vec![ResourceContents::TextResourceContents {
-                        uri: PROJECT_URI.to_string(),
-                        mime_type: Some("application/json".to_string()),
-                        text: json,
-                    }],
-                })
+                let layer = snap
+                    .tracks
+                    .iter()
+                    .flat_map(|t| t.layers.iter())
+                    .find(|l| l.id == layer_id)
+                    .ok_or_else(|| {
+                        McpError::resource_not_found(
+                            format!("layer {layer_id} not found"),
+                            None,
+                        )
+                    })?;
+                if want_effects {
+                    // Effects deferred to Phase 4.x — see project_phase4_scope.md.
+                    // The resource is reachable so agents can rely on the URI shape;
+                    // it just always returns an empty array today.
+                    serde_json::to_value(&layer.effects).map_err(serialize_err)?
+                } else {
+                    serde_json::to_value(layer).map_err(serialize_err)?
+                }
             }
-            other => Err(McpError::resource_not_found(
-                format!("unknown resource URI: {other}"),
-                None,
-            )),
-        }
+            other => {
+                return Err(McpError::resource_not_found(
+                    format!("unknown resource URI: {other}"),
+                    None,
+                ));
+            }
+        };
+
+        let text = serde_json::to_string_pretty(&body).map_err(serialize_err)?;
+        Ok(ReadResourceResult {
+            contents: vec![ResourceContents::TextResourceContents {
+                uri: uri.to_string(),
+                mime_type: Some(APP_JSON.to_string()),
+                text,
+            }],
+        })
     }
+}
+
+struct ResourceDescriptor {
+    uri: &'static str,
+    name: &'static str,
+    description: &'static str,
+}
+
+const STATIC_RESOURCES: &[ResourceDescriptor] = &[
+    ResourceDescriptor {
+        uri: URI_PROJECT,
+        name: "Current project",
+        description: "The full open Videtor project as JSON. Re-fetch after change events.",
+    },
+    ResourceDescriptor {
+        uri: URI_COMPOSITION,
+        name: "Composition",
+        description: "Canvas size, fps, sample rate, color space, background.",
+    },
+    ResourceDescriptor {
+        uri: URI_MEDIA,
+        name: "Media pool",
+        description: "All imported media items keyed by id.",
+    },
+    ResourceDescriptor {
+        uri: URI_TRACKS,
+        name: "Tracks",
+        description: "Tracks with layer envelopes. Read project://layers/{id} for full layer detail.",
+    },
+    ResourceDescriptor {
+        uri: URI_MARKERS,
+        name: "Markers",
+        description: "Timeline markers, sorted by t_us.",
+    },
+    ResourceDescriptor {
+        uri: URI_HISTORY,
+        name: "History",
+        description: "Recent operations and named checkpoints (no snapshots).",
+    },
+    ResourceDescriptor {
+        uri: URI_COMPILED,
+        name: "Compiled IR",
+        description: "Compiled IR graph for the current project — for agents that want structural reasoning.",
+    },
+];
+
+fn serialize_err(e: serde_json::Error) -> McpError {
+    McpError::internal_error(format!("serialize: {e}"), None)
 }
 
 pub async fn serve(project: ProjectHandle) -> Result<McpInfo> {
@@ -141,7 +280,7 @@ pub async fn serve(project: ProjectHandle) -> Result<McpInfo> {
     let server = SseServer::serve(bind).await.context("start rmcp SSE server")?;
     // The cancellation token gates the spawned server task. We intentionally drop
     // it — the server keeps running for the app's lifetime; tearing it down is a
-    // future Phase 4 concern when sessions get pinned/unpinned.
+    // future concern when sessions get pinned/unpinned.
     let project_for_factory = project.clone();
     let _ct = server.with_service(move || VidetorServer::new(project_for_factory.clone()));
 
@@ -169,8 +308,9 @@ fn pick_free_port() -> std::io::Result<u16> {
 fn random_token() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     // Localhost-only spike token — entropy from monotonic-ish nanoseconds + process id
-    // is enough to avoid trivial guessing on a single-user machine. Phase 4 swaps in
-    // a CSPRNG-backed token and surfaces it through the keyring.
+    // is enough to avoid trivial guessing on a single-user machine. Real auth swaps in
+    // a CSPRNG-backed token and surfaces it through the keyring; gated on rmcp shipping
+    // middleware support.
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())

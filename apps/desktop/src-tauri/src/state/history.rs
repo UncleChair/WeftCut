@@ -13,6 +13,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 use super::actor::{Actor, EntityRef};
 use super::ids::{CheckpointId, MediaId, OpId, new_id};
@@ -157,6 +158,33 @@ impl History {
         self.cursor + 1 < self.snapshots.len()
     }
 
+    /// Snapshot-free view of recent history for read-only consumers (UI panels,
+    /// MCP `project://history` resource). Returns the last `limit` entries plus
+    /// the checkpoint list, ordered oldest → newest.
+    pub fn view(&self, limit: usize) -> HistoryView {
+        let total = self.snapshots.len();
+        let take = limit.min(total);
+        let start = total - take;
+        let ops: Vec<HistoryEntrySummary> = self
+            .snapshots
+            .iter()
+            .skip(start)
+            .map(HistoryEntrySummary::from)
+            .collect();
+        let mut checkpoints: Vec<NamedCheckpointSummary> = self
+            .checkpoints
+            .values()
+            .map(NamedCheckpointSummary::from)
+            .collect();
+        checkpoints.sort_by_key(|c| c.created_at);
+        HistoryView {
+            ops,
+            cursor: self.cursor,
+            len: total,
+            checkpoints,
+        }
+    }
+
     /// Replace the `media_pool` of every snapshot (history + checkpoints) with
     /// `new_pool`. This is the "media imports stand outside of editing
     /// history" path: imports add to the pool, and the pool stays whether the
@@ -181,4 +209,56 @@ impl History {
             cp.snapshot = Arc::new(p);
         }
     }
+}
+
+/// Read-only summary of a `HistoryEntry` — drops the `Arc<Project>` so the
+/// shape is JSON-serializable for MCP/UI consumers.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HistoryEntrySummary {
+    pub op_id: OpId,
+    pub actor: Actor,
+    pub timestamp: DateTime<Utc>,
+    pub summary: String,
+    pub affected: Vec<EntityRef>,
+}
+
+impl From<&HistoryEntry> for HistoryEntrySummary {
+    fn from(e: &HistoryEntry) -> Self {
+        Self {
+            op_id: e.op_id,
+            actor: e.actor.clone(),
+            timestamp: e.timestamp,
+            summary: e.summary.clone(),
+            affected: e.affected.clone(),
+        }
+    }
+}
+
+/// Read-only summary of a `NamedCheckpoint` — drops the `Arc<Project>`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NamedCheckpointSummary {
+    pub id: CheckpointId,
+    pub label: String,
+    pub actor: Actor,
+    pub created_at: DateTime<Utc>,
+}
+
+impl From<&NamedCheckpoint> for NamedCheckpointSummary {
+    fn from(c: &NamedCheckpoint) -> Self {
+        Self {
+            id: c.id,
+            label: c.label.clone(),
+            actor: c.actor.clone(),
+            created_at: c.created_at,
+        }
+    }
+}
+
+/// Snapshot-free aggregate exposed to MCP / UI history panels.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HistoryView {
+    pub ops: Vec<HistoryEntrySummary>,
+    pub cursor: usize,
+    pub len: usize,
+    pub checkpoints: Vec<NamedCheckpointSummary>,
 }

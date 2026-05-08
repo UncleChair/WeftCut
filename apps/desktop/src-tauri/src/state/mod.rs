@@ -37,7 +37,7 @@ pub use actor::{
     Actor, ChangeEvent, CommandError, DiffHint, EntityRef, HistoryStatus, ProjectActor,
     ProjectHandle, spawn,
 };
-pub use history::{HistoryEntry, NamedCheckpoint};
+pub use history::{HistoryEntry, HistoryEntrySummary, HistoryView, NamedCheckpoint, NamedCheckpointSummary};
 pub use validate::{ValidationError, validate as validate_project};
 
 pub use animated::{Animated, Interpolation, Keyframe};

@@ -13,7 +13,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 
 use super::color::{ColorSpace, Rgba};
 use super::animated::Animated;
-use super::history::{History, HistoryEntry, NamedCheckpoint};
+use super::history::{History, HistoryEntry, HistoryView, NamedCheckpoint};
 use super::ids::{CheckpointId, LayerId, MarkerId, MediaId, OpId, TrackId, new_id};
 use super::layer::{Layer, LayerParams};
 use super::marker::Marker;
@@ -398,6 +398,10 @@ enum Command {
     HistoryStatus {
         reply: oneshot::Sender<HistoryStatus>,
     },
+    HistoryView {
+        limit: usize,
+        reply: oneshot::Sender<HistoryView>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -432,6 +436,17 @@ impl ProjectHandle {
         let (reply, rx) = oneshot::channel();
         self.tx
             .send(Command::HistoryStatus { reply })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    /// Snapshot-free view of recent history (last `limit` ops + checkpoints).
+    /// Used by MCP `project://history` and any UI history panel.
+    pub async fn history_view(&self, limit: usize) -> HistoryView {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::HistoryView { limit, reply })
             .await
             .expect("project actor terminated");
         rx.await.expect("project actor terminated")
@@ -998,6 +1013,9 @@ impl ProjectActor {
                     can_undo: self.history.can_undo(),
                     can_redo: self.history.can_redo(),
                 });
+            }
+            Command::HistoryView { limit, reply } => {
+                let _ = reply.send(self.history.view(limit));
             }
         }
     }
@@ -2907,6 +2925,78 @@ mod tests {
             !layer_still_there,
             "force removal must cascade-delete referencing layers"
         );
+    }
+
+    #[tokio::test]
+    async fn history_view_returns_recent_ops_and_checkpoints() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        // Three commits.
+        handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                color_layer(Rgba::WHITE),
+                0,
+                1_000_000,
+            )
+            .await
+            .unwrap();
+        handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                color_layer(Rgba::BLACK),
+                2_000_000,
+                3_000_000,
+            )
+            .await
+            .unwrap();
+        let cp = handle.checkpoint(Actor::User, "cp1").await;
+        handle
+            .add_marker(Actor::User, 500_000, None, "m", Rgba::WHITE)
+            .await
+            .unwrap();
+
+        let view = handle.history_view(50).await;
+        // Initial entry + 3 commits = 4 ops.
+        assert_eq!(view.len, 4);
+        assert_eq!(view.ops.len(), 4);
+        assert!(view.cursor < view.len);
+        assert_eq!(view.checkpoints.len(), 1);
+        assert_eq!(view.checkpoints[0].id, cp);
+        assert_eq!(view.checkpoints[0].label, "cp1");
+    }
+
+    #[tokio::test]
+    async fn history_view_respects_limit() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        // Two commits — total 3 entries with the initial one.
+        handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                color_layer(Rgba::WHITE),
+                0,
+                1_000_000,
+            )
+            .await
+            .unwrap();
+        handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                color_layer(Rgba::BLACK),
+                2_000_000,
+                3_000_000,
+            )
+            .await
+            .unwrap();
+
+        let view = handle.history_view(2).await;
+        assert_eq!(view.len, 3, "len reports the full history depth");
+        assert_eq!(view.ops.len(), 2, "ops is capped to the limit");
     }
 
     #[tokio::test]
