@@ -833,7 +833,16 @@ impl ServerHandler for VidetorServer {
                     snap.composition.sample_rate,
                     snap.composition.channels,
                 );
-                match ir::lower(&snap, target) {
+                let inline_subs = match ir::materialize_inline_subtitles(&snap, &self.cache) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        return Err(McpError::internal_error(
+                            format!("materialize inline subtitles: {e}"),
+                            None,
+                        ));
+                    }
+                };
+                match ir::lower(&snap, target, &inline_subs) {
                     Ok(graph) => serde_json::to_value(&graph).map_err(serialize_err)?,
                     Err(e) => {
                         return Err(McpError::internal_error(

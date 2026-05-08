@@ -819,6 +819,7 @@ pub async fn import_media(
 #[tauri::command]
 pub async fn compile_project(
     handle: State<'_, ProjectHandle>,
+    cache: State<'_, crate::cache::CacheLayout>,
 ) -> Result<CompiledGraph, String> {
     let snap = handle.snapshot().await;
     let target = ir::RenderTarget::full(
@@ -828,7 +829,9 @@ pub async fn compile_project(
         snap.composition.sample_rate,
         snap.composition.channels,
     );
-    let graph = ir::lower(&snap, target).map_err(|e| e.to_string())?;
+    let inline_subs =
+        ir::materialize_inline_subtitles(&snap, &cache).map_err(|e| e.to_string())?;
+    let graph = ir::lower(&snap, target, &inline_subs).map_err(|e| e.to_string())?;
     let plan = ir::emit_ffmpeg(&graph);
     Ok(CompiledGraph {
         inputs: plan.inputs,
@@ -1046,6 +1049,7 @@ pub struct MpvPreviewStatus {
 pub async fn mpv_preview_project(
     handle: State<'_, ProjectHandle>,
     slot: tauri::State<'_, mpv::MpvSlot>,
+    cache: State<'_, crate::cache::CacheLayout>,
 ) -> Result<MpvPreviewStatus, String> {
     let snap = handle.snapshot().await;
     let target = ir::RenderTarget::full(
@@ -1055,7 +1059,9 @@ pub async fn mpv_preview_project(
         snap.composition.sample_rate,
         snap.composition.channels,
     );
-    let graph = ir::lower(&snap, target).map_err(|e| e.to_string())?;
+    let inline_subs =
+        ir::materialize_inline_subtitles(&snap, &cache).map_err(|e| e.to_string())?;
+    let graph = ir::lower(&snap, target, &inline_subs).map_err(|e| e.to_string())?;
     let plan = ir::emit_mpv(&graph);
     let status = MpvPreviewStatus {
         primary: plan.primary.clone(),

@@ -25,7 +25,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tracing::{info, warn};
 
-use crate::ir::{RenderTarget, emit_ffmpeg, lower};
+use crate::ir::{RenderTarget, emit_ffmpeg, lower, materialize_inline_subtitles};
 use crate::state::Project;
 
 pub const EVENT_PROGRESS: &str = "export:progress";
@@ -75,7 +75,23 @@ pub async fn run_render(
         project.composition.sample_rate,
         project.composition.channels,
     );
-    let graph = lower(project, target).context("lower IR")?;
+    // Materialize inline subtitle bodies before lowering. The cache lives in
+    // app-managed state; if the export path is invoked from a context that
+    // didn't manage it (some tests do this), fall back to a tempdir-rooted
+    // layout so the materialization step doesn't hard-fail on absence.
+    let inline_subs = {
+        let cache = app
+            .try_state::<crate::cache::CacheLayout>()
+            .map(|s| s.inner().clone())
+            .unwrap_or_else(|| {
+                let fallback = std::env::temp_dir().join("videtor-export-cache");
+                let layout = crate::cache::CacheLayout::new(fallback);
+                let _ = layout.ensure_dirs();
+                layout
+            });
+        materialize_inline_subtitles(project, &cache).context("materialize inline subtitles")?
+    };
+    let graph = lower(project, target, &inline_subs).context("lower IR")?;
     let plan = emit_ffmpeg(&graph);
 
     let total_us = project.composition.duration_us.max(1_000_000);

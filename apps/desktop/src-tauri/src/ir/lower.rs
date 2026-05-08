@@ -11,6 +11,7 @@
 use thiserror::Error;
 
 use super::graph::IRGraph;
+use super::materialize::InlineSubPaths;
 use super::node::{FadeKind, IRNode, NodeId, PixFmt};
 use super::target::RenderTarget;
 use crate::state::animated::Animated;
@@ -32,7 +33,11 @@ pub enum LowerError {
     InlineSubtitlesNotMaterialized,
 }
 
-pub fn lower(project: &Project, target: RenderTarget) -> Result<IRGraph, LowerError> {
+pub fn lower(
+    project: &Project,
+    target: RenderTarget,
+    inline_sub_paths: &InlineSubPaths,
+) -> Result<IRGraph, LowerError> {
     let mut g = IRGraph::new(target);
 
     // Base canvas spans the whole composition. Minimum 1s so the `color=...`
@@ -61,7 +66,14 @@ pub fn lower(project: &Project, target: RenderTarget) -> Result<IRGraph, LowerEr
                     if !layer.enabled {
                         continue;
                     }
-                    current_v = lower_video_layer(&mut g, layer, current_v, project, target)?;
+                    current_v = lower_video_layer(
+                        &mut g,
+                        layer,
+                        current_v,
+                        project,
+                        target,
+                        inline_sub_paths,
+                    )?;
                 }
             }
             TrackKind::Audio => {
@@ -80,7 +92,14 @@ pub fn lower(project: &Project, target: RenderTarget) -> Result<IRGraph, LowerEr
                         continue;
                     }
                     if matches!(layer.params, LayerParams::Subtitles(_)) {
-                        current_v = lower_video_layer(&mut g, layer, current_v, project, target)?;
+                        current_v = lower_video_layer(
+                        &mut g,
+                        layer,
+                        current_v,
+                        project,
+                        target,
+                        inline_sub_paths,
+                    )?;
                     }
                 }
             }
@@ -119,6 +138,7 @@ fn lower_video_layer(
     base: NodeId,
     project: &Project,
     target: RenderTarget,
+    inline_sub_paths: &InlineSubPaths,
 ) -> Result<NodeId, LowerError> {
     match &layer.params {
         LayerParams::VideoClip(p) => {
@@ -257,10 +277,9 @@ fn lower_video_layer(
         }
         LayerParams::Subtitles(p) => {
             // Subtitles burn onto whatever video stream is currently the base.
-            // For inline ASS/SRT, the caller materializes the source to a temp
-            // file before lowering and passes the resulting path through a
-            // `Media` source. The lower step doesn't write files itself —
-            // keeps the function pure.
+            // For inline ASS/SRT, the caller runs `materialize_inline_subtitles`
+            // before `lower` to produce a side map of layer-id → file path.
+            // The lower step doesn't write files itself — keeps it pure.
             let path = match &p.source {
                 SubtitlesSource::Media(media_id) => {
                     let media = project
@@ -270,7 +289,10 @@ fn lower_video_layer(
                     media.path_abs.to_string_lossy().to_string()
                 }
                 SubtitlesSource::InlineAss(_) | SubtitlesSource::InlineSrt(_) => {
-                    return Err(LowerError::InlineSubtitlesNotMaterialized);
+                    let path = inline_sub_paths
+                        .get(&layer.id)
+                        .ok_or(LowerError::InlineSubtitlesNotMaterialized)?;
+                    path.to_string_lossy().to_string()
                 }
             };
             if !std::path::Path::new(&path).exists() {

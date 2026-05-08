@@ -194,6 +194,14 @@ pub struct SubtitlesParams {
     pub source: SubtitlesSource,
 }
 
+/// Source of subtitle text for a `SubtitlesParams` layer.
+///
+/// Inline variants carry the body in-state so projects round-trip cleanly
+/// through `.vproj` and so MCP tools (auto-caption, agent-authored cues)
+/// don't need to invent file paths. ffmpeg's `subtitles=` filter only
+/// accepts a path — the IR pipeline runs `ir::materialize_inline_subtitles`
+/// before `lower()` to turn each inline body into a content-addressed file
+/// in the OS app cache. Persistence stays inline.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "value")]
 pub enum SubtitlesSource {

@@ -49,6 +49,19 @@ impl CacheLayout {
         self.root.join("frames")
     }
 
+    /// Materialized inline-subtitle bodies (`SubtitlesSource::InlineSrt` /
+    /// `InlineAss`). Hash-addressed by blake3 of the body so identical text
+    /// in two projects (or the same project across reloads) hits the same
+    /// file. Lifetime is the cache lifetime — never deleted by the
+    /// materialization pass; user can wipe via "Clear cache".
+    pub fn inline_subs_dir(&self) -> PathBuf {
+        self.root.join("inline-subs")
+    }
+
+    pub fn inline_subs(&self, hash: &str, ext: &str) -> PathBuf {
+        self.inline_subs_dir().join(format!("{hash}.{ext}"))
+    }
+
     /// MP4 proxy for a hashed media file.
     pub fn proxy(&self, hash: &str) -> PathBuf {
         self.proxies_dir().join(format!("{hash}.mp4"))
@@ -88,6 +101,7 @@ impl CacheLayout {
             self.thumbnails_root(),
             self.waveforms_dir(),
             self.frames_root(),
+            self.inline_subs_dir(),
         ] {
             fs::create_dir_all(&p)
                 .with_context(|| format!("create cache dir {}", p.display()))?;
@@ -168,6 +182,21 @@ mod tests {
         assert!(layout.thumbnails_root().is_dir());
         assert!(layout.waveforms_dir().is_dir());
         assert!(layout.frames_root().is_dir());
+        assert!(layout.inline_subs_dir().is_dir());
+    }
+
+    #[test]
+    fn inline_subs_path_includes_extension() {
+        let tmp = TempDir::new().unwrap();
+        let layout = CacheLayout::new(tmp.path().to_path_buf());
+        assert_eq!(
+            layout.inline_subs("abc", "srt"),
+            tmp.path().join("inline-subs").join("abc.srt"),
+        );
+        assert_eq!(
+            layout.inline_subs("abc", "ass"),
+            tmp.path().join("inline-subs").join("abc.ass"),
+        );
     }
 
     #[test]

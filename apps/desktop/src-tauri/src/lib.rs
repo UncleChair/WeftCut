@@ -112,6 +112,8 @@ pub fn run() {
                 tracing::warn!("cache dir setup failed: {e:#}");
             }
             let cache_for_mcp = cache_layout.clone();
+            #[cfg(feature = "mpv")]
+            let cache_for_hotreload = cache_layout.clone();
             app.manage(cache_layout);
 
             // Render queue. Single-task FIFO; emits `export:queue` events on
@@ -249,7 +251,15 @@ pub fn run() {
                         snap.composition.sample_rate,
                         snap.composition.channels,
                     );
-                    let graph = match ir::lower(&snap, target) {
+                    let inline_subs =
+                        match ir::materialize_inline_subtitles(&snap, &cache_for_hotreload) {
+                            Ok(m) => m,
+                            Err(e) => {
+                                tracing::warn!("mpv hot-reload: materialize failed: {e}");
+                                continue;
+                            }
+                        };
+                    let graph = match ir::lower(&snap, target, &inline_subs) {
                         Ok(g) => g,
                         Err(e) => {
                             tracing::warn!("mpv hot-reload: lower failed: {e}");

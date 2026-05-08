@@ -405,7 +405,7 @@ mod tests {
     fn empty_project_emits_color_to_vo() {
         use crate::state::project::Project;
         let p = Project::new_blank("empty");
-        let g = lower(&p, fixture_target()).expect("lower");
+        let g = lower(&p, fixture_target(), &Default::default()).expect("lower");
         let plan = emit(&g);
         assert!(plan.primary.is_none());
         assert!(plan.external_files.is_empty());
@@ -518,7 +518,7 @@ mod tests {
             settings: Default::default(),
         };
 
-        let g = lower(&p, fixture_target()).expect("lower");
+        let g = lower(&p, fixture_target(), &Default::default()).expect("lower");
         let plan = emit(&g);
 
         assert_eq!(plan.primary.as_deref(), Some("/m/a.mp4"));

@@ -20,6 +20,7 @@ pub mod emit_ffmpeg;
 pub mod emit_mpv;
 pub mod graph;
 pub mod lower;
+pub mod materialize;
 pub mod node;
 pub mod target;
 
@@ -27,6 +28,7 @@ pub use emit_ffmpeg::{FfmpegPlan, emit as emit_ffmpeg};
 pub use emit_mpv::{MpvPlan, emit as emit_mpv};
 pub use graph::IRGraph;
 pub use lower::{LowerError, lower};
+pub use materialize::{InlineSubPaths, MaterializeError, materialize_inline_subtitles};
 pub use node::{FadeKind, IRNode, InputIdx, NodeId, PixFmt, StreamKind};
 pub use target::{Quality, RenderTarget};
 
@@ -149,7 +151,7 @@ mod tests {
     #[test]
     fn empty_project_emits_minimal_color_canvas() {
         let p = Project::new_blank("empty");
-        let g = lower(&p, fixture_target()).expect("lower");
+        let g = lower(&p, fixture_target(), &Default::default()).expect("lower");
         // Color base + OutV. No audio.
         assert_eq!(g.inputs.len(), 0);
         assert!(g.video_out.is_some());
@@ -165,7 +167,7 @@ mod tests {
     #[test]
     fn one_video_clip_lowers_to_decode_scale_fps_setpts_overlay() {
         let p = project_with_one_clip();
-        let g = lower(&p, fixture_target()).expect("lower");
+        let g = lower(&p, fixture_target(), &Default::default()).expect("lower");
         assert_eq!(g.inputs.len(), 1);
         assert_eq!(g.inputs[0].to_str().unwrap(), "/m/a.mp4");
 
@@ -195,7 +197,7 @@ mod tests {
     #[test]
     fn ffmpeg_emit_matches_expected_clip_pipeline() {
         let p = project_with_one_clip();
-        let g = lower(&p, fixture_target()).expect("lower");
+        let g = lower(&p, fixture_target(), &Default::default()).expect("lower");
         let plan = emit_ffmpeg(&g);
 
         assert_eq!(plan.inputs, vec!["/m/a.mp4".to_string()]);
@@ -255,7 +257,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
         p.media_pool.insert(media_id, media);
         p.tracks.push_back(track);
 
-        let g = lower(&p, fixture_target()).expect("lower");
+        let g = lower(&p, fixture_target(), &Default::default()).expect("lower");
         let plan = emit_ffmpeg(&g);
         assert!(plan.maps.contains(&"[aout]".to_string()));
         // Single audio source: no amix node, OutA wraps the Adelay directly.
@@ -331,7 +333,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
         p.media_pool.insert(media_id, media);
         p.tracks.push_back(track);
 
-        let g = lower(&p, fixture_target()).expect("lower");
+        let g = lower(&p, fixture_target(), &Default::default()).expect("lower");
         assert_eq!(g.inputs.len(), 1);
         assert!(matches!(
             g.nodes.iter().find(|n| matches!(n, IRNode::ImageDecode { .. })),
@@ -406,7 +408,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
         p.composition.duration_us = 5_000_000;
         p.tracks.push_back(track);
 
-        let g = lower(&p, fixture_target()).expect("lower");
+        let g = lower(&p, fixture_target(), &Default::default()).expect("lower");
         // No external inputs for a text-only project.
         assert!(g.inputs.is_empty());
         // Should contain a DrawText node.
@@ -495,7 +497,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
             return;
         }
         let p = Project::new_blank("empty");
-        let g = lower(&p, fixture_target()).expect("lower");
+        let g = lower(&p, fixture_target(), &Default::default()).expect("lower");
         let plan = emit_ffmpeg(&g);
 
         // -filter_complex_script reads from stdin when given `-`. Map the only
@@ -581,7 +583,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
         let mut p = Project::new_blank("text-render");
         p.composition.duration_us = 1_000_000;
         p.tracks.push_back(track);
-        let g = lower(&p, fixture_target()).expect("lower");
+        let g = lower(&p, fixture_target(), &Default::default()).expect("lower");
         let plan = emit_ffmpeg(&g);
 
         let Some((ok, out, stderr)) = run_graph_through_ffmpeg(
@@ -678,7 +680,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
         p.media_pool.insert(media_id, media);
         p.tracks.push_back(track);
 
-        let g = match lower(&p, fixture_target()) {
+        let g = match lower(&p, fixture_target(), &Default::default()) {
             Ok(g) => g,
             Err(e) => {
                 let _ = std::fs::remove_file(&srt_path);
@@ -720,6 +722,90 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
         assert!(
             size > 1024,
             "subs output mp4 is suspiciously small ({size} bytes)\n--- graph ---\n{}",
+            plan.filter_graph
+        );
+    }
+
+    /// Inline-source subtitles travel through `materialize_inline_subtitles`
+    /// before `lower` — the materialization writes a content-addressed file
+    /// to the cache and `lower` reads the path from the side map. End-to-end
+    /// through actual ffmpeg ensures the grammar at the seam holds, not just
+    /// that string substitution doesn't crash.
+    #[test]
+    fn inline_subtitles_materialize_and_render_through_ffmpeg() {
+        use crate::cache::CacheLayout;
+        use tempfile::TempDir;
+
+        let cache_root = TempDir::new().unwrap();
+        let cache = CacheLayout::new(cache_root.path().to_path_buf());
+        cache.ensure_dirs().unwrap();
+
+        let track_id = Uuid::parse_str("01900000-0000-7000-8000-0000000000a1").unwrap();
+        let layer_id = Uuid::parse_str("01900000-0000-7000-8000-0000000000a2").unwrap();
+        let body = "1\n00:00:00,000 --> 00:00:01,000\nhello inline\n\n";
+        let layer = Layer {
+            id: layer_id,
+            label: None,
+            t_start_us: 0,
+            t_end_us: 1_000_000,
+            enabled: true,
+            locked: false,
+            metadata: imbl::HashMap::new(),
+            effects: imbl::Vector::new(),
+            params: LayerParams::Subtitles(crate::state::SubtitlesParams {
+                source: crate::state::SubtitlesSource::InlineSrt(body.to_string()),
+            }),
+        };
+        let track = Track {
+            id: track_id,
+            kind: TrackKind::Subtitle,
+            label: None,
+            enabled: true,
+            locked: false,
+            removable: true,
+            height_px: 32,
+            layers: imbl::vector![layer],
+        };
+        let mut p = Project::new_blank("inline-subs");
+        p.composition.duration_us = 1_000_000;
+        p.tracks.push_back(track);
+
+        let inline_subs = materialize_inline_subtitles(&p, &cache).expect("materialize");
+        assert_eq!(inline_subs.len(), 1);
+        let g = lower(&p, fixture_target(), &inline_subs).expect("lower");
+        let plan = emit_ffmpeg(&g);
+
+        let Some((ok, out, stderr)) = run_graph_through_ffmpeg(
+            &plan.filter_graph,
+            &[],
+            "[vfinal]",
+            "mp4",
+            &[
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-pix_fmt",
+                "yuv420p",
+                "-t",
+                "1",
+            ],
+        ) else {
+            eprintln!("ffmpeg not on PATH — skipping inline-subs render test");
+            return;
+        };
+        if !ok {
+            let _ = std::fs::remove_file(&out);
+            panic!(
+                "ffmpeg rejected inline-subs graph:\n--- graph ---\n{}\n--- stderr ---\n{}",
+                plan.filter_graph, stderr
+            );
+        }
+        let size = std::fs::metadata(&out).map(|m| m.len()).unwrap_or(0);
+        let _ = std::fs::remove_file(&out);
+        assert!(
+            size > 1024,
+            "inline-subs output mp4 is suspiciously small ({size} bytes)\n--- graph ---\n{}",
             plan.filter_graph
         );
     }
@@ -784,7 +870,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
         p.media_pool.insert(media_id, media);
         p.tracks.push_back(track);
 
-        let g = lower(&p, fixture_target()).expect("lower");
+        let g = lower(&p, fixture_target(), &Default::default()).expect("lower");
         let plan = emit_mpv(&g);
         assert_eq!(plan.primary.as_deref(), Some("/m/logo.png"));
         assert!(plan.lavfi_complex.contains("[vid1] loop=loop=-1:size=1"));
