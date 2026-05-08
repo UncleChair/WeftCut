@@ -18,8 +18,10 @@
 //!
 //! Job kinds today: `thumbnails`, `proxy`, `waveform`.
 
+mod proxy;
 mod thumbnails;
 
+pub use proxy::run as run_proxy;
 pub use thumbnails::run as run_thumbnails;
 
 use std::sync::OnceLock;
@@ -82,7 +84,8 @@ pub fn enqueue_for_media(
     match media.kind {
         MediaKind::Video => {
             spawn_thumbnails(app.clone(), cache.clone(), project.clone(), media.clone());
-            // Proxy + waveform jobs land in Stages 4 + 5 — wire them here.
+            spawn_proxy(app.clone(), cache.clone(), project.clone(), media.clone());
+            // Waveform lands in Stage 5 (also Audio kind).
         }
         MediaKind::Audio => {
             // Waveform job lands in Stage 5.
@@ -145,6 +148,65 @@ fn spawn_thumbnails(
                 emit(&app, EVENT_ERROR, &JobError {
                     media_id: media_id.to_string(),
                     kind: JobKind::Thumbnails,
+                    error: format!("{e:#}"),
+                });
+            }
+        }
+    });
+}
+
+fn spawn_proxy(
+    app: AppHandle,
+    cache: CacheLayout,
+    project: ProjectHandle,
+    media: MediaItem,
+) {
+    tokio::spawn(async move {
+        let media_id = media.id;
+        emit(&app, EVENT_STARTED, &JobStarted {
+            media_id: media_id.to_string(),
+            kind: JobKind::Proxy,
+        });
+
+        let permit = ffmpeg_sem().acquire().await;
+        if permit.is_err() {
+            warn!("proxy job: semaphore closed; skipping {media_id}");
+            return;
+        }
+        let result = proxy::run(&cache, &media).await;
+        drop(permit);
+
+        match result {
+            Ok(proxy_path) => {
+                let path_str = proxy_path.display().to_string();
+                let patch = MediaDerivativesPatch {
+                    proxy_path: Some(proxy_path),
+                    ..Default::default()
+                };
+                if let Err(e) = project
+                    .set_media_derivatives(actor_for_jobs(), media_id, patch)
+                    .await
+                {
+                    warn!("proxy commit failed for {media_id}: {e}");
+                    emit(&app, EVENT_ERROR, &JobError {
+                        media_id: media_id.to_string(),
+                        kind: JobKind::Proxy,
+                        error: format!("commit: {e}"),
+                    });
+                    return;
+                }
+                info!("proxy ready for {media_id}");
+                emit(&app, EVENT_COMPLETE, &JobComplete {
+                    media_id: media_id.to_string(),
+                    kind: JobKind::Proxy,
+                    path: Some(path_str),
+                });
+            }
+            Err(e) => {
+                warn!("proxy job failed for {media_id}: {e:#}");
+                emit(&app, EVENT_ERROR, &JobError {
+                    media_id: media_id.to_string(),
+                    kind: JobKind::Proxy,
                     error: format!("{e:#}"),
                 });
             }
