@@ -171,6 +171,21 @@ pub struct AudioPatch {
 }
 
 
+/// Partial update for a marker. Only `Some(_)` fields apply. Setting
+/// `end_t_us` to `Some(None)` is impossible through this shape; clearing the
+/// region must round-trip through `remove_marker` + `add_marker`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct MarkerPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub t_us: Option<TimeUs>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_t_us: Option<TimeUs>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<Rgba>,
+}
+
 /// Partial update for the composition envelope. Only `Some(_)` fields apply.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct CompositionPatch {
@@ -215,6 +230,18 @@ pub enum CommandError {
     MarkerNotFound { marker: MarkerId },
     #[error("checkpoint {checkpoint} not found")]
     CheckpointNotFound { checkpoint: CheckpointId },
+    #[error("media {media} not found")]
+    MediaNotFound { media: MediaId },
+    #[error(
+        "media {media} is referenced by {} layer(s) (use force to delete anyway, which also removes those layers)",
+        .referenced_by.len()
+    )]
+    MediaInUse {
+        media: MediaId,
+        referenced_by: Vec<LayerId>,
+    },
+    #[error("track position {position} is out of range for track count {len}")]
+    TrackPositionOutOfRange { position: usize, len: usize },
     #[error("track {track} is not empty (use force to delete anyway)")]
     TrackNotEmpty { track: TrackId },
     #[error("track {track} is not removable (default A-roll/B-roll)")]
@@ -320,6 +347,29 @@ enum Command {
         color: Rgba,
         actor: Actor,
         reply: oneshot::Sender<Result<MarkerId, CommandError>>,
+    },
+    UpdateMarker {
+        id: MarkerId,
+        patch: MarkerPatch,
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
+    RemoveMarker {
+        id: MarkerId,
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
+    MoveTrack {
+        id: TrackId,
+        new_position: usize,
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
+    RemoveMedia {
+        id: MediaId,
+        force: bool,
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
     },
     Undo {
         actor: Actor,
@@ -628,6 +678,72 @@ impl ProjectHandle {
         rx.await.expect("project actor terminated")
     }
 
+    pub async fn update_marker(
+        &self,
+        actor: Actor,
+        id: MarkerId,
+        patch: MarkerPatch,
+    ) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::UpdateMarker {
+                id,
+                patch,
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    pub async fn remove_marker(&self, actor: Actor, id: MarkerId) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::RemoveMarker { id, actor, reply })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    pub async fn move_track(
+        &self,
+        actor: Actor,
+        id: TrackId,
+        new_position: usize,
+    ) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::MoveTrack {
+                id,
+                new_position,
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    pub async fn remove_media(
+        &self,
+        actor: Actor,
+        id: MediaId,
+        force: bool,
+    ) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::RemoveMedia {
+                id,
+                force,
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
     pub async fn undo(&self, actor: Actor) -> Result<(), CommandError> {
         let (reply, rx) = oneshot::channel();
         self.tx
@@ -816,6 +932,37 @@ impl ProjectActor {
                 reply,
             } => {
                 let result = self.do_add_marker(t_us, end_t_us, label, color, actor);
+                let _ = reply.send(result);
+            }
+            Command::UpdateMarker {
+                id,
+                patch,
+                actor,
+                reply,
+            } => {
+                let result = self.do_update_marker(id, patch, actor);
+                let _ = reply.send(result);
+            }
+            Command::RemoveMarker { id, actor, reply } => {
+                let result = self.do_remove_marker(id, actor);
+                let _ = reply.send(result);
+            }
+            Command::MoveTrack {
+                id,
+                new_position,
+                actor,
+                reply,
+            } => {
+                let result = self.do_move_track(id, new_position, actor);
+                let _ = reply.send(result);
+            }
+            Command::RemoveMedia {
+                id,
+                force,
+                actor,
+                reply,
+            } => {
+                let result = self.do_remove_media(id, force, actor);
                 let _ = reply.send(result);
             }
             Command::Undo { actor, reply } => {
@@ -1330,6 +1477,166 @@ impl ProjectActor {
             DiffHint::Coarse,
         )?;
         Ok(id)
+    }
+
+    fn do_update_marker(
+        &mut self,
+        id: MarkerId,
+        patch: MarkerPatch,
+        actor: Actor,
+    ) -> Result<(), CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+        let idx = next
+            .markers
+            .iter()
+            .position(|m| m.id == id)
+            .ok_or(CommandError::MarkerNotFound { marker: id })?;
+        let needs_resort = patch.t_us.is_some();
+        {
+            let m = next.markers.get_mut(idx).expect("index just verified");
+            if let Some(t) = patch.t_us {
+                m.t_us = t;
+            }
+            if let Some(end) = patch.end_t_us {
+                m.end_t_us = Some(end);
+            }
+            if let Some(label) = patch.label.clone() {
+                m.label = label;
+            }
+            if let Some(c) = patch.color {
+                m.color = c;
+            }
+        }
+        if needs_resort {
+            // Re-sort after a t_us change so the data-model invariant (markers
+            // sorted by t_us) holds.
+            let mut v: Vec<Marker> = next.markers.iter().cloned().collect();
+            v.sort_by_key(|m| m.t_us);
+            next.markers = imbl::Vector::from(v);
+        }
+        self.commit(
+            next,
+            actor,
+            format!("Updated marker {id}"),
+            Vec::new(),
+            DiffHint::Coarse,
+        )?;
+        Ok(())
+    }
+
+    fn do_remove_marker(&mut self, id: MarkerId, actor: Actor) -> Result<(), CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+        let idx = next
+            .markers
+            .iter()
+            .position(|m| m.id == id)
+            .ok_or(CommandError::MarkerNotFound { marker: id })?;
+        next.markers.remove(idx);
+        self.commit(
+            next,
+            actor,
+            format!("Removed marker {id}"),
+            Vec::new(),
+            DiffHint::Coarse,
+        )?;
+        Ok(())
+    }
+
+    fn do_move_track(
+        &mut self,
+        id: TrackId,
+        new_position: usize,
+        actor: Actor,
+    ) -> Result<(), CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+        let cur_idx = next
+            .tracks
+            .iter()
+            .position(|t| t.id == id)
+            .ok_or(CommandError::TrackNotFound { track: id })?;
+        if new_position >= next.tracks.len() {
+            return Err(CommandError::TrackPositionOutOfRange {
+                position: new_position,
+                len: next.tracks.len(),
+            });
+        }
+        if cur_idx == new_position {
+            // No-op; skip the commit so we don't pollute history.
+            return Ok(());
+        }
+        let track = next.tracks.remove(cur_idx);
+        next.tracks.insert(new_position, track);
+        self.commit(
+            next,
+            actor,
+            format!("Moved track {id} to position {new_position}"),
+            vec![EntityRef::Track(id)],
+            DiffHint::Coarse,
+        )?;
+        Ok(())
+    }
+
+    fn do_remove_media(
+        &mut self,
+        id: MediaId,
+        force: bool,
+        actor: Actor,
+    ) -> Result<(), CommandError> {
+        let current = self.history.current();
+        if !current.media_pool.contains_key(&id) {
+            return Err(CommandError::MediaNotFound { media: id });
+        }
+
+        // Find every layer that references this media id.
+        let referencing: Vec<LayerId> = current
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .filter(|l| match &l.params {
+                LayerParams::VideoClip(p) => p.media == id,
+                LayerParams::Audio(p) => p.media == id,
+                LayerParams::ImageOverlay(p) => p.media == id,
+                LayerParams::Subtitles(p) => matches!(
+                    &p.source,
+                    super::layer::SubtitlesSource::Media(m) if *m == id
+                ),
+                _ => false,
+            })
+            .map(|l| l.id)
+            .collect();
+
+        if !referencing.is_empty() && !force {
+            return Err(CommandError::MediaInUse {
+                media: id,
+                referenced_by: referencing,
+            });
+        }
+
+        let mut next: Project = (*current).clone();
+        // Cascade-delete referencing layers (force=true case). Without force,
+        // this set is empty and the loop is a no-op.
+        for layer_id in &referencing {
+            for track in next.tracks.iter_mut() {
+                if let Some(idx) = track.layers.iter().position(|l| l.id == *layer_id) {
+                    track.layers.remove(idx);
+                    break;
+                }
+            }
+        }
+        next.media_pool.remove(&id);
+
+        let summary = if referencing.is_empty() {
+            format!("Removed media {id}")
+        } else {
+            format!(
+                "Removed media {id} and {} referencing layer(s)",
+                referencing.len()
+            )
+        };
+        let affected: Vec<EntityRef> =
+            referencing.iter().map(|l| EntityRef::Layer(*l)).collect();
+        self.commit(next, actor, summary, affected, DiffHint::Coarse)?;
+        Ok(())
     }
 
     fn do_replace_state(&mut self, next: Project, actor: Actor) -> Result<(), CommandError> {
@@ -2310,5 +2617,306 @@ mod tests {
             snap.media_pool.contains_key(&media_id),
             "imported media must survive undo of unrelated edits"
         );
+    }
+
+    fn dummy_video_media(duration_us: TimeUs) -> crate::state::media::MediaItem {
+        use crate::state::media::{MediaItem, MediaKind, MediaMetadata};
+        use chrono::Utc;
+        MediaItem {
+            id: new_id(),
+            label: Some("clip.mp4".into()),
+            path_abs: "/m/clip.mp4".into(),
+            path_rel: None,
+            kind: MediaKind::Video,
+            metadata: MediaMetadata {
+                duration_us: Some(duration_us),
+                video: None,
+                audio: None,
+            },
+            proxy_path: None,
+            waveform_path: None,
+            thumbnails_dir: None,
+            file_hash_blake3: "0".into(),
+            file_size: 0,
+            file_mtime: 0,
+            imported_at: Utc::now(),
+        }
+    }
+
+    #[tokio::test]
+    async fn update_marker_changes_label() {
+        let (project, _) = project_with_video_track();
+        let handle = spawn(project);
+        let id = handle
+            .add_marker(Actor::User, 1_000_000, None, "old", Rgba::WHITE)
+            .await
+            .unwrap();
+        handle
+            .update_marker(
+                Actor::User,
+                id,
+                MarkerPatch {
+                    label: Some("new".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("update_marker");
+        let snap = handle.snapshot().await;
+        assert_eq!(snap.markers[0].label, "new");
+    }
+
+    #[tokio::test]
+    async fn update_marker_resorts_after_t_change() {
+        let (project, _) = project_with_video_track();
+        let handle = spawn(project);
+        let id_a = handle
+            .add_marker(Actor::User, 1_000_000, None, "a", Rgba::WHITE)
+            .await
+            .unwrap();
+        let _ = handle
+            .add_marker(Actor::User, 5_000_000, None, "b", Rgba::WHITE)
+            .await
+            .unwrap();
+        // Move "a" past "b".
+        handle
+            .update_marker(
+                Actor::User,
+                id_a,
+                MarkerPatch {
+                    t_us: Some(9_000_000),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let snap = handle.snapshot().await;
+        assert_eq!(snap.markers[0].label, "b");
+        assert_eq!(snap.markers[1].label, "a");
+    }
+
+    #[tokio::test]
+    async fn update_marker_unknown_id_errors() {
+        let (project, _) = project_with_video_track();
+        let handle = spawn(project);
+        let err = handle
+            .update_marker(
+                Actor::User,
+                new_id(),
+                MarkerPatch {
+                    label: Some("x".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect_err("unknown marker");
+        assert!(matches!(err, CommandError::MarkerNotFound { .. }));
+    }
+
+    #[tokio::test]
+    async fn remove_marker_drops_it() {
+        let (project, _) = project_with_video_track();
+        let handle = spawn(project);
+        let id = handle
+            .add_marker(Actor::User, 1_000_000, None, "m", Rgba::WHITE)
+            .await
+            .unwrap();
+        handle
+            .remove_marker(Actor::User, id)
+            .await
+            .expect("remove_marker");
+        let snap = handle.snapshot().await;
+        assert!(snap.markers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn remove_marker_unknown_id_errors() {
+        let (project, _) = project_with_video_track();
+        let handle = spawn(project);
+        let err = handle
+            .remove_marker(Actor::User, new_id())
+            .await
+            .expect_err("unknown marker");
+        assert!(matches!(err, CommandError::MarkerNotFound { .. }));
+    }
+
+    #[tokio::test]
+    async fn move_track_reorders() {
+        let handle = spawn(Project::new_blank("untitled"));
+        let snap = handle.snapshot().await;
+        // Default A roll is at position 0, B roll at position 1.
+        let a_roll = snap.tracks[0].id;
+        let b_roll = snap.tracks[1].id;
+        // Move B roll above A roll.
+        handle
+            .move_track(Actor::User, b_roll, 0)
+            .await
+            .expect("move_track");
+        let snap = handle.snapshot().await;
+        assert_eq!(snap.tracks[0].id, b_roll);
+        assert_eq!(snap.tracks[1].id, a_roll);
+    }
+
+    #[tokio::test]
+    async fn move_track_position_out_of_range() {
+        let handle = spawn(Project::new_blank("untitled"));
+        let snap = handle.snapshot().await;
+        let id = snap.tracks[0].id;
+        let err = handle
+            .move_track(Actor::User, id, 99)
+            .await
+            .expect_err("position out of range");
+        assert!(matches!(
+            err,
+            CommandError::TrackPositionOutOfRange { position: 99, .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn move_track_to_same_position_does_not_grow_history() {
+        let handle = spawn(Project::new_blank("untitled"));
+        let snap = handle.snapshot().await;
+        let id = snap.tracks[0].id;
+        let len_before = handle.history_status().await.len;
+        handle
+            .move_track(Actor::User, id, 0)
+            .await
+            .expect("no-op move");
+        let len_after = handle.history_status().await.len;
+        assert_eq!(len_before, len_after, "no-op move must not record history");
+    }
+
+    #[tokio::test]
+    async fn remove_media_unreferenced_succeeds() {
+        let (project, _) = project_with_video_track();
+        let handle = spawn(project);
+        let item = dummy_video_media(5_000_000);
+        let id = item.id;
+        handle.add_media_item(Actor::User, item).await.unwrap();
+        handle
+            .remove_media(Actor::User, id, false)
+            .await
+            .expect("remove_media");
+        let snap = handle.snapshot().await;
+        assert!(!snap.media_pool.contains_key(&id));
+    }
+
+    #[tokio::test]
+    async fn remove_media_referenced_rejects_without_force() {
+        use crate::state::layer::VideoClipParams;
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        let item = dummy_video_media(5_000_000);
+        let media_id = item.id;
+        handle.add_media_item(Actor::User, item).await.unwrap();
+        let layer_id = handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                LayerParams::VideoClip(VideoClipParams {
+                    media: media_id,
+                    src_in_us: 0,
+                    src_out_us: 1_000_000,
+                    transform: Default::default(),
+                    opacity: Animated::Static(1.0),
+                    crop: None,
+                    flip_h: false,
+                    flip_v: false,
+                    blend_mode: Default::default(),
+                    speed: 1.0,
+                    fade_in_us: 0,
+                    fade_out_us: 0,
+                }),
+                0,
+                1_000_000,
+            )
+            .await
+            .unwrap();
+
+        let err = handle
+            .remove_media(Actor::User, media_id, false)
+            .await
+            .expect_err("should reject without force");
+        match err {
+            CommandError::MediaInUse {
+                media,
+                referenced_by,
+            } => {
+                assert_eq!(media, media_id);
+                assert_eq!(referenced_by, vec![layer_id]);
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+
+        // Media still present, layer still present.
+        let snap = handle.snapshot().await;
+        assert!(snap.media_pool.contains_key(&media_id));
+        let still_there = snap
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .any(|l| l.id == layer_id);
+        assert!(still_there);
+    }
+
+    #[tokio::test]
+    async fn remove_media_with_force_cascades_layer_deletion() {
+        use crate::state::layer::VideoClipParams;
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        let item = dummy_video_media(5_000_000);
+        let media_id = item.id;
+        handle.add_media_item(Actor::User, item).await.unwrap();
+        let layer_id = handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                LayerParams::VideoClip(VideoClipParams {
+                    media: media_id,
+                    src_in_us: 0,
+                    src_out_us: 1_000_000,
+                    transform: Default::default(),
+                    opacity: Animated::Static(1.0),
+                    crop: None,
+                    flip_h: false,
+                    flip_v: false,
+                    blend_mode: Default::default(),
+                    speed: 1.0,
+                    fade_in_us: 0,
+                    fade_out_us: 0,
+                }),
+                0,
+                1_000_000,
+            )
+            .await
+            .unwrap();
+
+        handle
+            .remove_media(Actor::User, media_id, true)
+            .await
+            .expect("force-remove");
+
+        let snap = handle.snapshot().await;
+        assert!(!snap.media_pool.contains_key(&media_id));
+        let layer_still_there = snap
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .any(|l| l.id == layer_id);
+        assert!(
+            !layer_still_there,
+            "force removal must cascade-delete referencing layers"
+        );
+    }
+
+    #[tokio::test]
+    async fn remove_media_unknown_id_errors() {
+        let (project, _) = project_with_video_track();
+        let handle = spawn(project);
+        let err = handle
+            .remove_media(Actor::User, new_id(), false)
+            .await
+            .expect_err("unknown media");
+        assert!(matches!(err, CommandError::MediaNotFound { .. }));
     }
 }
