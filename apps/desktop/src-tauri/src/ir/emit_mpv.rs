@@ -22,6 +22,13 @@
 use super::graph::IRGraph;
 use super::node::{IRNode, NodeId};
 
+/// Mirrors `emit_ffmpeg::subtitles_path_escape` — same lavfi grammar.
+fn subtitles_path_escape(path: &str) -> String {
+    path.replace('\\', "/")
+        .replace(':', "\\:")
+        .replace('\'', "'\\''")
+}
+
 /// Result of emitting a graph for libmpv.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MpvPlan {
@@ -145,6 +152,21 @@ impl<'a> Emitter<'a> {
                 ));
                 lbl
             }
+            IRNode::ImageDecode { input, duration_us } => {
+                // Caveat: mpv's behavior on still-image inputs with
+                // --lavfi-complex is empirically unverified. ffmpeg's image2
+                // demuxer feeds frames at a default 25 fps which the `loop`
+                // filter then repeats; mpv may emit a single frame and EOF
+                // instead. If preview shows a flash of the image then black,
+                // this is the suspect — workaround is the export path.
+                let lbl = self.fresh_label("img");
+                let in_lbl = format!("[vid{}]", input + 1);
+                self.write_clause(&format!(
+                    "{in_lbl} loop=loop=-1:size=1,trim=duration={dur},setpts=PTS-STARTPTS {lbl}",
+                    dur = us_to_secs(duration_us),
+                ));
+                lbl
+            }
             IRNode::Scale { in_, width, height } => {
                 let in_lbl = self.emit_node(in_);
                 let lbl = self.fresh_label("scale");
@@ -190,6 +212,60 @@ impl<'a> Emitter<'a> {
                 self.write_clause(&format!(
                     "{in_lbl} format=yuva420p,colorchannelmixer=aa={alpha} {lbl}"
                 ));
+                lbl
+            }
+            IRNode::DrawText {
+                in_,
+                content,
+                font_family,
+                font_size,
+                color,
+                alpha,
+                x,
+                y,
+                gate_start_us,
+                gate_end_us,
+            } => {
+                let in_lbl = self.emit_node(in_);
+                let lbl = self.fresh_label("dt");
+                let escaped = drawtext_quoted_escape(&content);
+                let font_opt = drawtext_font_option(&font_family);
+                let fontcolor = format!(
+                    "0x{:02x}{:02x}{:02x}@{:.6}",
+                    color.r,
+                    color.g,
+                    color.b,
+                    (color.a as f64) / 255.0 * alpha
+                );
+                self.write_clause(&format!(
+                    "{in_lbl} drawtext=text='{escaped}':expansion=none:{font_opt}:fontsize={size}:fontcolor={fontcolor}:x={x}:y={y}:enable='between(t,{start},{end})' {lbl}",
+                    size = font_size,
+                    start = us_to_secs(gate_start_us),
+                    end = us_to_secs(gate_end_us),
+                ));
+                lbl
+            }
+            IRNode::Fade {
+                in_,
+                kind,
+                start_local_us,
+                duration_us,
+            } => {
+                let in_lbl = self.emit_node(in_);
+                let lbl = self.fresh_label("fade");
+                let dir = kind.as_str();
+                let start = us_to_secs(start_local_us);
+                let dur = us_to_secs(duration_us);
+                self.write_clause(&format!(
+                    "{in_lbl} fade=t={dir}:st={start}:d={dur} {lbl}"
+                ));
+                lbl
+            }
+            IRNode::Subtitles { in_, path } => {
+                let in_lbl = self.emit_node(in_);
+                let lbl = self.fresh_label("subs");
+                let escaped = subtitles_path_escape(&path);
+                self.write_clause(&format!("{in_lbl} subtitles='{escaped}' {lbl}"));
                 lbl
             }
             IRNode::Overlay {
@@ -277,6 +353,31 @@ fn fps_label(num: u32, den: u32) -> String {
         num.to_string()
     } else {
         format!("{num}/{den}")
+    }
+}
+
+/// Mirrors `emit_ffmpeg::drawtext_quoted_escape`. mpv's `--lavfi-complex` runs
+/// through the same filtergraph parser, so the rules are identical.
+fn drawtext_quoted_escape(s: &str) -> String {
+    s.replace('\'', "'\\''")
+}
+
+/// Mirrors `emit_ffmpeg::drawtext_font_option`. Same fontconfig avoidance rule
+/// applies regardless of which renderer (ffmpeg or mpv) hosts the filter chain.
+fn drawtext_font_option(family: &str) -> String {
+    if cfg!(target_os = "windows") {
+        let path = match family.to_ascii_lowercase().as_str() {
+            "times new roman" | "times" => "C:/Windows/Fonts/times.ttf",
+            "courier new" | "courier" => "C:/Windows/Fonts/cour.ttf",
+            "verdana" => "C:/Windows/Fonts/verdana.ttf",
+            "tahoma" => "C:/Windows/Fonts/tahoma.ttf",
+            _ => "C:/Windows/Fonts/arial.ttf",
+        };
+        let escaped_path = path.replace(':', "\\:");
+        format!("fontfile='{escaped_path}'")
+    } else {
+        let escaped = drawtext_quoted_escape(family);
+        format!("font='{escaped}'")
     }
 }
 
@@ -376,6 +477,8 @@ mod tests {
                 flip_v: false,
                 blend_mode: Default::default(),
                 speed: 1.0,
+                fade_in_us: 0,
+                fade_out_us: 0,
             }),
         };
 

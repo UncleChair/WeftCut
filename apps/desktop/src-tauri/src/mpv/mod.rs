@@ -101,6 +101,47 @@ mod real {
         slot.0.lock().expect("mpv slot poisoned").active
     }
 
+    /// Normalize a filesystem path for mpv's `loadfile` / `external-files`.
+    ///
+    /// Forward slashes are accepted on every OS, so swap them at the boundary.
+    /// Drive-letter paths and UNC roots both round-trip cleanly under this rule.
+    /// Backslashes elsewhere in the path are also fine (mpv's URL parser
+    /// handles them on Windows), but consistency aids debugging.
+    fn normalize_path_for_mpv(path: &str) -> String {
+        if cfg!(windows) {
+            path.replace('\\', "/")
+        } else {
+            path.to_string()
+        }
+    }
+
+    /// Quote a single argument for libmpv2 4.1's broken `command()` wrapper.
+    ///
+    /// libmpv2 4.1 (`~/.cargo/registry/src/.../libmpv2-4.1.0/src/mpv.rs:551`)
+    /// joins all command args into one space-separated string and passes it
+    /// to `mpv_command_string` instead of using the array-form `mpv_command`.
+    /// `mpv_command_string` whitespace-splits the result, so any arg
+    /// containing a space (e.g. a path like `C:/Users/.../WhatsApp Video
+    /// 2026-05-06.mp4`) gets shredded into multiple tokens, surfacing as
+    /// `MPV_ERROR_INVALID_PARAMETER (-4)` from `loadfile`.
+    ///
+    /// Workaround: pre-quote each arg using mpv's input-parser grammar —
+    /// wrap in `"..."`, escape `\` and `"` inside. Drop this helper once we
+    /// upgrade to a libmpv2 release that uses the array form, or switch to a
+    /// direct FFI call into `libmpv2_sys::mpv_command`.
+    fn quote_arg_for_command_string(s: &str) -> String {
+        let mut out = String::with_capacity(s.len() + 2);
+        out.push('"');
+        for c in s.chars() {
+            if c == '\\' || c == '"' {
+                out.push('\\');
+            }
+            out.push(c);
+        }
+        out.push('"');
+        out
+    }
+
     /// Construct the player on first use, applying the standalone-preview
     /// defaults that match Phase 1 scope.
     ///
@@ -210,8 +251,10 @@ mod real {
             let _ = mpv.set_property("lavfi-complex", "");
             let _ = mpv.set_property("external-files", "");
         }
-        mpv.command("loadfile", &[path, "replace"])
-            .map_err(|e| format!("loadfile: {e:?}"))?;
+        let normalized = normalize_path_for_mpv(path);
+        let quoted = quote_arg_for_command_string(&normalized);
+        mpv.command("loadfile", &[quoted.as_str(), "replace"])
+            .map_err(|e| format!("loadfile {normalized:?}: {e:?}"))?;
         // Raw-clip playback bypasses the project graph; clear last_key so the
         // next project preview always re-applies fresh.
         guard.last_key = None;
@@ -229,7 +272,11 @@ mod real {
         };
         let secs = (t_us as f64) / 1_000_000.0;
         let secs_str = format!("{secs:.6}");
-        mpv.command("seek", &[&secs_str, "absolute"])
+        // No spaces in the formatted float, but keep all `command` calls
+        // consistently quoted so the libmpv2 4.1 string-concat bug stays
+        // safely worked-around.
+        let quoted_secs = quote_arg_for_command_string(&secs_str);
+        mpv.command("seek", &[quoted_secs.as_str(), "absolute"])
             .map_err(|e| format!("seek: {e:?}"))
     }
 
@@ -272,23 +319,69 @@ mod real {
 
         let mpv = guard.mpv.as_ref().expect("init guarantees Some");
 
-        // Clear any previous graph before swapping files. mpv won't always
-        // reparse `lavfi-complex` if you set the same option to a new value
-        // back-to-back; clearing forces the rebuild on the next set.
-        let _ = mpv.set_property("lavfi-complex", "");
+        // Order matters: mpv binds `[vid1]`/`[aid1]` to the *selected tracks
+        // of the loaded file*. Setting `lavfi-complex` before any file is
+        // loaded references unbound labels — mpv stores the string but the
+        // first `loadfile` then fails with INVALID_PARAMETER when the
+        // bind-tracks-to-labels step finds no tracks.
+        //
+        // Canonical sequence for runtime graph swaps:
+        //   1. pause (the gap between loadfile and lavfi-complex would
+        //      otherwise show as a flash of raw playback)
+        //   2. clear stale lavfi-complex (so the about-to-load file isn't
+        //      briefly fed through the previous file's [vid1])
+        //   3. set external-files
+        //   4. loadfile  → tracks bind, [vid1]/[aid1] resolve
+        //   5. set lavfi-complex  → graph rebuilds against bound labels
+        //   6. unpause
+
+        // Mirror `play_file` byte-for-byte for the first-preview case so any
+        // pre-loadfile state divergence (which empirically broke loadfile with
+        // INVALID_PARAMETER in earlier iterations) is impossible.
+        //
+        // For repeat previews / hot-reload there's a stale graph + external
+        // file list to clear; for cold previews the conditional skips
+        // everything until after loadfile. The lavfi-complex set always lands
+        // *after* loadfile so [vid1]/[aid1] are bound to real selected tracks
+        // when the graph parser runs.
+        let had_prior_graph = guard.last_key.is_some();
 
         // Path-list separator: ';' on Windows (drive letters use ':'), ':' elsewhere.
         // Matches mpv's OPT_PATHLIST handling.
         let sep = if cfg!(windows) { ";" } else { ":" };
-        let externals = plan.external_files.join(sep);
-        mpv.set_property("external-files", externals.as_str())
-            .map_err(|e| format!("set external-files: {e:?}"))?;
+        let normalized_primary = normalize_path_for_mpv(primary);
+        let normalized_externals: Vec<String> = plan
+            .external_files
+            .iter()
+            .map(|p| normalize_path_for_mpv(p))
+            .collect();
+        let externals = normalized_externals.join(sep);
 
-        mpv.set_property("lavfi-complex", plan.lavfi_complex.as_str())
-            .map_err(|e| format!("set lavfi-complex: {e:?}"))?;
+        if had_prior_graph {
+            // Previous graph references the prior file's bound labels; clear
+            // before swapping files so the imminent loadfile starts clean.
+            let _ = mpv.set_property("lavfi-complex", "");
+            let _ = mpv.set_property("external-files", "");
+        }
+        // Only set externals when there's actually something to add.
+        if !externals.is_empty() {
+            mpv.set_property("external-files", externals.as_str())
+                .map_err(|e| format!("set external-files: {e:?}"))?;
+        }
 
-        mpv.command("loadfile", &[primary, "replace"])
-            .map_err(|e| format!("loadfile: {e:?}"))?;
+        info!(
+            ">>> mpv loadfile inputs:\n  primary    = {normalized_primary:?}\n  externals  = {externals:?}\n  lavfi      = {graph}",
+            graph = plan.lavfi_complex
+        );
+
+        let quoted_primary = quote_arg_for_command_string(&normalized_primary);
+        mpv.command("loadfile", &[quoted_primary.as_str(), "replace"])
+            .map_err(|e| format!("loadfile {normalized_primary:?}: {e:?}"))?;
+
+        if !plan.lavfi_complex.is_empty() {
+            mpv.set_property("lavfi-complex", plan.lavfi_complex.as_str())
+                .map_err(|e| format!("set lavfi-complex: {e:?}"))?;
+        }
 
         guard.last_key = Some(next_key);
         guard.active = true;

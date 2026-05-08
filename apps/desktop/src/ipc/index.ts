@@ -34,6 +34,76 @@ export interface LayerSummary {
   color_hint: string;
   enabled: boolean;
   locked: boolean;
+  params: LayerParamsView;
+}
+
+export type LayerParamsView =
+  | ({ kind: "VideoClip" } & VideoClipView)
+  | ({ kind: "ImageOverlay" } & ImageOverlayView)
+  | ({ kind: "Text" } & TextView)
+  | ({ kind: "Color" } & ColorView)
+  | ({ kind: "Audio" } & AudioView)
+  | ({ kind: "Subtitles" } & SubtitlesView)
+  | { kind: "Template"; template_id: string };
+
+export interface VideoClipView {
+  media_id: string;
+  media_label: string;
+  src_in_us: number;
+  src_out_us: number;
+  x: number;
+  y: number;
+  scale_x: number;
+  scale_y: number;
+  opacity: number;
+  speed: number;
+  flip_h: boolean;
+  flip_v: boolean;
+  fade_in_us: number;
+  fade_out_us: number;
+}
+
+export interface ImageOverlayView {
+  media_id: string;
+  media_label: string;
+  x: number;
+  y: number;
+  scale_x: number;
+  scale_y: number;
+  opacity: number;
+  fade_in_us: number;
+  fade_out_us: number;
+}
+
+export interface TextView {
+  content: string;
+  font_family: string;
+  font_size_px: number;
+  color: Rgba;
+  x: number;
+  y: number;
+  opacity: number;
+}
+
+export interface ColorView {
+  color: Rgba;
+  width: number;
+  height: number;
+}
+
+export interface AudioView {
+  media_id: string;
+  media_label: string;
+  src_in_us: number;
+  src_out_us: number;
+  gain_db: number;
+  pan: number;
+  mute: boolean;
+}
+
+export interface SubtitlesView {
+  source_kind: "Media" | "InlineAss" | "InlineSrt";
+  source_value: string;
 }
 
 export interface TrackSummary {
@@ -65,6 +135,73 @@ export interface LayerPatch {
   locked?: boolean;
 }
 
+/** Mirrors `Rgba` in `state/color.rs`. r/g/b/a all 0-255. */
+export interface Rgba {
+  r: number;
+  g: number;
+  b: number;
+  a: number;
+}
+
+export interface TextPatch {
+  content?: string;
+  font_family?: string;
+  font_size_px?: number;
+  color?: Rgba;
+  x?: number;
+  y?: number;
+  opacity?: number;
+}
+
+export interface VideoClipPatch {
+  src_in_us?: number;
+  src_out_us?: number;
+  x?: number;
+  y?: number;
+  scale_x?: number;
+  scale_y?: number;
+  opacity?: number;
+  speed?: number;
+  flip_h?: boolean;
+  flip_v?: boolean;
+  fade_in_us?: number;
+  fade_out_us?: number;
+}
+
+export interface ImageOverlayPatch {
+  x?: number;
+  y?: number;
+  scale_x?: number;
+  scale_y?: number;
+  opacity?: number;
+  fade_in_us?: number;
+  fade_out_us?: number;
+}
+
+export interface ColorPatch {
+  color?: Rgba;
+  width?: number;
+  height?: number;
+}
+
+export interface AudioPatch {
+  src_in_us?: number;
+  src_out_us?: number;
+  gain_db?: number;
+  pan?: number;
+  mute?: boolean;
+}
+
+/// Tagged union mirroring `LayerParamsPatch` in state/actor.rs. Tauri/serde
+/// expects the discriminant in `kind` to match the layer's current
+/// LayerParams kind; mismatches return `LayerParamsKindMismatch`.
+export type LayerParamsPatch =
+  | ({ kind: "Text" } & TextPatch)
+  | ({ kind: "VideoClip" } & VideoClipPatch)
+  | ({ kind: "ImageOverlay" } & ImageOverlayPatch)
+  | ({ kind: "Color" } & ColorPatch)
+  | ({ kind: "Audio" } & AudioPatch);
+
 export async function ping(): Promise<string> {
   return invoke<string>("ping");
 }
@@ -81,6 +218,10 @@ export async function addDemoColorLayer(): Promise<string> {
   return invoke<string>("add_demo_color_layer");
 }
 
+export async function addDemoTextLayer(): Promise<string> {
+  return invoke<string>("add_demo_text_layer");
+}
+
 export async function addMediaLayer(
   trackId: string,
   mediaId: string,
@@ -90,6 +231,20 @@ export async function addMediaLayer(
     trackId,
     mediaId,
     tStartUs,
+  });
+}
+
+export async function addTextLayer(
+  trackId: string,
+  content: string,
+  tStartUs: number,
+  durationUs: number,
+): Promise<string> {
+  return invoke<string>("add_text_layer", {
+    trackId,
+    content,
+    tStartUs,
+    durationUs,
   });
 }
 
@@ -145,14 +300,113 @@ export const EXPORT_EVENTS = {
   progress: "export:progress",
   complete: "export:complete",
   error: "export:error",
+  queue: "export:queue",
 } as const;
 
-export async function exportProject(outputPath: string): Promise<void> {
-  return invoke<void>("export_project", { outputPath });
+/// Mirrors `ExportPreset` in `export/preset.rs`. Names match the Rust
+/// variants so serde tagging works without rename rules.
+export type ExportPreset =
+  | "H264Mp4_1080p"
+  | "H264Mp4_4K"
+  | "ProResMov"
+  | "Gif";
+
+export const EXPORT_PRESETS: ExportPreset[] = [
+  "H264Mp4_1080p",
+  "H264Mp4_4K",
+  "ProResMov",
+  "Gif",
+];
+
+export function presetExtension(p: ExportPreset): string {
+  switch (p) {
+    case "H264Mp4_1080p":
+    case "H264Mp4_4K":
+      return "mp4";
+    case "ProResMov":
+      return "mov";
+    case "Gif":
+      return "gif";
+  }
+}
+
+export async function exportProject(
+  outputPath: string,
+  preset?: ExportPreset,
+): Promise<void> {
+  return invoke<void>("export_project", { outputPath, preset });
+}
+
+export type ExportQueueStatus =
+  | { kind: "Pending" }
+  | { kind: "Running" }
+  | { kind: "Completed" }
+  | { kind: "Failed"; detail: string }
+  | { kind: "Cancelled" };
+
+export interface ExportQueueItem {
+  id: string;
+  output_path: string;
+  preset: ExportPreset;
+  status: ExportQueueStatus;
+}
+
+export async function exportQueueEnqueue(
+  outputPath: string,
+  preset?: ExportPreset,
+): Promise<string> {
+  return invoke<string>("export_queue_enqueue", { outputPath, preset });
+}
+
+export async function exportQueueList(): Promise<ExportQueueItem[]> {
+  return invoke<ExportQueueItem[]>("export_queue_list");
+}
+
+export async function exportQueueRemove(id: string): Promise<void> {
+  return invoke<void>("export_queue_remove", { id });
+}
+
+export async function exportQueueClearFinished(): Promise<void> {
+  return invoke<void>("export_queue_clear_finished");
+}
+
+export type HwEncoder =
+  | "Nvenc"
+  | "Qsv"
+  | "Amf"
+  | "VideoToolbox"
+  | "Vaapi";
+
+export interface HwEncoderProbe {
+  available: HwEncoder[];
+  recommended: HwEncoder | null;
+}
+
+export async function hwEncoderProbe(): Promise<HwEncoderProbe> {
+  return invoke<HwEncoderProbe>("hw_encoder_probe");
 }
 
 export async function updateLayer(layerId: string, patch: LayerPatch): Promise<void> {
   return invoke<void>("update_layer", { layerId, patch });
+}
+
+export async function updateLayerParams(
+  layerId: string,
+  patch: LayerParamsPatch,
+): Promise<void> {
+  return invoke<void>("update_layer_params", { layerId, patch });
+}
+
+export async function addSubtitlesLayer(
+  mediaId: string,
+  tStartUs: number,
+  durationUs: number,
+): Promise<string> {
+  return invoke<string>("add_subtitles_layer", {
+    mediaId,
+    tStartUs,
+    durationUs,
+  });
 }
 
 export async function moveLayer(

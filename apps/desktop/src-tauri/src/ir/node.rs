@@ -43,6 +43,12 @@ pub enum IRNode {
         src_in_us: i64,
         src_out_us: i64,
     },
+    /// Single-frame image stretched into a finite-duration video stream.
+    /// Emitted as `loop=-1:size=1,trim=duration=<sec>,setpts=PTS-STARTPTS`.
+    ImageDecode {
+        input: InputIdx,
+        duration_us: i64,
+    },
 
     // --- Transforms (1 → 1) ---
     Scale {
@@ -68,6 +74,41 @@ pub enum IRNode {
     Opacity {
         in_: NodeId,
         alpha: f64,
+    },
+    /// Burn text onto a video stream. Emits `drawtext=...:enable='between(...)'`.
+    /// `font_family` resolves through fontconfig (`font=`) — works on Linux/macOS
+    /// and Windows ffmpeg builds with fontconfig (e.g. winget Gyan.FFmpeg).
+    /// Outline/shadow/animation presets are deferred to a later slice.
+    DrawText {
+        in_: NodeId,
+        content: String,
+        font_family: String,
+        font_size: f32,
+        color: Rgba,
+        alpha: f64,
+        x: i32,
+        y: i32,
+        gate_start_us: i64,
+        gate_end_us: i64,
+    },
+    /// Single-input fade. Both `fade_in` and `fade_out` map to the `fade`
+    /// filter (`fade=t=in:st=N:d=D` or `fade=t=out:st=N:d=D`). Times are
+    /// expressed in the input stream's local clock so we don't have to know
+    /// where the layer sits on the timeline at this stage of the pipeline.
+    Fade {
+        in_: NodeId,
+        kind: FadeKind,
+        start_local_us: i64,
+        duration_us: i64,
+    },
+    /// Burn an SRT or ASS subtitle file onto a video stream via the `subtitles`
+    /// filter (handles both formats; ASS preserves styling). The path is
+    /// passed through ffmpeg's subtitles= filter argument so it must be a
+    /// stable on-disk file. Inline subtitles are written to a temp file by the
+    /// caller before lowering.
+    Subtitles {
+        in_: NodeId,
+        path: String,
     },
 
     // --- Composites (n → 1) ---
@@ -96,6 +137,22 @@ pub enum IRNode {
         label: String,
         sample_rate: u32,
     },
+}
+
+/// Fade direction. Single-input fade (uses ffmpeg's `fade` filter, not `xfade`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FadeKind {
+    In,
+    Out,
+}
+
+impl FadeKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FadeKind::In => "in",
+            FadeKind::Out => "out",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -129,9 +186,13 @@ impl IRNode {
         match self {
             IRNode::Color { .. }
             | IRNode::DecodeV { .. }
+            | IRNode::ImageDecode { .. }
             | IRNode::Scale { .. }
             | IRNode::Fps { .. }
             | IRNode::Opacity { .. }
+            | IRNode::DrawText { .. }
+            | IRNode::Fade { .. }
+            | IRNode::Subtitles { .. }
             | IRNode::Overlay { .. }
             | IRNode::OutV { .. } => StreamKind::Video,
 

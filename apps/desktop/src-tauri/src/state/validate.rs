@@ -412,6 +412,8 @@ mod tests {
                 flip_v: false,
                 blend_mode: Default::default(),
                 speed: 1.0,
+                fade_in_us: 0,
+                fade_out_us: 0,
             }),
             ..color_layer(0, 1_000_000)
         };
@@ -443,6 +445,8 @@ mod tests {
                 flip_v: false,
                 blend_mode: Default::default(),
                 speed: 1.0,
+                fade_in_us: 0,
+                fade_out_us: 0,
             }),
             ..color_layer(0, 5_000_000)
         };
@@ -474,6 +478,8 @@ mod tests {
                 flip_v: false,
                 blend_mode: Default::default(),
                 speed: 1.0,
+                fade_in_us: 0,
+                fade_out_us: 0,
             }),
             ..color_layer(0, 1_000_000)
         };
@@ -508,6 +514,8 @@ mod tests {
             transform: Transform::default(),
             opacity: Animated::Keyframed(imbl::vector![bad_kf]),
             blend_mode: Default::default(),
+            fade_in_us: 0,
+            fade_out_us: 0,
         });
         track.layers.push_back(layer);
         p.tracks.push_back(track);

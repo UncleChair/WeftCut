@@ -4,10 +4,17 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   addDemoColorLayer,
+  addDemoTextLayer,
   addVideoTrack,
   compileProject,
   EXPORT_EVENTS,
+  EXPORT_PRESETS,
   exportProject,
+  exportQueueClearFinished,
+  exportQueueEnqueue,
+  exportQueueList,
+  exportQueueRemove,
+  hwEncoderProbe,
   importMedia,
   mpvClosePreview,
   mpvPlayMedia,
@@ -15,6 +22,7 @@ import {
   mpvSeek,
   mpvSetPaused,
   ping,
+  presetExtension,
   projectOpen,
   projectRedo,
   projectSaveAs,
@@ -23,11 +31,15 @@ import {
   splitFirstLayer,
   type CompiledGraph,
   type ExportComplete,
+  type ExportPreset,
   type ExportProgress,
+  type ExportQueueItem,
+  type HwEncoderProbe,
   type MediaSummary,
   type ProjectSummary,
 } from "./ipc";
 import { Timeline } from "./timeline/Timeline";
+import { PropertyPanel } from "./properties/PropertyPanel";
 import {
   LOCALE_LABELS,
   SUPPORTED_LOCALES,
@@ -45,6 +57,9 @@ export function App() {
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
   const [currentTimeUs, setCurrentTimeUs] = useState<number>(0);
   const [paused, setPaused] = useState<boolean>(true);
+  const [preset, setPreset] = useState<ExportPreset>("H264Mp4_1080p");
+  const [queue, setQueue] = useState<ExportQueueItem[]>([]);
+  const [hwProbe, setHwProbe] = useState<HwEncoderProbe | null>(null);
 
   const seekTo = useCallback(async (tUs: number) => {
     setCurrentTimeUs(tUs);
@@ -76,7 +91,29 @@ export function App() {
   useEffect(() => {
     ping().then(setPong).catch((e) => setPong(`error: ${String(e)}`));
     refresh();
+    exportQueueList().then(setQueue).catch(() => {});
+    hwEncoderProbe().then(setHwProbe).catch(() => {});
   }, [refresh]);
+
+  // Queue subscription — backend pushes a fresh list on every state change.
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+    (async () => {
+      const u = await listen<ExportQueueItem[]>(EXPORT_EVENTS.queue, (e) => {
+        setQueue(e.payload);
+      });
+      if (cancelled) {
+        u();
+        return;
+      }
+      unlisten = u;
+    })();
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
+  }, []);
 
   // Export event subscriptions — kept up for the lifetime of the app so the
   // panel can show progress for any in-flight render.
@@ -209,6 +246,9 @@ export function App() {
         <button onClick={() => run(addDemoColorLayer)} disabled={busy}>
           {t("actions.add_color_layer")}
         </button>
+        <button onClick={() => run(addDemoTextLayer)} disabled={busy}>
+          {t("actions.add_text_layer")}
+        </button>
         <button
           onClick={() => run(splitFirstLayer)}
           disabled={busy || !summary || summary.layer_count === 0}
@@ -221,22 +261,35 @@ export function App() {
         >
           {t("actions.compile")}
         </button>
+        <select
+          value={preset}
+          onChange={(e) => setPreset(e.target.value as ExportPreset)}
+          title={t("export.preset_hint")}
+          className="export-preset-select"
+        >
+          {EXPORT_PRESETS.map((p) => (
+            <option key={p} value={p}>
+              {t(`export.preset.${p}`, { defaultValue: p })}
+            </option>
+          ))}
+        </select>
         <button
           onClick={async () => {
+            const ext = presetExtension(preset);
             const path = await saveDialog({
               title: t("dialogs.export_title"),
-              defaultPath: t("dialogs.export_default_name"),
+              defaultPath: `videtor-export.${ext}`,
               filters: [
                 {
                   name: t("dialogs.export_filter"),
-                  extensions: ["mp4"],
+                  extensions: [ext],
                 },
               ],
             });
             if (typeof path !== "string") return;
             setExportState({ kind: "starting" });
             try {
-              await exportProject(path);
+              await exportProject(path, preset);
             } catch (e) {
               setExportState({ kind: "error", detail: String(e) });
             }
@@ -247,6 +300,32 @@ export function App() {
           }
         >
           {t("actions.export")}
+        </button>
+        <button
+          onClick={async () => {
+            const ext = presetExtension(preset);
+            const path = await saveDialog({
+              title: t("dialogs.export_queue_title"),
+              defaultPath: `videtor-export-queue.${ext}`,
+              filters: [
+                {
+                  name: t("dialogs.export_filter"),
+                  extensions: [ext],
+                },
+              ],
+            });
+            if (typeof path !== "string") return;
+            try {
+              await exportQueueEnqueue(path, preset);
+              setQueue(await exportQueueList());
+            } catch (e) {
+              console.warn("queue enqueue failed:", e);
+            }
+          }}
+          disabled={busy}
+          title={t("actions.queue_export_hint")}
+        >
+          {t("actions.queue_export")}
         </button>
         <span className="separator" />
         <button
@@ -404,6 +483,14 @@ export function App() {
         <section className="media-pool">
           <MediaPool media={summary?.media ?? []} />
         </section>
+
+        <section className="properties">
+          <PropertyPanel
+            tracks={summary?.tracks ?? []}
+            selectedLayerId={selectedLayerId}
+            onMutated={refresh}
+          />
+        </section>
       </main>
 
       {compiled && (
@@ -418,7 +505,86 @@ export function App() {
           onClose={() => setExportState(null)}
         />
       )}
+      {queue.length > 0 && (
+        <QueuePanel
+          items={queue}
+          hwProbe={hwProbe}
+          onRemove={async (id) => {
+            await exportQueueRemove(id);
+          }}
+          onClearFinished={async () => {
+            await exportQueueClearFinished();
+            setQueue(await exportQueueList());
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function QueuePanel({
+  items,
+  hwProbe,
+  onRemove,
+  onClearFinished,
+}: {
+  items: ExportQueueItem[];
+  hwProbe: HwEncoderProbe | null;
+  onRemove: (id: string) => Promise<void>;
+  onClearFinished: () => Promise<void>;
+}) {
+  const { t } = useTranslation();
+  const finishedCount = items.filter(
+    (i) =>
+      i.status.kind === "Completed" ||
+      i.status.kind === "Failed" ||
+      i.status.kind === "Cancelled",
+  ).length;
+  return (
+    <aside className="queue-panel">
+      <header>
+        <strong>{t("queue.title", { count: items.length })}</strong>
+        {hwProbe?.recommended && (
+          <span className="queue-hw">
+            {t("queue.hw_label")}: {hwProbe.recommended}
+          </span>
+        )}
+        {finishedCount > 0 && (
+          <button onClick={onClearFinished}>
+            {t("queue.clear_finished")}
+          </button>
+        )}
+      </header>
+      <ul className="queue-list">
+        {items.map((item) => (
+          <li key={item.id} className={`queue-item status-${item.status.kind.toLowerCase()}`}>
+            <span className={`queue-status status-${item.status.kind.toLowerCase()}`}>
+              {t(`queue.status.${item.status.kind}`, {
+                defaultValue: item.status.kind,
+              })}
+            </span>
+            <span className="queue-preset">
+              {t(`export.preset.${item.preset}`, { defaultValue: item.preset })}
+            </span>
+            <span className="queue-path truncate" title={item.output_path}>
+              {item.output_path}
+            </span>
+            {item.status.kind === "Failed" && (
+              <span className="error truncate" title={item.status.detail}>
+                {item.status.detail}
+              </span>
+            )}
+            <button
+              className="queue-remove"
+              onClick={() => onRemove(item.id)}
+              title={t("queue.remove_hint")}
+            >
+              ✕
+            </button>
+          </li>
+        ))}
+      </ul>
+    </aside>
   );
 }
 
@@ -567,7 +733,10 @@ function MediaPool({ media }: { media: MediaSummary[] }) {
   );
 }
 
-function formatBytes(bytes: number, t: (k: string, v?: object) => string): string {
+function formatBytes(
+  bytes: number,
+  t: (k: string, v: Record<string, unknown>) => string,
+): string {
   const KIB = 1024;
   const MIB = KIB * 1024;
   const GIB = MIB * 1024;

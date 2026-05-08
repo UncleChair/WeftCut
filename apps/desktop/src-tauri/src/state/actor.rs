@@ -12,6 +12,7 @@ use thiserror::Error;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 use super::color::{ColorSpace, Rgba};
+use super::animated::Animated;
 use super::history::{History, HistoryEntry, NamedCheckpoint};
 use super::ids::{CheckpointId, LayerId, MarkerId, MediaId, OpId, TrackId, new_id};
 use super::layer::{Layer, LayerParams};
@@ -48,8 +49,8 @@ pub enum DiffHint {
 }
 
 /// Partial update for a layer's envelope. Only `Some(_)` fields are applied.
-/// Patches don't reach into kind-specific `LayerParams` for now — that's a
-/// next-phase typed surface (`update_video_clip`, `update_text`, ...).
+/// `params_patch` carries kind-specific edits; the property panel sends one
+/// of the variant patches so the actor can sanity-check the kind matches.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct LayerPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -63,6 +64,112 @@ pub struct LayerPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub locked: Option<bool>,
 }
+
+/// Kind-tagged partial update for a layer's `params`. Fields are scalar so the
+/// UI can drive them with simple inputs; the actor lifts them to
+/// `Animated::Static(...)` where the underlying shape is animated.
+///
+/// Limitation: applying a static-value patch to a keyframed field overwrites
+/// the keyframe track. Acceptable for the MVP property panel where keyframes
+/// are not yet user-editable; revisit when the keyframe UI lands.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+pub enum LayerParamsPatch {
+    Text(TextPatch),
+    VideoClip(VideoClipPatch),
+    ImageOverlay(ImageOverlayPatch),
+    Color(ColorPatch),
+    Audio(AudioPatch),
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct TextPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_family: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_size_px: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<Rgba>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub x: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opacity: Option<f64>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct VideoClipPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub src_in_us: Option<TimeUs>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub src_out_us: Option<TimeUs>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub x: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale_x: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale_y: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opacity: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flip_h: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flip_v: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fade_in_us: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fade_out_us: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ImageOverlayPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub x: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale_x: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale_y: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opacity: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fade_in_us: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fade_out_us: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ColorPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<Rgba>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct AudioPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub src_in_us: Option<TimeUs>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub src_out_us: Option<TimeUs>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gain_db: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pan: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mute: Option<bool>,
+}
+
 
 /// Partial update for the composition envelope. Only `Some(_)` fields apply.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -114,6 +221,12 @@ pub enum CommandError {
     TrackNotRemovable { track: TrackId },
     #[error("split point {at_t}us is outside layer {layer} bounds")]
     SplitOutsideLayer { layer: LayerId, at_t: TimeUs },
+    #[error("layer {layer} kind {actual} does not match patch kind {patch}")]
+    LayerParamsKindMismatch {
+        layer: LayerId,
+        actual: &'static str,
+        patch: &'static str,
+    },
     #[error("nothing to undo")]
     NothingToUndo,
     #[error("nothing to redo")]
@@ -173,6 +286,12 @@ enum Command {
     UpdateLayer {
         id: LayerId,
         patch: LayerPatch,
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
+    UpdateLayerParams {
+        id: LayerId,
+        patch: LayerParamsPatch,
         actor: Actor,
         reply: oneshot::Sender<Result<(), CommandError>>,
     },
@@ -410,6 +529,25 @@ impl ProjectHandle {
         rx.await.expect("project actor terminated")
     }
 
+    pub async fn update_layer_params(
+        &self,
+        actor: Actor,
+        id: LayerId,
+        patch: LayerParamsPatch,
+    ) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::UpdateLayerParams {
+                id,
+                patch,
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
     pub async fn move_layer(
         &self,
         actor: Actor,
@@ -631,6 +769,15 @@ impl ProjectActor {
                 reply,
             } => {
                 let result = self.do_update_layer(id, patch, actor);
+                let _ = reply.send(result);
+            }
+            Command::UpdateLayerParams {
+                id,
+                patch,
+                actor,
+                reply,
+            } => {
+                let result = self.do_update_layer_params(id, patch, actor);
                 let _ = reply.send(result);
             }
             Command::MoveLayer {
@@ -960,6 +1107,35 @@ impl ProjectActor {
         Ok(())
     }
 
+    fn do_update_layer_params(
+        &mut self,
+        id: LayerId,
+        patch: LayerParamsPatch,
+        actor: Actor,
+    ) -> Result<(), CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+        let mut found = false;
+        for track in next.tracks.iter_mut() {
+            if let Some(idx) = track.layers.iter().position(|l| l.id == id) {
+                let layer = track.layers.get_mut(idx).expect("index just verified");
+                apply_params_patch(layer, &patch, id)?;
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            return Err(CommandError::LayerNotFound { layer: id });
+        }
+        self.commit(
+            next,
+            actor,
+            format!("Updated params on layer {id}"),
+            vec![EntityRef::Layer(id)],
+            DiffHint::Layer(id),
+        )?;
+        Ok(())
+    }
+
     fn do_move_layer(
         &mut self,
         id: LayerId,
@@ -1274,6 +1450,161 @@ impl ProjectActor {
             new_snapshot: snapshot,
             diff_hint: DiffHint::Coarse,
         });
+    }
+}
+
+/// Apply a `LayerParamsPatch` to a layer's `params` in place. Errors if the
+/// patch's kind doesn't match the layer's current `LayerParams` discriminant.
+fn apply_params_patch(
+    layer: &mut Layer,
+    patch: &LayerParamsPatch,
+    id: LayerId,
+) -> Result<(), CommandError> {
+    match (&mut layer.params, patch) {
+        (LayerParams::Text(p), LayerParamsPatch::Text(tp)) => {
+            if let Some(c) = &tp.content {
+                p.content = c.clone();
+            }
+            if let Some(f) = &tp.font_family {
+                p.font.family = f.clone();
+            }
+            if let Some(s) = tp.font_size_px {
+                p.font.size_px = s;
+            }
+            if let Some(c) = tp.color {
+                p.color = Animated::Static(c);
+            }
+            if let Some(x) = tp.x {
+                p.transform.x = Animated::Static(x);
+            }
+            if let Some(y) = tp.y {
+                p.transform.y = Animated::Static(y);
+            }
+            if let Some(o) = tp.opacity {
+                p.opacity = Animated::Static(o);
+            }
+            Ok(())
+        }
+        (LayerParams::VideoClip(p), LayerParamsPatch::VideoClip(vp)) => {
+            if let Some(v) = vp.src_in_us {
+                p.src_in_us = v;
+            }
+            if let Some(v) = vp.src_out_us {
+                p.src_out_us = v;
+            }
+            if let Some(x) = vp.x {
+                p.transform.x = Animated::Static(x);
+            }
+            if let Some(y) = vp.y {
+                p.transform.y = Animated::Static(y);
+            }
+            if let Some(s) = vp.scale_x {
+                p.transform.scale_x = Animated::Static(s);
+            }
+            if let Some(s) = vp.scale_y {
+                p.transform.scale_y = Animated::Static(s);
+            }
+            if let Some(o) = vp.opacity {
+                p.opacity = Animated::Static(o);
+            }
+            if let Some(s) = vp.speed {
+                p.speed = s;
+            }
+            if let Some(b) = vp.flip_h {
+                p.flip_h = b;
+            }
+            if let Some(b) = vp.flip_v {
+                p.flip_v = b;
+            }
+            if let Some(v) = vp.fade_in_us {
+                p.fade_in_us = v;
+            }
+            if let Some(v) = vp.fade_out_us {
+                p.fade_out_us = v;
+            }
+            Ok(())
+        }
+        (LayerParams::ImageOverlay(p), LayerParamsPatch::ImageOverlay(ip)) => {
+            if let Some(x) = ip.x {
+                p.transform.x = Animated::Static(x);
+            }
+            if let Some(y) = ip.y {
+                p.transform.y = Animated::Static(y);
+            }
+            if let Some(s) = ip.scale_x {
+                p.transform.scale_x = Animated::Static(s);
+            }
+            if let Some(s) = ip.scale_y {
+                p.transform.scale_y = Animated::Static(s);
+            }
+            if let Some(o) = ip.opacity {
+                p.opacity = Animated::Static(o);
+            }
+            if let Some(v) = ip.fade_in_us {
+                p.fade_in_us = v;
+            }
+            if let Some(v) = ip.fade_out_us {
+                p.fade_out_us = v;
+            }
+            Ok(())
+        }
+        (LayerParams::Color(p), LayerParamsPatch::Color(cp)) => {
+            if let Some(c) = cp.color {
+                p.color = Animated::Static(c);
+            }
+            if let Some(w) = cp.width {
+                p.width = w;
+            }
+            if let Some(h) = cp.height {
+                p.height = h;
+            }
+            Ok(())
+        }
+        (LayerParams::Audio(p), LayerParamsPatch::Audio(ap)) => {
+            if let Some(v) = ap.src_in_us {
+                p.src_in_us = v;
+            }
+            if let Some(v) = ap.src_out_us {
+                p.src_out_us = v;
+            }
+            if let Some(g) = ap.gain_db {
+                p.gain_db = Animated::Static(g);
+            }
+            if let Some(p_) = ap.pan {
+                p.pan = Animated::Static(p_);
+            }
+            if let Some(m) = ap.mute {
+                p.mute = m;
+            }
+            Ok(())
+        }
+        (actual, patch) => Err(CommandError::LayerParamsKindMismatch {
+            layer: id,
+            actual: layer_params_kind(actual),
+            patch: layer_params_patch_kind(patch),
+        }),
+    }
+}
+
+fn layer_params_kind(params: &LayerParams) -> &'static str {
+    match params {
+        LayerParams::VideoClip(_) => "VideoClip",
+        LayerParams::ImageOverlay(_) => "ImageOverlay",
+        LayerParams::Text(_) => "Text",
+        LayerParams::Template(_) => "Template",
+        LayerParams::Audio(_) => "Audio",
+        LayerParams::Subtitles(_) => "Subtitles",
+        LayerParams::Color(_) => "Color",
+    }
+}
+
+fn layer_params_patch_kind(patch: &LayerParamsPatch) -> &'static str {
+    match patch {
+        LayerParamsPatch::Text(_) => "Text",
+        LayerParamsPatch::VideoClip(_) => "VideoClip",
+        LayerParamsPatch::ImageOverlay(_) => "ImageOverlay",
+        LayerParamsPatch::Color(_) => "Color",
+        LayerParamsPatch::Audio(_) => "Audio",
     }
 }
 

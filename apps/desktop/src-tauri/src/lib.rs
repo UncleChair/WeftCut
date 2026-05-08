@@ -43,8 +43,12 @@ pub fn run() {
             commands::add_video_track,
             commands::add_demo_color_layer,
             commands::add_media_layer,
+            commands::add_text_layer,
+            commands::add_demo_text_layer,
             commands::split_first_layer,
             commands::update_layer,
+            commands::update_layer_params,
+            commands::add_subtitles_layer,
             commands::move_layer,
             commands::duplicate_layer,
             commands::delete_layer,
@@ -57,6 +61,11 @@ pub fn run() {
             commands::import_media,
             commands::compile_project,
             commands::export_project,
+            commands::export_queue_enqueue,
+            commands::export_queue_list,
+            commands::export_queue_remove,
+            commands::export_queue_clear_finished,
+            commands::hw_encoder_probe,
             commands::mpv_close_preview,
             commands::mpv_play_file,
             commands::mpv_play_media,
@@ -81,6 +90,24 @@ pub fn run() {
             #[cfg(feature = "mpv")]
             let mpv_slot_for_events = mpv_slot.clone();
             app.manage(mpv_slot);
+
+            // Render queue. Single-task FIFO; emits `export:queue` events on
+            // every state change. Lives for the app lifetime.
+            let export_queue = export::ExportQueue::new(app.handle().clone());
+            app.manage(export_queue);
+
+            // HW encoder cache. Probes the host (NVENC/QSV/AMF/VideoToolbox/
+            // VAAPI) on first access, memoized for the process lifetime. We
+            // kick off a background probe at startup so the first export
+            // doesn't pay the latency.
+            let hw_cache = export::HwEncoderCache::new();
+            app.manage(hw_cache);
+            let hw_for_warmup = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                if let Some(c) = hw_for_warmup.try_state::<export::HwEncoderCache>() {
+                    let _ = c.probe().await;
+                }
+            });
 
             if let Err(e) = raster::spawn_spike(app.handle()) {
                 tracing::error!("raster spike failed: {e:?}");

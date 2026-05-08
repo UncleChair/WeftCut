@@ -121,6 +121,8 @@ mod tests {
                 flip_v: false,
                 blend_mode: BlendMode::Normal,
                 speed: 1.0,
+                fade_in_us: 0,
+                fade_out_us: 0,
             }),
         };
 

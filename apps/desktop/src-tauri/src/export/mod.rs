@@ -1,13 +1,18 @@
 //! Export pipeline — drive ffmpeg with the IR-compiled plan.
 //!
-//! Phase 1.12 MVP: one preset (H.264/AAC MP4), one render at a time, progress
-//! reported via Tauri events. Hardware encoder detection, render queues,
-//! ProRes/GIF presets are Phase 3 work per the original roadmap numbering.
-//!
-//! Progress comes from `ffmpeg -progress pipe:1 -nostats` which emits clean
-//! key=value lines (vs. the noisy default stderr `frame=...` text). Each
-//! `progress=continue|end` line ends one block; we accumulate the keys and
-//! emit one `export:progress` Tauri event per block.
+//! Phase 3: presets (H264 1080p, H264 4K, ProRes, GIF), hardware encoder
+//! detection with software fallback, in-memory render queue (serial FIFO).
+//! Progress comes from `ffmpeg -progress pipe:1 -nostats` — clean key=value
+//! lines vs the noisy default stderr text. Each `progress=continue|end`
+//! line ends one block; we emit one `export:progress` Tauri event per block.
+
+mod hwencoder;
+mod preset;
+mod queue;
+
+pub use hwencoder::{HwEncoderCache, HwEncoderProbe, probe_hw_encoders};
+pub use preset::ExportPreset;
+pub use queue::{ExportQueue, ExportQueueItem};
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -15,7 +20,7 @@ use std::process::Stdio;
 use anyhow::{Context, Result};
 use ffmpeg_sidecar::{command::ffmpeg_is_installed, paths::ffmpeg_path};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tracing::{info, warn};
@@ -26,6 +31,7 @@ use crate::state::Project;
 pub const EVENT_PROGRESS: &str = "export:progress";
 pub const EVENT_COMPLETE: &str = "export:complete";
 pub const EVENT_ERROR: &str = "export:error";
+pub const EVENT_QUEUE: &str = "export:queue";
 
 #[derive(Clone, Debug, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -46,6 +52,15 @@ pub struct ExportComplete {
 }
 
 pub async fn export_to_mp4(app: AppHandle, project: &Project, output: &Path) -> Result<()> {
+    run_render(app, project, output, ExportPreset::default()).await
+}
+
+pub async fn run_render(
+    app: AppHandle,
+    project: &Project,
+    output: &Path,
+    preset: ExportPreset,
+) -> Result<()> {
     if !ffmpeg_is_installed() {
         anyhow::bail!(
             "ffmpeg is not installed. Install via `winget install -e --id Gyan.FFmpeg` (Windows), \
@@ -70,7 +85,17 @@ pub async fn export_to_mp4(app: AppHandle, project: &Project, output: &Path) -> 
         "videtor-export-{}.txt",
         uuid::Uuid::now_v7().simple()
     ));
-    std::fs::write(&script_path, &plan.filter_graph).context("write filter script")?;
+    let mut graph_body = plan.filter_graph.clone();
+    if let Some(suffix) = preset.filter_graph_suffix() {
+        // Make sure we re-use the [vfinal] label by appending a suffix that
+        // splits/palettes the existing terminal stream. Trim trailing
+        // newlines so the join is clean.
+        while graph_body.ends_with('\n') {
+            graph_body.pop();
+        }
+        graph_body.push_str(suffix);
+    }
+    std::fs::write(&script_path, &graph_body).context("write filter script")?;
 
     let mut cmd = Command::new(ffmpeg_path());
     cmd.arg("-y") // overwrite
@@ -83,15 +108,31 @@ pub async fn export_to_mp4(app: AppHandle, project: &Project, output: &Path) -> 
 
     cmd.arg("-filter_complex_script").arg(&script_path);
 
-    for map in &plan.maps {
-        cmd.arg("-map").arg(map);
+    // Preset may override the final video label (e.g. GIF emits [vgif]).
+    let final_v_label = preset.final_video_label();
+    cmd.arg("-map").arg(final_v_label);
+    if preset.has_audio() {
+        for map in &plan.maps {
+            // Skip the video map — we already added the (possibly-renamed)
+            // version above.
+            if map.starts_with("[v") {
+                continue;
+            }
+            cmd.arg("-map").arg(map);
+        }
     }
 
-    // MVP encoder preset: software H.264 + AAC. Hardware-encoder probing comes
-    // in the Phase 3 hwaccel rewrite.
-    cmd.args(["-c:v", "libx264", "-preset", "medium", "-crf", "20"]);
-    cmd.args(["-pix_fmt", "yuv420p"]);
-    cmd.args(["-c:a", "aac", "-b:a", "192k"]);
+    // HW encoder selection. We resolve through the AppHandle-managed cache
+    // when available (probed once at startup) and fall back to a fresh probe
+    // only if the cache isn't installed (e.g. tests calling run_render
+    // directly without going through the Tauri setup hook). Per-export probes
+    // would otherwise add up to several seconds on hosts where some
+    // candidates time out.
+    let hw = match app.try_state::<HwEncoderCache>() {
+        Some(c) => c.get().await,
+        None => probe_hw_encoders().await.recommended,
+    };
+    preset.apply_to_command(&mut cmd, hw);
 
     // -progress pipe:1 → clean key=value blocks on stdout, one per ~0.5s.
     cmd.args(["-progress", "pipe:1"]);
@@ -103,7 +144,12 @@ pub async fn export_to_mp4(app: AppHandle, project: &Project, output: &Path) -> 
         .stderr(Stdio::piped())
         .kill_on_drop(true);
 
-    info!("ffmpeg export starting → {}", output.display());
+    info!(
+        "ffmpeg export starting → {} (preset={:?}, hw={:?})",
+        output.display(),
+        preset,
+        hw
+    );
     let mut child = cmd.spawn().context("spawn ffmpeg")?;
 
     let stdout = child.stdout.take().context("take ffmpeg stdout")?;
@@ -198,7 +244,16 @@ pub async fn export_to_mp4(app: AppHandle, project: &Project, output: &Path) -> 
 /// Convenience wrapper that swallows path conversion + emits an error event on
 /// failure so the UI can show a toast even when the awaiting handle isn't.
 pub async fn export_to_mp4_logged(app: AppHandle, project: &Project, output: PathBuf) {
-    if let Err(e) = export_to_mp4(app.clone(), project, &output).await {
+    export_with_preset_logged(app, project, output, ExportPreset::default()).await
+}
+
+pub async fn export_with_preset_logged(
+    app: AppHandle,
+    project: &Project,
+    output: PathBuf,
+    preset: ExportPreset,
+) {
+    if let Err(e) = run_render(app.clone(), project, &output, preset).await {
         let msg = format!("{e:#}");
         warn!("export failed: {msg}");
         let _ = app.emit(EVENT_ERROR, &msg);

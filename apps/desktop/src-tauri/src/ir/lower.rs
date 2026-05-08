@@ -11,12 +11,12 @@
 use thiserror::Error;
 
 use super::graph::IRGraph;
-use super::node::{IRNode, NodeId, PixFmt};
+use super::node::{FadeKind, IRNode, NodeId, PixFmt};
 use super::target::RenderTarget;
 use crate::state::animated::Animated;
 use crate::state::color::Rgba;
 use crate::state::ids::MediaId;
-use crate::state::layer::{Layer, LayerParams};
+use crate::state::layer::{Layer, LayerParams, SubtitlesSource};
 use crate::state::project::Project;
 use crate::state::track::TrackKind;
 
@@ -26,6 +26,10 @@ pub enum LowerError {
     MissingMedia(MediaId),
     #[error("layer kind {kind} is not yet supported by the IR MVP")]
     UnsupportedLayer { kind: &'static str },
+    #[error("subtitles file not found: {0}")]
+    SubtitlesFileNotFound(String),
+    #[error("subtitles inline source must be written to a temp file before lowering")]
+    InlineSubtitlesNotMaterialized,
 }
 
 pub fn lower(project: &Project, target: RenderTarget) -> Result<IRGraph, LowerError> {
@@ -71,7 +75,14 @@ pub fn lower(project: &Project, target: RenderTarget) -> Result<IRGraph, LowerEr
                 }
             }
             TrackKind::Subtitle => {
-                // MVP: subtitles deferred to Phase 2 (DrawText/Subs nodes).
+                for layer in track.layers.iter() {
+                    if !layer.enabled {
+                        continue;
+                    }
+                    if matches!(layer.params, LayerParams::Subtitles(_)) {
+                        current_v = lower_video_layer(&mut g, layer, current_v, project, target)?;
+                    }
+                }
             }
         }
     }
@@ -140,8 +151,11 @@ fn lower_video_layer(
                 fps_den: target.fps.den,
             });
 
+            let layer_dur = (layer.t_end_us - layer.t_start_us).max(0);
+            let faded = apply_fades(g, fps, layer_dur, p.fade_in_us as i64, p.fade_out_us as i64);
+
             let placed = g.add_node(IRNode::SetPts {
-                in_: fps,
+                in_: faded,
                 offset_us: layer.t_start_us,
             });
 
@@ -190,14 +204,138 @@ fn lower_video_layer(
                 gate_end_us: layer.t_end_us,
             }))
         }
-        LayerParams::ImageOverlay(_) => Err(LowerError::UnsupportedLayer { kind: "ImageOverlay" }),
-        LayerParams::Text(_) => Err(LowerError::UnsupportedLayer { kind: "Text" }),
+        LayerParams::ImageOverlay(p) => {
+            let media = project
+                .media_pool
+                .get(&p.media)
+                .ok_or(LowerError::MissingMedia(p.media))?;
+            let input = g.add_input(&media.path_abs);
+
+            let dur = (layer.t_end_us - layer.t_start_us).max(0);
+            let dec = g.add_node(IRNode::ImageDecode {
+                input,
+                duration_us: dur,
+            });
+
+            let fps = g.add_node(IRNode::Fps {
+                in_: dec,
+                fps_num: target.fps.num,
+                fps_den: target.fps.den,
+            });
+
+            let faded = apply_fades(g, fps, dur, p.fade_in_us as i64, p.fade_out_us as i64);
+
+            let placed = g.add_node(IRNode::SetPts {
+                in_: faded,
+                offset_us: layer.t_start_us,
+            });
+
+            let alpha = static_or(&p.opacity, 1.0);
+            let with_alpha = if alpha < 1.0 - 1e-9 {
+                g.add_node(IRNode::Opacity {
+                    in_: placed,
+                    alpha,
+                })
+            } else {
+                placed
+            };
+
+            let x = static_or(&p.transform.x, 0.0) as i32;
+            let y = static_or(&p.transform.y, 0.0) as i32;
+
+            // MVP: transform.scale_x/y ignored — image plays at native size.
+            // Adding expression-based Scale (`iw*sx:ih*sy`) is a follow-up.
+
+            Ok(g.add_node(IRNode::Overlay {
+                base,
+                top: with_alpha,
+                x,
+                y,
+                gate_start_us: layer.t_start_us,
+                gate_end_us: layer.t_end_us,
+            }))
+        }
+        LayerParams::Subtitles(p) => {
+            // Subtitles burn onto whatever video stream is currently the base.
+            // For inline ASS/SRT, the caller materializes the source to a temp
+            // file before lowering and passes the resulting path through a
+            // `Media` source. The lower step doesn't write files itself —
+            // keeps the function pure.
+            let path = match &p.source {
+                SubtitlesSource::Media(media_id) => {
+                    let media = project
+                        .media_pool
+                        .get(media_id)
+                        .ok_or(LowerError::MissingMedia(*media_id))?;
+                    media.path_abs.to_string_lossy().to_string()
+                }
+                SubtitlesSource::InlineAss(_) | SubtitlesSource::InlineSrt(_) => {
+                    return Err(LowerError::InlineSubtitlesNotMaterialized);
+                }
+            };
+            if !std::path::Path::new(&path).exists() {
+                return Err(LowerError::SubtitlesFileNotFound(path));
+            }
+            Ok(g.add_node(IRNode::Subtitles { in_: base, path }))
+        }
+        LayerParams::Text(p) => {
+            let alpha = static_or(&p.opacity, 1.0);
+            let color = static_or(&p.color, Rgba::WHITE);
+            let x = static_or(&p.transform.x, 0.0) as i32;
+            let y = static_or(&p.transform.y, 0.0) as i32;
+            Ok(g.add_node(IRNode::DrawText {
+                in_: base,
+                content: p.content.clone(),
+                font_family: p.font.family.clone(),
+                font_size: p.font.size_px,
+                color,
+                alpha,
+                x,
+                y,
+                gate_start_us: layer.t_start_us,
+                gate_end_us: layer.t_end_us,
+            }))
+        }
         LayerParams::Template(_) => Err(LowerError::UnsupportedLayer { kind: "Template" }),
-        LayerParams::Subtitles(_) => Err(LowerError::UnsupportedLayer { kind: "Subtitles" }),
         LayerParams::Audio(_) => Err(LowerError::UnsupportedLayer {
             kind: "Audio on video track",
         }),
     }
+}
+
+/// Wrap `in_` with fade-in and/or fade-out nodes. Times are in the input
+/// stream's local clock (i.e. relative to the trimmed/looped source after
+/// `trim`/`setpts=PTS-STARTPTS`). Both fade durations are clamped to
+/// `[0, layer_dur]` so a 5s clip with `fade_out_us = 7s` doesn't try to
+/// run the fade off the end.
+fn apply_fades(
+    g: &mut IRGraph,
+    in_: NodeId,
+    layer_dur_us: i64,
+    fade_in_us: i64,
+    fade_out_us: i64,
+) -> NodeId {
+    let mut current = in_;
+    let in_dur = fade_in_us.clamp(0, layer_dur_us);
+    if in_dur > 0 {
+        current = g.add_node(IRNode::Fade {
+            in_: current,
+            kind: FadeKind::In,
+            start_local_us: 0,
+            duration_us: in_dur,
+        });
+    }
+    let out_dur = fade_out_us.clamp(0, layer_dur_us);
+    if out_dur > 0 {
+        let start = (layer_dur_us - out_dur).max(0);
+        current = g.add_node(IRNode::Fade {
+            in_: current,
+            kind: FadeKind::Out,
+            start_local_us: start,
+            duration_us: out_dur,
+        });
+    }
+    current
 }
 
 fn lower_audio_layer(

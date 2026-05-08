@@ -19,8 +19,8 @@ use crate::ir;
 use crate::mpv;
 use crate::state::{
     self, Actor, ColorParams, CommandError, LayerParams, MediaItem, MediaKind, ProjectHandle,
-    Rgba, TrackKind,
-    actor::{CompositionPatch, LayerPatch},
+    Rgba, SubtitlesParams, SubtitlesSource, TrackKind,
+    actor::{CompositionPatch, LayerParamsPatch, LayerPatch},
     animated::Animated,
     ids::new_id,
     time::{Rational, TimeUs},
@@ -62,6 +62,88 @@ pub struct LayerSummary {
     pub color_hint: String,
     pub enabled: bool,
     pub locked: bool,
+    /// UI-friendly snapshot of the kind-specific params. Read by the property
+    /// panel; mutates flow back through `update_layer_params` with the
+    /// matching `LayerParamsPatch` variant.
+    pub params: LayerParamsView,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(tag = "kind")]
+pub enum LayerParamsView {
+    VideoClip(VideoClipView),
+    ImageOverlay(ImageOverlayView),
+    Text(TextView),
+    Color(ColorView),
+    Audio(AudioView),
+    Subtitles(SubtitlesView),
+    Template { template_id: String },
+}
+
+#[derive(Serialize, Clone)]
+pub struct VideoClipView {
+    pub media_id: String,
+    pub media_label: String,
+    pub src_in_us: i64,
+    pub src_out_us: i64,
+    pub x: f64,
+    pub y: f64,
+    pub scale_x: f64,
+    pub scale_y: f64,
+    pub opacity: f64,
+    pub speed: f64,
+    pub flip_h: bool,
+    pub flip_v: bool,
+    pub fade_in_us: u64,
+    pub fade_out_us: u64,
+}
+
+#[derive(Serialize, Clone)]
+pub struct ImageOverlayView {
+    pub media_id: String,
+    pub media_label: String,
+    pub x: f64,
+    pub y: f64,
+    pub scale_x: f64,
+    pub scale_y: f64,
+    pub opacity: f64,
+    pub fade_in_us: u64,
+    pub fade_out_us: u64,
+}
+
+#[derive(Serialize, Clone)]
+pub struct TextView {
+    pub content: String,
+    pub font_family: String,
+    pub font_size_px: f32,
+    pub color: Rgba,
+    pub x: f64,
+    pub y: f64,
+    pub opacity: f64,
+}
+
+#[derive(Serialize, Clone)]
+pub struct ColorView {
+    pub color: Rgba,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Serialize, Clone)]
+pub struct AudioView {
+    pub media_id: String,
+    pub media_label: String,
+    pub src_in_us: i64,
+    pub src_out_us: i64,
+    pub gain_db: f64,
+    pub pan: f64,
+    pub mute: bool,
+}
+
+#[derive(Serialize, Clone)]
+pub struct SubtitlesView {
+    pub source_kind: String,
+    pub source_value: String,
 }
 
 #[derive(Serialize, Clone)]
@@ -152,6 +234,7 @@ pub async fn project_summary(handle: State<'_, ProjectHandle>) -> Result<Project
                     color_hint: layer_color_hint(l),
                     enabled: l.enabled,
                     locked: l.locked,
+                    params: layer_params_view(&l.params, &snap.media_pool),
                 })
                 .collect(),
         })
@@ -178,6 +261,103 @@ pub async fn project_summary(handle: State<'_, ProjectHandle>) -> Result<Project
         media,
         tracks,
     })
+}
+
+fn layer_params_view(
+    params: &LayerParams,
+    media_pool: &imbl::HashMap<state::MediaId, state::MediaItem>,
+) -> LayerParamsView {
+    use state::Animated;
+    let static_or = |a: &Animated<f64>, fb: f64| -> f64 {
+        match a {
+            Animated::Static(v) => *v,
+            Animated::Keyframed(kfs) => kfs.iter().next().map(|kf| kf.value).unwrap_or(fb),
+        }
+    };
+    let static_or_rgba = |a: &Animated<Rgba>, fb: Rgba| -> Rgba {
+        match a {
+            Animated::Static(v) => *v,
+            Animated::Keyframed(kfs) => kfs.iter().next().map(|kf| kf.value).unwrap_or(fb),
+        }
+    };
+    let media_label_for = |id: &state::MediaId| -> String {
+        media_pool
+            .get(id)
+            .and_then(|m| {
+                m.label.clone().or_else(|| {
+                    m.path_abs
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                })
+            })
+            .unwrap_or_else(|| id.to_string())
+    };
+    match params {
+        LayerParams::VideoClip(p) => LayerParamsView::VideoClip(VideoClipView {
+            media_id: p.media.to_string(),
+            media_label: media_label_for(&p.media),
+            src_in_us: p.src_in_us,
+            src_out_us: p.src_out_us,
+            x: static_or(&p.transform.x, 0.0),
+            y: static_or(&p.transform.y, 0.0),
+            scale_x: static_or(&p.transform.scale_x, 1.0),
+            scale_y: static_or(&p.transform.scale_y, 1.0),
+            opacity: static_or(&p.opacity, 1.0),
+            speed: p.speed,
+            flip_h: p.flip_h,
+            flip_v: p.flip_v,
+            fade_in_us: p.fade_in_us,
+            fade_out_us: p.fade_out_us,
+        }),
+        LayerParams::ImageOverlay(p) => LayerParamsView::ImageOverlay(ImageOverlayView {
+            media_id: p.media.to_string(),
+            media_label: media_label_for(&p.media),
+            x: static_or(&p.transform.x, 0.0),
+            y: static_or(&p.transform.y, 0.0),
+            scale_x: static_or(&p.transform.scale_x, 1.0),
+            scale_y: static_or(&p.transform.scale_y, 1.0),
+            opacity: static_or(&p.opacity, 1.0),
+            fade_in_us: p.fade_in_us,
+            fade_out_us: p.fade_out_us,
+        }),
+        LayerParams::Text(p) => LayerParamsView::Text(TextView {
+            content: p.content.clone(),
+            font_family: p.font.family.clone(),
+            font_size_px: p.font.size_px,
+            color: static_or_rgba(&p.color, Rgba::WHITE),
+            x: static_or(&p.transform.x, 0.0),
+            y: static_or(&p.transform.y, 0.0),
+            opacity: static_or(&p.opacity, 1.0),
+        }),
+        LayerParams::Color(p) => LayerParamsView::Color(ColorView {
+            color: static_or_rgba(&p.color, Rgba::BLACK),
+            width: p.width,
+            height: p.height,
+        }),
+        LayerParams::Audio(p) => LayerParamsView::Audio(AudioView {
+            media_id: p.media.to_string(),
+            media_label: media_label_for(&p.media),
+            src_in_us: p.src_in_us,
+            src_out_us: p.src_out_us,
+            gain_db: static_or(&p.gain_db, 0.0),
+            pan: static_or(&p.pan, 0.0),
+            mute: p.mute,
+        }),
+        LayerParams::Subtitles(p) => {
+            let (kind, value) = match &p.source {
+                SubtitlesSource::Media(id) => ("Media".to_string(), id.to_string()),
+                SubtitlesSource::InlineAss(s) => ("InlineAss".to_string(), s.clone()),
+                SubtitlesSource::InlineSrt(s) => ("InlineSrt".to_string(), s.clone()),
+            };
+            LayerParamsView::Subtitles(SubtitlesView {
+                source_kind: kind,
+                source_value: value,
+            })
+        }
+        LayerParams::Template(p) => LayerParamsView::Template {
+            template_id: p.template_id.clone(),
+        },
+    }
 }
 
 fn layer_kind(params: &LayerParams) -> String {
@@ -273,6 +453,8 @@ pub async fn add_media_layer(
                 flip_v: false,
                 blend_mode: Default::default(),
                 speed: 1.0,
+                fade_in_us: 0,
+                fade_out_us: 0,
             }),
             total_src,
         ),
@@ -295,13 +477,29 @@ pub async fn add_media_layer(
                 transform: Default::default(),
                 opacity: Animated::Static(1.0),
                 blend_mode: Default::default(),
+                fade_in_us: 0,
+                fade_out_us: 0,
             }),
             // Stills: default to 3 seconds of screen time.
             3_000_000,
         ),
-        MediaKind::Subtitle => {
-            return Err("subtitle media drop is not supported yet".to_string());
-        }
+        MediaKind::Subtitle => (
+            LayerParams::Subtitles(SubtitlesParams {
+                source: SubtitlesSource::Media(media),
+            }),
+            // Subtitle file's "duration" is its rendered span. Without parsing
+            // the file we don't know it; default to 10s and let the user trim.
+            10_000_000,
+        ),
+    };
+
+    // Subtitles must live on a Subtitle track for the lowering to apply them.
+    // If the user drops a subtitle media onto a video/audio track, fall back
+    // to the first Subtitle track (auto-creating one if necessary).
+    let track = if matches!(media_item.kind, MediaKind::Subtitle) {
+        ensure_subtitle_track(handle.inner(), snap.as_ref()).await?
+    } else {
+        track
     };
 
     let t_end_us = t_start_us + span_us;
@@ -349,6 +547,92 @@ pub async fn add_demo_color_layer(handle: State<'_, ProjectHandle>) -> Result<St
         .await
         .map_err(|e: CommandError| e.to_string())?;
     Ok(layer_id.to_string())
+}
+
+#[tauri::command]
+pub async fn add_text_layer(
+    handle: State<'_, ProjectHandle>,
+    track_id: String,
+    content: String,
+    t_start_us: TimeUs,
+    duration_us: TimeUs,
+) -> Result<String, String> {
+    let track = Uuid::parse_str(&track_id).map_err(|e| format!("track_id: {e}"))?;
+    let span = duration_us.max(100_000);
+    let params = LayerParams::Text(state::layer::TextParams {
+        content,
+        font: state::layer::FontSpec {
+            family: "Arial".to_string(),
+            size_px: 72.0,
+            weight: 400,
+            italic: false,
+        },
+        color: Animated::Static(Rgba::WHITE),
+        align: state::layer::TextAlign::Center,
+        transform: Default::default(),
+        opacity: Animated::Static(1.0),
+        shadow: None,
+        outline: None,
+        intro: None,
+        outro: None,
+        backend_hint: state::layer::TextBackend::DrawText,
+    });
+    handle
+        .add_layer(Actor::User, track, params, t_start_us, t_start_us + span)
+        .await
+        .map(|id| id.to_string())
+        .map_err(|e: CommandError| e.to_string())
+}
+
+#[tauri::command]
+pub async fn add_demo_text_layer(handle: State<'_, ProjectHandle>) -> Result<String, String> {
+    // Mirrors `add_demo_color_layer`: append a 3s "TEXT" Text layer to the
+    // first video track. Useful before the property panel exists for editing
+    // content from the UI.
+    let snap = handle.snapshot().await;
+    let track_id = match snap
+        .tracks
+        .iter()
+        .find(|t| matches!(t.kind, TrackKind::Video))
+    {
+        Some(t) => t.id,
+        None => handle
+            .add_track(Actor::User, TrackKind::Video, Some("Video".into()))
+            .await
+            .map_err(|e: CommandError| e.to_string())?,
+    };
+    let snap = handle.snapshot().await;
+    let track = snap
+        .tracks
+        .iter()
+        .find(|t| t.id == track_id)
+        .expect("track just created");
+    let t_start = track.layers.last().map(|l| l.t_end_us).unwrap_or(0);
+    let t_end = t_start + 3_000_000;
+
+    let params = LayerParams::Text(state::layer::TextParams {
+        content: "TEXT".to_string(),
+        font: state::layer::FontSpec {
+            family: "Arial".to_string(),
+            size_px: 96.0,
+            weight: 700,
+            italic: false,
+        },
+        color: Animated::Static(Rgba::WHITE),
+        align: state::layer::TextAlign::Center,
+        transform: Default::default(),
+        opacity: Animated::Static(1.0),
+        shadow: None,
+        outline: None,
+        intro: None,
+        outro: None,
+        backend_hint: state::layer::TextBackend::DrawText,
+    });
+    handle
+        .add_layer(Actor::User, track_id, params, t_start, t_end)
+        .await
+        .map(|id| id.to_string())
+        .map_err(|e: CommandError| e.to_string())
 }
 
 #[tauri::command]
@@ -486,6 +770,70 @@ pub async fn update_layer(
     let id = Uuid::parse_str(&layer_id).map_err(|e| format!("layer_id: {e}"))?;
     handle
         .update_layer(Actor::User, id, patch)
+        .await
+        .map_err(|e: CommandError| e.to_string())
+}
+
+#[tauri::command]
+pub async fn update_layer_params(
+    handle: State<'_, ProjectHandle>,
+    layer_id: String,
+    patch: LayerParamsPatch,
+) -> Result<(), String> {
+    let id = Uuid::parse_str(&layer_id).map_err(|e| format!("layer_id: {e}"))?;
+    handle
+        .update_layer_params(Actor::User, id, patch)
+        .await
+        .map_err(|e: CommandError| e.to_string())
+}
+
+/// Add a subtitles layer that burns a subtitle file (`.srt` / `.ass`) onto
+/// the timeline. The path must be absolute and point to an on-disk file —
+/// import the file via `import_media` first if it isn't already in the pool.
+#[tauri::command]
+pub async fn add_subtitles_layer(
+    handle: State<'_, ProjectHandle>,
+    media_id: String,
+    t_start_us: TimeUs,
+    duration_us: TimeUs,
+) -> Result<String, String> {
+    let media = Uuid::parse_str(&media_id).map_err(|e| format!("media_id: {e}"))?;
+    let snap = handle.snapshot().await;
+    let media_item = snap
+        .media_pool
+        .get(&media)
+        .ok_or_else(|| "media not found in pool".to_string())?;
+    if !matches!(media_item.kind, MediaKind::Subtitle) {
+        return Err(format!(
+            "media {media_id} is {:?}, expected Subtitle",
+            media_item.kind
+        ));
+    }
+    let track_id = ensure_subtitle_track(handle.inner(), snap.as_ref()).await?;
+    let span = duration_us.max(100_000);
+    let params = LayerParams::Subtitles(SubtitlesParams {
+        source: SubtitlesSource::Media(media),
+    });
+    handle
+        .add_layer(Actor::User, track_id, params, t_start_us, t_start_us + span)
+        .await
+        .map(|id| id.to_string())
+        .map_err(|e: CommandError| e.to_string())
+}
+
+async fn ensure_subtitle_track(
+    handle: &ProjectHandle,
+    snap: &state::Project,
+) -> Result<state::TrackId, String> {
+    if let Some(t) = snap
+        .tracks
+        .iter()
+        .find(|t| matches!(t.kind, TrackKind::Subtitle))
+    {
+        return Ok(t.id);
+    }
+    handle
+        .add_track(Actor::User, TrackKind::Subtitle, Some("Subtitles".into()))
         .await
         .map_err(|e: CommandError| e.to_string())
 }
@@ -674,14 +1022,62 @@ pub async fn export_project(
     app: tauri::AppHandle,
     handle: State<'_, ProjectHandle>,
     output_path: String,
+    preset: Option<export::ExportPreset>,
 ) -> Result<(), String> {
     let snap = handle.snapshot().await;
     let path = PathBuf::from(output_path);
     let project = (*snap).clone();
+    let preset = preset.unwrap_or_default();
     tauri::async_runtime::spawn(async move {
-        export::export_to_mp4_logged(app, &project, path).await;
+        export::export_with_preset_logged(app, &project, path, preset).await;
     });
     Ok(())
+}
+
+#[tauri::command]
+pub async fn export_queue_enqueue(
+    queue: State<'_, export::ExportQueue>,
+    handle: State<'_, ProjectHandle>,
+    output_path: String,
+    preset: Option<export::ExportPreset>,
+) -> Result<String, String> {
+    let snap = handle.snapshot().await;
+    let preset = preset.unwrap_or_default();
+    let id = queue
+        .enqueue(snap, output_path, preset)
+        .await;
+    Ok(id.to_string())
+}
+
+#[tauri::command]
+pub async fn export_queue_list(
+    queue: State<'_, export::ExportQueue>,
+) -> Result<Vec<export::ExportQueueItem>, String> {
+    Ok(queue.list().await)
+}
+
+#[tauri::command]
+pub async fn export_queue_remove(
+    queue: State<'_, export::ExportQueue>,
+    id: String,
+) -> Result<(), String> {
+    let id = Uuid::parse_str(&id).map_err(|e| format!("id: {e}"))?;
+    queue.remove(id).await
+}
+
+#[tauri::command]
+pub async fn export_queue_clear_finished(
+    queue: State<'_, export::ExportQueue>,
+) -> Result<(), String> {
+    queue.clear_finished().await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn hw_encoder_probe(
+    cache: State<'_, export::HwEncoderCache>,
+) -> Result<export::HwEncoderProbe, String> {
+    Ok((*cache.probe().await).clone())
 }
 
 #[tauri::command]

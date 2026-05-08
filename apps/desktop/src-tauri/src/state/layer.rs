@@ -72,6 +72,14 @@ pub struct VideoClipParams {
     pub blend_mode: BlendMode,
     /// 1.0 default. Warns at apply time if != 1 with attached audio.
     pub speed: f64,
+    /// Fade-from-black at the start of the clip. 0 = no fade. Lowering uses the
+    /// `fade` filter (single-input, simpler than `xfade` which needs two
+    /// streams). Capped at the clip duration at lowering time.
+    #[serde(default)]
+    pub fade_in_us: u64,
+    /// Fade-to-black at the end of the clip. Same semantics as `fade_in_us`.
+    #[serde(default)]
+    pub fade_out_us: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -81,6 +89,12 @@ pub struct ImageOverlayParams {
     pub opacity: Animated<f64>,
     #[serde(default)]
     pub blend_mode: BlendMode,
+    /// Optional fade-in / fade-out wrapping the image overlay. Mirrors
+    /// `VideoClipParams::fade_in_us` semantics.
+    #[serde(default)]
+    pub fade_in_us: u64,
+    #[serde(default)]
+    pub fade_out_us: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

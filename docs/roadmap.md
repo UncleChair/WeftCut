@@ -148,6 +148,30 @@ Forward motion: **Phase 1 closed for milestone purposes, with the three gaps tra
 
 **Exit criteria:** add a title, a logo, captions, and a fade transition.
 
+### Phase 2 status (2026-05-08, Windows 11)
+
+**SUBSTANTIALLY COMPLETE** — all five slices land, with two named caveats:
+
+| Slice | Status |
+|---|---|
+| ImageOverlay layer | ✅ IR + ffmpeg/mpv emitters + UI wiring + property-panel transform/opacity/fade controls. Export path verified at the parser level; mpv still-image preview unmeasured (caveat documented). |
+| Text / DrawText | ✅ IR + emitters + property-panel content/font/size/color/x-y/opacity controls. Export path now works end-to-end after the `;`-separator fix (see "emit_ffmpeg fix" below). Live preview through mpv's bundled libavfilter still fails with `Raw(-13)` — separate from the export-side bug, deferred again. |
+| Subtitles | ✅ IR `Subtitles` node + lower for `SubtitlesParams` (Media-backed, inline ASS/SRT not yet wired). Burns onto current_v via ffmpeg's `subtitles` filter. Auto-creates a Subtitle track when the user drops a `.srt`/`.ass` from the media pool. ffmpeg + mpv emitters share the same path-escape rule (`\:` for drive letters, `'\''` for embedded quotes). |
+| xfade transitions | ✅ shipped as **per-clip fade-in / fade-out** via the simpler `fade` filter (single-input). New `IRNode::Fade` + `FadeKind`. Property panel exposes `fade_in_us` / `fade_out_us` on `VideoClip` and `ImageOverlay`. Crossfade-between-adjacent-clips deferred — needs an overlap-exempt `Transition` concept (see "deliberately deferred" below). |
+| Property panel UI | ✅ Right-side sidebar. Edits envelope (label, t_start_us, t_end_us, enabled) and kind-specific scalars (Text: content/font/size/color/x/y/opacity; VideoClip: opacity/scale/x/y/speed/fade/flip; ImageOverlay: opacity/x/y/fade; Color: color/dims; Audio: gain/pan/mute; Subtitles: read-only source view). Range/color inputs debounced; text/number inputs commit on blur. New `LayerParamsPatch` actor command + Tauri command flow. |
+
+### emit_ffmpeg fix (2026-05-08) — silent export-pipeline bug
+
+While diagnosing the deferred Text-preview failure, the export-side bisection (run the emitted graph through `ffmpeg -filter_complex_script` headless) revealed that **the export pipeline had been broken end-to-end since Phase 1.12**: `emit_ffmpeg` separated filter clauses with `\n` only, but lavfi requires `;` between filterchains. ffmpeg's parser rejected every multi-clause graph with "Trailing garbage after a filter". Existing unit tests only checked string contents and never invoked ffmpeg, so the regression slipped through.
+
+Fix: `emit_ffmpeg` now uses the same `write_clause` helper as `emit_mpv`, which inserts `;\n` between clauses. New regression guard `empty_project_graph_parses_through_ffmpeg` in `ir/mod.rs` runs `ffmpeg -filter_complex_script` against the emitter output (skipped when ffmpeg is absent). Test count: 53 → 54.
+
+### Deliberately deferred (still open)
+
+- **Crossfade / dissolve between two clips.** Per-clip fade-in/fade-out covers "fade-to-black" from the roadmap, but real crossfades need temporal overlap between layers — which violates the `LayerInvariants::no_overlap` rule. Design path: `LayerParams::Transition` variant exempted from overlap, lowering walks the bracketing layers and emits `xfade`. ~150 LoC, judgment call to ship later.
+- **mpv drawtext + image-overlay live preview.** Export now works for projects with these layer kinds; live preview through libmpv's bundled libavfilter still fails with `Raw(-13)` for drawtext (unmeasured for image overlays — likely related). Failing graphs + reproduction notes still in `project_text_preview_deferred.md`. Likely a libmpv-specific `--lavfi-complex` quirk on color sources; suspects to try next: drawtext directly on `[vid1]` instead of color base, `--lavfi=` startup option, mpv 0.42 to see if libavfilter version helps.
+- **Layer composition order.** Lowering walks layers in track-iteration order, so layers on earlier-iterating tracks become the base. With the default A roll / B roll, text on A roll renders correctly behind video on B roll *only if you put text on B roll*. Either document the convention firmly in the UI or change lowering to top-down composition.
+
 ## Phase 3 — Export pipeline (1–2 weeks)
 
 - ffmpeg subprocess driver with progress reporting.
@@ -157,6 +181,18 @@ Forward motion: **Phase 1 closed for milestone purposes, with the three gaps tra
 - Export progress events to UI.
 
 **Exit criteria:** export a complete project to MP4 with hardware acceleration on the host platform; output plays correctly in VLC and a browser.
+
+### Phase 3 status (2026-05-08)
+
+**COMPLETE** for the listed deliverables. Verification of "plays correctly in VLC and a browser" needs a follow-up sanity export; the export pipeline now actually emits valid lavfi (see emit_ffmpeg fix above) so this is the first time end-to-end MP4 generation has been operational.
+
+| Slice | Status |
+|---|---|
+| ffmpeg subprocess driver + progress | ✅ from Phase 1.12. Now driving the new preset/HW path. |
+| Export presets | ✅ `ExportPreset` enum: `H264Mp4_1080p`, `H264Mp4_4K`, `ProResMov`, `Gif`. ProRes uses `prores_ks -profile:v 3` with PCM s16le; GIF uses two-pass `palettegen` / `paletteuse` via filter-graph suffix appended to the IR's lavfi script. UI dropdown next to Export button picks the preset; default-extension flips automatically. |
+| HW encoder detection | ✅ Runtime probe via tiny synthetic encode (`color=...:d=0.1` → encoder → `null`) per candidate, time-boxed to 4s per encoder. Per-platform candidate list: Win=[NVENC, QSV, AMF], macOS=[VideoToolbox], Linux=[NVENC, VAAPI]. Result cached in memory; queue panel shows the recommended encoder. Each H.264 preset call site swaps `libx264` → `h264_<recommended>`. |
+| Render queue | ✅ `ExportQueue` actor. In-memory FIFO, single tokio worker. `enqueue / list / remove / clear_finished` Tauri commands; `export:queue` events broadcast on every state change. UI: floating queue panel (top-right) showing per-job status + remove button. Removing a Running job sends a kill signal → `kill_on_drop` terminates ffmpeg. |
+| Export progress events | ✅ `export:progress` / `export:complete` / `export:error` from Phase 1.12; new `export:queue` for queue state. |
 
 ## Phase 4 — MCP server (2 weeks)
 
