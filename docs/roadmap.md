@@ -138,6 +138,34 @@ Out-of-scope-but-delivered work that paid for the gaps in calendar terms:
 
 Forward motion: **Phase 1 closed for milestone purposes, with the three gaps tracked as named follow-ups**. The next time we're in front of the project, the natural Phase 1 cleanup is the live-preview-of-compiled-graph slice — it's the deliverable the spec actually wanted from "scrub the result smoothly", and it unblocks meaningful Phase 2 work.
 
+### Phase 1.x leftover (proxy / thumbnails / waveform) closeout (2026-05-08)
+
+The "background-job phase" gap from the Phase 1 audit. **COMPLETE** in seven staged commits (`a028572` → `0e3ce48`). The Phase 4 closeout deferred `media://*` MCP resources to "the proxy/thumbnails/waveform background-job phase" — that's this phase, and they ship together.
+
+| Stage | Result |
+|---|---|
+| 1 — Cache + actor surface | ✅ `cache::CacheLayout` (content-addressable layout in OS app-cache dir, deviates from data-model.md per-`.vproj` spec deliberately — same hash hits across projects). `MediaDerivativesPatch` + `Command::SetMediaDerivatives` + `ProjectHandle::set_media_derivatives`, mirrors `add_media_item` semantics (outside the editing undo stack). Atomicity helpers `temp_path` / `promote_temp` / `discard_temp` + `cached_ok` predicate. |
+| 2+3 — Orchestration + thumbnails | ✅ `jobs/mod.rs` with `OnceLock<Semaphore>` (capacity 2) gating concurrent ffmpeg invocations. `enqueue_for_media` fans jobs out per kind. `jobs/thumbnails.rs` extracts 10 evenly-spaced 320px JPGs via `-vf fps=N/D,scale=...,-frames:v N`. Atomic at directory level — write into `<dest>.tmp/`, verify N non-empty files, rename. |
+| 4 — Proxy | ✅ 540p H.264 fast-preset MP4 software encode (HW probe stays for user exports). Smoke test caught a real bug — ffmpeg can't infer mp4 from `<dest>.mp4.tmp` so the muxer needs explicit `-f mp4`. |
+| 5 — Waveform | ✅ Mono f32 PCM at 22050 Hz piped to stdout, max-abs per ~10ms window written to a compact binary peaks file (`VPEAKS\0\0` magic + header + f32 array). 1 hour of audio ≈ 1.4 MB; mmap-friendly. |
+| 6 — `media://*` MCP resources | ✅ `media://{id}/thumbnail` returns the middle thumbnail, `media://{id}/frame/{t_us}` does on-demand extraction with disk cache, `media://{id}/waveform` returns the peaks file. All via `BlobResourceContents.blob` (base64). 404 with hint text pointing at `media:job_complete` when derivatives haven't been generated yet — agents know to wait + retry rather than giving up. |
+| 7 — Import-time fan-out | ✅ Both `commands::import_media` and `VidetorServer::import_media` call `jobs::enqueue_for_media` after `add_media_item` succeeds. Identical event streams from either source. |
+
+Tests: 70 → 88. **+11 jobs tests** running real ffmpeg against tiny `lavfi`-generated fixtures (skipped when ffmpeg absent — the smoke-test pattern from `feedback_emit_smoke_tests.md`). The `.mp4.tmp` and waveform-amplitude bugs that actually surfaced both came from these tests, vindicating the discipline.
+
+Tauri events the UI can listen for (not yet wired into a media-pool progress strip — polish phase): `media:job_started`, `media:job_complete`, `media:job_error` with `{ media_id, kind: "thumbnails" | "proxy" | "waveform", path? | error? }` payloads.
+
+### Deliberately deferred from Phase 1.x
+
+| Deferral | Where it belongs |
+|---|---|
+| Frontend display of thumbnails / waveforms (media pool thumbnail strip; timeline waveform peaks under audio layers) | Phase 7 polish or whenever the editing UX feels held back. Backend already has the data; rendering is a React + canvas job. |
+| Per-vproj cache mirroring (data-model.md "On-disk format" originally spec'd `cache/` inside `.vproj`) | Lands when "consolidate to project folder" is a feature. Until then the app-cache deviation makes more sense (cross-project hits). |
+| Proxy auto-selection (libmpv plays the proxy when original is too heavy) | Needs a heuristic ("source is 4K + proxy exists → use proxy"). Not yet wired into `mpv::play_*`. |
+| ffmpeg behind SOCKS proxy auto-download | Pre-existing Phase 0 issue; manual `winget install Gyan.FFmpeg` is the documented workaround. |
+
+Forward motion: Phase 1.x closed. Next slice options: **Phase 5 (rasterized templates)**, **Phase 6 (cloud transcription)**, or pick at remaining Phase 2 deferrals (mpv drawtext live preview, crossfade, layer composition order).
+
 ## Phase 2 — Native overlays (2 weeks)
 
 - `ImageOverlay` layer (ffmpeg `overlay`).
