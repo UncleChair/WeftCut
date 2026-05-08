@@ -724,7 +724,9 @@ pub struct CompiledGraph {
 
 #[tauri::command]
 pub async fn import_media(
+    app: tauri::AppHandle,
     handle: State<'_, ProjectHandle>,
+    cache: State<'_, crate::cache::CacheLayout>,
     path: String,
 ) -> Result<String, String> {
     let path_buf = PathBuf::from(&path);
@@ -754,11 +756,20 @@ pub async fn import_media(
     .await
     .map_err(|e| format!("import join: {e}"))??;
 
-    handle
+    let item_for_jobs = item.clone();
+    let id = handle
         .add_media_item(Actor::User, item)
         .await
-        .map(|id| id.to_string())
-        .map_err(|e: CommandError| e.to_string())
+        .map_err(|e: CommandError| e.to_string())?;
+    // Fan out thumbnails / proxy / waveform jobs. Fire-and-forget; the
+    // global semaphore keeps concurrent ffmpeg children bounded.
+    crate::jobs::enqueue_for_media(
+        app,
+        (*cache).clone(),
+        (*handle).clone(),
+        item_for_jobs,
+    );
+    Ok(id.to_string())
 }
 
 #[tauri::command]

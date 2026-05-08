@@ -10,7 +10,7 @@
 //! incoming requests. Localhost-only binding is the real isolation on a
 //! single-user machine; flipping to 0.0.0.0 must wait for proper auth.
 //!
-//! Resource surface (read-only, Phase 4 Stage 2):
+//! Resource surface (read-only):
 //! - `project://current`     — full Project JSON
 //! - `project://composition` — Composition only
 //! - `project://media`       — media pool
@@ -21,6 +21,12 @@
 //! - `project://markers`     — markers
 //! - `project://history`     — recent ops + checkpoints (snapshot-free)
 //! - `project://compiled`    — compiled IRGraph (JSON)
+//! - `media://{id}/thumbnail` — middle thumbnail JPG (base64 in
+//!   BlobResourceContents). 404 with hint if generation hasn't completed yet.
+//! - `media://{id}/frame/{t_us}` — on-demand frame extraction at the given
+//!   microsecond timestamp, lazy-cached on disk. Multimodal-friendly.
+//! - `media://{id}/waveform` — peaks file (base64). See `jobs/waveform.rs`
+//!   for the binary format.
 //!
 //! Edit tools (Stage 3) and workflow tools (Stage 4) live alongside `ping`
 //! in the `VidetorServer` impl block. The change feed (Stage 5) lives on its
@@ -45,6 +51,7 @@ use rmcp::{
     tool,
     transport::sse_server::SseServer,
 };
+use tauri::AppHandle;
 use chrono::Utc;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -52,8 +59,10 @@ use serde_json::Value;
 use tracing::info;
 use uuid::Uuid;
 
+use crate::cache::{CacheLayout, cached_ok};
 use crate::io::probe;
 use crate::ir::{self, RenderTarget};
+use crate::jobs;
 use crate::state::{
     Actor, Animated, BlendMode, ColorParams, CommandError, CompositionPatch, LayerId, LayerParams,
     LayerParamsPatch, LayerPatch, MarkerId, MarkerPatch, MediaId, MediaItem, MediaKind,
@@ -69,10 +78,13 @@ const URI_MARKERS: &str = "project://markers";
 const URI_HISTORY: &str = "project://history";
 const URI_COMPILED: &str = "project://compiled";
 const PREFIX_LAYERS: &str = "project://layers/";
+const PREFIX_MEDIA: &str = "media://";
 
 const HISTORY_LIMIT: usize = 100;
 
 const APP_JSON: &str = "application/json";
+const APP_OCTET: &str = "application/octet-stream";
+const IMAGE_JPEG: &str = "image/jpeg";
 
 /// Tauri-managed cell holding the MCP server's connection details once it's
 /// bound. Set once at startup; read by the connect-agent panel via the
@@ -94,17 +106,33 @@ pub struct McpInfo {
     pub events_url: String,
 }
 
-/// The MCP server identity. Carries a `ProjectHandle` so resources can read
-/// state via the same single-writer actor that the UI commands use.
-#[derive(Debug, Clone)]
+/// The MCP server identity. Carries:
+/// - `ProjectHandle` so resources read via the same single-writer actor as
+///   UI commands.
+/// - `CacheLayout` so `media://*` reads can serve cached derivatives.
+/// - `AppHandle` so `import_media` can enqueue background jobs that emit
+///   `media:job_*` Tauri events for the UI.
+#[derive(Clone)]
 pub struct VidetorServer {
     project: ProjectHandle,
+    cache: CacheLayout,
+    app: AppHandle,
+}
+
+impl std::fmt::Debug for VidetorServer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VidetorServer").finish_non_exhaustive()
+    }
 }
 
 #[tool(tool_box)]
 impl VidetorServer {
-    pub fn new(project: ProjectHandle) -> Self {
-        Self { project }
+    pub fn new(project: ProjectHandle, cache: CacheLayout, app: AppHandle) -> Self {
+        Self {
+            project,
+            cache,
+            app,
+        }
     }
 
     #[tool(description = "Liveness check. Returns 'pong' to confirm the Videtor MCP server is reachable.")]
@@ -405,11 +433,21 @@ impl VidetorServer {
         .await
         .map_err(|e| McpError::internal_error(format!("import join: {e}"), None))?
         .map_err(|e| McpError::invalid_params(format!("import: {e}"), None))?;
+        let item_for_jobs = item.clone();
         let id = self
             .project
             .add_media_item(agent_actor(), item)
             .await
             .map_err(map_command_error)?;
+        // Fire-and-forget: enqueues thumbnails / proxy / waveform jobs via
+        // the global semaphore. UI listeners pick up `media:job_*` events;
+        // cached derivatives appear in subsequent `project://media` reads.
+        jobs::enqueue_for_media(
+            self.app.clone(),
+            self.cache.clone(),
+            self.project.clone(),
+            item_for_jobs,
+        );
         Ok(ok_text(id.to_string()))
     }
 
@@ -770,6 +808,13 @@ impl ServerHandler for VidetorServer {
         let snap = self.project.snapshot().await;
         let uri = request.uri.as_str();
 
+        // media://* paths return binary content (image bytes, peaks file). We
+        // peel them off here so the rest of `read_resource` can stay
+        // text/JSON oriented.
+        if let Some(tail) = uri.strip_prefix(PREFIX_MEDIA) {
+            return self.read_media_resource(uri, tail, &snap).await;
+        }
+
         let body: Value = match uri {
             URI_PROJECT => serde_json::to_value(&*snap).map_err(serialize_err)?,
             URI_COMPOSITION => serde_json::to_value(&snap.composition).map_err(serialize_err)?,
@@ -855,6 +900,132 @@ impl ServerHandler for VidetorServer {
     }
 }
 
+impl VidetorServer {
+    /// Dispatch handler for `media://{id}/...` URIs. Returns binary content
+    /// (image/jpeg, application/octet-stream) base64-encoded into rmcp's
+    /// `BlobResourceContents.blob` field per the MCP spec.
+    async fn read_media_resource(
+        &self,
+        uri: &str,
+        tail: &str,
+        snap: &crate::state::Project,
+    ) -> Result<ReadResourceResult, McpError> {
+        // tail = "{id}/thumbnail" | "{id}/frame/{t_us}" | "{id}/waveform"
+        let (id_part, sub) = tail.split_once('/').ok_or_else(|| {
+            McpError::resource_not_found(
+                format!("media URI missing sub-path: {uri}"),
+                None,
+            )
+        })?;
+        let media_id: MediaId = Uuid::parse_str(id_part).map_err(|_| {
+            McpError::resource_not_found(
+                format!("media URI has invalid UUID: {id_part}"),
+                None,
+            )
+        })?;
+        let media = snap
+            .media_pool
+            .get(&media_id)
+            .cloned()
+            .ok_or_else(|| {
+                McpError::resource_not_found(
+                    format!("media {media_id} not found"),
+                    None,
+                )
+            })?;
+
+        if sub == "thumbnail" {
+            self.serve_thumbnail(uri, &media).await
+        } else if sub == "waveform" {
+            self.serve_waveform(uri, &media).await
+        } else if let Some(t_str) = sub.strip_prefix("frame/") {
+            let t_us: i64 = t_str.parse().map_err(|_| {
+                McpError::invalid_params(
+                    format!("frame URI t_us not an integer: {t_str}"),
+                    None,
+                )
+            })?;
+            self.serve_frame(uri, &media, t_us).await
+        } else {
+            Err(McpError::resource_not_found(
+                format!("unknown media sub-resource '{sub}'"),
+                None,
+            ))
+        }
+    }
+
+    async fn serve_thumbnail(
+        &self,
+        uri: &str,
+        media: &MediaItem,
+    ) -> Result<ReadResourceResult, McpError> {
+        // Pick the middle thumbnail (index 5) — agents asking for "show me
+        // this clip" generally want a representative still, not the first
+        // frame which is often a slate / black.
+        const MID: usize = 5;
+        let path = self.cache.thumbnail(&media.file_hash_blake3, MID);
+        if !cached_ok(&path) {
+            return Err(McpError::resource_not_found(
+                format!(
+                    "thumbnail not generated yet for media {} — wait for a media:job_complete event with kind=thumbnails, or read media://{}/frame/<t_us> for an on-demand extraction",
+                    media.id, media.id,
+                ),
+                None,
+            ));
+        }
+        blob_response(uri, &path, IMAGE_JPEG).await
+    }
+
+    async fn serve_frame(
+        &self,
+        uri: &str,
+        media: &MediaItem,
+        t_us: i64,
+    ) -> Result<ReadResourceResult, McpError> {
+        let path = jobs::extract_frame(&self.cache, media, t_us).await.map_err(
+            |e| McpError::internal_error(format!("frame extract: {e:#}"), None),
+        )?;
+        blob_response(uri, &path, IMAGE_JPEG).await
+    }
+
+    async fn serve_waveform(
+        &self,
+        uri: &str,
+        media: &MediaItem,
+    ) -> Result<ReadResourceResult, McpError> {
+        let path = self.cache.waveform(&media.file_hash_blake3);
+        if !cached_ok(&path) {
+            return Err(McpError::resource_not_found(
+                format!(
+                    "waveform not generated yet for media {} — wait for a media:job_complete event with kind=waveform",
+                    media.id,
+                ),
+                None,
+            ));
+        }
+        blob_response(uri, &path, APP_OCTET).await
+    }
+}
+
+async fn blob_response(
+    uri: &str,
+    path: &std::path::Path,
+    mime: &str,
+) -> Result<ReadResourceResult, McpError> {
+    use base64::Engine;
+    let bytes = tokio::fs::read(path).await.map_err(|e| {
+        McpError::internal_error(format!("read {}: {e}", path.display()), None)
+    })?;
+    let blob = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(ReadResourceResult {
+        contents: vec![ResourceContents::BlobResourceContents {
+            uri: uri.to_string(),
+            mime_type: Some(mime.to_string()),
+            blob,
+        }],
+    })
+}
+
 struct ResourceDescriptor {
     uri: &'static str,
     name: &'static str,
@@ -903,7 +1074,11 @@ fn serialize_err(e: serde_json::Error) -> McpError {
     McpError::internal_error(format!("serialize: {e}"), None)
 }
 
-pub async fn serve(project: ProjectHandle) -> Result<McpInfo> {
+pub async fn serve(
+    project: ProjectHandle,
+    cache: CacheLayout,
+    app: AppHandle,
+) -> Result<McpInfo> {
     let port = pick_free_port().context("pick free localhost port")?;
     let bind = SocketAddr::from(([127, 0, 0, 1], port));
     let bearer_token = random_token();
@@ -913,7 +1088,15 @@ pub async fn serve(project: ProjectHandle) -> Result<McpInfo> {
     // it — the server keeps running for the app's lifetime; tearing it down is a
     // future concern when sessions get pinned/unpinned.
     let project_for_factory = project.clone();
-    let _ct = server.with_service(move || VidetorServer::new(project_for_factory.clone()));
+    let cache_for_factory = cache.clone();
+    let app_for_factory = app.clone();
+    let _ct = server.with_service(move || {
+        VidetorServer::new(
+            project_for_factory.clone(),
+            cache_for_factory.clone(),
+            app_for_factory.clone(),
+        )
+    });
 
     let events_info = events::serve(project)
         .await

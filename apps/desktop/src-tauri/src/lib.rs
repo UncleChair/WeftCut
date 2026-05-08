@@ -108,6 +108,7 @@ pub fn run() {
             if let Err(e) = cache_layout.ensure_dirs() {
                 tracing::warn!("cache dir setup failed: {e:#}");
             }
+            let cache_for_mcp = cache_layout.clone();
             app.manage(cache_layout);
 
             // Render queue. Single-task FIFO; emits `export:queue` events on
@@ -184,8 +185,9 @@ pub fn run() {
             // the `get_mcp_info` Tauri command.
             let mcp_info_cell: mcp::McpInfoCell = std::sync::Arc::new(std::sync::RwLock::new(None));
             app.manage(mcp_info_cell.clone());
+            let app_for_mcp = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                match mcp::serve(project_for_mcp).await {
+                match mcp::serve(project_for_mcp, cache_for_mcp, app_for_mcp).await {
                     Ok(info) => {
                         if let Ok(mut slot) = mcp_info_cell.write() {
                             *slot = Some(info);

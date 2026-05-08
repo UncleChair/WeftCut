@@ -65,6 +65,11 @@ rmcp = { version = "0.1", features = ["server", "macros", "transport-sse-server"
 axum = "0.8"
 tokio-stream = { version = "0.1", features = ["sync"] }
 futures = "0.3"
+# Phase 1.x Stage 6 base64-encodes media bytes (JPG thumbnails, peaks file)
+# into rmcp's BlobResourceContents.blob String field for the media://*
+# resources. Already transitively present via tauri/rmcp; pinning for direct
+# use.
+base64 = "0.22"
 
 [dev-dependencies]
 insta = { version = "1", features = ["json", "yaml"] }

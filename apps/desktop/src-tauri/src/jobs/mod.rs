@@ -18,10 +18,12 @@
 //!
 //! Job kinds today: `thumbnails`, `proxy`, `waveform`.
 
+mod frame;
 mod proxy;
 mod thumbnails;
 mod waveform;
 
+pub use frame::extract as extract_frame;
 pub use proxy::run as run_proxy;
 pub use thumbnails::run as run_thumbnails;
 pub use waveform::{read_peaks_file, run as run_waveform};
