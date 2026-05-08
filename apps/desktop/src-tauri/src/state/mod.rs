@@ -34,8 +34,9 @@ pub mod transform;
 pub mod validate;
 
 pub use actor::{
-    Actor, ChangeEvent, CommandError, DiffHint, EntityRef, HistoryStatus, ProjectActor,
-    ProjectHandle, spawn,
+    Actor, AudioPatch, ChangeEvent, ColorPatch, CommandError, CompositionPatch, DiffHint,
+    EntityRef, HistoryStatus, ImageOverlayPatch, LayerParamsPatch, LayerPatch, MarkerPatch,
+    ProjectActor, ProjectHandle, TextPatch, VideoClipPatch, spawn,
 };
 pub use history::{HistoryEntry, HistoryEntrySummary, HistoryView, NamedCheckpoint, NamedCheckpointSummary};
 pub use validate::{ValidationError, validate as validate_project};

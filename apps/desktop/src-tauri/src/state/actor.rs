@@ -7,6 +7,7 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -51,7 +52,7 @@ pub enum DiffHint {
 /// Partial update for a layer's envelope. Only `Some(_)` fields are applied.
 /// `params_patch` carries kind-specific edits; the property panel sends one
 /// of the variant patches so the actor can sanity-check the kind matches.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct LayerPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
@@ -72,7 +73,7 @@ pub struct LayerPatch {
 /// Limitation: applying a static-value patch to a keyframed field overwrites
 /// the keyframe track. Acceptable for the MVP property panel where keyframes
 /// are not yet user-editable; revisit when the keyframe UI lands.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind")]
 pub enum LayerParamsPatch {
     Text(TextPatch),
@@ -82,7 +83,7 @@ pub enum LayerParamsPatch {
     Audio(AudioPatch),
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct TextPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
@@ -100,7 +101,7 @@ pub struct TextPatch {
     pub opacity: Option<f64>,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct VideoClipPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub src_in_us: Option<TimeUs>,
@@ -128,7 +129,7 @@ pub struct VideoClipPatch {
     pub fade_out_us: Option<u64>,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ImageOverlayPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub x: Option<f64>,
@@ -146,7 +147,7 @@ pub struct ImageOverlayPatch {
     pub fade_out_us: Option<u64>,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ColorPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<Rgba>,
@@ -156,7 +157,7 @@ pub struct ColorPatch {
     pub height: Option<u32>,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct AudioPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub src_in_us: Option<TimeUs>,
@@ -174,7 +175,7 @@ pub struct AudioPatch {
 /// Partial update for a marker. Only `Some(_)` fields apply. Setting
 /// `end_t_us` to `Some(None)` is impossible through this shape; clearing the
 /// region must round-trip through `remove_marker` + `add_marker`.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct MarkerPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub t_us: Option<TimeUs>,
@@ -187,7 +188,7 @@ pub struct MarkerPatch {
 }
 
 /// Partial update for the composition envelope. Only `Some(_)` fields apply.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct CompositionPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub width: Option<u32>,

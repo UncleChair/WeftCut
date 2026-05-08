@@ -4,9 +4,10 @@
 // and future UI/agent commands; not all wired in the lib build.
 #![allow(dead_code)]
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Rgba {
     pub r: u8,
     pub g: u8,
@@ -30,7 +31,7 @@ impl Default for Rgba {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
 pub enum ColorSpace {
     #[default]
     Bt709,

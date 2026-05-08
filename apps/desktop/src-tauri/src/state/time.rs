@@ -5,6 +5,7 @@
 // they'll be wired by Phase 2 UI / agent commands.
 #![allow(dead_code)]
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 pub type TimeUs = i64;
@@ -13,7 +14,7 @@ pub const US_PER_SEC: i64 = 1_000_000;
 pub const US_PER_MS: i64 = 1_000;
 
 /// Frame rate as an exact rational. `30000/1001` ≠ `29.97`, and ffmpeg cares.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Rational {
     pub num: u32,
     pub den: u32,
