@@ -206,6 +206,41 @@ Fix: `emit_ffmpeg` now uses the same `write_clause` helper as `emit_mpv`, which 
 
 **Exit criteria:** Claude Desktop connected, "make a 30-second highlight from this clip" successfully edits the open project.
 
+### Phase 4 status (2026-05-08)
+
+**SUBSTANTIALLY COMPLETE** in six staged commits (`bbd2414` → `4a8fbcb`). The MVP edit surface is live; deliberately-deferred pieces are the ones that hit IR-lowering gaps or rmcp 0.1.x limits.
+
+| Stage | Result |
+|---|---|
+| 1 — Actor backfill | ✅ `update_marker`, `remove_marker`, `move_track`, `remove_media(force)` with `MediaInUse { referenced_by }` error. 12 new tests. |
+| 2 — Read resources | ✅ `project://current/composition/media/tracks/markers/history/compiled` + dynamic `project://layers/{id}` and `project://layers/{id}/effects` (returns `[]` per scope cut). `media://*` and `templates://*` deferred. New `HistoryView`/`HistoryEntrySummary`/`NamedCheckpointSummary` snapshot-free types. |
+| 3 — Edit tools | ✅ 17 schemars-derived tools mapping 1:1 to actor commands. Structured `LayerOverlap` and `MediaInUse` errors carry `options[]` per `docs/mcp.md` "Error model" so agents can pick a recovery rather than brick-wall. `JsonSchema` derive cascade onto `Rgba`, `ColorSpace`, `Rational`, all `*Patch` types. |
+| 4 — Workflow tools | ✅ `undo`, `redo`, `checkpoint(label)`, `list_checkpoints`, `restore_checkpoint`. |
+| 5 — SSE change feed | ✅ Separate axum-backed `/events` endpoint on its own port — sidesteps rmcp 0.1.x's missing per-session notification surface. Pushes `ChangeEventSummary` (no snapshot) per `docs/mcp.md`'s "events are a notification, not a sync protocol". 15s keep-alive + lagged-event hint when the broadcast channel falls behind. |
+| 6 — Connect-agent panel UI | ✅ Modal panel showing SSE / events URLs + bearer token (revealable) + copy-ready snippets for Claude Desktop / Cursor / curl. Polls `get_mcp_info` until the server binds. en-US + zh-CN strings. |
+
+Tool count today: **23** (`ping` + 17 edit + 5 workflow). Spec target was ~25; the remainder is the Phase 4.x deferred set.
+
+### Deliberately deferred from Phase 4 (Phase 4.x or beyond)
+
+| Deferral | Where it belongs |
+|---|---|
+| **Effect / keyframe MCP edit tools** (`add_effect`, `add_keyframe`, etc.) | Phase 4.x. `state/effect.rs` is "Phase 2 scaffolding — types declared, lowering wired later". `ir/lower.rs` evaluates `Animated<T>` static-or-first-keyframe only. Exposing the actor-level surface today would succeed but produce zero visual change — strictly worse than absence. Re-open when the per-frame `Animated<T>` IR pass lands; effect lowering becomes feasible at the same time. See `project_phase4_scope.md`. |
+| **`dry_run(operations[])` workflow tool** | Phase 4.x. Needs a `Project::try_apply` pure path or `Command::DryRun` actor variant — not a thin wrapper. Cheaper than it sounds with `imbl` structural sharing, but it's a new architectural piece. Until it lands, agents fall back to "execute one op at a time, course-correct on the structured `LayerOverlap` / `MediaInUse` errors". |
+| **Token enforcement on inbound MCP requests** | Phase 4.x or whenever rmcp ships middleware. rmcp 0.1.5's `SseServer` doesn't expose request middleware; localhost-only binding is the actual isolation today. Token is generated and surfaced in the connect panel so the user can paste it into Claude Desktop config (validating the auth flow end-to-end), and we keep it ready for the day enforcement clicks on. Real auth lights up automatically when middleware lands or when the user wants to flip the bind to `0.0.0.0` (which we'd gate behind a confirmation dialog regardless). |
+| **`media://{id}/thumbnail` / `media://{id}/frame/{time}` / `media://{id}/waveform`** | Needs Phase 1's deferred proxy/thumbnails/waveform background-job phase. Multimodal agents lose the "see the video" affordance until then; they can still reason structurally via `project://current` + `project://compiled`. |
+| **`templates://*` resources, `add_template` tool** | Phase 5 — depends on the rasterized-template runtime. |
+| **MCP activity panel in UI** | Quality-of-life polish. No spec dependency on it; Phase 4.x. |
+| **MCP prompts** (`/cut-silences`, `/auto-caption`, `/highlight-reel`, `/jump-cut`, `/translate-subtitles`) | Phase 4.x for `/cut-silences` and `/highlight-reel` (analysis tools first). `/auto-caption` and `/translate-subtitles` are Phase 6 (cloud transcription). |
+
+**Strict exit-criteria check** — "Claude Desktop connected, 'make a 30-second highlight from this clip' successfully edits the open project":
+- Claude Desktop can connect ✅ — connect-agent panel emits the exact `claude_desktop_config.json` snippet.
+- Agent can make a 30s highlight ✅ — `import_media` → `add_video_layer` (multiple slices) → `split_layer` / `delete_layer` for refinement → user clicks **Export…** in the UI (export tools intentionally remain UI-driven; render queue is Tauri-event-driven). Validation rejects map to structured `LayerOverlap` options the agent can resolve.
+
+### Verification owed
+
+- Real Claude Desktop end-to-end smoke: connect using the panel snippet and run a tool round-trip. Local-LAN testing only — production-grade is post-token-enforcement.
+
 ## Phase 5 — Rasterized templates (2–3 weeks)
 
 - Offscreen `wry` worker, time-mock JS shim, platform capture APIs (Win + macOS first; Linux fallback decision).
