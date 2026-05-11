@@ -164,7 +164,7 @@ Tauri events the UI can listen for (not yet wired into a media-pool progress str
 | Proxy auto-selection (libmpv plays the proxy when original is too heavy) | Needs a heuristic ("source is 4K + proxy exists → use proxy"). Not yet wired into `mpv::play_*`. |
 | ffmpeg behind SOCKS proxy auto-download | Pre-existing Phase 0 issue; manual `winget install Gyan.FFmpeg` is the documented workaround. |
 
-Forward motion: Phase 1.x closed. **Phase 6 (cloud transcription + TTS) in progress** — Stages 1–3 complete (keyring + Settings UI, inline-subtitle materialization, `apply_subtitles` tool). Stage 4 (cloud client foundation: Transcriber/Synthesizer traits + reqwest + audio extract) is next when work resumes. Other open slices: Phase 5 (rasterized templates), or pick at remaining Phase 2 deferrals (mpv drawtext live preview, crossfade, layer composition order).
+Forward motion: Phase 1.x closed. **Phase 6 (cloud transcription + TTS) in progress** — Stages 1–4 complete (keyring + Settings UI, inline-subtitle materialization, `apply_subtitles` tool, cloud client foundation). Stage 5 (OpenAI Whisper provider + `transcribe_clip` MCP tool) is next when work resumes. Other open slices: Phase 5 (rasterized templates), or pick at remaining Phase 2 deferrals (mpv drawtext live preview, crossfade, layer composition order).
 
 ## Phase 2 — Native overlays (2 weeks)
 
@@ -323,10 +323,24 @@ Stages (advisor-blessed sequence; numbers are cumulative):
    track via new `VidetorServer::ensure_subtitle_track` (mirrors the
    Tauri-command behavior so both surfaces target the same track).
    Stage 3 is a thin wrapper — heavy lifting lives in Stage 2.
-4. **Cloud client foundation** — `cloud::Transcriber` and
-   `cloud::Synthesizer` traits + reqwest scaffolding + audio-extract
-   helper (ffmpeg slice → mono 16 kHz WAV for transcription, raw text
-   for TTS).
+4. ✅ **Cloud client foundation**. `cloud/{transcriber, synthesizer,
+   errors, http, audio_extract}.rs` ship: `Transcriber` and `Synthesizer`
+   async-trait surfaces with owned-data request/response structs (no
+   borrowed lifetimes — keeps `Box<dyn Transcriber>` clean), shared
+   `reqwest::Client` singleton with a 180s default timeout and pinned
+   User-Agent, `CloudError` enum covering MissingKey / InvalidKey /
+   RateLimited / PayloadTooLarge / Provider / Network / Io / AudioExtract.
+   `audio_extract::extract_audio_window(cache, source, source_hash, in_us,
+   out_us)` slices through ffmpeg to mono 16 kHz 16-bit PCM WAV, content-
+   addressed to `<cache>/transcribe-audio/<hash>.wav` where `hash =
+   blake3([source_hash.bytes, in_us.le, out_us.le].concat())`. Shares
+   `jobs::ffmpeg_sem()` (now `pub(crate)`) with background derivative jobs.
+   Per-provider `Capabilities { transcription, tts }` lives on `Provider`
+   in `keys.rs`. End-to-end smoke `audio_extract_window_roundtrip_against_
+   real_ffmpeg` cracks the WAV header to verify mono / 16 kHz / 16-bit.
+   No provider impls and no `pick_*` picker in this stage — both land in
+   Stage 5. 100 → 109 lib tests. New dep: `async-trait` (required for
+   dyn-compatible async methods on stable).
 5. **OpenAI Whisper transcription** + `transcribe_clip` MCP tool. Returns
    the SRT body inline (timeline-absolute timestamps after `in_us` shift)
    so the agent can inspect / edit before piping into `apply_subtitles`.

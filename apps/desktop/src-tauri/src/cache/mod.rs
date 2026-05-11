@@ -93,6 +93,17 @@ impl CacheLayout {
         self.frames(hash).join(format!("{t_us}.jpg"))
     }
 
+    /// Audio slices extracted for cloud transcription (mono 16 kHz WAV).
+    /// Hash composition is `blake3([source_hash_bytes, in_us.to_le_bytes(),
+    /// out_us.to_le_bytes()].concat())` — see `cloud::audio_extract`.
+    pub fn transcribe_audio_dir(&self) -> PathBuf {
+        self.root.join("transcribe-audio")
+    }
+
+    pub fn transcribe_audio(&self, hash: &str) -> PathBuf {
+        self.transcribe_audio_dir().join(format!("{hash}.wav"))
+    }
+
     /// Create the top-level cache directory tree. Idempotent.
     pub fn ensure_dirs(&self) -> Result<()> {
         for p in [
@@ -102,6 +113,7 @@ impl CacheLayout {
             self.waveforms_dir(),
             self.frames_root(),
             self.inline_subs_dir(),
+            self.transcribe_audio_dir(),
         ] {
             fs::create_dir_all(&p)
                 .with_context(|| format!("create cache dir {}", p.display()))?;
@@ -170,6 +182,10 @@ mod tests {
             layout.frame("abc", 1_500_000),
             tmp.path().join("frames").join("abc").join("1500000.jpg"),
         );
+        assert_eq!(
+            layout.transcribe_audio("abc"),
+            tmp.path().join("transcribe-audio").join("abc.wav"),
+        );
     }
 
     #[test]
@@ -183,6 +199,7 @@ mod tests {
         assert!(layout.waveforms_dir().is_dir());
         assert!(layout.frames_root().is_dir());
         assert!(layout.inline_subs_dir().is_dir());
+        assert!(layout.transcribe_audio_dir().is_dir());
     }
 
     #[test]

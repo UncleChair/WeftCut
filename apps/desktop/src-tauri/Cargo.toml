@@ -79,6 +79,11 @@ keyring = "3"
 # features explicitly avoids pulling in a second native-tls stack alongside
 # the one tauri already brings in via its plugin transitives.
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "stream"] }
+# Phase 6 Stage 4 cloud-provider traits (`Transcriber`, `Synthesizer`) need
+# `dyn`-compatible async methods. Native async-fn-in-trait isn't dyn-safe yet
+# on stable; `async-trait` is the standard workaround and keeps the
+# "add Deepgram in a single file" exit criterion clean.
+async-trait = "0.1"
 
 [dev-dependencies]
 insta = { version = "1", features = ["json", "yaml"] }

@@ -44,7 +44,10 @@ pub const EVENT_ERROR: &str = "media:job_error";
 
 const MAX_PARALLEL_FFMPEG: usize = 2;
 
-fn ffmpeg_sem() -> &'static Semaphore {
+/// Global ffmpeg-child semaphore. Shared with `cloud::audio_extract` so cloud
+/// transcription slices compete fairly with background derivative jobs
+/// (thumbnails/proxy/waveform) rather than spawning unbounded extra ffmpegs.
+pub(crate) fn ffmpeg_sem() -> &'static Semaphore {
     static S: OnceLock<Semaphore> = OnceLock::new();
     S.get_or_init(|| Semaphore::new(MAX_PARALLEL_FFMPEG))
 }

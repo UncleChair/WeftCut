@@ -42,6 +42,28 @@ impl Provider {
     pub fn all() -> &'static [Provider] {
         &[Provider::OpenAi]
     }
+
+    /// Which Phase 6 capability surfaces this provider can serve. The default
+    /// provider picker (Stage 5) walks [`Provider::all`], filters by the
+    /// requested capability, requires `has_key`, and returns the first match —
+    /// so a single OpenAI key activates both transcription and TTS without
+    /// any per-surface configuration on the user side.
+    pub fn capabilities(self) -> Capabilities {
+        match self {
+            Provider::OpenAi => Capabilities {
+                transcription: true,
+                tts: true,
+            },
+        }
+    }
+}
+
+/// Per-provider declaration of which Phase 6 surfaces are reachable through it.
+/// Adding a provider that does TTS only is `transcription: false, tts: true`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Capabilities {
+    pub transcription: bool,
+    pub tts: bool,
 }
 
 fn entry(p: Provider) -> Result<Entry, keyring::Error> {
@@ -98,5 +120,12 @@ mod tests {
     #[test]
     fn provider_tags_are_stable() {
         assert_eq!(Provider::OpenAi.as_str(), "openai");
+    }
+
+    #[test]
+    fn openai_provider_supports_both_surfaces() {
+        let caps = Provider::OpenAi.capabilities();
+        assert!(caps.transcription);
+        assert!(caps.tts);
     }
 }
