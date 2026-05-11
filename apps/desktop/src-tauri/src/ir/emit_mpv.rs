@@ -426,6 +426,196 @@ mod tests {
         assert!(plan.lavfi_complex.contains("color=c="));
     }
 
+    /// Pin the shape of the mpv lavfi-complex graph for a Text-on-Video
+    /// project — historically the failing case for the libmpv preview bug
+    /// (memory/project_text_preview_deferred.md). Asserts the seams that
+    /// matter for filter-graph parsing: drawtext with single-quote-escaped
+    /// fontfile that ALSO backslash-escapes the colon (both levels of
+    /// ffmpeg's escaping), `[vid1]` reference, `[vo]` terminator,
+    /// `format=yuv420p` final clause. The mpv runtime can't be exercised
+    /// from cargo tests (no headless mode + libmpv2 needs a real GPU
+    /// context), so this is the closest we get without manual dev-session
+    /// verification.
+    #[test]
+    fn text_on_video_emits_drawtext_with_double_escaped_fontfile() {
+        use chrono::Utc;
+        use uuid::Uuid;
+
+        use crate::state::{
+            animated::Animated,
+            color::Rgba,
+            composition::Composition,
+            layer::{
+                FontSpec, Layer, LayerParams, TextAlign, TextBackend, TextParams,
+                VideoClipParams,
+            },
+            media::{MediaItem, MediaKind, MediaMetadata},
+            project::{Project, ProjectMetadata},
+            track::{Track, TrackKind},
+            transform::Transform,
+        };
+
+        let media_id = Uuid::parse_str("01900000-0000-7000-8000-000000000011").unwrap();
+        let v_track_id = Uuid::parse_str("01900000-0000-7000-8000-000000000012").unwrap();
+        let v_layer_id = Uuid::parse_str("01900000-0000-7000-8000-000000000013").unwrap();
+        let t_track_id = Uuid::parse_str("01900000-0000-7000-8000-000000000014").unwrap();
+        let t_layer_id = Uuid::parse_str("01900000-0000-7000-8000-000000000015").unwrap();
+
+        let media = MediaItem {
+            id: media_id,
+            label: None,
+            path_abs: "/m/clip.mp4".into(),
+            path_rel: None,
+            kind: MediaKind::Video,
+            metadata: MediaMetadata {
+                duration_us: Some(10_000_000),
+                video: None,
+                audio: None,
+            },
+            proxy_path: None,
+            waveform_path: None,
+            thumbnails_dir: None,
+            file_hash_blake3: "0".into(),
+            file_size: 0,
+            file_mtime: 0,
+            imported_at: Utc::now(),
+        };
+
+        let video_layer = Layer {
+            id: v_layer_id,
+            label: None,
+            t_start_us: 0,
+            t_end_us: 5_000_000,
+            enabled: true,
+            locked: false,
+            metadata: imbl::HashMap::new(),
+            effects: imbl::Vector::new(),
+            params: LayerParams::VideoClip(VideoClipParams {
+                media: media_id,
+                src_in_us: 0,
+                src_out_us: 5_000_000,
+                transform: Transform::default(),
+                opacity: Animated::Static(1.0),
+                crop: None,
+                flip_h: false,
+                flip_v: false,
+                blend_mode: Default::default(),
+                speed: 1.0,
+                fade_in_us: 0,
+                fade_out_us: 0,
+            }),
+        };
+
+        let text_layer = Layer {
+            id: t_layer_id,
+            label: None,
+            t_start_us: 0,
+            t_end_us: 3_000_000,
+            enabled: true,
+            locked: false,
+            metadata: imbl::HashMap::new(),
+            effects: imbl::Vector::new(),
+            params: LayerParams::Text(TextParams {
+                content: "TEXT".into(),
+                font: FontSpec {
+                    family: "Arial".into(),
+                    size_px: 96.0,
+                    weight: 700,
+                    italic: false,
+                },
+                color: Animated::Static(Rgba::WHITE),
+                align: TextAlign::Center,
+                transform: Transform::default(),
+                opacity: Animated::Static(1.0),
+                shadow: None,
+                outline: None,
+                intro: None,
+                outro: None,
+                backend_hint: TextBackend::DrawText,
+            }),
+        };
+
+        let v_track = Track {
+            id: v_track_id,
+            kind: TrackKind::Video,
+            label: None,
+            enabled: true,
+            locked: false,
+            removable: true,
+            height_px: 64,
+            layers: imbl::vector![video_layer],
+        };
+        let t_track = Track {
+            id: t_track_id,
+            kind: TrackKind::Video,
+            label: None,
+            enabled: true,
+            locked: false,
+            removable: true,
+            height_px: 64,
+            layers: imbl::vector![text_layer],
+        };
+
+        let p = Project {
+            schema_version: 1,
+            project_id: Uuid::parse_str("01900000-0000-7000-8000-000000000010").unwrap(),
+            metadata: ProjectMetadata {
+                name: "text-on-vid".into(),
+                created_at: Utc::now(),
+                modified_at: Utc::now(),
+                description: None,
+            },
+            composition: Composition {
+                width: 1920,
+                height: 1080,
+                fps: Rational::FPS_30,
+                duration_us: 5_000_000,
+                sample_rate: 48_000,
+                channels: 2,
+                color_space: Default::default(),
+                background: Rgba::BLACK,
+            },
+            media_pool: imbl::HashMap::unit(media_id, media),
+            // Text track second (top of z-stack per the data model). The
+            // composition-order fix landed in the same Phase 2 session
+            // ensures the UI presents this correctly; lowering already
+            // walks tracks bottom-up so the text ends up on top of video.
+            tracks: imbl::vector![v_track, t_track],
+            markers: imbl::Vector::new(),
+            transitions: imbl::Vector::new(),
+            settings: Default::default(),
+        };
+
+        let g = lower(&p, fixture_target(), &Default::default()).expect("lower");
+        let plan = emit(&g);
+
+        // 1. Single-line, `;`-separated.
+        assert!(!plan.lavfi_complex.contains('\n'));
+        // 2. References mpv's input label, not ffmpeg's `[0:v]`.
+        assert!(plan.lavfi_complex.contains("[vid1]"));
+        assert!(!plan.lavfi_complex.contains("[0:v]"));
+        // 3. Terminates in `[vo]`.
+        assert!(plan.lavfi_complex.trim_end().ends_with("[vo]"));
+        // 4. drawtext present.
+        assert!(plan.lavfi_complex.contains("drawtext="));
+        // 5. fontfile double-escaped (single-quote AROUND value that
+        //    itself backslash-escapes the colon). Without the backslash
+        //    layer 2 of ffmpeg's filter parser splits at the first `:`
+        //    inside the path and the whole filter is rejected. The fix
+        //    landed in `drawtext_font_option` and this assertion locks
+        //    it in.
+        assert!(
+            plan.lavfi_complex.contains("fontfile='C\\:/Windows/Fonts/arial.ttf'")
+                || plan.lavfi_complex.contains("font='Arial'"), // non-Windows
+            "missing double-escaped fontfile in:\n{}",
+            plan.lavfi_complex,
+        );
+        // 6. Final pixel format clause for [vo].
+        assert!(plan.lavfi_complex.contains("format=yuv420p"));
+        // 7. expansion=none on drawtext so `%` in user content stays literal.
+        assert!(plan.lavfi_complex.contains("expansion=none"));
+    }
+
     #[test]
     fn one_clip_uses_vid1_and_terminates_in_vo() {
         // Reuse the same fixture shape as emit_ffmpeg's worked-example test,
