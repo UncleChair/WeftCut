@@ -104,6 +104,19 @@ impl CacheLayout {
         self.transcribe_audio_dir().join(format!("{hash}.wav"))
     }
 
+    /// Synthesized TTS output. Content-addressed by `blake3(model || '\0' ||
+    /// voice || '\0' || speed || '\0' || text)` so repeated requests with the
+    /// same parameters skip the API call entirely — see
+    /// `cloud::providers::openai::tts_cache_key` and the `synthesize_speech`
+    /// MCP tool.
+    pub fn voiceover_dir(&self) -> PathBuf {
+        self.root.join("voiceover")
+    }
+
+    pub fn voiceover(&self, hash: &str, ext: &str) -> PathBuf {
+        self.voiceover_dir().join(format!("{hash}.{ext}"))
+    }
+
     /// Create the top-level cache directory tree. Idempotent.
     pub fn ensure_dirs(&self) -> Result<()> {
         for p in [
@@ -114,6 +127,7 @@ impl CacheLayout {
             self.frames_root(),
             self.inline_subs_dir(),
             self.transcribe_audio_dir(),
+            self.voiceover_dir(),
         ] {
             fs::create_dir_all(&p)
                 .with_context(|| format!("create cache dir {}", p.display()))?;
@@ -186,6 +200,10 @@ mod tests {
             layout.transcribe_audio("abc"),
             tmp.path().join("transcribe-audio").join("abc.wav"),
         );
+        assert_eq!(
+            layout.voiceover("abc", "mp3"),
+            tmp.path().join("voiceover").join("abc.mp3"),
+        );
     }
 
     #[test]
@@ -200,6 +218,7 @@ mod tests {
         assert!(layout.frames_root().is_dir());
         assert!(layout.inline_subs_dir().is_dir());
         assert!(layout.transcribe_audio_dir().is_dir());
+        assert!(layout.voiceover_dir().is_dir());
     }
 
     #[test]

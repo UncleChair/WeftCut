@@ -353,6 +353,160 @@ impl VidetorServer {
         Ok(ok_text(shifted))
     }
 
+    #[tool(description = "Synthesize speech via the configured cloud TTS provider (OpenAI tts-1 today) \
+                          and attach the result as an Audio layer. The MP3 is content-addressed in cache \
+                          by `(model, voice, speed, text)`, so a repeat call with the same args reuses \
+                          the cached file without burning another API request. \
+                          Args: `text` (≤4096 chars for tts-1), `voice` (one of alloy/echo/fable/onyx/nova/shimmer), \
+                          optional `speed` (0.25..4.0; default = provider default ≈1.0), \
+                          optional `target_track_id` (defaults to first existing Audio track or a new \
+                          'Voiceover' track), optional `t_start_us` (defaults to the composition's \
+                          current duration so the voiceover appends at the end). Returns \
+                          `{ layer_id, media_id, t_start_us, t_end_us, cached }`.")]
+    async fn synthesize_speech(
+        &self,
+        #[tool(aggr)] args: SynthesizeSpeechArgs,
+    ) -> Result<CallToolResult, McpError> {
+        if args.text.trim().is_empty() {
+            return Err(McpError::invalid_params(
+                "text is empty",
+                None,
+            ));
+        }
+
+        let synthesizer = cloud::pick_synthesizer().ok_or_else(|| {
+            McpError::invalid_request(
+                "no TTS provider configured — open Settings → API keys and add an OpenAI API key",
+                None,
+            )
+        })?;
+
+        let cache_key = cloud::providers::openai::tts_cache_key(
+            &args.text,
+            &args.voice,
+            args.speed,
+        );
+        // Cache extension hardcoded as "mp3" because the only Stage 6 provider
+        // (OpenAiTts) pins `response_format=mp3`. The `debug_assert!` below
+        // trips in dev the first time a future provider returns a different
+        // format and forces the format-extension-from-response fix here.
+        // TODO(future-provider): pull extension from `resp.format` so cache
+        // file naming matches provider output once a second TTS provider lands.
+        let dest = self.cache.voiceover(&cache_key, "mp3");
+        let cached = cached_ok(&dest);
+        if !cached {
+            let resp = synthesizer
+                .synthesize(cloud::SynthesizeRequest {
+                    text: args.text.clone(),
+                    voice: args.voice.clone(),
+                    speed: args.speed,
+                })
+                .await
+                .map_err(map_cloud_error)?;
+            debug_assert_eq!(
+                resp.format,
+                cloud::AudioFormat::Mp3,
+                "Stage 6 v1 assumes mp3 output; update cache extension before adding non-mp3 providers",
+            );
+            write_voiceover_atomic(&dest, &resp.audio)
+                .await
+                .map_err(|e| {
+                    McpError::internal_error(format!("write voiceover: {e:#}"), None)
+                })?;
+        }
+
+        // Probe the (now-existing) file on a blocking thread to get duration.
+        // ffprobe is required here — without duration we can't size the
+        // Audio layer correctly.
+        let probe_path = dest.clone();
+        let cache_key_clone = cache_key.clone();
+        let media_item = tokio::task::spawn_blocking(move || -> Result<MediaItem, String> {
+            let metadata = probe::probe_metadata(&probe_path);
+            if metadata.duration_us.is_none() {
+                return Err(
+                    "ffprobe could not determine duration of synthesized audio — \
+                     install ffprobe (ships with ffmpeg) and retry"
+                        .to_string(),
+                );
+            }
+            let stat = std::fs::metadata(&probe_path)
+                .map_err(|e| format!("stat voiceover: {e}"))?;
+            Ok(MediaItem {
+                id: new_id(),
+                label: Some(format!("voiceover-{}", &cache_key_clone[..8])),
+                path_abs: probe_path,
+                path_rel: None,
+                kind: MediaKind::Audio,
+                metadata,
+                proxy_path: None,
+                waveform_path: None,
+                thumbnails_dir: None,
+                file_hash_blake3: cache_key_clone,
+                file_size: stat.len(),
+                file_mtime: stat
+                    .modified()
+                    .ok()
+                    .and_then(|t| {
+                        t.duration_since(std::time::UNIX_EPOCH).ok()
+                    })
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0),
+                imported_at: Utc::now(),
+            })
+        })
+        .await
+        .map_err(|e| McpError::internal_error(format!("probe join: {e}"), None))?
+        .map_err(|e| McpError::internal_error(e, None))?;
+
+        let duration_us = media_item.metadata.duration_us.unwrap_or(0);
+        let media_item_for_jobs = media_item.clone();
+        let media_id = self
+            .project
+            .add_media_item(agent_actor(), media_item)
+            .await
+            .map_err(map_command_error)?;
+        // Fan out background jobs (waveform; thumbnails skip on audio-only).
+        jobs::enqueue_for_media(
+            self.app.clone(),
+            self.cache.clone(),
+            self.project.clone(),
+            media_item_for_jobs,
+        );
+
+        let snap = self.project.snapshot().await;
+        let t_start_us = args.t_start_us.unwrap_or(snap.composition.duration_us);
+        let t_end_us = t_start_us + duration_us;
+
+        let track_id = match args.target_track_id.as_deref() {
+            Some(s) => parse_uuid(s, "target_track_id")?,
+            None => self.ensure_audio_track().await?,
+        };
+
+        let params = LayerParams::Audio(AudioParams {
+            media: media_id,
+            src_in_us: 0,
+            src_out_us: duration_us,
+            gain_db: Animated::Static(0.0),
+            pan: Animated::Static(0.0),
+            fade_in_us: 0,
+            fade_out_us: 0,
+            mute: false,
+        });
+        let layer_id = self
+            .project
+            .add_layer(agent_actor(), track_id, params, t_start_us, t_end_us)
+            .await
+            .map_err(map_command_error)?;
+
+        ok_json(&SynthesizeSpeechResult {
+            layer_id: layer_id.to_string(),
+            media_id: media_id.to_string(),
+            t_start_us,
+            t_end_us,
+            cached,
+        })
+    }
+
     #[tool(description = "Update a layer's envelope (label, time range, enabled, locked). \
                           Only fields you set are applied. Time range changes go through validation.")]
     async fn update_layer(
@@ -710,6 +864,34 @@ pub struct TranscribeClipArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct SynthesizeSpeechArgs {
+    /// Text to synthesize. tts-1 caps at 4096 characters.
+    pub text: String,
+    /// Voice identifier. tts-1 accepts: alloy, echo, fable, onyx, nova, shimmer.
+    pub voice: String,
+    /// 0.25..4.0 for tts-1. Omit to use the provider default (~1.0).
+    pub speed: Option<f32>,
+    /// Optional Audio track id. If omitted, lands on the first existing Audio
+    /// track or auto-creates one labeled "Voiceover".
+    pub target_track_id: Option<String>,
+    /// Optional timeline start in microseconds. Defaults to the composition's
+    /// current `duration_us` so the voiceover appends at the end.
+    pub t_start_us: Option<i64>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct SynthesizeSpeechResult {
+    pub layer_id: String,
+    pub media_id: String,
+    pub t_start_us: i64,
+    pub t_end_us: i64,
+    /// True when the result came from the content-addressed cache and no API
+    /// call was made. Surfaced so the agent knows whether to expect any
+    /// provider-side billing.
+    pub cached: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct UpdateLayerArgs {
     pub layer_id: String,
     pub patch: LayerPatch,
@@ -1050,6 +1232,33 @@ fn resolve_clip_audio_source(
     })
 }
 
+/// Write synthesized audio bytes atomically to the cache. Mirrors the
+/// `<dest>.tmp → promote_temp` pattern from the jobs module so an interrupted
+/// write never leaves a zero-byte file that `cached_ok` would happily skip.
+async fn write_voiceover_atomic(
+    dest: &std::path::Path,
+    bytes: &[u8],
+) -> Result<(), anyhow::Error> {
+    use crate::cache::{cached_ok, discard_temp, promote_temp, temp_path};
+    use anyhow::Context;
+    if let Some(parent) = dest.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .with_context(|| format!("ensure {}", parent.display()))?;
+    }
+    let tmp = temp_path(dest);
+    let _ = tokio::fs::remove_file(&tmp).await;
+    tokio::fs::write(&tmp, bytes)
+        .await
+        .with_context(|| format!("write {}", tmp.display()))?;
+    if !cached_ok(&tmp) {
+        discard_temp(dest);
+        anyhow::bail!("synthesized audio is empty after write");
+    }
+    promote_temp(dest)?;
+    Ok(())
+}
+
 /// Map a `cloud::CloudError` to an `McpError` so the agent sees a structured
 /// failure (missing key, invalid key, rate-limited, too-large payload) with
 /// actionable recovery steps in the message.
@@ -1234,6 +1443,24 @@ impl VidetorServer {
         }
         self.project
             .add_track(agent_actor(), TrackKind::Subtitle, Some("Subtitles".into()))
+            .await
+            .map_err(map_command_error)
+    }
+
+    /// Find an existing Audio track or create one labeled "Voiceover".
+    /// Used by `synthesize_speech` to land the generated layer on a sensible
+    /// default track when the agent didn't pick one explicitly.
+    async fn ensure_audio_track(&self) -> Result<TrackId, McpError> {
+        let snap = self.project.snapshot().await;
+        if let Some(t) = snap
+            .tracks
+            .iter()
+            .find(|t| matches!(t.kind, TrackKind::Audio))
+        {
+            return Ok(t.id);
+        }
+        self.project
+            .add_track(agent_actor(), TrackKind::Audio, Some("Voiceover".into()))
             .await
             .map_err(map_command_error)
     }

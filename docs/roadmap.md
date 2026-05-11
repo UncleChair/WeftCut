@@ -164,7 +164,7 @@ Tauri events the UI can listen for (not yet wired into a media-pool progress str
 | Proxy auto-selection (libmpv plays the proxy when original is too heavy) | Needs a heuristic ("source is 4K + proxy exists → use proxy"). Not yet wired into `mpv::play_*`. |
 | ffmpeg behind SOCKS proxy auto-download | Pre-existing Phase 0 issue; manual `winget install Gyan.FFmpeg` is the documented workaround. |
 
-Forward motion: Phase 1.x closed. **Phase 6 (cloud transcription + TTS) in progress** — Stages 1–5 complete (keyring + Settings UI, inline-subtitle materialization, `apply_subtitles` tool, cloud client foundation, OpenAI Whisper + `transcribe_clip` tool). Stage 6 (OpenAI tts-1 + `synthesize_speech` MCP tool) is next when work resumes. Other open slices: Phase 5 (rasterized templates), or pick at remaining Phase 2 deferrals (mpv drawtext live preview, crossfade, layer composition order).
+Forward motion: Phase 1.x closed. **Phase 6 (cloud transcription + TTS) in progress** — Stages 1–6 complete (keyring + Settings UI, inline-subtitle materialization, `apply_subtitles` tool, cloud client foundation, Whisper + `transcribe_clip`, tts-1 + `synthesize_speech`). Stage 7 (`/auto-caption` + `/voiceover` MCP prompts) is next when work resumes. Other open slices: Phase 5 (rasterized templates), or pick at remaining Phase 2 deferrals (mpv drawtext live preview, crossfade, layer composition order).
 
 ## Phase 2 — Native overlays (2 weeks)
 
@@ -365,10 +365,26 @@ Stages (advisor-blessed sequence; numbers are cumulative):
    (the source-coord math is only correct at speed=1; mirrors the
    `split_layer` precedent). 109 → 133 lib tests (+11 SRT shift,
    +5 provider HTTP-error mapping, +8 MCP resolve_clip_audio_source).
-6. **OpenAI TTS** + `synthesize_speech` MCP tool. Args: text, voice
-   (`alloy|echo|fable|onyx|nova|shimmer`), optional speed, optional
-   target track. Writes `<project>/voiceover/<hash>.mp3` content-addressably,
-   creates an Audio layer on the picked or first audio track.
+6. ✅ **OpenAI TTS** + `synthesize_speech` MCP tool. `OpenAiTts` lives
+   alongside `OpenAiWhisper` in `cloud/providers/openai.rs`; same key,
+   same HTTP-status mapping. JSON POST to `/v1/audio/speech` with
+   `model=tts-1, response_format=mp3, input, voice, speed?`. Pre-flight
+   checks reject empty text, text past 4096 chars, unknown voice, and
+   speed outside `[0.25, 4.0]` BEFORE the API call. `cloud::pick_synthesizer()`
+   mirrors `pick_transcriber`. Cache layout adds `<cache>/voiceover/<hash>.mp3`;
+   hash composition is `blake3(model || '\0' || lowercase(voice) || '\0'
+   || speed-or-"default" || '\0' || text)` so repeat synthesize calls
+   skip the API entirely. `synthesize_speech { text, voice, speed?,
+   target_track_id?, t_start_us? }`: checks cache → calls synthesizer on
+   miss → atomic write to `<cache>/voiceover/...` → ffprobe for duration
+   → constructs MediaItem with `file_hash_blake3` = cache key → adds to
+   media pool → ensures/uses Audio track → adds Audio layer at
+   `t_start_us` (default = `composition.duration_us`, so voiceover
+   appends at end) with `t_end_us = t_start + duration`. Returns
+   `{ layer_id, media_id, t_start_us, t_end_us, cached }`. Cache hits
+   skip the API and the `cached: true` flag tells agents the result
+   came from cache (no billing). 133 → 138 lib tests (+5 TTS pre-flight
+   + cache-key determinism).
 7. **MCP prompts**: `/auto-caption` (transcribe → apply_subtitles) and
    `/voiceover` (synthesize_speech for a script with a single voice).
 8. **Hardening**: rate-limit-aware retries, key-validation feedback in

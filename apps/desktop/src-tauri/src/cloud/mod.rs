@@ -56,12 +56,29 @@ pub fn pick_transcriber() -> Option<Box<dyn Transcriber>> {
     None
 }
 
+/// TTS-capable counterpart to [`pick_transcriber`] — same walk, filtered by
+/// `capabilities().tts`. Used by the `synthesize_speech` MCP tool (Stage 6).
+pub fn pick_synthesizer() -> Option<Box<dyn Synthesizer>> {
+    for &p in keys::Provider::all() {
+        if !p.capabilities().tts {
+            continue;
+        }
+        if !keys::has_key(p) {
+            continue;
+        }
+        return Some(construct_synthesizer(p));
+    }
+    None
+}
+
 fn construct_transcriber(p: keys::Provider) -> Box<dyn Transcriber> {
     match p {
         keys::Provider::OpenAi => Box::new(providers::openai::OpenAiWhisper::new()),
     }
 }
 
-// TODO(stage 6): mirror as `pub fn pick_synthesizer() -> Option<Box<dyn
-// Synthesizer>>` once `OpenAiTts` lands in `providers::openai`. Same shape
-// as `pick_transcriber` — filter by `capabilities().tts`, require `has_key`.
+fn construct_synthesizer(p: keys::Provider) -> Box<dyn Synthesizer> {
+    match p {
+        keys::Provider::OpenAi => Box::new(providers::openai::OpenAiTts::new()),
+    }
+}
