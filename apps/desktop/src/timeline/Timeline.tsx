@@ -86,9 +86,14 @@ export function Timeline({
       if (!canvasRef.current) return null;
       const rect = canvasRef.current.getBoundingClientRect();
       const y = clientY - rect.top - RULER_HEIGHT;
-      const idx = Math.floor(y / TRACK_HEIGHT);
-      if (idx < 0 || idx >= tracks.length) return null;
-      return tracks[idx] ?? null;
+      const visualIdx = Math.floor(y / TRACK_HEIGHT);
+      if (visualIdx < 0 || visualIdx >= tracks.length) return null;
+      // Data model: tracks[0] = bottom of z-stack. The render order is
+      // reversed (top of UI = top of z-stack), so a screen-position index
+      // maps to `tracks.length - 1 - visualIdx`. Without this remap, drops
+      // land on the wrong track.
+      const dataIdx = tracks.length - 1 - visualIdx;
+      return tracks[dataIdx] ?? null;
     },
     [tracks],
   );
@@ -244,18 +249,29 @@ export function Timeline({
           onSeekFromX={(x) => onSeek(Math.max(0, Math.round((x / PX_PER_SEC) * 1_000_000)))}
         />
         {tracks.length === 0 && <EmptyHint />}
-        {tracks.map((track) => (
-          <TrackLane
-            key={track.id}
-            track={track}
-            pxPerSec={PX_PER_SEC}
-            selectedLayerId={selectedLayerId}
-            dragState={drag}
-            onSelect={onSelect}
-            onDragStart={(state) => setDrag(state)}
-            onMediaDrop={onMediaDrop}
-          />
-        ))}
+        {/*
+          Data model: `tracks[0]` is the bottom of the z-stack, `tracks[last]`
+          is the top (see `Project::tracks` doc-comment). We render in reverse
+          so the user sees the top of the z-stack at the top of the timeline,
+          matching Premiere / Resolve / FCP conventions. Without this flip,
+          the user puts overlays on "lower-looking" tracks and is surprised
+          when they render on top.
+        */}
+        {tracks
+          .slice()
+          .reverse()
+          .map((track) => (
+            <TrackLane
+              key={track.id}
+              track={track}
+              pxPerSec={PX_PER_SEC}
+              selectedLayerId={selectedLayerId}
+              dragState={drag}
+              onSelect={onSelect}
+              onDragStart={(state) => setDrag(state)}
+              onMediaDrop={onMediaDrop}
+            />
+          ))}
         {currentTimeUs >= 0 && (
           <div
             className="timeline-playhead"
