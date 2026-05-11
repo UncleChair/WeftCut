@@ -355,6 +355,96 @@ impl VidetorServer {
         Ok(ok_text(shifted))
     }
 
+    #[tool(description = "Find silent regions in a VideoClip or Audio layer using the pre-computed \
+                          waveform. Walks the layer's peaks file (binary VPEAKS at 100 peaks/sec) and \
+                          returns timeline-absolute ranges where every peak stays below `threshold_amp` \
+                          for at least `min_silence_us` microseconds. Defaults: `threshold_amp=0.02` \
+                          (-34 dBFS), `min_silence_us=500000` (0.5s). Use the returned ranges to feed \
+                          `split_layer` + `delete_layer` and produce a tighter cut. \
+                          Returns `[{ t_start_us, t_end_us }, ...]` sorted by t_start_us. Errors with \
+                          `NotReady` if the waveform job hasn't finished yet — wait for a \
+                          `media:job_complete` event with `kind=waveform` and retry.")]
+    async fn detect_silences(
+        &self,
+        #[tool(aggr)] args: DetectSilencesArgs,
+    ) -> Result<CallToolResult, McpError> {
+        let layer_id = parse_uuid(&args.layer_id, "layer_id")?;
+        let snap = self.project.snapshot().await;
+        let layer = snap
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .find(|l| l.id == layer_id)
+            .ok_or_else(|| {
+                McpError::invalid_params(format!("layer {layer_id} not found"), None)
+            })?;
+
+        let media_id = match &layer.params {
+            LayerParams::VideoClip(p) => p.media,
+            LayerParams::Audio(p) => p.media,
+            _ => {
+                return Err(McpError::invalid_params(
+                    format!(
+                        "layer {layer_id} kind is not analyzable for silence — pass a VideoClip or Audio layer",
+                    ),
+                    None,
+                ));
+            }
+        };
+        let media = snap.media_pool.get(&media_id).ok_or_else(|| {
+            McpError::invalid_params(
+                format!("layer {layer_id} references missing media {media_id}"),
+                None,
+            )
+        })?;
+        let waveform_path = self.cache.waveform(&media.file_hash_blake3);
+        if !cached_ok(&waveform_path) {
+            return Err(McpError::invalid_request(
+                format!(
+                    "waveform not generated yet for media {media_id} — wait for a media:job_complete event with kind=waveform and retry",
+                ),
+                None,
+            ));
+        }
+
+        let threshold_amp = args.threshold_amp.unwrap_or(0.02);
+        let min_silence_us = args.min_silence_us.unwrap_or(500_000);
+        if !(0.0..=1.0).contains(&threshold_amp) {
+            return Err(McpError::invalid_params(
+                format!("threshold_amp {threshold_amp} must be in [0.0, 1.0]"),
+                None,
+            ));
+        }
+        if min_silence_us <= 0 {
+            return Err(McpError::invalid_params(
+                format!("min_silence_us {min_silence_us} must be positive"),
+                None,
+            ));
+        }
+
+        let peaks = jobs::read_peaks_file(&waveform_path)
+            .map_err(|e| McpError::internal_error(format!("read peaks: {e:#}"), None))?;
+
+        // Map source-relative silence regions to timeline-absolute coords:
+        //   timeline_t = layer.t_start_us + (source_t - layer.src_in_us)
+        //   clipped to [layer.t_start_us, layer.t_end_us]
+        let (src_in_us, src_out_us) = match &layer.params {
+            LayerParams::VideoClip(p) => (p.src_in_us, p.src_out_us),
+            LayerParams::Audio(p) => (p.src_in_us, p.src_out_us),
+            _ => unreachable!("kind already checked above"),
+        };
+        let regions = detect_silences_in_peaks(
+            &peaks,
+            threshold_amp,
+            min_silence_us,
+            src_in_us,
+            src_out_us,
+            layer.t_start_us,
+        );
+
+        ok_json(&regions)
+    }
+
     #[tool(description = "Synthesize speech via the configured cloud TTS provider (OpenAI tts-1 today) \
                           and attach the result as an Audio layer. The MP3 is content-addressed in cache \
                           by `(model, voice, speed, text)`, so a repeat call with the same args reuses \
@@ -852,6 +942,24 @@ pub struct ApplySubtitlesArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct DetectSilencesArgs {
+    /// Target VideoClip or Audio layer id.
+    pub layer_id: String,
+    /// Peak amplitude threshold in [0.0, 1.0]. Anything strictly below this
+    /// counts as silence. Default 0.02 (≈ -34 dBFS).
+    pub threshold_amp: Option<f32>,
+    /// Minimum contiguous silence duration (microseconds) to surface.
+    /// Default 500000 (0.5 seconds).
+    pub min_silence_us: Option<i64>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct SilenceRegion {
+    pub t_start_us: i64,
+    pub t_end_us: i64,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct TranscribeClipArgs {
     /// Target VideoClip or Audio layer id.
     pub layer_id: String,
@@ -1232,6 +1340,90 @@ fn resolve_clip_audio_source(
         source_out_us: source_out,
         timeline_start_us: t_start,
     })
+}
+
+/// Scan a peaks array (one f32 magnitude per ~10ms window, from
+/// `jobs::waveform::SAMPLES_PER_PEAK`) and return timeline-absolute silence
+/// ranges. Splits the peaks into segments where every value is strictly
+/// below `threshold_amp` and total duration ≥ `min_silence_us`.
+///
+/// Coord math: peak index `i` covers source-relative window
+/// `[i, i+1) * us_per_peak`, where `us_per_peak = 1_000_000 /
+/// PEAKS_PER_SECOND`. Map to timeline via `t_us = layer.t_start_us +
+/// (source_us - src_in_us)` and clip to `[layer.t_start_us, layer.t_end_us)`
+/// using `src_in_us..src_out_us` as the source window.
+fn detect_silences_in_peaks(
+    peaks: &[f32],
+    threshold_amp: f32,
+    min_silence_us: i64,
+    src_in_us: i64,
+    src_out_us: i64,
+    layer_t_start_us: i64,
+) -> Vec<SilenceRegion> {
+    let us_per_peak: i64 = 1_000_000 / crate::jobs::waveform::PEAKS_PER_SECOND as i64;
+    let mut regions = Vec::new();
+    let mut run_start: Option<usize> = None;
+    for (i, &p) in peaks.iter().enumerate() {
+        let silent = p < threshold_amp;
+        match (silent, run_start) {
+            (true, None) => run_start = Some(i),
+            (false, Some(start)) => {
+                push_if_long_enough(
+                    &mut regions,
+                    start,
+                    i,
+                    us_per_peak,
+                    min_silence_us,
+                    src_in_us,
+                    src_out_us,
+                    layer_t_start_us,
+                );
+                run_start = None;
+            }
+            _ => {}
+        }
+    }
+    if let Some(start) = run_start {
+        push_if_long_enough(
+            &mut regions,
+            start,
+            peaks.len(),
+            us_per_peak,
+            min_silence_us,
+            src_in_us,
+            src_out_us,
+            layer_t_start_us,
+        );
+    }
+    regions
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_if_long_enough(
+    out: &mut Vec<SilenceRegion>,
+    start_idx: usize,
+    end_idx: usize, // exclusive
+    us_per_peak: i64,
+    min_silence_us: i64,
+    src_in_us: i64,
+    src_out_us: i64,
+    layer_t_start_us: i64,
+) {
+    let src_silence_start = start_idx as i64 * us_per_peak;
+    let src_silence_end = end_idx as i64 * us_per_peak;
+    // Intersect with the layer's source window — peaks beyond src_out_us
+    // belong to media the layer doesn't reference.
+    let src_start = src_silence_start.max(src_in_us);
+    let src_end = src_silence_end.min(src_out_us);
+    if src_end - src_start < min_silence_us {
+        return;
+    }
+    let t_start = layer_t_start_us + (src_start - src_in_us);
+    let t_end = layer_t_start_us + (src_end - src_in_us);
+    out.push(SilenceRegion {
+        t_start_us: t_start,
+        t_end_us: t_end,
+    });
 }
 
 /// Write synthesized audio bytes atomically to the cache. Mirrors the
@@ -2006,5 +2198,135 @@ mod tests {
             .expect_err("speed != 1 should reject");
         assert!(format!("{err:?}").contains("speed != 1.0"));
         assert!(format!("{err:?}").contains("split off"));
+    }
+
+    // ============================================================
+    // detect_silences_in_peaks — Phase 4.x silence-cut helper
+    // ============================================================
+
+    /// 100 peaks/sec means each peak covers 10_000us. Easier to think in
+    /// "peak indices" when constructing fixtures.
+    const US_PER_PEAK: i64 = 10_000;
+
+    fn flat_peaks(n: usize, amp: f32) -> Vec<f32> {
+        (0..n).map(|_| amp).collect()
+    }
+
+    #[test]
+    fn detect_silences_returns_empty_for_loud_track() {
+        let peaks = flat_peaks(500, 0.5);
+        let regions =
+            detect_silences_in_peaks(&peaks, 0.02, 500_000, 0, 5_000_000, 0);
+        assert!(regions.is_empty());
+    }
+
+    #[test]
+    fn detect_silences_finds_single_quiet_window() {
+        // 200 peaks (= 2s) total. Quiet from peak 50 (= 500ms) to peak 150
+        // (= 1500ms), so silence duration = 1000ms.
+        let mut peaks = flat_peaks(200, 0.5);
+        for i in 50..150 {
+            peaks[i] = 0.001;
+        }
+        let regions =
+            detect_silences_in_peaks(&peaks, 0.02, 500_000, 0, 2_000_000, 0);
+        assert_eq!(regions.len(), 1);
+        assert_eq!(regions[0].t_start_us, 50 * US_PER_PEAK);
+        assert_eq!(regions[0].t_end_us, 150 * US_PER_PEAK);
+    }
+
+    #[test]
+    fn detect_silences_filters_out_runs_shorter_than_min_duration() {
+        // 200 peaks (= 2s). Three quiet runs of 30 peaks each (= 300ms).
+        // With min_silence_us=500_000 (500ms) none should be returned.
+        let mut peaks = flat_peaks(200, 0.5);
+        for i in 0..30 {
+            peaks[i] = 0.0;
+        }
+        for i in 80..110 {
+            peaks[i] = 0.0;
+        }
+        for i in 160..190 {
+            peaks[i] = 0.0;
+        }
+        let regions =
+            detect_silences_in_peaks(&peaks, 0.02, 500_000, 0, 2_000_000, 0);
+        assert!(regions.is_empty(), "expected no regions, got {regions:?}");
+
+        // With min_silence_us=200_000 (200ms) all three should be returned.
+        let regions =
+            detect_silences_in_peaks(&peaks, 0.02, 200_000, 0, 2_000_000, 0);
+        assert_eq!(regions.len(), 3);
+    }
+
+    #[test]
+    fn detect_silences_handles_silence_at_tail() {
+        // Quiet from peak 100 to the end (peak 200). Runs to EOF — make
+        // sure the closing branch flushes the pending region.
+        let mut peaks = flat_peaks(200, 0.5);
+        for i in 100..200 {
+            peaks[i] = 0.0;
+        }
+        let regions =
+            detect_silences_in_peaks(&peaks, 0.02, 500_000, 0, 2_000_000, 0);
+        assert_eq!(regions.len(), 1);
+        assert_eq!(regions[0].t_start_us, 100 * US_PER_PEAK);
+        assert_eq!(regions[0].t_end_us, 200 * US_PER_PEAK);
+    }
+
+    #[test]
+    fn detect_silences_shifts_by_layer_t_start_us() {
+        // Layer placed at timeline t=5s. Source [0, 2s]. Silence at source
+        // [0.5s, 1.5s] → timeline [5.5s, 6.5s].
+        let mut peaks = flat_peaks(200, 0.5);
+        for i in 50..150 {
+            peaks[i] = 0.0;
+        }
+        let regions = detect_silences_in_peaks(
+            &peaks,
+            0.02,
+            500_000,
+            0,
+            2_000_000,
+            5_000_000,
+        );
+        assert_eq!(regions.len(), 1);
+        assert_eq!(regions[0].t_start_us, 5_500_000);
+        assert_eq!(regions[0].t_end_us, 6_500_000);
+    }
+
+    #[test]
+    fn detect_silences_clips_to_layer_source_window() {
+        // Peaks cover 2s of source. Layer references only source [0.3s, 1.7s].
+        // A silence spanning the WHOLE peaks file [0, 2s] should clip to
+        // [0.3s, 1.7s] in source coords → timeline [0, 1.4s] for a layer
+        // anchored at t=0.
+        let peaks = flat_peaks(200, 0.0);
+        let regions = detect_silences_in_peaks(
+            &peaks,
+            0.02,
+            100_000,
+            300_000,   // src_in_us
+            1_700_000, // src_out_us
+            0,         // layer_t_start_us
+        );
+        assert_eq!(regions.len(), 1);
+        assert_eq!(regions[0].t_start_us, 0);
+        assert_eq!(regions[0].t_end_us, 1_400_000);
+    }
+
+    #[test]
+    fn detect_silences_threshold_is_strict_below() {
+        // Peaks exactly at threshold should NOT count as silence.
+        let peaks = flat_peaks(200, 0.02);
+        let regions =
+            detect_silences_in_peaks(&peaks, 0.02, 100_000, 0, 2_000_000, 0);
+        assert!(regions.is_empty());
+
+        // Just below threshold → silence.
+        let peaks = flat_peaks(200, 0.019);
+        let regions =
+            detect_silences_in_peaks(&peaks, 0.02, 100_000, 0, 2_000_000, 0);
+        assert_eq!(regions.len(), 1);
     }
 }

@@ -21,7 +21,7 @@
 mod frame;
 mod proxy;
 mod thumbnails;
-mod waveform;
+pub mod waveform;
 
 pub use frame::extract as extract_frame;
 pub use proxy::run as run_proxy;
