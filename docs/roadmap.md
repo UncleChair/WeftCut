@@ -164,7 +164,7 @@ Tauri events the UI can listen for (not yet wired into a media-pool progress str
 | Proxy auto-selection (libmpv plays the proxy when original is too heavy) | Needs a heuristic ("source is 4K + proxy exists → use proxy"). Not yet wired into `mpv::play_*`. |
 | ffmpeg behind SOCKS proxy auto-download | Pre-existing Phase 0 issue; manual `winget install Gyan.FFmpeg` is the documented workaround. |
 
-Forward motion: Phase 1.x closed. **Phase 6 (cloud transcription + TTS) in progress** — Stages 1–6 complete (keyring + Settings UI, inline-subtitle materialization, `apply_subtitles` tool, cloud client foundation, Whisper + `transcribe_clip`, tts-1 + `synthesize_speech`). Stage 7 (`/auto-caption` + `/voiceover` MCP prompts) is next when work resumes. Other open slices: Phase 5 (rasterized templates), or pick at remaining Phase 2 deferrals (mpv drawtext live preview, crossfade, layer composition order).
+Forward motion: Phase 1.x closed. **Phase 6 (cloud transcription + TTS) in progress** — Stages 1–7 complete (keyring + Settings UI, inline-subtitle materialization, `apply_subtitles` tool, cloud client foundation, Whisper + `transcribe_clip`, tts-1 + `synthesize_speech`, `/auto-caption` + `/voiceover` prompts). Stage 8 (hardening: retries, key validation, missing-key gating) closes Phase 6. Other open slices: Phase 5 (rasterized templates), or pick at remaining Phase 2 deferrals (mpv drawtext live preview, crossfade, layer composition order).
 
 ## Phase 2 — Native overlays (2 weeks)
 
@@ -385,8 +385,22 @@ Stages (advisor-blessed sequence; numbers are cumulative):
    skip the API and the `cached: true` flag tells agents the result
    came from cache (no billing). 133 → 138 lib tests (+5 TTS pre-flight
    + cache-key determinism).
-7. **MCP prompts**: `/auto-caption` (transcribe → apply_subtitles) and
+7. ✅ **MCP prompts**: `/auto-caption` (transcribe → apply_subtitles) and
    `/voiceover` (synthesize_speech for a script with a single voice).
+   `mcp/prompts.rs` ships the catalog + per-call expansion. `auto-caption`
+   takes `layer_id` (required) and optional `language`; the expanded
+   user-role message walks the agent through `transcribe_clip` →
+   inspect → `apply_subtitles` (with the explicit "omit `t_start_us` so
+   cues self-position" reminder). `voiceover` takes `script` + `voice`
+   (required), optional `speed` and `target_track_id`; expansion
+   embeds the script verbatim and tells the agent to split at paragraph
+   boundaries if it exceeds tts-1's 4096-char cap. Both prompts close
+   with the missing-key recovery hint ("configure Settings → API
+   keys"). `ServerCapabilities::builder().enable_prompts()`, plus
+   `ServerHandler::list_prompts` (returns the catalog) and `get_prompt`
+   (delegates to `prompts::expand`). 138 → 146 lib tests (+8 covering
+   catalog shape, unknown-prompt rejection, required-arg enforcement,
+   and arg interpolation for both prompts).
 8. **Hardening**: rate-limit-aware retries, key-validation feedback in
    Settings ("Test connection" → 1-token call), missing-key tool gating
    (`Unavailable` if no provider supports the requested surface).

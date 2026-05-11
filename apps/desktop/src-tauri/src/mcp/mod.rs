@@ -36,6 +36,7 @@
 //! Design: `docs/mcp.md`.
 
 mod events;
+mod prompts;
 
 use std::net::SocketAddr;
 
@@ -43,9 +44,10 @@ use anyhow::{Context, Result};
 use rmcp::{
     Error as McpError, ServerHandler,
     model::{
-        AnnotateAble, CallToolResult, Content, ListResourcesResult, PaginatedRequestParam,
-        RawResource, ReadResourceRequestParam, ReadResourceResult, ResourceContents,
-        ServerCapabilities, ServerInfo,
+        AnnotateAble, CallToolResult, Content, GetPromptRequestParam, GetPromptResult,
+        ListPromptsResult, ListResourcesResult, PaginatedRequestParam, RawResource,
+        ReadResourceRequestParam, ReadResourceResult, ResourceContents, ServerCapabilities,
+        ServerInfo,
     },
     service::RequestContext,
     tool,
@@ -1290,6 +1292,7 @@ impl ServerHandler for VidetorServer {
             capabilities: ServerCapabilities::builder()
                 .enable_tools()
                 .enable_resources()
+                .enable_prompts()
                 .build(),
             ..Default::default()
         }
@@ -1317,6 +1320,25 @@ impl ServerHandler for VidetorServer {
             resources,
             next_cursor: None,
         })
+    }
+
+    async fn list_prompts(
+        &self,
+        _request: PaginatedRequestParam,
+        _context: RequestContext<rmcp::RoleServer>,
+    ) -> Result<ListPromptsResult, McpError> {
+        Ok(ListPromptsResult {
+            prompts: prompts::catalog(),
+            next_cursor: None,
+        })
+    }
+
+    async fn get_prompt(
+        &self,
+        request: GetPromptRequestParam,
+        _context: RequestContext<rmcp::RoleServer>,
+    ) -> Result<GetPromptResult, McpError> {
+        prompts::expand(&request.name, request.arguments.as_ref())
     }
 
     async fn read_resource(
