@@ -167,6 +167,10 @@ const enUS = {
     clearing: "Clearing…",
     saved: "Saved!",
     cleared: "Cleared!",
+    test: "Test",
+    testing: "Testing…",
+    test_hint:
+      "Run a cheap API call to confirm the saved key works. Surfaces InvalidKey / rate-limit errors before your first cloud-backed agent call.",
   },
   property_panel: {
     heading: "Properties",

@@ -5,6 +5,7 @@ import {
   settingsClearApiKey,
   settingsGetApiKeyStatus,
   settingsSetApiKey,
+  settingsTestProvider,
 } from "../ipc";
 
 interface Props {
@@ -76,8 +77,13 @@ function ApiKeyRow({
 }) {
   const { t } = useTranslation();
   const [value, setValue] = useState("");
-  const [busy, setBusy] = useState<"save" | "clear" | null>(null);
+  const [busy, setBusy] = useState<"save" | "clear" | "test" | null>(null);
   const [flash, setFlash] = useState<"saved" | "cleared" | null>(null);
+  const [testResult, setTestResult] = useState<
+    | { kind: "ok"; summary: string }
+    | { kind: "err"; message: string }
+    | null
+  >(null);
 
   const save = async () => {
     if (!value.trim()) return;
@@ -99,6 +105,7 @@ function ApiKeyRow({
   const clear = async () => {
     setBusy("clear");
     onError("");
+    setTestResult(null);
     try {
       await settingsClearApiKey(status.provider);
       setFlash("cleared");
@@ -106,6 +113,20 @@ function ApiKeyRow({
       await onChanged();
     } catch (e) {
       onError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const test = async () => {
+    setBusy("test");
+    setTestResult(null);
+    onError("");
+    try {
+      const info = await settingsTestProvider(status.provider);
+      setTestResult({ kind: "ok", summary: info.summary });
+    } catch (e) {
+      setTestResult({ kind: "err", message: String(e) });
     } finally {
       setBusy(null);
     }
@@ -163,7 +184,28 @@ function ApiKeyRow({
               ? t("settings.cleared")
               : t("settings.clear")}
         </button>
+        <button
+          type="button"
+          onClick={test}
+          disabled={busy !== null || !status.configured}
+          title={t("settings.test_hint")}
+        >
+          {busy === "test" ? t("settings.testing") : t("settings.test")}
+        </button>
       </div>
+      {testResult && (
+        <p
+          className={
+            testResult.kind === "ok"
+              ? "settings-test-ok"
+              : "settings-test-err"
+          }
+        >
+          {testResult.kind === "ok"
+            ? `✓ ${testResult.summary}`
+            : `✗ ${testResult.message}`}
+        </p>
+      )}
     </div>
   );
 }

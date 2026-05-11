@@ -168,6 +168,10 @@ const zhCN: Resources = {
     clearing: "清除中…",
     saved: "已保存！",
     cleared: "已清除！",
+    test: "测试",
+    testing: "测试中…",
+    test_hint:
+      "运行一次廉价的 API 调用，确认所保存的密钥可用。可在首次调用云端工具前提前暴露密钥无效或速率限制错误。",
   },
   property_panel: {
     heading: "属性",

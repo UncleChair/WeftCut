@@ -78,6 +78,7 @@ pub fn run() {
             commands::settings_get_api_key_status,
             commands::settings_set_api_key,
             commands::settings_clear_api_key,
+            commands::settings_test_provider,
         ])
         .setup(|app| {
             // Project actor — single writer for all state mutations, shared by

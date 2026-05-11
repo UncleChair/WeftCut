@@ -2,6 +2,8 @@
 //! (Stage 6). Both share the same API key pulled from `keys::Provider::OpenAi`
 //! so the user configures one credential.
 
+use std::time::Instant;
+
 use async_trait::async_trait;
 use reqwest::multipart::{Form, Part};
 use reqwest::StatusCode;
@@ -9,7 +11,9 @@ use serde::Serialize;
 use tokio::fs;
 
 use crate::cloud::errors::CloudError;
-use crate::cloud::http::{bearer_auth, shared_client};
+use crate::cloud::http::{
+    bearer_auth, retry_delay_for_status, shared_client, MAX_RETRY_ATTEMPTS, RETRY_TOTAL_BUDGET,
+};
 use crate::cloud::keys::Provider;
 use crate::cloud::synthesizer::{
     AudioFormat, SynthesizeRequest, SynthesizeResponse, Synthesizer,
@@ -62,42 +66,77 @@ impl Transcriber for OpenAiWhisper {
             .and_then(|n| n.to_str())
             .unwrap_or("audio.wav")
             .to_string();
-        let file_part = Part::bytes(bytes)
-            .file_name(filename)
-            .mime_str("audio/wav")
-            .expect("audio/wav is a valid mime");
-
-        let mut form = Form::new()
-            .text("model", WHISPER_MODEL)
-            .text("response_format", "srt")
-            .part("file", file_part);
-        if let Some(lang) = req.language.as_deref() {
-            // Whisper expects ISO-639-1 (`en`, `zh`). The MCP tool doesn't
-            // validate — we forward whatever the agent sent and let Whisper
-            // reject if it can't recognize the code.
-            form = form.text("language", lang.to_string());
-        }
 
         let auth = bearer_auth(Provider::OpenAi)?;
-        let response = shared_client()
-            .post(WHISPER_ENDPOINT)
-            .header("Authorization", auth)
-            .multipart(form)
-            .send()
-            .await?;
-
-        let status = response.status();
-        if status.is_success() {
-            let srt_body = response.text().await?;
-            return Ok(TranscribeResponse {
-                srt_body,
-                language_detected: None, // SRT response_format doesn't include it
-            });
-        }
-        let retry_after_s = parse_retry_after(&response);
-        let body_text = response.text().await.unwrap_or_default();
-        Err(map_status_to_cloud_error(status, retry_after_s, body_text))
+        let started = Instant::now();
+        let mut attempt: u32 = 0;
+        let response = loop {
+            // Rebuild the multipart form each iteration — `Form`/`Part` aren't
+            // cleanly cloneable, but the bytes/filename/language are cheap to
+            // re-wrap. Bytes are owned via `Vec<u8>::clone` only on retry.
+            let file_part = Part::bytes(bytes.clone())
+                .file_name(filename.clone())
+                .mime_str("audio/wav")
+                .expect("audio/wav is a valid mime");
+            let mut form = Form::new()
+                .text("model", WHISPER_MODEL)
+                .text("response_format", "srt")
+                .part("file", file_part);
+            if let Some(lang) = req.language.as_deref() {
+                form = form.text("language", lang.to_string());
+            }
+            let response = shared_client()
+                .post(WHISPER_ENDPOINT)
+                .header("Authorization", &auth)
+                .multipart(form)
+                .send()
+                .await?;
+            let status = response.status();
+            if status.is_success() {
+                break response;
+            }
+            if let Some(delay) =
+                next_retry_delay(status, &response, attempt, started)
+            {
+                tracing::warn!(
+                    target: "videtor::cloud",
+                    "OpenAI Whisper {status} (attempt {attempt}); retrying in {delay:?}",
+                );
+                drop(response);
+                tokio::time::sleep(delay).await;
+                attempt += 1;
+                continue;
+            }
+            let retry_after_s = parse_retry_after(&response);
+            let body_text = response.text().await.unwrap_or_default();
+            return Err(map_status_to_cloud_error(status, retry_after_s, body_text));
+        };
+        let srt_body = response.text().await?;
+        Ok(TranscribeResponse {
+            srt_body,
+            language_detected: None, // SRT response_format doesn't include it
+        })
     }
+}
+
+/// Shared retry-decision helper used by both Whisper and tts-1. Returns the
+/// delay to sleep, or `None` if the failure is permanent or the budget is
+/// exhausted.
+fn next_retry_delay(
+    status: StatusCode,
+    response: &reqwest::Response,
+    attempt: u32,
+    started: Instant,
+) -> Option<std::time::Duration> {
+    if attempt + 1 >= MAX_RETRY_ATTEMPTS {
+        return None;
+    }
+    let retry_after_s = parse_retry_after(response);
+    let delay = retry_delay_for_status(status, retry_after_s, attempt)?;
+    if started.elapsed() + delay > RETRY_TOTAL_BUDGET {
+        return None;
+    }
+    Some(delay)
 }
 
 // ============================================================
@@ -187,23 +226,40 @@ impl Synthesizer for OpenAiTts {
             speed: req.speed,
         };
         let auth = bearer_auth(Provider::OpenAi)?;
-        let response = shared_client()
-            .post(TTS_ENDPOINT)
-            .header("Authorization", auth)
-            .json(&body)
-            .send()
-            .await?;
-        let status = response.status();
-        if status.is_success() {
-            let bytes = response.bytes().await?.to_vec();
-            return Ok(SynthesizeResponse {
-                audio: bytes,
-                format: AudioFormat::Mp3,
-            });
-        }
-        let retry_after_s = parse_retry_after(&response);
-        let body_text = response.text().await.unwrap_or_default();
-        Err(map_status_to_cloud_error(status, retry_after_s, body_text))
+        let started = Instant::now();
+        let mut attempt: u32 = 0;
+        let response = loop {
+            let response = shared_client()
+                .post(TTS_ENDPOINT)
+                .header("Authorization", &auth)
+                .json(&body)
+                .send()
+                .await?;
+            let status = response.status();
+            if status.is_success() {
+                break response;
+            }
+            if let Some(delay) =
+                next_retry_delay(status, &response, attempt, started)
+            {
+                tracing::warn!(
+                    target: "videtor::cloud",
+                    "OpenAI tts-1 {status} (attempt {attempt}); retrying in {delay:?}",
+                );
+                drop(response);
+                tokio::time::sleep(delay).await;
+                attempt += 1;
+                continue;
+            }
+            let retry_after_s = parse_retry_after(&response);
+            let body_text = response.text().await.unwrap_or_default();
+            return Err(map_status_to_cloud_error(status, retry_after_s, body_text));
+        };
+        let bytes = response.bytes().await?.to_vec();
+        Ok(SynthesizeResponse {
+            audio: bytes,
+            format: AudioFormat::Mp3,
+        })
     }
 }
 
@@ -233,6 +289,46 @@ pub fn tts_cache_key(text: &str, voice: &str, speed: Option<f32>) -> String {
     hasher.update(&[0]);
     hasher.update(text.as_bytes());
     hasher.finalize().to_hex().to_string()
+}
+
+// ============================================================
+// Test connection — Settings "Test" button
+// ============================================================
+
+const MODELS_ENDPOINT: &str = "https://api.openai.com/v1/models";
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OpenAiConnectionInfo {
+    /// Number of models the configured key can list. Acts as a smoke check:
+    /// a working key sees dozens of models, an invalid key gets 401 (mapped
+    /// to `CloudError::InvalidKey` before we reach here).
+    pub model_count: usize,
+}
+
+/// Validate the configured OpenAI API key with a cheap GET /v1/models call.
+/// Returns model count on success; surfaces InvalidKey / RateLimited /
+/// network errors per the shared mapping. Used by the Settings → "Test"
+/// button so users learn about a bad key BEFORE the first agent call.
+pub async fn test_connection() -> Result<OpenAiConnectionInfo, CloudError> {
+    let auth = bearer_auth(Provider::OpenAi)?;
+    let response = shared_client()
+        .get(MODELS_ENDPOINT)
+        .header("Authorization", auth)
+        .send()
+        .await?;
+    let status = response.status();
+    if !status.is_success() {
+        let retry_after_s = parse_retry_after(&response);
+        let body_text = response.text().await.unwrap_or_default();
+        return Err(map_status_to_cloud_error(status, retry_after_s, body_text));
+    }
+    let json: serde_json::Value = response.json().await?;
+    let model_count = json
+        .get("data")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.len())
+        .unwrap_or(0);
+    Ok(OpenAiConnectionInfo { model_count })
 }
 
 // ============================================================

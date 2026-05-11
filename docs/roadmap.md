@@ -164,7 +164,7 @@ Tauri events the UI can listen for (not yet wired into a media-pool progress str
 | Proxy auto-selection (libmpv plays the proxy when original is too heavy) | Needs a heuristic ("source is 4K + proxy exists → use proxy"). Not yet wired into `mpv::play_*`. |
 | ffmpeg behind SOCKS proxy auto-download | Pre-existing Phase 0 issue; manual `winget install Gyan.FFmpeg` is the documented workaround. |
 
-Forward motion: Phase 1.x closed. **Phase 6 (cloud transcription + TTS) in progress** — Stages 1–7 complete (keyring + Settings UI, inline-subtitle materialization, `apply_subtitles` tool, cloud client foundation, Whisper + `transcribe_clip`, tts-1 + `synthesize_speech`, `/auto-caption` + `/voiceover` prompts). Stage 8 (hardening: retries, key validation, missing-key gating) closes Phase 6. Other open slices: Phase 5 (rasterized templates), or pick at remaining Phase 2 deferrals (mpv drawtext live preview, crossfade, layer composition order).
+Forward motion: Phase 1.x closed. **Phase 6 closed 2026-05-11** — Stages 1–8 complete (keyring + Settings UI, inline-subtitle materialization, `apply_subtitles` tool, cloud client foundation, Whisper + `transcribe_clip`, tts-1 + `synthesize_speech`, `/auto-caption` + `/voiceover` prompts, hardening: retries + Test connection). One scope gap deliberately deferred: omitting unconfigured cloud tools from `list_tools` (rmcp 0.1.x `tool_box` macro limitation — current `MissingKey` structured error is the recovery path; see `cloud/mod.rs` doc comment near `pick_transcriber`). Other open slices: Phase 5 (rasterized templates), or pick at remaining Phase 2 deferrals (mpv drawtext live preview, crossfade, layer composition order).
 
 ## Phase 2 — Native overlays (2 weeks)
 
@@ -401,9 +401,33 @@ Stages (advisor-blessed sequence; numbers are cumulative):
    (delegates to `prompts::expand`). 138 → 146 lib tests (+8 covering
    catalog shape, unknown-prompt rejection, required-arg enforcement,
    and arg interpolation for both prompts).
-8. **Hardening**: rate-limit-aware retries, key-validation feedback in
-   Settings ("Test connection" → 1-token call), missing-key tool gating
-   (`Unavailable` if no provider supports the requested surface).
+8. ✅ **Hardening**.
+   - **Retries**: `cloud::http::retry_delay_for_status` returns `Some(delay)`
+     for 408 / 429 / 5xx. 429 prefers the `Retry-After` header capped at
+     10s; 408 / 5xx use exponential backoff (500ms → 1s → 2s → 4s → 8s,
+     saturating at attempt 4). `MAX_RETRY_ATTEMPTS = 3` (1 initial + 2
+     retries). `RETRY_TOTAL_BUDGET = 45s` bounds *between-retry* sleeps,
+     not a wedged single attempt (that's the `shared_client` 180s per-
+     request timeout). Loop lives in each provider's `transcribe` /
+     `synthesize` method so the body can be rebuilt per attempt (multipart
+     `Form` isn't cheaply cloneable).
+   - **Test connection**: `cloud::test_connection(provider)` does a cheap
+     GET to OpenAI's `/v1/models`, returns a `ConnectionTestInfo` with a
+     one-line summary ("N models available"). New Tauri command
+     `settings_test_provider` and a "Test" button in `SettingsPanel.tsx`
+     surface this inline (green ✓ summary, red ✗ message). Catches
+     invalid keys + rate-limit / network issues BEFORE the first agent
+     call.
+   - **Missing-key tool gating** *deferred* (scope gap, see `cloud/mod.rs`
+     doc comment near `pick_transcriber`): rmcp 0.1.x's `tool_box` macro
+     generates `list_tools` from compile-time registration with no per-
+     session filtering hook. Tools currently return structured `MissingKey`
+     errors when called without a configured provider; the prompts and
+     tool descriptions reference Settings. Revisit when rmcp gains
+     per-session tool filtering.
+   - 146 → 151 lib tests (+5 retry-decision: permanent 4xx, Retry-After
+     honored + capped at 10s, exponential fallback when no header, 5xx
+     uses exponential, exponent saturates at attempt 4).
 
 Provider model: keyring slot is keyed by **API provider** (`OpenAi`,
 `Deepgram`, `ElevenLabs`, ...), not by feature surface. A single OpenAI

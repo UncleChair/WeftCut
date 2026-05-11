@@ -499,3 +499,20 @@ export async function settingsSetApiKey(provider: string, key: string): Promise<
 export async function settingsClearApiKey(provider: string): Promise<void> {
   return invoke<void>("settings_clear_api_key", { provider });
 }
+
+export interface ConnectionTestInfo {
+  /// The provider tag the result is attributed to (matches `ApiKeyStatus.provider`).
+  provider: string;
+  /// One-line success summary for the user.
+  summary: string;
+}
+
+/// Run a cheap smoke check against the configured provider key. Resolves with
+/// a structured info object on success; rejects with the structured cloud
+/// error message (MissingKey / InvalidKey / RateLimited / ...) so the UI can
+/// render it inline.
+export async function settingsTestProvider(
+  provider: string,
+): Promise<ConnectionTestInfo> {
+  return invoke<ConnectionTestInfo>("settings_test_provider", { provider });
+}

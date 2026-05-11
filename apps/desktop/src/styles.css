@@ -1081,6 +1081,19 @@ html, body, #root { height: 100%; margin: 0; }
   border: 1px solid #374151;
 }
 
+.settings-test-ok {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: #34d399;
+}
+
+.settings-test-err {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: #f87171;
+  word-break: break-word;
+}
+
 .settings-key-input-row {
   display: flex;
   align-items: center;

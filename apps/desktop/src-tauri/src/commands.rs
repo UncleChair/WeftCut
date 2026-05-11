@@ -245,6 +245,20 @@ pub fn settings_clear_api_key(provider: String) -> Result<(), String> {
     crate::cloud::keys::clear_key(p).map_err(|e| format!("keyring: {e}"))
 }
 
+/// Run a cheap API smoke check for the supplied provider. Returns a
+/// structured `ConnectionTestInfo` (provider tag + one-line summary) on
+/// success, or a flat `String` carrying the structured cloud error so the
+/// UI can render it inline.
+#[tauri::command]
+pub async fn settings_test_provider(
+    provider: String,
+) -> Result<crate::cloud::ConnectionTestInfo, String> {
+    let p = parse_provider(&provider)?;
+    crate::cloud::test_connection(p)
+        .await
+        .map_err(|e| format!("{e}"))
+}
+
 #[tauri::command]
 pub async fn project_summary(handle: State<'_, ProjectHandle>) -> Result<ProjectSummary, ()> {
     let snap = handle.snapshot().await;
