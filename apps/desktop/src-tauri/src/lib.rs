@@ -159,18 +159,31 @@ pub fn run() {
                 loop {
                     match rx.recv().await {
                         Ok(event) => {
-                            let actor_label = match &event.actor {
-                                state::Actor::User => "User".to_string(),
+                            let (actor_kind, client) = match &event.actor {
+                                state::Actor::User => ("user", None),
                                 state::Actor::Agent { client } => {
-                                    format!("Agent({client})")
+                                    ("agent", Some(client.clone()))
                                 }
                             };
                             let _ = app_handle_for_ui_events.emit(
                                 "project:changed",
                                 serde_json::json!({
                                     "op_id": event.op_id.to_string(),
-                                    "actor": actor_label,
+                                    // Legacy: short human-readable label kept
+                                    // for back-compat with the existing
+                                    // hot-reload bridge.
+                                    "actor": match &event.actor {
+                                        state::Actor::User => "User".to_string(),
+                                        state::Actor::Agent { client } => {
+                                            format!("Agent({client})")
+                                        }
+                                    },
+                                    // Structured fields for the activity panel.
+                                    "actor_kind": actor_kind,
+                                    "client": client,
                                     "summary": event.summary,
+                                    "timestamp": event.timestamp.to_rfc3339(),
+                                    "affected_count": event.affected.len(),
                                 }),
                             );
                         }

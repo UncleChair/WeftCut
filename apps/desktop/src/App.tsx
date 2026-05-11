@@ -40,6 +40,7 @@ import {
 } from "./ipc";
 import { Timeline } from "./timeline/Timeline";
 import { PropertyPanel } from "./properties/PropertyPanel";
+import { ActivityPanel } from "./activity/ActivityPanel";
 import { ConnectAgentPanel } from "./connect/ConnectAgentPanel";
 import { SettingsPanel } from "./settings/SettingsPanel";
 import {
@@ -64,6 +65,7 @@ export function App() {
   const [hwProbe, setHwProbe] = useState<HwEncoderProbe | null>(null);
   const [connectOpen, setConnectOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [activityOpen, setActivityOpen] = useState(false);
 
   const seekTo = useCallback(async (tUs: number) => {
     setCurrentTimeUs(tUs);
@@ -491,6 +493,12 @@ export function App() {
           {t("actions.connect_agent")}
         </button>
         <button
+          onClick={() => setActivityOpen(true)}
+          title={t("actions.activity_hint")}
+        >
+          {t("actions.activity")}
+        </button>
+        <button
           onClick={() => setSettingsOpen(true)}
           title={t("actions.settings_hint")}
         >
@@ -563,6 +571,9 @@ export function App() {
       )}
       {settingsOpen && (
         <SettingsPanel onClose={() => setSettingsOpen(false)} />
+      )}
+      {activityOpen && (
+        <ActivityPanel onClose={() => setActivityOpen(false)} />
       )}
     </div>
   );

@@ -37,6 +37,9 @@ const enUS = {
     settings: "⚙ Settings…",
     settings_hint:
       "Manage cloud-provider API keys (transcription, future TTS). Keys live in the OS keyring.",
+    activity: "📜 Activity…",
+    activity_hint:
+      "Recent edits from this session — both yours and any connected agent's. Filter by actor.",
   },
   compiler: {
     panel_title: "Compiled filter graph ({{count}} nodes)",
@@ -171,6 +174,14 @@ const enUS = {
     testing: "Testing…",
     test_hint:
       "Run a cheap API call to confirm the saved key works. Surfaces InvalidKey / rate-limit errors before your first cloud-backed agent call.",
+  },
+  activity: {
+    heading: "Activity",
+    close: "Close",
+    filter_all: "All",
+    filter_user: "You",
+    filter_agent: "Agents",
+    empty: "Nothing yet. Edits land here as they happen.",
   },
   property_panel: {
     heading: "Properties",

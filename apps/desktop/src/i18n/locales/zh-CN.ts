@@ -40,6 +40,9 @@ const zhCN: Resources = {
     settings: "⚙ 设置…",
     settings_hint:
       "管理云服务 API 密钥（转写、未来的 TTS）。密钥存储在系统密钥环中。",
+    activity: "📜 活动…",
+    activity_hint:
+      "本会话的最近编辑——包括你和任何已连接代理的操作。可按操作者筛选。",
   },
   compiler: {
     panel_title: "编译后的滤镜图（{{count}} 个节点）",
@@ -172,6 +175,14 @@ const zhCN: Resources = {
     testing: "测试中…",
     test_hint:
       "运行一次廉价的 API 调用，确认所保存的密钥可用。可在首次调用云端工具前提前暴露密钥无效或速率限制错误。",
+  },
+  activity: {
+    heading: "活动",
+    close: "关闭",
+    filter_all: "全部",
+    filter_user: "你",
+    filter_agent: "代理",
+    empty: "暂无记录。每次提交后会在此处出现。",
   },
   property_panel: {
     heading: "属性",
