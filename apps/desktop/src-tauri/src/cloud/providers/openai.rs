@@ -1,0 +1,221 @@
+//! OpenAI provider — Whisper transcription (Stage 5) and tts-1 synthesis
+//! (Stage 6 will fill the `Synthesizer` impl). Both share the same API key
+//! pulled from `keys::Provider::OpenAi` so the user configures one credential.
+
+use async_trait::async_trait;
+use reqwest::multipart::{Form, Part};
+use reqwest::StatusCode;
+use tokio::fs;
+
+use crate::cloud::errors::CloudError;
+use crate::cloud::http::{bearer_auth, shared_client};
+use crate::cloud::keys::Provider;
+use crate::cloud::transcriber::{TranscribeRequest, TranscribeResponse, Transcriber};
+
+/// OpenAI's documented Whisper upload cap. Surfacing this as a structured
+/// `PayloadTooLarge` error lets the agent narrow `[t_start_us, t_end_us]`
+/// rather than crashing into an opaque 413.
+pub const WHISPER_MAX_UPLOAD_BYTES: u64 = 25 * 1024 * 1024;
+
+const WHISPER_ENDPOINT: &str = "https://api.openai.com/v1/audio/transcriptions";
+const WHISPER_MODEL: &str = "whisper-1";
+
+/// Whisper transcription client. Construction is free — credentials are
+/// fetched per request via `http::bearer_auth` so a key change in Settings
+/// doesn't require restarting anything.
+pub struct OpenAiWhisper;
+
+impl OpenAiWhisper {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for OpenAiWhisper {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl Transcriber for OpenAiWhisper {
+    async fn transcribe(
+        &self,
+        req: TranscribeRequest,
+    ) -> Result<TranscribeResponse, CloudError> {
+        let bytes = fs::read(&req.audio_path).await?;
+        let size = bytes.len() as u64;
+        if size > WHISPER_MAX_UPLOAD_BYTES {
+            return Err(CloudError::PayloadTooLarge {
+                bytes: size,
+                cap: WHISPER_MAX_UPLOAD_BYTES,
+            });
+        }
+
+        let filename = req
+            .audio_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("audio.wav")
+            .to_string();
+        let file_part = Part::bytes(bytes)
+            .file_name(filename)
+            .mime_str("audio/wav")
+            .expect("audio/wav is a valid mime");
+
+        let mut form = Form::new()
+            .text("model", WHISPER_MODEL)
+            .text("response_format", "srt")
+            .part("file", file_part);
+        if let Some(lang) = req.language.as_deref() {
+            // Whisper expects ISO-639-1 (`en`, `zh`). The MCP tool doesn't
+            // validate — we forward whatever the agent sent and let Whisper
+            // reject if it can't recognize the code.
+            form = form.text("language", lang.to_string());
+        }
+
+        let auth = bearer_auth(Provider::OpenAi)?;
+        let response = shared_client()
+            .post(WHISPER_ENDPOINT)
+            .header("Authorization", auth)
+            .multipart(form)
+            .send()
+            .await?;
+
+        let status = response.status();
+        if status.is_success() {
+            let srt_body = response.text().await?;
+            return Ok(TranscribeResponse {
+                srt_body,
+                language_detected: None, // SRT response_format doesn't include it
+            });
+        }
+        let retry_after_s = parse_retry_after(&response);
+        let body_text = response.text().await.unwrap_or_default();
+        Err(map_status_to_cloud_error(status, retry_after_s, body_text))
+    }
+}
+
+fn map_status_to_cloud_error(
+    status: StatusCode,
+    retry_after_s: Option<u64>,
+    body_text: String,
+) -> CloudError {
+    match status {
+        StatusCode::UNAUTHORIZED => CloudError::InvalidKey {
+            provider: Provider::OpenAi,
+        },
+        StatusCode::PAYLOAD_TOO_LARGE => CloudError::PayloadTooLarge {
+            // We already pre-checked against `WHISPER_MAX_UPLOAD_BYTES`, so
+            // landing here means OpenAI tightened the cap or we miscounted.
+            // Surface their advertised cap so the message stays accurate.
+            bytes: 0,
+            cap: WHISPER_MAX_UPLOAD_BYTES,
+        },
+        StatusCode::TOO_MANY_REQUESTS => CloudError::RateLimited {
+            provider: Provider::OpenAi,
+            retry_after_s,
+        },
+        _ => CloudError::Provider {
+            provider: Provider::OpenAi,
+            message: format!(
+                "{} {}: {}",
+                status.as_u16(),
+                status.canonical_reason().unwrap_or(""),
+                trim_body(&body_text),
+            ),
+        },
+    }
+}
+
+fn parse_retry_after(response: &reqwest::Response) -> Option<u64> {
+    response
+        .headers()
+        .get("retry-after")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.trim().parse::<u64>().ok())
+}
+
+fn trim_body(s: &str) -> String {
+    const MAX: usize = 400;
+    let trimmed = s.trim();
+    if trimmed.len() <= MAX {
+        trimmed.to_string()
+    } else {
+        format!("{}…", &trimmed[..MAX])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maps_401_to_invalid_key() {
+        let err = map_status_to_cloud_error(
+            StatusCode::UNAUTHORIZED,
+            None,
+            "{\"error\":{\"message\":\"Invalid Authentication\"}}".into(),
+        );
+        match err {
+            CloudError::InvalidKey { provider: Provider::OpenAi } => {}
+            other => panic!("expected InvalidKey, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn maps_429_to_rate_limited_with_retry_after() {
+        let err = map_status_to_cloud_error(
+            StatusCode::TOO_MANY_REQUESTS,
+            Some(20),
+            "rate limit".into(),
+        );
+        match err {
+            CloudError::RateLimited {
+                provider: Provider::OpenAi,
+                retry_after_s: Some(20),
+            } => {}
+            other => panic!("expected RateLimited(20), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn maps_413_to_payload_too_large() {
+        let err = map_status_to_cloud_error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            None,
+            "too big".into(),
+        );
+        match err {
+            CloudError::PayloadTooLarge { cap, .. } => {
+                assert_eq!(cap, WHISPER_MAX_UPLOAD_BYTES);
+            }
+            other => panic!("expected PayloadTooLarge, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn maps_500_to_provider_error_with_body() {
+        let err = map_status_to_cloud_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            None,
+            "kaboom".into(),
+        );
+        match err {
+            CloudError::Provider { provider: Provider::OpenAi, message } => {
+                assert!(message.contains("500"), "missing status: {message}");
+                assert!(message.contains("kaboom"), "missing body: {message}");
+            }
+            other => panic!("expected Provider, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn trim_body_caps_at_400() {
+        let long = "x".repeat(1000);
+        let trimmed = trim_body(&long);
+        // 400 'x' bytes + '…' (3 bytes in UTF-8).
+        assert_eq!(trimmed.chars().count(), 401);
+        assert!(trimmed.ends_with('…'));
+    }
+}

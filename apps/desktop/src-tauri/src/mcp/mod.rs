@@ -63,11 +63,12 @@ use crate::cache::{CacheLayout, cached_ok};
 use crate::io::probe;
 use crate::ir::{self, RenderTarget};
 use crate::jobs;
+use crate::cloud;
 use crate::state::{
-    Actor, Animated, BlendMode, ColorParams, CommandError, CompositionPatch, LayerId, LayerParams,
-    LayerParamsPatch, LayerPatch, MarkerId, MarkerPatch, MediaId, MediaItem, MediaKind,
-    ProjectHandle, Rational, Rgba, SubtitlesParams, SubtitlesSource, TrackId, TrackKind,
-    Transform, ValidationError, VideoClipParams, new_id,
+    Actor, Animated, AudioParams, BlendMode, ColorParams, CommandError, CompositionPatch, LayerId,
+    LayerParams, LayerParamsPatch, LayerPatch, MarkerId, MarkerPatch, MediaId, MediaItem,
+    MediaKind, Project, ProjectHandle, Rational, Rgba, SubtitlesParams, SubtitlesSource, TrackId,
+    TrackKind, Transform, ValidationError, VideoClipParams, new_id,
 };
 
 const URI_PROJECT: &str = "project://current";
@@ -298,6 +299,58 @@ impl VidetorServer {
             .await
             .map_err(map_command_error)?;
         Ok(ok_text(id.to_string()))
+    }
+
+    #[tool(description = "Transcribe a VideoClip or Audio layer through the configured cloud transcription \
+                          provider (OpenAI Whisper today) and return the SRT body with timestamps already \
+                          shifted to timeline-absolute microseconds. Pipe the returned body straight into \
+                          `apply_subtitles` (omit `t_start_us` so the layer activates from 0 — the cues \
+                          self-position via their internal timestamps). Optional `t_start_us`/`t_end_us` \
+                          narrow the transcription window inside the layer's time range; both default to \
+                          the layer endpoints. VideoClip layers with speed != 1.0 are rejected — split off \
+                          a speed-1 segment first. Errors with structured messages if no API key is \
+                          configured, the audio slice exceeds the provider cap (~13 min for Whisper at \
+                          25 MB), or the provider rate-limits / rejects auth.")]
+    async fn transcribe_clip(
+        &self,
+        #[tool(aggr)] args: TranscribeClipArgs,
+    ) -> Result<CallToolResult, McpError> {
+        let layer_id = parse_uuid(&args.layer_id, "layer_id")?;
+        let snap = self.project.snapshot().await;
+        let resolved = resolve_clip_audio_source(
+            &snap,
+            layer_id,
+            args.t_start_us,
+            args.t_end_us,
+        )?;
+
+        let transcriber = cloud::pick_transcriber().ok_or_else(|| {
+            McpError::invalid_request(
+                "no transcription provider configured — open Settings → API keys and add an OpenAI API key",
+                None,
+            )
+        })?;
+
+        let audio_path = cloud::audio_extract::extract_audio_window(
+            &self.cache,
+            &resolved.source_path,
+            &resolved.source_hash,
+            resolved.source_in_us,
+            resolved.source_out_us,
+        )
+        .await
+        .map_err(|e| McpError::internal_error(format!("audio extract: {e:#}"), None))?;
+
+        let resp = transcriber
+            .transcribe(cloud::TranscribeRequest {
+                audio_path,
+                language: args.language,
+            })
+            .await
+            .map_err(map_cloud_error)?;
+
+        let shifted = cloud::srt::shift_srt(&resp.srt_body, resolved.timeline_start_us);
+        Ok(ok_text(shifted))
     }
 
     #[tool(description = "Update a layer's envelope (label, time range, enabled, locked). \
@@ -643,6 +696,20 @@ pub struct ApplySubtitlesArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct TranscribeClipArgs {
+    /// Target VideoClip or Audio layer id.
+    pub layer_id: String,
+    /// Optional transcription window start in timeline microseconds.
+    /// Defaults to the layer's `t_start_us`. Must lie within the layer.
+    pub t_start_us: Option<i64>,
+    /// Optional transcription window end in timeline microseconds.
+    /// Defaults to the layer's `t_end_us`. Must lie within the layer.
+    pub t_end_us: Option<i64>,
+    /// Optional ISO-639-1 language hint (`"en"`, `"zh"`). Auto-detect when omitted.
+    pub language: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct UpdateLayerArgs {
     pub layer_id: String,
     pub patch: LayerPatch,
@@ -845,6 +912,159 @@ fn map_command_error(e: CommandError) -> McpError {
     match detail {
         Some(d) => McpError::invalid_params(message, Some(d)),
         None => McpError::invalid_params(message, None),
+    }
+}
+
+/// Resolved source-audio coordinates for a `transcribe_clip` call.
+#[derive(Debug)]
+struct ResolvedAudioSource {
+    source_path: std::path::PathBuf,
+    source_hash: String,
+    /// Source-relative microseconds: where to start the ffmpeg slice.
+    source_in_us: i64,
+    /// Source-relative microseconds: where to end the ffmpeg slice.
+    source_out_us: i64,
+    /// Timeline-absolute microseconds of the slice's start — what we shift
+    /// the SRT cue timestamps by so they land on the timeline.
+    timeline_start_us: i64,
+}
+
+/// Find a layer with audio attached (VideoClip or Audio), validate the
+/// requested timeline window lies inside it, and map that window onto the
+/// source media's coordinate space.
+fn resolve_clip_audio_source(
+    snap: &Project,
+    layer_id: LayerId,
+    t_start_arg: Option<i64>,
+    t_end_arg: Option<i64>,
+) -> Result<ResolvedAudioSource, McpError> {
+    let layer = snap
+        .tracks
+        .iter()
+        .flat_map(|t| t.layers.iter())
+        .find(|l| l.id == layer_id)
+        .ok_or_else(|| {
+            McpError::invalid_params(
+                format!("layer {layer_id} not found"),
+                None,
+            )
+        })?;
+
+    let (media_id, src_in_us, src_out_us) = match &layer.params {
+        LayerParams::VideoClip(VideoClipParams {
+            media,
+            src_in_us,
+            src_out_us,
+            speed,
+            ..
+        }) => {
+            // Speed != 1 changes the timeline↔source ratio. Until the
+            // clip-edit path supports variable speed end-to-end, refuse
+            // rather than silently transcribe the wrong audio span and
+            // misalign cues on the timeline. Mirrors the split_layer
+            // precedent ("source offsets adjusted at speed=1").
+            if (*speed - 1.0).abs() > f64::EPSILON {
+                return Err(McpError::invalid_params(
+                    format!(
+                        "transcribe_clip does not yet support speed != 1.0 (layer speed={speed}); \
+                         split off a speed-1 segment first",
+                    ),
+                    None,
+                ));
+            }
+            (*media, *src_in_us, *src_out_us)
+        }
+        LayerParams::Audio(AudioParams { media, src_in_us, src_out_us, .. }) => {
+            (*media, *src_in_us, *src_out_us)
+        }
+        _ => {
+            return Err(McpError::invalid_params(
+                format!(
+                    "layer {layer_id} kind is not transcribable — pass a VideoClip or Audio layer",
+                ),
+                None,
+            ));
+        }
+    };
+
+    let media = snap.media_pool.get(&media_id).ok_or_else(|| {
+        McpError::invalid_params(
+            format!(
+                "layer {layer_id} references missing media {media_id} (project state is inconsistent)",
+            ),
+            None,
+        )
+    })?;
+    if media.metadata.audio.is_none() {
+        return Err(McpError::invalid_params(
+            format!(
+                "media {media_id} has no audio stream — transcription needs audio",
+            ),
+            None,
+        ));
+    }
+
+    let t_start = t_start_arg.unwrap_or(layer.t_start_us);
+    let t_end = t_end_arg.unwrap_or(layer.t_end_us);
+    if t_end <= t_start {
+        return Err(McpError::invalid_params(
+            format!(
+                "transcription window must have positive duration (t_start_us={t_start}, t_end_us={t_end})",
+            ),
+            None,
+        ));
+    }
+    if t_start < layer.t_start_us || t_end > layer.t_end_us {
+        return Err(McpError::invalid_params(
+            format!(
+                "transcription window [{t_start}, {t_end}] is outside layer range [{}, {}]",
+                layer.t_start_us, layer.t_end_us,
+            ),
+            None,
+        ));
+    }
+
+    // Map timeline-relative offset within the layer onto source-relative
+    // microseconds. Speed != 1 is not yet supported for the clip-edit path
+    // (see VideoClipParams::speed comment); transcription warns rather than
+    // silently producing misaligned cues.
+    let offset_in = t_start - layer.t_start_us;
+    let offset_out = t_end - layer.t_start_us;
+    let source_in = src_in_us + offset_in;
+    let source_out = src_in_us + offset_out;
+    if source_out > src_out_us {
+        return Err(McpError::invalid_params(
+            format!(
+                "transcription window maps past the layer's source range (source_out={source_out} > src_out_us={src_out_us})",
+            ),
+            None,
+        ));
+    }
+
+    Ok(ResolvedAudioSource {
+        source_path: media.path_abs.clone(),
+        source_hash: media.file_hash_blake3.clone(),
+        source_in_us: source_in,
+        source_out_us: source_out,
+        timeline_start_us: t_start,
+    })
+}
+
+/// Map a `cloud::CloudError` to an `McpError` so the agent sees a structured
+/// failure (missing key, invalid key, rate-limited, too-large payload) with
+/// actionable recovery steps in the message.
+fn map_cloud_error(e: cloud::CloudError) -> McpError {
+    use cloud::CloudError as E;
+    let message = e.to_string();
+    match e {
+        E::MissingKey { .. } | E::InvalidKey { .. } => {
+            McpError::invalid_request(message, None)
+        }
+        E::PayloadTooLarge { .. } => McpError::invalid_params(message, None),
+        E::RateLimited { .. } | E::Provider { .. } | E::Network(_) => {
+            McpError::internal_error(message, None)
+        }
+        E::Io(_) | E::AudioExtract(_) => McpError::internal_error(message, None),
     }
 }
 
@@ -1293,5 +1513,249 @@ mod tests {
     #[test]
     fn sniff_format_defaults_to_srt_when_unclear() {
         assert!(matches!(sniff_subtitle_format("hello\nworld\n"), SubFormat::Srt));
+    }
+
+    // ============================================================
+    // resolve_clip_audio_source — Stage 5 source-coordinate math
+    // ============================================================
+
+    use chrono::Utc;
+    use std::path::PathBuf;
+    use crate::state::{
+        AudioStreamMeta, MediaItem, MediaKind, MediaMetadata, Layer, Track, TrackKind,
+        new_id,
+    };
+
+    fn audio_media() -> MediaItem {
+        MediaItem {
+            id: new_id(),
+            label: Some("a.wav".into()),
+            path_abs: PathBuf::from("/tmp/a.wav"),
+            path_rel: None,
+            kind: MediaKind::Audio,
+            metadata: MediaMetadata {
+                duration_us: Some(60_000_000),
+                video: None,
+                audio: Some(AudioStreamMeta {
+                    sample_rate: 44100,
+                    channels: 1,
+                    codec: "pcm_s16le".into(),
+                }),
+            },
+            proxy_path: None,
+            waveform_path: None,
+            thumbnails_dir: None,
+            file_hash_blake3: "media-hash".into(),
+            file_size: 0,
+            file_mtime: 0,
+            imported_at: Utc::now(),
+        }
+    }
+
+    fn video_clip_layer(
+        media_id: MediaId,
+        t_start: i64,
+        t_end: i64,
+        src_in: i64,
+        src_out: i64,
+        speed: f64,
+    ) -> Layer {
+        Layer {
+            id: new_id(),
+            label: None,
+            t_start_us: t_start,
+            t_end_us: t_end,
+            enabled: true,
+            locked: false,
+            metadata: imbl::HashMap::new(),
+            effects: imbl::Vector::new(),
+            params: LayerParams::VideoClip(VideoClipParams {
+                media: media_id,
+                src_in_us: src_in,
+                src_out_us: src_out,
+                transform: Transform::default(),
+                opacity: Animated::Static(1.0),
+                crop: None,
+                flip_h: false,
+                flip_v: false,
+                blend_mode: BlendMode::default(),
+                speed,
+                fade_in_us: 0,
+                fade_out_us: 0,
+            }),
+        }
+    }
+
+    fn audio_layer(media_id: MediaId, t_start: i64, t_end: i64, src_in: i64, src_out: i64) -> Layer {
+        Layer {
+            id: new_id(),
+            label: None,
+            t_start_us: t_start,
+            t_end_us: t_end,
+            enabled: true,
+            locked: false,
+            metadata: imbl::HashMap::new(),
+            effects: imbl::Vector::new(),
+            params: LayerParams::Audio(AudioParams {
+                media: media_id,
+                src_in_us: src_in,
+                src_out_us: src_out,
+                gain_db: Animated::Static(0.0),
+                pan: Animated::Static(0.0),
+                fade_in_us: 0,
+                fade_out_us: 0,
+                mute: false,
+            }),
+        }
+    }
+
+    fn project_with_audio_layer(layer: Layer, media: MediaItem) -> Project {
+        project_with_layer(layer, media, TrackKind::Audio)
+    }
+
+    fn project_with_layer(layer: Layer, media: MediaItem, kind: TrackKind) -> Project {
+        let mut p = Project::new_blank("test");
+        p.media_pool.insert(media.id, media);
+        let mut track = Track::new(kind);
+        track.label = Some("T".into());
+        track.layers.push_back(layer);
+        p.tracks.push_back(track);
+        p
+    }
+
+    #[test]
+    fn resolve_default_window_uses_layer_endpoints() {
+        // Audio layer occupies [10s, 25s] on the timeline, mapping to
+        // [5s, 20s] in the source file (so the layer started 5s into the
+        // source). Default args -> full layer.
+        let media = audio_media();
+        let layer = audio_layer(
+            media.id,
+            10_000_000, 25_000_000,
+            5_000_000, 20_000_000,
+        );
+        let layer_id = layer.id;
+        let project = project_with_audio_layer(layer, media);
+
+        let r = resolve_clip_audio_source(&project, layer_id, None, None).unwrap();
+        assert_eq!(r.source_in_us, 5_000_000);
+        assert_eq!(r.source_out_us, 20_000_000);
+        assert_eq!(r.timeline_start_us, 10_000_000);
+        assert_eq!(r.source_hash, "media-hash");
+    }
+
+    #[test]
+    fn resolve_narrowed_window_maps_offset_into_source_coords() {
+        // Layer at timeline [10s, 25s] → source [5s, 20s]. Agent asks for
+        // [13s, 20s] timeline → offset [3s, 10s] in the layer → source
+        // [8s, 15s].
+        let media = audio_media();
+        let layer = audio_layer(
+            media.id,
+            10_000_000, 25_000_000,
+            5_000_000, 20_000_000,
+        );
+        let layer_id = layer.id;
+        let project = project_with_audio_layer(layer, media);
+
+        let r = resolve_clip_audio_source(
+            &project, layer_id, Some(13_000_000), Some(20_000_000),
+        ).unwrap();
+        assert_eq!(r.source_in_us, 8_000_000);
+        assert_eq!(r.source_out_us, 15_000_000);
+        assert_eq!(r.timeline_start_us, 13_000_000);
+    }
+
+    #[test]
+    fn resolve_rejects_window_outside_layer() {
+        let media = audio_media();
+        let layer = audio_layer(media.id, 10_000_000, 20_000_000, 0, 10_000_000);
+        let layer_id = layer.id;
+        let project = project_with_audio_layer(layer, media);
+
+        let err = resolve_clip_audio_source(
+            &project, layer_id, Some(5_000_000), Some(15_000_000),
+        )
+        .expect_err("window starts before layer");
+        assert!(format!("{err:?}").contains("outside layer range"));
+    }
+
+    #[test]
+    fn resolve_rejects_zero_or_inverted_duration() {
+        let media = audio_media();
+        let layer = audio_layer(media.id, 10_000_000, 20_000_000, 0, 10_000_000);
+        let layer_id = layer.id;
+        let project = project_with_audio_layer(layer, media);
+
+        let err = resolve_clip_audio_source(
+            &project, layer_id, Some(15_000_000), Some(15_000_000),
+        )
+        .expect_err("zero duration");
+        assert!(format!("{err:?}").contains("positive duration"));
+    }
+
+    #[test]
+    fn resolve_rejects_non_transcribable_layer_kind() {
+        let media = audio_media();
+        let mut layer = audio_layer(media.id, 0, 5_000_000, 0, 5_000_000);
+        layer.params = LayerParams::Color(ColorParams {
+            color: Animated::Static(Rgba::WHITE),
+            width: 1920,
+            height: 1080,
+        });
+        let layer_id = layer.id;
+        let project = project_with_audio_layer(layer, media);
+        let err = resolve_clip_audio_source(&project, layer_id, None, None)
+            .expect_err("Color layer is not transcribable");
+        assert!(format!("{err:?}").contains("not transcribable"));
+    }
+
+    #[test]
+    fn resolve_rejects_media_without_audio_stream() {
+        let mut media = audio_media();
+        media.metadata.audio = None;
+        let layer = audio_layer(media.id, 0, 5_000_000, 0, 5_000_000);
+        let layer_id = layer.id;
+        let project = project_with_audio_layer(layer, media);
+        let err = resolve_clip_audio_source(&project, layer_id, None, None)
+            .expect_err("media has no audio");
+        assert!(format!("{err:?}").contains("no audio stream"));
+    }
+
+    #[test]
+    fn resolve_works_for_video_clip_at_speed_1() {
+        // VideoClip layer at timeline [10s, 25s] → source [5s, 20s] at
+        // speed=1. Same coord math as audio.
+        let media = audio_media(); // re-use; metadata.audio is present
+        let layer = video_clip_layer(
+            media.id,
+            10_000_000, 25_000_000,
+            5_000_000, 20_000_000,
+            1.0,
+        );
+        let layer_id = layer.id;
+        let project = project_with_layer(layer, media, TrackKind::Video);
+
+        let r = resolve_clip_audio_source(&project, layer_id, None, None).unwrap();
+        assert_eq!(r.source_in_us, 5_000_000);
+        assert_eq!(r.source_out_us, 20_000_000);
+        assert_eq!(r.timeline_start_us, 10_000_000);
+    }
+
+    #[test]
+    fn resolve_rejects_video_clip_with_nonunit_speed() {
+        let media = audio_media();
+        let layer = video_clip_layer(
+            media.id,
+            0, 10_000_000,
+            0, 20_000_000,
+            2.0, // 2x speed
+        );
+        let layer_id = layer.id;
+        let project = project_with_layer(layer, media, TrackKind::Video);
+        let err = resolve_clip_audio_source(&project, layer_id, None, None)
+            .expect_err("speed != 1 should reject");
+        assert!(format!("{err:?}").contains("speed != 1.0"));
+        assert!(format!("{err:?}").contains("split off"));
     }
 }

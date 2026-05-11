@@ -164,7 +164,7 @@ Tauri events the UI can listen for (not yet wired into a media-pool progress str
 | Proxy auto-selection (libmpv plays the proxy when original is too heavy) | Needs a heuristic ("source is 4K + proxy exists → use proxy"). Not yet wired into `mpv::play_*`. |
 | ffmpeg behind SOCKS proxy auto-download | Pre-existing Phase 0 issue; manual `winget install Gyan.FFmpeg` is the documented workaround. |
 
-Forward motion: Phase 1.x closed. **Phase 6 (cloud transcription + TTS) in progress** — Stages 1–4 complete (keyring + Settings UI, inline-subtitle materialization, `apply_subtitles` tool, cloud client foundation). Stage 5 (OpenAI Whisper provider + `transcribe_clip` MCP tool) is next when work resumes. Other open slices: Phase 5 (rasterized templates), or pick at remaining Phase 2 deferrals (mpv drawtext live preview, crossfade, layer composition order).
+Forward motion: Phase 1.x closed. **Phase 6 (cloud transcription + TTS) in progress** — Stages 1–5 complete (keyring + Settings UI, inline-subtitle materialization, `apply_subtitles` tool, cloud client foundation, OpenAI Whisper + `transcribe_clip` tool). Stage 6 (OpenAI tts-1 + `synthesize_speech` MCP tool) is next when work resumes. Other open slices: Phase 5 (rasterized templates), or pick at remaining Phase 2 deferrals (mpv drawtext live preview, crossfade, layer composition order).
 
 ## Phase 2 — Native overlays (2 weeks)
 
@@ -341,11 +341,30 @@ Stages (advisor-blessed sequence; numbers are cumulative):
    No provider impls and no `pick_*` picker in this stage — both land in
    Stage 5. 100 → 109 lib tests. New dep: `async-trait` (required for
    dyn-compatible async methods on stable).
-5. **OpenAI Whisper transcription** + `transcribe_clip` MCP tool. Returns
-   the SRT body inline (timeline-absolute timestamps after `in_us` shift)
-   so the agent can inspect / edit before piping into `apply_subtitles`.
-   25 MB upload cap surfaces as a clean `PayloadTooLarge` error pointing
-   at `in_us`/`out_us` slicing rather than auto-chunking.
+5. ✅ **OpenAI Whisper transcription** + `transcribe_clip` MCP tool.
+   `cloud/providers/openai.rs` ships `OpenAiWhisper` (multipart POST to
+   `/v1/audio/transcriptions`, `response_format=srt`, optional `language`
+   forwarded as ISO-639-1). HTTP status mapping: 401 → `InvalidKey`,
+   413 → `PayloadTooLarge { cap: 25 MB }` (also pre-checked client-side
+   so the agent gets the error before the upload starts), 429 →
+   `RateLimited { retry_after_s: <header> }`, 5xx + others →
+   `Provider { message: "<status> <reason>: <body[..400]>…" }`.
+   `cloud::pick_transcriber()` walks `Provider::all() → capabilities →
+   has_key → first match`; returns `None` when nothing's configured so
+   the tool errors with a "configure Settings → API keys" hint.
+   `cloud/srt.rs` shifts SRT cue timestamps forward by the timeline-
+   absolute slice start (line-tolerant, CRLF-preserving, accepts `,`
+   or `.` as the decimal separator on parse, emits canonical `,`).
+   `transcribe_clip { layer_id, t_start_us?, t_end_us?, language? }`
+   resolves a VideoClip or Audio layer, validates the window is inside
+   the layer, maps timeline offset → source coords via `src_in_us +
+   (t - layer.t_start_us)`, calls `audio_extract::extract_audio_window`
+   to materialize the mono 16 kHz WAV, hands to the picked transcriber,
+   shifts cues, returns the body inline. VideoClip layers with
+   `speed != 1.0` are rejected with `split off a speed-1 segment first`
+   (the source-coord math is only correct at speed=1; mirrors the
+   `split_layer` precedent). 109 → 133 lib tests (+11 SRT shift,
+   +5 provider HTTP-error mapping, +8 MCP resolve_clip_audio_source).
 6. **OpenAI TTS** + `synthesize_speech` MCP tool. Args: text, voice
    (`alloy|echo|fable|onyx|nova|shimmer`), optional speed, optional
    target track. Writes `<project>/voiceover/<hash>.mp3` content-addressably,
