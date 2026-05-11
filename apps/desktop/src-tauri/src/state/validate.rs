@@ -5,13 +5,13 @@
 //! validation lives elsewhere (Phase 5, alongside the rasterizer manifest
 //! loader) and is intentionally not covered here.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use super::animated::Animated;
-use super::ids::{EffectId, KeyframeId, LayerId, MediaId, TrackId};
+use super::ids::{EffectId, KeyframeId, LayerId, MediaId, TrackId, TransitionId};
 use super::layer::{Layer, LayerParams};
 use super::project::Project;
 use super::time::TimeUs;
@@ -84,17 +84,153 @@ pub enum ValidationError {
 
     #[error("duplicate effect id {effect} on layer {layer}")]
     DuplicateEffectId { layer: LayerId, effect: EffectId },
+
+    #[error("transition {transition} references unknown layer {layer}")]
+    TransitionLayerMissing {
+        transition: TransitionId,
+        layer: LayerId,
+    },
+
+    #[error("transition {transition} from_layer and to_layer must be distinct ({layer})")]
+    TransitionSelfReference {
+        transition: TransitionId,
+        layer: LayerId,
+    },
+
+    #[error(
+        "transition {transition} from_layer {from} and to_layer {to} are on different tracks"
+    )]
+    TransitionCrossTrack {
+        transition: TransitionId,
+        from: LayerId,
+        to: LayerId,
+    },
+
+    #[error(
+        "transition {transition} duration {duration}us must equal layer overlap {overlap}us"
+    )]
+    TransitionDurationMismatch {
+        transition: TransitionId,
+        duration: TimeUs,
+        overlap: TimeUs,
+    },
+
+    #[error(
+        "transition {transition} duration {duration}us must be positive and not exceed either layer's length"
+    )]
+    TransitionDurationOutOfRange {
+        transition: TransitionId,
+        duration: TimeUs,
+    },
+
+    #[error("layer {layer} is in more than one transition on the same side")]
+    LayerInMultipleTransitions { layer: LayerId },
+
+    #[error("duplicate transition id {transition}")]
+    DuplicateTransitionId { transition: TransitionId },
 }
 
 pub fn validate(project: &Project) -> Result<(), ValidationError> {
     validate_composition(project)?;
 
+    let authorized = validate_transitions(project)?;
     let mut seen_layers: HashSet<LayerId> = HashSet::new();
 
     for track in project.tracks.iter() {
-        validate_track(project, track, &mut seen_layers)?;
+        validate_track(project, track, &mut seen_layers, &authorized)?;
     }
     Ok(())
+}
+
+/// Pair of layer ids that are allowed to overlap, with the authorized
+/// duration. Lookup is unordered (insertion order doesn't matter).
+fn pair(a: LayerId, b: LayerId) -> (LayerId, LayerId) {
+    if a <= b { (a, b) } else { (b, a) }
+}
+
+type AuthorizedOverlaps = HashMap<(LayerId, LayerId), TimeUs>;
+
+/// Walk `project.transitions`, validate each entry against the project, and
+/// return a map of {pair of layer ids → authorized overlap duration} so the
+/// per-track overlap check can exempt them.
+fn validate_transitions(project: &Project) -> Result<AuthorizedOverlaps, ValidationError> {
+    // Index layers by id and capture (track_id, t_start, t_end) so the
+    // per-transition check stays O(1) instead of O(layers).
+    let mut layer_index: HashMap<LayerId, (TrackId, TimeUs, TimeUs)> = HashMap::new();
+    for track in project.tracks.iter() {
+        for layer in track.layers.iter() {
+            layer_index.insert(layer.id, (track.id, layer.t_start_us, layer.t_end_us));
+        }
+    }
+
+    let mut authorized: AuthorizedOverlaps = HashMap::new();
+    let mut seen_ids: HashSet<TransitionId> = HashSet::new();
+    // A layer can be at most ONE outgoing source and ONE incoming target.
+    // Both sides separately so a layer can be the receiver from one neighbor
+    // AND the source for another (B in an A→B→C chain).
+    let mut as_from: HashSet<LayerId> = HashSet::new();
+    let mut as_to: HashSet<LayerId> = HashSet::new();
+
+    for tr in project.transitions.iter() {
+        if !seen_ids.insert(tr.id) {
+            return Err(ValidationError::DuplicateTransitionId { transition: tr.id });
+        }
+        if tr.from_layer == tr.to_layer {
+            return Err(ValidationError::TransitionSelfReference {
+                transition: tr.id,
+                layer: tr.from_layer,
+            });
+        }
+        let (from_track, from_start, from_end) = *layer_index
+            .get(&tr.from_layer)
+            .ok_or(ValidationError::TransitionLayerMissing {
+                transition: tr.id,
+                layer: tr.from_layer,
+            })?;
+        let (to_track, to_start, to_end) = *layer_index
+            .get(&tr.to_layer)
+            .ok_or(ValidationError::TransitionLayerMissing {
+                transition: tr.id,
+                layer: tr.to_layer,
+            })?;
+        if from_track != to_track {
+            return Err(ValidationError::TransitionCrossTrack {
+                transition: tr.id,
+                from: tr.from_layer,
+                to: tr.to_layer,
+            });
+        }
+        let from_len = (from_end - from_start).max(0);
+        let to_len = (to_end - to_start).max(0);
+        if tr.duration_us <= 0 || tr.duration_us > from_len || tr.duration_us > to_len {
+            return Err(ValidationError::TransitionDurationOutOfRange {
+                transition: tr.id,
+                duration: tr.duration_us,
+            });
+        }
+        let overlap_start = from_start.max(to_start);
+        let overlap_end = from_end.min(to_end);
+        let overlap = (overlap_end - overlap_start).max(0);
+        if overlap != tr.duration_us {
+            return Err(ValidationError::TransitionDurationMismatch {
+                transition: tr.id,
+                duration: tr.duration_us,
+                overlap,
+            });
+        }
+        if !as_from.insert(tr.from_layer) {
+            return Err(ValidationError::LayerInMultipleTransitions {
+                layer: tr.from_layer,
+            });
+        }
+        if !as_to.insert(tr.to_layer) {
+            return Err(ValidationError::LayerInMultipleTransitions {
+                layer: tr.to_layer,
+            });
+        }
+        authorized.insert(pair(tr.from_layer, tr.to_layer), tr.duration_us);
+    }
+    Ok(authorized)
 }
 
 fn validate_composition(p: &Project) -> Result<(), ValidationError> {
@@ -118,6 +254,7 @@ fn validate_track(
     project: &Project,
     track: &Track,
     seen_layers: &mut HashSet<LayerId>,
+    authorized: &AuthorizedOverlaps,
 ) -> Result<(), ValidationError> {
     // Snapshot layers sorted by start time; the data-model invariant says they
     // *should* already be sorted, but validation shouldn't depend on that.
@@ -132,15 +269,24 @@ fn validate_track(
 
         if let Some(prev) = sorted.get(idx.wrapping_sub(1)) {
             if idx > 0 && layer.t_start_us < prev.t_end_us {
-                return Err(ValidationError::LayerOverlap {
-                    track: track.id,
-                    a: prev.id,
-                    a_start: prev.t_start_us,
-                    a_end: prev.t_end_us,
-                    b: layer.id,
-                    b_start: layer.t_start_us,
-                    b_end: layer.t_end_us,
-                });
+                // Overlap detected. Reject UNLESS a transition authorizes it
+                // AND the overlap length matches exactly what the transition
+                // declares. (The cross-check is done in `validate_transitions`;
+                // here we just consult the authorized-pair lookup.)
+                let overlap = prev.t_end_us - layer.t_start_us;
+                let key = pair(prev.id, layer.id);
+                let allowed = authorized.get(&key).copied().unwrap_or(0);
+                if allowed != overlap {
+                    return Err(ValidationError::LayerOverlap {
+                        track: track.id,
+                        a: prev.id,
+                        a_start: prev.t_start_us,
+                        a_end: prev.t_end_us,
+                        b: layer.id,
+                        b_start: layer.t_start_us,
+                        b_end: layer.t_end_us,
+                    });
+                }
             }
         }
     }
@@ -561,6 +707,252 @@ mod tests {
         assert!(matches!(
             validate(&p),
             Err(ValidationError::DuplicateLayerId { .. })
+        ));
+    }
+
+    // ============================================================
+    // Transitions (Phase 2 crossfade deferral)
+    // ============================================================
+
+    use crate::state::transition::{Transition, TransitionKind};
+
+    fn pair_of_overlapping_layers(
+        a_start: TimeUs,
+        a_end: TimeUs,
+        b_start: TimeUs,
+        b_end: TimeUs,
+    ) -> (Project, LayerId, LayerId) {
+        let mut p = blank();
+        let mut t = Track::new(TrackKind::Video);
+        let a = color_layer(a_start, a_end);
+        let b = color_layer(b_start, b_end);
+        let a_id = a.id;
+        let b_id = b.id;
+        t.layers.push_back(a);
+        t.layers.push_back(b);
+        p.tracks.push_back(t);
+        (p, a_id, b_id)
+    }
+
+    #[test]
+    fn transition_authorizes_layer_overlap() {
+        let (mut p, a, b) =
+            pair_of_overlapping_layers(0, 3_000_000, 2_000_000, 5_000_000);
+        // Overlap = 1s; without a transition this would error LayerOverlap.
+        p.transitions.push_back(Transition {
+            id: new_id(),
+            from_layer: a,
+            to_layer: b,
+            duration_us: 1_000_000,
+            kind: TransitionKind::Crossfade,
+        });
+        validate(&p).expect("transition authorizes the overlap");
+    }
+
+    #[test]
+    fn transition_with_wrong_duration_rejects() {
+        let (mut p, a, b) =
+            pair_of_overlapping_layers(0, 3_000_000, 2_000_000, 5_000_000);
+        // Actual overlap = 1s, transition claims 2s. Mismatch → reject.
+        p.transitions.push_back(Transition {
+            id: new_id(),
+            from_layer: a,
+            to_layer: b,
+            duration_us: 2_000_000,
+            kind: TransitionKind::Crossfade,
+        });
+        assert!(matches!(
+            validate(&p),
+            Err(ValidationError::TransitionDurationMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn transition_rejects_self_reference() {
+        let (mut p, a, _b) =
+            pair_of_overlapping_layers(0, 3_000_000, 2_000_000, 5_000_000);
+        p.transitions.push_back(Transition {
+            id: new_id(),
+            from_layer: a,
+            to_layer: a,
+            duration_us: 1_000_000,
+            kind: TransitionKind::Crossfade,
+        });
+        assert!(matches!(
+            validate(&p),
+            Err(ValidationError::TransitionSelfReference { .. })
+        ));
+    }
+
+    #[test]
+    fn transition_rejects_unknown_layer() {
+        let (mut p, a, _b) =
+            pair_of_overlapping_layers(0, 3_000_000, 2_000_000, 5_000_000);
+        p.transitions.push_back(Transition {
+            id: new_id(),
+            from_layer: a,
+            to_layer: new_id(),
+            duration_us: 1_000_000,
+            kind: TransitionKind::Crossfade,
+        });
+        assert!(matches!(
+            validate(&p),
+            Err(ValidationError::TransitionLayerMissing { .. })
+        ));
+    }
+
+    #[test]
+    fn transition_rejects_cross_track_layers() {
+        let mut p = blank();
+        let mut t1 = Track::new(TrackKind::Video);
+        let mut t2 = Track::new(TrackKind::Video);
+        let a = color_layer(0, 3_000_000);
+        let b = color_layer(0, 3_000_000);
+        let a_id = a.id;
+        let b_id = b.id;
+        t1.layers.push_back(a);
+        t2.layers.push_back(b);
+        p.tracks.push_back(t1);
+        p.tracks.push_back(t2);
+        p.transitions.push_back(Transition {
+            id: new_id(),
+            from_layer: a_id,
+            to_layer: b_id,
+            duration_us: 1_000_000,
+            kind: TransitionKind::Crossfade,
+        });
+        assert!(matches!(
+            validate(&p),
+            Err(ValidationError::TransitionCrossTrack { .. })
+        ));
+    }
+
+    #[test]
+    fn transition_rejects_zero_duration() {
+        let (mut p, a, b) =
+            pair_of_overlapping_layers(0, 3_000_000, 2_000_000, 5_000_000);
+        p.transitions.push_back(Transition {
+            id: new_id(),
+            from_layer: a,
+            to_layer: b,
+            duration_us: 0,
+            kind: TransitionKind::Crossfade,
+        });
+        assert!(matches!(
+            validate(&p),
+            Err(ValidationError::TransitionDurationOutOfRange { .. })
+        ));
+    }
+
+    #[test]
+    fn transition_rejects_duration_exceeding_layer_length() {
+        // Both layers 1s long, transition claims 2s → over-range.
+        let (mut p, a, b) =
+            pair_of_overlapping_layers(0, 1_000_000, 0, 1_000_000);
+        p.transitions.push_back(Transition {
+            id: new_id(),
+            from_layer: a,
+            to_layer: b,
+            duration_us: 2_000_000,
+            kind: TransitionKind::Crossfade,
+        });
+        assert!(matches!(
+            validate(&p),
+            Err(ValidationError::TransitionDurationOutOfRange { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_layer_in_two_transitions_on_same_side() {
+        // Layer B receives from two different sources A and C → invalid.
+        let mut p = blank();
+        let mut t = Track::new(TrackKind::Video);
+        let a = color_layer(0, 3_000_000);
+        let b = color_layer(2_000_000, 5_000_000);
+        let c = color_layer(4_000_000, 7_000_000);
+        let a_id = a.id;
+        let b_id = b.id;
+        let c_id = c.id;
+        t.layers.push_back(a);
+        t.layers.push_back(b);
+        t.layers.push_back(c);
+        p.tracks.push_back(t);
+        // Both transitions name B as the incoming side.
+        p.transitions.push_back(Transition {
+            id: new_id(),
+            from_layer: a_id,
+            to_layer: b_id,
+            duration_us: 1_000_000,
+            kind: TransitionKind::Crossfade,
+        });
+        p.transitions.push_back(Transition {
+            id: new_id(),
+            from_layer: c_id,
+            to_layer: b_id,
+            duration_us: 1_000_000,
+            kind: TransitionKind::Crossfade,
+        });
+        assert!(matches!(
+            validate(&p),
+            Err(ValidationError::LayerInMultipleTransitions { .. })
+        ));
+    }
+
+    #[test]
+    fn chain_a_to_b_to_c_is_valid() {
+        // B is the receiver from A AND the sender to C — that's fine (two
+        // different sides). Layer A is only a sender, C is only a receiver.
+        let mut p = blank();
+        let mut t = Track::new(TrackKind::Video);
+        let a = color_layer(0, 3_000_000);
+        let b = color_layer(2_000_000, 5_000_000);
+        let c = color_layer(4_000_000, 7_000_000);
+        let a_id = a.id;
+        let b_id = b.id;
+        let c_id = c.id;
+        t.layers.push_back(a);
+        t.layers.push_back(b);
+        t.layers.push_back(c);
+        p.tracks.push_back(t);
+        p.transitions.push_back(Transition {
+            id: new_id(),
+            from_layer: a_id,
+            to_layer: b_id,
+            duration_us: 1_000_000,
+            kind: TransitionKind::Crossfade,
+        });
+        p.transitions.push_back(Transition {
+            id: new_id(),
+            from_layer: b_id,
+            to_layer: c_id,
+            duration_us: 1_000_000,
+            kind: TransitionKind::Crossfade,
+        });
+        validate(&p).expect("A→B→C chain is valid");
+    }
+
+    #[test]
+    fn rejects_duplicate_transition_id() {
+        let (mut p, a, b) =
+            pair_of_overlapping_layers(0, 3_000_000, 2_000_000, 5_000_000);
+        let dup_id = new_id();
+        p.transitions.push_back(Transition {
+            id: dup_id,
+            from_layer: a,
+            to_layer: b,
+            duration_us: 1_000_000,
+            kind: TransitionKind::Crossfade,
+        });
+        p.transitions.push_back(Transition {
+            id: dup_id,
+            from_layer: a,
+            to_layer: b,
+            duration_us: 1_000_000,
+            kind: TransitionKind::Crossfade,
+        });
+        assert!(matches!(
+            validate(&p),
+            Err(ValidationError::DuplicateTransitionId { .. })
         ));
     }
 }

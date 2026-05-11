@@ -42,6 +42,7 @@ mod tests {
         animated::Animated,
         color::Rgba,
         composition::Composition,
+        ids::new_id,
         layer::{
             AudioParams, ColorParams, FontSpec, ImageOverlayParams, Layer, LayerParams, TextAlign,
             TextBackend, TextParams, VideoClipParams,
@@ -51,6 +52,7 @@ mod tests {
         time::Rational,
         track::{Track, TrackKind},
         transform::Transform,
+        transition::{Transition, TransitionKind},
     };
 
     fn fixture_target() -> RenderTarget {
@@ -144,6 +146,7 @@ mod tests {
             media_pool: imbl::HashMap::unit(media_id, media),
             tracks: imbl::vector![track],
             markers: imbl::Vector::new(),
+            transitions: imbl::Vector::new(),
             settings: Default::default(),
         }
     }
@@ -807,6 +810,134 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
             size > 1024,
             "inline-subs output mp4 is suspiciously small ({size} bytes)\n--- graph ---\n{}",
             plan.filter_graph
+        );
+    }
+
+    /// End-to-end smoke for crossfade transitions: two overlapping Color
+    /// layers with an authorized Transition lower to a graph that ffmpeg
+    /// renders into a non-empty mp4. Catches regressions in the alpha-fade
+    /// + Format(yuva420p) emission seams which string-only tests miss
+    /// (the `;` separator bug from Phase 1 → Phase 2 lived in exactly this
+    /// gap).
+    ///
+    /// What this test does NOT verify: the visual blend math. ffmpeg's
+    /// `overlay` filter with a yuva420p top and yuv420p base should produce
+    /// `out = top*alpha + base*(1-alpha)` — verifying that requires frame
+    /// extraction + pixel sampling, which we don't do here. A future ffmpeg
+    /// version changing overlay semantics would silently pass this test
+    /// while breaking visual output.
+    #[test]
+    fn crossfade_transition_renders_through_ffmpeg() {
+        let track_id = Uuid::parse_str("01900000-0000-7000-8000-0000000000d1").unwrap();
+        let a_id = new_id();
+        let b_id = new_id();
+
+        let a = Layer {
+            id: a_id,
+            label: None,
+            t_start_us: 0,
+            t_end_us: 3_000_000,
+            enabled: true,
+            locked: false,
+            metadata: imbl::HashMap::new(),
+            effects: imbl::Vector::new(),
+            params: LayerParams::Color(ColorParams {
+                color: Animated::Static(Rgba::WHITE),
+                width: 1920,
+                height: 1080,
+            }),
+        };
+        let b = Layer {
+            id: b_id,
+            label: None,
+            t_start_us: 2_000_000, // overlap by 1s with a's tail
+            t_end_us: 5_000_000,
+            enabled: true,
+            locked: false,
+            metadata: imbl::HashMap::new(),
+            effects: imbl::Vector::new(),
+            params: LayerParams::Color(ColorParams {
+                color: Animated::Static(Rgba::BLACK),
+                width: 1920,
+                height: 1080,
+            }),
+        };
+        let track = Track {
+            id: track_id,
+            kind: TrackKind::Video,
+            label: None,
+            enabled: true,
+            locked: false,
+            removable: true,
+            height_px: 64,
+            layers: imbl::vector![a, b],
+        };
+        let mut p = Project::new_blank("crossfade");
+        p.composition.duration_us = 5_000_000;
+        p.tracks.clear();
+        p.tracks.push_back(track);
+        p.transitions.push_back(Transition {
+            id: new_id(),
+            from_layer: a_id,
+            to_layer: b_id,
+            duration_us: 1_000_000,
+            kind: TransitionKind::Crossfade,
+        });
+
+        // Validate first so the test fails loudly if the validation rule
+        // ever drifts away from "authorized overlap with matching duration".
+        crate::state::validate::validate(&p).expect("validation");
+
+        let g = lower(&p, fixture_target(), &Default::default()).expect("lower");
+        let plan = emit_ffmpeg(&g);
+
+        // The emitted graph MUST contain the alpha-fade clause and a
+        // format=yuva420p conversion before it. Asserting these strings
+        // is the cheap unit-test layer; ffmpeg invocation below is the
+        // real load-bearing check.
+        assert!(
+            plan.filter_graph.contains("alpha=1"),
+            "expected `alpha=1` in graph:\n{}",
+            plan.filter_graph,
+        );
+        assert!(
+            plan.filter_graph.contains("format=yuva420p"),
+            "expected `format=yuva420p` before alpha fade:\n{}",
+            plan.filter_graph,
+        );
+
+        let Some((ok, out, stderr)) = run_graph_through_ffmpeg(
+            &plan.filter_graph,
+            &[],
+            "[vfinal]",
+            "mp4",
+            &[
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-pix_fmt",
+                "yuv420p",
+                "-t",
+                "5",
+            ],
+        ) else {
+            eprintln!("ffmpeg not on PATH — skipping crossfade render test");
+            return;
+        };
+        if !ok {
+            let _ = std::fs::remove_file(&out);
+            panic!(
+                "ffmpeg rejected crossfade graph:\n--- graph ---\n{}\n--- stderr ---\n{}",
+                plan.filter_graph, stderr
+            );
+        }
+        let size = std::fs::metadata(&out).map(|m| m.len()).unwrap_or(0);
+        let _ = std::fs::remove_file(&out);
+        assert!(
+            size > 1024,
+            "crossfade output mp4 is suspiciously small ({size} bytes)\n--- graph ---\n{}",
+            plan.filter_graph,
         );
     }
 

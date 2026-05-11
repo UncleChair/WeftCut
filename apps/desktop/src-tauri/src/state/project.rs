@@ -10,6 +10,7 @@ use super::ids::{MediaId, new_id};
 use super::marker::Marker;
 use super::media::MediaItem;
 use super::track::{Track, TrackKind};
+use super::transition::Transition;
 
 pub const SCHEMA_VERSION: u32 = 1;
 
@@ -23,6 +24,12 @@ pub struct Project {
     /// 0 = bottom of z-stack, last = top.
     pub tracks: imbl::Vector<Track>,
     pub markers: imbl::Vector<Marker>,
+    /// Authorized layer-pair overlaps with transition semantics (Phase 2
+    /// deferral). Each entry authorizes a specific overlap between two
+    /// adjacent layers on the same track; validation rejects the project
+    /// otherwise. `#[serde(default)]` keeps older `.vproj` files loadable.
+    #[serde(default)]
+    pub transitions: imbl::Vector<Transition>,
     pub settings: ProjectSettings,
 }
 
@@ -54,6 +61,7 @@ impl Project {
             media_pool: imbl::HashMap::new(),
             tracks,
             markers: imbl::Vector::new(),
+            transitions: imbl::Vector::new(),
             settings: ProjectSettings::default(),
         }
     }

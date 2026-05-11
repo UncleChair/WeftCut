@@ -8,6 +8,8 @@
 //! Per-frame keyframe interpolation is the IR-pass-on-evaluated-Animated work
 //! that follows once we have a real preview to diff against.
 
+use std::collections::HashMap;
+
 use thiserror::Error;
 
 use super::graph::IRGraph;
@@ -16,10 +18,12 @@ use super::node::{FadeKind, IRNode, NodeId, PixFmt};
 use super::target::RenderTarget;
 use crate::state::animated::Animated;
 use crate::state::color::Rgba;
-use crate::state::ids::MediaId;
+use crate::state::ids::{LayerId, MediaId};
 use crate::state::layer::{Layer, LayerParams, SubtitlesSource};
 use crate::state::project::Project;
+use crate::state::time::TimeUs;
 use crate::state::track::TrackKind;
+use crate::state::transition::TransitionKind;
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum LowerError {
@@ -55,6 +59,13 @@ pub fn lower(
 
     let mut audio_streams: Vec<NodeId> = Vec::new();
 
+    // Pre-compute incoming-transition lookup: for each layer that's the
+    // `to_layer` of a crossfade, capture its transition duration. The
+    // outgoing side needs no special handling — the existing overlay's
+    // alpha blending with the incoming layer's alpha-fade produces the
+    // crossfade naturally.
+    let incoming = incoming_transition_map(project);
+
     // Tracks: index 0 = bottom of stack, last = top.
     for track in project.tracks.iter() {
         if !track.enabled {
@@ -73,6 +84,7 @@ pub fn lower(
                         project,
                         target,
                         inline_sub_paths,
+                        &incoming,
                     )?;
                 }
             }
@@ -99,6 +111,7 @@ pub fn lower(
                         project,
                         target,
                         inline_sub_paths,
+                        &incoming,
                     )?;
                     }
                 }
@@ -139,6 +152,7 @@ fn lower_video_layer(
     project: &Project,
     target: RenderTarget,
     inline_sub_paths: &InlineSubPaths,
+    incoming: &IncomingTransitions,
 ) -> Result<NodeId, LowerError> {
     match &layer.params {
         LayerParams::VideoClip(p) => {
@@ -172,7 +186,16 @@ fn lower_video_layer(
             });
 
             let layer_dur = (layer.t_end_us - layer.t_start_us).max(0);
-            let faded = apply_fades(g, fps, layer_dur, p.fade_in_us as i64, p.fade_out_us as i64);
+            let mut faded = apply_fades(g, fps, layer_dur, p.fade_in_us as i64, p.fade_out_us as i64);
+
+            // Crossfade-in for the incoming side of a transition: alpha-fade
+            // the first `duration_us` of this clip's local clock. The
+            // outgoing layer's gate still overlays the canvas opaquely, so
+            // the linear blend `out = top*alpha + bottom*(1-alpha)` falls
+            // out of the existing overlay step.
+            if let Some(dur) = incoming.get(&layer.id) {
+                faded = apply_crossfade_in(g, faded, (*dur).min(layer_dur));
+            }
 
             let placed = g.add_node(IRNode::SetPts {
                 in_: faded,
@@ -203,16 +226,26 @@ fn lower_video_layer(
         }
         LayerParams::Color(p) => {
             let color = static_or(&p.color, Rgba::BLACK);
+            let layer_dur = layer.t_end_us - layer.t_start_us;
             let synth = g.add_node(IRNode::Color {
                 rgba: color,
                 width: p.width,
                 height: p.height,
                 fps_num: target.fps.num,
                 fps_den: target.fps.den,
-                duration_us: layer.t_end_us - layer.t_start_us,
+                duration_us: layer_dur,
             });
+            // Crossfade-in for the incoming side of a transition (mirrors
+            // the VideoClip branch). Color is a synthetic source so we
+            // wrap it in `Format(yuva420p)` + `Fade(alpha=1)` before
+            // placing it.
+            let with_fade = if let Some(dur) = incoming.get(&layer.id) {
+                apply_crossfade_in(g, synth, (*dur).min(layer_dur.max(0)))
+            } else {
+                synth
+            };
             let placed = g.add_node(IRNode::SetPts {
-                in_: synth,
+                in_: with_fade,
                 offset_us: layer.t_start_us,
             });
             Ok(g.add_node(IRNode::Overlay {
@@ -345,6 +378,7 @@ fn apply_fades(
             kind: FadeKind::In,
             start_local_us: 0,
             duration_us: in_dur,
+            alpha: false,
         });
     }
     let out_dur = fade_out_us.clamp(0, layer_dur_us);
@@ -355,9 +389,46 @@ fn apply_fades(
             kind: FadeKind::Out,
             start_local_us: start,
             duration_us: out_dur,
+            alpha: false,
         });
     }
     current
+}
+
+type IncomingTransitions = HashMap<LayerId, TimeUs>;
+
+/// Build `to_layer → duration_us` lookup for every crossfade transition in
+/// the project. The outgoing side needs no entry — the existing overlay
+/// chain on the source clip works as-is, and the incoming clip's alpha-fade
+/// gives the visible blend.
+fn incoming_transition_map(project: &Project) -> IncomingTransitions {
+    let mut map = IncomingTransitions::new();
+    for tr in project.transitions.iter() {
+        match tr.kind {
+            TransitionKind::Crossfade => {
+                map.insert(tr.to_layer, tr.duration_us);
+            }
+        }
+    }
+    map
+}
+
+/// Apply a crossfade-in (`fade=alpha=1` ramping 0 → 1) over the incoming
+/// transition's window. Inserts a `Format(yuva420p)` first so the stream
+/// has an alpha channel for the fade to operate on. Called only when the
+/// layer is the incoming side of a transition.
+fn apply_crossfade_in(g: &mut IRGraph, in_: NodeId, duration_us: i64) -> NodeId {
+    let with_alpha = g.add_node(IRNode::Format {
+        in_,
+        pix_fmt: PixFmt::Yuva420p,
+    });
+    g.add_node(IRNode::Fade {
+        in_: with_alpha,
+        kind: FadeKind::In,
+        start_local_us: 0,
+        duration_us,
+        alpha: true,
+    })
 }
 
 fn lower_audio_layer(

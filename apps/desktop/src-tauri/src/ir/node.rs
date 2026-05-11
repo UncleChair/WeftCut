@@ -95,11 +95,25 @@ pub enum IRNode {
     /// filter (`fade=t=in:st=N:d=D` or `fade=t=out:st=N:d=D`). Times are
     /// expressed in the input stream's local clock so we don't have to know
     /// where the layer sits on the timeline at this stage of the pipeline.
+    ///
+    /// `alpha = true` adds `:alpha=1` to the filter, ramping only the alpha
+    /// channel rather than fading RGB to/from black. Used by crossfade
+    /// transition lowering: the incoming clip's first `duration_us` get
+    /// alpha 0→1, and the existing `overlay` step does the linear blend.
+    /// The input MUST already be in a pixel format that carries alpha
+    /// (e.g. `yuva420p` via a [`IRNode::Format`] node).
     Fade {
         in_: NodeId,
         kind: FadeKind,
         start_local_us: i64,
         duration_us: i64,
+        alpha: bool,
+    },
+    /// Pixel-format conversion (`format=<pix_fmt>`). Used before alpha-fades
+    /// to ensure the stream has an alpha channel to fade.
+    Format {
+        in_: NodeId,
+        pix_fmt: PixFmt,
     },
     /// Burn an SRT or ASS subtitle file onto a video stream via the `subtitles`
     /// filter (handles both formats; ASS preserves styling). The path is
@@ -192,6 +206,7 @@ impl IRNode {
             | IRNode::Opacity { .. }
             | IRNode::DrawText { .. }
             | IRNode::Fade { .. }
+            | IRNode::Format { .. }
             | IRNode::Subtitles { .. }
             | IRNode::Overlay { .. }
             | IRNode::OutV { .. } => StreamKind::Video,

@@ -31,6 +31,7 @@ pub mod project;
 pub mod time;
 pub mod track;
 pub mod transform;
+pub mod transition;
 pub mod validate;
 
 pub use actor::{
@@ -46,7 +47,8 @@ pub use color::{ColorSpace, Rgba};
 pub use composition::Composition;
 pub use effect::{Effect, EffectKind, EffectParams};
 pub use ids::{
-    CheckpointId, EffectId, KeyframeId, LayerId, MarkerId, MediaId, OpId, TrackId, new_id,
+    CheckpointId, EffectId, KeyframeId, LayerId, MarkerId, MediaId, OpId, TrackId, TransitionId,
+    new_id,
 };
 pub use layer::{
     AudioParams, ColorParams, FontSpec, ImageOverlayParams, Layer, LayerParams, Outline, Shadow,
@@ -59,6 +61,7 @@ pub use project::{Project, ProjectMetadata, ProjectSettings, SCHEMA_VERSION};
 pub use time::{Rational, TimeUs, US_PER_MS, US_PER_SEC};
 pub use track::{Track, TrackKind};
 pub use transform::{BlendMode, Rect, Transform};
+pub use transition::{Transition, TransitionKind};
 
 #[cfg(test)]
 mod tests {
@@ -151,6 +154,7 @@ mod tests {
             media_pool: imbl::HashMap::unit(media_id, media),
             tracks: imbl::vector![track],
             markers: imbl::Vector::new(),
+            transitions: imbl::Vector::new(),
             settings: ProjectSettings::default(),
         }
     }

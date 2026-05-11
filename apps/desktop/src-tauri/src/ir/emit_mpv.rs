@@ -250,14 +250,25 @@ impl<'a> Emitter<'a> {
                 kind,
                 start_local_us,
                 duration_us,
+                alpha,
             } => {
                 let in_lbl = self.emit_node(in_);
                 let lbl = self.fresh_label("fade");
                 let dir = kind.as_str();
                 let start = us_to_secs(start_local_us);
                 let dur = us_to_secs(duration_us);
+                let alpha_opt = if alpha { ":alpha=1" } else { "" };
                 self.write_clause(&format!(
-                    "{in_lbl} fade=t={dir}:st={start}:d={dur} {lbl}"
+                    "{in_lbl} fade=t={dir}:st={start}:d={dur}{alpha_opt} {lbl}"
+                ));
+                lbl
+            }
+            IRNode::Format { in_, pix_fmt } => {
+                let in_lbl = self.emit_node(in_);
+                let lbl = self.fresh_label("fmt");
+                self.write_clause(&format!(
+                    "{in_lbl} format={fmt} {lbl}",
+                    fmt = pix_fmt.as_str(),
                 ));
                 lbl
             }
@@ -515,6 +526,7 @@ mod tests {
             media_pool: imbl::HashMap::unit(media_id, media),
             tracks: imbl::vector![track],
             markers: imbl::Vector::new(),
+            transitions: imbl::Vector::new(),
             settings: Default::default(),
         };
 

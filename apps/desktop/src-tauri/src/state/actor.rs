@@ -15,13 +15,16 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use super::color::{ColorSpace, Rgba};
 use super::animated::Animated;
 use super::history::{History, HistoryEntry, HistoryView, NamedCheckpoint};
-use super::ids::{CheckpointId, LayerId, MarkerId, MediaId, OpId, TrackId, new_id};
+use super::ids::{
+    CheckpointId, LayerId, MarkerId, MediaId, OpId, TrackId, TransitionId, new_id,
+};
 use super::layer::{Layer, LayerParams};
 use super::marker::Marker;
 use super::media::MediaItem;
 use super::project::Project;
 use super::time::{Rational, TimeUs};
 use super::track::{Track, TrackKind};
+use super::transition::{Transition, TransitionKind};
 use super::validate::{ValidationError, validate};
 
 const INBOX_CAPACITY: usize = 100;
@@ -241,6 +244,16 @@ pub enum CommandError {
     LayerNotFound { layer: LayerId },
     #[error("marker {marker} not found")]
     MarkerNotFound { marker: MarkerId },
+    #[error("transition {transition} not found")]
+    TransitionNotFound { transition: TransitionId },
+    #[error(
+        "transition layers {from} and {to} are neither adjacent nor pre-overlapped by {duration}us — bring them adjacent first"
+    )]
+    TransitionLayersNotAdjacent {
+        from: LayerId,
+        to: LayerId,
+        duration: TimeUs,
+    },
     #[error("checkpoint {checkpoint} not found")]
     CheckpointNotFound { checkpoint: CheckpointId },
     #[error("media {media} not found")]
@@ -369,6 +382,19 @@ enum Command {
     },
     RemoveMarker {
         id: MarkerId,
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
+    AddTransition {
+        from_layer: LayerId,
+        to_layer: LayerId,
+        duration_us: TimeUs,
+        kind: TransitionKind,
+        actor: Actor,
+        reply: oneshot::Sender<Result<TransitionId, CommandError>>,
+    },
+    RemoveTransition {
+        id: TransitionId,
         actor: Actor,
         reply: oneshot::Sender<Result<(), CommandError>>,
     },
@@ -740,6 +766,42 @@ impl ProjectHandle {
         rx.await.expect("project actor terminated")
     }
 
+    pub async fn add_transition(
+        &self,
+        actor: Actor,
+        from_layer: LayerId,
+        to_layer: LayerId,
+        duration_us: TimeUs,
+        kind: TransitionKind,
+    ) -> Result<TransitionId, CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::AddTransition {
+                from_layer,
+                to_layer,
+                duration_us,
+                kind,
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    pub async fn remove_transition(
+        &self,
+        actor: Actor,
+        id: TransitionId,
+    ) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::RemoveTransition { id, actor, reply })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
     pub async fn move_track(
         &self,
         actor: Actor,
@@ -1002,6 +1064,22 @@ impl ProjectActor {
             }
             Command::RemoveMarker { id, actor, reply } => {
                 let result = self.do_remove_marker(id, actor);
+                let _ = reply.send(result);
+            }
+            Command::AddTransition {
+                from_layer,
+                to_layer,
+                duration_us,
+                kind,
+                actor,
+                reply,
+            } => {
+                let result =
+                    self.do_add_transition(from_layer, to_layer, duration_us, kind, actor);
+                let _ = reply.send(result);
+            }
+            Command::RemoveTransition { id, actor, reply } => {
+                let result = self.do_remove_transition(id, actor);
                 let _ = reply.send(result);
             }
             Command::MoveTrack {
@@ -1611,6 +1689,113 @@ impl ProjectActor {
         Ok(())
     }
 
+    fn do_add_transition(
+        &mut self,
+        from_layer: LayerId,
+        to_layer: LayerId,
+        duration_us: TimeUs,
+        kind: TransitionKind,
+        actor: Actor,
+    ) -> Result<TransitionId, CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+        // Find both layers and their track. They must live on the same track —
+        // validate will catch the cross-track case, but rejecting it early
+        // produces a more specific error.
+        let (track_idx, from_idx) = next
+            .tracks
+            .iter()
+            .enumerate()
+            .find_map(|(ti, t)| {
+                t.layers.iter().position(|l| l.id == from_layer).map(|fi| (ti, fi))
+            })
+            .ok_or(CommandError::LayerNotFound { layer: from_layer })?;
+        let to_idx = next.tracks[track_idx]
+            .layers
+            .iter()
+            .position(|l| l.id == to_layer)
+            .ok_or(CommandError::LayerNotFound { layer: to_layer })?;
+
+        let from_end = next.tracks[track_idx].layers[from_idx].t_end_us;
+        let to_start = next.tracks[track_idx].layers[to_idx].t_start_us;
+        let cur_overlap = (from_end - to_start).max(0);
+
+        // Three cases:
+        // 1. Layers are exactly adjacent (from.t_end == to.t_start): extend
+        //    `from` by `duration_us` so post-state overlap == duration_us.
+        // 2. Layers already overlap by exactly `duration_us`: just add the
+        //    transition (the caller pre-positioned them).
+        // 3. Anything else (gap, wrong overlap): reject — the caller must
+        //    move/trim layers explicitly so the intent is unambiguous.
+        if cur_overlap == 0 && from_end == to_start {
+            extend_layer_t_end(&mut next.tracks[track_idx].layers[from_idx], duration_us);
+        } else if cur_overlap == duration_us {
+            // No adjustment needed.
+        } else {
+            return Err(CommandError::TransitionLayersNotAdjacent {
+                from: from_layer,
+                to: to_layer,
+                duration: duration_us,
+            });
+        }
+
+        let id = new_id();
+        next.transitions.push_back(Transition {
+            id,
+            from_layer,
+            to_layer,
+            duration_us,
+            kind,
+        });
+        // `commit`'s validate pass enforces the rest: src_out_us within media
+        // duration, no double-overlap on either side, etc. Bad inputs roll
+        // back via ValidationFailed before history is touched.
+        self.commit(
+            next,
+            actor,
+            format!("Added transition {id}"),
+            Vec::new(),
+            DiffHint::Coarse,
+        )?;
+        Ok(id)
+    }
+
+    fn do_remove_transition(
+        &mut self,
+        id: TransitionId,
+        actor: Actor,
+    ) -> Result<(), CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+        let idx = next
+            .transitions
+            .iter()
+            .position(|t| t.id == id)
+            .ok_or(CommandError::TransitionNotFound { transition: id })?;
+        let tr = next.transitions[idx].clone();
+        next.transitions.remove(idx);
+        // Mirror the auto-extend in `add_transition`: shrink `from_layer`
+        // back by `duration_us`. This puts the timeline back into a
+        // validation-passing shape (no unauthorized overlap). If the user
+        // manually trimmed `from_layer` between add and remove, this can
+        // shrink past their intent — that's an edge case the caller can
+        // restore by editing `t_end_us` afterwards.
+        if let Some((track_idx, layer_idx)) =
+            next.tracks.iter().enumerate().find_map(|(ti, t)| {
+                t.layers.iter().position(|l| l.id == tr.from_layer).map(|li| (ti, li))
+            })
+        {
+            let layer = &mut next.tracks[track_idx].layers[layer_idx];
+            shrink_layer_t_end(layer, tr.duration_us);
+        }
+        self.commit(
+            next,
+            actor,
+            format!("Removed transition {id}"),
+            Vec::new(),
+            DiffHint::Coarse,
+        )?;
+        Ok(())
+    }
+
     fn do_move_track(
         &mut self,
         id: TrackId,
@@ -1990,6 +2175,31 @@ fn apply_params_patch(
             actual: layer_params_kind(actual),
             patch: layer_params_patch_kind(patch),
         }),
+    }
+}
+
+/// Extend a layer's `t_end_us` (and `src_out_us` for media-bearing layer
+/// kinds) by `delta_us`. Used by `add_transition` to atomically create the
+/// authorized overlap between two back-to-back clips. Validation downstream
+/// catches the case where `src_out_us` runs off the end of the source media.
+fn extend_layer_t_end(layer: &mut Layer, delta_us: TimeUs) {
+    layer.t_end_us += delta_us;
+    match &mut layer.params {
+        LayerParams::VideoClip(p) => p.src_out_us += delta_us,
+        LayerParams::Audio(p) => p.src_out_us += delta_us,
+        _ => {}
+    }
+}
+
+/// Inverse of [`extend_layer_t_end`]: shrink `t_end_us` (and `src_out_us`
+/// for media-bearing layers) by `delta_us`. Used by `remove_transition` to
+/// undo the auto-extension. Saturates at 0 so a buggy delta can't underflow.
+fn shrink_layer_t_end(layer: &mut Layer, delta_us: TimeUs) {
+    layer.t_end_us = (layer.t_end_us - delta_us).max(0);
+    match &mut layer.params {
+        LayerParams::VideoClip(p) => p.src_out_us = (p.src_out_us - delta_us).max(0),
+        LayerParams::Audio(p) => p.src_out_us = (p.src_out_us - delta_us).max(0),
+        _ => {}
     }
 }
 
@@ -2545,6 +2755,109 @@ mod tests {
             err,
             CommandError::ValidationFailed(ValidationError::InvalidCanvas { width: 0, .. })
         ));
+    }
+
+    #[tokio::test]
+    async fn add_transition_extends_outgoing_layer_to_create_overlap() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        // Two back-to-back clips at [0, 3] and [3, 6]. add_transition should
+        // extend `a` to [0, 4] and create a 1s overlap with `b` at [3, 4].
+        let a = handle
+            .add_layer(Actor::User, track_id, color_layer(Rgba::WHITE), 0, 3_000_000)
+            .await
+            .expect("add a");
+        let b = handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                color_layer(Rgba::BLACK),
+                3_000_000,
+                6_000_000,
+            )
+            .await
+            .expect("add b");
+        let tid = handle
+            .add_transition(Actor::User, a, b, 1_000_000, TransitionKind::Crossfade)
+            .await
+            .expect("add_transition");
+
+        let snap = handle.snapshot().await;
+        let track = snap.tracks.iter().find(|t| t.id == track_id).unwrap();
+        let a_layer = track.layers.iter().find(|l| l.id == a).unwrap();
+        let b_layer = track.layers.iter().find(|l| l.id == b).unwrap();
+        assert_eq!(a_layer.t_end_us, 4_000_000, "a extended to overlap b by 1s");
+        assert_eq!(b_layer.t_start_us, 3_000_000, "b unchanged");
+        assert_eq!(snap.transitions.len(), 1);
+        assert_eq!(snap.transitions[0].id, tid);
+        assert_eq!(snap.transitions[0].duration_us, 1_000_000);
+    }
+
+    #[tokio::test]
+    async fn add_transition_rejects_layers_with_gap() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        let a = handle
+            .add_layer(Actor::User, track_id, color_layer(Rgba::WHITE), 0, 1_000_000)
+            .await
+            .unwrap();
+        let b = handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                color_layer(Rgba::BLACK),
+                5_000_000, // 4s gap after a
+                7_000_000,
+            )
+            .await
+            .unwrap();
+        let err = handle
+            .add_transition(Actor::User, a, b, 500_000, TransitionKind::Crossfade)
+            .await
+            .expect_err("gap should reject");
+        assert!(matches!(
+            err,
+            CommandError::TransitionLayersNotAdjacent { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn remove_transition_undoes_in_one_step() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        let a = handle
+            .add_layer(Actor::User, track_id, color_layer(Rgba::WHITE), 0, 3_000_000)
+            .await
+            .unwrap();
+        let b = handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                color_layer(Rgba::BLACK),
+                3_000_000,
+                6_000_000,
+            )
+            .await
+            .unwrap();
+        let tid = handle
+            .add_transition(Actor::User, a, b, 1_000_000, TransitionKind::Crossfade)
+            .await
+            .unwrap();
+        handle
+            .remove_transition(Actor::User, tid)
+            .await
+            .expect("remove");
+        let snap = handle.snapshot().await;
+        assert_eq!(snap.transitions.len(), 0);
+        // remove_transition mirrors add_transition: the outgoing layer is
+        // shrunk back by the transition's duration so the timeline returns
+        // to a validation-passing back-to-back shape.
+        let track = snap.tracks.iter().find(|t| t.id == track_id).unwrap();
+        let a_layer = track.layers.iter().find(|l| l.id == a).unwrap();
+        assert_eq!(
+            a_layer.t_end_us, 3_000_000,
+            "remove_transition shrinks A back to its pre-transition end",
+        );
     }
 
     #[tokio::test]
