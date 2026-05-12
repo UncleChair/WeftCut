@@ -2912,14 +2912,10 @@ mod tests {
     async fn blank_project_ships_with_a_b_roll() {
         let p = Project::new_blank("untitled");
         assert_eq!(p.tracks.len(), 2);
-        // Both video, both non-removable, labelled A roll / B roll.
-        let labels: Vec<String> = p
-            .tracks
-            .iter()
-            .map(|t| t.label.clone().unwrap_or_default())
-            .collect();
-        assert!(labels.contains(&"A roll".to_string()));
-        assert!(labels.contains(&"B roll".to_string()));
+        // Both video, both non-removable. A roll at index 0 (bottom of z-stack
+        // = video base), B roll at index 1 (top of z-stack = overlays).
+        assert_eq!(p.tracks[0].label.as_deref(), Some("A roll"));
+        assert_eq!(p.tracks[1].label.as_deref(), Some("B roll"));
         for t in p.tracks.iter() {
             assert!(matches!(t.kind, super::TrackKind::Video));
             assert!(!t.removable);

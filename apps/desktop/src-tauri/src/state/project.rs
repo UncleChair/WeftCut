@@ -36,18 +36,18 @@ pub struct Project {
 impl Project {
     pub fn new_blank(name: impl Into<String>) -> Self {
         let now = Utc::now();
-        // Two non-removable video tracks, A-roll on top of B-roll. Stable IDs
-        // would be nice for agents to address them by name; for now their
-        // labels are what the UI shows and what the user sees.
+        // Two non-removable video tracks. Stable IDs would be nice for agents
+        // to address them by name; for now their labels are what the UI shows.
         let mut a_roll = Track::new(TrackKind::Video);
         a_roll.label = Some("A roll".into());
         a_roll.removable = false;
         let mut b_roll = Track::new(TrackKind::Video);
         b_roll.label = Some("B roll".into());
         b_roll.removable = false;
-        // Order in `tracks` is bottom-up (last = top of z-stack). Put A-roll on
-        // top so it visually dominates when the user starts dropping clips.
-        let tracks = imbl::vector![b_roll, a_roll];
+        // Order in `tracks` is bottom-up (index 0 = bottom of z-stack, last =
+        // top). A-roll is the video base, so it sits at index 0; B-roll holds
+        // overlays / supplementary footage and is drawn on top.
+        let tracks = imbl::vector![a_roll, b_roll];
         Self {
             schema_version: SCHEMA_VERSION,
             project_id: new_id(),
