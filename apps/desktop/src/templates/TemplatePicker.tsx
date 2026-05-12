@@ -5,6 +5,7 @@ import {
   listTemplates,
   type PropSpec,
   type TemplateSummary,
+  type TrackSummary,
 } from "../ipc";
 
 interface Props {
@@ -14,9 +15,23 @@ interface Props {
   /// time so the template appends after existing content instead of
   /// colliding at t=0.
   compositionDurationUs: number;
+  /// Project's current tracks. The picker filters to Video tracks for the
+  /// target dropdown — templates lower to PngSeq overlay nodes and would
+  /// silently render nothing on an Audio/Subtitle lane.
+  tracks: TrackSummary[];
 }
 
-export function TemplatePicker({ onClose, onAdded, compositionDurationUs }: Props) {
+/// `<select>` value when the user wants the picker to find-or-create the
+/// shared "Overlay" track. Sent over IPC as `trackId: undefined` so the
+/// backend's `ensure_overlay_track` path runs.
+const AUTO_OVERLAY_SENTINEL = "__auto_overlay__";
+
+export function TemplatePicker({
+  onClose,
+  onAdded,
+  compositionDurationUs,
+  tracks,
+}: Props) {
   const { t } = useTranslation();
   const [templates, setTemplates] = useState<TemplateSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -33,8 +48,13 @@ export function TemplatePicker({ onClose, onAdded, compositionDurationUs }: Prop
   }, []);
 
   const selected = useMemo(
-    () => templates?.find((t) => t.id === selectedId) ?? null,
+    () => templates?.find((tpl) => tpl.id === selectedId) ?? null,
     [templates, selectedId],
+  );
+
+  const videoTracks = useMemo(
+    () => tracks.filter((tr) => tr.kind === "Video"),
+    [tracks],
   );
 
   return (
@@ -69,6 +89,14 @@ export function TemplatePicker({ onClose, onAdded, compositionDurationUs }: Prop
                   }
                   onClick={() => setSelectedId(tpl.id)}
                 >
+                  <TemplatePreview
+                    template={tpl}
+                    // Card thumbnails always render at manifest defaults so
+                    // they don't re-mount when the user edits the form on
+                    // the right — keeps the catalog stable while previewing.
+                    props={defaultPropsFor(tpl)}
+                    width={240}
+                  />
                   <span className="template-card-name">{tpl.name}</span>
                   <span className="template-card-meta">
                     {tpl.size[0]}×{tpl.size[1]} · {tpl.default_duration_s}s
@@ -84,13 +112,15 @@ export function TemplatePicker({ onClose, onAdded, compositionDurationUs }: Prop
                   key={selected.id}
                   template={selected}
                   compositionDurationUs={compositionDurationUs}
-                  onSubmit={async ({ tStartUs, props }) => {
+                  tracks={videoTracks}
+                  onSubmit={async ({ tStartUs, props, trackId }) => {
                     setError(null);
                     try {
                       await addTemplate({
                         templateId: selected.id,
                         tStartUs,
                         props,
+                        trackId,
                       });
                       await onAdded();
                       onClose();
@@ -120,39 +150,60 @@ function defaultPropValue(spec: PropSpec): unknown {
   }
 }
 
+function defaultPropsFor(template: TemplateSummary): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, spec] of Object.entries(template.props_schema)) {
+    out[key] = defaultPropValue(spec);
+  }
+  return out;
+}
+
 function TemplateForm({
   template,
   compositionDurationUs,
+  tracks,
   onSubmit,
 }: {
   template: TemplateSummary;
   compositionDurationUs: number;
+  tracks: TrackSummary[];
   onSubmit: (args: {
     tStartUs: number;
     props: Record<string, unknown>;
+    trackId?: string;
   }) => Promise<void>;
 }) {
   const { t } = useTranslation();
-  const [propValues, setPropValues] = useState<Record<string, unknown>>(() => {
-    const init: Record<string, unknown> = {};
-    for (const [key, spec] of Object.entries(template.props_schema)) {
-      init[key] = defaultPropValue(spec);
-    }
-    return init;
-  });
+  const [propValues, setPropValues] = useState<Record<string, unknown>>(() =>
+    defaultPropsFor(template),
+  );
   const [insertAtSec, setInsertAtSec] = useState<number>(
     compositionDurationUs / 1_000_000,
   );
+  // If an "Overlay" video track already exists, prefer it as the default
+  // dropdown choice — the label is more honest than "(auto-create)" when
+  // no creation will actually happen. Backend resolves either path to the
+  // same outcome.
+  const [trackChoice, setTrackChoice] = useState<string>(() => {
+    const existingOverlay = tracks.find((tr) => tr.label === "Overlay");
+    return existingOverlay?.id ?? AUTO_OVERLAY_SENTINEL;
+  });
   const [busy, setBusy] = useState(false);
 
   const setProp = (key: string, value: unknown) =>
     setPropValues((prev) => ({ ...prev, [key]: value }));
 
+  // Re-mounting the preview iframe on every keystroke would reset the
+  // template's RAF-driven animations. Debounce until the user pauses typing.
+  const debouncedProps = useDebounced(propValues, 300);
+
   const submit = async () => {
     setBusy(true);
     try {
       const tStartUs = Math.max(0, Math.round(insertAtSec * 1_000_000));
-      await onSubmit({ tStartUs, props: propValues });
+      const trackId =
+        trackChoice === AUTO_OVERLAY_SENTINEL ? undefined : trackChoice;
+      await onSubmit({ tStartUs, props: propValues, trackId });
     } finally {
       setBusy(false);
     }
@@ -167,6 +218,9 @@ function TemplateForm({
         submit();
       }}
     >
+      <h3>{t("template_picker.preview_heading")}</h3>
+      <TemplatePreview template={template} props={debouncedProps} width={480} large />
+
       <h3>{t("template_picker.props_heading")}</h3>
       {propKeys.length === 0 ? (
         <p className="settings-status">{t("template_picker.no_props")}</p>
@@ -193,6 +247,22 @@ function TemplateForm({
           onChange={(e) => setInsertAtSec(Number(e.target.value))}
         />
       </label>
+      <label className="template-picker-field">
+        <span>{t("template_picker.track_label")}</span>
+        <select
+          value={trackChoice}
+          onChange={(e) => setTrackChoice(e.target.value)}
+        >
+          <option value={AUTO_OVERLAY_SENTINEL}>
+            {t("template_picker.track_overlay_auto")}
+          </option>
+          {tracks.map((tr) => (
+            <option key={tr.id} value={tr.id}>
+              {tr.label ?? `track ${tr.id.slice(0, 8)}`}
+            </option>
+          ))}
+        </select>
+      </label>
       <p className="template-picker-hint">
         {t("template_picker.duration_hint", {
           seconds: template.default_duration_s,
@@ -207,6 +277,81 @@ function TemplateForm({
         </button>
       </div>
     </form>
+  );
+}
+
+function useDebounced<T>(value: T, delay: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const id = window.setTimeout(() => setDebounced(value), delay);
+    return () => window.clearTimeout(id);
+  }, [value, delay]);
+  return debounced;
+}
+
+function buildPreviewSrcDoc(
+  template: TemplateSummary,
+  props: Record<string, unknown>,
+): string {
+  // Mirrors the production raster path's __STYLE__ substitution so what the
+  // picker shows matches what render-time emits.
+  const styled = template.html.replace("__STYLE__", template.style);
+  const propsJson = JSON.stringify(props ?? {});
+  // Inject before </head> so window.__props__ is set before the body's
+  // start() loop polls for it. Every shipped template has a <head>; the
+  // <body> fallback is defensive in case a future template omits it.
+  const inject = `<script>window.__props__ = ${propsJson};</script>`;
+  if (styled.includes("</head>")) {
+    return styled.replace("</head>", `${inject}</head>`);
+  }
+  return styled.replace("<body", `${inject}<body`);
+}
+
+/// Live preview of a template, rendered at its manifest-declared natural
+/// size and CSS-scaled to `width`. Natural-size + transform-scale beats
+/// shrinking the iframe directly because viewport units (vw/vh) are
+/// relative to the iframe's logical size — shrinking would break layouts
+/// designed at 1920×1080. Sandboxed to `allow-scripts` only so template
+/// JS can animate without reaching Tauri APIs or this app's DOM.
+function TemplatePreview({
+  template,
+  props,
+  width,
+  large,
+}: {
+  template: TemplateSummary;
+  props: Record<string, unknown>;
+  width: number;
+  large?: boolean;
+}) {
+  const [w, h] = template.size;
+  const scale = width / w;
+  const scaledHeight = h * scale;
+  const html = useMemo(
+    () => buildPreviewSrcDoc(template, props),
+    [template.id, template.html, template.style, JSON.stringify(props)],
+  );
+  return (
+    <div
+      className={
+        large
+          ? "template-preview-host template-preview-large"
+          : "template-preview-host"
+      }
+      style={{ width, height: scaledHeight }}
+    >
+      <iframe
+        srcDoc={html}
+        sandbox="allow-scripts"
+        title={`preview-${template.id}`}
+        style={{
+          width: w,
+          height: h,
+          transformOrigin: "top left",
+          transform: `scale(${scale})`,
+        }}
+      />
+    </div>
   );
 }
 

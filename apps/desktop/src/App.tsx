@@ -589,6 +589,7 @@ export function App() {
           onClose={() => setTemplatePickerOpen(false)}
           onAdded={refresh}
           compositionDurationUs={summary?.duration_us ?? 0}
+          tracks={summary?.tracks ?? []}
         />
       )}
     </div>

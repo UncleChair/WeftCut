@@ -989,13 +989,25 @@ async fn ensure_overlay_track(
         .map_err(|e: CommandError| e.to_string())
 }
 
-/// Stage F-Picker: the UI catalog. Same shape as MCP `list_templates`. Both
-/// surfaces wrap `raster::template::catalog()` so they can't drift.
+/// Stage F-Picker: the UI catalog. A superset of the MCP `list_templates`
+/// payload — every manifest field plus the raw `html` / `style` strings so
+/// the picker can render live iframe previews client-side. The MCP surface
+/// stays manifest-only (see `mcp::templates_payload`); the extra fields are
+/// UI-only and would just bloat agent context.
 #[tauri::command]
 pub async fn list_templates() -> Result<Vec<serde_json::Value>, String> {
-    raster_template::catalog()
+    raster_template::builtins()
         .into_iter()
-        .map(|m| serde_json::to_value(m).map_err(|e| format!("manifest serialize: {e}")))
+        .map(|tpl| {
+            let mut v = serde_json::to_value(&tpl.manifest)
+                .map_err(|e| format!("manifest serialize: {e}"))?;
+            let obj = v
+                .as_object_mut()
+                .ok_or_else(|| "manifest is not a JSON object".to_string())?;
+            obj.insert("html".to_string(), serde_json::Value::String(tpl.html));
+            obj.insert("style".to_string(), serde_json::Value::String(tpl.style));
+            Ok(v)
+        })
         .collect()
 }
 

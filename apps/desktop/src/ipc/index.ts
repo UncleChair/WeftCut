@@ -549,7 +549,9 @@ export type PropSpec =
   | { type: "color"; default: string }
   | { type: "number"; default: number; min?: number; max?: number };
 
-/// One catalog entry from `list_templates()`. Mirrors `raster::template::Manifest`.
+/// One catalog entry from `list_templates()`. Superset of the MCP `list_templates`
+/// payload — `Manifest` plus the raw `html` / `style` strings so the picker
+/// can render live iframe previews without a second round-trip.
 export interface TemplateSummary {
   id: string;
   name: string;
@@ -560,6 +562,11 @@ export interface TemplateSummary {
   /// Keyed by prop name. Map order is BTreeMap-stable (alphabetical) so the
   /// picker can render fields in a deterministic order without sorting.
   props_schema: Record<string, PropSpec>;
+  /// Raw template HTML with the `__STYLE__` placeholder still present —
+  /// substitute the `style` field in to render a preview iframe.
+  html: string;
+  /// Raw template CSS substituted into the `__STYLE__` placeholder in `html`.
+  style: string;
 }
 
 export async function listTemplates(): Promise<TemplateSummary[]> {

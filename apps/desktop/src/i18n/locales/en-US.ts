@@ -223,10 +223,13 @@ const enUS = {
     close: "Close",
     loading: "Loading templates…",
     empty: "No templates available.",
+    preview_heading: "Preview",
     props_heading: "Props",
     no_props: "(no editable props)",
     timing_heading: "Timing",
     insert_at: "Insert at (seconds)",
+    track_label: "Track",
+    track_overlay_auto: "Overlay (auto-create)",
     duration_hint:
       "Layer length defaults to {{seconds}}s (the template's default_duration_s). Trim later in the timeline if you need a different length.",
     add: "Add to timeline",

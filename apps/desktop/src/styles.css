@@ -1307,7 +1307,8 @@ html, body, #root { height: 100%; margin: 0; }
 /* ============================================================ */
 
 .template-picker {
-  width: min(880px, calc(100vw - 32px));
+  /* Widened from 880px to accommodate the iframe preview pane on the right. */
+  width: min(1040px, calc(100vw - 32px));
   max-height: calc(100vh - 64px);
   background: #0b0d11;
   border: 1px solid #374151;
@@ -1340,8 +1341,52 @@ html, body, #root { height: 100%; margin: 0; }
   max-height: calc(100vh - 160px);
 }
 
+/* ---- Live iframe previews ---------------------------------------------- */
+
+/* Host wraps a natural-size iframe scaled down via `transform: scale(...)`.
+   The host has the SCALED size (so it claims the right layout box); the
+   iframe overflows out and the host clips it. Checkerboard backdrop shows
+   transparent regions for lower-thirds / callout / logo-bug. */
+.template-preview-host {
+  position: relative;
+  overflow: hidden;
+  border-radius: 4px;
+  border: 1px solid #1f2937;
+  background-color: #0b0d11;
+  background-image:
+    linear-gradient(45deg, #1f2937 25%, transparent 25%),
+    linear-gradient(-45deg, #1f2937 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #1f2937 75%),
+    linear-gradient(-45deg, transparent 75%, #1f2937 75%);
+  background-size: 12px 12px;
+  background-position: 0 0, 0 6px, 6px -6px, -6px 0;
+  /* Disable pointer events on the host and any descendants (incl. the iframe)
+     so clicks AND wheel events pass through to the parent `<button>`, which
+     in turn bubbles them up to the scrollable card list. Setting on the host
+     alone (rather than just the iframe) is what fixes wheel-scroll being
+     trapped by the iframe's inner document in Chromium/WebView2. */
+  pointer-events: none;
+}
+
+.template-preview-host iframe {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border: 0;
+}
+
+.template-preview-large {
+  margin: 4px 0 8px;
+}
+
 .template-picker-list {
   border-right: 1px solid #1f2937;
+  /* `max-height` here (instead of relying on the parent body's clip) makes
+     this element the scroll container — without it, the list grows to fit
+     all cards and `overflow-y: auto` never kicks in. The body above is
+     also `max-height`-capped but with grid rows defaulting to `auto`, the
+     grid track sizes to content, so the list inherits no height bound. */
+  max-height: calc(100vh - 160px);
   overflow-y: auto;
   padding: 8px;
   display: flex;
@@ -1352,8 +1397,8 @@ html, body, #root { height: 100%; margin: 0; }
 .template-card {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
+  align-items: stretch;
+  gap: 4px;
   padding: 10px 12px;
   background: transparent;
   border: 1px solid transparent;
@@ -1391,6 +1436,10 @@ html, body, #root { height: 100%; margin: 0; }
 
 .template-picker-form {
   padding: 8px 16px 16px;
+  /* Same reason as `.template-picker-list` above — needs its own height cap
+     so its overflow-y scroll activates when props + large preview push the
+     form past the picker's visible area. */
+  max-height: calc(100vh - 160px);
   overflow-y: auto;
 }
 
@@ -1418,7 +1467,8 @@ html, body, #root { height: 100%; margin: 0; }
 }
 
 .template-picker-field input[type='text'],
-.template-picker-field input[type='number'] {
+.template-picker-field input[type='number'],
+.template-picker-field select {
   background: #1f2937;
   border: 1px solid #374151;
   color: #e5e7eb;

@@ -223,10 +223,13 @@ const zhCN: Resources = {
     close: "关闭",
     loading: "正在加载模板…",
     empty: "无可用模板。",
+    preview_heading: "预览",
     props_heading: "参数",
     no_props: "（无可编辑参数）",
     timing_heading: "时间",
     insert_at: "插入位置（秒）",
+    track_label: "轨道",
+    track_overlay_auto: "Overlay（自动创建）",
     duration_hint:
       "图层长度默认为 {{seconds}} 秒（模板的 default_duration_s）。如需不同长度，可在时间轴上裁剪。",
     add: "添加到时间轴",
