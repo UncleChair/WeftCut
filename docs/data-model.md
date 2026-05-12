@@ -98,7 +98,7 @@ struct Track {
 }
 ```
 
-A fresh project ships with two non-removable video tracks labelled **"A roll"** (top of z-stack) and **"B roll"** (below). They give every project a guaranteed drop target so the UI doesn't have to handle "no tracks exist" as a separate case, and they give agents a stable "where do I put this?" answer when they don't have other context. Users can rename them; they cannot delete them. `delete_track` returns `CommandError::TrackNotRemovable` if invoked on one.
+A fresh project ships with two non-removable video tracks labelled **"A roll"** (index 0 = bottom of z-stack, video base) and **"B roll"** (index 1 = top of z-stack, overlays / supplementary footage). This matches the Premiere/Resolve/FCP convention where V1 is the base and V2+ are overlays. They give every project a guaranteed drop target so the UI doesn't have to handle "no tracks exist" as a separate case, and they give agents a stable "where do I put this?" answer when they don't have other context. Users can rename them; they cannot delete them. `delete_track` returns `CommandError::TrackNotRemovable` if invoked on one.
 
 `removable` defaults to `true` via `#[serde(default)]` so `.vproj` files written before this field existed deserialize as fully-removable tracks.
 
