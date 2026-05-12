@@ -22,11 +22,34 @@ fn subtitles_path_escape(path: &str) -> String {
         .replace('\'', "'\\''")
 }
 
+/// One `-i` argument with optional `-framerate` preamble for image sequences.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlanInput {
+    pub path: String,
+    pub framerate: Option<(u32, u32)>,
+}
+
+impl PlanInput {
+    /// CLI tokens for this input — `[-framerate, N/D, -i, path]` for image
+    /// sequences, just `[-i, path]` otherwise.
+    pub fn cli_args(&self) -> Vec<String> {
+        let mut out = Vec::with_capacity(4);
+        if let Some((n, d)) = self.framerate {
+            out.push("-framerate".into());
+            out.push(format!("{n}/{d}"));
+        }
+        out.push("-i".into());
+        out.push(self.path.clone());
+        out
+    }
+}
+
 /// Result of emitting a graph for ffmpeg.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FfmpegPlan {
-    /// Input file paths, in `-i` order.
-    pub inputs: Vec<String>,
+    /// Inputs in `-i` order. Use [`PlanInput::cli_args`] to build the
+    /// per-input argv slice; concatenate them for the full command line.
+    pub inputs: Vec<PlanInput>,
     /// Complete `filter_complex_script` body, newline-separated filter steps.
     pub filter_graph: String,
     /// `-map` arguments — `[vfinal]`, `[aout]`, etc.
@@ -51,7 +74,10 @@ pub fn emit(graph: &IRGraph) -> FfmpegPlan {
         inputs: graph
             .inputs
             .iter()
-            .map(|p| p.to_string_lossy().into_owned())
+            .map(|spec| PlanInput {
+                path: spec.path.to_string_lossy().into_owned(),
+                framerate: spec.framerate,
+            })
             .collect(),
         filter_graph: emitter.body,
         maps,
@@ -166,6 +192,27 @@ impl<'a> Emitter<'a> {
                     dur = us_to_secs(duration_us),
                 ));
                 lbl
+            }
+            IRNode::PngSeq { input, duration_us, alpha } => {
+                // The input itself carries the framerate (`-framerate N/D
+                // -i pattern`); here we just trim to the layer's duration,
+                // re-stamp PTS, and optionally promote to yuva420p so the
+                // overlay chain preserves per-frame alpha.
+                let in_lbl = format!("[{input}:v]");
+                let trimmed = self.fresh_label("pngseq");
+                self.write_clause(&format!(
+                    "{in_lbl} trim=duration={dur},setpts=PTS-STARTPTS {trimmed}",
+                    dur = us_to_secs(duration_us),
+                ));
+                if alpha {
+                    let with_alpha = self.fresh_label("pngseq_a");
+                    self.write_clause(&format!(
+                        "{trimmed} format=yuva420p {with_alpha}"
+                    ));
+                    with_alpha
+                } else {
+                    trimmed
+                }
             }
             IRNode::Scale { in_, width, height } => {
                 let in_lbl = self.emit_node(in_);

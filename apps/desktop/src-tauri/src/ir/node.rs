@@ -49,6 +49,16 @@ pub enum IRNode {
         input: InputIdx,
         duration_us: i64,
     },
+    /// PNG-sequence input (a directory of `frame_NNNNN.png` files at a fixed
+    /// fps, produced by `raster::render`). `alpha = true` runs the decoded
+    /// stream through `format=yuva420p` so the rest of the overlay chain
+    /// preserves the per-frame alpha channel — required for any template
+    /// that wants to composite over the video below it.
+    PngSeq {
+        input: InputIdx,
+        duration_us: i64,
+        alpha: bool,
+    },
 
     // --- Transforms (1 → 1) ---
     Scale {
@@ -201,6 +211,7 @@ impl IRNode {
             IRNode::Color { .. }
             | IRNode::DecodeV { .. }
             | IRNode::ImageDecode { .. }
+            | IRNode::PngSeq { .. }
             | IRNode::Scale { .. }
             | IRNode::Fps { .. }
             | IRNode::Opacity { .. }

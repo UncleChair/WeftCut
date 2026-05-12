@@ -172,7 +172,8 @@ mod tests {
         let p = project_with_one_clip();
         let g = lower(&p, fixture_target(), &Default::default()).expect("lower");
         assert_eq!(g.inputs.len(), 1);
-        assert_eq!(g.inputs[0].to_str().unwrap(), "/m/a.mp4");
+        assert_eq!(g.inputs[0].path.to_str().unwrap(), "/m/a.mp4");
+        assert_eq!(g.inputs[0].framerate, None);
 
         // Should contain: Color base, DecodeV, Scale, Fps, SetPts, Overlay, OutV.
         let kinds: Vec<&str> = g
@@ -203,7 +204,9 @@ mod tests {
         let g = lower(&p, fixture_target(), &Default::default()).expect("lower");
         let plan = emit_ffmpeg(&g);
 
-        assert_eq!(plan.inputs, vec!["/m/a.mp4".to_string()]);
+        assert_eq!(plan.inputs.len(), 1);
+        assert_eq!(plan.inputs[0].path, "/m/a.mp4");
+        assert_eq!(plan.inputs[0].framerate, None);
         assert_eq!(plan.maps, vec!["[vfinal]".to_string()]);
 
         let expected = "\
@@ -937,6 +940,149 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
         assert!(
             size > 1024,
             "crossfade output mp4 is suspiciously small ({size} bytes)\n--- graph ---\n{}",
+            plan.filter_graph,
+        );
+    }
+
+    /// Stage E1 smoke: a hand-built IR with a `PngSeq` overlay on top of a
+    /// `Color` base renders through ffmpeg into a non-empty mp4, and the
+    /// alpha=true branch emits the `format=yuva420p` conversion the overlay
+    /// needs to composite per-frame alpha correctly.
+    #[test]
+    fn pngseq_overlay_renders_through_ffmpeg() {
+        use crate::ir::node::{IRNode, PixFmt};
+        use crate::state::color::Rgba;
+        use std::process::Command;
+        use tempfile::TempDir;
+
+        let Ok(probe) = Command::new("ffmpeg").arg("-version").output() else {
+            eprintln!("ffmpeg not on PATH — skipping pngseq smoke");
+            return;
+        };
+        if !probe.status.success() {
+            eprintln!("ffmpeg returned non-zero — skipping pngseq smoke");
+            return;
+        }
+
+        // Fixture: three RGBA PNG frames with a magenta-on-transparent dot.
+        // `color=color=...@0.0` gives a transparent base, then drawbox lays
+        // down a translucent square so there's actually a non-zero alpha
+        // region to composite. We feed PNGs (not a video) to mirror what
+        // `raster::render` writes to the cache.
+        let dir = TempDir::new().unwrap();
+        let pattern = dir.path().join("frame_%05d.png");
+        let gen = Command::new("ffmpeg")
+            .args(["-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi"])
+            .arg("-i")
+            .arg("color=c=0x00000000:s=320x180:d=0.3:r=10")
+            .args(["-vf", "drawbox=x=80:y=40:w=160:h=100:color=0xff44aa@0.85:t=fill"])
+            .args(["-frames:v", "3"])
+            .arg(&pattern)
+            .output()
+            .expect("generate fixture PNGs");
+        assert!(
+            gen.status.success(),
+            "fixture generation failed: {}",
+            String::from_utf8_lossy(&gen.stderr)
+        );
+
+        // Hand-build the IR: Color base → PngSeq (alpha) → Scale → SetPts →
+        // Overlay → OutV(yuv420p).
+        let target = RenderTarget::full(320, 180, Rational::new(30, 1), 48000, 2);
+        let mut g = IRGraph::new(target);
+
+        let base = g.add_node(IRNode::Color {
+            rgba: Rgba::rgb(20, 22, 30),
+            width: 320,
+            height: 180,
+            fps_num: 30,
+            fps_den: 1,
+            duration_us: 1_000_000,
+        });
+
+        let pngseq_input = g.add_png_seq(&pattern, 10, 1);
+        let pngseq = g.add_node(IRNode::PngSeq {
+            input: pngseq_input,
+            duration_us: 300_000,
+            alpha: true,
+        });
+        let scaled = g.add_node(IRNode::Scale {
+            in_: pngseq,
+            width: 320,
+            height: 180,
+        });
+        let placed = g.add_node(IRNode::SetPts {
+            in_: scaled,
+            offset_us: 0,
+        });
+        let composited = g.add_node(IRNode::Overlay {
+            base,
+            top: placed,
+            x: 0,
+            y: 0,
+            gate_start_us: 0,
+            gate_end_us: 300_000,
+        });
+        let out_v = g.add_node(IRNode::OutV {
+            in_: composited,
+            label: "vfinal".into(),
+            pix_fmt: PixFmt::Yuv420p,
+        });
+        g.video_out = Some(out_v);
+
+        let plan = emit_ffmpeg(&g);
+
+        // The emit shape must include the alpha-preservation `format=yuva420p`
+        // step. Without it, ffmpeg drops alpha at the trim node and the
+        // overlay paints opaque magenta over the base.
+        assert!(
+            plan.filter_graph.contains("format=yuva420p"),
+            "expected format=yuva420p in pngseq alpha graph:\n{}",
+            plan.filter_graph
+        );
+
+        // Input must carry `-framerate 10/1` per InputSpec.
+        assert_eq!(plan.inputs.len(), 1);
+        assert_eq!(plan.inputs[0].framerate, Some((10, 1)));
+
+        // Run end-to-end and assert non-empty mp4.
+        let script = std::env::temp_dir()
+            .join(format!("videtor-pngseq-graph-{}.txt", Uuid::now_v7().simple()));
+        let out_path = std::env::temp_dir()
+            .join(format!("videtor-pngseq-out-{}.mp4", Uuid::now_v7().simple()));
+        std::fs::write(&script, &plan.filter_graph).expect("write script");
+
+        let mut cmd = Command::new("ffmpeg");
+        cmd.args(["-y", "-hide_banner", "-nostats", "-loglevel", "error"]);
+        for input in &plan.inputs {
+            for arg in input.cli_args() {
+                cmd.arg(arg);
+            }
+        }
+        cmd.arg("-filter_complex_script").arg(&script);
+        for m in &plan.maps {
+            cmd.arg("-map").arg(m);
+        }
+        cmd.args([
+            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-t", "0.3",
+        ])
+        .arg(&out_path);
+
+        let out = cmd.output().expect("run ffmpeg");
+        let _ = std::fs::remove_file(&script);
+        if !out.status.success() {
+            let _ = std::fs::remove_file(&out_path);
+            panic!(
+                "ffmpeg rejected pngseq graph:\n--- graph ---\n{}\n--- stderr ---\n{}",
+                plan.filter_graph,
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        let size = std::fs::metadata(&out_path).map(|m| m.len()).unwrap_or(0);
+        let _ = std::fs::remove_file(&out_path);
+        assert!(
+            size > 512,
+            "pngseq mp4 is suspiciously small ({size} bytes)\n--- graph ---\n{}",
             plan.filter_graph,
         );
     }

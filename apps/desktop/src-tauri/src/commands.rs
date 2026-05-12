@@ -850,7 +850,10 @@ pub async fn compile_project(
     let graph = ir::lower(&snap, target, &inline_subs).map_err(|e| e.to_string())?;
     let plan = ir::emit_ffmpeg(&graph);
     Ok(CompiledGraph {
-        inputs: plan.inputs,
+        // CompiledGraph is shown in a debug panel — just the paths, no
+        // framerate flags. Callers that build a real ffmpeg command line
+        // (export/mod.rs) should use `PlanInput::cli_args` directly.
+        inputs: plan.inputs.iter().map(|i| i.path.clone()).collect(),
         filter_graph: plan.filter_graph,
         maps: plan.maps,
         node_count: graph.nodes.len(),

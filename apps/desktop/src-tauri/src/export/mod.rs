@@ -119,7 +119,9 @@ pub async fn run_render(
         .arg("-nostats");
 
     for input in &plan.inputs {
-        cmd.arg("-i").arg(input);
+        for arg in input.cli_args() {
+            cmd.arg(arg);
+        }
     }
 
     cmd.arg("-filter_complex_script").arg(&script_path);

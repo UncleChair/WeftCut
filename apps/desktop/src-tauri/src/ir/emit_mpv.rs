@@ -52,10 +52,15 @@ pub fn emit(graph: &IRGraph) -> MpvPlan {
     let mut emitter = Emitter::new(graph);
     emitter.emit();
 
+    // mpv's loadfile / --external-files can't pass `-framerate` per input the
+    // way ffmpeg can; PNG sequences would need the `mf://` protocol with
+    // `--mf-fps` set. Stage E1 ships ffmpeg export only — preview through mpv
+    // for Template layers is a Stage E2+ concern. For now, emit paths as-is
+    // and let the lavfi side reference them.
     let inputs: Vec<String> = graph
         .inputs
         .iter()
-        .map(|p| p.to_string_lossy().into_owned())
+        .map(|spec| spec.path.to_string_lossy().into_owned())
         .collect();
     let mut iter = inputs.into_iter();
     let primary = iter.next();
@@ -166,6 +171,28 @@ impl<'a> Emitter<'a> {
                     dur = us_to_secs(duration_us),
                 ));
                 lbl
+            }
+            IRNode::PngSeq { input, duration_us, alpha } => {
+                // Stage E1 emits the same shape as the ffmpeg side for symmetry,
+                // but PngSeq inputs need mpv's `mf://` protocol or per-input
+                // `--mf-fps` to play back at the right rate. Stage E2 wires
+                // that up; for now this branch is reachable only from the
+                // hand-rolled smoke test on the ffmpeg side.
+                let in_lbl = format!("[vid{}]", input + 1);
+                let trimmed = self.fresh_label("pngseq");
+                self.write_clause(&format!(
+                    "{in_lbl} trim=duration={dur},setpts=PTS-STARTPTS {trimmed}",
+                    dur = us_to_secs(duration_us),
+                ));
+                if alpha {
+                    let with_alpha = self.fresh_label("pngseq_a");
+                    self.write_clause(&format!(
+                        "{trimmed} format=yuva420p {with_alpha}"
+                    ));
+                    with_alpha
+                } else {
+                    trimmed
+                }
             }
             IRNode::Scale { in_, width, height } => {
                 let in_lbl = self.emit_node(in_);
