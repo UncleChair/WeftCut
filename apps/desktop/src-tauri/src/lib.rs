@@ -86,6 +86,7 @@ pub fn run() {
             commands::get_media_thumbnail,
             commands::list_templates,
             commands::add_template,
+            commands::template_preview,
         ])
         .setup(|app| {
             // Project actor — single writer for all state mutations, shared by

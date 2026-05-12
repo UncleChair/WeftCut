@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import {
   addTemplate,
   listTemplates,
+  templatePreview,
   type PropSpec,
   type TemplateSummary,
   type TrackSummary,
@@ -38,15 +39,45 @@ export function TemplatePicker({
   const [templates, setTemplates] = useState<TemplateSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Keyed by template id. `undefined` = not yet requested; string = data URL
+  // ready to drop into <img src>; `null` = render failed and we fall back
+  // to the iframe preview. Renders run serially against the shared
+  // offscreen webview, so kicking off all 10 in parallel from JS still
+  // queues at the Rust layer — that's fine, the card grid stays
+  // responsive because each thumbnail's loading state is independent.
+  const [thumbnails, setThumbnails] = useState<
+    Record<string, string | null>
+  >({});
 
   useEffect(() => {
+    let cancelled = false;
     listTemplates().then(
       (list) => {
+        if (cancelled) return;
         setTemplates(list);
         if (list.length > 0) setSelectedId(list[0].id);
+        // Fire all renders concurrently. allSettled because one bad
+        // template shouldn't poison the whole grid — the others still
+        // get static thumbnails and the broken one falls back to iframe.
+        for (const tpl of list) {
+          templatePreview(tpl.id).then(
+            (dataUrl) => {
+              if (cancelled) return;
+              setThumbnails((prev) => ({ ...prev, [tpl.id]: dataUrl }));
+            },
+            (e) => {
+              if (cancelled) return;
+              console.warn(`template preview for ${tpl.id} failed:`, e);
+              setThumbnails((prev) => ({ ...prev, [tpl.id]: null }));
+            },
+          );
+        }
       },
       (e) => setError(String(e)),
     );
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const selected = useMemo(
@@ -91,13 +122,9 @@ export function TemplatePicker({
                   }
                   onClick={() => setSelectedId(tpl.id)}
                 >
-                  <TemplatePreview
+                  <TemplateCardThumbnail
                     template={tpl}
-                    // Card thumbnails always render at manifest defaults so
-                    // they don't re-mount when the user edits the form on
-                    // the right — keeps the catalog stable while previewing.
-                    props={defaultPropsFor(tpl)}
-                    width={240}
+                    staticUrl={thumbnails[tpl.id]}
                   />
                   <span className="template-card-name">{tpl.name}</span>
                   <span className="template-card-meta">
@@ -354,6 +381,46 @@ function TemplatePreview({
         }}
       />
     </div>
+  );
+}
+
+/// Card-grid thumbnail. Prefers the statically-rendered PNG (pixel-accurate
+/// to ffmpeg-emit output, cached after the first session), falling back to
+/// the live iframe preview at default props while the render is in flight
+/// or if it failed. The iframe path is the same component the form's large
+/// preview uses, so a fallback render looks like before; it just animates
+/// instead of being a static still.
+function TemplateCardThumbnail({
+  template,
+  staticUrl,
+}: {
+  template: TemplateSummary;
+  staticUrl: string | null | undefined;
+}) {
+  const [w, h] = template.size;
+  const width = 240;
+  const scale = width / w;
+  const scaledHeight = h * scale;
+  if (typeof staticUrl === "string") {
+    return (
+      <div
+        className="template-preview-host"
+        style={{ width, height: scaledHeight }}
+      >
+        <img
+          src={staticUrl}
+          alt={template.name}
+          style={{ width, height: scaledHeight, display: "block" }}
+        />
+      </div>
+    );
+  }
+  return (
+    <TemplatePreview
+      template={template}
+      props={defaultPropsFor(template)}
+      width={width}
+    />
   );
 }
 

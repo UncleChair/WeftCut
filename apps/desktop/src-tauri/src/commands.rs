@@ -1011,6 +1011,55 @@ pub async fn list_templates() -> Result<Vec<serde_json::Value>, String> {
         .collect()
 }
 
+/// Render a static thumbnail of the named template at default props and a
+/// representative time, returning the PNG bytes base64-encoded so React
+/// can wrap them in a `data:image/png;base64,…` URL. Goes through the
+/// same offscreen-webview raster pipeline IR Template layers use, so the
+/// thumbnail is pixel-accurate to what ffmpeg would emit. First call per
+/// template is ~200–700ms on a cold cache; subsequent calls are
+/// near-instant via the content-keyed raster cache.
+#[tauri::command]
+pub async fn template_preview(
+    app: tauri::AppHandle,
+    cache: State<'_, crate::cache::CacheLayout>,
+    template_id: String,
+) -> Result<String, String> {
+    let template = raster_template::builtins()
+        .into_iter()
+        .find(|t| t.id() == template_id)
+        .ok_or_else(|| {
+            format!(
+                "unknown template_id '{template_id}' — call list_templates for the catalog",
+            )
+        })?;
+    // Default props match what the picker's card thumbnails currently feed
+    // their iframes, so the static-render swap is visually equivalent.
+    let canonical = template
+        .canonicalize_props(&serde_json::Value::Object(Default::default()))
+        .map_err(|e| format!("canonicalize defaults: {e}"))?;
+    // 0.5 * default_duration_s clamped at [0, 1] — same heuristic as the
+    // MCP `templates://<id>/preview` resource (kept in sync deliberately
+    // so card thumbnails and the agent-facing surface render identically).
+    let t = template.manifest.default_duration_s * 0.5;
+    let t = t.clamp(0.0, 1.0);
+    let job = crate::raster::RasterJob {
+        template,
+        props_canonical_json: canonical,
+        fps: 1,
+        times_s: vec![t],
+    };
+    let out = crate::raster::render(&app, cache.inner(), job).await?;
+    let frame = out
+        .frames
+        .first()
+        .ok_or_else(|| "render returned zero frames".to_string())?;
+    let bytes = tokio::fs::read(&frame.path)
+        .await
+        .map_err(|e| format!("read {}: {e}", frame.path.display()))?;
+    use base64::Engine;
+    Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
+}
+
 /// Stage F-Picker: UI counterpart to the MCP `add_template` tool. Mirrors
 /// the behavior 1:1 (canonicalize props through the Template module,
 /// default `t_end_us` from manifest duration, default the track to the

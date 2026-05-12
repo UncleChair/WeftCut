@@ -631,3 +631,13 @@ export async function addTemplate(args: {
     props: args.props,
   });
 }
+
+/// Render a static PNG thumbnail of a template at its manifest defaults.
+/// Returns a `data:image/png;base64,…` URL ready to drop into `<img src>`.
+/// First call per template is ~200–700ms (cold cache + offscreen webview
+/// render); subsequent calls hit the content-keyed raster cache and are
+/// near-instant. Pixel-accurate to what ffmpeg emits at render time.
+export async function templatePreview(templateId: string): Promise<string> {
+  const b64 = await invoke<string>("template_preview", { templateId });
+  return `data:image/png;base64,${b64}`;
+}

@@ -29,6 +29,12 @@
 //!   for the binary format.
 //! - `templates://current` — built-in template catalog (id, name, size,
 //!   default_duration_s, props_schema). Same payload as `list_templates`.
+//! - `templates://{id}/preview` — rendered PNG thumbnail of the built-in
+//!   template at default props, captured once the entrance animation has
+//!   settled. Goes through the same offscreen-webview raster pipeline that
+//!   IR Template layers use, so what an agent sees here matches what it'd
+//!   render on the timeline. Cached by `raster::cache_key`; first request
+//!   per template is ~200–700ms on a cold cache, subsequent calls are free.
 //!
 //! Edit tools (Stage 3) and workflow tools (Stage 4) live alongside `ping`
 //! in the `VidetorServer` impl block. The change feed (Stage 5) lives on its
@@ -87,12 +93,14 @@ const URI_COMPILED: &str = "project://compiled";
 const URI_TEMPLATES: &str = "templates://current";
 const PREFIX_LAYERS: &str = "project://layers/";
 const PREFIX_MEDIA: &str = "media://";
+const PREFIX_TEMPLATES: &str = "templates://";
 
 const HISTORY_LIMIT: usize = 100;
 
 const APP_JSON: &str = "application/json";
 const APP_OCTET: &str = "application/octet-stream";
 const IMAGE_JPEG: &str = "image/jpeg";
+const IMAGE_PNG: &str = "image/png";
 
 /// Tauri-managed cell holding the MCP server's connection details once it's
 /// bound. Set once at startup; read by the connect-agent panel via the
@@ -1513,6 +1521,17 @@ fn resolve_template_t_end_us(
     }
 }
 
+/// Pick a "settled but pre-exit" time to capture each template at for its
+/// preview thumbnail. Mid-duration works for static templates and lands
+/// after the typical entrance animation (most ship a 0.3–0.6s slide-in)
+/// without overshooting into any exit animation a future template might
+/// add. Cap at 1.0s so long-duration templates (slate, captions strip)
+/// don't capture a frame the entrance shim might not have settled by.
+fn representative_preview_time_s(template: &raster_template::Template) -> f64 {
+    let half = template.manifest.default_duration_s * 0.5;
+    half.clamp(0.0, 1.0)
+}
+
 fn parse_track_kind(s: &str) -> Result<TrackKind, McpError> {
     match s.to_ascii_lowercase().as_str() {
         "video" => Ok(TrackKind::Video),
@@ -1935,6 +1954,15 @@ impl ServerHandler for VidetorServer {
             return self.read_media_resource(uri, tail, &snap).await;
         }
 
+        // templates://<id>/preview returns a rendered PNG (BlobResourceContents).
+        // templates://current is the catalog (TextResourceContents) and falls
+        // through to the URI_TEMPLATES arm below.
+        if uri != URI_TEMPLATES {
+            if let Some(tail) = uri.strip_prefix(PREFIX_TEMPLATES) {
+                return self.read_template_resource(uri, tail).await;
+            }
+        }
+
         let body: Value = match uri {
             URI_PROJECT => serde_json::to_value(&*snap).map_err(serialize_err)?,
             URI_COMPOSITION => serde_json::to_value(&snap.composition).map_err(serialize_err)?,
@@ -2183,6 +2211,83 @@ impl VidetorServer {
             |e| McpError::internal_error(format!("frame extract: {e:#}"), None),
         )?;
         blob_response(uri, &path, IMAGE_JPEG).await
+    }
+
+    /// Dispatch handler for `templates://<id>/preview`. Resolves the
+    /// template against the built-in registry, renders one frame at a
+    /// representative time with default props, and returns the PNG bytes
+    /// in a `BlobResourceContents`. Cached on disk via
+    /// `raster::cache_key`, so subsequent calls bypass the webview.
+    async fn read_template_resource(
+        &self,
+        uri: &str,
+        tail: &str,
+    ) -> Result<ReadResourceResult, McpError> {
+        let (id_part, sub) = tail.split_once('/').ok_or_else(|| {
+            McpError::resource_not_found(
+                format!("template URI missing sub-path (expected `<id>/preview`): {uri}"),
+                None,
+            )
+        })?;
+        if sub != "preview" {
+            return Err(McpError::resource_not_found(
+                format!("unknown template sub-resource `{sub}` — only `preview` is supported"),
+                None,
+            ));
+        }
+        let template = raster_template::builtins()
+            .into_iter()
+            .find(|t| t.id() == id_part)
+            .ok_or_else(|| {
+                McpError::resource_not_found(
+                    format!("template `{id_part}` not found in built-in registry"),
+                    None,
+                )
+            })?;
+        self.serve_template_preview(uri, template).await
+    }
+
+    async fn serve_template_preview(
+        &self,
+        uri: &str,
+        template: raster_template::Template,
+    ) -> Result<ReadResourceResult, McpError> {
+        // Default props produce a deterministic preview. The picker UI's
+        // iframe shows the same defaults, so what an agent sees here lines
+        // up with the human-side preview without per-prop coupling.
+        let canonical = template
+            .canonicalize_props(&serde_json::Value::Object(serde_json::Map::new()))
+            .map_err(|e| {
+                McpError::internal_error(
+                    format!("canonicalize template defaults: {e}"),
+                    None,
+                )
+            })?;
+        let t = representative_preview_time_s(&template);
+        let job = crate::raster::RasterJob {
+            template,
+            props_canonical_json: canonical,
+            // fps=1 with one capture: this is a still, not a sequence.
+            // Cache key bakes fps in, so picking 1 keeps the key from
+            // colliding with whatever a future emit-time render would use.
+            fps: 1,
+            times_s: vec![t],
+        };
+        let out = crate::raster::render(&self.app, &self.cache, job)
+            .await
+            .map_err(|e| {
+                McpError::internal_error(
+                    format!("render template preview: {e}"),
+                    None,
+                )
+            })?;
+        let frame = out.frames.first().ok_or_else(|| {
+            McpError::internal_error(
+                "render returned zero frames".to_string(),
+                None,
+            )
+        })?;
+        blob_response(uri, &frame.path, IMAGE_PNG).await
     }
 
     async fn serve_waveform(
@@ -2823,5 +2928,51 @@ mod tests {
             resolve_template_t_end_us(i64::MAX, None, 5.0),
             i64::MAX,
         );
+    }
+
+    // ============================================================
+    // templates://<id>/preview — preview-time heuristic
+    // ============================================================
+
+    /// Short templates capture at the midpoint of their duration; long
+    /// templates clamp at 1.0s. The 1.0s cap is chosen so the entrance
+    /// animation (typically 0.3–0.6s) is settled but we never run past it.
+    #[test]
+    fn preview_time_clamps_long_durations_at_one_second() {
+        // Most builtins ship 4–10s defaults → clamped.
+        let title_card = raster_template::builtin_title_card();
+        assert!(title_card.manifest.default_duration_s >= 2.0);
+        assert_eq!(representative_preview_time_s(&title_card), 1.0);
+    }
+
+    #[test]
+    fn preview_time_uses_midpoint_for_short_templates() {
+        // Mock a hypothetical short template via the builtin path: take any
+        // existing template and verify the math holds when we feed it back
+        // a half-duration < 1.0.
+        let mut t = raster_template::builtin_lower_third_simple();
+        t.manifest.default_duration_s = 0.8;
+        // 0.8 * 0.5 = 0.4
+        assert!((representative_preview_time_s(&t) - 0.4).abs() < 1e-9);
+    }
+
+    #[test]
+    fn preview_time_floors_at_zero_for_degenerate_input() {
+        let mut t = raster_template::builtin_lower_third_simple();
+        t.manifest.default_duration_s = -0.5; // sanity: malformed manifest
+        assert_eq!(representative_preview_time_s(&t), 0.0);
+    }
+
+    /// Every shipped builtin must produce a finite, non-negative preview
+    /// time. Defends against a future template with a NaN or negative
+    /// `default_duration_s` slipping through and crashing the render path.
+    #[test]
+    fn every_builtin_has_a_valid_preview_time() {
+        for template in raster_template::builtins() {
+            let t = representative_preview_time_s(&template);
+            assert!(t.is_finite(), "{}: t not finite", template.id());
+            assert!(t >= 0.0, "{}: t negative", template.id());
+            assert!(t <= 1.0, "{}: t > 1.0 cap", template.id());
+        }
     }
 }
