@@ -16,54 +16,36 @@
 //!   Linux:   `webkit_web_view_get_snapshot` (async; soft spot — fall back to bundled
 //!            headless Chromium via `chromiumoxide` if WebKitGTK misbehaves).
 
+pub mod template;
+
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 use tracing::{info, warn};
 
+use template::Template;
+
 /// JS shim that pins time, replaces rAF, and exposes `window.__seek(t)`.
 /// Injected before the page script runs so templates see the mocked clock
 /// from the very first frame.
 const TIME_MOCK_SHIM: &str = include_str!("time_mock.js");
 
-/// Test page used by the spike. A rAF-driven Canvas animation that draws the
-/// current `performance.now()` and a dot whose x-position is a linear
-/// function of that time. With the shim active, captures at t=0 / t=1 / t=2
-/// produce visibly different frames at known positions.
-const SPIKE_HTML: &str = r##"data:text/html,<!doctype html>
-<html><head><meta charset="utf-8"><style>html,body{margin:0;background:%231f2937;color:%2360a5fa;font:14px ui-sans-serif,system-ui}</style></head>
-<body>
-<canvas id="c" width="800" height="200"></canvas>
-<script>
-  const ctx = document.getElementById('c').getContext('2d');
-  function tick() {
-    const t = performance.now() / 1000;
-    ctx.fillStyle = '%231f2937';
-    ctx.fillRect(0, 0, 800, 200);
-    ctx.fillStyle = '%2360a5fa';
-    ctx.font = '32px ui-sans-serif, system-ui, sans-serif';
-    ctx.fillText('t = ' + t.toFixed(2) + ' s', 24, 60);
-    ctx.beginPath();
-    ctx.arc(60 + t * 100, 120, 16, 0, 2 * Math.PI);
-    ctx.fillStyle = '%23f472b6';
-    ctx.fill();
-    requestAnimationFrame(tick);
-  }
-  tick();
-</script>
-</body></html>"##;
+/// Bare initial page for the offscreen worker. render() navigates away
+/// from this to the template's composed HTML on every render. The
+/// time-mock shim is an initialization_script so it runs on every
+/// navigation, including the first.
+const BLANK_HTML: &str = "data:text/html,<!doctype html><html><body></body></html>";
 
 /// Builds the offscreen raster worker webview with the time-mock shim
-/// injected. The webview stays hidden for the lifetime of the app — the
-/// rest of Phase 5 (worker pool, cache, IR PngSeq) drives it via JS calls
-/// + capture.
+/// injected. The webview stays hidden for the lifetime of the app — render()
+/// navigates it to per-job composed HTML on each call.
 pub fn spawn_spike(app: &AppHandle) -> Result<()> {
     if app.get_webview_window("raster-worker").is_some() {
         return Ok(()); // already spawned (e.g., dev hot-reload)
     }
 
-    let url: tauri::Url = SPIKE_HTML.parse().context("parse spike data URL")?;
+    let url: tauri::Url = BLANK_HTML.parse().context("parse blank data URL")?;
     let _window = WebviewWindowBuilder::new(app, "raster-worker", WebviewUrl::External(url))
         .initialization_script(TIME_MOCK_SHIM)
         .visible(false)
@@ -73,7 +55,7 @@ pub fn spawn_spike(app: &AppHandle) -> Result<()> {
         .build()
         .context("build offscreen raster worker window")?;
 
-    info!("raster spike: hidden webview spawned, time-mock shim injected");
+    info!("raster worker: hidden webview spawned, time-mock shim injected");
     Ok(())
 }
 
@@ -84,22 +66,16 @@ const RASTERIZER_VERSION: u32 = 1;
 
 /// A render job. Cache-key inputs go into `blake3` (see [`cache_key`]); if
 /// the key already exists on disk we skip the webview entirely and reuse
-/// the cached PNG sequence. Stage D fills in `template_id` / `props_json`
-/// from a real template manifest; the spike uses a sentinel id + the
-/// hard-coded HTML body's hash.
+/// the cached PNG sequence.
 pub struct RasterJob {
-    pub template_id: String,
-    /// blake3 of all template files concatenated, or any other stable
-    /// content fingerprint. Bumping this invalidates stale renders when a
-    /// template's HTML/CSS changes during authoring.
-    pub template_content_hash: String,
-    /// Canonical JSON-encoded props the template was rendered with.
-    pub props_json: String,
+    pub template: Template,
+    /// Canonical-JSON props (call `template.canonicalize_props(...)` first
+    /// to validate + fill defaults + sort keys for cache-key stability).
+    pub props_canonical_json: String,
     pub fps: u32,
-    pub size: (u32, u32),
-    /// Explicit list of times to capture (seconds). For real templates Stage
-    /// D will derive this from `duration_us` + `fps`; the spike passes it
-    /// directly so we can sample non-uniformly during development.
+    /// Explicit list of times to capture (seconds). Stage E will derive
+    /// this from layer duration + fps; templates can vary it for non-
+    /// uniform sampling during authoring.
     pub times_s: Vec<f64>,
 }
 
@@ -122,18 +98,19 @@ pub struct RasterOutput {
 pub fn cache_key(job: &RasterJob) -> String {
     let mut hasher = blake3::Hasher::new();
     hasher.update(&RASTERIZER_VERSION.to_le_bytes());
-    let parts: &[&[u8]] = &[
-        job.template_id.as_bytes(),
-        job.template_content_hash.as_bytes(),
-        job.props_json.as_bytes(),
-    ];
-    for p in parts {
-        hasher.update(p);
+    let content_hash = job.template.content_hash();
+    for part in [
+        job.template.id().as_bytes(),
+        content_hash.as_bytes(),
+        job.props_canonical_json.as_bytes(),
+    ] {
+        hasher.update(part);
         hasher.update(&[0]);
     }
+    let (w, h) = job.template.size();
     hasher.update(&job.fps.to_le_bytes());
-    hasher.update(&job.size.0.to_le_bytes());
-    hasher.update(&job.size.1.to_le_bytes());
+    hasher.update(&w.to_le_bytes());
+    hasher.update(&h.to_le_bytes());
     for t in &job.times_s {
         hasher.update(&t.to_le_bytes());
     }
@@ -145,7 +122,7 @@ struct RasterManifest {
     rasterizer_version: u32,
     template_id: String,
     template_content_hash: String,
-    props_json: String,
+    props_canonical_json: String,
     fps: u32,
     width: u32,
     height: u32,
@@ -173,6 +150,15 @@ pub async fn render(
         .get_webview_window("raster-worker")
         .ok_or_else(|| "raster-worker window not spawned".to_string())?;
 
+    // Navigate the offscreen worker to the template's composed HTML, then
+    // inject props, then wait for the template's start() to apply them.
+    navigate_to_template(&window, &job.template).await?;
+    inject_props(&window, &job.props_canonical_json).await?;
+    // Brief settle for the template's polling `while (!__props__)` to read
+    // the new __props__ and run its synchronous setup. The first __seek's
+    // awaits cover layout / fonts thereafter.
+    tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+
     // Write into a `.tmp` sibling and promote on success so an interrupted
     // render doesn't leave a half-populated cache dir.
     let tmp_dir = crate::cache::temp_path(&dest_dir);
@@ -188,14 +174,15 @@ pub async fn render(
         frames.push(RasterFrame { idx, t, path });
     }
 
+    let (w, h) = job.template.size();
     let manifest = RasterManifest {
         rasterizer_version: RASTERIZER_VERSION,
-        template_id: job.template_id.clone(),
-        template_content_hash: job.template_content_hash.clone(),
-        props_json: job.props_json.clone(),
+        template_id: job.template.id().to_string(),
+        template_content_hash: job.template.content_hash(),
+        props_canonical_json: job.props_canonical_json.clone(),
         fps: job.fps,
-        width: job.size.0,
-        height: job.size.1,
+        width: w,
+        height: h,
         times_s: job.times_s.clone(),
         frame_count: frames.len(),
     };
@@ -248,6 +235,58 @@ fn load_cached_frames(
         frames.push(RasterFrame { idx, t, path });
     }
     Some(frames)
+}
+
+/// Compose the template's CSS into its HTML and navigate the offscreen
+/// worker to it. Waits for `document.readyState === 'complete'`.
+async fn navigate_to_template(
+    window: &tauri::WebviewWindow,
+    template: &Template,
+) -> Result<(), String> {
+    let composed = template.html.replace("__STYLE__", &template.style);
+    // data: URLs need everything-not-safe percent-encoded — most importantly
+    // `#`, `%`, and reserved chars. `urlencoding` would be ideal but isn't
+    // in our deps; do the minimal escape ourselves.
+    let encoded = data_url_encode(&composed);
+    let data_url = format!("data:text/html;charset=utf-8,{encoded}");
+    let url: tauri::Url = data_url
+        .parse()
+        .map_err(|e| format!("parse data URL: {e}"))?;
+    window
+        .navigate(url)
+        .map_err(|e| format!("navigate: {e}"))?;
+
+    let start = std::time::Instant::now();
+    loop {
+        let state = eval_async(window, "document.readyState".into()).await?;
+        if state.trim().trim_matches('"') == "complete" {
+            return Ok(());
+        }
+        if start.elapsed().as_secs() > 5 {
+            return Err("navigation timeout".into());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+}
+
+fn data_url_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() * 2);
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+/// Set `window.__props__` directly. The template's bootstrap loop polls
+/// this property and applies the values once it appears.
+async fn inject_props(window: &tauri::WebviewWindow, canonical_json: &str) -> Result<(), String> {
+    let script = format!("window.__props__ = {canonical_json};");
+    eval_async(window, script).await.map(|_| ())
 }
 
 /// Dispatch `__seek(t)` and poll `__seek_status` until the async awaits
@@ -315,37 +354,49 @@ async fn capture_via_webview(
     rx.await.map_err(|e| format!("oneshot recv: {e}"))?
 }
 
-/// Drive the offscreen webview through `__seek(0)`, `__seek(1)`, `__seek(2)`
-/// and exercise the full cache path. First call renders + writes the cache
-/// entry; second call (forced 100ms later) should report `cached=true` and
-/// return in microseconds. The log line `cached=true` is the Stage C signal.
+/// Render the built-in lower-third template at five time offsets to
+/// exercise the full pipeline: navigation, prop injection, seek, capture,
+/// cache. Second pass exercises the cache-hit path.
 pub fn schedule_capture_spike(app: &AppHandle, cache: crate::cache::CacheLayout) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        // Initial page load + first rAF tick + font load. 1500 ms is
-        // conservative; the spike page is trivial.
-        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        // Let the initial about:blank navigation settle before render()
+        // navigates away.
+        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+
+        let template = template::builtin_lower_third_simple();
+        let provided_props = serde_json::json!({
+            "title": "Welcome",
+            "subtitle": "Phase 5 Stage D — template loader",
+            "color": "#ff5577"
+        });
+        let canonical = match template.canonicalize_props(&provided_props) {
+            Ok(c) => c,
+            Err(e) => {
+                warn!("raster spike: canonicalize props failed: {e}");
+                return;
+            }
+        };
 
         let build_job = || RasterJob {
-            template_id: "raster-spike".into(),
-            template_content_hash: blake3::hash(SPIKE_HTML.as_bytes()).to_hex().to_string(),
-            props_json: "{}".into(),
-            fps: 1,
-            size: (800, 200),
-            times_s: vec![0.0, 1.0, 2.0],
+            template: template.clone(),
+            props_canonical_json: canonical.clone(),
+            fps: 5,
+            // Five frames over the slide-in (0.6 s) plus one settled frame.
+            times_s: vec![0.0, 0.15, 0.30, 0.45, 0.60, 1.00],
         };
 
         for pass in ["cold", "warm"] {
             let t0 = std::time::Instant::now();
             match render(&app, &cache, build_job()).await {
                 Ok(out) => info!(
-                    "raster capture spike ({pass}): cached={} dir={} frames={} elapsed={:?}",
+                    "raster spike ({pass}): cached={} dir={} frames={} elapsed={:?}",
                     out.cached,
                     out.dir.display(),
                     out.frames.len(),
                     t0.elapsed()
                 ),
-                Err(e) => warn!("raster capture spike ({pass}): render failed: {e}"),
+                Err(e) => warn!("raster spike ({pass}): render failed: {e}"),
             }
         }
     });
