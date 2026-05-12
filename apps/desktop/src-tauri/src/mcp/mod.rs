@@ -1848,22 +1848,21 @@ impl VidetorServer {
             .map_err(map_command_error)
     }
 
-    /// Find an existing Video track or create one labeled "Templates".
-    /// Used by `add_template` to land template overlays on a sensible default
-    /// track when the agent didn't pick one explicitly. Templates composite
-    /// ON TOP of video, so a Video track (which lowers as overlay foreground
-    /// when above another Video track) is the right place.
+    /// Find a Video track labeled "Overlay" or auto-create one. Templates
+    /// composite ON TOP of base video, so they need to live on a track
+    /// ABOVE the base video tracks (A roll / B roll) — the UX paper-cut
+    /// closed 2026-05-12 (option 3). Mirrors `commands::ensure_overlay_track`
+    /// so MCP-added templates land on the same track as picker-added ones
+    /// and as image drops from the timeline.
     async fn ensure_template_target_track(&self) -> Result<TrackId, McpError> {
         let snap = self.project.snapshot().await;
-        if let Some(t) = snap
-            .tracks
-            .iter()
-            .find(|t| matches!(t.kind, TrackKind::Video))
-        {
+        if let Some(t) = snap.tracks.iter().find(|t| {
+            matches!(t.kind, TrackKind::Video) && t.label.as_deref() == Some("Overlay")
+        }) {
             return Ok(t.id);
         }
         self.project
-            .add_track(agent_actor(), TrackKind::Video, Some("Templates".into()))
+            .add_track(agent_actor(), TrackKind::Video, Some("Overlay".into()))
             .await
             .map_err(map_command_error)
     }

@@ -576,12 +576,14 @@ pub async fn add_media_layer(
 
     // Subtitles must live on a Subtitle track for the lowering to apply them.
     // Audio must live on an Audio track (the lowering only iterates audio
-    // layers on Audio tracks). If the user drops onto the wrong track kind,
-    // fall back to (or auto-create) the matching one — mirrors the existing
-    // ensure_subtitle_track pattern.
+    // layers on Audio tracks). Image overlays land on the "Overlay" Video
+    // track so they composite ABOVE base video — closing the UX paper-cut
+    // (option 3) where a dropped image went on the same track as the base
+    // video and got occluded by it. Mirrors the existing ensure_* pattern.
     let track = match media_item.kind {
         MediaKind::Subtitle => ensure_subtitle_track(handle.inner(), snap.as_ref()).await?,
         MediaKind::Audio => ensure_audio_track(handle.inner(), snap.as_ref()).await?,
+        MediaKind::Image => ensure_overlay_track(handle.inner(), snap.as_ref()).await?,
         _ => track,
     };
 
@@ -669,21 +671,12 @@ pub async fn add_text_layer(
 
 #[tauri::command]
 pub async fn add_demo_text_layer(handle: State<'_, ProjectHandle>) -> Result<String, String> {
-    // Mirrors `add_demo_color_layer`: append a 3s "TEXT" Text layer to the
-    // first video track. Useful before the property panel exists for editing
-    // content from the UI.
+    // Append a 3s "TEXT" Text layer to the "Overlay" video track (auto-
+    // created at the top of z-stack if it doesn't exist yet). Prior to the
+    // UX paper-cut fix this landed on the first Video track, which is the
+    // BOTTOM of z-stack — text rendered behind base video.
     let snap = handle.snapshot().await;
-    let track_id = match snap
-        .tracks
-        .iter()
-        .find(|t| matches!(t.kind, TrackKind::Video))
-    {
-        Some(t) => t.id,
-        None => handle
-            .add_track(Actor::User, TrackKind::Video, Some("Video".into()))
-            .await
-            .map_err(|e: CommandError| e.to_string())?,
-    };
+    let track_id = ensure_overlay_track(handle.inner(), snap.as_ref()).await?;
     let snap = handle.snapshot().await;
     let track = snap
         .tracks
@@ -964,15 +957,34 @@ async fn ensure_template_target_track(
     handle: &ProjectHandle,
     snap: &state::Project,
 ) -> Result<state::TrackId, String> {
-    if let Some(t) = snap
-        .tracks
-        .iter()
-        .find(|t| matches!(t.kind, TrackKind::Video))
-    {
+    // Templates are overlays — share the same "Overlay" track as image
+    // overlays and the demo text layer so the user doesn't accumulate one
+    // dedicated track per content type. Same z-stack rationale as
+    // `ensure_overlay_track`.
+    ensure_overlay_track(handle, snap).await
+}
+
+/// Find a Video track labeled "Overlay" or auto-create one at the top of
+/// z-stack. Image / Text overlays land here by default so they composite
+/// ABOVE base video tracks (A roll / B roll) instead of being occluded by
+/// them — the UX paper-cut closed 2026-05-12 (option 3 in
+/// `project_phase_status.md`).
+///
+/// The label match is exact: if the user renamed the Overlay track,
+/// subsequent drops create a new "Overlay" track rather than reusing the
+/// renamed one. That's deliberate — the rename is treated as opting out
+/// of the convention.
+async fn ensure_overlay_track(
+    handle: &ProjectHandle,
+    snap: &state::Project,
+) -> Result<state::TrackId, String> {
+    if let Some(t) = snap.tracks.iter().find(|t| {
+        matches!(t.kind, TrackKind::Video) && t.label.as_deref() == Some("Overlay")
+    }) {
         return Ok(t.id);
     }
     handle
-        .add_track(Actor::User, TrackKind::Video, Some("Templates".into()))
+        .add_track(Actor::User, TrackKind::Video, Some("Overlay".into()))
         .await
         .map_err(|e: CommandError| e.to_string())
 }
