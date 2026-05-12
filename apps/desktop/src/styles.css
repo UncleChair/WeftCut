@@ -497,12 +497,26 @@ html, body, #root { height: 100%; margin: 0; }
 
 .media-item {
   display: grid;
-  grid-template-columns: 60px 1fr auto auto auto auto;
+  grid-template-columns: 48px 60px 1fr auto auto auto auto;
   gap: 12px;
   padding: 4px 8px;
   font-size: 12px;
   border-radius: 3px;
   align-items: center;
+}
+
+.media-thumbnail {
+  width: 48px;
+  height: 27px;
+  object-fit: cover;
+  border-radius: 2px;
+  background: #1f2937;
+  display: block;
+}
+
+.media-thumbnail.is-placeholder {
+  /* keep the column slot reserved so non-video / pending rows align */
+  background: #0e131c;
 }
 
 .media-preview-btn {

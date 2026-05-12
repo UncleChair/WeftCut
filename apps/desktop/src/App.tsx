@@ -43,6 +43,7 @@ import { PropertyPanel } from "./properties/PropertyPanel";
 import { ActivityPanel } from "./activity/ActivityPanel";
 import { ConnectAgentPanel } from "./connect/ConnectAgentPanel";
 import { SettingsPanel } from "./settings/SettingsPanel";
+import { MediaThumbnail } from "./panels/MediaThumbnail";
 import {
   LOCALE_LABELS,
   SUPPORTED_LOCALES,
@@ -750,6 +751,7 @@ function MediaPool({ media }: { media: MediaSummary[] }) {
               defaultValue: "Drag onto a timeline track to add",
             })}
           >
+            <MediaThumbnail mediaId={m.id} mediaKind={m.kind} />
             <span className={`media-kind kind-${m.kind.toLowerCase()}`}>
               {t(`kinds.${m.kind.toLowerCase()}`, { defaultValue: m.kind })}
             </span>

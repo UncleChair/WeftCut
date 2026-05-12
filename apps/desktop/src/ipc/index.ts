@@ -529,3 +529,10 @@ export interface WaveformPeaks {
 export async function getWaveformPeaks(mediaId: string): Promise<WaveformPeaks> {
   return invoke<WaveformPeaks>("get_waveform_peaks", { mediaId });
 }
+
+/// Returns a `data:image/jpeg;base64,...` URL for the middle thumbnail of a
+/// video media item. Rejects with "not_ready" if the thumbnails job is still
+/// running.
+export async function getMediaThumbnail(mediaId: string): Promise<string> {
+  return invoke<string>("get_media_thumbnail", { mediaId });
+}

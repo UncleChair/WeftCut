@@ -1210,6 +1210,35 @@ pub struct WaveformPeaks {
     pub peaks_per_second: u32,
 }
 
+/// Returns a `data:image/jpeg;base64,...` URL for the middle frame of the
+/// cached thumbnail set, suitable for an `<img src>`. Errors with `not_ready`
+/// if the thumbnails job hasn't finished — frontend should retry on
+/// `media:job_complete kind=thumbnails`.
+#[tauri::command]
+pub async fn get_media_thumbnail(
+    handle: State<'_, ProjectHandle>,
+    media_id: String,
+) -> Result<String, String> {
+    use base64::Engine;
+    let media_uuid = Uuid::parse_str(&media_id).map_err(|e| format!("invalid media_id: {e}"))?;
+    let snap = handle.snapshot().await;
+    let media = snap
+        .media_pool
+        .get(&media_uuid)
+        .ok_or_else(|| format!("media {media_id} not found"))?;
+    let dir = media
+        .thumbnails_dir
+        .clone()
+        .ok_or_else(|| "not_ready".to_string())?;
+    // 10 thumbnails, indices 000..009 — pick the middle one as representative.
+    let path = dir.join("004.jpg");
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|e| format!("read thumbnail: {e}"))?;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(format!("data:image/jpeg;base64,{b64}"))
+}
+
 /// Read the cached peaks file for `media_id` and return the f32 array plus the
 /// peaks-per-second rate the timeline needs to map a layer's src window onto
 /// a slice of the peaks. Errors with `not_ready` if the waveform job hasn't

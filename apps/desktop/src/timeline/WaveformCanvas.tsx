@@ -12,13 +12,8 @@ const peaksCache = new Map<string, CacheEntry>();
 const peaksListeners = new Map<string, Set<() => void>>();
 let jobListenerInstalled = false;
 
-function notifyPeaks(mediaId: string) {
+function fireListeners(mediaId: string) {
   peaksListeners.get(mediaId)?.forEach((cb) => cb());
-}
-
-function invalidate(mediaId: string) {
-  peaksCache.delete(mediaId);
-  notifyPeaks(mediaId);
 }
 
 async function ensurePeaks(mediaId: string) {
@@ -42,7 +37,7 @@ async function ensurePeaks(mediaId: string) {
       peaksCache.set(mediaId, { state: "error", message });
     }
   }
-  notifyPeaks(mediaId);
+  fireListeners(mediaId);
 }
 
 async function installJobListenerOnce() {
@@ -52,7 +47,10 @@ async function installJobListenerOnce() {
     "media:job_complete",
     (event) => {
       if (event.payload?.kind === "waveform") {
-        invalidate(event.payload.media_id);
+        // Drop the stale entry AND kick off a refetch — see MediaThumbnail
+        // for the why.
+        peaksCache.delete(event.payload.media_id);
+        void ensurePeaks(event.payload.media_id);
       }
     },
   );
