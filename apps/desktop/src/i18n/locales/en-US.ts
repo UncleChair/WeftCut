@@ -17,6 +17,15 @@ const enUS = {
     duration_seconds: "{{value}}s",
     history_position: "hist {{cursor}}/{{len}}",
   },
+  menu: {
+    file: "File",
+    edit: "Edit",
+    insert: "Insert",
+    preview: "Preview",
+    export: "Export",
+    tools: "Tools",
+    preset_heading: "Output preset",
+  },
   actions: {
     add_track: "+ Track",
     add_color_layer: "+ Color layer (2s)",
@@ -31,16 +40,16 @@ const enUS = {
     redo: "Redo",
     queue_export: "+ Queue",
     queue_export_hint: "Add an export to the render queue (runs after current job).",
-    connect_agent: "🔌 Connect agent…",
+    connect_agent: "Connect agent…",
     connect_agent_hint:
       "Show the URL + token an external agent (Claude Desktop, Cursor) needs to drive Videtor over MCP.",
-    settings: "⚙ Settings…",
+    settings: "Settings…",
     settings_hint:
       "Manage cloud-provider API keys (transcription, future TTS). Keys live in the OS keyring.",
-    activity: "📜 Activity…",
+    activity: "Activity…",
     activity_hint:
       "Recent edits from this session — both yours and any connected agent's. Filter by actor.",
-    templates: "✨ Templates…",
+    templates: "Templates…",
     templates_hint:
       "Pick a template overlay (lower third, title card, callout, …) and drop it on the timeline.",
   },
@@ -76,7 +85,7 @@ const enUS = {
     preview_disabled_hint: "Build with --features mpv to enable preview",
   },
   preview: {
-    surface_placeholder: "Click 🎬 Preview project to start playback",
+    surface_placeholder: "Preview → Preview project to start playback",
   },
   timeline: {
     empty_placeholder: "timeline (add a track to populate)",
@@ -99,10 +108,10 @@ const enUS = {
     to_start_hint: "Jump to start",
     to_end: "⏭",
     to_end_hint: "Jump to end",
-    preview_project: "🎬 Preview project",
+    preview_project: "Preview project",
     preview_project_hint:
       "Compile the project graph and load it in libmpv. Edits hot-reload from then on.",
-    close_preview: "✕ Close preview",
+    close_preview: "Close preview",
     close_preview_hint: "Close the libmpv preview window.",
   },
   export: {

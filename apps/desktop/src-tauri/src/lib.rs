@@ -76,6 +76,8 @@ pub fn run() {
             commands::mpv_seek,
             commands::mpv_set_paused,
             commands::mpv_set_surface_rect,
+            commands::mpv_set_host_visible,
+            commands::mpv_set_host_clip,
             commands::settings_get_api_key_status,
             commands::settings_set_api_key,
             commands::settings_clear_api_key,

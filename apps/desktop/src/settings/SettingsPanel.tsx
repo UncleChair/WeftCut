@@ -7,12 +7,14 @@ import {
   settingsSetApiKey,
   settingsTestProvider,
 } from "../ipc";
+import { useHideMpvHost } from "../mpv/useHideMpvHost";
 
 interface Props {
   onClose: () => void;
 }
 
 export function SettingsPanel({ onClose }: Props) {
+  useHideMpvHost();
   const { t } = useTranslation();
   const [statuses, setStatuses] = useState<ApiKeyStatus[] | null>(null);
   const [error, setError] = useState<string | null>(null);

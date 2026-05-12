@@ -7,6 +7,7 @@ import {
   type TemplateSummary,
   type TrackSummary,
 } from "../ipc";
+import { useHideMpvHost } from "../mpv/useHideMpvHost";
 
 interface Props {
   onClose: () => void;
@@ -32,6 +33,7 @@ export function TemplatePicker({
   compositionDurationUs,
   tracks,
 }: Props) {
+  useHideMpvHost();
   const { t } = useTranslation();
   const [templates, setTemplates] = useState<TemplateSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);

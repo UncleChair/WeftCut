@@ -481,6 +481,30 @@ export async function mpvSetSurfaceRect(
   return invoke<void>("mpv_set_surface_rect", { x, y, w, h });
 }
 
+/// Toggle the embed host HWND's visibility. Use for full-screen overlays
+/// (modal panels) that cover most of the preview pane. For partial
+/// overlays like dropdown menus, prefer `mpvSetHostClip` so the preview
+/// keeps showing around the overlay.
+/// No-op on non-Windows builds.
+export async function mpvSetHostVisible(visible: boolean): Promise<void> {
+  return invoke<void>("mpv_set_host_visible", { visible });
+}
+
+/// Punch a rectangular hole in the embed host HWND so WebView2 shows
+/// through there. Pass `null` to restore the full host. Coordinates are
+/// physical pixels (CSS px × devicePixelRatio), same coord space as
+/// `mpvSetSurfaceRect`. No-op on non-Windows builds.
+export async function mpvSetHostClip(
+  rect: { x: number; y: number; w: number; h: number } | null,
+): Promise<void> {
+  return invoke<void>("mpv_set_host_clip", {
+    x: rect?.x ?? null,
+    y: rect?.y ?? null,
+    w: rect?.w ?? null,
+    h: rect?.h ?? null,
+  });
+}
+
 export interface McpInfoView {
   bind: string;
   sse_url: string;

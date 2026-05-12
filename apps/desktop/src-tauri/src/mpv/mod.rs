@@ -30,7 +30,8 @@
 #[cfg(feature = "mpv")]
 pub use real::{
     close, drain_events_and_close_if_shutdown, is_active, play_file, play_graph, seek,
-    set_host_hwnd, set_paused, set_surface_rect, MpvPopupSlot, MpvSlot,
+    set_host_clip, set_host_hwnd, set_host_visible, set_paused, set_surface_rect,
+    MpvPopupSlot, MpvSlot,
 };
 #[cfg(all(feature = "mpv", target_os = "windows"))]
 pub use real::create_host_hwnd;
@@ -38,7 +39,8 @@ pub use real::create_host_hwnd;
 #[cfg(not(feature = "mpv"))]
 pub use stub::{
     close, drain_events_and_close_if_shutdown, is_active, play_file, play_graph, seek,
-    set_host_hwnd, set_paused, set_surface_rect, MpvPopupSlot, MpvSlot,
+    set_host_clip, set_host_hwnd, set_host_visible, set_paused, set_surface_rect,
+    MpvPopupSlot, MpvSlot,
 };
 
 use crate::ir::MpvPlan;
@@ -78,6 +80,11 @@ mod real {
         pub active: bool,
         pub last_key: Option<(Option<String>, Vec<String>, String)>,
         pub host_hwnd: Option<isize>,
+        /// Last `set_surface_rect` value `(x, y, w, h)` in parent-client
+        /// physical pixels. `set_host_clip` reads this so it can translate
+        /// the clip rect (also in parent-client coords) into the host's
+        /// own coord space (origin at host top-left).
+        pub host_rect: Option<(i32, i32, i32, i32)>,
     }
 
     impl Default for MpvState {
@@ -87,6 +94,7 @@ mod real {
                 active: false,
                 last_key: None,
                 host_hwnd: None,
+                host_rect: None,
             }
         }
     }
@@ -253,12 +261,89 @@ mod real {
         w: i32,
         h: i32,
     ) -> Result<(), String> {
+        let mut guard = slot.0.lock().expect("mpv slot poisoned");
+        let Some(hwnd_isize) = guard.host_hwnd else {
+            return Ok(());
+        };
+        guard.host_rect = Some((x, y, w, h));
+        drop(guard);
+        set_surface_rect_native(hwnd_isize, x, y, w, h)
+    }
+
+    /// Punch a rectangular hole in the host HWND's visible region so the
+    /// content beneath (WebView2) shows through there. Used by dropdown
+    /// menus so they can sit over the preview area without the libmpv
+    /// child HWND obscuring them. `None` restores the default rectangular
+    /// region (full host visible again).
+    ///
+    /// Clip rect is given in **parent-client physical pixel coords** —
+    /// the same coord system `set_surface_rect` uses — and gets
+    /// translated to the host's own coord system (origin at host
+    /// top-left) via the stored `host_rect`. No-op when no host or no
+    /// host_rect is registered.
+    pub fn set_host_clip(
+        slot: &MpvSlot,
+        clip: Option<(i32, i32, i32, i32)>,
+    ) -> Result<(), String> {
         let guard = slot.0.lock().expect("mpv slot poisoned");
         let Some(hwnd_isize) = guard.host_hwnd else {
             return Ok(());
         };
+        let host_rect = guard.host_rect;
         drop(guard);
-        set_surface_rect_native(hwnd_isize, x, y, w, h)
+        set_host_clip_native(hwnd_isize, host_rect, clip)
+    }
+
+    #[cfg(target_os = "windows")]
+    fn set_host_clip_native(
+        hwnd_isize: isize,
+        host_rect: Option<(i32, i32, i32, i32)>,
+        clip: Option<(i32, i32, i32, i32)>,
+    ) -> Result<(), String> {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::Graphics::Gdi::{
+            CombineRgn, CreateRectRgn, DeleteObject, SetWindowRgn, RGN_DIFF,
+        };
+        let hwnd = HWND(hwnd_isize as *mut _);
+        let Some((cx, cy, cw, ch)) = clip else {
+            // `None` for hRgn restores the default rectangular region —
+            // host fully visible again. Return value (BOOL/i32) is 0 on
+            // failure, non-zero on success; we don't have a useful
+            // recovery for failure so just ignore.
+            let _ = unsafe { SetWindowRgn(hwnd, None, true) };
+            return Ok(());
+        };
+        let Some((hx, hy, hw, hh)) = host_rect else {
+            // No host position recorded yet — can't translate clip into
+            // host-local space. Skip silently; the next set_surface_rect
+            // will populate `host_rect` and the next clip will work.
+            return Ok(());
+        };
+        let local_x = cx - hx;
+        let local_y = cy - hy;
+        unsafe {
+            // CreateRectRgn uses inclusive-left, exclusive-right
+            // semantics — the rect (l, t, r, b) covers `[l, r) × [t, b)`.
+            let full = CreateRectRgn(0, 0, hw, hh);
+            let cut = CreateRectRgn(local_x, local_y, local_x + cw, local_y + ch);
+            let result = CreateRectRgn(0, 0, 0, 0);
+            CombineRgn(Some(result), Some(full), Some(cut), RGN_DIFF);
+            // Free the two source regions; `result` is handed to the
+            // system below and must NOT be freed by us.
+            let _ = DeleteObject(full.into());
+            let _ = DeleteObject(cut.into());
+            let _ = SetWindowRgn(hwnd, Some(result), true);
+        }
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn set_host_clip_native(
+        _hwnd_isize: isize,
+        _host_rect: Option<(i32, i32, i32, i32)>,
+        _clip: Option<(i32, i32, i32, i32)>,
+    ) -> Result<(), String> {
+        Ok(())
     }
 
     #[cfg(target_os = "windows")]
@@ -278,6 +363,36 @@ mod real {
             SetWindowPos(hwnd, Some(HWND_TOP), x, y, w, h, SWP_NOACTIVATE)
                 .map_err(|e| format!("SetWindowPos: {e}"))
         }
+    }
+
+    /// Toggle the embed host HWND's visibility. Used by dropdown menus
+    /// that extend over the preview area — the host's `HWND_TOP` z-order
+    /// captures mouse events otherwise, blocking clicks on menu items.
+    /// Hide on menu open, show on close. No-op when no host is registered.
+    pub fn set_host_visible(slot: &MpvSlot, visible: bool) -> Result<(), String> {
+        let guard = slot.0.lock().expect("mpv slot poisoned");
+        let Some(hwnd_isize) = guard.host_hwnd else {
+            return Ok(());
+        };
+        drop(guard);
+        set_host_visible_native(hwnd_isize, visible)
+    }
+
+    #[cfg(target_os = "windows")]
+    fn set_host_visible_native(hwnd_isize: isize, visible: bool) -> Result<(), String> {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE, SW_SHOWNA};
+        let hwnd = HWND(hwnd_isize as *mut _);
+        let cmd = if visible { SW_SHOWNA } else { SW_HIDE };
+        // ShowWindow returns BOOL indicating prev visibility — never an
+        // error per docs. Discard.
+        let _ = unsafe { ShowWindow(hwnd, cmd) };
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn set_host_visible_native(_hwnd_isize: isize, _visible: bool) -> Result<(), String> {
+        Ok(())
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -638,6 +753,17 @@ mod stub {
     pub fn set_host_hwnd(_: &MpvSlot, _: isize) {}
 
     pub fn set_surface_rect(_: &MpvSlot, _: i32, _: i32, _: i32, _: i32) -> Result<(), String> {
+        Ok(())
+    }
+
+    pub fn set_host_visible(_: &MpvSlot, _: bool) -> Result<(), String> {
+        Ok(())
+    }
+
+    pub fn set_host_clip(
+        _: &MpvSlot,
+        _: Option<(i32, i32, i32, i32)>,
+    ) -> Result<(), String> {
         Ok(())
     }
 }

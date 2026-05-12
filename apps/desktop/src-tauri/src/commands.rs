@@ -1219,6 +1219,44 @@ pub async fn mpv_set_surface_rect(
         .map_err(|e| format!("join: {e}"))?
 }
 
+/// Toggle the embed host HWND's visibility. React calls this when a
+/// full-screen modal opens / closes so the host HWND doesn't intercept
+/// mouse events on items that overlap the preview area.
+#[tauri::command]
+pub async fn mpv_set_host_visible(
+    slot: tauri::State<'_, mpv::MpvSlot>,
+    visible: bool,
+) -> Result<(), String> {
+    let slot = slot.inner().clone();
+    tokio::task::spawn_blocking(move || mpv::set_host_visible(&slot, visible))
+        .await
+        .map_err(|e| format!("join: {e}"))?
+}
+
+/// Punch a rectangular hole in the embed host HWND so WebView2 below
+/// shows through there. React calls this for *partial* overlays
+/// (dropdown menus) so the preview keeps showing in the area around the
+/// dropdown instead of disappearing entirely. Pass `null` to restore the
+/// full host. Coordinates are physical pixels, same coord space as
+/// `mpv_set_surface_rect`.
+#[tauri::command]
+pub async fn mpv_set_host_clip(
+    slot: tauri::State<'_, mpv::MpvSlot>,
+    x: Option<i32>,
+    y: Option<i32>,
+    w: Option<i32>,
+    h: Option<i32>,
+) -> Result<(), String> {
+    let clip = match (x, y, w, h) {
+        (Some(x), Some(y), Some(w), Some(h)) => Some((x, y, w, h)),
+        _ => None,
+    };
+    let slot = slot.inner().clone();
+    tokio::task::spawn_blocking(move || mpv::set_host_clip(&slot, clip))
+        .await
+        .map_err(|e| format!("join: {e}"))?
+}
+
 /// Compile the current project to an `MpvPlan` and load it into the libmpv
 /// preview window. This is the "scrub the result, not the raw clip" path.
 /// Returns a short status struct so the UI can confirm what was loaded.

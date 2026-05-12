@@ -47,6 +47,13 @@ import { SettingsPanel } from "./settings/SettingsPanel";
 import { TemplatePicker } from "./templates/TemplatePicker";
 import { MediaThumbnail } from "./panels/MediaThumbnail";
 import {
+  Menu,
+  MenuHeading,
+  MenuItem,
+  MenuSeparator,
+} from "./menu/Menu";
+import { useHideMpvHost } from "./mpv/useHideMpvHost";
+import {
   LOCALE_LABELS,
   SUPPORTED_LOCALES,
   type Locale,
@@ -240,6 +247,119 @@ export function App() {
     [busy, refresh],
   );
 
+  // ---- Menu-bar action handlers (extracted from former inline onClicks). ----
+
+  const openProject = useCallback(async () => {
+    const path = await openDialog({
+      title: t("dialogs.open_title"),
+      directory: true,
+      multiple: false,
+    });
+    if (typeof path === "string") {
+      await run(() => projectOpen(path));
+    }
+  }, [run, t]);
+
+  const saveProject = useCallback(async () => {
+    const path = await saveDialog({
+      title: t("dialogs.save_title"),
+      defaultPath: t("dialogs.save_default_name"),
+      filters: [
+        { name: t("dialogs.project_filter"), extensions: ["vproj"] },
+      ],
+    });
+    if (typeof path === "string") {
+      await run(() => projectSaveAs(path));
+    }
+  }, [run, t]);
+
+  const importMediaFiles = useCallback(async () => {
+    const picked = await openDialog({
+      title: t("dialogs.import_title"),
+      multiple: true,
+      filters: [
+        {
+          name: t("dialogs.media_filter"),
+          extensions: [
+            "mp4", "mov", "mkv", "webm", "avi",
+            "wav", "mp3", "flac", "aac", "m4a", "ogg",
+            "png", "jpg", "jpeg", "gif", "webp",
+            "srt", "ass", "vtt",
+          ],
+        },
+      ],
+    });
+    const paths = Array.isArray(picked)
+      ? picked
+      : typeof picked === "string"
+        ? [picked]
+        : [];
+    if (paths.length === 0) return;
+    await run(async () => {
+      for (const p of paths) {
+        await importMedia(p);
+      }
+    });
+  }, [run, t]);
+
+  const showCompiledGraph = useCallback(() => {
+    run(async () => setCompiled(await compileProject()));
+  }, [run]);
+
+  const exportNow = useCallback(async () => {
+    const ext = presetExtension(preset);
+    const path = await saveDialog({
+      title: t("dialogs.export_title"),
+      defaultPath: `videtor-export.${ext}`,
+      filters: [
+        { name: t("dialogs.export_filter"), extensions: [ext] },
+      ],
+    });
+    if (typeof path !== "string") return;
+    setExportState({ kind: "starting" });
+    try {
+      await exportProject(path, preset);
+    } catch (e) {
+      setExportState({ kind: "error", detail: String(e) });
+    }
+  }, [preset, t]);
+
+  const addToExportQueue = useCallback(async () => {
+    const ext = presetExtension(preset);
+    const path = await saveDialog({
+      title: t("dialogs.export_queue_title"),
+      defaultPath: `videtor-export-queue.${ext}`,
+      filters: [
+        { name: t("dialogs.export_filter"), extensions: [ext] },
+      ],
+    });
+    if (typeof path !== "string") return;
+    try {
+      await exportQueueEnqueue(path, preset);
+      setQueue(await exportQueueList());
+    } catch (e) {
+      console.warn("queue enqueue failed:", e);
+    }
+  }, [preset, t]);
+
+  const previewProject = useCallback(async () => {
+    try {
+      await mpvPreviewProject();
+      setPaused(false);
+    } catch (err) {
+      setError(t("errors.preview_failed", { detail: String(err) }));
+    }
+  }, [t]);
+
+  const closePreview = useCallback(async () => {
+    try {
+      await mpvClosePreview();
+      setPaused(true);
+    } catch (err) {
+      console.warn("close preview failed:", err);
+    }
+  }, []);
+
   const cycleLocale = useCallback(() => {
     const current = i18n.language as Locale;
     const idx = SUPPORTED_LOCALES.indexOf(current);
@@ -307,245 +427,136 @@ export function App() {
         )}
       </section>
 
-      <section className="actions">
-        <button onClick={() => run(addVideoTrack)} disabled={busy}>
-          {t("actions.add_track")}
-        </button>
-        <button onClick={() => run(addDemoColorLayer)} disabled={busy}>
-          {t("actions.add_color_layer")}
-        </button>
-        <button onClick={() => run(addDemoTextLayer)} disabled={busy}>
-          {t("actions.add_text_layer")}
-        </button>
-        <button
-          onClick={() => run(splitFirstLayer)}
-          disabled={busy || !summary || summary.layer_count === 0}
-        >
-          {t("actions.split_first")}
-        </button>
-        <button
-          onClick={() => run(async () => setCompiled(await compileProject()))}
-          disabled={busy}
-        >
-          {t("actions.compile")}
-        </button>
-        <select
-          value={preset}
-          onChange={(e) => setPreset(e.target.value as ExportPreset)}
-          title={t("export.preset_hint")}
-          className="export-preset-select"
-        >
+      <section className="menu-bar">
+        <Menu label={t("menu.file")}>
+          <MenuItem
+            label={t("actions.open")}
+            onSelect={openProject}
+            disabled={busy}
+          />
+          <MenuItem
+            label={t("actions.save_as")}
+            onSelect={saveProject}
+            disabled={busy}
+          />
+          <MenuSeparator />
+          <MenuItem
+            label={t("actions.import_media")}
+            onSelect={importMediaFiles}
+            disabled={busy}
+          />
+        </Menu>
+
+        <Menu label={t("menu.edit")}>
+          <MenuItem
+            label={t("actions.undo")}
+            onSelect={() => run(projectUndo)}
+            disabled={busy || !summary?.history.can_undo}
+          />
+          <MenuItem
+            label={t("actions.redo")}
+            onSelect={() => run(projectRedo)}
+            disabled={busy || !summary?.history.can_redo}
+          />
+          <MenuSeparator />
+          <MenuItem
+            label={t("actions.split_first")}
+            onSelect={() => run(splitFirstLayer)}
+            disabled={busy || !summary || summary.layer_count === 0}
+          />
+        </Menu>
+
+        <Menu label={t("menu.insert")}>
+          <MenuItem
+            label={t("actions.add_track")}
+            onSelect={() => run(addVideoTrack)}
+            disabled={busy}
+          />
+          <MenuItem
+            label={t("actions.add_color_layer")}
+            onSelect={() => run(addDemoColorLayer)}
+            disabled={busy}
+          />
+          <MenuItem
+            label={t("actions.add_text_layer")}
+            onSelect={() => run(addDemoTextLayer)}
+            disabled={busy}
+          />
+          <MenuSeparator />
+          <MenuItem
+            label={t("actions.templates")}
+            hint={t("actions.templates_hint")}
+            onSelect={() => setTemplatePickerOpen(true)}
+          />
+        </Menu>
+
+        <Menu label={t("menu.preview")}>
+          <MenuItem
+            label={t("transport.preview_project")}
+            hint={t("transport.preview_project_hint")}
+            onSelect={previewProject}
+            disabled={busy}
+          />
+          <MenuItem
+            label={t("transport.close_preview")}
+            hint={t("transport.close_preview_hint")}
+            onSelect={closePreview}
+          />
+        </Menu>
+
+        <Menu label={t("menu.export")} hint={t("export.preset_hint")}>
+          <MenuItem
+            label={t("actions.compile")}
+            onSelect={showCompiledGraph}
+            disabled={busy}
+          />
+          <MenuSeparator />
+          <MenuHeading label={t("menu.preset_heading")} />
           {EXPORT_PRESETS.map((p) => (
-            <option key={p} value={p}>
-              {t(`export.preset.${p}`, { defaultValue: p })}
-            </option>
+            <MenuItem
+              key={p}
+              label={t(`export.preset.${p}`, { defaultValue: p })}
+              checked={p === preset}
+              onSelect={() => setPreset(p)}
+            />
           ))}
-        </select>
-        <button
-          onClick={async () => {
-            const ext = presetExtension(preset);
-            const path = await saveDialog({
-              title: t("dialogs.export_title"),
-              defaultPath: `videtor-export.${ext}`,
-              filters: [
-                {
-                  name: t("dialogs.export_filter"),
-                  extensions: [ext],
-                },
-              ],
-            });
-            if (typeof path !== "string") return;
-            setExportState({ kind: "starting" });
-            try {
-              await exportProject(path, preset);
-            } catch (e) {
-              setExportState({ kind: "error", detail: String(e) });
+          <MenuSeparator />
+          <MenuItem
+            label={t("actions.export")}
+            onSelect={exportNow}
+            disabled={
+              busy ||
+              exportState?.kind === "starting" ||
+              exportState?.kind === "progress"
             }
-          }}
-          disabled={
-            busy ||
-            (exportState?.kind === "starting" || exportState?.kind === "progress")
-          }
-        >
-          {t("actions.export")}
-        </button>
-        <button
-          onClick={async () => {
-            const ext = presetExtension(preset);
-            const path = await saveDialog({
-              title: t("dialogs.export_queue_title"),
-              defaultPath: `videtor-export-queue.${ext}`,
-              filters: [
-                {
-                  name: t("dialogs.export_filter"),
-                  extensions: [ext],
-                },
-              ],
-            });
-            if (typeof path !== "string") return;
-            try {
-              await exportQueueEnqueue(path, preset);
-              setQueue(await exportQueueList());
-            } catch (e) {
-              console.warn("queue enqueue failed:", e);
-            }
-          }}
-          disabled={busy}
-          title={t("actions.queue_export_hint")}
-        >
-          {t("actions.queue_export")}
-        </button>
-        <span className="separator" />
-        <button
-          onClick={async () => {
-            const picked = await openDialog({
-              title: t("dialogs.import_title"),
-              multiple: true,
-              filters: [
-                {
-                  name: t("dialogs.media_filter"),
-                  extensions: [
-                    "mp4",
-                    "mov",
-                    "mkv",
-                    "webm",
-                    "avi",
-                    "wav",
-                    "mp3",
-                    "flac",
-                    "aac",
-                    "m4a",
-                    "ogg",
-                    "png",
-                    "jpg",
-                    "jpeg",
-                    "gif",
-                    "webp",
-                    "srt",
-                    "ass",
-                    "vtt",
-                  ],
-                },
-              ],
-            });
-            const paths = Array.isArray(picked)
-              ? picked
-              : typeof picked === "string"
-                ? [picked]
-                : [];
-            if (paths.length === 0) return;
-            await run(async () => {
-              for (const p of paths) {
-                await importMedia(p);
-              }
-            });
-          }}
-          disabled={busy}
-        >
-          {t("actions.import_media")}
-        </button>
-        <span className="separator" />
-        <button
-          onClick={async () => {
-            const path = await saveDialog({
-              title: t("dialogs.save_title"),
-              defaultPath: t("dialogs.save_default_name"),
-              filters: [
-                {
-                  name: t("dialogs.project_filter"),
-                  extensions: ["vproj"],
-                },
-              ],
-            });
-            if (typeof path === "string") {
-              await run(() => projectSaveAs(path));
-            }
-          }}
-          disabled={busy}
-        >
-          {t("actions.save_as")}
-        </button>
-        <button
-          onClick={async () => {
-            const path = await openDialog({
-              title: t("dialogs.open_title"),
-              directory: true,
-              multiple: false,
-            });
-            if (typeof path === "string") {
-              await run(() => projectOpen(path));
-            }
-          }}
-          disabled={busy}
-        >
-          {t("actions.open")}
-        </button>
-        <span className="separator" />
-        <button
-          onClick={async () => {
-            try {
-              await mpvPreviewProject();
-              setPaused(false);
-            } catch (err) {
-              setError(t("errors.preview_failed", { detail: String(err) }));
-            }
-          }}
-          disabled={busy}
-          title={t("transport.preview_project_hint")}
-        >
-          {t("transport.preview_project")}
-        </button>
-        <button
-          onClick={async () => {
-            try {
-              await mpvClosePreview();
-              setPaused(true);
-            } catch (err) {
-              console.warn("close preview failed:", err);
-            }
-          }}
-          title={t("transport.close_preview_hint")}
-        >
-          {t("transport.close_preview")}
-        </button>
-        <span className="separator" />
-        <button
-          onClick={() => run(projectUndo)}
-          disabled={busy || !summary?.history.can_undo}
-        >
-          {t("actions.undo")}
-        </button>
-        <button
-          onClick={() => run(projectRedo)}
-          disabled={busy || !summary?.history.can_redo}
-        >
-          {t("actions.redo")}
-        </button>
-        <span className="separator" />
-        <button
-          onClick={() => setTemplatePickerOpen(true)}
-          title={t("actions.templates_hint")}
-        >
-          {t("actions.templates")}
-        </button>
-        <button
-          onClick={() => setConnectOpen(true)}
-          title={t("actions.connect_agent_hint")}
-        >
-          {t("actions.connect_agent")}
-        </button>
-        <button
-          onClick={() => setActivityOpen(true)}
-          title={t("actions.activity_hint")}
-        >
-          {t("actions.activity")}
-        </button>
-        <button
-          onClick={() => setSettingsOpen(true)}
-          title={t("actions.settings_hint")}
-        >
-          {t("actions.settings")}
-        </button>
+          />
+          <MenuItem
+            label={t("actions.queue_export")}
+            hint={t("actions.queue_export_hint")}
+            onSelect={addToExportQueue}
+            disabled={busy}
+          />
+        </Menu>
+
+        <Menu label={t("menu.tools")}>
+          <MenuItem
+            label={t("actions.connect_agent")}
+            hint={t("actions.connect_agent_hint")}
+            onSelect={() => setConnectOpen(true)}
+          />
+          <MenuItem
+            label={t("actions.activity")}
+            hint={t("actions.activity_hint")}
+            onSelect={() => setActivityOpen(true)}
+          />
+          <MenuSeparator />
+          <MenuItem
+            label={t("actions.settings")}
+            hint={t("actions.settings_hint")}
+            onSelect={() => setSettingsOpen(true)}
+          />
+        </Menu>
+
         {error && <span className="error">{error}</span>}
       </section>
 
@@ -668,6 +679,7 @@ function QueuePanel({
   onRemove: (id: string) => Promise<void>;
   onClearFinished: () => Promise<void>;
 }) {
+  useHideMpvHost();
   const { t } = useTranslation();
   const finishedCount = items.filter(
     (i) =>
@@ -736,6 +748,7 @@ function ExportPanel({
   state: ExportState;
   onClose: () => void;
 }) {
+  useHideMpvHost();
   const { t } = useTranslation();
   const inProgress = state.kind === "starting" || state.kind === "progress";
 
@@ -895,6 +908,7 @@ function CompiledPanel({
   graph: CompiledGraph;
   onClose: () => void;
 }) {
+  useHideMpvHost();
   const { t } = useTranslation();
   return (
     <aside className="compiler-panel">

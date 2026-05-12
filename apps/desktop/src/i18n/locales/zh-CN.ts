@@ -20,6 +20,15 @@ const zhCN: Resources = {
     duration_seconds: "{{value}} 秒",
     history_position: "历史 {{cursor}}/{{len}}",
   },
+  menu: {
+    file: "文件",
+    edit: "编辑",
+    insert: "插入",
+    preview: "预览",
+    export: "导出",
+    tools: "工具",
+    preset_heading: "输出预设",
+  },
   actions: {
     add_track: "+ 轨道",
     add_color_layer: "+ 颜色层（2秒）",
@@ -34,16 +43,16 @@ const zhCN: Resources = {
     redo: "重做",
     queue_export: "+ 排队",
     queue_export_hint: "将导出加入渲染队列（在当前任务后执行）。",
-    connect_agent: "🔌 连接代理…",
+    connect_agent: "连接代理…",
     connect_agent_hint:
       "显示外部代理（Claude Desktop、Cursor）通过 MCP 驱动 Videtor 所需的 URL 和令牌。",
-    settings: "⚙ 设置…",
+    settings: "设置…",
     settings_hint:
       "管理云服务 API 密钥（转写、未来的 TTS）。密钥存储在系统密钥环中。",
-    activity: "📜 活动…",
+    activity: "活动…",
     activity_hint:
       "本会话的最近编辑——包括你和任何已连接代理的操作。可按操作者筛选。",
-    templates: "✨ 模板…",
+    templates: "模板…",
     templates_hint: "选择模板叠加层（下三分位、标题卡、标注…）并添加到时间轴。",
   },
   compiler: {
@@ -78,7 +87,7 @@ const zhCN: Resources = {
     preview_disabled_hint: "需以 --features mpv 构建以启用预览",
   },
   preview: {
-    surface_placeholder: "点击 🎬 预览项目 开始播放",
+    surface_placeholder: "预览 → 预览项目 开始播放",
   },
   timeline: {
     empty_placeholder: "时间线（添加轨道开始）",
@@ -101,9 +110,9 @@ const zhCN: Resources = {
     to_start_hint: "跳转到开头",
     to_end: "⏭",
     to_end_hint: "跳转到结尾",
-    preview_project: "🎬 预览项目",
+    preview_project: "预览项目",
     preview_project_hint: "编译项目图并在 libmpv 中加载。之后每次编辑会热更新。",
-    close_preview: "✕ 关闭预览",
+    close_preview: "关闭预览",
     close_preview_hint: "关闭 libmpv 预览窗口。",
   },
   export: {
