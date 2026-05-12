@@ -574,12 +574,14 @@ pub async fn add_media_layer(
     };
 
     // Subtitles must live on a Subtitle track for the lowering to apply them.
-    // If the user drops a subtitle media onto a video/audio track, fall back
-    // to the first Subtitle track (auto-creating one if necessary).
-    let track = if matches!(media_item.kind, MediaKind::Subtitle) {
-        ensure_subtitle_track(handle.inner(), snap.as_ref()).await?
-    } else {
-        track
+    // Audio must live on an Audio track (the lowering only iterates audio
+    // layers on Audio tracks). If the user drops onto the wrong track kind,
+    // fall back to (or auto-create) the matching one — mirrors the existing
+    // ensure_subtitle_track pattern.
+    let track = match media_item.kind {
+        MediaKind::Subtitle => ensure_subtitle_track(handle.inner(), snap.as_ref()).await?,
+        MediaKind::Audio => ensure_audio_track(handle.inner(), snap.as_ref()).await?,
+        _ => track,
     };
 
     let t_end_us = t_start_us + span_us;
@@ -932,6 +934,23 @@ async fn ensure_subtitle_track(
         .map_err(|e: CommandError| e.to_string())
 }
 
+async fn ensure_audio_track(
+    handle: &ProjectHandle,
+    snap: &state::Project,
+) -> Result<state::TrackId, String> {
+    if let Some(t) = snap
+        .tracks
+        .iter()
+        .find(|t| matches!(t.kind, TrackKind::Audio))
+    {
+        return Ok(t.id);
+    }
+    handle
+        .add_track(Actor::User, TrackKind::Audio, Some("Audio".into()))
+        .await
+        .map_err(|e: CommandError| e.to_string())
+}
+
 #[tauri::command]
 pub async fn move_layer(
     handle: State<'_, ProjectHandle>,
@@ -1183,6 +1202,42 @@ pub async fn project_redo(handle: State<'_, ProjectHandle>) -> Result<(), String
         .redo(Actor::User)
         .await
         .map_err(|e: CommandError| e.to_string())
+}
+
+#[derive(Serialize, Clone)]
+pub struct WaveformPeaks {
+    pub peaks: Vec<f32>,
+    pub peaks_per_second: u32,
+}
+
+/// Read the cached peaks file for `media_id` and return the f32 array plus the
+/// peaks-per-second rate the timeline needs to map a layer's src window onto
+/// a slice of the peaks. Errors with `not_ready` if the waveform job hasn't
+/// finished yet — frontend should listen for `media:job_complete kind=waveform`
+/// and retry.
+#[tauri::command]
+pub async fn get_waveform_peaks(
+    handle: State<'_, ProjectHandle>,
+    media_id: String,
+) -> Result<WaveformPeaks, String> {
+    let media_uuid = Uuid::parse_str(&media_id).map_err(|e| format!("invalid media_id: {e}"))?;
+    let snap = handle.snapshot().await;
+    let media = snap
+        .media_pool
+        .get(&media_uuid)
+        .ok_or_else(|| format!("media {media_id} not found"))?;
+    let path = media
+        .waveform_path
+        .clone()
+        .ok_or_else(|| "not_ready".to_string())?;
+    let peaks = tokio::task::spawn_blocking(move || crate::jobs::waveform::read_peaks_file(&path))
+        .await
+        .map_err(|e| format!("join error: {e}"))?
+        .map_err(|e| format!("read peaks: {e:#}"))?;
+    Ok(WaveformPeaks {
+        peaks,
+        peaks_per_second: crate::jobs::waveform::PEAKS_PER_SECOND,
+    })
 }
 
 fn demo_color(idx: usize) -> Rgba {

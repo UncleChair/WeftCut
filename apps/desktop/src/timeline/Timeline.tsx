@@ -8,6 +8,7 @@ import {
   type LayerSummary,
   type TrackSummary,
 } from "../ipc";
+import { WaveformCanvas } from "./WaveformCanvas";
 
 interface TimelineProps {
   tracks: TrackSummary[];
@@ -50,6 +51,48 @@ function trackAcceptsMedia(trackKind: string, mediaKind: string): boolean {
   return false;
 }
 
+interface VisualTrack {
+  track: TrackSummary;
+  /// True when this is the first lane of its kind group — the renderer adds
+  /// a divider line above it.
+  isGroupStart: boolean;
+}
+
+// Group tracks by kind so the user sees a Premiere-style stack:
+//
+//   ┌────────────┐ Video (top of z-stack at the top of the group; default
+//   │ Video B    │ A roll at the bottom)
+//   │ Video A    │
+//   ├────────────┤ ── divider
+//   │ Subtitles  │ Subtitle tracks (rare; sit between video and audio)
+//   ├────────────┤ ── divider
+//   │ Audio      │ Audio tracks at the bottom (no z-stack interaction; we
+//   └────────────┘ just want them visually below video)
+//
+// Within each group, lower-index data slots render BELOW higher-index ones
+// (matches the existing z-stack convention: tracks[last] = top of z-stack).
+function visualOrderedTracks(tracks: TrackSummary[]): VisualTrack[] {
+  const video = tracks.filter((t) => t.kind.toLowerCase() === "video").slice().reverse();
+  const subtitle = tracks.filter((t) => t.kind.toLowerCase() === "subtitle").slice().reverse();
+  const audio = tracks.filter((t) => t.kind.toLowerCase() === "audio").slice().reverse();
+  const out: VisualTrack[] = [];
+  for (const group of [video, subtitle, audio]) {
+    group.forEach((track, i) => {
+      out.push({ track, isGroupStart: i === 0 && out.length > 0 });
+    });
+  }
+  return out;
+}
+
+// Some media kinds (audio, subtitle) must live on a matching track kind for
+// the IR lowering to pick them up. The backend auto-creates / redirects to
+// that track on drop, so the drop-hit test should also accept these onto any
+// track to mirror that behaviour.
+function trackAcceptsMediaForAutoRoute(_trackKind: string, mediaKind: string): boolean {
+  const m = mediaKind.toLowerCase();
+  return m === "audio" || m === "subtitle";
+}
+
 type DragKind = "move" | "trim-start" | "trim-end";
 
 interface DragState {
@@ -81,21 +124,20 @@ export function Timeline({
   const [drag, setDrag] = useState<DragState | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
 
+  const orderedTracks = visualOrderedTracks(tracks);
+
   const trackUnderPointer = useCallback(
     (clientY: number): TrackSummary | null => {
       if (!canvasRef.current) return null;
       const rect = canvasRef.current.getBoundingClientRect();
       const y = clientY - rect.top - RULER_HEIGHT;
       const visualIdx = Math.floor(y / TRACK_HEIGHT);
-      if (visualIdx < 0 || visualIdx >= tracks.length) return null;
-      // Data model: tracks[0] = bottom of z-stack. The render order is
-      // reversed (top of UI = top of z-stack), so a screen-position index
-      // maps to `tracks.length - 1 - visualIdx`. Without this remap, drops
-      // land on the wrong track.
-      const dataIdx = tracks.length - 1 - visualIdx;
-      return tracks[dataIdx] ?? null;
+      if (visualIdx < 0 || visualIdx >= orderedTracks.length) return null;
+      // Map screen-row index → the right data track via the visual ordering
+      // (video → subtitle → audio, each kind already z-stack-reversed).
+      return orderedTracks[visualIdx]?.track ?? null;
     },
-    [tracks],
+    [orderedTracks],
   );
 
   const handlePointerMove = useCallback(
@@ -212,7 +254,10 @@ export function Timeline({
       payload: MediaDragPayload,
       e: React.DragEvent<HTMLDivElement>,
     ) => {
-      if (!trackAcceptsMedia(track.kind, payload.kind)) {
+      if (
+        !trackAcceptsMedia(track.kind, payload.kind) &&
+        !trackAcceptsMediaForAutoRoute(track.kind, payload.kind)
+      ) {
         console.warn(
           `track ${track.kind} doesn't accept media of kind ${payload.kind}`,
         );
@@ -251,27 +296,24 @@ export function Timeline({
         {tracks.length === 0 && <EmptyHint />}
         {/*
           Data model: `tracks[0]` is the bottom of the z-stack, `tracks[last]`
-          is the top (see `Project::tracks` doc-comment). We render in reverse
-          so the user sees the top of the z-stack at the top of the timeline,
-          matching Premiere / Resolve / FCP conventions. Without this flip,
-          the user puts overlays on "lower-looking" tracks and is surprised
-          when they render on top.
+          is the top (see `Project::tracks` doc-comment). The visual order
+          groups by kind (Video on top, then Subtitle, then Audio at the
+          bottom — Premiere/Resolve/FCP convention) and within each group is
+          z-stack-reversed so the top of the group is the top of z-stack.
         */}
-        {tracks
-          .slice()
-          .reverse()
-          .map((track) => (
-            <TrackLane
-              key={track.id}
-              track={track}
-              pxPerSec={PX_PER_SEC}
-              selectedLayerId={selectedLayerId}
-              dragState={drag}
-              onSelect={onSelect}
-              onDragStart={(state) => setDrag(state)}
-              onMediaDrop={onMediaDrop}
-            />
-          ))}
+        {orderedTracks.map(({ track, isGroupStart }) => (
+          <TrackLane
+            key={track.id}
+            track={track}
+            pxPerSec={PX_PER_SEC}
+            selectedLayerId={selectedLayerId}
+            dragState={drag}
+            onSelect={onSelect}
+            onDragStart={(state) => setDrag(state)}
+            onMediaDrop={onMediaDrop}
+            isGroupStart={isGroupStart}
+          />
+        ))}
         {currentTimeUs >= 0 && (
           <div
             className="timeline-playhead"
@@ -349,6 +391,7 @@ function TrackLane({
   onSelect,
   onDragStart,
   onMediaDrop,
+  isGroupStart,
 }: {
   track: TrackSummary;
   pxPerSec: number;
@@ -361,6 +404,7 @@ function TrackLane({
     payload: MediaDragPayload,
     e: React.DragEvent<HTMLDivElement>,
   ) => void;
+  isGroupStart: boolean;
 }) {
   const { t } = useTranslation();
   const kindLabel = t(`kinds.${track.kind.toLowerCase()}`, {
@@ -404,7 +448,7 @@ function TrackLane({
     <div
       className={`timeline-track-lane kind-${track.kind.toLowerCase()} ${
         isCrossTrackTarget ? "is-drop-target" : ""
-      }`}
+      } ${isGroupStart ? "is-group-start" : ""}`}
       style={{ height: TRACK_HEIGHT }}
       onClick={(e) => {
         if (e.target === e.currentTarget) onSelect(null);
@@ -515,6 +559,8 @@ function LayerBlock({
       });
     };
 
+  const layerWidthPx = Math.max(width, 4);
+
   return (
     <div
       className={`timeline-layer ${isSelected ? "is-selected" : ""} ${
@@ -522,7 +568,7 @@ function LayerBlock({
       } ${layer.locked ? "is-locked" : ""} ${movedAcrossTracks ? "is-ghost" : ""}`}
       style={{
         left,
-        width: Math.max(width, 4),
+        width: layerWidthPx,
         background: layer.color_hint,
         opacity: movedAcrossTracks
           ? 0.3
@@ -537,6 +583,29 @@ function LayerBlock({
       onPointerDown={beginDrag("move", trackKind)}
       title={`${layer.kind}: ${(liveStart / 1_000_000).toFixed(2)}s → ${(liveEnd / 1_000_000).toFixed(2)}s`}
     >
+      {layer.params.kind === "Audio" && layerWidthPx > 8 && (() => {
+        // Source-window shifts mirror the timeline-window shifts during
+        // trim — no speed factor on Audio params, so dx applies 1:1.
+        let liveSrcIn = layer.params.src_in_us;
+        let liveSrcOut = layer.params.src_out_us;
+        if (isDragging && dragState) {
+          const dx = dragState.deltaUs;
+          if (dragState.kind === "trim-start") {
+            liveSrcIn = Math.min(liveSrcIn + dx, liveSrcOut - MIN_LAYER_DURATION_US);
+          } else if (dragState.kind === "trim-end") {
+            liveSrcOut = Math.max(liveSrcIn + MIN_LAYER_DURATION_US, liveSrcOut + dx);
+          }
+        }
+        return (
+          <WaveformCanvas
+            mediaId={layer.params.media_id}
+            srcInUs={liveSrcIn}
+            srcOutUs={liveSrcOut}
+            width={layerWidthPx}
+            height={TRACK_HEIGHT - 4}
+          />
+        );
+      })()}
       <div
         className="layer-trim-handle left"
         onPointerDown={beginDrag("trim-start", trackKind)}

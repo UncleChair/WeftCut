@@ -516,3 +516,16 @@ export async function settingsTestProvider(
 ): Promise<ConnectionTestInfo> {
   return invoke<ConnectionTestInfo>("settings_test_provider", { provider });
 }
+
+export interface WaveformPeaks {
+  /// One f32 in [0.0, 1.0] per peak window; max-abs over `1 / peaks_per_second`
+  /// of source audio. Resolves rejected with the literal string "not_ready" if
+  /// the waveform job hasn't finished — the caller should retry on the
+  /// matching `media:job_complete` event.
+  peaks: number[];
+  peaks_per_second: number;
+}
+
+export async function getWaveformPeaks(mediaId: string): Promise<WaveformPeaks> {
+  return invoke<WaveformPeaks>("get_waveform_peaks", { mediaId });
+}
