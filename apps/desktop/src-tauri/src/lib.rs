@@ -94,20 +94,30 @@ pub fn run() {
             #[cfg(feature = "mpv")]
             let project_for_preview = project_handle.clone();
             app.manage(project_handle);
-            // Lazily-initialised libmpv slot for the preview window; commands
-            // populate it on first use. Stub variant when the `mpv` feature
-            // is off keeps the same shape so callers don't `cfg!`.
+            // Lazily-initialised libmpv slots. Two distinct instances so
+            // they don't share `wid` / graph state:
+            //   * `mpv_slot`        — project preview (embedded into the
+            //                         WebView2 sibling HWND on Windows).
+            //   * `mpv_popup_slot`  — media-pool / raw-file preview, always
+            //                         a standalone top-level window. No
+            //                         host_hwnd is registered on this slot,
+            //                         so `ensure_init` falls back to
+            //                         `force-window=yes`.
+            // Stub variants when the `mpv` feature is off keep the same
+            // shape so callers don't `cfg!`.
             let mpv_slot = mpv::MpvSlot::default();
+            let mpv_popup_slot = mpv::MpvPopupSlot::default();
             #[cfg(feature = "mpv")]
             let mpv_slot_for_preview = mpv_slot.clone();
             #[cfg(feature = "mpv")]
             let mpv_slot_for_events = mpv_slot.clone();
+            #[cfg(feature = "mpv")]
+            let mpv_popup_for_events = mpv_popup_slot.clone();
 
             // Windows embed: create a child HWND of the main Tauri window to
-            // host libmpv's VO. Registered on the slot *before* `app.manage`
-            // so `ensure_init` can read it and set `wid` ahead of the first
-            // `loadfile`. Failure here falls back to standalone-window mode
-            // (the `host_hwnd: None` branch in `ensure_init`).
+            // host libmpv's VO for the *project* preview. Registered on the
+            // embed slot only — the popup slot stays unregistered so raw
+            // file previews keep opening as standalone top-level windows.
             #[cfg(all(feature = "mpv", target_os = "windows"))]
             {
                 if let Some(main_window) = app.get_webview_window("main") {
@@ -124,6 +134,7 @@ pub fn run() {
             }
 
             app.manage(mpv_slot);
+            app.manage(mpv_popup_slot);
 
             // Cache layout for media derivatives (proxies / thumbnails /
             // waveforms / on-demand frames). Lives in the OS app-cache dir
@@ -251,19 +262,24 @@ pub fn run() {
             tauri::async_runtime::spawn_blocking(mpv::spike);
 
             // Event poller: drains libmpv's event queue every 200ms and drops
-            // the handle when MPV_EVENT_SHUTDOWN arrives. This is what makes
-            // the OS close button on the preview window actually close — mpv
-            // binds CLOSE_WIN→quit by default, but the resulting Shutdown event
-            // doesn't release the window resource until our handle is dropped.
+            // the handle when MPV_EVENT_SHUTDOWN arrives. For the popup slot
+            // this is what makes the OS close button on the preview window
+            // actually close — mpv binds CLOSE_WIN→quit by default, but the
+            // resulting Shutdown event doesn't release the window resource
+            // until our handle is dropped. For the embedded slot there's no
+            // OS close button so Shutdown is rare, but the poller still
+            // covers internal shutdown paths.
             #[cfg(feature = "mpv")]
             tauri::async_runtime::spawn(async move {
                 let mut tick =
                     tokio::time::interval(std::time::Duration::from_millis(200));
                 loop {
                     tick.tick().await;
-                    let slot = mpv_slot_for_events.clone();
+                    let embed = mpv_slot_for_events.clone();
+                    let popup = mpv_popup_for_events.0.clone();
                     let _ = tokio::task::spawn_blocking(move || {
-                        mpv::drain_events_and_close_if_shutdown(&slot)
+                        mpv::drain_events_and_close_if_shutdown(&embed);
+                        mpv::drain_events_and_close_if_shutdown(&popup);
                     })
                     .await;
                 }

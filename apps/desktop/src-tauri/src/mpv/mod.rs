@@ -30,7 +30,7 @@
 #[cfg(feature = "mpv")]
 pub use real::{
     close, drain_events_and_close_if_shutdown, is_active, play_file, play_graph, seek,
-    set_host_hwnd, set_paused, set_surface_rect, MpvSlot,
+    set_host_hwnd, set_paused, set_surface_rect, MpvPopupSlot, MpvSlot,
 };
 #[cfg(all(feature = "mpv", target_os = "windows"))]
 pub use real::create_host_hwnd;
@@ -38,7 +38,7 @@ pub use real::create_host_hwnd;
 #[cfg(not(feature = "mpv"))]
 pub use stub::{
     close, drain_events_and_close_if_shutdown, is_active, play_file, play_graph, seek,
-    set_host_hwnd, set_paused, set_surface_rect, MpvSlot,
+    set_host_hwnd, set_paused, set_surface_rect, MpvPopupSlot, MpvSlot,
 };
 
 use crate::ir::MpvPlan;
@@ -96,6 +96,16 @@ mod real {
     /// thread-safe but our wrapper keeps things simple.
     #[derive(Default, Clone)]
     pub struct MpvSlot(pub Arc<Mutex<MpvState>>);
+
+    /// Second slot used for the media-pool / raw-file preview path. Same
+    /// shape as `MpvSlot`, just registered as a distinct Tauri-managed
+    /// state so the project preview (embedded into the WebView2 sibling
+    /// HWND) and the raw-file preview (popup top-level window) don't share
+    /// a libmpv instance — they'd fight over `wid` and graph state.
+    /// `host_hwnd` is intentionally never set on this slot, so
+    /// `ensure_init` takes the `force-window=yes` standalone branch.
+    #[derive(Default, Clone)]
+    pub struct MpvPopupSlot(pub MpvSlot);
 
     pub fn spike() {
         match Mpv::new() {
@@ -584,6 +594,9 @@ mod real {
 mod stub {
     #[derive(Default, Clone)]
     pub struct MpvSlot;
+
+    #[derive(Default, Clone)]
+    pub struct MpvPopupSlot(pub MpvSlot);
 
     pub fn spike() {
         tracing::info!(

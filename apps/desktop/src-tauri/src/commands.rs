@@ -1151,15 +1151,16 @@ pub async fn add_marker(
         .map_err(|e: CommandError| e.to_string())
 }
 
-/// Open the libmpv preview window and play the given file. Spawns libmpv on
-/// first call. Phase 1 mode is a standalone top-level window; the
-/// embed-inside-Tauri-window slice is follow-on work.
+/// Open a libmpv popup window and play the given raw file. Uses the popup
+/// slot (no host HWND registered) so it lands in a standalone top-level
+/// window — separate from the embedded project preview. Closed by the user
+/// via the OS close button; the drain-events poller cleans up the handle.
 #[tauri::command]
 pub async fn mpv_play_file(
-    slot: tauri::State<'_, mpv::MpvSlot>,
+    popup: tauri::State<'_, mpv::MpvPopupSlot>,
     path: String,
 ) -> Result<(), String> {
-    let slot = slot.inner().clone();
+    let slot = popup.inner().0.clone();
     tokio::task::spawn_blocking(move || mpv::play_file(&slot, &path))
         .await
         .map_err(|e| format!("join: {e}"))?
@@ -1267,11 +1268,13 @@ pub async fn mpv_preview_project(
     Ok(status)
 }
 
-/// Resolve a `MediaId` to its absolute path and open it in the preview window.
+/// Resolve a `MediaId` to its absolute path and open it in a popup preview
+/// window. Uses the popup slot so the media-pool preview stays separate
+/// from the embedded project preview.
 #[tauri::command]
 pub async fn mpv_play_media(
     handle: State<'_, ProjectHandle>,
-    slot: tauri::State<'_, mpv::MpvSlot>,
+    popup: tauri::State<'_, mpv::MpvPopupSlot>,
     media_id: String,
 ) -> Result<(), String> {
     let id = uuid::Uuid::parse_str(&media_id).map_err(|e| format!("media_id: {e}"))?;
@@ -1281,7 +1284,7 @@ pub async fn mpv_play_media(
         .get(&id)
         .ok_or_else(|| "media not found in pool".to_string())?;
     let path = item.path_abs.to_string_lossy().to_string();
-    let slot = slot.inner().clone();
+    let slot = popup.inner().0.clone();
     tokio::task::spawn_blocking(move || mpv::play_file(&slot, &path))
         .await
         .map_err(|e| format!("join: {e}"))?
