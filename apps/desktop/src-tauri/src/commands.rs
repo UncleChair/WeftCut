@@ -1199,6 +1199,25 @@ pub async fn mpv_close_preview(
         .map_err(|e| format!("join: {e}"))?
 }
 
+/// Reposition the embed host HWND so it tracks the React `#video-surface`
+/// div. JS measures via `getBoundingClientRect()` and multiplies by
+/// `devicePixelRatio` so coordinates are physical pixels relative to the
+/// parent Tauri window's client area. No-op on non-Windows builds (no host
+/// HWND was registered at startup).
+#[tauri::command]
+pub async fn mpv_set_surface_rect(
+    slot: tauri::State<'_, mpv::MpvSlot>,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+) -> Result<(), String> {
+    let slot = slot.inner().clone();
+    tokio::task::spawn_blocking(move || mpv::set_surface_rect(&slot, x, y, w, h))
+        .await
+        .map_err(|e| format!("join: {e}"))?
+}
+
 /// Compile the current project to an `MpvPlan` and load it into the libmpv
 /// preview window. This is the "scrub the result, not the raw clip" path.
 /// Returns a short status struct so the UI can confirm what was loaded.

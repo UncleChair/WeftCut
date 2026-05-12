@@ -31,7 +31,7 @@ Prerequisites for building Videtor on each supported OS, and the first-run flow.
       # or for tests:
       cargo test --features mpv
       ```
-   5. **Bundling for distribution**: `apps/desktop/src-tauri/tauri.conf.json` `bundle.resources` references `libmpv-2.dll` so it lands next to `videtor.exe` in the .msi. Make sure the DLL is reachable at the path Tauri expects when you run `tauri build --features mpv`.
+   5. **Bundling for distribution**: `apps/desktop/src-tauri/tauri.windows.conf.json` declares a `bundle.resources` mapping that ships `vendor/libmpv/libmpv-2.dll` → next to `videtor.exe` in the .msi / .nsis installer. Make sure `vendor/libmpv/libmpv-2.dll` exists before `npm run tauri:build`. Note: the vendored full-codec dev DLL is ~118 MB and inflates the installer accordingly; swap to a slim libmpv variant if size matters.
 
 Then from the repo root:
 ```powershell
@@ -104,5 +104,16 @@ npm run tauri icon path/to/source-1024.png --workspace apps/desktop  # generate 
 # restore the multi-format icon array in tauri.conf.json
 npm run build
 ```
+
+### libmpv per-platform bundling
+
+End users should not have to install libmpv themselves. The bundle config splits per platform via `tauri.<platform>.conf.json` overlay files (merged on top of `tauri.conf.json` at build time):
+
+| Platform | Overlay file | Strategy | End-user impact |
+|---|---|---|---|
+| Windows | `tauri.windows.conf.json` | Bundles `vendor/libmpv/libmpv-2.dll` next to `videtor.exe` in the .msi / .nsis | Self-contained — installer carries the DLL |
+| macOS | `tauri.macos.conf.json` | `bundle.macOS.frameworks` embeds the dylib into `Contents/Frameworks/`; tauri-bundler rewrites the install_name | Self-contained — but the build host needs `brew install mpv` so the dylib exists at `/opt/homebrew/opt/mpv/lib/libmpv.2.dylib` (Apple Silicon) or `/usr/local/opt/mpv/lib/libmpv.2.dylib` (Intel). Edit the path if your build host differs. |
+| Linux (.deb / .rpm) | `tauri.linux.conf.json` | Declares `libmpv2` (Debian/Ubuntu) / `mpv-libs` (Fedora/RHEL) as a package-manager dependency | apt/dnf auto-installs libmpv when the user installs the package — not strictly "bundled" but no manual step |
+| Linux (AppImage) | not wired yet | TBD — needs `linuxdeploy --plugin libmpv` or similar so the AppImage carries libmpv internally | If you target AppImage, plumb this before shipping |
 
 Code signing (Win + macOS) and `tauri-plugin-updater` are Phase 7 — see [roadmap.md](roadmap.md).

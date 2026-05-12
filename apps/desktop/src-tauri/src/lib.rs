@@ -75,6 +75,7 @@ pub fn run() {
             commands::mpv_preview_project,
             commands::mpv_seek,
             commands::mpv_set_paused,
+            commands::mpv_set_surface_rect,
             commands::settings_get_api_key_status,
             commands::settings_set_api_key,
             commands::settings_clear_api_key,
@@ -101,6 +102,27 @@ pub fn run() {
             let mpv_slot_for_preview = mpv_slot.clone();
             #[cfg(feature = "mpv")]
             let mpv_slot_for_events = mpv_slot.clone();
+
+            // Windows embed: create a child HWND of the main Tauri window to
+            // host libmpv's VO. Registered on the slot *before* `app.manage`
+            // so `ensure_init` can read it and set `wid` ahead of the first
+            // `loadfile`. Failure here falls back to standalone-window mode
+            // (the `host_hwnd: None` branch in `ensure_init`).
+            #[cfg(all(feature = "mpv", target_os = "windows"))]
+            {
+                if let Some(main_window) = app.get_webview_window("main") {
+                    match main_window.hwnd() {
+                        Ok(parent) => match mpv::create_host_hwnd(parent.0 as isize) {
+                            Ok(host) => mpv::set_host_hwnd(&mpv_slot, host),
+                            Err(e) => tracing::error!("mpv embed: create_host_hwnd: {e}"),
+                        },
+                        Err(e) => tracing::error!("mpv embed: main_window.hwnd: {e}"),
+                    }
+                } else {
+                    tracing::error!("mpv embed: main webview window not found");
+                }
+            }
+
             app.manage(mpv_slot);
 
             // Cache layout for media derivatives (proxies / thumbnails /

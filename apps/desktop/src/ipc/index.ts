@@ -468,6 +468,19 @@ export async function mpvClosePreview(): Promise<void> {
   return invoke<void>("mpv_close_preview");
 }
 
+/// Reposition the embed host HWND so it tracks the React `#video-surface`
+/// placeholder. Coordinates are physical pixels — the caller is responsible
+/// for multiplying CSS-px `getBoundingClientRect()` by `devicePixelRatio`
+/// before invoking. No-op on non-Windows builds.
+export async function mpvSetSurfaceRect(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+): Promise<void> {
+  return invoke<void>("mpv_set_surface_rect", { x, y, w, h });
+}
+
 export interface McpInfoView {
   bind: string;
   sse_url: string;

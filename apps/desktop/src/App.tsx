@@ -1,6 +1,6 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   addDemoColorLayer,
@@ -21,6 +21,7 @@ import {
   mpvPreviewProject,
   mpvSeek,
   mpvSetPaused,
+  mpvSetSurfaceRect,
   ping,
   presetExtension,
   projectOpen,
@@ -186,6 +187,41 @@ export function App() {
       for (const u of unlisteners) u();
     };
   }, [refresh]);
+
+  // Embed-mode surface sync. The Rust side has a child HWND (Windows) that
+  // hosts the libmpv VO; we stream the placeholder div's rect to it so the
+  // native surface tracks layout. ResizeObserver catches element-size shifts;
+  // window 'resize' catches everything else (window resize, DPR change after
+  // monitor move). Physical pixels = CSS px × devicePixelRatio. Sent
+  // unconditionally — non-Windows builds no-op in Rust. Mounting fires once
+  // immediately so the surface has a real rect before the first preview.
+  const videoSurfaceRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = videoSurfaceRef.current;
+    if (!el) return;
+    let cancelled = false;
+    const sync = () => {
+      if (cancelled) return;
+      const r = el.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      const x = Math.round(r.left * dpr);
+      const y = Math.round(r.top * dpr);
+      const w = Math.round(r.width * dpr);
+      const h = Math.round(r.height * dpr);
+      mpvSetSurfaceRect(x, y, w, h).catch((err) => {
+        console.warn("set surface rect failed:", err);
+      });
+    };
+    sync();
+    const ro = new ResizeObserver(sync);
+    ro.observe(el);
+    window.addEventListener("resize", sync);
+    return () => {
+      cancelled = true;
+      ro.disconnect();
+      window.removeEventListener("resize", sync);
+    };
+  }, []);
 
   const run = useCallback(
     async (action: () => Promise<unknown>) => {
@@ -472,9 +508,6 @@ export function App() {
         >
           {t("transport.close_preview")}
         </button>
-        <button onClick={togglePlay} title={t("transport.play_pause_hint")}>
-          {paused ? t("transport.play") : t("transport.pause")}
-        </button>
         <span className="separator" />
         <button
           onClick={() => run(projectUndo)}
@@ -518,10 +551,38 @@ export function App() {
 
       <main className="app-main">
         <section className="preview">
-          <div id="video-surface" className="video-surface">
+          <div
+            id="video-surface"
+            className="video-surface"
+            ref={videoSurfaceRef}
+          >
             <span className="placeholder">
               {t("preview.surface_placeholder")}
             </span>
+          </div>
+          <div className="preview-transport" role="toolbar" aria-label="Preview transport">
+            <button
+              onClick={() => seekTo(0)}
+              title={t("transport.to_start_hint")}
+              aria-label={t("transport.to_start_hint")}
+            >
+              {t("transport.to_start")}
+            </button>
+            <button
+              onClick={togglePlay}
+              title={t("transport.play_pause_hint")}
+              aria-label={t("transport.play_pause_hint")}
+            >
+              {paused ? t("transport.play") : t("transport.pause")}
+            </button>
+            <button
+              onClick={() => seekTo(summary?.duration_us ?? 0)}
+              title={t("transport.to_end_hint")}
+              aria-label={t("transport.to_end_hint")}
+              disabled={!summary || summary.duration_us === 0}
+            >
+              {t("transport.to_end")}
+            </button>
           </div>
         </section>
 

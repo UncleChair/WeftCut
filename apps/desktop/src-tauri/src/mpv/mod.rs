@@ -12,11 +12,17 @@
 //! `apps/desktop/src-tauri/vendor/libmpv/`; `build.rs` extends the linker
 //! search path and stages the DLL into `target/<profile>/`.
 //!
-//! **Phase 1 surface scope**: libmpv runs in its own top-level window via
-//! `force-window=yes`. That sidesteps the child-HWND-inside-WebView2 dance
-//! while still proving end-to-end decode + display. Real embed-into-the-Tauri-
-//! window arrives in a follow-on slice once we have a place for the per-OS
-//! handle wiring (see architecture.md).
+//! **Windows surface mode (embed)**: at app startup `create_host_hwnd` makes
+//! a child HWND of the Tauri main window and stores it in the `MpvSlot`.
+//! `ensure_init` passes that HWND to libmpv via the `wid` property *before*
+//! the first `loadfile`, so the VO embeds into the host instead of spawning a
+//! top-level window. JS measures `#video-surface` (`getBoundingClientRect *
+//! devicePixelRatio`) and calls `mpv_set_surface_rect` to reposition the host
+//! HWND via `SetWindowPos(HWND_TOP, …)`.
+//!
+//! **Non-Windows fallback**: macOS/Linux still use the Phase 1 standalone
+//! window via `force-window=yes`. The NSView / GtkBox embed paths haven't
+//! been wired yet.
 
 // `ensure_init` is intentionally not re-exported — it's an internal helper
 // used by `play_file` / `play_graph` and shouldn't be called by callers
@@ -24,13 +30,15 @@
 #[cfg(feature = "mpv")]
 pub use real::{
     close, drain_events_and_close_if_shutdown, is_active, play_file, play_graph, seek,
-    set_paused, MpvSlot,
+    set_host_hwnd, set_paused, set_surface_rect, MpvSlot,
 };
+#[cfg(all(feature = "mpv", target_os = "windows"))]
+pub use real::create_host_hwnd;
 
 #[cfg(not(feature = "mpv"))]
 pub use stub::{
     close, drain_events_and_close_if_shutdown, is_active, play_file, play_graph, seek,
-    set_paused, MpvSlot,
+    set_host_hwnd, set_paused, set_surface_rect, MpvSlot,
 };
 
 use crate::ir::MpvPlan;
@@ -59,10 +67,17 @@ mod real {
     /// graph string), not just the graph — file-list rotations that leave the
     /// graph byte-identical (e.g. swapping layer A→B at the same input slot)
     /// must still trigger a reload.
+    ///
+    /// `host_hwnd` is the child HWND created at app startup (Windows only).
+    /// libmpv embeds into it via the `wid` property — set in `ensure_init`
+    /// *before* the first `loadfile` (mpv only honours `wid` at init time).
+    /// On non-Windows it stays `None` and `ensure_init` falls back to
+    /// `force-window=yes` for a standalone top-level window.
     pub struct MpvState {
         pub mpv: Option<Mpv>,
         pub active: bool,
         pub last_key: Option<(Option<String>, Vec<String>, String)>,
+        pub host_hwnd: Option<isize>,
     }
 
     impl Default for MpvState {
@@ -71,6 +86,7 @@ mod real {
                 mpv: None,
                 active: false,
                 last_key: None,
+                host_hwnd: None,
             }
         }
     }
@@ -142,28 +158,35 @@ mod real {
         out
     }
 
-    /// Construct the player on first use, applying the standalone-preview
-    /// defaults that match Phase 1 scope.
+    /// Construct the player on first use.
     ///
-    /// `force-window=yes` is required: when libmpv runs embedded without a
-    /// host-supplied `wid`, it won't create its own window for `loadfile`
-    /// alone — `force-window` is the property that makes it spawn a top-level
-    /// window. Closing reliably is handled two ways: the explicit ✕ Close
-    /// preview command in the UI (`close()` below), and the zombie-handle
-    /// probe at the top of this function which re-inits fresh if a previous
-    /// handle was externally quit.
+    /// Two modes, selected by whether `host_hwnd` was registered at startup:
+    ///   * **Embed (Windows)** — set `wid` to the host HWND so libmpv's VO
+    ///     attaches into the child window we created as a sibling of WebView2.
+    ///     `force-window` is *not* set; the host HWND itself supplies the
+    ///     drawing surface. OSC + default key bindings are off — the React UI
+    ///     owns transport.
+    ///   * **Standalone (mac/Linux + Windows-without-host)** — set
+    ///     `force-window=yes` so libmpv spawns its own top-level window;
+    ///     without it `loadfile` succeeds silently with no display surface.
+    ///
+    /// `wid` must be set before the first VO init, which means before the
+    /// first `loadfile`. Once VO is up libmpv ignores further `wid` changes.
+    ///
+    /// Zombie handling: if a previous handle has been externally quit
+    /// (Shutdown event, OS close button on the standalone window) a cheap
+    /// property probe fails and we drop + recreate. On the embed path there's
+    /// no OS close button so this branch is near-dead, but we keep it for
+    /// internal shutdown paths (and for the standalone fallback).
     pub fn ensure_init(slot: &MpvSlot) -> Result<(), String> {
         let mut guard = slot.0.lock().expect("mpv slot poisoned");
-        // If we hold a handle but it's been externally quit (e.g. user clicked
-        // the OS close button), property access errors out. Probe with a cheap
-        // read; if it fails, drop the zombie and re-init fresh.
         let zombie = guard
             .mpv
             .as_ref()
             .map(|m| m.get_property::<String>("mpv-version").is_err())
             .unwrap_or(false);
         if zombie {
-            info!("libmpv: previous handle is gone (window closed by user); reinitialising");
+            info!("libmpv: previous handle is gone; reinitialising");
             guard.mpv = None;
             guard.active = false;
             guard.last_key = None;
@@ -172,17 +195,179 @@ mod real {
             return Ok(());
         }
         let mpv = Mpv::new().map_err(|e| format!("create mpv: {e:?}"))?;
-        // Standalone window: libmpv owns the OS window. We'll pipe `wid` once
-        // the WebView2-child slice lands.
-        let _ = mpv.set_property("force-window", "yes");
+        match guard.host_hwnd {
+            Some(hwnd) => {
+                // Embed mode: VO renders into the host HWND.
+                mpv.set_property("wid", hwnd as i64)
+                    .map_err(|e| format!("set wid: {e:?}"))?;
+                let _ = mpv.set_property("osc", false);
+                let _ = mpv.set_property("input-default-bindings", false);
+                let _ = mpv.set_property("input-vo-keyboard", false);
+                info!("libmpv preview initialised (embed, wid={hwnd:#x})");
+            }
+            None => {
+                // Standalone mode: libmpv owns the OS window.
+                let _ = mpv.set_property("force-window", "yes");
+                let _ = mpv.set_property("osc", true);
+                let _ = mpv.set_property("input-default-bindings", true);
+                let _ = mpv.set_property("input-vo-keyboard", true);
+                let _ = mpv.set_property("title", "Videtor preview");
+                info!("libmpv preview initialised (standalone window)");
+            }
+        }
         let _ = mpv.set_property("keep-open", "yes");
-        let _ = mpv.set_property("osc", true);
-        let _ = mpv.set_property("input-default-bindings", true);
-        let _ = mpv.set_property("input-vo-keyboard", true);
-        let _ = mpv.set_property("title", "Videtor preview");
+        let _ = mpv.set_property("idle", "yes");
         guard.mpv = Some(mpv);
-        info!("libmpv preview initialised");
         Ok(())
+    }
+
+    /// Register the embed host HWND created at Tauri startup. Called once,
+    /// before any `play_*` invocation. Stored as `isize` so the lock guards
+    /// stay `Send` — we reconstruct the `HWND` at use sites.
+    pub fn set_host_hwnd(slot: &MpvSlot, hwnd: isize) {
+        let mut guard = slot.0.lock().expect("mpv slot poisoned");
+        guard.host_hwnd = Some(hwnd);
+        info!("mpv preview: host HWND registered ({hwnd:#x})");
+    }
+
+    /// Reposition the embed host HWND to match the React placeholder div.
+    ///
+    /// Coordinates are physical pixels relative to the parent Tauri window's
+    /// client area (JS pre-multiplies CSS px by `devicePixelRatio`). HWND_TOP
+    /// keeps the host above its WebView2 sibling in Z-order.
+    /// No-op when the host HWND wasn't registered (non-Windows builds).
+    pub fn set_surface_rect(
+        slot: &MpvSlot,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+    ) -> Result<(), String> {
+        let guard = slot.0.lock().expect("mpv slot poisoned");
+        let Some(hwnd_isize) = guard.host_hwnd else {
+            return Ok(());
+        };
+        drop(guard);
+        set_surface_rect_native(hwnd_isize, x, y, w, h)
+    }
+
+    #[cfg(target_os = "windows")]
+    fn set_surface_rect_native(
+        hwnd_isize: isize,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+    ) -> Result<(), String> {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            SetWindowPos, HWND_TOP, SWP_NOACTIVATE,
+        };
+        let hwnd = HWND(hwnd_isize as *mut _);
+        unsafe {
+            SetWindowPos(hwnd, Some(HWND_TOP), x, y, w, h, SWP_NOACTIVATE)
+                .map_err(|e| format!("SetWindowPos: {e}"))
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn set_surface_rect_native(
+        _hwnd_isize: isize,
+        _x: i32,
+        _y: i32,
+        _w: i32,
+        _h: i32,
+    ) -> Result<(), String> {
+        // Should never be reached — non-Windows builds don't register a host
+        // HWND, so `set_surface_rect` short-circuits before this is called.
+        Ok(())
+    }
+
+    /// Create a child HWND of the Tauri main window to host the libmpv VO.
+    ///
+    /// The host is a sibling of WebView2 (both children of the outer Tauri
+    /// HWND). `WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS` plus a per-call
+    /// `HWND_TOP` Z-order in `set_surface_rect` keeps it drawn over the
+    /// webview. The window class is registered exactly once via `Once`;
+    /// subsequent calls reuse it.
+    ///
+    /// Returned as `isize` so the value can travel through the Tauri-managed
+    /// `MpvSlot` without dragging `!Send` window handles around.
+    #[cfg(target_os = "windows")]
+    pub fn create_host_hwnd(parent: isize) -> Result<isize, String> {
+        use std::sync::Once;
+        use windows::core::{w, PCWSTR};
+        use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+        use windows::Win32::Graphics::Gdi::{GetStockObject, HBRUSH, BLACK_BRUSH};
+        use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            CreateWindowExW, DefWindowProcW, RegisterClassExW, CS_HREDRAW, CS_VREDRAW,
+            WINDOW_EX_STYLE, WNDCLASSEXW, WS_CHILD, WS_CLIPSIBLINGS, WS_VISIBLE,
+        };
+
+        // windows-rs's `DefWindowProcW` is exported as a regular Rust function
+        // that internally links to the user32 symbol; its ABI doesn't match
+        // the `WNDPROC = Option<unsafe extern "system" fn(...)>` type, so we
+        // need a tiny `extern "system"` trampoline that calls through.
+        unsafe extern "system" fn wnd_proc(
+            hwnd: HWND,
+            msg: u32,
+            wparam: WPARAM,
+            lparam: LPARAM,
+        ) -> LRESULT {
+            DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
+
+        static REGISTER: Once = Once::new();
+        const CLASS: PCWSTR = w!("VidetorMpvHost");
+
+        let hmod = unsafe { GetModuleHandleW(None) }
+            .map_err(|e| format!("GetModuleHandleW: {e}"))?;
+        let hinst: windows::Win32::Foundation::HINSTANCE = hmod.into();
+
+        REGISTER.call_once(|| {
+            let bg = unsafe { GetStockObject(BLACK_BRUSH) };
+            let wc = WNDCLASSEXW {
+                cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+                style: CS_HREDRAW | CS_VREDRAW,
+                lpfnWndProc: Some(wnd_proc),
+                hInstance: hinst,
+                hbrBackground: HBRUSH(bg.0),
+                lpszClassName: CLASS,
+                ..Default::default()
+            };
+            // Ignore RegisterClassExW return — if it's 0 because the class
+            // already exists (e.g. hot reload during dev), CreateWindowExW
+            // below will succeed anyway.
+            unsafe {
+                RegisterClassExW(&wc);
+            }
+        });
+
+        // Spawn offscreen and sized 1×1 so the host doesn't briefly flash a
+        // black square in the parent's top-left before React's first
+        // `mpv_set_surface_rect` reposition. WebView2's z-clip would also let
+        // a (0, 0, 16, 16) host overlap the React header bar for a beat.
+        let parent_hwnd = HWND(parent as *mut _);
+        let hwnd = unsafe {
+            CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                CLASS,
+                w!("mpv-host"),
+                WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
+                -10_000,
+                -10_000,
+                1,
+                1,
+                Some(parent_hwnd),
+                None,
+                Some(hinst),
+                None,
+            )
+        }
+        .map_err(|e| format!("CreateWindowExW: {e}"))?;
+        info!("mpv host HWND created ({hwnd:?})");
+        Ok(hwnd.0 as isize)
     }
 
     /// Non-blocking drain of mpv's event queue. Called periodically by a
@@ -436,4 +621,10 @@ mod stub {
     }
 
     pub fn drain_events_and_close_if_shutdown(_: &MpvSlot) {}
+
+    pub fn set_host_hwnd(_: &MpvSlot, _: isize) {}
+
+    pub fn set_surface_rect(_: &MpvSlot, _: i32, _: i32, _: i32, _: i32) -> Result<(), String> {
+        Ok(())
+    }
 }

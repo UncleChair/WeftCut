@@ -76,7 +76,7 @@ const enUS = {
     preview_disabled_hint: "Build with --features mpv to enable preview",
   },
   preview: {
-    surface_placeholder: "libmpv surface mounts here",
+    surface_placeholder: "Click 🎬 Preview project to start playback",
   },
   timeline: {
     empty_placeholder: "timeline (add a track to populate)",
@@ -92,9 +92,13 @@ const enUS = {
     zh_CN: "中文",
   },
   transport: {
-    play: "▶ Play",
-    pause: "⏸ Pause",
-    play_pause_hint: "Toggle preview playback (libmpv)",
+    play: "▶",
+    pause: "⏸",
+    play_pause_hint: "Play / pause",
+    to_start: "⏮",
+    to_start_hint: "Jump to start",
+    to_end: "⏭",
+    to_end_hint: "Jump to end",
     preview_project: "🎬 Preview project",
     preview_project_hint:
       "Compile the project graph and load it in libmpv. Edits hot-reload from then on.",

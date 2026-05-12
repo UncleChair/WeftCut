@@ -262,6 +262,7 @@ html, body, #root { height: 100%; margin: 0; }
 
 .preview {
   display: flex;
+  flex-direction: column;
   align-items: stretch;
   justify-content: stretch;
   background: #000;
@@ -275,6 +276,49 @@ html, body, #root { height: 100%; margin: 0; }
   justify-content: center;
   outline: 1px dashed #374151;
   outline-offset: -8px;
+  min-height: 0;
+}
+
+.preview-transport {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: #0e1218;
+  border-top: 1px solid #1f2937;
+  flex: 0 0 auto;
+}
+
+.preview-transport button {
+  background: transparent;
+  color: #9ca3af;
+  border: none;
+  border-radius: 50%;
+  padding: 0;
+  width: 30px;
+  height: 30px;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.preview-transport button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  color: #e5e7eb;
+}
+
+.preview-transport button:active:not(:disabled) {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.preview-transport button:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
 }
 
 .timeline {

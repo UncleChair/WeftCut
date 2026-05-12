@@ -78,7 +78,7 @@ const zhCN: Resources = {
     preview_disabled_hint: "需以 --features mpv 构建以启用预览",
   },
   preview: {
-    surface_placeholder: "libmpv 视频画面将在此显示",
+    surface_placeholder: "点击 🎬 预览项目 开始播放",
   },
   timeline: {
     empty_placeholder: "时间线（添加轨道开始）",
@@ -94,9 +94,13 @@ const zhCN: Resources = {
     zh_CN: "中文",
   },
   transport: {
-    play: "▶ 播放",
-    pause: "⏸ 暂停",
-    play_pause_hint: "切换预览播放（libmpv）",
+    play: "▶",
+    pause: "⏸",
+    play_pause_hint: "播放 / 暂停",
+    to_start: "⏮",
+    to_start_hint: "跳转到开头",
+    to_end: "⏭",
+    to_end_hint: "跳转到结尾",
     preview_project: "🎬 预览项目",
     preview_project_hint: "编译项目图并在 libmpv 中加载。之后每次编辑会热更新。",
     close_preview: "✕ 关闭预览",
