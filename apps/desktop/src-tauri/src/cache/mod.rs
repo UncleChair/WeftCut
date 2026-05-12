@@ -117,6 +117,18 @@ impl CacheLayout {
         self.voiceover_dir().join(format!("{hash}.{ext}"))
     }
 
+    /// Per-render PNG sequence directory for the rasterizer. Content-addressed
+    /// by blake3 of the canonical render inputs — see `raster::cache_key`. A
+    /// hit means we already have every frame on disk and can skip the
+    /// expensive webview rasterization entirely.
+    pub fn raster_root(&self) -> PathBuf {
+        self.root.join("raster")
+    }
+
+    pub fn raster_dir(&self, key: &str) -> PathBuf {
+        self.raster_root().join(key)
+    }
+
     /// Create the top-level cache directory tree. Idempotent.
     pub fn ensure_dirs(&self) -> Result<()> {
         for p in [
@@ -128,6 +140,7 @@ impl CacheLayout {
             self.inline_subs_dir(),
             self.transcribe_audio_dir(),
             self.voiceover_dir(),
+            self.raster_root(),
         ] {
             fs::create_dir_all(&p)
                 .with_context(|| format!("create cache dir {}", p.display()))?;

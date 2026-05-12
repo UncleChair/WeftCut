@@ -16,7 +16,7 @@
 //!   Linux:   `webkit_web_view_get_snapshot` (async; soft spot — fall back to bundled
 //!            headless Chromium via `chromiumoxide` if WebKitGTK misbehaves).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
@@ -77,42 +77,177 @@ pub fn spawn_spike(app: &AppHandle) -> Result<()> {
     Ok(())
 }
 
-/// A render job: snapshot the offscreen webview at each `times_s` value,
-/// writing `<dest_dir>/<file_prefix><k>.png` per frame. Stage B keeps this
-/// minimal — Stage D adds template_id / props / cache key.
+/// Rasterizer version baked into every cache key. Bump when the capture
+/// pipeline changes in a way that should invalidate every prior render
+/// (e.g. shim semantics change, PNG format swap, frame timing fix).
+const RASTERIZER_VERSION: u32 = 1;
+
+/// A render job. Cache-key inputs go into `blake3` (see [`cache_key`]); if
+/// the key already exists on disk we skip the webview entirely and reuse
+/// the cached PNG sequence. Stage D fills in `template_id` / `props_json`
+/// from a real template manifest; the spike uses a sentinel id + the
+/// hard-coded HTML body's hash.
 pub struct RasterJob {
+    pub template_id: String,
+    /// blake3 of all template files concatenated, or any other stable
+    /// content fingerprint. Bumping this invalidates stale renders when a
+    /// template's HTML/CSS changes during authoring.
+    pub template_content_hash: String,
+    /// Canonical JSON-encoded props the template was rendered with.
+    pub props_json: String,
+    pub fps: u32,
+    pub size: (u32, u32),
+    /// Explicit list of times to capture (seconds). For real templates Stage
+    /// D will derive this from `duration_us` + `fps`; the spike passes it
+    /// directly so we can sample non-uniformly during development.
     pub times_s: Vec<f64>,
-    pub dest_dir: PathBuf,
-    pub file_prefix: String,
 }
 
 pub struct RasterFrame {
+    pub idx: usize,
     pub t: f64,
     pub path: PathBuf,
-    pub bytes: u64,
 }
 
-/// Render every requested time into `dest_dir`. Steps the mocked clock via
-/// `__seek_dispatch(t)`, polls `__seek_status().done >= seq` (sub-frame
-/// latency typical), then captures the post-flush pixels. Errors propagate
-/// per frame — we'd rather complete what we can than abort on one bad seek.
-pub async fn render(app: &AppHandle, job: RasterJob) -> Result<Vec<RasterFrame>, String> {
+pub struct RasterOutput {
+    pub dir: PathBuf,
+    pub frames: Vec<RasterFrame>,
+    pub cached: bool,
+}
+
+/// Stable hex hash over every cache-relevant input. Order + format matter —
+/// any change here is a cache invalidation. Inputs are joined with `\0` so
+/// e.g. template_id="ab" + content_hash="cd" can't collide with template_id
+/// ="a" + content_hash="bcd".
+pub fn cache_key(job: &RasterJob) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(&RASTERIZER_VERSION.to_le_bytes());
+    let parts: &[&[u8]] = &[
+        job.template_id.as_bytes(),
+        job.template_content_hash.as_bytes(),
+        job.props_json.as_bytes(),
+    ];
+    for p in parts {
+        hasher.update(p);
+        hasher.update(&[0]);
+    }
+    hasher.update(&job.fps.to_le_bytes());
+    hasher.update(&job.size.0.to_le_bytes());
+    hasher.update(&job.size.1.to_le_bytes());
+    for t in &job.times_s {
+        hasher.update(&t.to_le_bytes());
+    }
+    hasher.finalize().to_hex().to_string()
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct RasterManifest {
+    rasterizer_version: u32,
+    template_id: String,
+    template_content_hash: String,
+    props_json: String,
+    fps: u32,
+    width: u32,
+    height: u32,
+    times_s: Vec<f64>,
+    frame_count: usize,
+}
+
+/// Render every requested time and write the sequence into the
+/// content-addressed cache. Cache hit short-circuits the webview entirely.
+pub async fn render(
+    app: &AppHandle,
+    cache: &crate::cache::CacheLayout,
+    job: RasterJob,
+) -> Result<RasterOutput, String> {
+    let key = cache_key(&job);
+    let dest_dir = cache.raster_dir(&key);
+    let manifest_path = dest_dir.join("manifest.json");
+
+    // Cache hit: every frame plus the manifest is present + non-empty.
+    if let Some(frames) = load_cached_frames(&dest_dir, &manifest_path, job.times_s.len()) {
+        return Ok(RasterOutput { dir: dest_dir, frames, cached: true });
+    }
+
     let window = app
         .get_webview_window("raster-worker")
         .ok_or_else(|| "raster-worker window not spawned".to_string())?;
-    std::fs::create_dir_all(&job.dest_dir)
-        .map_err(|e| format!("create dest_dir {}: {e}", job.dest_dir.display()))?;
+
+    // Write into a `.tmp` sibling and promote on success so an interrupted
+    // render doesn't leave a half-populated cache dir.
+    let tmp_dir = crate::cache::temp_path(&dest_dir);
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+    std::fs::create_dir_all(&tmp_dir)
+        .map_err(|e| format!("create raster tmp dir {}: {e}", tmp_dir.display()))?;
 
     let mut frames = Vec::with_capacity(job.times_s.len());
     for (idx, &t) in job.times_s.iter().enumerate() {
         wait_seek(&window, t).await?;
-        let dest = job
-            .dest_dir
-            .join(format!("{}{:05}.png", job.file_prefix, idx));
-        let bytes = capture_via_webview(&window, &dest).await?;
-        frames.push(RasterFrame { t, path: dest, bytes });
+        let path = tmp_dir.join(format!("frame_{idx:05}.png"));
+        let _ = capture_via_webview(&window, &path).await?;
+        frames.push(RasterFrame { idx, t, path });
     }
-    Ok(frames)
+
+    let manifest = RasterManifest {
+        rasterizer_version: RASTERIZER_VERSION,
+        template_id: job.template_id.clone(),
+        template_content_hash: job.template_content_hash.clone(),
+        props_json: job.props_json.clone(),
+        fps: job.fps,
+        width: job.size.0,
+        height: job.size.1,
+        times_s: job.times_s.clone(),
+        frame_count: frames.len(),
+    };
+    let manifest_bytes = serde_json::to_vec_pretty(&manifest)
+        .map_err(|e| format!("manifest serialize: {e}"))?;
+    std::fs::write(tmp_dir.join("manifest.json"), manifest_bytes)
+        .map_err(|e| format!("write manifest: {e}"))?;
+
+    // Atomic promote: rename(tmp_dir, dest_dir). Anything reading the cache
+    // through `load_cached_frames` either sees a complete sequence or no
+    // entry at all.
+    if dest_dir.exists() {
+        let _ = std::fs::remove_dir_all(&dest_dir);
+    }
+    std::fs::rename(&tmp_dir, &dest_dir)
+        .map_err(|e| format!("promote raster cache dir {}: {e}", dest_dir.display()))?;
+
+    // Rewrite the frame paths into the promoted location.
+    let frames = frames
+        .into_iter()
+        .map(|f| RasterFrame {
+            idx: f.idx,
+            t: f.t,
+            path: dest_dir.join(f.path.file_name().expect("frame name")),
+        })
+        .collect();
+
+    Ok(RasterOutput { dir: dest_dir, frames, cached: false })
+}
+
+fn load_cached_frames(
+    dest_dir: &Path,
+    manifest_path: &Path,
+    expected_count: usize,
+) -> Option<Vec<RasterFrame>> {
+    if !manifest_path.exists() {
+        return None;
+    }
+    let bytes = std::fs::read(manifest_path).ok()?;
+    let manifest: RasterManifest = serde_json::from_slice(&bytes).ok()?;
+    if manifest.frame_count != expected_count {
+        return None;
+    }
+    let mut frames = Vec::with_capacity(expected_count);
+    for (idx, &t) in manifest.times_s.iter().enumerate() {
+        let path = dest_dir.join(format!("frame_{idx:05}.png"));
+        if !crate::cache::cached_ok(&path) {
+            return None;
+        }
+        frames.push(RasterFrame { idx, t, path });
+    }
+    Some(frames)
 }
 
 /// Dispatch `__seek(t)` and poll `__seek_status` until the async awaits
@@ -181,32 +316,37 @@ async fn capture_via_webview(
 }
 
 /// Drive the offscreen webview through `__seek(0)`, `__seek(1)`, `__seek(2)`
-/// and capture a PNG after each step. Used as the end-to-end smoke for
-/// Stages A + B — the captures should show the dot at three different
-/// linear positions and the timestamp text matching the seeked value.
-pub fn schedule_capture_spike(app: &AppHandle, dest_dir: PathBuf) {
+/// and exercise the full cache path. First call renders + writes the cache
+/// entry; second call (forced 100ms later) should report `cached=true` and
+/// return in microseconds. The log line `cached=true` is the Stage C signal.
+pub fn schedule_capture_spike(app: &AppHandle, cache: crate::cache::CacheLayout) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         // Initial page load + first rAF tick + font load. 1500 ms is
         // conservative; the spike page is trivial.
         tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-        let job = RasterJob {
+
+        let build_job = || RasterJob {
+            template_id: "raster-spike".into(),
+            template_content_hash: blake3::hash(SPIKE_HTML.as_bytes()).to_hex().to_string(),
+            props_json: "{}".into(),
+            fps: 1,
+            size: (800, 200),
             times_s: vec![0.0, 1.0, 2.0],
-            dest_dir,
-            file_prefix: "raster-spike-t".into(),
         };
-        match render(&app, job).await {
-            Ok(frames) => {
-                for f in frames {
-                    info!(
-                        "raster capture spike: t={} → wrote {} bytes to {}",
-                        f.t,
-                        f.bytes,
-                        f.path.display()
-                    );
-                }
+
+        for pass in ["cold", "warm"] {
+            let t0 = std::time::Instant::now();
+            match render(&app, &cache, build_job()).await {
+                Ok(out) => info!(
+                    "raster capture spike ({pass}): cached={} dir={} frames={} elapsed={:?}",
+                    out.cached,
+                    out.dir.display(),
+                    out.frames.len(),
+                    t0.elapsed()
+                ),
+                Err(e) => warn!("raster capture spike ({pass}): render failed: {e}"),
             }
-            Err(e) => warn!("raster capture spike: render failed: {e}"),
         }
     });
 }

@@ -145,8 +145,7 @@ pub fn run() {
                 // shortly after startup. The log line `raster capture spike:
                 // wrote N bytes …` confirms the load-bearing capture path
                 // works before we build the rest of the rasterizer.
-                let dest_dir = cache_for_spike.root().to_path_buf();
-                raster::schedule_capture_spike(app.handle(), dest_dir);
+                raster::schedule_capture_spike(app.handle(), cache_for_spike);
             }
             tauri::async_runtime::spawn(async {
                 match ffmpeg::bootstrap().await {
