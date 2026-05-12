@@ -17,9 +17,10 @@ use crate::export;
 use crate::io;
 use crate::ir;
 use crate::mpv;
+use crate::raster::template as raster_template;
 use crate::state::{
     self, Actor, ColorParams, CommandError, LayerParams, MediaItem, MediaKind, ProjectHandle,
-    Rgba, SubtitlesParams, SubtitlesSource, TrackKind,
+    Rgba, SubtitlesParams, SubtitlesSource, TemplateParams, TrackKind, Transform,
     actor::{CompositionPatch, LayerParamsPatch, LayerPatch},
     animated::Animated,
     ids::new_id,
@@ -956,6 +957,106 @@ async fn ensure_audio_track(
     handle
         .add_track(Actor::User, TrackKind::Audio, Some("Audio".into()))
         .await
+        .map_err(|e: CommandError| e.to_string())
+}
+
+async fn ensure_template_target_track(
+    handle: &ProjectHandle,
+    snap: &state::Project,
+) -> Result<state::TrackId, String> {
+    if let Some(t) = snap
+        .tracks
+        .iter()
+        .find(|t| matches!(t.kind, TrackKind::Video))
+    {
+        return Ok(t.id);
+    }
+    handle
+        .add_track(Actor::User, TrackKind::Video, Some("Templates".into()))
+        .await
+        .map_err(|e: CommandError| e.to_string())
+}
+
+/// Stage F-Picker: the UI catalog. Same shape as MCP `list_templates`. Both
+/// surfaces wrap `raster::template::catalog()` so they can't drift.
+#[tauri::command]
+pub async fn list_templates() -> Result<Vec<serde_json::Value>, String> {
+    raster_template::catalog()
+        .into_iter()
+        .map(|m| serde_json::to_value(m).map_err(|e| format!("manifest serialize: {e}")))
+        .collect()
+}
+
+/// Stage F-Picker: UI counterpart to the MCP `add_template` tool. Mirrors
+/// the behavior 1:1 (canonicalize props through the Template module,
+/// default `t_end_us` from manifest duration, default the track to the
+/// first Video track or auto-create "Templates"), only the actor identity
+/// differs — `Actor::User` here vs. `Actor::Agent { client: "mcp" }`
+/// there.
+#[tauri::command]
+pub async fn add_template(
+    handle: State<'_, ProjectHandle>,
+    template_id: String,
+    t_start_us: TimeUs,
+    t_end_us: Option<TimeUs>,
+    track_id: Option<String>,
+    props: Option<serde_json::Value>,
+) -> Result<String, String> {
+    let template = raster_template::builtins()
+        .into_iter()
+        .find(|t| t.id() == template_id)
+        .ok_or_else(|| {
+            format!(
+                "unknown template_id '{template_id}' — call list_templates for the catalog",
+            )
+        })?;
+
+    let provided = props.unwrap_or_else(|| serde_json::Value::Object(Default::default()));
+    let canonical = template
+        .canonicalize_props(&provided)
+        .map_err(|e| format!("invalid props: {e}"))?;
+    let parsed: serde_json::Value =
+        serde_json::from_str(&canonical).map_err(|e| format!("canonical props parse: {e}"))?;
+    let obj = parsed
+        .as_object()
+        .ok_or_else(|| "canonical props is not a JSON object".to_string())?;
+    let props_map: imbl::HashMap<String, serde_json::Value> =
+        obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+
+    let resolved_end = match t_end_us {
+        Some(end) => end,
+        None => {
+            let duration_us =
+                (template.manifest.default_duration_s * 1_000_000.0) as i64;
+            t_start_us.saturating_add(duration_us)
+        }
+    };
+    if resolved_end <= t_start_us {
+        return Err(format!(
+            "t_end_us {resolved_end} must be greater than t_start_us {t_start_us}",
+        ));
+    }
+
+    let track = match track_id {
+        Some(s) => Uuid::parse_str(&s).map_err(|e| format!("track_id: {e}"))?,
+        None => {
+            let snap = handle.snapshot().await;
+            ensure_template_target_track(handle.inner(), snap.as_ref()).await?
+        }
+    };
+
+    let params = LayerParams::Template(TemplateParams {
+        template_id: template.id().to_string(),
+        template_version: template.manifest.version,
+        props: props_map,
+        transform: Transform::default(),
+        opacity: Animated::Static(1.0),
+    });
+
+    handle
+        .add_layer(Actor::User, track, params, t_start_us, resolved_end)
+        .await
+        .map(|id| id.to_string())
         .map_err(|e: CommandError| e.to_string())
 }
 

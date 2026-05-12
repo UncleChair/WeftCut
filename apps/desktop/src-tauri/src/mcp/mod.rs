@@ -1237,15 +1237,13 @@ fn parse_uuid(s: &str, field: &str) -> Result<Uuid, McpError> {
 }
 
 /// JSON payload shared by the `list_templates` tool and the
-/// `templates://current` resource. One source of truth so the two surfaces
-/// can't drift. Order = `template::builtins()` order (stable per build).
+/// `templates://current` resource. Wraps `raster::template::catalog()` so
+/// the Tauri-side picker (`commands::list_templates`) and the MCP surfaces
+/// emit the same JSON shape from the same source.
 fn templates_payload() -> Vec<Value> {
-    raster_template::builtins()
+    raster_template::catalog()
         .into_iter()
-        .map(|t| {
-            serde_json::to_value(&t.manifest)
-                .expect("Manifest is unconditionally Serialize")
-        })
+        .map(|m| serde_json::to_value(m).expect("Manifest is unconditionally Serialize"))
         .collect()
 }
 

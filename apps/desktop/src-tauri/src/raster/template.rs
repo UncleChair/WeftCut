@@ -240,6 +240,16 @@ builtin_template!(builtin_countdown, "countdown");
 builtin_template!(builtin_logo_bug, "logo_bug");
 builtin_template!(builtin_slate, "slate");
 
+/// Catalog entry — the JSON-serializable shape that the picker UI + the
+/// `list_templates` MCP tool + the `templates://current` resource all
+/// agree on. One source of truth so the three surfaces can't drift.
+///
+/// Fields are exactly the manifest's, so adding a new manifest field
+/// surfaces it everywhere without per-surface plumbing.
+pub fn catalog() -> Vec<Manifest> {
+    builtins().into_iter().map(|t| t.manifest).collect()
+}
+
 /// All built-in templates, in display order. The picker UI iterates this
 /// list; agents see the same set via `list_templates` (Stage H).
 pub fn builtins() -> Vec<Template> {

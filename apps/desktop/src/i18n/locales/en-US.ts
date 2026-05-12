@@ -40,6 +40,9 @@ const enUS = {
     activity: "📜 Activity…",
     activity_hint:
       "Recent edits from this session — both yours and any connected agent's. Filter by actor.",
+    templates: "✨ Templates…",
+    templates_hint:
+      "Pick a template overlay (lower third, title card, callout, …) and drop it on the timeline.",
   },
   compiler: {
     panel_title: "Compiled filter graph ({{count}} nodes)",
@@ -214,6 +217,20 @@ const enUS = {
     mute: "Mute",
     subtitles: "Subtitles",
     subtitles_source: "Source",
+  },
+  template_picker: {
+    heading: "Templates",
+    close: "Close",
+    loading: "Loading templates…",
+    empty: "No templates available.",
+    props_heading: "Props",
+    no_props: "(no editable props)",
+    timing_heading: "Timing",
+    insert_at: "Insert at (seconds)",
+    duration_hint:
+      "Layer length defaults to {{seconds}}s (the template's default_duration_s). Trim later in the timeline if you need a different length.",
+    add: "Add to timeline",
+    adding: "Adding…",
   },
   // Display labels for Rust-side enum discriminants. Keep keys lowercase so
   // `t("kinds." + value.toLowerCase())` works directly.

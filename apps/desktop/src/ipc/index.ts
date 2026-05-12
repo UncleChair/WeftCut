@@ -536,3 +536,54 @@ export async function getWaveformPeaks(mediaId: string): Promise<WaveformPeaks> 
 export async function getMediaThumbnail(mediaId: string): Promise<string> {
   return invoke<string>("get_media_thumbnail", { mediaId });
 }
+
+// ============================================================
+// Templates (Stage F + Stage F-Picker)
+// ============================================================
+
+/// Discriminated union mirroring `raster::template::PropSpec`. The picker
+/// switches on `type` to render the right input. New prop types must be
+/// added here AND in the picker's form generator.
+export type PropSpec =
+  | { type: "string"; default: string; max_length?: number }
+  | { type: "color"; default: string }
+  | { type: "number"; default: number; min?: number; max?: number };
+
+/// One catalog entry from `list_templates()`. Mirrors `raster::template::Manifest`.
+export interface TemplateSummary {
+  id: string;
+  name: string;
+  version: number;
+  /// `[width, height]` in pixels — the webview size the rasterizer uses.
+  size: [number, number];
+  default_duration_s: number;
+  /// Keyed by prop name. Map order is BTreeMap-stable (alphabetical) so the
+  /// picker can render fields in a deterministic order without sorting.
+  props_schema: Record<string, PropSpec>;
+}
+
+export async function listTemplates(): Promise<TemplateSummary[]> {
+  return invoke<TemplateSummary[]>("list_templates");
+}
+
+/// Add a template layer. Mirrors the MCP `add_template` tool's behavior:
+/// - `t_end_us` defaults to `t_start_us + default_duration_s * 1e6`.
+/// - `track_id` defaults to first existing Video track or auto-creates
+///   one labeled "Templates".
+/// - `props` is validated against the template's `props_schema`; unknown
+///   keys reject, missing keys fall back to defaults.
+export async function addTemplate(args: {
+  templateId: string;
+  tStartUs: number;
+  tEndUs?: number;
+  trackId?: string;
+  props?: Record<string, unknown>;
+}): Promise<string> {
+  return invoke<string>("add_template", {
+    templateId: args.templateId,
+    tStartUs: args.tStartUs,
+    tEndUs: args.tEndUs,
+    trackId: args.trackId,
+    props: args.props,
+  });
+}

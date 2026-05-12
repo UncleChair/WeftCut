@@ -43,6 +43,8 @@ const zhCN: Resources = {
     activity: "📜 活动…",
     activity_hint:
       "本会话的最近编辑——包括你和任何已连接代理的操作。可按操作者筛选。",
+    templates: "✨ 模板…",
+    templates_hint: "选择模板叠加层（下三分位、标题卡、标注…）并添加到时间轴。",
   },
   compiler: {
     panel_title: "编译后的滤镜图（{{count}} 个节点）",
@@ -215,6 +217,20 @@ const zhCN: Resources = {
     mute: "静音",
     subtitles: "字幕",
     subtitles_source: "来源",
+  },
+  template_picker: {
+    heading: "模板",
+    close: "关闭",
+    loading: "正在加载模板…",
+    empty: "无可用模板。",
+    props_heading: "参数",
+    no_props: "（无可编辑参数）",
+    timing_heading: "时间",
+    insert_at: "插入位置（秒）",
+    duration_hint:
+      "图层长度默认为 {{seconds}} 秒（模板的 default_duration_s）。如需不同长度，可在时间轴上裁剪。",
+    add: "添加到时间轴",
+    adding: "添加中…",
   },
   kinds: {
     video: "视频",

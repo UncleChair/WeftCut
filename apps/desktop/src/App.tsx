@@ -43,6 +43,7 @@ import { PropertyPanel } from "./properties/PropertyPanel";
 import { ActivityPanel } from "./activity/ActivityPanel";
 import { ConnectAgentPanel } from "./connect/ConnectAgentPanel";
 import { SettingsPanel } from "./settings/SettingsPanel";
+import { TemplatePicker } from "./templates/TemplatePicker";
 import { MediaThumbnail } from "./panels/MediaThumbnail";
 import {
   LOCALE_LABELS,
@@ -67,6 +68,7 @@ export function App() {
   const [connectOpen, setConnectOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
+  const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
 
   const seekTo = useCallback(async (tUs: number) => {
     setCurrentTimeUs(tUs);
@@ -488,6 +490,12 @@ export function App() {
         </button>
         <span className="separator" />
         <button
+          onClick={() => setTemplatePickerOpen(true)}
+          title={t("actions.templates_hint")}
+        >
+          {t("actions.templates")}
+        </button>
+        <button
           onClick={() => setConnectOpen(true)}
           title={t("actions.connect_agent_hint")}
         >
@@ -575,6 +583,13 @@ export function App() {
       )}
       {activityOpen && (
         <ActivityPanel onClose={() => setActivityOpen(false)} />
+      )}
+      {templatePickerOpen && (
+        <TemplatePicker
+          onClose={() => setTemplatePickerOpen(false)}
+          onAdded={refresh}
+          compositionDurationUs={summary?.duration_us ?? 0}
+        />
       )}
     </div>
   );
