@@ -250,6 +250,8 @@ pub fn run() {
             // active once the user has opened preview at least once; before
             // that, ChangeEvents are observed but ignored.
             #[cfg(feature = "mpv")]
+            let app_for_hotreload = app.handle().clone();
+            #[cfg(feature = "mpv")]
             tauri::async_runtime::spawn(async move {
                 use tokio::sync::broadcast::error::RecvError;
                 let mut rx = project_for_preview.subscribe();
@@ -282,7 +284,20 @@ pub fn run() {
                                 continue;
                             }
                         };
-                    let graph = match ir::lower(&snap, target, &inline_subs) {
+                    let template_renders = match ir::materialize_templates(
+                        &snap,
+                        &cache_for_hotreload,
+                        &app_for_hotreload,
+                    )
+                    .await
+                    {
+                        Ok(m) => m,
+                        Err(e) => {
+                            tracing::warn!("mpv hot-reload: materialize templates failed: {e}");
+                            continue;
+                        }
+                    };
+                    let graph = match ir::lower(&snap, target, &inline_subs, &template_renders) {
                         Ok(g) => g,
                         Err(e) => {
                             tracing::warn!("mpv hot-reload: lower failed: {e}");

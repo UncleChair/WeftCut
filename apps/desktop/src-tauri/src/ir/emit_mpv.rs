@@ -1,4 +1,4 @@
-//! libmpv-flavor `lavfi` emitter. Same graph shape as `emit_ffmpeg`, three
+﻿//! libmpv-flavor `lavfi` emitter. Same graph shape as `emit_ffmpeg`, three
 //! differences:
 //!
 //! 1. **Input labels.** ffmpeg uses `[N:v]` / `[N:a]` to reference its `-i N`
@@ -6,23 +6,23 @@
 //!    tracks*: the primary `loadfile` contributes `vid1`/`aid1`, each
 //!    `external-files` entry adds `vid2`/`aid2` and so on, in order.
 //! 2. **Output labels.** ffmpeg picks any label and `-map`s it. libmpv looks
-//!    for the magic names `[vo]` and `[ao]` — only those flow to the screen
+//!    for the magic names `[vo]` and `[ao]` â€” only those flow to the screen
 //!    and speakers.
 //! 3. **No flat `-i` list.** The first graph input becomes mpv's primary file
 //!    (`loadfile`); the rest go on `--external-files`. The plan returned here
 //!    splits accordingly.
 //!
-//! Caveat for mixed-stream inputs: `InputIdx N → vid(N+1)/aid(N+1)` assumes
+//! Caveat for mixed-stream inputs: `InputIdx N â†’ vid(N+1)/aid(N+1)` assumes
 //! each file contributes both selected tracks (or that the graph only ever
 //! references the kind it has). A video-only file followed by an audio-only
-//! file would break this — mpv numbers vid and aid independently of file
+//! file would break this â€” mpv numbers vid and aid independently of file
 //! order. Out of scope for the Phase 1 MVP fixture (uniform A/V mp4s); fix
 //! when the lowerer starts emitting graphs that mix kinds across inputs.
 
 use super::graph::IRGraph;
 use super::node::{IRNode, NodeId};
 
-/// Mirrors `emit_ffmpeg::subtitles_path_escape` — same lavfi grammar.
+/// Mirrors `emit_ffmpeg::subtitles_path_escape` â€” same lavfi grammar.
 fn subtitles_path_escape(path: &str) -> String {
     path.replace('\\', "/")
         .replace(':', "\\:")
@@ -33,7 +33,7 @@ fn subtitles_path_escape(path: &str) -> String {
 #[derive(Clone, Debug, PartialEq)]
 pub struct MpvPlan {
     /// File mpv should `loadfile` first (becomes `vid1`/`aid1`). `None` for
-    /// pure-Color projects with no decoded inputs — caller must decide whether
+    /// pure-Color projects with no decoded inputs â€” caller must decide whether
     /// to skip preview or load a synthetic placeholder.
     pub primary: Option<String>,
     /// Remaining input paths, joined into `--external-files`.
@@ -54,7 +54,7 @@ pub fn emit(graph: &IRGraph) -> MpvPlan {
 
     // mpv's loadfile / --external-files can't pass `-framerate` per input the
     // way ffmpeg can; PNG sequences would need the `mf://` protocol with
-    // `--mf-fps` set. Stage E1 ships ffmpeg export only — preview through mpv
+    // `--mf-fps` set. Stage E1 ships ffmpeg export only â€” preview through mpv
     // for Template layers is a Stage E2+ concern. For now, emit paths as-is
     // and let the lavfi side reference them.
     let inputs: Vec<String> = graph
@@ -134,7 +134,7 @@ impl<'a> Emitter<'a> {
                 src_out_us,
             } => {
                 let lbl = self.fresh_label("v");
-                // [0:v] → [vid1], [1:v] → [vid2], 1-indexed selected tracks.
+                // [0:v] â†’ [vid1], [1:v] â†’ [vid2], 1-indexed selected tracks.
                 let in_lbl = format!("[vid{}]", input + 1);
                 self.write_clause(&format!(
                     "{in_lbl} trim={start}:{end},setpts=PTS-STARTPTS {lbl}",
@@ -163,7 +163,7 @@ impl<'a> Emitter<'a> {
                 // demuxer feeds frames at a default 25 fps which the `loop`
                 // filter then repeats; mpv may emit a single frame and EOF
                 // instead. If preview shows a flash of the image then black,
-                // this is the suspect — workaround is the export path.
+                // this is the suspect â€” workaround is the export path.
                 let lbl = self.fresh_label("img");
                 let in_lbl = format!("[vid{}]", input + 1);
                 self.write_clause(&format!(
@@ -443,7 +443,7 @@ mod tests {
     fn empty_project_emits_color_to_vo() {
         use crate::state::project::Project;
         let p = Project::new_blank("empty");
-        let g = lower(&p, fixture_target(), &Default::default()).expect("lower");
+        let g = lower(&p, fixture_target(), &Default::default(), &Default::default()).expect("lower");
         let plan = emit(&g);
         assert!(plan.primary.is_none());
         assert!(plan.external_files.is_empty());
@@ -454,7 +454,7 @@ mod tests {
     }
 
     /// Pin the shape of the mpv lavfi-complex graph for a Text-on-Video
-    /// project — historically the failing case for the libmpv preview bug
+    /// project â€” historically the failing case for the libmpv preview bug
     /// (memory/project_text_preview_deferred.md). Asserts the seams that
     /// matter for filter-graph parsing: drawtext with single-quote-escaped
     /// fontfile that ALSO backslash-escapes the colon (both levels of
@@ -613,7 +613,7 @@ mod tests {
             settings: Default::default(),
         };
 
-        let g = lower(&p, fixture_target(), &Default::default()).expect("lower");
+        let g = lower(&p, fixture_target(), &Default::default(), &Default::default()).expect("lower");
         let plan = emit(&g);
 
         // 1. Single-line, `;`-separated.
@@ -747,7 +747,7 @@ mod tests {
             settings: Default::default(),
         };
 
-        let g = lower(&p, fixture_target(), &Default::default()).expect("lower");
+        let g = lower(&p, fixture_target(), &Default::default(), &Default::default()).expect("lower");
         let plan = emit(&g);
 
         assert_eq!(plan.primary.as_deref(), Some("/m/a.mp4"));

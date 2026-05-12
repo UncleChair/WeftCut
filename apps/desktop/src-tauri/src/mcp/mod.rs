@@ -1575,7 +1575,17 @@ impl ServerHandler for VidetorServer {
                         ));
                     }
                 };
-                match ir::lower(&snap, target, &inline_subs) {
+                let template_renders =
+                    match ir::materialize_templates(&snap, &self.cache, &self.app).await {
+                        Ok(m) => m,
+                        Err(e) => {
+                            return Err(McpError::internal_error(
+                                format!("materialize templates: {e}"),
+                                None,
+                            ));
+                        }
+                    };
+                match ir::lower(&snap, target, &inline_subs, &template_renders) {
                     Ok(graph) => serde_json::to_value(&graph).map_err(serialize_err)?,
                     Err(e) => {
                         return Err(McpError::internal_error(

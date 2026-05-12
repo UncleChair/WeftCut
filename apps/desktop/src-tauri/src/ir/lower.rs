@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use thiserror::Error;
 
 use super::graph::IRGraph;
-use super::materialize::InlineSubPaths;
+use super::materialize::{InlineSubPaths, TemplateRenders};
 use super::node::{FadeKind, IRNode, NodeId, PixFmt};
 use super::target::RenderTarget;
 use crate::state::animated::Animated;
@@ -35,12 +35,15 @@ pub enum LowerError {
     SubtitlesFileNotFound(String),
     #[error("subtitles inline source must be written to a temp file before lowering")]
     InlineSubtitlesNotMaterialized,
+    #[error("template layer {0} not materialized — call ir::materialize_templates first")]
+    TemplateNotMaterialized(LayerId),
 }
 
 pub fn lower(
     project: &Project,
     target: RenderTarget,
     inline_sub_paths: &InlineSubPaths,
+    template_renders: &TemplateRenders,
 ) -> Result<IRGraph, LowerError> {
     let mut g = IRGraph::new(target);
 
@@ -84,6 +87,7 @@ pub fn lower(
                         project,
                         target,
                         inline_sub_paths,
+                        template_renders,
                         &incoming,
                     )?;
                 }
@@ -111,6 +115,7 @@ pub fn lower(
                         project,
                         target,
                         inline_sub_paths,
+                        template_renders,
                         &incoming,
                     )?;
                     }
@@ -152,6 +157,7 @@ fn lower_video_layer(
     project: &Project,
     target: RenderTarget,
     inline_sub_paths: &InlineSubPaths,
+    template_renders: &TemplateRenders,
     incoming: &IncomingTransitions,
 ) -> Result<NodeId, LowerError> {
     match &layer.params {
@@ -351,7 +357,57 @@ fn lower_video_layer(
                 gate_end_us: layer.t_end_us,
             }))
         }
-        LayerParams::Template(_) => Err(LowerError::UnsupportedLayer { kind: "Template" }),
+        LayerParams::Template(p) => {
+            let info = template_renders
+                .get(&layer.id)
+                .ok_or(LowerError::TemplateNotMaterialized(layer.id))?;
+
+            let input = g.add_png_seq(&info.pattern_path, info.fps_num, info.fps_den);
+            let pngseq = g.add_node(IRNode::PngSeq {
+                input,
+                duration_us: info.duration_us,
+                alpha: true,
+            });
+
+            // Scale onto the canvas. Templates are authored at their native
+            // manifest size; a transform.scale tweak rides on top.
+            let scale_x = static_or(&p.transform.scale_x, 1.0);
+            let scale_y = static_or(&p.transform.scale_y, 1.0);
+            let target_w = ((info.width as f64) * scale_x) as u32;
+            let target_h = ((info.height as f64) * scale_y) as u32;
+            let scaled = g.add_node(IRNode::Scale {
+                in_: pngseq,
+                width: target_w.max(1),
+                height: target_h.max(1),
+            });
+
+            let placed = g.add_node(IRNode::SetPts {
+                in_: scaled,
+                offset_us: layer.t_start_us,
+            });
+
+            let alpha = static_or(&p.opacity, 1.0);
+            let with_alpha = if alpha < 1.0 - 1e-9 {
+                g.add_node(IRNode::Opacity {
+                    in_: placed,
+                    alpha,
+                })
+            } else {
+                placed
+            };
+
+            let x = static_or(&p.transform.x, 0.0) as i32;
+            let y = static_or(&p.transform.y, 0.0) as i32;
+
+            Ok(g.add_node(IRNode::Overlay {
+                base,
+                top: with_alpha,
+                x,
+                y,
+                gate_start_us: layer.t_start_us,
+                gate_end_us: layer.t_end_us,
+            }))
+        }
         LayerParams::Audio(_) => Err(LowerError::UnsupportedLayer {
             kind: "Audio on video track",
         }),

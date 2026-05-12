@@ -24,6 +24,24 @@ use crate::state::project::Project;
 
 pub type InlineSubPaths = imbl::HashMap<LayerId, PathBuf>;
 
+/// Per-Template-layer rasterization result the lower pass needs to emit a
+/// `PngSeq → Scale → SetPts → Overlay` chain. `pattern_path` is the printf
+/// glob `<dir>/frame_%05d.png` that `IRGraph::add_png_seq` consumes; the
+/// other fields drive the framerate flag, the layer's effective duration,
+/// and the destination canvas size.
+#[derive(Clone, Debug)]
+pub struct TemplateRenderInfo {
+    pub pattern_path: PathBuf,
+    pub frame_count: usize,
+    pub fps_num: u32,
+    pub fps_den: u32,
+    pub duration_us: i64,
+    pub width: u32,
+    pub height: u32,
+}
+
+pub type TemplateRenders = imbl::HashMap<LayerId, TemplateRenderInfo>;
+
 #[derive(Debug, Error)]
 pub enum MaterializeError {
     #[error("write inline subtitle for layer {layer}: {source}")]
@@ -32,6 +50,15 @@ pub enum MaterializeError {
         #[source]
         source: std::io::Error,
     },
+    #[error("unknown template `{template_id}` referenced by layer {layer}")]
+    UnknownTemplate {
+        layer: LayerId,
+        template_id: String,
+    },
+    #[error("invalid props for template on layer {layer}: {detail}")]
+    PropsValidation { layer: LayerId, detail: String },
+    #[error("rasterizer failed for layer {layer}: {detail}")]
+    Render { layer: LayerId, detail: String },
 }
 
 /// Walk every Subtitles layer with an inline body, hash it, and write a
@@ -88,6 +115,91 @@ pub fn materialize_inline_subtitles(
 
 fn io_from_anyhow(e: anyhow::Error) -> std::io::Error {
     std::io::Error::other(format!("{e:#}"))
+}
+
+/// Walk every `Template` layer, call `raster::render` against the built-in
+/// template registry, and return per-layer pointers into the content-keyed
+/// raster cache. Idempotent — every cache hit skips the webview entirely.
+///
+/// fps and duration are derived from the layer's timeline span: we sample
+/// at `composition.fps` so the resulting PngSeq frame rate matches the
+/// project's, avoiding extra resampling at emit time. A 1-second layer at
+/// 30 fps materializes 30 frames; a 200 ms layer at 30 fps materializes 6.
+pub async fn materialize_templates(
+    project: &Project,
+    cache: &CacheLayout,
+    app: &tauri::AppHandle,
+) -> Result<TemplateRenders, MaterializeError> {
+    use crate::raster::{self, template};
+
+    let builtins = template::builtins();
+    let mut out = TemplateRenders::new();
+    let fps_num = project.composition.fps.num.max(1);
+    let fps_den = project.composition.fps.den.max(1);
+    let fps_f = fps_num as f64 / fps_den as f64;
+
+    for track in project.tracks.iter() {
+        for layer in track.layers.iter() {
+            let LayerParams::Template(p) = &layer.params else {
+                continue;
+            };
+            let template = builtins
+                .iter()
+                .find(|t| t.id() == p.template_id)
+                .cloned()
+                .ok_or_else(|| MaterializeError::UnknownTemplate {
+                    layer: layer.id,
+                    template_id: p.template_id.clone(),
+                })?;
+
+            // imbl::HashMap<String, Value> → serde_json::Value::Object.
+            let mut props_obj = serde_json::Map::new();
+            for (k, v) in p.props.iter() {
+                props_obj.insert(k.clone(), v.clone());
+            }
+            let canonical = template
+                .canonicalize_props(&serde_json::Value::Object(props_obj))
+                .map_err(|e| MaterializeError::PropsValidation {
+                    layer: layer.id,
+                    detail: e.to_string(),
+                })?;
+
+            let duration_us = (layer.t_end_us - layer.t_start_us).max(1);
+            let dur_s = duration_us as f64 / 1_000_000.0;
+            let frame_count = ((dur_s * fps_f).ceil() as usize).max(1);
+            let times_s: Vec<f64> = (0..frame_count)
+                .map(|i| i as f64 / fps_f)
+                .collect();
+
+            let (w, h) = template.size();
+            let job = raster::RasterJob {
+                template,
+                props_canonical_json: canonical,
+                fps: fps_num,
+                times_s,
+            };
+            let render = raster::render(app, cache, job).await.map_err(|detail| {
+                MaterializeError::Render {
+                    layer: layer.id,
+                    detail,
+                }
+            })?;
+
+            out.insert(
+                layer.id,
+                TemplateRenderInfo {
+                    pattern_path: render.dir.join("frame_%05d.png"),
+                    frame_count: render.frames.len(),
+                    fps_num,
+                    fps_den,
+                    duration_us,
+                    width: w,
+                    height: h,
+                },
+            );
+        }
+    }
+    Ok(out)
 }
 
 #[cfg(test)]

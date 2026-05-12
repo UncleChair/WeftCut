@@ -62,7 +62,9 @@ pub fn spawn_spike(app: &AppHandle) -> Result<()> {
 /// Rasterizer version baked into every cache key. Bump when the capture
 /// pipeline changes in a way that should invalidate every prior render
 /// (e.g. shim semantics change, PNG format swap, frame timing fix).
-const RASTERIZER_VERSION: u32 = 1;
+/// v2: transparent background via SetDefaultBackgroundColor — v1 captures
+/// have an opaque-white backdrop and would composite wrong on overlay.
+const RASTERIZER_VERSION: u32 = 2;
 
 /// A render job. Cache-key inputs go into `blake3` (see [`cache_key`]); if
 /// the key already exists on disk we skip the webview entirely and reuse
@@ -149,6 +151,10 @@ pub async fn render(
     let window = app
         .get_webview_window("raster-worker")
         .ok_or_else(|| "raster-worker window not spawned".to_string())?;
+
+    // Pin transparent background each render — cheap, idempotent, and survives
+    // the case where the controller was reset by some other code path.
+    set_transparent_background(&window).await?;
 
     // Navigate the offscreen worker to the template's composed HTML, then
     // inject props, then wait for the template's start() to apply them.
@@ -474,6 +480,47 @@ fn eval_async_blocking(
     _script: &str,
 ) -> Result<String, String> {
     Err("raster eval_async: only wired on Windows so far".into())
+}
+
+/// Set the raster worker's default background color to fully transparent so
+/// template renders carry a real alpha channel (`format=yuva420p` in the IR
+/// only matters if the input PNG had alpha in the first place). Without this
+/// WebView2 paints an opaque white under everything.
+pub async fn set_transparent_background(window: &tauri::WebviewWindow) -> Result<(), String> {
+    let (tx, rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
+    let with_webview = window.with_webview(move |webview| {
+        let _ = tx.send(set_transparent_background_blocking(webview));
+    });
+    if let Err(e) = with_webview {
+        return Err(format!("with_webview: {e}"));
+    }
+    rx.await.map_err(|e| format!("oneshot recv: {e}"))?
+}
+
+#[cfg(windows)]
+fn set_transparent_background_blocking(
+    webview: tauri::webview::PlatformWebview,
+) -> Result<(), String> {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        COREWEBVIEW2_COLOR, ICoreWebView2Controller2,
+    };
+    use windows::core::Interface;
+
+    let controller = webview.controller();
+    let controller2: ICoreWebView2Controller2 = controller
+        .cast()
+        .map_err(|e| format!("cast to Controller2: {e}"))?;
+    let clear = COREWEBVIEW2_COLOR { A: 0, R: 0, G: 0, B: 0 };
+    unsafe { controller2.SetDefaultBackgroundColor(clear) }
+        .map_err(|e| format!("SetDefaultBackgroundColor: {e}"))?;
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn set_transparent_background_blocking(
+    _webview: tauri::webview::PlatformWebview,
+) -> Result<(), String> {
+    Err("transparent background: only wired on Windows so far".into())
 }
 
 #[cfg(windows)]

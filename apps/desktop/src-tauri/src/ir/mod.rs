@@ -1,4 +1,4 @@
-//! Render graph IR: resolve → pre-rasterize → lower → optimize → validate → emit.
+﻿//! Render graph IR: resolve â†’ pre-rasterize â†’ lower â†’ optimize â†’ validate â†’ emit.
 //!
 //! One IR, two emit targets: ffmpeg `-filter_complex_script` for export and
 //! libmpv `--lavfi-complex` for live preview. Identical pixels at different scales.
@@ -11,7 +11,7 @@
 //! Design: `docs/rendering.md` part 1.
 
 // The `pub use` re-exports below expose the IR's public surface. Some are
-// only consumed by tests / future phases / external callers — silence
+// only consumed by tests / future phases / external callers â€” silence
 // unused-import warnings for this re-export module rather than peppering
 // individual lines.
 #![allow(unused_imports)]
@@ -28,7 +28,10 @@ pub use emit_ffmpeg::{FfmpegPlan, emit as emit_ffmpeg};
 pub use emit_mpv::{MpvPlan, emit as emit_mpv};
 pub use graph::IRGraph;
 pub use lower::{LowerError, lower};
-pub use materialize::{InlineSubPaths, MaterializeError, materialize_inline_subtitles};
+pub use materialize::{
+    InlineSubPaths, MaterializeError, TemplateRenderInfo, TemplateRenders,
+    materialize_inline_subtitles, materialize_templates,
+};
 pub use node::{FadeKind, IRNode, InputIdx, NodeId, PixFmt, StreamKind};
 pub use target::{Quality, RenderTarget};
 
@@ -154,7 +157,7 @@ mod tests {
     #[test]
     fn empty_project_emits_minimal_color_canvas() {
         let p = Project::new_blank("empty");
-        let g = lower(&p, fixture_target(), &Default::default()).expect("lower");
+        let g = lower(&p, fixture_target(), &Default::default(), &Default::default()).expect("lower");
         // Color base + OutV. No audio.
         assert_eq!(g.inputs.len(), 0);
         assert!(g.video_out.is_some());
@@ -170,7 +173,7 @@ mod tests {
     #[test]
     fn one_video_clip_lowers_to_decode_scale_fps_setpts_overlay() {
         let p = project_with_one_clip();
-        let g = lower(&p, fixture_target(), &Default::default()).expect("lower");
+        let g = lower(&p, fixture_target(), &Default::default(), &Default::default()).expect("lower");
         assert_eq!(g.inputs.len(), 1);
         assert_eq!(g.inputs[0].path.to_str().unwrap(), "/m/a.mp4");
         assert_eq!(g.inputs[0].framerate, None);
@@ -201,7 +204,7 @@ mod tests {
     #[test]
     fn ffmpeg_emit_matches_expected_clip_pipeline() {
         let p = project_with_one_clip();
-        let g = lower(&p, fixture_target(), &Default::default()).expect("lower");
+        let g = lower(&p, fixture_target(), &Default::default(), &Default::default()).expect("lower");
         let plan = emit_ffmpeg(&g);
 
         assert_eq!(plan.inputs.len(), 1);
@@ -263,7 +266,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
         p.media_pool.insert(media_id, media);
         p.tracks.push_back(track);
 
-        let g = lower(&p, fixture_target(), &Default::default()).expect("lower");
+        let g = lower(&p, fixture_target(), &Default::default(), &Default::default()).expect("lower");
         let plan = emit_ffmpeg(&g);
         assert!(plan.maps.contains(&"[aout]".to_string()));
         // Single audio source: no amix node, OutA wraps the Adelay directly.
@@ -339,7 +342,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
         p.media_pool.insert(media_id, media);
         p.tracks.push_back(track);
 
-        let g = lower(&p, fixture_target(), &Default::default()).expect("lower");
+        let g = lower(&p, fixture_target(), &Default::default(), &Default::default()).expect("lower");
         assert_eq!(g.inputs.len(), 1);
         assert!(matches!(
             g.nodes.iter().find(|n| matches!(n, IRNode::ImageDecode { .. })),
@@ -414,7 +417,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
         p.composition.duration_us = 5_000_000;
         p.tracks.push_back(track);
 
-        let g = lower(&p, fixture_target(), &Default::default()).expect("lower");
+        let g = lower(&p, fixture_target(), &Default::default(), &Default::default()).expect("lower");
         // No external inputs for a text-only project.
         assert!(g.inputs.is_empty());
         // Should contain a DrawText node.
@@ -430,7 +433,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
         );
         // Format-string expansion suppressed so `%{pts}` etc render literally.
         assert!(plan.filter_graph.contains("expansion=none"));
-        // Font resolution differs by host OS — Windows ships ffmpeg builds
+        // Font resolution differs by host OS â€” Windows ships ffmpeg builds
         // without a fontconfig default, so we emit `fontfile=` instead of
         // `font=`. See `drawtext_font_option`.
         #[cfg(target_os = "windows")]
@@ -495,15 +498,15 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
     fn empty_project_graph_parses_through_ffmpeg() {
         use std::process::{Command, Stdio};
         let Ok(probe) = Command::new("ffmpeg").arg("-version").output() else {
-            eprintln!("ffmpeg not on PATH — skipping graph-parse smoke test");
+            eprintln!("ffmpeg not on PATH â€” skipping graph-parse smoke test");
             return;
         };
         if !probe.status.success() {
-            eprintln!("ffmpeg returned non-zero — skipping");
+            eprintln!("ffmpeg returned non-zero â€” skipping");
             return;
         }
         let p = Project::new_blank("empty");
-        let g = lower(&p, fixture_target(), &Default::default()).expect("lower");
+        let g = lower(&p, fixture_target(), &Default::default(), &Default::default()).expect("lower");
         let plan = emit_ffmpeg(&g);
 
         // -filter_complex_script reads from stdin when given `-`. Map the only
@@ -537,7 +540,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
     /// End-to-end sanity: a project with Color base + Text layer compiles to
     /// a graph that ffmpeg actually renders to a non-empty mp4. This is the
     /// Phase 3 exit-criteria test ("output plays correctly") at the
-    /// generated-bytes level — proving the file is parseable + readable
+    /// generated-bytes level â€” proving the file is parseable + readable
     /// downstream is the user-visible spec, but a zero-size file is the
     /// fastest discriminator and catches the "filter graph silently
     /// produced no output" class of bug.
@@ -589,7 +592,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
         let mut p = Project::new_blank("text-render");
         p.composition.duration_us = 1_000_000;
         p.tracks.push_back(track);
-        let g = lower(&p, fixture_target(), &Default::default()).expect("lower");
+        let g = lower(&p, fixture_target(), &Default::default(), &Default::default()).expect("lower");
         let plan = emit_ffmpeg(&g);
 
         let Some((ok, out, stderr)) = run_graph_through_ffmpeg(
@@ -608,7 +611,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
                 "1",
             ],
         ) else {
-            eprintln!("ffmpeg not on PATH — skipping render test");
+            eprintln!("ffmpeg not on PATH â€” skipping render test");
             return;
         };
         assert!(ok, "ffmpeg failed:\n--- graph ---\n{}\n--- stderr ---\n{}", plan.filter_graph, stderr);
@@ -686,7 +689,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
         p.media_pool.insert(media_id, media);
         p.tracks.push_back(track);
 
-        let g = match lower(&p, fixture_target(), &Default::default()) {
+        let g = match lower(&p, fixture_target(), &Default::default(), &Default::default()) {
             Ok(g) => g,
             Err(e) => {
                 let _ = std::fs::remove_file(&srt_path);
@@ -711,7 +714,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
             ],
         ) else {
             let _ = std::fs::remove_file(&srt_path);
-            eprintln!("ffmpeg not on PATH — skipping subtitle render test");
+            eprintln!("ffmpeg not on PATH â€” skipping subtitle render test");
             return;
         };
         let _ = std::fs::remove_file(&srt_path);
@@ -733,7 +736,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
     }
 
     /// Inline-source subtitles travel through `materialize_inline_subtitles`
-    /// before `lower` — the materialization writes a content-addressed file
+    /// before `lower` â€” the materialization writes a content-addressed file
     /// to the cache and `lower` reads the path from the side map. End-to-end
     /// through actual ffmpeg ensures the grammar at the seam holds, not just
     /// that string substitution doesn't crash.
@@ -778,7 +781,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
 
         let inline_subs = materialize_inline_subtitles(&p, &cache).expect("materialize");
         assert_eq!(inline_subs.len(), 1);
-        let g = lower(&p, fixture_target(), &inline_subs).expect("lower");
+        let g = lower(&p, fixture_target(), &inline_subs, &Default::default()).expect("lower");
         let plan = emit_ffmpeg(&g);
 
         let Some((ok, out, stderr)) = run_graph_through_ffmpeg(
@@ -797,7 +800,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
                 "1",
             ],
         ) else {
-            eprintln!("ffmpeg not on PATH — skipping inline-subs render test");
+            eprintln!("ffmpeg not on PATH â€” skipping inline-subs render test");
             return;
         };
         if !ok {
@@ -820,12 +823,12 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
     /// layers with an authorized Transition lower to a graph that ffmpeg
     /// renders into a non-empty mp4. Catches regressions in the alpha-fade
     /// + Format(yuva420p) emission seams which string-only tests miss
-    /// (the `;` separator bug from Phase 1 → Phase 2 lived in exactly this
+    /// (the `;` separator bug from Phase 1 â†’ Phase 2 lived in exactly this
     /// gap).
     ///
     /// What this test does NOT verify: the visual blend math. ffmpeg's
     /// `overlay` filter with a yuva420p top and yuv420p base should produce
-    /// `out = top*alpha + base*(1-alpha)` — verifying that requires frame
+    /// `out = top*alpha + base*(1-alpha)` â€” verifying that requires frame
     /// extraction + pixel sampling, which we don't do here. A future ffmpeg
     /// version changing overlay semantics would silently pass this test
     /// while breaking visual output.
@@ -891,7 +894,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
         // ever drifts away from "authorized overlap with matching duration".
         crate::state::validate::validate(&p).expect("validation");
 
-        let g = lower(&p, fixture_target(), &Default::default()).expect("lower");
+        let g = lower(&p, fixture_target(), &Default::default(), &Default::default()).expect("lower");
         let plan = emit_ffmpeg(&g);
 
         // The emitted graph MUST contain the alpha-fade clause and a
@@ -925,7 +928,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
                 "5",
             ],
         ) else {
-            eprintln!("ffmpeg not on PATH — skipping crossfade render test");
+            eprintln!("ffmpeg not on PATH â€” skipping crossfade render test");
             return;
         };
         if !ok {
@@ -944,6 +947,156 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
         );
     }
 
+    /// Stage E2 smoke: a Project with a Template layer + a hand-built
+    /// `TemplateRenders` map (pointing at a fixture PNG sequence so the
+    /// test doesn't depend on a webview) flows through
+    /// `lower → emit_ffmpeg → ffmpeg` into a non-empty mp4. Catches
+    /// regressions across the full Template → PngSeq → Overlay seam
+    /// without needing an offscreen webview in CI.
+    #[test]
+    fn template_layer_renders_through_ffmpeg() {
+        use crate::ir::materialize::{TemplateRenderInfo, TemplateRenders};
+        use crate::state::layer::TemplateParams;
+        use crate::state::transform::Transform;
+        use std::process::Command;
+        use tempfile::TempDir;
+
+        let Ok(probe) = Command::new("ffmpeg").arg("-version").output() else {
+            eprintln!("ffmpeg not on PATH — skipping template smoke");
+            return;
+        };
+        if !probe.status.success() {
+            eprintln!("ffmpeg returned non-zero — skipping template smoke");
+            return;
+        }
+
+        // Fixture: three transparent-magenta PNG frames, mimicking what
+        // `raster::render` would have written for a 0.3s @ 10 fps render.
+        let dir = TempDir::new().unwrap();
+        let pattern = dir.path().join("frame_%05d.png");
+        let gen = Command::new("ffmpeg")
+            .args(["-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi"])
+            .arg("-i")
+            .arg("color=c=0x00000000:s=320x180:d=0.3:r=10")
+            .args(["-vf", "drawbox=x=80:y=40:w=160:h=100:color=0xff44aa@0.85:t=fill"])
+            .args(["-frames:v", "3"])
+            .arg(&pattern)
+            .output()
+            .expect("generate fixture PNGs");
+        assert!(gen.status.success(), "fixture: {}", String::from_utf8_lossy(&gen.stderr));
+
+        // Build a Project with a single Template layer.
+        let track_id = Uuid::parse_str("01900000-0000-7000-8000-000000000fe1").unwrap();
+        let layer_id = Uuid::parse_str("01900000-0000-7000-8000-000000000fe2").unwrap();
+        let template = TemplateParams {
+            template_id: "lower-third-simple".into(),
+            template_version: 1,
+            props: imbl::HashMap::new(),
+            transform: Transform::default(),
+            opacity: Animated::Static(1.0),
+        };
+        let layer = Layer {
+            id: layer_id,
+            label: None,
+            t_start_us: 0,
+            t_end_us: 300_000,
+            enabled: true,
+            locked: false,
+            metadata: imbl::HashMap::new(),
+            effects: imbl::Vector::new(),
+            params: LayerParams::Template(template),
+        };
+        let track = Track {
+            id: track_id,
+            kind: TrackKind::Video,
+            label: None,
+            enabled: true,
+            locked: false,
+            removable: true,
+            height_px: 64,
+            layers: imbl::vector![layer],
+        };
+        let mut p = Project::new_blank("template-smoke");
+        p.composition.duration_us = 300_000;
+        p.tracks.clear();
+        p.tracks.push_back(track);
+
+        // Hand-build the TemplateRenders the way `materialize_templates`
+        // would after a real webview render — skip the async webview hop.
+        let mut renders = TemplateRenders::new();
+        renders.insert(
+            layer_id,
+            TemplateRenderInfo {
+                pattern_path: pattern.clone(),
+                frame_count: 3,
+                fps_num: 10,
+                fps_den: 1,
+                duration_us: 300_000,
+                width: 800,
+                height: 200,
+            },
+        );
+
+        let g = lower(&p, fixture_target(), &Default::default(), &renders).expect("lower");
+        let plan = emit_ffmpeg(&g);
+
+        // Sanity: the input must carry the framerate flag; the graph must
+        // include format=yuva420p (template alpha) AND an overlay that
+        // composites onto the Color base.
+        assert_eq!(plan.inputs.len(), 1, "one PngSeq input");
+        assert_eq!(plan.inputs[0].framerate, Some((10, 1)));
+        assert!(
+            plan.filter_graph.contains("format=yuva420p"),
+            "expected format=yuva420p in template graph:\n{}",
+            plan.filter_graph,
+        );
+        assert!(
+            plan.filter_graph.contains("overlay="),
+            "expected overlay= in template graph:\n{}",
+            plan.filter_graph,
+        );
+
+        let script = std::env::temp_dir()
+            .join(format!("videtor-tmpl-graph-{}.txt", Uuid::now_v7().simple()));
+        let out_path = std::env::temp_dir()
+            .join(format!("videtor-tmpl-out-{}.mp4", Uuid::now_v7().simple()));
+        std::fs::write(&script, &plan.filter_graph).expect("write script");
+
+        let mut cmd = Command::new("ffmpeg");
+        cmd.args(["-y", "-hide_banner", "-nostats", "-loglevel", "error"]);
+        for input in &plan.inputs {
+            for arg in input.cli_args() {
+                cmd.arg(arg);
+            }
+        }
+        cmd.arg("-filter_complex_script").arg(&script);
+        for m in &plan.maps {
+            cmd.arg("-map").arg(m);
+        }
+        cmd.args([
+            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-t", "0.3",
+        ])
+        .arg(&out_path);
+
+        let out = cmd.output().expect("run ffmpeg");
+        let _ = std::fs::remove_file(&script);
+        if !out.status.success() {
+            let _ = std::fs::remove_file(&out_path);
+            panic!(
+                "ffmpeg rejected template graph:\n--- graph ---\n{}\n--- stderr ---\n{}",
+                plan.filter_graph,
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        let size = std::fs::metadata(&out_path).map(|m| m.len()).unwrap_or(0);
+        let _ = std::fs::remove_file(&out_path);
+        assert!(
+            size > 512,
+            "template mp4 suspiciously small ({size} bytes)\n--- graph ---\n{}",
+            plan.filter_graph,
+        );
+    }
+
     /// Stage E1 smoke: a hand-built IR with a `PngSeq` overlay on top of a
     /// `Color` base renders through ffmpeg into a non-empty mp4, and the
     /// alpha=true branch emits the `format=yuva420p` conversion the overlay
@@ -956,11 +1109,11 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
         use tempfile::TempDir;
 
         let Ok(probe) = Command::new("ffmpeg").arg("-version").output() else {
-            eprintln!("ffmpeg not on PATH — skipping pngseq smoke");
+            eprintln!("ffmpeg not on PATH â€” skipping pngseq smoke");
             return;
         };
         if !probe.status.success() {
-            eprintln!("ffmpeg returned non-zero — skipping pngseq smoke");
+            eprintln!("ffmpeg returned non-zero â€” skipping pngseq smoke");
             return;
         }
 
@@ -986,8 +1139,8 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
             String::from_utf8_lossy(&gen.stderr)
         );
 
-        // Hand-build the IR: Color base → PngSeq (alpha) → Scale → SetPts →
-        // Overlay → OutV(yuv420p).
+        // Hand-build the IR: Color base â†’ PngSeq (alpha) â†’ Scale â†’ SetPts â†’
+        // Overlay â†’ OutV(yuv420p).
         let target = RenderTarget::full(320, 180, Rational::new(30, 1), 48000, 2);
         let mut g = IRGraph::new(target);
 
@@ -1147,7 +1300,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
         p.media_pool.insert(media_id, media);
         p.tracks.push_back(track);
 
-        let g = lower(&p, fixture_target(), &Default::default()).expect("lower");
+        let g = lower(&p, fixture_target(), &Default::default(), &Default::default()).expect("lower");
         let plan = emit_mpv(&g);
         assert_eq!(plan.primary.as_deref(), Some("/m/logo.png"));
         assert!(plan.lavfi_complex.contains("[vid1] loop=loop=-1:size=1"));
