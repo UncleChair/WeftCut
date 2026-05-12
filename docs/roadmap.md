@@ -283,11 +283,14 @@ Tool count today: **23** (`ping` + 17 edit + 5 workflow). Spec target was ~25; t
 
 ### Phase 5 status (2026-05-12)
 
-**Substantially complete — stages A through F shipped.** The architectural
+**Substantially complete — stages A through F + H + F-Picker shipped, plus
+the UX paper-cut closure for overlay z-stack ordering.** The architectural
 pipeline (offscreen webview → time-mock shim → cache → template loader → IR
 PngSeq → emit → ffmpeg → mp4) is end-to-end functional and validated by smoke
-tests. The starter set (10 templates) is shipped. Remaining work is purely
-additive: macOS / Linux capture paths (G) + MCP wrappers (H).
+tests. The starter set (10 templates) is shipped. Agents drive templates via
+MCP `list_templates` / `add_template`; users drive them via the ✨ Templates
+modal. Only Stage G (macOS / Linux capture paths) remains — premature without
+a second-platform user.
 
 Commits, in order:
 
@@ -301,19 +304,51 @@ Commits, in order:
 | E1 | `9119e2a` | `InputSpec { path, framerate: Option<(u32, u32)> }` replaces `Vec<PathBuf>` for image-sequence inputs that need `-framerate N/D`. `IRNode::PngSeq { input, duration_us, alpha }` lowers to `trim → setpts → format=yuva420p` chain. Smoke test asserts alpha round-trips. |
 | E2 | `185edd1` | `materialize_templates` async pre-lower pass + `lower()` 4th-arg `template_renders` map + Template arm emitting `PngSeq → Scale → SetPts → Overlay`. All 5 lower() call sites updated (compile, mpv preview, export, mcp compiled resource, mpv hot-reload). WebView2 `SetDefaultBackgroundColor(0,0,0,0)` flips captures from `pix_fmt rgb` → `rgba` so alpha makes it to ffmpeg. End-to-end smoke `template_layer_renders_through_ffmpeg` proves the full pipeline produces a non-empty mp4 with `format=yuva420p` + `overlay=` in the graph. |
 | F | `e0ffcf7` | 9 new built-in templates (`lower-third-glow`, `lower-third-bar`, `title-card`, `captions-strip`, `callout`, `progress-bar`, `countdown`, `logo-bug`, `slate`) round out the spec's 8-category starter set (lower thirds × 3 with the existing `lower-third-simple`, title card, captions, callout, progress bar, countdown, logo bug, slate). Per-template webview resize added (`window.set_size(LogicalSize)` before navigate) so templates can declare natural sizes (1920×1080 title card, 1920×80 progress bar, 480×480 countdown, …) instead of all sharing the lower-third 800×200. `builtin_template!` macro folds the include_str! trio into one line per template. 4 new tests assert every builtin parses + defaults validate, ids are unique (cache-key guard), starter-set ids match the spec, and every HTML carries the `__STYLE__` placeholder. 184 → 188 lib tests. Title-card verified end-to-end via real WebView2 render (1921×1081 capture, ~650 ms cold / ~6 ms warm). |
-| H | this commit | `list_templates` MCP tool (returns the catalog) + `add_template` MCP tool (resolves template, canonicalizes props, defaults `t_end_us` from manifest duration, defaults `track_id` to first Video track or auto-creates a "Templates" track) + `templates://current` resource sharing the `templates_payload()` helper with `list_templates`. `ensure_template_target_track` mirrors the existing `ensure_audio_track` / `ensure_subtitle_track` defaulting. `resolve_template_t_end_us` extracted for testability with i64-saturating guard. 188 → 192 lib tests. |
+| H | `9eb9945` | `list_templates` MCP tool (returns the catalog) + `add_template` MCP tool (resolves template, canonicalizes props, defaults `t_end_us` from manifest duration, defaults `track_id` to first Video track or auto-creates an "Overlay" track) + `templates://current` resource sharing the `templates_payload()` helper with `list_templates`. `ensure_template_target_track` mirrors the existing `ensure_audio_track` / `ensure_subtitle_track` defaulting. `resolve_template_t_end_us` extracted for testability with i64-saturating guard. 188 → 192 lib tests. |
+| F-Picker | `075f170` | React `TemplatePicker.tsx` modal (left column: template grid; right column: props form generated from `props_schema` — switches on `PropSpec.type` for text / color / number inputs with bounds wired through). Backend: `raster::template::catalog()` factored as single source of truth shared by MCP and the new Tauri-side `commands::list_templates` / `commands::add_template`. ✨ Templates button in App.tsx header. EN + zh-CN strings. Known v1 caveats: 6-char color picker loses alpha on edit; no track-selector dropdown; no preview thumbnails. |
+| UX paper-cut (option 3) | `4fb78cf` | Closes the z-stack ordering bug where overlays (Image drops, +Text demo button, picker templates, MCP templates) landed on the first Video track (= base video = bottom of z-stack) and were occluded. All four paths now route through a shared auto-created "Overlay" Video track via `commands::ensure_overlay_track`. Exact label-match — renaming "Overlay" opts out. |
 
-### Deliberately deferred from Phase 5 (Stage G / H)
+### Deliberately deferred from Phase 5 (Stage G remains open)
 
 | Slice | Status |
 |---|---|
 | **macOS `WKWebView.takeSnapshot`** | Stage G1. Same shape as the Windows path: get the platform webview via Tauri's `with_webview`, call the platform capture API, dump bytes to disk. `set_transparent_background` needs the mac equivalent (`setOpaque:false`). |
 | **Linux `webkit_web_view_get_snapshot` + Chromium fallback** | Stage G2. Soft spot per spec — WebKitGTK snapshot maturity is the unknown. Fallback is bundled headless Chromium via `chromiumoxide` if WebKitGTK falls over. |
 | **mpv `mf://` / `--mf-fps` for PngSeq preview** | Stage E1 emit_mpv handles InputSpec but ffmpeg export is the only path that respects per-input framerate today. Preview still works for non-template projects; Template layers in live preview are a follow-up. |
-| **MCP `add_template` tool + `templates://` resources** | ✅ Stage H shipped. `list_templates`, `add_template`, `templates://current` resource. Tracks default to first Video track (auto-create "Templates" track if none); `t_end_us` derives from manifest `default_duration_s` when omitted; `props` validates through `Template::canonicalize_props`. 4 new mcp helper tests. |
+| **MCP `add_template` tool + `templates://` resources** | ✅ Stage H shipped (`9eb9945`). |
+| **React template-picker UI** | ✅ F-Picker shipped (`075f170`). |
 | **Worker pool (>1 webview)** | Single-webview rendering is fine for v1. Multi-worker parallelism makes sense after we have multiple-template-per-export workloads. |
 | **LRU cache eviction** | Cache writes go to `<cache>/raster/<key>/` with no size cap today. Easy to add a background sweep when total bytes cross a threshold; not load-bearing for v1. |
-| **Template-picker UI in React** | Phase 7. The compile pipeline accepts Template layers today; users just have no way to add them from the timeline UI yet. |
+| **Preview thumbnails for templates** (`templates://{id}/preview`) | Picker shows id + size + name; no rendered preview yet. Needs a thumbnail generator that does an off-line render of each builtin at install time. |
+| **Verify the other 8 starter templates render** | Title-card WebView2-proven 2026-05-12; lower-third-glow, lower-third-bar, captions-strip, callout, progress-bar, countdown, logo-bug, slate are pipeline-unverified. Easiest smoke now is the picker (✨ Templates → Add → Export). |
+
+### Phase 4.x last gap closed (`8a1af7c`)
+
+**`dry_run` shipped 2026-05-12.** Closes the documented Phase 4.x deferral.
+Approach matched the plan in `project_phase_status.md`: six mutation methods
+(`do_add_layer`, `do_delete_layer`, `do_update_layer`,
+`do_update_layer_params`, `do_move_layer`, `do_split_layer`) split into pure
+`apply_*` free functions operating on `&mut Project`; each `do_*` now reads
+"clone + apply + commit". Behavior-preserving — 192 prior tests stayed green.
+
+New `Command::DryRun { ops, reply }` variant + `ProjectActor::do_dry_run`
+dispatcher. Clones the current project once, loops `apply_X → validate(&next)
+→ next op`, halts on first error. **Per-op validation** (not just at the end)
+matches `commit()`'s honest behaviour — without it, "add overlapping A; move
+A to fix" would dry-run ✅ but fail at op 1 in real execution.
+
+MCP `dry_run` tool with tagged-union `OperationSpec` covering seven op
+kinds: `add_color_layer`, `add_video_layer`, `update_layer`,
+`update_layer_params`, `move_layer`, `split_layer`, `delete_layer`. Returns
+`{ results: [{ index, status, output? | error? }, ...], halted_at }` so the
+agent can pinpoint exactly where the chain would fail. Out of v1 scope:
+`add_template` / `apply_subtitles` / `import_media` / `undo` / `redo` /
+`render` — they touch raster cache / cloud / filesystem / history walks,
+not pure state.
+
+192 → 196 lib tests (`dry_run_does_not_mutate_state`,
+`dry_run_halts_at_first_validation_error`, `dry_run_chains_state_across_ops`,
+`dry_run_surfaces_apply_errors_with_correct_op_index`).
 
 ## Phase 6 — Cloud transcription + TTS + auto-caption / voiceover (1–1.5 weeks)
 
