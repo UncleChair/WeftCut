@@ -5299,6 +5299,8 @@ dependencies = [
  "tracing-subscriber",
  "ts-rs",
  "uuid",
+ "webview2-com 0.37.0",
+ "windows 0.61.3",
  "wry 0.46.3",
 ]
 

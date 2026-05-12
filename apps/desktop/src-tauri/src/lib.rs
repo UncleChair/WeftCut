@@ -117,6 +117,7 @@ pub fn run() {
             let cache_for_mcp = cache_layout.clone();
             #[cfg(feature = "mpv")]
             let cache_for_hotreload = cache_layout.clone();
+            let cache_for_spike = cache_layout.clone();
             app.manage(cache_layout);
 
             // Render queue. Single-task FIFO; emits `export:queue` events on
@@ -139,6 +140,13 @@ pub fn run() {
 
             if let Err(e) = raster::spawn_spike(app.handle()) {
                 tracing::error!("raster spike failed: {e:?}");
+            } else {
+                // Phase 5 spike: snapshot the offscreen webview to a PNG once,
+                // shortly after startup. The log line `raster capture spike:
+                // wrote N bytes …` confirms the load-bearing capture path
+                // works before we build the rest of the rasterizer.
+                let dest = cache_for_spike.root().join("raster-spike.png");
+                raster::schedule_capture_spike(app.handle(), dest);
             }
             tauri::async_runtime::spawn(async {
                 match ffmpeg::bootstrap().await {
