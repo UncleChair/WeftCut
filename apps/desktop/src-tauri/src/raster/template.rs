@@ -204,28 +204,57 @@ pub enum TemplateError {
 }
 
 // -- Built-in starter templates ------------------------------------------
+//
+// Stage F: 9 templates total. Each lives in `templates/<id>/` as the trio
+// `{manifest.json, index.html, style.css}` and is embedded via `include_str!`
+// so the desktop binary ships them without runtime file access. The set
+// covers the spec's 8 categories (lower thirds × 3 — counting the existing
+// `lower-third-simple` — intro/outro title card, captions strip, callout,
+// progress bar, countdown, logo bug, slate).
 
-const LOWER_THIRD_HTML: &str = include_str!("templates/lower_third_simple/index.html");
-const LOWER_THIRD_STYLE: &str = include_str!("templates/lower_third_simple/style.css");
-const LOWER_THIRD_MANIFEST: &str =
-    include_str!("templates/lower_third_simple/manifest.json");
-
-/// Simple lower-third title card. Reads `title`, `subtitle`, `color` props;
-/// rAF-driven slide-in animation over the first 0.6 s so a multi-frame
-/// render shows visible motion.
-pub fn builtin_lower_third_simple() -> Template {
-    let manifest: Manifest =
-        serde_json::from_str(LOWER_THIRD_MANIFEST).expect("built-in manifest must parse");
-    Template {
-        manifest,
-        html: LOWER_THIRD_HTML.to_string(),
-        style: LOWER_THIRD_STYLE.to_string(),
-    }
+macro_rules! builtin_template {
+    ($fn_name:ident, $dir:literal) => {
+        pub fn $fn_name() -> Template {
+            const MANIFEST: &str = include_str!(concat!("templates/", $dir, "/manifest.json"));
+            const HTML: &str = include_str!(concat!("templates/", $dir, "/index.html"));
+            const STYLE: &str = include_str!(concat!("templates/", $dir, "/style.css"));
+            let manifest: Manifest =
+                serde_json::from_str(MANIFEST).expect("built-in manifest must parse");
+            Template {
+                manifest,
+                html: HTML.to_string(),
+                style: STYLE.to_string(),
+            }
+        }
+    };
 }
 
-/// All built-in templates, in display order.
+builtin_template!(builtin_lower_third_simple, "lower_third_simple");
+builtin_template!(builtin_lower_third_glow, "lower_third_glow");
+builtin_template!(builtin_lower_third_bar, "lower_third_bar");
+builtin_template!(builtin_title_card, "title_card");
+builtin_template!(builtin_captions_strip, "captions_strip");
+builtin_template!(builtin_callout, "callout");
+builtin_template!(builtin_progress_bar, "progress_bar");
+builtin_template!(builtin_countdown, "countdown");
+builtin_template!(builtin_logo_bug, "logo_bug");
+builtin_template!(builtin_slate, "slate");
+
+/// All built-in templates, in display order. The picker UI iterates this
+/// list; agents see the same set via `list_templates` (Stage H).
 pub fn builtins() -> Vec<Template> {
-    vec![builtin_lower_third_simple()]
+    vec![
+        builtin_lower_third_simple(),
+        builtin_lower_third_glow(),
+        builtin_lower_third_bar(),
+        builtin_title_card(),
+        builtin_captions_strip(),
+        builtin_callout(),
+        builtin_progress_bar(),
+        builtin_countdown(),
+        builtin_logo_bug(),
+        builtin_slate(),
+    ]
 }
 
 #[cfg(test)]
@@ -307,5 +336,95 @@ mod tests {
         assert!(!is_hex_color("00aaff"));
         assert!(!is_hex_color("#xyz"));
         assert!(!is_hex_color("#"));
+    }
+
+    // -- Stage F starter set ------------------------------------------------
+
+    /// Every builtin's manifest must parse, every prop default must satisfy
+    /// its own validator, and `content_hash` must be stable across two
+    /// constructions (cache-key requirement). One loop covers all of these
+    /// so adding a future builtin requires zero extra test scaffolding.
+    #[test]
+    fn every_builtin_parses_and_self_validates() {
+        for t in builtins() {
+            assert!(!t.id().is_empty(), "id missing");
+            assert!(t.manifest.size[0] > 0 && t.manifest.size[1] > 0, "{}: zero size", t.id());
+            assert!(
+                t.manifest.default_duration_s > 0.0,
+                "{}: default_duration_s must be > 0",
+                t.id()
+            );
+            // Canonicalize-with-empty-object: every prop falls back to its
+            // default and the result must pass validation.
+            let canonical = t
+                .canonicalize_props(&json!({}))
+                .unwrap_or_else(|e| panic!("{}: defaults must validate: {e}", t.id()));
+            // Stable canonical form (BTreeMap-ordered).
+            let again = t
+                .canonicalize_props(&json!({}))
+                .expect("second pass canonicalize");
+            assert_eq!(canonical, again, "{}: canonical form unstable", t.id());
+            // Content hash stable across constructions.
+            let h1 = t.content_hash();
+            let h2 = builtins()
+                .into_iter()
+                .find(|x| x.id() == t.id())
+                .expect("present")
+                .content_hash();
+            assert_eq!(h1, h2, "{}: content_hash unstable", t.id());
+        }
+    }
+
+    /// Template ids feed `cache_key` — collisions silently cross-mix
+    /// rendered frames between templates. Catch any duplicate at compile-
+    /// adjacent time rather than at first cache hit.
+    #[test]
+    fn builtin_ids_are_unique() {
+        use std::collections::HashSet;
+        let mut seen = HashSet::new();
+        for t in builtins() {
+            assert!(
+                seen.insert(t.id().to_string()),
+                "duplicate builtin id: {}",
+                t.id()
+            );
+        }
+    }
+
+    /// The Stage F bullet list calls for exactly these 10 templates. If
+    /// `builtins()` is ever pruned or reordered, this guard surfaces it so
+    /// the picker-UI / docs side stays in sync.
+    #[test]
+    fn builtins_cover_starter_set() {
+        let expected: &[&str] = &[
+            "lower-third-simple",
+            "lower-third-glow",
+            "lower-third-bar",
+            "title-card",
+            "captions-strip",
+            "callout",
+            "progress-bar",
+            "countdown",
+            "logo-bug",
+            "slate",
+        ];
+        let actual: Vec<String> = builtins().iter().map(|t| t.id().to_string()).collect();
+        let expected: Vec<String> = expected.iter().map(|s| s.to_string()).collect();
+        assert_eq!(actual, expected);
+    }
+
+    /// Every template's HTML must contain the `__STYLE__` placeholder —
+    /// `navigate_to_template` does a plain `replace("__STYLE__", &style)`,
+    /// so a missing placeholder ships the unstyled DOM and looks broken in
+    /// the captured PNG. Cheap to enforce here rather than at first render.
+    #[test]
+    fn every_builtin_html_has_style_placeholder() {
+        for t in builtins() {
+            assert!(
+                t.html.contains("__STYLE__"),
+                "{}: HTML missing __STYLE__ placeholder",
+                t.id()
+            );
+        }
     }
 }

@@ -283,11 +283,11 @@ Tool count today: **23** (`ping` + 17 edit + 5 workflow). Spec target was ~25; t
 
 ### Phase 5 status (2026-05-12)
 
-**Substantially complete — stages A through E2 shipped in one session.** The
-architectural pipeline (offscreen webview → time-mock shim → cache → template
-loader → IR PngSeq → emit → ffmpeg → mp4) is end-to-end functional and
-validated by smoke tests. Remaining work is additive: the 8-template starter
-set + macOS / Linux capture paths.
+**Substantially complete — stages A through F shipped.** The architectural
+pipeline (offscreen webview → time-mock shim → cache → template loader → IR
+PngSeq → emit → ffmpeg → mp4) is end-to-end functional and validated by smoke
+tests. The starter set (10 templates) is shipped. Remaining work is purely
+additive: macOS / Linux capture paths (G) + MCP wrappers (H).
 
 Commits, in order:
 
@@ -300,12 +300,12 @@ Commits, in order:
 | D | `a09d390` | `Template`/`Manifest`/`PropSpec` types, `canonicalize_props` (rejects unknown keys, fills defaults, BTreeMap-sorted for cache-key stability). First built-in: `lower-third-simple` with title / subtitle / color props and a rAF slide-in. |
 | E1 | `9119e2a` | `InputSpec { path, framerate: Option<(u32, u32)> }` replaces `Vec<PathBuf>` for image-sequence inputs that need `-framerate N/D`. `IRNode::PngSeq { input, duration_us, alpha }` lowers to `trim → setpts → format=yuva420p` chain. Smoke test asserts alpha round-trips. |
 | E2 | `185edd1` | `materialize_templates` async pre-lower pass + `lower()` 4th-arg `template_renders` map + Template arm emitting `PngSeq → Scale → SetPts → Overlay`. All 5 lower() call sites updated (compile, mpv preview, export, mcp compiled resource, mpv hot-reload). WebView2 `SetDefaultBackgroundColor(0,0,0,0)` flips captures from `pix_fmt rgb` → `rgba` so alpha makes it to ffmpeg. End-to-end smoke `template_layer_renders_through_ffmpeg` proves the full pipeline produces a non-empty mp4 with `format=yuva420p` + `overlay=` in the graph. |
+| F | this commit | 9 new built-in templates (`lower-third-glow`, `lower-third-bar`, `title-card`, `captions-strip`, `callout`, `progress-bar`, `countdown`, `logo-bug`, `slate`) round out the spec's 8-category starter set (lower thirds × 3 with the existing `lower-third-simple`, title card, captions, callout, progress bar, countdown, logo bug, slate). Per-template webview resize added (`window.set_size(LogicalSize)` before navigate) so templates can declare natural sizes (1920×1080 title card, 1920×80 progress bar, 480×480 countdown, …) instead of all sharing the lower-third 800×200. `builtin_template!` macro folds the include_str! trio into one line per template. 4 new tests assert every builtin parses + defaults validate, ids are unique (cache-key guard), starter-set ids match the spec, and every HTML carries the `__STYLE__` placeholder. 184 → 188 lib tests. |
 
-### Deliberately deferred from Phase 5 (Stage F / G)
+### Deliberately deferred from Phase 5 (Stage G / H)
 
 | Slice | Status |
 |---|---|
-| **8-template starter set** (lower thirds × 3, intro/outro, captions, callout, progress bar, countdown, logo bug, slate) | Stage F. Architectural risk is zero — each is an HTML/CSS file pair next to `lower_third_simple/`, loaded via the same `Template::from_*` path. Mostly design + authoring work. |
 | **macOS `WKWebView.takeSnapshot`** | Stage G1. Same shape as the Windows path: get the platform webview via Tauri's `with_webview`, call the platform capture API, dump bytes to disk. `set_transparent_background` needs the mac equivalent (`setOpaque:false`). |
 | **Linux `webkit_web_view_get_snapshot` + Chromium fallback** | Stage G2. Soft spot per spec — WebKitGTK snapshot maturity is the unknown. Fallback is bundled headless Chromium via `chromiumoxide` if WebKitGTK falls over. |
 | **mpv `mf://` / `--mf-fps` for PngSeq preview** | Stage E1 emit_mpv handles InputSpec but ffmpeg export is the only path that respects per-input framerate today. Preview still works for non-template projects; Template layers in live preview are a follow-up. |

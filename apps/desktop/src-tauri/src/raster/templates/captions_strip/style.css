@@ -1,0 +1,37 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  font-family: 'Segoe UI', 'Helvetica Neue', system-ui, sans-serif;
+  color: #fff;
+  overflow: hidden;
+  width: 100vw;
+  height: 100vh;
+}
+
+.wrap {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 80px;
+  opacity: 0;
+}
+
+/* The manifest default for `color` is an 8-char hex (#000000cc) carrying alpha.
+   If a future RRGGBB-only picker (Phase 7) drops the trailing alpha bits, this
+   box becomes fully opaque and the strip stops feeling like a caption overlay.
+   Preserve alpha or re-introduce it at the picker level. */
+.box {
+  background: rgba(0, 0, 0, 0.8);
+  padding: 24px 36px;
+  border-radius: 10px;
+  max-width: 1600px;
+  text-align: center;
+  font-size: 44px;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: 0.3px;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
+}

@@ -21,7 +21,7 @@ pub mod template;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, LogicalSize, Manager, WebviewUrl, WebviewWindowBuilder};
 use tracing::{info, warn};
 
 use template::Template;
@@ -155,6 +155,16 @@ pub async fn render(
     // Pin transparent background each render — cheap, idempotent, and survives
     // the case where the controller was reset by some other code path.
     set_transparent_background(&window).await?;
+
+    // Resize the offscreen worker to match the template's declared size.
+    // Stage F adds templates at varied sizes (1920x1080 title cards, 1920x80
+    // progress bars, 480x480 countdowns, …) — the single fixed-size spawn
+    // can no longer cover them. LogicalSize matches the WebviewWindowBuilder
+    // convention at the spawn site.
+    let (w, h) = job.template.size();
+    window
+        .set_size(LogicalSize::new(w as f64, h as f64))
+        .map_err(|e| format!("resize raster worker to {w}x{h}: {e}"))?;
 
     // Navigate the offscreen worker to the template's composed HTML, then
     // inject props, then wait for the template's start() to apply them.
@@ -360,9 +370,12 @@ async fn capture_via_webview(
     rx.await.map_err(|e| format!("oneshot recv: {e}"))?
 }
 
-/// Render the built-in lower-third template at five time offsets to
-/// exercise the full pipeline: navigation, prop injection, seek, capture,
-/// cache. Second pass exercises the cache-hit path.
+/// Render a built-in template at six time offsets to exercise the full
+/// pipeline: navigation, prop injection, seek, capture, cache. Second pass
+/// exercises the cache-hit path. Stage F swapped this from
+/// `lower-third-simple` (800x200, matches the spawn size) to `title-card`
+/// (1920x1080) so each `npm run dev` also exercises the per-template
+/// `window.set_size` introduced in Stage F.
 pub fn schedule_capture_spike(app: &AppHandle, cache: crate::cache::CacheLayout) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -370,11 +383,11 @@ pub fn schedule_capture_spike(app: &AppHandle, cache: crate::cache::CacheLayout)
         // navigates away.
         tokio::time::sleep(std::time::Duration::from_millis(800)).await;
 
-        let template = template::builtin_lower_third_simple();
+        let template = template::builtin_title_card();
         let provided_props = serde_json::json!({
             "title": "Welcome",
-            "subtitle": "Phase 5 Stage D — template loader",
-            "color": "#ff5577"
+            "subtitle": "Phase 5 Stage F — starter template set",
+            "color": "#0b1320"
         });
         let canonical = match template.canonicalize_props(&provided_props) {
             Ok(c) => c,

@@ -1,0 +1,39 @@
+{
+  "id": "slate",
+  "name": "Production Slate",
+  "version": 1,
+  "size": [1280, 720],
+  "default_duration_s": 3.0,
+  "props_schema": {
+    "project": {
+      "type": "string",
+      "default": "Project",
+      "max_length": 80
+    },
+    "scene": {
+      "type": "string",
+      "default": "1",
+      "max_length": 20
+    },
+    "take": {
+      "type": "string",
+      "default": "1",
+      "max_length": 20
+    },
+    "camera": {
+      "type": "string",
+      "default": "A",
+      "max_length": 20
+    },
+    "director": {
+      "type": "string",
+      "default": "",
+      "max_length": 60
+    },
+    "date": {
+      "type": "string",
+      "default": "",
+      "max_length": 20
+    }
+  }
+}
