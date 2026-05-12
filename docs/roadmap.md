@@ -281,6 +281,39 @@ Tool count today: **23** (`ping` + 17 edit + 5 workflow). Spec target was ~25; t
 
 **Exit criteria:** agent picks a template, fills props, sees it appear on the timeline within seconds; preview matches export pixel-for-pixel.
 
+### Phase 5 status (2026-05-12)
+
+**Substantially complete — stages A through E2 shipped in one session.** The
+architectural pipeline (offscreen webview → time-mock shim → cache → template
+loader → IR PngSeq → emit → ffmpeg → mp4) is end-to-end functional and
+validated by smoke tests. Remaining work is additive: the 8-template starter
+set + macOS / Linux capture paths.
+
+Commits, in order:
+
+| Stage | Commit | Slice |
+|---|---|---|
+| 0 (spike) | `b7e89b8` | WebView2 `CapturePreview` from offscreen `visible:false` window writes valid PNG. De-risked the load-bearing assumption — everything else is plumbing. |
+| A | `e7fa51a` | `time_mock.js` shim overrides `performance.now` / `Date.now` / rAF and exposes `__seek(t)`. Multi-capture spike confirms deterministic time-stepping (dot at `60 + t*100` px across t=0/1/2). |
+| B | `8db0ace` | `eval_async` via `ExecuteScript`-with-completion-handler + `__seek_dispatch` / `__seek_status` polling for the real promise resolution. Public `render(job) → RasterFrame[]` API. |
+| C | `5ec1f38` | Content-keyed cache: `blake3(rasterizer_version, template_id, content_hash, props_canonical_json, fps, w, h, times_s)` → `<cache>/raster/<key>/{frame_NNNNN.png, manifest.json}`. Live measurement: cold 193 ms, warm 8.6 ms (~22× speedup). |
+| D | `a09d390` | `Template`/`Manifest`/`PropSpec` types, `canonicalize_props` (rejects unknown keys, fills defaults, BTreeMap-sorted for cache-key stability). First built-in: `lower-third-simple` with title / subtitle / color props and a rAF slide-in. |
+| E1 | `9119e2a` | `InputSpec { path, framerate: Option<(u32, u32)> }` replaces `Vec<PathBuf>` for image-sequence inputs that need `-framerate N/D`. `IRNode::PngSeq { input, duration_us, alpha }` lowers to `trim → setpts → format=yuva420p` chain. Smoke test asserts alpha round-trips. |
+| E2 | `185edd1` | `materialize_templates` async pre-lower pass + `lower()` 4th-arg `template_renders` map + Template arm emitting `PngSeq → Scale → SetPts → Overlay`. All 5 lower() call sites updated (compile, mpv preview, export, mcp compiled resource, mpv hot-reload). WebView2 `SetDefaultBackgroundColor(0,0,0,0)` flips captures from `pix_fmt rgb` → `rgba` so alpha makes it to ffmpeg. End-to-end smoke `template_layer_renders_through_ffmpeg` proves the full pipeline produces a non-empty mp4 with `format=yuva420p` + `overlay=` in the graph. |
+
+### Deliberately deferred from Phase 5 (Stage F / G)
+
+| Slice | Status |
+|---|---|
+| **8-template starter set** (lower thirds × 3, intro/outro, captions, callout, progress bar, countdown, logo bug, slate) | Stage F. Architectural risk is zero — each is an HTML/CSS file pair next to `lower_third_simple/`, loaded via the same `Template::from_*` path. Mostly design + authoring work. |
+| **macOS `WKWebView.takeSnapshot`** | Stage G1. Same shape as the Windows path: get the platform webview via Tauri's `with_webview`, call the platform capture API, dump bytes to disk. `set_transparent_background` needs the mac equivalent (`setOpaque:false`). |
+| **Linux `webkit_web_view_get_snapshot` + Chromium fallback** | Stage G2. Soft spot per spec — WebKitGTK snapshot maturity is the unknown. Fallback is bundled headless Chromium via `chromiumoxide` if WebKitGTK falls over. |
+| **mpv `mf://` / `--mf-fps` for PngSeq preview** | Stage E1 emit_mpv handles InputSpec but ffmpeg export is the only path that respects per-input framerate today. Preview still works for non-template projects; Template layers in live preview are a follow-up. |
+| **MCP `add_template` tool + `templates://` resources** | Stage H. Trivial wrappers around `template::builtins()` + the existing `add_layer` actor command. |
+| **Worker pool (>1 webview)** | Single-webview rendering is fine for v1. Multi-worker parallelism makes sense after we have multiple-template-per-export workloads. |
+| **LRU cache eviction** | Cache writes go to `<cache>/raster/<key>/` with no size cap today. Easy to add a background sweep when total bytes cross a threshold; not load-bearing for v1. |
+| **Template-picker UI in React** | Phase 7. The compile pipeline accepts Template layers today; users just have no way to add them from the timeline UI yet. |
+
 ## Phase 6 — Cloud transcription + TTS + auto-caption / voiceover (1–1.5 weeks)
 
 Cloud-side AI lives behind a provider-agnostic trait surface so the agent
