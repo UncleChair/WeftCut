@@ -61,7 +61,17 @@
     }
   }
 
-  window.__seek = async function __seek(seconds) {
+  // Polling-based completion signal. WebView2's ExecuteScript returns the
+  // serialized form of the script's last expression — if it's an unresolved
+  // Promise we get `{}`, not the awaited value. So we expose:
+  //   __seek_dispatch(t) → sequence number (sync return)
+  //   __seek_status()    → { done: latest-completed-seq, latest: highest-dispatched }
+  // and let the host poll. Cheap (each poll = one ExecuteScript), and works
+  // identically on any platform we later wire up.
+  let __seek_seq = 0;
+  let __seek_done_seq = 0;
+
+  async function __seek_impl(seconds) {
     __t = Number(seconds) || 0;
 
     // 1. Run any rAF callbacks queued before this seek with the new fake
@@ -105,6 +115,38 @@
     //    we just queued. Without this the next capture may still show the
     //    pre-seek pixels on slow / offscreen compositors.
     await new Promise((resolve) => _origRAF(() => resolve(undefined)));
+  }
+
+  // Original async API — kept for templates that call it directly.
+  window.__seek = async function __seek(seconds) {
+    const seq = ++__seek_seq;
+    await __seek_impl(seconds);
+    __seek_done_seq = Math.max(__seek_done_seq, seq);
+    return seq;
+  };
+
+  // Sync-return dispatch for hosts that can only ExecuteScript and poll.
+  // Returns the sequence number to wait on; the actual async work runs in
+  // the background and marks __seek_done_seq when it finishes.
+  window.__seek_dispatch = function __seek_dispatch(seconds) {
+    const seq = ++__seek_seq;
+    __seek_impl(seconds).then(
+      () => {
+        __seek_done_seq = Math.max(__seek_done_seq, seq);
+      },
+      (e) => {
+        // Surface the failure but still mark done so the host doesn't
+        // poll forever; the next __seek_status will show a `pending`
+        // count > 0 and the host can decide what to do.
+        console.error("raster __seek_dispatch failed:", e);
+        __seek_done_seq = Math.max(__seek_done_seq, seq);
+      },
+    );
+    return seq;
+  };
+
+  window.__seek_status = function __seek_status() {
+    return { done: __seek_done_seq, latest: __seek_seq };
   };
 
   // Expose a probe the host can call to confirm the shim took effect (used

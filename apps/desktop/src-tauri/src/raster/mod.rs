@@ -77,65 +77,212 @@ pub fn spawn_spike(app: &AppHandle) -> Result<()> {
     Ok(())
 }
 
+/// A render job: snapshot the offscreen webview at each `times_s` value,
+/// writing `<dest_dir>/<file_prefix><k>.png` per frame. Stage B keeps this
+/// minimal — Stage D adds template_id / props / cache key.
+pub struct RasterJob {
+    pub times_s: Vec<f64>,
+    pub dest_dir: PathBuf,
+    pub file_prefix: String,
+}
+
+pub struct RasterFrame {
+    pub t: f64,
+    pub path: PathBuf,
+    pub bytes: u64,
+}
+
+/// Render every requested time into `dest_dir`. Steps the mocked clock via
+/// `__seek_dispatch(t)`, polls `__seek_status().done >= seq` (sub-frame
+/// latency typical), then captures the post-flush pixels. Errors propagate
+/// per frame — we'd rather complete what we can than abort on one bad seek.
+pub async fn render(app: &AppHandle, job: RasterJob) -> Result<Vec<RasterFrame>, String> {
+    let window = app
+        .get_webview_window("raster-worker")
+        .ok_or_else(|| "raster-worker window not spawned".to_string())?;
+    std::fs::create_dir_all(&job.dest_dir)
+        .map_err(|e| format!("create dest_dir {}: {e}", job.dest_dir.display()))?;
+
+    let mut frames = Vec::with_capacity(job.times_s.len());
+    for (idx, &t) in job.times_s.iter().enumerate() {
+        wait_seek(&window, t).await?;
+        let dest = job
+            .dest_dir
+            .join(format!("{}{:05}.png", job.file_prefix, idx));
+        let bytes = capture_via_webview(&window, &dest).await?;
+        frames.push(RasterFrame { t, path: dest, bytes });
+    }
+    Ok(frames)
+}
+
+/// Dispatch `__seek(t)` and poll `__seek_status` until the async awaits
+/// inside the shim (rAF flush + fonts.ready + one real compositor frame)
+/// complete. Returns when `done >= seq` or after `MAX_WAIT_MS`.
+async fn wait_seek(window: &tauri::WebviewWindow, t: f64) -> Result<(), String> {
+    const POLL_MS: u64 = 10;
+    const MAX_WAIT_MS: u128 = 2_000;
+    let raw_seq = eval_async(window, format!("window.__seek_dispatch({t})")).await?;
+    let seq: i64 = raw_seq
+        .trim()
+        .parse()
+        .map_err(|e| format!("parse seq {raw_seq:?}: {e}"))?;
+    let start = std::time::Instant::now();
+    loop {
+        let status = eval_async(window, "JSON.stringify(window.__seek_status())".into()).await?;
+        // The shim returns JSON like `{"done":1,"latest":1}`. ExecuteScript
+        // wraps it again — we ask for the stringified form to skip a level
+        // of un-quoting on the Rust side. Parse the inner JSON.
+        let stripped = strip_outer_json_quotes(&status);
+        if let Some(done) = parse_done_field(&stripped) {
+            if done >= seq {
+                return Ok(());
+            }
+        }
+        if start.elapsed().as_millis() > MAX_WAIT_MS {
+            return Err(format!("__seek({t}) timeout after {MAX_WAIT_MS}ms"));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(POLL_MS)).await;
+    }
+}
+
+fn strip_outer_json_quotes(s: &str) -> String {
+    // ExecuteScript serializes a String JS return value as a JSON string —
+    // `"{\"done\":1,\"latest\":1}"`. Strip the outer quotes and unescape
+    // inner ones. JSON.parse would be cleaner but pulling serde_json into
+    // hot polling is overkill for this tiny shape.
+    let trimmed = s.trim();
+    if trimmed.len() < 2 || !trimmed.starts_with('"') || !trimmed.ends_with('"') {
+        return trimmed.to_string();
+    }
+    trimmed[1..trimmed.len() - 1].replace("\\\"", "\"")
+}
+
+fn parse_done_field(inner: &str) -> Option<i64> {
+    let needle = "\"done\":";
+    let start = inner.find(needle)? + needle.len();
+    let tail = &inner[start..];
+    let end = tail.find(|c: char| !c.is_ascii_digit() && c != '-').unwrap_or(tail.len());
+    tail[..end].parse().ok()
+}
+
+async fn capture_via_webview(
+    window: &tauri::WebviewWindow,
+    dest: &std::path::Path,
+) -> Result<u64, String> {
+    let (tx, rx) = tokio::sync::oneshot::channel::<Result<u64, String>>();
+    let dest_owned = dest.to_path_buf();
+    let with_webview = window.with_webview(move |webview| {
+        let _ = tx.send(capture_to_file(webview, &dest_owned));
+    });
+    if let Err(e) = with_webview {
+        return Err(format!("with_webview: {e}"));
+    }
+    rx.await.map_err(|e| format!("oneshot recv: {e}"))?
+}
+
 /// Drive the offscreen webview through `__seek(0)`, `__seek(1)`, `__seek(2)`
-/// and capture a PNG after each step. Writes three files under `dest_dir`:
-/// `raster-spike-t0.png`, `raster-spike-t1.png`, `raster-spike-t2.png`. Logs
-/// each result so the spike's signal lives in the dev log (and the user can
-/// open the files to confirm the captures actually differ — the dot moves,
-/// the timestamp text advances).
-///
-/// Time-mock validation: if the captures all show the same image, the shim
-/// isn't taking effect (initialization-script not running before the page
-/// script, or rAF override bypassed). If they differ in the expected linear
-/// way, the deterministic time step works end-to-end.
+/// and capture a PNG after each step. Used as the end-to-end smoke for
+/// Stages A + B — the captures should show the dot at three different
+/// linear positions and the timestamp text matching the seeked value.
 pub fn schedule_capture_spike(app: &AppHandle, dest_dir: PathBuf) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         // Initial page load + first rAF tick + font load. 1500 ms is
         // conservative; the spike page is trivial.
         tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-        let window = match app.get_webview_window("raster-worker") {
-            Some(w) => w,
-            None => {
-                warn!("raster capture spike: raster-worker window missing");
-                return;
-            }
+        let job = RasterJob {
+            times_s: vec![0.0, 1.0, 2.0],
+            dest_dir,
+            file_prefix: "raster-spike-t".into(),
         };
-
-        for t in [0.0f64, 1.0, 2.0] {
-            // Step the mocked clock. `eval` is fire-and-forget; we sleep
-            // briefly to let __seek's awaits (font ready + one real frame)
-            // resolve before capturing. Stage B (worker pool) will swap
-            // this for an ExecuteScript-with-completion-handler so we
-            // don't have to guess.
-            let script = format!("window.__seek({t});");
-            if let Err(e) = window.eval(&script) {
-                warn!("raster capture spike: eval __seek({t}) failed: {e:?}");
-                continue;
+        match render(&app, job).await {
+            Ok(frames) => {
+                for f in frames {
+                    info!(
+                        "raster capture spike: t={} → wrote {} bytes to {}",
+                        f.t,
+                        f.bytes,
+                        f.path.display()
+                    );
+                }
             }
-            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-
-            let dest = dest_dir.join(format!("raster-spike-t{}.png", t as i32));
-            let dest_for_capture = dest.clone();
-            let (tx, rx) = tokio::sync::oneshot::channel::<Result<u64, String>>();
-            let with_webview = window.with_webview(move |webview| {
-                let outcome = capture_to_file(webview, &dest_for_capture);
-                let _ = tx.send(outcome);
-            });
-            if let Err(e) = with_webview {
-                warn!("raster capture spike: with_webview failed at t={t}: {e:?}");
-                continue;
-            }
-            match rx.await {
-                Ok(Ok(bytes)) => info!(
-                    "raster capture spike: t={t} → wrote {bytes} bytes to {}",
-                    dest.display()
-                ),
-                Ok(Err(msg)) => warn!("raster capture spike: t={t} capture failed: {msg}"),
-                Err(e) => warn!("raster capture spike: t={t} oneshot closed: {e}"),
-            }
+            Err(e) => warn!("raster capture spike: render failed: {e}"),
         }
     });
+}
+
+/// Run `script` inside the offscreen webview and wait for it to resolve
+/// (top-level promises included — the WebView2 ExecuteScript completion
+/// handler doesn't fire until the script returns). Returns the script's
+/// JSON-encoded return value as a `String`.
+///
+/// Replaces the `tokio::sleep` hack from the Stage A spike: now the host
+/// knows EXACTLY when `await window.__seek(t)` has finished and the next
+/// capture will see the post-seek frame.
+pub async fn eval_async(
+    window: &tauri::WebviewWindow,
+    script: String,
+) -> Result<String, String> {
+    let (tx, rx) = tokio::sync::oneshot::channel::<Result<String, String>>();
+    let with_webview = window.with_webview(move |webview| {
+        let _ = tx.send(eval_async_blocking(webview, &script));
+    });
+    if let Err(e) = with_webview {
+        return Err(format!("with_webview: {e}"));
+    }
+    rx.await.map_err(|e| format!("oneshot recv: {e}"))?
+}
+
+#[cfg(windows)]
+fn eval_async_blocking(
+    webview: tauri::webview::PlatformWebview,
+    script: &str,
+) -> Result<String, String> {
+    use std::sync::{Arc, Mutex};
+
+    use webview2_com::ExecuteScriptCompletedHandler;
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2;
+    use windows::core::PCWSTR;
+
+    let controller = webview.controller();
+    let core: ICoreWebView2 = unsafe { controller.CoreWebView2() }
+        .map_err(|e| format!("get CoreWebView2: {e}"))?;
+
+    // Wide-encode the script for the COM call. The buffer must outlive the
+    // ExecuteScript invocation; WebView2 marshals the string synchronously
+    // so it's safe to drop once `core.ExecuteScript` returns.
+    let script_wide: Vec<u16> = script.encode_utf16().chain(std::iter::once(0)).collect();
+    let result_slot: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+    let result_for_cb = result_slot.clone();
+
+    ExecuteScriptCompletedHandler::wait_for_async_operation(
+        Box::new(move |handler| -> webview2_com::Result<()> {
+            unsafe {
+                core.ExecuteScript(PCWSTR::from_raw(script_wide.as_ptr()), &handler)
+                    .map_err(webview2_com::Error::WindowsError)
+            }
+        }),
+        Box::new(move |hr, json_value| -> windows::core::Result<()> {
+            hr?;
+            *result_for_cb.lock().expect("eval_async result mutex poisoned") = json_value;
+            Ok(())
+        }),
+    )
+    .map_err(|e| format!("ExecuteScript async op: {e}"))?;
+
+    let s = result_slot
+        .lock()
+        .expect("eval_async result mutex poisoned")
+        .clone();
+    Ok(s)
+}
+
+#[cfg(not(windows))]
+fn eval_async_blocking(
+    _webview: tauri::webview::PlatformWebview,
+    _script: &str,
+) -> Result<String, String> {
+    Err("raster eval_async: only wired on Windows so far".into())
 }
 
 #[cfg(windows)]
