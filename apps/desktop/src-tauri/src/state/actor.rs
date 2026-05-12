@@ -447,6 +447,58 @@ enum Command {
         limit: usize,
         reply: oneshot::Sender<HistoryView>,
     },
+    DryRun {
+        ops: Vec<DryRunOp>,
+        reply: oneshot::Sender<Vec<Result<DryRunOutput, CommandError>>>,
+    },
+}
+
+/// Operations the `dry_run` dispatcher can apply against a clone of the
+/// current project. This is the actor-side parallel of `mcp::OperationSpec`
+/// — string UUIDs come in at the MCP boundary and get parsed into proper
+/// id types before reaching this enum.
+#[derive(Debug, Clone)]
+pub enum DryRunOp {
+    AddLayer {
+        track_id: TrackId,
+        params: LayerParams,
+        t_start_us: TimeUs,
+        t_end_us: TimeUs,
+    },
+    DeleteLayer {
+        id: LayerId,
+    },
+    UpdateLayer {
+        id: LayerId,
+        patch: LayerPatch,
+    },
+    UpdateLayerParams {
+        id: LayerId,
+        patch: LayerParamsPatch,
+    },
+    MoveLayer {
+        id: LayerId,
+        new_track_id: TrackId,
+        new_t_start_us: TimeUs,
+    },
+    SplitLayer {
+        id: LayerId,
+        at_t_us: TimeUs,
+    },
+}
+
+/// Per-op output from a successful dry-run application. Voids (delete /
+/// update / move) carry no payload; layer-producing ops surface the id(s)
+/// that real execution would have allocated. Note: the layer ids here are
+/// freshly generated on EACH dry-run pass, so two consecutive dry-runs of
+/// the same op chain produce different ids.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DryRunOutput {
+    AddLayer { layer_id: LayerId },
+    SplitLayer { left_id: LayerId, right_id: LayerId },
+    /// Void op — delete / update / move. No payload.
+    Void,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -492,6 +544,23 @@ impl ProjectHandle {
         let (reply, rx) = oneshot::channel();
         self.tx
             .send(Command::HistoryView { limit, reply })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    /// Run a sequence of mutations against a CLONE of the current project,
+    /// validating after each successful op. Halts at the first error so
+    /// later ops don't dry-run against a state real execution wouldn't
+    /// reach. Never commits — used by the MCP `dry_run` tool so agents can
+    /// preview multi-step edits before mutating real state.
+    pub async fn dry_run(
+        &self,
+        ops: Vec<DryRunOp>,
+    ) -> Vec<Result<DryRunOutput, CommandError>> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::DryRun { ops, reply })
             .await
             .expect("project actor terminated");
         rx.await.expect("project actor terminated")
@@ -1146,7 +1215,73 @@ impl ProjectActor {
             Command::HistoryView { limit, reply } => {
                 let _ = reply.send(self.history.view(limit));
             }
+            Command::DryRun { ops, reply } => {
+                let results = self.do_dry_run(ops);
+                let _ = reply.send(results);
+            }
         }
+    }
+
+    /// Dispatcher for `Command::DryRun`. Clones the current project, applies
+    /// each op via the shared `apply_*` mutation helpers, validates after
+    /// each successful application, and halts at the first error so the
+    /// agent sees exactly the op that would fail in real execution. The
+    /// clone is dropped on return — the actor's state is never touched.
+    fn do_dry_run(
+        &self,
+        ops: Vec<DryRunOp>,
+    ) -> Vec<Result<DryRunOutput, CommandError>> {
+        let mut next: Project = (*self.history.current()).clone();
+        let mut results: Vec<Result<DryRunOutput, CommandError>> =
+            Vec::with_capacity(ops.len());
+        for op in ops {
+            let outcome: Result<DryRunOutput, CommandError> = match op {
+                DryRunOp::AddLayer {
+                    track_id,
+                    params,
+                    t_start_us,
+                    t_end_us,
+                } => apply_add_layer(&mut next, track_id, params, t_start_us, t_end_us)
+                    .map(|layer_id| DryRunOutput::AddLayer { layer_id }),
+                DryRunOp::DeleteLayer { id } => {
+                    apply_delete_layer(&mut next, id).map(|_| DryRunOutput::Void)
+                }
+                DryRunOp::UpdateLayer { id, patch } => {
+                    apply_update_layer(&mut next, id, &patch).map(|_| DryRunOutput::Void)
+                }
+                DryRunOp::UpdateLayerParams { id, patch } => {
+                    apply_update_layer_params(&mut next, id, &patch)
+                        .map(|_| DryRunOutput::Void)
+                }
+                DryRunOp::MoveLayer {
+                    id,
+                    new_track_id,
+                    new_t_start_us,
+                } => apply_move_layer(&mut next, id, new_track_id, new_t_start_us)
+                    .map(|_| DryRunOutput::Void),
+                DryRunOp::SplitLayer { id, at_t_us } => {
+                    apply_split_layer(&mut next, id, at_t_us)
+                        .map(|(left_id, right_id)| DryRunOutput::SplitLayer {
+                            left_id,
+                            right_id,
+                        })
+                }
+            };
+            // Validate after each successful op. If an op's mutation
+            // succeeds but the resulting project violates an invariant
+            // (overlap, inverted range, …), surface it as that op's error
+            // — real execution would have rejected at the same point via
+            // `commit()`'s validate call.
+            let outcome = outcome.and_then(|out| {
+                validate(&next).map(|_| out).map_err(CommandError::from)
+            });
+            let halt = outcome.is_err();
+            results.push(outcome);
+            if halt {
+                break;
+            }
+        }
+        results
     }
 
     fn do_add_track(
@@ -1179,43 +1314,7 @@ impl ProjectActor {
         actor: Actor,
     ) -> Result<LayerId, CommandError> {
         let mut next: Project = (*self.history.current()).clone();
-        let track_idx = next
-            .tracks
-            .iter()
-            .position(|t| t.id == track_id)
-            .ok_or(CommandError::TrackNotFound { track: track_id })?;
-
-        let layer_id = new_id();
-        let new_layer = Layer {
-            id: layer_id,
-            label: None,
-            t_start_us,
-            t_end_us,
-            enabled: true,
-            locked: false,
-            metadata: imbl::HashMap::new(),
-            effects: imbl::Vector::new(),
-            params,
-        };
-
-        let track = next
-            .tracks
-            .get_mut(track_idx)
-            .expect("index just verified");
-
-        // Insert in `t_start_us` order so iteration stays sorted; validation
-        // catches actual overlap and inverted ranges.
-        let insert_at = track
-            .layers
-            .iter()
-            .position(|l| l.t_start_us > t_start_us)
-            .unwrap_or(track.layers.len());
-        track.layers.insert(insert_at, new_layer);
-
-        if next.composition.duration_us < t_end_us {
-            next.composition.duration_us = t_end_us;
-        }
-
+        let layer_id = apply_add_layer(&mut next, track_id, params, t_start_us, t_end_us)?;
         self.commit(
             next,
             actor,
@@ -1262,66 +1361,7 @@ impl ProjectActor {
         actor: Actor,
     ) -> Result<(LayerId, LayerId), CommandError> {
         let mut next: Project = (*self.history.current()).clone();
-
-        // Locate the layer in some track.
-        let mut found: Option<(usize, usize)> = None;
-        for (ti, track) in next.tracks.iter().enumerate() {
-            if let Some(li) = track.layers.iter().position(|l| l.id == id) {
-                found = Some((ti, li));
-                break;
-            }
-        }
-        let (ti, li) = found.ok_or(CommandError::LayerNotFound { layer: id })?;
-
-        let original = next.tracks[ti].layers[li].clone();
-        if at_t_us <= original.t_start_us || at_t_us >= original.t_end_us {
-            return Err(CommandError::SplitOutsideLayer {
-                layer: id,
-                at_t: at_t_us,
-            });
-        }
-
-        let split_offset = at_t_us - original.t_start_us;
-
-        // Build the right half.
-        let mut right = original.clone();
-        right.id = new_id();
-        right.t_start_us = at_t_us;
-        right.t_end_us = original.t_end_us;
-        // Adjust source offsets for media-bearing variants. Speed=1 assumption
-        // for Phase 1 — Phase 2 will fold variable speed into the offset math.
-        match &mut right.params {
-            LayerParams::VideoClip(p) => {
-                p.src_in_us = p.src_in_us + split_offset;
-            }
-            LayerParams::Audio(p) => {
-                p.src_in_us = p.src_in_us + split_offset;
-            }
-            _ => {}
-        }
-
-        // Build the left half: clone original, truncate end. Adjust src_out
-        // similarly so its source range matches its timeline range.
-        let mut left = original.clone();
-        left.t_end_us = at_t_us;
-        match &mut left.params {
-            LayerParams::VideoClip(p) => {
-                p.src_out_us = p.src_in_us + split_offset;
-            }
-            LayerParams::Audio(p) => {
-                p.src_out_us = p.src_in_us + split_offset;
-            }
-            _ => {}
-        }
-
-        let track = &mut next.tracks[ti];
-        track.layers[li] = left;
-        // Insert right just after left, keeping `t_start_us` order.
-        let insert_at = li + 1;
-        track.layers.insert(insert_at, right.clone());
-
-        let left_id = id;
-        let right_id = right.id;
+        let (left_id, right_id) = apply_split_layer(&mut next, id, at_t_us)?;
         self.commit(
             next,
             actor,
@@ -1365,32 +1405,7 @@ impl ProjectActor {
         actor: Actor,
     ) -> Result<(), CommandError> {
         let mut next: Project = (*self.history.current()).clone();
-        let mut found = false;
-        for track in next.tracks.iter_mut() {
-            if let Some(idx) = track.layers.iter().position(|l| l.id == id) {
-                let layer = track.layers.get_mut(idx).expect("index just verified");
-                if let Some(label) = patch.label.clone() {
-                    layer.label = Some(label);
-                }
-                if let Some(t_start) = patch.t_start_us {
-                    layer.t_start_us = t_start;
-                }
-                if let Some(t_end) = patch.t_end_us {
-                    layer.t_end_us = t_end;
-                }
-                if let Some(enabled) = patch.enabled {
-                    layer.enabled = enabled;
-                }
-                if let Some(locked) = patch.locked {
-                    layer.locked = locked;
-                }
-                found = true;
-                break;
-            }
-        }
-        if !found {
-            return Err(CommandError::LayerNotFound { layer: id });
-        }
+        apply_update_layer(&mut next, id, &patch)?;
         self.commit(
             next,
             actor,
@@ -1408,18 +1423,7 @@ impl ProjectActor {
         actor: Actor,
     ) -> Result<(), CommandError> {
         let mut next: Project = (*self.history.current()).clone();
-        let mut found = false;
-        for track in next.tracks.iter_mut() {
-            if let Some(idx) = track.layers.iter().position(|l| l.id == id) {
-                let layer = track.layers.get_mut(idx).expect("index just verified");
-                apply_params_patch(layer, &patch, id)?;
-                found = true;
-                break;
-            }
-        }
-        if !found {
-            return Err(CommandError::LayerNotFound { layer: id });
-        }
+        apply_update_layer_params(&mut next, id, &patch)?;
         self.commit(
             next,
             actor,
@@ -1438,54 +1442,7 @@ impl ProjectActor {
         actor: Actor,
     ) -> Result<(), CommandError> {
         let mut next: Project = (*self.history.current()).clone();
-
-        // Pull the layer out of its current track first.
-        let mut moved: Option<Layer> = None;
-        for track in next.tracks.iter_mut() {
-            if let Some(idx) = track.layers.iter().position(|l| l.id == id) {
-                moved = Some(track.layers.remove(idx));
-                break;
-            }
-        }
-        let mut layer = moved.ok_or(CommandError::LayerNotFound { layer: id })?;
-
-        // Shift end by the same delta as start.
-        let delta = new_t_start_us - layer.t_start_us;
-        layer.t_start_us = new_t_start_us;
-        layer.t_end_us += delta;
-
-        let dest_idx = next
-            .tracks
-            .iter()
-            .position(|t| t.id == new_track_id)
-            .ok_or(CommandError::TrackNotFound {
-                track: new_track_id,
-            })?;
-        let dest = next
-            .tracks
-            .get_mut(dest_idx)
-            .expect("index just verified");
-        let insert_at = dest
-            .layers
-            .iter()
-            .position(|l| l.t_start_us > new_t_start_us)
-            .unwrap_or(dest.layers.len());
-        dest.layers.insert(insert_at, layer);
-
-        if next.composition.duration_us < new_t_start_us + delta {
-            // Not strictly needed (delta could be negative), but auto-extend the
-            // composition if the move pushes past it.
-            let max_end = next
-                .tracks
-                .iter()
-                .flat_map(|t| t.layers.iter().map(|l| l.t_end_us))
-                .max()
-                .unwrap_or(next.composition.duration_us);
-            if max_end > next.composition.duration_us {
-                next.composition.duration_us = max_end;
-            }
-        }
-
+        apply_move_layer(&mut next, id, new_track_id, new_t_start_us)?;
         self.commit(
             next,
             actor,
@@ -1942,17 +1899,7 @@ impl ProjectActor {
 
     fn do_delete_layer(&mut self, id: LayerId, actor: Actor) -> Result<(), CommandError> {
         let mut next: Project = (*self.history.current()).clone();
-        let mut removed = false;
-        for track in next.tracks.iter_mut() {
-            if let Some(idx) = track.layers.iter().position(|l| l.id == id) {
-                track.layers.remove(idx);
-                removed = true;
-                break;
-            }
-        }
-        if !removed {
-            return Err(CommandError::LayerNotFound { layer: id });
-        }
+        apply_delete_layer(&mut next, id)?;
         self.commit(
             next,
             actor,
@@ -2043,6 +1990,221 @@ impl ProjectActor {
             diff_hint: DiffHint::Coarse,
         });
     }
+}
+
+// ============================================================
+// Pure mutation helpers — shared by `do_*` (real execution) and the
+// `dry_run` dispatcher. These NEVER validate, record history, or
+// broadcast events; that's the caller's responsibility. Each function
+// either mutates `project` and returns its result, or short-circuits
+// with a `CommandError` and leaves `project` in a partially-modified
+// state — callers MUST clone the project first (or, for dry_run, drop
+// the working clone on error).
+
+/// Mutation half of `do_add_layer`. Inserts a new layer on `track_id` at
+/// the t-start-sorted position. Extends composition duration if needed.
+pub(crate) fn apply_add_layer(
+    project: &mut Project,
+    track_id: TrackId,
+    params: LayerParams,
+    t_start_us: TimeUs,
+    t_end_us: TimeUs,
+) -> Result<LayerId, CommandError> {
+    let track_idx = project
+        .tracks
+        .iter()
+        .position(|t| t.id == track_id)
+        .ok_or(CommandError::TrackNotFound { track: track_id })?;
+    let layer_id = new_id();
+    let new_layer = Layer {
+        id: layer_id,
+        label: None,
+        t_start_us,
+        t_end_us,
+        enabled: true,
+        locked: false,
+        metadata: imbl::HashMap::new(),
+        effects: imbl::Vector::new(),
+        params,
+    };
+    let track = project
+        .tracks
+        .get_mut(track_idx)
+        .expect("index just verified");
+    let insert_at = track
+        .layers
+        .iter()
+        .position(|l| l.t_start_us > t_start_us)
+        .unwrap_or(track.layers.len());
+    track.layers.insert(insert_at, new_layer);
+    if project.composition.duration_us < t_end_us {
+        project.composition.duration_us = t_end_us;
+    }
+    Ok(layer_id)
+}
+
+/// Mutation half of `do_delete_layer`.
+pub(crate) fn apply_delete_layer(
+    project: &mut Project,
+    id: LayerId,
+) -> Result<(), CommandError> {
+    for track in project.tracks.iter_mut() {
+        if let Some(idx) = track.layers.iter().position(|l| l.id == id) {
+            track.layers.remove(idx);
+            return Ok(());
+        }
+    }
+    Err(CommandError::LayerNotFound { layer: id })
+}
+
+/// Mutation half of `do_update_layer` — envelope-only patch.
+pub(crate) fn apply_update_layer(
+    project: &mut Project,
+    id: LayerId,
+    patch: &LayerPatch,
+) -> Result<(), CommandError> {
+    for track in project.tracks.iter_mut() {
+        if let Some(idx) = track.layers.iter().position(|l| l.id == id) {
+            let layer = track.layers.get_mut(idx).expect("index just verified");
+            if let Some(label) = patch.label.clone() {
+                layer.label = Some(label);
+            }
+            if let Some(t_start) = patch.t_start_us {
+                layer.t_start_us = t_start;
+            }
+            if let Some(t_end) = patch.t_end_us {
+                layer.t_end_us = t_end;
+            }
+            if let Some(enabled) = patch.enabled {
+                layer.enabled = enabled;
+            }
+            if let Some(locked) = patch.locked {
+                layer.locked = locked;
+            }
+            return Ok(());
+        }
+    }
+    Err(CommandError::LayerNotFound { layer: id })
+}
+
+/// Mutation half of `do_update_layer_params` — kind-specific patch.
+/// `apply_params_patch` (below) is already a pure helper; this is a thin
+/// locate-then-patch wrapper.
+pub(crate) fn apply_update_layer_params(
+    project: &mut Project,
+    id: LayerId,
+    patch: &LayerParamsPatch,
+) -> Result<(), CommandError> {
+    for track in project.tracks.iter_mut() {
+        if let Some(idx) = track.layers.iter().position(|l| l.id == id) {
+            let layer = track.layers.get_mut(idx).expect("index just verified");
+            apply_params_patch(layer, patch, id)?;
+            return Ok(());
+        }
+    }
+    Err(CommandError::LayerNotFound { layer: id })
+}
+
+/// Mutation half of `do_move_layer`. Removes layer from its current track,
+/// shifts its end time by the same delta as its start, inserts at the
+/// t-sorted position on the destination track, and auto-extends composition
+/// duration if needed.
+pub(crate) fn apply_move_layer(
+    project: &mut Project,
+    id: LayerId,
+    new_track_id: TrackId,
+    new_t_start_us: TimeUs,
+) -> Result<(), CommandError> {
+    let mut moved: Option<Layer> = None;
+    for track in project.tracks.iter_mut() {
+        if let Some(idx) = track.layers.iter().position(|l| l.id == id) {
+            moved = Some(track.layers.remove(idx));
+            break;
+        }
+    }
+    let mut layer = moved.ok_or(CommandError::LayerNotFound { layer: id })?;
+    let delta = new_t_start_us - layer.t_start_us;
+    layer.t_start_us = new_t_start_us;
+    layer.t_end_us += delta;
+    let dest_idx = project
+        .tracks
+        .iter()
+        .position(|t| t.id == new_track_id)
+        .ok_or(CommandError::TrackNotFound { track: new_track_id })?;
+    let dest = project
+        .tracks
+        .get_mut(dest_idx)
+        .expect("index just verified");
+    let insert_at = dest
+        .layers
+        .iter()
+        .position(|l| l.t_start_us > new_t_start_us)
+        .unwrap_or(dest.layers.len());
+    dest.layers.insert(insert_at, layer);
+    if project.composition.duration_us < new_t_start_us + delta {
+        let max_end = project
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter().map(|l| l.t_end_us))
+            .max()
+            .unwrap_or(project.composition.duration_us);
+        if max_end > project.composition.duration_us {
+            project.composition.duration_us = max_end;
+        }
+    }
+    Ok(())
+}
+
+/// Mutation half of `do_split_layer`. Returns `(left_id, right_id)` — left
+/// reuses the original layer id; right gets a freshly-allocated one.
+pub(crate) fn apply_split_layer(
+    project: &mut Project,
+    id: LayerId,
+    at_t_us: TimeUs,
+) -> Result<(LayerId, LayerId), CommandError> {
+    let mut found: Option<(usize, usize)> = None;
+    for (ti, track) in project.tracks.iter().enumerate() {
+        if let Some(li) = track.layers.iter().position(|l| l.id == id) {
+            found = Some((ti, li));
+            break;
+        }
+    }
+    let (ti, li) = found.ok_or(CommandError::LayerNotFound { layer: id })?;
+    let original = project.tracks[ti].layers[li].clone();
+    if at_t_us <= original.t_start_us || at_t_us >= original.t_end_us {
+        return Err(CommandError::SplitOutsideLayer { layer: id, at_t: at_t_us });
+    }
+    let split_offset = at_t_us - original.t_start_us;
+    let mut right = original.clone();
+    right.id = new_id();
+    right.t_start_us = at_t_us;
+    right.t_end_us = original.t_end_us;
+    match &mut right.params {
+        LayerParams::VideoClip(p) => {
+            p.src_in_us = p.src_in_us + split_offset;
+        }
+        LayerParams::Audio(p) => {
+            p.src_in_us = p.src_in_us + split_offset;
+        }
+        _ => {}
+    }
+    let mut left = original.clone();
+    left.t_end_us = at_t_us;
+    match &mut left.params {
+        LayerParams::VideoClip(p) => {
+            p.src_out_us = p.src_in_us + split_offset;
+        }
+        LayerParams::Audio(p) => {
+            p.src_out_us = p.src_in_us + split_offset;
+        }
+        _ => {}
+    }
+    let track = &mut project.tracks[ti];
+    track.layers[li] = left;
+    let insert_at = li + 1;
+    let right_id = right.id;
+    track.layers.insert(insert_at, right);
+    Ok((id, right_id))
 }
 
 /// Apply a `LayerParamsPatch` to a layer's `params` in place. Errors if the
@@ -3456,5 +3618,162 @@ mod tests {
             .await
             .expect_err("unknown media");
         assert!(matches!(err, CommandError::MediaNotFound { .. }));
+    }
+
+    // ============================================================
+    // dry_run — Phase 4.x last gap
+    // ============================================================
+
+    /// Dry-running a single AddLayer should report success but leave
+    /// `handle.snapshot()` unchanged. This is the load-bearing property:
+    /// agents trust dry_run because it can't accidentally commit.
+    #[tokio::test]
+    async fn dry_run_does_not_mutate_state() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        let before = handle.snapshot().await;
+        let track_count_before = before.tracks.len();
+        let layer_count_before: usize =
+            before.tracks.iter().map(|t| t.layers.len()).sum();
+        let history_cursor_before = handle.history_status().await.cursor;
+
+        let results = handle
+            .dry_run(vec![DryRunOp::AddLayer {
+                track_id,
+                params: color_layer(Rgba::WHITE),
+                t_start_us: 0,
+                t_end_us: 2_000_000,
+            }])
+            .await;
+        assert_eq!(results.len(), 1);
+        assert!(matches!(results[0], Ok(DryRunOutput::AddLayer { .. })));
+
+        let after = handle.snapshot().await;
+        assert_eq!(after.tracks.len(), track_count_before);
+        let layer_count_after: usize =
+            after.tracks.iter().map(|t| t.layers.len()).sum();
+        assert_eq!(layer_count_after, layer_count_before);
+        assert_eq!(handle.history_status().await.cursor, history_cursor_before);
+    }
+
+    /// A 3-op chain where the second op violates the no-overlap invariant
+    /// must HALT at that op — the third must NOT execute. Mirrors the
+    /// real-execution behavior where a failing commit aborts.
+    #[tokio::test]
+    async fn dry_run_halts_at_first_validation_error() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+
+        // Real-commit a layer at [0, 3s] so the first op in the chain
+        // overlaps with it.
+        handle
+            .add_layer(Actor::User, track_id, color_layer(Rgba::BLACK), 0, 3_000_000)
+            .await
+            .expect("seed layer");
+
+        let results = handle
+            .dry_run(vec![
+                DryRunOp::AddLayer {
+                    track_id,
+                    params: color_layer(Rgba::WHITE),
+                    t_start_us: 0,
+                    t_end_us: 4_000_000, // overlaps with [0, 3s]
+                },
+                DryRunOp::AddLayer {
+                    track_id,
+                    params: color_layer(Rgba::WHITE),
+                    t_start_us: 5_000_000,
+                    t_end_us: 6_000_000,
+                },
+            ])
+            .await;
+        assert_eq!(results.len(), 1, "halt should drop subsequent ops");
+        assert!(matches!(
+            &results[0],
+            Err(CommandError::ValidationFailed(ValidationError::LayerOverlap { .. }))
+        ));
+    }
+
+    /// A two-op chain that's only valid as a sequence: add layer A, then
+    /// move A. Dry-run must apply both in order against the SAME working
+    /// clone so the second op sees the first op's mutation.
+    #[tokio::test]
+    async fn dry_run_chains_state_across_ops() {
+        let (project, track_id) = project_with_video_track();
+        // Need a second track so MoveLayer has somewhere to land.
+        let mut project = project;
+        let mut second_track = Track::new(TrackKind::Video);
+        let second_track_id = second_track.id;
+        second_track.label = Some("Overlay".into());
+        project.tracks.push_back(second_track);
+        let handle = spawn(project);
+
+        // First op produces a layer id; we don't see it from outside, so
+        // pre-seed instead and chain a move + update on the real id.
+        let layer_id = handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                color_layer(Rgba::WHITE),
+                0,
+                2_000_000,
+            )
+            .await
+            .expect("seed layer");
+
+        let results = handle
+            .dry_run(vec![
+                DryRunOp::MoveLayer {
+                    id: layer_id,
+                    new_track_id: second_track_id,
+                    new_t_start_us: 1_000_000,
+                },
+                DryRunOp::UpdateLayer {
+                    id: layer_id,
+                    patch: LayerPatch {
+                        label: Some("renamed".into()),
+                        ..Default::default()
+                    },
+                },
+            ])
+            .await;
+        assert_eq!(results.len(), 2);
+        assert!(matches!(results[0], Ok(DryRunOutput::Void)));
+        assert!(matches!(results[1], Ok(DryRunOutput::Void)));
+
+        // Real state still untouched — the seed layer should be where we
+        // put it, not where the dry-run move would have landed it.
+        let snap = handle.snapshot().await;
+        let original_track = snap.tracks.iter().find(|t| t.id == track_id).unwrap();
+        assert_eq!(original_track.layers.len(), 1);
+        assert_eq!(original_track.layers[0].id, layer_id);
+        assert_eq!(original_track.layers[0].label, None);
+    }
+
+    /// An invalid layer id surfaces as LayerNotFound from the apply_*
+    /// function — should propagate cleanly through the dispatcher.
+    #[tokio::test]
+    async fn dry_run_surfaces_apply_errors_with_correct_op_index() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+
+        // First op succeeds; second op refers to a non-existent layer.
+        let results = handle
+            .dry_run(vec![
+                DryRunOp::AddLayer {
+                    track_id,
+                    params: color_layer(Rgba::WHITE),
+                    t_start_us: 0,
+                    t_end_us: 1_000_000,
+                },
+                DryRunOp::DeleteLayer { id: new_id() },
+            ])
+            .await;
+        assert_eq!(results.len(), 2, "halt after the second op fails");
+        assert!(matches!(results[0], Ok(DryRunOutput::AddLayer { .. })));
+        assert!(matches!(
+            &results[1],
+            Err(CommandError::LayerNotFound { .. })
+        ));
     }
 }

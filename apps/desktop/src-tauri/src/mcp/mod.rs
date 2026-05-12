@@ -70,10 +70,11 @@ use crate::jobs;
 use crate::cloud;
 use crate::raster::template as raster_template;
 use crate::state::{
-    Actor, Animated, AudioParams, BlendMode, ColorParams, CommandError, CompositionPatch, LayerId,
-    LayerParams, LayerParamsPatch, LayerPatch, MarkerId, MarkerPatch, MediaId, MediaItem,
-    MediaKind, Project, ProjectHandle, Rational, Rgba, SubtitlesParams, SubtitlesSource,
-    TemplateParams, TrackId, TrackKind, Transform, ValidationError, VideoClipParams, new_id,
+    Actor, Animated, AudioParams, BlendMode, ColorParams, CommandError, CompositionPatch,
+    DryRunOp, DryRunOutput, LayerId, LayerParams, LayerParamsPatch, LayerPatch, MarkerId,
+    MarkerPatch, MediaId, MediaItem, MediaKind, Project, ProjectHandle, Rational, Rgba,
+    SubtitlesParams, SubtitlesSource, TemplateParams, TrackId, TrackKind, Transform,
+    ValidationError, VideoClipParams, new_id,
 };
 
 const URI_PROJECT: &str = "project://current";
@@ -969,6 +970,40 @@ impl VidetorServer {
             .map_err(map_command_error)?;
         Ok(ok_void())
     }
+
+    // ============================================================
+    // Dry run (Phase 4.x last gap)
+    // ============================================================
+
+    #[tool(description = "Try-run a sequence of edit operations against a clone of the current project \
+                          WITHOUT committing. Useful for previewing complex multi-step edits — agents \
+                          can detect overlap / invariant violations before mutating real state. \
+                          Validates after each op (matching real `commit()` behaviour) and HALTS at \
+                          the first error so subsequent ops don't dry-run against a state real \
+                          execution wouldn't reach. Returns `{ results: [{ index, status, output? \
+                          | error? }, ...] }`. \
+                          Supports add_color_layer, add_video_layer, update_layer, \
+                          update_layer_params, move_layer, split_layer, delete_layer. Other tools \
+                          (templates, subtitles, media import, undo/redo) are not dry-runnable in v1.")]
+    async fn dry_run(
+        &self,
+        #[tool(aggr)] args: DryRunArgs,
+    ) -> Result<CallToolResult, McpError> {
+        // Parse the MCP OperationSpec list into the actor's DryRunOp values
+        // (string UUIDs → TrackId/LayerId/MediaId at this boundary).
+        let mut ops = Vec::with_capacity(args.operations.len());
+        for (idx, spec) in args.operations.into_iter().enumerate() {
+            let op = spec_to_op(spec).map_err(|e| {
+                McpError::invalid_params(
+                    format!("operations[{idx}]: {e}"),
+                    None,
+                )
+            })?;
+            ops.push(op);
+        }
+        let results = self.project.dry_run(ops).await;
+        ok_json(&DryRunResponse::from_results(results))
+    }
 }
 
 // ============================================================
@@ -1200,6 +1235,202 @@ pub struct CheckpointArgs {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct RestoreCheckpointArgs {
     pub checkpoint_id: String,
+}
+
+// ============================================================
+// dry_run argument shape
+// ============================================================
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DryRunArgs {
+    /// Operations to apply in order against a CLONE of current project state.
+    /// First error halts the chain. Each op uses string UUIDs at the MCP
+    /// boundary; the actor parses them server-side.
+    pub operations: Vec<OperationSpec>,
+}
+
+/// Tagged-union mirror of the small set of mutation MCP tools that can be
+/// dry-run safely. Variants stay flat (no nested action/payload split) so
+/// the JSON shape is `{"kind": "add_color_layer", "track_id": ..., ...}`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum OperationSpec {
+    /// Equivalent to the `add_color_layer` tool.
+    AddColorLayer {
+        track_id: String,
+        t_start_us: i64,
+        t_end_us: i64,
+        color: Rgba,
+        width: Option<u32>,
+        height: Option<u32>,
+    },
+    /// Equivalent to the `add_video_layer` tool.
+    AddVideoLayer {
+        track_id: String,
+        media_id: String,
+        t_start_us: i64,
+        t_end_us: i64,
+        src_in_us: i64,
+        src_out_us: i64,
+    },
+    /// Equivalent to the `update_layer` tool — envelope only (label / time
+    /// range / enabled / locked).
+    UpdateLayer {
+        layer_id: String,
+        patch: LayerPatch,
+    },
+    /// Equivalent to `update_layer_params` — kind-specific params.
+    UpdateLayerParams {
+        layer_id: String,
+        patch: LayerParamsPatch,
+    },
+    /// Equivalent to `move_layer`.
+    MoveLayer {
+        layer_id: String,
+        new_track_id: String,
+        new_t_start_us: i64,
+    },
+    /// Equivalent to `split_layer`.
+    SplitLayer {
+        layer_id: String,
+        at_t_us: i64,
+    },
+    /// Equivalent to `delete_layer`.
+    DeleteLayer {
+        layer_id: String,
+    },
+}
+
+/// Top-level shape returned by the `dry_run` tool. Halt-on-first-error
+/// means `results.len()` may be less than the requested op count; the index
+/// on each entry identifies which input op it corresponds to.
+#[derive(Debug, Serialize)]
+struct DryRunResponse {
+    results: Vec<DryRunResultEntry>,
+    /// Index of the op that errored (causing the halt), or `null` when the
+    /// entire chain succeeded.
+    halted_at: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+struct DryRunResultEntry {
+    index: usize,
+    #[serde(flatten)]
+    outcome: DryRunResultOutcome,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+enum DryRunResultOutcome {
+    Ok { output: DryRunOutput },
+    Error { error: String },
+}
+
+impl DryRunResponse {
+    fn from_results(results: Vec<Result<DryRunOutput, CommandError>>) -> Self {
+        let mut halted_at: Option<usize> = None;
+        let entries = results
+            .into_iter()
+            .enumerate()
+            .map(|(index, r)| {
+                let outcome = match r {
+                    Ok(o) => DryRunResultOutcome::Ok { output: o },
+                    Err(e) => {
+                        if halted_at.is_none() {
+                            halted_at = Some(index);
+                        }
+                        DryRunResultOutcome::Error { error: e.to_string() }
+                    }
+                };
+                DryRunResultEntry { index, outcome }
+            })
+            .collect();
+        Self { results: entries, halted_at }
+    }
+}
+
+/// Translate an MCP-side `OperationSpec` (string UUIDs, agent-friendly
+/// args) into the actor's `DryRunOp`. Errors propagate as the per-op
+/// invalid-params reason in the dispatcher.
+fn spec_to_op(spec: OperationSpec) -> Result<DryRunOp, String> {
+    match spec {
+        OperationSpec::AddColorLayer {
+            track_id,
+            t_start_us,
+            t_end_us,
+            color,
+            width,
+            height,
+        } => {
+            let track = Uuid::parse_str(&track_id)
+                .map_err(|e| format!("track_id: {e}"))?;
+            let params = LayerParams::Color(ColorParams {
+                color: Animated::Static(color),
+                width: width.unwrap_or(1920),
+                height: height.unwrap_or(1080),
+            });
+            Ok(DryRunOp::AddLayer { track_id: track, params, t_start_us, t_end_us })
+        }
+        OperationSpec::AddVideoLayer {
+            track_id,
+            media_id,
+            t_start_us,
+            t_end_us,
+            src_in_us,
+            src_out_us,
+        } => {
+            let track = Uuid::parse_str(&track_id)
+                .map_err(|e| format!("track_id: {e}"))?;
+            let media = Uuid::parse_str(&media_id)
+                .map_err(|e| format!("media_id: {e}"))?;
+            let params = LayerParams::VideoClip(VideoClipParams {
+                media,
+                src_in_us,
+                src_out_us,
+                transform: Transform::default(),
+                opacity: Animated::Static(1.0),
+                crop: None,
+                flip_h: false,
+                flip_v: false,
+                blend_mode: BlendMode::default(),
+                speed: 1.0,
+                fade_in_us: 0,
+                fade_out_us: 0,
+            });
+            Ok(DryRunOp::AddLayer { track_id: track, params, t_start_us, t_end_us })
+        }
+        OperationSpec::UpdateLayer { layer_id, patch } => {
+            let id = Uuid::parse_str(&layer_id)
+                .map_err(|e| format!("layer_id: {e}"))?;
+            Ok(DryRunOp::UpdateLayer { id, patch })
+        }
+        OperationSpec::UpdateLayerParams { layer_id, patch } => {
+            let id = Uuid::parse_str(&layer_id)
+                .map_err(|e| format!("layer_id: {e}"))?;
+            Ok(DryRunOp::UpdateLayerParams { id, patch })
+        }
+        OperationSpec::MoveLayer {
+            layer_id,
+            new_track_id,
+            new_t_start_us,
+        } => {
+            let id = Uuid::parse_str(&layer_id)
+                .map_err(|e| format!("layer_id: {e}"))?;
+            let new_track = Uuid::parse_str(&new_track_id)
+                .map_err(|e| format!("new_track_id: {e}"))?;
+            Ok(DryRunOp::MoveLayer { id, new_track_id: new_track, new_t_start_us })
+        }
+        OperationSpec::SplitLayer { layer_id, at_t_us } => {
+            let id = Uuid::parse_str(&layer_id)
+                .map_err(|e| format!("layer_id: {e}"))?;
+            Ok(DryRunOp::SplitLayer { id, at_t_us })
+        }
+        OperationSpec::DeleteLayer { layer_id } => {
+            let id = Uuid::parse_str(&layer_id)
+                .map_err(|e| format!("layer_id: {e}"))?;
+            Ok(DryRunOp::DeleteLayer { id })
+        }
+    }
 }
 
 // ============================================================

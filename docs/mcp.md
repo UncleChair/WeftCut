@@ -104,7 +104,7 @@ Each maps 1:1 to a project actor command (see [data-model.md](data-model.md) "Mu
 - `checkpoint(label)` — explicit named snapshot
 - `list_checkpoints()` / `restore_checkpoint(id)`
 - `undo()` / `redo()`
-- `dry_run(operations[])` — applies the batch in a sandbox, returns the resulting compiled graph + validation diagnostics, **does not commit**
+- `dry_run(operations[])` — applies the batch against a clone of the project, validates after each op (matching `commit()`), halts at the first error so subsequent ops don't dry-run against a state real execution wouldn't reach. **Does not commit.** v1 ops: `add_color_layer`, `add_video_layer`, `update_layer`, `update_layer_params`, `move_layer`, `split_layer`, `delete_layer`. Returns `{ results: [{ index, status, output? | error? }, ...], halted_at: number | null }`. Other tools (templates, subtitles, media import, undo/redo, render) are not dry-runnable in v1.
 - `list_recent_operations(limit)` — for agents that want to see what just happened
 
 ### Render
