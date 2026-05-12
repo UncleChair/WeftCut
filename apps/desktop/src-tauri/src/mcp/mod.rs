@@ -27,6 +27,8 @@
 //!   microsecond timestamp, lazy-cached on disk. Multimodal-friendly.
 //! - `media://{id}/waveform` — peaks file (base64). See `jobs/waveform.rs`
 //!   for the binary format.
+//! - `templates://current` — built-in template catalog (id, name, size,
+//!   default_duration_s, props_schema). Same payload as `list_templates`.
 //!
 //! Edit tools (Stage 3) and workflow tools (Stage 4) live alongside `ping`
 //! in the `VidetorServer` impl block. The change feed (Stage 5) lives on its
@@ -66,11 +68,12 @@ use crate::io::probe;
 use crate::ir::{self, RenderTarget};
 use crate::jobs;
 use crate::cloud;
+use crate::raster::template as raster_template;
 use crate::state::{
     Actor, Animated, AudioParams, BlendMode, ColorParams, CommandError, CompositionPatch, LayerId,
     LayerParams, LayerParamsPatch, LayerPatch, MarkerId, MarkerPatch, MediaId, MediaItem,
-    MediaKind, Project, ProjectHandle, Rational, Rgba, SubtitlesParams, SubtitlesSource, TrackId,
-    TrackKind, Transform, ValidationError, VideoClipParams, new_id,
+    MediaKind, Project, ProjectHandle, Rational, Rgba, SubtitlesParams, SubtitlesSource,
+    TemplateParams, TrackId, TrackKind, Transform, ValidationError, VideoClipParams, new_id,
 };
 
 const URI_PROJECT: &str = "project://current";
@@ -80,6 +83,7 @@ const URI_TRACKS: &str = "project://tracks";
 const URI_MARKERS: &str = "project://markers";
 const URI_HISTORY: &str = "project://history";
 const URI_COMPILED: &str = "project://compiled";
+const URI_TEMPLATES: &str = "templates://current";
 const PREFIX_LAYERS: &str = "project://layers/";
 const PREFIX_MEDIA: &str = "media://";
 
@@ -693,6 +697,95 @@ impl VidetorServer {
     }
 
     // ============================================================
+    // Template tools (Phase 5 Stage H)
+    // ============================================================
+
+    #[tool(description = "List every built-in template available to add via `add_template`. Returns an array \
+                          of `{ id, name, version, size: [w,h], default_duration_s, props_schema }`. \
+                          Inspect `props_schema` before calling `add_template` to know what keys + types each \
+                          template accepts; unknown keys reject. The catalog is fixed per build; once \
+                          Phase 5 Stage H (community + user templates) lands this becomes dynamic.")]
+    async fn list_templates(&self) -> Result<CallToolResult, McpError> {
+        ok_json(&templates_payload())
+    }
+
+    #[tool(description = "Add a template layer to a track. The template is rasterized to a PNG sequence on \
+                          first render and cached content-addressably; subsequent renders are folder lookups. \
+                          Args: `template_id` (from `list_templates`), `t_start_us` (timeline microseconds), \
+                          optional `t_end_us` (defaults to `t_start_us + default_duration_s * 1e6`), optional \
+                          `track_id` (Video track; defaults to the first existing Video track or a new one \
+                          labeled 'Templates'), optional `props` (JSON object matched against the template's \
+                          `props_schema`; unknown keys reject, missing keys fall back to defaults). \
+                          Returns the new layer id.")]
+    async fn add_template(
+        &self,
+        #[tool(aggr)] args: AddTemplateArgs,
+    ) -> Result<CallToolResult, McpError> {
+        let template = raster_template::builtins()
+            .into_iter()
+            .find(|t| t.id() == args.template_id)
+            .ok_or_else(|| {
+                McpError::invalid_params(
+                    format!(
+                        "unknown template_id '{}' — call list_templates for the catalog",
+                        args.template_id
+                    ),
+                    None,
+                )
+            })?;
+
+        let provided = args
+            .props
+            .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
+        let canonical = template
+            .canonicalize_props(&provided)
+            .map_err(|e| McpError::invalid_params(format!("invalid props: {e}"), None))?;
+        let props_map = parse_canonical_props(&canonical)?;
+
+        let t_end_us = resolve_template_t_end_us(
+            args.t_start_us,
+            args.t_end_us,
+            template.manifest.default_duration_s,
+        );
+        if t_end_us <= args.t_start_us {
+            return Err(McpError::invalid_params(
+                format!(
+                    "t_end_us {} must be greater than t_start_us {}",
+                    t_end_us, args.t_start_us,
+                ),
+                None,
+            ));
+        }
+
+        let track_id = match args.track_id.as_deref() {
+            Some(s) => parse_uuid(s, "track_id")?,
+            None => self.ensure_template_target_track().await?,
+        };
+
+        let params = LayerParams::Template(TemplateParams {
+            template_id: template.id().to_string(),
+            template_version: template.manifest.version,
+            props: props_map,
+            transform: Transform::default(),
+            opacity: Animated::Static(1.0),
+        });
+
+        let layer_id = self
+            .project
+            .add_layer(
+                agent_actor(),
+                track_id,
+                params,
+                args.t_start_us,
+                t_end_us,
+            )
+            .await
+            .map_err(map_command_error)?;
+
+        Ok(ok_text(layer_id.to_string()))
+    }
+
+    // ============================================================
     // Composition tools
     // ============================================================
 
@@ -1044,6 +1137,23 @@ pub struct DuplicateLayerArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct AddTemplateArgs {
+    /// Template id from `list_templates` (e.g. "lower-third-simple", "title-card").
+    pub template_id: String,
+    /// Layer start in timeline microseconds.
+    pub t_start_us: i64,
+    /// Layer end in timeline microseconds. Defaults to
+    /// `t_start_us + default_duration_s * 1_000_000` when omitted.
+    pub t_end_us: Option<i64>,
+    /// Target Video track id. If omitted, the first existing Video track is used,
+    /// or a new one labeled "Templates" is created.
+    pub track_id: Option<String>,
+    /// Template props as a JSON object. Keys must match the template's
+    /// `props_schema`; unknown keys reject; missing keys fill from defaults.
+    pub props: Option<Value>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct SetCompositionArgs {
     pub patch: CompositionPatch,
 }
@@ -1124,6 +1234,54 @@ fn agent_actor() -> Actor {
 fn parse_uuid(s: &str, field: &str) -> Result<Uuid, McpError> {
     Uuid::parse_str(s)
         .map_err(|e| McpError::invalid_params(format!("{field} not a UUID: {e}"), None))
+}
+
+/// JSON payload shared by the `list_templates` tool and the
+/// `templates://current` resource. One source of truth so the two surfaces
+/// can't drift. Order = `template::builtins()` order (stable per build).
+fn templates_payload() -> Vec<Value> {
+    raster_template::builtins()
+        .into_iter()
+        .map(|t| {
+            serde_json::to_value(&t.manifest)
+                .expect("Manifest is unconditionally Serialize")
+        })
+        .collect()
+}
+
+/// Convert the canonical JSON string produced by `Template::canonicalize_props`
+/// back into the `imbl::HashMap<String, Value>` shape that `TemplateParams`
+/// stores. Canonicalize already validated types + filled defaults; this is
+/// just the format crossover.
+fn parse_canonical_props(
+    canonical_json: &str,
+) -> Result<imbl::HashMap<String, Value>, McpError> {
+    let parsed: Value = serde_json::from_str(canonical_json).map_err(|e| {
+        McpError::internal_error(format!("canonical props parse: {e}"), None)
+    })?;
+    let obj = parsed.as_object().ok_or_else(|| {
+        McpError::internal_error("canonical props is not a JSON object", None)
+    })?;
+    Ok(obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+}
+
+/// Compute the layer's end time for `add_template`. When the agent omits
+/// `t_end_us` we extend by the template's `default_duration_s`; otherwise we
+/// pass the value through unchanged so the caller controls duration.
+/// `saturating_add` guards the i64 overflow on absurd inputs (e.g. agent
+/// passes `i64::MAX` as start time + a default duration).
+fn resolve_template_t_end_us(
+    t_start_us: i64,
+    t_end_us: Option<i64>,
+    default_duration_s: f64,
+) -> i64 {
+    match t_end_us {
+        Some(end) => end,
+        None => {
+            let duration_us = (default_duration_s * 1_000_000.0) as i64;
+            t_start_us.saturating_add(duration_us)
+        }
+    }
 }
 
 fn parse_track_kind(s: &str) -> Result<TrackKind, McpError> {
@@ -1554,6 +1712,9 @@ impl ServerHandler for VidetorServer {
             URI_MEDIA => serde_json::to_value(&snap.media_pool).map_err(serialize_err)?,
             URI_TRACKS => serde_json::to_value(&snap.tracks).map_err(serialize_err)?,
             URI_MARKERS => serde_json::to_value(&snap.markers).map_err(serialize_err)?,
+            URI_TEMPLATES => {
+                serde_json::to_value(templates_payload()).map_err(serialize_err)?
+            }
             URI_HISTORY => {
                 let view = self.project.history_view(HISTORY_LIMIT).await;
                 serde_json::to_value(&view).map_err(serialize_err)?
@@ -1685,6 +1846,26 @@ impl VidetorServer {
         }
         self.project
             .add_track(agent_actor(), TrackKind::Audio, Some("Voiceover".into()))
+            .await
+            .map_err(map_command_error)
+    }
+
+    /// Find an existing Video track or create one labeled "Templates".
+    /// Used by `add_template` to land template overlays on a sensible default
+    /// track when the agent didn't pick one explicitly. Templates composite
+    /// ON TOP of video, so a Video track (which lowers as overlay foreground
+    /// when above another Video track) is the right place.
+    async fn ensure_template_target_track(&self) -> Result<TrackId, McpError> {
+        let snap = self.project.snapshot().await;
+        if let Some(t) = snap
+            .tracks
+            .iter()
+            .find(|t| matches!(t.kind, TrackKind::Video))
+        {
+            return Ok(t.id);
+        }
+        self.project
+            .add_track(agent_actor(), TrackKind::Video, Some("Templates".into()))
             .await
             .map_err(map_command_error)
     }
@@ -1855,6 +2036,12 @@ const STATIC_RESOURCES: &[ResourceDescriptor] = &[
         uri: URI_COMPILED,
         name: "Compiled IR",
         description: "Compiled IR graph for the current project — for agents that want structural reasoning.",
+    },
+    ResourceDescriptor {
+        uri: URI_TEMPLATES,
+        name: "Templates catalog",
+        description: "Built-in template catalog as JSON. Same shape as the `list_templates` tool result. \
+                      Read this once at session start to know what `add_template` accepts.",
     },
 ];
 
@@ -2338,5 +2525,75 @@ mod tests {
         let regions =
             detect_silences_in_peaks(&peaks, 0.02, 100_000, 0, 2_000_000, 0);
         assert_eq!(regions.len(), 1);
+    }
+
+    // ============================================================
+    // Stage H — template MCP helpers
+    // ============================================================
+
+    /// `list_templates` and `templates://current` share `templates_payload()`.
+    /// One entry per builtin, ordered to match the picker. If a future
+    /// builtin lands but isn't surfaced through this payload, agents wouldn't
+    /// see it.
+    #[test]
+    fn templates_payload_lists_every_builtin() {
+        let payload = templates_payload();
+        let builtins = raster_template::builtins();
+        assert_eq!(payload.len(), builtins.len());
+        for (entry, t) in payload.iter().zip(builtins.iter()) {
+            let obj = entry.as_object().expect("entry is JSON object");
+            assert_eq!(obj.get("id").and_then(|v| v.as_str()), Some(t.id()));
+            assert!(obj.contains_key("name"));
+            assert!(obj.contains_key("size"));
+            assert!(obj.contains_key("default_duration_s"));
+            assert!(obj.contains_key("props_schema"));
+        }
+    }
+
+    /// `parse_canonical_props` is the format crossover between
+    /// `Template::canonicalize_props` (returns JSON string) and
+    /// `TemplateParams.props` (imbl::HashMap<String, Value>). Round-trip via
+    /// canonicalize_props with empty input should yield every prop default
+    /// keyed by name.
+    #[test]
+    fn parse_canonical_props_roundtrips_defaults() {
+        let template = raster_template::builtin_lower_third_simple();
+        let canonical = template
+            .canonicalize_props(&serde_json::json!({}))
+            .expect("canonicalize defaults");
+        let map = parse_canonical_props(&canonical).expect("parse");
+        assert_eq!(map.len(), template.manifest.props_schema.len());
+        for key in template.manifest.props_schema.keys() {
+            assert!(map.contains_key(key), "missing prop {key}");
+        }
+    }
+
+    #[test]
+    fn parse_canonical_props_rejects_non_object_payload() {
+        let err = parse_canonical_props("\"not an object\"").expect_err("non-object");
+        assert!(
+            format!("{err:?}").contains("not a JSON object"),
+            "unexpected error: {err:?}",
+        );
+    }
+
+    /// `add_template` derives `t_end_us` from the template's
+    /// `default_duration_s` when the agent omits it. Guard against future
+    /// regressions (e.g. someone swaps `as i64` for `as u64`).
+    #[test]
+    fn resolve_t_end_us_uses_template_default_when_omitted() {
+        // 5.0s default + 0us start → 5_000_000us end.
+        assert_eq!(resolve_template_t_end_us(0, None, 5.0), 5_000_000);
+        // Caller's value wins when set, even if it would normally be invalid
+        // (validation happens at the actor layer, not here).
+        assert_eq!(
+            resolve_template_t_end_us(1_000_000, Some(2_000_000), 99.0),
+            2_000_000,
+        );
+        // saturating_add survives i64::MAX start time without panicking.
+        assert_eq!(
+            resolve_template_t_end_us(i64::MAX, None, 5.0),
+            i64::MAX,
+        );
     }
 }

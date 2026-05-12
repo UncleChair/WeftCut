@@ -74,8 +74,8 @@ Around 25 tools. Don't expose 100; agents get confused.
 | `media://{id}/thumbnail` | poster frame as image |
 | `media://{id}/frame/{time}` | extracted frame as image (multimodal-friendly) |
 | `media://{id}/waveform` | audio peaks |
-| `templates://list` | available templates with `props_schema` and previews |
-| `templates://{id}/preview` | thumbnail PNG |
+| `templates://current` | built-in template catalog (id, name, size, default_duration_s, props_schema) — same payload as `list_templates` |
+| `templates://{id}/preview` | thumbnail PNG (deferred — no preview generator yet) |
 
 Returning images from `media://{id}/frame/{time}` is what makes this useful with multimodal agents — they can *see* the video and make spatial/temporal judgments before editing.
 
@@ -95,7 +95,8 @@ Each maps 1:1 to a project actor command (see [data-model.md](data-model.md) "Mu
 - `add_keyframe`, `update_keyframe`, `remove_keyframe`
 - `add_marker`, `update_marker`, `remove_marker`
 - `set_composition`
-- `add_template` — uses templated overlay; rasterization may be async, returns immediately with `state: "rasterizing"`
+- `list_templates()` — returns the built-in catalog: `[{ id, name, version, size: [w, h], default_duration_s, props_schema }, ...]`. Inspect `props_schema` before calling `add_template` to know what keys/types each template accepts.
+- `add_template(template_id, t_start_us, t_end_us?, track_id?, props?)` — adds a Template layer. `t_end_us` defaults to `t_start_us + default_duration_s * 1e6`; `track_id` defaults to first existing Video track (else auto-creates one labeled "Templates"); `props` validates against the template's `props_schema` (unknown keys reject, missing keys fall back to defaults). Returns the new layer id. Rasterization happens lazily at next render (cache hit on subsequent renders); the tool itself returns synchronously.
 - `apply_subtitles(body, format?, track_id?, t_start_us?, t_end_us)` — pushes a SRT/ASS body inline; format auto-sniffed from body when omitted; auto-finds or creates a Subtitle track. Body is materialized to a content-addressed cache file before render.
 
 ### Workflow / safety
