@@ -148,13 +148,18 @@ const enUS = {
   connect: {
     heading: "Connect an agent",
     blurb:
-      "Paste one of these snippets into the agent's MCP config. Token is regenerated on every app launch.",
+      "Paste one of these snippets into the agent's MCP config. The token is reused across restarts — hit Refresh to rotate it.",
     starting: "MCP server starting…",
     close: "Close",
     copy: "Copy",
     copied: "Copied!",
     reveal: "Reveal",
     hide: "Hide",
+    refresh: "Refresh",
+    refreshing: "Refreshing…",
+    refresh_hint: "Generate a new bearer token and persist it",
+    refresh_confirm:
+      "Generate a new bearer token? Any agent using the current token will need its config updated.",
     token_note:
       "Token enforcement isn't on yet — localhost-only binding is the active isolation. Don't expose the port to other machines until proper auth ships.",
     field: {

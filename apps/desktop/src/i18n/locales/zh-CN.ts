@@ -148,13 +148,17 @@ const zhCN: Resources = {
   },
   connect: {
     heading: "连接代理",
-    blurb: "把下面任一片段粘贴到代理的 MCP 配置中。每次启动应用都会重新生成令牌。",
+    blurb: "把下面任一片段粘贴到代理的 MCP 配置中。令牌在重启后保持不变 —— 点击「刷新」可重新生成。",
     starting: "MCP 服务正在启动…",
     close: "关闭",
     copy: "复制",
     copied: "已复制！",
     reveal: "显示",
     hide: "隐藏",
+    refresh: "刷新",
+    refreshing: "刷新中…",
+    refresh_hint: "重新生成 Bearer 令牌并保存",
+    refresh_confirm: "重新生成 Bearer 令牌？正在使用旧令牌的代理需要更新其配置。",
     token_note:
       "尚未启用令牌校验 — 仅本地回环绑定提供隔离。在正式认证就绪前，请勿对其它机器开放此端口。",
     field: {

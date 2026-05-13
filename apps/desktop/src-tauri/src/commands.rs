@@ -197,6 +197,17 @@ pub fn get_mcp_info(cell: State<'_, crate::mcp::McpInfoCell>) -> Option<McpInfoV
     })
 }
 
+/// Generate a fresh bearer token, swap it into the live `McpInfo`, and rewrite
+/// `mcp_auth.json` so the next launch picks it up too. Port unchanged — the
+/// server stays bound. Returns the new token for the UI to echo.
+#[tauri::command]
+pub fn reset_mcp_token(
+    app: tauri::AppHandle,
+    cell: State<'_, crate::mcp::McpInfoCell>,
+) -> Result<String, String> {
+    crate::mcp::regenerate_token(&app, &cell).map_err(|e| format!("reset bearer: {e:#}"))
+}
+
 #[tauri::command]
 pub fn ping() -> &'static str {
     "ok"

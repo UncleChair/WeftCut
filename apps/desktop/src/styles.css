@@ -1032,10 +1032,18 @@ html, body, #root { height: 100%; margin: 0; }
   color: #e5e7eb;
 }
 
-.connect-agent-panel > p,
-.connect-agent-panel > h3,
-.connect-agent-panel > .connect-field,
-.connect-agent-panel > .connect-snippet {
+.connect-agent-body {
+  flex: 1 1 auto;
+  /* min-height: 0 lets a flex item shrink below its content size; without it
+     overflow-y: auto never engages because the body grows to fit its children. */
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.connect-agent-body > p,
+.connect-agent-body > h3,
+.connect-agent-body > .connect-field,
+.connect-agent-body > .connect-snippet {
   padding: 0 16px;
 }
 
@@ -1101,8 +1109,14 @@ html, body, #root { height: 100%; margin: 0; }
   background: #374151;
 }
 
-.connect-reveal {
+.connect-reveal,
+.connect-refresh {
   font-variant: small-caps;
+}
+
+.connect-refresh:disabled {
+  opacity: 0.6;
+  cursor: progress;
 }
 
 .connect-snippet {

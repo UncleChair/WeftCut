@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { getMcpInfo, type McpInfoView } from "../ipc";
+import { getMcpInfo, resetMcpToken, type McpInfoView } from "../ipc";
 import { useHideMpvHost } from "../mpv/useHideMpvHost";
 
 interface Props {
@@ -15,6 +15,7 @@ export function ConnectAgentPanel({ onClose }: Props) {
   const [info, setInfo] = useState<McpInfoView | null>(null);
   const [revealed, setRevealed] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Poll until the MCP server is up. Once we have info, stop polling.
   useEffect(() => {
@@ -96,6 +97,25 @@ export function ConnectAgentPanel({ onClose }: Props) {
     }
   };
 
+  const refreshToken = async () => {
+    if (refreshing) return;
+    if (!window.confirm(t("connect.refresh_confirm"))) return;
+    setRefreshing(true);
+    try {
+      const next = await resetMcpToken();
+      // Splice the new token into the cached view so every snippet recomputes
+      // without waiting on the next getMcpInfo poll (the poll already stopped).
+      setInfo((prev) => (prev ? { ...prev, bearer_token: next } : prev));
+      // Auto-reveal so the user can immediately copy the new value into their
+      // agent config — the refresh just invalidated what they had.
+      setRevealed(true);
+    } catch (e) {
+      console.warn("reset bearer failed:", e);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   return (
     <div className="connect-agent-overlay" role="dialog" aria-modal="true">
       <div className="connect-agent-panel">
@@ -106,6 +126,7 @@ export function ConnectAgentPanel({ onClose }: Props) {
           </button>
         </header>
 
+        <div className="connect-agent-body">
         {!info ? (
           <p className="connect-status">{t("connect.starting")}</p>
         ) : (
@@ -136,13 +157,24 @@ export function ConnectAgentPanel({ onClose }: Props) {
               copyLabel={t("connect.copy")}
               copiedLabel={t("connect.copied")}
               extraButton={
-                <button
-                  type="button"
-                  className="connect-reveal"
-                  onClick={() => setRevealed((r) => !r)}
-                >
-                  {revealed ? t("connect.hide") : t("connect.reveal")}
-                </button>
+                <>
+                  <button
+                    type="button"
+                    className="connect-reveal"
+                    onClick={() => setRevealed((r) => !r)}
+                  >
+                    {revealed ? t("connect.hide") : t("connect.reveal")}
+                  </button>
+                  <button
+                    type="button"
+                    className="connect-refresh"
+                    onClick={refreshToken}
+                    disabled={refreshing}
+                    title={t("connect.refresh_hint")}
+                  >
+                    {refreshing ? t("connect.refreshing") : t("connect.refresh")}
+                  </button>
+                </>
               }
             />
 
@@ -184,6 +216,7 @@ export function ConnectAgentPanel({ onClose }: Props) {
             <p className="connect-note">{t("connect.token_note")}</p>
           </>
         )}
+        </div>
       </div>
     </div>
   );

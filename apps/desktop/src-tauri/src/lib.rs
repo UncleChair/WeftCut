@@ -42,6 +42,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::ping,
             commands::get_mcp_info,
+            commands::reset_mcp_token,
             commands::project_summary,
             commands::add_video_track,
             commands::add_demo_color_layer,

@@ -519,6 +519,14 @@ export async function getMcpInfo(): Promise<McpInfoView | null> {
   return invoke<McpInfoView | null>("get_mcp_info");
 }
 
+/// Regenerate the bearer token. The server stays bound on the same port —
+/// only the token rotates. Persists to `mcp_auth.json` so the next launch
+/// reuses the new token. Returns the fresh token so the panel can update
+/// without a follow-up `getMcpInfo` call.
+export async function resetMcpToken(): Promise<string> {
+  return invoke<string>("reset_mcp_token");
+}
+
 export interface ApiKeyStatus {
   provider: string;
   label: string;

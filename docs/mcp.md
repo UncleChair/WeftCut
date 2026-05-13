@@ -1,6 +1,6 @@
 # MCP Server & Agent UX
 
-> **Implementation status:** This is the design spec. Current implementation reality (what's wired, what's intentionally deferred to Phase 4.x or later) lives in [`roadmap.md`'s Phase 4 closeout](roadmap.md#phase-4-status-2026-05-08). Notable deltas at time of writing: SSE transport instead of Streamable HTTP (rmcp 0.1.x); token surfaced but not enforced (rmcp lacks middleware; localhost-only is the active isolation); change feed lives on a separate `/events` axum endpoint rather than as MCP notifications; effects/keyframe MCP tools and `dry_run` deferred until their IR-lowering / actor-refactor prerequisites land.
+> **Implementation status:** This is the design spec. Current implementation reality (what's wired, what's intentionally deferred to Phase 4.x or later) lives in [`roadmap.md`'s Phase 4 closeout](roadmap.md#phase-4-status-2026-05-08). Notable deltas at time of writing: SSE transport instead of Streamable HTTP (we stay on rmcp 0.1.x deliberately — 1.6.x dropped SSE entirely in favor of Streamable HTTP, but Claude Desktop is SSE-only for local servers as of Anthropic's 2026-05-03 statement, so migrating would break the integration); token surfaced but not enforced (rmcp 0.1.x's `SseServer` exposes no middleware hook; localhost-only binding is the active isolation); change feed lives on a separate `/events` axum endpoint rather than as MCP notifications; effects/keyframe MCP tools deferred until IR-lowering lands.
 
 Videtor exposes itself as an MCP server. External agents (Claude Desktop, Cursor, Cline, custom Python clients) connect over a localhost HTTP server and edit the project through a structured tool surface.
 
@@ -13,10 +13,10 @@ Videtor exposes itself as an MCP server. External agents (Claude Desktop, Cursor
 
 ## Authentication
 
-- Per-session random token (32 bytes hex), regenerated on every app launch unless user pins.
-- Token required as `Authorization: Bearer <token>` header on every request.
+- Random 32-byte hex token, generated on first launch and persisted to `<app_config_dir>/mcp_auth.json` alongside the auto-picked port so the Connect-agent snippet stays valid across restarts. If the saved port is occupied at bind time, the server falls back to a fresh OS-picked port and rewrites the file.
+- Token required as `Authorization: Bearer <token>` header on every request. **Currently surfaced but not enforced** — rmcp 0.1.x's `SseServer` exposes no middleware hook (only `serve` / `with_service` / `cancel`). rmcp 1.6.x ships `StreamableHttpService` as a tower service that would unblock a `tower::Layer`-based bearer check, but Claude Desktop is SSE-only for local servers, so we can't migrate without breaking the integration. Localhost-only binding is the real isolation today. Enforcement could ship via an axum reverse-proxy in front of rmcp's SSE server (~100-200 LoC + SSE-streaming risk) — deferred until threat model justifies it. Migrate this file to the OS keyring when enforcement lands.
 - No token visible in UI until user opens the **Connect agent** panel — defends against video tutorials accidentally leaking it on stream.
-- "Reset token" button kicks all connected agents.
+- **Refresh** button in the Connect-agent panel rotates the bearer in place: the server stays bound on the same port and `mcp_auth.json` is rewritten with the new token. Once enforcement lands, hitting Refresh kicks every agent that hasn't picked up the new value.
 
 ## Connection UX
 

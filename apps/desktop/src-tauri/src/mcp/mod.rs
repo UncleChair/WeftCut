@@ -1,14 +1,32 @@
 //! MCP server: tool surface, resources, prompts, SSE change feed.
 //!
-//! Transport: SSE on `127.0.0.1:<auto-port>`. Streamable HTTP is the spec
-//! target but rmcp 0.1.x hasn't shipped it yet — Claude Desktop accepts both.
-//! Swap to streamable-http when upstream lands.
+//! Transport: SSE on `127.0.0.1:<auto-port>` via rmcp 0.1.x's `SseServer`.
+//! Note that rmcp upstream has moved on (1.6.0, 2026-05-01) and dropped SSE
+//! entirely in favor of Streamable HTTP. We're deliberately staying on 0.1.x
+//! because Claude Desktop is SSE-only for local servers as of Anthropic's
+//! 2026-05-03 statement; migrating to streamable-http would technically be
+//! "spec-current" but would break the integration this app exists to serve.
+//! Revisit when Claude Desktop ships streamable-http for local servers.
 //!
-//! Per-session bearer token, regenerated on each app launch unless pinned.
-//! rmcp 0.1.x's `SseServer` doesn't expose middleware injection, so the
-//! token is generated and surfaced (UI panel + log) but **NOT enforced** on
-//! incoming requests. Localhost-only binding is the real isolation on a
-//! single-user machine; flipping to 0.0.0.0 must wait for proper auth.
+//! Bearer token + auto-picked port are persisted to
+//! `<app_config_dir>/mcp_auth.json` on first launch and reused on every
+//! subsequent start, so the Claude Desktop / Cursor snippet stays valid
+//! across restarts. If the saved port is occupied at bind time (another
+//! Videtor instance, port collision) the server falls back to a fresh
+//! OS-picked port and rewrites the file.
+//!
+//! rmcp 0.1.x's `SseServer` exposes no middleware hook (only `serve` /
+//! `serve_with_config` / `with_service` / `cancel` / `next_transport`), so
+//! the token is generated and surfaced (UI panel + log) but **NOT enforced**
+//! on incoming requests. Localhost-only binding is the real isolation on a
+//! single-user machine; flipping to 0.0.0.0 needs proper enforcement first.
+//! Enforcement paths considered (none active):
+//! - rmcp 1.6.x with tower::Layer — blocked on Claude Desktop SSE-only.
+//! - axum reverse-proxy in front of rmcp 0.1.x — feasible TODAY (would own
+//!   the `/sse` GET stream + `/message` POST forwarding) but ~100-200 LoC
+//!   with SSE-streaming risk; deferred until threat model justifies it.
+//! When enforcement does land, migrate this file to the OS keyring
+//! (`cloud/keys.rs` is the template — add a `Provider::McpBearer` variant).
 //!
 //! Resource surface (read-only):
 //! - `project://current`     — full Project JSON
@@ -46,7 +64,9 @@
 mod events;
 mod prompts;
 
+use std::fs;
 use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use rmcp::{
@@ -61,7 +81,7 @@ use rmcp::{
     tool,
     transport::sse_server::SseServer,
 };
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use chrono::Utc;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -2387,11 +2407,39 @@ pub async fn serve(
     cache: CacheLayout,
     app: AppHandle,
 ) -> Result<McpInfo> {
-    let port = pick_free_port().context("pick free localhost port")?;
-    let bind = SocketAddr::from(([127, 0, 0, 1], port));
-    let bearer_token = random_token();
+    let auth_path = auth_file_path(&app);
+    let mut auth = match load_auth(&auth_path) {
+        Some(a) => a,
+        None => McpAuth {
+            bearer_token: random_token(),
+            port: pick_free_port().context("pick free localhost port")?,
+        },
+    };
 
-    let server = SseServer::serve(bind).await.context("start rmcp SSE server")?;
+    // Try the saved/picked port first. If it's now occupied (another Videtor
+    // instance, another process grabbed it) fall back to a freshly picked
+    // port and rewrite the file so the next launch lands on the new one.
+    let mut bind = SocketAddr::from(([127, 0, 0, 1], auth.port));
+    let server = match SseServer::serve(bind).await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(
+                "mcp bind on saved port {} failed ({e:#}); picking fresh port",
+                auth.port
+            );
+            let new_port = pick_free_port().context("pick free localhost port")?;
+            bind = SocketAddr::from(([127, 0, 0, 1], new_port));
+            auth.port = new_port;
+            SseServer::serve(bind).await.context("start rmcp SSE server")?
+        }
+    };
+
+    // Best-effort persistence — failure means next launch regenerates, which
+    // is the pre-persistence behaviour, not a reason to fail server startup.
+    if let Err(e) = save_auth(&auth_path, &auth) {
+        tracing::warn!("persist mcp auth to {}: {e:#}", auth_path.display());
+    }
+    let bearer_token = auth.bearer_token;
     // The cancellation token gates the spawned server task. We intentionally drop
     // it — the server keeps running for the app's lifetime; tearing it down is a
     // future concern when sessions get pinned/unpinned.
@@ -2425,11 +2473,89 @@ pub async fn serve(
     Ok(info)
 }
 
+/// Generate a fresh bearer token, swap it into the live `McpInfoCell`, and
+/// persist it to `mcp_auth.json`. Port stays bound to the same socket — only
+/// the token changes. Returns the new token so callers can echo it back to
+/// the UI without a second read.
+///
+/// Once rmcp ships middleware and we start enforcing the bearer, this is the
+/// hook that kicks every connected agent (their saved header goes stale).
+/// Today it's a UX action that keeps the Connect-agent snippet current.
+pub fn regenerate_token(app: &AppHandle, cell: &McpInfoCell) -> Result<String> {
+    regenerate_token_at(&auth_file_path(app), cell)
+}
+
+/// Path-injected core of `regenerate_token` — same semantics, but takes the
+/// auth-file path directly so tests don't need a live `AppHandle`.
+fn regenerate_token_at(auth_path: &Path, cell: &McpInfoCell) -> Result<String> {
+    let new_token = random_token();
+
+    let mut guard = cell
+        .write()
+        .map_err(|_| anyhow::anyhow!("mcp info cell poisoned"))?;
+    let info = guard
+        .as_mut()
+        .ok_or_else(|| anyhow::anyhow!("mcp server not ready"))?;
+    info.bearer_token = new_token.clone();
+    let port = info.bind.port();
+    drop(guard);
+
+    let auth = McpAuth {
+        bearer_token: new_token.clone(),
+        port,
+    };
+    save_auth(auth_path, &auth).context("persist regenerated mcp auth")?;
+
+    info!("mcp bearer token regenerated");
+    Ok(new_token)
+}
+
 fn pick_free_port() -> std::io::Result<u16> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
     let port = listener.local_addr()?.port();
     drop(listener);
     Ok(port)
+}
+
+/// Persisted bearer + port so the Connect-agent snippet survives restarts.
+/// Lives at `<app_config_dir>/mcp_auth.json`. Plain file (not OS keyring)
+/// because the token isn't enforced yet — see module doc.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct McpAuth {
+    bearer_token: String,
+    port: u16,
+}
+
+const AUTH_FILE: &str = "mcp_auth.json";
+
+fn auth_file_path(app: &AppHandle) -> PathBuf {
+    // Falls back to a sibling of the working dir when Tauri can't resolve a
+    // platform config dir (sandboxed CI, headless tests). Same shape as the
+    // cache_dir fallback in `lib.rs`.
+    app.path()
+        .app_config_dir()
+        .unwrap_or_else(|_| PathBuf::from("./config"))
+        .join(AUTH_FILE)
+}
+
+fn load_auth(path: &Path) -> Option<McpAuth> {
+    let bytes = fs::read(path).ok()?;
+    let auth: McpAuth = serde_json::from_slice(&bytes).ok()?;
+    // Drop obviously-broken state so we regenerate instead of looping on a
+    // bad file (manual edit, partial write, schema drift).
+    if auth.bearer_token.is_empty() || auth.port == 0 {
+        return None;
+    }
+    Some(auth)
+}
+
+fn save_auth(path: &Path, auth: &McpAuth) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).context("create app config dir")?;
+    }
+    let bytes = serde_json::to_vec_pretty(auth).context("serialize mcp auth")?;
+    fs::write(path, bytes).context("write mcp auth file")?;
+    Ok(())
 }
 
 fn random_token() -> String {
@@ -2484,6 +2610,88 @@ mod tests {
     #[test]
     fn sniff_format_defaults_to_srt_when_unclear() {
         assert!(matches!(sniff_subtitle_format("hello\nworld\n"), SubFormat::Srt));
+    }
+
+    // ============================================================
+    // mcp_auth.json — token + port persistence across launches
+    // ============================================================
+
+    #[test]
+    fn save_then_load_roundtrips_token_and_port() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("nested").join("mcp_auth.json");
+        let original = McpAuth {
+            bearer_token: "deadbeef".repeat(8),
+            port: 51234,
+        };
+        save_auth(&path, &original).unwrap();
+        let loaded = load_auth(&path).expect("load after save");
+        assert_eq!(loaded.bearer_token, original.bearer_token);
+        assert_eq!(loaded.port, original.port);
+    }
+
+    #[test]
+    fn load_returns_none_for_missing_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(load_auth(&tmp.path().join("does-not-exist.json")).is_none());
+    }
+
+    #[test]
+    fn load_rejects_zero_port_so_serve_regenerates() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("mcp_auth.json");
+        fs::write(&path, br#"{"bearer_token":"abc","port":0}"#).unwrap();
+        assert!(load_auth(&path).is_none());
+    }
+
+    #[test]
+    fn load_rejects_empty_token() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("mcp_auth.json");
+        fs::write(&path, br#"{"bearer_token":"","port":51234}"#).unwrap();
+        assert!(load_auth(&path).is_none());
+    }
+
+    #[test]
+    fn load_rejects_malformed_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("mcp_auth.json");
+        fs::write(&path, b"not json").unwrap();
+        assert!(load_auth(&path).is_none());
+    }
+
+    #[test]
+    fn regenerate_token_swaps_in_cell_and_persists_with_same_port() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("mcp_auth.json");
+        let original_bind: std::net::SocketAddr = "127.0.0.1:51234".parse().unwrap();
+        let cell: McpInfoCell = std::sync::Arc::new(std::sync::RwLock::new(Some(McpInfo {
+            bind: original_bind,
+            sse_url: "http://127.0.0.1:51234/sse".into(),
+            message_url: "http://127.0.0.1:51234/message".into(),
+            bearer_token: "stale".repeat(8),
+            events_url: "http://127.0.0.1:51235/events".into(),
+        })));
+
+        let new_token = regenerate_token_at(&path, &cell).unwrap();
+
+        let after = cell.read().unwrap().clone().unwrap();
+        assert_eq!(after.bearer_token, new_token);
+        assert_ne!(after.bearer_token, "stale".repeat(8));
+        assert_eq!(after.bind, original_bind, "port stays bound");
+
+        let persisted = load_auth(&path).expect("auth file written");
+        assert_eq!(persisted.bearer_token, new_token);
+        assert_eq!(persisted.port, 51234);
+    }
+
+    #[test]
+    fn regenerate_token_rejects_when_cell_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("mcp_auth.json");
+        let cell: McpInfoCell = std::sync::Arc::new(std::sync::RwLock::new(None));
+        assert!(regenerate_token_at(&path, &cell).is_err());
+        assert!(!path.exists(), "must not write a file with no port to persist");
     }
 
     // ============================================================
