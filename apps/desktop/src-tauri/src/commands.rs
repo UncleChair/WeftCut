@@ -755,24 +755,44 @@ pub async fn split_first_layer(handle: State<'_, ProjectHandle>) -> Result<(), S
 #[tauri::command]
 pub async fn project_save_as(
     handle: State<'_, ProjectHandle>,
+    cache: State<'_, crate::cache::CacheLayout>,
+    workspace: State<'_, crate::workspace::WorkspaceSlot>,
     path: String,
 ) -> Result<(), String> {
     let snap = handle.snapshot().await;
     let path = PathBuf::from(path);
     io::save_to_dir(&snap, &path)
         .await
-        .map_err(|e| format!("{e:#}"))
+        .map_err(|e| format!("{e:#}"))?;
+    // Per workspace-redesign Q3, every save-as/open re-points the cache at
+    // `<workspace>/Cache/`. From here on, proxies/thumbnails/waveforms/
+    // preview renders land inside the workspace folder, not the OS app-cache.
+    cache
+        .set_workspace(&path)
+        .map_err(|e| format!("cache set_workspace: {e:#}"))?;
+    workspace.set(path);
+    Ok(())
 }
 
 #[tauri::command]
 pub async fn project_open(
     handle: State<'_, ProjectHandle>,
+    cache: State<'_, crate::cache::CacheLayout>,
+    workspace: State<'_, crate::workspace::WorkspaceSlot>,
     path: String,
 ) -> Result<(), String> {
     let path = PathBuf::from(path);
     let project = io::load_from_dir(&path)
         .await
         .map_err(|e| format!("{e:#}"))?;
+    // Re-point cache + workspace before broadcasting the state swap, so any
+    // consumers that react to `project:changed` and immediately ask for
+    // derivative paths or resolved media paths see the workspace, not the
+    // boot fallback.
+    cache
+        .set_workspace(&path)
+        .map_err(|e| format!("cache set_workspace: {e:#}"))?;
+    workspace.set(path);
     handle
         .replace_state(Actor::User, project)
         .await

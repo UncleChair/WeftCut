@@ -1,14 +1,15 @@
 //! Content-addressable cache layout for media derivatives — proxies,
 //! thumbnails, waveforms, on-demand extracted frames.
 //!
-//! Lives in the OS app-cache directory rather than per-`.vproj` (data-model.md
-//! "On-disk format" originally specified the latter). Rationale: derivatives
-//! are content-addressed by `file_hash_blake3`; the same imported file across
-//! two projects hits the same cache entry, and re-imports of an unchanged
-//! file (mtime same, content same) skip work entirely. Per-project caches
-//! would duplicate that work. Per-`.vproj` mirroring is a future polish move
-//! when "consolidate to project folder" lands; the layout below stays
-//! identical so it's a copy, not a rewrite.
+//! **Per `docs/workspace-redesign.md`** (decision Q3), the cache is now
+//! rooted at `<workspace>/Cache/`. At app boot, before any workspace is
+//! opened or saved, `CacheLayout` points at the OS app-cache as a
+//! transitional fallback. When `project_save_as` or `project_open` lands,
+//! `set_workspace()` re-points the layout at the workspace's `Cache/` dir.
+//! Interior mutability via `RwLock<PathBuf>` lets consumers keep their
+//! existing `State<CacheLayout>` signatures while the root underneath
+//! moves; reads clone the current root each time, so the cost is one
+//! lock-acquire-and-clone per `proxies_dir()` / `thumbnail()` / ... call.
 //!
 //! Atomicity: every writer must write to `<final>.tmp` then rename. Skip-if-
 //! cached checks must verify both `exists()` AND non-zero size — interrupted
@@ -16,37 +17,70 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock};
 
 use anyhow::{Context, Result};
 
 #[derive(Clone, Debug)]
 pub struct CacheLayout {
-    root: PathBuf,
+    /// Current cache root. Swapped by `set_workspace` when the user opens or
+    /// saves a project to a folder. Reads clone-by-value; never hand out a
+    /// borrowed reference to the locked value or callers will deadlock on
+    /// the next swap.
+    root: Arc<RwLock<PathBuf>>,
 }
 
 impl CacheLayout {
+    /// Construct a layout rooted at `root`. Use this for the OS app-cache
+    /// fallback at boot. `set_workspace` re-points at a workspace folder
+    /// the first time a project is opened or saved.
     pub fn new(root: PathBuf) -> Self {
-        Self { root }
+        Self {
+            root: Arc::new(RwLock::new(root)),
+        }
     }
 
-    pub fn root(&self) -> &Path {
-        &self.root
+    /// Swap the cache root to `<workspace>/Cache/` and create the dir tree
+    /// at the new location. Idempotent: calling with the same workspace
+    /// twice does nothing extra. Per workspace-redesign Q3 this fires on
+    /// every `project_save_as` / `project_open`.
+    pub fn set_workspace(&self, workspace_root: &Path) -> Result<()> {
+        let new_root = workspace_root.join("Cache");
+        {
+            let mut guard = self.root.write().expect("cache root lock poisoned");
+            if *guard == new_root {
+                return Ok(());
+            }
+            *guard = new_root;
+        }
+        self.ensure_dirs()
+    }
+
+    fn current_root(&self) -> PathBuf {
+        self.root.read().expect("cache root lock poisoned").clone()
+    }
+
+    /// Current cache root, cloned by value. Callers that need to compose
+    /// further paths under the root should still prefer the typed methods
+    /// (`proxies_dir`, etc.) rather than reaching for `root()`.
+    pub fn root(&self) -> PathBuf {
+        self.current_root()
     }
 
     pub fn proxies_dir(&self) -> PathBuf {
-        self.root.join("proxies")
+        self.current_root().join("proxies")
     }
 
     pub fn thumbnails_root(&self) -> PathBuf {
-        self.root.join("thumbnails")
+        self.current_root().join("thumbnails")
     }
 
     pub fn waveforms_dir(&self) -> PathBuf {
-        self.root.join("waveforms")
+        self.current_root().join("waveforms")
     }
 
     pub fn frames_root(&self) -> PathBuf {
-        self.root.join("frames")
+        self.current_root().join("frames")
     }
 
     /// Materialized inline-subtitle bodies (`SubtitlesSource::InlineSrt` /
@@ -55,7 +89,7 @@ impl CacheLayout {
     /// file. Lifetime is the cache lifetime — never deleted by the
     /// materialization pass; user can wipe via "Clear cache".
     pub fn inline_subs_dir(&self) -> PathBuf {
-        self.root.join("inline-subs")
+        self.current_root().join("inline-subs")
     }
 
     pub fn inline_subs(&self, hash: &str, ext: &str) -> PathBuf {
@@ -97,7 +131,7 @@ impl CacheLayout {
     /// Hash composition is `blake3([source_hash_bytes, in_us.to_le_bytes(),
     /// out_us.to_le_bytes()].concat())` — see `cloud::audio_extract`.
     pub fn transcribe_audio_dir(&self) -> PathBuf {
-        self.root.join("transcribe-audio")
+        self.current_root().join("transcribe-audio")
     }
 
     pub fn transcribe_audio(&self, hash: &str) -> PathBuf {
@@ -110,7 +144,7 @@ impl CacheLayout {
     /// `cloud::providers::openai::tts_cache_key` and the `synthesize_speech`
     /// MCP tool.
     pub fn voiceover_dir(&self) -> PathBuf {
-        self.root.join("voiceover")
+        self.current_root().join("voiceover")
     }
 
     pub fn voiceover(&self, hash: &str, ext: &str) -> PathBuf {
@@ -122,17 +156,31 @@ impl CacheLayout {
     /// hit means we already have every frame on disk and can skip the
     /// expensive webview rasterization entirely.
     pub fn raster_root(&self) -> PathBuf {
-        self.root.join("raster")
+        self.current_root().join("raster")
     }
 
     pub fn raster_dir(&self, key: &str) -> PathBuf {
         self.raster_root().join(key)
     }
 
-    /// Create the top-level cache directory tree. Idempotent.
+    /// (NEW per workspace-redesign Q10) State-hashed preview MP4 renders.
+    /// Hit means a prior render produced this exact project state to MP4;
+    /// the React `<video>` source can swap to it instantly with no ffmpeg
+    /// invocation. Key composition lives in the Phase D preview renderer.
+    pub fn preview_dir(&self) -> PathBuf {
+        self.current_root().join("preview")
+    }
+
+    pub fn preview(&self, key: &str) -> PathBuf {
+        self.preview_dir().join(format!("{key}.mp4"))
+    }
+
+    /// Create the top-level cache directory tree. Idempotent. Called
+    /// implicitly by `set_workspace`; the boot fallback also calls it once.
     pub fn ensure_dirs(&self) -> Result<()> {
+        let root = self.current_root();
         for p in [
-            self.root.clone(),
+            root.clone(),
             self.proxies_dir(),
             self.thumbnails_root(),
             self.waveforms_dir(),
@@ -141,6 +189,7 @@ impl CacheLayout {
             self.transcribe_audio_dir(),
             self.voiceover_dir(),
             self.raster_root(),
+            self.preview_dir(),
         ] {
             fs::create_dir_all(&p)
                 .with_context(|| format!("create cache dir {}", p.display()))?;
@@ -232,6 +281,39 @@ mod tests {
         assert!(layout.inline_subs_dir().is_dir());
         assert!(layout.transcribe_audio_dir().is_dir());
         assert!(layout.voiceover_dir().is_dir());
+        assert!(layout.preview_dir().is_dir());
+    }
+
+    #[test]
+    fn set_workspace_swaps_root_and_creates_dirs() {
+        // Boot fallback: layout points at an OS-app-cache-ish location.
+        let boot = TempDir::new().unwrap();
+        let layout = CacheLayout::new(boot.path().to_path_buf());
+        assert_eq!(layout.proxies_dir(), boot.path().join("proxies"));
+
+        // User opens a workspace; cache moves under `<workspace>/Cache/`.
+        let ws = TempDir::new().unwrap();
+        layout.set_workspace(ws.path()).unwrap();
+        assert_eq!(
+            layout.proxies_dir(),
+            ws.path().join("Cache").join("proxies"),
+        );
+        assert!(layout.proxies_dir().is_dir());
+        assert!(layout.preview_dir().is_dir());
+
+        // Idempotent: re-setting to the same workspace is a no-op.
+        layout.set_workspace(ws.path()).unwrap();
+        assert!(layout.preview_dir().is_dir());
+    }
+
+    #[test]
+    fn preview_path_is_state_hashed_mp4() {
+        let tmp = TempDir::new().unwrap();
+        let layout = CacheLayout::new(tmp.path().to_path_buf());
+        assert_eq!(
+            layout.preview("statehash123"),
+            tmp.path().join("preview").join("statehash123.mp4"),
+        );
     }
 
     #[test]

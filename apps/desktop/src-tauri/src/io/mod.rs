@@ -40,6 +40,14 @@ pub async fn save_to_dir(project: &Project, dir: &Path) -> Result<()> {
 }
 
 /// Load a project from a `.vproj` directory.
+///
+/// Per workspace-redesign Q2/A.2, `path_rel` is the on-disk authority for
+/// imported media. On load, every `MediaItem` whose `path_rel` is populated
+/// has its in-memory `path_abs` recomputed as `dir.join(path_rel)` — this
+/// reconciles the absolute path with the current workspace location
+/// (handles "user moved the workspace folder between sessions"). Items
+/// whose `path_rel` is still `None` (legacy projects, pre-migration) keep
+/// their serialized `path_abs` until Phase A.4's migration fills `path_rel`.
 pub async fn load_from_dir(dir: &Path) -> Result<Project> {
     let path: PathBuf = dir.join(PROJECT_FILE);
     let json = tokio::task::spawn_blocking(move || -> Result<String> {
@@ -48,7 +56,7 @@ pub async fn load_from_dir(dir: &Path) -> Result<Project> {
     .await
     .context("load_from_dir join")??;
 
-    let project: Project = serde_json::from_str(&json).context("deserialize project")?;
+    let mut project: Project = serde_json::from_str(&json).context("deserialize project")?;
     if project.schema_version > SCHEMA_VERSION {
         anyhow::bail!(
             "project was saved with schema_version {} but this build supports up to {}",
@@ -57,6 +65,27 @@ pub async fn load_from_dir(dir: &Path) -> Result<Project> {
         );
     }
     // Future: run migration chain here when schema_version < SCHEMA_VERSION.
+
+    // Reconcile media `path_abs` against the workspace location. The
+    // serialized `path_abs` is whatever was correct at save time; if the
+    // workspace folder moved (different machine, renamed parent dir), the
+    // serialized absolute path is now stale. The `path_rel` anchor is
+    // workspace-relative and survives moves intact.
+    let updated: Vec<(crate::state::ids::MediaId, crate::state::media::MediaItem)> = project
+        .media_pool
+        .iter()
+        .filter_map(|(id, item)| {
+            item.path_rel.as_ref().map(|rel| {
+                let mut next = item.clone();
+                next.path_abs = dir.join(rel);
+                (*id, next)
+            })
+        })
+        .collect();
+    for (id, item) in updated {
+        project.media_pool.insert(id, item);
+    }
+
     info!(
         "project loaded ({} → {}, schema {})",
         dir.display(),
@@ -86,6 +115,102 @@ mod tests {
         let loaded = load_from_dir(&vproj).await.expect("load");
         assert_eq!(loaded.project_id, original_id);
         assert_eq!(loaded.metadata.name, "round-trip");
+    }
+
+    #[tokio::test]
+    async fn load_reconciles_path_abs_from_path_rel() {
+        use crate::state::media::{MediaItem, MediaKind, MediaMetadata};
+        use chrono::Utc;
+        use std::path::PathBuf;
+
+        let saved_at = TempDir::new().unwrap();
+        let vproj = saved_at.path().join("doc.vproj");
+
+        let mut project = Project::new_blank("reconcile");
+        let item = MediaItem {
+            id: uuid::Uuid::now_v7(),
+            label: Some("clip".into()),
+            // path_abs at save time — pointing into the original workspace.
+            path_abs: vproj.join("Media").join("clip.mp4"),
+            // path_rel is the anchor that survives a workspace move.
+            path_rel: Some(PathBuf::from("Media/clip.mp4")),
+            kind: MediaKind::Video,
+            metadata: MediaMetadata::default(),
+            proxy_path: None,
+            waveform_path: None,
+            thumbnails_dir: None,
+            file_hash_blake3: "deadbeef".into(),
+            file_size: 0,
+            file_mtime: 0,
+            imported_at: Utc::now(),
+        };
+        let id = item.id;
+        project.media_pool.insert(id, item);
+        save_to_dir(&project, &vproj).await.unwrap();
+
+        // Simulate the user moving the workspace folder elsewhere.
+        let moved = TempDir::new().unwrap();
+        let moved_vproj = moved.path().join("renamed.vproj");
+        fs::create_dir_all(&moved_vproj).unwrap();
+        fs::copy(
+            vproj.join(PROJECT_FILE),
+            moved_vproj.join(PROJECT_FILE),
+        )
+        .unwrap();
+        fs::copy(
+            vproj.join(SCHEMA_FILE),
+            moved_vproj.join(SCHEMA_FILE),
+        )
+        .unwrap();
+
+        let loaded = load_from_dir(&moved_vproj).await.unwrap();
+        let loaded_item = loaded.media_pool.get(&id).unwrap();
+        // path_abs got rewritten to point inside the NEW workspace location.
+        assert_eq!(
+            loaded_item.path_abs,
+            moved_vproj.join("Media").join("clip.mp4"),
+        );
+        // path_rel is unchanged — it's the workspace-relative anchor.
+        assert_eq!(
+            loaded_item.path_rel.as_ref().unwrap(),
+            &PathBuf::from("Media/clip.mp4"),
+        );
+    }
+
+    #[tokio::test]
+    async fn load_leaves_path_abs_alone_when_path_rel_is_none() {
+        use crate::state::media::{MediaItem, MediaKind, MediaMetadata};
+        use chrono::Utc;
+        use std::path::PathBuf;
+
+        let dir = TempDir::new().unwrap();
+        let vproj = dir.path().join("legacy.vproj");
+
+        let mut project = Project::new_blank("legacy");
+        let legacy_abs = PathBuf::from("/external/source/video.mp4");
+        let item = MediaItem {
+            id: uuid::Uuid::now_v7(),
+            label: None,
+            path_abs: legacy_abs.clone(),
+            path_rel: None, // legacy: pre-workspace-redesign import
+            kind: MediaKind::Video,
+            metadata: MediaMetadata::default(),
+            proxy_path: None,
+            waveform_path: None,
+            thumbnails_dir: None,
+            file_hash_blake3: "abc".into(),
+            file_size: 0,
+            file_mtime: 0,
+            imported_at: Utc::now(),
+        };
+        let id = item.id;
+        project.media_pool.insert(id, item);
+        save_to_dir(&project, &vproj).await.unwrap();
+
+        let loaded = load_from_dir(&vproj).await.unwrap();
+        // Legacy item: path_abs preserved verbatim. Phase A.4 migration is
+        // what flips it into the workspace format.
+        assert_eq!(loaded.media_pool.get(&id).unwrap().path_abs, legacy_abs);
     }
 
     #[tokio::test]

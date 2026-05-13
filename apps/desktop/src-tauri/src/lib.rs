@@ -20,6 +20,7 @@ mod mcp;
 mod mpv;
 mod raster;
 mod state;
+mod workspace;
 
 use tauri::Manager;
 use tracing_subscriber::EnvFilter;
@@ -140,11 +141,15 @@ pub fn run() {
             app.manage(mpv_slot);
             app.manage(mpv_popup_slot);
 
-            // Cache layout for media derivatives (proxies / thumbnails /
-            // waveforms / on-demand frames). Lives in the OS app-cache dir
-            // rather than per-`.vproj` because content-addressed entries can
-            // be shared across projects. See `cache/mod.rs` for the
-            // deviation rationale + atomicity rules.
+            // Cache layout. **Per workspace-redesign Q3** (`docs/workspace-
+            // redesign.md`), the cache lives at `<workspace>/Cache/` once a
+            // workspace is opened or saved. Until then — the blank-on-boot
+            // session before any Save As / Open — we use OS app-cache as a
+            // transitional fallback so the pre-existing import / proxy /
+            // thumbnail pipeline still works. `project_save_as` and
+            // `project_open` call `cache.set_workspace(...)` to flip the root
+            // to the workspace folder at the right moment. Phase B's startup
+            // screen will make "no workspace" unreachable.
             let cache_root = app
                 .path()
                 .app_cache_dir()
@@ -153,6 +158,13 @@ pub fn run() {
             if let Err(e) = cache_layout.ensure_dirs() {
                 tracing::warn!("cache dir setup failed: {e:#}");
             }
+
+            // Workspace path tracker. Starts empty; `project_save_as` /
+            // `project_open` populate it. `workspace::resolve_media_path`
+            // routes media-path reads through it so the workspace's
+            // `path_rel` becomes authoritative once Phase A.4 migration or
+            // Phase C.1 import fills it in.
+            app.manage(workspace::WorkspaceSlot::new());
             let cache_for_mcp = cache_layout.clone();
             #[cfg(feature = "mpv")]
             let cache_for_hotreload = cache_layout.clone();
