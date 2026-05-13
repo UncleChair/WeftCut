@@ -71,6 +71,8 @@ pub fn run() {
             commands::recents_set_reopen_on_launch,
             commands::recents_most_recent,
             commands::import_media,
+            commands::import_cancel,
+            commands::import_queue_list,
             commands::compile_project,
             commands::export_project,
             commands::export_queue_enqueue,
@@ -212,6 +214,14 @@ pub fn run() {
             // every state change. Lives for the app lifetime.
             let export_queue = export::ExportQueue::new(app.handle().clone());
             app.manage(export_queue);
+
+            // Import queue. Single-task FIFO, like `export_queue`. Pops a
+            // PendingImport, copies source → `<workspace>/Media/...`,
+            // dispatches an actor command to flip the MediaItem's
+            // `path_abs` + `path_rel`. Emits `import:queue` / `started` /
+            // `complete` / `error`. See workspace-redesign.md Q6.
+            let import_queue = jobs::import::ImportQueue::new(app.handle().clone());
+            app.manage(import_queue);
 
             // HW encoder cache. Probes the host (NVENC/QSV/AMF/VideoToolbox/
             // VAAPI) on first access, memoized for the process lifetime. We

@@ -52,6 +52,11 @@ const enUS = {
     layers_other: "{{count}} layers",
     duration_seconds: "{{value}}s",
     history_position: "hist {{cursor}}/{{len}}",
+    derivatives_pending_one: "Generating {{count}} derivative…",
+    derivatives_pending_other: "Generating {{count}} derivatives…",
+    derivatives_pending: "Generating {{count}} derivatives…",
+    derivatives_pending_hint:
+      "Background proxy / thumbnail / waveform jobs for imported media. Editor stays fully usable while they run.",
   },
   menu: {
     file: "File",
@@ -118,6 +123,10 @@ const enUS = {
     no_duration: "—",
     preview: "Preview",
     preview_disabled_hint: "Build with --features mpv to enable preview",
+    importing: "Copying…",
+    importing_cancel_hint: "Cancel import",
+    missing: "Missing",
+    missing_hint: "Source file not found: {{path}}",
   },
   preview: {
     empty_hint: "Add a layer to start the preview",

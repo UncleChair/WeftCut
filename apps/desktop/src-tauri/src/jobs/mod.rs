@@ -19,6 +19,7 @@
 //! Job kinds today: `thumbnails`, `proxy`, `waveform`.
 
 mod frame;
+pub mod import;
 mod proxy;
 mod thumbnails;
 pub mod waveform;

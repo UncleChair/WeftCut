@@ -23,6 +23,10 @@ export interface MediaSummary {
   width: number | null;
   height: number | null;
   size_bytes: number;
+  /// Phase C.2 (workspace-redesign): false when path_abs doesn't resolve
+  /// to a real file. UI surfaces a "missing source" badge; project still
+  /// opens; layers referencing the missing item render placeholders.
+  available: boolean;
 }
 
 export interface LayerSummary {
@@ -322,6 +326,54 @@ export async function recentsGetReopenOnLaunch(): Promise<boolean> {
 
 export async function recentsSetReopenOnLaunch(value: boolean): Promise<void> {
   return invoke<void>("recents_set_reopen_on_launch", { value });
+}
+
+// ============================================================
+// Background import worker (Phase C.1 — workspace-redesign.md Q6)
+// ============================================================
+
+export type ImportStatus =
+  | { kind: "Pending" }
+  | { kind: "Copying" }
+  | { kind: "Completed" }
+  | { kind: "Failed"; detail: string }
+  | { kind: "Cancelled" };
+
+export interface ImportEntry {
+  media_id: string;
+  source: string;
+  destination_rel: string | null;
+  status: ImportStatus;
+}
+
+export const IMPORT_EVENTS = {
+  queue: "import:queue",
+  started: "import:started",
+  complete: "import:complete",
+  error: "import:error",
+} as const;
+
+/// Per-media derivative job events. Emitted by `jobs/{proxy,thumbnails,
+/// waveform}.rs` so the UI can react to background generation finishing.
+/// Phase C.3 uses started/complete/error to track an in-flight count for
+/// a small "Generating derivatives…" indicator near the project bar.
+export const MEDIA_JOB_EVENTS = {
+  started: "media:job_started",
+  complete: "media:job_complete",
+  error: "media:job_error",
+} as const;
+
+export interface MediaJobEvent {
+  media_id: string;
+  kind: string;
+}
+
+export async function importQueueList(): Promise<ImportEntry[]> {
+  return invoke<ImportEntry[]>("import_queue_list");
+}
+
+export async function importCancel(mediaId: string): Promise<boolean> {
+  return invoke<boolean>("import_cancel", { mediaId });
 }
 
 export interface CompiledGraph {

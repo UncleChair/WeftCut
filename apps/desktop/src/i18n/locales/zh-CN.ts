@@ -56,6 +56,11 @@ const zhCN: Resources = {
     layers_other: "{{count}} 个图层",
     duration_seconds: "{{value}} 秒",
     history_position: "历史 {{cursor}}/{{len}}",
+    derivatives_pending_one: "正在生成 {{count}} 个衍生文件…",
+    derivatives_pending_other: "正在生成 {{count}} 个衍生文件…",
+    derivatives_pending: "正在生成 {{count}} 个衍生文件…",
+    derivatives_pending_hint:
+      "正在为已导入的素材后台生成代理 / 缩略图 / 波形。编辑器在生成期间完全可用。",
   },
   menu: {
     file: "文件",
@@ -121,6 +126,10 @@ const zhCN: Resources = {
     no_duration: "—",
     preview: "预览",
     preview_disabled_hint: "需以 --features mpv 构建以启用预览",
+    importing: "复制中…",
+    importing_cancel_hint: "取消导入",
+    missing: "缺失",
+    missing_hint: "源文件未找到：{{path}}",
   },
   preview: {
     empty_hint: "添加图层后预览将自动启动",

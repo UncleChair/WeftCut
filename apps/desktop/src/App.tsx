@@ -1,6 +1,6 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   addDemoColorLayer,
@@ -15,7 +15,11 @@ import {
   exportQueueList,
   exportQueueRemove,
   hwEncoderProbe,
+  IMPORT_EVENTS,
+  importCancel,
   importMedia,
+  importQueueList,
+  MEDIA_JOB_EVENTS,
   mpvPlayMedia,
   mpvPreviewProject,
   mpvSeek,
@@ -35,6 +39,7 @@ import {
   type ExportProgress,
   type ExportQueueItem,
   type HwEncoderProbe,
+  type ImportEntry,
   type MediaSummary,
   type ProjectSummary,
 } from "./ipc";
@@ -79,6 +84,26 @@ export function App() {
   const [editingTimecode, setEditingTimecode] = useState<string | null>(null);
   const [previewInit, setPreviewInit] = useState<PreviewInitState>("idle");
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [importQueue, setImportQueue] = useState<ImportEntry[]>([]);
+  // Phase C.3 derivative-job tracker. Background proxy / thumbnails /
+  // waveform jobs emit `media:job_started` and `media:job_complete` /
+  // `media:job_error` — we keep a tiny counter to render a "Generating
+  // derivatives (N)…" pill while anything's in flight.
+  const [pendingDerivatives, setPendingDerivatives] = useState<number>(0);
+
+  // Set of media_ids currently being copied into <workspace>/Media/. The
+  // pool item renders a "Copying…" badge for these. Items that have moved
+  // past Pending/Copying (Completed/Failed/Cancelled) shouldn't show a
+  // copying badge — the path_abs has either landed or never will.
+  const importingMediaIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const entry of importQueue) {
+      if (entry.status.kind === "Pending" || entry.status.kind === "Copying") {
+        set.add(entry.media_id);
+      }
+    }
+    return set;
+  }, [importQueue]);
   const timecodeInputRef = useRef<HTMLInputElement | null>(null);
 
   // Suppress incoming `mpv:time` updates for a short window after any user
@@ -144,6 +169,63 @@ export function App() {
     (async () => {
       const u = await listen<ExportQueueItem[]>(EXPORT_EVENTS.queue, (e) => {
         setQueue(e.payload);
+      });
+      if (cancelled) {
+        u();
+        return;
+      }
+      unlisten = u;
+    })();
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
+  }, []);
+
+  // Derivative-job tracker (Phase C.3 — workspace-redesign.md). Each
+  // `media:job_started` increments; `media:job_complete` / `error`
+  // decrement. The total is shown as a small pill near the project bar
+  // when > 0 so the user has a visible signal that proxies / thumbnails /
+  // waveforms are still grinding in the background.
+  useEffect(() => {
+    const unlisteners: UnlistenFn[] = [];
+    let cancelled = false;
+    (async () => {
+      const onStarted = await listen(MEDIA_JOB_EVENTS.started, () => {
+        setPendingDerivatives((n) => n + 1);
+      });
+      const onComplete = await listen(MEDIA_JOB_EVENTS.complete, () => {
+        setPendingDerivatives((n) => Math.max(0, n - 1));
+      });
+      const onError = await listen(MEDIA_JOB_EVENTS.error, () => {
+        setPendingDerivatives((n) => Math.max(0, n - 1));
+      });
+      if (cancelled) {
+        onStarted();
+        onComplete();
+        onError();
+        return;
+      }
+      unlisteners.push(onStarted, onComplete, onError);
+    })();
+    return () => {
+      cancelled = true;
+      for (const u of unlisteners) u();
+    };
+  }, []);
+
+  // Import queue subscription (Phase C.1 — workspace-redesign.md Q6). The
+  // background-copy worker pushes a fresh history list on every state
+  // change. MediaPool reads the in-flight set out of this so pool items
+  // can show a "Copying…" badge while their bytes are being moved into
+  // `<workspace>/Media/`.
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+    importQueueList().then(setImportQueue).catch(() => {});
+    (async () => {
+      const u = await listen<ImportEntry[]>(IMPORT_EVENTS.queue, (e) => {
+        setImportQueue(e.payload);
       });
       if (cancelled) {
         u();
@@ -487,6 +569,15 @@ export function App() {
         ) : (
           <span className="meta">{t("project.loading")}</span>
         )}
+        {pendingDerivatives > 0 && (
+          <span
+            className="derivatives-pill"
+            title={t("project.derivatives_pending_hint")}
+          >
+            <span className="derivatives-pill-spinner" aria-hidden="true" />
+            {t("project.derivatives_pending", { count: pendingDerivatives })}
+          </span>
+        )}
       </section>
 
       <section className="menu-bar">
@@ -709,7 +800,13 @@ export function App() {
         </section>
 
         <section className="media-pool">
-          <MediaPool media={summary?.media ?? []} />
+          <MediaPool
+            media={summary?.media ?? []}
+            importing={importingMediaIds}
+            onCancelImport={async (id) => {
+              await importCancel(id).catch(() => false);
+            }}
+          />
         </section>
 
         <section className="properties">
@@ -967,7 +1064,15 @@ function ExportPanel({
   );
 }
 
-function MediaPool({ media }: { media: MediaSummary[] }) {
+function MediaPool({
+  media,
+  importing,
+  onCancelImport,
+}: {
+  media: MediaSummary[];
+  importing: Set<string>;
+  onCancelImport: (mediaId: string) => Promise<void>;
+}) {
   const { t } = useTranslation();
   if (media.length === 0) {
     return (
@@ -983,58 +1088,84 @@ function MediaPool({ media }: { media: MediaSummary[] }) {
         {t("media_pool.heading")} ({media.length})
       </h2>
       <ul className="media-list">
-        {media.map((m) => (
-          <li
-            key={m.id}
-            className="media-item"
-            draggable
-            onDragStart={(e) => {
-              e.dataTransfer.setData(
-                "application/x-videtor-media",
-                JSON.stringify({ mediaId: m.id, kind: m.kind }),
-              );
-              e.dataTransfer.effectAllowed = "copy";
-            }}
-            title={t("media_pool.drag_hint", {
-              defaultValue: "Drag onto a timeline track to add",
-            })}
-          >
-            <MediaThumbnail mediaId={m.id} mediaKind={m.kind} />
-            <span className={`media-kind kind-${m.kind.toLowerCase()}`}>
-              {t(`kinds.${m.kind.toLowerCase()}`, { defaultValue: m.kind })}
-            </span>
-            <span className="media-label" title={m.path}>
-              {m.label}
-            </span>
-            <span className="media-meta">
-              {m.duration_us !== null
-                ? t("media_pool.duration", {
-                    seconds: (m.duration_us / 1_000_000).toFixed(2),
-                  })
-                : t("media_pool.no_duration")}
-            </span>
-            {m.width !== null && m.height !== null && (
-              <span className="media-meta">
-                {m.width}×{m.height}
-              </span>
-            )}
-            <span className="media-meta">{formatBytes(m.size_bytes, t)}</span>
-            <button
-              className="media-preview-btn"
-              onClick={async (e) => {
-                e.stopPropagation();
-                try {
-                  await mpvPlayMedia(m.id);
-                } catch (err) {
-                  console.error("preview failed:", err);
-                }
+        {media.map((m) => {
+          const isImporting = importing.has(m.id);
+          const isMissing = !m.available && !isImporting;
+          return (
+            <li
+              key={m.id}
+              className={`media-item${isMissing ? " is-missing" : ""}${
+                isImporting ? " is-importing" : ""
+              }`}
+              draggable={!isImporting && !isMissing}
+              onDragStart={(e) => {
+                e.dataTransfer.setData(
+                  "application/x-videtor-media",
+                  JSON.stringify({ mediaId: m.id, kind: m.kind }),
+                );
+                e.dataTransfer.effectAllowed = "copy";
               }}
-              title={t("media_pool.preview")}
+              title={t("media_pool.drag_hint", {
+                defaultValue: "Drag onto a timeline track to add",
+              })}
             >
-              ▶
-            </button>
-          </li>
-        ))}
+              <MediaThumbnail mediaId={m.id} mediaKind={m.kind} />
+              <span className={`media-kind kind-${m.kind.toLowerCase()}`}>
+                {t(`kinds.${m.kind.toLowerCase()}`, { defaultValue: m.kind })}
+              </span>
+              <span className="media-label" title={m.path}>
+                {m.label}
+              </span>
+              <span className="media-meta">
+                {m.duration_us !== null
+                  ? t("media_pool.duration", {
+                      seconds: (m.duration_us / 1_000_000).toFixed(2),
+                    })
+                  : t("media_pool.no_duration")}
+              </span>
+              {m.width !== null && m.height !== null && (
+                <span className="media-meta">
+                  {m.width}×{m.height}
+                </span>
+              )}
+              <span className="media-meta">{formatBytes(m.size_bytes, t)}</span>
+              {isImporting ? (
+                <button
+                  className="media-import-cancel"
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    await onCancelImport(m.id);
+                  }}
+                  title={t("media_pool.importing_cancel_hint")}
+                >
+                  {t("media_pool.importing")}
+                </button>
+              ) : isMissing ? (
+                <span
+                  className="media-missing-badge"
+                  title={t("media_pool.missing_hint", { path: m.path })}
+                >
+                  {t("media_pool.missing")}
+                </span>
+              ) : (
+                <button
+                  className="media-preview-btn"
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    try {
+                      await mpvPlayMedia(m.id);
+                    } catch (err) {
+                      console.error("preview failed:", err);
+                    }
+                  }}
+                  title={t("media_pool.preview")}
+                >
+                  ▶
+                </button>
+              )}
+            </li>
+          );
+        })}
       </ul>
     </div>
   );

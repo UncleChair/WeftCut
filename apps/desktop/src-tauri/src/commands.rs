@@ -157,6 +157,11 @@ pub struct MediaSummary {
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub size_bytes: u64,
+    /// True when `path_abs` resolves to a real file on disk right now.
+    /// Per workspace-redesign Q5/Q9, the UI shows a "missing media" badge
+    /// when this is false (project opens anyway; layers referencing the
+    /// missing item render placeholders).
+    pub available: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -299,6 +304,7 @@ pub async fn project_summary(handle: State<'_, ProjectHandle>) -> Result<Project
                 width: m.metadata.video.as_ref().map(|v| v.width),
                 height: m.metadata.video.as_ref().map(|v| v.height),
                 size_bytes: m.file_size,
+                available: m.path_abs.is_file(),
             }
         })
         .collect();
@@ -921,49 +927,100 @@ pub async fn import_media(
     app: tauri::AppHandle,
     handle: State<'_, ProjectHandle>,
     cache: State<'_, crate::cache::CacheLayout>,
+    workspace: State<'_, crate::workspace::WorkspaceSlot>,
+    import_queue: State<'_, crate::jobs::import::ImportQueue>,
     path: String,
 ) -> Result<String, String> {
-    let path_buf = PathBuf::from(&path);
-    let item = tokio::task::spawn_blocking(move || -> Result<MediaItem, String> {
-        let facts = io::probe::hash_and_stat(&path_buf).map_err(|e| format!("{e:#}"))?;
-        let metadata = io::probe::probe_metadata(&path_buf);
-        let kind: MediaKind = io::probe::detect_kind(&path_buf, &metadata);
-        let label = path_buf
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string());
-        Ok(MediaItem {
-            id: new_id(),
-            label,
-            path_abs: path_buf,
-            path_rel: None,
-            kind,
-            metadata,
-            proxy_path: None,
-            waveform_path: None,
-            thumbnails_dir: None,
-            file_hash_blake3: facts.blake3_hex,
-            file_size: facts.size,
-            file_mtime: facts.mtime_secs,
-            imported_at: Utc::now(),
-        })
+    let source_buf = PathBuf::from(&path);
+    let item = tokio::task::spawn_blocking({
+        let source_buf = source_buf.clone();
+        move || -> Result<MediaItem, String> {
+            let facts = io::probe::hash_and_stat(&source_buf).map_err(|e| format!("{e:#}"))?;
+            let metadata = io::probe::probe_metadata(&source_buf);
+            let kind: MediaKind = io::probe::detect_kind(&source_buf, &metadata);
+            let label = source_buf
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string());
+            Ok(MediaItem {
+                id: new_id(),
+                label,
+                // path_abs starts as the source location. The background
+                // import worker (jobs::import) flips it to the workspace
+                // copy once it lands, via SetMediaWorkspacePaths.
+                path_abs: source_buf,
+                path_rel: None,
+                kind,
+                metadata,
+                proxy_path: None,
+                waveform_path: None,
+                thumbnails_dir: None,
+                file_hash_blake3: facts.blake3_hex,
+                file_size: facts.size,
+                file_mtime: facts.mtime_secs,
+                imported_at: Utc::now(),
+            })
+        }
     })
     .await
     .map_err(|e| format!("import join: {e}"))??;
 
     let item_for_jobs = item.clone();
+    let media_id = item.id;
     let id = handle
         .add_media_item(Actor::User, item)
         .await
         .map_err(|e: CommandError| e.to_string())?;
-    // Fan out thumbnails / proxy / waveform jobs. Fire-and-forget; the
-    // global semaphore keeps concurrent ffmpeg children bounded.
+
+    // Derivatives (proxy / thumbnails / waveform) are content-addressed by
+    // blake3 hash, so the cache key doesn't care whether the worker reads
+    // from the original or the post-copy workspace location. Kick them
+    // immediately from the original path; they'll race the copy and the
+    // results are valid either way.
     crate::jobs::enqueue_for_media(
         app,
         (*cache).clone(),
         (*handle).clone(),
         item_for_jobs,
     );
+
+    // Per workspace-redesign Q6 + Q2 we copy the source into
+    // `<workspace>/Media/`. The copy is a background FIFO job; the actor
+    // gets a SetMediaWorkspacePaths callback once the copy lands. Without
+    // a workspace yet (transitional boot state — Phase B's startup screen
+    // makes this unreachable), skip the copy and leave the MediaItem
+    // pointing at the original. The next save-as / open will set the
+    // workspace and any future imports get copied normally.
+    if let Some(ws) = workspace.current() {
+        import_queue.enqueue(
+            (*handle).clone(),
+            media_id,
+            source_buf,
+            ws,
+        );
+    } else {
+        tracing::warn!(
+            "import_media: no workspace set; MediaItem stays referencing the original \
+             source. Open or save the project to a workspace folder to copy it in."
+        );
+    }
+
     Ok(id.to_string())
+}
+
+#[tauri::command]
+pub async fn import_cancel(
+    import_queue: State<'_, crate::jobs::import::ImportQueue>,
+    media_id: String,
+) -> Result<bool, String> {
+    let id = Uuid::parse_str(&media_id).map_err(|e| format!("media_id: {e}"))?;
+    Ok(import_queue.cancel(id))
+}
+
+#[tauri::command]
+pub async fn import_queue_list(
+    import_queue: State<'_, crate::jobs::import::ImportQueue>,
+) -> Result<Vec<crate::jobs::import::ImportEntry>, String> {
+    Ok(import_queue.list())
 }
 
 #[tauri::command]

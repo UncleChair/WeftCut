@@ -416,6 +416,18 @@ enum Command {
         actor: Actor,
         reply: oneshot::Sender<Result<(), CommandError>>,
     },
+    /// Per workspace-redesign Q6: the background import worker (`jobs::
+    /// import`) copies the source file into `<workspace>/Media/` and then
+    /// calls back through this command with the new absolute path + the
+    /// workspace-relative anchor. Sits outside the undo stack — it's a
+    /// background reconciliation, not a user edit.
+    SetMediaWorkspacePaths {
+        id: MediaId,
+        path_abs: std::path::PathBuf,
+        path_rel: std::path::PathBuf,
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
     Undo {
         actor: Actor,
         reply: oneshot::Sender<Result<(), CommandError>>,
@@ -909,6 +921,31 @@ impl ProjectHandle {
         rx.await.expect("project actor terminated")
     }
 
+    /// Background import worker callback: replace a media item's
+    /// `path_abs` / `path_rel` once the source has been copied into
+    /// `<workspace>/Media/`. Outside the editing undo stack — mirrors
+    /// `set_media_derivatives`.
+    pub async fn set_media_workspace_paths(
+        &self,
+        actor: Actor,
+        id: MediaId,
+        path_abs: std::path::PathBuf,
+        path_rel: std::path::PathBuf,
+    ) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::SetMediaWorkspacePaths {
+                id,
+                path_abs,
+                path_rel,
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
     /// Apply a derivatives patch to a media item — used by background jobs
     /// when proxy / thumbnails / waveform generation completes. Sits outside
     /// the editing undo stack (mirrors `add_media_item` semantics) so undoing
@@ -1176,6 +1213,16 @@ impl ProjectActor {
                 reply,
             } => {
                 let result = self.do_set_media_derivatives(id, patch, actor);
+                let _ = reply.send(result);
+            }
+            Command::SetMediaWorkspacePaths {
+                id,
+                path_abs,
+                path_rel,
+                actor,
+                reply,
+            } => {
+                let result = self.do_set_media_workspace_paths(id, path_abs, path_rel, actor);
                 let _ = reply.send(result);
             }
             Command::Undo { actor, reply } => {
@@ -1847,6 +1894,34 @@ impl ProjectActor {
         let affected: Vec<EntityRef> =
             referencing.iter().map(|l| EntityRef::Layer(*l)).collect();
         self.commit(next, actor, summary, affected, DiffHint::Coarse)?;
+        Ok(())
+    }
+
+    fn do_set_media_workspace_paths(
+        &mut self,
+        id: MediaId,
+        path_abs: std::path::PathBuf,
+        path_rel: std::path::PathBuf,
+        actor: Actor,
+    ) -> Result<(), CommandError> {
+        // Mirrors `do_set_media_derivatives`: patch every snapshot's
+        // media_pool so undo across unrelated edits doesn't flip the path
+        // back to the pre-copy original. Broadcast non-recorded so this
+        // doesn't grow the undo stack.
+        let current = self.history.current();
+        let mut next_pool = current.media_pool.clone();
+        let item = next_pool
+            .get_mut(&id)
+            .ok_or(CommandError::MediaNotFound { media: id })?;
+        item.path_abs = path_abs;
+        item.path_rel = Some(path_rel);
+        self.history.replace_media_pool_everywhere(next_pool);
+        let snapshot = self.history.current();
+        self.broadcast_unrecorded(
+            actor,
+            format!("Updated workspace paths for media {id}"),
+            snapshot,
+        );
         Ok(())
     }
 

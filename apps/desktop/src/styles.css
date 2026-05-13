@@ -2191,3 +2191,66 @@ input.preview-timecode:focus {
   max-width: 460px;
   line-height: 1.45;
 }
+
+/* --------------------------------------------------------------------------
+ * Media-pool badges (Phase C.1 + C.2 — workspace-redesign.md)
+ * -------------------------------------------------------------------------- */
+
+.media-item.is-importing {
+  opacity: 0.85;
+}
+
+.media-item.is-missing {
+  opacity: 0.7;
+}
+
+.media-import-cancel {
+  background: rgba(96, 165, 250, 0.18);
+  border: 1px solid rgba(96, 165, 250, 0.4);
+  color: #bfdbfe;
+  border-radius: 3px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.media-import-cancel:hover {
+  background: rgba(96, 165, 250, 0.28);
+}
+
+.media-missing-badge {
+  background: rgba(248, 113, 113, 0.18);
+  border: 1px solid rgba(248, 113, 113, 0.4);
+  color: #fecaca;
+  border-radius: 3px;
+  padding: 2px 8px;
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: default;
+}
+
+/* Project-bar pill: "Generating N derivatives…" (Phase C.3). */
+
+.derivatives-pill {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: rgba(96, 165, 250, 0.12);
+  border: 1px solid rgba(96, 165, 250, 0.32);
+  color: #bfdbfe;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.derivatives-pill-spinner {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid rgba(191, 219, 254, 0.25);
+  border-top-color: #93c5fd;
+  animation: preview-spin 0.9s linear infinite;
+}
