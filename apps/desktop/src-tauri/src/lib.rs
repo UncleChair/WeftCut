@@ -96,6 +96,7 @@ pub fn run() {
             let project_handle = state::spawn(state::Project::new_blank("untitled"));
             let project_for_mcp = project_handle.clone();
             let project_for_ui_events = project_handle.clone();
+            let project_for_autosave = project_handle.clone();
             #[cfg(feature = "mpv")]
             let project_for_preview = project_handle.clone();
             app.manage(project_handle);
@@ -164,7 +165,21 @@ pub fn run() {
             // routes media-path reads through it so the workspace's
             // `path_rel` becomes authoritative once Phase A.4 migration or
             // Phase C.1 import fills it in.
-            app.manage(workspace::WorkspaceSlot::new());
+            let workspace_slot = workspace::WorkspaceSlot::new();
+            app.manage(workspace_slot.clone());
+
+            // Auto-save subscriber. Listens to actor events, debounces
+            // 500ms, writes `project.json` whenever a workspace is set.
+            // Periodic snapshots land in `Backups/`. The blank-on-boot
+            // window has no workspace so the task is a dormant
+            // dirty-flag-keeper until the first `project_save_as` /
+            // `project_open`. See `docs/workspace-redesign.md` Q8.
+            let autosave =
+                io::autosave::AutosaveController::spawn(
+                    project_for_autosave,
+                    workspace_slot,
+                );
+            app.manage(autosave);
             let cache_for_mcp = cache_layout.clone();
             #[cfg(feature = "mpv")]
             let cache_for_hotreload = cache_layout.clone();

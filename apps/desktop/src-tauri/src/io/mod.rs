@@ -7,18 +7,22 @@
 //! probe + hash imported media. Migrations, cache/history subdirs, proxy +
 //! thumbnail + waveform generation come online as their phases land.
 
+pub mod autosave;
+pub mod migrate;
 pub mod probe;
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::state::{Project, project::SCHEMA_VERSION};
 
 pub const PROJECT_FILE: &str = "project.json";
 pub const SCHEMA_FILE: &str = "schema_version";
+pub const MEDIA_DIR: &str = "Media";
+pub const BACKUPS_DIR: &str = "Backups";
 
 /// Save a project to a `.vproj` directory. Creates the directory if missing.
 pub async fn save_to_dir(project: &Project, dir: &Path) -> Result<()> {
@@ -64,7 +68,29 @@ pub async fn load_from_dir(dir: &Path) -> Result<Project> {
             SCHEMA_VERSION
         );
     }
-    // Future: run migration chain here when schema_version < SCHEMA_VERSION.
+
+    // Auto-migrate older schemas. Per workspace-redesign Q9 we write a
+    // pre-migration backup first, then run the migration to bring media
+    // into `<workspace>/Media/` + populate `path_rel`. If migration fails
+    // partway, the backup file is the recovery anchor.
+    if project.schema_version < SCHEMA_VERSION {
+        let report = migrate::run(dir, &mut project)
+            .await
+            .with_context(|| format!("migrate {}", dir.display()))?;
+        info!(
+            "migrated {} from schema {} to {}: {} migrated, {} missing, {} reused",
+            dir.display(),
+            report.from_version,
+            report.to_version,
+            report.migrated,
+            report.missing_sources,
+            report.reused_existing,
+        );
+        // Persist the migrated project state so subsequent loads skip
+        // the migration path (and the new path_abs / path_rel pairs are
+        // canonical on disk).
+        save_to_dir(&project, dir).await.context("re-save after migration")?;
+    }
 
     // Reconcile media `path_abs` against the workspace location. The
     // serialized `path_abs` is whatever was correct at save time; if the

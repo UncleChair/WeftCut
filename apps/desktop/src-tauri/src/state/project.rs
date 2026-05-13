@@ -12,7 +12,12 @@ use super::media::MediaItem;
 use super::track::{Track, TrackKind};
 use super::transition::Transition;
 
-pub const SCHEMA_VERSION: u32 = 1;
+// v1 — original .vproj format with absolute media paths.
+// v2 — workspace-first redesign (`docs/workspace-redesign.md`): media
+//      copied into `<workspace>/Media/`, `path_rel` authoritative,
+//      derivatives in `<workspace>/Cache/`. `io::load_from_dir`
+//      auto-migrates v1 projects to v2 on open.
+pub const SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Project {
