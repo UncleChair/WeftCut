@@ -230,6 +230,11 @@ mod real {
                 let _ = mpv.set_property("osd-level", 0i64);
                 let _ = mpv.set_property("input-default-bindings", false);
                 let _ = mpv.set_property("input-vo-keyboard", false);
+                // Project preview auto-initialises on project-open; without
+                // this, libmpv starts playback immediately on first loadfile
+                // and the user gets audio out of nowhere. The React UI flips
+                // `pause=false` only when the user clicks Play.
+                let _ = mpv.set_property("pause", true);
                 info!("libmpv preview initialised (embed, wid={hwnd:#x})");
             }
             None => {

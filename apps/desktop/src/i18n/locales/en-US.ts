@@ -21,7 +21,6 @@ const enUS = {
     file: "File",
     edit: "Edit",
     insert: "Insert",
-    preview: "Preview",
     export: "Export",
     tools: "Tools",
     preset_heading: "Output preset",
@@ -85,7 +84,10 @@ const enUS = {
     preview_disabled_hint: "Build with --features mpv to enable preview",
   },
   preview: {
-    surface_placeholder: "Preview → Preview project to start playback",
+    empty_hint: "Add a layer to start the preview",
+    preparing: "Preparing preview…",
+    init_failed: "Preview failed to start",
+    retry: "Retry",
   },
   timeline: {
     empty_placeholder: "timeline (add a track to populate)",
@@ -93,7 +95,6 @@ const enUS = {
   },
   errors: {
     refresh_failed: "refresh: {{detail}}",
-    preview_failed: "preview: {{detail}}",
   },
   language: {
     switch_label: "Language",
@@ -108,11 +109,6 @@ const enUS = {
     to_start_hint: "Jump to start",
     to_end: "⏭",
     to_end_hint: "Jump to end",
-    preview_project: "Preview project",
-    preview_project_hint:
-      "Compile the project graph and load it in libmpv. Edits hot-reload from then on.",
-    close_preview: "Close preview",
-    close_preview_hint: "Close the libmpv preview window.",
     timecode_label: "Current time",
     timecode_edit_hint: "Click to edit · Enter to seek · Esc to cancel",
   },

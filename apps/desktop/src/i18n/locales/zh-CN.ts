@@ -24,7 +24,6 @@ const zhCN: Resources = {
     file: "文件",
     edit: "编辑",
     insert: "插入",
-    preview: "预览",
     export: "导出",
     tools: "工具",
     preset_heading: "输出预设",
@@ -87,7 +86,10 @@ const zhCN: Resources = {
     preview_disabled_hint: "需以 --features mpv 构建以启用预览",
   },
   preview: {
-    surface_placeholder: "预览 → 预览项目 开始播放",
+    empty_hint: "添加图层后预览将自动启动",
+    preparing: "正在准备预览…",
+    init_failed: "预览启动失败",
+    retry: "重试",
   },
   timeline: {
     empty_placeholder: "时间线（添加轨道开始）",
@@ -95,7 +97,6 @@ const zhCN: Resources = {
   },
   errors: {
     refresh_failed: "刷新失败：{{detail}}",
-    preview_failed: "预览失败：{{detail}}",
   },
   language: {
     switch_label: "语言",
@@ -110,10 +111,6 @@ const zhCN: Resources = {
     to_start_hint: "跳转到开头",
     to_end: "⏭",
     to_end_hint: "跳转到结尾",
-    preview_project: "预览项目",
-    preview_project_hint: "编译项目图并在 libmpv 中加载。之后每次编辑会热更新。",
-    close_preview: "关闭预览",
-    close_preview_hint: "关闭 libmpv 预览窗口。",
     timecode_label: "当前时间",
     timecode_edit_hint: "点击编辑 · 回车跳转 · Esc 取消",
   },

@@ -390,6 +390,79 @@ html, body, #root { height: 100%; margin: 0; }
   min-height: 0;
 }
 
+.preview-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.preview-spinner {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.12);
+  border-top-color: #60a5fa;
+  animation: preview-spin 0.9s linear infinite;
+}
+
+.preview-spinner-inline {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  border-top-color: #9ca3af;
+  animation: preview-spin 0.9s linear infinite;
+  display: inline-block;
+}
+
+@keyframes preview-spin {
+  to { transform: rotate(360deg); }
+}
+
+.preview-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  max-width: 80%;
+  padding: 12px 16px;
+  border: 1px solid rgba(248, 113, 113, 0.4);
+  background: rgba(127, 29, 29, 0.18);
+  border-radius: 6px;
+  color: #fecaca;
+  text-align: center;
+}
+
+.preview-error-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.preview-error-detail {
+  font-size: 11px;
+  color: #fca5a5;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  word-break: break-word;
+  /* Keep stack traces / mpv error blobs from blowing out the surface. */
+  max-height: 6em;
+  overflow: auto;
+}
+
+.preview-retry {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #e5e7eb;
+  border-radius: 3px;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.preview-retry:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
 .preview-transport {
   display: grid;
   grid-template-columns: 1fr auto 1fr;

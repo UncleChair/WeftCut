@@ -16,7 +16,6 @@ import {
   exportQueueRemove,
   hwEncoderProbe,
   importMedia,
-  mpvClosePreview,
   mpvPlayMedia,
   mpvPreviewProject,
   mpvSeek,
@@ -78,6 +77,8 @@ export function App() {
   const [activityOpen, setActivityOpen] = useState(false);
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
   const [editingTimecode, setEditingTimecode] = useState<string | null>(null);
+  const [previewInit, setPreviewInit] = useState<PreviewInitState>("idle");
+  const [previewError, setPreviewError] = useState<string | null>(null);
   const timecodeInputRef = useRef<HTMLInputElement | null>(null);
 
   // Suppress incoming `mpv:time` updates for a short window after any user
@@ -389,23 +390,37 @@ export function App() {
     }
   }, [preset, t]);
 
-  const previewProject = useCallback(async () => {
+  // Compile the project graph and load it into libmpv. Called once
+  // automatically when the project first becomes non-empty (see the
+  // effect below), and reused by the in-surface retry button if init
+  // rejects. After a successful call, every subsequent commit
+  // hot-reloads the graph on the Rust side — no further init needed.
+  // libmpv loads paused (set in `ensure_init`), so the user controls
+  // playback start via the transport button.
+  const initPreview = useCallback(async () => {
+    setPreviewInit("initializing");
+    setPreviewError(null);
     try {
       await mpvPreviewProject();
-      setPaused(false);
+      setPreviewInit("ready");
     } catch (err) {
-      setError(t("errors.preview_failed", { detail: String(err) }));
-    }
-  }, [t]);
-
-  const closePreview = useCallback(async () => {
-    try {
-      await mpvClosePreview();
-      setPaused(true);
-    } catch (err) {
-      console.warn("close preview failed:", err);
+      setPreviewInit("error");
+      setPreviewError(String(err));
     }
   }, []);
+
+  // Auto-init preview the first time the project has content. App boots with
+  // a blank `Project::new_blank("untitled")` (zero layers), so the natural
+  // edge is `layer_count: 0 → ≥1` — fires on first import / first
+  // demo-layer-add, or once when a non-empty `.vproj` is opened. The state
+  // machine guards re-entry so a 10-file multi-select doesn't fire init ten
+  // times; subsequent commits hot-reload the graph on the Rust side without
+  // a second call.
+  useEffect(() => {
+    if (previewInit !== "idle") return;
+    if (!summary || summary.layer_count === 0) return;
+    void initPreview();
+  }, [summary, previewInit, initPreview]);
 
   const cycleLocale = useCallback(() => {
     const current = i18n.language as Locale;
@@ -537,20 +552,6 @@ export function App() {
           />
         </Menu>
 
-        <Menu label={t("menu.preview")}>
-          <MenuItem
-            label={t("transport.preview_project")}
-            hint={t("transport.preview_project_hint")}
-            onSelect={previewProject}
-            disabled={busy}
-          />
-          <MenuItem
-            label={t("transport.close_preview")}
-            hint={t("transport.close_preview_hint")}
-            onSelect={closePreview}
-          />
-        </Menu>
-
         <Menu label={t("menu.export")} hint={t("export.preset_hint")}>
           <MenuItem
             label={t("actions.compile")}
@@ -614,9 +615,12 @@ export function App() {
             className="video-surface"
             ref={videoSurfaceRef}
           >
-            <span className="placeholder">
-              {t("preview.surface_placeholder")}
-            </span>
+            <PreviewSurfaceContent
+              previewInit={previewInit}
+              previewError={previewError}
+              hasContent={(summary?.layer_count ?? 0) > 0}
+              onRetry={initPreview}
+            />
           </div>
           <div className="preview-transport" role="toolbar" aria-label="Preview transport">
             {editingTimecode !== null ? (
@@ -669,8 +673,15 @@ export function App() {
                 onClick={togglePlay}
                 title={t("transport.play_pause_hint")}
                 aria-label={t("transport.play_pause_hint")}
+                disabled={previewInit !== "ready"}
               >
-                {paused ? t("transport.play") : t("transport.pause")}
+                {previewInit === "initializing" ? (
+                  <span className="preview-spinner-inline" aria-hidden="true" />
+                ) : paused ? (
+                  t("transport.play")
+                ) : (
+                  t("transport.pause")
+                )}
               </button>
               <button
                 onClick={() => seekTo(summary?.duration_us ?? 0)}
@@ -756,6 +767,58 @@ export function App() {
   );
 }
 
+// Tri-state content rendered inside `#video-surface`. On Windows the libmpv
+// host HWND sits above the WebView2 surface, so the `ready` branch returns
+// `null` — libmpv covers whatever React would have drawn. On non-Windows /
+// disabled-mpv builds the React content stays visible. Order matters: the
+// error branch is checked before the empty branch because a failed init on
+// a project with content should surface the failure, not the empty hint.
+function PreviewSurfaceContent({
+  previewInit,
+  previewError,
+  hasContent,
+  onRetry,
+}: {
+  previewInit: PreviewInitState;
+  previewError: string | null;
+  hasContent: boolean;
+  onRetry: () => void | Promise<void>;
+}) {
+  const { t } = useTranslation();
+  if (previewInit === "error") {
+    return (
+      <div className="preview-error" role="alert">
+        <span className="preview-error-title">
+          {t("preview.init_failed")}
+        </span>
+        {previewError && (
+          <span className="preview-error-detail">{previewError}</span>
+        )}
+        <button className="preview-retry" onClick={() => void onRetry()}>
+          {t("preview.retry")}
+        </button>
+      </div>
+    );
+  }
+  if (previewInit === "initializing") {
+    return (
+      <div className="preview-loading" aria-live="polite">
+        <span className="preview-spinner" aria-hidden="true" />
+        <span className="placeholder">{t("preview.preparing")}</span>
+      </div>
+    );
+  }
+  if (previewInit === "ready") {
+    return null;
+  }
+  // idle: nothing has triggered init yet (project still empty).
+  return (
+    <span className="placeholder">
+      {hasContent ? t("preview.preparing") : t("preview.empty_hint")}
+    </span>
+  );
+}
+
 function QueuePanel({
   items,
   hwProbe,
@@ -828,6 +891,13 @@ type ExportState =
   | { kind: "progress"; progress: ExportProgress }
   | { kind: "complete"; payload: ExportComplete }
   | { kind: "error"; detail: string };
+
+// Preview is "ignited" once per session via `mpvPreviewProject()`. After that
+// the Rust hot-reload subscriber re-applies the compiled graph on every
+// project commit, so we never call init twice. `error` is the recoverable
+// terminal: the in-surface Retry button calls `initPreview()` again, which
+// resets back through `initializing`.
+type PreviewInitState = "idle" | "initializing" | "ready" | "error";
 
 function ExportPanel({
   state,
