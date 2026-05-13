@@ -491,6 +491,8 @@ input.preview-timecode:focus {
   width: 100%;
   height: 100%;
   overflow: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
   background: #0a0c10;
   position: relative;
   /* Strip above the tracks where the playhead knob lives, sized so a
@@ -498,6 +500,10 @@ input.preview-timecode:focus {
      overlapping the first lane. Kept on the scroll container so the
      line + knob position relative to its padding box. */
   padding-top: 18px;
+}
+
+.timeline-root::-webkit-scrollbar {
+  display: none;
 }
 
 .timeline-root.is-dragging {
