@@ -75,7 +75,7 @@ Around 25 tools. Don't expose 100; agents get confused.
 | `media://{id}/frame/{time}` | extracted frame as image (multimodal-friendly) |
 | `media://{id}/waveform` | audio peaks |
 | `templates://current` | built-in template catalog (id, name, size, default_duration_s, props_schema) — same payload as `list_templates` |
-| `templates://{id}/preview` | thumbnail PNG (deferred — no preview generator yet) |
+| `templates://{id}/preview` | thumbnail PNG of the built-in template at default props, captured at a "settled" time (default_duration_s × 0.5, clamped to [0, 1]s) so the entrance animation has finished. Goes through the same offscreen-webview raster pipeline IR Template layers use, so what an agent sees here matches what would render on the timeline. Cached by `raster::cache_key`; first request per template is ~200–700ms on a cold cache, subsequent calls are free. |
 
 Returning images from `media://{id}/frame/{time}` is what makes this useful with multimodal agents — they can *see* the video and make spatial/temporal judgments before editing.
 
