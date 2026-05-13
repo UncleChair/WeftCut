@@ -114,6 +114,8 @@ const zhCN: Resources = {
     preview_project_hint: "编译项目图并在 libmpv 中加载。之后每次编辑会热更新。",
     close_preview: "关闭预览",
     close_preview_hint: "关闭 libmpv 预览窗口。",
+    timecode_label: "当前时间",
+    timecode_edit_hint: "点击编辑 · 回车跳转 · Esc 取消",
   },
   export: {
     starting: "正在启动导出…",

@@ -22,7 +22,6 @@ interface TimelineProps {
 
 const PX_PER_SEC = 80;
 const TRACK_HEIGHT = 36;
-const RULER_HEIGHT = 22;
 const MIN_LAYER_DURATION_US = 100_000;
 
 const MEDIA_DRAG_TYPE = "application/x-videtor-media";
@@ -130,7 +129,7 @@ export function Timeline({
     (clientY: number): TrackSummary | null => {
       if (!canvasRef.current) return null;
       const rect = canvasRef.current.getBoundingClientRect();
-      const y = clientY - rect.top - RULER_HEIGHT;
+      const y = clientY - rect.top;
       const visualIdx = Math.floor(y / TRACK_HEIGHT);
       if (visualIdx < 0 || visualIdx >= orderedTracks.length) return null;
       // Map screen-row index → the right data track via the visual ordering
@@ -278,21 +277,45 @@ export function Timeline({
 
   const playheadX = (currentTimeUs / 1_000_000) * PX_PER_SEC;
 
+  const seekFromClientX = useCallback(
+    (clientX: number) => {
+      if (!canvasRef.current) return;
+      const rect = canvasRef.current.getBoundingClientRect();
+      const x = clientX - rect.left;
+      onSeek(Math.max(0, Math.round((x / PX_PER_SEC) * 1_000_000)));
+    },
+    [onSeek],
+  );
+
+  // Click/drag on empty canvas (lane background, gap below tracks) to seek.
+  // Layer / trim-handle pointerdown stops propagation, so this never fires
+  // when interacting with an existing layer.
+  const onCanvasPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (e.button !== 0) return;
+      seekFromClientX(e.clientX);
+      const onMove = (ev: PointerEvent) => seekFromClientX(ev.clientX);
+      const onUp = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    },
+    [seekFromClientX],
+  );
+
   return (
     <div
       className={`timeline-root ${drag ? "is-dragging" : ""}`}
       onClick={() => onSelect(null)}
+      onPointerDown={onCanvasPointerDown}
     >
       <div
         ref={canvasRef}
         className="timeline-canvas"
-        style={{ width: Math.max(widthPx, 200) + 16 }}
+        style={{ width: Math.max(widthPx, 200) }}
       >
-        <Ruler
-          totalSec={totalSec}
-          pxPerSec={PX_PER_SEC}
-          onSeekFromX={(x) => onSeek(Math.max(0, Math.round((x / PX_PER_SEC) * 1_000_000)))}
-        />
         {tracks.length === 0 && <EmptyHint />}
         {/*
           Data model: `tracks[0]` is the bottom of the z-stack, `tracks[last]`
@@ -314,15 +337,15 @@ export function Timeline({
             isGroupStart={isGroupStart}
           />
         ))}
-        {currentTimeUs >= 0 && (
-          <div
-            className="timeline-playhead"
-            style={{ left: playheadX, height: RULER_HEIGHT + tracks.length * TRACK_HEIGHT }}
-          >
-            <div className="playhead-knob" />
-          </div>
-        )}
       </div>
+      {currentTimeUs >= 0 && (
+        <div
+          className="timeline-playhead"
+          style={{ left: playheadX }}
+        >
+          <div className="playhead-knob" />
+        </div>
+      )}
     </div>
   );
 }
@@ -332,48 +355,6 @@ export function Timeline({
 /// compiler ignores, so we reject at the UI layer.
 function trackAcceptsForLayer(target: TrackSummary, drag: DragState): boolean {
   return target.kind.toLowerCase() === drag.trackKind.toLowerCase();
-}
-
-function Ruler({
-  totalSec,
-  pxPerSec,
-  onSeekFromX,
-}: {
-  totalSec: number;
-  pxPerSec: number;
-  onSeekFromX: (x: number) => void;
-}) {
-  const tickEverySec = pxPerSec >= 60 ? 1 : pxPerSec >= 20 ? 5 : 10;
-  const ticks: number[] = [];
-  for (let s = 0; s <= Math.ceil(totalSec); s += tickEverySec) {
-    ticks.push(s);
-  }
-  return (
-    <div
-      className="timeline-ruler"
-      style={{ height: RULER_HEIGHT }}
-      onClick={(e) => {
-        e.stopPropagation();
-        const rect = e.currentTarget.getBoundingClientRect();
-        onSeekFromX(e.clientX - rect.left);
-      }}
-    >
-      {ticks.map((s) => (
-        <div key={s} className="ruler-tick" style={{ left: s * pxPerSec }}>
-          <span>{formatTime(s)}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function formatTime(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`;
-  const m = Math.floor(seconds / 60);
-  const s = Math.floor(seconds % 60)
-    .toString()
-    .padStart(2, "0");
-  return `${m}:${s}`;
 }
 
 function EmptyHint() {

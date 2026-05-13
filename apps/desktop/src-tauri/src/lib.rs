@@ -265,27 +265,49 @@ pub fn run() {
             });
             tauri::async_runtime::spawn_blocking(mpv::spike);
 
-            // Event poller: drains libmpv's event queue every 200ms and drops
-            // the handle when MPV_EVENT_SHUTDOWN arrives. For the popup slot
-            // this is what makes the OS close button on the preview window
-            // actually close — mpv binds CLOSE_WIN→quit by default, but the
-            // resulting Shutdown event doesn't release the window resource
-            // until our handle is dropped. For the embedded slot there's no
-            // OS close button so Shutdown is rare, but the poller still
-            // covers internal shutdown paths.
+            // Event poller: drains libmpv's event queue every ~33ms (≈30 fps)
+            // and drops the handle when MPV_EVENT_SHUTDOWN arrives. For the
+            // popup slot this is what makes the OS close button on the
+            // preview window actually close — mpv binds CLOSE_WIN→quit by
+            // default, but the resulting Shutdown event doesn't release the
+            // window resource until our handle is dropped. For the embedded
+            // slot there's no OS close button so Shutdown is rare, but the
+            // poller still covers internal shutdown paths.
+            //
+            // Same tick also reads `playback-time` from the embed slot and
+            // emits `mpv:time` whenever the value changes — the UI listens
+            // and slides the timeline playhead in sync with libmpv during
+            // playback. Emit only on change so a paused player doesn't
+            // flood IPC.
+            #[cfg(feature = "mpv")]
+            let app_for_mpv_events = app.handle().clone();
             #[cfg(feature = "mpv")]
             tauri::async_runtime::spawn(async move {
+                use tauri::Emitter;
                 let mut tick =
-                    tokio::time::interval(std::time::Duration::from_millis(200));
+                    tokio::time::interval(std::time::Duration::from_millis(33));
+                let mut last_emit: Option<i64> = None;
                 loop {
                     tick.tick().await;
                     let embed = mpv_slot_for_events.clone();
                     let popup = mpv_popup_for_events.0.clone();
-                    let _ = tokio::task::spawn_blocking(move || {
+                    let result = tokio::task::spawn_blocking(move || -> Option<i64> {
                         mpv::drain_events_and_close_if_shutdown(&embed);
                         mpv::drain_events_and_close_if_shutdown(&popup);
+                        mpv::playback_time_us(&embed)
                     })
                     .await;
+                    let t_us = match result {
+                        Ok(v) => v,
+                        Err(_) => continue,
+                    };
+                    if t_us != last_emit {
+                        last_emit = t_us;
+                        if let Some(t_us) = t_us {
+                            let _ = app_for_mpv_events
+                                .emit("mpv:time", serde_json::json!({ "t_us": t_us }));
+                        }
+                    }
                 }
             });
 

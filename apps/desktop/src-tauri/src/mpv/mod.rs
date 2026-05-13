@@ -29,18 +29,18 @@
 // directly (they'd skip the lazy-init guard semantics).
 #[cfg(feature = "mpv")]
 pub use real::{
-    close, drain_events_and_close_if_shutdown, is_active, play_file, play_graph, seek,
-    set_host_clip, set_host_hwnd, set_host_visible, set_paused, set_surface_rect,
-    MpvPopupSlot, MpvSlot,
+    close, drain_events_and_close_if_shutdown, is_active, play_file, play_graph,
+    playback_time_us, seek, set_host_clip, set_host_hwnd, set_host_visible,
+    set_paused, set_surface_rect, MpvPopupSlot, MpvSlot,
 };
 #[cfg(all(feature = "mpv", target_os = "windows"))]
 pub use real::create_host_hwnd;
 
 #[cfg(not(feature = "mpv"))]
 pub use stub::{
-    close, drain_events_and_close_if_shutdown, is_active, play_file, play_graph, seek,
-    set_host_clip, set_host_hwnd, set_host_visible, set_paused, set_surface_rect,
-    MpvPopupSlot, MpvSlot,
+    close, drain_events_and_close_if_shutdown, is_active, play_file, play_graph,
+    playback_time_us, seek, set_host_clip, set_host_hwnd, set_host_visible,
+    set_paused, set_surface_rect, MpvPopupSlot, MpvSlot,
 };
 
 use crate::ir::MpvPlan;
@@ -187,6 +187,8 @@ mod real {
     ///   * **Standalone (mac/Linux + Windows-without-host)** — set
     ///     `force-window=yes` so libmpv spawns its own top-level window;
     ///     without it `loadfile` succeeds silently with no display surface.
+    ///     OSC is also off here so the popup preview stays clean; keyboard
+    ///     bindings remain on so space / arrow keys still drive the popup.
     ///
     /// `wid` must be set before the first VO init, which means before the
     /// first `loadfile`. Once VO is up libmpv ignores further `wid` changes.
@@ -219,14 +221,26 @@ mod real {
                 mpv.set_property("wid", hwnd as i64)
                     .map_err(|e| format!("set wid: {e:?}"))?;
                 let _ = mpv.set_property("osc", false);
+                // Suppress every default OSD overlay: the seek-bar that pops
+                // up on every `seek` command, the volume bar, the file-load
+                // message, etc. The React UI owns all transport feedback so
+                // any libmpv-rendered chrome is pure clutter on the embed.
+                let _ = mpv.set_property("osd-bar", false);
+                let _ = mpv.set_property("osd-on-seek", "no");
+                let _ = mpv.set_property("osd-level", 0i64);
                 let _ = mpv.set_property("input-default-bindings", false);
                 let _ = mpv.set_property("input-vo-keyboard", false);
                 info!("libmpv preview initialised (embed, wid={hwnd:#x})");
             }
             None => {
-                // Standalone mode: libmpv owns the OS window.
+                // Standalone mode: libmpv owns the OS window. OSC stays off
+                // so the seek bar / progress overlay doesn't clutter the
+                // popup preview; keyboard bindings remain on so space / arrow
+                // keys still drive the popup when it has focus.
                 let _ = mpv.set_property("force-window", "yes");
-                let _ = mpv.set_property("osc", true);
+                let _ = mpv.set_property("osc", false);
+                let _ = mpv.set_property("osd-bar", false);
+                let _ = mpv.set_property("osd-on-seek", "no");
                 let _ = mpv.set_property("input-default-bindings", true);
                 let _ = mpv.set_property("input-vo-keyboard", true);
                 let _ = mpv.set_property("title", "Videtor preview");
@@ -530,6 +544,22 @@ mod real {
         }
     }
 
+    /// Current playback position in microseconds, or `None` if the slot has
+    /// no live handle / nothing loaded. Read on every poll tick so the UI
+    /// playhead can mirror libmpv during playback.
+    pub fn playback_time_us(slot: &MpvSlot) -> Option<i64> {
+        let guard = slot.0.lock().expect("mpv slot poisoned");
+        if !guard.active {
+            return None;
+        }
+        let mpv = guard.mpv.as_ref()?;
+        let secs: f64 = mpv.get_property("playback-time").ok()?;
+        if !secs.is_finite() || secs < 0.0 {
+            return None;
+        }
+        Some((secs * 1_000_000.0) as i64)
+    }
+
     /// Drop the mpv handle, closing the preview window. Idempotent.
     ///
     /// `Mpv::drop` calls `mpv_terminate_destroy` which synchronously tears the
@@ -749,6 +779,10 @@ mod stub {
     }
 
     pub fn drain_events_and_close_if_shutdown(_: &MpvSlot) {}
+
+    pub fn playback_time_us(_: &MpvSlot) -> Option<i64> {
+        None
+    }
 
     pub fn set_host_hwnd(_: &MpvSlot, _: isize) {}
 

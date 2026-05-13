@@ -77,8 +77,16 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
+  const [editingTimecode, setEditingTimecode] = useState<string | null>(null);
+  const timecodeInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Suppress incoming `mpv:time` updates for a short window after any user
+  // seek so libmpv's lagged readings don't fight the user's scrub. Long
+  // enough to absorb the seek round-trip + the next ~30 fps poller tick.
+  const lastUserSeekAtRef = useRef<number>(0);
 
   const seekTo = useCallback(async (tUs: number) => {
+    lastUserSeekAtRef.current = performance.now();
     setCurrentTimeUs(tUs);
     try {
       await mpvSeek(tUs);
@@ -86,6 +94,22 @@ export function App() {
       console.warn("seek failed:", err);
     }
   }, []);
+
+  const commitTimecode = useCallback(() => {
+    if (editingTimecode === null) return;
+    const us = parseTimecode(editingTimecode);
+    setEditingTimecode(null);
+    if (us !== null) void seekTo(us);
+  }, [editingTimecode, seekTo]);
+
+  // Focus + select the timecode input the moment edit mode opens so the user
+  // can immediately type to replace the current value.
+  useEffect(() => {
+    if (editingTimecode !== null && timecodeInputRef.current) {
+      timecodeInputRef.current.focus();
+      timecodeInputRef.current.select();
+    }
+  }, [editingTimecode]);
 
   const togglePlay = useCallback(async () => {
     const next = !paused;
@@ -154,6 +178,29 @@ export function App() {
       if (unlisten) unlisten();
     };
   }, [refresh]);
+
+  // Playhead sync — backend polls libmpv's playback-time at ~30 fps and emits
+  // on change. Drop incoming values briefly after a user seek so the UI
+  // playhead follows the user's pointer, not libmpv's lagged read.
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+    (async () => {
+      const u = await listen<{ t_us: number }>("mpv:time", (e) => {
+        if (performance.now() - lastUserSeekAtRef.current < 250) return;
+        setCurrentTimeUs(e.payload.t_us);
+      });
+      if (cancelled) {
+        u();
+        return;
+      }
+      unlisten = u;
+    })();
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
+  }, []);
 
   // Export event subscriptions — kept up for the lifetime of the app so the
   // panel can show progress for any in-flight render.
@@ -572,28 +619,69 @@ export function App() {
             </span>
           </div>
           <div className="preview-transport" role="toolbar" aria-label="Preview transport">
-            <button
-              onClick={() => seekTo(0)}
-              title={t("transport.to_start_hint")}
-              aria-label={t("transport.to_start_hint")}
-            >
-              {t("transport.to_start")}
-            </button>
-            <button
-              onClick={togglePlay}
-              title={t("transport.play_pause_hint")}
-              aria-label={t("transport.play_pause_hint")}
-            >
-              {paused ? t("transport.play") : t("transport.pause")}
-            </button>
-            <button
-              onClick={() => seekTo(summary?.duration_us ?? 0)}
-              title={t("transport.to_end_hint")}
-              aria-label={t("transport.to_end_hint")}
-              disabled={!summary || summary.duration_us === 0}
-            >
-              {t("transport.to_end")}
-            </button>
+            {editingTimecode !== null ? (
+              <input
+                ref={timecodeInputRef}
+                className="preview-timecode"
+                type="text"
+                value={editingTimecode}
+                onChange={(e) => setEditingTimecode(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    commitTimecode();
+                  } else if (e.key === "Escape") {
+                    e.preventDefault();
+                    setEditingTimecode(null);
+                  }
+                }}
+                onBlur={commitTimecode}
+                aria-label={t("transport.timecode_label")}
+                spellCheck={false}
+              />
+            ) : (
+              <span
+                className="preview-timecode"
+                aria-live="polite"
+                role="button"
+                tabIndex={0}
+                title={t("transport.timecode_edit_hint")}
+                onClick={() => setEditingTimecode(formatTimecode(currentTimeUs))}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setEditingTimecode(formatTimecode(currentTimeUs));
+                  }
+                }}
+              >
+                {formatTimecode(currentTimeUs)}
+              </span>
+            )}
+            <div className="transport-buttons">
+              <button
+                onClick={() => seekTo(0)}
+                title={t("transport.to_start_hint")}
+                aria-label={t("transport.to_start_hint")}
+              >
+                {t("transport.to_start")}
+              </button>
+              <button
+                onClick={togglePlay}
+                title={t("transport.play_pause_hint")}
+                aria-label={t("transport.play_pause_hint")}
+              >
+                {paused ? t("transport.play") : t("transport.pause")}
+              </button>
+              <button
+                onClick={() => seekTo(summary?.duration_us ?? 0)}
+                title={t("transport.to_end_hint")}
+                aria-label={t("transport.to_end_hint")}
+                disabled={!summary || summary.duration_us === 0}
+              >
+                {t("transport.to_end")}
+              </button>
+            </div>
+            <span className="preview-timecode-spacer" aria-hidden="true" />
           </div>
         </section>
 
@@ -899,6 +987,43 @@ function formatBytes(
     return t("media_pool.size_kib", { value: (bytes / KIB).toFixed(0) });
   }
   return t("media_pool.size_bytes", { bytes });
+}
+
+function formatTimecode(us: number): string {
+  const totalMs = Math.max(0, Math.floor(us / 1000));
+  const ms = totalMs % 1000;
+  const totalSec = Math.floor(totalMs / 1000);
+  const s = totalSec % 60;
+  const m = Math.floor(totalSec / 60) % 60;
+  const h = Math.floor(totalSec / 3600);
+  const pad = (n: number, w: number) => n.toString().padStart(w, "0");
+  return `${pad(h, 2)}:${pad(m, 2)}:${pad(s, 2)}.${pad(ms, 3)}`;
+}
+
+// Parse a flexible timecode string into microseconds, or null when invalid.
+// Accepts: SS, SS.mmm, MM:SS(.mmm), HH:MM:SS(.mmm). Trailing milliseconds
+// may be 1–3 digits and are padded right (e.g. "1.5" → 1500 ms).
+function parseTimecode(input: string): number | null {
+  const s = input.trim();
+  if (!s) return null;
+  const parts = s.split(":");
+  if (parts.length > 3) return null;
+  const tail = parts[parts.length - 1];
+  const tailMatch = /^(\d+)(?:\.(\d{1,3}))?$/.exec(tail);
+  if (!tailMatch) return null;
+  const ss = Number(tailMatch[1]);
+  const ms = tailMatch[2] ? Number(tailMatch[2].padEnd(3, "0")) : 0;
+  let h = 0;
+  let m = 0;
+  if (parts.length === 3) {
+    h = Number(parts[0]);
+    m = Number(parts[1]);
+  } else if (parts.length === 2) {
+    m = Number(parts[0]);
+  }
+  if (![h, m, ss, ms].every((n) => Number.isFinite(n) && n >= 0)) return null;
+  if (parts.length >= 2 && (m >= 60 || ss >= 60)) return null;
+  return (((h * 3600 + m * 60 + ss) * 1000) + ms) * 1000;
 }
 
 function CompiledPanel({

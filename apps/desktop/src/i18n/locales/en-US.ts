@@ -113,6 +113,8 @@ const enUS = {
       "Compile the project graph and load it in libmpv. Edits hot-reload from then on.",
     close_preview: "Close preview",
     close_preview_hint: "Close the libmpv preview window.",
+    timecode_label: "Current time",
+    timecode_edit_hint: "Click to edit · Enter to seek · Esc to cancel",
   },
   export: {
     starting: "Starting export…",

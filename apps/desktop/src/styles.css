@@ -391,14 +391,63 @@ html, body, #root { height: 100%; margin: 0; }
 }
 
 .preview-transport {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  justify-content: center;
-  gap: 4px;
+  gap: 8px;
   padding: 4px 8px;
   background: #0e1218;
   border-top: 1px solid #1f2937;
   flex: 0 0 auto;
+}
+
+.preview-transport .transport-buttons {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.preview-timecode {
+  justify-self: start;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: #9ca3af;
+  padding-left: 4px;
+}
+
+span.preview-timecode {
+  user-select: none;
+  cursor: text;
+  outline: none;
+  border-radius: 3px;
+}
+
+span.preview-timecode:hover {
+  color: #e5e7eb;
+}
+
+span.preview-timecode:focus-visible {
+  box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.6);
+}
+
+input.preview-timecode {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 3px;
+  color: #e5e7eb;
+  padding: 1px 4px;
+  outline: none;
+  width: 13ch;
+}
+
+input.preview-timecode:focus {
+  border-color: #60a5fa;
+}
+
+.preview-timecode-spacer {
+  justify-self: end;
 }
 
 .preview-transport button {
@@ -444,6 +493,11 @@ html, body, #root { height: 100%; margin: 0; }
   overflow: auto;
   background: #0a0c10;
   position: relative;
+  /* Strip above the tracks where the playhead knob lives, sized so a
+     14 px knob (positioned 2 px below the strip top) fits without
+     overlapping the first lane. Kept on the scroll container so the
+     line + knob position relative to its padding box. */
+  padding-top: 18px;
 }
 
 .timeline-root.is-dragging {
@@ -454,31 +508,6 @@ html, body, #root { height: 100%; margin: 0; }
 .timeline-canvas {
   position: relative;
   min-width: 100%;
-  padding: 0 8px;
-}
-
-.timeline-ruler {
-  position: relative;
-  border-bottom: 1px solid #1f2937;
-  background: #0e1218;
-  height: 22px;
-}
-
-.ruler-tick {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 1px;
-  background: #1f2937;
-}
-
-.ruler-tick span {
-  position: absolute;
-  top: 4px;
-  left: 4px;
-  font-size: 10px;
-  color: #6b7280;
-  font-variant-numeric: tabular-nums;
 }
 
 .timeline-empty {
@@ -492,6 +521,13 @@ html, body, #root { height: 100%; margin: 0; }
   position: relative;
   border-bottom: 1px solid #131822;
   background: #0a0c10;
+}
+
+/* Visual separator between the playhead strip (top padding of the canvas)
+   and the first track. Without this, the strip and the lane blend together
+   and the top of the tracks feels open-ended. */
+.timeline-track-lane:first-child {
+  border-top: 1px solid #1f2937;
 }
 
 .timeline-track-lane.kind-video { background: #0a0d12; }
@@ -600,25 +636,46 @@ html, body, #root { height: 100%; margin: 0; }
 
 .timeline-playhead {
   position: absolute;
-  top: 0;
+  top: 2px;
+  bottom: 0;
   width: 2px;
-  background: #f87171;
+  background: linear-gradient(
+    to bottom,
+    #fca5a5 0%,
+    #ef4444 18%,
+    #ef4444 100%
+  );
   pointer-events: none;
   z-index: 4;
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.55),
+    0 0 6px rgba(239, 68, 68, 0.35);
+  border-radius: 1px;
 }
 
 .playhead-knob {
   position: absolute;
   top: 0;
-  left: -5px;
-  width: 12px;
-  height: 12px;
-  background: #f87171;
-  clip-path: polygon(0 0, 100% 0, 50% 100%);
+  left: -6px;
+  width: 14px;
+  height: 14px;
+  background: linear-gradient(
+    to bottom,
+    #fb7185 0%,
+    #ef4444 45%,
+    #b91c1c 100%
+  );
+  clip-path: polygon(0 0, 100% 0, 100% 45%, 50% 100%, 0 45%);
+  filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.6));
 }
 
-.timeline-ruler {
-  cursor: text; /* hint that you can click here to seek */
+.playhead-knob::after {
+  content: "";
+  position: absolute;
+  inset: 1px 1px auto 1px;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.45);
+  border-radius: 1px;
 }
 
 .media-pool {
