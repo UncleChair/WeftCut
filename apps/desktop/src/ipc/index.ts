@@ -268,6 +268,62 @@ export async function projectOpen(path: string): Promise<void> {
   return invoke<void>("project_open", { path });
 }
 
+// ============================================================
+// Workspace lifecycle (Phase B — workspace-redesign.md)
+// ============================================================
+
+export interface CanvasPreset {
+  width: number;
+  height: number;
+  fpsNum: number;
+  fpsDen: number;
+}
+
+/// Create a fresh workspace at `<parentFolder>/<name>/` with the given
+/// canvas params, replace the actor's state, and push to recents.
+/// Returns the absolute path of the new workspace folder.
+export async function projectNewWorkspace(args: {
+  parentFolder: string;
+  name: string;
+  canvas: CanvasPreset;
+}): Promise<string> {
+  return invoke<string>("project_new_workspace", {
+    parentFolder: args.parentFolder,
+    name: args.name,
+    width: args.canvas.width,
+    height: args.canvas.height,
+    fpsNum: args.canvas.fpsNum,
+    fpsDen: args.canvas.fpsDen,
+  });
+}
+
+export interface RecentEntry {
+  path: string;
+  name: string;
+  /// ISO-8601 timestamp from chrono::DateTime<Utc>.
+  last_opened: string;
+}
+
+export async function recentsList(): Promise<RecentEntry[]> {
+  return invoke<RecentEntry[]>("recents_list");
+}
+
+export async function recentsRemove(path: string): Promise<void> {
+  return invoke<void>("recents_remove", { path });
+}
+
+export async function recentsMostRecent(): Promise<RecentEntry | null> {
+  return invoke<RecentEntry | null>("recents_most_recent");
+}
+
+export async function recentsGetReopenOnLaunch(): Promise<boolean> {
+  return invoke<boolean>("recents_get_reopen_on_launch");
+}
+
+export async function recentsSetReopenOnLaunch(value: boolean): Promise<void> {
+  return invoke<void>("recents_set_reopen_on_launch", { value });
+}
+
 export interface CompiledGraph {
   inputs: string[];
   filter_graph: string;

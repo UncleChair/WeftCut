@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   type ApiKeyStatus,
+  recentsGetReopenOnLaunch,
+  recentsSetReopenOnLaunch,
   settingsClearApiKey,
   settingsGetApiKeyStatus,
   settingsSetApiKey,
@@ -18,6 +20,7 @@ export function SettingsPanel({ onClose }: Props) {
   const { t } = useTranslation();
   const [statuses, setStatuses] = useState<ApiKeyStatus[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [reopenOnLaunch, setReopenOnLaunch] = useState<boolean | null>(null);
 
   const refresh = async () => {
     try {
@@ -30,6 +33,9 @@ export function SettingsPanel({ onClose }: Props) {
 
   useEffect(() => {
     refresh();
+    recentsGetReopenOnLaunch()
+      .then(setReopenOnLaunch)
+      .catch((e) => setError(String(e)));
   }, []);
 
   return (
@@ -45,6 +51,33 @@ export function SettingsPanel({ onClose }: Props) {
             ✕
           </button>
         </header>
+
+        <h3>{t("settings.startup_heading")}</h3>
+        <label className="settings-toggle-row">
+          <input
+            type="checkbox"
+            checked={reopenOnLaunch === true}
+            disabled={reopenOnLaunch === null}
+            onChange={async (e) => {
+              const next = e.target.checked;
+              setReopenOnLaunch(next);
+              try {
+                await recentsSetReopenOnLaunch(next);
+              } catch (err) {
+                setError(String(err));
+                setReopenOnLaunch(!next);
+              }
+            }}
+          />
+          <span>
+            <span className="settings-toggle-label">
+              {t("settings.reopen_on_launch")}
+            </span>
+            <span className="settings-toggle-hint">
+              {t("settings.reopen_on_launch_hint")}
+            </span>
+          </span>
+        </label>
 
         <h3>{t("settings.api_keys_heading")}</h3>
         <p className="settings-blurb">{t("settings.api_keys_blurb")}</p>

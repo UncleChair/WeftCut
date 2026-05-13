@@ -757,6 +757,7 @@ pub async fn project_save_as(
     handle: State<'_, ProjectHandle>,
     cache: State<'_, crate::cache::CacheLayout>,
     workspace: State<'_, crate::workspace::WorkspaceSlot>,
+    recents: State<'_, crate::recents::RecentsStore>,
     path: String,
 ) -> Result<(), String> {
     let snap = handle.snapshot().await;
@@ -770,7 +771,8 @@ pub async fn project_save_as(
     cache
         .set_workspace(&path)
         .map_err(|e| format!("cache set_workspace: {e:#}"))?;
-    workspace.set(path);
+    workspace.set(path.clone());
+    recents.push(path, snap.metadata.name.clone());
     Ok(())
 }
 
@@ -779,6 +781,7 @@ pub async fn project_open(
     handle: State<'_, ProjectHandle>,
     cache: State<'_, crate::cache::CacheLayout>,
     workspace: State<'_, crate::workspace::WorkspaceSlot>,
+    recents: State<'_, crate::recents::RecentsStore>,
     path: String,
 ) -> Result<(), String> {
     let path = PathBuf::from(path);
@@ -792,11 +795,117 @@ pub async fn project_open(
     cache
         .set_workspace(&path)
         .map_err(|e| format!("cache set_workspace: {e:#}"))?;
-    workspace.set(path);
+    workspace.set(path.clone());
+    let display_name = project.metadata.name.clone();
     handle
         .replace_state(Actor::User, project)
         .await
-        .map_err(|e: CommandError| e.to_string())
+        .map_err(|e: CommandError| e.to_string())?;
+    recents.push(path, display_name);
+    Ok(())
+}
+
+/// Create a brand-new workspace at `<parent_folder>/<name>/` with the given
+/// composition preset, replace the actor's state with a fresh blank
+/// project, and write it to disk. Used by the startup screen's "+ New
+/// project" form. Per workspace-redesign Q7 this is the canonical way to
+/// start a new project — the legacy "blank-on-boot then Save As later"
+/// flow is going away in Phase B.3.
+#[tauri::command]
+pub async fn project_new_workspace(
+    handle: State<'_, ProjectHandle>,
+    cache: State<'_, crate::cache::CacheLayout>,
+    workspace: State<'_, crate::workspace::WorkspaceSlot>,
+    recents: State<'_, crate::recents::RecentsStore>,
+    parent_folder: String,
+    name: String,
+    width: u32,
+    height: u32,
+    fps_num: u32,
+    fps_den: u32,
+) -> Result<String, String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("project name is required".into());
+    }
+    if width == 0 || height == 0 || fps_num == 0 || fps_den == 0 {
+        return Err("invalid canvas preset".into());
+    }
+    let target = PathBuf::from(parent_folder).join(trimmed);
+    if target.exists() {
+        // Either it's an old workspace we'd clobber, or just a folder the
+        // user already picked. Refuse — startup screen flows route the
+        // user to "Open" if the folder is a valid `.vproj`.
+        return Err(format!(
+            "folder already exists: {}",
+            target.display()
+        ));
+    }
+
+    let mut project = state::Project::new_blank(trimmed);
+    project.composition.width = width;
+    project.composition.height = height;
+    project.composition.fps = Rational::new(fps_num, fps_den);
+
+    io::save_to_dir(&project, &target)
+        .await
+        .map_err(|e| format!("save new workspace: {e:#}"))?;
+    cache
+        .set_workspace(&target)
+        .map_err(|e| format!("cache set_workspace: {e:#}"))?;
+    workspace.set(target.clone());
+
+    let display_name = project.metadata.name.clone();
+    handle
+        .replace_state(Actor::User, project)
+        .await
+        .map_err(|e: CommandError| e.to_string())?;
+    recents.push(target.clone(), display_name);
+    Ok(target.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub async fn recents_list(
+    recents: State<'_, crate::recents::RecentsStore>,
+) -> Result<Vec<crate::recents::RecentEntry>, String> {
+    recents.list().map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub async fn recents_remove(
+    recents: State<'_, crate::recents::RecentsStore>,
+    path: String,
+) -> Result<(), String> {
+    recents
+        .remove(&PathBuf::from(path))
+        .map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub async fn recents_get_reopen_on_launch(
+    recents: State<'_, crate::recents::RecentsStore>,
+) -> Result<bool, String> {
+    recents.reopen_on_launch().map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub async fn recents_set_reopen_on_launch(
+    recents: State<'_, crate::recents::RecentsStore>,
+    value: bool,
+) -> Result<(), String> {
+    recents
+        .set_reopen_on_launch(value)
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Returns the most recent workspace, if any. Used by the startup screen
+/// on boot: when `reopen_on_launch` is enabled, the UI calls this and
+/// immediately fires `project_open` on the result.
+#[tauri::command]
+pub async fn recents_most_recent(
+    recents: State<'_, crate::recents::RecentsStore>,
+) -> Result<Option<crate::recents::RecentEntry>, String> {
+    recents.most_recent().map_err(|e| format!("{e:#}"))
 }
 
 #[derive(Serialize, Clone)]

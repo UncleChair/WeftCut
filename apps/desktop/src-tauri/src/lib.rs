@@ -19,6 +19,7 @@ mod jobs;
 mod mcp;
 mod mpv;
 mod raster;
+mod recents;
 mod state;
 mod workspace;
 
@@ -63,6 +64,12 @@ pub fn run() {
             commands::project_redo,
             commands::project_save_as,
             commands::project_open,
+            commands::project_new_workspace,
+            commands::recents_list,
+            commands::recents_remove,
+            commands::recents_get_reopen_on_launch,
+            commands::recents_set_reopen_on_launch,
+            commands::recents_most_recent,
             commands::import_media,
             commands::compile_project,
             commands::export_project,
@@ -167,6 +174,21 @@ pub fn run() {
             // Phase C.1 import fills it in.
             let workspace_slot = workspace::WorkspaceSlot::new();
             app.manage(workspace_slot.clone());
+
+            // Recent-projects store + app prefs (`reopen_on_launch`). Phase
+            // B's startup screen reads from this; `project_open` /
+            // `project_save_as` / `project_new_workspace` push to it.
+            let config_dir = app
+                .path()
+                .app_config_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from("./config"));
+            if let Err(e) = std::fs::create_dir_all(&config_dir) {
+                tracing::warn!(
+                    "app config dir setup failed: {e:#} ({})",
+                    config_dir.display()
+                );
+            }
+            app.manage(recents::RecentsStore::new(config_dir));
 
             // Auto-save subscriber. Listens to actor events, debounces
             // 500ms, writes `project.json` whenever a workspace is set.
