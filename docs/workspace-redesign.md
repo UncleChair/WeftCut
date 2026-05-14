@@ -1,8 +1,9 @@
 # Workspace Redesign
 
-> **Status:** All four phases shipped 2026-05-13 / 2026-05-14.
-> Supersedes parts of [`data-model.md`'s on-disk format](data-model.md) and
-> the [Phase 1 libmpv embed model](roadmap.md#phase-1--editor-mvp-45-weeks).
+> **Status:** All four phases + dep upgrade pass + live-verification polish
+> shipped 2026-05-13 / 2026-05-14. Supersedes parts of
+> [`data-model.md`'s on-disk format](data-model.md) and the
+> [Phase 1 libmpv embed model](roadmap.md#phase-1--editor-mvp-45-weeks).
 >
 > | Phase | Commits |
 > |---|---|
@@ -10,6 +11,16 @@
 > | B — startup screen (Create / Open / Recent + recents.json + new-project form) | `c5e528b` |
 > | C — import polish (background copy, missing-media badges, derivatives pill) | `6f943be` |
 > | D — preview overhaul (DOM `<video>` + state-hashed MP4, delete libmpv embed) | `9e23046`, `3cb42d2` |
+> | docs — mark phases shipped + tie off obsolete libmpv memories | `2982b3c` |
+> | E — dep upgrade pass (tauri 2.5→2.11, libmpv2 4→6, reqwest 0.12→0.13, ts-rs 10→12) | `067c69c` |
+> | live-verification polish — startup locale toggle + new-project rewrite | `22f6c6a` |
+> | live-verification polish — async `state_hash` + silent `run_render` + RAF playhead | `81bc02b` |
+>
+> **All five residual-risk flows verified end-to-end against a real dev
+> build** (startup screen, "+ New project", recents persistence, import
+> + preview render, legacy `.vproj` migration — last one moot per "no
+> install base"). See "Live-verification log" near the bottom of this
+> doc for the fixes that came out of that pass.
 >
 > Cross-cutting work — affects state, IO, cache, raster, mpv, raster preview,
 > jobs, MCP. Targets the 4 user-facing problems below; resolves them via 10
@@ -182,3 +193,54 @@ Exit: libmpv embed code removed from the project preview path; project preview i
 - **Cross-platform libmpv removal**: Phase D removes the project preview's dependency on libmpv on Windows. macOS/Linux project previews use the standalone window (no embed work was ever done) — those just stop opening a window once Phase D lands. The media-pool `mpv_play_media` popup survives until later cleanup.
 - **Hardlinks / symlinks as an opt-in**: deferred. Q2 chose pure copy; a "link instead" toggle can come later as an advanced Settings option if disk pressure becomes a real complaint.
 - **`relink` UX for missing media**: badged in Phase C, but the actual right-click → file-picker → reassign-by-content-hash flow is its own small project.
+
+## Live-verification log (2026-05-14)
+
+The plan was structurally complete after Phase D landed, but cargo tests
+and tsc don't catch UI-level wrong-ness. A residual-risks pass walked
+five flows in the running dev build:
+
+1. **Startup screen first paint** — ✅ passed.
+2. **"+ New project" flow** — surfaced two UX gaps:
+   - i18n toggle button was only in the editor header → first-launch
+     users on a foreign locale couldn't switch before they could read
+     the buttons. Added top-right locale toggle to the startup screen
+     mirroring the editor's `cycleLocale`. Commit `22f6c6a`.
+   - The save-dialog flow felt like the name was buried inside folder
+     creation. Rewrote `NewProjectForm` (grill-me design pass):
+     two-row form with a separate **Project name** input (autofocused,
+     empty, live validation against `\ / : * ? " < > |` + reserved
+     names + trailing dot / whitespace) and a **Save in** parent
+     picker. Pre-fills "Save in" with the parent of the last project
+     created (persisted in `recents.json` as
+     `last_new_project_parent`); first launch falls back to
+     `documentDir()`. Path preview `→ <parent>/<name>` updates live.
+     Commit `22f6c6a`.
+3. **Recents persistence across restarts** — ✅ passed.
+4. **First import + preview render** — surfaced three bugs:
+   - `preview::state_hash` called `tauri::async_runtime::block_on(
+     materialize_templates(...))` from inside the preview-loop tokio
+     task — a deadlock-or-panic anti-pattern that silently killed the
+     renderer task on the first commit. No `preview:render_*` events
+     surfaced. Native `.await`; the loop survives. Added a
+     `preview renderer subscribed; waiting for commits` log so
+     "is the renderer alive" is observable. See
+     [[feedback_async_block_on_in_async]]. Commit `81bc02b`.
+   - `preview::render` called `export::run_render`, which emits
+     `export:complete` — the React `<ExportPanel>` popped up an
+     "Exported to ..." toast on every preview render and couldn't
+     stay dismissed. Split: `run_render` (event-emitting, for user
+     exports) wraps `run_render_inner` with an `emit_events: bool`;
+     new `run_render_silent` is the no-emit wrapper for preview's
+     use. Commit `81bc02b`.
+   - Timeline playhead jerky during playback because the HTML5
+     `timeupdate` event only fires at ~4 Hz. PreviewSurface now starts
+     a `requestAnimationFrame` pump on `onPlay` (~60 Hz updates) and
+     cancels on `onPause`. Final sync on pause so the playhead lands
+     exactly where the video stopped. Commit `81bc02b`.
+5. **Migration of legacy `.vproj`** — moot. The project has never been
+   released; no install base exists. `io::migrate::tests` covers the
+   v1→v2 code path; the live "open a real legacy project from disk"
+   test would have been belt-and-suspenders for a population that
+   doesn't exist. Migration code stays as schema-bump insurance for
+   future v2→v3 work.
