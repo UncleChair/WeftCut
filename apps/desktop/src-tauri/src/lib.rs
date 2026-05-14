@@ -81,15 +81,8 @@ pub fn run() {
             commands::export_queue_remove,
             commands::export_queue_clear_finished,
             commands::hw_encoder_probe,
-            commands::mpv_close_preview,
             commands::mpv_play_file,
             commands::mpv_play_media,
-            commands::mpv_preview_project,
-            commands::mpv_seek,
-            commands::mpv_set_paused,
-            commands::mpv_set_surface_rect,
-            commands::mpv_set_host_visible,
-            commands::mpv_set_host_clip,
             commands::settings_get_api_key_status,
             commands::settings_set_api_key,
             commands::settings_clear_api_key,
@@ -109,26 +102,14 @@ pub fn run() {
             let project_for_ui_events = project_handle.clone();
             let project_for_autosave = project_handle.clone();
             let project_for_preview_renderer = project_handle.clone();
-            #[cfg(feature = "mpv")]
-            let project_for_preview = project_handle.clone();
             app.manage(project_handle);
-            // Lazily-initialised libmpv slots. Two distinct instances so
-            // they don't share `wid` / graph state:
-            //   * `mpv_slot`        — project preview (embedded into the
-            //                         WebView2 sibling HWND on Windows).
-            //   * `mpv_popup_slot`  — media-pool / raw-file preview, always
-            //                         a standalone top-level window. No
-            //                         host_hwnd is registered on this slot,
-            //                         so `ensure_init` falls back to
-            //                         `force-window=yes`.
-            // Stub variants when the `mpv` feature is off keep the same
-            // shape so callers don't `cfg!`.
+            // libmpv survives only for the media-pool popup preview (a
+            // standalone OS window with no z-order conflict against the
+            // Phase-D DOM `<video>` project preview). The embed slot
+            // (`mpv_slot`) stays in the type system for cross-platform
+            // parity but has no HWND wired up and is never play_graph'd.
             let mpv_slot = mpv::MpvSlot::default();
             let mpv_popup_slot = mpv::MpvPopupSlot::default();
-            #[cfg(feature = "mpv")]
-            let mpv_slot_for_preview = mpv_slot.clone();
-            #[cfg(feature = "mpv")]
-            let mpv_slot_for_events = mpv_slot.clone();
             #[cfg(feature = "mpv")]
             let mpv_popup_for_events = mpv_popup_slot.clone();
 
@@ -210,8 +191,6 @@ pub fn run() {
             );
             app.manage(preview_renderer);
             let cache_for_mcp = cache_layout.clone();
-            #[cfg(feature = "mpv")]
-            let cache_for_hotreload = cache_layout.clone();
             let cache_for_spike = cache_layout.clone();
             app.manage(cache_layout);
 
@@ -329,120 +308,24 @@ pub fn run() {
             });
             tauri::async_runtime::spawn_blocking(mpv::spike);
 
-            // Event poller: drains libmpv's event queue every ~33ms (≈30 fps)
-            // and drops the handle when MPV_EVENT_SHUTDOWN arrives. For the
-            // popup slot this is what makes the OS close button on the
-            // preview window actually close — mpv binds CLOSE_WIN→quit by
-            // default, but the resulting Shutdown event doesn't release the
-            // window resource until our handle is dropped. For the embedded
-            // slot there's no OS close button so Shutdown is rare, but the
-            // poller still covers internal shutdown paths.
-            //
-            // Same tick also reads `playback-time` from the embed slot and
-            // emits `mpv:time` whenever the value changes — the UI listens
-            // and slides the timeline playhead in sync with libmpv during
-            // playback. Emit only on change so a paused player doesn't
-            // flood IPC.
-            #[cfg(feature = "mpv")]
-            let app_for_mpv_events = app.handle().clone();
+            // Popup-slot event drain. The media-pool play button opens a
+            // standalone libmpv window via `mpv_play_media` — mpv binds
+            // CLOSE_WIN→quit by default, but the resulting Shutdown event
+            // doesn't release the window resource until our handle is
+            // dropped. The 33ms tick drains those events so the OS close
+            // button actually closes the popup. The embed slot is gone
+            // (Phase D), so only the popup is drained.
             #[cfg(feature = "mpv")]
             tauri::async_runtime::spawn(async move {
-                use tauri::Emitter;
                 let mut tick =
                     tokio::time::interval(std::time::Duration::from_millis(33));
-                let mut last_emit: Option<i64> = None;
                 loop {
                     tick.tick().await;
-                    let embed = mpv_slot_for_events.clone();
                     let popup = mpv_popup_for_events.0.clone();
-                    let result = tokio::task::spawn_blocking(move || -> Option<i64> {
-                        mpv::drain_events_and_close_if_shutdown(&embed);
+                    let _ = tokio::task::spawn_blocking(move || {
                         mpv::drain_events_and_close_if_shutdown(&popup);
-                        mpv::playback_time_us(&embed)
                     })
                     .await;
-                    let t_us = match result {
-                        Ok(v) => v,
-                        Err(_) => continue,
-                    };
-                    if t_us != last_emit {
-                        last_emit = t_us;
-                        if let Some(t_us) = t_us {
-                            let _ = app_for_mpv_events
-                                .emit("mpv:time", serde_json::json!({ "t_us": t_us }));
-                        }
-                    }
-                }
-            });
-
-            // Hot-reload: every project commit recompiles the IR and re-applies
-            // the lavfi-complex graph to the open libmpv preview window. Only
-            // active once the user has opened preview at least once; before
-            // that, ChangeEvents are observed but ignored.
-            #[cfg(feature = "mpv")]
-            let app_for_hotreload = app.handle().clone();
-            #[cfg(feature = "mpv")]
-            tauri::async_runtime::spawn(async move {
-                use tokio::sync::broadcast::error::RecvError;
-                let mut rx = project_for_preview.subscribe();
-                loop {
-                    match rx.recv().await {
-                        Ok(_event) => {}
-                        Err(RecvError::Lagged(n)) => {
-                            tracing::warn!(
-                                "mpv hot-reload: lagged {n} events; recompiling from current snapshot"
-                            );
-                        }
-                        Err(RecvError::Closed) => break,
-                    }
-                    if !mpv::is_active(&mpv_slot_for_preview) {
-                        continue;
-                    }
-                    let snap = project_for_preview.snapshot().await;
-                    let target = ir::RenderTarget::full(
-                        snap.composition.width,
-                        snap.composition.height,
-                        state::Rational::new(snap.composition.fps.num, snap.composition.fps.den),
-                        snap.composition.sample_rate,
-                        snap.composition.channels,
-                    );
-                    let inline_subs =
-                        match ir::materialize_inline_subtitles(&snap, &cache_for_hotreload) {
-                            Ok(m) => m,
-                            Err(e) => {
-                                tracing::warn!("mpv hot-reload: materialize failed: {e}");
-                                continue;
-                            }
-                        };
-                    let template_renders = match ir::materialize_templates(
-                        &snap,
-                        &cache_for_hotreload,
-                        &app_for_hotreload,
-                    )
-                    .await
-                    {
-                        Ok(m) => m,
-                        Err(e) => {
-                            tracing::warn!("mpv hot-reload: materialize templates failed: {e}");
-                            continue;
-                        }
-                    };
-                    let graph = match ir::lower(&snap, target, &inline_subs, &template_renders) {
-                        Ok(g) => g,
-                        Err(e) => {
-                            tracing::warn!("mpv hot-reload: lower failed: {e}");
-                            continue;
-                        }
-                    };
-                    let plan = ir::emit_mpv(&graph);
-                    let slot = mpv_slot_for_preview.clone();
-                    if let Err(e) =
-                        tokio::task::spawn_blocking(move || mpv::play_graph(&slot, &plan))
-                            .await
-                            .unwrap_or_else(|e| Err(format!("join: {e}")))
-                    {
-                        tracing::warn!("mpv hot-reload: apply failed: {e}");
-                    }
                 }
             });
 

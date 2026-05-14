@@ -7,8 +7,6 @@ import {
   type ReactNode,
 } from "react";
 
-import { useMpvHostClip } from "../mpv/useHideMpvHost";
-
 // Closing the open dropdown is handled at the `Menu` root; `MenuItem`
 // uses this context to fire it after `onClick` so the user doesn't have
 // to manually dismiss.
@@ -65,10 +63,11 @@ export function Menu({ label, hint, children }: MenuProps) {
   );
 }
 
-// Separate component so the clip hook's mount/unmount lifecycle aligns
-// with the dropdown's open/close. The libmpv host gets a hole punched
-// out at the dropdown's rect while this is mounted, so the preview
-// keeps showing in the area around the dropdown.
+// Wrap the open dropdown so the close callback is available to
+// `MenuItem` via context. The clip-hook that punched a hole in the
+// libmpv host HWND used to live here; the Phase D `<video>` preview is
+// a DOM element so no clip is needed and the dropdown composes
+// naturally with the rest of the layout.
 function MenuDropdown({
   close,
   children,
@@ -76,11 +75,9 @@ function MenuDropdown({
   close: () => void;
   children: ReactNode;
 }) {
-  const listRef = useRef<HTMLDivElement>(null);
-  useMpvHostClip(listRef);
   return (
     <MenuCloseContext.Provider value={close}>
-      <div className="menu-list" role="menu" ref={listRef}>
+      <div className="menu-list" role="menu">
         {children}
       </div>
     </MenuCloseContext.Provider>

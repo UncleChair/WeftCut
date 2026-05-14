@@ -56,7 +56,6 @@ import {
   MenuItem,
   MenuSeparator,
 } from "./menu/Menu";
-import { useHideMpvHost } from "./mpv/useHideMpvHost";
 import {
   LOCALE_LABELS,
   SUPPORTED_LOCALES,
@@ -777,7 +776,6 @@ function QueuePanel({
   onRemove: (id: string) => Promise<void>;
   onClearFinished: () => Promise<void>;
 }) {
-  useHideMpvHost();
   const { t } = useTranslation();
   const finishedCount = items.filter(
     (i) =>
@@ -846,7 +844,6 @@ function ExportPanel({
   state: ExportState;
   onClose: () => void;
 }) {
-  useHideMpvHost();
   const { t } = useTranslation();
   const inProgress = state.kind === "starting" || state.kind === "progress";
 
@@ -1077,7 +1074,6 @@ function CompiledPanel({
   graph: CompiledGraph;
   onClose: () => void;
 }) {
-  useHideMpvHost();
   const { t } = useTranslation();
   return (
     <aside className="compiler-panel">

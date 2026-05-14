@@ -570,73 +570,12 @@ export async function mpvPlayFile(path: string): Promise<void> {
   return invoke<void>("mpv_play_file", { path });
 }
 
+/// Open a libmpv popup window for the given media item. Used by the
+/// media-pool play button. Survives Phase D — it's a standalone OS
+/// window (no z-order conflict with the DOM `<video>` element), so it
+/// keeps libmpv only for that single isolated use.
 export async function mpvPlayMedia(mediaId: string): Promise<void> {
   return invoke<void>("mpv_play_media", { mediaId });
-}
-
-export async function mpvSeek(tUs: number): Promise<void> {
-  return invoke<void>("mpv_seek", { tUs });
-}
-
-export async function mpvSetPaused(paused: boolean): Promise<void> {
-  return invoke<void>("mpv_set_paused", { paused });
-}
-
-export interface MpvPreviewStatus {
-  primary: string | null;
-  external_count: number;
-  has_video: boolean;
-  has_audio: boolean;
-  graph_len: number;
-}
-
-/// Compile the current project to a libmpv `lavfi-complex` graph and load it
-/// in the preview window. After this call, every project commit hot-reloads
-/// the graph automatically (see `lib.rs` setup).
-export async function mpvPreviewProject(): Promise<MpvPreviewStatus> {
-  return invoke<MpvPreviewStatus>("mpv_preview_project");
-}
-
-/// Close the libmpv preview window and drop the player handle.
-export async function mpvClosePreview(): Promise<void> {
-  return invoke<void>("mpv_close_preview");
-}
-
-/// Reposition the embed host HWND so it tracks the React `#video-surface`
-/// placeholder. Coordinates are physical pixels — the caller is responsible
-/// for multiplying CSS-px `getBoundingClientRect()` by `devicePixelRatio`
-/// before invoking. No-op on non-Windows builds.
-export async function mpvSetSurfaceRect(
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-): Promise<void> {
-  return invoke<void>("mpv_set_surface_rect", { x, y, w, h });
-}
-
-/// Toggle the embed host HWND's visibility. Use for full-screen overlays
-/// (modal panels) that cover most of the preview pane. For partial
-/// overlays like dropdown menus, prefer `mpvSetHostClip` so the preview
-/// keeps showing around the overlay.
-/// No-op on non-Windows builds.
-export async function mpvSetHostVisible(visible: boolean): Promise<void> {
-  return invoke<void>("mpv_set_host_visible", { visible });
-}
-
-/// Punch a rectangular hole in the embed host HWND so WebView2 shows
-/// through there. Pass `null` to restore the full host. Coordinates are
-/// physical pixels (CSS px × devicePixelRatio), same coord space as
-/// `mpvSetSurfaceRect`. No-op on non-Windows builds.
-export async function mpvSetHostClip(
-  rect: { x: number; y: number; w: number; h: number } | null,
-): Promise<void> {
-  return invoke<void>("mpv_set_host_clip", {
-    x: rect?.x ?? null,
-    y: rect?.y ?? null,
-    w: rect?.w ?? null,
-    h: rect?.h ?? null,
-  });
 }
 
 export interface McpInfoView {

@@ -2,8 +2,6 @@ import { useEffect, useState, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 
-import { useHideMpvHost } from "../mpv/useHideMpvHost";
-
 interface Props {
   onClose: () => void;
 }
@@ -25,7 +23,6 @@ type Filter = "all" | "user" | "agent";
 const MAX_ENTRIES = 200;
 
 export function ActivityPanel({ onClose }: Props) {
-  useHideMpvHost();
   const { t } = useTranslation();
   const [entries, setEntries] = useState<ActivityEntry[]>([]);
   const [filter, setFilter] = useState<Filter>("all");

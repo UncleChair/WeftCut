@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { getMcpInfo, resetMcpToken, type McpInfoView } from "../ipc";
-import { useHideMpvHost } from "../mpv/useHideMpvHost";
 
 interface Props {
   onClose: () => void;
@@ -10,7 +9,6 @@ interface Props {
 const REFRESH_INTERVAL_MS = 1000;
 
 export function ConnectAgentPanel({ onClose }: Props) {
-  useHideMpvHost();
   const { t } = useTranslation();
   const [info, setInfo] = useState<McpInfoView | null>(null);
   const [revealed, setRevealed] = useState(false);
