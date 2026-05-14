@@ -775,6 +775,7 @@ pub async fn project_save_as(
     workspace: State<'_, crate::workspace::WorkspaceSlot>,
     recents: State<'_, crate::recents::RecentsStore>,
     log_slot: State<'_, crate::logs::LogBusSlot>,
+    agent_session: State<'_, crate::agent_session::AgentSessionSlot>,
     app: tauri::AppHandle,
     path: String,
 ) -> Result<(), String> {
@@ -790,6 +791,9 @@ pub async fn project_save_as(
         .set_workspace(&path)
         .map_err(|e| format!("cache set_workspace: {e:#}"))?;
     workspace.set(path.clone());
+    // Workspace change resets any in-flight agent session — view mode
+    // doesn't survive across project switches.
+    let _ = crate::agent_session::end_and_emit(&app, &agent_session);
     // Install (or rotate) the LogBus for this workspace. Replaces any
     // prior bus; the old writer task drains + exits on mpsc-close.
     log_slot.install(crate::logs::LogBus::spawn(&path, app.clone()));
@@ -804,6 +808,7 @@ pub async fn project_open(
     workspace: State<'_, crate::workspace::WorkspaceSlot>,
     recents: State<'_, crate::recents::RecentsStore>,
     log_slot: State<'_, crate::logs::LogBusSlot>,
+    agent_session: State<'_, crate::agent_session::AgentSessionSlot>,
     app: tauri::AppHandle,
     path: String,
 ) -> Result<(), String> {
@@ -829,6 +834,7 @@ pub async fn project_open(
         .set_workspace(&path)
         .map_err(|e| format!("cache set_workspace: {e:#}"))?;
     workspace.set(path.clone());
+    let _ = crate::agent_session::end_and_emit(&app, &agent_session);
     // Install (or rotate) the LogBus rooted at this workspace's Logs/.
     log_slot.install(crate::logs::LogBus::spawn(&path, app.clone()));
     let display_name = project.metadata.name.clone();
@@ -853,6 +859,7 @@ pub async fn project_new_workspace(
     workspace: State<'_, crate::workspace::WorkspaceSlot>,
     recents: State<'_, crate::recents::RecentsStore>,
     log_slot: State<'_, crate::logs::LogBusSlot>,
+    agent_session: State<'_, crate::agent_session::AgentSessionSlot>,
     app: tauri::AppHandle,
     parent_folder: String,
     name: String,
@@ -892,6 +899,7 @@ pub async fn project_new_workspace(
         .set_workspace(&target)
         .map_err(|e| format!("cache set_workspace: {e:#}"))?;
     workspace.set(target.clone());
+    let _ = crate::agent_session::end_and_emit(&app, &agent_session);
     log_slot.install(crate::logs::LogBus::spawn(&target, app.clone()));
 
     let display_name = project.metadata.name.clone();
@@ -1010,6 +1018,50 @@ pub async fn keybindings_import(
     store
         .import_from(&PathBuf::from(src))
         .map_err(|e| format!("{e:#}"))
+}
+
+// ---- Agent-session view-mode slot ----
+//
+// Pre-MCP (the agent-session begin/end is the agent-mode entry; that
+// MCP tool is added in Phase 2), these commands surface the current
+// slot to the UI and let the user exit on their own. The slot reset on
+// workspace change is wired inline in `project_save_as` / `project_open`
+// / `project_new_workspace` below.
+
+#[tauri::command]
+pub async fn agent_session_get(
+    slot: State<'_, crate::agent_session::AgentSessionSlot>,
+) -> Result<Option<crate::agent_session::AgentSession>, String> {
+    Ok(slot.current())
+}
+
+/// User-side "Exit to editor" handler. Always allowed — even with a
+/// lock or in-flight ops (Q3/Q4 invariants).
+#[tauri::command]
+pub async fn agent_session_end(
+    app: tauri::AppHandle,
+    slot: State<'_, crate::agent_session::AgentSessionSlot>,
+) -> Result<(), String> {
+    let prior = crate::agent_session::end_and_emit(&app, &slot);
+    if let Some(s) = prior {
+        // System-attributed entry so the record panel — already
+        // closed by the time this lands — and the full LogConsole
+        // both surface the transition.
+        crate::logs::emit_via_app(
+            &app,
+            crate::logs::LogEntryInput {
+                level: crate::logs::LogLevel::Info,
+                category: crate::logs::LogCategory::System,
+                source: crate::logs::LogSource::System,
+                message: format!(
+                    "User exited agent mode (session client={} reason={})",
+                    s.client, s.reason,
+                ),
+                ..Default::default()
+            },
+        );
+    }
+    Ok(())
 }
 
 // ---- Per-workspace view state (timeline zoom + per-track heights) ----

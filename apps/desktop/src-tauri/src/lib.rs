@@ -22,6 +22,7 @@ mod mcp;
 mod mpv;
 mod preview;
 mod raster;
+mod agent_session;
 mod recents;
 mod state;
 mod view_state;
@@ -91,6 +92,8 @@ pub fn run() {
             commands::keybindings_import,
             commands::view_state_get,
             commands::view_state_set,
+            commands::agent_session_get,
+            commands::agent_session_end,
             commands::import_media,
             commands::import_cancel,
             commands::import_queue_list,
@@ -183,6 +186,14 @@ pub fn run() {
             // Phase C.1 import fills it in.
             let workspace_slot = workspace::WorkspaceSlot::new();
             app.manage(workspace_slot.clone());
+
+            // Agent-session slot — process-global. `None` in editor mode;
+            // `Some(...)` while an MCP-initiated agent session is active.
+            // Reset on workspace change (project_save_as/open/new_workspace
+            // emit the change event themselves). MCP-side begin/end is wired
+            // in Phase 2.
+            let agent_session_slot = agent_session::AgentSessionSlot::new();
+            app.manage(agent_session_slot.clone());
 
             // Recent-projects store + app prefs (`reopen_on_launch`). Phase
             // B's startup screen reads from this; `project_open` /

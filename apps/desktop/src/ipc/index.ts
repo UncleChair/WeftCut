@@ -394,6 +394,31 @@ export async function viewStateSet(state: ViewState): Promise<void> {
 }
 
 // ============================================================
+// Agent session — view mode controlled by MCP. UI shows agent mode
+// when `agent_session_get` returns Some(...); editor mode otherwise.
+// The frontend ONLY exits (`agent_session_end`); entry is MCP-only.
+// ============================================================
+
+export interface AgentSession {
+  client: string;
+  reason: string;
+  /// ISO 8601 timestamp from chrono::DateTime<Utc>.
+  started_at: string;
+}
+
+export const AGENT_SESSION_EVENTS = {
+  changed: "agent_session:changed",
+} as const;
+
+export async function agentSessionGet(): Promise<AgentSession | null> {
+  return invoke<AgentSession | null>("agent_session_get");
+}
+
+export async function agentSessionEnd(): Promise<void> {
+  return invoke<void>("agent_session_end");
+}
+
+// ============================================================
 // Background import worker (Phase C.1 — workspace-redesign.md Q6)
 // ============================================================
 
