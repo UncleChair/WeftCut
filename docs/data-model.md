@@ -1,8 +1,6 @@
 # Data Model
 
-> **Implementation status:** This is the design spec for the type tree, mutation surface, and on-disk format. Implementation status (which mutation commands are wired today, which deferred) lives in [`roadmap.md`'s Phase 4 closeout](roadmap.md#phase-4-status-2026-05-08). At time of writing: layer / track / marker / media / composition / checkpoint / undo+redo / replace_state actor commands are all in; `update_marker`, `remove_marker`, `move_track`, `remove_media` shipped in Phase 4 Stage 1. Effect and keyframe commands remain intentionally absent until their IR lowering lands (see `project_phase4_scope.md`).
->
-> **On-disk format superseded:** The original "On-disk format: `.vproj` folder" section assumed absolute media paths and OS-level cache. [`workspace-redesign.md`](workspace-redesign.md) supersedes it — `SCHEMA_VERSION` is now 2: media is copied into `<workspace>/Media/`, `path_rel` is authoritative, derivatives live in `<workspace>/Cache/`. Legacy v1 projects auto-migrate on open. `MediaItem` keeps both `path_abs` and `path_rel` fields; `load_from_dir` recomputes `path_abs` from `<workspace>/path_rel` so workspace moves don't break references.
+> **Implementation status:** This is the design spec for the type tree, mutation surface, and on-disk format. Phase history lives in [`roadmap.md`](roadmap.md); the workspace-folder format + autosave model shipped 2026-05-13/14 — see [`workspace-redesign.md`](workspace-redesign.md) for the shipped-log + design rationale. At time of writing: layer / track / marker / media / composition / checkpoint / undo+redo / replace_state actor commands are all in; `update_marker`, `remove_marker`, `move_track`, `remove_media` shipped in Phase 4 Stage 1. Effect and keyframe commands remain intentionally absent until their IR lowering lands (see `project_phase4_scope.md`).
 
 The project state is the single source of truth. UI, IR compiler, MCP server, and persistence are all clients of it.
 
@@ -69,21 +67,21 @@ struct Composition {
 struct MediaItem {
     id: MediaId,
     label: Option<String>,
-    path_abs: PathBuf,
-    path_rel: Option<PathBuf>,        // relative to .vproj folder if applicable
+    path_abs: PathBuf,                // computed at load = workspace.join(path_rel)
+    path_rel: Option<PathBuf>,        // authoritative; relative to workspace root
     kind: MediaKind,                  // Video | Audio | Image | Subtitle
     metadata: MediaMetadata,
-    proxy_path: Option<PathBuf>,
+    proxy_path: Option<PathBuf>,      // 540p H.264 in workspace/Cache/proxies/
     waveform_path: Option<PathBuf>,
     thumbnails_dir: Option<PathBuf>,
-    file_hash_blake3: String,         // for relink-by-content
+    file_hash_blake3: String,         // for relink-by-content + cache key
     file_size: u64,
     file_mtime: u64,
     imported_at: Timestamp,
 }
 ```
 
-On load: try `path_rel` first (project moved with media), then `path_abs` (media stayed put), then prompt to relink — find by hash within a user-pointed directory.
+`path_rel` is the on-disk anchor (workspace-relative, e.g. `Media/clip.mp4`). On load, `io::load_from_dir` rewrites `path_abs = workspace.join(path_rel)` so workspace moves between machines don't break references. `path_abs` is the in-memory convenience path consumed by the IR compiler + background jobs. If `path_rel` is missing (legacy v1 project before migration) or the resolved file doesn't exist, the pool item gets a "missing media" badge — the project still loads.
 
 ## `Track`
 
@@ -382,39 +380,47 @@ Every command maps directly to one MCP tool with the same name. Patches are **st
 | `undo()` / `redo()` | |
 | `replace_state(snapshot)` | for paste/template-instantiation; full validation |
 
-## On-disk format: `.vproj` folder
+## On-disk format: workspace folder
+
+The workspace folder *is* the project. Opening a workspace folder = opening the project; zipping the folder = backing up the project. Originals get copied in on import so the bundle is self-contained.
 
 ```
-my-edit.vproj/
-  project.json              ← canonical state (10 KB – few MB)
-  schema_version            ← redundant copy for tooling that reads only this
-  cache/
-    proxies/<media_hash>.mp4
-    waveforms/<media_hash>.dat
-    thumbnails/<media_hash>/000.jpg ...
-    raster/<key>/           ← per-project rasterized template outputs
-  history/
-    operations.log          ← optional persisted op log
-    checkpoints/<id>.json
-  media/                    ← optional consolidated copies of imported media
+<workspace>/
+├── project.json              ← canonical state, auto-saved 500ms-debounced
+├── schema_version            ← redundant copy for tooling that reads only this
+├── Media/                    ← imported originals (workspace owns the bytes)
+│   ├── interview.mov
+│   └── b-roll-001.mp4
+├── Cache/                    ← all derivatives; safe to delete
+│   ├── proxies/              ← 540p H.264 per source (used by preview render)
+│   ├── thumbnails/           ← per-source thumb strips
+│   ├── waveforms/            ← .peaks files for waveform display
+│   ├── frames/               ← on-demand video frames (media://{id}/frame/{t})
+│   ├── raster/               ← rasterized template renders
+│   ├── preview/              ← state-hashed preview MP4s (see `rendering.md`)
+│   └── voiceover/            ← TTS output
+├── Backups/                  ← periodic project.json snapshots (rolling 20)
+└── Renders/                  ← export outputs default here
 ```
 
-- `project.json` is JSON for diffability and debug-readability. Switch to a binary format only if profiling demands.
-- `cache/` is fully derived; safe to delete.
-- Imported media is referenced by path by default. A "consolidate to project folder" action copies into `media/` for sharing/archiving.
+**Authoritative path is `MediaItem.path_rel`** (relative to the workspace root). At load time `io::load_from_dir` rewrites `path_abs` as `workspace.join(path_rel)` so moving the workspace folder between machines doesn't break references. `path_abs` is kept in the struct as a convenience for the IR compiler + jobs that read media by absolute path.
+
+`Backups/` rolls every 50 commits or 5 minutes (whichever first), retains the 20 most recent. `project_save_as` is gone in favor of the auto-save subscriber; Cmd-S is a force-flush hook reserved for future UI. The save model is "the folder is the truth" — closing the app loses nothing.
 
 ## Versioning
 
 ```json
-{ "schema_version": 1, "project": { ... } }
+{ "schema_version": 2, "project": { ... } }
 ```
+
+`SCHEMA_VERSION = 2` after the workspace redesign. v1 projects (absolute paths, no `Media/` folder) auto-migrate on open: pre-migration backup → copy each `MediaItem.path_abs` source into `<workspace>/Media/` (hash-prefix on filename collisions) → set `path_rel` → bump schema. Missing sources stay in legacy mode with a "missing media" badge on the pool item; the editor still loads.
 
 On load:
 1. Read `schema_version`.
-2. Run migration chain `1 → 2 → ... → current`. Each migration is a pure function over the JSON value.
+2. Run migration chain `1 → 2 → ... → current`. Each migration is in `io/migrate.rs` and mutates the in-memory Project before save-back.
 3. Refuse to load a `schema_version` newer than the binary supports.
 
-Be **strict** at deserialization (unknown fields error in v1) — catches typos and forgotten migrations early.
+Be **strict** at deserialization (unknown fields error) — catches typos and forgotten migrations early.
 
 ## Pitfalls
 

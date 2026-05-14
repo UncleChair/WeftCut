@@ -2,6 +2,8 @@
 
 Phased delivery to v1. Single-developer estimates; double for first time touching Tauri/Rust/ffmpeg.
 
+> **Note 2026-05-14:** The libmpv-embed work that runs through Phases 0, 1, and 1.x in this document was **deleted in workspace-redesign Phase D** (commit `3cb42d2`). The project preview is now a DOM `<video>` element backed by state-hashed MP4 renders in `<workspace>/Cache/preview/`. libmpv survives only for the media-pool play-on-click popup (standalone OS window, no z-order conflict). See [`workspace-redesign.md`](workspace-redesign.md) for the shipped log + design rationale. Historical entries below are preserved as a project journal — the work happened, it just didn't survive the redesign.
+
 ## Phase 0 — Spike (1 week)
 
 **Goal: kill the project here if a fundamental assumption is wrong.**

@@ -23,14 +23,14 @@ Project state
 [3] Lower           — Project layers → IR nodes
 [4] Optimize        — input dedup, dead-code, scale fusion, hwaccel rewrite
 [5] Validate        — type-check streams, framerates, channel counts
-[6] Emit            — target-specific string (ffmpeg / libmpv / ...)
+[6] Emit            — ffmpeg lavfi-complex filter graph
 ```
 
 Stages 1–5 are pure functions over data. Stage 6 is the only one that knows about the target.
 
 ## Why an IR (and not direct string formatting)
 
-- **Multi-target emit** — libmpv + ffmpeg today; WebGPU compositor tomorrow.
+- **Multi-target emit** — ffmpeg today (export + preview render); WebGPU compositor or other targets tomorrow.
 - **Validation before launch** — bad graphs fail in our code with a useful error, not in ffmpeg with `Invalid argument`.
 - **Optimization passes** — dedup inputs, drop dead layers, fuse scales, hardware-aware lowering.
 - **Determinism** — same project → byte-identical filter string. Critical for caching and agent reproducibility.
@@ -119,11 +119,11 @@ Cheap checks that turn ffmpeg-side disasters into compile-time errors:
 
 A good error: `Layer "title-3" references media "intro.mov" with src_out=12.5s, but media duration is 11.8s.`
 
-## Emit: ffmpeg vs libmpv
+## Emit: ffmpeg
 
-**Same syntax.** libmpv accepts ffmpeg `lavfi` strings via `--lavfi-complex`. Difference is invocation, not graph:
+Single emit target today. The compiler produces one ffmpeg `lavfi` filter-graph string that both **preview** and **export** consume — same graph, different `RenderTarget` parameters and different input substitution.
 
-- **ffmpeg export**:
+- **ffmpeg export** (full quality, originals as inputs):
   ```
   ffmpeg -i a.mp4 -i b.mp4 -i logo.png \
          -filter_complex_script graph.txt \
@@ -134,13 +134,23 @@ A good error: `Layer "title-3" references media "intro.mov" with src_out=12.5s, 
   ```
   (`-filter_complex_script` reads from a file — necessary because complex graphs blow past argv length limits.)
 
-- **libmpv preview**:
-  ```rust
-  mpv.set_option("external-files", &input_paths.join(":"))?;
-  mpv.set_option("lavfi-complex", &emitted_graph)?;
-  ```
+- **Preview render** (low-cost, 540p proxies as inputs): same `ffmpeg ... -filter_complex_script` invocation, but each `MediaItem.path_abs` is substituted with `MediaItem.proxy_path` if present. Output goes to `<workspace>/Cache/preview/<state_hash>.mp4` (see "Preview rendering" below). `export::run_render_silent` is the entry point — the wrapper that calls `run_render_inner` with `emit_events: false` so the React `<ExportPanel>` doesn't get told about every preview re-render.
 
-The compiler parameterizes on `RenderTarget { resolution, fps, hwaccel, quality }`. Preview = (1280×720, 30, hwaccel-on, draft); export = (project resolution, project fps, hwaccel-on, quality).
+The compiler parameterizes on `RenderTarget { resolution, fps, hwaccel, quality }`. Export = (project resolution, project fps, hwaccel-on, quality). Preview = (project resolution, project fps, software encode, fast preset) — the proxies are already 540p so resolution scaling is cheap; software-encode keeps a fresh project resolvable on machines without an NVENC etc.
+
+## Preview rendering
+
+Per the workspace redesign (Phase D, 2026-05-14), the project preview is a DOM `<video>` element pointed at a state-hashed MP4 on disk. The render loop:
+
+1. **`preview::PreviewRenderer::spawn`** subscribes to actor commits at startup.
+2. On every commit, debounces 1 s (coalesces rapid edits — a drag emitting 10 commits per move tick still produces one render).
+3. After the quiet window: compute `state_hash` = blake3(canonical lavfi graph || sorted-by-id media file hashes || canvas params). Same project state → same hash.
+4. Output path: `<workspace>/Cache/preview/<state_hash>.mp4`. If it already exists (cache hit), emit `preview:render_complete` with that path; no ffmpeg work.
+5. Otherwise call `export::run_render_silent` with proxies substituted for originals; on success emit `preview:render_complete` with the new path.
+
+The React `<PreviewSurface>` listens for `preview:render_complete`, calls `convertFileSrc(path)` to get an `asset://...` URL, and sets it as `<video src>`. Playhead + paused state are preserved across the swap on `loadedmetadata` so the user doesn't lose their place.
+
+`state_hash` is `async fn` — calling `tauri::async_runtime::block_on(materialize_templates(...))` from inside the preview-loop tokio task silently kills the task (see `feedback_async_block_on_in_async` memory). Always `.await` async work from async contexts.
 
 ## Worked example
 
@@ -194,7 +204,7 @@ If you ever cache compiled graphs, key on the **structural hash of the IR after 
 7. **Color space drift.** Pin `colorspace=bt709:iall=bt601-6-625:fast=1` for SDR HD; document the assumption.
 8. **`enable=` doesn't free decode work.** Always pair with `trim`+`setpts` upstream.
 9. **Filter-graph string length.** Use `-filter_complex_script` reading from a temp file.
-10. **Live edits.** When the user nudges a clip, recompile + reload-graph. Debounce ~80 ms.
+10. **Live edits.** Preview renderer subscribes to actor commits, debounces ~1s, kicks ffmpeg if the state hash changed. The React `<video>` swaps `src` on `preview:render_complete`.
 
 ## Implementation footprint
 
@@ -205,7 +215,7 @@ If you ever cache compiled graphs, key on the **structural hash of the IR after 
 | Passes (dedup, DCE) | ~300 |
 | Validation | ~300 |
 | ffmpeg emitter | ~500 |
-| libmpv emitter | ~100 |
+| Preview renderer (state hash + debounced loop) | ~300 |
 | Cache layer | ~400 |
 | Tests (snapshot per layer type, integration) | ~1000 |
 

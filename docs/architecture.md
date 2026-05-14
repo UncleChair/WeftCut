@@ -1,8 +1,8 @@
 # Architecture
 
-> **Implementation status:** This is the design spec. Phase-by-phase implementation status lives in [`roadmap.md`](roadmap.md). At time of writing the MCP transport is SSE rather than Streamable HTTP (rmcp 0.1.x hasn't shipped streamable-http yet) and the change-feed lives on a separate axum-backed `/events` endpoint rather than riding the MCP transport — both pragmatic deltas, see `roadmap.md`'s Phase 4 closeout.
+> **Implementation status:** This is the design spec. Phase-by-phase implementation status lives in [`roadmap.md`](roadmap.md); workspace-folder data flow + DOM `<video>` preview shipped 2026-05-13/14 — see [`workspace-redesign.md`](workspace-redesign.md). At time of writing the MCP transport is SSE (rmcp 0.1.x; 1.x dropped SSE and the migration to streamable-HTTP is its own piece of work — see `feedback_rmcp_migration_blocked` memory) and the change-feed lives on a separate axum-backed `/events` endpoint rather than riding the MCP transport.
 
-Videtor is a Tauri 2 desktop app. The Rust core owns all state and side effects; the webview is a thin UI; external agents connect over MCP.
+Videtor is a Tauri 2 desktop app. The Rust core owns all state and side effects; the webview is a thin UI; external agents connect over MCP. **The workspace folder *is* the project** — opening a folder = opening the project; auto-save means closing the app loses nothing.
 
 ## Component map
 
@@ -11,27 +11,33 @@ Videtor is a Tauri 2 desktop app. The Rust core owns all state and side effects;
 │                          External agents                             │
 │        (Claude Desktop, Cursor, Cline, custom Python clients)        │
 └────────────────────────┬─────────────────────────────────────────────┘
-                         │ MCP / Streamable HTTP / localhost / token
+                         │ MCP / SSE / localhost / token
 ┌────────────────────────▼─────────────────────────────────────────────┐
 │                          Tauri app                                   │
 │                                                                      │
 │  ┌────────────────────────┐         ┌─────────────────────────────┐  │
 │  │ Webview (React)        │ ◄─IPC─► │ Rust core                   │  │
-│  │ • Timeline             │         │ ┌─────────────────────────┐ │  │
-│  │ • Property panels      │         │ │ Project actor (state)   │ │  │
-│  │ • mpv surface mount    │         │ │  • Arc<Project>+history │ │  │
-│  │ • Offscreen rasterizer │         │ │  • single-writer queue  │ │  │
-│  │   (hidden webviews)    │         │ └────────────┬────────────┘ │  │
-│  └────────────────────────┘         │ ┌────────────▼────────────┐ │  │
+│  │ • Startup screen       │         │ ┌─────────────────────────┐ │  │
+│  │ • Timeline             │         │ │ Project actor (state)   │ │  │
+│  │ • Property panels      │         │ │  • Arc<Project>+history │ │  │
+│  │ • <video> preview      │         │ │  • single-writer queue  │ │  │
+│  │   (DOM-native; reads   │         │ └────────────┬────────────┘ │  │
+│  │    Cache/preview/      │         │ ┌────────────▼────────────┐ │  │
+│  │    via asset://)       │         │ │ Subscriber tasks        │ │  │
+│  │ • Offscreen rasterizer │         │ │  • Autosave (debounce)  │ │  │
+│  │   (hidden webviews)    │         │ │  • Preview renderer     │ │  │
+│  └────────────────────────┘         │ │  • UI event bridge      │ │  │
+│                                     │ └────────────┬────────────┘ │  │
+│                                     │ ┌────────────▼────────────┐ │  │
 │                                     │ │ IR compiler             │ │  │
-│                                     │ │  lower → optimize →     │ │  │
-│                                     │ │  emit ffmpeg/lavfi      │ │  │
+│                                     │ │  lower → emit ffmpeg    │ │  │
 │                                     │ └────────────┬────────────┘ │  │
 │                                     │ ┌────────────▼────────────┐ │  │
 │                                     │ │ Render orchestrator     │ │  │
-│                                     │ │  • libmpv (preview)     │ │  │
-│                                     │ │  • ffmpeg (export)      │ │  │
+│                                     │ │  • ffmpeg (preview MP4  │ │  │
+│                                     │ │    + final export)      │ │  │
 │                                     │ │  • rasterizer driver    │ │  │
+│                                     │ │  • import-copy queue    │ │  │
 │                                     │ └─────────────────────────┘ │  │
 │                                     │ ┌─────────────────────────┐ │  │
 │                                     │ │ MCP server (rmcp)       │ │  │
@@ -42,13 +48,15 @@ Videtor is a Tauri 2 desktop app. The Rust core owns all state and side effects;
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
+libmpv survives only for the media-pool play-on-click popup (`mpv_play_media` — a standalone OS window, no z-order conflict with the DOM). The **project preview is a DOM `<video>` element** backed by state-hashed MP4 renders under `<workspace>/Cache/preview/<hash>.mp4`. See [`rendering.md`](rendering.md) for the preview-render details and [`workspace-redesign.md`](workspace-redesign.md) for the design rationale.
+
 ## Three load-bearing principles
 
 ### 1. Single-writer state
 All mutations — UI edits and MCP tool calls — funnel through one Rust actor that holds `Arc<Project>`. Reads are lock-free `Arc` clones. Concurrency is solved by serialization, not by locks scattered through the code.
 
-### 2. Preview = export pipeline at lower resolution
-The IR compiler emits one filter graph. libmpv plays it at proxy resolution for live preview; ffmpeg encodes it at full resolution for export. Same pixels, different scales. No alternate code paths to drift.
+### 2. Preview = export pipeline at low resolution
+The IR compiler emits one ffmpeg lavfi-complex filter graph. The **preview renderer** debounces actor commits 1 s, then runs that graph through ffmpeg into `<workspace>/Cache/preview/<state_hash>.mp4` — substituting each clip's 540p H.264 proxy (`MediaItem.proxy_path`) for the original so the encode is cheap. The React `<PreviewSurface>` listens for `preview:render_complete` and swaps its `<video src>`. Export uses the same graph at full resolution against originals. **Same code path, two resolutions**, no alternate "preview engine" to drift from export.
 
 ### 3. Hybrid rendering for HTML overlays
 ffmpeg-native layers (clips, images, drawtext, subtitles, shapes, transitions) flow through the filter graph directly. Rich graphic overlays (animated titles, lower thirds, custom motion graphics) are rasterized in an offscreen webview to a PNG sequence, then composited as just another overlay layer. Authoring flexibility of HTML/CSS, parity guarantee of a unified pipeline.
@@ -57,13 +65,15 @@ ffmpeg-native layers (clips, images, drawtext, subtitles, shapes, transitions) f
 
 1. UI command or MCP tool call sends a `Command` to the project actor.
 2. Actor validates invariants. Reject on failure with a structured error.
-3. Actor produces a new `Arc<Project>`, pushes the prior one onto history.
-4. Change event is broadcast:
-   - **UI** re-renders affected components.
-   - **IR compiler** recompiles the affected subgraph.
-   - **MCP change feed** pushes a compact line to subscribed agents.
-5. New filter graph is hot-reloaded into libmpv via `lavfi-complex` (full reload only when topology changes; parameter-only changes use mpv's filter-update path).
-6. Preview reflects the change within ~100 ms.
+3. Actor produces a new `Arc<Project>`, pushes the prior one onto history, broadcasts a `ChangeEvent`.
+4. Subscribers react:
+   - **UI event bridge** emits `project:changed` so React panels re-fetch `projectSummary()`.
+   - **Autosave subscriber** debounces 500 ms, writes `<workspace>/project.json` (atomic `.tmp` + rename). Every 50 commits or 5 min, copies to `Backups/<ISO>.json`.
+   - **Preview renderer** debounces 1 s, computes the state hash, kicks ffmpeg if the resulting `Cache/preview/<hash>.mp4` doesn't already exist, emits `preview:render_complete` with the path.
+   - **MCP change feed** pushes a compact line to subscribed agents over the `/events` SSE endpoint.
+5. `<PreviewSurface>` receives `preview:render_complete`, swaps `<video src>` via `convertFileSrc(...)`, restores playhead + paused state across the swap so the user keeps their place.
+
+Round-trip from commit to preview pixels: ~1 s debounce + ffmpeg encode time on proxies (typically 200 ms – 2 s for short projects).
 
 ## IR ↔ state contract
 
@@ -83,32 +93,29 @@ For MVP, do full recompile on every commit — measure before optimizing. Compil
 | From → To | Mechanism |
 |---|---|
 | Webview UI → Rust core | `tauri::command` (sync queries, RPC-style mutations) |
-| Rust core → Webview UI | `app_handle.emit` events: `project:change`, `compile:done`, `raster:progress`, `export:progress` |
-| External agent → Rust core | MCP over Streamable HTTP on localhost (tools + resources) |
-| Rust core → External agent | MCP SSE change feed |
-| Rust core → libmpv | `libmpv2` crate, `lavfi-complex` option, command queue |
-| Rust core → ffmpeg | `ffmpeg-sidecar` subprocess, `-filter_complex_script` (file-backed graphs to avoid argv length limits) |
-| Rust core → Offscreen rasterizer | Spawned `wry` webviews, JS `eval` for `__seek`, native snapshot APIs for capture |
+| Rust core → Webview UI | `app_handle.emit` events: `project:changed`, `preview:render_*`, `import:*`, `media:job_*`, `export:*` |
+| Webview UI → preview MP4 | `<video src={convertFileSrc(path)}>` via Tauri's `asset://` protocol (scope `**`, enabled in `tauri.conf.json`) |
+| External agent → Rust core | MCP over SSE on localhost (rmcp 0.1.x; bearer in `app_config_dir/mcp_auth.json`) |
+| Rust core → External agent | MCP SSE change feed on a separate axum `/events` endpoint |
+| Rust core → ffmpeg | `ffmpeg-sidecar` subprocess, `-filter_complex_script` (file-backed graphs to avoid argv length limits). Used by export, preview render, proxy/thumbnail/waveform jobs, audio-extract for cloud transcription. |
+| Rust core → libmpv | Popup window only (`mpv_play_media` for media-pool play-on-click). Standalone OS window; no z-order conflict with the DOM. |
+| Rust core → Offscreen rasterizer | Spawned `wry` webviews, JS `eval` for `__seek`, native snapshot APIs (WebView2 `CapturePreview` on Windows) |
 
-## libmpv surface integration
+## Project preview surface
 
-Embedding a native video pane inside a webview UI is the platform-specific bit:
+The project preview is a DOM `<video>` element inside `<PreviewSurface>`. Its `src` points at the current `<workspace>/Cache/preview/<state_hash>.mp4` produced by the preview-renderer task; Tauri's `convertFileSrc(path)` turns the absolute path into an `asset://...` URL the WebView2 page can fetch. Cross-platform by construction: the same DOM element works on Windows / macOS / Linux without any native-surface fiddling.
 
-| OS | Approach |
-|---|---|
-| Windows | Child HWND of the Tauri WebView2 host; layered with the webview by Z-order. |
-| macOS | NSView added as a sibling of WKWebView in the Tauri NSWindow; constrained by Auto Layout to the webview's "video" placeholder div, position synced via JS measuring DOM rect. |
-| Linux | GtkBox placement inside Tauri's GtkApplicationWindow; same DOM-rect-syncing pattern. |
+Across `src` swaps (which happen every time a re-render lands), the component preserves `currentTime` and `paused` state — set on the `loadedmetadata` event after a fresh `src` so the user doesn't lose their place. The timeline playhead is driven by a `requestAnimationFrame` pump that reads `video.currentTime` at the display refresh rate (~60 Hz) while playing, not the HTML5 `timeupdate` event (capped at ~4 Hz, jerky).
 
-The webview reserves a placeholder `<div id="video-surface">` whose position/size it streams to Rust on resize/scroll; Rust positions the libmpv surface to match. This is fiddly and is the most likely Phase 0 spike to fail — validate it early.
+The transport buttons (⏮ / ⏯·⏸ / ⏭) drive the `<video>` element via an imperative ref: `play()`, `pause()`, `seekTo(tUs)`. The parent owns `currentTimeUs` state; it pushes to the video on user seek and reads back during RAF pumps.
 
-**Two libmpv slots, by design.** Tauri state holds `MpvSlot` (project preview) AND `MpvPopupSlot(MpvSlot)` (media-pool / raw-file preview). They use separate libmpv handles because `wid` is init-only — a single handle can't toggle between embedded and standalone modes without dropping + recreating on every transition. The slot a Tauri command takes determines its surface: `mpv_preview_project` + transport commands use the embed slot; `mpv_play_file` / `mpv_play_media` use the popup slot.
+## libmpv: media-pool popup only
 
-**Windows (current):** the embed is wired for the project preview. At Tauri setup we register a `WS_CHILD` window class and create a host HWND as a sibling of WebView2 (parented to the outer Tauri HWND). The host's HWND value is stored on the **embed `MpvSlot`** only; `ensure_init` sets libmpv's `wid` property *before* the first `loadfile` so the VO embeds into it. JS measures `#video-surface` via `getBoundingClientRect()`, multiplies by `devicePixelRatio`, and calls `mpv_set_surface_rect` → `SetWindowPos(HWND_TOP, …)`. ResizeObserver + a `window.resize` listener keep the surface tracking layout. `osc`, `input-default-bindings`, and `input-vo-keyboard` are off in embed mode — the React UI owns transport (⏮ / ⏯·⏸ / ⏭ row beneath the preview pane). The **popup `MpvPopupSlot`** has no host HWND registered, so `ensure_init` falls into the `force-window=yes` branch and the media-pool preview continues to spawn a separate top-level window.
+After the workspace redesign, libmpv survives only for `mpv_play_media` — the media-pool "play this clip" button. The popup opens a standalone top-level OS window (no host HWND, no WebView2 sibling), so there's no z-order conflict with the editor's DOM overlays. The Rust surface (`mpv/mod.rs`) is `MpvSlot` (the libmpv handle) + `MpvPopupSlot(MpvSlot)` (Tauri-managed wrapper) + `ensure_init` (standalone-window branch only, sets `force-window=yes` + suppresses OSC/keyboard bindings) + `play_file` + `drain_events_and_close_if_shutdown` (~33 ms tick so the OS close button releases the window).
 
-**macOS / Linux (deferred):** both slots run libmpv in standalone top-level windows via `force-window=yes` (required when no host `wid` is supplied — without it `loadfile` succeeds silently with no display surface). The NSView / GtkBox embed paths haven't been wired yet; the `host_hwnd: None` branch in `ensure_init` keeps them on the standalone-window fallback.
+The pre-redesign WS_CHILD HWND embed, `set_host_hwnd` / `set_surface_rect` / `set_host_visible` / `set_host_clip` machinery, the `useHideMpvHost` / `useMpvHostClip` React hooks, and the project-graph `play_graph` / `mpv:time` poller are all deleted. See [`workspace-redesign.md`](workspace-redesign.md) for the rationale (HWND z-order trap → DOM-native composition).
 
-**Closing the embedded window cleanly is non-obvious.** mpv's default `CLOSE_WIN → quit` binding fires when the user clicks the OS close button; this puts the mpv core in a shutdown state and emits `MPV_EVENT_SHUTDOWN`, but the OS window resource isn't released until `mpv_terminate_destroy` runs — i.e. until the `Mpv` handle is `Drop`-ed. A 200ms-tick poller drains the event queue and drops the handle on `Shutdown`. There's also an explicit `mpv_close_preview` Tauri command for instant close from the UI, and `ensure_init` probes the existing handle via `mpv-version` and re-creates fresh if it's been externally quit.
+libmpv2 6.0 (the current version) uses the array-form `mpv_command` natively, so the per-arg quoting workaround that 4.x needed is also gone. The zombie-handle probe in `ensure_init` (re-init on first failing `get_property("mpv-version")`) and the drain-events poller are the only non-obvious wirings that remain — both load-bearing for clean window close behavior.
 
 ## Repository layout
 
@@ -120,12 +127,25 @@ videtor/
     src-tauri/                ← Rust core
       src/
         state/                ← project state types, actor, history, persistence
-        ir/                   ← render graph IR, lowering, optimization, emitter
-        ffmpeg/               ← sidecar wrapper, export pipeline
-        mpv/                  ← libmpv integration, surface management
-        raster/               ← offscreen rasterizer, JS shim, cache
+        ir/                   ← render graph IR, lowering, emitter
+        export/               ← ffmpeg pipeline: run_render (events) +
+                              ←   run_render_silent (preview path)
+        ffmpeg/               ← sidecar wrapper, install bootstrap
+        preview/              ← state-hashed preview renderer task +
+                              ←   PreviewRenderer subscriber (Phase D)
+        jobs/                 ← background derivative jobs:
+                              ←   proxy, thumbnails, waveform, frame,
+                              ←   import (workspace copy worker)
+        cache/                ← workspace-scoped derivative cache
+                              ←   (workspace/Cache/{proxies,preview,...})
+        mpv/                  ← libmpv popup window for mpv_play_media
+                              ←   (project preview is DOM <video>)
+        raster/               ← offscreen rasterizer for HTML templates
         mcp/                  ← rmcp server, tool definitions, resources
-        io/                   ← project save/load, schema migrations
+        io/                   ← project.json save/load + autosave task +
+                              ←   io/migrate.rs (v1→v2 workspace migration)
+        recents.rs            ← startup-screen recents.json + prefs
+        workspace.rs          ← WorkspaceSlot tracking current workspace
         cloud/                ← provider-agnostic cloud APIs:
                               ←   Transcriber / Synthesizer traits,
                               ←   keyring-backed key storage,
@@ -134,9 +154,11 @@ videtor/
       Cargo.toml
       tauri.conf.json
     src/                      ← React UI
+      startup/                ← Create / Open / Recent screen
+      preview/                ← <PreviewSurface> wrapping <video>
       timeline/
-      panels/
-      hooks/
+      properties/
+      activity/, connect/, settings/, templates/, menu/, panels/
       ipc/                    ← typed Tauri command wrappers
   packages/templates/         ← built-in HTML overlay templates
     lower-third-glow/
@@ -148,19 +170,22 @@ videtor/
 
 ## External dependencies (decided)
 
-- `tauri` v2 — shell, IPC, window management.
-- `wry` — webview backend; used directly for offscreen rasterizer workers.
-- `rmcp` — MCP server framework.
+- `tauri` v2.11 — shell, IPC, window management, `assetProtocol` for `<video>` access to workspace files.
+- `rmcp` v0.1.x — MCP server framework. Pinned: 1.x dropped the SSE transport, migration is its own work (see `feedback_rmcp_migration_blocked`).
 - `ffmpeg-sidecar` — auto-downloads ffmpeg on first run; sidesteps licensing/distribution.
-- `libmpv2` — embedded preview player.
+- `libmpv2` v6 — media-pool popup player. Project preview no longer uses it.
 - `imbl` — persistent immutable collections (state snapshots with structural sharing).
 - `tokio` — async runtime, channels.
 - `serde` / `serde_json` / `schemars` — serialization, JSON Schema generation shared between MCP and Tauri command bridges.
-- `ts-rs` — emit TypeScript types from Rust state types so the UI doesn't drift.
+- `ts-rs` v12 — emit TypeScript types from Rust state types so the UI doesn't drift.
 - `uuid` — v7 IDs for all addressable entities.
-- `blake3` — content hashing (cache keys, file dedup, raster cache).
+- `blake3` — content hashing (cache keys, file dedup, raster cache, preview state-hash).
+- `keyring` v3 — OS-native credential storage for cloud-provider API keys.
+- `reqwest` v0.13 (rustls) — HTTP client for cloud-provider integrations.
 - `insta` — snapshot testing for IR lowering.
 - `i18next` + `react-i18next` + `i18next-browser-languagedetector` — frontend i18n; bundled resources for `en-US` and `zh-CN`, localStorage-persisted user choice.
+
+Direct `wry` dep was dropped in Phase E — the raster module spawns its offscreen webview via Tauri's `WebviewWindowBuilder` (which re-exports wry transitively).
 
 ## Internationalization (UI)
 
