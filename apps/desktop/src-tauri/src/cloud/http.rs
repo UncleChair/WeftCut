@@ -32,7 +32,7 @@ pub fn shared_client() -> &'static Client {
     static CLIENT: OnceLock<Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
         Client::builder()
-            .user_agent(concat!("videtor/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("weftcut/", env!("CARGO_PKG_VERSION")))
             .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
             .build()
             .expect("reqwest::Client::build with rustls-tls cannot fail")

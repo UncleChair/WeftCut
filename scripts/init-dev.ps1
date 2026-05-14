@@ -11,15 +11,15 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 # DestroyIcon p/invoke for releasing HICON returned by Bitmap.GetHicon.
-if (-not ("Videtor.Win32" -as [type])) {
-    Add-Type -Namespace Videtor -Name Win32 -MemberDefinition @'
+if (-not ("WeftCut.Win32" -as [type])) {
+    Add-Type -Namespace WeftCut -Name Win32 -MemberDefinition @'
 [System.Runtime.InteropServices.DllImport("user32.dll")]
 public static extern bool DestroyIcon(System.IntPtr hIcon);
 '@
 }
 
 $root = Split-Path -Parent $PSScriptRoot
-Write-Host "Videtor dev init — root: $root"
+Write-Host "WeftCut dev init — root: $root"
 
 function Check-Cmd($name, $hint) {
     $cmd = Get-Command $name -ErrorAction SilentlyContinue
@@ -100,7 +100,7 @@ if (-not (Test-Path $iconIco)) {
             try { $icon.Save($fs) } finally { $fs.Dispose() }
         } finally {
             # Release the unmanaged HICON returned by GetHicon.
-            [Videtor.Win32]::DestroyIcon($hicon) | Out-Null
+            [WeftCut.Win32]::DestroyIcon($hicon) | Out-Null
         }
     } finally { $bmp.Dispose() }
     Write-Host "Wrote $iconIco"

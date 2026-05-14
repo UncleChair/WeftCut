@@ -24,7 +24,7 @@ const PX_PER_SEC = 80;
 const TRACK_HEIGHT = 36;
 const MIN_LAYER_DURATION_US = 100_000;
 
-const MEDIA_DRAG_TYPE = "application/x-videtor-media";
+const MEDIA_DRAG_TYPE = "application/x-weftcut-media";
 
 interface MediaDragPayload {
   mediaId: string;

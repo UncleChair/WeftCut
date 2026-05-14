@@ -4,14 +4,14 @@ import type { Resources } from "./en-US";
 // will fail to type-check if a key is missing or extra.
 const zhCN: Resources = {
   app: {
-    title: "Videtor",
+    title: "WeftCut",
     core_status: "核心：{{status}}",
   },
   startup: {
     subtitle: "选择要打开的项目，或新建一个。",
     new_project: "新建项目",
     open_folder: "打开文件夹…",
-    open_dialog_title: "打开 Videtor 项目文件夹",
+    open_dialog_title: "打开 WeftCut 项目文件夹",
     recent_heading: "最近",
     recent_loading: "加载中…",
     recent_empty: "暂无最近项目。",
@@ -93,7 +93,7 @@ const zhCN: Resources = {
     queue_export_hint: "将导出加入渲染队列（在当前任务后执行）。",
     connect_agent: "连接代理…",
     connect_agent_hint:
-      "显示外部代理（Claude Desktop、Cursor）通过 MCP 驱动 Videtor 所需的 URL 和令牌。",
+      "显示外部代理（Claude Desktop、Cursor）通过 MCP 驱动 WeftCut 所需的 URL 和令牌。",
     settings: "设置…",
     settings_hint:
       "管理云服务 API 密钥（转写、未来的 TTS）。密钥存储在系统密钥环中。",
@@ -111,15 +111,15 @@ const zhCN: Resources = {
     close: "关闭",
   },
   dialogs: {
-    save_title: "保存 Videtor 项目",
-    open_title: "打开 Videtor 项目",
-    project_filter: "Videtor 项目",
+    save_title: "保存 WeftCut 项目",
+    open_title: "打开 WeftCut 项目",
+    project_filter: "WeftCut 项目",
     save_default_name: "未命名.vproj",
     import_title: "导入素材",
     media_filter: "媒体文件",
     export_title: "导出视频",
     export_queue_title: "加入导出队列",
-    export_default_name: "videtor-导出.mp4",
+    export_default_name: "weftcut-导出.mp4",
     export_filter: "输出文件",
   },
   media_pool: {

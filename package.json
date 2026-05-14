@@ -1,5 +1,5 @@
 {
-  "name": "videtor",
+  "name": "weftcut",
   "version": "0.0.0",
   "private": true,
   "description": "Tauri 2 desktop video editor with an MCP tool surface for external AI agents",

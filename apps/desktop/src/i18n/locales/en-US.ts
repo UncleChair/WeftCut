@@ -2,14 +2,14 @@
 // to other locales. Keep keys grouped by feature area, not by component.
 const enUS = {
   app: {
-    title: "Videtor",
+    title: "WeftCut",
     core_status: "core: {{status}}",
   },
   startup: {
     subtitle: "Pick a project to open, or create a new one.",
     new_project: "New project",
     open_folder: "Open folder…",
-    open_dialog_title: "Open Videtor project folder",
+    open_dialog_title: "Open WeftCut project folder",
     recent_heading: "Recent",
     recent_loading: "Loading…",
     recent_empty: "No recent projects yet.",
@@ -89,7 +89,7 @@ const enUS = {
     queue_export_hint: "Add an export to the render queue (runs after current job).",
     connect_agent: "Connect agent…",
     connect_agent_hint:
-      "Show the URL + token an external agent (Claude Desktop, Cursor) needs to drive Videtor over MCP.",
+      "Show the URL + token an external agent (Claude Desktop, Cursor) needs to drive WeftCut over MCP.",
     settings: "Settings…",
     settings_hint:
       "Manage cloud-provider API keys (transcription, future TTS). Keys live in the OS keyring.",
@@ -108,15 +108,15 @@ const enUS = {
     close: "Close",
   },
   dialogs: {
-    save_title: "Save Videtor project",
-    open_title: "Open Videtor project",
-    project_filter: "Videtor project",
+    save_title: "Save WeftCut project",
+    open_title: "Open WeftCut project",
+    project_filter: "WeftCut project",
     save_default_name: "untitled.vproj",
     import_title: "Import media",
     media_filter: "Media files",
     export_title: "Export to video",
     export_queue_title: "Add export to queue",
-    export_default_name: "videtor-export.mp4",
+    export_default_name: "weftcut-export.mp4",
     export_filter: "Output file",
   },
   media_pool: {
@@ -232,7 +232,7 @@ const enUS = {
     startup_heading: "Startup",
     reopen_on_launch: "Reopen last project on launch",
     reopen_on_launch_hint:
-      "When enabled, Videtor skips the start screen and re-opens whichever project you used last. Off by default — a partial-commit state at crash time should not silently re-mount.",
+      "When enabled, WeftCut skips the start screen and re-opens whichever project you used last. Off by default — a partial-commit state at crash time should not silently re-mount.",
     api_keys_heading: "Cloud API keys",
     api_keys_blurb:
       "Keys are stored in the OS keyring (Windows Credential Manager / macOS Keychain / Linux Secret Service). Cloud-backed tools (Whisper transcription, future TTS) become available once a matching key is set.",

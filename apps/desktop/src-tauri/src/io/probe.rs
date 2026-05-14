@@ -222,7 +222,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("a.bin");
         let mut f = File::create(&path).unwrap();
-        f.write_all(b"hello videtor").unwrap();
+        f.write_all(b"hello weftcut").unwrap();
         drop(f);
 
         let a = hash_and_stat(&path).unwrap();

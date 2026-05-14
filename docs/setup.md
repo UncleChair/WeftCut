@@ -1,6 +1,6 @@
 # Setup
 
-Prerequisites for building Videtor on each supported OS, and the first-run flow.
+Prerequisites for building WeftCut on each supported OS, and the first-run flow.
 
 ## Windows 11
 
@@ -21,7 +21,7 @@ Prerequisites for building Videtor on each supported OS, and the first-run flow.
 4. **Node 20+** — `winget install -e --id OpenJS.NodeJS.LTS`.
 5. **libmpv** — needed once you start working on `src/mpv/`. `libmpv2` is now an **optional Cargo feature** (`mpv`); the regular `cargo build` skips it entirely. To enable preview work:
    1. Download a libmpv "dev" build for Windows: <https://github.com/shinchiro/mpv-winbuild-cmake/releases> → `mpv-dev-x86_64-*.7z` (contains `libmpv-2.dll`, `libmpv-2.lib`, headers).
-   2. **Runtime DLL**: drop `libmpv-2.dll` somewhere on `PATH`. Convention for Videtor dev: `apps/desktop/src-tauri/target/debug/libmpv-2.dll` so `cargo run` finds it via the binary's directory.
+   2. **Runtime DLL**: drop `libmpv-2.dll` somewhere on `PATH`. Convention for WeftCut dev: `apps/desktop/src-tauri/target/debug/libmpv-2.dll` so `cargo run` finds it via the binary's directory.
    3. **Link-time import lib**: rename `libmpv-2.lib` → `mpv.lib` and put it in a directory on `%LIB%`, or set `set RUSTFLAGS=-L C:\path\to\libmpv\lib` before `cargo build`. Convention: keep all libmpv files under `C:\dev\libmpv\` and add that path to both `%PATH%` and `%LIB%` in your shell profile.
    4. Build / run with the feature on:
       ```powershell
@@ -31,7 +31,7 @@ Prerequisites for building Videtor on each supported OS, and the first-run flow.
       # or for tests:
       cargo test --features mpv
       ```
-   5. **Bundling for distribution**: `apps/desktop/src-tauri/tauri.windows.conf.json` declares a `bundle.resources` mapping that ships `vendor/libmpv/libmpv-2.dll` → next to `videtor.exe` in the .msi / .nsis installer. Make sure `vendor/libmpv/libmpv-2.dll` exists before `npm run tauri:build`. Note: the vendored full-codec dev DLL is ~118 MB and inflates the installer accordingly; swap to a slim libmpv variant if size matters.
+   5. **Bundling for distribution**: `apps/desktop/src-tauri/tauri.windows.conf.json` declares a `bundle.resources` mapping that ships `vendor/libmpv/libmpv-2.dll` → next to `weftcut.exe` in the .msi / .nsis installer. Make sure `vendor/libmpv/libmpv-2.dll` exists before `npm run tauri:build`. Note: the vendored full-codec dev DLL is ~118 MB and inflates the installer accordingly; swap to a slim libmpv variant if size matters.
 
 Then from the repo root:
 ```powershell
@@ -72,7 +72,7 @@ Once running, the dev shell shows a window with a `#video-surface` placeholder d
 
 ## ffmpeg
 
-Videtor will auto-download ffmpeg via `ffmpeg-sidecar` on first run, but the downloader uses `ureq` without SOCKS support. If you're behind an `ALL_PROXY=socks5h://...` proxy (China / GFW workarounds, corporate VPNs), the download will fail with `Connection refused`. Workarounds:
+WeftCut will auto-download ffmpeg via `ffmpeg-sidecar` on first run, but the downloader uses `ureq` without SOCKS support. If you're behind an `ALL_PROXY=socks5h://...` proxy (China / GFW workarounds, corporate VPNs), the download will fail with `Connection refused`. Workarounds:
 
 - **Recommended:** install ffmpeg natively. Bootstrap then takes the "already installed" path:
   - Windows: `winget install -e --id Gyan.FFmpeg`
@@ -111,7 +111,7 @@ End users should not have to install libmpv themselves. The bundle config splits
 
 | Platform | Overlay file | Strategy | End-user impact |
 |---|---|---|---|
-| Windows | `tauri.windows.conf.json` | Bundles `vendor/libmpv/libmpv-2.dll` next to `videtor.exe` in the .msi / .nsis | Self-contained — installer carries the DLL |
+| Windows | `tauri.windows.conf.json` | Bundles `vendor/libmpv/libmpv-2.dll` next to `weftcut.exe` in the .msi / .nsis | Self-contained — installer carries the DLL |
 | macOS | `tauri.macos.conf.json` | `bundle.macOS.frameworks` embeds the dylib into `Contents/Frameworks/`; tauri-bundler rewrites the install_name | Self-contained — but the build host needs `brew install mpv` so the dylib exists at `/opt/homebrew/opt/mpv/lib/libmpv.2.dylib` (Apple Silicon) or `/usr/local/opt/mpv/lib/libmpv.2.dylib` (Intel). Edit the path if your build host differs. |
 | Linux (.deb / .rpm) | `tauri.linux.conf.json` | Declares `libmpv2` (Debian/Ubuntu) / `mpv-libs` (Fedora/RHEL) as a package-manager dependency | apt/dnf auto-installs libmpv when the user installs the package — not strictly "bundled" but no manual step |
 | Linux (AppImage) | not wired yet | TBD — needs `linuxdeploy --plugin libmpv` or similar so the AppImage carries libmpv internally | If you target AppImage, plumb this before shipping |

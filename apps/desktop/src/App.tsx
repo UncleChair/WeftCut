@@ -375,7 +375,7 @@ export function App() {
     const ext = presetExtension(preset);
     const path = await saveDialog({
       title: t("dialogs.export_title"),
-      defaultPath: `videtor-export.${ext}`,
+      defaultPath: `weftcut-export.${ext}`,
       filters: [
         { name: t("dialogs.export_filter"), extensions: [ext] },
       ],
@@ -393,7 +393,7 @@ export function App() {
     const ext = presetExtension(preset);
     const path = await saveDialog({
       title: t("dialogs.export_queue_title"),
-      defaultPath: `videtor-export-queue.${ext}`,
+      defaultPath: `weftcut-export-queue.${ext}`,
       filters: [
         { name: t("dialogs.export_filter"), extensions: [ext] },
       ],
@@ -940,7 +940,7 @@ function MediaPool({
               draggable={!isImporting && !isMissing}
               onDragStart={(e) => {
                 e.dataTransfer.setData(
-                  "application/x-videtor-media",
+                  "application/x-weftcut-media",
                   JSON.stringify({ mediaId: m.id, kind: m.kind }),
                 );
                 e.dataTransfer.effectAllowed = "copy";

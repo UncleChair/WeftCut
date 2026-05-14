@@ -46,7 +46,7 @@ export function ConnectAgentPanel({ onClose }: Props) {
     return JSON.stringify(
       {
         mcpServers: {
-          videtor: {
+          weftcut: {
             url: info.sse_url,
             transport: "sse",
             headers: { Authorization: `Bearer ${info.bearer_token}` },
@@ -63,7 +63,7 @@ export function ConnectAgentPanel({ onClose }: Props) {
     return JSON.stringify(
       {
         mcpServers: {
-          videtor: {
+          weftcut: {
             url: info.sse_url,
             type: "sse",
             headers: { Authorization: `Bearer ${info.bearer_token}` },

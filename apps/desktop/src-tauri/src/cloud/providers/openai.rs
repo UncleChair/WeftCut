@@ -99,7 +99,7 @@ impl Transcriber for OpenAiWhisper {
                 next_retry_delay(status, &response, attempt, started)
             {
                 tracing::warn!(
-                    target: "videtor::cloud",
+                    target: "weftcut::cloud",
                     "OpenAI Whisper {status} (attempt {attempt}); retrying in {delay:?}",
                 );
                 drop(response);
@@ -243,7 +243,7 @@ impl Synthesizer for OpenAiTts {
                 next_retry_delay(status, &response, attempt, started)
             {
                 tracing::warn!(
-                    target: "videtor::cloud",
+                    target: "weftcut::cloud",
                     "OpenAI tts-1 {status} (attempt {attempt}); retrying in {delay:?}",
                 );
                 drop(response);

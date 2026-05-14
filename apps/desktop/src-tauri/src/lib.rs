@@ -1,4 +1,4 @@
-//! Videtor desktop app entry point.
+//! WeftCut desktop app entry point.
 //!
 //! Architecture: see `docs/architecture.md`.
 
@@ -32,11 +32,11 @@ pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("info,videtor=debug,videtor_lib=debug")),
+                .unwrap_or_else(|_| EnvFilter::new("info,weftcut=debug,weftcut_lib=debug")),
         )
         .init();
 
-    tracing::info!("videtor starting");
+    tracing::info!("weftcut starting");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())

@@ -104,7 +104,7 @@ mod real {
         let _ = mpv.set_property("osd-on-seek", "no");
         let _ = mpv.set_property("input-default-bindings", true);
         let _ = mpv.set_property("input-vo-keyboard", true);
-        let _ = mpv.set_property("title", "Videtor preview");
+        let _ = mpv.set_property("title", "WeftCut preview");
         let _ = mpv.set_property("keep-open", "yes");
         let _ = mpv.set_property("idle", "yes");
         info!("libmpv popup initialised (standalone window)");

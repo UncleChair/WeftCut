@@ -107,7 +107,7 @@ async fn run_render_inner(
         .try_state::<crate::cache::CacheLayout>()
         .map(|s| s.inner().clone())
         .unwrap_or_else(|| {
-            let fallback = std::env::temp_dir().join("videtor-export-cache");
+            let fallback = std::env::temp_dir().join("weftcut-export-cache");
             let layout = crate::cache::CacheLayout::new(fallback);
             let _ = layout.ensure_dirs();
             layout
@@ -124,7 +124,7 @@ async fn run_render_inner(
 
     // Write the filter graph to a temp file — long graphs can blow argv limits.
     let script_path = std::env::temp_dir().join(format!(
-        "videtor-export-{}.txt",
+        "weftcut-export-{}.txt",
         uuid::Uuid::now_v7().simple()
     ));
     let mut graph_body = plan.filter_graph.clone();

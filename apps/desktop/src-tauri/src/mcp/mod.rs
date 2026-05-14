@@ -12,7 +12,7 @@
 //! `<app_config_dir>/mcp_auth.json` on first launch and reused on every
 //! subsequent start, so the Claude Desktop / Cursor snippet stays valid
 //! across restarts. If the saved port is occupied at bind time (another
-//! Videtor instance, port collision) the server falls back to a fresh
+//! WeftCut instance, port collision) the server falls back to a fresh
 //! OS-picked port and rewrites the file.
 //!
 //! rmcp 0.1.x's `SseServer` exposes no middleware hook (only `serve` /
@@ -55,7 +55,7 @@
 //!   per template is ~200–700ms on a cold cache, subsequent calls are free.
 //!
 //! Edit tools (Stage 3) and workflow tools (Stage 4) live alongside `ping`
-//! in the `VidetorServer` impl block. The change feed (Stage 5) lives on its
+//! in the `WeftCutServer` impl block. The change feed (Stage 5) lives on its
 //! own axum-backed `/events` endpoint — see `events.rs`. Both servers spawn
 //! from `serve(...)`.
 //!
@@ -149,20 +149,20 @@ pub struct McpInfo {
 /// - `AppHandle` so `import_media` can enqueue background jobs that emit
 ///   `media:job_*` Tauri events for the UI.
 #[derive(Clone)]
-pub struct VidetorServer {
+pub struct WeftCutServer {
     project: ProjectHandle,
     cache: CacheLayout,
     app: AppHandle,
 }
 
-impl std::fmt::Debug for VidetorServer {
+impl std::fmt::Debug for WeftCutServer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("VidetorServer").finish_non_exhaustive()
+        f.debug_struct("WeftCutServer").finish_non_exhaustive()
     }
 }
 
 #[tool(tool_box)]
-impl VidetorServer {
+impl WeftCutServer {
     pub fn new(project: ProjectHandle, cache: CacheLayout, app: AppHandle) -> Self {
         Self {
             project,
@@ -171,7 +171,7 @@ impl VidetorServer {
         }
     }
 
-    #[tool(description = "Liveness check. Returns 'pong' to confirm the Videtor MCP server is reachable.")]
+    #[tool(description = "Liveness check. Returns 'pong' to confirm the WeftCut MCP server is reachable.")]
     async fn ping(&self) -> String {
         "pong".to_string()
     }
@@ -1898,11 +1898,11 @@ fn map_cloud_error(e: cloud::CloudError) -> McpError {
 }
 
 #[tool(tool_box)]
-impl ServerHandler for VidetorServer {
+impl ServerHandler for WeftCutServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             instructions: Some(
-                "Videtor exposes the open project as an MCP tool surface. \
+                "WeftCut exposes the open project as an MCP tool surface. \
                  Read-only resources cover the project state under `project://*`. \
                  Edit tools and change-feed events land in later Phase 4 stages."
                     .to_string(),
@@ -2090,7 +2090,7 @@ impl ServerHandler for VidetorServer {
     }
 }
 
-impl VidetorServer {
+impl WeftCutServer {
     /// Find an existing Subtitle track or create one labeled "Subtitles".
     /// Mirrors `commands::ensure_subtitle_track` so the apply_subtitles MCP
     /// tool and the Tauri add_subtitles_layer command target the same track.
@@ -2358,7 +2358,7 @@ const STATIC_RESOURCES: &[ResourceDescriptor] = &[
     ResourceDescriptor {
         uri: URI_PROJECT,
         name: "Current project",
-        description: "The full open Videtor project as JSON. Re-fetch after change events.",
+        description: "The full open WeftCut project as JSON. Re-fetch after change events.",
     },
     ResourceDescriptor {
         uri: URI_COMPOSITION,
@@ -2416,7 +2416,7 @@ pub async fn serve(
         },
     };
 
-    // Try the saved/picked port first. If it's now occupied (another Videtor
+    // Try the saved/picked port first. If it's now occupied (another WeftCut
     // instance, another process grabbed it) fall back to a freshly picked
     // port and rewrite the file so the next launch lands on the new one.
     let mut bind = SocketAddr::from(([127, 0, 0, 1], auth.port));
@@ -2447,7 +2447,7 @@ pub async fn serve(
     let cache_for_factory = cache.clone();
     let app_for_factory = app.clone();
     let _ct = server.with_service(move || {
-        VidetorServer::new(
+        WeftCutServer::new(
             project_for_factory.clone(),
             cache_for_factory.clone(),
             app_for_factory.clone(),

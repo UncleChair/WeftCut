@@ -466,8 +466,8 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
             return None;
         }
         let id = uuid::Uuid::now_v7().simple();
-        let script = std::env::temp_dir().join(format!("videtor-test-graph-{id}.txt"));
-        let out = std::env::temp_dir().join(format!("videtor-test-out-{id}.{out_format}"));
+        let script = std::env::temp_dir().join(format!("weftcut-test-graph-{id}.txt"));
+        let out = std::env::temp_dir().join(format!("weftcut-test-out-{id}.{out_format}"));
         std::fs::write(&script, graph).expect("write script");
 
         let mut cmd = Command::new("ffmpeg");
@@ -512,7 +512,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
         // -filter_complex_script reads from stdin when given `-`. Map the only
         // output, write to /dev/null (`-f null -`) so we don't produce a file.
         let script_path = std::env::temp_dir()
-            .join(format!("videtor-test-graph-{}.txt", uuid::Uuid::now_v7().simple()));
+            .join(format!("weftcut-test-graph-{}.txt", uuid::Uuid::now_v7().simple()));
         std::fs::write(&script_path, &plan.filter_graph).expect("write script");
 
         let mut cmd = Command::new("ffmpeg");
@@ -633,7 +633,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
     #[test]
     fn subtitles_layer_renders_through_ffmpeg() {
         let id = uuid::Uuid::now_v7().simple();
-        let srt_path = std::env::temp_dir().join(format!("videtor-test-subs-{id}.srt"));
+        let srt_path = std::env::temp_dir().join(format!("weftcut-test-subs-{id}.srt"));
         std::fs::write(
             &srt_path,
             "1\n00:00:00,000 --> 00:00:01,000\nhello\n\n",
@@ -1057,9 +1057,9 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
         );
 
         let script = std::env::temp_dir()
-            .join(format!("videtor-tmpl-graph-{}.txt", Uuid::now_v7().simple()));
+            .join(format!("weftcut-tmpl-graph-{}.txt", Uuid::now_v7().simple()));
         let out_path = std::env::temp_dir()
-            .join(format!("videtor-tmpl-out-{}.mp4", Uuid::now_v7().simple()));
+            .join(format!("weftcut-tmpl-out-{}.mp4", Uuid::now_v7().simple()));
         std::fs::write(&script, &plan.filter_graph).expect("write script");
 
         let mut cmd = Command::new("ffmpeg");
@@ -1200,9 +1200,9 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
 
         // Run end-to-end and assert non-empty mp4.
         let script = std::env::temp_dir()
-            .join(format!("videtor-pngseq-graph-{}.txt", Uuid::now_v7().simple()));
+            .join(format!("weftcut-pngseq-graph-{}.txt", Uuid::now_v7().simple()));
         let out_path = std::env::temp_dir()
-            .join(format!("videtor-pngseq-out-{}.mp4", Uuid::now_v7().simple()));
+            .join(format!("weftcut-pngseq-out-{}.mp4", Uuid::now_v7().simple()));
         std::fs::write(&script, &plan.filter_graph).expect("write script");
 
         let mut cmd = Command::new("ffmpeg");

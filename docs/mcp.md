@@ -2,13 +2,13 @@
 
 > **Implementation status:** This is the design spec. Current implementation reality (what's wired, what's intentionally deferred to Phase 4.x or later) lives in [`roadmap.md`'s Phase 4 closeout](roadmap.md#phase-4-status-2026-05-08). Notable deltas at time of writing: SSE transport instead of Streamable HTTP (we stay on rmcp 0.1.x deliberately — 1.6.x dropped SSE entirely in favor of Streamable HTTP, but Claude Desktop is SSE-only for local servers as of Anthropic's 2026-05-03 statement, so migrating would break the integration); token surfaced but not enforced (rmcp 0.1.x's `SseServer` exposes no middleware hook; localhost-only binding is the active isolation); change feed lives on a separate `/events` axum endpoint rather than as MCP notifications; effects/keyframe MCP tools deferred until IR-lowering lands.
 
-Videtor exposes itself as an MCP server. External agents (Claude Desktop, Cursor, Cline, custom Python clients) connect over a localhost HTTP server and edit the project through a structured tool surface.
+WeftCut exposes itself as an MCP server. External agents (Claude Desktop, Cursor, Cline, custom Python clients) connect over a localhost HTTP server and edit the project through a structured tool surface.
 
 ## Transport & deployment
 
 - **Streamable HTTP** on `127.0.0.1:<auto-port>`. Not stdio — the app isn't a child process of the agent.
 - Auto-port assigned at app start; user may pin in settings.
-- One server per running Videtor instance. Multi-instance = multi-port; surfaced in the connection UI.
+- One server per running WeftCut instance. Multi-instance = multi-port; surfaced in the connection UI.
 - For remote access (Tailscale, ngrok, codespace): out of scope for v1. Localhost only.
 
 ## Authentication
@@ -34,7 +34,7 @@ Snippet example for Claude Desktop:
 ```json
 {
   "mcpServers": {
-    "videtor": {
+    "weftcut": {
       "url": "http://127.0.0.1:50831/mcp",
       "transport": "http",
       "headers": { "Authorization": "Bearer 8f3a..." }

@@ -1,10 +1,10 @@
-# Videtor
+# WeftCut
 
 A cross-platform desktop video editor where **external AI agents are first-class collaborators**. Connect Claude Desktop, Cursor, or any MCP-capable client to a localhost MCP server and let an agent edit your timeline through a structured tool surface — while you watch the changes land in the UI in real time.
 
 ## Why this is different
 
-Most editors bolt AI on as features. Videtor exposes the editor *as* a tool surface. The intelligence lives in whoever connects; the app stays small, fast, bring-your-own-API-key, and free of bundled models.
+Most editors bolt AI on as features. WeftCut exposes the editor *as* a tool surface. The intelligence lives in whoever connects; the app stays small, fast, bring-your-own-API-key, and free of bundled models.
 
 ## Tech stack
 

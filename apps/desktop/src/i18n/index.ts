@@ -36,7 +36,7 @@ i18n
     detection: {
       order: ["localStorage", "navigator", "htmlTag"],
       caches: ["localStorage"],
-      lookupLocalStorage: "videtor.locale",
+      lookupLocalStorage: "weftcut.locale",
     },
     interpolation: {
       escapeValue: false, // React already escapes

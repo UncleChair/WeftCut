@@ -1,6 +1,6 @@
 //! OS keyring-backed storage for cloud-provider API keys.
 //!
-//! Service name `"videtor"`, username = the [`Provider`] tag (lowercase, kebab).
+//! Service name `"weftcut"`, username = the [`Provider`] tag (lowercase, kebab).
 //! - Windows: Credential Manager (Generic Credential)
 //! - macOS: Keychain (Generic Password)
 //! - Linux: Secret Service (libsecret) — needs a daemon at runtime; on a
@@ -13,7 +13,7 @@
 use keyring::Entry;
 use serde::{Deserialize, Serialize};
 
-const SERVICE: &str = "videtor";
+const SERVICE: &str = "weftcut";
 
 /// Cloud providers we know how to talk to. Keep the serde tag stable — it's
 /// the keyring username and travels over the IPC wire.

@@ -7,7 +7,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
-echo "Videtor dev init — root: $root"
+echo "WeftCut dev init — root: $root"
 
 check_cmd() {
     local name="$1"
