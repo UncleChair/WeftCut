@@ -2857,6 +2857,115 @@ mod tests {
         assert_eq!(track.layers.len(), 1);
     }
 
+    /// End-to-end happy path the human would see in agent mode:
+    ///   1. Agent begins a session (here: just mints the auto-checkpoint
+    ///      via the same code path the MCP tool exercises).
+    ///   2. Agent locks history mid-batch.
+    ///   3. User Undo / Restore attempts reject with HistoryLocked.
+    ///   4. Agent unlocks. User Restore succeeds.
+    ///   5. After Restore the project is back at the auto-checkpoint state.
+    ///
+    /// Walks every primitive Phase 1-4 added against the live actor.
+    #[tokio::test]
+    async fn agent_session_full_lifecycle() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+
+        // Step 1: simulate the begin_agent_session auto-checkpoint.
+        // Agent actor is the entity minting the checkpoint, mirroring
+        // what the MCP tool does.
+        let agent = Actor::Agent { client: "mcp".into() };
+        let pre_agent_cp = handle.checkpoint(agent.clone(), "Pre-agent: test").await;
+
+        // Agent makes a destructive edit.
+        let added = handle
+            .add_layer(
+                agent.clone(),
+                track_id,
+                color_layer(Rgba::WHITE),
+                0,
+                1_000_000,
+            )
+            .await
+            .unwrap();
+        let after_add = handle.snapshot().await;
+        let track = after_add.tracks.iter().find(|t| t.id == track_id).unwrap();
+        assert_eq!(track.layers.len(), 1);
+        assert_eq!(track.layers.front().unwrap().id, added);
+
+        // Step 2: agent grabs the revert lock.
+        handle.lock_history("agent batch".into()).await;
+        assert_eq!(
+            handle.history_status().await.lock_reason.as_deref(),
+            Some("agent batch"),
+        );
+
+        // Step 3: user-side undo + restore both reject.
+        match handle.undo(Actor::User).await.unwrap_err() {
+            CommandError::HistoryLocked { reason } => {
+                assert_eq!(reason, "agent batch");
+            }
+            other => panic!("expected HistoryLocked from undo, got {other:?}"),
+        }
+        match handle
+            .restore_checkpoint(Actor::User, pre_agent_cp)
+            .await
+            .unwrap_err()
+        {
+            CommandError::HistoryLocked { reason } => {
+                assert_eq!(reason, "agent batch");
+            }
+            other => panic!("expected HistoryLocked from restore, got {other:?}"),
+        }
+
+        // Step 4: agent releases the lock; user restore now works.
+        handle.unlock_history().await;
+        assert!(handle.history_status().await.lock_reason.is_none());
+        handle
+            .restore_checkpoint(Actor::User, pre_agent_cp)
+            .await
+            .expect("restore after unlock");
+
+        // Step 5: project state is the pre-agent baseline (no layers).
+        let restored = handle.snapshot().await;
+        let track = restored.tracks.iter().find(|t| t.id == track_id).unwrap();
+        assert_eq!(track.layers.len(), 0);
+    }
+
+    /// agent_session_end's auto-unlock guarantee: the Tauri command
+    /// for "Exit to editor" calls unlock_history so the human's
+    /// editor-mode Undo / Restore re-enables on the next paint, even
+    /// if the agent left a lock taken. We can't call the Tauri
+    /// command directly from a lib test, but the load-bearing path is
+    /// `ProjectHandle::unlock_history` — verify that path leaves the
+    /// revert surface usable.
+    #[tokio::test]
+    async fn unlock_history_restores_editor_revert_surface() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                color_layer(Rgba::WHITE),
+                0,
+                1_000_000,
+            )
+            .await
+            .unwrap();
+        handle.lock_history("agent batch".into()).await;
+        // User tries undo and gets rejected — same path the disabled-
+        // tooltip UX is meant to communicate.
+        assert!(matches!(
+            handle.undo(Actor::User).await.unwrap_err(),
+            CommandError::HistoryLocked { .. }
+        ));
+        // User clicks Exit-to-editor; the Tauri command calls this.
+        handle.unlock_history().await;
+        // Now undo succeeds.
+        handle.undo(Actor::User).await.expect("undo after exit");
+    }
+
     #[tokio::test]
     async fn lock_blocks_revert_paths() {
         let (project, track_id) = project_with_video_track();
