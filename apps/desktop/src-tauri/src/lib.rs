@@ -17,6 +17,7 @@ mod io;
 mod ir;
 mod jobs;
 mod keybindings;
+mod logs;
 mod mcp;
 mod mpv;
 mod preview;
@@ -26,15 +27,23 @@ mod state;
 mod workspace;
 
 use tauri::Manager;
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
+    // Log-bus slot is created here (pre-Tauri) so the tracing layer
+    // can hold an `Arc` clone. The slot starts `None`; a workspace
+    // open/save-as/new installs the bus. See
+    // `docs/status-log-system.md` Q8 (strict pre-workspace refuse).
+    let log_slot = logs::LogBusSlot::new();
+
+    tracing_subscriber::registry()
+        .with(
             EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| EnvFilter::new("info,weftcut=debug,weftcut_lib=debug")),
         )
+        .with(fmt::layer())
+        .with(logs::LogBusLayer::new(log_slot.clone()))
         .init();
 
     tracing::info!("weftcut starting");
@@ -101,8 +110,12 @@ pub fn run() {
             commands::add_template,
             commands::template_preview,
             commands::preview_current_path,
+            commands::log_list,
+            commands::log_clear,
+            commands::log_emit,
+            commands::log_dir_path,
         ])
-        .setup(|app| {
+        .setup(move |app| {
             // Project actor — single writer for all state mutations, shared by
             // UI commands (now) and the MCP tool surface.
             let project_handle = state::spawn(state::Project::new_blank("untitled"));
@@ -111,6 +124,15 @@ pub fn run() {
             let project_for_autosave = project_handle.clone();
             let project_for_preview_renderer = project_handle.clone();
             app.manage(project_handle);
+
+            // Status/log subsystem slot — `None` until a workspace is
+            // opened. Producers (project_save_as, project_open,
+            // project_new_workspace) install a fresh bus rooted at
+            // `<workspace>/Logs/`. The tracing layer was wired earlier
+            // (above this setup callback) to forward `error!` events
+            // from our crate into whichever bus is current.
+            app.manage(log_slot.clone());
+            let log_slot_for_ui_events = log_slot.clone();
             // libmpv survives only for the media-pool popup preview (a
             // standalone OS window with no z-order conflict against the
             // Phase-D DOM `<video>` project preview). The embed slot
@@ -292,6 +314,28 @@ pub fn run() {
                                     "affected_count": event.affected.len(),
                                 }),
                             );
+
+                            // Phase 1 producer: project-mutation entry.
+                            // Carries the same actor kind so the bar /
+                            // expanded console can show "User" vs
+                            // "Agent · <client>". `op_id` is propagated
+                            // so future MCP producers (Phase 3) can fold
+                            // their tool-call Started/Ok entries into
+                            // the same group. No-op pre-workspace.
+                            let source = match &event.actor {
+                                state::Actor::User => logs::LogSource::User,
+                                state::Actor::Agent { client } => logs::LogSource::Agent {
+                                    client: client.clone(),
+                                },
+                            };
+                            log_slot_for_ui_events.emit(logs::LogEntryInput {
+                                level: logs::LogLevel::Info,
+                                category: logs::LogCategory::Project,
+                                source,
+                                message: event.summary.clone(),
+                                op_id: Some(event.op_id),
+                                ..Default::default()
+                            });
                         }
                         Err(RecvError::Lagged(n)) => {
                             tracing::warn!(

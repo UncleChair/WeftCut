@@ -301,9 +301,58 @@ pub async fn export_with_preset_logged(
     output: PathBuf,
     preset: ExportPreset,
 ) {
-    if let Err(e) = run_render(app.clone(), project, &output, preset).await {
-        let msg = format!("{e:#}");
-        warn!("export failed: {msg}");
-        let _ = app.emit(EVENT_ERROR, &msg);
+    // Status-log producer: one Started entry, one Ok/Err pair per
+    // export. The ExportPanel still owns detailed progress UI; the
+    // log shows the lifecycle and surfaces failures so the bar's
+    // error counter increments on bad renders.
+    let log_op_id = uuid::Uuid::now_v7();
+    crate::logs::emit_via_app(
+        &app,
+        crate::logs::LogEntryInput {
+            level: crate::logs::LogLevel::Info,
+            category: crate::logs::LogCategory::Export,
+            source: crate::logs::LogSource::User,
+            message: format!("Export started: {}", output.display()),
+            op_id: Some(log_op_id),
+            op_state: Some(crate::logs::OpState::Started),
+            details: Some(serde_json::json!({
+                "output": output.to_string_lossy(),
+                "preset": format!("{preset:?}"),
+            })),
+            ..Default::default()
+        },
+    );
+    match run_render(app.clone(), project, &output, preset).await {
+        Ok(()) => {
+            crate::logs::emit_via_app(
+                &app,
+                crate::logs::LogEntryInput {
+                    level: crate::logs::LogLevel::Info,
+                    category: crate::logs::LogCategory::Export,
+                    source: crate::logs::LogSource::User,
+                    message: format!("Export complete: {}", output.display()),
+                    op_id: Some(log_op_id),
+                    op_state: Some(crate::logs::OpState::Ok),
+                    ..Default::default()
+                },
+            );
+        }
+        Err(e) => {
+            let msg = format!("{e:#}");
+            warn!("export failed: {msg}");
+            let _ = app.emit(EVENT_ERROR, &msg);
+            crate::logs::emit_via_app(
+                &app,
+                crate::logs::LogEntryInput {
+                    level: crate::logs::LogLevel::Error,
+                    category: crate::logs::LogCategory::Export,
+                    source: crate::logs::LogSource::User,
+                    message: format!("Export failed: {msg}"),
+                    op_id: Some(log_op_id),
+                    op_state: Some(crate::logs::OpState::Err),
+                    ..Default::default()
+                },
+            );
+        }
     }
 }

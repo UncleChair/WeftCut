@@ -767,3 +767,67 @@ export async function templatePreview(templateId: string): Promise<string> {
   const b64 = await invoke<string>("template_preview", { templateId });
   return `data:image/png;base64,${b64}`;
 }
+
+// ============================================================
+// Status / log surface (see `docs/status-log-system.md`)
+// ============================================================
+
+export type LogLevel = "trace" | "debug" | "info" | "warn" | "error";
+
+export type LogCategory =
+  | { kind: "Shortcut" }
+  | { kind: "Mcp" }
+  | { kind: "Job" }
+  | { kind: "Export" }
+  | { kind: "Import" }
+  | { kind: "Project" }
+  | { kind: "System" }
+  | { kind: "Agent" }
+  | { kind: "Other"; name: string };
+
+export type LogSource =
+  | { kind: "User" }
+  | { kind: "Agent"; client: string }
+  | { kind: "System" };
+
+export type OpState =
+  | { state: "Started"; progress?: null }
+  | { state: "Progress"; progress: number }
+  | { state: "Ok"; progress?: null }
+  | { state: "Err"; progress?: null };
+
+export interface LogEntry {
+  id: string;
+  ts: string;
+  level: LogLevel;
+  category: LogCategory;
+  source: LogSource;
+  message: string;
+  i18n_key?: string | null;
+  i18n_args?: unknown;
+  op_id?: string | null;
+  op_state?: OpState | null;
+  details?: unknown;
+}
+
+export type LogEntryInput = Omit<LogEntry, "id" | "ts">;
+
+export const LOG_EVENTS = {
+  entry: "log:entry",
+} as const;
+
+export async function logList(): Promise<LogEntry[]> {
+  return invoke<LogEntry[]>("log_list");
+}
+
+export async function logClear(): Promise<void> {
+  return invoke<void>("log_clear");
+}
+
+export async function logEmit(input: LogEntryInput): Promise<void> {
+  return invoke<void>("log_emit", { input });
+}
+
+export async function logDirPath(): Promise<string | null> {
+  return invoke<string | null>("log_dir_path");
+}

@@ -350,6 +350,57 @@ impl WeftCutServer {
         &self,
         #[tool(aggr)] args: TranscribeClipArgs,
     ) -> Result<CallToolResult, McpError> {
+        let log_op_id = uuid::Uuid::now_v7();
+        let log_args = serde_json::to_value(&args).ok();
+        crate::logs::emit_via_app(
+            &self.app,
+            crate::logs::LogEntryInput {
+                level: crate::logs::LogLevel::Info,
+                category: crate::logs::LogCategory::Mcp,
+                source: crate::logs::LogSource::Agent { client: "mcp".into() },
+                message: "MCP: transcribe_clip started".into(),
+                op_id: Some(log_op_id),
+                op_state: Some(crate::logs::OpState::Started),
+                details: log_args,
+                ..Default::default()
+            },
+        );
+        let result = self.transcribe_clip_inner(args).await;
+        match &result {
+            Ok(_) => crate::logs::emit_via_app(
+                &self.app,
+                crate::logs::LogEntryInput {
+                    level: crate::logs::LogLevel::Info,
+                    category: crate::logs::LogCategory::Mcp,
+                    source: crate::logs::LogSource::Agent { client: "mcp".into() },
+                    message: "MCP: transcribe_clip done".into(),
+                    op_id: Some(log_op_id),
+                    op_state: Some(crate::logs::OpState::Ok),
+                    ..Default::default()
+                },
+            ),
+            Err(e) => crate::logs::emit_via_app(
+                &self.app,
+                crate::logs::LogEntryInput {
+                    level: crate::logs::LogLevel::Error,
+                    category: crate::logs::LogCategory::Mcp,
+                    source: crate::logs::LogSource::Agent { client: "mcp".into() },
+                    message: format!("MCP: transcribe_clip failed: {e}"),
+                    op_id: Some(log_op_id),
+                    op_state: Some(crate::logs::OpState::Err),
+                    ..Default::default()
+                },
+            ),
+        }
+        result
+    }
+
+    /// Body of `transcribe_clip`; lifted out so the tool method itself
+    /// can wrap it with log producer entries.
+    async fn transcribe_clip_inner(
+        &self,
+        args: TranscribeClipArgs,
+    ) -> Result<CallToolResult, McpError> {
         let layer_id = parse_uuid(&args.layer_id, "layer_id")?;
         let snap = self.project.snapshot().await;
         let resolved = resolve_clip_audio_source(
@@ -1115,7 +1166,7 @@ pub struct SilenceRegion {
     pub t_end_us: i64,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct TranscribeClipArgs {
     /// Target VideoClip or Audio layer id.
     pub layer_id: String,
@@ -2469,6 +2520,20 @@ pub async fn serve(
     info!(
         "MCP server listening — sse: {} message: {} events: {} bearer: {}",
         info.sse_url, info.message_url, info.events_url, info.bearer_token
+    );
+    crate::logs::emit_via_app(
+        &app,
+        crate::logs::LogEntryInput {
+            level: crate::logs::LogLevel::Info,
+            category: crate::logs::LogCategory::Mcp,
+            source: crate::logs::LogSource::System,
+            message: format!("MCP server listening on {bind}"),
+            details: Some(serde_json::json!({
+                "sse_url": info.sse_url,
+                "events_url": info.events_url,
+            })),
+            ..Default::default()
+        },
     );
     Ok(info)
 }

@@ -44,6 +44,11 @@ anyhow = "1"
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# `regex` is used by the status/log redactor (`logs::redact`) to strip
+# api-key/bearer-token patterns from `details` payloads. It's already in
+# the build graph transitively via `tauri-plugin-shell` / `tauri-utils`,
+# so adding it as a direct dep is essentially free.
+regex = "1"
 
 # --- Phase 0 spike deps. Pin/upgrade once verified to compile. ---
 ffmpeg-sidecar = "2"

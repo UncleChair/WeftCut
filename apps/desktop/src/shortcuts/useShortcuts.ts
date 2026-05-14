@@ -7,6 +7,7 @@ import {
   parseBinding,
   type ParsedBinding,
 } from "./match";
+import { logEmit } from "../ipc";
 
 export type Handler = () => void | Promise<void>;
 export type HandlerMap = Partial<Record<ActionId, Handler>>;
@@ -96,11 +97,108 @@ export function useShortcuts({
         if (!fn) return;
         e.preventDefault();
         e.stopPropagation();
-        void fn();
+        runWithLogging(entry.id, fn);
         return;
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [entries]);
+}
+
+/// Wrap a shortcut handler so its result lands in the activity log.
+///
+/// Three flavors of entry per dispatch:
+///   * Synchronous handler → one `Info` entry on completion.
+///   * Async handler resolving in < 250 ms → one `Info` entry on
+///     completion. No "Started" — saves a row for the common case.
+///   * Async handler still running at 250 ms → emit a `Started` entry
+///     (shared `op_id`), then a final `Ok` / `Err` entry when it
+///     resolves.
+///
+/// Errors always emit at `Error` level, regardless of timing.
+function runWithLogging(actionId: ActionId, fn: () => void | Promise<void>) {
+  const labelKey = ACTION_DEFS[actionId].labelKey;
+  let result: void | Promise<void>;
+  try {
+    result = fn();
+  } catch (err) {
+    void logEmit({
+      level: "error",
+      category: { kind: "Shortcut" },
+      source: { kind: "User" },
+      message: `Shortcut ${actionId} failed: ${String(err)}`,
+      i18n_key: "log.shortcut_failed",
+      i18n_args: { actionId, label_key: labelKey, error: String(err) },
+    });
+    return;
+  }
+  if (!result || typeof (result as Promise<void>).then !== "function") {
+    void logEmit({
+      level: "info",
+      category: { kind: "Shortcut" },
+      source: { kind: "User" },
+      message: `Shortcut: ${actionId}`,
+      i18n_key: "log.shortcut_ok",
+      i18n_args: { actionId, label_key: labelKey },
+    });
+    return;
+  }
+  // Async path: gate the Started entry on a 250 ms timer; if the
+  // promise resolves first, the timer is cancelled and we emit a
+  // single Ok entry. Either way the final Ok/Err shares `op_id` with
+  // any prior Started so the console can collapse them.
+  const opId = makeOpId();
+  let resolved = false;
+  const startedTimer = window.setTimeout(() => {
+    if (resolved) return;
+    void logEmit({
+      level: "info",
+      category: { kind: "Shortcut" },
+      source: { kind: "User" },
+      message: `Shortcut: ${actionId}`,
+      op_id: opId,
+      op_state: { state: "Started" },
+      i18n_key: "log.shortcut_started",
+      i18n_args: { actionId, label_key: labelKey },
+    });
+  }, 250);
+  (result as Promise<void>).then(
+    () => {
+      resolved = true;
+      window.clearTimeout(startedTimer);
+      void logEmit({
+        level: "info",
+        category: { kind: "Shortcut" },
+        source: { kind: "User" },
+        message: `Shortcut: ${actionId}`,
+        op_id: opId,
+        op_state: { state: "Ok" },
+        i18n_key: "log.shortcut_ok",
+        i18n_args: { actionId, label_key: labelKey },
+      });
+    },
+    (err) => {
+      resolved = true;
+      window.clearTimeout(startedTimer);
+      void logEmit({
+        level: "error",
+        category: { kind: "Shortcut" },
+        source: { kind: "User" },
+        message: `Shortcut ${actionId} failed: ${String(err)}`,
+        op_id: opId,
+        op_state: { state: "Err" },
+        i18n_key: "log.shortcut_failed",
+        i18n_args: { actionId, label_key: labelKey, error: String(err) },
+      });
+    },
+  );
+}
+
+/// RFC 4122 UUID. Required because the backend's `LogEntryInput.op_id`
+/// deserializes as `Option<Uuid>`; a non-UUID string would fail
+/// `log_emit` and silently lose the async-path Started/Ok entries.
+/// WebView2 ships `crypto.randomUUID`, so no polyfill is needed.
+function makeOpId(): string {
+  return crypto.randomUUID();
 }

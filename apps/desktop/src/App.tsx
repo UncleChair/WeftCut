@@ -44,7 +44,6 @@ import {
 } from "./ipc";
 import { Timeline } from "./timeline/Timeline";
 import { PropertyPanel } from "./properties/PropertyPanel";
-import { ActivityPanel } from "./activity/ActivityPanel";
 import { ConnectAgentPanel } from "./connect/ConnectAgentPanel";
 import { SettingsPanel } from "./settings/SettingsPanel";
 import { TemplatePicker } from "./templates/TemplatePicker";
@@ -70,6 +69,10 @@ import {
   type HandlerMap,
   type OverrideMap,
 } from "./shortcuts";
+import { StatusBar } from "./logs/StatusBar";
+import { LogConsole, type LogConsoleHandle } from "./logs/LogConsole";
+import { wireLogStream, useLogStore } from "./logs/store";
+import { logEmit } from "./ipc";
 
 interface AppProps {
   /// Hop the root router back to the StartupScreen — wired by `main.tsx`.
@@ -93,7 +96,8 @@ export function App({ onCloseProject }: AppProps) {
   const [hwProbe, setHwProbe] = useState<HwEncoderProbe | null>(null);
   const [connectOpen, setConnectOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [activityOpen, setActivityOpen] = useState(false);
+  const [logConsoleOpen, setLogConsoleOpen] = useState(false);
+  const logConsoleRef = useRef<LogConsoleHandle | null>(null);
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
   const [editingTimecode, setEditingTimecode] = useState<string | null>(null);
   // User shortcut overrides. Loaded once on mount; refreshed when the
@@ -177,6 +181,26 @@ export function App({ onCloseProject }: AppProps) {
     hwEncoderProbe().then(setHwProbe).catch(() => {});
     keybindingsGet().then(setKeybindings).catch(() => {});
   }, [refresh]);
+
+  // Wire the status-log stream: seed from `log_list`, then subscribe to
+  // `log:entry` events. Pre-workspace this is a no-op (backend bus is
+  // None). The Zustand store backs the status bar's selectors.
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+    (async () => {
+      const u = await wireLogStream();
+      if (cancelled) {
+        u();
+        return;
+      }
+      unlisten = u;
+    })();
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
+  }, []);
 
   // Queue subscription — backend pushes a fresh list on every state change.
   useEffect(() => {
@@ -327,7 +351,18 @@ export function App({ onCloseProject }: AppProps) {
         await action();
         await refresh();
       } catch (e) {
-        setError(String(e));
+        const msg = String(e);
+        setError(msg);
+        // Phase 4 deletion of the inline menu-bar error span — the
+        // user-facing error path now lives in the status bar. Push
+        // every caught UI error into the log so the bar's error
+        // counter + sticky-latest behavior surfaces it.
+        void logEmit({
+          level: "error",
+          category: { kind: "System" },
+          source: { kind: "User" },
+          message: msg,
+        });
       } finally {
         setBusy(false);
       }
@@ -349,7 +384,14 @@ export function App({ onCloseProject }: AppProps) {
       await projectSave();
       onCloseProject();
     } catch (e) {
-      setError(String(e));
+      const msg = String(e);
+      setError(msg);
+      void logEmit({
+        level: "error",
+        category: { kind: "System" },
+        source: { kind: "User" },
+        message: `Save and close failed: ${msg}`,
+      });
     } finally {
       setBusy(false);
     }
@@ -465,6 +507,24 @@ export function App({ onCloseProject }: AppProps) {
   // window listener never reattaches just because handler identities
   // changed. The listener only reattaches when the resolved binding
   // entries change (i.e. when user overrides land later).
+  const toggleLogConsole = useCallback(() => {
+    setLogConsoleOpen((v) => {
+      const next = !v;
+      // Acknowledge any 10-s-sticky error in the bar — toggle = "I've
+      // seen it". Idempotent on already-acknowledged state.
+      useLogStore.getState().acknowledgeErrorSticky();
+      return next;
+    });
+  }, []);
+
+  const focusLogSearch = useCallback(() => {
+    setLogConsoleOpen(true);
+    // Defer focus to after the console mounts.
+    setTimeout(() => {
+      logConsoleRef.current?.focusSearch();
+    }, 0);
+  }, []);
+
   const shortcutHandlers: HandlerMap = {
     save: saveProjectNow,
     saveAs: saveProject,
@@ -476,6 +536,8 @@ export function App({ onCloseProject }: AppProps) {
     importMedia: importMediaFiles,
     export: exportNow,
     splitFirstLayer: () => run(splitFirstLayer),
+    toggleLog: toggleLogConsole,
+    focusLogSearch,
   };
   // Memoised so `useShortcuts`'s `useMemo(entries)` doesn't churn each
   // render. The backend's `Record<string, string[]>` is structurally
@@ -684,11 +746,6 @@ export function App({ onCloseProject }: AppProps) {
             hint={t("actions.connect_agent_hint")}
             onSelect={() => setConnectOpen(true)}
           />
-          <MenuItem
-            label={t("actions.activity")}
-            hint={t("actions.activity_hint")}
-            onSelect={() => setActivityOpen(true)}
-          />
           <MenuSeparator />
           <MenuItem
             label={t("actions.settings")}
@@ -696,8 +753,6 @@ export function App({ onCloseProject }: AppProps) {
             onSelect={() => setSettingsOpen(true)}
           />
         </Menu>
-
-        {error && <span className="error">{error}</span>}
       </section>
 
       <main className="app-main">
@@ -844,9 +899,6 @@ export function App({ onCloseProject }: AppProps) {
           onKeybindingsChanged={setKeybindings}
         />
       )}
-      {activityOpen && (
-        <ActivityPanel onClose={() => setActivityOpen(false)} />
-      )}
       {templatePickerOpen && (
         <TemplatePicker
           onClose={() => setTemplatePickerOpen(false)}
@@ -855,6 +907,13 @@ export function App({ onCloseProject }: AppProps) {
           tracks={summary?.tracks ?? []}
         />
       )}
+      {logConsoleOpen && (
+        <LogConsole
+          ref={logConsoleRef}
+          onClose={() => setLogConsoleOpen(false)}
+        />
+      )}
+      <StatusBar onToggleLogs={toggleLogConsole} />
     </div>
     </ShortcutBindingsProvider>
   );

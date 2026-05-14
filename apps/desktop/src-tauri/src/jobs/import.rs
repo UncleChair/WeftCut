@@ -36,6 +36,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{info, warn};
 
+use crate::logs;
 use crate::state::ids::MediaId;
 use crate::state::{Actor, ProjectHandle};
 
@@ -230,6 +231,25 @@ impl ImportQueue {
             {
                 warn!("emit import:started: {e}");
             }
+            // Status-log producer: pair Started/Ok-Err on the same
+            // op_id so the console collapses the lifecycle.
+            let log_op_id = uuid::Uuid::now_v7();
+            logs::emit_via_app(
+                &self.app,
+                logs::LogEntryInput {
+                    level: logs::LogLevel::Info,
+                    category: logs::LogCategory::Import,
+                    source: logs::LogSource::User,
+                    message: format!("Importing {}", next.source.display()),
+                    op_id: Some(log_op_id),
+                    op_state: Some(logs::OpState::Started),
+                    details: Some(serde_json::json!({
+                        "mediaId": media_id.to_string(),
+                        "source": next.source.to_string_lossy(),
+                    })),
+                    ..Default::default()
+                },
+            );
             self.emit_queue();
 
             let outcome = copy_to_workspace(
@@ -263,6 +283,18 @@ impl ImportQueue {
                                 "detail": e.to_string(),
                             }),
                         );
+                        logs::emit_via_app(
+                            &self.app,
+                            logs::LogEntryInput {
+                                level: logs::LogLevel::Error,
+                                category: logs::LogCategory::Import,
+                                source: logs::LogSource::User,
+                                message: format!("Import failed: {e}"),
+                                op_id: Some(log_op_id),
+                                op_state: Some(logs::OpState::Err),
+                                ..Default::default()
+                            },
+                        );
                     } else {
                         info!(
                             "import: {} -> {}",
@@ -281,6 +313,22 @@ impl ImportQueue {
                                 "pathRel": dest_rel.to_string_lossy(),
                             }),
                         );
+                        logs::emit_via_app(
+                            &self.app,
+                            logs::LogEntryInput {
+                                level: logs::LogLevel::Info,
+                                category: logs::LogCategory::Import,
+                                source: logs::LogSource::User,
+                                message: format!(
+                                    "Imported {} → {}",
+                                    next.source.display(),
+                                    dest_rel.display()
+                                ),
+                                op_id: Some(log_op_id),
+                                op_state: Some(logs::OpState::Ok),
+                                ..Default::default()
+                            },
+                        );
                     }
                 }
                 Ok(None) => {
@@ -298,6 +346,18 @@ impl ImportQueue {
                             "mediaId": media_id.to_string(),
                             "detail": format!("{e:#}"),
                         }),
+                    );
+                    logs::emit_via_app(
+                        &self.app,
+                        logs::LogEntryInput {
+                            level: logs::LogLevel::Error,
+                            category: logs::LogCategory::Import,
+                            source: logs::LogSource::User,
+                            message: format!("Import copy failed: {e:#}"),
+                            op_id: Some(log_op_id),
+                            op_state: Some(logs::OpState::Err),
+                            ..Default::default()
+                        },
                     );
                 }
             }

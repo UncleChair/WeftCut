@@ -774,6 +774,8 @@ pub async fn project_save_as(
     cache: State<'_, crate::cache::CacheLayout>,
     workspace: State<'_, crate::workspace::WorkspaceSlot>,
     recents: State<'_, crate::recents::RecentsStore>,
+    log_slot: State<'_, crate::logs::LogBusSlot>,
+    app: tauri::AppHandle,
     path: String,
 ) -> Result<(), String> {
     let snap = handle.snapshot().await;
@@ -788,6 +790,9 @@ pub async fn project_save_as(
         .set_workspace(&path)
         .map_err(|e| format!("cache set_workspace: {e:#}"))?;
     workspace.set(path.clone());
+    // Install (or rotate) the LogBus for this workspace. Replaces any
+    // prior bus; the old writer task drains + exits on mpsc-close.
+    log_slot.install(crate::logs::LogBus::spawn(&path, app.clone()));
     recents.push(path, snap.metadata.name.clone());
     Ok(())
 }
@@ -798,6 +803,8 @@ pub async fn project_open(
     cache: State<'_, crate::cache::CacheLayout>,
     workspace: State<'_, crate::workspace::WorkspaceSlot>,
     recents: State<'_, crate::recents::RecentsStore>,
+    log_slot: State<'_, crate::logs::LogBusSlot>,
+    app: tauri::AppHandle,
     path: String,
 ) -> Result<(), String> {
     let path = PathBuf::from(path);
@@ -822,6 +829,8 @@ pub async fn project_open(
         .set_workspace(&path)
         .map_err(|e| format!("cache set_workspace: {e:#}"))?;
     workspace.set(path.clone());
+    // Install (or rotate) the LogBus rooted at this workspace's Logs/.
+    log_slot.install(crate::logs::LogBus::spawn(&path, app.clone()));
     let display_name = project.metadata.name.clone();
     handle
         .replace_state(Actor::User, project)
@@ -843,6 +852,8 @@ pub async fn project_new_workspace(
     cache: State<'_, crate::cache::CacheLayout>,
     workspace: State<'_, crate::workspace::WorkspaceSlot>,
     recents: State<'_, crate::recents::RecentsStore>,
+    log_slot: State<'_, crate::logs::LogBusSlot>,
+    app: tauri::AppHandle,
     parent_folder: String,
     name: String,
     width: u32,
@@ -881,6 +892,7 @@ pub async fn project_new_workspace(
         .set_workspace(&target)
         .map_err(|e| format!("cache set_workspace: {e:#}"))?;
     workspace.set(target.clone());
+    log_slot.install(crate::logs::LogBus::spawn(&target, app.clone()));
 
     let display_name = project.metadata.name.clone();
     handle
@@ -1671,6 +1683,53 @@ pub async fn get_waveform_peaks(
         peaks,
         peaks_per_second: crate::jobs::waveform::PEAKS_PER_SECOND,
     })
+}
+
+// ============================================================
+// Status / log surface (see `docs/status-log-system.md`).
+//
+// `log_list` snapshots the in-memory ring for the frontend Zustand
+// store on mount. `log_clear` empties the ring (the JSONL file is
+// untouched). `log_emit` is the frontend-originated entry path —
+// shortcut results, UI-side errors. Pre-workspace these are silent
+// no-ops; the slot is `None` until a workspace is opened.
+// ============================================================
+
+#[tauri::command]
+pub async fn log_list(
+    slot: State<'_, crate::logs::LogBusSlot>,
+) -> Result<Vec<crate::logs::LogEntry>, String> {
+    Ok(slot.current().map(|b| b.list()).unwrap_or_default())
+}
+
+#[tauri::command]
+pub async fn log_clear(slot: State<'_, crate::logs::LogBusSlot>) -> Result<(), String> {
+    if let Some(bus) = slot.current() {
+        bus.clear();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn log_emit(
+    slot: State<'_, crate::logs::LogBusSlot>,
+    input: crate::logs::LogEntryInput,
+) -> Result<(), String> {
+    slot.emit(input);
+    Ok(())
+}
+
+/// Absolute path to the current workspace's `Logs/` directory, or
+/// `None` pre-workspace. The frontend's "Open log folder" action
+/// passes this string to `shell.open(...)` so the OS file manager
+/// reveals it.
+#[tauri::command]
+pub async fn log_dir_path(
+    workspace: State<'_, crate::workspace::WorkspaceSlot>,
+) -> Result<Option<String>, String> {
+    Ok(workspace
+        .current()
+        .map(|p| p.join("Logs").to_string_lossy().to_string()))
 }
 
 fn demo_color(idx: usize) -> Rgba {

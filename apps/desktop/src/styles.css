@@ -11,7 +11,8 @@ html, body, #root { height: 100%; margin: 0; }
 
 .app {
   display: grid;
-  grid-template-rows: auto auto auto 1fr;
+  /* Header, project-bar, menu-bar, main (1fr), status-bar */
+  grid-template-rows: auto auto auto 1fr auto;
   height: 100%;
 }
 
@@ -2593,3 +2594,552 @@ input.preview-timecode:focus {
   50% { border-color: #93c5fd; }
 }
 
+
+/* ===================================================================
+   Status bar (see docs/status-log-system.md).
+
+   Persistent ~28px strip pinned to the bottom of the editor view.
+   Phase 1 ships the bar; Phase 2 adds the expanded console overlay
+   that lifts above it.
+   =================================================================== */
+
+.status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 28px;
+  padding: 0 12px;
+  background: #0f172a;
+  border-top: 1px solid #1e293b;
+  color: #cbd5e1;
+  font-size: 12px;
+  font-family: var(--font-ui);
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.status-bar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.status-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.status-bar-empty {
+  color: #64748b;
+  font-style: italic;
+}
+
+.status-bar-time {
+  color: #64748b;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.status-bar-message {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1;
+}
+
+.status-bar-source {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.12);
+  color: #94a3b8;
+  flex-shrink: 0;
+}
+
+.status-bar-source.source-user {
+  background: rgba(59, 130, 246, 0.12);
+  color: #93c5fd;
+}
+
+.status-bar-source.source-agent {
+  background: rgba(168, 85, 247, 0.14);
+  color: #c4b5fd;
+}
+
+.status-bar-source.source-system {
+  background: rgba(148, 163, 184, 0.12);
+  color: #cbd5e1;
+}
+
+.status-bar-level-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-bar-level-dot.level-trace,
+.status-bar-level-dot.level-debug {
+  background: #475569;
+}
+
+.status-bar-level-dot.level-info {
+  background: #60a5fa;
+}
+
+.status-bar-level-dot.level-warn {
+  background: #fbbf24;
+}
+
+.status-bar-level-dot.level-error {
+  background: #ef4444;
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
+}
+
+.status-bar-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  color: inherit;
+}
+
+.status-bar-badge:hover {
+  background: rgba(148, 163, 184, 0.12);
+}
+
+.status-bar-badge-error {
+  background: rgba(239, 68, 68, 0.16);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #fca5a5;
+  animation: status-bar-error-pulse 1.5s ease-in-out 1;
+}
+
+.status-bar-badge-running {
+  background: rgba(59, 130, 246, 0.12);
+  border-color: rgba(59, 130, 246, 0.3);
+  color: #93c5fd;
+}
+
+@keyframes status-bar-error-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+  50% { box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.35); }
+}
+
+.status-bar-spinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: status-bar-spin 0.9s linear infinite;
+}
+
+@keyframes status-bar-spin {
+  to { transform: rotate(360deg); }
+}
+
+.status-bar-logs-toggle {
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid #334155;
+  background: transparent;
+  color: #cbd5e1;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.status-bar-logs-toggle:hover:not(:disabled) {
+  background: rgba(148, 163, 184, 0.1);
+}
+
+.status-bar-logs-toggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Standard visually-hidden helper for aria-live regions; not present
+   elsewhere in styles.css. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ===================================================================
+   Log console — Phase 2 expanded overlay that lifts above the editor.
+   The drag-to-resize handle is rendered as a CSS-only top border;
+   pointer events are forwarded to a resize handler when needed.
+   =================================================================== */
+
+.log-console {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 28px; /* sit on top of the status bar */
+  height: 40vh;
+  min-height: 200px;
+  max-height: 80vh;
+  background: rgba(15, 23, 42, 0.97);
+  border-top: 2px solid #1e293b;
+  box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  z-index: 80;
+  color: #cbd5e1;
+  font-size: 12px;
+  font-family: var(--font-ui);
+}
+
+.log-console::before {
+  /* Visual cue for "drag to resize" — not yet wired to an actual
+     pointer drag handler; the height defaults to 40vh and the user
+     can close + reopen with a different layout if needed. Wiring a
+     proper resize handler is deferred to a polish pass. */
+  content: "";
+  position: absolute;
+  top: -3px;
+  left: 0;
+  right: 0;
+  height: 6px;
+  cursor: ns-resize;
+  background: transparent;
+}
+
+.log-console-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #1e293b;
+  background: #0b1220;
+}
+
+.log-chip-group {
+  display: inline-flex;
+  gap: 4px;
+  padding: 2px;
+  border-radius: 6px;
+  background: rgba(148, 163, 184, 0.06);
+}
+
+.log-chip {
+  padding: 3px 10px;
+  border-radius: 4px;
+  background: transparent;
+  color: #94a3b8;
+  border: 1px solid transparent;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.log-chip:hover {
+  color: #cbd5e1;
+}
+
+.log-chip.active {
+  background: rgba(59, 130, 246, 0.18);
+  color: #93c5fd;
+  border-color: rgba(59, 130, 246, 0.4);
+}
+
+.log-search {
+  flex: 1;
+  min-width: 160px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid #334155;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-size: 12px;
+}
+
+.log-search:focus {
+  outline: none;
+  border-color: #3b82f6;
+}
+
+.log-toolbar-actions {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.log-action {
+  padding: 3px 10px;
+  border-radius: 4px;
+  background: transparent;
+  border: 1px solid #334155;
+  color: #cbd5e1;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.log-action:hover:not(:disabled) {
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.log-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.log-action.is-off {
+  color: #64748b;
+  border-style: dashed;
+}
+
+.log-action.log-close {
+  border-color: transparent;
+  font-size: 13px;
+}
+
+.log-console-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.log-console-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.log-row {
+  padding: 4px 12px;
+  border-bottom: 1px solid rgba(30, 41, 59, 0.6);
+}
+
+.log-row:hover {
+  background: rgba(30, 41, 59, 0.35);
+}
+
+.log-row.level-error {
+  background: rgba(239, 68, 68, 0.06);
+}
+
+.log-row.level-warn {
+  background: rgba(251, 191, 36, 0.04);
+}
+
+.log-row-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.log-time {
+  color: #64748b;
+  font-variant-numeric: tabular-nums;
+  width: 64px;
+  flex-shrink: 0;
+}
+
+.log-level-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.log-level-dot.level-trace,
+.log-level-dot.level-debug {
+  background: #475569;
+}
+.log-level-dot.level-info {
+  background: #60a5fa;
+}
+.log-level-dot.level-warn {
+  background: #fbbf24;
+}
+.log-level-dot.level-error {
+  background: #ef4444;
+}
+
+.log-category-pill,
+.log-source-pill {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.log-category-pill {
+  background: rgba(148, 163, 184, 0.12);
+  color: #94a3b8;
+}
+
+.log-category-pill.category-shortcut { background: rgba(34, 197, 94, 0.14); color: #86efac; }
+.log-category-pill.category-mcp      { background: rgba(168, 85, 247, 0.14); color: #c4b5fd; }
+.log-category-pill.category-export   { background: rgba(59, 130, 246, 0.14); color: #93c5fd; }
+.log-category-pill.category-import   { background: rgba(14, 165, 233, 0.14); color: #7dd3fc; }
+.log-category-pill.category-project  { background: rgba(244, 114, 182, 0.14); color: #f9a8d4; }
+.log-category-pill.category-system   { background: rgba(148, 163, 184, 0.14); color: #cbd5e1; }
+.log-category-pill.category-job      { background: rgba(251, 191, 36, 0.14); color: #fcd34d; }
+.log-category-pill.category-agent    { background: rgba(168, 85, 247, 0.14); color: #c4b5fd; }
+
+.log-source-pill.source-user   { background: rgba(59, 130, 246, 0.12); color: #93c5fd; }
+.log-source-pill.source-agent  { background: rgba(168, 85, 247, 0.14); color: #c4b5fd; }
+.log-source-pill.source-system { background: rgba(148, 163, 184, 0.12); color: #cbd5e1; }
+
+.log-message {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.log-op-state {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.log-op-state.state-started { background: rgba(59, 130, 246, 0.18); color: #93c5fd; }
+.log-op-state.state-ok      { background: rgba(34, 197, 94, 0.18); color: #86efac; }
+.log-op-state.state-err     { background: rgba(239, 68, 68, 0.18); color: #fca5a5; }
+
+.log-op-state.progress {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 48px;
+  height: 14px;
+  background: rgba(148, 163, 184, 0.12);
+  overflow: hidden;
+}
+
+.log-op-progress-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: rgba(59, 130, 246, 0.45);
+}
+
+.log-op-progress-label {
+  position: relative;
+  z-index: 1;
+  color: #e2e8f0;
+}
+
+.log-op-counter {
+  font-size: 10px;
+  background: rgba(148, 163, 184, 0.12);
+  color: #cbd5e1;
+  border: none;
+  border-radius: 8px;
+  padding: 1px 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.log-op-counter:hover {
+  background: rgba(148, 163, 184, 0.2);
+}
+
+.log-details-toggle {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 0 6px;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.log-details-toggle:hover {
+  color: #cbd5e1;
+}
+
+.log-row-details {
+  margin-top: 4px;
+  padding: 8px 12px;
+  background: rgba(15, 23, 42, 0.65);
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.log-op-id {
+  color: #64748b;
+  margin-bottom: 4px;
+}
+
+.log-op-id code {
+  background: rgba(148, 163, 184, 0.12);
+  padding: 0 4px;
+  border-radius: 3px;
+}
+
+.log-details-json {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: 11px;
+  color: #cbd5e1;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.log-op-children {
+  margin-top: 4px !important;
+  padding-left: 24px !important;
+  border-left: 2px solid #334155;
+}
+
+.log-op-children li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  font-size: 11px;
+}
+
+.log-empty {
+  text-align: center;
+  padding: 24px;
+  color: #64748b;
+  font-style: italic;
+}
+
+.log-console-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 12px;
+  border-top: 1px solid #1e293b;
+  background: #0b1220;
+  font-size: 11px;
+  color: #64748b;
+}
+
+.log-footer-path {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 60%;
+}

@@ -5828,6 +5828,7 @@ dependencies = [
  "keyring",
  "libmpv2",
  "parking_lot",
+ "regex",
  "reqwest",
  "rmcp",
  "schemars 0.8.22",

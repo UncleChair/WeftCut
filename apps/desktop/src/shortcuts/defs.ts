@@ -25,7 +25,9 @@ export type ActionId =
   | "deleteSelected"
   | "importMedia"
   | "export"
-  | "splitFirstLayer";
+  | "splitFirstLayer"
+  | "toggleLog"
+  | "focusLogSearch";
 
 export interface ActionDef {
   defaultKeys: string[];
@@ -45,6 +47,8 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   importMedia:     { defaultKeys: ["Mod+I"],               labelKey: "actions.import_media" },
   export:          { defaultKeys: ["Mod+E"],               labelKey: "actions.export" },
   splitFirstLayer: { defaultKeys: ["Mod+K"],               labelKey: "actions.split_first" },
+  toggleLog:       { defaultKeys: ["Mod+`"],               labelKey: "actions.toggle_log" },
+  focusLogSearch:  { defaultKeys: ["Mod+Shift+`"],         labelKey: "actions.focus_log_search" },
 };
 
 export const ACTION_IDS = Object.keys(ACTION_DEFS) as ActionId[];
