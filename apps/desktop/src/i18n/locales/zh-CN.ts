@@ -157,6 +157,12 @@ const zhCN: Resources = {
     track_label: "轨道 {{n}}",
     resize_track_hint: "拖动以调整该轨道高度",
   },
+  agent_mode: {
+    client_label: "代理：{{client}}",
+    exit: "退出代理模式",
+    exit_hint: "离开代理模式并返回编辑器。代理的后续操作仍在后台继续。",
+    placeholder_body: "代理活动将在此处显示。",
+  },
   errors: {
     refresh_failed: "刷新失败：{{detail}}",
   },

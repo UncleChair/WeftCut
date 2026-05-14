@@ -6,10 +6,14 @@ import {
   addDemoColorLayer,
   addDemoTextLayer,
   addVideoTrack,
+  AGENT_SESSION_EVENTS,
+  agentSessionEnd,
+  agentSessionGet,
   compileProject,
   deleteLayer,
   EXPORT_EVENTS,
   keybindingsGet,
+  type AgentSession,
   type KeybindingsMap,
   EXPORT_PRESETS,
   exportProject,
@@ -43,6 +47,7 @@ import {
   type ProjectSummary,
 } from "./ipc";
 import { Timeline } from "./timeline/Timeline";
+import { AgentMode } from "./agent/AgentMode";
 import { PropertyPanel } from "./properties/PropertyPanel";
 import { ConnectAgentPanel } from "./connect/ConnectAgentPanel";
 import { SettingsPanel } from "./settings/SettingsPanel";
@@ -107,6 +112,13 @@ export function App({ onCloseProject }: AppProps) {
   // catalogue (`ACTION_DEFS`) is the validator. Unknown action ids in
   // the file are silently ignored at dispatch time.
   const [keybindings, setKeybindings] = useState<KeybindingsMap>({});
+  // Active agent session (null = editor mode). Set by the
+  // `agent_session:changed` event the backend emits whenever an MCP
+  // client calls `begin_agent_session` or any path clears the slot
+  // (workspace change, user-side exit). Always seeded by an explicit
+  // get on mount so the UI never blinks through the wrong mode on
+  // app start.
+  const [agentSession, setAgentSession] = useState<AgentSession | null>(null);
   // Phase D — workspace-redesign.md Q10: the project preview is a DOM
   // `<video>` element driven by `<PreviewSurface>`. The transport buttons
   // here delegate to its imperative handle (play / pause / seek), and
@@ -180,7 +192,44 @@ export function App({ onCloseProject }: AppProps) {
     exportQueueList().then(setQueue).catch(() => {});
     hwEncoderProbe().then(setHwProbe).catch(() => {});
     keybindingsGet().then(setKeybindings).catch(() => {});
+    // Seed agent-session mode explicitly so the UI never flashes through
+    // editor mode on a fresh app start when an MCP client has already
+    // begun a session (e.g., on app re-launch via deeplink in the
+    // future). Subsequent flips arrive via the agent_session:changed
+    // event below.
+    agentSessionGet().then(setAgentSession).catch(() => {});
   }, [refresh]);
+
+  // Subscribe to agent_session:changed — payload is `AgentSession | null`.
+  // Begin / replace / end all flow through here so the conditional render
+  // below stays in sync with the backend slot.
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+    (async () => {
+      const u = await listen<AgentSession | null>(
+        AGENT_SESSION_EVENTS.changed,
+        (e) => setAgentSession(e.payload),
+      );
+      if (cancelled) {
+        u();
+        return;
+      }
+      unlisten = u;
+    })();
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
+  }, []);
+
+  const exitAgentMode = useCallback(async () => {
+    try {
+      await agentSessionEnd();
+    } catch (e) {
+      console.warn("agent_session_end failed:", e);
+    }
+  }, []);
 
   // Wire the status-log stream: seed from `log_list`, then subscribe to
   // `log:entry` events. Pre-workspace this is a no-op (backend bus is
@@ -568,6 +617,29 @@ export function App({ onCloseProject }: AppProps) {
             summary.composition.fps_num / summary.composition.fps_den
           ).toFixed(2),
         }));
+
+  if (agentSession) {
+    // Agent mode swap: backend's `agent_session:changed` event flipped
+    // the slot to Some(...). Render the simplified shell instead of the
+    // editor body. ShortcutBindingsProvider stays so the agent-mode
+    // panel can still consume bound actions if it grows any (none in
+    // Phase 5). Floating editor panels (export, compile, settings,
+    // template-picker) are deliberately suppressed — the user is
+    // watching the agent, not driving the editor.
+    return (
+      <ShortcutBindingsProvider overrides={shortcutOverrides}>
+        <AgentMode
+          ref={previewRef}
+          session={agentSession}
+          summary={summary}
+          currentTimeUs={currentTimeUs}
+          onTimeUpdate={setCurrentTimeUs}
+          onPausedChange={setPaused}
+          onExit={exitAgentMode}
+        />
+      </ShortcutBindingsProvider>
+    );
+  }
 
   return (
     <ShortcutBindingsProvider overrides={shortcutOverrides}>

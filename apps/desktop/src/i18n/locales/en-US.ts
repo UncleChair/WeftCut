@@ -158,6 +158,12 @@ const enUS = {
     track_label: "track {{n}}",
     resize_track_hint: "Drag to resize this track",
   },
+  agent_mode: {
+    client_label: "Agent: {{client}}",
+    exit: "Exit to editor",
+    exit_hint: "Leave agent mode and return to the full editor. Agent operations continue in the background.",
+    placeholder_body: "Agent activity will appear here.",
+  },
   errors: {
     refresh_failed: "refresh: {{detail}}",
   },
