@@ -1166,6 +1166,63 @@ impl WeftCutServer {
         Ok(ok_void())
     }
 
+    // ============================================================
+    // History lock
+    // ============================================================
+    //
+    // The lock blocks every revert path — undo, redo, restore_checkpoint
+    // — while the agent is mid-batch. The user's "Exit to editor" button
+    // is never affected (release happens in the Tauri command); the
+    // human can always escape agent mode. Lock auto-releases on
+    // workspace change (History::reset wipes it).
+
+    #[tool(description = "Block the user from reverting (undo / redo / restore_checkpoint) while \
+                          the agent is mid-batch. `reason` is shown next to the lock badge in the \
+                          record-panel header and as the error returned to revert attempts. \
+                          Last-writer-wins. Always pair with an unlock_history call; releases \
+                          also happen on workspace change and on user-side agent-mode exit.")]
+    async fn lock_history(
+        &self,
+        #[tool(aggr)] args: LockHistoryArgs,
+    ) -> Result<CallToolResult, McpError> {
+        let reason = args.reason.trim();
+        if reason.is_empty() {
+            return Err(McpError::invalid_params(
+                "reason must be non-empty",
+                None,
+            ));
+        }
+        self.project.lock_history(reason.to_string()).await;
+        crate::logs::emit_via_app(
+            &self.app,
+            crate::logs::LogEntryInput {
+                level: crate::logs::LogLevel::Info,
+                category: crate::logs::LogCategory::Mcp,
+                source: crate::logs::LogSource::Agent { client: "mcp".into() },
+                message: format!("History locked: {reason}"),
+                ..Default::default()
+            },
+        );
+        Ok(ok_void())
+    }
+
+    #[tool(description = "Release the revert-lock taken by lock_history. Idempotent — calling \
+                          while already unlocked is a no-op.")]
+    async fn unlock_history(&self) -> Result<CallToolResult, McpError> {
+        self.project.unlock_history().await;
+        crate::logs::emit_via_app(
+            &self.app,
+            crate::logs::LogEntryInput {
+                level: crate::logs::LogLevel::Info,
+                category: crate::logs::LogCategory::Mcp,
+                source: crate::logs::LogSource::Agent { client: "mcp".into() },
+                message: "History unlocked".into(),
+                ..Default::default()
+            },
+        );
+        Ok(ok_void())
+    }
+
     #[tool(description = "Create an explicit named checkpoint of the current state. \
                           Checkpoints survive new commits (they don't get truncated like the redo tail) \
                           and persist in the .vproj save file. Returns the new checkpoint id. \
@@ -1274,6 +1331,13 @@ pub struct BeginAgentSessionArgs {
     /// Short free-text label shown in the human's record-panel header
     /// while the session is active. Examples: "cutting filler words",
     /// "applying transcribe + auto-cut pass". Required, non-empty.
+    pub reason: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct LockHistoryArgs {
+    /// Short free-text label shown to the user while the lock is held
+    /// ("applying transitions", "rendering preview", etc.). Required.
     pub reason: String,
 }
 

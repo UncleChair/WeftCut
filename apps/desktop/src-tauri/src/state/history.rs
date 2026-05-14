@@ -52,6 +52,13 @@ pub struct History {
     cursor: usize,
     cap: usize,
     checkpoints: HashMap<CheckpointId, NamedCheckpoint>,
+    /// When `Some(reason)`, all revert paths (undo / redo / restore
+    /// checkpoint) reject with `CommandError::HistoryLocked`. The agent
+    /// takes this lock via `lock_history(reason)` and drops it via
+    /// `unlock_history()`. Not persisted to disk — released on workspace
+    /// change (via `reset`) and on agent-session end (via the Tauri
+    /// command).
+    lock: Option<String>,
 }
 
 impl History {
@@ -71,7 +78,26 @@ impl History {
             cursor: 0,
             cap: DEFAULT_CAP,
             checkpoints: HashMap::new(),
+            lock: None,
         }
+    }
+
+    /// Take the revert-lock, recording `reason` (shown in the agent-mode
+    /// record-panel header and any rejected-revert error). Last writer
+    /// wins — calling while already locked replaces the reason.
+    pub fn lock(&mut self, reason: String) {
+        self.lock = Some(reason);
+    }
+
+    /// Release the revert-lock. Idempotent — `unlock` while already
+    /// unlocked is a no-op.
+    pub fn unlock(&mut self) {
+        self.lock = None;
+    }
+
+    /// Current lock reason if any.
+    pub fn lock_reason(&self) -> Option<&str> {
+        self.lock.as_deref()
     }
 
     pub fn current(&self) -> Arc<Project> {
@@ -183,6 +209,7 @@ impl History {
             cursor: self.cursor,
             len: total,
             checkpoints,
+            lock_reason: self.lock.clone(),
         }
     }
 
@@ -247,6 +274,9 @@ impl History {
         self.snapshots.push_back(entry);
         self.cursor = 0;
         self.checkpoints.clear();
+        // Workspace swap releases any prior lock — view-mode + lock are
+        // ephemeral and shouldn't survive into a different project.
+        self.lock = None;
     }
 }
 
@@ -313,4 +343,68 @@ pub struct HistoryView {
     pub cursor: usize,
     pub len: usize,
     pub checkpoints: Vec<NamedCheckpointSummary>,
+    /// `Some(reason)` while the revert surface is locked (set by the
+    /// agent via `lock_history`). UI uses this to disable Undo / Redo /
+    /// Restore buttons with the reason as a tooltip.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lock_reason: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::project::Project;
+
+    fn fresh() -> History {
+        History::new(Arc::new(Project::new_blank("test")), Actor::User)
+    }
+
+    #[test]
+    fn lock_unset_by_default() {
+        let h = fresh();
+        assert!(h.lock_reason().is_none());
+    }
+
+    #[test]
+    fn lock_then_unlock_round_trip() {
+        let mut h = fresh();
+        h.lock("rendering".into());
+        assert_eq!(h.lock_reason(), Some("rendering"));
+        h.unlock();
+        assert!(h.lock_reason().is_none());
+    }
+
+    #[test]
+    fn lock_replaces_prior_reason() {
+        let mut h = fresh();
+        h.lock("a".into());
+        h.lock("b".into());
+        assert_eq!(h.lock_reason(), Some("b"));
+    }
+
+    #[test]
+    fn unlock_when_unlocked_is_noop() {
+        let mut h = fresh();
+        h.unlock();
+        h.unlock();
+        assert!(h.lock_reason().is_none());
+    }
+
+    #[test]
+    fn reset_clears_lock() {
+        let mut h = fresh();
+        h.lock("held".into());
+        h.reset(Arc::new(Project::new_blank("other")), Actor::User);
+        assert!(h.lock_reason().is_none());
+    }
+
+    #[test]
+    fn history_view_surfaces_lock_reason() {
+        let mut h = fresh();
+        let unlocked = h.view(10);
+        assert!(unlocked.lock_reason.is_none());
+        h.lock("busy".into());
+        let locked = h.view(10);
+        assert_eq!(locked.lock_reason.as_deref(), Some("busy"));
+    }
 }

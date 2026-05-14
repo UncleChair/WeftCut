@@ -1036,13 +1036,18 @@ pub async fn agent_session_get(
 }
 
 /// User-side "Exit to editor" handler. Always allowed — even with a
-/// lock or in-flight ops (Q3/Q4 invariants).
+/// lock or in-flight ops (Q3/Q4 invariants). Releases the revert lock
+/// so the user can immediately undo/restore once back in editor mode.
 #[tauri::command]
 pub async fn agent_session_end(
     app: tauri::AppHandle,
     slot: State<'_, crate::agent_session::AgentSessionSlot>,
+    handle: State<'_, ProjectHandle>,
 ) -> Result<(), String> {
     let prior = crate::agent_session::end_and_emit(&app, &slot);
+    // Release any agent-taken revert lock so the human's editor-mode
+    // Undo / Restore buttons re-enable on the next paint.
+    handle.unlock_history().await;
     if let Some(s) = prior {
         // System-attributed entry so the record panel — already
         // closed by the time this lands — and the full LogConsole

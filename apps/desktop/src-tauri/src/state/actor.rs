@@ -284,6 +284,8 @@ pub enum CommandError {
     NothingToUndo,
     #[error("nothing to redo")]
     NothingToRedo,
+    #[error("history is locked: {reason}")]
+    HistoryLocked { reason: String },
     #[error("project invariant violated: {0}")]
     ValidationFailed(ValidationError),
 }
@@ -448,6 +450,13 @@ enum Command {
         id: CheckpointId,
         actor: Actor,
         reply: oneshot::Sender<Result<(), CommandError>>,
+    },
+    LockHistory {
+        reason: String,
+        reply: oneshot::Sender<()>,
+    },
+    UnlockHistory {
+        reply: oneshot::Sender<()>,
     },
     Snapshot {
         reply: oneshot::Sender<Arc<Project>>,
@@ -1009,6 +1018,27 @@ impl ProjectHandle {
         rx.await.expect("project actor terminated")
     }
 
+    /// Take the revert lock. While set, undo/redo/restore_checkpoint
+    /// reject with `CommandError::HistoryLocked`. Last-writer-wins.
+    pub async fn lock_history(&self, reason: String) {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::LockHistory { reason, reply })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    /// Release the revert lock. Idempotent.
+    pub async fn unlock_history(&self) {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::UnlockHistory { reply })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
     pub async fn restore_checkpoint(
         &self,
         actor: Actor,
@@ -1243,6 +1273,14 @@ impl ProjectActor {
             }
             Command::ListCheckpoints { reply } => {
                 let _ = reply.send(self.history.list_checkpoints());
+            }
+            Command::LockHistory { reason, reply } => {
+                self.history.lock(reason);
+                let _ = reply.send(());
+            }
+            Command::UnlockHistory { reply } => {
+                self.history.unlock();
+                let _ = reply.send(());
             }
             Command::RestoreCheckpoint { id, actor, reply } => {
                 let result = self.do_restore_checkpoint(id, actor);
@@ -2042,12 +2080,22 @@ impl ProjectActor {
     }
 
     fn do_undo(&mut self, actor: Actor) -> Result<(), CommandError> {
+        if let Some(reason) = self.history.lock_reason() {
+            return Err(CommandError::HistoryLocked {
+                reason: reason.to_string(),
+            });
+        }
         let snapshot = self.history.undo().ok_or(CommandError::NothingToUndo)?;
         self.broadcast_unrecorded(actor, "Undo".to_string(), snapshot);
         Ok(())
     }
 
     fn do_redo(&mut self, actor: Actor) -> Result<(), CommandError> {
+        if let Some(reason) = self.history.lock_reason() {
+            return Err(CommandError::HistoryLocked {
+                reason: reason.to_string(),
+            });
+        }
         let snapshot = self.history.redo().ok_or(CommandError::NothingToRedo)?;
         self.broadcast_unrecorded(actor, "Redo".to_string(), snapshot);
         Ok(())
@@ -2058,6 +2106,11 @@ impl ProjectActor {
         id: CheckpointId,
         actor: Actor,
     ) -> Result<(), CommandError> {
+        if let Some(reason) = self.history.lock_reason() {
+            return Err(CommandError::HistoryLocked {
+                reason: reason.to_string(),
+            });
+        }
         let snapshot = self
             .history
             .restore_checkpoint(id)
@@ -2795,6 +2848,47 @@ mod tests {
         let snap = handle.snapshot().await;
         let track = snap.tracks.iter().find(|t| t.id == track_id).unwrap();
         assert_eq!(track.layers.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn lock_blocks_revert_paths() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                color_layer(Rgba::WHITE),
+                0,
+                1_000_000,
+            )
+            .await
+            .unwrap();
+        let cp = handle.checkpoint(Actor::User, "after first add").await;
+
+        handle.lock_history("agent busy".into()).await;
+
+        // Undo / redo / restore all reject with HistoryLocked while the
+        // lock is held — error carries the reason the agent supplied.
+        for err in [
+            handle.undo(Actor::User).await.unwrap_err(),
+            handle.redo(Actor::User).await.unwrap_err(),
+            handle
+                .restore_checkpoint(Actor::User, cp)
+                .await
+                .unwrap_err(),
+        ] {
+            match err {
+                CommandError::HistoryLocked { reason } => {
+                    assert_eq!(reason, "agent busy");
+                }
+                other => panic!("expected HistoryLocked, got {other:?}"),
+            }
+        }
+
+        // Releasing the lock re-enables every revert path.
+        handle.unlock_history().await;
+        handle.undo(Actor::User).await.unwrap();
     }
 
     #[tokio::test]
