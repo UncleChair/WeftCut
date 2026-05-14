@@ -1,8 +1,16 @@
 # Workspace Redesign
 
-> **Status:** Plan agreed 2026-05-13 via grill-me session. Phase A in flight.
+> **Status:** All four phases shipped 2026-05-13 / 2026-05-14.
 > Supersedes parts of [`data-model.md`'s on-disk format](data-model.md) and
 > the [Phase 1 libmpv embed model](roadmap.md#phase-1--editor-mvp-45-weeks).
+>
+> | Phase | Commits |
+> |---|---|
+> | A — workspace foundation (cache per-workspace, path_rel anchor, auto-save, migration) | `902ad93`, `5e10593` |
+> | B — startup screen (Create / Open / Recent + recents.json + new-project form) | `c5e528b` |
+> | C — import polish (background copy, missing-media badges, derivatives pill) | `6f943be` |
+> | D — preview overhaul (DOM `<video>` + state-hashed MP4, delete libmpv embed) | `9e23046`, `3cb42d2` |
+>
 > Cross-cutting work — affects state, IO, cache, raster, mpv, raster preview,
 > jobs, MCP. Targets the 4 user-facing problems below; resolves them via 10
 > design decisions and a 4-phase rollout.
