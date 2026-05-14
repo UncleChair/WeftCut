@@ -1,27 +1,37 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import {
   addMediaLayer,
   moveLayer,
   updateLayer,
+  viewStateGet,
+  viewStateSet,
   type LayerSummary,
   type TrackSummary,
 } from "../ipc";
 import { WaveformCanvas } from "./WaveformCanvas";
 
-interface TimelineProps {
-  tracks: TrackSummary[];
-  durationUs: number;
-  currentTimeUs: number;
-  selectedLayerId: string | null;
-  onSelect: (id: string | null) => void;
-  onSeek: (tUs: number) => void;
-  onMutated: () => Promise<void>;
-}
-
-const PX_PER_SEC = 80;
-const TRACK_HEIGHT = 36;
+// Zoom + height bounds. The defaults match the pre-refactor constants so
+// projects that have never written `view.json` look identical to before.
+const DEFAULT_PX_PER_SEC = 80;
+const MIN_PX_PER_SEC = 8;
+const MAX_PX_PER_SEC = 800;
+const DEFAULT_TRACK_HEIGHT = 36;
+const MIN_TRACK_HEIGHT = 24;
+const MAX_TRACK_HEIGHT = 200;
 const MIN_LAYER_DURATION_US = 100_000;
+// Debounce window after the last zoom/height edit before we hit disk.
+// Resize-drag tends to fire ~60×/sec; 200ms keeps the file write off the
+// critical drag path while still landing within a beat of the user
+// releasing the handle.
+const VIEW_SAVE_DEBOUNCE_MS = 200;
 
 const MEDIA_DRAG_TYPE = "application/x-weftcut-media";
 
@@ -108,6 +118,26 @@ interface DragState {
   overTrackId: string | null;
 }
 
+interface HeightDragState {
+  trackId: string;
+  startY: number;
+  startHeight: number;
+}
+
+interface TimelineProps {
+  tracks: TrackSummary[];
+  durationUs: number;
+  currentTimeUs: number;
+  selectedLayerId: string | null;
+  onSelect: (id: string | null) => void;
+  onSeek: (tUs: number) => void;
+  onMutated: () => Promise<void>;
+}
+
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, v));
+}
+
 export function Timeline({
   tracks,
   durationUs,
@@ -117,32 +147,182 @@ export function Timeline({
   onSeek,
   onMutated,
 }: TimelineProps) {
+  const [pxPerSec, setPxPerSec] = useState<number>(DEFAULT_PX_PER_SEC);
+  const [trackHeights, setTrackHeights] = useState<Record<string, number>>({});
+  // Suppress the initial post-load save: we don't want the first
+  // load-then-set-state pair to immediately echo the same values back to
+  // disk. Flipped to true only after the in-flight load completes.
+  const viewLoadedRef = useRef<boolean>(false);
+
   const totalSec = Math.max(durationUs / 1_000_000, 5);
-  const widthPx = totalSec * PX_PER_SEC;
+  const widthPx = totalSec * pxPerSec;
   const [drag, setDrag] = useState<DragState | null>(null);
+  const [heightDrag, setHeightDrag] = useState<HeightDragState | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
 
-  const orderedTracks = visualOrderedTracks(tracks);
+  const orderedTracks = useMemo(() => visualOrderedTracks(tracks), [tracks]);
+
+  // Cumulative (y, height) per visible track row. Heights vary now, so
+  // hit-testing for "which track is the pointer over" needs a real
+  // offset table instead of `Math.floor(y / TRACK_HEIGHT)`.
+  const trackRows = useMemo(() => {
+    const rows: { track: TrackSummary; y: number; height: number }[] = [];
+    let y = 0;
+    for (const { track } of orderedTracks) {
+      const h = trackHeights[track.id] ?? DEFAULT_TRACK_HEIGHT;
+      rows.push({ track, y, height: h });
+      y += h;
+    }
+    return rows;
+  }, [orderedTracks, trackHeights]);
+
+  // -------- Initial load + debounced save --------
+
+  // One-shot load on mount. The backend returns defaults pre-workspace
+  // (blank-on-boot session), so this is safe to call unconditionally.
+  useEffect(() => {
+    let cancelled = false;
+    viewStateGet()
+      .then((state) => {
+        if (cancelled) return;
+        setPxPerSec(
+          clamp(state.timeline_px_per_sec, MIN_PX_PER_SEC, MAX_PX_PER_SEC),
+        );
+        setTrackHeights(state.track_heights ?? {});
+      })
+      .catch((e) => {
+        console.warn("view_state load failed:", e);
+      })
+      .finally(() => {
+        if (!cancelled) viewLoadedRef.current = true;
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Debounced persist. Refs hold the latest values so the timer doesn't
+  // need to restart with React's render cadence on every wheel tick.
+  const pxPerSecRef = useRef(pxPerSec);
+  const trackHeightsRef = useRef(trackHeights);
+  useEffect(() => {
+    pxPerSecRef.current = pxPerSec;
+  }, [pxPerSec]);
+  useEffect(() => {
+    trackHeightsRef.current = trackHeights;
+  }, [trackHeights]);
+
+  useEffect(() => {
+    if (!viewLoadedRef.current) return;
+    const handle = setTimeout(() => {
+      // Prune dead track ids on save so view.json doesn't accumulate
+      // entries for tracks the user has deleted (see advisor note: state
+      // map keeps stale keys until we filter on the way out).
+      const live = new Set(tracks.map((t) => t.id));
+      const pruned: Record<string, number> = {};
+      for (const [id, h] of Object.entries(trackHeightsRef.current)) {
+        if (live.has(id)) pruned[id] = h;
+      }
+      viewStateSet({
+        timeline_px_per_sec: pxPerSecRef.current,
+        track_heights: pruned,
+      }).catch((e) => console.warn("view_state save failed:", e));
+    }, VIEW_SAVE_DEBOUNCE_MS);
+    return () => clearTimeout(handle);
+    // `tracks` participates so a track-deletion triggers a save that
+    // prunes the stale id even if neither zoom nor height changed.
+  }, [pxPerSec, trackHeights, tracks]);
+
+  // -------- Ctrl+wheel zoom (cursor-anchored) --------
+
+  // We capture { scrollLeft, cursorXInViewport, oldPxPerSec } when the
+  // wheel fires, kick off `setPxPerSec`, and apply the new scrollLeft
+  // in a useLayoutEffect once React has re-rendered with the new
+  // px/sec. Doing it inline in the handler reads stale state and
+  // produces a one-frame jitter (advisor note #2).
+  const wheelPendingRef = useRef<{
+    scrollLeft: number;
+    cursorXInViewport: number;
+    oldPxPerSec: number;
+  } | null>(null);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    // React's JSX `onWheel` is registered passive in modern React, so
+    // `preventDefault()` from there silently fails. Attach manually
+    // with `{ passive: false }` so we can swallow the default
+    // page-scroll behaviour when Ctrl is held.
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      const rect = root.getBoundingClientRect();
+      const cursorXInViewport = e.clientX - rect.left;
+      // deltaMode varies by device — normalise lines/pages to pixels
+      // before computing the zoom factor (advisor note #3).
+      const lineHeight = 16;
+      const pageHeight = 100;
+      const px =
+        e.deltaY *
+        (e.deltaMode === 1 ? lineHeight : e.deltaMode === 2 ? pageHeight : 1);
+      // Exponential zoom: small wheel ticks scale by ~ε near 1.0, big
+      // ones don't snap-jump. Negative px (scrolling up) zooms in.
+      const factor = Math.exp(-px * 0.001);
+      const oldPxPerSec = pxPerSecRef.current;
+      const newPxPerSec = clamp(
+        oldPxPerSec * factor,
+        MIN_PX_PER_SEC,
+        MAX_PX_PER_SEC,
+      );
+      if (newPxPerSec === oldPxPerSec) return;
+      wheelPendingRef.current = {
+        scrollLeft: root.scrollLeft,
+        cursorXInViewport,
+        oldPxPerSec,
+      };
+      setPxPerSec(newPxPerSec);
+    };
+    root.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      root.removeEventListener("wheel", onWheel);
+    };
+  }, []);
+
+  // Re-anchor scroll position so the time under the cursor stays put.
+  // Runs synchronously after the layout flip so there's no flash.
+  useLayoutEffect(() => {
+    const pending = wheelPendingRef.current;
+    if (!pending) return;
+    wheelPendingRef.current = null;
+    const root = rootRef.current;
+    if (!root) return;
+    const ratio = pxPerSec / pending.oldPxPerSec;
+    root.scrollLeft =
+      (pending.scrollLeft + pending.cursorXInViewport) * ratio -
+      pending.cursorXInViewport;
+  }, [pxPerSec]);
+
+  // -------- Layer drag (move / trim) --------
 
   const trackUnderPointer = useCallback(
     (clientY: number): TrackSummary | null => {
       if (!canvasRef.current) return null;
       const rect = canvasRef.current.getBoundingClientRect();
       const y = clientY - rect.top;
-      const visualIdx = Math.floor(y / TRACK_HEIGHT);
-      if (visualIdx < 0 || visualIdx >= orderedTracks.length) return null;
-      // Map screen-row index → the right data track via the visual ordering
-      // (video → subtitle → audio, each kind already z-stack-reversed).
-      return orderedTracks[visualIdx]?.track ?? null;
+      for (const row of trackRows) {
+        if (y >= row.y && y < row.y + row.height) return row.track;
+      }
+      return null;
     },
-    [orderedTracks],
+    [trackRows],
   );
 
   const handlePointerMove = useCallback(
     (e: PointerEvent) => {
       if (!drag) return;
       const deltaPx = e.clientX - drag.startX;
-      const deltaUs = (deltaPx / PX_PER_SEC) * 1_000_000;
+      const deltaUs = (deltaPx / pxPerSec) * 1_000_000;
       const overTrack =
         drag.kind === "move" ? trackUnderPointer(e.clientY) : null;
       setDrag({
@@ -151,14 +331,14 @@ export function Timeline({
         overTrackId: overTrack?.id ?? null,
       });
     },
-    [drag, trackUnderPointer],
+    [drag, pxPerSec, trackUnderPointer],
   );
 
   const handlePointerUp = useCallback(
     async (e: PointerEvent) => {
       if (!drag) return;
       const deltaPx = e.clientX - drag.startX;
-      const deltaUs = Math.round((deltaPx / PX_PER_SEC) * 1_000_000);
+      const deltaUs = Math.round((deltaPx / pxPerSec) * 1_000_000);
       const overTrack =
         drag.kind === "move" ? trackUnderPointer(e.clientY) : null;
       const committed = drag;
@@ -206,7 +386,7 @@ export function Timeline({
         console.error("timeline commit failed:", err);
       }
     },
-    [drag, onMutated, trackUnderPointer],
+    [drag, onMutated, pxPerSec, trackUnderPointer],
   );
 
   useEffect(() => {
@@ -218,6 +398,52 @@ export function Timeline({
       window.removeEventListener("pointerup", handlePointerUp);
     };
   }, [drag, handlePointerMove, handlePointerUp]);
+
+  // -------- Track-height drag --------
+
+  const beginHeightDrag = useCallback(
+    (trackId: string) => (e: React.PointerEvent) => {
+      if (e.button !== 0) return;
+      // The lane below the handle would normally start a seek; stop the
+      // pointerdown here so the seek-on-empty-canvas path never fires.
+      e.stopPropagation();
+      e.preventDefault();
+      const current =
+        trackHeightsRef.current[trackId] ?? DEFAULT_TRACK_HEIGHT;
+      setHeightDrag({
+        trackId,
+        startY: e.clientY,
+        startHeight: current,
+      });
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!heightDrag) return;
+    const onMove = (e: PointerEvent) => {
+      const dy = e.clientY - heightDrag.startY;
+      const next = clamp(
+        Math.round(heightDrag.startHeight + dy),
+        MIN_TRACK_HEIGHT,
+        MAX_TRACK_HEIGHT,
+      );
+      setTrackHeights((prev) =>
+        prev[heightDrag.trackId] === next
+          ? prev
+          : { ...prev, [heightDrag.trackId]: next },
+      );
+    };
+    const onUp = () => setHeightDrag(null);
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, [heightDrag]);
+
+  // -------- Media drop, seek, render --------
 
   const onMediaDrop = useCallback(
     async (
@@ -236,7 +462,7 @@ export function Timeline({
       }
       const rect = e.currentTarget.getBoundingClientRect();
       const x = e.clientX - rect.left;
-      const tStartUs = Math.max(0, Math.round((x / PX_PER_SEC) * 1_000_000));
+      const tStartUs = Math.max(0, Math.round((x / pxPerSec) * 1_000_000));
       try {
         await addMediaLayer(track.id, payload.mediaId, tStartUs);
         await onMutated();
@@ -244,24 +470,24 @@ export function Timeline({
         console.error("media drop failed:", err);
       }
     },
-    [onMutated],
+    [onMutated, pxPerSec],
   );
 
-  const playheadX = (currentTimeUs / 1_000_000) * PX_PER_SEC;
+  const playheadX = (currentTimeUs / 1_000_000) * pxPerSec;
 
   const seekFromClientX = useCallback(
     (clientX: number) => {
       if (!canvasRef.current) return;
       const rect = canvasRef.current.getBoundingClientRect();
       const x = clientX - rect.left;
-      onSeek(Math.max(0, Math.round((x / PX_PER_SEC) * 1_000_000)));
+      onSeek(Math.max(0, Math.round((x / pxPerSec) * 1_000_000)));
     },
-    [onSeek],
+    [onSeek, pxPerSec],
   );
 
   // Click/drag on empty canvas (lane background, gap below tracks) to seek.
-  // Layer / trim-handle pointerdown stops propagation, so this never fires
-  // when interacting with an existing layer.
+  // Layer / trim-handle / resize-handle pointerdown stops propagation, so
+  // this never fires when interacting with an existing control.
   const onCanvasPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       if (e.button !== 0) return;
@@ -279,7 +505,10 @@ export function Timeline({
 
   return (
     <div
-      className={`timeline-root ${drag ? "is-dragging" : ""}`}
+      ref={rootRef}
+      className={`timeline-root ${drag ? "is-dragging" : ""} ${
+        heightDrag ? "is-resizing-track" : ""
+      }`}
       onClick={() => onSelect(null)}
       onPointerDown={onCanvasPointerDown}
     >
@@ -300,13 +529,15 @@ export function Timeline({
           <TrackLane
             key={track.id}
             track={track}
-            pxPerSec={PX_PER_SEC}
+            pxPerSec={pxPerSec}
+            height={trackHeights[track.id] ?? DEFAULT_TRACK_HEIGHT}
             selectedLayerId={selectedLayerId}
             dragState={drag}
             onSelect={onSelect}
             onDragStart={(state) => setDrag(state)}
             onMediaDrop={onMediaDrop}
             isGroupStart={isGroupStart}
+            onHeightDragStart={beginHeightDrag(track.id)}
           />
         ))}
       </div>
@@ -339,15 +570,18 @@ function EmptyHint() {
 function TrackLane({
   track,
   pxPerSec,
+  height,
   selectedLayerId,
   dragState,
   onSelect,
   onDragStart,
   onMediaDrop,
   isGroupStart,
+  onHeightDragStart,
 }: {
   track: TrackSummary;
   pxPerSec: number;
+  height: number;
   selectedLayerId: string | null;
   dragState: DragState | null;
   onSelect: (id: string | null) => void;
@@ -358,6 +592,7 @@ function TrackLane({
     e: React.DragEvent<HTMLDivElement>,
   ) => void;
   isGroupStart: boolean;
+  onHeightDragStart: (e: React.PointerEvent) => void;
 }) {
   const { t } = useTranslation();
   const kindLabel = t(`kinds.${track.kind.toLowerCase()}`, {
@@ -402,7 +637,7 @@ function TrackLane({
       className={`timeline-track-lane kind-${track.kind.toLowerCase()} ${
         isCrossTrackTarget ? "is-drop-target" : ""
       } ${isGroupStart ? "is-group-start" : ""}`}
-      style={{ height: TRACK_HEIGHT }}
+      style={{ height }}
       onClick={(e) => {
         if (e.target === e.currentTarget) onSelect(null);
       }}
@@ -421,12 +656,20 @@ function TrackLane({
           trackId={track.id}
           trackKind={track.kind}
           pxPerSec={pxPerSec}
+          laneHeight={height}
           isSelected={selectedLayerId === layer.id}
           dragState={dragState}
           onSelect={onSelect}
           onDragStart={onDragStart}
         />
       ))}
+      <div
+        className="track-resize-handle"
+        title={t("timeline.resize_track_hint", {
+          defaultValue: "Drag to resize this track",
+        })}
+        onPointerDown={onHeightDragStart}
+      />
     </div>
   );
 }
@@ -436,6 +679,7 @@ function LayerBlock({
   trackId,
   trackKind,
   pxPerSec,
+  laneHeight,
   isSelected,
   dragState,
   onSelect,
@@ -445,6 +689,7 @@ function LayerBlock({
   trackId: string;
   trackKind: string;
   pxPerSec: number;
+  laneHeight: number;
   isSelected: boolean;
   dragState: DragState | null;
   onSelect: (id: string | null) => void;
@@ -555,7 +800,7 @@ function LayerBlock({
             srcInUs={liveSrcIn}
             srcOutUs={liveSrcOut}
             width={layerWidthPx}
-            height={TRACK_HEIGHT - 4}
+            height={Math.max(8, laneHeight - 4)}
           />
         );
       })()}

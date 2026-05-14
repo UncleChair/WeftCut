@@ -1012,6 +1012,38 @@ pub async fn keybindings_import(
         .map_err(|e| format!("{e:#}"))
 }
 
+// ---- Per-workspace view state (timeline zoom + per-track heights) ----
+//
+// Lives at `<workspace>/view.json`. The frontend reads on mount and
+// writes debounced (200 ms after the last edit) — that's why both
+// commands are whole-file: there's no per-field churn worth optimising.
+//
+// Pre-workspace (blank-on-boot session before any save / open) the
+// commands return defaults / silently no-op so the UI stays usable.
+
+#[tauri::command]
+pub async fn view_state_get(
+    workspace: State<'_, crate::workspace::WorkspaceSlot>,
+) -> Result<crate::view_state::ViewState, String> {
+    let Some(ws) = workspace.current() else {
+        return Ok(crate::view_state::ViewState::default());
+    };
+    Ok(crate::view_state::load(&ws))
+}
+
+#[tauri::command]
+pub async fn view_state_set(
+    workspace: State<'_, crate::workspace::WorkspaceSlot>,
+    state: crate::view_state::ViewState,
+) -> Result<(), String> {
+    let Some(ws) = workspace.current() else {
+        // Pre-workspace: silently drop. Once the user does a Save As,
+        // the next debounced write will land in the new workspace.
+        return Ok(());
+    };
+    crate::view_state::save(&ws, &state).map_err(|e| format!("{e:#}"))
+}
+
 #[derive(Serialize, Clone)]
 pub struct CompiledGraph {
     pub inputs: Vec<String>,

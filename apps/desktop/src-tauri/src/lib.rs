@@ -24,6 +24,7 @@ mod preview;
 mod raster;
 mod recents;
 mod state;
+mod view_state;
 mod workspace;
 
 use tauri::Manager;
@@ -88,6 +89,8 @@ pub fn run() {
             commands::keybindings_reset_all,
             commands::keybindings_export,
             commands::keybindings_import,
+            commands::view_state_get,
+            commands::view_state_set,
             commands::import_media,
             commands::import_cancel,
             commands::import_queue_list,

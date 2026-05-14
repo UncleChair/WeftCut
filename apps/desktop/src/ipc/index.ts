@@ -374,6 +374,26 @@ export async function keybindingsImport(src: string): Promise<KeybindingsMap> {
 }
 
 // ============================================================
+// Per-workspace view state (timeline zoom + per-track heights).
+// Lives at `<workspace>/view.json`. Frontend reads on mount, writes
+// debounced 200 ms after the last edit. Pre-workspace, get returns
+// defaults and set silently no-ops.
+// ============================================================
+
+export interface ViewState {
+  timeline_px_per_sec: number;
+  track_heights: Record<string, number>;
+}
+
+export async function viewStateGet(): Promise<ViewState> {
+  return invoke<ViewState>("view_state_get");
+}
+
+export async function viewStateSet(state: ViewState): Promise<void> {
+  return invoke<void>("view_state_set", { state });
+}
+
+// ============================================================
 // Background import worker (Phase C.1 — workspace-redesign.md Q6)
 // ============================================================
 

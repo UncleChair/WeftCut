@@ -155,6 +155,7 @@ const zhCN: Resources = {
   timeline: {
     empty_placeholder: "时间线（添加轨道开始）",
     track_label: "轨道 {{n}}",
+    resize_track_hint: "拖动以调整该轨道高度",
   },
   errors: {
     refresh_failed: "刷新失败：{{detail}}",

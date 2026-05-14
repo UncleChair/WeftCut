@@ -755,6 +755,32 @@ input.preview-timecode:focus {
   outline-offset: -1px;
 }
 
+/* Bottom-edge resize handle. 6 px tall, sits over the lane's own
+   bottom border so it doesn't add to the lane's box. Hidden until
+   the user is hovering near the bottom of the lane (or actively
+   dragging) so it doesn't clutter the visual stack. */
+.track-resize-handle {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -3px;
+  height: 6px;
+  cursor: ns-resize;
+  z-index: 3;
+  background: transparent;
+  transition: background 80ms ease-out;
+}
+
+.track-resize-handle:hover,
+.timeline-root.is-resizing-track .track-resize-handle {
+  background: rgba(96, 165, 250, 0.35);
+}
+
+.timeline-root.is-resizing-track {
+  cursor: ns-resize;
+  user-select: none;
+}
+
 .timeline-playhead {
   position: absolute;
   top: 2px;

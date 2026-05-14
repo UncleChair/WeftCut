@@ -156,6 +156,7 @@ const enUS = {
   timeline: {
     empty_placeholder: "timeline (add a track to populate)",
     track_label: "track {{n}}",
+    resize_track_hint: "Drag to resize this track",
   },
   errors: {
     refresh_failed: "refresh: {{detail}}",
