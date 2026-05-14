@@ -81,8 +81,11 @@ const enUS = {
     compile: "Compile",
     import_media: "Import media…",
     export: "Export…",
+    save: "Save",
     save_as: "Save as…",
-    open: "Open…",
+    save_and_close: "Save and Close",
+    save_and_close_hint:
+      "Flush any pending edits to the workspace, then return to the project picker.",
     undo: "Undo",
     redo: "Redo",
     queue_export: "+ Queue",

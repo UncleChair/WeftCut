@@ -264,6 +264,10 @@ export async function splitFirstLayer(): Promise<void> {
   return invoke<void>("split_first_layer");
 }
 
+export async function projectSave(): Promise<void> {
+  return invoke<void>("project_save");
+}
+
 export async function projectSaveAs(path: string): Promise<void> {
   return invoke<void>("project_save_as", { path });
 }

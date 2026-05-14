@@ -23,8 +23,8 @@ import {
   mpvPlayMedia,
   ping,
   presetExtension,
-  projectOpen,
   projectRedo,
+  projectSave,
   projectSaveAs,
   projectSummary,
   projectUndo,
@@ -62,7 +62,13 @@ import {
   type Locale,
 } from "./i18n";
 
-export function App() {
+interface AppProps {
+  /// Hop the root router back to the StartupScreen — wired by `main.tsx`.
+  /// Called by File → Save and Close after a successful save flush.
+  onCloseProject: () => void;
+}
+
+export function App({ onCloseProject }: AppProps) {
   const { t, i18n } = useTranslation();
   const [pong, setPong] = useState<string>("…");
   const [summary, setSummary] = useState<ProjectSummary | null>(null);
@@ -314,16 +320,23 @@ export function App() {
 
   // ---- Menu-bar action handlers (extracted from former inline onClicks). ----
 
-  const openProject = useCallback(async () => {
-    const path = await openDialog({
-      title: t("dialogs.open_title"),
-      directory: true,
-      multiple: false,
-    });
-    if (typeof path === "string") {
-      await run(() => projectOpen(path));
+  const saveProjectNow = useCallback(async () => {
+    await run(() => projectSave());
+  }, [run]);
+
+  const saveAndClose = useCallback(async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await projectSave();
+      onCloseProject();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
     }
-  }, [run, t]);
+  }, [busy, onCloseProject]);
 
   const saveProject = useCallback(async () => {
     const path = await saveDialog({
@@ -493,8 +506,8 @@ export function App() {
       <section className="menu-bar">
         <Menu label={t("menu.file")}>
           <MenuItem
-            label={t("actions.open")}
-            onSelect={openProject}
+            label={t("actions.save")}
+            onSelect={saveProjectNow}
             disabled={busy}
           />
           <MenuItem
@@ -504,8 +517,9 @@ export function App() {
           />
           <MenuSeparator />
           <MenuItem
-            label={t("actions.import_media")}
-            onSelect={importMediaFiles}
+            label={t("actions.save_and_close")}
+            hint={t("actions.save_and_close_hint")}
+            onSelect={saveAndClose}
             disabled={busy}
           />
         </Menu>
@@ -530,6 +544,12 @@ export function App() {
         </Menu>
 
         <Menu label={t("menu.insert")}>
+          <MenuItem
+            label={t("actions.import_media")}
+            onSelect={importMediaFiles}
+            disabled={busy}
+          />
+          <MenuSeparator />
           <MenuItem
             label={t("actions.add_track")}
             onSelect={() => run(addVideoTrack)}

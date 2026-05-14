@@ -758,6 +758,16 @@ pub async fn split_first_layer(handle: State<'_, ProjectHandle>) -> Result<(), S
     Err("no splittable layer (need at least 200ms)".to_string())
 }
 
+/// Force-flush autosave to disk for the current workspace. Safe to call
+/// unconditionally — if no workspace is set yet (the unreachable blank-boot
+/// window, in practice), `force_flush` is a no-op that just resolves.
+#[tauri::command]
+pub async fn project_save(
+    autosave: State<'_, crate::io::autosave::AutosaveController>,
+) -> Result<(), String> {
+    autosave.force_flush().await.map_err(|e| format!("{e:#}"))
+}
+
 #[tauri::command]
 pub async fn project_save_as(
     handle: State<'_, ProjectHandle>,

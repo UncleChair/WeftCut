@@ -56,6 +56,7 @@ function Root() {
   }, []);
 
   const onWorkspaceReady = useCallback(() => setStage("editor"), []);
+  const onCloseProject = useCallback(() => setStage("startup"), []);
 
   if (stage === "boot") {
     // Brief — usually one tick — while we're checking the reopen-on-launch
@@ -65,7 +66,7 @@ function Root() {
   if (stage === "startup") {
     return <StartupScreen onWorkspaceReady={onWorkspaceReady} />;
   }
-  return <App />;
+  return <App onCloseProject={onCloseProject} />;
 }
 
 ReactDOM.createRoot(root).render(
