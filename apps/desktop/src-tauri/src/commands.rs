@@ -1085,6 +1085,76 @@ pub async fn agent_session_get(
     Ok(slot.current())
 }
 
+/// Dev-only manual entry into agent mode. Lets us exercise the UI
+/// without needing a connected MCP client to call begin_agent_session.
+/// Mirrors the MCP tool's side-effects (auto-checkpoint, slot write,
+/// agent_session:changed emission) but routes through Actor::User
+/// since there's no agent actually attached.
+///
+/// Gated behind `cfg(debug_assertions)` so release builds never see
+/// this command — the documented entry into agent mode is MCP-only.
+#[cfg(debug_assertions)]
+#[tauri::command]
+pub async fn debug_simulate_agent_session(
+    app: tauri::AppHandle,
+    slot: State<'_, crate::agent_session::AgentSessionSlot>,
+    handle: State<'_, ProjectHandle>,
+    reason: String,
+) -> Result<String, String> {
+    let reason = reason.trim();
+    if reason.is_empty() {
+        return Err("reason must be non-empty".into());
+    }
+    let label = format!("Pre-agent: {reason}");
+    let checkpoint_id = handle
+        .checkpoint(Actor::User, label.clone())
+        .await;
+    crate::logs::emit_via_app(
+        &app,
+        crate::logs::LogEntryInput {
+            level: crate::logs::LogLevel::Info,
+            category: crate::logs::LogCategory::Project,
+            source: crate::logs::LogSource::Agent { client: "debug-sim".into() },
+            message: format!("Checkpoint: {label}"),
+            details: Some(serde_json::json!({
+                "kind": "Checkpoint",
+                "id": checkpoint_id.to_string(),
+                "label": label,
+            })),
+            ..Default::default()
+        },
+    );
+    let session = crate::agent_session::AgentSession {
+        client: "debug-sim".into(),
+        reason: reason.to_string(),
+        started_at: Utc::now(),
+    };
+    crate::agent_session::begin_and_emit(&app, &slot, session);
+    Ok(checkpoint_id.to_string())
+}
+
+/// Dev-only: take the revert lock so the badge + disabled-Restore
+/// behavior can be exercised without a real agent.
+#[cfg(debug_assertions)]
+#[tauri::command]
+pub async fn debug_lock_history(
+    handle: State<'_, ProjectHandle>,
+    reason: String,
+) -> Result<(), String> {
+    handle.lock_history(reason).await;
+    Ok(())
+}
+
+/// Dev-only: release the revert lock.
+#[cfg(debug_assertions)]
+#[tauri::command]
+pub async fn debug_unlock_history(
+    handle: State<'_, ProjectHandle>,
+) -> Result<(), String> {
+    handle.unlock_history().await;
+    Ok(())
+}
+
 /// User-side "Exit to editor" handler. Always allowed — even with a
 /// lock or in-flight ops (Q3/Q4 invariants). Releases the revert lock
 /// so the user can immediately undo/restore once back in editor mode.

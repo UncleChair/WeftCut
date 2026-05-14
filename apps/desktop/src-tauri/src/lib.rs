@@ -95,6 +95,12 @@ pub fn run() {
             commands::view_state_set,
             commands::agent_session_get,
             commands::agent_session_end,
+            #[cfg(debug_assertions)]
+            commands::debug_simulate_agent_session,
+            #[cfg(debug_assertions)]
+            commands::debug_lock_history,
+            #[cfg(debug_assertions)]
+            commands::debug_unlock_history,
             commands::import_media,
             commands::import_cancel,
             commands::import_queue_list,
