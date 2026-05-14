@@ -30,7 +30,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 schemars = "0.8"
-ts-rs = { version = "10", features = ["uuid-impl", "chrono-impl"] }
+ts-rs = { version = "12", features = ["uuid-impl", "chrono-impl"] }
 
 # Domain primitives
 imbl = { version = "3", features = ["serde"] }
@@ -52,11 +52,14 @@ ffmpeg-sidecar = "2"
 # needs `mpv.lib` on `LIB` and the runtime needs `libmpv-2.dll` on `PATH`.
 # See `docs/setup.md` for the install + bundling story. Default features
 # stay empty so plain `cargo build` works without libmpv installed.
-libmpv2 = { version = "4", optional = true }
-wry = "0.46"
-# Anthropic Rust MCP SDK. Streamable HTTP isn't published yet (as of rmcp 0.1.5);
-# Phase 0 spike uses SSE transport, which Claude Desktop also supports. Swap when
-# `transport-streamable-http-server` lands upstream.
+libmpv2 = { version = "6", optional = true }
+# Anthropic Rust MCP SDK. Pinned to 0.1.x: 1.x dropped the
+# `transport-sse-server` feature in favor of streamable-HTTP only. Our
+# `mcp/mod.rs::serve` uses `rmcp::transport::sse_server::SseServer`,
+# which is gone in 1.x. Migrating means swapping the server type AND
+# verifying every connecting client (Claude Desktop, Cursor, custom
+# integrations) speaks streamable-HTTP. Tracked as separate work; see
+# [[feedback_rmcp_migration_blocked]].
 rmcp = { version = "0.1", features = ["server", "macros", "transport-sse-server"] }
 # Phase 4 Stage 5 ships an MCP-side change-feed on a separate /events SSE
 # endpoint so it doesn't compete with rmcp's notification surface (which
@@ -74,11 +77,14 @@ base64 = "0.22"
 # keyring (Windows Credential Manager, macOS Keychain, Linux Secret Service).
 # Linux needs a Secret-Service daemon at runtime — fine for desktop, gate
 # tests behind a flag if CI ever lands.
+# keyring 4 split into a router (`keyring` + `keyring-core`) with explicit
+# store selection (`use_named_store`). Migration is a real piece of work,
+# not a casual bump — keep `keyring = "3"` until that's scoped.
 keyring = "3"
 # HTTP client for Whisper / Deepgram / future cloud providers. Pinning rustls
 # features explicitly avoids pulling in a second native-tls stack alongside
 # the one tauri already brings in via its plugin transitives.
-reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "stream"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "multipart", "rustls", "stream"] }
 # Phase 6 Stage 4 cloud-provider traits (`Transcriber`, `Synthesizer`) need
 # `dyn`-compatible async methods. Native async-fn-in-trait isn't dyn-safe yet
 # on stable; `async-trait` is the standard workaround and keeps the
@@ -89,19 +95,18 @@ async-trait = "0.1"
 insta = { version = "1", features = ["json", "yaml"] }
 tempfile = "3"
 
-# Phase 5 spike: capture PNGs from the offscreen WebView2 webview via
-# CapturePreview. Pinned to the same transitive versions tauri 2.5.1 already
-# pulls in (webview2-com 0.37, windows 0.61) so we don't fork the dep graph.
-# `windows` features cover IStream + CoCreateInstance + Com setup.
+# Phase 5: capture PNGs from the offscreen WebView2 webview via
+# CapturePreview. Pinned to the same transitive versions tauri 2.11 already
+# pulls in (webview2-com 0.38, windows 0.61) so we don't fork the dep graph.
+# `windows` features cover only what `raster/mod.rs` uses now — the
+# libmpv-embed Gdi / LibraryLoader / UI_WindowsAndMessaging features were
+# dropped in workspace-redesign Phase D.4.
 [target.'cfg(windows)'.dependencies]
-webview2-com = "0.37"
+webview2-com = "0.38"
 windows = { version = "0.61", features = [
     "Win32_Foundation",
-    "Win32_Graphics_Gdi",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
-    "Win32_System_LibraryLoader",
-    "Win32_UI_WindowsAndMessaging",
 ] }
 
 [features]

@@ -123,35 +123,19 @@ mod real {
         }
     }
 
-    /// Pre-quote a single argument for libmpv2 4.1's broken `command()`
-    /// wrapper (see `feedback_libmpv2_command_bug`). 4.1 joins all args
-    /// into one space-separated string and passes it to
-    /// `mpv_command_string`, which then whitespace-splits — destroying
-    /// any path containing a space. Wrap in `"..."` with `\` / `"`
-    /// escaped inside.
-    fn quote_arg_for_command_string(s: &str) -> String {
-        let mut out = String::with_capacity(s.len() + 2);
-        out.push('"');
-        for c in s.chars() {
-            if c == '\\' || c == '"' {
-                out.push('\\');
-            }
-            out.push(c);
-        }
-        out.push('"');
-        out
-    }
-
     /// Load + play `path` in the popup window. Initialises the player on
     /// first call. Used exclusively by the media-pool play button —
     /// project preview is the DOM `<video>` element, not this.
+    ///
+    /// libmpv2 6.0+ uses the array-form `mpv_command` natively, so the
+    /// space-shredding workaround needed in 4.1 (manual `"..."` quoting
+    /// per arg) is gone. Pass the normalized path through verbatim.
     pub fn play_file(slot: &MpvSlot, path: &str) -> Result<(), String> {
         ensure_init(slot)?;
         let guard = slot.0.lock().expect("mpv slot poisoned");
         let mpv = guard.mpv.as_ref().expect("init guarantees Some");
         let normalized = normalize_path_for_mpv(path);
-        let quoted = quote_arg_for_command_string(&normalized);
-        mpv.command("loadfile", &[quoted.as_str(), "replace"])
+        mpv.command("loadfile", &[normalized.as_str(), "replace"])
             .map_err(|e| format!("loadfile {normalized:?}: {e:?}"))?;
         info!("libmpv popup: loaded {path}");
         Ok(())
@@ -161,13 +145,15 @@ mod real {
     /// window emits `Shutdown` via mpv's default `CLOSE_WIN→quit`
     /// binding; until our handle drops, the window resource isn't
     /// released. The lib.rs background tick calls this every ~33 ms.
+    ///
+    /// libmpv2 6.0+ flattened the event API: `wait_event` lives directly
+    /// on `Mpv` instead of behind an `event_context_mut()` indirection.
     pub fn drain_events_and_close_if_shutdown(slot: &MpvSlot) {
         let mut guard = slot.0.lock().expect("mpv slot poisoned");
         let mut shutdown = false;
-        if let Some(mpv) = guard.mpv.as_mut() {
-            let events = mpv.event_context_mut();
+        if let Some(mpv) = guard.mpv.as_ref() {
             loop {
-                match events.wait_event(0.0) {
+                match mpv.wait_event(0.0) {
                     None => break,
                     Some(Ok(Event::Shutdown)) => {
                         shutdown = true;
