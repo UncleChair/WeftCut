@@ -21,10 +21,6 @@ import {
   importQueueList,
   MEDIA_JOB_EVENTS,
   mpvPlayMedia,
-  mpvPreviewProject,
-  mpvSeek,
-  mpvSetPaused,
-  mpvSetSurfaceRect,
   ping,
   presetExtension,
   projectOpen,
@@ -50,6 +46,10 @@ import { ConnectAgentPanel } from "./connect/ConnectAgentPanel";
 import { SettingsPanel } from "./settings/SettingsPanel";
 import { TemplatePicker } from "./templates/TemplatePicker";
 import { MediaThumbnail } from "./panels/MediaThumbnail";
+import {
+  PreviewSurface,
+  type PreviewSurfaceHandle,
+} from "./preview/PreviewSurface";
 import {
   Menu,
   MenuHeading,
@@ -82,8 +82,12 @@ export function App() {
   const [activityOpen, setActivityOpen] = useState(false);
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
   const [editingTimecode, setEditingTimecode] = useState<string | null>(null);
-  const [previewInit, setPreviewInit] = useState<PreviewInitState>("idle");
-  const [previewError, setPreviewError] = useState<string | null>(null);
+  // Phase D — workspace-redesign.md Q10: the project preview is a DOM
+  // `<video>` element driven by `<PreviewSurface>`. The transport buttons
+  // here delegate to its imperative handle (play / pause / seek), and
+  // playhead state flows back up via callbacks. The previous
+  // libmpv-embed "previewInit" state machine is gone.
+  const previewRef = useRef<PreviewSurfaceHandle | null>(null);
   const [importQueue, setImportQueue] = useState<ImportEntry[]>([]);
   // Phase C.3 derivative-job tracker. Background proxy / thumbnails /
   // waveform jobs emit `media:job_started` and `media:job_complete` /
@@ -106,19 +110,9 @@ export function App() {
   }, [importQueue]);
   const timecodeInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Suppress incoming `mpv:time` updates for a short window after any user
-  // seek so libmpv's lagged readings don't fight the user's scrub. Long
-  // enough to absorb the seek round-trip + the next ~30 fps poller tick.
-  const lastUserSeekAtRef = useRef<number>(0);
-
-  const seekTo = useCallback(async (tUs: number) => {
-    lastUserSeekAtRef.current = performance.now();
+  const seekTo = useCallback((tUs: number) => {
     setCurrentTimeUs(tUs);
-    try {
-      await mpvSeek(tUs);
-    } catch (err) {
-      console.warn("seek failed:", err);
-    }
+    previewRef.current?.seekTo(tUs);
   }, []);
 
   const commitTimecode = useCallback(() => {
@@ -137,15 +131,15 @@ export function App() {
     }
   }, [editingTimecode]);
 
-  const togglePlay = useCallback(async () => {
-    const next = !paused;
-    setPaused(next);
-    try {
-      await mpvSetPaused(next);
-    } catch (err) {
-      console.warn("set paused failed:", err);
+  const togglePlay = useCallback(() => {
+    const handle = previewRef.current;
+    if (!handle) return;
+    if (handle.paused()) {
+      handle.play();
+    } else {
+      handle.pause();
     }
-  }, [paused]);
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -262,29 +256,6 @@ export function App() {
     };
   }, [refresh]);
 
-  // Playhead sync — backend polls libmpv's playback-time at ~30 fps and emits
-  // on change. Drop incoming values briefly after a user seek so the UI
-  // playhead follows the user's pointer, not libmpv's lagged read.
-  useEffect(() => {
-    let unlisten: (() => void) | null = null;
-    let cancelled = false;
-    (async () => {
-      const u = await listen<{ t_us: number }>("mpv:time", (e) => {
-        if (performance.now() - lastUserSeekAtRef.current < 250) return;
-        setCurrentTimeUs(e.payload.t_us);
-      });
-      if (cancelled) {
-        u();
-        return;
-      }
-      unlisten = u;
-    })();
-    return () => {
-      cancelled = true;
-      if (unlisten) unlisten();
-    };
-  }, []);
-
   // Export event subscriptions — kept up for the lifetime of the app so the
   // panel can show progress for any in-flight render.
   useEffect(() => {
@@ -324,41 +295,6 @@ export function App() {
       for (const u of unlisteners) u();
     };
   }, [refresh]);
-
-  // Embed-mode surface sync. The Rust side has a child HWND (Windows) that
-  // hosts the libmpv VO; we stream the placeholder div's rect to it so the
-  // native surface tracks layout. ResizeObserver catches element-size shifts;
-  // window 'resize' catches everything else (window resize, DPR change after
-  // monitor move). Physical pixels = CSS px × devicePixelRatio. Sent
-  // unconditionally — non-Windows builds no-op in Rust. Mounting fires once
-  // immediately so the surface has a real rect before the first preview.
-  const videoSurfaceRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const el = videoSurfaceRef.current;
-    if (!el) return;
-    let cancelled = false;
-    const sync = () => {
-      if (cancelled) return;
-      const r = el.getBoundingClientRect();
-      const dpr = window.devicePixelRatio || 1;
-      const x = Math.round(r.left * dpr);
-      const y = Math.round(r.top * dpr);
-      const w = Math.round(r.width * dpr);
-      const h = Math.round(r.height * dpr);
-      mpvSetSurfaceRect(x, y, w, h).catch((err) => {
-        console.warn("set surface rect failed:", err);
-      });
-    };
-    sync();
-    const ro = new ResizeObserver(sync);
-    ro.observe(el);
-    window.addEventListener("resize", sync);
-    return () => {
-      cancelled = true;
-      ro.disconnect();
-      window.removeEventListener("resize", sync);
-    };
-  }, []);
 
   const run = useCallback(
     async (action: () => Promise<unknown>) => {
@@ -472,37 +408,12 @@ export function App() {
     }
   }, [preset, t]);
 
-  // Compile the project graph and load it into libmpv. Called once
-  // automatically when the project first becomes non-empty (see the
-  // effect below), and reused by the in-surface retry button if init
-  // rejects. After a successful call, every subsequent commit
-  // hot-reloads the graph on the Rust side — no further init needed.
-  // libmpv loads paused (set in `ensure_init`), so the user controls
-  // playback start via the transport button.
-  const initPreview = useCallback(async () => {
-    setPreviewInit("initializing");
-    setPreviewError(null);
-    try {
-      await mpvPreviewProject();
-      setPreviewInit("ready");
-    } catch (err) {
-      setPreviewInit("error");
-      setPreviewError(String(err));
-    }
-  }, []);
-
-  // Auto-init preview the first time the project has content. App boots with
-  // a blank `Project::new_blank("untitled")` (zero layers), so the natural
-  // edge is `layer_count: 0 → ≥1` — fires on first import / first
-  // demo-layer-add, or once when a non-empty `.vproj` is opened. The state
-  // machine guards re-entry so a 10-file multi-select doesn't fire init ten
-  // times; subsequent commits hot-reload the graph on the Rust side without
-  // a second call.
-  useEffect(() => {
-    if (previewInit !== "idle") return;
-    if (!summary || summary.layer_count === 0) return;
-    void initPreview();
-  }, [summary, previewInit, initPreview]);
+  // Phase D: no React-side preview init step is needed. The Rust
+  // `preview::PreviewRenderer` task subscribes to actor commits and
+  // produces `<workspace>/Cache/preview/<hash>.mp4` on its own; the
+  // PreviewSurface component listens for the resulting events and swaps
+  // its `<video src>`. The transport buttons here just drive that
+  // element's play/pause/seek state.
 
   const cycleLocale = useCallback(() => {
     const current = i18n.language as Locale;
@@ -701,16 +612,12 @@ export function App() {
 
       <main className="app-main">
         <section className="preview">
-          <div
-            id="video-surface"
-            className="video-surface"
-            ref={videoSurfaceRef}
-          >
-            <PreviewSurfaceContent
-              previewInit={previewInit}
-              previewError={previewError}
+          <div id="video-surface" className="video-surface">
+            <PreviewSurface
+              ref={previewRef}
               hasContent={(summary?.layer_count ?? 0) > 0}
-              onRetry={initPreview}
+              onTimeUpdate={setCurrentTimeUs}
+              onPausedChange={setPaused}
             />
           </div>
           <div className="preview-transport" role="toolbar" aria-label="Preview transport">
@@ -764,15 +671,9 @@ export function App() {
                 onClick={togglePlay}
                 title={t("transport.play_pause_hint")}
                 aria-label={t("transport.play_pause_hint")}
-                disabled={previewInit !== "ready"}
+                disabled={(summary?.layer_count ?? 0) === 0}
               >
-                {previewInit === "initializing" ? (
-                  <span className="preview-spinner-inline" aria-hidden="true" />
-                ) : paused ? (
-                  t("transport.play")
-                ) : (
-                  t("transport.pause")
-                )}
+                {paused ? t("transport.play") : t("transport.pause")}
               </button>
               <button
                 onClick={() => seekTo(summary?.duration_us ?? 0)}
@@ -864,57 +765,6 @@ export function App() {
   );
 }
 
-// Tri-state content rendered inside `#video-surface`. On Windows the libmpv
-// host HWND sits above the WebView2 surface, so the `ready` branch returns
-// `null` — libmpv covers whatever React would have drawn. On non-Windows /
-// disabled-mpv builds the React content stays visible. Order matters: the
-// error branch is checked before the empty branch because a failed init on
-// a project with content should surface the failure, not the empty hint.
-function PreviewSurfaceContent({
-  previewInit,
-  previewError,
-  hasContent,
-  onRetry,
-}: {
-  previewInit: PreviewInitState;
-  previewError: string | null;
-  hasContent: boolean;
-  onRetry: () => void | Promise<void>;
-}) {
-  const { t } = useTranslation();
-  if (previewInit === "error") {
-    return (
-      <div className="preview-error" role="alert">
-        <span className="preview-error-title">
-          {t("preview.init_failed")}
-        </span>
-        {previewError && (
-          <span className="preview-error-detail">{previewError}</span>
-        )}
-        <button className="preview-retry" onClick={() => void onRetry()}>
-          {t("preview.retry")}
-        </button>
-      </div>
-    );
-  }
-  if (previewInit === "initializing") {
-    return (
-      <div className="preview-loading" aria-live="polite">
-        <span className="preview-spinner" aria-hidden="true" />
-        <span className="placeholder">{t("preview.preparing")}</span>
-      </div>
-    );
-  }
-  if (previewInit === "ready") {
-    return null;
-  }
-  // idle: nothing has triggered init yet (project still empty).
-  return (
-    <span className="placeholder">
-      {hasContent ? t("preview.preparing") : t("preview.empty_hint")}
-    </span>
-  );
-}
 
 function QueuePanel({
   items,
@@ -988,13 +838,6 @@ type ExportState =
   | { kind: "progress"; progress: ExportProgress }
   | { kind: "complete"; payload: ExportComplete }
   | { kind: "error"; detail: string };
-
-// Preview is "ignited" once per session via `mpvPreviewProject()`. After that
-// the Rust hot-reload subscriber re-applies the compiled graph on every
-// project commit, so we never call init twice. `error` is the recoverable
-// terminal: the in-surface Retry button calls `initPreview()` again, which
-// resets back through `initializing`.
-type PreviewInitState = "idle" | "initializing" | "ready" | "error";
 
 function ExportPanel({
   state,

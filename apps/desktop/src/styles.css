@@ -382,12 +382,38 @@ html, body, #root { height: 100%; margin: 0; }
 
 .video-surface {
   flex: 1;
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
   outline: 1px dashed #374151;
   outline-offset: -8px;
   min-height: 0;
+  overflow: hidden;
+}
+
+.preview-video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+.preview-rebuilding {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(96, 165, 250, 0.32);
+  color: #bfdbfe;
+  font-size: 11px;
+  pointer-events: none;
+  backdrop-filter: blur(4px);
 }
 
 .preview-loading {

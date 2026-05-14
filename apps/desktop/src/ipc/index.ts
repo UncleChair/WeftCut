@@ -368,6 +368,32 @@ export interface MediaJobEvent {
   kind: string;
 }
 
+// ============================================================
+// Project preview renderer (Phase D — workspace-redesign.md Q10)
+// ============================================================
+
+/// Events the Phase-D preview renderer emits as it works.
+/// `complete` carries the freshly-rendered MP4 absolute path; React turns
+/// it into a `<video src>` via `convertFileSrc`.
+export const PREVIEW_EVENTS = {
+  started: "preview:render_started",
+  complete: "preview:render_complete",
+  error: "preview:render_error",
+} as const;
+
+export interface PreviewReady {
+  stateHash: string;
+  path: string;
+  durationUs: number;
+}
+
+/// Returns the absolute path of the current preview MP4 on disk, or null
+/// if no render has landed yet. Used on mount so the first PreviewSurface
+/// paint doesn't have to wait for the next commit-debounce cycle.
+export async function previewCurrentPath(): Promise<string | null> {
+  return invoke<string | null>("preview_current_path");
+}
+
 export async function importQueueList(): Promise<ImportEntry[]> {
   return invoke<ImportEntry[]>("import_queue_list");
 }

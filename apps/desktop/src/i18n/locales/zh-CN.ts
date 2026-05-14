@@ -134,6 +134,7 @@ const zhCN: Resources = {
   preview: {
     empty_hint: "添加图层后预览将自动启动",
     preparing: "正在准备预览…",
+    rebuilding: "正在重建预览…",
     init_failed: "预览启动失败",
     retry: "重试",
   },

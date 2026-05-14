@@ -18,6 +18,7 @@ mod ir;
 mod jobs;
 mod mcp;
 mod mpv;
+mod preview;
 mod raster;
 mod recents;
 mod state;
@@ -98,6 +99,7 @@ pub fn run() {
             commands::list_templates,
             commands::add_template,
             commands::template_preview,
+            commands::preview_current_path,
         ])
         .setup(|app| {
             // Project actor — single writer for all state mutations, shared by
@@ -106,6 +108,7 @@ pub fn run() {
             let project_for_mcp = project_handle.clone();
             let project_for_ui_events = project_handle.clone();
             let project_for_autosave = project_handle.clone();
+            let project_for_preview_renderer = project_handle.clone();
             #[cfg(feature = "mpv")]
             let project_for_preview = project_handle.clone();
             app.manage(project_handle);
@@ -129,24 +132,14 @@ pub fn run() {
             #[cfg(feature = "mpv")]
             let mpv_popup_for_events = mpv_popup_slot.clone();
 
-            // Windows embed: create a child HWND of the main Tauri window to
-            // host libmpv's VO for the *project* preview. Registered on the
-            // embed slot only — the popup slot stays unregistered so raw
-            // file previews keep opening as standalone top-level windows.
-            #[cfg(all(feature = "mpv", target_os = "windows"))]
-            {
-                if let Some(main_window) = app.get_webview_window("main") {
-                    match main_window.hwnd() {
-                        Ok(parent) => match mpv::create_host_hwnd(parent.0 as isize) {
-                            Ok(host) => mpv::set_host_hwnd(&mpv_slot, host),
-                            Err(e) => tracing::error!("mpv embed: create_host_hwnd: {e}"),
-                        },
-                        Err(e) => tracing::error!("mpv embed: main_window.hwnd: {e}"),
-                    }
-                } else {
-                    tracing::error!("mpv embed: main webview window not found");
-                }
-            }
+            // Per workspace-redesign Q10 / Phase D: the project preview is
+            // a DOM `<video>` element backed by `preview::PreviewRenderer`,
+            // not an embedded libmpv HWND. No host HWND is created here.
+            // The popup slot below (`mpv_popup_slot`) survives — it backs
+            // the media-pool play-on-click preview, which is a standalone
+            // top-level window and has no z-order conflict. The embed
+            // slot stays in the type system to keep cross-platform parity
+            // until Phase D.4 cleanup deletes it outright.
 
             app.manage(mpv_slot);
             app.manage(mpv_popup_slot);
@@ -204,6 +197,18 @@ pub fn run() {
                     workspace_slot,
                 );
             app.manage(autosave);
+
+            // Phase D preview renderer (workspace-redesign Q10). Subscribes
+            // to actor commits, debounces 1s, renders the project to
+            // `<workspace>/Cache/preview/<state_hash>.mp4` via the export
+            // pipeline (proxies substituted for originals when present).
+            // The React `<PreviewSurface>` listens for `preview:render_*`
+            // events and swaps its `<video src>` accordingly.
+            let preview_renderer = preview::PreviewRenderer::spawn(
+                app.handle().clone(),
+                project_for_preview_renderer,
+            );
+            app.manage(preview_renderer);
             let cache_for_mcp = cache_layout.clone();
             #[cfg(feature = "mpv")]
             let cache_for_hotreload = cache_layout.clone();

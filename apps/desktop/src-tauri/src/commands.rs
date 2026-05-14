@@ -1007,6 +1007,18 @@ pub async fn import_media(
     Ok(id.to_string())
 }
 
+/// Return the current preview MP4 path (if a Phase-D render has landed)
+/// so the React `<PreviewSurface>` can pick the right `<video src>` on
+/// mount without waiting for the next commit-debounce-render cycle.
+#[tauri::command]
+pub async fn preview_current_path(
+    renderer: State<'_, crate::preview::PreviewRenderer>,
+) -> Result<Option<String>, String> {
+    Ok(renderer
+        .current_path()
+        .map(|p| p.to_string_lossy().to_string()))
+}
+
 #[tauri::command]
 pub async fn import_cancel(
     import_queue: State<'_, crate::jobs::import::ImportQueue>,

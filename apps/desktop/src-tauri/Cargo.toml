@@ -20,7 +20,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 # Tauri shell
-tauri = { version = "2", features = ["webview-data-url"] }
+tauri = { version = "2", features = ["webview-data-url", "protocol-asset"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-shell = "2"
