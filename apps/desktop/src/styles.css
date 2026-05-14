@@ -1875,7 +1875,11 @@ input.preview-timecode:focus {
   align-items: center;
   justify-content: center;
   min-height: 100vh;
-  padding: 32px;
+  /* Asymmetric top padding biases the (still-centered) panel downward by
+   * ~24px so the header + actions sit just below visual center. The panel
+   * itself is now fixed-height (recents pinned via min-height) so this
+   * doesn't reintroduce layout jitter. */
+  padding: 80px 32px 32px;
   background: #0b0d11;
 }
 
@@ -1977,8 +1981,26 @@ input.preview-timecode:focus {
   font-size: 12px;
 }
 
-.startup-recent h2 {
-  margin: 0 0 8px;
+/* Reserve the same vertical footprint whether recents is loading, empty, or
+ * populated. Without this, the centered panel re-centers as soon as the
+ * recents list arrives, visibly bumping the header + action buttons up or
+ * down depending on whether anything was returned. The value matches the
+ * heading row (~26px including margin-bottom) plus the fixed list height
+ * + a small breathing margin. */
+.startup-recent {
+  min-height: 170px;
+}
+
+.startup-recent-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.startup-recent-header h2 {
+  margin: 0;
   font-size: 13px;
   font-weight: 600;
   text-transform: uppercase;
@@ -1995,10 +2017,41 @@ input.preview-timecode:focus {
 .startup-recent-list {
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 0 4px 0 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
+  /* Firefox: thin slim scrollbar. Webkit equivalents below. */
+  scrollbar-width: thin;
+  scrollbar-color: #374151 transparent;
+  /* Fixed height (not max-height) so the list region reserves the same
+   * footprint whether the user has collapsed it to 3 items or expanded it
+   * to MAX_RECENTS (10). Without this, the panel total height shifts when
+   * the toggle is clicked, and since the screen container centers the
+   * panel vertically, the header + action buttons visibly bump upward.
+   * Collapsed: 3 items (~140px) fill the region exactly. Expanded: list
+   * scrolls internally. Sized to keep the whole panel under typical
+   * laptop viewport heights so the page never grows a scrollbar. */
+  height: 140px;
+  overflow-y: auto;
+}
+
+.startup-recent-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.startup-recent-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.startup-recent-list::-webkit-scrollbar-thumb {
+  background-color: #374151;
+  border-radius: 4px;
+  transition: background-color 180ms ease;
+}
+
+.startup-recent-list::-webkit-scrollbar-thumb:hover {
+  background-color: #4b5563;
 }
 
 .startup-recent-list li {
@@ -2018,9 +2071,9 @@ input.preview-timecode:focus {
   display: grid;
   grid-template-columns: 1fr auto;
   grid-template-rows: auto auto;
-  gap: 2px 12px;
   align-items: baseline;
-  padding: 10px 12px;
+  gap: 1px 12px;
+  padding: 6px 12px;
   background: transparent;
   border: none;
   color: inherit;
@@ -2039,18 +2092,22 @@ input.preview-timecode:focus {
   font-size: 13px;
   color: #e5e7eb;
   font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .startup-recent-meta {
-  grid-row: 1;
+  grid-row: 1 / span 2;
   grid-column: 2;
+  align-self: center;
   font-size: 11px;
   color: #6b7280;
 }
 
 .startup-recent-path {
   grid-row: 2;
-  grid-column: 1 / span 2;
+  grid-column: 1;
   font-size: 11px;
   color: #6b7280;
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
@@ -2069,11 +2126,40 @@ input.preview-timecode:focus {
   cursor: pointer;
   padding: 2px 8px;
   border-radius: 3px;
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms, background 120ms;
+}
+
+/* Hover row OR keyboard-focus inside the row reveals the ×. Using opacity
+ * (not display/visibility) so the button always occupies its grid cell —
+ * the card never reflows when the user mouses over it. */
+.startup-recent-list li:hover .startup-recent-remove,
+.startup-recent-list li:focus-within .startup-recent-remove {
+  opacity: 1;
 }
 
 .startup-recent-remove:hover {
   color: #fca5a5;
   background: rgba(248, 113, 113, 0.12);
+}
+
+.startup-recent-toggle {
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: #6b7280;
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 120ms;
+}
+
+.startup-recent-toggle:hover {
+  color: #e5e7eb;
+}
+
+.startup-recent-toggle-chevron {
+  display: inline-block;
+  margin-right: 4px;
 }
 
 /* --- New project modal --- */

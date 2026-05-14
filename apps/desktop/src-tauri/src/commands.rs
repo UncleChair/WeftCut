@@ -801,6 +801,16 @@ pub async fn project_open(
     path: String,
 ) -> Result<(), String> {
     let path = PathBuf::from(path);
+    // Pre-check so we can produce a typed sentinel for the "user picked a
+    // folder that isn't a WeftCut project" case. Without this the raw
+    // anyhow chain bubbles up an OS-localized `read <path>/project.json:
+    // <NLS-translated 'file not found' message> (os error 2)` which the
+    // user can't make sense of. The frontend matches this sentinel and
+    // renders a localized message; other errors flow through unchanged so
+    // the detail is still visible for unexpected failures.
+    if !path.join(io::PROJECT_FILE).exists() {
+        return Err("NOT_PROJECT_FOLDER".to_string());
+    }
     let project = io::load_from_dir(&path)
         .await
         .map_err(|e| format!("{e:#}"))?;

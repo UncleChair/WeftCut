@@ -10,13 +10,17 @@ const zhCN: Resources = {
   startup: {
     subtitle: "选择要打开的项目，或新建一个。",
     new_project: "新建项目",
-    open_folder: "打开文件夹…",
+    open_project: "打开项目…",
     open_dialog_title: "打开 WeftCut 项目文件夹",
     recent_heading: "最近",
     recent_loading: "加载中…",
     recent_empty: "暂无最近项目。",
     recent_remove_hint: "从列表中移除",
+    recent_show_all: "显示全部（{{count}}）",
+    recent_show_less: "收起",
     recent_open_failed: "无法打开项目：{{detail}}",
+    not_project_folder:
+      "此文件夹不是 WeftCut 项目。请选择由 WeftCut 创建的文件夹，或新建项目。",
     time_just_now: "刚刚",
     // Chinese has no plural forms; both _one and _other collapse.
     time_minutes_ago_one: "{{count}} 分钟前",

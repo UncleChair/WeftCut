@@ -34,6 +34,11 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
+  // Recents collapses to the most-recent COLLAPSED_RECENT_COUNT entries on
+  // mount. After Save-and-Close lands the user back here, the just-closed
+  // project is #1 in the list, so the collapsed view is almost always more
+  // useful than restoring a stale expansion. Deliberately not persisted.
+  const [recentsExpanded, setRecentsExpanded] = useState(false);
 
   // A first-launch user on a foreign locale needs a way to switch *before*
   // they can read any of the buttons. Mirrors the editor's header toggle.
@@ -58,14 +63,17 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
   }, [refreshRecents]);
 
   const runProtected = useCallback(
-    async (action: () => Promise<void>) => {
+    async (
+      action: () => Promise<void>,
+      formatError?: (err: unknown) => string,
+    ) => {
       if (busy) return;
       setBusy(true);
       setError(null);
       try {
         await action();
       } catch (e) {
-        setError(String(e));
+        setError(formatError ? formatError(e) : String(e));
       } finally {
         setBusy(false);
       }
@@ -80,28 +88,37 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
       multiple: false,
     });
     if (typeof picked !== "string") return;
-    await runProtected(async () => {
-      await projectOpen(picked);
-      onWorkspaceReady();
-    });
+    await runProtected(
+      async () => {
+        await projectOpen(picked);
+        onWorkspaceReady();
+      },
+      (e) => describeOpenError(e, picked, t),
+    );
   }, [t, runProtected, onWorkspaceReady]);
 
   const openRecent = useCallback(
     async (entry: RecentEntry) => {
-      await runProtected(async () => {
-        try {
-          await projectOpen(entry.path);
-          onWorkspaceReady();
-        } catch (e) {
-          // Most likely the folder was moved or deleted on disk. Offer to
-          // drop it from the list rather than leaving the user stuck.
-          const detail = String(e);
-          setError(t("startup.recent_open_failed", { detail }));
-          await recentsRemove(entry.path).catch(() => {});
-          await refreshRecents();
-          throw e;
-        }
-      });
+      await runProtected(
+        async () => {
+          try {
+            await projectOpen(entry.path);
+            onWorkspaceReady();
+          } catch (e) {
+            // Folder was moved, deleted, or wasn't a project to begin with
+            // (the backend's NOT_PROJECT_FOLDER sentinel also covers
+            // "folder doesn't exist anymore" — that path simply has no
+            // project.json). Drop the dead recent entry so the list
+            // doesn't keep offering it.
+            if (String(e).includes(NOT_PROJECT_FOLDER_SENTINEL)) {
+              await recentsRemove(entry.path).catch(() => {});
+              await refreshRecents();
+            }
+            throw e;
+          }
+        },
+        (e) => describeOpenError(e, entry.path, t),
+      );
     },
     [t, runProtected, onWorkspaceReady, refreshRecents],
   );
@@ -136,22 +153,58 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
             onClick={openWorkspaceFolder}
             disabled={busy}
           >
-            <span className="startup-action-icon" aria-hidden="true">📂</span>
-            <span className="startup-action-label">{t("startup.open_folder")}</span>
+            <svg
+              className="startup-action-icon"
+              width="22"
+              height="22"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M3.75 9.776c.112-.017.227-.026.344-.026h15.812c.117 0 .232.009.344.026m-16.5 0a2.25 2.25 0 0 0-1.883 2.542l.857 6a2.25 2.25 0 0 0 2.227 1.932h13.61a2.25 2.25 0 0 0 2.227-1.932l.857-6a2.25 2.25 0 0 0-1.883-2.542m-16.5 0V6A2.25 2.25 0 0 1 6 3.75h3.879a1.5 1.5 0 0 1 1.06.44l2.122 2.12a1.5 1.5 0 0 0 1.06.44H18A2.25 2.25 0 0 1 20.25 6v3.776" />
+            </svg>
+            <span className="startup-action-label">{t("startup.open_project")}</span>
           </button>
         </div>
 
         {error && <p className="startup-error">{error}</p>}
 
         <section className="startup-recent">
-          <h2>{t("startup.recent_heading")}</h2>
+          <div className="startup-recent-header">
+            <h2>{t("startup.recent_heading")}</h2>
+            {recents !== null && recents.length > COLLAPSED_RECENT_COUNT && (
+              <button
+                type="button"
+                className="startup-recent-toggle"
+                onClick={() => setRecentsExpanded((v) => !v)}
+                aria-expanded={recentsExpanded}
+              >
+                <span
+                  className="startup-recent-toggle-chevron"
+                  aria-hidden="true"
+                >
+                  {recentsExpanded ? "▴" : "▾"}
+                </span>
+                {recentsExpanded
+                  ? t("startup.recent_show_less")
+                  : t("startup.recent_show_all", { count: recents.length })}
+              </button>
+            )}
+          </div>
           {recents === null ? (
             <p className="startup-recent-empty">{t("startup.recent_loading")}</p>
           ) : recents.length === 0 ? (
             <p className="startup-recent-empty">{t("startup.recent_empty")}</p>
           ) : (
             <ul className="startup-recent-list">
-              {recents.map((entry) => (
+              {(recentsExpanded
+                ? recents
+                : recents.slice(0, COLLAPSED_RECENT_COUNT)
+              ).map((entry) => (
                 <li key={entry.path}>
                   <button
                     className="startup-recent-item"
@@ -195,6 +248,32 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
       )}
     </div>
   );
+}
+
+/// How many recents to show before the disclosure toggle appears. The
+/// backend caps the store at 10 (see `recents.rs::MAX_RECENTS`), so the
+/// "expanded" view reveals at most 7 additional entries.
+const COLLAPSED_RECENT_COUNT = 3;
+
+/// Sentinel error string returned by `project_open` when the picked folder
+/// has no `project.json`. Mirrors the literal in commands.rs.
+const NOT_PROJECT_FOLDER_SENTINEL = "NOT_PROJECT_FOLDER";
+
+/// Localize a `projectOpen` rejection so the user sees something readable
+/// instead of the raw anyhow chain (which on Windows-CN renders the OS
+/// error in Chinese system locale, e.g. "系统找不到指定的文件。"). The
+/// path is what the user picked / clicked, so we re-attach it here rather
+/// than parsing it back out of the error string.
+function describeOpenError(
+  err: unknown,
+  path: string,
+  t: TFunction,
+): string {
+  const detail = String(err);
+  if (detail.includes(NOT_PROJECT_FOLDER_SENTINEL)) {
+    return t("startup.not_project_folder", { path });
+  }
+  return t("startup.recent_open_failed", { detail });
 }
 
 const CANVAS_PRESETS: { key: string; preset: CanvasPreset }[] = [

@@ -8,13 +8,17 @@ const enUS = {
   startup: {
     subtitle: "Pick a project to open, or create a new one.",
     new_project: "New project",
-    open_folder: "Open folder…",
+    open_project: "Open project…",
     open_dialog_title: "Open WeftCut project folder",
     recent_heading: "Recent",
     recent_loading: "Loading…",
     recent_empty: "No recent projects yet.",
     recent_remove_hint: "Remove from list",
+    recent_show_all: "Show all ({{count}})",
+    recent_show_less: "Show less",
     recent_open_failed: "Couldn't open project: {{detail}}",
+    not_project_folder:
+      "That folder isn't a WeftCut project. Pick a folder created by WeftCut, or start a new project.",
     time_just_now: "just now",
     time_minutes_ago_one: "{{count}} minute ago",
     time_minutes_ago_other: "{{count}} minutes ago",
