@@ -35,6 +35,13 @@ struct RecentsFile {
     reopen_on_launch: bool,
     #[serde(default)]
     entries: Vec<RecentEntry>,
+    /// Parent folder of the last project the user created via the
+    /// "+ New project" form. The startup screen pre-fills this so the
+    /// next new project lands next to the previous one without
+    /// re-navigating from `C:\Users\<name>\`. Falls back to the OS
+    /// Documents directory in the UI when this is `None` (first launch).
+    #[serde(default)]
+    last_new_project_parent: Option<PathBuf>,
 }
 
 /// Tauri-managed recents store. Holds the path to `recents.json` and
@@ -140,6 +147,32 @@ impl RecentsStore {
         file.reopen_on_launch = value;
         self.write(&file)
     }
+
+    /// Last parent folder used in the "+ New project" form. The startup
+    /// screen pre-fills "Save in" with this so the user doesn't have to
+    /// re-navigate from the OS root every time. `None` on first launch —
+    /// the UI falls back to the OS Documents directory.
+    pub fn last_new_project_parent(&self) -> Result<Option<PathBuf>> {
+        Ok(self.read()?.last_new_project_parent)
+    }
+
+    /// Record the parent folder of the just-created workspace. Called by
+    /// `project_new_workspace` on success. Best-effort: any error is
+    /// logged but doesn't propagate to the caller — losing the default
+    /// folder is mild UX regression, not a correctness anchor.
+    pub fn set_last_new_project_parent(&self, parent: PathBuf) {
+        let mut file = match self.read() {
+            Ok(f) => f,
+            Err(e) => {
+                warn!("recents read failed, starting fresh: {e:#}");
+                RecentsFile::default()
+            }
+        };
+        file.last_new_project_parent = Some(parent);
+        if let Err(e) = self.write(&file) {
+            warn!("recents write failed: {e:#}");
+        }
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -211,5 +244,23 @@ mod tests {
         assert!(store.reopen_on_launch().unwrap());
         store.set_reopen_on_launch(false).unwrap();
         assert!(!store.reopen_on_launch().unwrap());
+    }
+
+    #[test]
+    fn last_new_project_parent_round_trips() {
+        let tmp = TempDir::new().unwrap();
+        let store = fresh(&tmp);
+        assert!(store.last_new_project_parent().unwrap().is_none());
+        store.set_last_new_project_parent(PathBuf::from("/projects/area"));
+        assert_eq!(
+            store.last_new_project_parent().unwrap(),
+            Some(PathBuf::from("/projects/area")),
+        );
+        // Overwrite — UI re-records on every new project.
+        store.set_last_new_project_parent(PathBuf::from("/other/area"));
+        assert_eq!(
+            store.last_new_project_parent().unwrap(),
+            Some(PathBuf::from("/other/area")),
+        );
     }
 }

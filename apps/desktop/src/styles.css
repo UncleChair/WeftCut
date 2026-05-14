@@ -1870,12 +1870,32 @@ input.preview-timecode:focus {
  * -------------------------------------------------------------------------- */
 
 .startup-screen {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
   min-height: 100vh;
   padding: 32px;
   background: #0b0d11;
+}
+
+.startup-locale-toggle {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  padding: 4px 10px;
+  background: transparent;
+  border: 1px solid #1f2937;
+  color: #9ca3af;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 120ms, color 120ms;
+}
+
+.startup-locale-toggle:hover {
+  border-color: #374151;
+  color: #e5e7eb;
 }
 
 .startup-panel {
@@ -2155,6 +2175,34 @@ input.preview-timecode:focus {
   border: 1px solid rgba(248, 113, 113, 0.35);
   color: #fecaca;
   font-size: 12px;
+}
+
+/* Inline validation message under the project-name input. Lives inside
+ * the .new-project-row label so it sits flush with the field. */
+.new-project-validation {
+  display: block;
+  margin-top: 2px;
+  color: #fca5a5;
+  font-size: 11px;
+}
+
+/* Computed full path preview between the two input rows. Single line,
+ * left-truncated with ellipsis when too wide — the end of the path is
+ * what matters (it carries the project name). */
+.new-project-preview {
+  margin: -6px 0 4px;
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 3px;
+  color: #9ca3af;
+  font-size: 11px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  direction: rtl;
+  text-align: left;
+  unicode-bidi: plaintext;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .new-project-actions {

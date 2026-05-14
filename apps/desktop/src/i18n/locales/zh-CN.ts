@@ -28,11 +28,18 @@ const zhCN: Resources = {
   },
   new_project: {
     title: "新建项目",
-    name: "名称",
-    location: "位置",
-    location_placeholder: "选择父文件夹…",
+    name: "项目名称",
+    name_placeholder: "例如：我的纪录片",
+    parent_folder: "保存到",
+    parent_folder_placeholder: "选择父文件夹…",
     choose_folder: "选择…",
     pick_parent_title: "为新项目选择父文件夹",
+    validation_empty: "请输入项目名称。",
+    validation_whitespace: "项目名称首尾不能有空格。",
+    validation_invalid_chars:
+      "项目名称不能包含以下字符之一：\\ / : * ? \" < > |",
+    validation_trailing_dot: "项目名称不能以句点结尾。",
+    validation_reserved: "项目名称是系统保留名 — 请换一个。",
     canvas_preset: "画布",
     preset: {
       hd1080p30: "1080p · 30 帧/秒",

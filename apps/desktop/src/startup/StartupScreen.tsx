@@ -1,11 +1,18 @@
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { documentDir } from "@tauri-apps/api/path";
 import type { TFunction } from "i18next";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
+  LOCALE_LABELS,
+  SUPPORTED_LOCALES,
+  type Locale,
+} from "../i18n";
+import {
   projectNewWorkspace,
   projectOpen,
+  recentsLastNewProjectParent,
   recentsList,
   recentsRemove,
   type CanvasPreset,
@@ -22,11 +29,21 @@ interface Props {
 /// starts here; the user must pick Create / Open / Recent to advance into
 /// the editor. There is no "blank-on-boot" editor surface anymore.
 export function StartupScreen({ onWorkspaceReady }: Props) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [recents, setRecents] = useState<RecentEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
+
+  // A first-launch user on a foreign locale needs a way to switch *before*
+  // they can read any of the buttons. Mirrors the editor's header toggle.
+  const cycleLocale = useCallback(() => {
+    const current = i18n.language as Locale;
+    const idx = SUPPORTED_LOCALES.indexOf(current);
+    const next =
+      SUPPORTED_LOCALES[(idx + 1) % SUPPORTED_LOCALES.length] ?? "en-US";
+    i18n.changeLanguage(next);
+  }, [i18n]);
 
   const refreshRecents = useCallback(async () => {
     try {
@@ -91,6 +108,14 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
 
   return (
     <div className="startup-screen">
+      <button
+        className="startup-locale-toggle"
+        onClick={cycleLocale}
+        title={t("language.switch_label")}
+        aria-label={t("language.switch_label")}
+      >
+        {LOCALE_LABELS[(i18n.resolvedLanguage ?? "en-US") as Locale] ?? "EN"}
+      </button>
       <div className="startup-panel">
         <header className="startup-header">
           <h1>{t("app.title")}</h1>
@@ -181,6 +206,45 @@ const CANVAS_PRESETS: { key: string; preset: CanvasPreset }[] = [
   { key: "ntsc1080p", preset: { width: 1920, height: 1080, fpsNum: 30000, fpsDen: 1001 } },
 ];
 
+/// Reserved file/folder names that are illegal on Windows regardless of
+/// extension. We block the full set so projects stay portable. NUL and
+/// CON show up in real systems; the LPT/COM band is rarer but cheap to
+/// guard against.
+const RESERVED_NAMES = new Set<string>([
+  "CON", "PRN", "AUX", "NUL",
+  "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+  "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+]);
+
+const INVALID_CHARS = /[\\/:*?"<>|]/;
+
+/// Validate a project name for filesystem compatibility. Returns either
+/// an i18n key for the failure mode, or `null` when valid. Checks the
+/// union of Windows + POSIX rules so projects round-trip across OSes
+/// without surprises.
+function validateProjectName(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return "new_project.validation_empty";
+  if (trimmed !== raw) return "new_project.validation_whitespace";
+  if (INVALID_CHARS.test(trimmed)) return "new_project.validation_invalid_chars";
+  if (trimmed.endsWith(".")) return "new_project.validation_trailing_dot";
+  // Windows reserved-names check is case-insensitive and ignores any
+  // extension suffix — `con.txt` is also reserved. We compare on the
+  // pre-dot prefix uppercased.
+  const stem = trimmed.split(".")[0]!.toUpperCase();
+  if (RESERVED_NAMES.has(stem)) return "new_project.validation_reserved";
+  return null;
+}
+
+/// Join a parent folder + project name into a full path. Picks the
+/// separator from whatever the parent uses (`\` if it contains one,
+/// else `/`); defaults to `\` since Tauri's primary target is Windows.
+function joinPath(parent: string, name: string): string {
+  const sep = parent.includes("\\") ? "\\" : parent.includes("/") ? "/" : "\\";
+  const trimmed = parent.replace(/[\\/]+$/, "");
+  return `${trimmed}${sep}${name}`;
+}
+
 function NewProjectForm({
   onCancel,
   onCreated,
@@ -189,43 +253,74 @@ function NewProjectForm({
   onCreated: () => void;
 }) {
   const { t } = useTranslation();
-  const [name, setName] = useState("untitled");
-  const [parentFolder, setParentFolder] = useState<string | null>(null);
+  const [name, setName] = useState("");
+  const [parentFolder, setParentFolder] = useState<string>("");
   const [presetKey, setPresetKey] = useState<string>(CANVAS_PRESETS[0]!.key);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const preset = CANVAS_PRESETS.find((p) => p.key === presetKey)!.preset;
 
-  const pickFolder = useCallback(async () => {
+  // First-launch: ask the backend for the last-used parent. If the
+  // user never created a project before, fall back to the OS Documents
+  // directory so they don't start at `C:\Users\<name>\`.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const last = await recentsLastNewProjectParent();
+        if (cancelled) return;
+        if (last) {
+          setParentFolder(last);
+          return;
+        }
+        const docs = await documentDir();
+        if (cancelled) return;
+        if (docs) setParentFolder(docs);
+      } catch {
+        // Leave parentFolder empty; the picker still works.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const pickParent = useCallback(async () => {
     const picked = await openDialog({
       title: t("new_project.pick_parent_title"),
       directory: true,
       multiple: false,
+      ...(parentFolder ? { defaultPath: parentFolder } : {}),
     });
     if (typeof picked === "string") {
       setParentFolder(picked);
+      setSubmitError(null);
     }
-  }, [t]);
+  }, [t, parentFolder]);
+
+  const nameValidationKey = validateProjectName(name);
+  const canCreate = !busy && !nameValidationKey && parentFolder.length > 0;
+  const previewPath = name.trim() && parentFolder
+    ? joinPath(parentFolder, name.trim())
+    : null;
 
   const submit = useCallback(async () => {
-    if (busy) return;
-    const trimmed = name.trim();
-    if (!trimmed || !parentFolder) return;
+    if (!canCreate) return;
     setBusy(true);
-    setError(null);
+    setSubmitError(null);
     try {
       await projectNewWorkspace({
         parentFolder,
-        name: trimmed,
+        name: name.trim(),
         canvas: preset,
       });
       onCreated();
     } catch (e) {
-      setError(String(e));
+      setSubmitError(String(e));
       setBusy(false);
     }
-  }, [busy, name, parentFolder, preset, onCreated]);
+  }, [canCreate, parentFolder, name, preset, onCreated]);
 
   return (
     <div
@@ -246,24 +341,46 @@ function NewProjectForm({
           <input
             type="text"
             value={name}
+            placeholder={t("new_project.name_placeholder")}
             onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && canCreate) {
+                e.preventDefault();
+                void submit();
+              }
+            }}
             spellCheck={false}
             disabled={busy}
             autoFocus
           />
+          {nameValidationKey && name.length > 0 && (
+            <span className="new-project-validation">
+              {t(nameValidationKey)}
+            </span>
+          )}
         </label>
 
         <div className="new-project-row">
-          <span>{t("new_project.location")}</span>
+          <span>{t("new_project.parent_folder")}</span>
           <div className="new-project-folder">
-            <span className="new-project-folder-path" title={parentFolder ?? ""}>
-              {parentFolder ?? t("new_project.location_placeholder")}
+            <span
+              className="new-project-folder-path"
+              title={parentFolder}
+            >
+              {parentFolder || t("new_project.parent_folder_placeholder")}
             </span>
-            <button onClick={pickFolder} disabled={busy}>
+            <button onClick={pickParent} disabled={busy}>
               {t("new_project.choose_folder")}
             </button>
           </div>
         </div>
+
+        {previewPath && (
+          <p className="new-project-preview" title={previewPath}>
+            <span aria-hidden="true">→ </span>
+            {previewPath}
+          </p>
+        )}
 
         <label className="new-project-row">
           <span>{t("new_project.canvas_preset")}</span>
@@ -282,7 +399,9 @@ function NewProjectForm({
           </select>
         </label>
 
-        {error && <p className="new-project-error">{error}</p>}
+        {submitError && (
+          <p className="new-project-error">{submitError}</p>
+        )}
 
         <footer className="new-project-actions">
           <button onClick={onCancel} disabled={busy}>
@@ -291,7 +410,7 @@ function NewProjectForm({
           <button
             className="primary"
             onClick={submit}
-            disabled={busy || !parentFolder || !name.trim()}
+            disabled={!canCreate}
           >
             {busy ? t("new_project.creating") : t("new_project.create")}
           </button>

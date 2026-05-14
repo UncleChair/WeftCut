@@ -320,6 +320,13 @@ export async function recentsMostRecent(): Promise<RecentEntry | null> {
   return invoke<RecentEntry | null>("recents_most_recent");
 }
 
+/// Parent folder of the last project the user created via "+ New project".
+/// `null` on first launch — the UI falls back to the OS Documents
+/// directory via `@tauri-apps/api/path::documentDir`.
+export async function recentsLastNewProjectParent(): Promise<string | null> {
+  return invoke<string | null>("recents_last_new_project_parent");
+}
+
 export async function recentsGetReopenOnLaunch(): Promise<boolean> {
   return invoke<boolean>("recents_get_reopen_on_launch");
 }

@@ -71,6 +71,7 @@ pub fn run() {
             commands::recents_get_reopen_on_launch,
             commands::recents_set_reopen_on_launch,
             commands::recents_most_recent,
+            commands::recents_last_new_project_parent,
             commands::import_media,
             commands::import_cancel,
             commands::import_queue_list,

@@ -837,7 +837,8 @@ pub async fn project_new_workspace(
     if width == 0 || height == 0 || fps_num == 0 || fps_den == 0 {
         return Err("invalid canvas preset".into());
     }
-    let target = PathBuf::from(parent_folder).join(trimmed);
+    let parent_path = PathBuf::from(&parent_folder);
+    let target = parent_path.join(trimmed);
     if target.exists() {
         // Either it's an old workspace we'd clobber, or just a folder the
         // user already picked. Refuse — startup screen flows route the
@@ -867,6 +868,10 @@ pub async fn project_new_workspace(
         .await
         .map_err(|e: CommandError| e.to_string())?;
     recents.push(target.clone(), display_name);
+    // Remember the parent folder so the next "+ New project" form opens
+    // pre-filled at the same location. Best-effort; failures are logged
+    // inside the setter but don't surface here.
+    recents.set_last_new_project_parent(parent_path);
     Ok(target.to_string_lossy().to_string())
 }
 
@@ -912,6 +917,18 @@ pub async fn recents_most_recent(
     recents: State<'_, crate::recents::RecentsStore>,
 ) -> Result<Option<crate::recents::RecentEntry>, String> {
     recents.most_recent().map_err(|e| format!("{e:#}"))
+}
+
+/// Parent folder of the last project the user created via "+ New project".
+/// `null` on first launch — the UI falls back to OS Documents.
+#[tauri::command]
+pub async fn recents_last_new_project_parent(
+    recents: State<'_, crate::recents::RecentsStore>,
+) -> Result<Option<String>, String> {
+    recents
+        .last_new_project_parent()
+        .map(|opt| opt.map(|p| p.to_string_lossy().to_string()))
+        .map_err(|e| format!("{e:#}"))
 }
 
 #[derive(Serialize, Clone)]

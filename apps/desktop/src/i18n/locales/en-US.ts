@@ -25,11 +25,18 @@ const enUS = {
   },
   new_project: {
     title: "New project",
-    name: "Name",
-    location: "Folder",
-    location_placeholder: "Pick a parent folder…",
+    name: "Project name",
+    name_placeholder: "e.g. My documentary",
+    parent_folder: "Save in",
+    parent_folder_placeholder: "Pick a parent folder…",
     choose_folder: "Choose…",
     pick_parent_title: "Pick a parent folder for the new project",
+    validation_empty: "Project name is required.",
+    validation_whitespace: "Project name can't start or end with whitespace.",
+    validation_invalid_chars:
+      "Project name can't contain any of: \\ / : * ? \" < > |",
+    validation_trailing_dot: "Project name can't end with a period.",
+    validation_reserved: "Project name is reserved by the OS — pick another.",
     canvas_preset: "Canvas",
     preset: {
       hd1080p30: "1080p · 30 fps",
