@@ -177,6 +177,132 @@ impl WeftCutServer {
     }
 
     // ============================================================
+    // Agent-mode session lifecycle
+    // ============================================================
+    //
+    // `begin_agent_session(reason)` flips the human's UI into agent mode
+    // — a simplified preview / scrub / record-only layout that lets the
+    // user watch what the agent is doing without competing for the
+    // timeline. The session carries a free-text `reason` so the human
+    // sees WHY the agent took over (rendered as the panel header).
+    //
+    // Lifecycle (matches the design grilled out in `docs/agent-mode.md`):
+    //   - Re-calling while a session is already active REPLACES it
+    //     (last writer wins, fresh `reason` shown). Useful when the
+    //     agent has finished one batch and is starting another.
+    //   - End-of-session is one-way from the human's side (the
+    //     `agent_session_end` Tauri command, fired by the Exit button).
+    //     The agent does NOT have an `end_agent_session` tool — the
+    //     human always exits.
+    //   - Disconnect detection is best-effort: rmcp 0.1.x doesn't
+    //     surface transport lifecycle, so a dropped SSE connection
+    //     currently does NOT auto-end the session. The human can
+    //     always exit via the UI button. Revisit when rmcp upgrade
+    //     opens up middleware (see file-level note above).
+    //
+    // Auto-checkpoint: on every successful begin, we mint a
+    // `History::checkpoint("Pre-agent: {reason}", Actor::Agent)` so the
+    // human has a one-click "undo the whole agent session" lifeline.
+    // The checkpoint id is returned to the agent in the tool response,
+    // which the agent MAY use to `restore_checkpoint` if it wants to
+    // backtrack its own work (Phase 3 of agent-mode plan).
+
+    #[tool(description = "Enter agent mode: flip the human's UI to a simplified preview / scrub / \
+                          record-only layout while the agent makes changes. `reason` is a short \
+                          free-text label shown in the record panel header (e.g. 'cutting filler \
+                          words'). Creates an automatic checkpoint named 'Pre-agent: {reason}' so \
+                          the human can revert the entire session in one click. Calling this while \
+                          already in agent mode replaces the session. The human exits via the UI; \
+                          there is no end_agent_session tool.")]
+    async fn begin_agent_session(
+        &self,
+        #[tool(aggr)] args: BeginAgentSessionArgs,
+    ) -> Result<CallToolResult, McpError> {
+        let reason = args.reason.trim();
+        if reason.is_empty() {
+            return Err(McpError::invalid_params(
+                "reason must be non-empty",
+                None,
+            ));
+        }
+        let op_id = uuid::Uuid::now_v7();
+        crate::logs::emit_via_app(
+            &self.app,
+            crate::logs::LogEntryInput {
+                level: crate::logs::LogLevel::Info,
+                category: crate::logs::LogCategory::Mcp,
+                source: crate::logs::LogSource::Agent { client: "mcp".into() },
+                message: format!("MCP: begin_agent_session started ({reason})"),
+                op_id: Some(op_id),
+                op_state: Some(crate::logs::OpState::Started),
+                ..Default::default()
+            },
+        );
+
+        // Auto-checkpoint BEFORE flipping the slot so the record-panel
+        // entry for the checkpoint lands inside the new session window
+        // (record-panel filters by `ts >= session.started_at`). The
+        // history actor records the checkpoint regardless of mode.
+        let label = format!("Pre-agent: {reason}");
+        let checkpoint_id = self
+            .project
+            .checkpoint(agent_actor(), label)
+            .await;
+
+        let started_at = Utc::now();
+        let session = crate::agent_session::AgentSession {
+            client: "mcp".into(),
+            reason: reason.to_string(),
+            started_at,
+        };
+        let slot = self
+            .app
+            .try_state::<crate::agent_session::AgentSessionSlot>()
+            .ok_or_else(|| McpError::internal_error(
+                "agent_session slot missing from Tauri state",
+                None,
+            ))?;
+        let prior = crate::agent_session::begin_and_emit(
+            &self.app,
+            slot.inner(),
+            session,
+        );
+        if let Some(prev) = prior {
+            crate::logs::emit_via_app(
+                &self.app,
+                crate::logs::LogEntryInput {
+                    level: crate::logs::LogLevel::Info,
+                    category: crate::logs::LogCategory::System,
+                    source: crate::logs::LogSource::System,
+                    message: format!(
+                        "Prior agent session displaced (client={} reason={})",
+                        prev.client, prev.reason,
+                    ),
+                    ..Default::default()
+                },
+            );
+        }
+
+        crate::logs::emit_via_app(
+            &self.app,
+            crate::logs::LogEntryInput {
+                level: crate::logs::LogLevel::Info,
+                category: crate::logs::LogCategory::Mcp,
+                source: crate::logs::LogSource::Agent { client: "mcp".into() },
+                message: format!("MCP: begin_agent_session done (checkpoint={checkpoint_id})"),
+                op_id: Some(op_id),
+                op_state: Some(crate::logs::OpState::Ok),
+                ..Default::default()
+            },
+        );
+
+        ok_json(&serde_json::json!({
+            "checkpoint_id": checkpoint_id.to_string(),
+            "started_at": started_at.to_rfc3339(),
+        }))
+    }
+
+    // ============================================================
     // Track tools
     // ============================================================
 
@@ -1092,6 +1218,14 @@ impl WeftCutServer {
 // ============================================================
 // Tool argument structs
 // ============================================================
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct BeginAgentSessionArgs {
+    /// Short free-text label shown in the human's record-panel header
+    /// while the session is active. Examples: "cutting filler words",
+    /// "applying transcribe + auto-cut pass". Required, non-empty.
+    pub reason: String,
+}
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct AddTrackArgs {
