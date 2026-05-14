@@ -12,6 +12,9 @@ export interface HistoryView {
   len: number;
   can_undo: boolean;
   can_redo: boolean;
+  /// `Some(reason)` while the agent holds the revert lock. Editor-mode
+  /// disables Undo/Redo with this as tooltip; agent-mode shows a badge.
+  lock_reason?: string | null;
 }
 
 export interface MediaSummary {
@@ -400,6 +403,10 @@ export async function viewStateGet(): Promise<ViewState> {
 
 export async function viewStateSet(state: ViewState): Promise<void> {
   return invoke<void>("view_state_set", { state });
+}
+
+export async function projectRestoreCheckpoint(checkpointId: string): Promise<void> {
+  return invoke<void>("project_restore_checkpoint", { checkpointId });
 }
 
 // ============================================================

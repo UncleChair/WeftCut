@@ -193,6 +193,11 @@ pub struct HistoryView {
     pub len: usize,
     pub can_undo: bool,
     pub can_redo: bool,
+    /// `Some(reason)` while the agent has taken the revert lock.
+    /// Frontend surfaces this as a badge in the agent-mode record
+    /// panel header and as a disabled-tooltip on Undo / Redo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lock_reason: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -382,6 +387,7 @@ pub async fn project_summary(handle: State<'_, ProjectHandle>) -> Result<Project
             len: history.len,
             can_undo: history.can_undo,
             can_redo: history.can_redo,
+            lock_reason: history.lock_reason.clone(),
         },
         media,
         tracks,
@@ -760,6 +766,22 @@ pub async fn add_demo_text_layer(handle: State<'_, ProjectHandle>) -> Result<Str
 pub async fn project_undo(handle: State<'_, ProjectHandle>) -> Result<(), String> {
     handle
         .undo(Actor::User)
+        .await
+        .map_err(|e: CommandError| e.to_string())
+}
+
+/// User-side checkpoint restore — wired to the agent-mode record
+/// panel's Restore button. Rejects with the same HistoryLocked error
+/// the MCP path raises when the agent holds the revert lock.
+#[tauri::command]
+pub async fn project_restore_checkpoint(
+    handle: State<'_, ProjectHandle>,
+    checkpoint_id: String,
+) -> Result<(), String> {
+    let id = Uuid::parse_str(&checkpoint_id)
+        .map_err(|e| format!("checkpoint_id not a UUID: {e}"))?;
+    handle
+        .restore_checkpoint(Actor::User, id)
         .await
         .map_err(|e: CommandError| e.to_string())
 }

@@ -75,6 +75,7 @@ pub fn run() {
             commands::add_marker,
             commands::project_undo,
             commands::project_redo,
+            commands::project_restore_checkpoint,
             commands::project_save,
             commands::project_save_as,
             commands::project_open,

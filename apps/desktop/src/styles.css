@@ -972,11 +972,150 @@ input.preview-timecode:focus {
   border-color: #4b5563;
 }
 
-.agent-record-body-stub {
+.agent-record-body {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.agent-lock-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: #2a1a0a;
+  border-bottom: 1px solid #4a2c10;
+  font-size: 11px;
+  color: #fbbf24;
+}
+
+.agent-lock-icon {
+  font-size: 12px;
+}
+
+.agent-lock-reason {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-record-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+  font-size: 12px;
+}
+
+.agent-record-empty {
   padding: 16px 12px;
   color: #6b7280;
-  font-size: 12px;
+  font-style: italic;
+}
+
+.agent-record-row {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  border-left: 2px solid transparent;
+}
+
+.agent-record-row:hover {
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.row-time {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: #6b7280;
+  letter-spacing: 0.04em;
+}
+
+.row-icon {
+  font-size: 13px;
+  width: 14px;
+  text-align: center;
+}
+
+.row-icon.status-running {
+  color: #60a5fa;
+  animation: agent-spin 1.4s linear infinite;
+}
+
+.row-icon.status-done {
+  color: #34d399;
+}
+
+.row-icon.status-error {
+  color: #f87171;
+}
+
+@keyframes agent-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.row-body {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #d1d5db;
+}
+
+.row-tool {
+  font-family:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+  color: #fafafa;
+}
+
+.checkpoint-row {
+  background: rgba(96, 165, 250, 0.06);
+  border-left-color: #60a5fa;
+}
+
+.checkpoint-row .row-checkpoint-label {
+  color: #fafafa;
+  font-weight: 500;
+}
+
+.row-restore {
+  background: #1f2937;
+  color: #fafafa;
+  border: 1px solid #374151;
+  border-radius: 3px;
+  padding: 3px 8px;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.row-restore:hover:not(:disabled) {
+  background: #374151;
+  border-color: #4b5563;
+}
+
+.row-restore:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.standalone-row.level-error .row-body {
+  color: #f87171;
+}
+
+.standalone-row.level-warn .row-body {
+  color: #fbbf24;
+}
+
+.op-row.status-error {
+  border-left-color: #f87171;
+}
+
+.op-row.status-running {
+  border-left-color: #60a5fa;
 }
 
 .timeline-playhead {

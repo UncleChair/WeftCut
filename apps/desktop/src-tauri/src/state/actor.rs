@@ -522,12 +522,18 @@ pub enum DryRunOutput {
     Void,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HistoryStatus {
     pub cursor: usize,
     pub len: usize,
     pub can_undo: bool,
     pub can_redo: bool,
+    /// `Some(reason)` while the revert surface is locked. Surfaced
+    /// through to the UI so the agent-mode record panel can render
+    /// a lock badge and the editor-mode menu can disable Undo /
+    /// Redo with a tooltip.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lock_reason: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -1295,6 +1301,7 @@ impl ProjectActor {
                     len: self.history.len(),
                     can_undo: self.history.can_undo(),
                     can_redo: self.history.can_redo(),
+                    lock_reason: self.history.lock_reason().map(str::to_string),
                 });
             }
             Command::HistoryView { limit, reply } => {

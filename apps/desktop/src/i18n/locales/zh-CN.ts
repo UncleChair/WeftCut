@@ -162,6 +162,12 @@ const zhCN: Resources = {
     exit: "退出代理模式",
     exit_hint: "离开代理模式并返回编辑器。代理的后续操作仍在后台继续。",
     placeholder_body: "代理活动将在此处显示。",
+    empty_waiting: "等待代理…",
+    restore: "恢复",
+    restoring: "恢复中…",
+    restore_hint: "将项目恢复到此检查点。恢复操作本身可撤销。",
+    restore_locked_hint: "代理已锁定：{{reason}}",
+    lock_hint: "代理已锁定撤销功能。点击退出代理模式以解锁。",
   },
   errors: {
     refresh_failed: "刷新失败：{{detail}}",

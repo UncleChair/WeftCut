@@ -13,6 +13,7 @@ import {
   type PreviewSurfaceHandle,
 } from "../preview/PreviewSurface";
 import { MiniTimeline } from "./MiniTimeline";
+import { RecordPanel } from "./RecordPanel";
 
 /// Agent mode — the simplified preview / mini-timeline / record-panel
 /// layout the human sees while an MCP-initiated agent session is
@@ -80,7 +81,10 @@ export const AgentMode = forwardRef(function AgentMode(
 
       <section className="agent-record">
         <RecordPanelHeader session={session} onExit={onExit} />
-        <RecordPanelPlaceholder />
+        <RecordPanel
+          sessionStartedAt={session.started_at}
+          lockReason={summary?.history.lock_reason ?? null}
+        />
       </section>
     </div>
   );
@@ -115,11 +119,3 @@ function RecordPanelHeader({
   );
 }
 
-function RecordPanelPlaceholder() {
-  const { t } = useTranslation();
-  return (
-    <div className="agent-record-body-stub">
-      <p>{t("agent_mode.placeholder_body")}</p>
-    </div>
-  );
-}

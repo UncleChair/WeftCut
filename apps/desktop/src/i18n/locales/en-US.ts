@@ -163,6 +163,12 @@ const enUS = {
     exit: "Exit to editor",
     exit_hint: "Leave agent mode and return to the full editor. Agent operations continue in the background.",
     placeholder_body: "Agent activity will appear here.",
+    empty_waiting: "Waiting for agent…",
+    restore: "Restore",
+    restoring: "Restoring…",
+    restore_hint: "Revert the project to this checkpoint. The restore itself is undoable.",
+    restore_locked_hint: "Locked by agent: {{reason}}",
+    lock_hint: "Agent has locked the revert surface. Click Exit to editor to release the lock.",
   },
   errors: {
     refresh_failed: "refresh: {{detail}}",
