@@ -16,6 +16,7 @@ mod ffmpeg;
 mod io;
 mod ir;
 mod jobs;
+mod keybindings;
 mod mcp;
 mod mpv;
 mod preview;
@@ -73,6 +74,11 @@ pub fn run() {
             commands::recents_set_reopen_on_launch,
             commands::recents_most_recent,
             commands::recents_last_new_project_parent,
+            commands::keybindings_get,
+            commands::keybindings_set,
+            commands::keybindings_reset_all,
+            commands::keybindings_export,
+            commands::keybindings_import,
             commands::import_media,
             commands::import_cancel,
             commands::import_queue_list,
@@ -166,7 +172,14 @@ pub fn run() {
                     config_dir.display()
                 );
             }
-            app.manage(recents::RecentsStore::new(config_dir));
+            app.manage(recents::RecentsStore::new(config_dir.clone()));
+
+            // Keyboard-shortcut overrides. Per-user, app-level (not
+            // workspace-level), so the same physical location as
+            // `recents.json`. The frontend `shortcuts/` module reads
+            // this once at startup and re-fetches whenever the
+            // Settings → Keyboard panel writes.
+            app.manage(keybindings::KeybindingsStore::new(config_dir));
 
             // Auto-save subscriber. Listens to actor events, debounces
             // 500ms, writes `project.json` whenever a workspace is set.

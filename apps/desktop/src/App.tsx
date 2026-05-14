@@ -7,7 +7,10 @@ import {
   addDemoTextLayer,
   addVideoTrack,
   compileProject,
+  deleteLayer,
   EXPORT_EVENTS,
+  keybindingsGet,
+  type KeybindingsMap,
   EXPORT_PRESETS,
   exportProject,
   exportQueueClearFinished,
@@ -61,6 +64,12 @@ import {
   SUPPORTED_LOCALES,
   type Locale,
 } from "./i18n";
+import {
+  ShortcutBindingsProvider,
+  useShortcuts,
+  type HandlerMap,
+  type OverrideMap,
+} from "./shortcuts";
 
 interface AppProps {
   /// Hop the root router back to the StartupScreen — wired by `main.tsx`.
@@ -87,6 +96,13 @@ export function App({ onCloseProject }: AppProps) {
   const [activityOpen, setActivityOpen] = useState(false);
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
   const [editingTimecode, setEditingTimecode] = useState<string | null>(null);
+  // User shortcut overrides. Loaded once on mount; refreshed when the
+  // Settings → Keyboard panel writes (it calls back via the
+  // `onKeybindingsChanged` prop). The map is `Record<string, string[]>`
+  // on the wire; we widen-cast into `OverrideMap` since the frontend
+  // catalogue (`ACTION_DEFS`) is the validator. Unknown action ids in
+  // the file are silently ignored at dispatch time.
+  const [keybindings, setKeybindings] = useState<KeybindingsMap>({});
   // Phase D — workspace-redesign.md Q10: the project preview is a DOM
   // `<video>` element driven by `<PreviewSurface>`. The transport buttons
   // here delegate to its imperative handle (play / pause / seek), and
@@ -159,6 +175,7 @@ export function App({ onCloseProject }: AppProps) {
     refresh();
     exportQueueList().then(setQueue).catch(() => {});
     hwEncoderProbe().then(setHwProbe).catch(() => {});
+    keybindingsGet().then(setKeybindings).catch(() => {});
   }, [refresh]);
 
   // Queue subscription — backend pushes a fresh list on every state change.
@@ -427,6 +444,51 @@ export function App({ onCloseProject }: AppProps) {
   // its `<video src>`. The transport buttons here just drive that
   // element's play/pause/seek state.
 
+  // Delete the currently-selected layer. Previously a local keydown
+  // effect inside `Timeline.tsx`; lifted here so the shortcuts
+  // registry owns every app-level binding. No-ops when nothing is
+  // selected — the `useShortcuts` dispatcher fires the handler
+  // regardless and we cheaply ignore.
+  const deleteSelected = useCallback(async () => {
+    if (!selectedLayerId) return;
+    try {
+      await deleteLayer(selectedLayerId);
+      setSelectedLayerId(null);
+      await refresh();
+    } catch (err) {
+      console.error("delete failed:", err);
+    }
+  }, [selectedLayerId, refresh]);
+
+  // Wire all v1 shortcut bindings. The handler map is rebuilt each
+  // render — fine, because `useShortcuts` reads through a ref so the
+  // window listener never reattaches just because handler identities
+  // changed. The listener only reattaches when the resolved binding
+  // entries change (i.e. when user overrides land later).
+  const shortcutHandlers: HandlerMap = {
+    save: saveProjectNow,
+    saveAs: saveProject,
+    closeProject: saveAndClose,
+    undo: () => run(projectUndo),
+    redo: () => run(projectRedo),
+    togglePlay,
+    deleteSelected,
+    importMedia: importMediaFiles,
+    export: exportNow,
+    splitFirstLayer: () => run(splitFirstLayer),
+  };
+  // Memoised so `useShortcuts`'s `useMemo(entries)` doesn't churn each
+  // render. The backend's `Record<string, string[]>` is structurally
+  // compatible with `OverrideMap`; the cast is purely a type assertion.
+  const shortcutOverrides = useMemo<OverrideMap>(
+    () => keybindings as OverrideMap,
+    [keybindings],
+  );
+  useShortcuts({
+    handlers: shortcutHandlers,
+    overrides: shortcutOverrides,
+  });
+
   const cycleLocale = useCallback(() => {
     const current = i18n.language as Locale;
     const idx = SUPPORTED_LOCALES.indexOf(current);
@@ -446,6 +508,7 @@ export function App({ onCloseProject }: AppProps) {
         }));
 
   return (
+    <ShortcutBindingsProvider overrides={shortcutOverrides}>
     <div className="app">
       <header className="app-header">
         <h1>{t("app.title")}</h1>
@@ -506,17 +569,20 @@ export function App({ onCloseProject }: AppProps) {
       <section className="menu-bar">
         <Menu label={t("menu.file")}>
           <MenuItem
+            actionId="save"
             label={t("actions.save")}
             onSelect={saveProjectNow}
             disabled={busy}
           />
           <MenuItem
+            actionId="saveAs"
             label={t("actions.save_as")}
             onSelect={saveProject}
             disabled={busy}
           />
           <MenuSeparator />
           <MenuItem
+            actionId="closeProject"
             label={t("actions.save_and_close")}
             hint={t("actions.save_and_close_hint")}
             onSelect={saveAndClose}
@@ -526,17 +592,20 @@ export function App({ onCloseProject }: AppProps) {
 
         <Menu label={t("menu.edit")}>
           <MenuItem
+            actionId="undo"
             label={t("actions.undo")}
             onSelect={() => run(projectUndo)}
             disabled={busy || !summary?.history.can_undo}
           />
           <MenuItem
+            actionId="redo"
             label={t("actions.redo")}
             onSelect={() => run(projectRedo)}
             disabled={busy || !summary?.history.can_redo}
           />
           <MenuSeparator />
           <MenuItem
+            actionId="splitFirstLayer"
             label={t("actions.split_first")}
             onSelect={() => run(splitFirstLayer)}
             disabled={busy || !summary || summary.layer_count === 0}
@@ -545,6 +614,7 @@ export function App({ onCloseProject }: AppProps) {
 
         <Menu label={t("menu.insert")}>
           <MenuItem
+            actionId="importMedia"
             label={t("actions.import_media")}
             onSelect={importMediaFiles}
             disabled={busy}
@@ -591,6 +661,7 @@ export function App({ onCloseProject }: AppProps) {
           ))}
           <MenuSeparator />
           <MenuItem
+            actionId="export"
             label={t("actions.export")}
             onSelect={exportNow}
             disabled={
@@ -767,7 +838,11 @@ export function App({ onCloseProject }: AppProps) {
         <ConnectAgentPanel onClose={() => setConnectOpen(false)} />
       )}
       {settingsOpen && (
-        <SettingsPanel onClose={() => setSettingsOpen(false)} />
+        <SettingsPanel
+          onClose={() => setSettingsOpen(false)}
+          keybindings={keybindings}
+          onKeybindingsChanged={setKeybindings}
+        />
       )}
       {activityOpen && (
         <ActivityPanel onClose={() => setActivityOpen(false)} />
@@ -781,6 +856,7 @@ export function App({ onCloseProject }: AppProps) {
         />
       )}
     </div>
+    </ShortcutBindingsProvider>
   );
 }
 

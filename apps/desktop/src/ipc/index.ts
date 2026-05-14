@@ -340,6 +340,40 @@ export async function recentsSetReopenOnLaunch(value: boolean): Promise<void> {
 }
 
 // ============================================================
+// Keyboard-shortcut overrides
+// ============================================================
+//
+// Per-user app-level overrides for the static defaults declared in
+// `shortcuts/defs.ts`. Empty / missing entries inherit the default.
+// An empty `keys` array means "explicitly unbound" — distinct from
+// "use the default."
+
+export type KeybindingsMap = Record<string, string[]>;
+
+export async function keybindingsGet(): Promise<KeybindingsMap> {
+  return invoke<KeybindingsMap>("keybindings_get");
+}
+
+export async function keybindingsSet(
+  action: string,
+  keys: string[],
+): Promise<void> {
+  return invoke<void>("keybindings_set", { action, keys });
+}
+
+export async function keybindingsResetAll(): Promise<void> {
+  return invoke<void>("keybindings_reset_all");
+}
+
+export async function keybindingsExport(dest: string): Promise<void> {
+  return invoke<void>("keybindings_export", { dest });
+}
+
+export async function keybindingsImport(src: string): Promise<KeybindingsMap> {
+  return invoke<KeybindingsMap>("keybindings_import", { src });
+}
+
+// ============================================================
 // Background import worker (Phase C.1 — workspace-redesign.md Q6)
 // ============================================================
 

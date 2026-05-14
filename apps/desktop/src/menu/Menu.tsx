@@ -6,6 +6,11 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import {
+  resolveAccelerator,
+  useEffectiveBindings,
+  type ActionId,
+} from "../shortcuts";
 
 // Closing the open dropdown is handled at the `Menu` root; `MenuItem`
 // uses this context to fire it after `onClick` so the user doesn't have
@@ -91,6 +96,13 @@ interface MenuItemProps {
   disabled?: boolean;
   /// Renders a check glyph; useful for radio-style preset rows.
   checked?: boolean;
+  /// When set, the item picks up its accelerator hint from
+  /// `ACTION_DEFS[actionId]` and renders it right-aligned. This is a
+  /// pure display aid — the handler still comes from `onSelect`. The
+  /// global keydown dispatcher (`useShortcuts`) reaches the same
+  /// handler via the action id, so the accelerator label and bound
+  /// key cannot drift.
+  actionId?: ActionId;
 }
 
 export function MenuItem({
@@ -99,8 +111,17 @@ export function MenuItem({
   onSelect,
   disabled,
   checked,
+  actionId,
 }: MenuItemProps) {
   const close = useContext(MenuCloseContext);
+  // Show only the *first* effective binding for the action. The menu
+  // has no room for multi-binding lists; the Settings → Keyboard panel
+  // is where the user goes to see them all. Reading through the
+  // bindings context (rather than `ACTION_DEFS.defaultKeys`) means a
+  // user remap shows up here immediately — the label and the bound
+  // key cannot drift.
+  const effective = useEffectiveBindings(actionId);
+  const accelerator = effective ? resolveAccelerator(effective) : "";
   return (
     <button
       type="button"
@@ -120,6 +141,11 @@ export function MenuItem({
         {checked ? "✓" : ""}
       </span>
       <span className="menu-item-label">{label}</span>
+      {accelerator && (
+        <span className="menu-item-accelerator" aria-hidden="true">
+          {accelerator}
+        </span>
+      )}
     </button>
   );
 }

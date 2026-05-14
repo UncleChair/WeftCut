@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   addMediaLayer,
-  deleteLayer,
   moveLayer,
   updateLayer,
   type LayerSummary,
@@ -219,33 +218,6 @@ export function Timeline({
       window.removeEventListener("pointerup", handlePointerUp);
     };
   }, [drag, handlePointerMove, handlePointerUp]);
-
-  // Delete the selected layer on Delete/Backspace, but only when no input is
-  // focused — don't fight the user when they're editing a label or token.
-  useEffect(() => {
-    const onKey = async (e: KeyboardEvent) => {
-      const tgt = e.target as HTMLElement | null;
-      if (
-        tgt instanceof HTMLInputElement ||
-        tgt instanceof HTMLTextAreaElement ||
-        tgt?.isContentEditable
-      ) {
-        return;
-      }
-      if (selectedLayerId && (e.key === "Delete" || e.key === "Backspace")) {
-        e.preventDefault();
-        try {
-          await deleteLayer(selectedLayerId);
-          onSelect(null);
-          await onMutated();
-        } catch (err) {
-          console.error("delete failed:", err);
-        }
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [selectedLayerId, onSelect, onMutated]);
 
   const onMediaDrop = useCallback(
     async (

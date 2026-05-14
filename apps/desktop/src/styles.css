@@ -151,6 +151,18 @@ html, body, #root { height: 100%; margin: 0; }
   flex: 1;
 }
 
+.menu-item-accelerator {
+  margin-left: 24px;
+  color: #9ca3af;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.menu-item:disabled .menu-item-accelerator {
+  color: #4b5563;
+}
+
 .menu-separator {
   height: 1px;
   background: #1f2937;
@@ -2414,3 +2426,167 @@ input.preview-timecode:focus {
   border-top-color: #93c5fd;
   animation: preview-spin 0.9s linear infinite;
 }
+
+/* --- Settings → Keyboard Shortcuts ---------------------------------- */
+/*
+ * The keyboard panel sits between the Startup section and the API
+ * Keys section. The settings-panel root is `overflow: hidden` so the
+ * keybindings block plus the API key rows can run tall; we let the
+ * panel itself scroll vertically rather than reflowing the whole
+ * settings overlay.
+ */
+
+.settings-panel {
+  overflow-y: auto;
+}
+
+.keybindings {
+  margin: 0 16px 16px;
+  border: 1px solid #1f2937;
+  border-radius: 4px;
+  padding: 8px;
+}
+
+.keybindings-toolbar {
+  display: flex;
+  gap: 8px;
+  padding: 0 4px 8px;
+  border-bottom: 1px solid #1f2937;
+  margin-bottom: 8px;
+}
+
+.keybindings-toolbar button {
+  font-size: 11px;
+  padding: 4px 10px;
+  background: #1f2937;
+  color: #e5e7eb;
+  border: 1px solid #374151;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.keybindings-toolbar button:hover {
+  background: #2a3441;
+}
+
+.keybindings-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.keybindings-row > td {
+  padding: 4px 4px;
+  vertical-align: middle;
+}
+
+.keybindings-label {
+  color: #d1d5db;
+  white-space: nowrap;
+  padding-right: 12px !important;
+  width: 1%;
+}
+
+.keybindings-chords {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.keybindings-empty {
+  color: #6b7280;
+  font-style: italic;
+}
+
+.keybindings-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #1f2937;
+  border: 1px solid #374151;
+  border-radius: 3px;
+  padding: 2px 4px 2px 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.keybindings-chip-label {
+  font-size: 11px;
+  color: #e5e7eb;
+}
+
+.keybindings-chip-remove {
+  background: transparent;
+  border: none;
+  color: #9ca3af;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0 2px;
+  line-height: 1;
+}
+
+.keybindings-chip-remove:hover {
+  color: #f87171;
+}
+
+.keybindings-add {
+  background: transparent;
+  border: 1px dashed #374151;
+  color: #9ca3af;
+  border-radius: 3px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.keybindings-add:hover {
+  border-color: #93c5fd;
+  color: #93c5fd;
+}
+
+.keybindings-row-actions {
+  text-align: right;
+  width: 1%;
+  white-space: nowrap;
+}
+
+.keybindings-reset {
+  background: transparent;
+  border: none;
+  color: #93c5fd;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.keybindings-reset:hover {
+  text-decoration: underline;
+}
+
+.kbd-capture {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 3px;
+  padding: 2px 8px;
+  font-size: 11px;
+  outline: none;
+}
+
+.kbd-capture-waiting {
+  background: rgba(147, 197, 253, 0.1);
+  border: 1px solid #3b82f6;
+  color: #93c5fd;
+  animation: kbd-capture-pulse 1.2s ease-in-out infinite;
+}
+
+.kbd-capture-conflict {
+  background: rgba(248, 113, 113, 0.12);
+  border: 1px solid #ef4444;
+  color: #fca5a5;
+}
+
+@keyframes kbd-capture-pulse {
+  0%, 100% { border-color: #3b82f6; }
+  50% { border-color: #93c5fd; }
+}
+

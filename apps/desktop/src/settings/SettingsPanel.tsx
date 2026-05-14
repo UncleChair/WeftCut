@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   type ApiKeyStatus,
+  type KeybindingsMap,
   recentsGetReopenOnLaunch,
   recentsSetReopenOnLaunch,
   settingsClearApiKey,
@@ -9,12 +10,22 @@ import {
   settingsSetApiKey,
   settingsTestProvider,
 } from "../ipc";
+import { KeybindingPanel } from "./KeybindingPanel";
 
 interface Props {
   onClose: () => void;
+  /// Shortcut overrides owned by App.tsx. Threaded through so the
+  /// Keyboard section can render the current bindings and the
+  /// dispatcher re-resolves the moment the user edits.
+  keybindings: KeybindingsMap;
+  onKeybindingsChanged: (next: KeybindingsMap) => void;
 }
 
-export function SettingsPanel({ onClose }: Props) {
+export function SettingsPanel({
+  onClose,
+  keybindings,
+  onKeybindingsChanged,
+}: Props) {
   const { t } = useTranslation();
   const [statuses, setStatuses] = useState<ApiKeyStatus[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -76,6 +87,14 @@ export function SettingsPanel({ onClose }: Props) {
             </span>
           </span>
         </label>
+
+        <h3>{t("settings.keybindings_heading")}</h3>
+        <p className="settings-blurb">{t("settings.keybindings_blurb")}</p>
+        <KeybindingPanel
+          keybindings={keybindings}
+          onChanged={onKeybindingsChanged}
+          onError={setError}
+        />
 
         <h3>{t("settings.api_keys_heading")}</h3>
         <p className="settings-blurb">{t("settings.api_keys_blurb")}</p>

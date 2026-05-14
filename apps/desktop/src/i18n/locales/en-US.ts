@@ -106,6 +106,11 @@ const enUS = {
     templates: "Templates…",
     templates_hint:
       "Pick a template overlay (lower third, title card, callout, …) and drop it on the timeline.",
+    // Not menu items — these labels show up in the Settings → Keyboard
+    // panel for shortcuts that don't have a menu home (transport,
+    // timeline edits).
+    toggle_play: "Play / pause",
+    delete_selected: "Delete selected layer",
   },
   compiler: {
     panel_title: "Compiled filter graph ({{count}} nodes)",
@@ -240,6 +245,9 @@ const enUS = {
     reopen_on_launch: "Reopen last project on launch",
     reopen_on_launch_hint:
       "When enabled, WeftCut skips the start screen and re-opens whichever project you used last. Off by default — a partial-commit state at crash time should not silently re-mount.",
+    keybindings_heading: "Keyboard shortcuts",
+    keybindings_blurb:
+      "Click a chord to remove it, or [+ Add] to bind a new one. Each chord must be unique across actions — unset the current owner first if you want to repurpose a key.",
     api_keys_heading: "Cloud API keys",
     api_keys_blurb:
       "Keys are stored in the OS keyring (Windows Credential Manager / macOS Keychain / Linux Secret Service). Cloud-backed tools (Whisper transcription, future TTS) become available once a matching key is set.",
@@ -257,6 +265,22 @@ const enUS = {
     testing: "Testing…",
     test_hint:
       "Run a cheap API call to confirm the saved key works. Surfaces InvalidKey / rate-limit errors before your first cloud-backed agent call.",
+  },
+  keybindings: {
+    add: "+ Add",
+    no_binding: "(no binding)",
+    remove_hint: "Remove this binding",
+    reset: "Reset",
+    reset_all: "Reset all",
+    export: "Export…",
+    import: "Import…",
+    export_title: "Export keyboard shortcuts",
+    import_title: "Import keyboard shortcuts",
+    press_a_key: "Press a key…",
+    conflict:
+      "Already bound to {{action}} — unset it there first",
+    reset_blocked:
+      "Can't reset: {{chord}} is bound to {{action}}. Unset it there first.",
   },
   activity: {
     heading: "Activity",

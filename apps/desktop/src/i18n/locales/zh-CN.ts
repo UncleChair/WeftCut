@@ -108,6 +108,8 @@ const zhCN: Resources = {
       "本会话的最近编辑——包括你和任何已连接代理的操作。可按操作者筛选。",
     templates: "模板…",
     templates_hint: "选择模板叠加层（下三分位、标题卡、标注…）并添加到时间轴。",
+    toggle_play: "播放 / 暂停",
+    delete_selected: "删除选中的图层",
   },
   compiler: {
     panel_title: "编译后的滤镜图（{{count}} 个节点）",
@@ -240,6 +242,9 @@ const zhCN: Resources = {
     reopen_on_launch: "启动时重新打开上一个项目",
     reopen_on_launch_hint:
       "开启后将跳过起始页，自动打开最近使用的项目。默认关闭——以防崩溃前的半提交状态被静默重新挂载。",
+    keybindings_heading: "键盘快捷键",
+    keybindings_blurb:
+      "点击快捷键可移除，点击 [+ 添加] 可绑定新组合。每个组合在所有操作中必须唯一——若想改绑已被占用的键，请先在原操作处取消。",
     api_keys_heading: "云服务 API 密钥",
     api_keys_blurb:
       "密钥保存在系统密钥环中（Windows 凭据管理器 / macOS 钥匙串 / Linux Secret Service）。设置匹配的密钥后，相应的云服务工具（Whisper 转写等）即可使用。",
@@ -257,6 +262,21 @@ const zhCN: Resources = {
     testing: "测试中…",
     test_hint:
       "运行一次廉价的 API 调用，确认所保存的密钥可用。可在首次调用云端工具前提前暴露密钥无效或速率限制错误。",
+  },
+  keybindings: {
+    add: "+ 添加",
+    no_binding: "（未绑定）",
+    remove_hint: "移除此绑定",
+    reset: "重置",
+    reset_all: "全部重置",
+    export: "导出…",
+    import: "导入…",
+    export_title: "导出键盘快捷键",
+    import_title: "导入键盘快捷键",
+    press_a_key: "请按键…",
+    conflict: "已绑定到「{{action}}」——请先在该操作中取消",
+    reset_blocked:
+      "无法重置：{{chord}} 已绑定到「{{action}}」，请先在该操作中取消。",
   },
   activity: {
     heading: "活动",

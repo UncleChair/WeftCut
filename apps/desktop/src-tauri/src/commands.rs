@@ -951,6 +951,55 @@ pub async fn recents_last_new_project_parent(
         .map_err(|e| format!("{e:#}"))
 }
 
+// --- Keyboard-shortcut overrides --------------------------------------
+//
+// The frontend `shortcuts/` module owns the action catalogue and the
+// conflict-detection logic; these commands are a thin pass-through to
+// `KeybindingsStore`. See `keybindings.rs` for the rationale.
+
+#[tauri::command]
+pub async fn keybindings_get(
+    store: State<'_, crate::keybindings::KeybindingsStore>,
+) -> Result<crate::keybindings::KeybindingsMap, String> {
+    store.get().map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub async fn keybindings_set(
+    store: State<'_, crate::keybindings::KeybindingsStore>,
+    action: String,
+    keys: Vec<String>,
+) -> Result<(), String> {
+    store.set(action, keys).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub async fn keybindings_reset_all(
+    store: State<'_, crate::keybindings::KeybindingsStore>,
+) -> Result<(), String> {
+    store.reset_all().map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub async fn keybindings_export(
+    store: State<'_, crate::keybindings::KeybindingsStore>,
+    dest: String,
+) -> Result<(), String> {
+    store
+        .export_to(PathBuf::from(dest))
+        .map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub async fn keybindings_import(
+    store: State<'_, crate::keybindings::KeybindingsStore>,
+    src: String,
+) -> Result<crate::keybindings::KeybindingsMap, String> {
+    store
+        .import_from(&PathBuf::from(src))
+        .map_err(|e| format!("{e:#}"))
+}
+
 #[derive(Serialize, Clone)]
 pub struct CompiledGraph {
     pub inputs: Vec<String>,
