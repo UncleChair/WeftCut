@@ -169,6 +169,8 @@ const enUS = {
     restore_hint: "Revert the project to this checkpoint. The restore itself is undoable.",
     restore_locked_hint: "Locked by agent: {{reason}}",
     lock_hint: "Agent has locked the revert surface. Click Exit to editor to release the lock.",
+    running_pill: "Agent: {{count}} running",
+    running_pill_hint: "Agent operations are still finishing in the background.",
   },
   errors: {
     refresh_failed: "refresh: {{detail}}",

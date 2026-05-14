@@ -699,6 +699,7 @@ export function App({ onCloseProject }: AppProps) {
             {t("project.derivatives_pending", { count: pendingDerivatives })}
           </span>
         )}
+        <AgentRunningPill />
       </section>
 
       <section className="menu-bar">
@@ -989,6 +990,35 @@ export function App({ onCloseProject }: AppProps) {
       <StatusBar onToggleLogs={toggleLogConsole} />
     </div>
     </ShortcutBindingsProvider>
+  );
+}
+
+
+/// Project-bar pill that surfaces agent-attributed running ops while
+/// the user is in editor mode. After exiting agent mode the user
+/// otherwise has no signal that the agent is still working (Q4: ops
+/// finish in the background). Selector walks runningOps + entries
+/// once per store-update — O(running × entries) but `running` is
+/// typically 0-3 in practice. Renders nothing when count is 0.
+function AgentRunningPill() {
+  const { t } = useTranslation();
+  const count = useLogStore((s) => {
+    let n = 0;
+    for (const opId of Object.keys(s.runningOps)) {
+      const e = s.entries.find((x) => x.op_id === opId);
+      if (e?.source.kind === "Agent") n += 1;
+    }
+    return n;
+  });
+  if (count === 0) return null;
+  return (
+    <span
+      className="agent-running-pill"
+      title={t("agent_mode.running_pill_hint")}
+    >
+      <span className="agent-running-spinner" aria-hidden="true" />
+      {t("agent_mode.running_pill", { count })}
+    </span>
   );
 }
 

@@ -168,6 +168,8 @@ const zhCN: Resources = {
     restore_hint: "将项目恢复到此检查点。恢复操作本身可撤销。",
     restore_locked_hint: "代理已锁定：{{reason}}",
     lock_hint: "代理已锁定撤销功能。点击退出代理模式以解锁。",
+    running_pill: "代理：{{count}} 个进行中",
+    running_pill_hint: "代理的后台操作仍在继续。",
   },
   errors: {
     refresh_failed: "刷新失败：{{detail}}",

@@ -2794,6 +2794,34 @@ input.preview-timecode:focus {
   animation: preview-spin 0.9s linear infinite;
 }
 
+/* Project-bar pill surfaced while the user is back in editor mode
+   but agent-attributed ops are still running in the background.
+   Reuses the derivatives-pill pattern with an amber palette to
+   distinguish "agent is doing things" from "we're generating
+   derivatives". */
+
+.agent-running-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.32);
+  color: #fde68a;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.agent-running-spinner {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid rgba(253, 230, 138, 0.25);
+  border-top-color: #fbbf24;
+  animation: preview-spin 0.9s linear infinite;
+}
+
 /* --- Settings → Keyboard Shortcuts ---------------------------------- */
 /*
  * The keyboard panel sits between the Startup section and the API
