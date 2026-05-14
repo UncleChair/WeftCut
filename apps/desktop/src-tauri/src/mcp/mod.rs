@@ -96,8 +96,8 @@ use crate::jobs;
 use crate::cloud;
 use crate::raster::template as raster_template;
 use crate::state::{
-    Actor, Animated, AudioParams, BlendMode, ColorParams, CommandError, CompositionPatch,
-    DryRunOp, DryRunOutput, LayerId, LayerParams, LayerParamsPatch, LayerPatch, MarkerId,
+    Actor, Animated, AudioParams, BlendMode, CheckpointId, ColorParams, CommandError,
+    CompositionPatch, DryRunOp, DryRunOutput, LayerId, LayerParams, LayerParamsPatch, LayerPatch,
     MarkerPatch, MediaId, MediaItem, MediaKind, Project, ProjectHandle, Rational, Rgba,
     SubtitlesParams, SubtitlesSource, TemplateParams, TrackId, TrackKind, Transform,
     ValidationError, VideoClipParams, new_id,
@@ -239,17 +239,36 @@ impl WeftCutServer {
             },
         );
 
-        // Auto-checkpoint BEFORE flipping the slot so the record-panel
-        // entry for the checkpoint lands inside the new session window
-        // (record-panel filters by `ts >= session.started_at`). The
-        // history actor records the checkpoint regardless of mode.
+        // Auto-checkpoint BEFORE flipping the slot — wait, we actually
+        // need started_at LOCKED first so the record-panel's filter
+        // (`ts >= started_at`) catches the checkpoint LogEntry. The
+        // history.checkpoint() call itself doesn't emit a LogEntry; we
+        // emit one below with the same structured `details` shape the
+        // `checkpoint` MCP tool uses, so the record panel renders this
+        // as a normal pin-row at the top of the session.
+        let started_at = Utc::now();
         let label = format!("Pre-agent: {reason}");
         let checkpoint_id = self
             .project
-            .checkpoint(agent_actor(), label)
+            .checkpoint(agent_actor(), label.clone())
             .await;
+        crate::logs::emit_via_app(
+            &self.app,
+            crate::logs::LogEntryInput {
+                level: crate::logs::LogLevel::Info,
+                category: crate::logs::LogCategory::Project,
+                source: crate::logs::LogSource::Agent { client: "mcp".into() },
+                message: format!("Checkpoint: {label}"),
+                details: Some(serde_json::json!({
+                    "kind": "Checkpoint",
+                    "id": checkpoint_id.to_string(),
+                    "label": label,
+                })),
+                ..Default::default()
+            },
+        );
 
-        let started_at = Utc::now();
+
         let session = crate::agent_session::AgentSession {
             client: "mcp".into(),
             reason: reason.to_string(),
@@ -1149,12 +1168,43 @@ impl WeftCutServer {
 
     #[tool(description = "Create an explicit named checkpoint of the current state. \
                           Checkpoints survive new commits (they don't get truncated like the redo tail) \
-                          and persist in the .vproj save file. Returns the new checkpoint id.")]
+                          and persist in the .vproj save file. Returns the new checkpoint id. \
+                          The human's agent-mode record panel renders each created checkpoint as a \
+                          pin-style row with a Restore button — use this at logical batch boundaries.")]
     async fn checkpoint(
         &self,
         #[tool(aggr)] args: CheckpointArgs,
     ) -> Result<CallToolResult, McpError> {
-        let id = self.project.checkpoint(agent_actor(), args.label).await;
+        let label = args.label.trim();
+        if label.is_empty() {
+            return Err(McpError::invalid_params(
+                "label must be non-empty",
+                None,
+            ));
+        }
+        let id: CheckpointId = self
+            .project
+            .checkpoint(agent_actor(), label.to_string())
+            .await;
+        // Structured `details` so the agent-mode record panel can render
+        // checkpoint rows distinctly from regular tool-call rows. The
+        // raw `History::checkpoint` write doesn't produce a ChangeEvent
+        // today; this LogEntry is the sole signal the record panel has.
+        crate::logs::emit_via_app(
+            &self.app,
+            crate::logs::LogEntryInput {
+                level: crate::logs::LogLevel::Info,
+                category: crate::logs::LogCategory::Project,
+                source: crate::logs::LogSource::Agent { client: "mcp".into() },
+                message: format!("Checkpoint: {label}"),
+                details: Some(serde_json::json!({
+                    "kind": "Checkpoint",
+                    "id": id.to_string(),
+                    "label": label,
+                })),
+                ..Default::default()
+            },
+        );
         Ok(ok_text(id.to_string()))
     }
 
