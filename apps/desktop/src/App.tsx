@@ -635,6 +635,7 @@ export function App({ onCloseProject }: AppProps) {
           currentTimeUs={currentTimeUs}
           onTimeUpdate={setCurrentTimeUs}
           onPausedChange={setPaused}
+          onSeek={seekTo}
           onExit={exitAgentMode}
         />
       </ShortcutBindingsProvider>

@@ -12,6 +12,7 @@ import {
   PreviewSurface,
   type PreviewSurfaceHandle,
 } from "../preview/PreviewSurface";
+import { MiniTimeline } from "./MiniTimeline";
 
 /// Agent mode — the simplified preview / mini-timeline / record-panel
 /// layout the human sees while an MCP-initiated agent session is
@@ -37,6 +38,7 @@ interface AgentModeProps {
   currentTimeUs: number;
   onTimeUpdate: (tUs: number) => void;
   onPausedChange: (paused: boolean) => void;
+  onSeek: (tUs: number) => void;
   /// User-side exit handler. Wired by the parent to call
   /// `agentSessionEnd` then refresh state.
   onExit: () => void;
@@ -49,6 +51,7 @@ export const AgentMode = forwardRef(function AgentMode(
     currentTimeUs,
     onTimeUpdate,
     onPausedChange,
+    onSeek,
     onExit,
   }: AgentModeProps,
   previewRef: ForwardedRef<PreviewSurfaceHandle>,
@@ -67,9 +70,11 @@ export const AgentMode = forwardRef(function AgentMode(
       </section>
 
       <section className="agent-mini-timeline">
-        <MiniTimelinePlaceholder
+        <MiniTimeline
           currentTimeUs={currentTimeUs}
           durationUs={summary?.duration_us ?? 0}
+          markers={summary?.markers ?? []}
+          onSeek={onSeek}
         />
       </section>
 
@@ -110,31 +115,6 @@ function RecordPanelHeader({
   );
 }
 
-function MiniTimelinePlaceholder({
-  currentTimeUs,
-  durationUs,
-}: {
-  currentTimeUs: number;
-  durationUs: number;
-}) {
-  // Phase 6 replaces this with the real scrub bar. For now we show
-  // the timecode + a flat progress strip so the shell isn't blank.
-  const ratio = durationUs > 0 ? currentTimeUs / durationUs : 0;
-  return (
-    <div className="mini-timeline-stub" aria-hidden="true">
-      <div className="mini-timeline-strip">
-        <div
-          className="mini-timeline-progress"
-          style={{ width: `${Math.max(0, Math.min(1, ratio)) * 100}%` }}
-        />
-      </div>
-      <div className="mini-timeline-tc">
-        {formatTimecode(currentTimeUs)} / {formatTimecode(durationUs)}
-      </div>
-    </div>
-  );
-}
-
 function RecordPanelPlaceholder() {
   const { t } = useTranslation();
   return (
@@ -142,15 +122,4 @@ function RecordPanelPlaceholder() {
       <p>{t("agent_mode.placeholder_body")}</p>
     </div>
   );
-}
-
-function formatTimecode(us: number): string {
-  const totalMs = Math.max(0, Math.floor(us / 1000));
-  const ms = totalMs % 1000;
-  const totalSec = Math.floor(totalMs / 1000);
-  const s = totalSec % 60;
-  const m = Math.floor(totalSec / 60) % 60;
-  const h = Math.floor(totalSec / 3600);
-  const pad = (n: number, w: number) => n.toString().padStart(w, "0");
-  return `${pad(h, 2)}:${pad(m, 2)}:${pad(s, 2)}.${pad(ms, 3)}`;
 }

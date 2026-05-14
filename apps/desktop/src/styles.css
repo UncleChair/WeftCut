@@ -829,24 +829,81 @@ input.preview-timecode:focus {
   gap: 6px;
 }
 
-.mini-timeline-stub {
+.mini-timeline {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-}
-
-.mini-timeline-strip {
-  position: relative;
-  height: 8px;
-  background: #1f2937;
-  border-radius: 4px;
-  overflow: hidden;
-}
-
-.mini-timeline-progress {
+  gap: 4px;
   height: 100%;
-  background: linear-gradient(to right, #60a5fa, #3b82f6);
-  transition: width 60ms linear;
+  justify-content: center;
+}
+
+.mini-timeline-ticks {
+  position: relative;
+  height: 14px;
+  border-bottom: 1px solid #1f2937;
+}
+
+.mini-tick {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  /* The tick is a 1-px vertical line on the bottom edge plus its
+     label hugging the left edge of that line. */
+  width: 1px;
+  background: #374151;
+}
+
+.mini-tick-label {
+  position: absolute;
+  left: 2px;
+  bottom: -1px;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  color: #6b7280;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.mini-timeline-strip-real {
+  position: relative;
+  height: 36px;
+  background: #11151c;
+  border-radius: 4px;
+  cursor: pointer;
+  overflow: hidden;
+  user-select: none;
+}
+
+.mini-marker-pip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  pointer-events: none;
+  opacity: 0.85;
+}
+
+.mini-marker-region {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  opacity: 0.35;
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.mini-playhead {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  background: #ef4444;
+  pointer-events: none;
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.55),
+    0 0 4px rgba(239, 68, 68, 0.45);
+  border-radius: 1px;
+  z-index: 2;
 }
 
 .mini-timeline-tc {
@@ -854,6 +911,7 @@ input.preview-timecode:focus {
   font-variant-numeric: tabular-nums;
   color: #9ca3af;
   letter-spacing: 0.04em;
+  text-align: right;
 }
 
 .agent-record {

@@ -129,6 +129,15 @@ export interface ProjectSummary {
   history: HistoryView;
   media: MediaSummary[];
   tracks: TrackSummary[];
+  markers: MarkerSummary[];
+}
+
+export interface MarkerSummary {
+  id: string;
+  t_us: number;
+  end_t_us: number | null;
+  label: string;
+  color_hint: string;
 }
 
 export interface LayerPatch {

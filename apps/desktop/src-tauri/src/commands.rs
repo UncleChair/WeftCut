@@ -38,6 +38,21 @@ pub struct ProjectSummary {
     pub history: HistoryView,
     pub media: Vec<MediaSummary>,
     pub tracks: Vec<TrackSummary>,
+    /// Sparse markers along the timeline. Surfaced so the agent-mode
+    /// mini timeline can render them as pips above the scrub bar.
+    pub markers: Vec<MarkerSummary>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct MarkerSummary {
+    pub id: String,
+    pub t_us: i64,
+    /// `Some(end)` when this is a region marker.
+    pub end_t_us: Option<i64>,
+    pub label: String,
+    /// Hex `#rrggbb` derived from the marker's `color` field for
+    /// straightforward CSS consumption.
+    pub color_hint: String,
 }
 
 #[derive(Serialize, Clone)]
@@ -338,6 +353,18 @@ pub async fn project_summary(handle: State<'_, ProjectHandle>) -> Result<Project
         })
         .collect();
 
+    let markers = snap
+        .markers
+        .iter()
+        .map(|m| MarkerSummary {
+            id: m.id.to_string(),
+            t_us: m.t_us,
+            end_t_us: m.end_t_us,
+            label: m.label.clone(),
+            color_hint: format!("#{:02x}{:02x}{:02x}", m.color.r, m.color.g, m.color.b),
+        })
+        .collect();
+
     Ok(ProjectSummary {
         project_id: snap.project_id.to_string(),
         name: snap.metadata.name.clone(),
@@ -358,6 +385,7 @@ pub async fn project_summary(handle: State<'_, ProjectHandle>) -> Result<Project
         },
         media,
         tracks,
+        markers,
     })
 }
 
