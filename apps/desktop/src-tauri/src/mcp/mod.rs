@@ -998,7 +998,11 @@ impl WeftCutServer {
     // ============================================================
 
     #[tool(description = "Undo the most recent edit (linear history). Errors with NothingToUndo at the origin. \
-                          Note: media imports sit OUTSIDE the undo stack — undoing past an import keeps the media in the pool.")]
+                          Only timeline edits (layers, tracks, markers, transitions, composition duration, and \
+                          cascade-deleting media removals) record onto the undo stack. The following sit OUTSIDE it \
+                          and are unaffected by undo: media imports and removals of unreferenced media, canvas \
+                          setup changes (width/height/fps/sample_rate/channels/color_space/background), and \
+                          loading or creating a project (which resets history).")]
     async fn undo(&self) -> Result<CallToolResult, McpError> {
         self.project
             .undo(agent_actor())

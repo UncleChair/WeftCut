@@ -1558,39 +1558,79 @@ impl ProjectActor {
         patch: CompositionPatch,
         actor: Actor,
     ) -> Result<(), CommandError> {
-        let mut next: Project = (*self.history.current()).clone();
-        let c = &mut next.composition;
+        // Composition fields split into two classes:
+        //   - canvas setup (width / height / fps / sample_rate / channels /
+        //     color_space / background) — not editing; patched into every
+        //     snapshot and NOT recorded.
+        //   - duration_us — editing-shaped (auto-extended by layer adds);
+        //     recorded normally.
+        // A mixed patch is split: canvas part applied everywhere first, then
+        // the duration delta committed on top.
+        let canvas_changes = patch.width.is_some()
+            || patch.height.is_some()
+            || patch.fps.is_some()
+            || patch.sample_rate.is_some()
+            || patch.channels.is_some()
+            || patch.color_space.is_some()
+            || patch.background.is_some();
+        let duration_change = patch.duration_us;
+
+        // Atomicity: validate the full post-state (canvas + duration combined)
+        // before mutating anything. Without this, an invalid mixed patch could
+        // apply the canvas part to every snapshot and then fail on the
+        // duration `commit`, leaving the caller with a partial change that
+        // looks like a rollback to them.
+        let current = self.history.current();
+        let mut new_canvas = current.composition.clone();
         if let Some(width) = patch.width {
-            c.width = width;
+            new_canvas.width = width;
         }
         if let Some(height) = patch.height {
-            c.height = height;
+            new_canvas.height = height;
         }
         if let Some(fps) = patch.fps {
-            c.fps = fps;
-        }
-        if let Some(duration) = patch.duration_us {
-            c.duration_us = duration;
+            new_canvas.fps = fps;
         }
         if let Some(sr) = patch.sample_rate {
-            c.sample_rate = sr;
+            new_canvas.sample_rate = sr;
         }
         if let Some(ch) = patch.channels {
-            c.channels = ch;
+            new_canvas.channels = ch;
         }
         if let Some(cs) = patch.color_space {
-            c.color_space = cs;
+            new_canvas.color_space = cs;
         }
         if let Some(bg) = patch.background {
-            c.background = bg;
+            new_canvas.background = bg;
         }
-        self.commit(
-            next,
-            actor,
-            "Updated composition".to_string(),
-            Vec::new(),
-            DiffHint::Composition,
-        )?;
+        let mut probe: Project = (*current).clone();
+        probe.composition = new_canvas.clone();
+        probe.composition.duration_us =
+            duration_change.unwrap_or(current.composition.duration_us);
+        validate(&probe)?;
+
+        if canvas_changes {
+            self.history.replace_composition_canvas_everywhere(&new_canvas);
+            let snapshot = self.history.current();
+            self.broadcast_unrecorded(
+                actor.clone(),
+                "Updated composition canvas".to_string(),
+                snapshot,
+            );
+        }
+
+        if let Some(duration) = duration_change {
+            let mut next: Project = (*self.history.current()).clone();
+            next.composition.duration_us = duration;
+            self.commit(
+                next,
+                actor,
+                "Updated composition duration".to_string(),
+                Vec::new(),
+                DiffHint::Composition,
+            )?;
+        }
+
         Ok(())
     }
 
@@ -1870,9 +1910,26 @@ impl ProjectActor {
             });
         }
 
+        // No references → pure media-pool deletion, mirror of `add_media_item`.
+        // Patch every snapshot's pool so the removal is durable across undos
+        // through unrelated edits, and skip recording a history entry: this is
+        // library bookkeeping, not a timeline edit.
+        if referencing.is_empty() {
+            let mut next_pool = current.media_pool.clone();
+            next_pool.remove(&id);
+
+            let mut probe: Project = (*current).clone();
+            probe.media_pool = next_pool.clone();
+            validate(&probe)?;
+
+            self.history.replace_media_pool_everywhere(next_pool);
+            let snapshot = self.history.current();
+            self.broadcast_unrecorded(actor, format!("Removed media {id}"), snapshot);
+            return Ok(());
+        }
+
+        // Force cascade: actual layer deletions, real editing event.
         let mut next: Project = (*current).clone();
-        // Cascade-delete referencing layers (force=true case). Without force,
-        // this set is empty and the loop is a no-op.
         for layer_id in &referencing {
             for track in next.tracks.iter_mut() {
                 if let Some(idx) = track.layers.iter().position(|l| l.id == *layer_id) {
@@ -1883,14 +1940,10 @@ impl ProjectActor {
         }
         next.media_pool.remove(&id);
 
-        let summary = if referencing.is_empty() {
-            format!("Removed media {id}")
-        } else {
-            format!(
-                "Removed media {id} and {} referencing layer(s)",
-                referencing.len()
-            )
-        };
+        let summary = format!(
+            "Removed media {id} and {} referencing layer(s)",
+            referencing.len()
+        );
         let affected: Vec<EntityRef> =
             referencing.iter().map(|l| EntityRef::Layer(*l)).collect();
         self.commit(next, actor, summary, affected, DiffHint::Coarse)?;
@@ -1957,18 +2010,21 @@ impl ProjectActor {
     }
 
     fn do_replace_state(&mut self, next: Project, actor: Actor) -> Result<(), CommandError> {
-        // Carry the project_id through unchanged so listeners see "same project, new
-        // state" rather than a fresh project. Callers wanting a fresh project should
-        // construct one explicitly with `Project::new_blank`.
-        let mut to_commit = next;
-        to_commit.metadata.modified_at = Utc::now();
-        self.commit(
-            to_commit,
-            actor,
-            "Replaced project state".to_string(),
-            Vec::new(),
-            DiffHint::Coarse,
-        )?;
+        // A state swap is wholesale — typically loading a different project, or
+        // creating a new one. The prior project's snapshots and checkpoints
+        // reference a different `project_id` and are incoherent against the
+        // new state, so history is reset to a fresh single-entry stack rather
+        // than recording a "Replaced project state" entry that Ctrl-Z could
+        // flop back through.
+        //
+        // `modified_at` is NOT touched here: opening an on-disk project
+        // shouldn't mark it dirty in memory. Callers that are authoring fresh
+        // state (e.g. "+ New project") set `modified_at` themselves via
+        // `Project::new_blank`.
+        validate(&next)?;
+        let snapshot = Arc::new(next);
+        self.history.reset(snapshot.clone(), actor.clone());
+        self.broadcast_unrecorded(actor, "Replaced project state".to_string(), snapshot);
         Ok(())
     }
 
@@ -2465,7 +2521,10 @@ fn layer_params_patch_kind(patch: &LayerParamsPatch) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{Animated, ColorParams, LayerParams, Project, Rgba, Track, TrackKind};
+    use crate::state::{
+        Animated, ColorParams, LayerParams, MediaKind, MediaMetadata, Project, Rgba, Track,
+        TrackKind,
+    };
 
     fn project_with_video_track() -> (Project, TrackId) {
         // Start from a blank but strip the default A-roll/B-roll so each
@@ -3117,9 +3176,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn replace_state_swaps_project_in_one_commit() {
-        let (project, _) = project_with_video_track();
+    async fn replace_state_resets_history_to_fresh_stack() {
+        let (project, track_id) = project_with_video_track();
         let handle = spawn(project);
+        // Make a real edit so history has more than one entry, and a
+        // checkpoint that should also get cleared on the swap.
+        handle
+            .add_layer(Actor::User, track_id, color_layer(Rgba::WHITE), 0, 1_000_000)
+            .await
+            .expect("add layer");
+        let _cp = handle.checkpoint(Actor::User, "before swap").await;
+        let view_before = handle.history_view(100).await;
+        assert!(view_before.len > 1, "stack should have prior edits");
+        assert_eq!(view_before.checkpoints.len(), 1);
+
         let mut replacement = Project::new_blank("replaced");
         replacement.tracks.clear();
         replacement
@@ -3138,12 +3208,150 @@ mod tests {
         assert_eq!(snap.tracks.len(), 1);
         assert!(matches!(snap.tracks[0].kind, super::TrackKind::Audio));
 
-        // Undo should bring back the original project.
+        // History was reset: exactly one "Initial" entry, no checkpoints, undo
+        // is a no-op. The prior project's edits and the "before swap"
+        // checkpoint are gone.
+        let view_after = handle.history_view(100).await;
+        assert_eq!(view_after.len, 1);
+        assert_eq!(view_after.cursor, 0);
+        assert!(view_after.checkpoints.is_empty());
+        let err = handle.undo(Actor::User).await.unwrap_err();
+        assert!(matches!(err, CommandError::NothingToUndo));
+    }
+
+    #[tokio::test]
+    async fn replace_state_does_not_touch_modified_at() {
+        let (project, _) = project_with_video_track();
+        let handle = spawn(project);
+        // Construct a replacement with a known modified_at value and verify
+        // do_replace_state leaves it alone. Loading a project from disk
+        // shouldn't mark it dirty in memory.
+        let mut replacement = Project::new_blank("on-disk");
+        let pinned = chrono::DateTime::<chrono::Utc>::from_timestamp(1_700_000_000, 0).unwrap();
+        replacement.metadata.modified_at = pinned;
+
+        handle
+            .replace_state(Actor::User, replacement)
+            .await
+            .expect("replace_state");
+
+        let snap = handle.snapshot().await;
+        assert_eq!(snap.metadata.modified_at, pinned);
+    }
+
+    #[tokio::test]
+    async fn remove_media_with_no_references_does_not_record() {
+        let (project, _) = project_with_video_track();
+        let handle = spawn(project);
+        let media_id = new_id();
+        let item = MediaItem {
+            id: media_id,
+            label: None,
+            path_abs: "/tmp/x.mp4".into(),
+            path_rel: None,
+            kind: MediaKind::Video,
+            metadata: MediaMetadata {
+                duration_us: Some(1_000_000),
+                video: None,
+                audio: None,
+            },
+            proxy_path: None,
+            waveform_path: None,
+            thumbnails_dir: None,
+            file_hash_blake3: "0".into(),
+            file_size: 0,
+            file_mtime: 0,
+            imported_at: Utc::now(),
+        };
+        handle
+            .add_media_item(Actor::User, item)
+            .await
+            .expect("add media");
+        let len_before = handle.history_view(100).await.len;
+
+        handle
+            .remove_media(Actor::User, media_id, false)
+            .await
+            .expect("remove media");
+
+        let view = handle.history_view(100).await;
+        assert_eq!(
+            view.len, len_before,
+            "removing unreferenced media should not grow history"
+        );
+        let snap = handle.snapshot().await;
+        assert!(!snap.media_pool.contains_key(&media_id));
+    }
+
+    #[tokio::test]
+    async fn set_composition_canvas_only_does_not_record() {
+        let (project, _) = project_with_video_track();
+        let handle = spawn(project);
+        let len_before = handle.history_view(100).await.len;
+
+        handle
+            .set_composition(
+                Actor::User,
+                CompositionPatch {
+                    width: Some(1280),
+                    height: Some(720),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("set composition");
+
+        let view = handle.history_view(100).await;
+        assert_eq!(
+            view.len, len_before,
+            "canvas-only changes should not grow history"
+        );
+        let snap = handle.snapshot().await;
+        assert_eq!(snap.composition.width, 1280);
+        assert_eq!(snap.composition.height, 720);
+    }
+
+    #[tokio::test]
+    async fn set_composition_mixed_patch_splits() {
+        let (project, _) = project_with_video_track();
+        let handle = spawn(project);
+        let len_before = handle.history_view(100).await.len;
+        let dur_before = handle.snapshot().await.composition.duration_us;
+
+        handle
+            .set_composition(
+                Actor::User,
+                CompositionPatch {
+                    width: Some(1280),
+                    duration_us: Some(dur_before + 5_000_000),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("set composition");
+
+        let view = handle.history_view(100).await;
+        assert_eq!(
+            view.len,
+            len_before + 1,
+            "mixed patch should record exactly one entry (for duration_us)",
+        );
+        let snap = handle.snapshot().await;
+        assert_eq!(snap.composition.width, 1280, "canvas applied");
+        assert_eq!(
+            snap.composition.duration_us,
+            dur_before + 5_000_000,
+            "duration applied",
+        );
+
+        // Undo should reverse only the duration delta, leaving the canvas
+        // change in place — that's the entire point of the split.
         handle.undo(Actor::User).await.expect("undo");
         let snap = handle.snapshot().await;
-        assert_eq!(snap.metadata.name, "test");
-        assert!(matches!(snap.tracks[0].kind, super::TrackKind::Video));
+        assert_eq!(snap.composition.duration_us, dur_before);
+        assert_eq!(snap.composition.width, 1280, "canvas survives undo");
     }
+
 
     #[tokio::test]
     async fn blank_project_ships_with_a_b_roll() {

@@ -16,6 +16,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::actor::{Actor, EntityRef};
+use super::composition::Composition;
 use super::ids::{CheckpointId, MediaId, OpId, new_id};
 use super::media::MediaItem;
 use super::project::Project;
@@ -209,6 +210,57 @@ impl History {
             cp.snapshot = Arc::new(p);
         }
     }
+
+    /// Apply the canvas-only fields of `canvas` to every snapshot's
+    /// `composition` (history + checkpoints). Each snapshot keeps its own
+    /// `duration_us`, since duration is an editing-shaped field that lives
+    /// on the recorded stack. Same out-of-band-edit pattern as
+    /// `replace_media_pool_everywhere`.
+    pub fn replace_composition_canvas_everywhere(&mut self, canvas: &Composition) {
+        for entry in self.snapshots.iter_mut() {
+            let mut p = (*entry.snapshot).clone();
+            apply_canvas_fields(&mut p.composition, canvas);
+            entry.snapshot = Arc::new(p);
+        }
+        for cp in self.checkpoints.values_mut() {
+            let mut p = (*cp.snapshot).clone();
+            apply_canvas_fields(&mut p.composition, canvas);
+            cp.snapshot = Arc::new(p);
+        }
+    }
+
+    /// Discard the existing stack and checkpoints, seeding a fresh history
+    /// with `initial` as the sole entry. Used by `replace_state` when a
+    /// different project is loaded — the old project's snapshots and
+    /// checkpoints reference a different `project_id` and have no meaning
+    /// against the new state, so they're dropped wholesale.
+    pub fn reset(&mut self, initial: Arc<Project>, actor: Actor) {
+        let entry = HistoryEntry {
+            op_id: new_id(),
+            actor,
+            timestamp: Utc::now(),
+            summary: "Initial".to_string(),
+            affected: Vec::new(),
+            snapshot: initial,
+        };
+        self.snapshots.clear();
+        self.snapshots.push_back(entry);
+        self.cursor = 0;
+        self.checkpoints.clear();
+    }
+}
+
+/// Copy the canvas-only fields (everything except `duration_us`) from `src`
+/// into `dst`. Used by `replace_composition_canvas_everywhere` and by
+/// `do_set_composition` when probing the post-state for validation.
+fn apply_canvas_fields(dst: &mut Composition, src: &Composition) {
+    dst.width = src.width;
+    dst.height = src.height;
+    dst.fps = src.fps;
+    dst.sample_rate = src.sample_rate;
+    dst.channels = src.channels;
+    dst.color_space = src.color_space;
+    dst.background = src.background;
 }
 
 /// Read-only summary of a `HistoryEntry` — drops the `Arc<Project>` so the
