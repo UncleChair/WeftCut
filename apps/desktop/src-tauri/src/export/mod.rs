@@ -61,6 +61,30 @@ pub async fn run_render(
     output: &Path,
     preset: ExportPreset,
 ) -> Result<()> {
+    run_render_inner(app, project, output, preset, true).await
+}
+
+/// Silent variant — same ffmpeg dance, but does NOT emit
+/// `export:progress` / `export:complete` / `export:error` events. Used
+/// by `preview::render` so the React `<ExportPanel>` doesn't pop up
+/// every time the project preview re-renders. The preview module
+/// emits its own `preview:render_*` events for status surfacing.
+pub async fn run_render_silent(
+    app: AppHandle,
+    project: &Project,
+    output: &Path,
+    preset: ExportPreset,
+) -> Result<()> {
+    run_render_inner(app, project, output, preset, false).await
+}
+
+async fn run_render_inner(
+    app: AppHandle,
+    project: &Project,
+    output: &Path,
+    preset: ExportPreset,
+    emit_events: bool,
+) -> Result<()> {
     if !ffmpeg_is_installed() {
         anyhow::bail!(
             "ffmpeg is not installed. Install via `winget install -e --id Gyan.FFmpeg` (Windows), \
@@ -212,7 +236,9 @@ pub async fn run_render(
                     "progress" => {
                         snapshot.progress =
                             ((snapshot.current_time_us as f64) / (total_us as f64)).clamp(0.0, 1.0);
-                        let _ = app_progress.emit(EVENT_PROGRESS, snapshot.clone());
+                        if emit_events {
+                            let _ = app_progress.emit(EVENT_PROGRESS, snapshot.clone());
+                        }
                     }
                     _ => {}
                 }
@@ -250,13 +276,15 @@ pub async fn run_render(
     }
 
     info!("ffmpeg export complete → {}", output.display());
-    let _ = app.emit(
-        EVENT_COMPLETE,
-        ExportComplete {
-            output_path: output.to_string_lossy().to_string(),
-            duration_us: total_us,
-        },
-    );
+    if emit_events {
+        let _ = app.emit(
+            EVENT_COMPLETE,
+            ExportComplete {
+                output_path: output.to_string_lossy().to_string(),
+                duration_us: total_us,
+            },
+        );
+    }
 
     Ok(())
 }

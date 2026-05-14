@@ -63,7 +63,11 @@ pub struct PreviewReady {
 ///   - layer / track / media UUIDs (the lavfi graph already encodes the
 ///     ordering that matters; raw UUIDs would invalidate the cache on a
 ///     pure-reorder that ends up producing identical output)
-pub fn state_hash(project: &Project, cache: &CacheLayout, app: &AppHandle) -> Result<String> {
+pub async fn state_hash(
+    project: &Project,
+    cache: &CacheLayout,
+    app: &AppHandle,
+) -> Result<String> {
     let target = RenderTarget::full(
         project.composition.width,
         project.composition.height,
@@ -74,10 +78,14 @@ pub fn state_hash(project: &Project, cache: &CacheLayout, app: &AppHandle) -> Re
     let inline_subs = materialize_inline_subtitles(project, cache)
         .context("materialize inline subtitles")?;
     // Templates are content-addressed by render inputs, so their hashes
-    // contribute via the inline subs / lavfi graph downstream.
-    let template_renders =
-        tauri::async_runtime::block_on(crate::ir::materialize_templates(project, cache, app))
-            .context("materialize templates")?;
+    // contribute via the inline subs / lavfi graph downstream. Native
+    // `.await` here — calling `tauri::async_runtime::block_on` from
+    // inside an already-async tokio task would deadlock-or-panic and
+    // the preview loop's task would silently die after the first
+    // commit.
+    let template_renders = crate::ir::materialize_templates(project, cache, app)
+        .await
+        .context("materialize templates")?;
     let graph = lower(project, target, &inline_subs, &template_renders).context("lower IR")?;
     let plan = emit_ffmpeg(&graph);
 
@@ -126,7 +134,7 @@ pub async fn render(
     project: &Project,
     cache: &CacheLayout,
 ) -> Result<PathBuf> {
-    let hash = state_hash(project, cache, &app)?;
+    let hash = state_hash(project, cache, &app).await?;
     let dest = cache.preview(&hash);
 
     if cached_ok(&dest) {
@@ -146,7 +154,12 @@ pub async fn render(
     // actor's snapshot stays canonical (this isn't a state mutation).
     let project_for_render = with_proxies_substituted(project);
 
-    export::run_render(
+    // `run_render_silent`, not `run_render`: the export-pipeline events
+    // (`export:progress` / `export:complete` / `export:error`) are
+    // wired to the React `<ExportPanel>` and would pop a "Exported to
+    // ..." toast on every preview re-render. The preview module emits
+    // its own `preview:render_*` events for status.
+    export::run_render_silent(
         app,
         &project_for_render,
         &dest,
@@ -233,6 +246,7 @@ impl PreviewRenderer {
 
 async fn preview_loop(app: AppHandle, handle: ProjectHandle, renderer: PreviewRenderer) {
     let mut rx = handle.subscribe();
+    info!("preview renderer subscribed; waiting for commits");
     loop {
         // Wait for the first sign of work.
         match rx.recv().await {
@@ -263,7 +277,7 @@ async fn preview_loop(app: AppHandle, handle: ProjectHandle, renderer: PreviewRe
             }
         };
         let project = handle.snapshot().await;
-        let hash = match state_hash(&project, &cache, &app) {
+        let hash = match state_hash(&project, &cache, &app).await {
             Ok(h) => h,
             Err(e) => {
                 warn!("preview: state_hash failed: {e:#}");
@@ -275,9 +289,12 @@ async fn preview_loop(app: AppHandle, handle: ProjectHandle, renderer: PreviewRe
             // No change — nothing to render.
             continue;
         }
-        // Empty project: skip — `run_render` rejects projects with no
-        // decoded inputs and we'd just spam errors.
-        if project.media_pool.is_empty() && project.tracks.iter().all(|t| t.layers.is_empty()) {
+        // No layers: nothing to render. `run_render` rejects projects
+        // with no decoded inputs, and the React side gates `hasContent`
+        // on `layer_count > 0` so it already shows the empty hint.
+        // Importing media into the pool without dragging it onto the
+        // timeline lands here.
+        if project.tracks.iter().all(|t| t.layers.is_empty()) {
             continue;
         }
         {

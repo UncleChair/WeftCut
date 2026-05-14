@@ -2,6 +2,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   forwardRef,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useRef,
@@ -133,6 +134,36 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
     // anything.
     const lastTimeRef = useRef<number>(0);
     const lastPausedRef = useRef<boolean>(true);
+
+    // requestAnimationFrame pump for smooth playhead updates during
+    // playback. The `<video>` element's native `timeupdate` event fires
+    // at most ~4Hz per the HTML5 spec, which reads as jerky on the
+    // timeline. RAF runs at the display refresh rate (~60Hz) while
+    // playing; we cancel it on pause + on unmount so it doesn't spin
+    // forever. Paused-state seeks don't need the pump — `seekTo()` in
+    // the imperative handle already pushes `currentTimeUs` up to the
+    // parent before setting `video.currentTime`.
+    const rafRef = useRef<number | null>(null);
+    const pumpTime = useCallback(() => {
+      const v = videoRef.current;
+      if (!v || v.paused) {
+        rafRef.current = null;
+        return;
+      }
+      const secs = v.currentTime;
+      lastTimeRef.current = secs;
+      onTimeUpdate(Math.round(secs * 1_000_000));
+      rafRef.current = requestAnimationFrame(pumpTime);
+    }, [onTimeUpdate]);
+
+    useEffect(() => {
+      return () => {
+        if (rafRef.current !== null) {
+          cancelAnimationFrame(rafRef.current);
+          rafRef.current = null;
+        }
+      };
+    }, []);
     useEffect(() => {
       const v = videoRef.current;
       if (!v) return;
@@ -210,18 +241,32 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
           className="preview-video"
           src={state.kind === "ready" ? state.src : undefined}
           preload="auto"
-          onTimeUpdate={(e) => {
-            const tUs = Math.round(e.currentTarget.currentTime * 1_000_000);
-            lastTimeRef.current = e.currentTarget.currentTime;
-            onTimeUpdate(tUs);
-          }}
           onPlay={() => {
             lastPausedRef.current = false;
             onPausedChange(false);
+            // Start the ~60Hz pump for smooth playhead motion. The
+            // native `timeupdate` event only fires at ~4Hz so isn't
+            // used here.
+            if (rafRef.current === null) {
+              rafRef.current = requestAnimationFrame(pumpTime);
+            }
           }}
           onPause={() => {
             lastPausedRef.current = true;
             onPausedChange(true);
+            if (rafRef.current !== null) {
+              cancelAnimationFrame(rafRef.current);
+              rafRef.current = null;
+            }
+            // Mirror the final video.currentTime once on pause so the
+            // playhead lands exactly where the video stopped (RAF
+            // cancellation can race the last frame by one tick).
+            const v = videoRef.current;
+            if (v) {
+              const tUs = Math.round(v.currentTime * 1_000_000);
+              lastTimeRef.current = v.currentTime;
+              onTimeUpdate(tUs);
+            }
           }}
         />
         {rebuilding && (
