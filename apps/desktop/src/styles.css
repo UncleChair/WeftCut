@@ -1118,6 +1118,21 @@ input.preview-timecode:focus {
   border-left-color: #60a5fa;
 }
 
+/* Restore-divider row — short marker showing where the rolled-back
+   window ends. Pre-restore rows in that window are pruned upstream
+   in buildRows(); only this divider + the target checkpoint pin
+   stay visible across the boundary. */
+.restore-divider-row {
+  background: rgba(148, 163, 184, 0.06);
+  border-left-color: #94a3b8;
+  color: #94a3b8;
+  font-style: italic;
+}
+
+.restore-divider-row .row-icon {
+  color: #94a3b8;
+}
+
 .timeline-playhead {
   position: absolute;
   top: 2px;

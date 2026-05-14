@@ -171,6 +171,7 @@ const enUS = {
     lock_hint: "Agent has locked the revert surface. Click Exit to editor to release the lock.",
     running_pill: "Agent: {{count}} running",
     running_pill_hint: "Agent operations are still finishing in the background.",
+    restored_to: "Restored to \"{{label}}\"",
   },
   errors: {
     refresh_failed: "refresh: {{detail}}",

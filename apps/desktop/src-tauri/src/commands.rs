@@ -773,17 +773,51 @@ pub async fn project_undo(handle: State<'_, ProjectHandle>) -> Result<(), String
 /// User-side checkpoint restore — wired to the agent-mode record
 /// panel's Restore button. Rejects with the same HistoryLocked error
 /// the MCP path raises when the agent holds the revert lock.
+///
+/// Emits a structured Restore LogEntry so the record panel can prune
+/// the rolled-back agent actions from view (`details.kind === "Restore"`
+/// carries the target `checkpoint_id` + `label`, and the entry's own
+/// `ts` is the upper bound of the rolled-back window).
 #[tauri::command]
 pub async fn project_restore_checkpoint(
+    app: tauri::AppHandle,
     handle: State<'_, ProjectHandle>,
     checkpoint_id: String,
 ) -> Result<(), String> {
     let id = Uuid::parse_str(&checkpoint_id)
         .map_err(|e| format!("checkpoint_id not a UUID: {e}"))?;
+    // Look up the label BEFORE restoring — the actor's restore call
+    // returns `()`, and we want the label for the Restore LogEntry's
+    // `details` payload so the panel can show "Restored to '<label>'".
+    let label = handle
+        .list_checkpoints()
+        .await
+        .into_iter()
+        .find(|c| c.id == id)
+        .map(|c| c.label);
     handle
         .restore_checkpoint(Actor::User, id)
         .await
-        .map_err(|e: CommandError| e.to_string())
+        .map_err(|e: CommandError| e.to_string())?;
+    crate::logs::emit_via_app(
+        &app,
+        crate::logs::LogEntryInput {
+            level: crate::logs::LogLevel::Info,
+            category: crate::logs::LogCategory::Project,
+            source: crate::logs::LogSource::User,
+            message: match &label {
+                Some(l) => format!("Restored to checkpoint: {l}"),
+                None => format!("Restored to checkpoint: {id}"),
+            },
+            details: Some(serde_json::json!({
+                "kind": "Restore",
+                "checkpoint_id": id.to_string(),
+                "label": label,
+            })),
+            ..Default::default()
+        },
+    );
+    Ok(())
 }
 
 #[tauri::command]

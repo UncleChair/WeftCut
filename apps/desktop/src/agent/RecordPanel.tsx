@@ -49,6 +49,12 @@ type Row =
       ts: string;
       label: string;
       entryId: string; // log entry id, for React key uniqueness
+    }
+  | {
+      kind: "restore-divider";
+      id: string; // log entry id, for React key uniqueness
+      ts: string;
+      targetLabel: string;
     };
 
 type OpStatus = "running" | "done" | "error";
@@ -75,26 +81,81 @@ function isCheckpointDetails(details: unknown): details is { kind: "Checkpoint";
   );
 }
 
+function isRestoreDetails(
+  details: unknown,
+): details is { kind: "Restore"; checkpoint_id: string; label: string | null } {
+  return (
+    typeof details === "object" &&
+    details !== null &&
+    (details as { kind?: unknown }).kind === "Restore"
+  );
+}
+
 function buildRows(entries: LogEntry[], sessionStartedAt: string): Row[] {
   const sessionStart = Date.parse(sessionStartedAt);
-  // The store keeps entries newest-first (entries[0] = latest). For
-  // chronological display we walk in reverse and accumulate; this
-  // also makes op groups settle on the LATEST entry naturally.
+
+  // Chronological order. We accept entries from any source here so
+  // user-initiated Restore events (which carry `source: User`) reach
+  // the rolled-back-range collector below. The Agent-source filter is
+  // applied per-row inside the build loop, EXCLUDING Restore entries
+  // which we always surface as boundary markers.
   const chronological: LogEntry[] = [];
   for (let i = entries.length - 1; i >= 0; i--) {
     const e = entries[i]!;
-    if (e.source.kind !== "Agent") continue;
     if (Date.parse(e.ts) < sessionStart) continue;
     chronological.push(e);
   }
 
-  // Two passes — first build the op-group accumulator, then a single
-  // chronological merge so checkpoint rows + standalone rows + the
-  // op-group rows stay in time order.
+  // Pass 1: build a checkpoint_id → ts lookup, then collect the
+  // [target_cp.ts, restore_event.ts] ranges that the user / agent
+  // rolled back. Entries with ts strictly inside any of these
+  // ranges are hidden from the panel — they happened but have been
+  // undone, so showing them is misleading.
+  const cpTsMap = new Map<string, number>();
+  for (const e of chronological) {
+    if (isCheckpointDetails(e.details)) {
+      cpTsMap.set(e.details.id, Date.parse(e.ts));
+    }
+  }
+  const rolledBackRanges: { start: number; end: number }[] = [];
+  for (const e of chronological) {
+    if (isRestoreDetails(e.details)) {
+      const targetTs = cpTsMap.get(e.details.checkpoint_id);
+      if (targetTs !== undefined) {
+        rolledBackRanges.push({ start: targetTs, end: Date.parse(e.ts) });
+      }
+    }
+  }
+  const isRolledBack = (ts: string): boolean => {
+    const t = Date.parse(ts);
+    for (const r of rolledBackRanges) {
+      // Strict exclusion on both ends so the target checkpoint pin
+      // and the Restore divider itself stay visible.
+      if (t > r.start && t < r.end) return true;
+    }
+    return false;
+  };
+
+  // Pass 2: build rows. Op groups settle on the LATEST entry naturally
+  // because chronological order means later entries overwrite earlier
+  // state for the same op_id key.
   type Group = { firstTs: string; latest: LogEntry; status: OpStatus; count: number };
   const groups = new Map<string, Group>();
   const rows: Row[] = [];
   for (const e of chronological) {
+    if (isRolledBack(e.ts)) continue;
+
+    // Restore boundary rows always show, regardless of source.
+    if (isRestoreDetails(e.details)) {
+      rows.push({
+        kind: "restore-divider",
+        id: e.id,
+        ts: e.ts,
+        targetLabel: e.details.label ?? "checkpoint",
+      });
+      continue;
+    }
+
     // Checkpoint rows always stand alone, regardless of op_id.
     if (isCheckpointDetails(e.details)) {
       rows.push({
@@ -106,6 +167,10 @@ function buildRows(entries: LogEntry[], sessionStartedAt: string): Row[] {
       });
       continue;
     }
+
+    // Everything else: agent-attributed only.
+    if (e.source.kind !== "Agent") continue;
+
     if (e.op_id) {
       const g = groups.get(e.op_id);
       if (g) {
@@ -262,6 +327,17 @@ export function RecordPanel({ sessionStartedAt, lockReason }: RecordPanelProps) 
                   </span>
                   <span className="row-body" title={row.latest.message}>
                     <span className="row-tool">{shortOpName(row.latest.message)}</span>
+                  </span>
+                </div>
+              );
+            }
+            if (row.kind === "restore-divider") {
+              return (
+                <div key={row.id} className="agent-record-row restore-divider-row">
+                  <span className="row-time">{formatClock(row.ts)}</span>
+                  <span className="row-icon" aria-hidden="true">↩</span>
+                  <span className="row-body" title={row.targetLabel}>
+                    {t("agent_mode.restored_to", { label: row.targetLabel })}
                   </span>
                 </div>
               );

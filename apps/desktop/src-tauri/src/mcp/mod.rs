@@ -1274,16 +1274,43 @@ impl WeftCutServer {
     }
 
     #[tool(description = "Restore a named checkpoint. Records a new history entry — undo will return to the \
-                          pre-restore state. Errors with CheckpointNotFound if the id doesn't exist.")]
+                          pre-restore state. Errors with CheckpointNotFound if the id doesn't exist. \
+                          The agent-mode record panel prunes the rolled-back agent actions from view; \
+                          a small '↩ Restored to <label>' row marks the boundary.")]
     async fn restore_checkpoint(
         &self,
         #[tool(aggr)] args: RestoreCheckpointArgs,
     ) -> Result<CallToolResult, McpError> {
         let id = parse_uuid(&args.checkpoint_id, "checkpoint_id")?;
+        let label = self
+            .project
+            .list_checkpoints()
+            .await
+            .into_iter()
+            .find(|c| c.id == id)
+            .map(|c| c.label);
         self.project
             .restore_checkpoint(agent_actor(), id)
             .await
             .map_err(map_command_error)?;
+        crate::logs::emit_via_app(
+            &self.app,
+            crate::logs::LogEntryInput {
+                level: crate::logs::LogLevel::Info,
+                category: crate::logs::LogCategory::Project,
+                source: crate::logs::LogSource::Agent { client: "mcp".into() },
+                message: match &label {
+                    Some(l) => format!("Restored to checkpoint: {l}"),
+                    None => format!("Restored to checkpoint: {id}"),
+                },
+                details: Some(serde_json::json!({
+                    "kind": "Restore",
+                    "checkpoint_id": id.to_string(),
+                    "label": label,
+                })),
+                ..Default::default()
+            },
+        );
         Ok(ok_void())
     }
 
