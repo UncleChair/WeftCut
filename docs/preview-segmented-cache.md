@@ -1,14 +1,31 @@
 # Preview segmented cache — design
 
-**Status:** Phase A1–A6 **shipped 2026-05-15** behind `WEFTCUT_PREVIEW_SEGMENTED=1` env flag (whole-timeline path remains the default). Phase B.3 (WebCodecs+WebGL2 real-time playback) intentionally deferred — design notes preserved below for future work.
+**Status:** Phase A1–A6 AND Phase B1–B6 **shipped 2026-05-15**. A is opt-in via `WEFTCUT_PREVIEW_SEGMENTED=1`; B.3 is user-selectable via Settings → Preview engine (Auto / Real-time / Cached), persisted to localStorage. The whole-timeline legacy preview is still produced and serves as B.3's audio source.
 
-Commits:
+Phase A commits:
 - `6bb7462` A1 — IR foundations (segments + lower_range + segment_hash)
 - `a95f372` A2 — manifest + per-segment encoder + feature-flagged orchestrator
 - `2296663` A3 — parallel queue + cancellation + retry classification
 - `5f3d52b` A4 — MSE driver + segmented PreviewSurface mode
 - `7d11baf` A5 — status bar + failure UX + LogBus integration
-- this commit — A6: codec profile abstraction + Linux VP9 path
+- `94887be` A6 — codec profile abstraction + Linux VP9 path
+
+Phase B.3 commits:
+- `2b33506` B1 — WebCodecs decoder substrate (mp4box demuxer + VideoDecoder) + dev-mode toggle
+- `538c23c` B2 — WebGL2 multi-layer compositor (transforms, opacity, blend modes)
+- `aebe6d5` B2-fix — VideoFrame Y-flip in shader (WebView2 zero-copy ignores UNPACK_FLIP_Y_WEBGL)
+- `5990958` B3 — `emit_webcodecs.rs` IR composition recipe + `preview_webcodecs_recipe` IPC
+- `39f2da2` B4 — capability probe + Auto/Real-time/Cached preference UI (Zustand + localStorage)
+- `0b7b25b` B5 — playback engine: DecoderPool + RasterCache + RAF render loop
+- `20a805c` B5-fix — playhead-distance ring eviction (not FIFO)
+- `50e9838` B5-fix — raster prefetch + previous-frame fallback + auto-rewind-on-end
+- `d452017` B5-fix — decoder reset on seek
+- `adc5cdd` B6a — audio sync via whole-timeline `<audio>` element
+- `0c1b63c` B6b — PreviewSurface routes to realtime engine by resolved mode
+- `f355e3e` B6b-fix — synthetic clock as master (audio-as-master caused frame-by-frame stall)
+- `046ae97` B6c — surface decoder failures + stalls to LogBus
+
+Sub-phase ordering was substrate-first: decoder (B1) → compositor (B2) → IR recipe shape informed by what the compositor actually consumes (B3) → probe + preference (B4) → engine wiring (B5) → integration + audio (B6). This let each phase be verified independently before the next built on it.
 
 ## Problem
 
