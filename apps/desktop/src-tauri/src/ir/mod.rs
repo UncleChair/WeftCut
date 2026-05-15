@@ -82,6 +82,8 @@ mod tests {
                 audio: None,
             },
             proxy_path: None,
+
+            proxy_format_version: 0,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "0".into(),
@@ -303,6 +305,8 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
                 audio: None,
             },
             proxy_path: None,
+
+            proxy_format_version: 0,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "0".into(),
@@ -662,6 +666,8 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
                 audio: None,
             },
             proxy_path: None,
+
+            proxy_format_version: 0,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "0".into(),
@@ -1266,6 +1272,8 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
                 audio: None,
             },
             proxy_path: None,
+
+            proxy_format_version: 0,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "0".into(),

@@ -18,6 +18,13 @@ pub struct MediaItem {
     pub kind: MediaKind,
     pub metadata: MediaMetadata,
     pub proxy_path: Option<PathBuf>,
+    /// Format-version of the cached proxy at `proxy_path` — compared
+    /// against `jobs::proxy::PROXY_FORMAT_VERSION` on workspace open
+    /// to invalidate stale proxies. See `docs/preview-scrub.md`.
+    /// `#[serde(default)]` keeps older `.vproj` files loadable as
+    /// version 0.
+    #[serde(default)]
+    pub proxy_format_version: u32,
     pub waveform_path: Option<PathBuf>,
     pub thumbnails_dir: Option<PathBuf>,
     pub file_hash_blake3: String,

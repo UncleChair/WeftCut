@@ -500,6 +500,8 @@ mod tests {
                 audio: None,
             },
             proxy_path: None,
+
+            proxy_format_version: 0,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "0".into(),
@@ -678,6 +680,8 @@ mod tests {
                 audio: None,
             },
             proxy_path: None,
+
+            proxy_format_version: 0,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "0".into(),

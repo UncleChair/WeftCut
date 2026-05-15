@@ -815,6 +815,8 @@ impl WeftCutServer {
                 kind: MediaKind::Audio,
                 metadata,
                 proxy_path: None,
+
+                proxy_format_version: 0,
                 waveform_path: None,
                 thumbnails_dir: None,
                 file_hash_blake3: cache_key_clone,
@@ -1321,6 +1323,8 @@ impl WeftCutServer {
                 kind,
                 metadata,
                 proxy_path: None,
+
+                proxy_format_version: 0,
                 waveform_path: None,
                 thumbnails_dir: None,
                 file_hash_blake3: facts.blake3_hex,
@@ -3391,6 +3395,8 @@ mod tests {
                 }),
             },
             proxy_path: None,
+
+            proxy_format_version: 0,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "media-hash".into(),

@@ -608,6 +608,8 @@ mod tests_segment_hash {
                 audio: None,
             },
             proxy_path: None,
+
+            proxy_format_version: 0,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: blake3.into(),

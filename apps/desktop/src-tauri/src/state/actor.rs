@@ -191,9 +191,19 @@ pub struct AudioPatch {
 /// the field; `None` leaves it alone. There's no clear-path here because once
 /// a derivative exists, it persists — content-addressed cache invalidation
 /// happens by hash mismatch on re-import, not by clearing fields.
+///
+/// EXCEPT: `proxy_path` IS clearable. `Some(None)` clears it (used by the
+/// workspace-open invalidation pass when an existing proxy is stale per
+/// `proxy_format_version`); `None` leaves it alone (the common path for
+/// fresh-generation patches that don't touch proxies). See
+/// `docs/preview-scrub.md`.
 #[derive(Clone, Debug, Default)]
 pub struct MediaDerivativesPatch {
-    pub proxy_path: Option<std::path::PathBuf>,
+    pub proxy_path: Option<Option<std::path::PathBuf>>,
+    /// Set when the proxy job completes successfully; the workspace-open
+    /// invalidation pass uses it to decide whether the cached proxy
+    /// matches the current `jobs::proxy::PROXY_FORMAT_VERSION`.
+    pub proxy_format_version: Option<u32>,
     pub waveform_path: Option<std::path::PathBuf>,
     pub thumbnails_dir: Option<std::path::PathBuf>,
 }
@@ -2441,7 +2451,12 @@ impl ProjectActor {
             .get_mut(&id)
             .ok_or(CommandError::MediaNotFound { media: id })?;
         if let Some(p) = patch.proxy_path {
-            item.proxy_path = Some(p);
+            // `Some(Some(path))` sets a freshly generated proxy.
+            // `Some(None)` clears it (workspace-open invalidation).
+            item.proxy_path = p;
+        }
+        if let Some(v) = patch.proxy_format_version {
+            item.proxy_format_version = v;
         }
         if let Some(p) = patch.waveform_path {
             item.waveform_path = Some(p);
@@ -4409,6 +4424,8 @@ mod tests {
                 audio: None,
             },
             proxy_path: None,
+
+            proxy_format_version: 0,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "0".into(),
@@ -4551,6 +4568,8 @@ mod tests {
                 audio: None,
             },
             proxy_path: None,
+
+            proxy_format_version: 0,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "0".into(),
@@ -4605,6 +4624,8 @@ mod tests {
                 audio: None,
             },
             proxy_path: None,
+
+            proxy_format_version: 0,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "0".into(),
@@ -4641,6 +4662,8 @@ mod tests {
                 audio: None,
             },
             proxy_path: None,
+
+            proxy_format_version: 0,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "0".into(),
@@ -5003,7 +5026,7 @@ mod tests {
                 Actor::User,
                 media_id,
                 MediaDerivativesPatch {
-                    proxy_path: Some(PathBuf::from("/cache/proxies/abc.mp4")),
+                    proxy_path: Some(Some(PathBuf::from("/cache/proxies/abc.mp4"))),
                     thumbnails_dir: Some(PathBuf::from("/cache/thumbnails/abc")),
                     ..Default::default()
                 },
@@ -5869,6 +5892,8 @@ mod tests {
                 }),
             },
             proxy_path: None,
+
+            proxy_format_version: 0,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "0".into(),
