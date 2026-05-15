@@ -618,10 +618,12 @@ export class PlaybackEngine {
   /// the seek target. See `buildClipLayer`.
   private clipSeekTargets: Map<string, number> = new Map();
   /// Last VideoFrame we successfully rendered per clip, held as an
-  /// independent clone so it survives `decoderPool.reset()` (called by
-  /// every `seekTo`). Used as a visual fallback while a fresh seek is
-  /// still cold-warming the decoder — without it the canvas would be
-  /// blank between "user drags playhead" and "decoder catches up". The
+  /// independent clone so it survives the decoder's internal ring
+  /// being cleared during a `decoder.seek` (post-S.4/S.5/S.6 the
+  /// `DecoderPool.reset` path only fires on recipe swap + dispose).
+  /// Used as a visual fallback while a fresh seek is still
+  /// decoding-toward-target — without it the canvas would be blank
+  /// between "user drags playhead" and "decoder catches up". The
   /// clone is owned by the engine; close it on replace / setRecipe /
   /// dispose.
   private fallbackFrames: Map<string, VideoFrame> = new Map();
@@ -771,17 +773,13 @@ export class PlaybackEngine {
     }
     this.clock.seek(tUs);
     this.endedFired = false;
-    // Reset the decoder pool on seek. Each ClipDecoder's ring buffer
-    // is centered around the previous playhead (dropFramesBefore
-    // trims old frames every tick) and the decoder may have already
-    // finished decoding the whole clip — so a backward seek can land
-    // in a region the ring no longer covers AND can't refill.
-    // Closing and reopening cold-starts each affected decoder; the
-    // RAF loop's next syncToTime tick will recreate them.
+    // `docs/preview-scrub.md` S.6 — `decoderPool.reset()` is no
+    // longer called here. The S.5 scrub loop drives `decoder.seek`
+    // in place so each ClipDecoder keeps its open mp4box demuxer +
+    // configured VideoDecoder across seeks. Resetting on every
+    // seek would defeat the entire fast-scrub design (the loop
+    // would have nothing to seek).
     //
-    // For B5 we hammer this on every seek for correctness; B6 can
-    // skip the reset when the new playhead is still inside the ring.
-    this.decoderPool.reset();
     // Mark every clip's seek target. `buildClipLayer` suppresses
     // frames whose timestamp is below this target until the decoder
     // catches up — otherwise the canvas would replay the source from
