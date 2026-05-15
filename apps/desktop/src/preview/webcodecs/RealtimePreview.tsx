@@ -123,6 +123,10 @@ export function RealtimePreview() {
             transform: { x: 0, y: 0, width: 1, height: 1 },
             opacity: 1,
             blendMode: "normal",
+            // WebView2 ignores UNPACK_FLIP_Y_WEBGL on VideoFrame
+            // uploads (zero-copy GPU fast path). Compensate per-layer
+            // via the fragment shader's u_flipY uniform.
+            flipY: true,
           });
         }
         if (overlay) {
