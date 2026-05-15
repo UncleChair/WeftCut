@@ -20,7 +20,11 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { previewWebcodecsRecipe, type WebcodecsRecipe } from "../../ipc";
+import {
+  previewCurrentPath,
+  previewWebcodecsRecipe,
+  type WebcodecsRecipe,
+} from "../../ipc";
 import { Mp4Decoder, type ClipInfo } from "./decoder";
 import {
   WebGL2Compositor,
@@ -297,10 +301,27 @@ export function RealtimePreview() {
       // Hand the fresh recipe to the engine immediately so the
       // playback canvas reflects the active project.
       engineRef.current?.setRecipe(r);
+      // B6a — also hand it the legacy preview MP4 path as an audio
+      // source. The legacy preview always carries the project's
+      // mixed audio track; the engine's `<audio>` element ignores
+      // the embedded video. Projects with no audio tracks land
+      // duration=NaN and the engine falls back to the synthetic
+      // clock cleanly.
+      try {
+        const path = await previewCurrentPath();
+        if (path) {
+          engineRef.current?.setAudioUrl(convertFileSrc(path));
+        } else {
+          engineRef.current?.setAudioUrl(null);
+        }
+      } catch {
+        engineRef.current?.setAudioUrl(null);
+      }
     } catch (e) {
       setRecipeError(String(e));
       setRecipe(null);
       engineRef.current?.setRecipe(null);
+      engineRef.current?.setAudioUrl(null);
     } finally {
       setRecipeLoading(false);
     }
