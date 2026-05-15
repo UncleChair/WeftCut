@@ -198,6 +198,25 @@ class ClipDecoder {
     return this.openError;
   }
 
+  /// Reposition the underlying demuxer + decoder to the random
+  /// access point at-or-before `localTimeUs`, drop the existing
+  /// ring (frames are stale against the new sample chain), and
+  /// resume sample emission. `docs/preview-scrub.md` (S.4) — this
+  /// is the engine's primary scrub mechanism, replacing the
+  /// "close decoder + reopen from t=0" path that resetting the
+  /// `DecoderPool` used.
+  async seek(localTimeUs: number): Promise<void> {
+    if (!this.mp4 || this.closed) return;
+    // Drop existing frames — they're from the pre-seek sample
+    // chain. The next batch of mp4box samples will start at the
+    // RAP at-or-before the target.
+    for (const entry of this.ring) entry.frame.close();
+    this.ring = [];
+    await this.mp4.seek(localTimeUs);
+    // The mp4 decoder owns its own "warming up" state via the
+    // engine's `clipSeekTargets` map; we don't track it here.
+  }
+
   async close(): Promise<void> {
     this.closed = true;
     for (const entry of this.ring) entry.frame.close();

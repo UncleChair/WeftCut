@@ -192,6 +192,43 @@ export class Mp4Decoder {
     });
   }
 
+  /// Reposition the demuxer + decoder to the previous random access
+  /// point at or before `localTimeUs`, drop in-flight frames, and
+  /// resume sample emission from that keyframe. The caller should
+  /// expect frames whose timestamps may be earlier than `localTimeUs`
+  /// — decoding has to walk forward from the keyframe to reach the
+  /// target. See `docs/preview-scrub.md` (S.4).
+  async seek(localTimeUs: number): Promise<void> {
+    const mp4 = this.mp4box;
+    const dec = this.decoder;
+    if (!mp4 || !dec || this.closed) return;
+    // 1. Tell mp4box to jump the demuxer to the previous RAP at or
+    //    before the target. `true` = useRap (find a keyframe).
+    try {
+      mp4.seek(localTimeUs / 1_000_000, true);
+    } catch (e) {
+      this.events.onError?.(`mp4box.seek: ${String(e)}`);
+      return;
+    }
+    // 2. Flush the WebCodecs decoder so it drops any in-flight chunks
+    //    and is ready to start decoding a new sample chain at the
+    //    upcoming keyframe.
+    try {
+      await dec.flush();
+    } catch {
+      // flush() rejects when the decoder is reset / closed mid-
+      // flight; expected on rapid teardown, non-fatal.
+    }
+    if (this.closed) return;
+    // 3. Resume sample emission. mp4box's internal `nextSeekPosition`
+    //    state (set by `seek`) controls where extraction picks up.
+    try {
+      mp4.start();
+    } catch (e) {
+      this.events.onError?.(`mp4box.start after seek: ${String(e)}`);
+    }
+  }
+
   async close(): Promise<void> {
     this.closed = true;
     const dec = this.decoder;
