@@ -3758,3 +3758,47 @@ input.preview-timecode:focus {
 .realtime-preview-error {
   color: #fca5a5;
 }
+
+.realtime-preview-divider {
+  width: 1px;
+  background: rgba(255, 255, 255, 0.15);
+  margin: 0 4px;
+}
+
+.realtime-preview-overlay-ctrls {
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 6px 12px;
+}
+
+.realtime-preview-overlay-ctrls h3 {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #a1a1aa;
+}
+
+.realtime-preview-overlay-ctrls label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  color: #d4d4d8;
+}
+
+.realtime-preview-overlay-ctrls input[type="range"] {
+  width: 100%;
+}
+
+.realtime-preview-overlay-ctrls select {
+  background: rgba(63, 63, 70, 0.5);
+  color: #e4e4e7;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  padding: 4px 6px;
+  border-radius: 4px;
+}
