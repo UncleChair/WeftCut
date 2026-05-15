@@ -99,18 +99,34 @@ export class SegmentedMSEPlayer {
       );
       this.videoBuffer.mode = "segments";
       this.videoBuffer.addEventListener("updateend", () => this.drainVideoOps());
-
-      this.audioBuffer = this.mediaSource.addSourceBuffer(
-        `${this.audioMimePrefix}; codecs="${this.audioCodec}"`,
-      );
-      this.audioBuffer.mode = "segments";
-      this.audioBuffer.addEventListener("updateend", () => this.drainAudioOps());
+      // Audio SourceBuffer is added LAZILY on first appendAudio. If the
+      // project has no Audio-track layers, the orchestrator never emits
+      // `audio_ready`, so we never add the buffer — keeps the video
+      // playing solo instead of stalling HAVE_ENOUGH_DATA waiting for
+      // audio bytes that will never arrive. See ensureAudioBuffer().
 
       this.ready = true;
       for (const r of this.readyResolvers) r();
       this.readyResolvers = [];
     } catch (e) {
       console.error("SegmentedMSEPlayer: addSourceBuffer failed", e);
+    }
+  }
+
+  /// Add the audio SourceBuffer if it doesn't exist yet. Called on the
+  /// first `appendAudio()` so audio-less projects don't stall on an
+  /// empty audio track.
+  private ensureAudioBuffer() {
+    if (this.audioBuffer) return;
+    if (this.mediaSource.readyState !== "open") return;
+    try {
+      this.audioBuffer = this.mediaSource.addSourceBuffer(
+        `${this.audioMimePrefix}; codecs="${this.audioCodec}"`,
+      );
+      this.audioBuffer.mode = "segments";
+      this.audioBuffer.addEventListener("updateend", () => this.drainAudioOps());
+    } catch (e) {
+      console.error("SegmentedMSEPlayer: lazy audio addSourceBuffer failed", e);
     }
   }
 
@@ -205,9 +221,13 @@ export class SegmentedMSEPlayer {
   }
 
   /// Replace the whole-timeline audio. Removes the existing audio range
-  /// first, then appends the new bytes from offset 0.
+  /// first, then appends the new bytes from offset 0. The audio
+  /// SourceBuffer is created lazily on the first call — projects with
+  /// no audio never call this and the video plays without an audio
+  /// track stalling it.
   public async appendAudio(fileUrl: string): Promise<void> {
     if (!this.ready) await this.whenReady();
+    this.ensureAudioBuffer();
     let bytes: Uint8Array;
     try {
       const resp = await fetch(fileUrl);
