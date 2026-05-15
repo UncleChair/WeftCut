@@ -5834,6 +5834,119 @@ mod tests {
         assert_eq!(on_track2.len(), 1, "B should not be split under escape");
     }
 
+    // Phase G.5 — verify the import-pairing orchestration composes cleanly
+    // at the actor level. `add_video_layer` / `add_media_layer` perform
+    // add_layer + add_layer + groups_create as three sequential commits;
+    // this test replays that sequence and checks the final group state.
+    #[tokio::test]
+    async fn paired_av_import_produces_grouped_pair() {
+        use crate::state::{
+            AudioParams as AP, LayerParams as LP, VideoClipParams as VCP, MediaItem,
+            MediaKind, MediaMetadata, AudioStreamMeta,
+        };
+        let (project, video_track) = project_with_video_track();
+        let handle = spawn(project);
+        let audio_track = handle
+            .add_track(Actor::User, TrackKind::Audio, Some("Audio".into()))
+            .await
+            .unwrap();
+        // Inject a media item with both video AND audio streams. The
+        // pairing path reads `MediaMetadata.audio` to decide whether to
+        // create the Audio layer.
+        let media = MediaItem {
+            id: new_id(),
+            label: Some("clip.mp4".into()),
+            path_abs: "/tmp/clip.mp4".into(),
+            path_rel: None,
+            kind: MediaKind::Video,
+            metadata: MediaMetadata {
+                duration_us: Some(5_000_000),
+                video: None,
+                audio: Some(AudioStreamMeta {
+                    sample_rate: 48_000,
+                    channels: 2,
+                    codec: "aac".into(),
+                }),
+            },
+            proxy_path: None,
+            waveform_path: None,
+            thumbnails_dir: None,
+            file_hash_blake3: "0".into(),
+            file_size: 0,
+            file_mtime: 0,
+            imported_at: Utc::now(),
+        };
+        let media_id = media.id;
+        handle.add_media_item(Actor::User, media).await.unwrap();
+        let video_layer_id = handle
+            .add_layer(
+                Actor::User,
+                video_track,
+                LP::VideoClip(VCP {
+                    media: media_id,
+                    src_in_us: 0,
+                    src_out_us: 5_000_000,
+                    transform: Default::default(),
+                    opacity: Animated::Static(1.0),
+                    crop: None,
+                    flip_h: false,
+                    flip_v: false,
+                    blend_mode: Default::default(),
+                    speed: 1.0,
+                    fade_in_us: 0,
+                    fade_out_us: 0,
+                }),
+                0,
+                5_000_000,
+            )
+            .await
+            .unwrap();
+        let audio_layer_id = handle
+            .add_layer(
+                Actor::User,
+                audio_track,
+                LP::Audio(AP {
+                    media: media_id,
+                    src_in_us: 0,
+                    src_out_us: 5_000_000,
+                    gain_db: Animated::Static(0.0),
+                    pan: Animated::Static(0.0),
+                    fade_in_us: 0,
+                    fade_out_us: 0,
+                    mute: false,
+                }),
+                0,
+                5_000_000,
+            )
+            .await
+            .unwrap();
+        let group_id = handle
+            .groups_create(
+                Actor::User,
+                vec![video_layer_id, audio_layer_id],
+                None,
+                false,
+            )
+            .await
+            .unwrap();
+        let snap = handle.snapshot().await;
+        assert_eq!(snap.groups.len(), 1);
+        let g = &snap.groups[0];
+        assert_eq!(g.id, group_id);
+        assert!(g.members.contains(&video_layer_id));
+        assert!(g.members.contains(&audio_layer_id));
+        // Sanity: a subsequent move on the video propagates to the audio.
+        handle
+            .move_layer(Actor::User, video_layer_id, video_track, 1_000_000, false)
+            .await
+            .unwrap();
+        let snap = handle.snapshot().await;
+        let v = layer(&snap, video_layer_id);
+        let a = layer(&snap, audio_layer_id);
+        assert_eq!(v.t_start_us, 1_000_000);
+        assert_eq!(a.t_start_us, 1_000_000, "AV pair shifts together");
+    }
+
     #[tokio::test]
     async fn split_layer_locked_spanning_sibling_rejects() {
         let (handle, _t1, _t2, a, b) = paired_layers_on_two_tracks().await;

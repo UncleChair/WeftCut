@@ -967,14 +967,22 @@ function LayerBlock({
       title={`${layer.kind}: ${(liveStart / 1_000_000).toFixed(2)}s → ${(liveEnd / 1_000_000).toFixed(2)}s`}
     >
       {groupId !== null && layerWidthPx > 14 && (
-        <span
+        <svg
           className="layer-group-icon"
           aria-label="grouped"
-          title="In a group (Ctrl+G to add, Ctrl+Shift+G to dissolve)"
+          width="9"
+          height="9"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="3"
+          strokeLinecap="round"
         >
-          {/* Chain link glyph — Unicode "LINK SYMBOL" */}
-          🔗
-        </span>
+          {/* Two interlocked oval links — a chain-link mark without an emoji. */}
+          <title>In a group (Ctrl+G to add, Ctrl+Shift+G to dissolve)</title>
+          <path d="M9 12a4 4 0 0 1 4-4h2a4 4 0 0 1 0 8h-2" />
+          <path d="M15 12a4 4 0 0 1-4 4H9a4 4 0 0 1 0-8h2" />
+        </svg>
       )}
       {layer.params.kind === "Audio" && layerWidthPx > 8 && (() => {
         // Source-window shifts mirror the timeline-window shifts during
