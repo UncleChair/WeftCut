@@ -454,6 +454,58 @@ Suggested commit cadence: one PR per phase, each ~2–5 days. Feature-flag A1–
 | 21 | B.3 gating | User preference + startup probe + per-clip check + mid-session fallback. NO build-time fragmentation. |
 | 22 | B.3 platform support | Win/Mac at launch; Linux stays on A until WebKitGTK matures |
 
+## Deferred follow-ups (B.3 polish)
+
+Captured 2026-05-15 after B6c landed. Each item is independently shippable; none block normal use of the realtime engine. Quick sketches so a future session can pick any of them up cold.
+
+### 1. True per-clip fallback to A's segmented cache
+
+**Gap.** B6c surfaces a clip's decode failure via LogBus but keeps rendering the rest of the recipe. The design's stated behavior is "the failing clip falls through to A's segmented cache for that clip ONLY — other clips still play through B.3." Currently the user has to flip the global preference to Cached to recover.
+
+**Sketch.** When `PlaybackEngine.onDecoderIssue` fires for a clip, mark that layerId as "force-segmented" in an engine-side Set. The render loop's `buildClipLayer` checks the Set and, instead of pulling a frame from the WebCodecs decoder pool, mounts a per-clip MSE-backed `<video>` element (one per failing clip) and pulls its current frame onto a texture via `texImage2D(video)`. Decoder pool ignores force-segmented clips. Closing the per-clip `<video>` on recipe swap + LRU cap on simultaneous fallbacks.
+
+**Relevant code.** `apps/desktop/src/preview/webcodecs/playbackEngine.ts` (`PlaybackEngine.buildClipLayer`, `DecoderPool`). New helper class `FallbackVideoPool` for the per-clip `<video>` lifecycle. A4/A5 segmented manifest already provides per-clip segment paths — wire that as the source for the `<video>` element. ~150 LoC.
+
+### 2. Audio drift correction (snap clock to audio)
+
+**Gap.** `PlaybackClock` advances via `performance.now()`; the `<audio>` element plays at the audio device's clock. Two different physical crystals → drift compounds at ~10–100ppm. After 5+ minutes of playback the lip-sync error becomes noticeable.
+
+**Sketch.** Every ~1s of wall time during play(), sample `audio.currentTime`, compare to `clock.currentTimeUs()`. If `|delta| > 100ms`, call `clock.seek(audio.currentTime * 1_000_000)` — synthetic clock snaps to audio. Don't do this every frame (would re-introduce the frame-by-frame stall bug from B6b). Skip the snap when audio isn't ready or is buffering (delta would be spurious).
+
+**Relevant code.** `apps/desktop/src/preview/webcodecs/playbackEngine.ts` — add an interval inside `startLoop()` that runs the snap check on a wall-time cadence, NOT every RAF tick. ~20 LoC.
+
+### 3. Smarter seek (only reset decoders that need it)
+
+**Gap.** `seekTo` currently resets the entire decoder pool on every seek. Every seek pays a 100–300ms cold-start. Within-clip scrubs that land inside the current ring SHOULD be free.
+
+**Sketch.** For each active decoder, check if the new playhead's clip-local time is inside `[ring[0].timestamp - 100ms, ring[-1].timestamp + lookahead_us]`. If yes, just call `dropFramesBefore(newLocal - FRAME_KEEP_BEHIND_US)` and let the existing frame pick it up. If no, close + recreate that decoder. New decoders that didn't exist still get created.
+
+**Relevant code.** `DecoderPool.maybeResetForSeek(timelineTimeUs)` replaces the bulk `reset()` call in `PlaybackEngine.seekTo`. ~40 LoC.
+
+### 4. Full set of blend modes in the compositor
+
+**Gap.** B2's compositor only understands `normal` and `add`. The recipe carries the full WeftCut set (`multiply`, `screen`, `overlay`, `darken`, `lighten`, `difference`) but `playbackEngine.normalizeBlend` collapses anything other than `add` to `normal`. Layers blended with non-trivial modes render incorrectly.
+
+**Sketch.** Two-pass render: layer i samples the framebuffer from pass i-1 as the destination texture, applies the per-layer blend math in the fragment shader, writes to a ping-pong framebuffer. Final framebuffer blits to the visible canvas. Multiply / screen / overlay all need destination color so `EXT_shader_framebuffer_fetch` (not WebGL2-standard) is unavailable — ping-pong is the portable approach.
+
+**Relevant code.** `apps/desktop/src/preview/webcodecs/compositor.ts` — gain two FBOs and a fragment shader case for each mode. ~150 LoC. Bench memory cost: two extra 1080p RGBA targets (~16MB each on GPU).
+
+### 5. Stage-2 real-decode capability probe
+
+**Gap.** B4's probe checks `VideoDecoder.isConfigSupported` + WebGL2 context creation. The design doc spec also calls for an ACTUAL decode of a tiny bundled H.264 clip — `isConfigSupported=true` lies on WebKitGTK (returns supported for codecs the decoder then stalls on), and a real decode catches "SW-only too slow" cases too. Currently deferred because Win/Mac WebView2/WKWebView are reliable enough that stage-1 is sufficient for shipping.
+
+**Sketch.** Bundle a ~3KB H.264 test clip (2 frames, 32x32, ultrafast preset) as a base64 string in `capability.ts`. After stage-1 passes, decode the 2 frames through Mp4Decoder; time elapsed should be < 500ms. Composite the resulting VideoFrame to an OffscreenCanvas via WebGL2 to confirm the full path. Fail → mark capability `stage: "decode-test"` and `ok: false`.
+
+**Relevant code.** `apps/desktop/src/preview/webcodecs/capability.ts` — extend `probeRealtimeCapability()` with stage-2 after stage-1 succeeds. Generate the test clip via `ffmpeg -f lavfi -i color=size=32x32:rate=30 -frames:v 2 -c:v libx264 -preset ultrafast probe.mp4`, then `base64 probe.mp4` and paste as a const. ~60 LoC + the base64 blob.
+
+### 6. Project-creation settings dialog (canvas / fps / audio rate)
+
+**Note.** Mentioned in conversation but NOT preview-specific. WeftCut's `Composition` already carries `width`, `height`, `fps: Rational`, `sample_rate`, `channels` — they're just defaulted at `Project::new_blank` rather than offered to the user at New-project time. The realtime engine reads them out of the recipe regardless.
+
+**Sketch.** Add a "New project" dialog with presets (1080p30, 1080p60, 4K30, etc.) + custom fields. Persist on project save. Existing projects keep their composition values; the dialog is opt-in at creation. Belongs in a separate workstream from preview.
+
+**Relevant code.** `apps/desktop/src/startup/StartupScreen.tsx` (new-project entry point), `apps/desktop/src-tauri/src/state/composition.rs`. ~200 LoC including the dialog component.
+
 ## See also
 
 - `docs/rendering.md` — IR + ffmpeg emitter + rasterizer (Part 2 explains why templates pre-rasterize regardless of engine)
