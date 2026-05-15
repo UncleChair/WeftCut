@@ -640,15 +640,20 @@ export class PlaybackEngine {
   }
 
   paused(): boolean {
-    // Audio is the master when ready; the synthetic clock follows.
-    if (this.audio && this.audioReady) return this.audio.paused;
+    // Synthetic clock is the authoritative paused state. Audio is
+    // driven in lockstep but isn't trusted for timing — buffering
+    // stalls / underruns in the legacy-preview source caused the
+    // RAF loop to "play frame-by-frame" when audio drove the clock.
     return this.clock.paused();
   }
 
   currentTimeUs(): number {
-    if (this.audio && this.audioReady) {
-      return Math.floor(this.audio.currentTime * 1_000_000);
-    }
+    // Synthetic clock advances at wall time regardless of audio
+    // buffering state. Audio drift can be corrected separately
+    // (B6c) by snapping the clock to audio.currentTime when |delta|
+    // exceeds a threshold — for B6b we just play them in parallel
+    // from the same play()/pause()/seek() actions, which keeps
+    // them within ~50ms in practice.
     return this.clock.currentTimeUs();
   }
 
