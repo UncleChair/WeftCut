@@ -1540,17 +1540,30 @@ pub async fn preview_webcodecs_recipe(
     cache: State<'_, crate::cache::CacheLayout>,
 ) -> Result<ir::WebcodecsRecipe, String> {
     let snap = handle.snapshot().await;
+    // `docs/preview-scrub.md` S.3 — recipe runs on the 540p proxy
+    // (when available) to give the WebCodecs decoder dense keyframes
+    // for fast `mp4box.seek`. `with_proxies_substituted` gracefully
+    // falls back to `media.path_abs` for items whose proxy hasn't
+    // been generated yet; segmented preview uses the same path.
+    let project_for_recipe = crate::preview::with_proxies_substituted(&snap);
     let target = ir::RenderTarget::full(
-        snap.composition.width,
-        snap.composition.height,
-        Rational::new(snap.composition.fps.num, snap.composition.fps.den),
-        snap.composition.sample_rate,
-        snap.composition.channels,
+        project_for_recipe.composition.width,
+        project_for_recipe.composition.height,
+        Rational::new(
+            project_for_recipe.composition.fps.num,
+            project_for_recipe.composition.fps.den,
+        ),
+        project_for_recipe.composition.sample_rate,
+        project_for_recipe.composition.channels,
     );
-    let template_renders = ir::materialize_templates(&snap, &cache, &app)
+    let template_renders = ir::materialize_templates(&project_for_recipe, &cache, &app)
         .await
         .map_err(|e| e.to_string())?;
-    Ok(ir::emit_webcodecs(&snap, &target, &template_renders))
+    Ok(ir::emit_webcodecs(
+        &project_for_recipe,
+        &target,
+        &template_renders,
+    ))
 }
 
 #[tauri::command]
