@@ -3802,3 +3802,45 @@ input.preview-timecode:focus {
   padding: 4px 6px;
   border-radius: 4px;
 }
+
+/* B4 — preview-engine section in the Settings panel. */
+.settings-preview-engine {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.settings-preview-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-preview-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+.settings-preview-option input[type="radio"] {
+  margin-top: 2px;
+}
+
+.settings-preview-status {
+  background: rgba(0, 0, 0, 0.2);
+  padding: 8px 10px;
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.settings-preview-status code {
+  background: rgba(0, 0, 0, 0.3);
+  padding: 0 4px;
+  border-radius: 3px;
+  font-family: ui-monospace, Menlo, monospace;
+}
