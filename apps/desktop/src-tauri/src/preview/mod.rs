@@ -30,7 +30,11 @@ use tracing::{info, warn};
 
 use crate::cache::{cached_ok, CacheLayout};
 use crate::export;
-use crate::ir::{emit_ffmpeg, lower, materialize_inline_subtitles, RenderTarget};
+use crate::ir::{
+    emit_ffmpeg, lower, lower::rebase_project_for_segment, lower_range, materialize_inline_subtitles,
+    RenderTarget,
+};
+use crate::state::layer::{LayerParams, SubtitlesSource};
 use crate::state::{Project, ProjectHandle};
 
 pub mod events {
@@ -116,6 +120,118 @@ pub async fn state_hash(
     }
 
     Ok(hasher.finalize().to_hex().to_string())
+}
+
+/// Content hash for the segment `[in_us, out_us]` of `project`. Used by the
+/// segmented preview cache (`docs/preview-segmented-cache.md`) — two project
+/// states whose segment-local content is identical produce the same hash,
+/// even if the segment sits at a different absolute timeline position.
+///
+/// Inputs:
+///   - the lavfi sub-graph emitted by `lower_range` (segment-local time)
+///   - blake3 of every media file referenced by surviving layers in the
+///     rebased segment (sorted by MediaId for canonicality)
+///   - canvas size + fps (sample_rate / channels deliberately omitted —
+///     audio is whole-timeline, segments are video-only)
+///
+/// Deliberately NOT included:
+///   - absolute `in_us` / `out_us` on the timeline. Inserting a 2s clip at
+///     t=5 shifts every later segment's position; their hashes should be
+///     unchanged so the diff algorithm short-circuits on "this segment
+///     content is already in the cache, just re-time the manifest entry".
+pub async fn segment_hash(
+    project: &Project,
+    cache: &CacheLayout,
+    app: &AppHandle,
+    in_us: i64,
+    out_us: i64,
+) -> Result<String> {
+    let inline_subs = materialize_inline_subtitles(project, cache)
+        .context("materialize inline subtitles")?;
+    let template_renders = crate::ir::materialize_templates(project, cache, app)
+        .await
+        .context("materialize templates")?;
+    segment_hash_core(project, &inline_subs, &template_renders, in_us, out_us)
+}
+
+/// Sync core of `segment_hash`. Separated so unit tests can hash arbitrary
+/// projects without needing a real `AppHandle` for the template-render side.
+/// Production code should call `segment_hash` which runs materialization
+/// first; tests can pass `&Default::default()` for both materialization maps.
+pub(crate) fn segment_hash_core(
+    project: &Project,
+    inline_subs: &crate::ir::InlineSubPaths,
+    template_renders: &crate::ir::TemplateRenders,
+    in_us: i64,
+    out_us: i64,
+) -> Result<String> {
+    let target = RenderTarget::full(
+        project.composition.width,
+        project.composition.height,
+        project.composition.fps,
+        project.composition.sample_rate,
+        project.composition.channels,
+    );
+    let graph = lower_range(project, target, inline_subs, template_renders, in_us, out_us)
+        .context("lower_range")?;
+    let plan = emit_ffmpeg(&graph);
+
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(plan.filter_graph.as_bytes());
+    hasher.update(b"\0width\0");
+    hasher.update(&project.composition.width.to_le_bytes());
+    hasher.update(b"\0height\0");
+    hasher.update(&project.composition.height.to_le_bytes());
+    hasher.update(b"\0fps_num\0");
+    hasher.update(&project.composition.fps.num.to_le_bytes());
+    hasher.update(b"\0fps_den\0");
+    hasher.update(&project.composition.fps.den.to_le_bytes());
+
+    // Media references from the rebased project — only those actually used
+    // by surviving layers in this segment. Sorted by MediaId so iteration
+    // order doesn't leak into the hash (imbl::HashMap iteration order is
+    // implementation-defined).
+    let rebased = rebase_project_for_segment(project, in_us, out_us);
+    let mut referenced: Vec<crate::state::ids::MediaId> = referenced_media_ids(&rebased)
+        .into_iter()
+        .collect();
+    referenced.sort();
+    for id in referenced {
+        if let Some(item) = project.media_pool.get(&id) {
+            hasher.update(b"\0media\0");
+            hasher.update(item.file_hash_blake3.as_bytes());
+        }
+    }
+
+    Ok(hasher.finalize().to_hex().to_string())
+}
+
+fn referenced_media_ids(project: &Project) -> std::collections::BTreeSet<crate::state::ids::MediaId> {
+    let mut ids = std::collections::BTreeSet::new();
+    for track in project.tracks.iter() {
+        for layer in track.layers.iter() {
+            match &layer.params {
+                LayerParams::VideoClip(p) => {
+                    ids.insert(p.media);
+                }
+                LayerParams::Audio(p) => {
+                    ids.insert(p.media);
+                }
+                LayerParams::ImageOverlay(p) => {
+                    ids.insert(p.media);
+                }
+                LayerParams::Subtitles(p) => {
+                    if let SubtitlesSource::Media(id) = &p.source {
+                        ids.insert(*id);
+                    }
+                }
+                LayerParams::Text(_)
+                | LayerParams::Color(_)
+                | LayerParams::Template(_) => {}
+            }
+        }
+    }
+    ids
 }
 
 /// Render the project to `<workspace>/Cache/preview/<state_hash>.mp4`.
@@ -325,5 +441,220 @@ async fn preview_loop(app: AppHandle, handle: ProjectHandle, renderer: PreviewRe
                     .emit(events::ERROR, serde_json::json!({ "detail": detail }));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests_segment_hash {
+    use super::*;
+    use chrono::Utc;
+    use uuid::Uuid;
+
+    use crate::state::animated::Animated;
+    use crate::state::color::Rgba;
+    use crate::state::composition::Composition;
+    use crate::state::ids::{new_id, MediaId};
+    use crate::state::layer::{Layer, LayerParams, VideoClipParams};
+    use crate::state::media::{MediaItem, MediaKind, MediaMetadata};
+    use crate::state::project::{Project, ProjectMetadata};
+    use crate::state::time::Rational;
+    use crate::state::track::{Track, TrackKind};
+    use crate::state::transform::Transform;
+
+    fn mk_media(blake3: &str, duration_us: i64) -> MediaItem {
+        MediaItem {
+            id: new_id(),
+            label: None,
+            path_abs: "/m/a.mp4".into(),
+            path_rel: None,
+            kind: MediaKind::Video,
+            metadata: MediaMetadata {
+                duration_us: Some(duration_us),
+                video: None,
+                audio: None,
+            },
+            proxy_path: None,
+            waveform_path: None,
+            thumbnails_dir: None,
+            file_hash_blake3: blake3.into(),
+            file_size: 0,
+            file_mtime: 0,
+            imported_at: Utc::now(),
+        }
+    }
+
+    fn mk_video_layer(media: MediaId, t_start: i64, t_end: i64, src_in: i64, src_out: i64) -> Layer {
+        Layer {
+            id: new_id(),
+            label: None,
+            t_start_us: t_start,
+            t_end_us: t_end,
+            enabled: true,
+            locked: false,
+            metadata: imbl::HashMap::new(),
+            effects: imbl::Vector::new(),
+            params: LayerParams::VideoClip(VideoClipParams {
+                media,
+                src_in_us: src_in,
+                src_out_us: src_out,
+                transform: Transform::default(),
+                opacity: Animated::Static(1.0),
+                crop: None,
+                flip_h: false,
+                flip_v: false,
+                blend_mode: Default::default(),
+                speed: 1.0,
+                fade_in_us: 0,
+                fade_out_us: 0,
+            }),
+        }
+    }
+
+    fn mk_project(duration_us: i64, layers: Vec<Layer>, media: Vec<MediaItem>) -> Project {
+        let track = Track {
+            id: new_id(),
+            kind: TrackKind::Video,
+            label: None,
+            enabled: true,
+            locked: false,
+            removable: true,
+            height_px: 64,
+            layers: layers.into_iter().collect(),
+        };
+        let mut media_pool = imbl::HashMap::new();
+        for m in media {
+            media_pool.insert(m.id, m);
+        }
+        Project {
+            schema_version: 2,
+            project_id: new_id(),
+            metadata: ProjectMetadata {
+                name: "hash-test".into(),
+                created_at: Utc::now(),
+                modified_at: Utc::now(),
+                description: None,
+            },
+            composition: Composition {
+                width: 1920,
+                height: 1080,
+                fps: Rational::FPS_30,
+                duration_us,
+                sample_rate: 48_000,
+                channels: 2,
+                color_space: Default::default(),
+                background: Rgba::BLACK,
+            },
+            media_pool,
+            tracks: imbl::vector![track],
+            markers: imbl::Vector::new(),
+            transitions: imbl::Vector::new(),
+            settings: Default::default(),
+        }
+    }
+
+    fn hash(project: &Project, in_us: i64, out_us: i64) -> String {
+        segment_hash_core(project, &Default::default(), &Default::default(), in_us, out_us)
+            .expect("segment_hash_core")
+    }
+
+    #[test]
+    fn determinism() {
+        let media = mk_media("blake3-a", 10_000_000);
+        let clip = mk_video_layer(media.id, 0, 5_000_000, 0, 5_000_000);
+        let p = mk_project(5_000_000, vec![clip], vec![media]);
+
+        assert_eq!(hash(&p, 0, 5_000_000), hash(&p, 0, 5_000_000));
+    }
+
+    #[test]
+    fn dedup_property_shift_insensitive() {
+        // The load-bearing property: a segment whose content matches
+        // another segment at a different timeline position has the same
+        // hash. Without this, inserting a clip at t=0 would invalidate
+        // every later segment.
+        //
+        // Project A: clip on timeline [0, 5], using source [0, 5].
+        // Project B: same media, but clip on timeline [3, 8] (after 3s of
+        // empty space). Source window still [0, 5].
+        // Segment [0,5] of A and segment [3,8] of B must hash identically.
+        let media_a = mk_media("blake3-shared", 10_000_000);
+        let media_a_id = media_a.id;
+        let clip_a = mk_video_layer(media_a_id, 0, 5_000_000, 0, 5_000_000);
+        let a = mk_project(5_000_000, vec![clip_a], vec![media_a]);
+
+        // For project B, reuse the same media (same blake3) — that's what
+        // "shifted same clip" looks like.
+        let media_b = MediaItem {
+            id: media_a_id, // same id (same media in the pool)
+            ..mk_media("blake3-shared", 10_000_000)
+        };
+        let clip_b = mk_video_layer(media_a_id, 3_000_000, 8_000_000, 0, 5_000_000);
+        let b = mk_project(8_000_000, vec![clip_b], vec![media_b]);
+
+        let hash_a = hash(&a, 0, 5_000_000);
+        let hash_b = hash(&b, 3_000_000, 8_000_000);
+        assert_eq!(
+            hash_a, hash_b,
+            "segments with identical local-time content must hash the same regardless of timeline position",
+        );
+    }
+
+    #[test]
+    fn media_content_change_invalidates_hash() {
+        let m1 = mk_media("blake3-a", 10_000_000);
+        let m1_id = m1.id;
+        let clip = mk_video_layer(m1_id, 0, 5_000_000, 0, 5_000_000);
+        let p1 = mk_project(5_000_000, vec![clip.clone()], vec![m1]);
+
+        let m2 = MediaItem {
+            id: m1_id,
+            file_hash_blake3: "blake3-DIFFERENT".into(),
+            ..mk_media("blake3-DIFFERENT", 10_000_000)
+        };
+        let p2 = mk_project(5_000_000, vec![clip], vec![m2]);
+
+        assert_ne!(hash(&p1, 0, 5_000_000), hash(&p2, 0, 5_000_000));
+    }
+
+    #[test]
+    fn canvas_size_change_invalidates_hash() {
+        let media = mk_media("blake3-a", 10_000_000);
+        let clip = mk_video_layer(media.id, 0, 5_000_000, 0, 5_000_000);
+        let mut p1 = mk_project(5_000_000, vec![clip], vec![media]);
+        let mut p2 = p1.clone();
+        p2.composition.width = 1280;
+        p2.composition.height = 720;
+
+        assert_ne!(hash(&p1, 0, 5_000_000), hash(&p2, 0, 5_000_000));
+    }
+
+    #[test]
+    fn different_source_window_changes_hash() {
+        // Two clips with the same media but different source windows must
+        // produce different hashes — they render different pixels.
+        let media = mk_media("blake3-a", 10_000_000);
+        let media_id = media.id;
+        let p1 = mk_project(
+            5_000_000,
+            vec![mk_video_layer(media_id, 0, 5_000_000, 0, 5_000_000)],
+            vec![media.clone()],
+        );
+        let p2 = mk_project(
+            5_000_000,
+            vec![mk_video_layer(media_id, 0, 5_000_000, 2_000_000, 7_000_000)],
+            vec![media],
+        );
+
+        assert_ne!(hash(&p1, 0, 5_000_000), hash(&p2, 0, 5_000_000));
+    }
+
+    #[test]
+    fn empty_segment_in_empty_project_hashes() {
+        // The segment_hash on an empty range must succeed and be stable.
+        let p = mk_project(5_000_000, vec![], vec![]);
+        let h1 = hash(&p, 1_000_000, 3_000_000);
+        let h2 = hash(&p, 1_000_000, 3_000_000);
+        assert_eq!(h1, h2);
+        assert!(!h1.is_empty());
     }
 }

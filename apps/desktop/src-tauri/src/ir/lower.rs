@@ -19,7 +19,9 @@ use super::target::RenderTarget;
 use crate::state::animated::Animated;
 use crate::state::color::Rgba;
 use crate::state::ids::{LayerId, MediaId};
-use crate::state::layer::{Layer, LayerParams, SubtitlesSource};
+use crate::state::layer::{
+    AudioParams, ImageOverlayParams, Layer, LayerParams, SubtitlesSource, VideoClipParams,
+};
 use crate::state::project::Project;
 use crate::state::time::TimeUs;
 use crate::state::track::TrackKind;
@@ -148,6 +150,161 @@ pub fn lower(
     }
 
     Ok(g)
+}
+
+/// Lower a *time window* of `project` to a video-only IR graph in
+/// segment-local time. Audio is intentionally dropped — per the segmented
+/// preview design (`docs/preview-segmented-cache.md` decision S4), audio is
+/// rendered whole-timeline as a separate file. Used by the preview segment
+/// renderer to produce one fMP4 per timeline range.
+///
+/// Implemented by cloning `project`, rebasing every layer that overlaps
+/// `[in_us, out_us]` into segment-local coordinates, and calling the
+/// existing [`lower`]. This avoids duplicating the lowering logic; the
+/// only new code is the rebase + audio-track filter.
+///
+/// Layer rebasing rules (see `rebase_layer_for_segment`):
+/// - `t_start_us` / `t_end_us` shifted into segment-local time
+/// - VideoClip / Audio: `src_in_us` / `src_out_us` advanced when the
+///   segment captures only a sub-window of the layer's source (speed=1
+///   assumed — `speed != 1` is rejected at apply time elsewhere)
+/// - fade_in_us dropped unless the segment captures the layer's original
+///   start; fade_out_us dropped unless it captures the layer's original
+///   end. Fades sit at layer edges which are by construction hard
+///   segment boundaries — they always land in the first/last containing
+///   segment, never straddle, so this rule is correct in the common case
+/// - Template layers that straddle a segment boundary are dropped: PngSeq
+///   has no trim semantics today. A1 limitation; revisit when the template
+///   path gains source-time trim
+/// - Transitions kept iff both layers survive (transitions are atomic by
+///   the boundary algorithm, so this is just a sanity check)
+pub fn lower_range(
+    project: &Project,
+    target: RenderTarget,
+    inline_sub_paths: &InlineSubPaths,
+    template_renders: &TemplateRenders,
+    in_us: TimeUs,
+    out_us: TimeUs,
+) -> Result<IRGraph, LowerError> {
+    let rebased = rebase_project_for_segment(project, in_us, out_us);
+    lower(&rebased, target, inline_sub_paths, template_renders)
+}
+
+/// Clone `project` with layers rebased into segment-local time. Drops audio
+/// tracks entirely (preview audio is whole-timeline). The returned project's
+/// `composition.duration_us` equals `out_us - in_us`.
+///
+/// Exposed `pub(crate)` because the preview-side `segment_hash` needs to
+/// enumerate referenced media from the same rebased project that `lower`
+/// will actually consume — keeping the rebase in one place avoids
+/// drift between "what we hashed" and "what we lower".
+pub(crate) fn rebase_project_for_segment(project: &Project, in_us: TimeUs, out_us: TimeUs) -> Project {
+    let seg_dur = (out_us - in_us).max(0);
+    let mut rebased = project.clone();
+    rebased.composition.duration_us = seg_dur;
+
+    // Filter tracks: drop audio (whole-timeline rendered separately).
+    let mut new_tracks = imbl::Vector::new();
+    let mut surviving_layer_ids: std::collections::HashSet<LayerId> =
+        std::collections::HashSet::new();
+    for track in project.tracks.iter() {
+        if track.kind == TrackKind::Audio {
+            continue;
+        }
+        let mut new_layers = imbl::Vector::new();
+        for layer in track.layers.iter() {
+            if let Some(rebased_layer) = rebase_layer_for_segment(layer, in_us, out_us) {
+                surviving_layer_ids.insert(rebased_layer.id);
+                new_layers.push_back(rebased_layer);
+            }
+        }
+        let mut new_track = track.clone();
+        new_track.layers = new_layers;
+        new_tracks.push_back(new_track);
+    }
+    rebased.tracks = new_tracks;
+
+    // Filter transitions: keep iff both layers survive in the segment.
+    rebased.transitions.retain(|tr| {
+        surviving_layer_ids.contains(&tr.from_layer)
+            && surviving_layer_ids.contains(&tr.to_layer)
+    });
+
+    rebased
+}
+
+/// Rebase a single layer into segment-local time. Returns `None` if the
+/// layer does not overlap `[in_us, out_us]` or if it's a layer kind that
+/// can't be partially rendered (Template straddling a segment boundary).
+fn rebase_layer_for_segment(layer: &Layer, in_us: TimeUs, out_us: TimeUs) -> Option<Layer> {
+    let layer_start = layer.t_start_us;
+    let layer_end = layer.t_end_us;
+    // No overlap (half-open intervals — touching at an endpoint doesn't count).
+    if layer_end <= in_us || layer_start >= out_us {
+        return None;
+    }
+
+    // Segment-local timeline placement (clipped + shifted).
+    let new_t_start = layer_start.max(in_us) - in_us;
+    let new_t_end = layer_end.min(out_us) - in_us;
+    if new_t_end <= new_t_start {
+        return None;
+    }
+
+    // Source-time advance when the segment starts mid-layer; tail truncate
+    // when the segment ends mid-layer. Microseconds map 1:1 to source time
+    // at speed=1 (the only speed currently supported by lowering anyway).
+    let src_advance = (in_us - layer_start).max(0);
+    let src_truncate = (layer_end - out_us).max(0);
+    let captures_layer_start = in_us <= layer_start;
+    let captures_layer_end = out_us >= layer_end;
+
+    let new_params = match &layer.params {
+        LayerParams::VideoClip(p) => LayerParams::VideoClip(VideoClipParams {
+            src_in_us: p.src_in_us + src_advance,
+            src_out_us: p.src_out_us - src_truncate,
+            fade_in_us: if captures_layer_start { p.fade_in_us } else { 0 },
+            fade_out_us: if captures_layer_end { p.fade_out_us } else { 0 },
+            ..p.clone()
+        }),
+        LayerParams::Audio(p) => LayerParams::Audio(AudioParams {
+            src_in_us: p.src_in_us + src_advance,
+            src_out_us: p.src_out_us - src_truncate,
+            fade_in_us: if captures_layer_start { p.fade_in_us } else { 0 },
+            fade_out_us: if captures_layer_end { p.fade_out_us } else { 0 },
+            ..p.clone()
+        }),
+        LayerParams::ImageOverlay(p) => LayerParams::ImageOverlay(ImageOverlayParams {
+            fade_in_us: if captures_layer_start { p.fade_in_us } else { 0 },
+            fade_out_us: if captures_layer_end { p.fade_out_us } else { 0 },
+            ..p.clone()
+        }),
+        LayerParams::Template(_) => {
+            // PngSeq has no trim semantics today; only emit if the segment
+            // fully contains the template. Straddling templates render as
+            // "not present" in the segment — known A1 limitation.
+            if !(captures_layer_start && captures_layer_end) {
+                return None;
+            }
+            layer.params.clone()
+        }
+        // No source-time or fade params — clamp t_start/t_end only.
+        LayerParams::Text(_) | LayerParams::Color(_) | LayerParams::Subtitles(_) => {
+            layer.params.clone()
+        }
+    };
+
+    Some(Layer {
+        id: layer.id,
+        label: layer.label.clone(),
+        t_start_us: new_t_start,
+        t_end_us: new_t_end,
+        enabled: layer.enabled,
+        locked: layer.locked,
+        metadata: layer.metadata.clone(),
+        effects: layer.effects.clone(),
+        params: new_params,
+    })
 }
 
 fn lower_video_layer(
@@ -526,5 +683,358 @@ fn static_or<T: Clone>(anim: &Animated<T>, fallback: T) -> T {
             .next()
             .map(|kf| kf.value.clone())
             .unwrap_or(fallback),
+    }
+}
+
+#[cfg(test)]
+mod tests_lower_range {
+    use chrono::Utc;
+    use uuid::Uuid;
+
+    use super::*;
+    use crate::state::animated::Animated;
+    use crate::state::color::Rgba;
+    use crate::state::composition::Composition;
+    use crate::state::ids::new_id;
+    use crate::state::layer::{
+        AudioParams, ColorParams, Layer, LayerParams, VideoClipParams,
+    };
+    use crate::state::media::{MediaItem, MediaKind, MediaMetadata};
+    use crate::state::project::{Project, ProjectMetadata};
+    use crate::state::time::Rational;
+    use crate::state::track::{Track, TrackKind};
+    use crate::state::transform::Transform;
+    use crate::state::transition::{Transition, TransitionKind};
+
+    fn target() -> RenderTarget {
+        RenderTarget::full(1920, 1080, Rational::FPS_30, 48_000, 2)
+    }
+
+    fn mk_media(path: &str, duration_us: i64, kind: MediaKind) -> MediaItem {
+        MediaItem {
+            id: new_id(),
+            label: None,
+            path_abs: path.into(),
+            path_rel: None,
+            kind,
+            metadata: MediaMetadata {
+                duration_us: Some(duration_us),
+                video: None,
+                audio: None,
+            },
+            proxy_path: None,
+            waveform_path: None,
+            thumbnails_dir: None,
+            file_hash_blake3: "0".into(),
+            file_size: 0,
+            file_mtime: 0,
+            imported_at: Utc::now(),
+        }
+    }
+
+    fn mk_video_clip(media_id: MediaId, t_start: i64, t_end: i64, src_in: i64, src_out: i64) -> Layer {
+        Layer {
+            id: new_id(),
+            label: None,
+            t_start_us: t_start,
+            t_end_us: t_end,
+            enabled: true,
+            locked: false,
+            metadata: imbl::HashMap::new(),
+            effects: imbl::Vector::new(),
+            params: LayerParams::VideoClip(VideoClipParams {
+                media: media_id,
+                src_in_us: src_in,
+                src_out_us: src_out,
+                transform: Transform::default(),
+                opacity: Animated::Static(1.0),
+                crop: None,
+                flip_h: false,
+                flip_v: false,
+                blend_mode: Default::default(),
+                speed: 1.0,
+                fade_in_us: 0,
+                fade_out_us: 0,
+            }),
+        }
+    }
+
+    fn mk_color_layer(t_start: i64, t_end: i64) -> Layer {
+        Layer {
+            id: new_id(),
+            label: None,
+            t_start_us: t_start,
+            t_end_us: t_end,
+            enabled: true,
+            locked: false,
+            metadata: imbl::HashMap::new(),
+            effects: imbl::Vector::new(),
+            params: LayerParams::Color(ColorParams {
+                color: Animated::Static(Rgba::WHITE),
+                width: 1920,
+                height: 1080,
+            }),
+        }
+    }
+
+    fn mk_project(duration_us: i64, video_layers: Vec<Layer>) -> Project {
+        let track = Track {
+            id: new_id(),
+            kind: TrackKind::Video,
+            label: None,
+            enabled: true,
+            locked: false,
+            removable: true,
+            height_px: 64,
+            layers: video_layers.into_iter().collect(),
+        };
+        Project {
+            schema_version: 2,
+            project_id: new_id(),
+            metadata: ProjectMetadata {
+                name: "rng-test".into(),
+                created_at: Utc::now(),
+                modified_at: Utc::now(),
+                description: None,
+            },
+            composition: Composition {
+                width: 1920,
+                height: 1080,
+                fps: Rational::FPS_30,
+                duration_us,
+                sample_rate: 48_000,
+                channels: 2,
+                color_space: Default::default(),
+                background: Rgba::BLACK,
+            },
+            media_pool: imbl::HashMap::new(),
+            tracks: imbl::vector![track],
+            markers: imbl::Vector::new(),
+            transitions: imbl::Vector::new(),
+            settings: Default::default(),
+        }
+    }
+
+    #[test]
+    fn empty_range_emits_color_only_segment() {
+        // 5s project with no layers — segment [1s, 3s] is a 2s color base only.
+        let p = mk_project(5_000_000, vec![]);
+        let g = lower_range(&p, target(), &Default::default(), &Default::default(), 1_000_000, 3_000_000)
+            .expect("lower_range");
+        assert!(g.inputs.is_empty());
+        assert!(g.video_out.is_some());
+        // No audio in segments.
+        assert!(g.audio_out.is_none());
+        // The Color base for the segment is 2s.
+        let found = g.nodes.iter().any(|n| matches!(n, IRNode::Color { duration_us: 2_000_000, .. }));
+        assert!(found, "expected Color node with 2s duration: {:?}", g.nodes);
+    }
+
+    #[test]
+    fn audio_track_is_dropped_from_segment() {
+        // A project with an audio layer — lower_range MUST emit no audio_out.
+        let media = mk_media("/m/audio.wav", 5_000_000, MediaKind::Audio);
+        let media_id = media.id;
+        let audio_layer = Layer {
+            id: new_id(),
+            label: None,
+            t_start_us: 0,
+            t_end_us: 4_000_000,
+            enabled: true,
+            locked: false,
+            metadata: imbl::HashMap::new(),
+            effects: imbl::Vector::new(),
+            params: LayerParams::Audio(AudioParams {
+                media: media_id,
+                src_in_us: 0,
+                src_out_us: 4_000_000,
+                gain_db: Animated::Static(0.0),
+                pan: Animated::Static(0.0),
+                fade_in_us: 0,
+                fade_out_us: 0,
+                mute: false,
+            }),
+        };
+        let audio_track = Track {
+            id: new_id(),
+            kind: TrackKind::Audio,
+            label: None,
+            enabled: true,
+            locked: false,
+            removable: true,
+            height_px: 48,
+            layers: imbl::vector![audio_layer],
+        };
+        let mut p = mk_project(5_000_000, vec![]);
+        p.media_pool.insert(media_id, media);
+        p.tracks.push_back(audio_track);
+
+        let g = lower_range(&p, target(), &Default::default(), &Default::default(), 0, 5_000_000)
+            .expect("lower_range");
+        // No audio_out — segments are video-only.
+        assert!(g.audio_out.is_none(), "segment should drop audio entirely");
+    }
+
+    #[test]
+    fn clip_fully_outside_segment_is_dropped() {
+        let media = mk_media("/m/a.mp4", 10_000_000, MediaKind::Video);
+        let media_id = media.id;
+        let clip = mk_video_clip(media_id, 0, 3_000_000, 0, 3_000_000);
+        let mut p = mk_project(10_000_000, vec![clip]);
+        p.media_pool.insert(media_id, media);
+
+        // Segment [5s, 8s] doesn't overlap clip [0, 3s].
+        let g = lower_range(&p, target(), &Default::default(), &Default::default(), 5_000_000, 8_000_000)
+            .expect("lower_range");
+        assert!(g.inputs.is_empty(), "clip outside segment should not produce inputs");
+    }
+
+    #[test]
+    fn clip_straddling_start_advances_src_in() {
+        // Clip 0–10s on a media that's also 0–10s. Segment [3s, 8s].
+        // Rebased: t_start=0, t_end=5_000_000, src_in=3_000_000, src_out=8_000_000.
+        // We can't easily peek into the lower'd graph for src_in directly;
+        // instead probe via the emitted ffmpeg graph string.
+        let media = mk_media("/m/a.mp4", 10_000_000, MediaKind::Video);
+        let media_id = media.id;
+        let clip = mk_video_clip(media_id, 0, 10_000_000, 0, 10_000_000);
+        let mut p = mk_project(10_000_000, vec![clip]);
+        p.media_pool.insert(media_id, media);
+
+        let g = lower_range(&p, target(), &Default::default(), &Default::default(), 3_000_000, 8_000_000)
+            .expect("lower_range");
+        let plan = crate::ir::emit_ffmpeg(&g);
+        // trim=3:8 (seconds) — src window advanced.
+        assert!(
+            plan.filter_graph.contains("trim=3:8"),
+            "expected trim=3:8 in segment graph:\n{}",
+            plan.filter_graph,
+        );
+    }
+
+    #[test]
+    fn clip_straddling_end_truncates_src_out() {
+        // Clip 0–10s, segment [2s, 7s]. src_in=2, src_out=7.
+        let media = mk_media("/m/a.mp4", 10_000_000, MediaKind::Video);
+        let media_id = media.id;
+        let clip = mk_video_clip(media_id, 0, 10_000_000, 0, 10_000_000);
+        let mut p = mk_project(10_000_000, vec![clip]);
+        p.media_pool.insert(media_id, media);
+
+        let g = lower_range(&p, target(), &Default::default(), &Default::default(), 2_000_000, 7_000_000)
+            .expect("lower_range");
+        let plan = crate::ir::emit_ffmpeg(&g);
+        assert!(
+            plan.filter_graph.contains("trim=2:7"),
+            "expected trim=2:7:\n{}",
+            plan.filter_graph,
+        );
+    }
+
+    #[test]
+    fn fade_in_dropped_when_segment_starts_mid_clip() {
+        // Clip 0–10s with 2s fade-in. Segment [3s, 6s] starts after fade-in
+        // ended — the segment graph should not contain the fade-in.
+        let media = mk_media("/m/a.mp4", 10_000_000, MediaKind::Video);
+        let media_id = media.id;
+        let mut clip = mk_video_clip(media_id, 0, 10_000_000, 0, 10_000_000);
+        if let LayerParams::VideoClip(ref mut p) = clip.params {
+            p.fade_in_us = 2_000_000;
+        }
+        let mut p = mk_project(10_000_000, vec![clip]);
+        p.media_pool.insert(media_id, media);
+
+        let g = lower_range(&p, target(), &Default::default(), &Default::default(), 3_000_000, 6_000_000)
+            .expect("lower_range");
+        let fade_count = g
+            .nodes
+            .iter()
+            .filter(|n| matches!(n, IRNode::Fade { kind: FadeKind::In, .. }))
+            .count();
+        assert_eq!(fade_count, 0, "fade-in should be dropped mid-clip");
+    }
+
+    #[test]
+    fn fade_in_preserved_when_segment_captures_clip_start() {
+        let media = mk_media("/m/a.mp4", 10_000_000, MediaKind::Video);
+        let media_id = media.id;
+        let mut clip = mk_video_clip(media_id, 0, 10_000_000, 0, 10_000_000);
+        if let LayerParams::VideoClip(ref mut p) = clip.params {
+            p.fade_in_us = 2_000_000;
+        }
+        let mut p = mk_project(10_000_000, vec![clip]);
+        p.media_pool.insert(media_id, media);
+
+        // Segment captures the clip's start (in_us=0).
+        let g = lower_range(&p, target(), &Default::default(), &Default::default(), 0, 5_000_000)
+            .expect("lower_range");
+        let fade_count = g
+            .nodes
+            .iter()
+            .filter(|n| matches!(n, IRNode::Fade { kind: FadeKind::In, .. }))
+            .count();
+        assert_eq!(fade_count, 1, "fade-in should be preserved when segment captures clip start");
+    }
+
+    #[test]
+    fn fade_out_dropped_when_segment_ends_before_clip() {
+        let media = mk_media("/m/a.mp4", 10_000_000, MediaKind::Video);
+        let media_id = media.id;
+        let mut clip = mk_video_clip(media_id, 0, 10_000_000, 0, 10_000_000);
+        if let LayerParams::VideoClip(ref mut p) = clip.params {
+            p.fade_out_us = 2_000_000;
+        }
+        let mut p = mk_project(10_000_000, vec![clip]);
+        p.media_pool.insert(media_id, media);
+
+        let g = lower_range(&p, target(), &Default::default(), &Default::default(), 0, 5_000_000)
+            .expect("lower_range");
+        let fade_out_count = g
+            .nodes
+            .iter()
+            .filter(|n| matches!(n, IRNode::Fade { kind: FadeKind::Out, .. }))
+            .count();
+        assert_eq!(fade_out_count, 0, "fade-out should be dropped when segment doesn't reach clip end");
+    }
+
+    #[test]
+    fn transition_within_segment_is_preserved() {
+        // Two color layers with a 1s crossfade — same setup as the
+        // crossfade smoke test, but lowered through lower_range covering
+        // the transition.
+        let a = mk_color_layer(0, 3_000_000);
+        let b = mk_color_layer(2_000_000, 5_000_000);
+        let a_id = a.id;
+        let b_id = b.id;
+        let mut p = mk_project(5_000_000, vec![a, b]);
+        p.transitions.push_back(Transition {
+            id: new_id(),
+            from_layer: a_id,
+            to_layer: b_id,
+            duration_us: 1_000_000,
+            kind: TransitionKind::Crossfade,
+        });
+
+        // Segment [1s, 4s] contains the full transition [2,3].
+        let g = lower_range(&p, target(), &Default::default(), &Default::default(), 1_000_000, 4_000_000)
+            .expect("lower_range");
+        let plan = crate::ir::emit_ffmpeg(&g);
+        // The alpha-fade crossfade emission survives the rebase.
+        assert!(
+            plan.filter_graph.contains("alpha=1"),
+            "expected alpha=1 in segment graph containing transition:\n{}",
+            plan.filter_graph,
+        );
+    }
+
+    #[test]
+    fn segment_local_time_starts_at_zero() {
+        // The Color base of the segment must use the segment's duration, not
+        // the whole project's. Segment [3s, 8s] → Color duration 5s.
+        let p = mk_project(20_000_000, vec![]);
+        let g = lower_range(&p, target(), &Default::default(), &Default::default(), 3_000_000, 8_000_000)
+            .expect("lower_range");
+        let found = g.nodes.iter().any(|n| matches!(n, IRNode::Color { duration_us: 5_000_000, .. }));
+        assert!(found, "expected segment-local Color duration of 5s: {:?}", g.nodes);
     }
 }

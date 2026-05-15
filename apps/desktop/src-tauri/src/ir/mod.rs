@@ -22,12 +22,14 @@ pub mod graph;
 pub mod lower;
 pub mod materialize;
 pub mod node;
+pub mod segments;
 pub mod target;
 
 pub use emit_ffmpeg::{FfmpegPlan, emit as emit_ffmpeg};
 pub use emit_mpv::{MpvPlan, emit as emit_mpv};
 pub use graph::IRGraph;
-pub use lower::{LowerError, lower};
+pub use lower::{LowerError, lower, lower_range};
+pub use segments::{MAX_SEGMENT_US, SegmentRange, compute_segment_boundaries};
 pub use materialize::{
     InlineSubPaths, MaterializeError, TemplateRenderInfo, TemplateRenders,
     materialize_inline_subtitles, materialize_templates,
