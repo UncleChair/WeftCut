@@ -561,6 +561,96 @@ export async function previewRetrySegment(hash: string): Promise<boolean> {
   return invoke<boolean>("preview_retry_segment", { hash });
 }
 
+// ---------------------------------------------------------------------------
+// Phase B3 — WebCodecs composition recipe.
+//
+// Mirrors `apps/desktop/src-tauri/src/ir/emit_webcodecs.rs`'s structs
+// with camelCase keys (the Rust side applies `rename_all = "camelCase"`).
+// Consumed by the future B5 PreviewSurface integration that drives the
+// decoder pool + compositor from a real project; B3's smoke harness
+// just fetches + displays a summary to prove the recipe shape.
+
+export interface RecipeCanvas {
+  width: number;
+  height: number;
+  fpsNum: number;
+  fpsDen: number;
+}
+
+export interface RecipeTransform {
+  /// Canvas-normalized [0,1] top-left x.
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface RecipeClip {
+  layerId: string;
+  trackIndex: number;
+  zOrder: number;
+  mediaId: string;
+  /// Absolute filesystem path — pass through `convertFileSrc` to fetch.
+  mediaPath: string;
+  timelineInUs: number;
+  timelineOutUs: number;
+  sourceInUs: number;
+  sourceOutUs: number;
+  transform: RecipeTransform;
+  opacity: number;
+  blendMode: string;
+  speed: number;
+  /// VideoFrame uploads bypass UNPACK_FLIP_Y_WEBGL — always true for
+  /// recipe clips.
+  flipY: boolean;
+}
+
+export interface RecipeRaster {
+  layerId: string;
+  trackIndex: number;
+  zOrder: number;
+  rasterDir: string;
+  frameCount: number;
+  fpsNum: number;
+  fpsDen: number;
+  timelineInUs: number;
+  timelineOutUs: number;
+  transform: RecipeTransform;
+  opacity: number;
+  blendMode: string;
+}
+
+export interface RecipeImage {
+  layerId: string;
+  trackIndex: number;
+  zOrder: number;
+  mediaId: string;
+  mediaPath: string;
+  timelineInUs: number;
+  timelineOutUs: number;
+  transform: RecipeTransform;
+  opacity: number;
+  blendMode: string;
+}
+
+export interface WebcodecsRecipe {
+  schemaVersion: number;
+  durationUs: number;
+  canvas: RecipeCanvas;
+  /// Linear-space RGBA in [0,1].
+  background: [number, number, number, number];
+  clips: RecipeClip[];
+  rasters: RecipeRaster[];
+  images: RecipeImage[];
+}
+
+/// Fetch the WebCodecs composition recipe for the current project
+/// snapshot. Pure read on the Rust side — no mutation, no side
+/// effects on the segmented renderer or preview cache.
+export async function previewWebcodecsRecipe(): Promise<WebcodecsRecipe> {
+  return invoke<WebcodecsRecipe>("preview_webcodecs_recipe");
+}
+
 export async function importQueueList(): Promise<ImportEntry[]> {
   return invoke<ImportEntry[]>("import_queue_list");
 }

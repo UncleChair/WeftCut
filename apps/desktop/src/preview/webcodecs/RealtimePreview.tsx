@@ -20,6 +20,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { previewWebcodecsRecipe, type WebcodecsRecipe } from "../../ipc";
 import {
   Mp4Decoder,
   probeWebCodecsCapability,
@@ -58,6 +59,13 @@ export function RealtimePreview() {
   // Overlay state (B2). Refs are read inside the RAF tick; mirroring
   // state lets the UI sliders drive the GL render at 60Hz without
   // recreating the loop on every change.
+  // B3: fetched recipe — displayed below as a structural summary so we
+  // can verify the IR emit walks the live project correctly. B5 will
+  // turn this into actual playback.
+  const [recipe, setRecipe] = useState<WebcodecsRecipe | null>(null);
+  const [recipeError, setRecipeError] = useState<string | null>(null);
+  const [recipeLoading, setRecipeLoading] = useState(false);
+
   const [overlayLoaded, setOverlayLoaded] = useState(false);
   const [opacity, setOpacity] = useState(0.85);
   const [overlayX, setOverlayX] = useState(0.35);
@@ -252,6 +260,20 @@ export function RealtimePreview() {
     setOverlayLoaded(false);
   }, []);
 
+  const fetchRecipe = useCallback(async () => {
+    setRecipeLoading(true);
+    setRecipeError(null);
+    try {
+      const r = await previewWebcodecsRecipe();
+      setRecipe(r);
+    } catch (e) {
+      setRecipeError(String(e));
+      setRecipe(null);
+    } finally {
+      setRecipeLoading(false);
+    }
+  }, []);
+
   return (
     <div className="realtime-preview-smoke">
       <header className="realtime-preview-header">
@@ -315,6 +337,10 @@ export function RealtimePreview() {
         </button>
         <button type="button" onClick={clearOverlay} disabled={!overlayLoaded}>
           Clear overlay
+        </button>
+        <span className="realtime-preview-divider" />
+        <button type="button" onClick={fetchRecipe} disabled={recipeLoading}>
+          {recipeLoading ? "Fetching recipe…" : "Fetch recipe (B3)"}
         </button>
       </section>
 
@@ -386,6 +412,86 @@ export function RealtimePreview() {
           height={360}
         />
       </section>
+
+      {(recipe || recipeError) && (
+        <section className="realtime-preview-capability">
+          <h3>Recipe (B3)</h3>
+          {recipeError && (
+            <p className="realtime-preview-error">Error: {recipeError}</p>
+          )}
+          {recipe && (
+            <>
+              <ul>
+                <li>
+                  Schema: <code>v{recipe.schemaVersion}</code>
+                </li>
+                <li>
+                  Canvas: {recipe.canvas.width}×{recipe.canvas.height} @{" "}
+                  {(recipe.canvas.fpsNum / recipe.canvas.fpsDen).toFixed(2)} fps
+                </li>
+                <li>
+                  Duration: {(recipe.durationUs / 1_000_000).toFixed(2)}s
+                </li>
+                <li>
+                  Layers: {recipe.clips.length} clip
+                  {recipe.clips.length === 1 ? "" : "s"} ·{" "}
+                  {recipe.rasters.length} raster
+                  {recipe.rasters.length === 1 ? "" : "s"} ·{" "}
+                  {recipe.images.length} image
+                  {recipe.images.length === 1 ? "" : "s"}
+                </li>
+              </ul>
+              {recipe.clips.length > 0 && (
+                <details>
+                  <summary>Clips ({recipe.clips.length})</summary>
+                  <ul>
+                    {recipe.clips.map((c, i) => (
+                      <li key={i}>
+                        track {c.trackIndex} · z={c.zOrder} ·{" "}
+                        [{(c.timelineInUs / 1_000_000).toFixed(2)}s –{" "}
+                        {(c.timelineOutUs / 1_000_000).toFixed(2)}s] ·{" "}
+                        <code>{c.mediaPath.split(/[\\/]/).pop()}</code>{" "}
+                        transform=({c.transform.x.toFixed(2)},
+                        {c.transform.y.toFixed(2)}) size=(
+                        {c.transform.width.toFixed(2)},
+                        {c.transform.height.toFixed(2)}) op=
+                        {c.opacity.toFixed(2)} blend={c.blendMode}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+              {recipe.rasters.length > 0 && (
+                <details>
+                  <summary>Rasters ({recipe.rasters.length})</summary>
+                  <ul>
+                    {recipe.rasters.map((r, i) => (
+                      <li key={i}>
+                        track {r.trackIndex} · z={r.zOrder} · {r.frameCount}{" "}
+                        frames @ {(r.fpsNum / r.fpsDen).toFixed(0)} fps ·{" "}
+                        dir=<code>{r.rasterDir.split(/[\\/]/).pop()}</code>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+              {recipe.images.length > 0 && (
+                <details>
+                  <summary>Images ({recipe.images.length})</summary>
+                  <ul>
+                    {recipe.images.map((m, i) => (
+                      <li key={i}>
+                        track {m.trackIndex} · z={m.zOrder} ·{" "}
+                        <code>{m.mediaPath.split(/[\\/]/).pop()}</code>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+            </>
+          )}
+        </section>
+      )}
 
       <section className="realtime-preview-stats">
         <h3>Stats</h3>

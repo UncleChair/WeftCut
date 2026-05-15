@@ -1444,6 +1444,31 @@ pub async fn compile_project(
     })
 }
 
+/// Phase B3: emit the WebCodecs composition recipe for the current
+/// project snapshot. Mirrors `compile_project`'s path (materialize
+/// templates + inline subtitles, snapshot the project) but produces
+/// the JSON recipe consumed by the WebGL2 compositor instead of the
+/// ffmpeg filter graph. Pure read; no mutation.
+#[tauri::command]
+pub async fn preview_webcodecs_recipe(
+    app: tauri::AppHandle,
+    handle: State<'_, ProjectHandle>,
+    cache: State<'_, crate::cache::CacheLayout>,
+) -> Result<ir::WebcodecsRecipe, String> {
+    let snap = handle.snapshot().await;
+    let target = ir::RenderTarget::full(
+        snap.composition.width,
+        snap.composition.height,
+        Rational::new(snap.composition.fps.num, snap.composition.fps.den),
+        snap.composition.sample_rate,
+        snap.composition.channels,
+    );
+    let template_renders = ir::materialize_templates(&snap, &cache, &app)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(ir::emit_webcodecs(&snap, &target, &template_renders))
+}
+
 #[tauri::command]
 pub async fn update_layer(
     handle: State<'_, ProjectHandle>,
