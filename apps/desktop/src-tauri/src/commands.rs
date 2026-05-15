@@ -832,7 +832,7 @@ pub async fn split_first_layer(handle: State<'_, ProjectHandle>) -> Result<(), S
             if duration > 200_000 {
                 let mid = layer.t_start_us + duration / 2;
                 handle
-                    .split_layer(Actor::User, layer.id, mid)
+                    .split_layer(Actor::User, layer.id, mid, false)
                     .await
                     .map_err(|e: CommandError| e.to_string())?;
                 return Ok(());
@@ -1753,7 +1753,7 @@ pub async fn move_layer(
     let lid = Uuid::parse_str(&layer_id).map_err(|e| format!("layer_id: {e}"))?;
     let tid = Uuid::parse_str(&new_track_id).map_err(|e| format!("new_track_id: {e}"))?;
     handle
-        .move_layer(Actor::User, lid, tid, new_t_start_us)
+        .move_layer(Actor::User, lid, tid, new_t_start_us, false)
         .await
         .map_err(|e: CommandError| e.to_string())
 }

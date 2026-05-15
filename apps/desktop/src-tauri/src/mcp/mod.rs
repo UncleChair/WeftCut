@@ -867,7 +867,13 @@ impl WeftCutServer {
         let layer_id = parse_uuid(&args.layer_id, "layer_id")?;
         let new_track_id = parse_uuid(&args.new_track_id, "new_track_id")?;
         self.project
-            .move_layer(agent_actor(), layer_id, new_track_id, args.new_t_start_us)
+            .move_layer(
+                agent_actor(),
+                layer_id,
+                new_track_id,
+                args.new_t_start_us,
+                args.escape_group.unwrap_or(false),
+            )
             .await
             .map_err(map_command_error)?;
         Ok(ok_void())
@@ -884,7 +890,12 @@ impl WeftCutServer {
         let id = parse_uuid(&args.layer_id, "layer_id")?;
         let (left, right) = self
             .project
-            .split_layer(agent_actor(), id, args.at_t_us)
+            .split_layer(
+                agent_actor(),
+                id,
+                args.at_t_us,
+                args.escape_group.unwrap_or(false),
+            )
             .await
             .map_err(map_command_error)?;
         ok_json(&SplitLayerResult {
@@ -1504,12 +1515,23 @@ pub struct MoveLayerArgs {
     pub layer_id: String,
     pub new_track_id: String,
     pub new_t_start_us: i64,
+    /// `docs/group-system.md` — when the moved layer is in a group and
+    /// `escape_group` is `false` or omitted, every group member shifts in
+    /// time by the same delta. Pass `true` to move only this layer.
+    #[serde(default)]
+    pub escape_group: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SplitLayerArgs {
     pub layer_id: String,
     pub at_t_us: i64,
+    /// `docs/group-system.md` — when the split layer is in a group and
+    /// `escape_group` is `false` or omitted, every group member spanning
+    /// `at_t_us` is also split there (all halves stay in the same group).
+    /// Pass `true` to split only this layer.
+    #[serde(default)]
+    pub escape_group: Option<bool>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -1647,11 +1669,15 @@ pub enum OperationSpec {
         layer_id: String,
         new_track_id: String,
         new_t_start_us: i64,
+        #[serde(default)]
+        escape_group: Option<bool>,
     },
     /// Equivalent to `split_layer`.
     SplitLayer {
         layer_id: String,
         at_t_us: i64,
+        #[serde(default)]
+        escape_group: Option<bool>,
     },
     /// Equivalent to `delete_layer`.
     DeleteLayer {
@@ -1771,17 +1797,31 @@ fn spec_to_op(spec: OperationSpec) -> Result<DryRunOp, String> {
             layer_id,
             new_track_id,
             new_t_start_us,
+            escape_group,
         } => {
             let id = Uuid::parse_str(&layer_id)
                 .map_err(|e| format!("layer_id: {e}"))?;
             let new_track = Uuid::parse_str(&new_track_id)
                 .map_err(|e| format!("new_track_id: {e}"))?;
-            Ok(DryRunOp::MoveLayer { id, new_track_id: new_track, new_t_start_us })
+            Ok(DryRunOp::MoveLayer {
+                id,
+                new_track_id: new_track,
+                new_t_start_us,
+                escape_group: escape_group.unwrap_or(false),
+            })
         }
-        OperationSpec::SplitLayer { layer_id, at_t_us } => {
+        OperationSpec::SplitLayer {
+            layer_id,
+            at_t_us,
+            escape_group,
+        } => {
             let id = Uuid::parse_str(&layer_id)
                 .map_err(|e| format!("layer_id: {e}"))?;
-            Ok(DryRunOp::SplitLayer { id, at_t_us })
+            Ok(DryRunOp::SplitLayer {
+                id,
+                at_t_us,
+                escape_group: escape_group.unwrap_or(false),
+            })
         }
         OperationSpec::DeleteLayer { layer_id } => {
             let id = Uuid::parse_str(&layer_id)
