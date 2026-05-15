@@ -18,6 +18,18 @@ use crate::state::MediaItem;
 
 const PROXY_HEIGHT: u32 = 540;
 
+/// Bump whenever the proxy ffmpeg args change in a way that affects
+/// playback / scrub behavior. `io::load_from_dir` compares each
+/// `MediaItem.proxy_format_version` against this constant on open
+/// and invalidates older proxies so the existing background job
+/// re-encodes them. See `docs/preview-scrub.md`.
+///
+/// Versions:
+///   0 — pre-versioning / legacy. ~8 s GOP from libx264 defaults.
+///   1 — `-g 30 -keyint_min 30` for ~1 s keyframe spacing; enables
+///       fast scrub in the realtime preview's WebCodecs decoder.
+pub const PROXY_FORMAT_VERSION: u32 = 1;
+
 pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     if !ffmpeg_is_installed() {
         anyhow::bail!("ffmpeg not installed; cannot generate proxy");
@@ -55,6 +67,15 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
             "fast",
             "-crf",
             "24",
+            // Dense keyframes for the realtime preview's `mp4box.seek`
+            // path (`docs/preview-scrub.md`). 30 frames = 1 s at 30 fps;
+            // worst-case decoder-seek waits ~1 s for the next sample
+            // chain to reach the cursor. `keyint_min` blocks scene-
+            // change-driven keyframes from clustering.
+            "-g",
+            "30",
+            "-keyint_min",
+            "30",
             "-pix_fmt",
             "yuv420p",
             "-c:a",
@@ -163,6 +184,8 @@ mod tests {
                 audio: None,
             },
             proxy_path: None,
+
+            proxy_format_version: 0,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "deadbeef".into(),
@@ -208,6 +231,8 @@ mod tests {
                 audio: None,
             },
             proxy_path: None,
+
+            proxy_format_version: 0,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: hash.into(),

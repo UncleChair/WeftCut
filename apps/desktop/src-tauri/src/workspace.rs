@@ -68,6 +68,8 @@ mod tests {
             kind: MediaKind::Video,
             metadata: MediaMetadata::default(),
             proxy_path: None,
+
+            proxy_format_version: 0,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "abc".into(),

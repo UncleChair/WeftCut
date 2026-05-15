@@ -192,7 +192,8 @@ fn spawn_proxy(
             Ok(proxy_path) => {
                 let path_str = proxy_path.display().to_string();
                 let patch = MediaDerivativesPatch {
-                    proxy_path: Some(proxy_path),
+                    proxy_path: Some(Some(proxy_path)),
+                    proxy_format_version: Some(proxy::PROXY_FORMAT_VERSION),
                     ..Default::default()
                 };
                 if let Err(e) = project

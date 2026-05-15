@@ -1358,6 +1358,8 @@ pub async fn import_media(
                 kind,
                 metadata,
                 proxy_path: None,
+
+                proxy_format_version: 0,
                 waveform_path: None,
                 thumbnails_dir: None,
                 file_hash_blake3: facts.blake3_hex,
