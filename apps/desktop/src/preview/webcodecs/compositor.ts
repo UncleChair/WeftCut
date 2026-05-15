@@ -33,6 +33,14 @@ export interface CompositorLayer {
   /// [0..1]; values outside the range are clamped.
   opacity: number;
   blendMode: BlendMode;
+  /// Per-layer Y flip applied in the fragment shader. Needed because
+  /// Chromium's WebView2 zero-copy fast path for VideoFrame uploads
+  /// IGNORES the global UNPACK_FLIP_Y_WEBGL state — the compositor
+  /// already sets that for ImageBitmap / HTMLCanvasElement but
+  /// VideoFrame ends up oriented opposite. Pass `true` for layers
+  /// whose source is a VideoFrame; leave undefined/false for other
+  /// sources.
+  flipY?: boolean;
 }
 
 const VS_SOURCE = `#version 300 es
@@ -58,9 +66,11 @@ precision mediump float;
 in vec2 v_texCoord;
 uniform sampler2D u_texture;
 uniform float u_opacity;
+uniform float u_flipY;  // 0 = sample as-is; 1 = flip Y on sample
 out vec4 fragColor;
 void main() {
-  vec4 c = texture(u_texture, v_texCoord);
+  vec2 tc = vec2(v_texCoord.x, mix(v_texCoord.y, 1.0 - v_texCoord.y, u_flipY));
+  vec4 c = texture(u_texture, tc);
   float a = c.a * u_opacity;
   fragColor = vec4(c.rgb * a, a);
 }
@@ -74,6 +84,7 @@ export class WebGL2Compositor {
   private readonly uMVP: WebGLUniformLocation;
   private readonly uOpacity: WebGLUniformLocation;
   private readonly uTexture: WebGLUniformLocation;
+  private readonly uFlipY: WebGLUniformLocation;
   private disposed = false;
 
   constructor(canvas: HTMLCanvasElement) {
@@ -95,12 +106,14 @@ export class WebGL2Compositor {
     const uMVP = gl.getUniformLocation(program, "u_mvp");
     const uOpacity = gl.getUniformLocation(program, "u_opacity");
     const uTexture = gl.getUniformLocation(program, "u_texture");
-    if (!uMVP || !uOpacity || !uTexture) {
+    const uFlipY = gl.getUniformLocation(program, "u_flipY");
+    if (!uMVP || !uOpacity || !uTexture || !uFlipY) {
       throw new Error("compositor: missing uniform locations");
     }
     this.uMVP = uMVP;
     this.uOpacity = uOpacity;
     this.uTexture = uTexture;
+    this.uFlipY = uFlipY;
 
     // Unit quad as a 4-vertex triangle strip in [0,1]^2.
     const positions = new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]);
@@ -195,6 +208,7 @@ export class WebGL2Compositor {
 
       gl.uniform1i(this.uTexture, 0);
       gl.uniform1f(this.uOpacity, clamp01(layer.opacity));
+      gl.uniform1f(this.uFlipY, layer.flipY ? 1 : 0);
       gl.uniformMatrix3fv(this.uMVP, false, makeMVP(layer.transform));
 
       switch (layer.blendMode) {
