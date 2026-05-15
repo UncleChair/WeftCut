@@ -992,6 +992,23 @@ pub async fn project_open(
         .await
         .map_err(|e: CommandError| e.to_string())?;
     recents.push(path, display_name);
+
+    // `docs/preview-scrub.md` S.2 — fan out background jobs for any
+    // media missing derivatives. `load_from_dir` cleared `proxy_path`
+    // on entries whose `proxy_format_version` was below the current
+    // encoder version; this catches those, plus any media whose
+    // derivatives were deleted externally between sessions. The
+    // proxy job's "skip-if-cached" check makes the call idempotent
+    // for media whose proxies are already up-to-date.
+    let snap = handle.snapshot().await;
+    for item in snap.media_pool.values() {
+        crate::jobs::enqueue_for_media(
+            app.clone(),
+            cache.inner().clone(),
+            handle.inner().clone(),
+            item.clone(),
+        );
+    }
     Ok(())
 }
 

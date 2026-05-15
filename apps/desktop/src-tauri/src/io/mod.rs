@@ -112,6 +112,14 @@ pub async fn load_from_dir(dir: &Path) -> Result<Project> {
         project.media_pool.insert(id, item);
     }
 
+    // `docs/preview-scrub.md` S.2 — invalidate proxies whose format
+    // version predates the current encoder shape. Clears `proxy_path`
+    // (and best-effort deletes the cached mp4) so subsequent open-time
+    // job enqueueing picks them up for re-encoding. The
+    // `proxy_format_version` stays as-recorded; the job's success patch
+    // will bump it to the current version once regeneration completes.
+    invalidate_stale_proxies(&mut project).await;
+
     info!(
         "project loaded ({} → {}, schema {})",
         dir.display(),
@@ -119,6 +127,37 @@ pub async fn load_from_dir(dir: &Path) -> Result<Project> {
         project.schema_version
     );
     Ok(project)
+}
+
+/// Walk the media pool and clear `proxy_path` on every entry whose
+/// `proxy_format_version` is below the current encoder version. The old
+/// cached file is removed best-effort so disk doesn't accumulate stale
+/// proxies; failure to delete is logged-only (the path is already
+/// unreferenced, so a leak is bounded and the next user-triggered
+/// "clear cache" sweeps it).
+async fn invalidate_stale_proxies(project: &mut crate::state::Project) {
+    use crate::jobs::proxy::PROXY_FORMAT_VERSION;
+    let stale: Vec<crate::state::ids::MediaId> = project
+        .media_pool
+        .iter()
+        .filter_map(|(id, item)| {
+            let has_proxy = item.proxy_path.is_some();
+            let stale = item.proxy_format_version < PROXY_FORMAT_VERSION;
+            (has_proxy && stale).then_some(*id)
+        })
+        .collect();
+    for id in stale {
+        if let Some(item) = project.media_pool.get_mut(&id) {
+            if let Some(path) = item.proxy_path.take() {
+                if let Err(e) = tokio::fs::remove_file(&path).await {
+                    warn!(
+                        "stale proxy delete failed for {} (non-fatal): {e}",
+                        path.display()
+                    );
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -170,7 +209,7 @@ mod tests {
             file_hash_blake3: "deadbeef".into(),
             file_size: 0,
             file_mtime: 0,
-            imported_at: Utc::now(),
+            imported_at: chrono::Utc::now(),
         };
         let id = item.id;
         project.media_pool.insert(id, item);
@@ -231,7 +270,7 @@ mod tests {
             file_hash_blake3: "abc".into(),
             file_size: 0,
             file_mtime: 0,
-            imported_at: Utc::now(),
+            imported_at: chrono::Utc::now(),
         };
         let id = item.id;
         project.media_pool.insert(id, item);
@@ -254,5 +293,95 @@ mod tests {
 
         let err = load_from_dir(&vproj).await.expect_err("future schema");
         assert!(format!("{err:#}").contains("schema_version"));
+    }
+
+    /// `docs/preview-scrub.md` S.2 — proxies whose recorded
+    /// `proxy_format_version` predates the encoder's current version
+    /// must be cleared on load so the post-load job-enqueue pass picks
+    /// them up. The cached file is best-effort deleted; we just verify
+    /// the in-memory path is None.
+    #[tokio::test]
+    async fn stale_proxy_format_invalidated_on_load() {
+        use crate::jobs::proxy::PROXY_FORMAT_VERSION;
+        use crate::state::media::{MediaItem, MediaKind, MediaMetadata};
+
+        let dir = TempDir::new().unwrap();
+        let vproj = dir.path().join("with-stale-proxy.vproj");
+        fs::create_dir_all(&vproj).unwrap();
+
+        let mut project = Project::new_blank("stale-proxy");
+        let stale_proxy = dir.path().join("stale.mp4");
+        tokio::fs::write(&stale_proxy, b"old proxy bytes").await.unwrap();
+
+        let item_id = uuid::Uuid::now_v7();
+        let item = MediaItem {
+            id: item_id,
+            label: None,
+            path_abs: dir.path().join("clip.mp4"),
+            path_rel: None,
+            kind: MediaKind::Video,
+            metadata: MediaMetadata::default(),
+            proxy_path: Some(stale_proxy.clone()),
+            // Marked as the OLD format version — invalidation must
+            // clear `proxy_path` regardless of whether the file exists.
+            proxy_format_version: PROXY_FORMAT_VERSION.saturating_sub(1),
+            waveform_path: None,
+            thumbnails_dir: None,
+            file_hash_blake3: "stale".into(),
+            file_size: 0,
+            file_mtime: 0,
+            imported_at: chrono::Utc::now(),
+        };
+        project.media_pool.insert(item_id, item);
+        save_to_dir(&project, &vproj).await.unwrap();
+
+        let loaded = load_from_dir(&vproj).await.unwrap();
+        let it = loaded.media_pool.get(&item_id).unwrap();
+        assert!(it.proxy_path.is_none(), "stale proxy_path should be cleared");
+        // Best-effort delete: the cached file should be gone.
+        assert!(!stale_proxy.exists(), "stale proxy file should be deleted");
+    }
+
+    #[tokio::test]
+    async fn fresh_proxy_format_preserved_on_load() {
+        use crate::jobs::proxy::PROXY_FORMAT_VERSION;
+        use crate::state::media::{MediaItem, MediaKind, MediaMetadata};
+
+        let dir = TempDir::new().unwrap();
+        let vproj = dir.path().join("with-fresh-proxy.vproj");
+        fs::create_dir_all(&vproj).unwrap();
+
+        let mut project = Project::new_blank("fresh-proxy");
+        let proxy_path = dir.path().join("fresh.mp4");
+        tokio::fs::write(&proxy_path, b"fresh proxy bytes").await.unwrap();
+
+        let item_id = uuid::Uuid::now_v7();
+        let item = MediaItem {
+            id: item_id,
+            label: None,
+            path_abs: dir.path().join("clip.mp4"),
+            path_rel: None,
+            kind: MediaKind::Video,
+            metadata: MediaMetadata::default(),
+            proxy_path: Some(proxy_path.clone()),
+            proxy_format_version: PROXY_FORMAT_VERSION, // current
+            waveform_path: None,
+            thumbnails_dir: None,
+            file_hash_blake3: "fresh".into(),
+            file_size: 0,
+            file_mtime: 0,
+            imported_at: chrono::Utc::now(),
+        };
+        project.media_pool.insert(item_id, item);
+        save_to_dir(&project, &vproj).await.unwrap();
+
+        let loaded = load_from_dir(&vproj).await.unwrap();
+        let it = loaded.media_pool.get(&item_id).unwrap();
+        assert_eq!(
+            it.proxy_path.as_deref(),
+            Some(proxy_path.as_path()),
+            "fresh proxy_path should survive load"
+        );
+        assert!(proxy_path.exists(), "fresh proxy file should not be deleted");
     }
 }
