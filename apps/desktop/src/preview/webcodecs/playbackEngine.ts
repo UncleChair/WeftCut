@@ -335,6 +335,10 @@ class DecoderPool {
     return dec.frameAtOrBefore(localT);
   }
 
+  getDecoder(layerId: string): ClipDecoder | undefined {
+    return this.decoders.get(layerId);
+  }
+
   activeCount(): number {
     return this.decoders.size;
   }
@@ -621,6 +625,16 @@ export class PlaybackEngine {
   /// clone is owned by the engine; close it on replace / setRecipe /
   /// dispose.
   private fallbackFrames: Map<string, VideoFrame> = new Map();
+  /// `docs/preview-scrub.md` S.5 — per-clip in-flight seek tracking.
+  /// When a decoder seek is dispatched the layerId enters this set;
+  /// it's removed when the seek's promise settles. The renderOnce
+  /// scrub-loop checks this so a new seek doesn't fire while a prior
+  /// one is still pending — the coalescing model says "let the
+  /// in-flight decode finish, then re-check against the latest
+  /// target". Latest-target-wins is satisfied because `clipSeekTargets`
+  /// is updated synchronously by every `seekTo` regardless of which
+  /// seek is currently running.
+  private clipsSeekingInFlight: Set<string> = new Set();
 
   constructor(canvas: HTMLCanvasElement, events: PlaybackEngineEvents = {}) {
     this.compositor = new WebGL2Compositor(canvas);
@@ -704,6 +718,12 @@ export class PlaybackEngine {
     // Drive an immediate render so the surface reflects the new
     // recipe state even while paused.
     this.renderOnce();
+    // Ensure the RAF loop is running so the S.5 scrub loop and
+    // decoder-frame-arrival cycles get a chance to paint even when
+    // the user hasn't pressed play. The loop is cheap when there's
+    // nothing to do (renderOnce early-returns for empty layer sets);
+    // it tears down on `dispose()`.
+    if (recipe) this.startLoop();
   }
 
   play(): void {
@@ -842,6 +862,31 @@ export class PlaybackEngine {
 
     // 1. Sync decoder pool with the active clip set
     this.decoderPool.syncToTime(tUs, this.recipe.clips);
+
+    // 1b. `docs/preview-scrub.md` S.5 — coalesced scrub loop.
+    //
+    // For each clip with an outstanding seek target whose decoder
+    // isn't already chasing one, fire `decoder.seek(target)`. The
+    // target may have been overwritten between dispatches (drag at
+    // 60-120 Hz vs decode at 10-30 Hz); the loop always picks up
+    // the latest value because `clipSeekTargets` is the source of
+    // truth, updated synchronously by `seekTo`. Once the dispatched
+    // seek's promise settles we drop the in-flight flag; the next
+    // RAF tick reconsiders against the current target.
+    for (const [layerId, target] of this.clipSeekTargets) {
+      if (this.clipsSeekingInFlight.has(layerId)) continue;
+      const dec = this.decoderPool.getDecoder(layerId);
+      if (!dec) continue;
+      this.clipsSeekingInFlight.add(layerId);
+      void dec
+        .seek(target)
+        .catch(() => {
+          /* errors surface via the decoder's onError */
+        })
+        .finally(() => {
+          this.clipsSeekingInFlight.delete(layerId);
+        });
+    }
 
     // 2. Collect active layers, sorted by z (back-to-front)
     type Entry = { z: number; layer: CompositorLayer | null };
