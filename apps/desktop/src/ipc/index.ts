@@ -133,6 +133,16 @@ export interface ProjectSummary {
   media: MediaSummary[];
   tracks: TrackSummary[];
   markers: MarkerSummary[];
+  /// `docs/group-system.md`. Empty when no groups exist. UI uses this to
+  /// render the tinted-border indicator and to resolve "what group is
+  /// this layer in?" for click-selects-whole-group behavior.
+  groups: GroupSummary[];
+}
+
+export interface GroupSummary {
+  id: string;
+  label: string | null;
+  layer_ids: string[];
 }
 
 export interface MarkerSummary {
@@ -804,12 +814,58 @@ export async function moveLayer(
   layerId: string,
   newTrackId: string,
   newTStartUs: number,
+  escapeGroup = false,
 ): Promise<void> {
   return invoke<void>("move_layer", {
     layerId,
     newTrackId,
     newTStartUs,
+    escapeGroup,
   });
+}
+
+/** `docs/group-system.md` — group-aware trim. `edge` is `"in"` or `"out"`. */
+export async function trimLayer(
+  layerId: string,
+  edge: "in" | "out",
+  newTUs: number,
+  escapeGroup = false,
+): Promise<void> {
+  return invoke<void>("trim_layer", {
+    layerId,
+    edge,
+    newTUs,
+    escapeGroup,
+  });
+}
+
+export async function splitLayerGrouped(
+  layerId: string,
+  atTUs: number,
+  escapeGroup = false,
+): Promise<[string, string]> {
+  return invoke<[string, string]>("split_layer_grouped", {
+    layerId,
+    atTUs,
+    escapeGroup,
+  });
+}
+
+/** `docs/group-system.md` — bundle ≥2 layer ids into a group. */
+export async function groupsCreate(
+  layerIds: string[],
+  label: string | null = null,
+  reassign = false,
+): Promise<string> {
+  return invoke<string>("groups_create", {
+    layerIds,
+    label,
+    reassign,
+  });
+}
+
+export async function groupsDissolve(groupId: string): Promise<void> {
+  return invoke<void>("groups_dissolve", { groupId });
 }
 
 export async function duplicateLayer(

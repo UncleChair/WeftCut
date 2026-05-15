@@ -9,10 +9,14 @@ import {
 import { useTranslation } from "react-i18next";
 import {
   addMediaLayer,
+  groupsCreate,
+  groupsDissolve,
   moveLayer,
+  trimLayer,
   updateLayer,
   viewStateGet,
   viewStateSet,
+  type GroupSummary,
   type LayerSummary,
   type TrackSummary,
 } from "../ipc";
@@ -116,6 +120,10 @@ interface DragState {
   deltaUs: number;
   /// During cross-track drag, which track is the pointer currently over.
   overTrackId: string | null;
+  /// `docs/group-system.md` — when true (Alt-held at drag start), this op
+  /// stays local even if the dragged layer is in a group. Passed straight
+  /// to `moveLayer` / `trimLayer` as `escape_group`.
+  escapeGroup: boolean;
 }
 
 interface HeightDragState {
@@ -126,6 +134,8 @@ interface HeightDragState {
 
 interface TimelineProps {
   tracks: TrackSummary[];
+  /// `docs/group-system.md`. Empty array when no groups exist.
+  groups: GroupSummary[];
   durationUs: number;
   currentTimeUs: number;
   selectedLayerId: string | null;
@@ -138,8 +148,35 @@ function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
 }
 
+/// `docs/group-system.md`. Stable, deterministic hue per group id so all
+/// members share an accent color across renders. Skips the yellow/green
+/// band that conflicts with the "is-selected" highlight in `styles.css`.
+function groupHue(groupId: string): number {
+  let h = 0;
+  for (let i = 0; i < groupId.length; i++) {
+    h = (h * 31 + groupId.charCodeAt(i)) >>> 0;
+  }
+  // 360 hues, skip 60-120 (yellow/green band).
+  const raw = h % 300;
+  return raw < 60 ? raw : raw + 60;
+}
+
+/// Build the layer-id → group-id lookup used by every render path that
+/// asks "what group is this in?". `groups` is small in practice (a
+/// handful), so a simple O(N*M) walk is cheaper than a Map allocation.
+function indexGroups(groups: GroupSummary[]): Map<string, string> {
+  const idx = new Map<string, string>();
+  for (const g of groups) {
+    for (const lid of g.layer_ids) {
+      idx.set(lid, g.id);
+    }
+  }
+  return idx;
+}
+
 export function Timeline({
   tracks,
+  groups,
   durationUs,
   currentTimeUs,
   selectedLayerId,
@@ -158,10 +195,106 @@ export function Timeline({
   const widthPx = totalSec * pxPerSec;
   const [drag, setDrag] = useState<DragState | null>(null);
   const [heightDrag, setHeightDrag] = useState<HeightDragState | null>(null);
+  /// `docs/group-system.md` — multi-select for `Ctrl+G` and visual highlight.
+  /// `selectedLayerId` (from App) is the primary (drives PropertyPanel);
+  /// this set tracks every layer that should render with the selected
+  /// chrome. Stays in sync via the click handlers below.
+  const [selectedLayerIds, setSelectedLayerIds] = useState<Set<string>>(new Set());
   const rootRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
 
+  const groupByLayerId = useMemo(() => indexGroups(groups), [groups]);
+
   const orderedTracks = useMemo(() => visualOrderedTracks(tracks), [tracks]);
+
+  /// Map a click event on a layer chip to the resulting selection set.
+  /// `docs/group-system.md`: plain click on a grouped layer selects the
+  /// whole group; `Alt+click` selects only the clicked layer (escape
+  /// path); `Shift+click` extends the current selection (with the
+  /// clicked layer's whole group if any).
+  const selectFromClick = useCallback(
+    (layerId: string, e: { altKey: boolean; shiftKey: boolean; metaKey: boolean }) => {
+      const gid = groupByLayerId.get(layerId);
+      const memberSet = (): Set<string> => {
+        if (!gid || e.altKey) return new Set([layerId]);
+        const g = groups.find((x) => x.id === gid);
+        return new Set(g?.layer_ids ?? [layerId]);
+      };
+      if (e.shiftKey) {
+        setSelectedLayerIds((prev) => {
+          const next = new Set(prev);
+          memberSet().forEach((id) => next.add(id));
+          return next;
+        });
+      } else {
+        setSelectedLayerIds(memberSet());
+      }
+      onSelect(layerId);
+    },
+    [groupByLayerId, groups, onSelect],
+  );
+
+  // Keep the visual set in sync if the primary selection changes from
+  // outside (e.g. PropertyPanel click, agent op). Treat the external set
+  // as plain-click semantics.
+  useEffect(() => {
+    if (selectedLayerId === null) {
+      setSelectedLayerIds(new Set());
+      return;
+    }
+    setSelectedLayerIds((prev) => {
+      if (prev.has(selectedLayerId)) return prev;
+      const gid = groupByLayerId.get(selectedLayerId);
+      if (!gid) return new Set([selectedLayerId]);
+      const g = groups.find((x) => x.id === gid);
+      return new Set(g?.layer_ids ?? [selectedLayerId]);
+    });
+  }, [selectedLayerId, groupByLayerId, groups]);
+
+  /// `docs/group-system.md` — Ctrl+G groups the current selection,
+  /// Ctrl+Shift+G dissolves every group represented in the selection.
+  /// Bound here at the timeline root rather than via the global
+  /// keybinding registry so it only fires when the timeline is the
+  /// effective focus.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (!mod || e.key.toLowerCase() !== "g") return;
+      const target = e.target as HTMLElement | null;
+      // Ignore when typing in an input/textarea/contenteditable.
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      if (selectedLayerIds.size < 2 && !e.shiftKey) return;
+      e.preventDefault();
+      (async () => {
+        try {
+          if (e.shiftKey) {
+            const targetGroups = new Set<string>();
+            selectedLayerIds.forEach((lid) => {
+              const gid = groupByLayerId.get(lid);
+              if (gid) targetGroups.add(gid);
+            });
+            for (const gid of targetGroups) {
+              await groupsDissolve(gid);
+            }
+          } else {
+            await groupsCreate(Array.from(selectedLayerIds), null, false);
+          }
+          await onMutated();
+        } catch (err) {
+          console.error("group op failed:", err);
+        }
+      })();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [selectedLayerIds, groupByLayerId, onMutated]);
 
   // Cumulative (y, height) per visible track row. Heights vary now, so
   // hit-testing for "which track is the pointer over" needs a real
@@ -351,6 +484,9 @@ export function Timeline({
       if (Math.abs(deltaUs) < 1_000 && sameTrack) return;
 
       try {
+        // `docs/group-system.md` — Alt-held at drag start opts the move /
+        // trim out of group fanout for this single op.
+        const escape = committed.escapeGroup;
         switch (committed.kind) {
           case "move": {
             const newStart = Math.max(0, committed.originalTStart + deltaUs);
@@ -358,7 +494,7 @@ export function Timeline({
               overTrack && trackAcceptsForLayer(overTrack, committed)
                 ? overTrack.id
                 : committed.trackId;
-            await moveLayer(committed.layerId, destTrackId, newStart);
+            await moveLayer(committed.layerId, destTrackId, newStart, escape);
             break;
           }
           case "trim-start": {
@@ -369,7 +505,7 @@ export function Timeline({
                 committed.originalTEnd - MIN_LAYER_DURATION_US,
               ),
             );
-            await updateLayer(committed.layerId, { t_start_us: newStart });
+            await trimLayer(committed.layerId, "in", newStart, escape);
             break;
           }
           case "trim-end": {
@@ -377,7 +513,7 @@ export function Timeline({
               committed.originalTStart + MIN_LAYER_DURATION_US,
               committed.originalTEnd + deltaUs,
             );
-            await updateLayer(committed.layerId, { t_end_us: newEnd });
+            await trimLayer(committed.layerId, "out", newEnd, escape);
             break;
           }
         }
@@ -532,8 +668,11 @@ export function Timeline({
             pxPerSec={pxPerSec}
             height={trackHeights[track.id] ?? DEFAULT_TRACK_HEIGHT}
             selectedLayerId={selectedLayerId}
+            selectedLayerIds={selectedLayerIds}
+            groupByLayerId={groupByLayerId}
             dragState={drag}
             onSelect={onSelect}
+            onSelectFromClick={selectFromClick}
             onDragStart={(state) => setDrag(state)}
             onMediaDrop={onMediaDrop}
             isGroupStart={isGroupStart}
@@ -572,8 +711,11 @@ function TrackLane({
   pxPerSec,
   height,
   selectedLayerId,
+  selectedLayerIds,
+  groupByLayerId,
   dragState,
   onSelect,
+  onSelectFromClick,
   onDragStart,
   onMediaDrop,
   isGroupStart,
@@ -583,8 +725,14 @@ function TrackLane({
   pxPerSec: number;
   height: number;
   selectedLayerId: string | null;
+  selectedLayerIds: Set<string>;
+  groupByLayerId: Map<string, string>;
   dragState: DragState | null;
   onSelect: (id: string | null) => void;
+  onSelectFromClick: (
+    layerId: string,
+    e: { altKey: boolean; shiftKey: boolean; metaKey: boolean },
+  ) => void;
   onDragStart: (state: DragState) => void;
   onMediaDrop: (
     track: TrackSummary,
@@ -657,9 +805,12 @@ function TrackLane({
           trackKind={track.kind}
           pxPerSec={pxPerSec}
           laneHeight={height}
-          isSelected={selectedLayerId === layer.id}
+          isPrimary={selectedLayerId === layer.id}
+          isSelected={selectedLayerIds.has(layer.id)}
+          groupId={groupByLayerId.get(layer.id) ?? null}
           dragState={dragState}
           onSelect={onSelect}
+          onSelectFromClick={onSelectFromClick}
           onDragStart={onDragStart}
         />
       ))}
@@ -680,9 +831,12 @@ function LayerBlock({
   trackKind,
   pxPerSec,
   laneHeight,
+  isPrimary,
   isSelected,
+  groupId,
   dragState,
   onSelect,
+  onSelectFromClick,
   onDragStart,
 }: {
   layer: LayerSummary;
@@ -690,9 +844,18 @@ function LayerBlock({
   trackKind: string;
   pxPerSec: number;
   laneHeight: number;
+  /// Primary selection (drives PropertyPanel). One layer at a time.
+  isPrimary: boolean;
+  /// Member of the current selection set (highlight only).
   isSelected: boolean;
+  /// `docs/group-system.md` — null when ungrouped.
+  groupId: string | null;
   dragState: DragState | null;
   onSelect: (id: string | null) => void;
+  onSelectFromClick: (
+    layerId: string,
+    e: { altKey: boolean; shiftKey: boolean; metaKey: boolean },
+  ) => void;
   onDragStart: (state: DragState) => void;
 }) {
   const { t } = useTranslation();
@@ -742,7 +905,13 @@ function LayerBlock({
     (e: React.PointerEvent) => {
       if (e.button !== 0 || layer.locked) return;
       e.stopPropagation();
-      onSelect(layer.id);
+      // `docs/group-system.md` — match click-selection semantics on
+      // pointerdown so drag and click share the same group-aware path.
+      onSelectFromClick(layer.id, {
+        altKey: e.altKey,
+        shiftKey: e.shiftKey,
+        metaKey: e.metaKey,
+      });
       onDragStart({
         kind,
         layerId: layer.id,
@@ -754,16 +923,27 @@ function LayerBlock({
         originalTEnd: layer.t_end_us,
         deltaUs: 0,
         overTrackId: trackId,
+        escapeGroup: e.altKey,
       });
     };
 
   const layerWidthPx = Math.max(width, 4);
 
+  // `docs/group-system.md` — tinted left border + chain-link icon hue
+  // derived from group_id so all members share an accent color.
+  const groupStyle: React.CSSProperties = {};
+  if (groupId !== null) {
+    const hue = groupHue(groupId);
+    groupStyle.borderLeft = `2px solid hsl(${hue} 75% 60%)`;
+  }
+
   return (
     <div
-      className={`timeline-layer ${isSelected ? "is-selected" : ""} ${
-        isDragging ? "is-dragging" : ""
-      } ${layer.locked ? "is-locked" : ""} ${movedAcrossTracks ? "is-ghost" : ""}`}
+      className={`timeline-layer ${isPrimary ? "is-primary" : ""} ${
+        isSelected ? "is-selected" : ""
+      } ${isDragging ? "is-dragging" : ""} ${layer.locked ? "is-locked" : ""} ${
+        movedAcrossTracks ? "is-ghost" : ""
+      } ${groupId !== null ? "is-grouped" : ""}`}
       style={{
         left,
         width: layerWidthPx,
@@ -773,14 +953,29 @@ function LayerBlock({
           : layer.enabled
             ? 1
             : 0.45,
+        ...groupStyle,
       }}
       onClick={(e) => {
         e.stopPropagation();
-        onSelect(layer.id);
+        onSelectFromClick(layer.id, {
+          altKey: e.altKey,
+          shiftKey: e.shiftKey,
+          metaKey: e.metaKey,
+        });
       }}
       onPointerDown={beginDrag("move", trackKind)}
       title={`${layer.kind}: ${(liveStart / 1_000_000).toFixed(2)}s → ${(liveEnd / 1_000_000).toFixed(2)}s`}
     >
+      {groupId !== null && layerWidthPx > 14 && (
+        <span
+          className="layer-group-icon"
+          aria-label="grouped"
+          title="In a group (Ctrl+G to add, Ctrl+Shift+G to dissolve)"
+        >
+          {/* Chain link glyph — Unicode "LINK SYMBOL" */}
+          🔗
+        </span>
+      )}
       {layer.params.kind === "Audio" && layerWidthPx > 8 && (() => {
         // Source-window shifts mirror the timeline-window shifts during
         // trim — no speed factor on Audio params, so dx applies 1:1.
