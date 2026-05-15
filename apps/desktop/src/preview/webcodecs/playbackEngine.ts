@@ -52,10 +52,23 @@ const DECODER_PREFETCH_US = 1_500_000;
 /// generous.
 const DECODER_LINGER_US = 2_000_000;
 
-/// Per-clip ring buffer cap. We keep enough decoded frames to cover
-/// ~0.5s at 30fps so the RAF loop can always find a frame ≤ t when
-/// playback is running slightly behind the decoder.
-const FRAME_RING_CAP = 16;
+/// Per-clip ring buffer cap. The decoder runs faster than realtime
+/// (typically 5–20× on HW-accel WebCodecs), so without a smart
+/// eviction policy a small ring would only ever hold frames from the
+/// END of the clip — and the RAF loop's "latest frame ≤ playhead"
+/// query would never find anything in the early seconds.
+///
+/// Sizing: 512 frames covers ~17s of 30fps playback. Frames are
+/// GPU-resident in Chromium so the CPU memory cost is small; the
+/// real bound is the decoder's internal output pool (~32–128 alive
+/// frames before stalls), which is why we also evict aggressively
+/// once we have a meaningful playhead position. See pushFrame for
+/// the distance-from-playhead eviction policy.
+const FRAME_RING_CAP = 512;
+
+/// How far behind the playhead we keep frames in case of immediate
+/// rewind. Anything older is dropped on the next syncToTime tick.
+const FRAME_KEEP_BEHIND_US = 500_000;
 
 /// LRU cap on raster ImageBitmaps. At 1080p RGBA each bitmap is ~8MB;
 /// 64 caps memory at ~512MB which is acceptable for a desktop app.
@@ -75,8 +88,17 @@ class ClipDecoder {
   private openError: string | null = null;
   private closed = false;
   private maxSeenTimestampUs = Number.NEGATIVE_INFINITY;
+  /// Current playhead in clip-local-source time. Updated by
+  /// DecoderPool.syncToTime each RAF; drives the eviction window in
+  /// pushFrame so we don't lose frames around the playhead when the
+  /// decoder bursts ahead.
+  private playheadLocalUs = Number.NEGATIVE_INFINITY;
 
   constructor(readonly clip: RecipeClip) {}
+
+  setPlayheadLocal(localTimeUs: number): void {
+    this.playheadLocalUs = localTimeUs;
+  }
 
   async open(): Promise<void> {
     if (this.mp4 || this.opening || this.closed) return;
@@ -149,11 +171,8 @@ class ClipDecoder {
   }
 
   private pushFrame(info: DecodedFrameInfo): void {
-    // Most decoders emit in PTS order, but VideoDecoder may produce
-    // out-of-order frames if the bitstream re-orders B-frames.
-    // Insert sorted; evict the OLDEST (smallest timestamp) when over
-    // cap. That keeps the most-recent frames available for forward
-    // playback.
+    // Most decoders emit in PTS order, but B-frames can produce
+    // out-of-order output. Keep the ring sorted by timestamp.
     const entry: RingEntry = {
       timestampUs: info.timestampUs,
       frame: info.frame,
@@ -170,7 +189,41 @@ class ClipDecoder {
     if (info.timestampUs > this.maxSeenTimestampUs) {
       this.maxSeenTimestampUs = info.timestampUs;
     }
+    // Smart eviction: when the ring overflows the cap, drop frames
+    // furthest from the playhead, NOT just the oldest. The decoder
+    // happily decodes ahead at 10–20× realtime; an oldest-first
+    // policy ejects the frames the RAF loop is about to need (those
+    // near the playhead) and keeps the end-of-clip frames.
+    //
+    // The cap itself is a backstop — the dominant eviction path is
+    // dropFramesBefore() called per tick from syncToTime, which
+    // trims past frames as the playhead advances.
     while (this.ring.length > FRAME_RING_CAP) {
+      this.evictFurthestFromPlayhead();
+    }
+  }
+
+  private evictFurthestFromPlayhead(): void {
+    if (this.ring.length === 0) return;
+    const playhead = this.playheadLocalUs;
+    if (!Number.isFinite(playhead)) {
+      // No playhead set yet — fall back to oldest-first so we don't
+      // grow unboundedly during the initial fill before play().
+      const evicted = this.ring.shift();
+      evicted?.frame.close();
+      return;
+    }
+    const first = this.ring[0];
+    const last = this.ring[this.ring.length - 1];
+    if (!first || !last) return;
+    // Compare distance from playhead of front vs back; evict the
+    // larger one. This keeps the ring centered around the playhead.
+    const distFront = Math.abs(playhead - first.timestampUs);
+    const distBack = Math.abs(playhead - last.timestampUs);
+    if (distBack >= distFront) {
+      const evicted = this.ring.pop();
+      evicted?.frame.close();
+    } else {
       const evicted = this.ring.shift();
       evicted?.frame.close();
     }
@@ -193,16 +246,20 @@ class DecoderPool {
         tUs <= clip.timelineOutUs + DECODER_PREFETCH_US;
       if (!inWindow) continue;
       wanted.add(clip.layerId);
-      if (!this.decoders.has(clip.layerId)) {
-        const dec = new ClipDecoder(clip);
+      const localT = tUs - clip.timelineInUs + clip.sourceInUs;
+      let dec = this.decoders.get(clip.layerId);
+      if (!dec) {
+        dec = new ClipDecoder(clip);
         this.decoders.set(clip.layerId, dec);
         void dec.open();
       } else {
-        // Trim frames the playhead has long passed (>0.5s back).
-        const dec = this.decoders.get(clip.layerId);
-        const localT = tUs - clip.timelineInUs + clip.sourceInUs;
-        dec?.dropFramesBefore(localT - 500_000);
+        // Trim frames the playhead has long passed.
+        dec.dropFramesBefore(localT - FRAME_KEEP_BEHIND_US);
       }
+      // Always update the playhead so pushFrame's smart eviction
+      // has a reference point — even on the first tick before any
+      // frames have arrived.
+      dec.setPlayheadLocal(localT);
     }
     for (const [id, dec] of this.decoders.entries()) {
       if (!wanted.has(id)) {
