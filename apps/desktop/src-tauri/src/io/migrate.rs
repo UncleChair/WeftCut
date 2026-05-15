@@ -67,6 +67,14 @@ pub async fn run(workspace: &Path, project: &mut Project) -> Result<MigrationRep
             .context("v1 → v2 migration")?;
         project.schema_version = 2;
     }
+    if project.schema_version < 3 {
+        // v3 = group system. `Project.groups` defaults to empty via
+        // `#[serde(default)]`; the `auto_pair_audio_on_import` setting
+        // defaults to `true`. Nothing on the wire actually changes — this
+        // is a pure version bump so the field-existence invariant in
+        // `validate_groups` runs on previously-untouched projects too.
+        project.schema_version = 3;
+    }
 
     Ok(report)
 }
@@ -245,7 +253,7 @@ mod tests {
 
         let report = run(&ws, &mut project).await.unwrap();
         assert_eq!(report.from_version, 1);
-        assert_eq!(report.to_version, 2);
+        assert_eq!(report.to_version, 3);
         assert_eq!(report.migrated, 1);
         assert_eq!(report.missing_sources, 0);
 
@@ -253,7 +261,7 @@ mod tests {
         assert_eq!(migrated.path_rel.as_ref().unwrap(), Path::new("Media/interview.mp4"));
         assert!(ws.join("Media").join("interview.mp4").is_file());
         assert!(ws.join("Backups").read_dir().unwrap().count() >= 1);
-        assert_eq!(project.schema_version, 2);
+        assert_eq!(project.schema_version, 3);
     }
 
     #[tokio::test]
@@ -277,7 +285,7 @@ mod tests {
         let still_legacy = project.media_pool.get(&id).unwrap();
         assert!(still_legacy.path_rel.is_none());
         assert_eq!(still_legacy.path_abs, Path::new("/nonexistent/missing.mp4"));
-        assert_eq!(project.schema_version, 2);
+        assert_eq!(project.schema_version, 3);
     }
 
     #[tokio::test]
@@ -317,5 +325,42 @@ mod tests {
             .collect();
         assert!(names.contains(&"clip.mp4".to_string()));
         assert!(names.iter().any(|n| n.contains("-clip.mp4")));
+    }
+
+    #[tokio::test]
+    async fn v2_to_v3_is_pure_version_bump() {
+        // A v2 project loads with `groups = []` via `#[serde(default)]`.
+        // The migration just stamps `schema_version = 3` — no media moves,
+        // no new files. The auto_pair_audio_on_import setting defaults to
+        // true. Existing media stays exactly where it is.
+        let ws_dir = TempDir::new().unwrap();
+        let ws = ws_dir.path().join("doc.vproj");
+        fs::create_dir_all(&ws).unwrap();
+
+        let mut project = Project::new_blank("v2-doc");
+        project.schema_version = 2;
+        super::super::save_to_dir(&project, &ws).await.unwrap();
+
+        let report = run(&ws, &mut project).await.unwrap();
+        assert_eq!(report.from_version, 2);
+        assert_eq!(report.to_version, 3);
+        assert_eq!(report.migrated, 0);
+        assert_eq!(report.missing_sources, 0);
+        assert_eq!(project.schema_version, 3);
+        assert!(project.groups.is_empty());
+        assert!(project.settings.auto_pair_audio_on_import);
+    }
+
+    #[tokio::test]
+    async fn v3_project_is_noop() {
+        let ws_dir = TempDir::new().unwrap();
+        let ws = ws_dir.path().join("doc.vproj");
+        fs::create_dir_all(&ws).unwrap();
+        let mut project = Project::new_blank("v3-doc");
+        super::super::save_to_dir(&project, &ws).await.unwrap();
+        let report = run(&ws, &mut project).await.unwrap();
+        assert_eq!(report.from_version, 3);
+        assert_eq!(report.to_version, 3);
+        assert_eq!(project.schema_version, 3);
     }
 }

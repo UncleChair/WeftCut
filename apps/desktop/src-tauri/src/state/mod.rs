@@ -22,6 +22,7 @@ pub mod animated;
 pub mod color;
 pub mod composition;
 pub mod effect;
+pub mod group;
 pub mod history;
 pub mod ids;
 pub mod layer;
@@ -47,9 +48,10 @@ pub use animated::{Animated, Interpolation, Keyframe};
 pub use color::{ColorSpace, Rgba};
 pub use composition::Composition;
 pub use effect::{Effect, EffectKind, EffectParams};
+pub use group::{Group, index_groups};
 pub use ids::{
-    CheckpointId, EffectId, KeyframeId, LayerId, MarkerId, MediaId, OpId, TrackId, TransitionId,
-    new_id,
+    CheckpointId, EffectId, GroupId, KeyframeId, LayerId, MarkerId, MediaId, OpId, TrackId,
+    TransitionId, new_id,
 };
 pub use layer::{
     AudioParams, ColorParams, FontSpec, ImageOverlayParams, Layer, LayerParams, Outline, Shadow,
@@ -156,6 +158,7 @@ mod tests {
             tracks: imbl::vector![track],
             markers: imbl::Vector::new(),
             transitions: imbl::Vector::new(),
+            groups: imbl::Vector::new(),
             settings: ProjectSettings::default(),
         }
     }
