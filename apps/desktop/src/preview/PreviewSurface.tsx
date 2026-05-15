@@ -507,7 +507,8 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
           engine.setRecipe(recipe);
         } catch {
           // Recipe unavailable (no project, MCP race, etc.).
-          // Engine sits at empty-state.
+          // Engine sits at empty-state until the next project:changed
+          // or hasContent-flip fetch.
         }
         try {
           const path = await previewCurrentPath();
@@ -552,6 +553,25 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
         if (unlisten) unlisten();
       };
     }, [inRealtimeMode]);
+
+    // Startup-race guard: the engine effect's initial `fetchAll`
+    // happens on mount, but a workspace that's still mid-`project_open`
+    // can return a not-yet-ready recipe (or fail outright). The
+    // `project:changed` listener catches *subsequent* mutations, but
+    // can miss the very first load event if the listener installs
+    // after that event was emitted. Mirror the fetch off the
+    // `hasContent` prop, which the parent flips true once
+    // `summary.layer_count > 0` — by then the project actor is fully
+    // populated and the recipe is meaningful.
+    useEffect(() => {
+      if (!inRealtimeMode) return;
+      if (!hasContent) return;
+      const engine = engineRef.current;
+      if (!engine) return;
+      void previewWebcodecsRecipe()
+        .then((r) => engine.setRecipe(r))
+        .catch(() => {});
+    }, [inRealtimeMode, hasContent]);
 
     // Track the latest legacy preview MP4 for the realtime path's
     // audio source. The legacy renderer always produces this even
