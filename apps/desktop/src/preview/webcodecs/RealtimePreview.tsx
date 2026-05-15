@@ -21,17 +21,19 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { previewWebcodecsRecipe, type WebcodecsRecipe } from "../../ipc";
-import {
-  Mp4Decoder,
-  probeWebCodecsCapability,
-  type CapabilityReport,
-  type ClipInfo,
-} from "./decoder";
+import { Mp4Decoder, type ClipInfo } from "./decoder";
 import {
   WebGL2Compositor,
   type BlendMode,
   type CompositorLayer,
 } from "./compositor";
+import { probeRealtimeCapability, type RealtimeCapability } from "./capability";
+import {
+  resolveEffectiveMode,
+  usePreviewModeCapability,
+  usePreviewModePreference,
+  useSetPreviewModeCapability,
+} from "./previewModeStore";
 
 type Status =
   | { kind: "idle" }
@@ -47,7 +49,15 @@ export function RealtimePreview() {
   const overlayBitmapRef = useRef<ImageBitmap | null>(null);
   const rafRef = useRef<number | null>(null);
 
-  const [capability, setCapability] = useState<CapabilityReport | null>(null);
+  // Capability now lives in the shared zustand store (B4) — atomic
+  // selectors so the smoke harness doesn't re-render on unrelated
+  // store changes. The local `capability` variable just mirrors the
+  // store value so the existing rendering blocks below don't need
+  // restructuring.
+  const capability = usePreviewModeCapability();
+  const setCapability = useSetPreviewModeCapability();
+  const preference = usePreviewModePreference();
+  const effectiveMode = resolveEffectiveMode(preference, capability);
   const [compositorReady, setCompositorReady] = useState(false);
   const [compositorError, setCompositorError] = useState<string | null>(null);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
@@ -83,11 +93,15 @@ export function RealtimePreview() {
   useEffect(() => { overlayScaleRef.current = overlayScale; }, [overlayScale]);
   useEffect(() => { blendModeRef.current = blendMode; }, [blendMode]);
 
-  // One-shot capability probe.
+  // One-shot capability probe — only if the store hasn't already
+  // been seeded by App.tsx's mount probe. The smoke harness can be
+  // opened before App's effect fires (race window <50ms) so we
+  // back-stop here.
   useEffect(() => {
+    if (capability) return;
     let cancelled = false;
     setStatus({ kind: "probing" });
-    void probeWebCodecsCapability().then((report) => {
+    void probeRealtimeCapability().then((report: RealtimeCapability) => {
       if (cancelled) return;
       setCapability(report);
       setStatus({ kind: "idle" });
@@ -95,7 +109,7 @@ export function RealtimePreview() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [capability, setCapability]);
 
   // Create the compositor once the canvas mounts.
   useEffect(() => {
@@ -296,13 +310,11 @@ export function RealtimePreview() {
             </li>
             <li>
               H.264 (avc1.640028):{" "}
-              <strong>
-                {capability.h264Supported === null
-                  ? "n/a"
-                  : capability.h264Supported
-                    ? "supported"
-                    : "NOT supported"}
-              </strong>
+              <strong>{capability.h264Supported ? "supported" : "NOT supported"}</strong>
+            </li>
+            <li>
+              WebGL2 probe:{" "}
+              <strong>{capability.webgl2Ok ? "ok" : "FAILED"}</strong>
             </li>
             <li>
               WebGL2 compositor:{" "}
@@ -313,6 +325,10 @@ export function RealtimePreview() {
                     ? "ready"
                     : "initializing"}
               </strong>
+            </li>
+            <li>
+              Preference: <strong>{preference}</strong> → effective:{" "}
+              <strong>{effectiveMode}</strong>
             </li>
             {capability.detail && <li>{capability.detail}</li>}
             {compositorError && <li className="realtime-preview-error">{compositorError}</li>}

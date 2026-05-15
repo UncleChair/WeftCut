@@ -51,37 +51,6 @@ export interface DecoderEvents {
   onError?: (err: string) => void;
 }
 
-export interface CapabilityReport {
-  /// WebCodecs `VideoDecoder` global is defined.
-  apiPresent: boolean;
-  /// `isConfigSupported` for a generic H.264 baseline-high config.
-  /// Returns `null` when the API is absent.
-  h264Supported: boolean | null;
-  detail?: string;
-}
-
-/// Cheap, synchronous capability probe used by dev-mode UI in B1.
-/// The serious probe (real decode + WebGL2 sanity check) lands in B4.
-export async function probeWebCodecsCapability(): Promise<CapabilityReport> {
-  if (typeof (globalThis as { VideoDecoder?: unknown }).VideoDecoder === "undefined") {
-    return { apiPresent: false, h264Supported: null, detail: "VideoDecoder global missing" };
-  }
-  try {
-    const sup = await VideoDecoder.isConfigSupported({
-      codec: "avc1.640028",
-      codedWidth: 960,
-      codedHeight: 540,
-    });
-    return {
-      apiPresent: true,
-      h264Supported: sup.supported ?? false,
-      detail: sup.supported ? "isConfigSupported=true" : "isConfigSupported=false",
-    };
-  } catch (e) {
-    return { apiPresent: true, h264Supported: false, detail: String(e) };
-  }
-}
-
 export class Mp4Decoder {
   private readonly events: DecoderEvents;
   private mp4box: MP4File | null = null;
