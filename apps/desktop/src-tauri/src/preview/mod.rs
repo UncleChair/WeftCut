@@ -19,7 +19,9 @@
 //!     can swap its `<video>` src.
 
 pub mod encoder;
+pub mod failure;
 pub mod manifest;
+pub mod queue;
 pub mod segmented;
 
 use std::path::{Path, PathBuf};

@@ -1,44 +1,56 @@
-//! Segmented preview orchestrator (Phase A2).
+//! Segmented preview orchestrator (Phase A2 + A3).
 //!
-//! Mirrors `PreviewRenderer`'s lifecycle: subscribes to actor commits,
-//! debounces, then materializes the segment-cache state for the current
-//! project snapshot. For A2 the rendering loop is SEQUENTIAL — one
-//! segment at a time. A3 layers on parallelism + priority + cancellation.
+//! Lifecycle: subscribes to actor commits, debounces, computes manifest,
+//! diffs vs prior, enqueues new segments into a priority queue drained by
+//! N parallel worker tasks. Workers each spawn an ffmpeg child per segment.
+//!
+//! Concurrency: `min(num_cpus/2, HW_SESSION_CAP=6)` if a HW encoder is
+//! probed, else `num_cpus/2` — see [`queue::worker_concurrency`].
+//!
+//! Cancellation: each in-flight job carries a [`CancelHandle`] keyed by
+//! segment hash. When a fresh commit lands and the running job's enqueue
+//! commit-id is ≥ 2 stale, we fire its cancel handle → the worker's
+//! `tokio::select!` drops the ffmpeg `Child` → `kill_on_drop` terminates.
+//! Single-commit-stale jobs are allowed to finish (decision in
+//! `docs/preview-segmented-cache.md`).
 //!
 //! Events emitted (Tauri):
 //!   * `preview:manifest_changed` — a fresh manifest has been written.
 //!   * `preview:segment_ready { hash, in_us, out_us, path }` — segment
 //!     file landed on disk and `cached_ok` passes.
-//!   * `preview:segment_error { hash, detail }` — render failed; surfaces
-//!     via LogBus in A5.
+//!   * `preview:segment_error { hash, detail }` — render failed.
 //!   * `preview:audio_ready { path }` — whole-timeline audio rendered.
 //!   * `preview:audio_error { detail }`.
 //!
-//! Enabled per `lib.rs` setup hook only when the env var
-//! `WEFTCUT_PREVIEW_SEGMENTED=1` is set. Otherwise the old whole-timeline
-//! `PreviewRenderer` runs as today.
+//! Enabled only when `WEFTCUT_PREVIEW_SEGMENTED=1` (see `lib.rs`).
 
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::broadcast::error::RecvError;
+use tokio::sync::Mutex as AsyncMutex;
 use tracing::{info, warn};
 
 use crate::cache::{cached_ok, CacheLayout};
-use crate::state::ProjectHandle;
+use crate::export::HwEncoderCache;
+use crate::state::{Project, ProjectHandle};
 
 use super::encoder::{render_audio, render_segment};
+use super::failure::{classify, SegmentFailureKind};
 use super::manifest::{
-    self, diff_manifests, load_manifest, save_manifest, Manifest, SegmentStatus,
+    self, diff_manifests, save_manifest, Manifest, SegmentStatus,
+};
+use super::queue::{
+    worker_concurrency, CancelHandle, PriorityClass, SegmentJob, SegmentQueue,
 };
 
 pub mod events {
-    /// Emitted when a fresh manifest has been computed and saved.
     pub const MANIFEST_CHANGED: &str = "preview:manifest_changed";
-    /// A specific segment landed on disk.
     pub const SEGMENT_READY: &str = "preview:segment_ready";
     pub const SEGMENT_ERROR: &str = "preview:segment_error";
     pub const AUDIO_READY: &str = "preview:audio_ready";
@@ -46,6 +58,13 @@ pub mod events {
 }
 
 const DEBOUNCE: Duration = Duration::from_millis(250);
+
+/// Cancel an in-flight job whose enqueue commit-id is at least
+/// `STALE_COMMIT_THRESHOLD` behind the current commit counter. The lazy
+/// default ("let single-commit-stale jobs finish") matches what Pr
+/// does and avoids the "progress resets on every keystroke" jitter that
+/// naive queues produce.
+const STALE_COMMIT_THRESHOLD: u64 = 2;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -86,12 +105,20 @@ pub struct AudioError {
 #[derive(Clone)]
 pub struct SegmentedRenderer {
     inner: Arc<Mutex<SegmentedRendererInner>>,
+    queue: Arc<SegmentQueue>,
+    in_flight: Arc<AsyncMutex<HashMap<String, InFlightEntry>>>,
+    commit_counter: Arc<AtomicU64>,
+}
+
+#[derive(Clone)]
+struct InFlightEntry {
+    cancel: CancelHandle,
+    commit_id: u64,
 }
 
 struct SegmentedRendererInner {
     current_manifest: Option<Manifest>,
     current_manifest_path: Option<PathBuf>,
-    in_flight: bool,
 }
 
 impl SegmentedRenderer {
@@ -100,13 +127,27 @@ impl SegmentedRenderer {
             inner: Arc::new(Mutex::new(SegmentedRendererInner {
                 current_manifest: None,
                 current_manifest_path: None,
-                in_flight: false,
             })),
+            queue: Arc::new(SegmentQueue::new()),
+            in_flight: Arc::new(AsyncMutex::new(HashMap::new())),
+            commit_counter: Arc::new(AtomicU64::new(0)),
         };
+
+        // Spawn workers. Concurrency is decided once at startup — we
+        // don't currently re-probe HW availability later, matching how
+        // `ExportPreset::apply_to_command` consumes the cached probe.
+        let app_for_workers = app.clone();
+        let me_for_workers = me.clone();
+        tauri::async_runtime::spawn(async move {
+            spawn_workers(app_for_workers, me_for_workers).await;
+        });
+
+        // Spawn the commit-subscriber loop.
         let me_for_loop = me.clone();
         tauri::async_runtime::spawn(async move {
-            segmented_loop(app, handle, me_for_loop).await;
+            commit_loop(app, handle, me_for_loop).await;
         });
+
         me
     }
 
@@ -125,9 +166,184 @@ impl SegmentedRenderer {
     }
 }
 
-async fn segmented_loop(app: AppHandle, handle: ProjectHandle, renderer: SegmentedRenderer) {
+/// Spawn N worker tasks that drain the segment queue. The number of
+/// workers is fixed at spawn time from the HW encoder probe + cpu count.
+async fn spawn_workers(app: AppHandle, renderer: SegmentedRenderer) {
+    let has_hw = match app.try_state::<HwEncoderCache>() {
+        Some(c) => c.get().await.is_some(),
+        None => false,
+    };
+    let logical_cpus = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(2);
+    let n = worker_concurrency(logical_cpus, has_hw);
+    info!(
+        "segmented preview: spawning {} worker(s) (logical_cpus={}, hw_encoder={})",
+        n, logical_cpus, has_hw,
+    );
+    for worker_id in 0..n {
+        let app = app.clone();
+        let renderer = renderer.clone();
+        tauri::async_runtime::spawn(async move {
+            worker_loop(worker_id, app, renderer).await;
+        });
+    }
+}
+
+async fn worker_loop(worker_id: usize, app: AppHandle, renderer: SegmentedRenderer) {
+    info!("segmented preview worker #{worker_id} ready");
+    let cache = match app.try_state::<CacheLayout>() {
+        Some(c) => c.inner().clone(),
+        None => {
+            warn!("worker #{worker_id}: no CacheLayout managed — exiting");
+            return;
+        }
+    };
+
+    loop {
+        let (job, cancel) = renderer.queue.pop().await;
+        // Register in_flight before yielding to render.
+        {
+            let mut g = renderer.in_flight.lock().await;
+            g.insert(
+                job.hash.clone(),
+                InFlightEntry {
+                    cancel: cancel.clone(),
+                    commit_id: job.commit_id,
+                },
+            );
+        }
+
+        let dest = cache.preview_segment(&job.hash);
+        let result = render_segment_with_retry(&app, &job, &dest, &cancel, worker_id).await;
+
+        renderer.in_flight.lock().await.remove(&job.hash);
+
+        match result {
+            Ok(()) => {
+                let _ = app.emit(
+                    events::SEGMENT_READY,
+                    SegmentReady {
+                        hash: job.hash.clone(),
+                        in_us: job.in_us,
+                        out_us: job.out_us,
+                        path: dest.to_string_lossy().to_string(),
+                    },
+                );
+            }
+            Err(detail) if cancel.is_cancelled() => {
+                // Cancellation isn't an error from the user's perspective.
+                tracing::debug!(
+                    "worker #{worker_id}: job {} cancelled ({detail})",
+                    job.hash
+                );
+            }
+            Err(detail) => {
+                warn!("worker #{worker_id}: job {} failed: {detail}", job.hash);
+                let _ = app.emit(
+                    events::SEGMENT_ERROR,
+                    SegmentError {
+                        hash: job.hash.clone(),
+                        detail,
+                    },
+                );
+            }
+        }
+    }
+}
+
+/// Run render_segment with the auto-retry policy. Returns Ok on success;
+/// Err with a flattened detail string on final failure (after retries).
+///
+/// Retry rules (one retry max):
+///   * `Transient` — re-run unchanged after 2s backoff
+///   * `HwEncoderRejected` — re-run with `prefer_sw=true` (1s backoff)
+///   * everything else — surface immediately, no retry
+async fn render_segment_with_retry(
+    app: &AppHandle,
+    job: &SegmentJob,
+    dest: &std::path::Path,
+    cancel: &CancelHandle,
+    worker_id: usize,
+) -> Result<(), String> {
+    // First attempt: let the encoder pick HW if available.
+    let first = render_segment(
+        app,
+        &job.project,
+        &job.inline_subs,
+        &job.template_renders,
+        job.in_us,
+        job.out_us,
+        dest,
+        cancel,
+        /*prefer_sw=*/ false,
+    )
+    .await;
+
+    let first_detail = match first {
+        Ok(()) => return Ok(()),
+        Err(e) => format!("{e:#}"),
+    };
+
+    if cancel.is_cancelled() {
+        return Err(first_detail);
+    }
+
+    let kind = classify(&first_detail);
+    match kind {
+        SegmentFailureKind::Transient => {
+            info!(
+                "worker #{worker_id}: job {} transient failure — retrying in 2s",
+                job.hash
+            );
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            if cancel.is_cancelled() {
+                return Err(first_detail);
+            }
+            render_segment(
+                app,
+                &job.project,
+                &job.inline_subs,
+                &job.template_renders,
+                job.in_us,
+                job.out_us,
+                dest,
+                cancel,
+                /*prefer_sw=*/ false,
+            )
+            .await
+            .map_err(|e| format!("{e:#} (after 1 retry)"))
+        }
+        SegmentFailureKind::HwEncoderRejected => {
+            info!(
+                "worker #{worker_id}: job {} HW encoder rejected — retrying with software encoder",
+                job.hash
+            );
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            if cancel.is_cancelled() {
+                return Err(first_detail);
+            }
+            render_segment(
+                app,
+                &job.project,
+                &job.inline_subs,
+                &job.template_renders,
+                job.in_us,
+                job.out_us,
+                dest,
+                cancel,
+                /*prefer_sw=*/ true,
+            )
+            .await
+            .map_err(|e| format!("{e:#} (after HW→SW retry)"))
+        }
+        _ => Err(first_detail),
+    }
+}
+
+async fn commit_loop(app: AppHandle, handle: ProjectHandle, renderer: SegmentedRenderer) {
     let mut rx = handle.subscribe();
-    info!("segmented preview renderer subscribed; waiting for commits");
+    info!("segmented preview commit-loop subscribed");
     loop {
         match rx.recv().await {
             Ok(_) => {}
@@ -149,35 +365,16 @@ async fn segmented_loop(app: AppHandle, handle: ProjectHandle, renderer: Segment
         let cache = match app.try_state::<CacheLayout>() {
             Some(c) => c.inner().clone(),
             None => {
-                warn!("segmented preview: no CacheLayout managed; skipping cycle");
+                warn!("commit_loop: no CacheLayout managed; skipping cycle");
                 continue;
             }
         };
         let project = handle.snapshot().await;
-        // No layers → no segments to render (matches PreviewRenderer's
-        // gating; React UI shows the empty-state hint).
         if project.tracks.iter().all(|t| t.layers.is_empty()) {
             continue;
         }
 
-        // Mark in-flight; bail if another cycle is mid-process. A3 lifts
-        // this restriction.
-        {
-            let mut g = renderer.inner.lock().expect("segmented preview lock");
-            if g.in_flight {
-                continue;
-            }
-            g.in_flight = true;
-        }
-
-        let result = run_one_cycle(&app, &cache, &project, &renderer).await;
-        renderer
-            .inner
-            .lock()
-            .expect("segmented preview lock")
-            .in_flight = false;
-
-        if let Err(e) = result {
+        if let Err(e) = run_one_cycle(&app, &cache, &project, &renderer).await {
             warn!("segmented preview cycle failed: {e:#}");
         }
     }
@@ -186,13 +383,36 @@ async fn segmented_loop(app: AppHandle, handle: ProjectHandle, renderer: Segment
 async fn run_one_cycle(
     app: &AppHandle,
     cache: &CacheLayout,
-    project: &crate::state::Project,
+    project: &Project,
     renderer: &SegmentedRenderer,
 ) -> anyhow::Result<()> {
-    // 1. Compute fresh manifest.
-    let new_manifest = super::compute_manifest(project, cache, app).await?;
+    // Bump the commit counter — workers compare in-flight job commit_ids
+    // against this to decide staleness.
+    let this_commit = renderer.commit_counter.fetch_add(1, Ordering::Relaxed) + 1;
 
-    // 2. Diff against last manifest (in-memory snapshot, not on-disk).
+    // 1. Materialize side maps ONCE per cycle. Workers receive Arc-clones
+    // so the entire cycle's segments share one set of paths.
+    let inline_subs = Arc::new(
+        crate::ir::materialize_inline_subtitles(project, cache)
+            .map_err(|e| anyhow::anyhow!("materialize inline subs: {e}"))?,
+    );
+    let template_renders = Arc::new(
+        crate::ir::materialize_templates(project, cache, app)
+            .await
+            .map_err(|e| anyhow::anyhow!("materialize templates: {e}"))?,
+    );
+
+    // 2. Compute manifest. Uses the same already-materialized side maps
+    // (via compute_manifest_core for synchronous code reuse).
+    let global_hash = super::state_hash(project, cache, app).await?;
+    let new_manifest = super::compute_manifest_core(
+        project,
+        global_hash,
+        &inline_subs,
+        &template_renders,
+    )?;
+
+    // 3. Diff against prior manifest.
     let prior = renderer
         .inner
         .lock()
@@ -201,8 +421,7 @@ async fn run_one_cycle(
         .clone();
     let diff = diff_manifests(prior.as_ref(), &new_manifest);
 
-    // 3. Save manifest atomically. React listens for `manifest_changed`
-    // to know the timeline layout has changed.
+    // 4. Save manifest atomically + emit manifest_changed.
     let manifest_path = cache.preview_manifest(&new_manifest.global_hash);
     save_manifest(&manifest_path, &new_manifest)?;
     let _ = app.emit(
@@ -213,17 +432,50 @@ async fn run_one_cycle(
             duration_us: new_manifest.duration_us,
         },
     );
-    renderer.record(new_manifest.clone(), manifest_path);
+    renderer.record(new_manifest.clone(), manifest_path.clone());
 
-    // 4. Render each new segment sequentially. Reused segments are
-    // verified against cached_ok and re-enqueued if the bytes are
-    // missing (the manifest believed in a cache hit but the file got
-    // deleted / GC'd / never existed).
-    for entry in diff.new_segments.iter().chain(diff.reused_segments.iter()) {
+    // 5. Drop obsolete pending jobs from the queue (hashes not in new
+    // manifest). Running jobs are cancelled by the staleness check below.
+    let new_hashes: std::collections::HashSet<String> =
+        new_manifest.video.segments.iter().map(|s| s.hash.clone()).collect();
+    let dropped = renderer
+        .queue
+        .retain_hashes(|h| new_hashes.contains(h))
+        .await;
+    if dropped > 0 {
+        info!("segmented preview: dropped {dropped} obsolete pending jobs");
+    }
+
+    // 6. Cancel running jobs whose commit-id is ≥ STALE_COMMIT_THRESHOLD
+    // stale. Single-commit-stale jobs are allowed to finish.
+    {
+        let in_flight = renderer.in_flight.lock().await;
+        for (hash, entry) in in_flight.iter() {
+            if this_commit.saturating_sub(entry.commit_id) >= STALE_COMMIT_THRESHOLD {
+                // Skip if hash is still in new manifest — same content,
+                // not stale.
+                if new_hashes.contains(hash) {
+                    continue;
+                }
+                info!(
+                    "segmented preview: cancelling stale running job {hash} \
+                     (enqueued at commit {}, current {})",
+                    entry.commit_id, this_commit
+                );
+                entry.cancel.cancel();
+            }
+        }
+    }
+
+    // 7. Enqueue new segments. Use PriorityClass::Ordered for all in A3;
+    // playhead / visible-region priority bumps come from A4 once the
+    // React side reports them.
+    let project_arc = Arc::new(project.clone());
+    for entry in &diff.new_segments {
         let dest = cache.preview_segment(&entry.hash);
         if cached_ok(&dest) {
-            // Already on disk — fast-path through to ready event so the
-            // React side reflects the cache hit.
+            // The diff said this was new but the file's already on disk
+            // (e.g. from a prior crashed cycle). Fast-path emit.
             let _ = app.emit(
                 events::SEGMENT_READY,
                 SegmentReady {
@@ -235,38 +487,63 @@ async fn run_one_cycle(
             );
             continue;
         }
-        match render_segment(app, project, entry.in_us, entry.out_us, &dest).await {
-            Ok(()) => {
-                let _ = app.emit(
-                    events::SEGMENT_READY,
-                    SegmentReady {
-                        hash: entry.hash.clone(),
-                        in_us: entry.in_us,
-                        out_us: entry.out_us,
-                        path: dest.to_string_lossy().to_string(),
-                    },
-                );
-            }
-            Err(e) => {
-                let detail = format!("{e:#}");
-                warn!("segment render failed for {}: {detail}", entry.hash);
-                let _ = app.emit(
-                    events::SEGMENT_ERROR,
-                    SegmentError {
-                        hash: entry.hash.clone(),
-                        detail,
-                    },
-                );
-            }
+        let job = SegmentJob {
+            hash: entry.hash.clone(),
+            in_us: entry.in_us,
+            out_us: entry.out_us,
+            commit_id: this_commit,
+            project: project_arc.clone(),
+            inline_subs: inline_subs.clone(),
+            template_renders: template_renders.clone(),
+        };
+        let _ = renderer.queue.push(job, PriorityClass::Ordered).await;
+    }
+
+    // 8. Reused segments: emit ready if file exists; otherwise enqueue
+    // (manifest believed in a cache hit but the bytes aren't on disk).
+    for entry in &diff.reused_segments {
+        let dest = cache.preview_segment(&entry.hash);
+        if cached_ok(&dest) {
+            let _ = app.emit(
+                events::SEGMENT_READY,
+                SegmentReady {
+                    hash: entry.hash.clone(),
+                    in_us: entry.in_us,
+                    out_us: entry.out_us,
+                    path: dest.to_string_lossy().to_string(),
+                },
+            );
+        } else {
+            let job = SegmentJob {
+                hash: entry.hash.clone(),
+                in_us: entry.in_us,
+                out_us: entry.out_us,
+                commit_id: this_commit,
+                project: project_arc.clone(),
+                inline_subs: inline_subs.clone(),
+                template_renders: template_renders.clone(),
+            };
+            let _ = renderer.queue.push(job, PriorityClass::Ordered).await;
         }
     }
 
-    // 5. Audio: whole-timeline. Render only if global hash changed (which
-    // means audio content might have changed) OR the file doesn't exist.
+    // 9. Audio (whole-timeline). Sequential, not queued — there's only
+    // ever one audio job per cycle. Cancellation: use a fresh handle
+    // dedicated to audio so the segment workers' handles don't interfere.
     let audio_path = cache.preview_audio(&new_manifest.global_hash);
     let needs_audio = diff.audio_changed || !cached_ok(&audio_path);
     if needs_audio {
-        match render_audio(app, project, &audio_path).await {
+        let audio_cancel = CancelHandle::new();
+        match render_audio(
+            app,
+            project,
+            &inline_subs,
+            &template_renders,
+            &audio_path,
+            &audio_cancel,
+        )
+        .await
+        {
             Ok(()) => {
                 if cached_ok(&audio_path) {
                     let _ = app.emit(
@@ -276,8 +553,6 @@ async fn run_one_cycle(
                         },
                     );
                 }
-                // If the project had no audio, render_audio returns Ok
-                // without producing a file. Skip the event in that case.
             }
             Err(e) => {
                 let detail = format!("{e:#}");
@@ -286,7 +561,6 @@ async fn run_one_cycle(
             }
         }
     } else if cached_ok(&audio_path) {
-        // Cache hit — emit ready so React reflects the existing file.
         let _ = app.emit(
             events::AUDIO_READY,
             AudioReady {
@@ -294,25 +568,6 @@ async fn run_one_cycle(
             },
         );
     }
-
-    // 6. Update on-disk manifest entries to reflect what's actually ready.
-    // Mark as Ready any segment whose cache file passes cached_ok now.
-    let mut final_manifest = new_manifest;
-    for seg in final_manifest.video.segments.iter_mut() {
-        let dest = cache.preview_segment(&seg.hash);
-        if cached_ok(&dest) {
-            seg.status = SegmentStatus::Ready;
-        }
-    }
-    if cached_ok(&audio_path) {
-        final_manifest.audio.status = SegmentStatus::Ready;
-    }
-    save_manifest(
-        &cache.preview_manifest(&final_manifest.global_hash),
-        &final_manifest,
-    )?;
-    renderer.inner.lock().expect("segmented preview lock").current_manifest =
-        Some(final_manifest);
 
     Ok(())
 }
@@ -332,7 +587,6 @@ mod tests {
         assert_eq!(events::AUDIO_ERROR, "preview:audio_error");
     }
 
-    /// Payload structs serialize the way React expects.
     #[test]
     fn segment_ready_serializes_camel_case() {
         let p = SegmentReady {
@@ -345,5 +599,14 @@ mod tests {
         assert!(json.contains("\"inUs\":1000000"), "expected camelCase inUs: {json}");
         assert!(json.contains("\"outUs\":5000000"));
         assert!(json.contains("\"hash\":\"abc\""));
+    }
+
+    #[test]
+    fn stale_commit_threshold_matches_design() {
+        // The grill-me decision was "≥ 2 commits behind → kill". Catches
+        // an accidental edit dropping this back to 1 (which produces the
+        // jittery "progress resets every keystroke" UX) or pushing it to
+        // some larger value (lets too many stale jobs run).
+        assert_eq!(STALE_COMMIT_THRESHOLD, 2);
     }
 }

@@ -21,11 +21,14 @@ use tauri::{AppHandle, Manager};
 use tokio::process::Command;
 use tracing::{info, warn};
 
-use crate::cache::{cached_ok, discard_temp, promote_temp, temp_path, CacheLayout};
+use crate::cache::{cached_ok, discard_temp, promote_temp, temp_path};
+use crate::export::{HwEncoder, HwEncoderCache};
 use crate::ir::{
-    emit_ffmpeg, lower, lower_range, materialize_inline_subtitles, RenderTarget,
+    emit_ffmpeg, lower, lower_range, InlineSubPaths, RenderTarget, TemplateRenders,
 };
 use crate::state::Project;
+
+use super::queue::CancelHandle;
 
 /// Render `[in_us, out_us]` of `project` to a self-contained fMP4 file at
 /// `dest`. Returns immediately on cache hit (`cached_ok`). Atomic via
@@ -34,12 +37,24 @@ use crate::state::Project;
 /// Audio is dropped: segments are video-only by design.
 /// Proxies are substituted (per-clip 540p H.264) when available, mirroring
 /// the whole-timeline preview path's load-bearing optimization.
+///
+/// **Cancellation**: when `cancel.cancel()` fires mid-encode, the ffmpeg
+/// child is dropped (kill_on_drop terminates the process). The partial
+/// `.tmp` file is cleaned up; `dest` remains untouched. Caller treats the
+/// returned error as "cancelled, don't emit a `segment_error` event" by
+/// checking `cancel.is_cancelled()` after the call.
+/// `prefer_sw=true` skips the HW encoder probe and forces libx264. Used
+/// by the orchestrator's auto-retry on `HwEncoderRejected` failures.
 pub async fn render_segment(
     app: &AppHandle,
     project: &Project,
+    inline_subs: &InlineSubPaths,
+    template_renders: &TemplateRenders,
     in_us: i64,
     out_us: i64,
     dest: &Path,
+    cancel: &CancelHandle,
+    prefer_sw: bool,
 ) -> Result<()> {
     if cached_ok(dest) {
         return Ok(());
@@ -50,18 +65,6 @@ pub async fn render_segment(
              (Windows), `brew install ffmpeg` (macOS), or your distro's package."
         );
     }
-
-    let cache = app
-        .try_state::<CacheLayout>()
-        .map(|s| s.inner().clone())
-        .ok_or_else(|| anyhow::anyhow!("CacheLayout not managed by app"))?;
-
-    // Materialize side-maps — same shape as the whole-timeline preview.
-    let inline_subs = materialize_inline_subtitles(project, &cache)
-        .context("materialize inline subtitles")?;
-    let template_renders = crate::ir::materialize_templates(project, &cache, app)
-        .await
-        .context("materialize templates")?;
 
     // Proxy substitution makes the encode cheap on 4K sources.
     let project_for_render = super::with_proxies_substituted(project);
@@ -76,8 +79,8 @@ pub async fn render_segment(
     let graph = lower_range(
         &project_for_render,
         target,
-        &inline_subs,
-        &template_renders,
+        inline_subs,
+        template_renders,
         in_us,
         out_us,
     )
@@ -116,16 +119,19 @@ pub async fn render_segment(
     // (rebase drops Audio tracks) so there's nothing to map for audio.
     cmd.arg("-map").arg("[vfinal]");
 
-    // H.264 High Profile @ L4.0 — matches the manifest's `avc1.640028`
-    // codec string. The MSE driver pins on this exactly; a mismatch
-    // silently rejects appendBuffer() bytes (decision M1).
-    cmd.args([
-        "-c:v", "libx264",
-        "-preset", "ultrafast",
-        "-profile:v", "high",
-        "-level:v", "4.0",
-        "-pix_fmt", "yuv420p",
-    ]);
+    // Pick HW encoder if probed and not forced to SW. Falls back to
+    // libx264 on absent / probe-failed hosts AND on auto-retry of a
+    // prior `HwEncoderRejected` failure. Either way the output codec
+    // string stays `avc1.640028` to match the manifest pin.
+    let hw = if prefer_sw {
+        None
+    } else {
+        match app.try_state::<HwEncoderCache>() {
+            Some(c) => c.get().await,
+            None => None,
+        }
+    };
+    apply_h264_segment_encoder(&mut cmd, hw);
     // Force IDR at segment start so the segment is independently decodable.
     // Disabling scene-change detection keeps GOP boundaries from drifting
     // mid-segment.
@@ -159,7 +165,25 @@ pub async fn render_segment(
         in_us,
         out_us
     );
-    let output = cmd.output().await.context("spawn ffmpeg")?;
+    let child = cmd.spawn().context("spawn ffmpeg")?;
+    // Race the ffmpeg run against cancellation. `wait_with_output(self)`
+    // consumes the Child into its future; dropping that future drops the
+    // Child, and `kill_on_drop(true)` set above terminates the process.
+    // The cancel arm cannot reference `child` directly — the wait arm
+    // already moved it.
+    let output = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => {
+            // wait_with_output future gets dropped here on select's
+            // ordinary cleanup → Child drops → kill_on_drop fires.
+            let _ = std::fs::remove_file(&script_path);
+            let _ = std::fs::remove_file(&tmp);
+            anyhow::bail!("segment render cancelled");
+        }
+        result = child.wait_with_output() => {
+            result.context("wait ffmpeg")?
+        }
+    };
     let _ = std::fs::remove_file(&script_path);
 
     if !output.status.success() {
@@ -185,9 +209,12 @@ pub async fn render_segment(
 /// orchestrator treats a missing audio file as "no audio in this
 /// composition" (the React side already handles the no-audio case).
 pub async fn render_audio(
-    app: &AppHandle,
+    _app: &AppHandle,
     project: &Project,
+    inline_subs: &InlineSubPaths,
+    template_renders: &TemplateRenders,
     dest: &Path,
+    cancel: &CancelHandle,
 ) -> Result<()> {
     if cached_ok(dest) {
         return Ok(());
@@ -196,16 +223,6 @@ pub async fn render_audio(
         anyhow::bail!("ffmpeg is not installed.");
     }
 
-    let cache = app
-        .try_state::<CacheLayout>()
-        .map(|s| s.inner().clone())
-        .ok_or_else(|| anyhow::anyhow!("CacheLayout not managed by app"))?;
-
-    let inline_subs = materialize_inline_subtitles(project, &cache)
-        .context("materialize inline subtitles")?;
-    let template_renders = crate::ir::materialize_templates(project, &cache, app)
-        .await
-        .context("materialize templates")?;
     let project_for_render = super::with_proxies_substituted(project);
 
     let target = RenderTarget::full(
@@ -215,7 +232,7 @@ pub async fn render_audio(
         project.composition.sample_rate,
         project.composition.channels,
     );
-    let graph = lower(&project_for_render, target, &inline_subs, &template_renders)
+    let graph = lower(&project_for_render, target, inline_subs, template_renders)
         .context("lower")?;
 
     // No audio in the project → skip cleanly.
@@ -269,7 +286,20 @@ pub async fn render_audio(
         .kill_on_drop(true);
 
     info!("preview audio render → {}", dest.display());
-    let output = cmd.output().await.context("spawn ffmpeg")?;
+    let child = cmd.spawn().context("spawn ffmpeg")?;
+    let output = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => {
+            // wait_with_output future drops on select cleanup → Child
+            // drops → kill_on_drop terminates ffmpeg.
+            let _ = std::fs::remove_file(&script_path);
+            let _ = std::fs::remove_file(&tmp);
+            anyhow::bail!("audio render cancelled");
+        }
+        result = child.wait_with_output() => {
+            result.context("wait ffmpeg")?
+        }
+    };
     let _ = std::fs::remove_file(&script_path);
 
     if !output.status.success() {
@@ -286,12 +316,128 @@ pub async fn render_audio(
     Ok(())
 }
 
+/// Append H.264 encoder flags tuned for preview segments. Uses the host's
+/// detected HW encoder when probed; falls back to libx264 ultrafast
+/// otherwise. Profile/level pinned to High@L4.0 so the produced bytes
+/// match the manifest's `avc1.640028` codec string regardless of which
+/// concrete encoder ran. MSE silently rejects appendBuffer() on codec
+/// mismatch — decision M1 in `docs/preview-segmented-cache.md`.
+///
+/// Preview tunings differ from `export/preset.rs::apply_h264`:
+/// 1. Quality tilted toward speed (CQ ~25, ultrafast preset). Preview
+///    bitrate doesn't matter — local file, plays once.
+/// 2. NVENC `-preset p1` (fastest) vs export's `p5` (balanced).
+/// 3. NO `-pix_fmt yuv420p` here — already applied via the IR's
+///    `format=yuv420p` clause baked into emit_ffmpeg's terminal node.
+fn apply_h264_segment_encoder(cmd: &mut Command, hw: Option<HwEncoder>) {
+    match hw {
+        Some(HwEncoder::Nvenc) => {
+            cmd.args([
+                "-c:v", "h264_nvenc",
+                "-preset", "p1",
+                "-tune", "ll",
+                "-cq", "25",
+                "-profile:v", "high",
+                "-level:v", "4.0",
+            ]);
+        }
+        Some(HwEncoder::Qsv) => {
+            cmd.args([
+                "-c:v", "h264_qsv",
+                "-preset", "veryfast",
+                "-global_quality", "25",
+                "-profile:v", "high",
+                "-level:v", "4.0",
+            ]);
+        }
+        Some(HwEncoder::Amf) => {
+            cmd.args([
+                "-c:v", "h264_amf",
+                "-quality", "speed",
+                "-rc", "cqp",
+                "-qp_i", "25",
+                "-qp_p", "25",
+                "-profile:v", "high",
+                "-level:v", "4.0",
+            ]);
+        }
+        Some(HwEncoder::VideoToolbox) => {
+            cmd.args([
+                "-c:v", "h264_videotoolbox",
+                "-realtime", "1",
+                "-q:v", "55",
+                "-profile:v", "high",
+                "-level:v", "4.0",
+            ]);
+        }
+        Some(HwEncoder::Vaapi) => {
+            // VAAPI requires `-vaapi_device` setup we'd thread separately
+            // — keep on libx264 for A3; revisit when Linux HW path is
+            // exercised in A6.
+            cmd.args([
+                "-c:v", "libx264",
+                "-preset", "ultrafast",
+                "-crf", "25",
+                "-profile:v", "high",
+                "-level:v", "4.0",
+            ]);
+        }
+        None => {
+            cmd.args([
+                "-c:v", "libx264",
+                "-preset", "ultrafast",
+                "-crf", "25",
+                "-profile:v", "high",
+                "-level:v", "4.0",
+            ]);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    // The encoder is hard to unit-test in isolation because it depends on
-    // an `AppHandle` (for CacheLayout) and a real ffmpeg binary. The
-    // load-bearing smoke test is run by the orchestrator's integration
-    // path in `preview/segmented.rs` (A2.g), which spins up a test
-    // CacheLayout and verifies the produced files. We keep that test
-    // there rather than duplicating the AppHandle scaffolding here.
+    use super::*;
+    use tokio::process::Command;
+
+    fn cmd_args(hw: Option<HwEncoder>) -> Vec<String> {
+        let mut c = Command::new("dummy");
+        apply_h264_segment_encoder(&mut c, hw);
+        c.as_std()
+            .get_args()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn libx264_fallback_pins_profile_level() {
+        let args = cmd_args(None);
+        assert!(args.contains(&"libx264".to_string()));
+        // The High@L4.0 pin must survive on every code path or the
+        // manifest's `avc1.640028` codec string will mismatch the bytes.
+        let joined = args.join(" ");
+        assert!(joined.contains("-profile:v high"), "args={joined}");
+        assert!(joined.contains("-level:v 4.0"), "args={joined}");
+    }
+
+    #[test]
+    fn each_hw_encoder_pins_profile_level() {
+        for hw in [
+            HwEncoder::Nvenc,
+            HwEncoder::Qsv,
+            HwEncoder::Amf,
+            HwEncoder::VideoToolbox,
+            HwEncoder::Vaapi,
+        ] {
+            let args = cmd_args(Some(hw));
+            let joined = args.join(" ");
+            assert!(
+                joined.contains("-profile:v high"),
+                "{hw:?}: profile missing from {joined}",
+            );
+            assert!(
+                joined.contains("-level:v 4.0"),
+                "{hw:?}: level missing from {joined}",
+            );
+        }
+    }
 }

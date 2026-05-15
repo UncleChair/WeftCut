@@ -10,7 +10,7 @@ mod hwencoder;
 mod preset;
 mod queue;
 
-pub use hwencoder::{HwEncoderCache, HwEncoderProbe, probe_hw_encoders};
+pub use hwencoder::{HwEncoder, HwEncoderCache, HwEncoderProbe, probe_hw_encoders};
 pub use preset::ExportPreset;
 pub use queue::{ExportQueue, ExportQueueItem};
 
