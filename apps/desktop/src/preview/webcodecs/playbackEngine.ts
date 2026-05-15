@@ -849,6 +849,21 @@ export class PlaybackEngine {
   private buildClipLayer(clip: RecipeClip, tUs: number): CompositorLayer | null {
     const frame = this.decoderPool.frameAt(clip, tUs);
     if (!frame) return null;
+    // When paused (typically right after a seek), the decoder is cold-
+    // starting from the beginning of the file and `frameAtOrBefore`
+    // walks up from t=0 toward the playhead as frames arrive. Without
+    // this guard the canvas plays through every intermediate frame
+    // from start-of-file to the seek target, which looks like
+    // unwanted playback. While playing, accept any latest-before
+    // frame so transient decoder lag stays graceful.
+    if (this.clock.paused()) {
+      const playheadLocalUs =
+        tUs - clip.timelineInUs + clip.sourceInUs;
+      const STALE_FRAME_TOLERANCE_US = 150_000; // ~4 frames at 30 fps
+      if (playheadLocalUs - frame.timestamp > STALE_FRAME_TOLERANCE_US) {
+        return null;
+      }
+    }
     return {
       source: frame,
       transform: clip.transform,
