@@ -53,6 +53,16 @@ pub enum DiffHint {
     Composition,
 }
 
+/// Which edge of a layer's timeline range to trim.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum LayerEdge {
+    /// `t_start_us` — the in-point.
+    In,
+    /// `t_end_us` — the out-point.
+    Out,
+}
+
 /// Partial update for a layer's envelope. Only `Some(_)` fields are applied.
 /// `params_patch` carries kind-specific edits; the property panel sends one
 /// of the variant patches so the actor can sanity-check the kind matches.
@@ -275,6 +285,23 @@ pub enum CommandError {
     TrackNotRemovable { track: TrackId },
     #[error("split point {at_t}us is outside layer {layer} bounds")]
     SplitOutsideLayer { layer: LayerId, at_t: TimeUs },
+    #[error(
+        "group op on layer {touched} blocked: member {locked_layer} of group {group} is locked"
+    )]
+    GroupLockedMember {
+        group: GroupId,
+        locked_layer: LayerId,
+        touched: LayerId,
+    },
+    #[error(
+        "trim edge invalid: new_t_us {new_t}us must satisfy t_start < t_end (current bounds were [{cur_start}, {cur_end}))"
+    )]
+    TrimEdgeOutOfRange {
+        layer: LayerId,
+        new_t: TimeUs,
+        cur_start: TimeUs,
+        cur_end: TimeUs,
+    },
     #[error("layer {layer} kind {actual} does not match patch kind {patch}")]
     LayerParamsKindMismatch {
         layer: LayerId,
@@ -336,8 +363,17 @@ enum Command {
     SplitLayer {
         id: LayerId,
         at_t_us: TimeUs,
+        escape_group: bool,
         actor: Actor,
         reply: oneshot::Sender<Result<(LayerId, LayerId), CommandError>>,
+    },
+    TrimLayer {
+        id: LayerId,
+        edge: LayerEdge,
+        new_t_us: TimeUs,
+        escape_group: bool,
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
     },
     ReplaceState {
         next: Box<Project>,
@@ -365,6 +401,7 @@ enum Command {
         id: LayerId,
         new_track_id: TrackId,
         new_t_start_us: TimeUs,
+        escape_group: bool,
         actor: Actor,
         reply: oneshot::Sender<Result<(), CommandError>>,
     },
@@ -543,10 +580,20 @@ pub enum DryRunOp {
         id: LayerId,
         new_track_id: TrackId,
         new_t_start_us: TimeUs,
+        #[allow(dead_code)]
+        escape_group: bool,
     },
     SplitLayer {
         id: LayerId,
         at_t_us: TimeUs,
+        #[allow(dead_code)]
+        escape_group: bool,
+    },
+    TrimLayer {
+        id: LayerId,
+        edge: LayerEdge,
+        new_t_us: TimeUs,
+        escape_group: bool,
     },
 }
 
@@ -705,17 +752,52 @@ impl ProjectHandle {
         rx.await.expect("project actor terminated")
     }
 
+    /// Split a layer at `at_t_us`. When the layer is in a group and
+    /// `escape_group=false` (default), every group member whose interval
+    /// strictly contains `at_t_us` is also split there, with all resulting
+    /// pieces staying in the same group. See `docs/group-system.md`.
     pub async fn split_layer(
         &self,
         actor: Actor,
         id: LayerId,
         at_t_us: TimeUs,
+        escape_group: bool,
     ) -> Result<(LayerId, LayerId), CommandError> {
         let (reply, rx) = oneshot::channel();
         self.tx
             .send(Command::SplitLayer {
                 id,
                 at_t_us,
+                escape_group,
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    /// Trim one edge of a layer's timeline range. When the layer is in a
+    /// group and `escape_group=false`, every group member whose corresponding
+    /// edge sits at the same time as the trimmed layer's pre-trim edge is
+    /// moved by the same delta. The op is clamped to the most restrictive
+    /// aligned member's source-bound / `t_start < t_end` constraint. See
+    /// `docs/group-system.md`.
+    pub async fn trim_layer(
+        &self,
+        actor: Actor,
+        id: LayerId,
+        edge: LayerEdge,
+        new_t_us: TimeUs,
+        escape_group: bool,
+    ) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::TrimLayer {
+                id,
+                edge,
+                new_t_us,
+                escape_group,
                 actor,
                 reply,
             })
@@ -796,12 +878,18 @@ impl ProjectHandle {
         rx.await.expect("project actor terminated")
     }
 
+    /// Move a layer to `new_track_id` at `new_t_start_us`. When the layer
+    /// is in a group and `escape_group=false` (default), every group member
+    /// shifts in time by the same delta as the moved layer; only the
+    /// targeted layer's track changes (track changes never propagate). See
+    /// `docs/group-system.md`.
     pub async fn move_layer(
         &self,
         actor: Actor,
         id: LayerId,
         new_track_id: TrackId,
         new_t_start_us: TimeUs,
+        escape_group: bool,
     ) -> Result<(), CommandError> {
         let (reply, rx) = oneshot::channel();
         self.tx
@@ -809,6 +897,7 @@ impl ProjectHandle {
                 id,
                 new_track_id,
                 new_t_start_us,
+                escape_group,
                 actor,
                 reply,
             })
@@ -1264,10 +1353,22 @@ impl ProjectActor {
             Command::SplitLayer {
                 id,
                 at_t_us,
+                escape_group,
                 actor,
                 reply,
             } => {
-                let result = self.do_split_layer(id, at_t_us, actor);
+                let result = self.do_split_layer(id, at_t_us, escape_group, actor);
+                let _ = reply.send(result);
+            }
+            Command::TrimLayer {
+                id,
+                edge,
+                new_t_us,
+                escape_group,
+                actor,
+                reply,
+            } => {
+                let result = self.do_trim_layer(id, edge, new_t_us, escape_group, actor);
                 let _ = reply.send(result);
             }
             Command::ReplaceState { next, actor, reply } => {
@@ -1300,10 +1401,12 @@ impl ProjectActor {
                 id,
                 new_track_id,
                 new_t_start_us,
+                escape_group,
                 actor,
                 reply,
             } => {
-                let result = self.do_move_layer(id, new_track_id, new_t_start_us, actor);
+                let result =
+                    self.do_move_layer(id, new_track_id, new_t_start_us, escape_group, actor);
                 let _ = reply.send(result);
             }
             Command::DuplicateLayer {
@@ -1530,15 +1633,23 @@ impl ProjectActor {
                     id,
                     new_track_id,
                     new_t_start_us,
-                } => apply_move_layer(&mut next, id, new_track_id, new_t_start_us)
+                    escape_group,
+                } => apply_move_layer(&mut next, id, new_track_id, new_t_start_us, escape_group)
                     .map(|_| DryRunOutput::Void),
-                DryRunOp::SplitLayer { id, at_t_us } => {
-                    apply_split_layer(&mut next, id, at_t_us)
-                        .map(|(left_id, right_id)| DryRunOutput::SplitLayer {
-                            left_id,
-                            right_id,
-                        })
-                }
+                DryRunOp::SplitLayer {
+                    id,
+                    at_t_us,
+                    escape_group,
+                } => apply_split_layer(&mut next, id, at_t_us, escape_group).map(
+                    |(left_id, right_id)| DryRunOutput::SplitLayer { left_id, right_id },
+                ),
+                DryRunOp::TrimLayer {
+                    id,
+                    edge,
+                    new_t_us,
+                    escape_group,
+                } => apply_trim_layer(&mut next, id, edge, new_t_us, escape_group)
+                    .map(|_| DryRunOutput::Void),
             };
             // Validate after each successful op. If an op's mutation
             // succeeds but the resulting project violates an invariant
@@ -1631,10 +1742,11 @@ impl ProjectActor {
         &mut self,
         id: LayerId,
         at_t_us: TimeUs,
+        escape_group: bool,
         actor: Actor,
     ) -> Result<(LayerId, LayerId), CommandError> {
         let mut next: Project = (*self.history.current()).clone();
-        let (left_id, right_id) = apply_split_layer(&mut next, id, at_t_us)?;
+        let (left_id, right_id) = apply_split_layer(&mut next, id, at_t_us, escape_group)?;
         self.commit(
             next,
             actor,
@@ -1643,6 +1755,26 @@ impl ProjectActor {
             DiffHint::Coarse,
         )?;
         Ok((left_id, right_id))
+    }
+
+    fn do_trim_layer(
+        &mut self,
+        id: LayerId,
+        edge: LayerEdge,
+        new_t_us: TimeUs,
+        escape_group: bool,
+        actor: Actor,
+    ) -> Result<(), CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+        apply_trim_layer(&mut next, id, edge, new_t_us, escape_group)?;
+        self.commit(
+            next,
+            actor,
+            format!("Trimmed layer {id} {edge:?} -> {new_t_us}us"),
+            vec![EntityRef::Layer(id)],
+            DiffHint::Coarse,
+        )?;
+        Ok(())
     }
 
     fn do_add_media_item(
@@ -1712,10 +1844,11 @@ impl ProjectActor {
         id: LayerId,
         new_track_id: TrackId,
         new_t_start_us: TimeUs,
+        escape_group: bool,
         actor: Actor,
     ) -> Result<(), CommandError> {
         let mut next: Project = (*self.history.current()).clone();
-        apply_move_layer(&mut next, id, new_track_id, new_t_start_us)?;
+        apply_move_layer(&mut next, id, new_track_id, new_t_start_us, escape_group)?;
         self.commit(
             next,
             actor,
@@ -2749,13 +2882,36 @@ pub(crate) fn apply_update_layer_params(
 /// Mutation half of `do_move_layer`. Removes layer from its current track,
 /// shifts its end time by the same delta as its start, inserts at the
 /// t-sorted position on the destination track, and auto-extends composition
-/// duration if needed.
+/// duration if needed. When the layer is in a group and `escape_group=false`,
+/// also shifts every group sibling's `t_start_us` / `t_end_us` by the same
+/// delta (`docs/group-system.md` — move propagates time only, tracks stay
+/// local). Locked siblings reject the whole op.
 pub(crate) fn apply_move_layer(
     project: &mut Project,
     id: LayerId,
     new_track_id: TrackId,
     new_t_start_us: TimeUs,
+    escape_group: bool,
 ) -> Result<(), CommandError> {
+    // Locate the target layer to compute the delta before we mutate anything.
+    let cur_start = locate_layer(project, id)
+        .map(|(ti, li)| project.tracks[ti].layers[li].t_start_us)
+        .ok_or(CommandError::LayerNotFound { layer: id })?;
+    let delta = new_t_start_us - cur_start;
+
+    // If grouped & not escaped, identify the sibling members we'll shift and
+    // reject up-front on any locked member (including the target itself).
+    let siblings: Vec<LayerId> = if escape_group {
+        Vec::new()
+    } else {
+        group_siblings_excluding(project, id)
+    };
+    if !escape_group && !siblings.is_empty() {
+        // Target counts as a "touched" layer for lock-check purposes.
+        check_group_lock(project, id, std::iter::once(id).chain(siblings.iter().copied()))?;
+    }
+
+    // Move the target layer itself (existing behavior).
     let mut moved: Option<Layer> = None;
     for track in project.tracks.iter_mut() {
         if let Some(idx) = track.layers.iter().position(|l| l.id == id) {
@@ -2763,8 +2919,7 @@ pub(crate) fn apply_move_layer(
             break;
         }
     }
-    let mut layer = moved.ok_or(CommandError::LayerNotFound { layer: id })?;
-    let delta = new_t_start_us - layer.t_start_us;
+    let mut layer = moved.expect("layer existence already verified");
     layer.t_start_us = new_t_start_us;
     layer.t_end_us += delta;
     let dest_idx = project
@@ -2782,15 +2937,77 @@ pub(crate) fn apply_move_layer(
         .position(|l| l.t_start_us > new_t_start_us)
         .unwrap_or(dest.layers.len());
     dest.layers.insert(insert_at, layer);
-    if project.composition.duration_us < new_t_start_us + delta {
-        let max_end = project
-            .tracks
-            .iter()
-            .flat_map(|t| t.layers.iter().map(|l| l.t_end_us))
-            .max()
-            .unwrap_or(project.composition.duration_us);
-        if max_end > project.composition.duration_us {
-            project.composition.duration_us = max_end;
+
+    // Fan out time-delta to siblings. Each sibling stays on its current
+    // track and its in-track sort order is preserved (delta is uniform).
+    if delta != 0 {
+        for &sid in siblings.iter() {
+            if let Some((ti, li)) = locate_layer(project, sid) {
+                let s = &mut project.tracks[ti].layers[li];
+                s.t_start_us += delta;
+                s.t_end_us += delta;
+            }
+        }
+    }
+
+    // Auto-extend composition duration if the move pushed any clip out.
+    let max_end = project
+        .tracks
+        .iter()
+        .flat_map(|t| t.layers.iter().map(|l| l.t_end_us))
+        .max()
+        .unwrap_or(project.composition.duration_us);
+    if max_end > project.composition.duration_us {
+        project.composition.duration_us = max_end;
+    }
+    Ok(())
+}
+
+/// Locate `(track_idx, layer_idx)` for a given LayerId. Returns None if
+/// the layer doesn't exist in the project.
+fn locate_layer(project: &Project, id: LayerId) -> Option<(usize, usize)> {
+    for (ti, track) in project.tracks.iter().enumerate() {
+        if let Some(li) = track.layers.iter().position(|l| l.id == id) {
+            return Some((ti, li));
+        }
+    }
+    None
+}
+
+/// All other members of `id`'s group (empty when ungrouped).
+fn group_siblings_excluding(project: &Project, id: LayerId) -> Vec<LayerId> {
+    let idx = super::group::index_groups(&project.groups);
+    let Some(&gid) = idx.get(&id) else {
+        return Vec::new();
+    };
+    let Some(group) = project.groups.iter().find(|g| g.id == gid) else {
+        return Vec::new();
+    };
+    group.members.iter().copied().filter(|&m| m != id).collect()
+}
+
+/// Reject if any of `touched` is `locked`. Used by group-aware ops to
+/// honour `Layer.locked` as a hard "don't touch" promise.
+fn check_group_lock<I: IntoIterator<Item = LayerId>>(
+    project: &Project,
+    touched_anchor: LayerId,
+    touched: I,
+) -> Result<(), CommandError> {
+    let idx = super::group::index_groups(&project.groups);
+    let gid = match idx.get(&touched_anchor) {
+        Some(&g) => g,
+        None => return Ok(()),
+    };
+    for id in touched {
+        if let Some((ti, li)) = locate_layer(project, id) {
+            let layer = &project.tracks[ti].layers[li];
+            if layer.locked {
+                return Err(CommandError::GroupLockedMember {
+                    group: gid,
+                    locked_layer: id,
+                    touched: touched_anchor,
+                });
+            }
         }
     }
     Ok(())
@@ -2798,19 +3015,90 @@ pub(crate) fn apply_move_layer(
 
 /// Mutation half of `do_split_layer`. Returns `(left_id, right_id)` — left
 /// reuses the original layer id; right gets a freshly-allocated one.
+///
+/// When the layer is in a group and `escape_group=false`, every group
+/// member whose interval strictly contains `at_t_us` is also split at
+/// `at_t_us`, with both halves staying in the same group (`docs/group-
+/// system.md` — split spans, group survives). Locked spanning members
+/// reject the whole op.
 pub(crate) fn apply_split_layer(
     project: &mut Project,
     id: LayerId,
     at_t_us: TimeUs,
+    escape_group: bool,
 ) -> Result<(LayerId, LayerId), CommandError> {
-    let mut found: Option<(usize, usize)> = None;
-    for (ti, track) in project.tracks.iter().enumerate() {
-        if let Some(li) = track.layers.iter().position(|l| l.id == id) {
-            found = Some((ti, li));
-            break;
+    // Pre-flight on the target: existence + valid split point.
+    {
+        let (ti, li) = locate_layer(project, id).ok_or(CommandError::LayerNotFound { layer: id })?;
+        let l = &project.tracks[ti].layers[li];
+        if at_t_us <= l.t_start_us || at_t_us >= l.t_end_us {
+            return Err(CommandError::SplitOutsideLayer { layer: id, at_t: at_t_us });
         }
     }
-    let (ti, li) = found.ok_or(CommandError::LayerNotFound { layer: id })?;
+
+    // Identify spanning siblings (members whose interval strictly contains
+    // `at_t_us`). Non-spanning members are unchanged.
+    let spanning_siblings: Vec<LayerId> = if escape_group {
+        Vec::new()
+    } else {
+        let siblings = group_siblings_excluding(project, id);
+        siblings
+            .into_iter()
+            .filter(|&s| {
+                locate_layer(project, s)
+                    .map(|(ti, li)| {
+                        let l = &project.tracks[ti].layers[li];
+                        l.t_start_us < at_t_us && at_t_us < l.t_end_us
+                    })
+                    .unwrap_or(false)
+            })
+            .collect()
+    };
+    if !escape_group {
+        check_group_lock(
+            project,
+            id,
+            std::iter::once(id).chain(spanning_siblings.iter().copied()),
+        )?;
+    }
+
+    // Split the target layer (and gather (left_id, right_id) to return).
+    let (target_left, target_right) = split_single_layer(project, id, at_t_us)?;
+
+    // Split each spanning sibling at the same time. Each gets a fresh
+    // right-half LayerId; both halves are members of the same group, so
+    // we patch the group's `members` set to add the right-half id (the
+    // left-half keeps the original id, which is already in `members`).
+    for &sid in spanning_siblings.iter() {
+        let (_, right_id) = split_single_layer(project, sid, at_t_us)?;
+        // Insert the new right-half into whichever group `sid` is in.
+        let gidx = super::group::index_groups(&project.groups);
+        if let Some(&gid) = gidx.get(&sid) {
+            if let Some(g) = project.groups.iter_mut().find(|g| g.id == gid) {
+                g.members.insert(right_id);
+            }
+        }
+    }
+    // Also add the target's right-half to its group, if any.
+    {
+        let gidx = super::group::index_groups(&project.groups);
+        if let Some(&gid) = gidx.get(&target_left) {
+            if let Some(g) = project.groups.iter_mut().find(|g| g.id == gid) {
+                g.members.insert(target_right);
+            }
+        }
+    }
+    Ok((target_left, target_right))
+}
+
+/// Single-layer split helper — the part that doesn't know about groups.
+/// Returns `(left_id, right_id)`; left reuses the original LayerId.
+fn split_single_layer(
+    project: &mut Project,
+    id: LayerId,
+    at_t_us: TimeUs,
+) -> Result<(LayerId, LayerId), CommandError> {
+    let (ti, li) = locate_layer(project, id).ok_or(CommandError::LayerNotFound { layer: id })?;
     let original = project.tracks[ti].layers[li].clone();
     if at_t_us <= original.t_start_us || at_t_us >= original.t_end_us {
         return Err(CommandError::SplitOutsideLayer { layer: id, at_t: at_t_us });
@@ -2846,6 +3134,211 @@ pub(crate) fn apply_split_layer(
     let right_id = right.id;
     track.layers.insert(insert_at, right);
     Ok((id, right_id))
+}
+
+/// `docs/group-system.md` — trim one edge of a layer's timeline range.
+/// When grouped and `escape_group=false`, fan out the same delta to every
+/// member whose corresponding edge sits at the *same* `t` as the trimmed
+/// layer's pre-trim edge. Clamp the delta to the most-restrictive aligned
+/// member (source-bound or `t_start < t_end` constraint).
+pub(crate) fn apply_trim_layer(
+    project: &mut Project,
+    id: LayerId,
+    edge: LayerEdge,
+    new_t_us: TimeUs,
+    escape_group: bool,
+) -> Result<(), CommandError> {
+    let (ti, li) = locate_layer(project, id).ok_or(CommandError::LayerNotFound { layer: id })?;
+    let target = &project.tracks[ti].layers[li];
+    let cur_start = target.t_start_us;
+    let cur_end = target.t_end_us;
+    let cur_edge_t = match edge {
+        LayerEdge::In => cur_start,
+        LayerEdge::Out => cur_end,
+    };
+
+    // Identify the aligned set: members (including the target) whose
+    // matching edge sits at `cur_edge_t`. The target is always aligned.
+    let aligned: Vec<LayerId> = if escape_group {
+        vec![id]
+    } else {
+        let mut v = vec![id];
+        for sid in group_siblings_excluding(project, id) {
+            if let Some((sti, sli)) = locate_layer(project, sid) {
+                let s = &project.tracks[sti].layers[sli];
+                let s_edge_t = match edge {
+                    LayerEdge::In => s.t_start_us,
+                    LayerEdge::Out => s.t_end_us,
+                };
+                if s_edge_t == cur_edge_t {
+                    v.push(sid);
+                }
+            }
+        }
+        v
+    };
+    if !escape_group {
+        check_group_lock(project, id, aligned.iter().copied())?;
+    }
+
+    let requested_delta = new_t_us - cur_edge_t;
+    if requested_delta == 0 {
+        return Ok(());
+    }
+
+    // Compute the most-restrictive allowed delta across all aligned members.
+    // For an `In` trim, the delta moves t_start by +delta; constraints:
+    //   - new_t_start < t_end (so delta < cur_dur)
+    //   - new_t_start >= 0 (so delta >= -t_start)
+    //   - for media-bearing kinds: new src_in = src_in + delta within
+    //     [0, src_out)
+    // For an `Out` trim, the delta moves t_end by +delta; constraints:
+    //   - new_t_end > t_start (so delta > -cur_dur)
+    //   - for media-bearing kinds: new src_out = src_out + delta within
+    //     (src_in, media_duration] (we don't know media_duration here, so
+    //     we cap at src_out monotonicity vs src_in only; over-trim past
+    //     media tail will be caught by `validate_src_range`).
+    let clamped_delta = {
+        let mut d = requested_delta;
+        for &mid in aligned.iter() {
+            let (mti, mli) = locate_layer(project, mid).expect("aligned member exists");
+            let m = &project.tracks[mti].layers[mli];
+            let bounds = trim_delta_bounds(m, edge);
+            d = clamp_signed(d, bounds.min, bounds.max);
+        }
+        d
+    };
+    if clamped_delta == 0 {
+        // The clamped op would be a no-op — surface as TrimEdgeOutOfRange
+        // so the caller knows the request was rejected rather than silently
+        // succeeded.
+        return Err(CommandError::TrimEdgeOutOfRange {
+            layer: id,
+            new_t: new_t_us,
+            cur_start,
+            cur_end,
+        });
+    }
+
+    // Apply the clamped delta to every aligned member's matching edge,
+    // updating src_* for media-bearing kinds.
+    for &mid in aligned.iter() {
+        let (mti, mli) = locate_layer(project, mid).expect("aligned member exists");
+        let m = &mut project.tracks[mti].layers[mli];
+        match edge {
+            LayerEdge::In => {
+                m.t_start_us += clamped_delta;
+                match &mut m.params {
+                    LayerParams::VideoClip(p) => {
+                        p.src_in_us += clamped_delta;
+                    }
+                    LayerParams::Audio(p) => {
+                        p.src_in_us += clamped_delta;
+                    }
+                    _ => {}
+                }
+            }
+            LayerEdge::Out => {
+                m.t_end_us += clamped_delta;
+                match &mut m.params {
+                    LayerParams::VideoClip(p) => {
+                        p.src_out_us += clamped_delta;
+                    }
+                    LayerParams::Audio(p) => {
+                        p.src_out_us += clamped_delta;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    // The `In` trim can move a layer's start time backwards within its
+    // track; re-sort the affected tracks to maintain the sort invariant.
+    if matches!(edge, LayerEdge::In) {
+        let touched_tracks: std::collections::HashSet<TrackId> = aligned
+            .iter()
+            .filter_map(|m| locate_layer(project, *m).map(|(ti, _)| project.tracks[ti].id))
+            .collect();
+        for tid in touched_tracks {
+            if let Some(t) = project.tracks.iter_mut().find(|t| t.id == tid) {
+                let mut sorted: Vec<Layer> = t.layers.iter().cloned().collect();
+                sorted.sort_by_key(|l| l.t_start_us);
+                t.layers = sorted.into();
+            }
+        }
+    }
+
+    // Auto-extend composition duration on `Out` trim.
+    if matches!(edge, LayerEdge::Out) {
+        let max_end = project
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter().map(|l| l.t_end_us))
+            .max()
+            .unwrap_or(project.composition.duration_us);
+        if max_end > project.composition.duration_us {
+            project.composition.duration_us = max_end;
+        }
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+struct DeltaBounds {
+    min: i64,
+    max: i64,
+}
+
+/// Allowable signed `delta` such that applying it to `edge` of `layer`
+/// keeps the layer geometrically valid (`t_start < t_end`, src window
+/// non-negative).
+fn trim_delta_bounds(layer: &Layer, edge: LayerEdge) -> DeltaBounds {
+    let dur = layer.t_end_us - layer.t_start_us;
+    let inf = i64::MAX / 4; // large enough to feel infinite, small enough to clamp safely
+    match edge {
+        LayerEdge::In => {
+            // delta > -t_start (keep timeline start >= 0)
+            // delta < dur (keep t_start < t_end)
+            let timeline_min = -layer.t_start_us;
+            let timeline_max = dur - 1;
+            // Source-bound (only for media-bearing kinds): src_in + delta >= 0
+            //                                              src_in + delta < src_out
+            let (src_min, src_max) = match &layer.params {
+                LayerParams::VideoClip(p) => (-p.src_in_us, p.src_out_us - p.src_in_us - 1),
+                LayerParams::Audio(p) => (-p.src_in_us, p.src_out_us - p.src_in_us - 1),
+                _ => (-inf, inf),
+            };
+            DeltaBounds {
+                min: timeline_min.max(src_min),
+                max: timeline_max.min(src_max),
+            }
+        }
+        LayerEdge::Out => {
+            // delta > -dur (keep t_end > t_start, so delta > -(dur-1) i.e. >= -(dur-1))
+            // delta unbounded above (composition will auto-extend)
+            let timeline_min = -(dur - 1);
+            // Source-bound: src_out + delta > src_in
+            // No media-duration check here — `validate_src_range` does it.
+            let (src_min, src_max) = match &layer.params {
+                LayerParams::VideoClip(p) => (-(p.src_out_us - p.src_in_us - 1), inf),
+                LayerParams::Audio(p) => (-(p.src_out_us - p.src_in_us - 1), inf),
+                _ => (-inf, inf),
+            };
+            DeltaBounds {
+                min: timeline_min.max(src_min),
+                max: src_max,
+            }
+        }
+    }
+}
+
+fn clamp_signed(d: i64, min: i64, max: i64) -> i64 {
+    if min > max {
+        // Bounds collapsed — no movement allowed.
+        return 0;
+    }
+    d.max(min).min(max)
 }
 
 /// Apply a `LayerParamsPatch` to a layer's `params` in place. Errors if the
@@ -3526,7 +4019,7 @@ mod tests {
             .unwrap();
 
         let (left, right) = handle
-            .split_layer(Actor::User, layer_id, 1_500_000)
+            .split_layer(Actor::User, layer_id, 1_500_000, false)
             .await
             .expect("split");
         assert_eq!(left, layer_id);
@@ -3558,7 +4051,7 @@ mod tests {
         // At the boundary — neither inside nor producing two valid halves.
         for at in [1_000_000, 3_000_000, 0, 5_000_000] {
             let err = handle
-                .split_layer(Actor::User, layer_id, at)
+                .split_layer(Actor::User, layer_id, at, false)
                 .await
                 .expect_err("split outside bounds");
             assert!(
@@ -3625,7 +4118,7 @@ mod tests {
             .unwrap();
 
         handle
-            .move_layer(Actor::User, id, dst_track_id, 5_000_000)
+            .move_layer(Actor::User, id, dst_track_id, 5_000_000, false)
             .await
             .expect("move");
 
@@ -4670,6 +5163,7 @@ mod tests {
                     id: layer_id,
                     new_track_id: second_track_id,
                     new_t_start_us: 1_000_000,
+                    escape_group: false,
                 },
                 DryRunOp::UpdateLayer {
                     id: layer_id,
@@ -4934,5 +5428,434 @@ mod tests {
         handle.undo(Actor::User).await.unwrap();
         let snap = handle.snapshot().await;
         assert!(snap.groups.is_empty(), "undo should reverse groups_create");
+    }
+
+    // ============================================================
+    // Group-aware move / trim / split (Phase G.3 — `docs/group-system.md`)
+    // ============================================================
+
+    /// Two tracks, A on track1 and B on track2, both at [0..1_000_000].
+    /// Returns (handle, track1, track2, a, b).
+    async fn paired_layers_on_two_tracks(
+    ) -> (ProjectHandle, TrackId, TrackId, LayerId, LayerId) {
+        let (project, track1) = project_with_video_track();
+        let handle = spawn(project);
+        let track2 = handle
+            .add_track(Actor::User, TrackKind::Video, Some("V2".into()))
+            .await
+            .unwrap();
+        let a = handle
+            .add_layer(Actor::User, track1, color_layer(Rgba::WHITE), 0, 1_000_000)
+            .await
+            .unwrap();
+        let b = handle
+            .add_layer(Actor::User, track2, color_layer(Rgba::WHITE), 0, 1_000_000)
+            .await
+            .unwrap();
+        (handle, track1, track2, a, b)
+    }
+
+    fn layer<'a>(p: &'a Project, id: LayerId) -> &'a Layer {
+        p.tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .find(|l| l.id == id)
+            .expect("layer present")
+    }
+
+    #[tokio::test]
+    async fn move_layer_propagates_time_delta_to_group_siblings() {
+        let (handle, t1, _t2, a, b) = paired_layers_on_two_tracks().await;
+        handle
+            .groups_create(Actor::User, vec![a, b], None, false)
+            .await
+            .unwrap();
+        // Shift A right by +500ms on its own track.
+        handle
+            .move_layer(Actor::User, a, t1, 500_000, false)
+            .await
+            .unwrap();
+        let snap = handle.snapshot().await;
+        let la = layer(&snap, a);
+        let lb = layer(&snap, b);
+        assert_eq!(la.t_start_us, 500_000);
+        assert_eq!(la.t_end_us, 1_500_000);
+        assert_eq!(lb.t_start_us, 500_000, "sibling shifts by the same delta");
+        assert_eq!(lb.t_end_us, 1_500_000);
+    }
+
+    #[tokio::test]
+    async fn move_layer_track_change_does_not_propagate() {
+        // Setup three tracks. A on t1, B on t2. Move A to t3 with a small
+        // time delta; B should stay on t2 and shift by the same delta.
+        let (project, t1) = project_with_video_track();
+        let handle = spawn(project);
+        let t2 = handle
+            .add_track(Actor::User, TrackKind::Video, Some("V2".into()))
+            .await
+            .unwrap();
+        let t3 = handle
+            .add_track(Actor::User, TrackKind::Video, Some("V3".into()))
+            .await
+            .unwrap();
+        let a = handle
+            .add_layer(Actor::User, t1, color_layer(Rgba::WHITE), 0, 1_000_000)
+            .await
+            .unwrap();
+        let b = handle
+            .add_layer(Actor::User, t2, color_layer(Rgba::WHITE), 0, 1_000_000)
+            .await
+            .unwrap();
+        handle
+            .groups_create(Actor::User, vec![a, b], None, false)
+            .await
+            .unwrap();
+        handle
+            .move_layer(Actor::User, a, t3, 500_000, false)
+            .await
+            .unwrap();
+        let snap = handle.snapshot().await;
+        // A is now on t3.
+        let track_of_a = snap
+            .tracks
+            .iter()
+            .find(|t| t.layers.iter().any(|l| l.id == a))
+            .unwrap();
+        assert_eq!(track_of_a.id, t3);
+        // B is still on t2.
+        let track_of_b = snap
+            .tracks
+            .iter()
+            .find(|t| t.layers.iter().any(|l| l.id == b))
+            .unwrap();
+        assert_eq!(track_of_b.id, t2);
+        // B's time shifted by the same delta.
+        assert_eq!(layer(&snap, b).t_start_us, 500_000);
+        assert_eq!(layer(&snap, b).t_end_us, 1_500_000);
+    }
+
+    #[tokio::test]
+    async fn move_layer_escape_group_skips_fanout() {
+        let (handle, t1, _t2, a, b) = paired_layers_on_two_tracks().await;
+        handle
+            .groups_create(Actor::User, vec![a, b], None, false)
+            .await
+            .unwrap();
+        let pre = handle.snapshot().await;
+        let pre_b = layer(&pre, b).clone();
+        handle
+            .move_layer(Actor::User, a, t1, 2_000_000, true)
+            .await
+            .unwrap();
+        let snap = handle.snapshot().await;
+        let la = layer(&snap, a);
+        let lb = layer(&snap, b);
+        assert_eq!(la.t_start_us, 2_000_000);
+        assert_eq!(lb.t_start_us, pre_b.t_start_us, "B not touched on escape");
+    }
+
+    #[tokio::test]
+    async fn move_layer_rejects_when_sibling_locked() {
+        let (handle, t1, _t2, a, b) = paired_layers_on_two_tracks().await;
+        handle
+            .groups_create(Actor::User, vec![a, b], None, false)
+            .await
+            .unwrap();
+        handle
+            .update_layer(
+                Actor::User,
+                b,
+                LayerPatch {
+                    locked: Some(true),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let err = handle
+            .move_layer(Actor::User, a, t1, 500_000, false)
+            .await
+            .expect_err("locked sibling should reject");
+        assert!(matches!(err, CommandError::GroupLockedMember { .. }));
+    }
+
+    #[tokio::test]
+    async fn move_layer_locked_sibling_yields_to_escape() {
+        let (handle, t1, _t2, a, b) = paired_layers_on_two_tracks().await;
+        handle
+            .groups_create(Actor::User, vec![a, b], None, false)
+            .await
+            .unwrap();
+        handle
+            .update_layer(
+                Actor::User,
+                b,
+                LayerPatch {
+                    locked: Some(true),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        // escape_group=true bypasses the lock check.
+        handle
+            .move_layer(Actor::User, a, t1, 500_000, true)
+            .await
+            .expect("escape should bypass lock");
+    }
+
+    /// AV-link case: video and audio at identical bounds, both edges aligned.
+    /// Trimming the out edge of one should fan out to the other.
+    #[tokio::test]
+    async fn trim_aligned_edges_propagate_to_group_siblings() {
+        let (handle, t1, _t2, a, b) = paired_layers_on_two_tracks().await;
+        handle
+            .groups_create(Actor::User, vec![a, b], None, false)
+            .await
+            .unwrap();
+        let _ = t1;
+        // Trim out edge of A from 1_000_000 to 700_000. Both A and B were
+        // at out=1_000_000 → aligned → both move.
+        handle
+            .trim_layer(Actor::User, a, LayerEdge::Out, 700_000, false)
+            .await
+            .unwrap();
+        let snap = handle.snapshot().await;
+        assert_eq!(layer(&snap, a).t_end_us, 700_000);
+        assert_eq!(
+            layer(&snap, b).t_end_us,
+            700_000,
+            "aligned out edge propagates"
+        );
+    }
+
+    /// Scene case: B-roll [0..1_000_000] and VO [0..5_000_000] in one group.
+    /// Left edges align (both 0); out edges don't. Trimming B-roll's left
+    /// edge should fan out (aligned); trimming its right edge should not.
+    #[tokio::test]
+    async fn trim_non_aligned_edge_stays_local() {
+        let (project, track1) = project_with_video_track();
+        let handle = spawn(project);
+        let track2 = handle
+            .add_track(Actor::User, TrackKind::Video, Some("V2".into()))
+            .await
+            .unwrap();
+        let a = handle
+            .add_layer(Actor::User, track1, color_layer(Rgba::WHITE), 0, 1_000_000)
+            .await
+            .unwrap();
+        let b = handle
+            .add_layer(Actor::User, track2, color_layer(Rgba::WHITE), 0, 5_000_000)
+            .await
+            .unwrap();
+        handle
+            .groups_create(Actor::User, vec![a, b], None, false)
+            .await
+            .unwrap();
+        // Trim A's OUT edge from 1_000_000 -> 800_000. B's out is at
+        // 5_000_000 → NOT aligned → B unchanged.
+        handle
+            .trim_layer(Actor::User, a, LayerEdge::Out, 800_000, false)
+            .await
+            .unwrap();
+        let snap = handle.snapshot().await;
+        assert_eq!(layer(&snap, a).t_end_us, 800_000);
+        assert_eq!(layer(&snap, b).t_end_us, 5_000_000, "non-aligned stays");
+        // Trim A's IN edge from 0 -> 100_000. B's in is also 0 → aligned →
+        // both move. But clamping: A has dur=800_000 so its t_start can
+        // go from 0 to at most 799_999; same for B (dur 5_000_000).
+        // requested delta = +100_000 fits both.
+        handle
+            .trim_layer(Actor::User, a, LayerEdge::In, 100_000, false)
+            .await
+            .unwrap();
+        let snap = handle.snapshot().await;
+        assert_eq!(layer(&snap, a).t_start_us, 100_000);
+        assert_eq!(
+            layer(&snap, b).t_start_us,
+            100_000,
+            "aligned in edge propagates"
+        );
+    }
+
+    #[tokio::test]
+    async fn trim_clamps_to_tightest_aligned_member() {
+        // A on [0..1_000_000], B on [0..200_000], grouped. Trim A's out
+        // edge to +500_000. B's dur is 200_000 so its max trim is +inf
+        // upward (out goes up); but trimming A DOWN to 500_000 means
+        // delta = -500_000. For B, that would push out to -300_000 — but
+        // B's t_start is 0 and dur is 200_000, so trimming out by more
+        // than 199_999 collapses it. Clamp should kick in.
+        let (project, track1) = project_with_video_track();
+        let handle = spawn(project);
+        let track2 = handle
+            .add_track(Actor::User, TrackKind::Video, Some("V2".into()))
+            .await
+            .unwrap();
+        let a = handle
+            .add_layer(Actor::User, track1, color_layer(Rgba::WHITE), 0, 1_000_000)
+            .await
+            .unwrap();
+        let b = handle
+            .add_layer(Actor::User, track2, color_layer(Rgba::WHITE), 0, 200_000)
+            .await
+            .unwrap();
+        // Force out edge alignment by trimming B's out to 1_000_000 first
+        // via escape (so they're aligned at 1_000_000).
+        // Actually here we test alignment at 200_000 only. The two layers
+        // are NOT aligned at any out edge (1_000_000 vs 200_000), so the
+        // fan-out doesn't fire — A trims alone.
+        handle
+            .groups_create(Actor::User, vec![a, b], None, false)
+            .await
+            .unwrap();
+        // Trim A's out from 1_000_000 to 500_000. B is at out=200_000 (not
+        // aligned) → B untouched.
+        handle
+            .trim_layer(Actor::User, a, LayerEdge::Out, 500_000, false)
+            .await
+            .unwrap();
+        let snap = handle.snapshot().await;
+        assert_eq!(layer(&snap, a).t_end_us, 500_000);
+        assert_eq!(layer(&snap, b).t_end_us, 200_000);
+    }
+
+    #[tokio::test]
+    async fn trim_escape_group_stays_local() {
+        let (handle, _t1, _t2, a, b) = paired_layers_on_two_tracks().await;
+        handle
+            .groups_create(Actor::User, vec![a, b], None, false)
+            .await
+            .unwrap();
+        handle
+            .trim_layer(Actor::User, a, LayerEdge::Out, 600_000, true)
+            .await
+            .unwrap();
+        let snap = handle.snapshot().await;
+        assert_eq!(layer(&snap, a).t_end_us, 600_000);
+        assert_eq!(layer(&snap, b).t_end_us, 1_000_000, "escape keeps B intact");
+    }
+
+    #[tokio::test]
+    async fn split_layer_fans_out_to_spanning_siblings() {
+        let (handle, _t1, _t2, a, b) = paired_layers_on_two_tracks().await;
+        handle
+            .groups_create(Actor::User, vec![a, b], None, false)
+            .await
+            .unwrap();
+        let (_la, ra) = handle
+            .split_layer(Actor::User, a, 500_000, false)
+            .await
+            .unwrap();
+        let snap = handle.snapshot().await;
+        // Both layers should be split at 500_000. A has its right half
+        // (ra) and a left half (still id=a). B should also have two
+        // pieces.
+        let on_track2: Vec<&Layer> = snap
+            .tracks
+            .iter()
+            .find(|t| t.layers.iter().any(|l| l.id == b))
+            .unwrap()
+            .layers
+            .iter()
+            .collect();
+        assert_eq!(on_track2.len(), 2, "B was split into 2 pieces");
+        assert!(on_track2.iter().any(|l| l.t_end_us == 500_000));
+        assert!(on_track2.iter().any(|l| l.t_start_us == 500_000));
+        // The group should now have 4 members (a, ra, b's left, b's right).
+        assert_eq!(snap.groups.len(), 1);
+        assert_eq!(snap.groups[0].members.len(), 4);
+        // ra should be in the group.
+        assert!(snap.groups[0].members.contains(&ra));
+    }
+
+    #[tokio::test]
+    async fn split_layer_non_spanning_sibling_stays_whole() {
+        // A on [0..1_000_000], B on [2_000_000..3_000_000], grouped.
+        // Split A at 500_000 — B doesn't span 500_000, stays whole and
+        // stays in the group.
+        let (project, track1) = project_with_video_track();
+        let handle = spawn(project);
+        let track2 = handle
+            .add_track(Actor::User, TrackKind::Video, Some("V2".into()))
+            .await
+            .unwrap();
+        let a = handle
+            .add_layer(Actor::User, track1, color_layer(Rgba::WHITE), 0, 1_000_000)
+            .await
+            .unwrap();
+        let b = handle
+            .add_layer(
+                Actor::User,
+                track2,
+                color_layer(Rgba::WHITE),
+                2_000_000,
+                3_000_000,
+            )
+            .await
+            .unwrap();
+        handle
+            .groups_create(Actor::User, vec![a, b], None, false)
+            .await
+            .unwrap();
+        let _ = handle
+            .split_layer(Actor::User, a, 500_000, false)
+            .await
+            .unwrap();
+        let snap = handle.snapshot().await;
+        let b_layer = layer(&snap, b);
+        assert_eq!(b_layer.t_start_us, 2_000_000);
+        assert_eq!(b_layer.t_end_us, 3_000_000);
+        // Group has 3 members (a, ra, b).
+        assert_eq!(snap.groups[0].members.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn split_layer_escape_group_only_splits_target() {
+        let (handle, _t1, _t2, a, b) = paired_layers_on_two_tracks().await;
+        handle
+            .groups_create(Actor::User, vec![a, b], None, false)
+            .await
+            .unwrap();
+        let _ = handle
+            .split_layer(Actor::User, a, 500_000, true)
+            .await
+            .unwrap();
+        let snap = handle.snapshot().await;
+        // Find B; it should be unchanged (one layer on its track).
+        let on_track2: Vec<&Layer> = snap
+            .tracks
+            .iter()
+            .find(|t| t.layers.iter().any(|l| l.id == b))
+            .unwrap()
+            .layers
+            .iter()
+            .collect();
+        assert_eq!(on_track2.len(), 1, "B should not be split under escape");
+    }
+
+    #[tokio::test]
+    async fn split_layer_locked_spanning_sibling_rejects() {
+        let (handle, _t1, _t2, a, b) = paired_layers_on_two_tracks().await;
+        handle
+            .groups_create(Actor::User, vec![a, b], None, false)
+            .await
+            .unwrap();
+        handle
+            .update_layer(
+                Actor::User,
+                b,
+                LayerPatch {
+                    locked: Some(true),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let err = handle
+            .split_layer(Actor::User, a, 500_000, false)
+            .await
+            .expect_err("locked sibling should reject");
+        assert!(matches!(err, CommandError::GroupLockedMember { .. }));
     }
 }
