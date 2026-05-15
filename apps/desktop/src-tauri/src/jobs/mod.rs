@@ -20,7 +20,7 @@
 
 mod frame;
 pub mod import;
-mod proxy;
+pub mod proxy;
 mod thumbnails;
 pub mod waveform;
 
