@@ -15,8 +15,9 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use super::color::{ColorSpace, Rgba};
 use super::animated::Animated;
 use super::history::{History, HistoryEntry, HistoryView, NamedCheckpoint};
+use super::group::Group;
 use super::ids::{
-    CheckpointId, LayerId, MarkerId, MediaId, OpId, TrackId, TransitionId, new_id,
+    CheckpointId, GroupId, LayerId, MarkerId, MediaId, OpId, TrackId, TransitionId, new_id,
 };
 use super::layer::{Layer, LayerParams};
 use super::marker::Marker;
@@ -280,6 +281,16 @@ pub enum CommandError {
         actual: &'static str,
         patch: &'static str,
     },
+    #[error("group {group} not found")]
+    GroupNotFound { group: GroupId },
+    #[error(
+        "layer {layer} is already in group {existing} — pass reassign=true to move it"
+    )]
+    LayerAlreadyGrouped { layer: LayerId, existing: GroupId },
+    #[error("groups_create needs at least 2 distinct layers, got {got}")]
+    GroupCreateNeedsTwoLayers { got: usize },
+    #[error("layer {layer} is not a member of group {group}")]
+    LayerNotInGroup { group: GroupId, layer: LayerId },
     #[error("nothing to undo")]
     NothingToUndo,
     #[error("nothing to redo")]
@@ -427,6 +438,37 @@ enum Command {
         id: MediaId,
         path_abs: std::path::PathBuf,
         path_rel: std::path::PathBuf,
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
+    GroupsCreate {
+        layer_ids: Vec<LayerId>,
+        label: Option<String>,
+        reassign: bool,
+        actor: Actor,
+        reply: oneshot::Sender<Result<GroupId, CommandError>>,
+    },
+    GroupsDissolve {
+        id: GroupId,
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
+    GroupsAddMembers {
+        id: GroupId,
+        layer_ids: Vec<LayerId>,
+        reassign: bool,
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
+    GroupsRemoveMembers {
+        id: GroupId,
+        layer_ids: Vec<LayerId>,
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
+    GroupsRename {
+        id: GroupId,
+        label: Option<String>,
         actor: Actor,
         reply: oneshot::Sender<Result<(), CommandError>>,
     },
@@ -898,6 +940,103 @@ impl ProjectHandle {
         rx.await.expect("project actor terminated")
     }
 
+    /// `docs/group-system.md` — bundle ≥2 layers into a unit that moves /
+    /// trims / splits together. Members must not be in any other group
+    /// unless `reassign == true` (in which case they're moved here and
+    /// the prior group auto-dissolves below 2 members).
+    pub async fn groups_create(
+        &self,
+        actor: Actor,
+        layer_ids: Vec<LayerId>,
+        label: Option<String>,
+        reassign: bool,
+    ) -> Result<GroupId, CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::GroupsCreate {
+                layer_ids,
+                label,
+                reassign,
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    pub async fn groups_dissolve(
+        &self,
+        actor: Actor,
+        id: GroupId,
+    ) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::GroupsDissolve { id, actor, reply })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    pub async fn groups_add_members(
+        &self,
+        actor: Actor,
+        id: GroupId,
+        layer_ids: Vec<LayerId>,
+        reassign: bool,
+    ) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::GroupsAddMembers {
+                id,
+                layer_ids,
+                reassign,
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    pub async fn groups_remove_members(
+        &self,
+        actor: Actor,
+        id: GroupId,
+        layer_ids: Vec<LayerId>,
+    ) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::GroupsRemoveMembers {
+                id,
+                layer_ids,
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    pub async fn groups_rename(
+        &self,
+        actor: Actor,
+        id: GroupId,
+        label: Option<String>,
+    ) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::GroupsRename {
+                id,
+                label,
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
     pub async fn move_track(
         &self,
         actor: Actor,
@@ -1259,6 +1398,48 @@ impl ProjectActor {
                 reply,
             } => {
                 let result = self.do_set_media_workspace_paths(id, path_abs, path_rel, actor);
+                let _ = reply.send(result);
+            }
+            Command::GroupsCreate {
+                layer_ids,
+                label,
+                reassign,
+                actor,
+                reply,
+            } => {
+                let result = self.do_groups_create(layer_ids, label, reassign, actor);
+                let _ = reply.send(result);
+            }
+            Command::GroupsDissolve { id, actor, reply } => {
+                let result = self.do_groups_dissolve(id, actor);
+                let _ = reply.send(result);
+            }
+            Command::GroupsAddMembers {
+                id,
+                layer_ids,
+                reassign,
+                actor,
+                reply,
+            } => {
+                let result = self.do_groups_add_members(id, layer_ids, reassign, actor);
+                let _ = reply.send(result);
+            }
+            Command::GroupsRemoveMembers {
+                id,
+                layer_ids,
+                actor,
+                reply,
+            } => {
+                let result = self.do_groups_remove_members(id, layer_ids, actor);
+                let _ = reply.send(result);
+            }
+            Command::GroupsRename {
+                id,
+                label,
+                actor,
+                reply,
+            } => {
+                let result = self.do_groups_rename(id, label, actor);
                 let _ = reply.send(result);
             }
             Command::Undo { actor, reply } => {
@@ -1885,6 +2066,93 @@ impl ProjectActor {
         Ok(())
     }
 
+    fn do_groups_create(
+        &mut self,
+        layer_ids: Vec<LayerId>,
+        label: Option<String>,
+        reassign: bool,
+        actor: Actor,
+    ) -> Result<GroupId, CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+        let group_id = apply_groups_create(&mut next, layer_ids, label, reassign)?;
+        self.commit(
+            next,
+            actor,
+            format!("Created group {group_id}"),
+            Vec::new(),
+            DiffHint::Coarse,
+        )?;
+        Ok(group_id)
+    }
+
+    fn do_groups_dissolve(&mut self, id: GroupId, actor: Actor) -> Result<(), CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+        apply_groups_dissolve(&mut next, id)?;
+        self.commit(
+            next,
+            actor,
+            format!("Dissolved group {id}"),
+            Vec::new(),
+            DiffHint::Coarse,
+        )?;
+        Ok(())
+    }
+
+    fn do_groups_add_members(
+        &mut self,
+        id: GroupId,
+        layer_ids: Vec<LayerId>,
+        reassign: bool,
+        actor: Actor,
+    ) -> Result<(), CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+        apply_groups_add_members(&mut next, id, layer_ids, reassign)?;
+        self.commit(
+            next,
+            actor,
+            format!("Added members to group {id}"),
+            Vec::new(),
+            DiffHint::Coarse,
+        )?;
+        Ok(())
+    }
+
+    fn do_groups_remove_members(
+        &mut self,
+        id: GroupId,
+        layer_ids: Vec<LayerId>,
+        actor: Actor,
+    ) -> Result<(), CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+        apply_groups_remove_members(&mut next, id, layer_ids)?;
+        self.commit(
+            next,
+            actor,
+            format!("Removed members from group {id}"),
+            Vec::new(),
+            DiffHint::Coarse,
+        )?;
+        Ok(())
+    }
+
+    fn do_groups_rename(
+        &mut self,
+        id: GroupId,
+        label: Option<String>,
+        actor: Actor,
+    ) -> Result<(), CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+        apply_groups_rename(&mut next, id, label)?;
+        self.commit(
+            next,
+            actor,
+            format!("Renamed group {id}"),
+            Vec::new(),
+            DiffHint::Coarse,
+        )?;
+        Ok(())
+    }
+
     fn do_move_track(
         &mut self,
         id: TrackId,
@@ -2234,18 +2502,200 @@ pub(crate) fn apply_add_layer(
     Ok(layer_id)
 }
 
-/// Mutation half of `do_delete_layer`.
+/// Mutation half of `do_delete_layer`. Also removes the layer from any
+/// group it belongs to and auto-dissolves the group when its member count
+/// drops below 2 (`docs/group-system.md` invariant #3).
 pub(crate) fn apply_delete_layer(
     project: &mut Project,
     id: LayerId,
 ) -> Result<(), CommandError> {
+    let mut removed = false;
     for track in project.tracks.iter_mut() {
         if let Some(idx) = track.layers.iter().position(|l| l.id == id) {
             track.layers.remove(idx);
-            return Ok(());
+            removed = true;
+            break;
         }
     }
-    Err(CommandError::LayerNotFound { layer: id })
+    if !removed {
+        return Err(CommandError::LayerNotFound { layer: id });
+    }
+    drop_layer_from_groups(project, id);
+    Ok(())
+}
+
+/// Remove `layer_id` from every group it appears in and auto-dissolve any
+/// group whose member count drops below 2. Used by both `apply_delete_layer`
+/// and the explicit `apply_groups_remove_members` reassignment path.
+pub(crate) fn drop_layer_from_groups(project: &mut Project, layer_id: LayerId) {
+    let mut i = 0;
+    while i < project.groups.len() {
+        let g = &mut project.groups[i];
+        if g.members.contains(&layer_id) {
+            g.members.remove(&layer_id);
+            if g.members.len() < 2 {
+                project.groups.remove(i);
+                continue;
+            }
+        }
+        i += 1;
+    }
+}
+
+/// `docs/group-system.md` — create a new group from the given layer ids.
+/// Requires ≥2 distinct existing layers. If any target is already in
+/// another group, fails with `LayerAlreadyGrouped` unless `reassign`,
+/// which removes them from their prior group(s) (auto-dissolving below 2)
+/// before creating the new group.
+pub(crate) fn apply_groups_create(
+    project: &mut Project,
+    layer_ids: Vec<LayerId>,
+    label: Option<String>,
+    reassign: bool,
+) -> Result<GroupId, CommandError> {
+    let unique: imbl::OrdSet<LayerId> = layer_ids.into_iter().collect();
+    if unique.len() < 2 {
+        return Err(CommandError::GroupCreateNeedsTwoLayers { got: unique.len() });
+    }
+    let known = layer_id_set(project);
+    for &m in unique.iter() {
+        if !known.contains(&m) {
+            return Err(CommandError::LayerNotFound { layer: m });
+        }
+    }
+    let idx = super::group::index_groups(&project.groups);
+    for &m in unique.iter() {
+        if let Some(&existing) = idx.get(&m) {
+            if !reassign {
+                return Err(CommandError::LayerAlreadyGrouped {
+                    layer: m,
+                    existing,
+                });
+            }
+        }
+    }
+    if reassign {
+        for &m in unique.iter() {
+            drop_layer_from_groups(project, m);
+        }
+    }
+    let id = new_id();
+    project.groups.push_back(Group {
+        id,
+        label,
+        members: unique,
+    });
+    Ok(id)
+}
+
+pub(crate) fn apply_groups_dissolve(
+    project: &mut Project,
+    id: GroupId,
+) -> Result<(), CommandError> {
+    let idx = project
+        .groups
+        .iter()
+        .position(|g| g.id == id)
+        .ok_or(CommandError::GroupNotFound { group: id })?;
+    project.groups.remove(idx);
+    Ok(())
+}
+
+pub(crate) fn apply_groups_add_members(
+    project: &mut Project,
+    id: GroupId,
+    layer_ids: Vec<LayerId>,
+    reassign: bool,
+) -> Result<(), CommandError> {
+    let known = layer_id_set(project);
+    for &m in layer_ids.iter() {
+        if !known.contains(&m) {
+            return Err(CommandError::LayerNotFound { layer: m });
+        }
+    }
+    let idx_map = super::group::index_groups(&project.groups);
+    for &m in layer_ids.iter() {
+        if let Some(&existing) = idx_map.get(&m) {
+            if existing == id {
+                continue; // already a member of the target group
+            }
+            if !reassign {
+                return Err(CommandError::LayerAlreadyGrouped {
+                    layer: m,
+                    existing,
+                });
+            }
+        }
+    }
+    if reassign {
+        for &m in layer_ids.iter() {
+            if idx_map.get(&m).copied() != Some(id) {
+                drop_layer_from_groups(project, m);
+            }
+        }
+    }
+    let gi = project
+        .groups
+        .iter()
+        .position(|g| g.id == id)
+        .ok_or(CommandError::GroupNotFound { group: id })?;
+    let group = &mut project.groups[gi];
+    for &m in layer_ids.iter() {
+        group.members.insert(m);
+    }
+    Ok(())
+}
+
+pub(crate) fn apply_groups_remove_members(
+    project: &mut Project,
+    id: GroupId,
+    layer_ids: Vec<LayerId>,
+) -> Result<(), CommandError> {
+    let gi = project
+        .groups
+        .iter()
+        .position(|g| g.id == id)
+        .ok_or(CommandError::GroupNotFound { group: id })?;
+    {
+        let group = &project.groups[gi];
+        for &m in layer_ids.iter() {
+            if !group.members.contains(&m) {
+                return Err(CommandError::LayerNotInGroup { group: id, layer: m });
+            }
+        }
+    }
+    let group = &mut project.groups[gi];
+    for &m in layer_ids.iter() {
+        group.members.remove(&m);
+    }
+    if group.members.len() < 2 {
+        project.groups.remove(gi);
+    }
+    Ok(())
+}
+
+pub(crate) fn apply_groups_rename(
+    project: &mut Project,
+    id: GroupId,
+    label: Option<String>,
+) -> Result<(), CommandError> {
+    let gi = project
+        .groups
+        .iter()
+        .position(|g| g.id == id)
+        .ok_or(CommandError::GroupNotFound { group: id })?;
+    project.groups[gi].label = label;
+    Ok(())
+}
+
+fn layer_id_set(project: &Project) -> std::collections::HashSet<LayerId> {
+    let mut s = std::collections::HashSet::new();
+    for t in project.tracks.iter() {
+        for l in t.layers.iter() {
+            s.insert(l.id);
+        }
+    }
+    s
 }
 
 /// Mutation half of `do_update_layer` — envelope-only patch.
@@ -4268,5 +4718,221 @@ mod tests {
             &results[1],
             Err(CommandError::LayerNotFound { .. })
         ));
+    }
+
+    // ============================================================
+    // Groups (Phase G.2 — `docs/group-system.md`)
+    // ============================================================
+
+    async fn three_layers_on_video_track() -> (ProjectHandle, TrackId, LayerId, LayerId, LayerId) {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        let a = handle
+            .add_layer(Actor::User, track_id, color_layer(Rgba::WHITE), 0, 1_000_000)
+            .await
+            .unwrap();
+        let b = handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                color_layer(Rgba::WHITE),
+                2_000_000,
+                3_000_000,
+            )
+            .await
+            .unwrap();
+        let c = handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                color_layer(Rgba::WHITE),
+                4_000_000,
+                5_000_000,
+            )
+            .await
+            .unwrap();
+        (handle, track_id, a, b, c)
+    }
+
+    #[tokio::test]
+    async fn groups_create_two_layers_succeeds() {
+        let (handle, _t, a, b, _c) = three_layers_on_video_track().await;
+        let group_id = handle
+            .groups_create(Actor::User, vec![a, b], Some("scene 1".into()), false)
+            .await
+            .expect("create");
+        let snap = handle.snapshot().await;
+        assert_eq!(snap.groups.len(), 1);
+        let g = &snap.groups[0];
+        assert_eq!(g.id, group_id);
+        assert_eq!(g.label.as_deref(), Some("scene 1"));
+        assert!(g.members.contains(&a) && g.members.contains(&b));
+    }
+
+    #[tokio::test]
+    async fn groups_create_rejects_single_member() {
+        let (handle, _t, a, _b, _c) = three_layers_on_video_track().await;
+        let err = handle
+            .groups_create(Actor::User, vec![a], None, false)
+            .await
+            .expect_err("single-member group");
+        assert!(matches!(
+            err,
+            CommandError::GroupCreateNeedsTwoLayers { got: 1 }
+        ));
+    }
+
+    #[tokio::test]
+    async fn groups_create_rejects_unknown_layer() {
+        let (handle, _t, a, _b, _c) = three_layers_on_video_track().await;
+        let ghost = new_id();
+        let err = handle
+            .groups_create(Actor::User, vec![a, ghost], None, false)
+            .await
+            .expect_err("unknown layer");
+        assert!(matches!(err, CommandError::LayerNotFound { layer } if layer == ghost));
+    }
+
+    #[tokio::test]
+    async fn groups_create_rejects_already_grouped_without_reassign() {
+        let (handle, _t, a, b, c) = three_layers_on_video_track().await;
+        handle
+            .groups_create(Actor::User, vec![a, b], None, false)
+            .await
+            .unwrap();
+        let err = handle
+            .groups_create(Actor::User, vec![a, c], None, false)
+            .await
+            .expect_err("a is already grouped");
+        assert!(matches!(err, CommandError::LayerAlreadyGrouped { layer, .. } if layer == a));
+    }
+
+    #[tokio::test]
+    async fn groups_create_with_reassign_moves_layer() {
+        let (handle, _t, a, b, c) = three_layers_on_video_track().await;
+        let g1 = handle
+            .groups_create(Actor::User, vec![a, b], None, false)
+            .await
+            .unwrap();
+        let g2 = handle
+            .groups_create(Actor::User, vec![a, c], None, true)
+            .await
+            .expect("reassign should succeed");
+        let snap = handle.snapshot().await;
+        // g1 had only {a, b}; removing a left {b}, which auto-dissolved g1.
+        // So we should now have exactly one group (g2) with members {a, c}.
+        assert_eq!(snap.groups.len(), 1, "g1 should have auto-dissolved");
+        let g = snap.groups.iter().find(|g| g.id == g2).unwrap();
+        assert!(g.members.contains(&a) && g.members.contains(&c));
+        assert!(snap.groups.iter().all(|g| g.id != g1));
+    }
+
+    #[tokio::test]
+    async fn groups_dissolve_removes_group() {
+        let (handle, _t, a, b, _c) = three_layers_on_video_track().await;
+        let g = handle
+            .groups_create(Actor::User, vec![a, b], None, false)
+            .await
+            .unwrap();
+        handle.groups_dissolve(Actor::User, g).await.unwrap();
+        let snap = handle.snapshot().await;
+        assert!(snap.groups.is_empty());
+    }
+
+    #[tokio::test]
+    async fn groups_dissolve_unknown_id_fails() {
+        let (handle, _t, _a, _b, _c) = three_layers_on_video_track().await;
+        let err = handle
+            .groups_dissolve(Actor::User, new_id())
+            .await
+            .expect_err("unknown group");
+        assert!(matches!(err, CommandError::GroupNotFound { .. }));
+    }
+
+    #[tokio::test]
+    async fn groups_add_members_grows_group() {
+        let (handle, _t, a, b, c) = three_layers_on_video_track().await;
+        let g = handle
+            .groups_create(Actor::User, vec![a, b], None, false)
+            .await
+            .unwrap();
+        handle
+            .groups_add_members(Actor::User, g, vec![c], false)
+            .await
+            .unwrap();
+        let snap = handle.snapshot().await;
+        assert_eq!(snap.groups[0].members.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn groups_remove_members_auto_dissolves_below_two() {
+        let (handle, _t, a, b, c) = three_layers_on_video_track().await;
+        let g = handle
+            .groups_create(Actor::User, vec![a, b, c], None, false)
+            .await
+            .unwrap();
+        handle
+            .groups_remove_members(Actor::User, g, vec![b, c])
+            .await
+            .unwrap();
+        let snap = handle.snapshot().await;
+        assert!(
+            snap.groups.is_empty(),
+            "group with only one remaining member should auto-dissolve"
+        );
+    }
+
+    #[tokio::test]
+    async fn groups_remove_unknown_member_fails() {
+        let (handle, _t, a, b, c) = three_layers_on_video_track().await;
+        let g = handle
+            .groups_create(Actor::User, vec![a, b], None, false)
+            .await
+            .unwrap();
+        let err = handle
+            .groups_remove_members(Actor::User, g, vec![c])
+            .await
+            .expect_err("c is not in the group");
+        assert!(matches!(err, CommandError::LayerNotInGroup { .. }));
+    }
+
+    #[tokio::test]
+    async fn groups_rename_updates_label() {
+        let (handle, _t, a, b, _c) = three_layers_on_video_track().await;
+        let g = handle
+            .groups_create(Actor::User, vec![a, b], Some("old".into()), false)
+            .await
+            .unwrap();
+        handle
+            .groups_rename(Actor::User, g, Some("new".into()))
+            .await
+            .unwrap();
+        let snap = handle.snapshot().await;
+        assert_eq!(snap.groups[0].label.as_deref(), Some("new"));
+    }
+
+    #[tokio::test]
+    async fn delete_layer_auto_removes_from_group_and_dissolves() {
+        let (handle, _t, a, b, _c) = three_layers_on_video_track().await;
+        let g = handle
+            .groups_create(Actor::User, vec![a, b], None, false)
+            .await
+            .unwrap();
+        handle.delete_layer(Actor::User, a).await.unwrap();
+        let snap = handle.snapshot().await;
+        // Group had {a, b}; removing a left {b}; auto-dissolved.
+        assert!(snap.groups.iter().all(|gg| gg.id != g));
+    }
+
+    #[tokio::test]
+    async fn undo_restores_group() {
+        let (handle, _t, a, b, _c) = three_layers_on_video_track().await;
+        handle
+            .groups_create(Actor::User, vec![a, b], None, false)
+            .await
+            .unwrap();
+        handle.undo(Actor::User).await.unwrap();
+        let snap = handle.snapshot().await;
+        assert!(snap.groups.is_empty(), "undo should reverse groups_create");
     }
 }
