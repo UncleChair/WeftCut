@@ -3642,3 +3642,119 @@ input.preview-timecode:focus {
 .preview-failed-retry:hover {
   background: rgba(127, 29, 29, 0.85);
 }
+
+/* B1 — WebCodecs smoke harness. Dev-mode only; not user-facing. */
+.realtime-preview-smoke {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  height: 100%;
+  padding: 12px;
+  overflow: auto;
+  color: #e4e4e7;
+  font-size: 12px;
+}
+
+.realtime-preview-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding-bottom: 8px;
+}
+
+.realtime-preview-header strong {
+  font-size: 13px;
+  color: #fde68a;
+}
+
+.realtime-preview-hint {
+  color: #a1a1aa;
+  font-size: 11px;
+}
+
+.realtime-preview-hint code {
+  background: rgba(0, 0, 0, 0.3);
+  padding: 0 4px;
+  border-radius: 3px;
+  font-family: ui-monospace, Menlo, monospace;
+}
+
+.realtime-preview-capability,
+.realtime-preview-stats {
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.realtime-preview-capability h3,
+.realtime-preview-stats h3 {
+  margin: 0 0 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #a1a1aa;
+}
+
+.realtime-preview-capability ul,
+.realtime-preview-stats ul {
+  margin: 0;
+  padding-left: 16px;
+  list-style: disc;
+}
+
+.realtime-preview-capability li,
+.realtime-preview-stats li {
+  margin: 2px 0;
+}
+
+.realtime-preview-capability code,
+.realtime-preview-stats code {
+  background: rgba(0, 0, 0, 0.3);
+  padding: 0 4px;
+  border-radius: 3px;
+  font-family: ui-monospace, Menlo, monospace;
+}
+
+.realtime-preview-controls {
+  display: flex;
+  gap: 8px;
+}
+
+.realtime-preview-controls button {
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(63, 63, 70, 0.5);
+  color: #e4e4e7;
+  cursor: pointer;
+}
+
+.realtime-preview-controls button:hover:not(:disabled) {
+  background: rgba(82, 82, 91, 0.7);
+}
+
+.realtime-preview-controls button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.realtime-preview-canvas-wrap {
+  background: #000;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 360px;
+}
+
+.realtime-preview-canvas {
+  max-width: 100%;
+  max-height: 360px;
+  background: #000;
+}
+
+.realtime-preview-error {
+  color: #fca5a5;
+}

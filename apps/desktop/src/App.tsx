@@ -58,6 +58,12 @@ import {
   type PreviewSurfaceHandle,
 } from "./preview/PreviewSurface";
 import { SegmentStatusBar } from "./preview/SegmentStatusBar";
+import { RealtimePreview } from "./preview/webcodecs/RealtimePreview";
+import { isRealtimeDevMode } from "./preview/webcodecs/devMode";
+
+// Phase B1 dev-mode toggle: evaluated once at module load. See
+// `preview/webcodecs/devMode.ts` for activation paths.
+const REALTIME_DEV_MODE = isRealtimeDevMode();
 import {
   Menu,
   MenuHeading,
@@ -833,12 +839,16 @@ export function App({ onCloseProject }: AppProps) {
       <main className="app-main">
         <section className="preview">
           <div id="video-surface" className="video-surface">
-            <PreviewSurface
-              ref={previewRef}
-              hasContent={(summary?.layer_count ?? 0) > 0}
-              onTimeUpdate={setCurrentTimeUs}
-              onPausedChange={setPaused}
-            />
+            {REALTIME_DEV_MODE ? (
+              <RealtimePreview />
+            ) : (
+              <PreviewSurface
+                ref={previewRef}
+                hasContent={(summary?.layer_count ?? 0) > 0}
+                onTimeUpdate={setCurrentTimeUs}
+                onPausedChange={setPaused}
+              />
+            )}
           </div>
           <div className="preview-transport" role="toolbar" aria-label="Preview transport">
             {editingTimecode !== null ? (
