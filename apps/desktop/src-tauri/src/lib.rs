@@ -243,11 +243,30 @@ pub fn run() {
             // pipeline (proxies substituted for originals when present).
             // The React `<PreviewSurface>` listens for `preview:render_*`
             // events and swaps its `<video src>` accordingly.
+            //
+            // A2 (`docs/preview-segmented-cache.md`): when the env var
+            // `WEFTCUT_PREVIEW_SEGMENTED=1` is set at startup, additionally
+            // spawn the new segmented orchestrator. Both renderers run in
+            // parallel during the transition — the segmented path produces
+            // segment-cache artifacts + new events, while the whole-timeline
+            // path keeps the existing `<video src=...mp4>` UI working. A4
+            // replaces the React consumer to prefer the segmented path; A6
+            // removes the whole-timeline renderer entirely.
             let preview_renderer = preview::PreviewRenderer::spawn(
                 app.handle().clone(),
-                project_for_preview_renderer,
+                project_for_preview_renderer.clone(),
             );
             app.manage(preview_renderer);
+            if std::env::var("WEFTCUT_PREVIEW_SEGMENTED").as_deref() == Ok("1") {
+                tracing::info!(
+                    "WEFTCUT_PREVIEW_SEGMENTED=1 — spawning segmented preview orchestrator alongside whole-timeline renderer"
+                );
+                let segmented_renderer = preview::segmented::SegmentedRenderer::spawn(
+                    app.handle().clone(),
+                    project_for_preview_renderer,
+                );
+                app.manage(segmented_renderer);
+            }
             let cache_for_mcp = cache_layout.clone();
             let cache_for_spike = cache_layout.clone();
             app.manage(cache_layout);

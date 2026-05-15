@@ -175,6 +175,40 @@ impl CacheLayout {
         self.preview_dir().join(format!("{key}.mp4"))
     }
 
+    /// (NEW per `docs/preview-segmented-cache.md` A2) Per-segment fMP4 files
+    /// keyed by content hash. Flat dir across all manifests — same segment
+    /// content under any project state dedupes naturally.
+    pub fn preview_segments_dir(&self) -> PathBuf {
+        self.preview_dir().join("segments")
+    }
+
+    pub fn preview_segment(&self, segment_hash: &str) -> PathBuf {
+        self.preview_segments_dir()
+            .join(format!("{segment_hash}.m4s"))
+    }
+
+    /// Manifest JSON per global state hash. Atomic via `.tmp` + rename
+    /// (see `temp_path` / `promote_temp`).
+    pub fn preview_manifest(&self, global_hash: &str) -> PathBuf {
+        self.preview_dir()
+            .join(format!("{global_hash}.manifest.json"))
+    }
+
+    /// Codec init segment per global hash. All segments referenced by the
+    /// manifest share this init (same codec / size / fps / pix_fmt). Stored
+    /// per-global-hash so a canvas-resolution change produces a fresh init
+    /// rather than corrupting the cached one.
+    pub fn preview_init(&self, global_hash: &str) -> PathBuf {
+        self.preview_dir().join(format!("{global_hash}.init.mp4"))
+    }
+
+    /// Whole-timeline audio per global hash. AAC in fMP4 container so the
+    /// React MSE driver can append it to an audio SourceBuffer alongside
+    /// the video segments.
+    pub fn preview_audio(&self, global_hash: &str) -> PathBuf {
+        self.preview_dir().join(format!("{global_hash}.audio.m4a"))
+    }
+
     /// Create the top-level cache directory tree. Idempotent. Called
     /// implicitly by `set_workspace`; the boot fallback also calls it once.
     pub fn ensure_dirs(&self) -> Result<()> {
@@ -190,6 +224,7 @@ impl CacheLayout {
             self.voiceover_dir(),
             self.raster_root(),
             self.preview_dir(),
+            self.preview_segments_dir(),
         ] {
             fs::create_dir_all(&p)
                 .with_context(|| format!("create cache dir {}", p.display()))?;
@@ -314,6 +349,47 @@ mod tests {
             layout.preview("statehash123"),
             tmp.path().join("preview").join("statehash123.mp4"),
         );
+    }
+
+    #[test]
+    fn preview_segments_dir_is_flat_under_preview() {
+        let tmp = TempDir::new().unwrap();
+        let layout = CacheLayout::new(tmp.path().to_path_buf());
+        assert_eq!(
+            layout.preview_segments_dir(),
+            tmp.path().join("preview").join("segments"),
+        );
+        assert_eq!(
+            layout.preview_segment("seg-hash-abc"),
+            tmp.path().join("preview").join("segments").join("seg-hash-abc.m4s"),
+        );
+    }
+
+    #[test]
+    fn preview_manifest_init_audio_paths() {
+        let tmp = TempDir::new().unwrap();
+        let layout = CacheLayout::new(tmp.path().to_path_buf());
+        let gh = "globalhash999";
+        assert_eq!(
+            layout.preview_manifest(gh),
+            tmp.path().join("preview").join("globalhash999.manifest.json"),
+        );
+        assert_eq!(
+            layout.preview_init(gh),
+            tmp.path().join("preview").join("globalhash999.init.mp4"),
+        );
+        assert_eq!(
+            layout.preview_audio(gh),
+            tmp.path().join("preview").join("globalhash999.audio.m4a"),
+        );
+    }
+
+    #[test]
+    fn ensure_dirs_creates_segments_dir() {
+        let tmp = TempDir::new().unwrap();
+        let layout = CacheLayout::new(tmp.path().to_path_buf());
+        layout.ensure_dirs().unwrap();
+        assert!(layout.preview_segments_dir().is_dir());
     }
 
     #[test]

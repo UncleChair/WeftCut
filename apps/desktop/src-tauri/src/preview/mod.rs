@@ -18,6 +18,10 @@
 //!     hash differs from the current one. Emits Tauri events so the UI
 //!     can swap its `<video>` src.
 
+pub mod encoder;
+pub mod manifest;
+pub mod segmented;
+
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -206,6 +210,103 @@ pub(crate) fn segment_hash_core(
     Ok(hasher.finalize().to_hex().to_string())
 }
 
+/// Build the full Manifest for `project`. Every segment + audio enters with
+/// `status: Pending` — actual file production happens later via the
+/// orchestrator's render queue.
+pub async fn compute_manifest(
+    project: &Project,
+    cache: &CacheLayout,
+    app: &AppHandle,
+) -> Result<manifest::Manifest> {
+    // global_hash = the same hash today's whole-timeline path uses. Any
+    // change to the project changes it, so each project state gets its own
+    // manifest+init+audio. Segments dedup at the segments/ subdir level
+    // independently.
+    let global_hash = state_hash(project, cache, app).await?;
+
+    // Materialize side-maps once and reuse across every segment_hash call.
+    let inline_subs = materialize_inline_subtitles(project, cache)
+        .context("materialize inline subtitles")?;
+    let template_renders = crate::ir::materialize_templates(project, cache, app)
+        .await
+        .context("materialize templates")?;
+
+    let boundaries = crate::ir::compute_segment_boundaries(project);
+    let mut segments = Vec::with_capacity(boundaries.len());
+    for r in boundaries {
+        let hash = segment_hash_core(project, &inline_subs, &template_renders, r.in_us, r.out_us)?;
+        segments.push(manifest::SegmentEntry {
+            in_us: r.in_us,
+            out_us: r.out_us,
+            hash,
+            status: manifest::SegmentStatus::Pending,
+        });
+    }
+
+    Ok(manifest::Manifest {
+        global_hash,
+        duration_us: project.composition.duration_us,
+        canvas: manifest::CanvasParams {
+            width: project.composition.width,
+            height: project.composition.height,
+            fps_num: project.composition.fps.num,
+            fps_den: project.composition.fps.den,
+        },
+        video: manifest::VideoTrack {
+            // H.264 High Profile @ Level 4.0 — same as the existing export
+            // preset. A6 will branch on platform (VP9 on Linux) via a
+            // capability probe at workspace open.
+            codec: "avc1.640028".to_string(),
+            segments,
+        },
+        audio: manifest::AudioTrack {
+            // AAC-LC.
+            codec: "mp4a.40.2".to_string(),
+            status: manifest::SegmentStatus::Pending,
+        },
+    })
+}
+
+/// Sync core of `compute_manifest`. Skips the materialization pass; callers
+/// must pass already-materialized inline_subs + template_renders. Used by
+/// tests + the orchestrator's debounce loop.
+pub(crate) fn compute_manifest_core(
+    project: &Project,
+    global_hash: String,
+    inline_subs: &crate::ir::InlineSubPaths,
+    template_renders: &crate::ir::TemplateRenders,
+) -> Result<manifest::Manifest> {
+    let boundaries = crate::ir::compute_segment_boundaries(project);
+    let mut segments = Vec::with_capacity(boundaries.len());
+    for r in boundaries {
+        let hash = segment_hash_core(project, inline_subs, template_renders, r.in_us, r.out_us)?;
+        segments.push(manifest::SegmentEntry {
+            in_us: r.in_us,
+            out_us: r.out_us,
+            hash,
+            status: manifest::SegmentStatus::Pending,
+        });
+    }
+    Ok(manifest::Manifest {
+        global_hash,
+        duration_us: project.composition.duration_us,
+        canvas: manifest::CanvasParams {
+            width: project.composition.width,
+            height: project.composition.height,
+            fps_num: project.composition.fps.num,
+            fps_den: project.composition.fps.den,
+        },
+        video: manifest::VideoTrack {
+            codec: "avc1.640028".to_string(),
+            segments,
+        },
+        audio: manifest::AudioTrack {
+            codec: "mp4a.40.2".to_string(),
+            status: manifest::SegmentStatus::Pending,
+        },
+    })
+}
+
 fn referenced_media_ids(project: &Project) -> std::collections::BTreeSet<crate::state::ids::MediaId> {
     let mut ids = std::collections::BTreeSet::new();
     for track in project.tracks.iter() {
@@ -291,7 +392,7 @@ pub async fn render(
 /// `proxy_path` when that proxy exists on disk. Per-clip proxies are 540p
 /// H.264 (`jobs::proxy::PROXY_HEIGHT`); the lavfi graph scales to the
 /// canvas anyway so resolution substitution is transparent.
-fn with_proxies_substituted(project: &Project) -> Project {
+pub(crate) fn with_proxies_substituted(project: &Project) -> Project {
     let mut next = project.clone();
     let updates: Vec<_> = next
         .media_pool
@@ -656,5 +757,123 @@ mod tests_segment_hash {
         let h2 = hash(&p, 1_000_000, 3_000_000);
         assert_eq!(h1, h2);
         assert!(!h1.is_empty());
+    }
+
+    fn manifest_for(project: &Project) -> manifest::Manifest {
+        compute_manifest_core(
+            project,
+            "test-global".to_string(),
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("compute_manifest_core")
+    }
+
+    #[test]
+    fn empty_project_manifest_has_no_segments() {
+        let p = mk_project(0, vec![], vec![]);
+        let m = manifest_for(&p);
+        assert_eq!(m.global_hash, "test-global");
+        assert_eq!(m.duration_us, 0);
+        assert!(m.video.segments.is_empty());
+    }
+
+    #[test]
+    fn single_segment_project_produces_one_entry() {
+        // 3s project, no layers — boundary algorithm returns one [0, 3s] range.
+        let p = mk_project(3_000_000, vec![], vec![]);
+        let m = manifest_for(&p);
+        assert_eq!(m.video.segments.len(), 1);
+        let seg = &m.video.segments[0];
+        assert_eq!(seg.in_us, 0);
+        assert_eq!(seg.out_us, 3_000_000);
+        assert_eq!(seg.status, manifest::SegmentStatus::Pending);
+        assert!(!seg.hash.is_empty());
+    }
+
+    #[test]
+    fn multi_segment_project_segments_cover_duration_contiguously() {
+        // 12s empty project: fixed-step splits at 5s → [0,5][5,10][10,12].
+        let p = mk_project(12_000_000, vec![], vec![]);
+        let m = manifest_for(&p);
+        assert_eq!(m.video.segments.len(), 3);
+        assert_eq!(m.video.segments[0].in_us, 0);
+        assert_eq!(m.video.segments[0].out_us, 5_000_000);
+        assert_eq!(m.video.segments[1].in_us, 5_000_000);
+        assert_eq!(m.video.segments[1].out_us, 10_000_000);
+        assert_eq!(m.video.segments[2].in_us, 10_000_000);
+        assert_eq!(m.video.segments[2].out_us, 12_000_000);
+        // The first two segments are both "5s of empty Color" — they
+        // SHOULD hash identically (dedup property). The third differs
+        // because its duration is 2s.
+        assert_eq!(
+            m.video.segments[0].hash, m.video.segments[1].hash,
+            "two empty 5s segments must dedup to the same hash",
+        );
+        assert_ne!(
+            m.video.segments[1].hash, m.video.segments[2].hash,
+            "different duration → different content → different hash",
+        );
+    }
+
+    #[test]
+    fn distinct_content_produces_distinct_segment_hashes() {
+        // Project with a clip overlapping part of the timeline — segments
+        // containing the clip must hash differently from empty segments.
+        let media = mk_media("blake3-c", 10_000_000);
+        let media_id = media.id;
+        let clip = mk_video_layer(media_id, 2_000_000, 8_000_000, 0, 6_000_000);
+        let p = mk_project(10_000_000, vec![clip], vec![media]);
+
+        let m = manifest_for(&p);
+        // Boundaries: {0, 2, 8, 10}; ranges [0,2],[2,7],[7,8],[8,10].
+        assert!(m.video.segments.len() >= 3, "expected multiple segments: {:?}", m.video.segments);
+        let with_clip: Vec<_> = m
+            .video
+            .segments
+            .iter()
+            .filter(|s| s.in_us >= 2_000_000 && s.out_us <= 8_000_000)
+            .collect();
+        let without_clip: Vec<_> = m
+            .video
+            .segments
+            .iter()
+            .filter(|s| s.out_us <= 2_000_000 || s.in_us >= 8_000_000)
+            .collect();
+        assert!(!with_clip.is_empty());
+        assert!(!without_clip.is_empty());
+        // Clip-containing segments must NOT share hashes with empty segments.
+        for c in &with_clip {
+            for e in &without_clip {
+                assert_ne!(
+                    c.hash, e.hash,
+                    "clip segment hash matched empty segment: {} == {}",
+                    c.hash, e.hash,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn canvas_params_propagate_to_manifest() {
+        let mut p = mk_project(3_000_000, vec![], vec![]);
+        p.composition.width = 1280;
+        p.composition.height = 720;
+        let m = manifest_for(&p);
+        assert_eq!(m.canvas.width, 1280);
+        assert_eq!(m.canvas.height, 720);
+        assert_eq!(m.canvas.fps_num, 30);
+        assert_eq!(m.canvas.fps_den, 1);
+    }
+
+    #[test]
+    fn manifest_codecs_match_mse_pinning() {
+        // The codec strings are part of the MSE wire contract — MUST match
+        // what the segment encoder will emit. A mismatch silently rejects
+        // appendBuffer() on the React side.
+        let p = mk_project(3_000_000, vec![], vec![]);
+        let m = manifest_for(&p);
+        assert_eq!(m.video.codec, "avc1.640028");
+        assert_eq!(m.audio.codec, "mp4a.40.2");
     }
 }
