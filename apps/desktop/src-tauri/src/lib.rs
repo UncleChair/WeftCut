@@ -124,6 +124,7 @@ pub fn run() {
             commands::template_preview,
             commands::preview_current_path,
             commands::preview_set_playhead,
+            commands::preview_retry_segment,
             commands::log_list,
             commands::log_clear,
             commands::log_emit,

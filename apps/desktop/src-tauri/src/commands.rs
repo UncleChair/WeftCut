@@ -1378,6 +1378,23 @@ pub async fn preview_set_playhead(
     Ok(())
 }
 
+/// User-triggered manual retry of a failed segment. Returns true if the
+/// segment was found in the current manifest and queued. The Rust side
+/// has all the typed state — React just passes the hash string.
+#[tauri::command]
+pub async fn preview_retry_segment(
+    app: tauri::AppHandle,
+    hash: String,
+) -> Result<bool, String> {
+    use tauri::Manager;
+    let Some(renderer) =
+        app.try_state::<crate::preview::segmented::SegmentedRenderer>()
+    else {
+        return Ok(false);
+    };
+    Ok(renderer.retry_segment(&hash).await)
+}
+
 #[tauri::command]
 pub async fn import_cancel(
     import_queue: State<'_, crate::jobs::import::ImportQueue>,

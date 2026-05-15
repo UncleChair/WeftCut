@@ -3549,3 +3549,96 @@ input.preview-timecode:focus {
   text-overflow: ellipsis;
   max-width: 60%;
 }
+
+/* Phase A5: per-segment render status bar above the timeline. */
+.segment-status-bar {
+  position: relative;
+  width: 100%;
+  height: 4px;
+  margin: 0 0 2px 0;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.segment-status-cell {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border: none;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.segment-status-cell:hover {
+  filter: brightness(1.2);
+}
+
+.segment-status-ready {
+  background: rgba(255, 255, 255, 0.06);
+  cursor: default;
+}
+
+.segment-status-pending {
+  background: rgba(96, 165, 250, 0.42);
+}
+
+.segment-status-running {
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(96, 165, 250, 0.6) 0,
+    rgba(96, 165, 250, 0.6) 4px,
+    rgba(96, 165, 250, 0.35) 4px,
+    rgba(96, 165, 250, 0.35) 8px
+  );
+  animation: segmentStatusStripe 1s linear infinite;
+}
+
+.segment-status-failed {
+  background: rgba(248, 113, 113, 0.7);
+}
+
+@keyframes segmentStatusStripe {
+  from { background-position: 0 0; }
+  to   { background-position: 16px 0; }
+}
+
+.preview-failed-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: rgba(15, 23, 42, 0.55);
+  color: #fecaca;
+  font-size: 13px;
+  pointer-events: auto;
+}
+
+.preview-failed-strip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: rgba(248, 113, 113, 0.9);
+}
+
+.preview-failed-retry {
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid rgba(248, 113, 113, 0.6);
+  background: rgba(127, 29, 29, 0.6);
+  color: #fecaca;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.preview-failed-retry:hover {
+  background: rgba(127, 29, 29, 0.85);
+}

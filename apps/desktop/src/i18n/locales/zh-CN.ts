@@ -150,8 +150,16 @@ const zhCN: Resources = {
     preparing: "正在准备预览…",
     rebuilding: "正在重建预览…",
     rendering_range: "正在渲染此区间…",
+    unavailable_range: "此区间预览不可用",
+    retry_rendering: "重新渲染",
     init_failed: "预览启动失败",
     retry: "重试",
+    segment_status: {
+      ready: "就绪",
+      pending: "等待",
+      running: "渲染中",
+      failed: "失败",
+    },
   },
   timeline: {
     empty_placeholder: "时间线（添加轨道开始）",

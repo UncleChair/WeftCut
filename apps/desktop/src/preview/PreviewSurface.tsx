@@ -13,10 +13,12 @@ import { useTranslation } from "react-i18next";
 import {
   PREVIEW_EVENTS,
   previewCurrentPath,
+  previewRetrySegment,
   previewSetPlayhead,
   SEGMENT_EVENTS,
   type ManifestChanged,
   type PreviewReady,
+  type SegmentError,
   type SegmentReady,
   type AudioReady,
 } from "../ipc";
@@ -175,6 +177,15 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
     // Local cache of the known segment ranges so the seek-into-pending
     // check knows what's buffered. Updated on segment_ready arrival.
     const segmentsRef = useRef<SegmentMeta[]>([]);
+    // Failed-segment registry for the playhead-in-failed-range overlay.
+    // hash → segment metadata + the first line of the error detail.
+    const failedSegmentsRef = useRef<
+      Map<string, { inUs: number; outUs: number; detail: string }>
+    >(new Map());
+    const [failedAtPlayhead, setFailedAtPlayhead] = useState<{
+      hash: string;
+      detail: string;
+    } | null>(null);
     useEffect(() => {
       const unlisteners: UnlistenFn[] = [];
       let cancelled = false;
@@ -230,6 +241,9 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
               player.setManifest(next, last.outUs);
             }
             void player.appendSegment(hash, convertFileSrc(path));
+            // Successful render: drop any failed marker for this hash.
+            failedSegmentsRef.current.delete(hash);
+            setFailedAtPlayhead((cur) => (cur?.hash === hash ? null : cur));
             // If the seek-pending overlay is up and this segment covers
             // the playhead, clear it.
             setState((s) =>
@@ -251,13 +265,40 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
             void playerRef.current?.appendAudio(convertFileSrc(e.payload.path));
           },
         );
+        const onSegmentError = await listen<SegmentError>(
+          SEGMENT_EVENTS.segmentError,
+          (e) => {
+            const meta = segmentsRef.current.find(
+              (s) => s.hash === e.payload.hash,
+            );
+            if (!meta) return;
+            failedSegmentsRef.current.set(e.payload.hash, {
+              inUs: meta.inUs,
+              outUs: meta.outUs,
+              detail: e.payload.detail,
+            });
+            // If the playhead is currently in the failed range, raise
+            // the overlay.
+            const v = videoRef.current;
+            if (v) {
+              const tUs = Math.round(v.currentTime * 1_000_000);
+              if (tUs >= meta.inUs && tUs < meta.outUs) {
+                setFailedAtPlayhead({
+                  hash: e.payload.hash,
+                  detail: e.payload.detail,
+                });
+              }
+            }
+          },
+        );
         if (cancelled) {
           onManifest();
           onSegmentReady();
           onAudioReady();
+          onSegmentError();
           return;
         }
-        unlisteners.push(onManifest, onSegmentReady, onAudioReady);
+        unlisteners.push(onManifest, onSegmentReady, onAudioReady, onSegmentError);
       })();
       return () => {
         cancelled = true;
@@ -300,6 +341,16 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
       if (tUs - lastPlayheadReportRef.current >= 100_000) {
         lastPlayheadReportRef.current = tUs;
         void previewSetPlayhead(tUs).catch(() => {});
+        // Same cadence: refresh the failed-at-playhead overlay. Linear
+        // scan over failed segments (rare) is fine.
+        let inFailed: { hash: string; detail: string } | null = null;
+        for (const [hash, meta] of failedSegmentsRef.current.entries()) {
+          if (tUs >= meta.inUs && tUs < meta.outUs) {
+            inFailed = { hash, detail: meta.detail };
+            break;
+          }
+        }
+        setFailedAtPlayhead(inFailed);
       }
       rafRef.current = requestAnimationFrame(pumpTime);
     }, [onTimeUpdate]);
@@ -352,9 +403,8 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
           // Tell the Rust orchestrator the new playhead so the next
           // queue push assigns Playhead priority to the right segment.
           void previewSetPlayhead(tUs).catch(() => {});
-          // In segmented mode: if the seek target isn't yet buffered,
-          // surface the seek-pending overlay so the user knows we're
-          // working on it.
+          // In segmented mode: detect seek-into-pending OR
+          // seek-into-failed and surface the appropriate overlay.
           const player = playerRef.current;
           if (player) {
             const target = player.segmentAt(tUs);
@@ -362,6 +412,15 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
             setState((s) =>
               s.kind === "segmented" ? { ...s, pendingAtPlayhead: isPending } : s,
             );
+            // Failed overlay check.
+            let inFailed: { hash: string; detail: string } | null = null;
+            for (const [hash, meta] of failedSegmentsRef.current.entries()) {
+              if (tUs >= meta.inUs && tUs < meta.outUs) {
+                inFailed = { hash, detail: meta.detail };
+                break;
+              }
+            }
+            setFailedAtPlayhead(inFailed);
           }
         },
         paused() {
@@ -449,6 +508,22 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
             <span>
               {t("preview.rendering_range", "Rendering this range…")}
             </span>
+          </div>
+        )}
+        {failedAtPlayhead && (
+          <div className="preview-failed-overlay" role="alert">
+            <div className="preview-failed-strip" />
+            <span>{t("preview.unavailable_range", "Preview unavailable for this range")}</span>
+            <button
+              type="button"
+              className="preview-failed-retry"
+              onClick={() => {
+                const target = failedAtPlayhead;
+                void previewRetrySegment(target.hash).catch(() => {});
+              }}
+            >
+              {t("preview.retry_rendering", "Retry rendering")}
+            </button>
           </div>
         )}
       </>

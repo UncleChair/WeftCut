@@ -548,6 +548,14 @@ export async function previewSetPlayhead(tUs: number): Promise<void> {
   return invoke<void>("preview_set_playhead", { tUs });
 }
 
+/// Manually re-enqueue a failed segment with Playhead priority. Used by
+/// the status-bar click-to-retry affordance + the failed-overlay button.
+/// Resolves true if the segment was found in the current manifest and
+/// queued; false otherwise (e.g. manifest already evicted that hash).
+export async function previewRetrySegment(hash: string): Promise<boolean> {
+  return invoke<boolean>("preview_retry_segment", { hash });
+}
+
 export async function importQueueList(): Promise<ImportEntry[]> {
   return invoke<ImportEntry[]>("import_queue_list");
 }

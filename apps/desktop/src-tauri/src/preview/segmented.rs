@@ -126,6 +126,12 @@ struct InFlightEntry {
 struct SegmentedRendererInner {
     current_manifest: Option<Manifest>,
     current_manifest_path: Option<PathBuf>,
+    /// Snapshot from the most recent cycle. Kept so a user-triggered
+    /// retry can build a fresh SegmentJob without waiting for the next
+    /// debounce-driven cycle.
+    last_project: Option<Arc<Project>>,
+    last_inline_subs: Option<Arc<crate::ir::InlineSubPaths>>,
+    last_template_renders: Option<Arc<crate::ir::TemplateRenders>>,
 }
 
 impl SegmentedRenderer {
@@ -134,6 +140,9 @@ impl SegmentedRenderer {
             inner: Arc::new(Mutex::new(SegmentedRendererInner {
                 current_manifest: None,
                 current_manifest_path: None,
+                last_project: None,
+                last_inline_subs: None,
+                last_template_renders: None,
             })),
             queue: Arc::new(SegmentQueue::new()),
             in_flight: Arc::new(AsyncMutex::new(HashMap::new())),
@@ -178,11 +187,73 @@ impl SegmentedRenderer {
         self.playhead_us.load(Ordering::Relaxed)
     }
 
+    /// User-triggered manual retry of a failed segment. Looks up the hash
+    /// in the current manifest, pulls the cached cycle inputs, and
+    /// enqueues a fresh job with `PriorityClass::Playhead`. Returns true
+    /// if the segment was queued; false if the hash isn't in the current
+    /// manifest OR if the renderer has no cached cycle yet.
+    pub async fn retry_segment(&self, hash: &str) -> bool {
+        let (entry_opt, project_opt, inline_subs_opt, template_renders_opt) = {
+            let g = self.inner.lock().expect("segmented preview lock");
+            let entry = g
+                .current_manifest
+                .as_ref()
+                .and_then(|m| m.video.segments.iter().find(|s| s.hash == hash).cloned());
+            (
+                entry,
+                g.last_project.clone(),
+                g.last_inline_subs.clone(),
+                g.last_template_renders.clone(),
+            )
+        };
+        let (entry, project, inline_subs, template_renders) = match (
+            entry_opt,
+            project_opt,
+            inline_subs_opt,
+            template_renders_opt,
+        ) {
+            (Some(e), Some(p), Some(i), Some(t)) => (e, p, i, t),
+            _ => return false,
+        };
+
+        let commit_id = self.commit_counter.load(Ordering::Relaxed);
+        let job = SegmentJob {
+            hash: entry.hash.clone(),
+            in_us: entry.in_us,
+            out_us: entry.out_us,
+            commit_id,
+            project,
+            inline_subs,
+            template_renders,
+        };
+        let _ = self.queue.push(job, PriorityClass::Playhead).await;
+        true
+    }
+
     fn record(&self, manifest: Manifest, path: PathBuf) {
         let mut g = self.inner.lock().expect("segmented preview lock");
         g.current_manifest = Some(manifest);
         g.current_manifest_path = Some(path);
     }
+
+    fn record_cycle_inputs(
+        &self,
+        project: Arc<Project>,
+        inline_subs: Arc<crate::ir::InlineSubPaths>,
+        template_renders: Arc<crate::ir::TemplateRenders>,
+    ) {
+        let mut g = self.inner.lock().expect("segmented preview lock");
+        g.last_project = Some(project);
+        g.last_inline_subs = Some(inline_subs);
+        g.last_template_renders = Some(template_renders);
+    }
+}
+
+/// First line of a multi-line error detail (or the whole string if no
+/// newline). Used to keep LogBus entries readable — full stderr lives
+/// in the `details.stderr` field.
+fn first_line(s: &str) -> &str {
+    s.split_once('\n').map(|(a, _)| a).unwrap_or(s)
 }
 
 /// Decide the priority class for a new segment based on its timeline range
@@ -287,9 +358,33 @@ async fn worker_loop(worker_id: usize, app: AppHandle, renderer: SegmentedRender
                     events::SEGMENT_ERROR,
                     SegmentError {
                         hash: job.hash.clone(),
-                        detail,
+                        detail: detail.clone(),
                     },
                 );
+                // Also surface via LogBus so the existing status-log
+                // console shows it alongside other warnings/errors.
+                if let Some(log_slot) =
+                    app.try_state::<crate::logs::LogBusSlot>()
+                {
+                    let in_s = (job.in_us as f64) / 1_000_000.0;
+                    let out_s = (job.out_us as f64) / 1_000_000.0;
+                    log_slot.emit(crate::logs::LogEntryInput {
+                        level: crate::logs::LogLevel::Warn,
+                        category: crate::logs::LogCategory::Other("Preview".into()),
+                        source: crate::logs::LogSource::System,
+                        message: format!(
+                            "Preview segment render failed at {in_s:.1}s..{out_s:.1}s: {}",
+                            first_line(&detail)
+                        ),
+                        details: Some(serde_json::json!({
+                            "segment_hash": job.hash,
+                            "in_us": job.in_us,
+                            "out_us": job.out_us,
+                            "stderr": detail,
+                        })),
+                        ..Default::default()
+                    });
+                }
             }
         }
     }
@@ -512,6 +607,11 @@ async fn run_one_cycle(
 
     // 7. Enqueue new segments with priority based on the current playhead.
     let project_arc = Arc::new(project.clone());
+    renderer.record_cycle_inputs(
+        project_arc.clone(),
+        inline_subs.clone(),
+        template_renders.clone(),
+    );
     let playhead = renderer.playhead();
     for entry in &diff.new_segments {
         let dest = cache.preview_segment(&entry.hash);

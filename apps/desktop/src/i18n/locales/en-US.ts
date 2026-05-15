@@ -151,8 +151,16 @@ const enUS = {
     preparing: "Preparing preview…",
     rebuilding: "Rebuilding preview…",
     rendering_range: "Rendering this range…",
+    unavailable_range: "Preview unavailable for this range",
+    retry_rendering: "Retry rendering",
     init_failed: "Preview failed to start",
     retry: "Retry",
+    segment_status: {
+      ready: "Ready",
+      pending: "Pending",
+      running: "Rendering",
+      failed: "Failed",
+    },
   },
   timeline: {
     empty_placeholder: "timeline (add a track to populate)",
