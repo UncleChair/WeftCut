@@ -427,6 +427,7 @@ mod tests {
             tracks: imbl::Vector::new(),
             markers: imbl::Vector::new(),
             transitions: imbl::Vector::new(),
+            groups: imbl::Vector::new(),
             settings: Default::default(),
         }
     }

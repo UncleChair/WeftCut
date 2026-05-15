@@ -811,6 +811,7 @@ mod tests_lower_range {
             tracks: imbl::vector![track],
             markers: imbl::Vector::new(),
             transitions: imbl::Vector::new(),
+            groups: imbl::Vector::new(),
             settings: Default::default(),
         }
     }

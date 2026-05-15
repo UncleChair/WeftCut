@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use super::animated::Animated;
-use super::ids::{EffectId, KeyframeId, LayerId, MediaId, TrackId, TransitionId};
+use super::ids::{EffectId, GroupId, KeyframeId, LayerId, MediaId, TrackId, TransitionId};
 use super::layer::{Layer, LayerParams};
 use super::project::Project;
 use super::time::TimeUs;
@@ -128,6 +128,22 @@ pub enum ValidationError {
 
     #[error("duplicate transition id {transition}")]
     DuplicateTransitionId { transition: TransitionId },
+
+    #[error("group {group} references unknown layer {layer}")]
+    GroupMemberMissing { group: GroupId, layer: LayerId },
+
+    #[error("layer {layer} appears in more than one group ({first} and {second})")]
+    LayerInMultipleGroups {
+        layer: LayerId,
+        first: GroupId,
+        second: GroupId,
+    },
+
+    #[error("duplicate group id {group}")]
+    DuplicateGroupId { group: GroupId },
+
+    #[error("group {group} has fewer than 2 members — should have been auto-dissolved")]
+    GroupBelowMinSize { group: GroupId, members: usize },
 }
 
 pub fn validate(project: &Project) -> Result<(), ValidationError> {
@@ -138,6 +154,50 @@ pub fn validate(project: &Project) -> Result<(), ValidationError> {
 
     for track in project.tracks.iter() {
         validate_track(project, track, &mut seen_layers, &authorized)?;
+    }
+    validate_groups(project, &seen_layers)?;
+    Ok(())
+}
+
+/// Group invariants (`docs/group-system.md`):
+///   1. Every `Group.members` LayerId resolves to a real layer.
+///   2. A LayerId appears in at most one group.
+///   3. Group IDs are unique.
+///   4. Every group has ≥ 2 members (groups below the threshold should have
+///      been auto-dissolved by the actor; surfacing them here catches drift).
+fn validate_groups(
+    project: &Project,
+    known_layers: &HashSet<LayerId>,
+) -> Result<(), ValidationError> {
+    let mut seen_ids: HashSet<GroupId> = HashSet::new();
+    let mut layer_to_group: HashMap<LayerId, GroupId> = HashMap::new();
+
+    for g in project.groups.iter() {
+        if !seen_ids.insert(g.id) {
+            return Err(ValidationError::DuplicateGroupId { group: g.id });
+        }
+        if g.members.len() < 2 {
+            return Err(ValidationError::GroupBelowMinSize {
+                group: g.id,
+                members: g.members.len(),
+            });
+        }
+        for &m in g.members.iter() {
+            if !known_layers.contains(&m) {
+                return Err(ValidationError::GroupMemberMissing {
+                    group: g.id,
+                    layer: m,
+                });
+            }
+            if let Some(&first) = layer_to_group.get(&m) {
+                return Err(ValidationError::LayerInMultipleGroups {
+                    layer: m,
+                    first,
+                    second: g.id,
+                });
+            }
+            layer_to_group.insert(m, g.id);
+        }
     }
     Ok(())
 }
@@ -954,6 +1014,101 @@ mod tests {
             validate(&p),
             Err(ValidationError::DuplicateTransitionId { .. })
         ));
+    }
+
+    // ============================================================
+    // Groups (Phase G — `docs/group-system.md`)
+    // ============================================================
+
+    use crate::state::group::Group;
+
+    fn add_layer_to_new_video_track(p: &mut Project, l: Layer) -> LayerId {
+        let id = l.id;
+        let mut t = Track::new(TrackKind::Video);
+        t.layers.push_back(l);
+        p.tracks.push_back(t);
+        id
+    }
+
+    #[test]
+    fn group_with_two_valid_members_validates() {
+        let mut p = blank();
+        let a = add_layer_to_new_video_track(&mut p, color_layer(0, 1_000_000));
+        let b = add_layer_to_new_video_track(&mut p, color_layer(2_000_000, 3_000_000));
+        p.groups.push_back(Group::from_iter(new_id(), None, [a, b]));
+        validate(&p).expect("valid group should pass");
+    }
+
+    #[test]
+    fn group_referencing_missing_layer_rejects() {
+        let mut p = blank();
+        let a = add_layer_to_new_video_track(&mut p, color_layer(0, 1_000_000));
+        let ghost = new_id();
+        p.groups.push_back(Group::from_iter(new_id(), None, [a, ghost]));
+        assert!(matches!(
+            validate(&p),
+            Err(ValidationError::GroupMemberMissing { .. })
+        ));
+    }
+
+    #[test]
+    fn layer_in_two_groups_rejects() {
+        let mut p = blank();
+        let a = add_layer_to_new_video_track(&mut p, color_layer(0, 1_000_000));
+        let b = add_layer_to_new_video_track(&mut p, color_layer(2_000_000, 3_000_000));
+        let c = add_layer_to_new_video_track(&mut p, color_layer(4_000_000, 5_000_000));
+        p.groups.push_back(Group::from_iter(new_id(), None, [a, b]));
+        // `a` joins a second group → invariant violated.
+        p.groups.push_back(Group::from_iter(new_id(), None, [a, c]));
+        assert!(matches!(
+            validate(&p),
+            Err(ValidationError::LayerInMultipleGroups { .. })
+        ));
+    }
+
+    #[test]
+    fn duplicate_group_id_rejects() {
+        let mut p = blank();
+        let a = add_layer_to_new_video_track(&mut p, color_layer(0, 1_000_000));
+        let b = add_layer_to_new_video_track(&mut p, color_layer(2_000_000, 3_000_000));
+        let c = add_layer_to_new_video_track(&mut p, color_layer(4_000_000, 5_000_000));
+        let d = add_layer_to_new_video_track(&mut p, color_layer(6_000_000, 7_000_000));
+        let dup = new_id();
+        p.groups.push_back(Group::from_iter(dup, None, [a, b]));
+        p.groups.push_back(Group::from_iter(dup, None, [c, d]));
+        assert!(matches!(
+            validate(&p),
+            Err(ValidationError::DuplicateGroupId { .. })
+        ));
+    }
+
+    #[test]
+    fn group_below_min_size_rejects() {
+        let mut p = blank();
+        let a = add_layer_to_new_video_track(&mut p, color_layer(0, 1_000_000));
+        // Single-member "group" — actor should have auto-dissolved it.
+        p.groups.push_back(Group::from_iter(new_id(), None, [a]));
+        assert!(matches!(
+            validate(&p),
+            Err(ValidationError::GroupBelowMinSize { members: 1, .. })
+        ));
+    }
+
+    #[test]
+    fn index_groups_maps_each_member_to_its_group() {
+        let g1 = new_id();
+        let g2 = new_id();
+        let a = new_id();
+        let b = new_id();
+        let c = new_id();
+        let groups: imbl::Vector<Group> = imbl::vector![
+            Group::from_iter(g1, None, [a, b]),
+            Group::from_iter(g2, None, [c, new_id()]),
+        ];
+        let idx = crate::state::group::index_groups(&groups);
+        assert_eq!(idx.get(&a), Some(&g1));
+        assert_eq!(idx.get(&b), Some(&g1));
+        assert_eq!(idx.get(&c), Some(&g2));
     }
 }
 

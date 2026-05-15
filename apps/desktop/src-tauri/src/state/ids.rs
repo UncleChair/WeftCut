@@ -14,6 +14,7 @@ pub type MarkerId = Uuid;
 pub type CheckpointId = Uuid;
 pub type OpId = Uuid;
 pub type TransitionId = Uuid;
+pub type GroupId = Uuid;
 
 pub fn new_id() -> Uuid {
     Uuid::now_v7()

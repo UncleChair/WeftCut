@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::composition::Composition;
+use super::group::Group;
 use super::ids::{MediaId, new_id};
 use super::marker::Marker;
 use super::media::MediaItem;
@@ -17,7 +18,11 @@ use super::transition::Transition;
 //      copied into `<workspace>/Media/`, `path_rel` authoritative,
 //      derivatives in `<workspace>/Cache/`. `io::load_from_dir`
 //      auto-migrates v1 projects to v2 on open.
-pub const SCHEMA_VERSION: u32 = 2;
+// v3 — group system (`docs/group-system.md`): adds project-level
+//      `groups` table + `settings.auto_pair_audio_on_import`. Old v2
+//      `.vproj` files load with `groups = []` via `#[serde(default)]`;
+//      the migration is a pure version-bump.
+pub const SCHEMA_VERSION: u32 = 3;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Project {
@@ -35,6 +40,13 @@ pub struct Project {
     /// otherwise. `#[serde(default)]` keeps older `.vproj` files loadable.
     #[serde(default)]
     pub transitions: imbl::Vector<Transition>,
+    /// Layer groups (`docs/group-system.md`). Each `Group` owns a set of
+    /// `LayerId`s; flat membership (a layer is in at most one group). The
+    /// actor maintains a derived `LayerId → GroupId` index for fast lookup
+    /// and fans out move/trim/split ops across members. `#[serde(default)]`
+    /// makes v2 `.vproj` files load as v3 projects with no groups.
+    #[serde(default)]
+    pub groups: imbl::Vector<Group>,
     pub settings: ProjectSettings,
 }
 
@@ -67,6 +79,7 @@ impl Project {
             tracks,
             markers: imbl::Vector::new(),
             transitions: imbl::Vector::new(),
+            groups: imbl::Vector::new(),
             settings: ProjectSettings::default(),
         }
     }
@@ -87,6 +100,17 @@ pub struct ProjectSettings {
     pub preview_height: u32,
     pub autosave_interval_secs: Option<u32>,
     pub history_capacity: usize,
+    /// When `true` (default), importing a video source that has an audio
+    /// stream creates both a `VideoClip` and an `Audio` layer pointing at
+    /// the same media, and groups them. See `docs/group-system.md`. When
+    /// `false`, only the `VideoClip` layer is created (audio is silently
+    /// dropped, matching pre-v3 behavior).
+    #[serde(default = "default_auto_pair_audio_on_import")]
+    pub auto_pair_audio_on_import: bool,
+}
+
+fn default_auto_pair_audio_on_import() -> bool {
+    true
 }
 
 impl Default for ProjectSettings {
@@ -96,6 +120,7 @@ impl Default for ProjectSettings {
             preview_height: 720,
             autosave_interval_secs: Some(60),
             history_capacity: 200,
+            auto_pair_audio_on_import: true,
         }
     }
 }
