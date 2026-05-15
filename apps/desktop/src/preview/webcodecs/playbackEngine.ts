@@ -558,6 +558,17 @@ export class PlaybackEngine {
   seekTo(tUs: number): void {
     this.clock.seek(tUs);
     this.endedFired = false;
+    // Reset the decoder pool on seek. Each ClipDecoder's ring buffer
+    // is centered around the previous playhead (dropFramesBefore
+    // trims old frames every tick) and the decoder may have already
+    // finished decoding the whole clip — so a backward seek can land
+    // in a region the ring no longer covers AND can't refill.
+    // Closing and reopening cold-starts each affected decoder; the
+    // RAF loop's next syncToTime tick will recreate them.
+    //
+    // For B5 we hammer this on every seek for correctness; B6 can
+    // skip the reset when the new playhead is still inside the ring.
+    this.decoderPool.reset();
     this.renderOnce();
     this.events.onTimeUpdate?.(this.clock.currentTimeUs());
   }
