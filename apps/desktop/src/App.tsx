@@ -57,6 +57,7 @@ import {
   PreviewSurface,
   type PreviewSurfaceHandle,
 } from "./preview/PreviewSurface";
+import { SegmentStatusBar } from "./preview/SegmentStatusBar";
 import {
   Menu,
   MenuHeading,
@@ -908,6 +909,7 @@ export function App({ onCloseProject }: AppProps) {
         </section>
 
         <section className="timeline">
+          <SegmentStatusBar />
           <Timeline
             tracks={summary?.tracks ?? []}
             durationUs={summary?.duration_us ?? 0}
