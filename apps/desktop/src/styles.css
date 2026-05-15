@@ -3844,3 +3844,21 @@ input.preview-timecode:focus {
   border-radius: 3px;
   font-family: ui-monospace, Menlo, monospace;
 }
+
+/* B5 — recipe playback section in the smoke harness. */
+.realtime-preview-playback {
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.realtime-preview-playback h3 {
+  margin: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #a1a1aa;
+}

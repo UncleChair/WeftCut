@@ -34,6 +34,7 @@ import {
   usePreviewModePreference,
   useSetPreviewModeCapability,
 } from "./previewModeStore";
+import { PlaybackEngine } from "./playbackEngine";
 
 type Status =
   | { kind: "idle" }
@@ -70,11 +71,24 @@ export function RealtimePreview() {
   // state lets the UI sliders drive the GL render at 60Hz without
   // recreating the loop on every change.
   // B3: fetched recipe — displayed below as a structural summary so we
-  // can verify the IR emit walks the live project correctly. B5 will
-  // turn this into actual playback.
+  // can verify the IR emit walks the live project correctly. B5
+  // additionally hands the recipe to the PlaybackEngine for real
+  // playback in the B5 canvas below.
   const [recipe, setRecipe] = useState<WebcodecsRecipe | null>(null);
   const [recipeError, setRecipeError] = useState<string | null>(null);
   const [recipeLoading, setRecipeLoading] = useState(false);
+
+  // B5: playback engine state. Owns its own canvas + compositor +
+  // decoder pool; lives alongside (not replacing) the B1/B2 single-
+  // clip smoke canvas so both verification paths stay usable.
+  const playbackCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const engineRef = useRef<PlaybackEngine | null>(null);
+  const [playbackPaused, setPlaybackPaused] = useState(true);
+  const [playbackTimeUs, setPlaybackTimeUs] = useState(0);
+  const [playbackStats, setPlaybackStats] = useState<{
+    activeDecoders: number;
+    errors: ReadonlyArray<{ layerId: string; detail: string }>;
+  }>({ activeDecoders: 0, errors: [] });
 
   const [overlayLoaded, setOverlayLoaded] = useState(false);
   const [opacity, setOpacity] = useState(0.85);
@@ -280,12 +294,52 @@ export function RealtimePreview() {
     try {
       const r = await previewWebcodecsRecipe();
       setRecipe(r);
+      // Hand the fresh recipe to the engine immediately so the
+      // playback canvas reflects the active project.
+      engineRef.current?.setRecipe(r);
     } catch (e) {
       setRecipeError(String(e));
       setRecipe(null);
+      engineRef.current?.setRecipe(null);
     } finally {
       setRecipeLoading(false);
     }
+  }, []);
+
+  // Create the playback engine when the B5 canvas mounts. Tear down
+  // on unmount.
+  useEffect(() => {
+    const canvas = playbackCanvasRef.current;
+    if (!canvas) return;
+    const engine = new PlaybackEngine(canvas, {
+      onTimeUpdate: (t) => setPlaybackTimeUs(t),
+      onPausedChange: (p) => setPlaybackPaused(p),
+    });
+    engineRef.current = engine;
+    return () => {
+      engine.dispose();
+      engineRef.current = null;
+    };
+  }, []);
+
+  // Periodic stats poll — engine itself doesn't push these (it'd
+  // cause a React render every RAF tick).
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const engine = engineRef.current;
+      if (engine) setPlaybackStats(engine.stats());
+    }, 250);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const playRecipe = useCallback(() => {
+    engineRef.current?.play();
+  }, []);
+  const pauseRecipe = useCallback(() => {
+    engineRef.current?.pause();
+  }, []);
+  const seekRecipeStart = useCallback(() => {
+    engineRef.current?.seekTo(0);
   }, []);
 
   return (
@@ -508,6 +562,60 @@ export function RealtimePreview() {
           )}
         </section>
       )}
+
+      <section className="realtime-preview-playback">
+        <h3>Recipe playback (B5)</h3>
+        <p className="realtime-preview-hint">
+          Plays the active project's recipe via decoder pool + WebGL2
+          compositor. No audio yet (B6). Pick a clip + Fetch recipe
+          first if the canvas is blank.
+        </p>
+        <div className="realtime-preview-controls">
+          <button type="button" onClick={playRecipe} disabled={!recipe}>
+            Play
+          </button>
+          <button
+            type="button"
+            onClick={pauseRecipe}
+            disabled={!recipe || playbackPaused}
+          >
+            Pause
+          </button>
+          <button type="button" onClick={seekRecipeStart} disabled={!recipe}>
+            ⏮ Start
+          </button>
+          <span className="realtime-preview-divider" />
+          <span style={{ fontFamily: "ui-monospace, Menlo, monospace" }}>
+            {(playbackTimeUs / 1_000_000).toFixed(2)}s /{" "}
+            {((recipe?.durationUs ?? 0) / 1_000_000).toFixed(2)}s
+          </span>
+          <span style={{ marginLeft: 12 }}>
+            decoders: {playbackStats.activeDecoders}
+          </span>
+        </div>
+        <div className="realtime-preview-canvas-wrap">
+          <canvas
+            ref={playbackCanvasRef}
+            className="realtime-preview-canvas"
+            width={640}
+            height={360}
+          />
+        </div>
+        {playbackStats.errors.length > 0 && (
+          <details>
+            <summary className="realtime-preview-error">
+              Decoder errors ({playbackStats.errors.length})
+            </summary>
+            <ul>
+              {playbackStats.errors.map((e, i) => (
+                <li key={i}>
+                  <code>{e.layerId.slice(0, 8)}</code>: {e.detail}
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
+      </section>
 
       <section className="realtime-preview-stats">
         <h3>Stats</h3>
