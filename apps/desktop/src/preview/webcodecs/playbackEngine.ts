@@ -585,6 +585,15 @@ export class PlaybackEngine {
   /// True iff audio has loaded enough metadata to be authoritative.
   /// Cleared on setAudioUrl(null) and when audio errors out.
   private audioReady = false;
+  /// Per-clip seek target in clip-local source-time. Populated on
+  /// every `seekTo`; cleared per-clip as soon as the decoder produces
+  /// a frame at-or-past the target (so the engine stops suppressing
+  /// frames once the decoder has caught up). Without this, after a
+  /// seek the cold-starting decoder produces frames climbing from
+  /// t=0, and `frameAtOrBefore(playhead)` would surface them one at a
+  /// time, making the canvas look like it's playing from start to
+  /// the seek target. See `buildClipLayer`.
+  private clipSeekTargets: Map<string, number> = new Map();
 
   constructor(canvas: HTMLCanvasElement, events: PlaybackEngineEvents = {}) {
     this.compositor = new WebGL2Compositor(canvas);
@@ -639,6 +648,7 @@ export class PlaybackEngine {
     this.decoderPool.reset();
     this.rasterCache.clear();
     this.endedFired = false;
+    this.clipSeekTargets.clear();
     this.clock.setBounds(recipe?.durationUs ?? null);
     if (!recipe) {
       this.clock.pause();
@@ -711,6 +721,17 @@ export class PlaybackEngine {
     // For B5 we hammer this on every seek for correctness; B6 can
     // skip the reset when the new playhead is still inside the ring.
     this.decoderPool.reset();
+    // Mark every clip's seek target. `buildClipLayer` suppresses
+    // frames whose timestamp is below this target until the decoder
+    // catches up — otherwise the canvas would replay the source from
+    // t=0 toward the target as decoded frames arrive (the same RAF
+    // loop keeps ticking while paused).
+    if (this.recipe) {
+      for (const clip of this.recipe.clips) {
+        const localT = tUs - clip.timelineInUs + clip.sourceInUs;
+        this.clipSeekTargets.set(clip.layerId, localT);
+      }
+    }
     this.renderOnce();
     this.events.onTimeUpdate?.(this.clock.currentTimeUs());
   }
@@ -849,20 +870,21 @@ export class PlaybackEngine {
   private buildClipLayer(clip: RecipeClip, tUs: number): CompositorLayer | null {
     const frame = this.decoderPool.frameAt(clip, tUs);
     if (!frame) return null;
-    // When paused (typically right after a seek), the decoder is cold-
-    // starting from the beginning of the file and `frameAtOrBefore`
-    // walks up from t=0 toward the playhead as frames arrive. Without
-    // this guard the canvas plays through every intermediate frame
-    // from start-of-file to the seek target, which looks like
-    // unwanted playback. While playing, accept any latest-before
-    // frame so transient decoder lag stays graceful.
-    if (this.clock.paused()) {
-      const playheadLocalUs =
-        tUs - clip.timelineInUs + clip.sourceInUs;
-      const STALE_FRAME_TOLERANCE_US = 150_000; // ~4 frames at 30 fps
-      if (playheadLocalUs - frame.timestamp > STALE_FRAME_TOLERANCE_US) {
+    // Seek-warmup gate. After a seek the decoder cold-starts from
+    // t=0 in the source file; `frameAtOrBefore(playhead)` would
+    // otherwise return successively-later frames as decoding climbs
+    // from 0 toward the seek target, which looks like the canvas is
+    // playing through the source. The per-clip seek target is set
+    // by `seekTo` and cleared here once a frame at-or-near the
+    // target arrives — after that, normal lag tolerance kicks in
+    // (we accept whatever the decoder has, the existing behavior).
+    const seekTarget = this.clipSeekTargets.get(clip.layerId);
+    if (seekTarget !== undefined) {
+      const TARGET_TOLERANCE_US = 150_000; // ~4 frames at 30 fps
+      if (frame.timestamp < seekTarget - TARGET_TOLERANCE_US) {
         return null;
       }
+      this.clipSeekTargets.delete(clip.layerId);
     }
     return {
       source: frame,
