@@ -640,11 +640,54 @@ pub async fn add_media_layer(
 
     let t_end_us = t_start_us + span_us;
 
-    handle
+    let video_layer_id = handle
         .add_layer(Actor::User, track, params, t_start_us, t_end_us)
         .await
-        .map(|id| id.to_string())
-        .map_err(|e: CommandError| e.to_string())
+        .map_err(|e: CommandError| e.to_string())?;
+
+    // `docs/group-system.md` — when the source is video-with-audio and
+    // the project's `auto_pair_audio_on_import` setting is on, also place
+    // an Audio layer pointing at the same MediaItem and group the pair.
+    // Snapshot AFTER add_layer so the freshly-added video layer counts
+    // toward overlap validation when we pick the audio track.
+    if matches!(media_item.kind, MediaKind::Video)
+        && media_item.metadata.audio.is_some()
+        && snap.settings.auto_pair_audio_on_import
+    {
+        let post_video_snap = handle.snapshot().await;
+        let audio_track = ensure_audio_track(handle.inner(), post_video_snap.as_ref()).await?;
+        let audio_params = LayerParams::Audio(state::layer::AudioParams {
+            media,
+            src_in_us: 0,
+            src_out_us: total_src,
+            gain_db: Animated::Static(0.0),
+            pan: Animated::Static(0.0),
+            fade_in_us: 0,
+            fade_out_us: 0,
+            mute: false,
+        });
+        let audio_layer_id = handle
+            .add_layer(
+                Actor::User,
+                audio_track,
+                audio_params,
+                t_start_us,
+                t_end_us,
+            )
+            .await
+            .map_err(|e: CommandError| e.to_string())?;
+        handle
+            .groups_create(
+                Actor::User,
+                vec![video_layer_id, audio_layer_id],
+                None,
+                false,
+            )
+            .await
+            .map_err(|e: CommandError| e.to_string())?;
+    }
+
+    Ok(video_layer_id.to_string())
 }
 
 #[tauri::command]

@@ -397,13 +397,21 @@ impl WeftCutServer {
     #[tool(description = "Add a video clip layer pulling a slice of an imported media item onto a track. \
                           `src_in_us`/`src_out_us` are the in/out points within the source media. \
                           `t_start_us`/`t_end_us` are where the clip lives on the timeline. \
-                          The two ranges should be the same length unless `speed` is later changed.")]
+                          The two ranges should be the same length unless `speed` is later changed. \
+                          When the source media has an audio stream and the project's \
+                          `auto_pair_audio_on_import` setting is on (default), this also creates a \
+                          paired Audio layer on an audio track at the same time bounds and groups the \
+                          two so they move/trim/split together. Returns either the video layer id \
+                          (legacy mode) or `{ video_layer_id, audio_layer_id, group_id }` when a pair \
+                          was created.")]
     async fn add_video_layer(
         &self,
         #[tool(aggr)] args: AddVideoLayerArgs,
     ) -> Result<CallToolResult, McpError> {
         let track_id = parse_uuid(&args.track_id, "track_id")?;
         let media_id = parse_uuid(&args.media_id, "media_id")?;
+        let snap = self.project.snapshot().await;
+        let media_item = snap.media_pool.get(&media_id).cloned();
         let params = LayerParams::VideoClip(VideoClipParams {
             media: media_id,
             src_in_us: args.src_in_us,
@@ -418,12 +426,58 @@ impl WeftCutServer {
             fade_in_us: 0,
             fade_out_us: 0,
         });
-        let id = self
+        let video_layer_id = self
             .project
             .add_layer(agent_actor(), track_id, params, args.t_start_us, args.t_end_us)
             .await
             .map_err(map_command_error)?;
-        Ok(ok_text(id.to_string()))
+
+        // `docs/group-system.md` — pair + group when source has audio.
+        let should_pair = snap.settings.auto_pair_audio_on_import
+            && media_item
+                .as_ref()
+                .map(|m| m.metadata.audio.is_some())
+                .unwrap_or(false);
+        if should_pair {
+            let audio_track = self.ensure_audio_track().await?;
+            let audio_params = LayerParams::Audio(AudioParams {
+                media: media_id,
+                src_in_us: args.src_in_us,
+                src_out_us: args.src_out_us,
+                gain_db: Animated::Static(0.0),
+                pan: Animated::Static(0.0),
+                fade_in_us: 0,
+                fade_out_us: 0,
+                mute: false,
+            });
+            let audio_layer_id = self
+                .project
+                .add_layer(
+                    agent_actor(),
+                    audio_track,
+                    audio_params,
+                    args.t_start_us,
+                    args.t_end_us,
+                )
+                .await
+                .map_err(map_command_error)?;
+            let group_id = self
+                .project
+                .groups_create(
+                    agent_actor(),
+                    vec![video_layer_id, audio_layer_id],
+                    None,
+                    false,
+                )
+                .await
+                .map_err(map_command_error)?;
+            return ok_json(&serde_json::json!({
+                "video_layer_id": video_layer_id.to_string(),
+                "audio_layer_id": audio_layer_id.to_string(),
+                "group_id": group_id.to_string(),
+            }));
+        }
+        Ok(ok_text(video_layer_id.to_string()))
     }
 
     #[tool(description = "Add a Subtitles layer that burns an inline SRT or ASS body onto the timeline. \
