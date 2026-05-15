@@ -140,15 +140,19 @@ mod tests {
         // Video-only fixture (no audio) — keeps the test focused on video
         // proxy generation; the proxy job's audio handling is a feature
         // not the contract under test here.
+        //
+        // 6 seconds at 30 fps so the keyframe-density assertion below
+        // can distinguish "-g 30 applied" (~6 keyframes) from
+        // "default libx264 -g 250" (1 keyframe for the full clip).
         let status = Command::new("ffmpeg")
             .args([
                 "-y", "-hide_banner", "-loglevel", "error",
                 "-f", "lavfi",
-                "-i", "testsrc=duration=1:size=640x360:rate=10",
+                "-i", "testsrc=duration=6:size=640x360:rate=30",
                 "-pix_fmt", "yuv420p",
                 "-c:v", "libx264",
                 "-preset", "ultrafast",
-                "-t", "1",
+                "-t", "6",
             ])
             .arg(dest)
             .status()
@@ -179,7 +183,7 @@ mod tests {
             path_rel: None,
             kind: MediaKind::Video,
             metadata: MediaMetadata {
-                duration_us: Some(1_000_000),
+                duration_us: Some(6_000_000),
                 video: None,
                 audio: None,
             },
@@ -206,6 +210,32 @@ mod tests {
             .await
             .expect("ffprobe");
         assert!(out.status.success(), "ffprobe rejected the proxy output");
+
+        // `docs/preview-scrub.md` S.1/S.7 — verify the GOP density.
+        // libx264 default `-g 250` would yield 1 keyframe for a 6 s
+        // / 30 fps (180-frame) source — the entire clip in one GOP.
+        // With `-g 30 -keyint_min 30` we expect ~6 keyframes (one
+        // per second). Lower bound at 4 to absorb edge-case encoder
+        // choices (e.g. ffmpeg dropping the final near-end keyframe).
+        let kf = Command::new("ffprobe")
+            .args([
+                "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "frame=pict_type",
+                "-of", "csv=p=0",
+            ])
+            .arg(&proxy_path)
+            .output()
+            .await
+            .expect("ffprobe keyframe count");
+        assert!(kf.status.success(), "ffprobe keyframe scan failed");
+        let stdout = String::from_utf8_lossy(&kf.stdout);
+        let i_frames = stdout.lines().filter(|l| l.trim() == "I").count();
+        assert!(
+            i_frames >= 4,
+            "proxy should have >= 4 keyframes for 6s @ 30fps with -g 30 (got {i_frames}); \
+             default GOP would produce 1. Means scrub-friendly keyframe density isn't being applied.\n{stdout}"
+        );
     }
 
     #[tokio::test]
