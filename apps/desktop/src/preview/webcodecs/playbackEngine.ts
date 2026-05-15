@@ -499,10 +499,62 @@ export class PlaybackEngine {
   private disposed = false;
   private lastReportedT = -1;
   private endedFired = false;
+  /// B6a — optional audio master. When present and playable, its
+  /// `currentTime` becomes the timeline clock so video+audio stay in
+  /// sync without ad-hoc PTS chasing. Source is typically the legacy
+  /// preview MP4 (which carries the project's mixed-down audio
+  /// track); projects with no audio fall through to the synthetic
+  /// `PlaybackClock`.
+  private audio: HTMLAudioElement | null = null;
+  /// True iff audio has loaded enough metadata to be authoritative.
+  /// Cleared on setAudioUrl(null) and when audio errors out.
+  private audioReady = false;
 
   constructor(canvas: HTMLCanvasElement, events: PlaybackEngineEvents = {}) {
     this.compositor = new WebGL2Compositor(canvas);
     this.events = events;
+  }
+
+  /// Point the engine at a whole-timeline audio source (or null to
+  /// run silent). The legacy preview MP4 is the practical source —
+  /// it already carries the mixed audio track. The `<audio>` element
+  /// silently ignores the video track, so passing the same path to
+  /// both surfaces is fine.
+  setAudioUrl(url: string | null): void {
+    // Tear down any prior audio element first so we don't leak the
+    // underlying decoder / network request.
+    if (this.audio) {
+      this.audio.pause();
+      this.audio.src = "";
+      this.audio.load();
+      this.audio = null;
+      this.audioReady = false;
+    }
+    if (!url) return;
+    const el = new Audio();
+    el.preload = "auto";
+    el.src = url;
+    el.addEventListener("loadedmetadata", () => {
+      // duration=NaN or 0 means the source has no playable audio
+      // (project has no audio tracks); leave audioReady=false so
+      // we fall through to the synthetic clock.
+      if (Number.isFinite(el.duration) && el.duration > 0) {
+        this.audioReady = true;
+      }
+    });
+    el.addEventListener("ended", () => {
+      if (!this.endedFired) {
+        this.endedFired = true;
+        this.events.onEnded?.();
+      }
+      this.events.onPausedChange?.(true);
+    });
+    el.addEventListener("error", () => {
+      // Source failed to load. Silently fall back to synthetic
+      // clock — B6c surfaces this through LogBus.
+      this.audioReady = false;
+    });
+    this.audio = el;
   }
 
   setRecipe(recipe: WebcodecsRecipe | null): void {
@@ -535,11 +587,14 @@ export class PlaybackEngine {
     // at an empty composition.
     const atEnd =
       this.recipe.durationUs > 0 &&
-      this.clock.currentTimeUs() >= this.recipe.durationUs - 50_000;
+      this.currentTimeUs() >= this.recipe.durationUs - 50_000;
     if (atEnd) {
-      this.clock.seek(0);
-      this.endedFired = false;
-      this.events.onTimeUpdate?.(0);
+      this.seekTo(0);
+    }
+    if (this.audio && this.audioReady) {
+      // play() may reject if the browser denies autoplay; that's
+      // fine — the synthetic clock keeps the video moving.
+      void this.audio.play().catch(() => {});
     }
     this.clock.play();
     this.endedFired = false;
@@ -548,6 +603,9 @@ export class PlaybackEngine {
   }
 
   pause(): void {
+    if (this.audio && this.audioReady) {
+      this.audio.pause();
+    }
     if (this.clock.paused()) return;
     this.clock.pause();
     this.events.onPausedChange?.(true);
@@ -556,6 +614,14 @@ export class PlaybackEngine {
   }
 
   seekTo(tUs: number): void {
+    if (this.audio && this.audioReady) {
+      try {
+        this.audio.currentTime = tUs / 1_000_000;
+      } catch {
+        // Some Chromium builds reject setting currentTime before
+        // the audio is fully buffered; non-fatal.
+      }
+    }
     this.clock.seek(tUs);
     this.endedFired = false;
     // Reset the decoder pool on seek. Each ClipDecoder's ring buffer
@@ -574,10 +640,15 @@ export class PlaybackEngine {
   }
 
   paused(): boolean {
+    // Audio is the master when ready; the synthetic clock follows.
+    if (this.audio && this.audioReady) return this.audio.paused;
     return this.clock.paused();
   }
 
   currentTimeUs(): number {
+    if (this.audio && this.audioReady) {
+      return Math.floor(this.audio.currentTime * 1_000_000);
+    }
     return this.clock.currentTimeUs();
   }
 
@@ -597,6 +668,12 @@ export class PlaybackEngine {
     this.disposed = true;
     if (this.rafHandle !== null) cancelAnimationFrame(this.rafHandle);
     this.rafHandle = null;
+    if (this.audio) {
+      this.audio.pause();
+      this.audio.src = "";
+      this.audio.load();
+      this.audio = null;
+    }
     this.decoderPool.reset();
     this.rasterCache.dispose();
     this.compositor.dispose();
