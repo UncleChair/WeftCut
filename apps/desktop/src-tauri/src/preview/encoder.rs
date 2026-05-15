@@ -28,6 +28,7 @@ use crate::ir::{
 };
 use crate::state::Project;
 
+use super::codec::CodecProfile;
 use super::queue::CancelHandle;
 
 /// Render `[in_us, out_us]` of `project` to a self-contained fMP4 file at
@@ -45,6 +46,8 @@ use super::queue::CancelHandle;
 /// checking `cancel.is_cancelled()` after the call.
 /// `prefer_sw=true` skips the HW encoder probe and forces libx264. Used
 /// by the orchestrator's auto-retry on `HwEncoderRejected` failures.
+/// `profile` picks codec + container (H.264 fMP4 on Win/Mac, VP9 WebM
+/// on Linux).
 pub async fn render_segment(
     app: &AppHandle,
     project: &Project,
@@ -55,6 +58,7 @@ pub async fn render_segment(
     dest: &Path,
     cancel: &CancelHandle,
     prefer_sw: bool,
+    profile: CodecProfile,
 ) -> Result<()> {
     if cached_ok(dest) {
         return Ok(());
@@ -119,39 +123,46 @@ pub async fn render_segment(
     // (rebase drops Audio tracks) so there's nothing to map for audio.
     cmd.arg("-map").arg("[vfinal]");
 
-    // Pick HW encoder if probed and not forced to SW. Falls back to
-    // libx264 on absent / probe-failed hosts AND on auto-retry of a
-    // prior `HwEncoderRejected` failure. Either way the output codec
-    // string stays `avc1.640028` to match the manifest pin.
-    let hw = if prefer_sw {
-        None
-    } else {
-        match app.try_state::<HwEncoderCache>() {
-            Some(c) => c.get().await,
-            None => None,
+    match profile {
+        CodecProfile::H264Mp4 => {
+            // Pick HW encoder if probed and not forced to SW.
+            let hw = if prefer_sw {
+                None
+            } else {
+                match app.try_state::<HwEncoderCache>() {
+                    Some(c) => c.get().await,
+                    None => None,
+                }
+            };
+            apply_h264_segment_encoder(&mut cmd, hw);
+            cmd.args(["-force_key_frames", "expr:eq(n,0)", "-sc_threshold", "0"]);
+            // fMP4 fragmented mux for MSE.
+            cmd.args([
+                "-movflags",
+                "+frag_keyframe+empty_moov+default_base_moof",
+                "-f",
+                "mp4",
+            ]);
         }
-    };
-    apply_h264_segment_encoder(&mut cmd, hw);
-    // Force IDR at segment start so the segment is independently decodable.
-    // Disabling scene-change detection keeps GOP boundaries from drifting
-    // mid-segment.
-    cmd.args([
-        "-force_key_frames",
-        "expr:eq(n,0)",
-        "-sc_threshold",
-        "0",
-    ]);
-    // fMP4 mux flags. `empty_moov` puts an empty moov at the start (codec
-    // params, no movie data); subsequent boxes are moof+mdat fragments.
-    // `default_base_moof` lets the moof carry absolute offsets so each
-    // fragment is positionally self-describing — required for MSE
-    // appendBuffer() across out-of-order arrivals.
-    cmd.args([
-        "-movflags",
-        "+frag_keyframe+empty_moov+default_base_moof",
-        "-f",
-        "mp4",
-    ]);
+        CodecProfile::Vp9Webm => {
+            // libvpx-vp9 software encode — VAAPI exists but is brittle
+            // across distros + needs `-vaapi_device` setup we don't yet
+            // thread. Realtime deadline matches "preview speed" tuning.
+            cmd.args([
+                "-c:v", "libvpx-vp9",
+                "-b:v", "0",
+                "-crf", "35",
+                "-deadline", "realtime",
+                "-cpu-used", "5",
+                "-row-mt", "1",
+                "-tile-columns", "4",
+                "-frame-parallel", "1",
+                "-force_key_frames", "expr:eq(n,0)",
+            ]);
+            // WebM cluster-based segmentation — MSE consumes natively.
+            cmd.args(["-f", "webm"]);
+        }
+    }
     cmd.arg(&tmp);
 
     cmd.stdin(Stdio::null())
@@ -215,6 +226,7 @@ pub async fn render_audio(
     template_renders: &TemplateRenders,
     dest: &Path,
     cancel: &CancelHandle,
+    profile: CodecProfile,
 ) -> Result<()> {
     if cached_ok(dest) {
         return Ok(());
@@ -270,14 +282,24 @@ pub async fn render_audio(
     cmd.arg("-filter_complex_script").arg(&script_path);
     // Audio-only mapping.
     cmd.arg("-map").arg("[aout]");
-    // AAC-LC matches the manifest's `mp4a.40.2` codec string.
-    cmd.args([
-        "-c:a", "aac",
-        "-b:a", "192k",
-        "-profile:a", "aac_low",
-        "-movflags", "+faststart",
-        "-f", "mp4",
-    ]);
+    match profile {
+        CodecProfile::H264Mp4 => {
+            cmd.args([
+                "-c:a", "aac",
+                "-b:a", "192k",
+                "-profile:a", "aac_low",
+                "-movflags", "+faststart",
+                "-f", "mp4",
+            ]);
+        }
+        CodecProfile::Vp9Webm => {
+            cmd.args([
+                "-c:a", "libopus",
+                "-b:a", "128k",
+                "-f", "webm",
+            ]);
+        }
+    }
     cmd.arg(&tmp);
 
     cmd.stdin(Stdio::null())

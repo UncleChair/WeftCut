@@ -65,6 +65,8 @@ export class SegmentedMSEPlayer {
 
   private videoCodec: string;
   private audioCodec: string;
+  private videoMimePrefix: string;
+  private audioMimePrefix: string;
 
   /// Fires when sourceopen completes and SourceBuffers are usable.
   private readyResolvers: Array<() => void> = [];
@@ -72,6 +74,11 @@ export class SegmentedMSEPlayer {
   constructor(videoCodec: string, audioCodec: string) {
     this.videoCodec = videoCodec;
     this.audioCodec = audioCodec;
+    // Derive container mime from codec-string prefix. `avc1.*` → mp4,
+    // `vp09.*` / `vp9` → webm. Default to mp4 on unknown strings —
+    // matches today's Win/Mac default.
+    this.videoMimePrefix = mimePrefixForVideoCodec(videoCodec);
+    this.audioMimePrefix = mimePrefixForAudioCodec(audioCodec);
     this.mediaSource = new MediaSource();
     this.objectUrl = URL.createObjectURL(this.mediaSource);
 
@@ -88,13 +95,13 @@ export class SegmentedMSEPlayer {
     if (this.ready) return;
     try {
       this.videoBuffer = this.mediaSource.addSourceBuffer(
-        `video/mp4; codecs="${this.videoCodec}"`,
+        `${this.videoMimePrefix}; codecs="${this.videoCodec}"`,
       );
       this.videoBuffer.mode = "segments";
       this.videoBuffer.addEventListener("updateend", () => this.drainVideoOps());
 
       this.audioBuffer = this.mediaSource.addSourceBuffer(
-        `audio/mp4; codecs="${this.audioCodec}"`,
+        `${this.audioMimePrefix}; codecs="${this.audioCodec}"`,
       );
       this.audioBuffer.mode = "segments";
       this.audioBuffer.addEventListener("updateend", () => this.drainAudioOps());
@@ -266,6 +273,25 @@ export class SegmentedMSEPlayer {
     if (!next) return;
     next();
   }
+}
+
+function mimePrefixForVideoCodec(codec: string): string {
+  if (codec.startsWith("vp09") || codec === "vp9" || codec.startsWith("vp08")) {
+    return "video/webm";
+  }
+  if (codec.startsWith("av01")) {
+    // AV1 typically muxed in WebM or MP4; default to webm here since
+    // CodecProfile currently only emits avc1/vp9.
+    return "video/webm";
+  }
+  return "video/mp4";
+}
+
+function mimePrefixForAudioCodec(codec: string): string {
+  if (codec === "opus" || codec === "vorbis") {
+    return "audio/webm";
+  }
+  return "audio/mp4";
 }
 
 // ---------------------------------------------------------------------------

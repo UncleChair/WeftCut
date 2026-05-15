@@ -18,6 +18,7 @@
 //!     hash differs from the current one. Emits Tauri events so the UI
 //!     can swap its `<video>` src.
 
+pub mod codec;
 pub mod encoder;
 pub mod failure;
 pub mod manifest;
@@ -220,6 +221,24 @@ pub async fn compute_manifest(
     cache: &CacheLayout,
     app: &AppHandle,
 ) -> Result<manifest::Manifest> {
+    compute_manifest_with_profile(
+        project,
+        cache,
+        app,
+        codec::CodecProfile::default_for_platform(),
+    )
+    .await
+}
+
+/// Same as `compute_manifest` but with an explicit codec profile. Used
+/// by the orchestrator so the profile chosen at workspace-open time
+/// propagates into the manifest's codec strings.
+pub async fn compute_manifest_with_profile(
+    project: &Project,
+    cache: &CacheLayout,
+    app: &AppHandle,
+    profile: codec::CodecProfile,
+) -> Result<manifest::Manifest> {
     // global_hash = the same hash today's whole-timeline path uses. Any
     // change to the project changes it, so each project state gets its own
     // manifest+init+audio. Segments dedup at the segments/ subdir level
@@ -255,15 +274,11 @@ pub async fn compute_manifest(
             fps_den: project.composition.fps.den,
         },
         video: manifest::VideoTrack {
-            // H.264 High Profile @ Level 4.0 — same as the existing export
-            // preset. A6 will branch on platform (VP9 on Linux) via a
-            // capability probe at workspace open.
-            codec: "avc1.640028".to_string(),
+            codec: profile.video_codec_string().to_string(),
             segments,
         },
         audio: manifest::AudioTrack {
-            // AAC-LC.
-            codec: "mp4a.40.2".to_string(),
+            codec: profile.audio_codec_string().to_string(),
             status: manifest::SegmentStatus::Pending,
         },
     })
@@ -277,6 +292,22 @@ pub(crate) fn compute_manifest_core(
     global_hash: String,
     inline_subs: &crate::ir::InlineSubPaths,
     template_renders: &crate::ir::TemplateRenders,
+) -> Result<manifest::Manifest> {
+    compute_manifest_core_with_profile(
+        project,
+        global_hash,
+        inline_subs,
+        template_renders,
+        codec::CodecProfile::default_for_platform(),
+    )
+}
+
+pub(crate) fn compute_manifest_core_with_profile(
+    project: &Project,
+    global_hash: String,
+    inline_subs: &crate::ir::InlineSubPaths,
+    template_renders: &crate::ir::TemplateRenders,
+    profile: codec::CodecProfile,
 ) -> Result<manifest::Manifest> {
     let boundaries = crate::ir::compute_segment_boundaries(project);
     let mut segments = Vec::with_capacity(boundaries.len());
@@ -299,11 +330,11 @@ pub(crate) fn compute_manifest_core(
             fps_den: project.composition.fps.den,
         },
         video: manifest::VideoTrack {
-            codec: "avc1.640028".to_string(),
+            codec: profile.video_codec_string().to_string(),
             segments,
         },
         audio: manifest::AudioTrack {
-            codec: "mp4a.40.2".to_string(),
+            codec: profile.audio_codec_string().to_string(),
             status: manifest::SegmentStatus::Pending,
         },
     })
@@ -870,12 +901,19 @@ mod tests_segment_hash {
 
     #[test]
     fn manifest_codecs_match_mse_pinning() {
-        // The codec strings are part of the MSE wire contract — MUST match
-        // what the segment encoder will emit. A mismatch silently rejects
-        // appendBuffer() on the React side.
+        // The codec strings are part of the MSE wire contract — MUST
+        // match what the segment encoder will emit. A mismatch silently
+        // rejects appendBuffer() on the React side.
+        // On Linux builds the manifest uses VP9+Opus; everywhere else
+        // H.264+AAC.
         let p = mk_project(3_000_000, vec![], vec![]);
         let m = manifest_for(&p);
-        assert_eq!(m.video.codec, "avc1.640028");
-        assert_eq!(m.audio.codec, "mp4a.40.2");
+        if cfg!(target_os = "linux") {
+            assert_eq!(m.video.codec, "vp09.00.41.08");
+            assert_eq!(m.audio.codec, "opus");
+        } else {
+            assert_eq!(m.video.codec, "avc1.640028");
+            assert_eq!(m.audio.codec, "mp4a.40.2");
+        }
     }
 }

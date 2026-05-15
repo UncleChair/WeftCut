@@ -194,12 +194,16 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
           SEGMENT_EVENTS.manifestChanged,
           (e) => {
             // First manifest event in this session: spin up an MSE player
-            // pinned to the manifest's codec strings. Subsequent events
-            // re-use the same player.
+            // pinned to the manifest's codec strings (so Linux builds
+            // using VP9/Opus get the right SourceBuffer mime). Subsequent
+            // events re-use the same player IF the codec didn't change;
+            // a codec swap mid-session would require teardown + rebuild,
+            // which is rare (only happens if the user moves between
+            // OS-flavored workspaces).
             if (!playerRef.current) {
               const player = new SegmentedMSEPlayer(
-                "avc1.640028",
-                "mp4a.40.2",
+                e.payload.videoCodec,
+                e.payload.audioCodec,
               );
               playerRef.current = player;
               setState({

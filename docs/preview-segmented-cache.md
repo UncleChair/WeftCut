@@ -1,6 +1,14 @@
 # Preview segmented cache — design
 
-**Status:** Designed 2026-05-15 via `/grill-me`. **Not yet implemented.** Phased plan at the bottom.
+**Status:** Phase A1–A6 **shipped 2026-05-15** behind `WEFTCUT_PREVIEW_SEGMENTED=1` env flag (whole-timeline path remains the default). Phase B.3 (WebCodecs+WebGL2 real-time playback) intentionally deferred — design notes preserved below for future work.
+
+Commits:
+- `6bb7462` A1 — IR foundations (segments + lower_range + segment_hash)
+- `a95f372` A2 — manifest + per-segment encoder + feature-flagged orchestrator
+- `2296663` A3 — parallel queue + cancellation + retry classification
+- `5f3d52b` A4 — MSE driver + segmented PreviewSurface mode
+- `7d11baf` A5 — status bar + failure UX + LogBus integration
+- this commit — A6: codec profile abstraction + Linux VP9 path
 
 ## Problem
 

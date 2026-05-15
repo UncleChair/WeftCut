@@ -518,6 +518,11 @@ export interface ManifestChanged {
   globalHash: string;
   manifestPath: string;
   durationUs: number;
+  /// Manifest's video codec string (e.g. "avc1.640028", "vp09.00.41.08").
+  /// The MSE player passes this to addSourceBuffer to match the bytes
+  /// the segments will carry.
+  videoCodec: string;
+  audioCodec: string;
 }
 
 export interface SegmentReady {

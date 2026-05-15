@@ -40,6 +40,7 @@ use crate::cache::{cached_ok, CacheLayout};
 use crate::export::HwEncoderCache;
 use crate::state::{Project, ProjectHandle};
 
+use super::codec::CodecProfile;
 use super::encoder::{render_audio, render_segment};
 use super::failure::{classify, SegmentFailureKind};
 use super::manifest::{
@@ -72,6 +73,11 @@ pub struct ManifestChanged {
     pub global_hash: String,
     pub manifest_path: String,
     pub duration_us: i64,
+    /// Codec strings the React MSE player must pass to addSourceBuffer.
+    /// Derived from the renderer's CodecProfile so Linux builds get
+    /// VP9/Opus and the player switches container mime accordingly.
+    pub video_codec: String,
+    pub audio_codec: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -115,6 +121,10 @@ pub struct SegmentedRenderer {
     /// get re-prioritized — only newly enqueued ones (acceptable
     /// for A4 because a manifest swap re-enqueues affected segments).
     playhead_us: Arc<AtomicI64>,
+    /// Codec profile picked at construction time. Drives the manifest's
+    /// codec strings and the encoder's container/codec choice. Default
+    /// per platform; A6's spike could expose a runtime override later.
+    profile: CodecProfile,
 }
 
 #[derive(Clone)]
@@ -136,6 +146,8 @@ struct SegmentedRendererInner {
 
 impl SegmentedRenderer {
     pub fn spawn(app: AppHandle, handle: ProjectHandle) -> Self {
+        let profile = CodecProfile::default_for_platform();
+        info!("segmented preview: codec profile = {profile:?}");
         let me = Self {
             inner: Arc::new(Mutex::new(SegmentedRendererInner {
                 current_manifest: None,
@@ -148,6 +160,7 @@ impl SegmentedRenderer {
             in_flight: Arc::new(AsyncMutex::new(HashMap::new())),
             commit_counter: Arc::new(AtomicU64::new(0)),
             playhead_us: Arc::new(AtomicI64::new(-1)),
+            profile,
         };
 
         // Spawn workers. Concurrency is decided once at startup — we
@@ -329,7 +342,15 @@ async fn worker_loop(worker_id: usize, app: AppHandle, renderer: SegmentedRender
         }
 
         let dest = cache.preview_segment(&job.hash);
-        let result = render_segment_with_retry(&app, &job, &dest, &cancel, worker_id).await;
+        let result = render_segment_with_retry(
+            &app,
+            &job,
+            &dest,
+            &cancel,
+            worker_id,
+            renderer.profile,
+        )
+        .await;
 
         renderer.in_flight.lock().await.remove(&job.hash);
 
@@ -403,6 +424,7 @@ async fn render_segment_with_retry(
     dest: &std::path::Path,
     cancel: &CancelHandle,
     worker_id: usize,
+    profile: CodecProfile,
 ) -> Result<(), String> {
     // First attempt: let the encoder pick HW if available.
     let first = render_segment(
@@ -415,6 +437,7 @@ async fn render_segment_with_retry(
         dest,
         cancel,
         /*prefer_sw=*/ false,
+        profile,
     )
     .await;
 
@@ -448,6 +471,7 @@ async fn render_segment_with_retry(
                 dest,
                 cancel,
                 /*prefer_sw=*/ false,
+                profile,
             )
             .await
             .map_err(|e| format!("{e:#} (after 1 retry)"))
@@ -471,6 +495,7 @@ async fn render_segment_with_retry(
                 dest,
                 cancel,
                 /*prefer_sw=*/ true,
+                profile,
             )
             .await
             .map_err(|e| format!("{e:#} (after HW→SW retry)"))
@@ -543,11 +568,12 @@ async fn run_one_cycle(
     // 2. Compute manifest. Uses the same already-materialized side maps
     // (via compute_manifest_core for synchronous code reuse).
     let global_hash = super::state_hash(project, cache, app).await?;
-    let new_manifest = super::compute_manifest_core(
+    let new_manifest = super::compute_manifest_core_with_profile(
         project,
         global_hash,
         &inline_subs,
         &template_renders,
+        renderer.profile,
     )?;
 
     // 3. Diff against prior manifest.
@@ -568,6 +594,8 @@ async fn run_one_cycle(
             global_hash: new_manifest.global_hash.clone(),
             manifest_path: manifest_path.to_string_lossy().to_string(),
             duration_us: new_manifest.duration_us,
+            video_codec: new_manifest.video.codec.clone(),
+            audio_codec: new_manifest.audio.codec.clone(),
         },
     );
     renderer.record(new_manifest.clone(), manifest_path.clone());
@@ -684,6 +712,7 @@ async fn run_one_cycle(
             &template_renders,
             &audio_path,
             &audio_cancel,
+            renderer.profile,
         )
         .await
         {
