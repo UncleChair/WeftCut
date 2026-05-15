@@ -11,6 +11,7 @@ import {
 import { useTranslation } from "react-i18next";
 
 import {
+  logEmit,
   PREVIEW_EVENTS,
   previewCurrentPath,
   previewRetrySegment,
@@ -484,6 +485,19 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
       const engine = new PlaybackEngine(canvas, {
         onTimeUpdate: (t) => onTimeUpdate(t),
         onPausedChange: (p) => onPausedChange(p),
+        // B6c — surface decoder failures + stalls to the status
+        // log. Each (clip, kind) fires at most once per engine
+        // lifetime so the bar doesn't fill up.
+        onDecoderIssue: (issue) => {
+          const basename = issue.mediaPath.split(/[\\/]/).pop() ?? issue.mediaPath;
+          const verb = issue.kind === "stall" ? "stalled" : "failed";
+          void logEmit({
+            level: issue.kind === "stall" ? "warn" : "error",
+            category: { kind: "Project" },
+            source: { kind: "System" },
+            message: `Real-time preview decoder ${verb} for ${basename}: ${issue.detail}`,
+          }).catch(() => {});
+        },
       });
       engineRef.current = engine;
 

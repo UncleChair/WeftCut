@@ -52,6 +52,13 @@ const DECODER_PREFETCH_US = 1_500_000;
 /// generous.
 const DECODER_LINGER_US = 2_000_000;
 
+/// Wall-time milliseconds we wait for a decoder to produce its
+/// first frame before flagging it as stalled. Three seconds
+/// covers HW probe + fetch + demux + first-IDR decode comfortably;
+/// anything longer is a real problem (codec unsupported, file
+/// missing, network stuck).
+const DECODER_STALL_THRESHOLD_MS = 3_000;
+
 /// Per-clip ring buffer cap. The decoder runs faster than realtime
 /// (typically 5–20× on HW-accel WebCodecs), so without a smart
 /// eviction policy a small ring would only ever hold frames from the
@@ -101,6 +108,17 @@ class ClipDecoder {
   /// pushFrame so we don't lose frames around the playhead when the
   /// decoder bursts ahead.
   private playheadLocalUs = Number.NEGATIVE_INFINITY;
+  /// Wall-time of open() start, set in open(); used to detect
+  /// stalled decoders that never produce a first frame.
+  private openStartedAtWallMs: number | null = null;
+  /// Wall-time of first onFrame. Null until the decoder has
+  /// produced at least one frame.
+  private firstFrameAtWallMs: number | null = null;
+  /// Latches once we've surfaced the open error to the engine, so
+  /// the LogBus doesn't receive the same entry every RAF tick.
+  reportedError = false;
+  /// Latches once we've surfaced the stall to the engine.
+  reportedStall = false;
 
   constructor(readonly clip: RecipeClip) {}
 
@@ -108,14 +126,26 @@ class ClipDecoder {
     this.playheadLocalUs = localTimeUs;
   }
 
+  /// True iff no frame has arrived AND wall-time-since-open exceeds
+  /// the stall threshold. The engine watcher reads this each tick.
+  isStalled(): boolean {
+    if (this.firstFrameAtWallMs !== null) return false;
+    if (this.openStartedAtWallMs === null) return false;
+    return performance.now() - this.openStartedAtWallMs >= DECODER_STALL_THRESHOLD_MS;
+  }
+
   async open(): Promise<void> {
     if (this.mp4 || this.opening || this.closed) return;
     this.opening = true;
+    this.openStartedAtWallMs = performance.now();
     const mp4 = new Mp4Decoder({
       onFrame: (info: DecodedFrameInfo) => {
         if (this.closed) {
           info.frame.close();
           return;
+        }
+        if (this.firstFrameAtWallMs === null) {
+          this.firstFrameAtWallMs = performance.now();
         }
         this.pushFrame(info);
       },
@@ -295,6 +325,40 @@ class DecoderPool {
     for (const [id, dec] of this.decoders.entries()) {
       const e = dec.error();
       if (e) out.push({ layerId: id, detail: e });
+    }
+    return out;
+  }
+
+  /// Return any NEW error / stall events since the last call,
+  /// marking them as reported on the underlying decoder so we don't
+  /// double-emit. The engine's RAF watcher invokes this once per
+  /// tick and pipes the results into the engine's event surface.
+  collectNewIssues(): Array<{
+    layerId: string;
+    kind: "error" | "stall";
+    detail: string;
+  }> {
+    const out: Array<{
+      layerId: string;
+      kind: "error" | "stall";
+      detail: string;
+    }> = [];
+    for (const [id, dec] of this.decoders.entries()) {
+      if (!dec.reportedError) {
+        const e = dec.error();
+        if (e) {
+          dec.reportedError = true;
+          out.push({ layerId: id, kind: "error", detail: e });
+        }
+      }
+      if (!dec.reportedStall && dec.isStalled()) {
+        dec.reportedStall = true;
+        out.push({
+          layerId: id,
+          kind: "stall",
+          detail: `no frame after ${DECODER_STALL_THRESHOLD_MS} ms`,
+        });
+      }
     }
     return out;
   }
@@ -482,10 +546,22 @@ export interface PlaybackStats {
   errors: ReadonlyArray<{ layerId: string; detail: string }>;
 }
 
+export interface DecoderIssue {
+  layerId: string;
+  mediaPath: string;
+  kind: "error" | "stall";
+  detail: string;
+}
+
 export interface PlaybackEngineEvents {
   onTimeUpdate?: (tUs: number) => void;
   onPausedChange?: (paused: boolean) => void;
   onEnded?: () => void;
+  /// Fires once per (layerId, kind) when a clip decoder fails to
+  /// open, errors mid-decode, or stalls past the stall threshold
+  /// without producing a first frame. PreviewSurface forwards this
+  /// to LogBus; B6c future work may auto-fall-back to segmented.
+  onDecoderIssue?: (issue: DecoderIssue) => void;
 }
 
 export class PlaybackEngine {
@@ -736,6 +812,24 @@ export class PlaybackEngine {
     if (Math.abs(tUs - this.lastReportedT) > 33_000) {
       this.lastReportedT = tUs;
       this.events.onTimeUpdate?.(tUs);
+    }
+
+    // 4b. B6c — surface any new decoder errors / stalls. Once per
+    // (clip, kind), so a stalled decoder doesn't spam LogBus every
+    // RAF tick.
+    if (this.events.onDecoderIssue) {
+      const issues = this.decoderPool.collectNewIssues();
+      for (const issue of issues) {
+        // Look up the clip's mediaPath so the log entry is useful
+        // without the user having to map a layer_id back to a clip.
+        const clip = this.recipe.clips.find((c) => c.layerId === issue.layerId);
+        this.events.onDecoderIssue({
+          layerId: issue.layerId,
+          mediaPath: clip?.mediaPath ?? "(unknown)",
+          kind: issue.kind,
+          detail: issue.detail,
+        });
+      }
     }
 
     // 5. Auto-pause at end
