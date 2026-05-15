@@ -930,6 +930,7 @@ export function App({ onCloseProject }: AppProps) {
           <SegmentStatusBar />
           <Timeline
             tracks={summary?.tracks ?? []}
+            groups={summary?.groups ?? []}
             durationUs={summary?.duration_us ?? 0}
             currentTimeUs={currentTimeUs}
             selectedLayerId={selectedLayerId}

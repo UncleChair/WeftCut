@@ -41,6 +41,17 @@ pub struct ProjectSummary {
     /// Sparse markers along the timeline. Surfaced so the agent-mode
     /// mini timeline can render them as pips above the scrub bar.
     pub markers: Vec<MarkerSummary>,
+    /// Layer groups (`docs/group-system.md`). UI uses these to render the
+    /// tinted group indicator + lookup the membership for click-selects-
+    /// whole-group behavior.
+    pub groups: Vec<GroupSummary>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct GroupSummary {
+    pub id: String,
+    pub label: Option<String>,
+    pub layer_ids: Vec<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -370,6 +381,16 @@ pub async fn project_summary(handle: State<'_, ProjectHandle>) -> Result<Project
         })
         .collect();
 
+    let groups: Vec<GroupSummary> = snap
+        .groups
+        .iter()
+        .map(|g| GroupSummary {
+            id: g.id.to_string(),
+            label: g.label.clone(),
+            layer_ids: g.members.iter().map(|m| m.to_string()).collect(),
+        })
+        .collect();
+
     Ok(ProjectSummary {
         project_id: snap.project_id.to_string(),
         name: snap.metadata.name.clone(),
@@ -392,6 +413,7 @@ pub async fn project_summary(handle: State<'_, ProjectHandle>) -> Result<Project
         media,
         tracks,
         markers,
+        groups,
     })
 }
 
@@ -1792,11 +1814,92 @@ pub async fn move_layer(
     layer_id: String,
     new_track_id: String,
     new_t_start_us: TimeUs,
+    escape_group: Option<bool>,
 ) -> Result<(), String> {
     let lid = Uuid::parse_str(&layer_id).map_err(|e| format!("layer_id: {e}"))?;
     let tid = Uuid::parse_str(&new_track_id).map_err(|e| format!("new_track_id: {e}"))?;
     handle
-        .move_layer(Actor::User, lid, tid, new_t_start_us, false)
+        .move_layer(
+            Actor::User,
+            lid,
+            tid,
+            new_t_start_us,
+            escape_group.unwrap_or(false),
+        )
+        .await
+        .map_err(|e: CommandError| e.to_string())
+}
+
+/// `docs/group-system.md` — group-aware trim. `edge` is `"in"` or `"out"`.
+/// When the layer is in a group and `escape_group` is false (default),
+/// aligned-edge coupling fans the trim out to other members.
+#[tauri::command]
+pub async fn trim_layer(
+    handle: State<'_, ProjectHandle>,
+    layer_id: String,
+    edge: String,
+    new_t_us: TimeUs,
+    escape_group: Option<bool>,
+) -> Result<(), String> {
+    let lid = Uuid::parse_str(&layer_id).map_err(|e| format!("layer_id: {e}"))?;
+    let parsed_edge = match edge.to_ascii_lowercase().as_str() {
+        "in" | "start" => crate::state::actor::LayerEdge::In,
+        "out" | "end" => crate::state::actor::LayerEdge::Out,
+        other => return Err(format!("unknown edge '{other}' (expected 'in' or 'out')")),
+    };
+    handle
+        .trim_layer(
+            Actor::User,
+            lid,
+            parsed_edge,
+            new_t_us,
+            escape_group.unwrap_or(false),
+        )
+        .await
+        .map_err(|e: CommandError| e.to_string())
+}
+
+#[tauri::command]
+pub async fn split_layer_grouped(
+    handle: State<'_, ProjectHandle>,
+    layer_id: String,
+    at_t_us: TimeUs,
+    escape_group: Option<bool>,
+) -> Result<(String, String), String> {
+    let lid = Uuid::parse_str(&layer_id).map_err(|e| format!("layer_id: {e}"))?;
+    let (left, right) = handle
+        .split_layer(Actor::User, lid, at_t_us, escape_group.unwrap_or(false))
+        .await
+        .map_err(|e: CommandError| e.to_string())?;
+    Ok((left.to_string(), right.to_string()))
+}
+
+#[tauri::command]
+pub async fn groups_create(
+    handle: State<'_, ProjectHandle>,
+    layer_ids: Vec<String>,
+    label: Option<String>,
+    reassign: Option<bool>,
+) -> Result<String, String> {
+    let ids: Vec<state::LayerId> = layer_ids
+        .into_iter()
+        .map(|s| Uuid::parse_str(&s).map_err(|e| format!("layer_id: {e}")))
+        .collect::<Result<_, _>>()?;
+    let gid = handle
+        .groups_create(Actor::User, ids, label, reassign.unwrap_or(false))
+        .await
+        .map_err(|e: CommandError| e.to_string())?;
+    Ok(gid.to_string())
+}
+
+#[tauri::command]
+pub async fn groups_dissolve(
+    handle: State<'_, ProjectHandle>,
+    group_id: String,
+) -> Result<(), String> {
+    let gid = Uuid::parse_str(&group_id).map_err(|e| format!("group_id: {e}"))?;
+    handle
+        .groups_dissolve(Actor::User, gid)
         .await
         .map_err(|e: CommandError| e.to_string())
 }
