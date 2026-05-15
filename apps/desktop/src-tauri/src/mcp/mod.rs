@@ -95,6 +95,7 @@ use crate::ir::{self, RenderTarget};
 use crate::jobs;
 use crate::cloud;
 use crate::raster::template as raster_template;
+use crate::state::actor::LayerEdge;
 use crate::state::{
     Actor, Animated, AudioParams, BlendMode, CheckpointId, ColorParams, CommandError,
     CompositionPatch, DryRunOp, DryRunOutput, LayerId, LayerParams, LayerParamsPatch, LayerPatch,
@@ -917,6 +918,166 @@ impl WeftCutServer {
         Ok(ok_void())
     }
 
+    #[tool(description = "Trim one edge of a layer's timeline range. `edge` is 'in' (t_start) or 'out' (t_end). \
+                          For media-bearing layers the corresponding src bound (src_in_us or src_out_us) moves \
+                          by the same delta; over-trimming past the source bound is clamped. \
+                          When the layer is in a group and `escape_group` is false (default), every group \
+                          member whose corresponding edge sits at the same t as the trimmed edge is moved \
+                          by the same delta, clamped to the tightest aligned member's bounds. Pass \
+                          `escape_group=true` to trim only this layer. See `docs/group-system.md`.")]
+    async fn trim_layer(
+        &self,
+        #[tool(aggr)] args: TrimLayerArgs,
+    ) -> Result<CallToolResult, McpError> {
+        let id = parse_uuid(&args.layer_id, "layer_id")?;
+        let edge = parse_layer_edge(&args.edge)?;
+        self.project
+            .trim_layer(
+                agent_actor(),
+                id,
+                edge,
+                args.new_t_us,
+                args.escape_group.unwrap_or(false),
+            )
+            .await
+            .map_err(map_command_error)?;
+        Ok(ok_void())
+    }
+
+    // ============================================================
+    // Group tools (Phase G.4 — `docs/group-system.md`)
+    // ============================================================
+
+    #[tool(description = "List every group in the project. Each entry has `id`, optional `label`, and the \
+                          set of member `layer_ids`. Empty array when no groups exist. Membership is flat — \
+                          a layer is in at most one group.")]
+    async fn groups_list(&self) -> Result<CallToolResult, McpError> {
+        let snap = self.project.snapshot().await;
+        let payload: Vec<_> = snap
+            .groups
+            .iter()
+            .map(|g| GroupView {
+                id: g.id.to_string(),
+                label: g.label.clone(),
+                layer_ids: g.members.iter().map(|m| m.to_string()).collect(),
+            })
+            .collect();
+        ok_json(&payload)
+    }
+
+    #[tool(description = "Read a single group by id. Returns `{ id, label, layer_ids }` or NotFound.")]
+    async fn groups_get(
+        &self,
+        #[tool(aggr)] args: GroupIdArgs,
+    ) -> Result<CallToolResult, McpError> {
+        let gid = parse_uuid(&args.group_id, "group_id")?;
+        let snap = self.project.snapshot().await;
+        let g = snap
+            .groups
+            .iter()
+            .find(|g| g.id == gid)
+            .ok_or_else(|| McpError::invalid_params(format!("group {gid} not found"), None))?;
+        ok_json(&GroupView {
+            id: g.id.to_string(),
+            label: g.label.clone(),
+            layer_ids: g.members.iter().map(|m| m.to_string()).collect(),
+        })
+    }
+
+    #[tool(description = "Create a new group from >=2 distinct layer ids. Optional `label`. \
+                          If any layer is already in another group, the op fails unless `reassign=true`, \
+                          which removes them from their prior group(s) first (auto-dissolving any group \
+                          that falls below 2 members). Returns the new group id.")]
+    async fn groups_create(
+        &self,
+        #[tool(aggr)] args: GroupsCreateArgs,
+    ) -> Result<CallToolResult, McpError> {
+        let layer_ids: Vec<LayerId> = args
+            .layer_ids
+            .iter()
+            .map(|s| parse_uuid(s, "layer_id"))
+            .collect::<Result<_, _>>()?;
+        let gid = self
+            .project
+            .groups_create(
+                agent_actor(),
+                layer_ids,
+                args.label,
+                args.reassign.unwrap_or(false),
+            )
+            .await
+            .map_err(map_command_error)?;
+        Ok(ok_text(gid.to_string()))
+    }
+
+    #[tool(description = "Dissolve (delete) a group. The member layers themselves are not deleted.")]
+    async fn groups_dissolve(
+        &self,
+        #[tool(aggr)] args: GroupIdArgs,
+    ) -> Result<CallToolResult, McpError> {
+        let gid = parse_uuid(&args.group_id, "group_id")?;
+        self.project
+            .groups_dissolve(agent_actor(), gid)
+            .await
+            .map_err(map_command_error)?;
+        Ok(ok_void())
+    }
+
+    #[tool(description = "Add member layers to an existing group. Same reassign semantics as groups_create.")]
+    async fn groups_add_members(
+        &self,
+        #[tool(aggr)] args: GroupsAddMembersArgs,
+    ) -> Result<CallToolResult, McpError> {
+        let gid = parse_uuid(&args.group_id, "group_id")?;
+        let layer_ids: Vec<LayerId> = args
+            .layer_ids
+            .iter()
+            .map(|s| parse_uuid(s, "layer_id"))
+            .collect::<Result<_, _>>()?;
+        self.project
+            .groups_add_members(
+                agent_actor(),
+                gid,
+                layer_ids,
+                args.reassign.unwrap_or(false),
+            )
+            .await
+            .map_err(map_command_error)?;
+        Ok(ok_void())
+    }
+
+    #[tool(description = "Remove member layers from a group. If the remaining membership falls below 2, \
+                          the group auto-dissolves.")]
+    async fn groups_remove_members(
+        &self,
+        #[tool(aggr)] args: GroupsRemoveMembersArgs,
+    ) -> Result<CallToolResult, McpError> {
+        let gid = parse_uuid(&args.group_id, "group_id")?;
+        let layer_ids: Vec<LayerId> = args
+            .layer_ids
+            .iter()
+            .map(|s| parse_uuid(s, "layer_id"))
+            .collect::<Result<_, _>>()?;
+        self.project
+            .groups_remove_members(agent_actor(), gid, layer_ids)
+            .await
+            .map_err(map_command_error)?;
+        Ok(ok_void())
+    }
+
+    #[tool(description = "Update a group's label. Pass `label: null` to clear it.")]
+    async fn groups_rename(
+        &self,
+        #[tool(aggr)] args: GroupsRenameArgs,
+    ) -> Result<CallToolResult, McpError> {
+        let gid = parse_uuid(&args.group_id, "group_id")?;
+        self.project
+            .groups_rename(agent_actor(), gid, args.label)
+            .await
+            .map_err(map_command_error)?;
+        Ok(ok_void())
+    }
+
     #[tool(description = "Duplicate a layer with a time offset. The copy is inserted on the same track. \
                           Returns the new layer id. The composition duration extends if needed.")]
     async fn duplicate_layer(
@@ -1541,6 +1702,65 @@ pub struct SplitLayerResult {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct TrimLayerArgs {
+    pub layer_id: String,
+    /// Either `"in"` (t_start) or `"out"` (t_end). Case-insensitive.
+    pub edge: String,
+    pub new_t_us: i64,
+    /// `docs/group-system.md` — when the trimmed layer is in a group and
+    /// `escape_group` is false or omitted, aligned-edge coupling fans the
+    /// trim out to other members whose corresponding edge sits at the same
+    /// time. Pass `true` to trim only this layer.
+    #[serde(default)]
+    pub escape_group: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GroupIdArgs {
+    pub group_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GroupsCreateArgs {
+    pub layer_ids: Vec<String>,
+    #[serde(default)]
+    pub label: Option<String>,
+    /// When any layer is already in another group, `reassign=true` removes
+    /// it from its prior group first (auto-dissolving if needed). When
+    /// false or omitted, the op rejects with `LayerAlreadyGrouped`.
+    #[serde(default)]
+    pub reassign: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GroupsAddMembersArgs {
+    pub group_id: String,
+    pub layer_ids: Vec<String>,
+    #[serde(default)]
+    pub reassign: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GroupsRemoveMembersArgs {
+    pub group_id: String,
+    pub layer_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GroupsRenameArgs {
+    pub group_id: String,
+    #[serde(default)]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct GroupView {
+    pub id: String,
+    pub label: Option<String>,
+    pub layer_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct LayerIdArgs {
     pub layer_id: String,
 }
@@ -1929,6 +2149,17 @@ fn parse_track_kind(s: &str) -> Result<TrackKind, McpError> {
         "subtitle" | "subtitles" => Ok(TrackKind::Subtitle),
         other => Err(McpError::invalid_params(
             format!("unknown track kind '{other}' (expected video|audio|subtitle)"),
+            None,
+        )),
+    }
+}
+
+fn parse_layer_edge(s: &str) -> Result<LayerEdge, McpError> {
+    match s.to_ascii_lowercase().as_str() {
+        "in" | "start" | "t_start" | "t_start_us" => Ok(LayerEdge::In),
+        "out" | "end" | "t_end" | "t_end_us" => Ok(LayerEdge::Out),
+        other => Err(McpError::invalid_params(
+            format!("unknown layer edge '{other}' (expected 'in' or 'out')"),
             None,
         )),
     }
