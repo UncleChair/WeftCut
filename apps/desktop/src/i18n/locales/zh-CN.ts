@@ -154,6 +154,7 @@ const zhCN: Resources = {
     retry_rendering: "重新渲染",
     init_failed: "预览启动失败",
     retry: "重试",
+    realtime_label: "实时预览",
     segment_status: {
       ready: "就绪",
       pending: "等待",
@@ -269,6 +270,22 @@ const zhCN: Resources = {
     keybindings_heading: "键盘快捷键",
     keybindings_blurb:
       "点击快捷键可移除，点击 [+ 添加] 可绑定新组合。每个组合在所有操作中必须唯一——若想改绑已被占用的键，请先在原操作处取消。",
+    preview_engine_heading: "预览引擎",
+    preview_engine_blurb:
+      "实时模式使用 WebCodecs + WebGL2 即时反馈编辑结果；缓存模式播放预渲染的片段。自动模式根据能力探测结果择优。",
+    preview_mode: {
+      auto: "自动（推荐）",
+      auto_hint: "能力探测通过则使用实时，否则使用缓存。",
+      realtime: "实时",
+      realtime_hint:
+        "强制使用 WebCodecs + WebGL2。仅当解码器完全不可用时回退到缓存。",
+      cached: "缓存",
+      cached_hint: "始终使用预渲染片段。Bug 上报时的兜底选项。",
+    },
+    preview_capability: "能力探测",
+    preview_capability_ok: "通过 — 各阶段均成功",
+    preview_capability_probing: "探测中…",
+    preview_effective: "当前引擎",
     api_keys_heading: "云服务 API 密钥",
     api_keys_blurb:
       "密钥保存在系统密钥环中（Windows 凭据管理器 / macOS 钥匙串 / Linux Secret Service）。设置匹配的密钥后，相应的云服务工具（Whisper 转写等）即可使用。",

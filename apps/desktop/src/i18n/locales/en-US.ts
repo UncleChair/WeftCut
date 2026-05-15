@@ -155,6 +155,7 @@ const enUS = {
     retry_rendering: "Retry rendering",
     init_failed: "Preview failed to start",
     retry: "Retry",
+    realtime_label: "Real-time preview",
     segment_status: {
       ready: "Ready",
       pending: "Pending",
@@ -272,6 +273,23 @@ const enUS = {
     keybindings_heading: "Keyboard shortcuts",
     keybindings_blurb:
       "Click a chord to remove it, or [+ Add] to bind a new one. Each chord must be unique across actions — unset the current owner first if you want to repurpose a key.",
+    preview_engine_heading: "Preview engine",
+    preview_engine_blurb:
+      "Real-time playback uses WebCodecs + WebGL2 for instant edit feedback; cached uses pre-rendered segments. Auto picks based on a capability probe.",
+    preview_mode: {
+      auto: "Auto (recommended)",
+      auto_hint:
+        "Real-time when the capability probe passes; cached otherwise.",
+      realtime: "Real-time",
+      realtime_hint:
+        "Force WebCodecs + WebGL2. Falls back to cached only when the decoder is entirely absent.",
+      cached: "Cached",
+      cached_hint: "Always use pre-rendered segments. Bug-report escape hatch.",
+    },
+    preview_capability: "Capability probe",
+    preview_capability_ok: "ok — all stages passed",
+    preview_capability_probing: "probing…",
+    preview_effective: "Effective engine",
     api_keys_heading: "Cloud API keys",
     api_keys_blurb:
       "Keys are stored in the OS keyring (Windows Credential Manager / macOS Keychain / Linux Secret Service). Cloud-backed tools (Whisper transcription, future TTS) become available once a matching key is set.",
