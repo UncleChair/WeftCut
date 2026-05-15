@@ -26,7 +26,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -108,6 +108,13 @@ pub struct SegmentedRenderer {
     queue: Arc<SegmentQueue>,
     in_flight: Arc<AsyncMutex<HashMap<String, InFlightEntry>>>,
     commit_counter: Arc<AtomicU64>,
+    /// Last reported playhead position in microseconds (-1 = unset).
+    /// Used at queue-push time to set `PriorityClass::Playhead` for the
+    /// segment containing the playhead. The React side reports updates
+    /// via `preview_set_playhead`; segments already in the queue don't
+    /// get re-prioritized — only newly enqueued ones (acceptable
+    /// for A4 because a manifest swap re-enqueues affected segments).
+    playhead_us: Arc<AtomicI64>,
 }
 
 #[derive(Clone)]
@@ -131,6 +138,7 @@ impl SegmentedRenderer {
             queue: Arc::new(SegmentQueue::new()),
             in_flight: Arc::new(AsyncMutex::new(HashMap::new())),
             commit_counter: Arc::new(AtomicU64::new(0)),
+            playhead_us: Arc::new(AtomicI64::new(-1)),
         };
 
         // Spawn workers. Concurrency is decided once at startup — we
@@ -159,11 +167,46 @@ impl SegmentedRenderer {
             .clone()
     }
 
+    /// Update the playhead position the orchestrator uses for priority
+    /// assignment. Called by the `preview_set_playhead` Tauri command on
+    /// React-side seek / time update. Stored atomically — no lock.
+    pub fn set_playhead(&self, t_us: i64) {
+        self.playhead_us.store(t_us, Ordering::Relaxed);
+    }
+
+    fn playhead(&self) -> i64 {
+        self.playhead_us.load(Ordering::Relaxed)
+    }
+
     fn record(&self, manifest: Manifest, path: PathBuf) {
         let mut g = self.inner.lock().expect("segmented preview lock");
         g.current_manifest = Some(manifest);
         g.current_manifest_path = Some(path);
     }
+}
+
+/// Decide the priority class for a new segment based on its timeline range
+/// and the current playhead. Returns `Playhead` if the playhead falls
+/// inside the segment, `PlayheadAdjacent` if it touches an immediate
+/// neighbor (within 1× segment span), else `Ordered`. (Visible-region
+/// awareness is deferred until the React side reports the scroll
+/// viewport.)
+fn classify_priority(in_us: i64, out_us: i64, playhead_us: i64) -> PriorityClass {
+    if playhead_us < 0 {
+        return PriorityClass::Ordered;
+    }
+    if playhead_us >= in_us && playhead_us < out_us {
+        return PriorityClass::Playhead;
+    }
+    // Adjacent: within one segment-span on either side.
+    let dur = out_us - in_us;
+    if dur > 0
+        && ((playhead_us < in_us && in_us - playhead_us <= dur)
+            || (playhead_us >= out_us && playhead_us - out_us <= dur))
+    {
+        return PriorityClass::PlayheadAdjacent;
+    }
+    PriorityClass::Ordered
 }
 
 /// Spawn N worker tasks that drain the segment queue. The number of
@@ -467,15 +510,13 @@ async fn run_one_cycle(
         }
     }
 
-    // 7. Enqueue new segments. Use PriorityClass::Ordered for all in A3;
-    // playhead / visible-region priority bumps come from A4 once the
-    // React side reports them.
+    // 7. Enqueue new segments with priority based on the current playhead.
     let project_arc = Arc::new(project.clone());
+    let playhead = renderer.playhead();
     for entry in &diff.new_segments {
         let dest = cache.preview_segment(&entry.hash);
         if cached_ok(&dest) {
-            // The diff said this was new but the file's already on disk
-            // (e.g. from a prior crashed cycle). Fast-path emit.
+            // Diff said new but the file's already on disk — fast-path emit.
             let _ = app.emit(
                 events::SEGMENT_READY,
                 SegmentReady {
@@ -496,7 +537,8 @@ async fn run_one_cycle(
             inline_subs: inline_subs.clone(),
             template_renders: template_renders.clone(),
         };
-        let _ = renderer.queue.push(job, PriorityClass::Ordered).await;
+        let cls = classify_priority(entry.in_us, entry.out_us, playhead);
+        let _ = renderer.queue.push(job, cls).await;
     }
 
     // 8. Reused segments: emit ready if file exists; otherwise enqueue
@@ -523,7 +565,8 @@ async fn run_one_cycle(
                 inline_subs: inline_subs.clone(),
                 template_renders: template_renders.clone(),
             };
-            let _ = renderer.queue.push(job, PriorityClass::Ordered).await;
+            let cls = classify_priority(entry.in_us, entry.out_us, playhead);
+            let _ = renderer.queue.push(job, cls).await;
         }
     }
 
@@ -608,5 +651,59 @@ mod tests {
         // jittery "progress resets every keystroke" UX) or pushing it to
         // some larger value (lets too many stale jobs run).
         assert_eq!(STALE_COMMIT_THRESHOLD, 2);
+    }
+
+    #[test]
+    fn classify_priority_no_playhead() {
+        // playhead_us < 0 means "no playhead reported yet" → everything
+        // is Ordered.
+        assert_eq!(
+            classify_priority(0, 5_000_000, -1),
+            PriorityClass::Ordered,
+        );
+    }
+
+    #[test]
+    fn classify_priority_playhead_inside_segment() {
+        // playhead at t=2.5s lands inside [0, 5s].
+        assert_eq!(
+            classify_priority(0, 5_000_000, 2_500_000),
+            PriorityClass::Playhead,
+        );
+    }
+
+    #[test]
+    fn classify_priority_playhead_at_segment_start_is_inside() {
+        // Inclusive at the start (between(playhead, in, out) uses `>=`
+        // on the lower bound — matches how the timeline display
+        // interprets "playhead is on this segment").
+        assert_eq!(
+            classify_priority(5_000_000, 10_000_000, 5_000_000),
+            PriorityClass::Playhead,
+        );
+    }
+
+    #[test]
+    fn classify_priority_adjacent_segments_get_bumped() {
+        // Segment [5, 10]; playhead at 4s (one second before): adjacent.
+        assert_eq!(
+            classify_priority(5_000_000, 10_000_000, 4_000_000),
+            PriorityClass::PlayheadAdjacent,
+        );
+        // Playhead at 12s (two seconds after a 5s segment ending at 10):
+        // still within one-segment-span of the boundary → adjacent.
+        assert_eq!(
+            classify_priority(5_000_000, 10_000_000, 12_000_000),
+            PriorityClass::PlayheadAdjacent,
+        );
+    }
+
+    #[test]
+    fn classify_priority_far_segments_fall_through() {
+        // Playhead at 100s; segment at [0, 5s]: more than one span away.
+        assert_eq!(
+            classify_priority(0, 5_000_000, 100_000_000),
+            PriorityClass::Ordered,
+        );
     }
 }

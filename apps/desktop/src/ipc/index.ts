@@ -500,6 +500,54 @@ export async function previewCurrentPath(): Promise<string | null> {
   return invoke<string | null>("preview_current_path");
 }
 
+// ---------------------------------------------------------------------------
+// Segmented preview events (Phase A4 — docs/preview-segmented-cache.md).
+// Emitted by the SegmentedRenderer on the Rust side ONLY when the user has
+// WEFTCUT_PREVIEW_SEGMENTED=1 set at startup. The React preview component
+// falls back to the legacy PREVIEW_EVENTS path when these don't fire.
+
+export const SEGMENT_EVENTS = {
+  manifestChanged: "preview:manifest_changed",
+  segmentReady: "preview:segment_ready",
+  segmentError: "preview:segment_error",
+  audioReady: "preview:audio_ready",
+  audioError: "preview:audio_error",
+} as const;
+
+export interface ManifestChanged {
+  globalHash: string;
+  manifestPath: string;
+  durationUs: number;
+}
+
+export interface SegmentReady {
+  hash: string;
+  inUs: number;
+  outUs: number;
+  /// Absolute path to the .m4s file. Use `convertFileSrc` for fetch.
+  path: string;
+}
+
+export interface SegmentError {
+  hash: string;
+  detail: string;
+}
+
+export interface AudioReady {
+  path: string;
+}
+
+export interface AudioError {
+  detail: string;
+}
+
+/// Tell the Rust SegmentedRenderer where the playhead is, so it can bump
+/// the segment containing the playhead to PriorityClass::Playhead on the
+/// next priority recompute. Microseconds.
+export async function previewSetPlayhead(tUs: number): Promise<void> {
+  return invoke<void>("preview_set_playhead", { tUs });
+}
+
 export async function importQueueList(): Promise<ImportEntry[]> {
   return invoke<ImportEntry[]>("import_queue_list");
 }

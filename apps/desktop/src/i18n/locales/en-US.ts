@@ -150,6 +150,7 @@ const enUS = {
     empty_hint: "Add a layer to start the preview",
     preparing: "Preparing preview…",
     rebuilding: "Rebuilding preview…",
+    rendering_range: "Rendering this range…",
     init_failed: "Preview failed to start",
     retry: "Retry",
   },

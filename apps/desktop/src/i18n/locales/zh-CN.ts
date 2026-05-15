@@ -149,6 +149,7 @@ const zhCN: Resources = {
     empty_hint: "添加图层后预览将自动启动",
     preparing: "正在准备预览…",
     rebuilding: "正在重建预览…",
+    rendering_range: "正在渲染此区间…",
     init_failed: "预览启动失败",
     retry: "重试",
   },

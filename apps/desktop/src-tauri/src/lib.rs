@@ -123,6 +123,7 @@ pub fn run() {
             commands::add_template,
             commands::template_preview,
             commands::preview_current_path,
+            commands::preview_set_playhead,
             commands::log_list,
             commands::log_clear,
             commands::log_emit,

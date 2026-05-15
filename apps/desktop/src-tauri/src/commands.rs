@@ -1360,6 +1360,24 @@ pub async fn preview_current_path(
         .map(|p| p.to_string_lossy().to_string()))
 }
 
+/// Update the segmented-preview renderer's playhead position so the next
+/// queue push assigns `PriorityClass::Playhead` to the segment containing
+/// `t_us`. No-op when the segmented renderer isn't running (i.e., the
+/// `WEFTCUT_PREVIEW_SEGMENTED` env var wasn't set at startup).
+#[tauri::command]
+pub async fn preview_set_playhead(
+    app: tauri::AppHandle,
+    t_us: i64,
+) -> Result<(), String> {
+    use tauri::Manager;
+    if let Some(renderer) =
+        app.try_state::<crate::preview::segmented::SegmentedRenderer>()
+    {
+        renderer.set_playhead(t_us);
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn import_cancel(
     import_queue: State<'_, crate::jobs::import::ImportQueue>,
