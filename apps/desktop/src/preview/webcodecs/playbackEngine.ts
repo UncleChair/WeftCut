@@ -594,10 +594,31 @@ export class PlaybackEngine {
   /// time, making the canvas look like it's playing from start to
   /// the seek target. See `buildClipLayer`.
   private clipSeekTargets: Map<string, number> = new Map();
+  /// Last VideoFrame we successfully rendered per clip, held as an
+  /// independent clone so it survives `decoderPool.reset()` (called by
+  /// every `seekTo`). Used as a visual fallback while a fresh seek is
+  /// still cold-warming the decoder — without it the canvas would be
+  /// blank between "user drags playhead" and "decoder catches up". The
+  /// clone is owned by the engine; close it on replace / setRecipe /
+  /// dispose.
+  private fallbackFrames: Map<string, VideoFrame> = new Map();
 
   constructor(canvas: HTMLCanvasElement, events: PlaybackEngineEvents = {}) {
     this.compositor = new WebGL2Compositor(canvas);
     this.events = events;
+  }
+
+  private disposeFallback(layerId: string): void {
+    const f = this.fallbackFrames.get(layerId);
+    if (f) {
+      f.close();
+      this.fallbackFrames.delete(layerId);
+    }
+  }
+
+  private disposeAllFallbacks(): void {
+    for (const f of this.fallbackFrames.values()) f.close();
+    this.fallbackFrames.clear();
   }
 
   /// Point the engine at a whole-timeline audio source (or null to
@@ -649,6 +670,7 @@ export class PlaybackEngine {
     this.rasterCache.clear();
     this.endedFired = false;
     this.clipSeekTargets.clear();
+    this.disposeAllFallbacks();
     this.clock.setBounds(recipe?.durationUs ?? null);
     if (!recipe) {
       this.clock.pause();
@@ -776,6 +798,7 @@ export class PlaybackEngine {
       this.audio.load();
       this.audio = null;
     }
+    this.disposeAllFallbacks();
     this.decoderPool.reset();
     this.rasterCache.dispose();
     this.compositor.dispose();
@@ -869,25 +892,44 @@ export class PlaybackEngine {
 
   private buildClipLayer(clip: RecipeClip, tUs: number): CompositorLayer | null {
     const frame = this.decoderPool.frameAt(clip, tUs);
-    if (!frame) return null;
-    // Seek-warmup gate. After a seek the decoder cold-starts from
-    // t=0 in the source file; `frameAtOrBefore(playhead)` would
-    // otherwise return successively-later frames as decoding climbs
-    // from 0 toward the seek target, which looks like the canvas is
-    // playing through the source. The per-clip seek target is set
-    // by `seekTo` and cleared here once a frame at-or-near the
-    // target arrives — after that, normal lag tolerance kicks in
-    // (we accept whatever the decoder has, the existing behavior).
     const seekTarget = this.clipSeekTargets.get(clip.layerId);
-    if (seekTarget !== undefined) {
-      const TARGET_TOLERANCE_US = 150_000; // ~4 frames at 30 fps
-      if (frame.timestamp < seekTarget - TARGET_TOLERANCE_US) {
-        return null;
+    const TARGET_TOLERANCE_US = 150_000; // ~4 frames at 30 fps
+    // "Caught up" = no outstanding seek target, OR the latest decoded
+    // frame is at-or-near that target. Either way the decoder is
+    // showing the right content for the current playhead.
+    const caughtUp =
+      !!frame &&
+      (seekTarget === undefined || frame.timestamp >= seekTarget - TARGET_TOLERANCE_US);
+
+    if (caughtUp && frame) {
+      // Fresh frame: render it, update fallback for the next warmup.
+      this.disposeFallback(clip.layerId);
+      try {
+        this.fallbackFrames.set(clip.layerId, frame.clone());
+      } catch {
+        // VideoFrame.clone() can throw if the frame's underlying
+        // resource has been recycled; harmless — we just won't have
+        // a fallback for this layer until the next clean render.
       }
-      this.clipSeekTargets.delete(clip.layerId);
+      if (seekTarget !== undefined) this.clipSeekTargets.delete(clip.layerId);
+      return {
+        source: frame,
+        transform: clip.transform,
+        opacity: clip.opacity,
+        blendMode: normalizeBlend(clip.blendMode),
+        flipY: clip.flipY,
+      };
     }
+
+    // Decoder is still cold-warming (typically right after a seek).
+    // Fall back to the previous good frame so the canvas keeps showing
+    // *something* instead of going blank during the wait. Without
+    // this the user sees a black canvas while the decoder rebuilds
+    // from t=0 toward the new playhead position.
+    const fallback = this.fallbackFrames.get(clip.layerId);
+    if (!fallback) return null;
     return {
-      source: frame,
+      source: fallback,
       transform: clip.transform,
       opacity: clip.opacity,
       blendMode: normalizeBlend(clip.blendMode),
