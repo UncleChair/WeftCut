@@ -500,7 +500,7 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
             }
           }}
         />
-        {rebuilding && (
+        {rebuilding && state.kind !== "segmented" && (
           <div className="preview-rebuilding" aria-live="polite">
             <span className="preview-spinner-inline" aria-hidden="true" />
             <span>{t("preview.rebuilding")}</span>
