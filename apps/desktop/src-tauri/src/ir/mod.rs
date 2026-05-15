@@ -18,6 +18,7 @@
 
 pub mod emit_ffmpeg;
 pub mod emit_mpv;
+pub mod emit_webcodecs;
 pub mod graph;
 pub mod lower;
 pub mod materialize;
@@ -27,6 +28,10 @@ pub mod target;
 
 pub use emit_ffmpeg::{FfmpegPlan, emit as emit_ffmpeg};
 pub use emit_mpv::{MpvPlan, emit as emit_mpv};
+pub use emit_webcodecs::{
+    RECIPE_SCHEMA_VERSION, RecipeCanvas, RecipeClip, RecipeImage, RecipeRaster, RecipeTransform,
+    WebcodecsRecipe, emit as emit_webcodecs,
+};
 pub use graph::IRGraph;
 pub use lower::{LowerError, lower, lower_range};
 pub use segments::{MAX_SEGMENT_US, SegmentRange, compute_segment_boundaries};
