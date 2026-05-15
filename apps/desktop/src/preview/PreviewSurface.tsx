@@ -15,6 +15,7 @@ import {
   previewCurrentPath,
   previewRetrySegment,
   previewSetPlayhead,
+  previewWebcodecsRecipe,
   SEGMENT_EVENTS,
   type ManifestChanged,
   type PreviewReady,
@@ -26,6 +27,8 @@ import {
   SegmentedMSEPlayer,
   type SegmentMeta,
 } from "./SegmentedMSEPlayer";
+import { PlaybackEngine } from "./webcodecs/playbackEngine";
+import { useEffectivePreviewMode } from "./webcodecs/previewModeStore";
 
 interface Props {
   /// Project ready to be previewed? When false the surface stays on the
@@ -96,6 +99,22 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
   ) {
     const { t } = useTranslation();
     const videoRef = useRef<HTMLVideoElement | null>(null);
+    // B6b — realtime mode is driven by the resolved preview-mode
+    // store. When it flips to "realtime" we mount a canvas +
+    // PlaybackEngine instead of the `<video>` surface; the legacy /
+    // segmented event subscriptions stay live so switching modes
+    // back doesn't need a reload.
+    const effectiveMode = useEffectivePreviewMode();
+    const inRealtimeMode = effectiveMode === "realtime";
+    const realtimeCanvasRef = useRef<HTMLCanvasElement | null>(null);
+    const engineRef = useRef<PlaybackEngine | null>(null);
+    // Mirror inRealtimeMode in a ref so the (stable) imperative
+    // handle below can branch on the live value without re-creating
+    // itself every render.
+    const inRealtimeModeRef = useRef(inRealtimeMode);
+    useEffect(() => {
+      inRealtimeModeRef.current = inRealtimeMode;
+    }, [inRealtimeMode]);
     const [state, setState] = useState<RenderState>({ kind: "idle" });
     // Whether a re-render is currently in flight. Distinct from
     // `state.kind === "rendering"` because we may already have a
@@ -389,12 +408,28 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
       forwardedRef,
       (): PreviewSurfaceHandle => ({
         play() {
+          if (inRealtimeModeRef.current) {
+            engineRef.current?.play();
+            return;
+          }
           void videoRef.current?.play().catch(() => {});
         },
         pause() {
+          if (inRealtimeModeRef.current) {
+            engineRef.current?.pause();
+            return;
+          }
           videoRef.current?.pause();
         },
         seekTo(tUs: number) {
+          if (inRealtimeModeRef.current) {
+            engineRef.current?.seekTo(tUs);
+            // Still inform the Rust segmented orchestrator — it's
+            // harmless when segmented mode isn't running and
+            // useful if the user switches modes mid-session.
+            void previewSetPlayhead(tUs).catch(() => {});
+            return;
+          }
           const v = videoRef.current;
           if (!v) return;
           const secs = tUs / 1_000_000;
@@ -428,15 +463,127 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
           }
         },
         paused() {
+          if (inRealtimeModeRef.current) {
+            return engineRef.current?.paused() ?? true;
+          }
           return videoRef.current?.paused ?? true;
         },
       }),
       [],
     );
 
+    // B6b realtime engine lifecycle. The canvas only mounts when
+    // inRealtimeMode is true; this effect creates the engine on
+    // mount and disposes on unmount. It also runs an immediate
+    // recipe + audio fetch so the surface paints something before
+    // the next project:changed event.
+    useEffect(() => {
+      if (!inRealtimeMode) return;
+      const canvas = realtimeCanvasRef.current;
+      if (!canvas) return;
+      const engine = new PlaybackEngine(canvas, {
+        onTimeUpdate: (t) => onTimeUpdate(t),
+        onPausedChange: (p) => onPausedChange(p),
+      });
+      engineRef.current = engine;
+
+      const fetchAll = async () => {
+        try {
+          const recipe = await previewWebcodecsRecipe();
+          engine.setRecipe(recipe);
+        } catch {
+          // Recipe unavailable (no project, MCP race, etc.).
+          // Engine sits at empty-state.
+        }
+        try {
+          const path = await previewCurrentPath();
+          engine.setAudioUrl(path ? convertFileSrc(path) : null);
+        } catch {
+          engine.setAudioUrl(null);
+        }
+      };
+      void fetchAll();
+
+      return () => {
+        engine.dispose();
+        engineRef.current = null;
+      };
+    }, [inRealtimeMode, onTimeUpdate, onPausedChange]);
+
+    // Re-fetch the recipe on every project:changed while in
+    // realtime mode. The legacy / segmented branches already react
+    // to their own events; realtime needs an explicit refresh
+    // because the recipe is a pull from a Rust command rather than
+    // a pushed event.
+    useEffect(() => {
+      if (!inRealtimeMode) return;
+      let unlisten: UnlistenFn | null = null;
+      let cancelled = false;
+      (async () => {
+        const u = await listen("project:changed", () => {
+          const engine = engineRef.current;
+          if (!engine) return;
+          void previewWebcodecsRecipe()
+            .then((r) => engine.setRecipe(r))
+            .catch(() => {});
+        });
+        if (cancelled) {
+          u();
+          return;
+        }
+        unlisten = u;
+      })();
+      return () => {
+        cancelled = true;
+        if (unlisten) unlisten();
+      };
+    }, [inRealtimeMode]);
+
+    // Track the latest legacy preview MP4 for the realtime path's
+    // audio source. The legacy renderer always produces this even
+    // when WEFTCUT_PREVIEW_SEGMENTED is set; it carries the mixed
+    // audio track that the engine's `<audio>` element consumes.
+    useEffect(() => {
+      if (!inRealtimeMode) return;
+      let unlisten: UnlistenFn | null = null;
+      let cancelled = false;
+      (async () => {
+        const u = await listen<PreviewReady>(
+          PREVIEW_EVENTS.complete,
+          (e) => {
+            engineRef.current?.setAudioUrl(convertFileSrc(e.payload.path));
+          },
+        );
+        if (cancelled) {
+          u();
+          return;
+        }
+        unlisten = u;
+      })();
+      return () => {
+        cancelled = true;
+        if (unlisten) unlisten();
+      };
+    }, [inRealtimeMode]);
+
     if (!hasContent) {
       return (
         <span className="placeholder">{t("preview.empty_hint")}</span>
+      );
+    }
+    // B6b — realtime mode owns the surface entirely. The canvas is
+    // driven by the PlaybackEngine; the transport controls in the
+    // parent route through the imperative handle. We deliberately
+    // skip the legacy "Rebuilding…" / "preview unavailable" overlays
+    // here because realtime doesn't go through the segment-render
+    // lifecycle that those overlays describe.
+    if (inRealtimeMode) {
+      return (
+        <canvas
+          ref={realtimeCanvasRef}
+          className="preview-video"
+          aria-label={t("preview.realtime_label", "Real-time preview")}
+        />
       );
     }
     if (state.kind === "idle") {
