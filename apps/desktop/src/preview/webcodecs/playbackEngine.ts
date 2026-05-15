@@ -74,6 +74,14 @@ const FRAME_KEEP_BEHIND_US = 500_000;
 /// 64 caps memory at ~512MB which is acceptable for a desktop app.
 const RASTER_CACHE_CAP = 64;
 
+/// How many raster frames ahead of the current index we prefetch on
+/// each access. Without prefetch, every NEW frame index would miss
+/// the cache for one RAF tick (during the async load) and render
+/// nothing, producing the visible flicker. 6 frames ≈ 200ms at 30fps,
+/// enough lead time for the fetch + decode to complete before the
+/// playhead lands on it.
+const RASTER_PREFETCH_AHEAD = 6;
+
 interface RingEntry {
   timestampUs: number;
   frame: VideoFrame;
@@ -307,20 +315,42 @@ class RasterCache {
   /// In-flight fetches so concurrent `getOrFetch` calls dedupe.
   private pending = new Map<string, Promise<ImageBitmap | null>>();
 
-  /// Get the cached bitmap for the raster's frame index, or kick
-  /// off a fetch and return null this tick. The next tick gets the
-  /// loaded bitmap.
-  getOrFetchFrame(rasterDir: string, frameIndex: number): ImageBitmap | null {
+  /// Get the cached bitmap for the raster's frame index, prefetching
+  /// the next several frames so subsequent ticks have them in cache.
+  /// If the requested frame isn't cached yet, falls back to the most
+  /// recent cached frame for this raster (any frame index ≤ the
+  /// requested one). That eliminates the one-tick flicker between
+  /// "fetch started" and "fetch finished".
+  getOrFetchFrame(
+    rasterDir: string,
+    frameIndex: number,
+    frameCount: number,
+  ): ImageBitmap | null {
     const key = framePath(rasterDir, frameIndex);
+
+    // Prefetch lookahead — fire-and-forget. The cache picks them up
+    // on completion; we don't await.
+    const last = Math.min(frameCount - 1, frameIndex + RASTER_PREFETCH_AHEAD);
+    for (let i = frameIndex; i <= last; i += 1) {
+      const k = framePath(rasterDir, i);
+      if (!this.bitmaps.has(k) && !this.pending.has(k)) {
+        this.pending.set(k, this.fetch(k));
+      }
+    }
+
     const cached = this.bitmaps.get(key);
     if (cached) {
-      // LRU touch.
       this.bitmaps.delete(key);
       this.bitmaps.set(key, cached);
       return cached;
     }
-    if (!this.pending.has(key)) {
-      this.pending.set(key, this.fetch(key));
+    // Fallback: walk backwards looking for the closest cached frame
+    // BEHIND the playhead. A one-tick-stale frame is invisible at
+    // 30fps raster + 60Hz display; a missing frame produces a
+    // visible flicker.
+    for (let i = frameIndex - 1; i >= 0; i -= 1) {
+      const fallback = this.bitmaps.get(framePath(rasterDir, i));
+      if (fallback) return fallback;
     }
     return null;
   }
@@ -499,6 +529,18 @@ export class PlaybackEngine {
 
   play(): void {
     if (!this.recipe) return;
+    // Pressing Play after auto-pause-at-end leaves the clock at
+    // durationUs, where nothing on the recipe is active. Rewind to
+    // the start so the user gets a normal replay instead of staring
+    // at an empty composition.
+    const atEnd =
+      this.recipe.durationUs > 0 &&
+      this.clock.currentTimeUs() >= this.recipe.durationUs - 50_000;
+    if (atEnd) {
+      this.clock.seek(0);
+      this.endedFired = false;
+      this.events.onTimeUpdate?.(0);
+    }
     this.clock.play();
     this.endedFired = false;
     this.events.onPausedChange?.(false);
@@ -640,7 +682,11 @@ export class PlaybackEngine {
       0,
       Math.min(raster.frameCount - 1, Math.floor(frameFloat)),
     );
-    const bmp = this.rasterCache.getOrFetchFrame(raster.rasterDir, idx);
+    const bmp = this.rasterCache.getOrFetchFrame(
+      raster.rasterDir,
+      idx,
+      raster.frameCount,
+    );
     if (!bmp) return null;
     return {
       source: bmp,
