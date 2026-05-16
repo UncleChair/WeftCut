@@ -22,13 +22,16 @@ use super::transition::Transition;
 //      `groups` table + `settings.auto_pair_audio_on_import`. Old v2
 //      `.vproj` files load with `groups = []` via `#[serde(default)]`;
 //      the migration is a pure version-bump.
-// v4 — A/B-roll redesign (`docs/ab-roll-redesign`): `Track.role` field
-//      stamps the four reserved tracks of a fresh project (Video A /
-//      Video B / Audio A / Audio B) and drives the AB display-mode
-//      filter. Legacy v3 `.vproj` files load with `role = None` on
-//      every track and render only correctly in Show-All mode (no
-//      auto-migration; user toggles to Show-All manually).
-pub const SCHEMA_VERSION: u32 = 4;
+// v4 — A/B-roll redesign v1: `Track.role` field stamps the four
+//      reserved tracks of a fresh project (Video A / Video B / Audio
+//      A / Audio B) and drives the AB display-mode filter.
+// v5 — A/B-roll redesign v2 (AE-style, this commit): reserved
+//      skeleton shrinks from 4 → 2 (A roll, B roll). Tracks become
+//      kind-agnostic over the v5 phases (TrackKind field still
+//      present in v5.0; removed in a later V.5). Legacy v4 projects
+//      load as-is — orphan AudioA/AudioB tracks remain visible (no
+//      auto-migration; user manually cleans up if desired).
+pub const SCHEMA_VERSION: u32 = 5;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Project {
@@ -59,43 +62,30 @@ pub struct Project {
 impl Project {
     pub fn new_blank(name: impl Into<String>) -> Self {
         let now = Utc::now();
-        // Four reserved, non-removable, role-stamped tracks form the A/B-roll
-        // skeleton of every new project (`docs/ab-roll-redesign`). Order in
-        // `tracks` is bottom-up (index 0 = bottom of z-stack, last = top):
+        // A/B-roll v2 (`docs/ab-roll-redesign` follow-up): the reserved
+        // skeleton shrinks from 4 → 2 tracks. Each is kind-agnostic in
+        // the user-facing model (V.1 still has `TrackKind::Video` on
+        // the field; the IR rewrite in V.5 removes the kind field and
+        // lets layers of any kind coexist). V+A pairs from import land
+        // on the same track and render as one combined row (V.6).
         //
-        //   index 0 — Audio B
-        //   index 1 — Audio A
-        //   index 2 — Video A
-        //   index 3 — Video B (top of z-stack)
-        //
-        // Two invariants encode the design decisions:
-        //   - Within video, A roll renders BELOW B roll (B sits on top).
-        //   - Within audio, A roll renders ABOVE B roll (A is "inner",
-        //     closer to the V/A boundary; B is "outer").
-        // The visual stack in the UI reverses this for video so newer
-        // tracks accrete farther from the middle line, but the data-model
-        // ordering above is what `Project::tracks` stores.
-        let mut audio_b = Track::new(TrackKind::Audio);
-        audio_b.label = Some("Audio B".into());
-        audio_b.removable = false;
-        audio_b.role = Some(TrackRole::AudioB);
-
-        let mut audio_a = Track::new(TrackKind::Audio);
-        audio_a.label = Some("Audio A".into());
-        audio_a.removable = false;
-        audio_a.role = Some(TrackRole::AudioA);
-
+        // Data-model ordering is bottom-up (index 0 = bottom of
+        // z-stack, last = top). A roll is the primary base; B roll
+        // overlays / cutaways paint on top. Separated-audio rows
+        // created by V.7's "Separate audio" feature insert adjacent
+        // to their source video, not at the bottom — visualOrderedTracks
+        // (V.8) computes the on-screen order from this data order.
         let mut a_roll = Track::new(TrackKind::Video);
-        a_roll.label = Some("Video A".into());
+        a_roll.label = Some("A roll".into());
         a_roll.removable = false;
         a_roll.role = Some(TrackRole::ARoll);
 
         let mut b_roll = Track::new(TrackKind::Video);
-        b_roll.label = Some("Video B".into());
+        b_roll.label = Some("B roll".into());
         b_roll.removable = false;
         b_roll.role = Some(TrackRole::BRoll);
 
-        let tracks = imbl::vector![audio_b, audio_a, a_roll, b_roll];
+        let tracks = imbl::vector![a_roll, b_roll];
         Self {
             schema_version: SCHEMA_VERSION,
             project_id: new_id(),

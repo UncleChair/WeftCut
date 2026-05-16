@@ -84,6 +84,14 @@ pub async fn run(workspace: &Path, project: &mut Project) -> Result<MigrationRep
         // manually (Q8 of the redesign locked "no migration").
         project.schema_version = 4;
     }
+    if project.schema_version < 5 {
+        // v5 = A/B-roll redesign v2 (AE-style). Reserved skeleton
+        // shrinks from 4 → 2 tracks. Legacy v4 projects keep their
+        // orphan AudioA/AudioB role-stamped tracks visible — no
+        // auto-migration. The user chose not to handle legacy here.
+        // Pure version bump.
+        project.schema_version = 5;
+    }
 
     Ok(report)
 }
@@ -264,7 +272,7 @@ mod tests {
 
         let report = run(&ws, &mut project).await.unwrap();
         assert_eq!(report.from_version, 1);
-        assert_eq!(report.to_version, 4);
+        assert_eq!(report.to_version, 5);
         assert_eq!(report.migrated, 1);
         assert_eq!(report.missing_sources, 0);
 
@@ -272,7 +280,7 @@ mod tests {
         assert_eq!(migrated.path_rel.as_ref().unwrap(), Path::new("Media/interview.mp4"));
         assert!(ws.join("Media").join("interview.mp4").is_file());
         assert!(ws.join("Backups").read_dir().unwrap().count() >= 1);
-        assert_eq!(project.schema_version, 4);
+        assert_eq!(project.schema_version, 5);
     }
 
     #[tokio::test]
@@ -296,7 +304,7 @@ mod tests {
         let still_legacy = project.media_pool.get(&id).unwrap();
         assert!(still_legacy.path_rel.is_none());
         assert_eq!(still_legacy.path_abs, Path::new("/nonexistent/missing.mp4"));
-        assert_eq!(project.schema_version, 4);
+        assert_eq!(project.schema_version, 5);
     }
 
     #[tokio::test]
@@ -361,10 +369,10 @@ mod tests {
 
         let report = run(&ws, &mut project).await.unwrap();
         assert_eq!(report.from_version, 2);
-        assert_eq!(report.to_version, 4);
+        assert_eq!(report.to_version, 5);
         assert_eq!(report.migrated, 0);
         assert_eq!(report.missing_sources, 0);
-        assert_eq!(project.schema_version, 4);
+        assert_eq!(project.schema_version, 5);
         assert!(project.groups.is_empty());
         assert!(project.settings.auto_pair_audio_on_import);
         // Legacy tracks stay unstamped — no auto-promote.
@@ -378,11 +386,11 @@ mod tests {
         let ws_dir = TempDir::new().unwrap();
         let ws = ws_dir.path().join("doc.vproj");
         fs::create_dir_all(&ws).unwrap();
-        let mut project = Project::new_blank("v4-doc");
+        let mut project = Project::new_blank("v5-doc");
         super::super::save_to_dir(&project, &ws).await.unwrap();
         let report = run(&ws, &mut project).await.unwrap();
-        assert_eq!(report.from_version, 4);
-        assert_eq!(report.to_version, 4);
-        assert_eq!(project.schema_version, 4);
+        assert_eq!(report.from_version, 5);
+        assert_eq!(report.to_version, 5);
+        assert_eq!(project.schema_version, 5);
     }
 }
