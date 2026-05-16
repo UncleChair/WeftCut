@@ -1592,21 +1592,17 @@ async fn place_imported_media_on_fresh_tracks(
         .await
         .map_err(|e: CommandError| e.to_string())?;
 
-    // Paired audio for video-with-audio imports. We replicate `add_media_
-    // layer`'s AV-pair logic verbatim but explicitly create a NEW audio
-    // track rather than reusing an existing one — R.3 says "every media
-    // gets a new track on import", which also applies to the paired
-    // audio component of a video file.
+    // Paired audio for video-with-audio imports. A/B-roll v2 (V.3): the
+    // audio layer lands on the SAME transient track as the video, not
+    // a separate audio track. The V.2 overlap invariant accepts V + A
+    // at the same time slot on one track because they're different
+    // overlap classes; the timeline renderer (V.6) collapses them into
+    // a single combined row visually.
     if matches!(item.kind, MediaKind::Video)
         && item.metadata.audio.is_some()
     {
         let snap = handle.snapshot().await;
         if snap.settings.auto_pair_audio_on_import {
-            let audio_label = format!("{} (audio)", track_label);
-            let audio_track_id = handle
-                .add_transient_track(Actor::User, TrackKind::Audio, Some(audio_label))
-                .await
-                .map_err(|e: CommandError| e.to_string())?;
             let audio_params = LayerParams::Audio(state::layer::AudioParams {
                 media: media_id,
                 src_in_us: 0,
@@ -1620,14 +1616,18 @@ async fn place_imported_media_on_fresh_tracks(
             let audio_layer_id = handle
                 .add_layer(
                     Actor::User,
-                    audio_track_id,
+                    primary_track_id,
                     audio_params,
                     0,
                     primary_span,
                 )
                 .await
                 .map_err(|e: CommandError| e.to_string())?;
-            // Group the V/A pair so future trims fan out (`docs/group-system.md`).
+            // Group the V/A pair so future trims fan out
+            // (`docs/group-system.md`). Same track placement means
+            // the group acts as the "this is one logical clip"
+            // signal; V.4's group-follow-on-move keeps them
+            // co-located when the user drags the pair onto A or B.
             handle
                 .groups_create(
                     Actor::User,
