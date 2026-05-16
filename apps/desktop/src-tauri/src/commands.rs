@@ -135,6 +135,12 @@ pub struct TemplateView {
     pub scale_x: f64,
     pub scale_y: f64,
     pub opacity: f64,
+    /// Validated props the user set on this template instance.
+    /// Keys match the template manifest's `props_schema`; values
+    /// are whatever JSON shape that schema permits (string / number /
+    /// color-as-string). The DOM preview injects this verbatim as
+    /// `window.__props__` inside the template iframe.
+    pub props: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Serialize, Clone)]
@@ -559,14 +565,24 @@ fn layer_params_view(
                 source_value: value,
             })
         }
-        LayerParams::Template(p) => LayerParamsView::Template(TemplateView {
-            template_id: p.template_id.clone(),
-            x: static_or(&p.transform.x, 0.0),
-            y: static_or(&p.transform.y, 0.0),
-            scale_x: static_or(&p.transform.scale_x, 1.0),
-            scale_y: static_or(&p.transform.scale_y, 1.0),
-            opacity: static_or(&p.opacity, 1.0),
-        }),
+        LayerParams::Template(p) => {
+            // imbl::HashMap<String, Value> → serde_json::Map. The values
+            // are already serde_json::Value; we just need to materialize
+            // the map into a serializable shape.
+            let mut props = serde_json::Map::new();
+            for (k, v) in p.props.iter() {
+                props.insert(k.clone(), v.clone());
+            }
+            LayerParamsView::Template(TemplateView {
+                template_id: p.template_id.clone(),
+                x: static_or(&p.transform.x, 0.0),
+                y: static_or(&p.transform.y, 0.0),
+                scale_x: static_or(&p.transform.scale_x, 1.0),
+                scale_y: static_or(&p.transform.scale_y, 1.0),
+                opacity: static_or(&p.opacity, 1.0),
+                props,
+            })
+        }
     }
 }
 

@@ -65,6 +65,10 @@ export interface TemplateView {
   scale_x: number;
   scale_y: number;
   opacity: number;
+  /// User-set props for this template instance, validated against the
+  /// template manifest's `props_schema`. Injected verbatim as
+  /// `window.__props__` inside the DOM-preview iframe.
+  props: Record<string, unknown>;
 }
 
 export interface VideoClipView {
