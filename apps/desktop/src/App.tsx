@@ -48,7 +48,7 @@ import {
 } from "./ipc";
 import { Timeline } from "./timeline/Timeline";
 import { AgentMode } from "./agent/AgentMode";
-import { PropertyPanel } from "./properties/PropertyPanel";
+import { RightPanel } from "./panels/RightPanel";
 import { ConnectAgentPanel } from "./connect/ConnectAgentPanel";
 import { SettingsPanel } from "./settings/SettingsPanel";
 import { TemplatePicker } from "./templates/TemplatePicker";
@@ -974,9 +974,12 @@ export function App({ onCloseProject }: AppProps) {
         </section>
 
         <section className="properties">
-          <PropertyPanel
+          <RightPanel
             tracks={summary?.tracks ?? []}
+            groups={summary?.groups ?? []}
             selectedLayerId={selectedLayerId}
+            currentTimeUs={currentTimeUs}
+            onSelect={setSelectedLayerId}
             onMutated={refresh}
           />
         </section>

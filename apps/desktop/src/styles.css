@@ -1378,6 +1378,154 @@ input.preview-timecode:focus {
   padding: 0;
 }
 
+/* ============================================================
+   Right panel (`docs/ab-roll-redesign` R.6)
+   Replaces the standalone PropertyPanel section.
+   Peek list (top) + Inspector (bottom). Peek hides in Show-All
+   mode and collapses to zero-height when no hidden-track layers
+   fall in the ±Δ window (Q14 lock).
+   ============================================================ */
+.right-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.right-panel-peek {
+  flex: 0 0 auto;
+  max-height: 40%;
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid #1f2937;
+  background: rgba(0, 0, 0, 0.15);
+  overflow: hidden;
+}
+
+.right-panel-peek-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #9ca3af;
+  border-bottom: 1px solid #1f2937;
+}
+
+.right-panel-peek-window {
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.right-panel-peek-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  overflow-y: auto;
+  flex: 1 1 auto;
+}
+
+.right-panel-peek-list li {
+  margin: 0;
+  padding: 0;
+}
+
+.peek-item {
+  display: grid;
+  grid-template-columns: 32px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: #e5e7eb;
+  text-align: left;
+  padding: 6px 12px;
+  cursor: pointer;
+  font: inherit;
+  transition: background 80ms;
+}
+
+.peek-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.peek-item.is-selected {
+  background: rgba(96, 165, 250, 0.18);
+}
+
+.peek-item.is-live {
+  background: rgba(248, 113, 113, 0.08);
+}
+
+.peek-item.is-live.is-selected {
+  background: rgba(248, 113, 113, 0.22);
+}
+
+.peek-thumb {
+  width: 32px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #111827;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.peek-thumb-fallback {
+  font-size: 14px;
+  color: #6b7280;
+}
+
+.peek-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.peek-label {
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.peek-sublabel {
+  font-size: 10px;
+  color: #6b7280;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.peek-times {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  font-size: 10px;
+  color: #9ca3af;
+}
+
+.peek-offset.is-live {
+  color: #fca5a5;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.peek-duration {
+  color: #6b7280;
+}
+
+.right-panel-inspector {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 .property-panel {
   padding: 12px 14px;
   display: flex;
