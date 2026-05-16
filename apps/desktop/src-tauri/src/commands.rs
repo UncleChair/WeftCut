@@ -634,6 +634,22 @@ fn hsl_to_hex(h: f32, s: f32, l: f32) -> String {
     )
 }
 
+/// A/B-roll v2 V.7: right-click "Separate audio to new track" feature.
+/// Lifts an Audio layer onto a freshly-created non-transient track
+/// inserted directly after the source. Group membership preserved.
+#[tauri::command]
+pub async fn separate_audio_to_new_track(
+    handle: State<'_, ProjectHandle>,
+    layer_id: String,
+) -> Result<String, String> {
+    let id = Uuid::parse_str(&layer_id).map_err(|e| format!("layer_id: {e}"))?;
+    handle
+        .separate_audio_to_new_track(Actor::User, id)
+        .await
+        .map(|t| t.to_string())
+        .map_err(|e: CommandError| e.to_string())
+}
+
 #[tauri::command]
 pub async fn add_video_track(handle: State<'_, ProjectHandle>) -> Result<String, String> {
     // V.5: tracks are kind-agnostic. The legacy "add_video_track"

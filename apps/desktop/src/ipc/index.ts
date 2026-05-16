@@ -929,6 +929,17 @@ export async function groupsDissolve(groupId: string): Promise<void> {
   return invoke<void>("groups_dissolve", { groupId });
 }
 
+/// V.7: lift an Audio layer onto a freshly-created non-transient
+/// track inserted directly after its source. Group membership
+/// survives. Returns the new track's id. UI consequence: V.6's
+/// combined-row collapses to V-only on the source row; the new row
+/// below shows the waveform on its own (J/L-cut friendly).
+export async function separateAudioToNewTrack(
+  layerId: string,
+): Promise<string> {
+  return invoke<string>("separate_audio_to_new_track", { layerId });
+}
+
 export async function duplicateLayer(
   layerId: string,
   tOffsetUs: number,
