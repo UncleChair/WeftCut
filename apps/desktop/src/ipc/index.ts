@@ -67,7 +67,9 @@ export interface TemplateView {
   opacity: number;
   /// User-set props for this template instance, validated against the
   /// template manifest's `props_schema`. Injected verbatim as
-  /// `window.__props__` inside the DOM-preview iframe.
+  /// `__props__` on the per-instance shadowed window-proxy inside the
+  /// DOM-preview template host (`<div>` + Shadow DOM; see
+  /// `TemplateHandle.ts`).
   props: Record<string, unknown>;
 }
 
@@ -961,6 +963,23 @@ export async function addTemplate(args: {
 export async function templatePreview(templateId: string): Promise<string> {
   const b64 = await invoke<string>("template_preview", { templateId });
   return `data:image/png;base64,${b64}`;
+}
+
+/// Phase H.0 transparency probe — drives the export-side raster mount
+/// (offscreen webview navigates to the half-transparent-red probe
+/// document, captures, returns PNG bytes). The dev `#html-group-spike`
+/// page calls this, decodes the PNG into a canvas, reads the center
+/// pixel, and asserts vs. PROBE_TARGET. See
+/// `docs/html-render-groups.md` decision 12.
+export interface HtmlGroupProbeResult {
+  /// PNG bytes from `CapturePreview`, base64-encoded.
+  pngBase64: string;
+  width: number;
+  height: number;
+}
+
+export async function htmlGroupProbeTransparency(): Promise<HtmlGroupProbeResult> {
+  return invoke<HtmlGroupProbeResult>("html_group_probe_transparency");
 }
 
 // ============================================================
