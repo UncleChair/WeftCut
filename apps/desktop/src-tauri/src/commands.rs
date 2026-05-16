@@ -1433,11 +1433,17 @@ pub async fn import_media(
     .map_err(|e| format!("import join: {e}"))??;
 
     let item_for_jobs = item.clone();
+    let item_for_placement = item.clone();
     let media_id = item.id;
     let id = handle
         .add_media_item(Actor::User, item)
         .await
         .map_err(|e: CommandError| e.to_string())?;
+
+    // A/B-roll redesign R.3 (`docs/ab-roll-redesign`): every import lands
+    // a layer on a fresh hidden track. The reserved A/B-roll tracks stay
+    // untouched until the user explicitly drags a clip onto them.
+    place_imported_media_on_fresh_tracks(&app, &handle, &item_for_placement).await?;
 
     // Derivatives (proxy / thumbnails / waveform) are content-addressed by
     // blake3 hash, so the cache key doesn't care whether the worker reads
@@ -1445,7 +1451,7 @@ pub async fn import_media(
     // immediately from the original path; they'll race the copy and the
     // results are valid either way.
     crate::jobs::enqueue_for_media(
-        app,
+        app.clone(),
         (*cache).clone(),
         (*handle).clone(),
         item_for_jobs,
@@ -1473,6 +1479,180 @@ pub async fn import_media(
     }
 
     Ok(id.to_string())
+}
+
+/// A/B-roll redesign R.3 helper. Creates one (or two, for paired AV) fresh
+/// hidden tracks and lands the imported media as layer(s) at `t = 0`. The
+/// tracks have `role = None`, so AB display mode hides them; the user
+/// promotes a clip onto Video A/B (or Audio A/B) by dragging the layer
+/// in the timeline (or via the right-panel peek list).
+///
+/// A status-log entry surfaces the new tracks so the user has a visible
+/// signal that the import landed even when AB mode hides the result.
+async fn place_imported_media_on_fresh_tracks(
+    app: &tauri::AppHandle,
+    handle: &ProjectHandle,
+    item: &MediaItem,
+) -> Result<(), String> {
+    use crate::logs;
+
+    let media_id = item.id;
+    // Default span when ffprobe couldn't give us a duration. Same fallback
+    // shape as `add_media_layer` so the resulting layer is placeable and
+    // trim-able even for unprobed sources.
+    let total_src = item.metadata.duration_us.unwrap_or(2_000_000);
+    let label = item
+        .label
+        .as_deref()
+        .unwrap_or("Untitled")
+        .to_string();
+    // Trim the extension off the track label so "interview.mp4" reads as
+    // "interview" in the timeline header.
+    let track_label = std::path::Path::new(&label)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| label.clone());
+
+    let (primary_kind, primary_params, primary_span) = match item.kind {
+        MediaKind::Video => (
+            TrackKind::Video,
+            LayerParams::VideoClip(state::layer::VideoClipParams {
+                media: media_id,
+                src_in_us: 0,
+                src_out_us: total_src,
+                transform: Default::default(),
+                opacity: Animated::Static(1.0),
+                crop: None,
+                flip_h: false,
+                flip_v: false,
+                blend_mode: Default::default(),
+                speed: 1.0,
+                fade_in_us: 0,
+                fade_out_us: 0,
+            }),
+            total_src,
+        ),
+        MediaKind::Audio => (
+            TrackKind::Audio,
+            LayerParams::Audio(state::layer::AudioParams {
+                media: media_id,
+                src_in_us: 0,
+                src_out_us: total_src,
+                gain_db: Animated::Static(0.0),
+                pan: Animated::Static(0.0),
+                fade_in_us: 0,
+                fade_out_us: 0,
+                mute: false,
+            }),
+            total_src,
+        ),
+        MediaKind::Image => (
+            TrackKind::Video,
+            LayerParams::ImageOverlay(state::layer::ImageOverlayParams {
+                media: media_id,
+                transform: Default::default(),
+                opacity: Animated::Static(1.0),
+                blend_mode: Default::default(),
+                fade_in_us: 0,
+                fade_out_us: 0,
+            }),
+            3_000_000,
+        ),
+        MediaKind::Subtitle => (
+            TrackKind::Subtitle,
+            LayerParams::Subtitles(SubtitlesParams {
+                source: SubtitlesSource::Media(media_id),
+            }),
+            10_000_000,
+        ),
+    };
+
+    // Primary track + layer.
+    let primary_track_id = handle
+        .add_track(Actor::User, primary_kind, Some(track_label.clone()))
+        .await
+        .map_err(|e: CommandError| e.to_string())?;
+    let primary_layer_id = handle
+        .add_layer(
+            Actor::User,
+            primary_track_id,
+            primary_params,
+            0,
+            primary_span,
+        )
+        .await
+        .map_err(|e: CommandError| e.to_string())?;
+
+    // Paired audio for video-with-audio imports. We replicate `add_media_
+    // layer`'s AV-pair logic verbatim but explicitly create a NEW audio
+    // track rather than reusing an existing one — R.3 says "every media
+    // gets a new track on import", which also applies to the paired
+    // audio component of a video file.
+    if matches!(item.kind, MediaKind::Video)
+        && item.metadata.audio.is_some()
+    {
+        let snap = handle.snapshot().await;
+        if snap.settings.auto_pair_audio_on_import {
+            let audio_label = format!("{} (audio)", track_label);
+            let audio_track_id = handle
+                .add_track(Actor::User, TrackKind::Audio, Some(audio_label))
+                .await
+                .map_err(|e: CommandError| e.to_string())?;
+            let audio_params = LayerParams::Audio(state::layer::AudioParams {
+                media: media_id,
+                src_in_us: 0,
+                src_out_us: total_src,
+                gain_db: Animated::Static(0.0),
+                pan: Animated::Static(0.0),
+                fade_in_us: 0,
+                fade_out_us: 0,
+                mute: false,
+            });
+            let audio_layer_id = handle
+                .add_layer(
+                    Actor::User,
+                    audio_track_id,
+                    audio_params,
+                    0,
+                    primary_span,
+                )
+                .await
+                .map_err(|e: CommandError| e.to_string())?;
+            // Group the V/A pair so future trims fan out (`docs/group-system.md`).
+            handle
+                .groups_create(
+                    Actor::User,
+                    vec![primary_layer_id, audio_layer_id],
+                    None,
+                    false,
+                )
+                .await
+                .map_err(|e: CommandError| e.to_string())?;
+        }
+    }
+
+    // Surface the new track to the status console. The user is in AB mode
+    // by default — without this entry an import looks like nothing
+    // happened. Logged at Info so it's visible without being intrusive.
+    logs::emit_via_app(
+        app,
+        logs::LogEntryInput {
+            level: logs::LogLevel::Info,
+            category: logs::LogCategory::Import,
+            source: logs::LogSource::User,
+            message: format!(
+                "Added '{}' on a new track (hidden in A/B-Roll mode — switch to Show-All to see)",
+                label
+            ),
+            details: Some(serde_json::json!({
+                "mediaId": media_id.to_string(),
+                "trackId": primary_track_id.to_string(),
+            })),
+            ..Default::default()
+        },
+    );
+
+    Ok(())
 }
 
 /// Return the current preview MP4 path (if a Phase-D render has landed)
