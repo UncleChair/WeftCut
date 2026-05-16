@@ -1019,6 +1019,7 @@ impl WeftCutServer {
                 id: g.id.to_string(),
                 label: g.label.clone(),
                 layer_ids: g.members.iter().map(|m| m.to_string()).collect(),
+                render_mode: g.render_mode,
             })
             .collect();
         ok_json(&payload)
@@ -1040,6 +1041,7 @@ impl WeftCutServer {
             id: g.id.to_string(),
             label: g.label.clone(),
             layer_ids: g.members.iter().map(|m| m.to_string()).collect(),
+            render_mode: g.render_mode,
         })
     }
 
@@ -1132,6 +1134,29 @@ impl WeftCutServer {
         let gid = parse_uuid(&args.group_id, "group_id")?;
         self.project
             .groups_rename(agent_actor(), gid, args.label)
+            .await
+            .map_err(map_command_error)?;
+        Ok(ok_void())
+    }
+
+    #[tool(
+        description = "Switch a group's render mode between `Native` (the default ffmpeg per-layer lowering — \
+                       each member becomes its own IR nodes in the overlay chain) and `Html` (html-render-groups \
+                       island; see `docs/html-render-groups.md`). `Html` mode collapses the group's visual \
+                       members into one HTML composition that exports through CSS, enabling CSS-only effects \
+                       like 3D perspective transforms on real video. Audio members in either mode flow through \
+                       the normal amix chain. Switching to `Html` rejects with a structured validation error \
+                       if any member layer carries an effect with no CSS implementation (e.g. `ChromaKey`, \
+                       `Speed`, `Vignette` in v1); remove the effect or stay in `Native`. Switching back to \
+                       `Native` always succeeds."
+    )]
+    async fn groups_set_render_mode(
+        &self,
+        #[tool(aggr)] args: GroupsSetRenderModeArgs,
+    ) -> Result<CallToolResult, McpError> {
+        let gid = parse_uuid(&args.group_id, "group_id")?;
+        self.project
+            .groups_set_render_mode(agent_actor(), gid, args.mode)
             .await
             .map_err(map_command_error)?;
         Ok(ok_void())
@@ -1814,11 +1839,25 @@ pub struct GroupsRenameArgs {
     pub label: Option<String>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GroupsSetRenderModeArgs {
+    pub group_id: String,
+    /// `"Native"` (default ffmpeg per-layer lowering) or `"Html"`
+    /// (html-render-groups island; see `docs/html-render-groups.md`).
+    /// Switching to `Html` rejects if any member layer has an effect
+    /// with no CSS implementation.
+    pub mode: crate::state::group::GroupRenderMode,
+}
+
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct GroupView {
     pub id: String,
     pub label: Option<String>,
     pub layer_ids: Vec<String>,
+    /// Render mode (`docs/html-render-groups.md`): `Native` lowers
+    /// members through the normal ffmpeg path; `Html` collapses
+    /// visual members into a single HTML composition island.
+    pub render_mode: crate::state::group::GroupRenderMode,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

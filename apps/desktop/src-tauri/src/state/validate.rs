@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use super::animated::Animated;
+use super::effect::EffectKind;
+use super::group::GroupRenderMode;
 use super::ids::{EffectId, GroupId, KeyframeId, LayerId, MediaId, TrackId, TransitionId};
 use super::layer::{Layer, LayerParams};
 use super::project::Project;
@@ -144,6 +146,16 @@ pub enum ValidationError {
 
     #[error("group {group} has fewer than 2 members — should have been auto-dissolved")]
     GroupBelowMinSize { group: GroupId, members: usize },
+
+    #[error(
+        "html-render group {group}: layer {layer} carries effect {effect} ({effect_kind:?}) which has no CSS implementation — remove the effect or switch the group back to Native render mode"
+    )]
+    GroupHtmlEffectNotSupported {
+        group: GroupId,
+        layer: LayerId,
+        effect: EffectId,
+        effect_kind: EffectKind,
+    },
 }
 
 pub fn validate(project: &Project) -> Result<(), ValidationError> {
@@ -199,6 +211,53 @@ fn validate_groups(
             layer_to_group.insert(m, g.id);
         }
     }
+
+    // Html-render groups (`docs/html-render-groups.md` decision 8 —
+    // strict refusal): every effect on every member of an `Html`-mode
+    // group must have a CSS implementation, because the html-render
+    // island has no ffmpeg fallback. Silent drop at export is the bug
+    // class we're preventing — surface the offending effect here so
+    // the user gets an actionable error at the action that created
+    // the conflict (mode switch, or effect add after the switch).
+    //
+    // Skip the layer-index build when there are no Html groups so
+    // existing projects pay zero cost.
+    let has_html_groups = project
+        .groups
+        .iter()
+        .any(|g| g.render_mode == GroupRenderMode::Html);
+    if has_html_groups {
+        let mut layer_by_id: HashMap<LayerId, &Layer> = HashMap::new();
+        for track in project.tracks.iter() {
+            for layer in track.layers.iter() {
+                layer_by_id.insert(layer.id, layer);
+            }
+        }
+        for g in project.groups.iter() {
+            if g.render_mode != GroupRenderMode::Html {
+                continue;
+            }
+            for &member_id in g.members.iter() {
+                let Some(&layer) = layer_by_id.get(&member_id) else {
+                    // Membership integrity was already verified above;
+                    // a miss here is unreachable in practice.
+                    continue;
+                };
+                for effect in layer.effects.iter() {
+                    let kind = effect.kind();
+                    if !kind.supports_css() {
+                        return Err(ValidationError::GroupHtmlEffectNotSupported {
+                            group: g.id,
+                            layer: member_id,
+                            effect: effect.id,
+                            effect_kind: kind,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -1257,6 +1316,95 @@ mod tests {
         assert_eq!(idx.get(&a), Some(&g1));
         assert_eq!(idx.get(&b), Some(&g1));
         assert_eq!(idx.get(&c), Some(&g2));
+    }
+
+    // ============================================================
+    // HTML render groups (Phase H.1 — `docs/html-render-groups.md`)
+    // ============================================================
+
+    use crate::state::group::GroupRenderMode;
+
+    fn css_supported_blur_effect() -> Effect {
+        Effect {
+            id: new_id(),
+            enabled: true,
+            params: EffectParams::Blur {
+                radius: Animated::Static(1.0),
+            },
+        }
+    }
+
+    /// ChromaKey has `supports_css() == false` — adding it to a layer
+    /// inside an Html-mode group is what the validator must catch.
+    fn css_unsupported_chroma_key_effect() -> Effect {
+        Effect {
+            id: new_id(),
+            enabled: true,
+            params: EffectParams::ChromaKey {
+                key: Rgba::WHITE,
+                similarity: Animated::Static(0.1),
+                smoothness: Animated::Static(0.1),
+            },
+        }
+    }
+
+    fn html_group(id: GroupId, members: impl IntoIterator<Item = LayerId>) -> Group {
+        let mut g = Group::from_iter(id, None, members);
+        g.render_mode = GroupRenderMode::Html;
+        g
+    }
+
+    #[test]
+    fn html_group_with_css_supported_effects_validates() {
+        let mut p = blank();
+        let mut a = color_layer(0, 1_000_000);
+        let mut b = color_layer(2_000_000, 3_000_000);
+        // Blur is CSS-supported per EffectKind::supports_css.
+        a.effects.push_back(css_supported_blur_effect());
+        b.effects.push_back(css_supported_blur_effect());
+        let a_id = add_layer_to_new_video_track(&mut p, a);
+        let b_id = add_layer_to_new_video_track(&mut p, b);
+        p.groups.push_back(html_group(new_id(), [a_id, b_id]));
+        validate(&p).expect("html group with only CSS-supported effects should pass");
+    }
+
+    #[test]
+    fn html_group_with_css_unsupported_effect_rejects() {
+        let mut p = blank();
+        let mut a = color_layer(0, 1_000_000);
+        let b = color_layer(2_000_000, 3_000_000);
+        // ChromaKey has no CSS impl — Html mode must reject.
+        a.effects.push_back(css_unsupported_chroma_key_effect());
+        let a_id = add_layer_to_new_video_track(&mut p, a);
+        let b_id = add_layer_to_new_video_track(&mut p, b);
+        p.groups.push_back(html_group(new_id(), [a_id, b_id]));
+        let err = validate(&p).expect_err("should reject");
+        assert!(
+            matches!(
+                err,
+                ValidationError::GroupHtmlEffectNotSupported {
+                    effect_kind: EffectKind::ChromaKey,
+                    ..
+                }
+            ),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn native_group_ignores_css_support() {
+        // Same chroma-key effect that would fail under Html mode must
+        // pass under Native mode — Native groups go through the
+        // ffmpeg path where every effect ships a lavfi lowering.
+        let mut p = blank();
+        let mut a = color_layer(0, 1_000_000);
+        let b = color_layer(2_000_000, 3_000_000);
+        a.effects.push_back(css_unsupported_chroma_key_effect());
+        let a_id = add_layer_to_new_video_track(&mut p, a);
+        let b_id = add_layer_to_new_video_track(&mut p, b);
+        // Default render_mode is Native; no chroma-key check should fire.
+        p.groups.push_back(Group::from_iter(new_id(), None, [a_id, b_id]));
+        validate(&p).expect("native group with ChromaKey should still pass");
     }
 }
 

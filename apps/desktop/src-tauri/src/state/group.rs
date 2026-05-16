@@ -10,9 +10,36 @@
 
 use std::collections::HashMap;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::ids::{GroupId, LayerId};
+
+/// How a group renders at export time.
+///
+/// `Native` (the default — every pre-Phase-H project, and every group
+/// the user hasn't explicitly opted in) lowers each member through the
+/// normal ffmpeg path: each layer becomes its own IR nodes inside the
+/// overlay chain.
+///
+/// `Html` (`docs/html-render-groups.md`) collapses the group's visual
+/// members into one HTML composition that the offscreen raster webview
+/// captures frame-by-frame. The captured frames stream into a transient
+/// VP9-with-alpha intermediate that the main ffmpeg overlays as a
+/// single input. Audio members of the group still feed the regular
+/// amix unchanged.
+///
+/// Toggling `Native → Html` runs a validator that rejects the switch
+/// when any member layer carries an effect with no CSS implementation
+/// (`docs/html-render-groups.md` decision 8 — strict refusal). This
+/// surfaces the problem at edit time rather than silently dropping the
+/// effect from the final export.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum GroupRenderMode {
+    #[default]
+    Native,
+    Html,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Group {
@@ -22,11 +49,20 @@ pub struct Group {
     /// `OrdSet` so the on-disk form is deterministic. Insertion order is
     /// not user-visible — group membership is a set.
     pub members: imbl::OrdSet<LayerId>,
+    /// `#[serde(default)]` loads every pre-v6 group as `Native`, so the
+    /// schema v5 → v6 migration is a pure version bump.
+    #[serde(default)]
+    pub render_mode: GroupRenderMode,
 }
 
 impl Group {
     pub fn new(id: GroupId, label: Option<String>, members: imbl::OrdSet<LayerId>) -> Self {
-        Self { id, label, members }
+        Self {
+            id,
+            label,
+            members,
+            render_mode: GroupRenderMode::default(),
+        }
     }
 
     /// Convenience: build from an unordered iterator.
@@ -39,6 +75,7 @@ impl Group {
             id,
             label,
             members: members.into_iter().collect(),
+            render_mode: GroupRenderMode::default(),
         }
     }
 }

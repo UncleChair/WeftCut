@@ -39,6 +39,57 @@ pub enum EffectKind {
     Vignette,
 }
 
+impl EffectKind {
+    /// Whether this effect has a CSS-rendered representation. Consulted
+    /// by `state::validate` to reject `Group.render_mode = Html` when a
+    /// member layer carries an effect that ffmpeg can do but CSS can't
+    /// — the strict-refusal policy from `docs/html-render-groups.md`
+    /// decision 8. False today doesn't mean "never" — it means "no v1
+    /// CSS impl exists" and adding one is a real piece of work
+    /// (per-effect shader / SVG-filter / radial-gradient adapter).
+    ///
+    /// Today's mapping (revisit as the html-render-groups effect
+    /// catalog grows):
+    ///
+    /// | Kind          | supports_css | Why                                              |
+    /// |---------------|--------------|--------------------------------------------------|
+    /// | ColorCorrect  | true         | `filter: brightness/contrast/saturate(...)`      |
+    /// | Blur          | true         | `filter: blur(...)` (math diverges from `gblur`, |
+    /// |               |              | but inside an html-group CSS *is* the truth)     |
+    /// | ChromaKey     | false        | No native CSS chroma-key; SVG filter would be    |
+    /// |               |              | a real engineering project                       |
+    /// | Speed         | false        | Temporal remap, not a per-frame style; html-group|
+    /// |               |              | source frames are pre-extracted at canvas fps,   |
+    /// |               |              | which makes Speed redundant inside the island    |
+    /// | Vignette      | false        | Possible via radial-gradient overlay or          |
+    /// |               |              | `mask-image`, but no impl in v1                  |
+    ///
+    /// Effects without `supports_css` block toggling a containing group
+    /// to `Html` render mode; surface the structured error to the user
+    /// at edit time (decision 8) so silent drops at export are
+    /// impossible.
+    pub fn supports_css(self) -> bool {
+        match self {
+            EffectKind::ColorCorrect | EffectKind::Blur => true,
+            EffectKind::ChromaKey | EffectKind::Speed | EffectKind::Vignette => false,
+        }
+    }
+
+    /// Whether this effect has an ffmpeg lavfi lowering. Always `true`
+    /// today — every effect must lower to ffmpeg or it couldn't ship.
+    /// The mirror of `supports_css` for symmetry; consulted by lowering
+    /// if/when an export-only-via-CSS effect ever lands.
+    pub fn supports_ffmpeg(self) -> bool {
+        match self {
+            EffectKind::ColorCorrect
+            | EffectKind::Blur
+            | EffectKind::ChromaKey
+            | EffectKind::Speed
+            | EffectKind::Vignette => true,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum EffectParams {
