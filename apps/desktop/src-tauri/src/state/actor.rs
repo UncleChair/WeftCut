@@ -4696,25 +4696,24 @@ mod tests {
 
     #[tokio::test]
     async fn blank_project_ships_with_ab_roll_skeleton() {
-        // `docs/ab-roll-redesign`: every fresh project ships with four
-        // reserved, non-removable, role-stamped tracks. Ordering in
-        // `Project::tracks` is bottom-up:
-        //   index 0 — Audio B   (role AudioB)
-        //   index 1 — Audio A   (role AudioA)
-        //   index 2 — Video A   (role ARoll)
-        //   index 3 — Video B   (role BRoll, top of z-stack)
+        // A/B-roll v2 (`docs/ab-roll-redesign` follow-up): the reserved
+        // skeleton shrinks from 4 → 2. Two non-removable, role-stamped
+        // tracks (A roll + B roll). Both are kind-agnostic in the
+        // user-facing model; in v5.0 the TrackKind field still exists
+        // and is set to Video for back-compat (V.5 removes the field).
+        //
+        // Data-model order is bottom-up: A roll at index 0 (z-stack
+        // base), B roll at index 1 (top — overlays / cutaways paint
+        // on top of A).
         let p = Project::new_blank("untitled");
-        assert_eq!(p.tracks.len(), 4);
+        assert_eq!(p.tracks.len(), 2);
 
         let expected = [
-            ("Audio B", super::TrackKind::Audio, super::TrackRole::AudioB),
-            ("Audio A", super::TrackKind::Audio, super::TrackRole::AudioA),
-            ("Video A", super::TrackKind::Video, super::TrackRole::ARoll),
-            ("Video B", super::TrackKind::Video, super::TrackRole::BRoll),
+            ("A roll", super::TrackRole::ARoll),
+            ("B roll", super::TrackRole::BRoll),
         ];
-        for (track, (label, kind, role)) in p.tracks.iter().zip(expected.iter()) {
+        for (track, (label, role)) in p.tracks.iter().zip(expected.iter()) {
             assert_eq!(track.label.as_deref(), Some(*label));
-            assert!(matches!(&track.kind, k if std::mem::discriminant(k) == std::mem::discriminant(kind)));
             assert_eq!(track.role, Some(*role));
             assert!(!track.removable);
         }
@@ -4734,6 +4733,25 @@ mod tests {
         use chrono::Utc;
 
         let mut p = Project::new_blank("ab-roll-test");
+        // V.1 shrunk Project::new_blank to 2 reserved tracks (A roll +
+        // B roll). The R.4 promotion tests still want AudioA + AudioB
+        // role-stamped tracks present so the legacy
+        // `promote_av_pair_to_matching_role` path has somewhere to
+        // route to. Inject them by direct mutation — V.4 will replace
+        // the promotion semantics and these fixture tracks become
+        // unnecessary at that point.
+        {
+            let mut audio_a = Track::new(TrackKind::Audio);
+            audio_a.label = Some("Audio A".into());
+            audio_a.removable = false;
+            audio_a.role = Some(TrackRole::AudioA);
+            let mut audio_b = Track::new(TrackKind::Audio);
+            audio_b.label = Some("Audio B".into());
+            audio_b.removable = false;
+            audio_b.role = Some(TrackRole::AudioB);
+            p.tracks.push_back(audio_a);
+            p.tracks.push_back(audio_b);
+        }
         // Add the import media to the pool so the layers can reference it.
         let media = MediaItem {
             id: new_id(),
@@ -5051,13 +5069,12 @@ mod tests {
 
     #[tokio::test]
     async fn cannot_delete_role_stamped_track() {
-        // Reserved tracks have removable=false; the existing TrackNotRemovable
-        // error path covers them. Verify against every reserved index, not
-        // just the first, so an accidental flip of `removable` on any one
-        // surface would catch.
+        // V.1: reserved skeleton is A roll + B roll (2 tracks). Both
+        // are removable=false; an attempted delete must surface
+        // TrackNotRemovable on either.
         let handle = spawn(Project::new_blank("untitled"));
         let snap = handle.snapshot().await;
-        assert_eq!(snap.tracks.len(), 4);
+        assert_eq!(snap.tracks.len(), 2);
         for t in snap.tracks.iter() {
             let err = handle
                 .delete_track(Actor::User, t.id, true)
