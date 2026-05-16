@@ -3,9 +3,6 @@ import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialo
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  addDemoColorLayer,
-  addDemoTextLayer,
-  addVideoTrack,
   AGENT_SESSION_EVENTS,
   agentSessionEnd,
   agentSessionGet,
@@ -860,22 +857,10 @@ export function App({ onCloseProject }: AppProps) {
             disabled={busy}
           />
           <MenuSeparator />
-          <MenuItem
-            label={t("actions.add_track")}
-            onSelect={() => run(addVideoTrack)}
-            disabled={busy}
-          />
-          <MenuItem
-            label={t("actions.add_color_layer")}
-            onSelect={() => run(addDemoColorLayer)}
-            disabled={busy}
-          />
-          <MenuItem
-            label={t("actions.add_text_layer")}
-            onSelect={() => run(addDemoTextLayer)}
-            disabled={busy}
-          />
-          <MenuSeparator />
+          {/* R.10 (`docs/ab-roll-redesign`): the "Add Track" / "Add color
+              layer" / "Add text layer" menu entries are gone. New tracks
+              only come from the import flow (R.3 lands one fresh hidden
+              track per imported media) and from templates below. */}
           <MenuItem
             label={t("actions.templates")}
             hint={t("actions.templates_hint")}
