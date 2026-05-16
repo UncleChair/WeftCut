@@ -83,6 +83,7 @@ import {
 import { StatusBar } from "./logs/StatusBar";
 import { LogConsole, type LogConsoleHandle } from "./logs/LogConsole";
 import { wireLogStream, useLogStore } from "./logs/store";
+import { wireProjectStore } from "./state/projectStore";
 import {
   setMediaPoolDrawerOpen,
   toggleDisplayMode,
@@ -302,6 +303,28 @@ export function App({ onCloseProject }: AppProps) {
     let cancelled = false;
     (async () => {
       const u = await wireLogStream();
+      if (cancelled) {
+        u();
+        return;
+      }
+      unlisten = u;
+    })();
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
+  }, []);
+
+  // Project state mirror for the DOM preview (`docs/preview-dom.md` Phase A).
+  // Coexists with the local-state fetches further down — both subscribe to
+  // `project:changed`, both re-fetch, no cross-talk. The DOM preview engine
+  // reads from `useProjectStore`; App.tsx's existing fetches stay until
+  // Phase F cutover.
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+    (async () => {
+      const u = await wireProjectStore();
       if (cancelled) {
         u();
         return;
