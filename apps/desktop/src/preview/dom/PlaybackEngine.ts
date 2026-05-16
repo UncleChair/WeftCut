@@ -12,7 +12,9 @@
 ///     off rather than jumping ahead.
 ///   - A registry of `LayerHandle`s receives `tick(masterUs, playing)`
 ///     every RAF frame. Each handle drives its own DOM element (a
-///     `<video>`, `<audio>`, `<iframe>`, `<canvas>`, `<div>`); the
+///     `<video>`, `<audio>`, `<canvas>`, or `<div>` — the last serving
+///     both generic color/text layers and template hosts via Shadow
+///     DOM; see `TemplateHandle.ts` for why iframes are not used); the
 ///     engine never touches the DOM directly.
 ///   - `play()` / `pause()` / `seek()` / `beginScrub()` / `endScrub()`
 ///     are the entire mutating API. UI subscribes via `onTimeUpdate`

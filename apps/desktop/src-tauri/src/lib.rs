@@ -132,6 +132,7 @@ pub fn run() {
             commands::list_templates,
             commands::add_template,
             commands::template_preview,
+            commands::html_group_probe_transparency,
             commands::log_list,
             commands::log_clear,
             commands::log_emit,

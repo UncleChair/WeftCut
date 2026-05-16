@@ -139,7 +139,9 @@ pub struct TemplateView {
     /// Keys match the template manifest's `props_schema`; values
     /// are whatever JSON shape that schema permits (string / number /
     /// color-as-string). The DOM preview injects this verbatim as
-    /// `window.__props__` inside the template iframe.
+    /// `__props__` on the per-instance shadowed window-proxy inside
+    /// the template host (`<div>` + Shadow DOM; see
+    /// `TemplateHandle.ts`).
     pub props: serde_json::Map<String, serde_json::Value>,
 }
 
@@ -1962,6 +1964,24 @@ pub async fn template_preview(
         .map_err(|e| format!("read {}: {e}", frame.path.display()))?;
     use base64::Engine;
     Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
+}
+
+/// HTML-render-groups Phase H.0 transparency probe — drives the
+/// export-side mount surface (the offscreen `raster-worker` webview
+/// navigates to a full-document half-transparent-red probe and captures
+/// via WebView2 `CapturePreview`). Returns base64 PNG bytes; the dev
+/// `#html-group-spike` page decodes them, reads the center pixel, and
+/// asserts vs. (255, 0, 0, 128) ± 4. Removed when Phase H closes.
+///
+/// Decision 12 (`docs/html-render-groups.md`) requires this probe to
+/// pass *before* anything else in Phase H.* lands. If it fails, the
+/// iframe-transparency-bug arc has re-opened on a new surface and the
+/// fix needs to land before composition machinery is built on top.
+#[tauri::command]
+pub async fn html_group_probe_transparency(
+    app: tauri::AppHandle,
+) -> Result<crate::raster::html_group::ProbeResult, String> {
+    crate::raster::html_group::probe_transparency(&app).await
 }
 
 /// Stage F-Picker: UI counterpart to the MCP `add_template` tool. Mirrors

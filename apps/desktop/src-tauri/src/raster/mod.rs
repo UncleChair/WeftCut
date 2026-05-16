@@ -16,6 +16,7 @@
 //!   Linux:   `webkit_web_view_get_snapshot` (async; soft spot — fall back to bundled
 //!            headless Chromium via `chromiumoxide` if WebKitGTK misbehaves).
 
+pub mod html_group;
 pub mod template;
 
 use std::path::{Path, PathBuf};
@@ -260,10 +261,21 @@ async fn navigate_to_template(
     template: &Template,
 ) -> Result<(), String> {
     let composed = template.html.replace("__STYLE__", &template.style);
+    navigate_to_html(window, &composed).await
+}
+
+/// Navigate the offscreen worker to an arbitrary HTML document via a
+/// `data:` URL and await `document.readyState === 'complete'`. Used by
+/// both `navigate_to_template` (Phase 5) and the html-render-groups
+/// probe + raster path (Phase H.*).
+pub async fn navigate_to_html(
+    window: &tauri::WebviewWindow,
+    html: &str,
+) -> Result<(), String> {
     // data: URLs need everything-not-safe percent-encoded — most importantly
     // `#`, `%`, and reserved chars. `urlencoding` would be ideal but isn't
     // in our deps; do the minimal escape ourselves.
-    let encoded = data_url_encode(&composed);
+    let encoded = data_url_encode(html);
     let data_url = format!("data:text/html;charset=utf-8,{encoded}");
     let url: tauri::Url = data_url
         .parse()
@@ -541,6 +553,24 @@ fn capture_to_file(
     webview: tauri::webview::PlatformWebview,
     dest: &std::path::Path,
 ) -> Result<u64, String> {
+    let buf = capture_png_bytes_blocking(webview)?;
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("create cache dir {}: {e}", parent.display()))?;
+    }
+    std::fs::write(dest, &buf).map_err(|e| format!("write {}: {e}", dest.display()))?;
+    Ok(buf.len() as u64)
+}
+
+/// Capture the current offscreen-webview frame as a PNG byte buffer.
+/// Shared low-level path used by both `capture_to_file` (template
+/// raster, writes the bytes to disk in the cache layout) and the
+/// html-render-groups probe (returns the bytes for in-process pixel
+/// inspection).
+#[cfg(windows)]
+fn capture_png_bytes_blocking(
+    webview: tauri::webview::PlatformWebview,
+) -> Result<Vec<u8>, String> {
     use webview2_com::CapturePreviewCompletedHandler;
     use webview2_com::Microsoft::Web::WebView2::Win32::{
         COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_PNG, ICoreWebView2,
@@ -607,13 +637,20 @@ fn capture_to_file(
             break;
         }
     }
+    Ok(buf)
+}
 
-    if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("create cache dir {}: {e}", parent.display()))?;
+/// Async wrapper for [`capture_png_bytes_blocking`] — bridges the
+/// PlatformWebview-via-with_webview thread to the tokio task.
+pub async fn capture_png_bytes(window: &tauri::WebviewWindow) -> Result<Vec<u8>, String> {
+    let (tx, rx) = tokio::sync::oneshot::channel::<Result<Vec<u8>, String>>();
+    let with_webview = window.with_webview(move |webview| {
+        let _ = tx.send(capture_png_bytes_blocking(webview));
+    });
+    if let Err(e) = with_webview {
+        return Err(format!("with_webview: {e}"));
     }
-    std::fs::write(dest, &buf).map_err(|e| format!("write {}: {e}", dest.display()))?;
-    Ok(buf.len() as u64)
+    rx.await.map_err(|e| format!("oneshot recv: {e}"))?
 }
 
 #[cfg(not(windows))]
@@ -623,4 +660,12 @@ fn capture_to_file(
     _dest: &std::path::Path,
 ) -> Result<u64, String> {
     Err("raster capture: only wired on Windows so far (Phase 5 spike)".into())
+}
+
+#[cfg(not(windows))]
+#[allow(dead_code)]
+fn capture_png_bytes_blocking(
+    _webview: tauri::webview::PlatformWebview,
+) -> Result<Vec<u8>, String> {
+    Err("raster capture: only wired on Windows so far".into())
 }
