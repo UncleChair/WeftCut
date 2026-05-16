@@ -3,8 +3,8 @@
 /// Owns the synthetic master clock + RAF loop + handle registry. Pure
 /// TypeScript; no React imports. Designed in `docs/preview-dom.md` Q4
 /// (γ: synthetic clock as master, Web Audio is the mixer not the
-/// timing source). Replaces the B.3 `webcodecs/playbackEngine.ts` once
-/// Phase F lands.
+/// timing source). Replaces the legacy WebCodecs `playbackEngine` from
+/// the B.3 path that Phase F deleted at cutover.
 ///
 /// Architecture:
 ///   - master_us advances from a `performance.now()` baseline, with

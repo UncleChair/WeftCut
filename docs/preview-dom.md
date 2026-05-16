@@ -1,13 +1,11 @@
 # DOM preview — design
 
-**Status:** Planning, not yet shipped. Will land on branch `feat/preview-dom`
-via Q8.a big-bang phasing. Designed in a grilling session on 2026-05-16.
-
-Replaces the cached preview path (`PreviewRenderer`, `WEFTCUT_PREVIEW_SEGMENTED`
-segmented cache) and the B.3 real-time WebCodecs + WebGL2 engine from
-`docs/preview-segmented-cache.md`. After cutover, **one** preview engine
-exists, ffmpeg is invoked only at import (proxy job) and export — never
-in the preview hot path.
+**Status:** Phases A–F **shipped 2026-05-16** on branch `feat/preview-dom`.
+Designed in a grilling session on 2026-05-16; six implementation commits
+landed the same day. The Rust-side `PreviewRenderer`, segmented cache,
+WebCodecs + WebGL2 engine, and the cached/realtime/auto mode toggle UI
+are all deleted. **One** preview engine exists; ffmpeg runs only at
+import (proxy job) and export — never in the preview hot path.
 
 ---
 

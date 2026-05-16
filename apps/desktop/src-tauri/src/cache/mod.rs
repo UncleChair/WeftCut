@@ -163,54 +163,14 @@ impl CacheLayout {
         self.raster_root().join(key)
     }
 
-    /// (NEW per workspace-redesign Q10) State-hashed preview MP4 renders.
-    /// Hit means a prior render produced this exact project state to MP4;
-    /// the React `<video>` source can swap to it instantly with no ffmpeg
-    /// invocation. Key composition lives in the Phase D preview renderer.
-    pub fn preview_dir(&self) -> PathBuf {
-        self.current_root().join("preview")
-    }
-
-    pub fn preview(&self, key: &str) -> PathBuf {
-        self.preview_dir().join(format!("{key}.mp4"))
-    }
-
-    /// (NEW per `docs/preview-segmented-cache.md` A2) Per-segment fMP4 files
-    /// keyed by content hash. Flat dir across all manifests — same segment
-    /// content under any project state dedupes naturally.
-    pub fn preview_segments_dir(&self) -> PathBuf {
-        self.preview_dir().join("segments")
-    }
-
-    pub fn preview_segment(&self, segment_hash: &str) -> PathBuf {
-        self.preview_segments_dir()
-            .join(format!("{segment_hash}.m4s"))
-    }
-
-    /// Manifest JSON per global state hash. Atomic via `.tmp` + rename
-    /// (see `temp_path` / `promote_temp`).
-    pub fn preview_manifest(&self, global_hash: &str) -> PathBuf {
-        self.preview_dir()
-            .join(format!("{global_hash}.manifest.json"))
-    }
-
-    /// Codec init segment per global hash. All segments referenced by the
-    /// manifest share this init (same codec / size / fps / pix_fmt). Stored
-    /// per-global-hash so a canvas-resolution change produces a fresh init
-    /// rather than corrupting the cached one.
-    pub fn preview_init(&self, global_hash: &str) -> PathBuf {
-        self.preview_dir().join(format!("{global_hash}.init.mp4"))
-    }
-
-    /// Whole-timeline audio per global hash. AAC in fMP4 container so the
-    /// React MSE driver can append it to an audio SourceBuffer alongside
-    /// the video segments.
-    pub fn preview_audio(&self, global_hash: &str) -> PathBuf {
-        self.preview_dir().join(format!("{global_hash}.audio.m4a"))
-    }
-
     /// Create the top-level cache directory tree. Idempotent. Called
     /// implicitly by `set_workspace`; the boot fallback also calls it once.
+    ///
+    /// `Cache/preview/` is intentionally NOT created — the cached + segmented
+    /// preview paths were deleted in `docs/preview-dom.md` Phase F. Existing
+    /// workspaces may have an orphan `Cache/preview/` tree from a prior
+    /// version; it's left in place rather than auto-deleted (call out in the
+    /// design doc) so a user reverting to an older build keeps their cache.
     pub fn ensure_dirs(&self) -> Result<()> {
         let root = self.current_root();
         for p in [
@@ -223,8 +183,6 @@ impl CacheLayout {
             self.transcribe_audio_dir(),
             self.voiceover_dir(),
             self.raster_root(),
-            self.preview_dir(),
-            self.preview_segments_dir(),
         ] {
             fs::create_dir_all(&p)
                 .with_context(|| format!("create cache dir {}", p.display()))?;
@@ -316,7 +274,6 @@ mod tests {
         assert!(layout.inline_subs_dir().is_dir());
         assert!(layout.transcribe_audio_dir().is_dir());
         assert!(layout.voiceover_dir().is_dir());
-        assert!(layout.preview_dir().is_dir());
     }
 
     #[test]
