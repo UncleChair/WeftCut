@@ -33,7 +33,6 @@ use crate::state::layer::{
 };
 use crate::state::media::{MediaItem, MediaKind};
 use crate::state::project::Project;
-use crate::state::track::TrackKind;
 use crate::state::transform::BlendMode as ProjectBlendMode;
 
 /// Recipe schema version. Bump on any structural change so old
@@ -165,20 +164,24 @@ pub fn emit(
         if !track.enabled {
             continue;
         }
-        if track.kind != TrackKind::Video {
-            // Audio + subtitle tracks aren't WebCodecs-rendered:
-            // audio reuses A's whole-timeline file; subtitles ride
-            // the raster pipeline alongside templates.
-            continue;
-        }
 
         // Z-order: each later track renders on top. Stride by 1_000
         // so the in-track layer index could be folded in later
-        // without renumbering.
+        // without renumbering. V.5: tracks are kind-agnostic — we
+        // walk every track and filter per-layer below. Audio layers
+        // are skipped (audio reuses A's whole-timeline file);
+        // subtitle layers ride the raster pipeline like templates.
         let z_order = (track_idx as i32) * 1_000;
 
         for layer in track.layers.iter() {
             if !layer.enabled {
+                continue;
+            }
+            // V.5 per-layer filter: skip audio at the WebCodecs
+            // stage. Visual-class layers (VideoClip, ImageOverlay,
+            // Text, Color, Template, Subtitles) flow into the
+            // appropriate sub-pipeline below via the existing match.
+            if matches!(layer.params, LayerParams::Audio(_)) {
                 continue;
             }
             match &layer.params {
@@ -395,7 +398,7 @@ mod tests {
         media::{MediaItem, MediaKind, MediaMetadata, VideoStreamMeta},
         project::{Project, ProjectMetadata},
         time::Rational,
-        track::{Track, TrackKind},
+        track::Track,
         transform::Transform,
     };
 
@@ -511,7 +514,6 @@ mod tests {
         };
         p.tracks.push_back(Track {
             id: track_id,
-            kind: TrackKind::Video,
             label: None,
             enabled: true,
             locked: false,
@@ -573,7 +575,6 @@ mod tests {
         };
         p.tracks.push_back(Track {
             id: Uuid::now_v7(),
-            kind: TrackKind::Video,
             label: None,
             enabled: false, // disabled — clips must be skipped
             locked: false,
@@ -592,7 +593,6 @@ mod tests {
         let mut p = empty_project();
         p.tracks.push_back(Track {
             id: Uuid::now_v7(),
-            kind: TrackKind::Audio,
             label: None,
             enabled: true,
             locked: false,
@@ -645,7 +645,6 @@ mod tests {
         };
         p.tracks.push_back(Track {
             id: Uuid::now_v7(),
-            kind: TrackKind::Video,
             label: None,
             enabled: true,
             locked: false,
@@ -699,7 +698,6 @@ mod tests {
 
         p.tracks.push_back(Track {
             id: Uuid::now_v7(),
-            kind: TrackKind::Video,
             label: None,
             enabled: true,
             locked: false,
@@ -711,7 +709,6 @@ mod tests {
         });
         p.tracks.push_back(Track {
             id: Uuid::now_v7(),
-            kind: TrackKind::Video,
             label: None,
             enabled: true,
             locked: false,
@@ -750,7 +747,6 @@ mod tests {
         };
         p.tracks.push_back(Track {
             id: Uuid::now_v7(),
-            kind: TrackKind::Video,
             label: None,
             enabled: true,
             locked: false,

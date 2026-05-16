@@ -100,7 +100,7 @@ use crate::state::{
     Actor, Animated, AudioParams, BlendMode, CheckpointId, ColorParams, CommandError,
     CompositionPatch, DryRunOp, DryRunOutput, LayerId, LayerParams, LayerParamsPatch, LayerPatch,
     MarkerPatch, MediaId, MediaItem, MediaKind, Project, ProjectHandle, Rational, Rgba,
-    SubtitlesParams, SubtitlesSource, TemplateParams, TrackId, TrackKind, Transform,
+    SubtitlesParams, SubtitlesSource, TemplateParams, TrackId, Transform,
     ValidationError, VideoClipParams, new_id,
 };
 
@@ -332,10 +332,13 @@ impl WeftCutServer {
         &self,
         #[tool(aggr)] args: AddTrackArgs,
     ) -> Result<CallToolResult, McpError> {
-        let kind = parse_track_kind(&args.kind)?;
+        // V.5: tracks are kind-agnostic. The args.kind arg is
+        // accepted but ignored (backward-compat with existing agent
+        // prompts). New tracks accept any layer kind.
+        let _ = &args.kind;
         let id = self
             .project
-            .add_track(agent_actor(), kind, args.label)
+            .add_track(agent_actor(), args.label)
             .await
             .map_err(map_command_error)?;
         Ok(ok_text(id.to_string()))
@@ -2200,17 +2203,9 @@ fn representative_preview_time_s(template: &raster_template::Template) -> f64 {
     half.clamp(0.0, 1.0)
 }
 
-fn parse_track_kind(s: &str) -> Result<TrackKind, McpError> {
-    match s.to_ascii_lowercase().as_str() {
-        "video" => Ok(TrackKind::Video),
-        "audio" => Ok(TrackKind::Audio),
-        "subtitle" | "subtitles" => Ok(TrackKind::Subtitle),
-        other => Err(McpError::invalid_params(
-            format!("unknown track kind '{other}' (expected video|audio|subtitle)"),
-            None,
-        )),
-    }
-}
+// V.5: tracks are kind-agnostic; `parse_track_kind` is removed. The
+// MCP `add_track` tool's `kind` arg is now ignored (kept on the wire
+// for backward compat with existing agent prompts).
 
 fn parse_layer_edge(s: &str) -> Result<LayerEdge, McpError> {
     match s.to_ascii_lowercase().as_str() {
@@ -2752,55 +2747,46 @@ impl ServerHandler for WeftCutServer {
 impl WeftCutServer {
     /// Find an existing Subtitle track or create one labeled "Subtitles".
     /// Mirrors `commands::ensure_subtitle_track` so the apply_subtitles MCP
-    /// tool and the Tauri add_subtitles_layer command target the same track.
+    /// V.5: tracks are kind-agnostic. Subtitle layers land on the
+    /// topmost track (last index) which by convention holds overlays.
+    /// Creates a new track if zero exist.
     async fn ensure_subtitle_track(&self) -> Result<TrackId, McpError> {
         let snap = self.project.snapshot().await;
-        if let Some(t) = snap
-            .tracks
-            .iter()
-            .find(|t| matches!(t.kind, TrackKind::Subtitle))
-        {
+        if let Some(t) = snap.tracks.last() {
             return Ok(t.id);
         }
         self.project
-            .add_track(agent_actor(), TrackKind::Subtitle, Some("Subtitles".into()))
+            .add_track(agent_actor(), Some("Overlay".into()))
             .await
             .map_err(map_command_error)
     }
 
-    /// Find an existing Audio track or create one labeled "Voiceover".
-    /// Used by `synthesize_speech` to land the generated layer on a sensible
-    /// default track when the agent didn't pick one explicitly.
+    /// V.5: tracks are kind-agnostic. The MCP `synthesize_speech`
+    /// caller asks for a default audio target — under v2 we pick the
+    /// topmost track (overlay slot by convention) or spawn one named
+    /// "Voiceover" if none exists.
     async fn ensure_audio_track(&self) -> Result<TrackId, McpError> {
         let snap = self.project.snapshot().await;
-        if let Some(t) = snap
-            .tracks
-            .iter()
-            .find(|t| matches!(t.kind, TrackKind::Audio))
-        {
+        if let Some(t) = snap.tracks.last() {
             return Ok(t.id);
         }
         self.project
-            .add_track(agent_actor(), TrackKind::Audio, Some("Voiceover".into()))
+            .add_track(agent_actor(), Some("Voiceover".into()))
             .await
             .map_err(map_command_error)
     }
 
-    /// Find a Video track labeled "Overlay" or auto-create one. Templates
-    /// composite ON TOP of base video, so they need to live on a track
-    /// ABOVE the base video tracks (A roll / B roll) — the UX paper-cut
-    /// closed 2026-05-12 (option 3). Mirrors `commands::ensure_overlay_track`
-    /// so MCP-added templates land on the same track as picker-added ones
-    /// and as image drops from the timeline.
+    /// V.5: tracks are kind-agnostic. Templates compose on top of
+    /// existing content; land them on the topmost track (last index
+    /// in `project.tracks` = top of z-stack). Creates a new "Overlay"
+    /// track if zero exist.
     async fn ensure_template_target_track(&self) -> Result<TrackId, McpError> {
         let snap = self.project.snapshot().await;
-        if let Some(t) = snap.tracks.iter().find(|t| {
-            matches!(t.kind, TrackKind::Video) && t.label.as_deref() == Some("Overlay")
-        }) {
+        if let Some(t) = snap.tracks.last() {
             return Ok(t.id);
         }
         self.project
-            .add_track(agent_actor(), TrackKind::Video, Some("Overlay".into()))
+            .add_track(agent_actor(), Some("Overlay".into()))
             .await
             .map_err(map_command_error)
     }
@@ -3374,7 +3360,7 @@ mod tests {
     use chrono::Utc;
     use std::path::PathBuf;
     use crate::state::{
-        AudioStreamMeta, MediaItem, MediaKind, MediaMetadata, Layer, Track, TrackKind,
+        AudioStreamMeta, MediaItem, MediaKind, MediaMetadata, Layer, Track,
         new_id,
     };
 
@@ -3464,13 +3450,13 @@ mod tests {
     }
 
     fn project_with_audio_layer(layer: Layer, media: MediaItem) -> Project {
-        project_with_layer(layer, media, TrackKind::Audio)
+        project_with_layer(layer, media)
     }
 
-    fn project_with_layer(layer: Layer, media: MediaItem, kind: TrackKind) -> Project {
+    fn project_with_layer(layer: Layer, media: MediaItem) -> Project {
         let mut p = Project::new_blank("test");
         p.media_pool.insert(media.id, media);
-        let mut track = Track::new(kind);
+        let mut track = Track::new();
         track.label = Some("T".into());
         track.layers.push_back(layer);
         p.tracks.push_back(track);
@@ -3588,7 +3574,7 @@ mod tests {
             1.0,
         );
         let layer_id = layer.id;
-        let project = project_with_layer(layer, media, TrackKind::Video);
+        let project = project_with_layer(layer, media);
 
         let r = resolve_clip_audio_source(&project, layer_id, None, None).unwrap();
         assert_eq!(r.source_in_us, 5_000_000);
@@ -3606,7 +3592,7 @@ mod tests {
             2.0, // 2x speed
         );
         let layer_id = layer.id;
-        let project = project_with_layer(layer, media, TrackKind::Video);
+        let project = project_with_layer(layer, media);
         let err = resolve_clip_audio_source(&project, layer_id, None, None)
             .expect_err("speed != 1 should reject");
         assert!(format!("{err:?}").contains("speed != 1.0"));

@@ -24,7 +24,7 @@ use super::marker::Marker;
 use super::media::MediaItem;
 use super::project::Project;
 use super::time::{Rational, TimeUs};
-use super::track::{Track, TrackKind, TrackRole};
+use super::track::{Track, TrackRole};
 use super::transition::{Transition, TransitionKind};
 use super::validate::{ValidationError, validate};
 
@@ -346,7 +346,6 @@ impl From<ValidationError> for CommandError {
 
 enum Command {
     AddTrack {
-        kind: TrackKind,
         label: Option<String>,
         /// When `true`, the new track flips its `transient` flag so the
         /// auto-prune sweep deletes it the moment its `layers` becomes
@@ -700,13 +699,11 @@ impl ProjectHandle {
     pub async fn add_track(
         &self,
         actor: Actor,
-        kind: TrackKind,
         label: Option<String>,
     ) -> Result<TrackId, CommandError> {
         let (reply, rx) = oneshot::channel();
         self.tx
             .send(Command::AddTrack {
-                kind,
                 label,
                 transient: false,
                 actor,
@@ -725,13 +722,11 @@ impl ProjectHandle {
     pub async fn add_transient_track(
         &self,
         actor: Actor,
-        kind: TrackKind,
         label: Option<String>,
     ) -> Result<TrackId, CommandError> {
         let (reply, rx) = oneshot::channel();
         self.tx
             .send(Command::AddTrack {
-                kind,
                 label,
                 transient: true,
                 actor,
@@ -1359,13 +1354,12 @@ impl ProjectActor {
     fn handle(&mut self, cmd: Command) {
         match cmd {
             Command::AddTrack {
-                kind,
                 label,
                 transient,
                 actor,
                 reply,
             } => {
-                let result = self.do_add_track(kind, label, transient, actor);
+                let result = self.do_add_track(label, transient, actor);
                 let _ = reply.send(result);
             }
             Command::AddLayer {
@@ -1712,13 +1706,12 @@ impl ProjectActor {
 
     fn do_add_track(
         &mut self,
-        kind: TrackKind,
         label: Option<String>,
         transient: bool,
         actor: Actor,
     ) -> Result<TrackId, CommandError> {
         let mut next: Project = (*self.history.current()).clone();
-        let mut track = Track::new(kind);
+        let mut track = Track::new();
         track.label = label;
         track.transient = transient;
         let track_id = track.id;
@@ -1726,7 +1719,7 @@ impl ProjectActor {
         self.commit(
             next,
             actor,
-            format!("Added {kind:?} track {track_id}"),
+            format!("Added track {track_id}"),
             vec![EntityRef::Track(track_id)],
             DiffHint::Coarse,
         )?;
@@ -3638,7 +3631,6 @@ mod tests {
     use super::*;
     use crate::state::{
         Animated, ColorParams, LayerParams, MediaKind, MediaMetadata, Project, Rgba, Track,
-        TrackKind,
     };
 
     fn project_with_video_track() -> (Project, TrackId) {
@@ -3646,7 +3638,7 @@ mod tests {
         // delete/insert/replace test has a clean slate to assert against.
         let mut p = Project::new_blank("test");
         p.tracks.clear();
-        let track = Track::new(TrackKind::Video);
+        let track = Track::new();
         let track_id = track.id;
         p.tracks.push_back(track);
         (p, track_id)
@@ -4213,7 +4205,7 @@ mod tests {
     async fn move_layer_across_tracks() {
         let (mut project, src_track) = project_with_video_track();
         // Add a second track manually so we can move into it.
-        let dst_track = Track::new(TrackKind::Video);
+        let dst_track = Track::new();
         let dst_track_id = dst_track.id;
         project.tracks.push_back(dst_track);
 
@@ -4457,9 +4449,7 @@ mod tests {
 
         let mut replacement = Project::new_blank("replaced");
         replacement.tracks.clear();
-        replacement
-            .tracks
-            .push_back(super::Track::new(super::TrackKind::Audio));
+        replacement.tracks.push_back(super::Track::new());
         let replacement_id = replacement.project_id;
 
         handle
@@ -4471,7 +4461,6 @@ mod tests {
         assert_eq!(snap.project_id, replacement_id);
         assert_eq!(snap.metadata.name, "replaced");
         assert_eq!(snap.tracks.len(), 1);
-        assert!(matches!(snap.tracks[0].kind, super::TrackKind::Audio));
 
         // History was reset: exactly one "Initial" entry, no checkpoints, undo
         // is a no-op. The prior project's edits and the "before swap"
@@ -4696,11 +4685,11 @@ mod tests {
         // Mirror R.3's import path: transient tracks so the auto-prune
         // sweep can act on them once they empty out.
         let v_track = handle
-            .add_transient_track(Actor::User, TrackKind::Video, Some("import".into()))
+            .add_transient_track(Actor::User, Some("import".into()))
             .await
             .unwrap();
         let a_track = handle
-            .add_transient_track(Actor::User, TrackKind::Audio, Some("import (audio)".into()))
+            .add_transient_track(Actor::User, Some("import (audio)".into()))
             .await
             .unwrap();
         let v_layer = handle
@@ -5574,7 +5563,7 @@ mod tests {
         let (project, track_id) = project_with_video_track();
         // Need a second track so MoveLayer has somewhere to land.
         let mut project = project;
-        let mut second_track = Track::new(TrackKind::Video);
+        let mut second_track = Track::new();
         let second_track_id = second_track.id;
         second_track.label = Some("Overlay".into());
         project.tracks.push_back(second_track);
@@ -5877,7 +5866,7 @@ mod tests {
         let (project, track1) = project_with_video_track();
         let handle = spawn(project);
         let track2 = handle
-            .add_track(Actor::User, TrackKind::Video, Some("V2".into()))
+            .add_track(Actor::User, Some("V2".into()))
             .await
             .unwrap();
         let a = handle
@@ -5911,7 +5900,7 @@ mod tests {
         let (project, t1) = project_with_video_track();
         let handle = spawn(project);
         let t2 = handle
-            .add_track(Actor::User, TrackKind::Video, Some("V2".into()))
+            .add_track(Actor::User, Some("V2".into()))
             .await
             .unwrap();
         let media = dummy_video_media(5_000_000);
@@ -5971,11 +5960,11 @@ mod tests {
         let (project, t1) = project_with_video_track();
         let handle = spawn(project);
         let t2 = handle
-            .add_track(Actor::User, TrackKind::Video, Some("V2".into()))
+            .add_track(Actor::User, Some("V2".into()))
             .await
             .unwrap();
         let t3 = handle
-            .add_track(Actor::User, TrackKind::Video, Some("V3".into()))
+            .add_track(Actor::User, Some("V3".into()))
             .await
             .unwrap();
         let media = dummy_video_media(5_000_000);
@@ -6135,7 +6124,7 @@ mod tests {
         let (project, track1) = project_with_video_track();
         let handle = spawn(project);
         let track2 = handle
-            .add_track(Actor::User, TrackKind::Video, Some("V2".into()))
+            .add_track(Actor::User, Some("V2".into()))
             .await
             .unwrap();
         let a = handle
@@ -6187,7 +6176,7 @@ mod tests {
         let (project, track1) = project_with_video_track();
         let handle = spawn(project);
         let track2 = handle
-            .add_track(Actor::User, TrackKind::Video, Some("V2".into()))
+            .add_track(Actor::User, Some("V2".into()))
             .await
             .unwrap();
         let a = handle
@@ -6275,7 +6264,7 @@ mod tests {
         let (project, track1) = project_with_video_track();
         let handle = spawn(project);
         let track2 = handle
-            .add_track(Actor::User, TrackKind::Video, Some("V2".into()))
+            .add_track(Actor::User, Some("V2".into()))
             .await
             .unwrap();
         let a = handle
@@ -6345,7 +6334,7 @@ mod tests {
         let (project, video_track) = project_with_video_track();
         let handle = spawn(project);
         let audio_track = handle
-            .add_track(Actor::User, TrackKind::Audio, Some("Audio".into()))
+            .add_track(Actor::User, Some("Audio".into()))
             .await
             .unwrap();
         // Inject a media item with both video AND audio streams. The

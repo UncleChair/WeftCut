@@ -119,6 +119,11 @@ export type TrackRole = "a-roll" | "b-roll" | "audio-a" | "audio-b";
 
 export interface TrackSummary {
   id: string;
+  /// V.5 (A/B-roll v2): tracks are kind-agnostic on the backend, but
+  /// this field is preserved as a derived "dominant layer class" label
+  /// (Video / Audio / Subtitle) so the existing timeline CSS + drag-
+  /// drop checks keep working through V.10's frontend cleanup. After
+  /// V.10 this field goes away.
   kind: string;
   label: string | null;
   enabled: boolean;

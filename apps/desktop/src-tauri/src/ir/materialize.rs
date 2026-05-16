@@ -207,7 +207,6 @@ mod tests {
     use super::*;
     use crate::state::layer::SubtitlesParams;
     use crate::state::project::Project;
-    use crate::state::track::TrackKind;
     use crate::state::{Layer, LayerParams};
     use tempfile::TempDir;
 
