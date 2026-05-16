@@ -56,7 +56,16 @@ export type LayerParamsView =
   | ({ kind: "Color" } & ColorView)
   | ({ kind: "Audio" } & AudioView)
   | ({ kind: "Subtitles" } & SubtitlesView)
-  | { kind: "Template"; template_id: string };
+  | ({ kind: "Template" } & TemplateView);
+
+export interface TemplateView {
+  template_id: string;
+  x: number;
+  y: number;
+  scale_x: number;
+  scale_y: number;
+  opacity: number;
+}
 
 export interface VideoClipView {
   media_id: string;
