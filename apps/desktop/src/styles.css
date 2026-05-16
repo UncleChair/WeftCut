@@ -368,20 +368,33 @@ html, body, #root { height: 100%; margin: 0; }
   background: #374151;
 }
 
+/* A/B-roll redesign R.9 (`docs/ab-roll-redesign`): MediaPool moves
+   from a bottom grid cell to a left collapsible drawer. The drawer
+   column is a CSS variable so the M shortcut / View menu toggle can
+   animate the open/closed transition with a single value flip. */
 .app-main {
   display: grid;
-  grid-template-columns: 1fr 280px;
-  grid-template-rows: 1fr 200px auto;
+  grid-template-columns: var(--mediapool-drawer-width, 0px) 1fr 280px;
+  grid-template-rows: 1fr 1fr;
   grid-template-areas:
-    "preview properties"
-    "timeline properties"
-    "mediapool properties";
+    "mediapool preview properties"
+    "mediapool timeline properties";
   min-height: 0;
+  transition: grid-template-columns 160ms ease-out;
+}
+
+.app-main.drawer-open {
+  --mediapool-drawer-width: 280px;
 }
 
 .preview { grid-area: preview; }
 .timeline { grid-area: timeline; }
-.media-pool { grid-area: mediapool; }
+.media-pool {
+  grid-area: mediapool;
+  overflow: hidden;
+  border-right: 1px solid #1f2937;
+  background: #0a0c10;
+}
 .properties { grid-area: properties; }
 
 .preview {
