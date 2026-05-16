@@ -3033,9 +3033,11 @@ pub(crate) fn apply_move_layer(
     Ok(())
 }
 
-/// Move any group siblings whose layer is `Audio` and whose current
-/// track has `role = None` onto the audio-role track paired with the
-/// destination's video role. Caller has already verified that
+/// Move any group siblings on hidden (`role = None`) tracks onto the
+/// role-paired counterpart of the destination's role. Symmetric: a
+/// video promotion (`ARoll`/`BRoll`) routes audio siblings to
+/// `AudioA`/`AudioB`; an audio promotion (`AudioA`/`AudioB`) routes
+/// video siblings to `ARoll`/`BRoll`. Caller has already verified that
 /// `new_track_id` exists and that the move is not Alt-escaping its
 /// group.
 fn promote_av_pair_to_matching_role(
@@ -3049,25 +3051,30 @@ fn promote_av_pair_to_matching_role(
         .find(|t| t.id == new_track_id)
         .and_then(|t| t.role);
     let Some(role) = dest_role else { return };
-    if !role.is_video() {
-        return;
-    }
+    // paired() resolves both directions (video→audio AND audio→video)
+    // — the symmetric promotion case matters when the user grabs the
+    // audio waveform first.
     let paired_role = role.paired();
-    let audio_dest_id = match project
+    let pair_dest_id = match project
         .tracks
         .iter()
         .find(|t| t.role == Some(paired_role))
         .map(|t| t.id)
     {
         Some(id) => id,
-        // No paired audio track in this project (e.g., user deleted
-        // their reserved Audio A/B in a future feature). Skip silently
-        // — the audio sibling stays on its current track.
+        // No paired track in this project (e.g., user deleted their
+        // reserved Audio A/B in a future feature). Skip silently — the
+        // sibling stays on its current track.
         None => return,
     };
-    if audio_dest_id == new_track_id {
+    if pair_dest_id == new_track_id {
         return;
     }
+    let expected_track_kind = if role.is_video() {
+        TrackKind::Audio
+    } else {
+        TrackKind::Video
+    };
     for &sid in siblings {
         let Some((ti, li)) = locate_layer(project, sid) else {
             continue;
@@ -3077,11 +3084,21 @@ fn promote_av_pair_to_matching_role(
         if project.tracks[ti].role.is_some() {
             continue;
         }
-        // Only audio layers promote across the V/A boundary.
-        if !matches!(
-            project.tracks[ti].layers[li].params,
-            LayerParams::Audio(_)
-        ) {
+        // Cross-boundary check: only the opposite-kind sibling promotes.
+        // Video promotion → only audio layers follow; audio promotion →
+        // only video layers follow.
+        let is_eligible = match expected_track_kind {
+            TrackKind::Audio => matches!(
+                project.tracks[ti].layers[li].params,
+                LayerParams::Audio(_)
+            ),
+            TrackKind::Video => matches!(
+                project.tracks[ti].layers[li].params,
+                LayerParams::VideoClip(_) | LayerParams::ImageOverlay(_)
+            ),
+            TrackKind::Subtitle => false,
+        };
+        if !is_eligible {
             continue;
         }
         let mut layer = project.tracks[ti].layers.remove(li);
@@ -3090,7 +3107,7 @@ fn promote_av_pair_to_matching_role(
         let dest_idx = match project
             .tracks
             .iter()
-            .position(|t| t.id == audio_dest_id)
+            .position(|t| t.id == pair_dest_id)
         {
             Some(i) => i,
             None => {
@@ -3106,10 +3123,6 @@ fn promote_av_pair_to_matching_role(
             .iter()
             .position(|l| l.t_start_us > layer.t_start_us)
             .unwrap_or(project.tracks[dest_idx].layers.len());
-        // Final adjust: if t_start was somehow negative after a wonky
-        // delta application (shouldn't happen, but the existing move
-        // path doesn't clamp here either), let validate() catch it
-        // downstream.
         layer.t_start_us = layer.t_start_us.max(0);
         project.tracks[dest_idx].layers.insert(insert_at, layer);
     }
@@ -3120,11 +3133,18 @@ fn promote_av_pair_to_matching_role(
 ///     path), and
 ///   - has zero layers.
 ///
-/// Reserved (role-stamped) tracks are not `transient`. Tracks the user
-/// or an agent explicitly creates aren't either. Only the import-spawned
-/// holding tracks get the auto-prune treatment — those exist solely to
-/// host the just-imported clip and have no identity left once the clip
-/// migrates onto A/B (or is deleted).
+/// Scope is deliberately narrow: only import-spawned holding tracks
+/// auto-prune. Reserved (role-stamped) tracks survive — they're the
+/// permanent skeleton. Tracks the user or an agent explicitly creates
+/// via `add_track` survive too — their authors own their lifecycle.
+///
+/// The Q17(c) recommendation phrased this as "any hidden empty track,"
+/// but in practice the only path that produces those is `import_media`
+/// (R.10 removes the user-facing "Add Track" menu, and the underlying
+/// command is now agent-only). Caller-managed auto-create paths like
+/// `ensure_audio_track` would also be falsely pruned without this
+/// narrowing. If an agent does call `add_track` and leaves the track
+/// empty, it persists — that's the agent's responsibility to clean up.
 pub(crate) fn prune_empty_hidden_tracks(project: &mut Project) {
     project.tracks.retain(|t| !(t.transient && t.layers.is_empty()));
 }
@@ -4854,6 +4874,59 @@ mod tests {
             !after.tracks.iter().any(|t| t.id == hidden_a_track),
             "hidden audio source track must auto-prune"
         );
+    }
+
+    #[tokio::test]
+    async fn promoting_audio_to_audio_a_routes_video_to_video_a() {
+        // Symmetric case: the user grabs the audio waveform of an
+        // imported AV pair and drops it on Audio A. The video sibling
+        // must follow onto Video A. Same promotion logic, opposite
+        // axis.
+        let (handle, hidden_v_track, hidden_a_track, v_layer, a_layer, _media) =
+            project_with_hidden_av_pair().await;
+        let snap = handle.snapshot().await;
+        let video_a = snap
+            .tracks
+            .iter()
+            .find(|t| t.role == Some(TrackRole::ARoll))
+            .unwrap()
+            .id;
+        let audio_a = snap
+            .tracks
+            .iter()
+            .find(|t| t.role == Some(TrackRole::AudioA))
+            .unwrap()
+            .id;
+
+        handle
+            .move_layer(Actor::User, a_layer, audio_a, 0, false)
+            .await
+            .unwrap();
+
+        let after = handle.snapshot().await;
+        assert!(
+            after
+                .tracks
+                .iter()
+                .find(|t| t.id == audio_a)
+                .unwrap()
+                .layers
+                .iter()
+                .any(|l| l.id == a_layer)
+        );
+        assert!(
+            after
+                .tracks
+                .iter()
+                .find(|t| t.id == video_a)
+                .unwrap()
+                .layers
+                .iter()
+                .any(|l| l.id == v_layer),
+            "video sibling must promote to Video A when audio leads"
+        );
+        assert!(!after.tracks.iter().any(|t| t.id == hidden_v_track));
+        assert!(!after.tracks.iter().any(|t| t.id == hidden_a_track));
     }
 
     #[tokio::test]
