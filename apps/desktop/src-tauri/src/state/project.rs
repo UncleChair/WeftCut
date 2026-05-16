@@ -31,7 +31,11 @@ use super::transition::Transition;
 //      present in v5.0; removed in a later V.5). Legacy v4 projects
 //      load as-is — orphan AudioA/AudioB tracks remain visible (no
 //      auto-migration; user manually cleans up if desired).
-pub const SCHEMA_VERSION: u32 = 5;
+// v6 — html-render groups (`docs/html-render-groups.md`): adds
+//      `Group.render_mode: GroupRenderMode { Native | Html }` field.
+//      Legacy v5 groups load as `Native` via `#[serde(default)]`. Pure
+//      version bump; the migration is a no-op.
+pub const SCHEMA_VERSION: u32 = 6;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Project {

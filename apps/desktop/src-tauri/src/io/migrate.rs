@@ -92,6 +92,17 @@ pub async fn run(workspace: &Path, project: &mut Project) -> Result<MigrationRep
         // Pure version bump.
         project.schema_version = 5;
     }
+    if project.schema_version < 6 {
+        // v6 = html-render groups (`docs/html-render-groups.md`).
+        // Groups gain a `render_mode` field that defaults to `Native`
+        // via `#[serde(default)]`, so every legacy v5 group loads as
+        // Native and renders identically to how it did before. The
+        // user opts into `Html` mode explicitly via the
+        // `groups_set_render_mode` op (rejected at edit time if any
+        // member layer carries an effect with no CSS implementation).
+        // Pure version bump.
+        project.schema_version = 6;
+    }
 
     Ok(report)
 }
@@ -272,7 +283,7 @@ mod tests {
 
         let report = run(&ws, &mut project).await.unwrap();
         assert_eq!(report.from_version, 1);
-        assert_eq!(report.to_version, 5);
+        assert_eq!(report.to_version, 6);
         assert_eq!(report.migrated, 1);
         assert_eq!(report.missing_sources, 0);
 
@@ -280,7 +291,7 @@ mod tests {
         assert_eq!(migrated.path_rel.as_ref().unwrap(), Path::new("Media/interview.mp4"));
         assert!(ws.join("Media").join("interview.mp4").is_file());
         assert!(ws.join("Backups").read_dir().unwrap().count() >= 1);
-        assert_eq!(project.schema_version, 5);
+        assert_eq!(project.schema_version, 6);
     }
 
     #[tokio::test]
@@ -304,7 +315,7 @@ mod tests {
         let still_legacy = project.media_pool.get(&id).unwrap();
         assert!(still_legacy.path_rel.is_none());
         assert_eq!(still_legacy.path_abs, Path::new("/nonexistent/missing.mp4"));
-        assert_eq!(project.schema_version, 5);
+        assert_eq!(project.schema_version, 6);
     }
 
     #[tokio::test]
@@ -369,10 +380,10 @@ mod tests {
 
         let report = run(&ws, &mut project).await.unwrap();
         assert_eq!(report.from_version, 2);
-        assert_eq!(report.to_version, 5);
+        assert_eq!(report.to_version, 6);
         assert_eq!(report.migrated, 0);
         assert_eq!(report.missing_sources, 0);
-        assert_eq!(project.schema_version, 5);
+        assert_eq!(project.schema_version, 6);
         assert!(project.groups.is_empty());
         assert!(project.settings.auto_pair_audio_on_import);
         // Legacy tracks stay unstamped — no auto-promote.
@@ -386,11 +397,41 @@ mod tests {
         let ws_dir = TempDir::new().unwrap();
         let ws = ws_dir.path().join("doc.vproj");
         fs::create_dir_all(&ws).unwrap();
-        let mut project = Project::new_blank("v5-doc");
+        let mut project = Project::new_blank("v6-doc");
         super::super::save_to_dir(&project, &ws).await.unwrap();
         let report = run(&ws, &mut project).await.unwrap();
+        assert_eq!(report.from_version, 6);
+        assert_eq!(report.to_version, 6);
+        assert_eq!(project.schema_version, 6);
+    }
+
+    #[tokio::test]
+    async fn v5_to_v6_loads_groups_as_native_render_mode() {
+        // A v5 project's groups have no `render_mode` field on the
+        // wire; `#[serde(default)]` should fill `Native`. The migration
+        // is otherwise a pure version bump — no on-disk shape changes.
+        use crate::state::group::{Group, GroupRenderMode};
+        use crate::state::ids::new_id;
+
+        let ws_dir = TempDir::new().unwrap();
+        let ws = ws_dir.path().join("doc.vproj");
+        fs::create_dir_all(&ws).unwrap();
+
+        let mut project = Project::new_blank("v5-doc");
+        project.schema_version = 5;
+        // Synthesize a group of two layer ids; the group's render_mode
+        // field is what we're testing the default for.
+        let l1 = new_id();
+        let l2 = new_id();
+        let group = Group::from_iter(new_id(), None, [l1, l2]);
+        project.groups.push_back(group);
+        super::super::save_to_dir(&project, &ws).await.unwrap();
+
+        let report = run(&ws, &mut project).await.unwrap();
         assert_eq!(report.from_version, 5);
-        assert_eq!(report.to_version, 5);
-        assert_eq!(project.schema_version, 5);
+        assert_eq!(report.to_version, 6);
+        assert_eq!(project.schema_version, 6);
+        let g = project.groups.front().expect("group survives migration");
+        assert_eq!(g.render_mode, GroupRenderMode::Native);
     }
 }

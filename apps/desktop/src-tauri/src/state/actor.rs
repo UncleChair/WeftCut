@@ -15,7 +15,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use super::color::{ColorSpace, Rgba};
 use super::animated::Animated;
 use super::history::{History, HistoryEntry, HistoryView, NamedCheckpoint};
-use super::group::Group;
+use super::group::{Group, GroupRenderMode};
 use super::ids::{
     CheckpointId, GroupId, LayerId, MarkerId, MediaId, OpId, TrackId, TransitionId, new_id,
 };
@@ -538,6 +538,12 @@ enum Command {
     GroupsRename {
         id: GroupId,
         label: Option<String>,
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
+    GroupsSetRenderMode {
+        id: GroupId,
+        mode: GroupRenderMode,
         actor: Actor,
         reply: oneshot::Sender<Result<(), CommandError>>,
     },
@@ -1207,6 +1213,34 @@ impl ProjectHandle {
         rx.await.expect("project actor terminated")
     }
 
+    /// Switch a group's render mode between `Native` (ffmpeg per-layer
+    /// lowering, the default) and `Html` (html-render-groups island —
+    /// `docs/html-render-groups.md`). Validation runs on commit; if any
+    /// member layer carries an effect with no CSS implementation, the
+    /// commit fails with
+    /// `ValidationError::GroupHtmlEffectNotSupported` (surfaced as
+    /// `CommandError::ValidationFailed`). Switching back to `Native`
+    /// always succeeds — the CSS-support invariant only constrains
+    /// `Html` mode.
+    pub async fn groups_set_render_mode(
+        &self,
+        actor: Actor,
+        id: GroupId,
+        mode: GroupRenderMode,
+    ) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::GroupsSetRenderMode {
+                id,
+                mode,
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
     pub async fn move_track(
         &self,
         actor: Actor,
@@ -1633,6 +1667,15 @@ impl ProjectActor {
                 reply,
             } => {
                 let result = self.do_groups_rename(id, label, actor);
+                let _ = reply.send(result);
+            }
+            Command::GroupsSetRenderMode {
+                id,
+                mode,
+                actor,
+                reply,
+            } => {
+                let result = self.do_groups_set_render_mode(id, mode, actor);
                 let _ = reply.send(result);
             }
             Command::Undo { actor, reply } => {
@@ -2443,6 +2486,28 @@ impl ProjectActor {
         Ok(())
     }
 
+    fn do_groups_set_render_mode(
+        &mut self,
+        id: GroupId,
+        mode: GroupRenderMode,
+        actor: Actor,
+    ) -> Result<(), CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+        apply_groups_set_render_mode(&mut next, id, mode)?;
+        // `commit` runs `validate`, which rejects the switch if any
+        // member layer has an effect with no CSS implementation
+        // (decision 8 — strict refusal). Mode-switch then becomes a
+        // no-op against `self.history` because the commit fails first.
+        self.commit(
+            next,
+            actor,
+            format!("Set group {id} render mode to {mode:?}"),
+            Vec::new(),
+            DiffHint::Coarse,
+        )?;
+        Ok(())
+    }
+
     fn do_move_track(
         &mut self,
         id: TrackId,
@@ -2884,6 +2949,7 @@ pub(crate) fn apply_groups_create(
         id,
         label,
         members: unique,
+        render_mode: GroupRenderMode::default(),
     });
     Ok(id)
 }
@@ -2985,6 +3051,20 @@ pub(crate) fn apply_groups_rename(
         .position(|g| g.id == id)
         .ok_or(CommandError::GroupNotFound { group: id })?;
     project.groups[gi].label = label;
+    Ok(())
+}
+
+pub(crate) fn apply_groups_set_render_mode(
+    project: &mut Project,
+    id: GroupId,
+    mode: GroupRenderMode,
+) -> Result<(), CommandError> {
+    let gi = project
+        .groups
+        .iter()
+        .position(|g| g.id == id)
+        .ok_or(CommandError::GroupNotFound { group: id })?;
+    project.groups[gi].render_mode = mode;
     Ok(())
 }
 
@@ -6046,6 +6126,121 @@ mod tests {
             .unwrap();
         let snap = handle.snapshot().await;
         assert_eq!(snap.groups[0].label.as_deref(), Some("new"));
+    }
+
+    #[tokio::test]
+    async fn groups_set_render_mode_round_trips_native_html() {
+        let (handle, _t, a, b, _c) = three_layers_on_video_track().await;
+        let g = handle
+            .groups_create(Actor::User, vec![a, b], None, false)
+            .await
+            .unwrap();
+
+        // Default render mode is Native.
+        let snap = handle.snapshot().await;
+        assert_eq!(snap.groups[0].render_mode, GroupRenderMode::Native);
+
+        // Native → Html succeeds (no effects on the color layers).
+        handle
+            .groups_set_render_mode(Actor::User, g, GroupRenderMode::Html)
+            .await
+            .expect("Native → Html should succeed when no member has CSS-incompatible effects");
+        let snap = handle.snapshot().await;
+        assert_eq!(snap.groups[0].render_mode, GroupRenderMode::Html);
+
+        // Html → Native always succeeds.
+        handle
+            .groups_set_render_mode(Actor::User, g, GroupRenderMode::Native)
+            .await
+            .expect("Html → Native should always succeed");
+        let snap = handle.snapshot().await;
+        assert_eq!(snap.groups[0].render_mode, GroupRenderMode::Native);
+    }
+
+    #[tokio::test]
+    async fn groups_set_render_mode_unknown_id_fails() {
+        let (handle, _t, _a, _b, _c) = three_layers_on_video_track().await;
+        let err = handle
+            .groups_set_render_mode(Actor::User, new_id(), GroupRenderMode::Html)
+            .await
+            .expect_err("unknown group");
+        assert!(matches!(err, CommandError::GroupNotFound { .. }));
+    }
+
+    #[tokio::test]
+    async fn groups_set_render_mode_rejects_when_member_has_css_incompatible_effect() {
+        // Build the project state directly so we can pre-bake a
+        // ChromaKey effect (no actor surface for adding effects today).
+        // Then spawn, group the two layers, and try to switch to Html.
+        use crate::state::color::Rgba;
+        use crate::state::effect::{Effect, EffectParams};
+        use crate::state::layer::{ColorParams, Layer, LayerParams};
+
+        let (mut project, track_id) = project_with_video_track();
+        let mk_color_layer = |t_start: TimeUs, t_end: TimeUs| Layer {
+            id: new_id(),
+            label: None,
+            t_start_us: t_start,
+            t_end_us: t_end,
+            enabled: true,
+            locked: false,
+            metadata: imbl::HashMap::new(),
+            effects: imbl::Vector::new(),
+            params: LayerParams::Color(ColorParams {
+                color: Animated::Static(Rgba::WHITE),
+                width: 1920,
+                height: 1080,
+            }),
+        };
+        let mut l_a = mk_color_layer(0, 1_000_000);
+        let l_a_id = l_a.id;
+        // ChromaKey has no CSS implementation (EffectKind::supports_css == false).
+        l_a.effects.push_back(Effect {
+            id: new_id(),
+            enabled: true,
+            params: EffectParams::ChromaKey {
+                key: Rgba::WHITE,
+                similarity: Animated::Static(0.1),
+                smoothness: Animated::Static(0.1),
+            },
+        });
+        let l_b = mk_color_layer(2_000_000, 3_000_000);
+        let l_b_id = l_b.id;
+        let track = project
+            .tracks
+            .iter_mut()
+            .find(|t| t.id == track_id)
+            .expect("video track present");
+        track.layers.push_back(l_a);
+        track.layers.push_back(l_b);
+
+        let handle = spawn(project);
+        let g = handle
+            .groups_create(Actor::User, vec![l_a_id, l_b_id], None, false)
+            .await
+            .expect("group create");
+
+        // Switching to Html must reject — the ChromaKey effect has no
+        // CSS implementation, so the validator's strict-refusal kicks in.
+        let err = handle
+            .groups_set_render_mode(Actor::User, g, GroupRenderMode::Html)
+            .await
+            .expect_err("Html mode should reject when a member has a CSS-incompatible effect");
+        assert!(
+            matches!(
+                err,
+                CommandError::ValidationFailed(
+                    crate::state::validate::ValidationError::GroupHtmlEffectNotSupported { .. }
+                )
+            ),
+            "got {err:?}"
+        );
+
+        // And the group's render_mode stays Native (the failed commit
+        // never landed in history).
+        let snap = handle.snapshot().await;
+        let group = snap.groups.iter().find(|gg| gg.id == g).expect("group");
+        assert_eq!(group.render_mode, GroupRenderMode::Native);
     }
 
     #[tokio::test]
