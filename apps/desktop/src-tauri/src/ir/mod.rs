@@ -1254,73 +1254,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
         );
     }
 
-    #[test]
-    fn image_overlay_emits_vid_label_for_mpv() {
-        let media_id = Uuid::parse_str("01900000-0000-7000-8000-0000000000c1").unwrap();
-        let track_id = Uuid::parse_str("01900000-0000-7000-8000-0000000000c2").unwrap();
-        let layer_id = Uuid::parse_str("01900000-0000-7000-8000-0000000000c3").unwrap();
-
-        let media = MediaItem {
-            id: media_id,
-            label: None,
-            path_abs: "/m/logo.png".into(),
-            path_rel: None,
-            kind: MediaKind::Image,
-            metadata: MediaMetadata {
-                duration_us: None,
-                video: None,
-                audio: None,
-            },
-            proxy_path: None,
-
-            proxy_format_version: 0,
-            waveform_path: None,
-            thumbnails_dir: None,
-            file_hash_blake3: "0".into(),
-            file_size: 0,
-            file_mtime: 0,
-            imported_at: Utc::now(),
-        };
-
-        let layer = Layer {
-            id: layer_id,
-            label: None,
-            t_start_us: 0,
-            t_end_us: 2_000_000,
-            enabled: true,
-            locked: false,
-            metadata: imbl::HashMap::new(),
-            effects: imbl::Vector::new(),
-            params: LayerParams::ImageOverlay(ImageOverlayParams {
-                media: media_id,
-                transform: Transform::default(),
-                opacity: Animated::Static(1.0),
-                blend_mode: Default::default(),
-                fade_in_us: 0,
-                fade_out_us: 0,
-            }),
-        };
-        let track = Track {
-            id: track_id,
-            label: None,
-            enabled: true,
-            locked: false,
-            removable: true,
-            role: None,
-            transient: false,
-            height_px: 64,
-            layers: imbl::vector![layer],
-        };
-
-        let mut p = Project::new_blank("image-mpv");
-        p.composition.duration_us = 2_000_000;
-        p.media_pool.insert(media_id, media);
-        p.tracks.push_back(track);
-
-        let g = lower(&p, fixture_target(), &Default::default(), &Default::default()).expect("lower");
-        let plan = emit_mpv(&g);
-        assert_eq!(plan.primary.as_deref(), Some("/m/logo.png"));
-        assert!(plan.lavfi_complex.contains("[vid1] loop=loop=-1:size=1"));
-        assert!(plan.lavfi_complex.trim_end().ends_with("[vo]"));
-    }
+    // The `image_overlay_emits_vid_label_for_mpv` test went away at the
+    // Phase F cutover (commit 5a4879d) when `emit_mpv` and the libmpv-host
+    // preview path were deleted.
 }
