@@ -77,9 +77,17 @@ const zhCN: Resources = {
     file: "文件",
     edit: "编辑",
     insert: "插入",
+    view: "视图",
     export: "导出",
     tools: "工具",
     preset_heading: "输出预设",
+  },
+  view: {
+    display_mode_heading: "轨道显示",
+    display_ab: "显示：仅 A/B 轨",
+    display_all: "显示：全部轨道",
+    open_media_pool: "打开素材库抽屉",
+    close_media_pool: "关闭素材库抽屉",
   },
   actions: {
     add_track: "+ 轨道",
@@ -109,6 +117,8 @@ const zhCN: Resources = {
     delete_selected: "删除选中的图层",
     toggle_log: "切换活动日志",
     focus_log_search: "聚焦活动日志搜索",
+    toggle_display_mode: "切换 A/B 轨 / 显示全部",
+    toggle_media_pool: "切换素材库抽屉",
   },
   compiler: {
     panel_title: "编译后的滤镜图（{{count}} 个节点）",
@@ -163,9 +173,21 @@ const zhCN: Resources = {
     },
   },
   timeline: {
-    empty_placeholder: "时间线（添加轨道开始）",
+    empty_placeholder: "时间线（导入片段或选择模板开始）",
+    empty_ab_mode:
+      "此处没有 A/B 内容。将片段拖到 Video A 或 Video B，或点击上方的 A/B 标签切换到全部显示。",
+    mode_ab: "A/B",
+    mode_all: "全部",
+    mode_ab_hint: "当前仅显示 A/B 轨。点击切换为显示全部。",
+    mode_all_hint: "当前显示全部轨道。点击切换为仅显示 A/B 轨。",
     track_label: "轨道 {{n}}",
     resize_track_hint: "拖动以调整该轨道高度",
+  },
+  peek: {
+    heading: "播放头附近（{{count}}）",
+    section_label: "播放头附近的隐藏轨内容",
+    live: "正在播放",
+    offset: "{{value}}",
   },
   agent_mode: {
     client_label: "代理：{{client}}",

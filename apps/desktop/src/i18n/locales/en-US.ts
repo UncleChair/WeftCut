@@ -73,9 +73,17 @@ const enUS = {
     file: "File",
     edit: "Edit",
     insert: "Insert",
+    view: "View",
     export: "Export",
     tools: "Tools",
     preset_heading: "Output preset",
+  },
+  view: {
+    display_mode_heading: "Track display",
+    display_ab: "Display: A/B Roll only",
+    display_all: "Display: Show all tracks",
+    open_media_pool: "Open Media Pool drawer",
+    close_media_pool: "Close Media Pool drawer",
   },
   actions: {
     add_track: "+ Track",
@@ -110,6 +118,8 @@ const enUS = {
     delete_selected: "Delete selected layer",
     toggle_log: "Toggle activity log",
     focus_log_search: "Focus activity-log search",
+    toggle_display_mode: "Toggle A/B Roll / Show All",
+    toggle_media_pool: "Toggle Media Pool drawer",
   },
   compiler: {
     panel_title: "Compiled filter graph ({{count}} nodes)",
@@ -164,9 +174,21 @@ const enUS = {
     },
   },
   timeline: {
-    empty_placeholder: "timeline (add a track to populate)",
+    empty_placeholder: "timeline (import a clip or pick a template to populate)",
+    empty_ab_mode:
+      "No A/B-roll content here. Drop a clip on Video A or Video B, or click the A/B pill above to switch to Show All.",
     track_label: "track {{n}}",
     resize_track_hint: "Drag to resize this track",
+    mode_ab: "A/B",
+    mode_all: "All",
+    mode_ab_hint: "Showing A/B-roll tracks only. Click to show all.",
+    mode_all_hint: "Showing all tracks. Click to filter to A/B-roll only.",
+  },
+  peek: {
+    heading: "Near playhead ({{count}})",
+    section_label: "Hidden-track layers near playhead",
+    live: "LIVE",
+    offset: "{{value}}",
   },
   agent_mode: {
     client_label: "Agent: {{client}}",
