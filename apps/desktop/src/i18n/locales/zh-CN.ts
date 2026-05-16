@@ -175,11 +175,13 @@ const zhCN: Resources = {
   timeline: {
     empty_placeholder: "时间线（导入片段或选择模板开始）",
     empty_ab_mode:
-      "此处没有 A/B 内容。将片段拖到 Video A 或 Video B，或点击上方的 A/B 标签切换到全部显示。",
+      "此处没有 A/B 内容。将片段拖到 A roll 或 B roll，或点击上方的 A/B 标签切换到全部显示。",
     mode_ab: "A/B",
     mode_all: "全部",
     mode_ab_hint: "当前仅显示 A/B 轨。点击切换为显示全部。",
     mode_all_hint: "当前显示全部轨道。点击切换为仅显示 A/B 轨。",
+    separate_audio: "将音频分离到新轨道",
+    no_actions_here: "（此图层无可用操作）",
     track_label: "轨道 {{n}}",
     resize_track_hint: "拖动以调整该轨道高度",
   },

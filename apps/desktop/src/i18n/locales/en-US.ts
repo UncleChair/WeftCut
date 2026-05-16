@@ -176,13 +176,16 @@ const enUS = {
   timeline: {
     empty_placeholder: "timeline (import a clip or pick a template to populate)",
     empty_ab_mode:
-      "No A/B-roll content here. Drop a clip on Video A or Video B, or click the A/B pill above to switch to Show All.",
+      "No A/B-roll content here. Drop a clip on A roll or B roll, or click the A/B pill above to switch to Show All.",
     track_label: "track {{n}}",
     resize_track_hint: "Drag to resize this track",
     mode_ab: "A/B",
     mode_all: "All",
     mode_ab_hint: "Showing A/B-roll tracks only. Click to show all.",
     mode_all_hint: "Showing all tracks. Click to filter to A/B-roll only.",
+    // V.7 context-menu entries for the right-click menu on layers.
+    separate_audio: "Separate audio to new track",
+    no_actions_here: "(no actions for this layer)",
   },
   peek: {
     heading: "Near playhead ({{count}})",
