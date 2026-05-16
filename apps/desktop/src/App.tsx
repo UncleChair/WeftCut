@@ -803,6 +803,13 @@ export function App({ onCloseProject }: AppProps) {
       <section className="menu-bar">
         <Menu label={t("menu.file")}>
           <MenuItem
+            actionId="importMedia"
+            label={t("actions.import_media")}
+            onSelect={importMediaFiles}
+            disabled={busy}
+          />
+          <MenuSeparator />
+          <MenuItem
             actionId="save"
             label={t("actions.save")}
             onSelect={saveProjectNow}
@@ -850,17 +857,11 @@ export function App({ onCloseProject }: AppProps) {
 
 
         <Menu label={t("menu.insert")}>
-          <MenuItem
-            actionId="importMedia"
-            label={t("actions.import_media")}
-            onSelect={importMediaFiles}
-            disabled={busy}
-          />
-          <MenuSeparator />
-          {/* R.10 (`docs/ab-roll-redesign`): the "Add Track" / "Add color
-              layer" / "Add text layer" menu entries are gone. New tracks
-              only come from the import flow (R.3 lands one fresh hidden
-              track per imported media) and from templates below. */}
+          {/* R.10 + 2026-05-16 import revert: "Import Media" moved to
+              the File menu (it's a file-operation, not a timeline
+              insert). "Add Track" / "Add color layer" / "Add text
+              layer" are gone. Only Templates remain as a true
+              timeline-insert affordance. */}
           <MenuItem
             label={t("actions.templates")}
             hint={t("actions.templates_hint")}

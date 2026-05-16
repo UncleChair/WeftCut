@@ -1508,17 +1508,19 @@ pub async fn import_media(
     .map_err(|e| format!("import join: {e}"))??;
 
     let item_for_jobs = item.clone();
-    let item_for_placement = item.clone();
     let media_id = item.id;
     let id = handle
         .add_media_item(Actor::User, item)
         .await
         .map_err(|e: CommandError| e.to_string())?;
 
-    // A/B-roll redesign R.3 (`docs/ab-roll-redesign`): every import lands
-    // a layer on a fresh hidden track. The reserved A/B-roll tracks stay
-    // untouched until the user explicitly drags a clip onto them.
-    place_imported_media_on_fresh_tracks(&app, &handle, &item_for_placement).await?;
+    // 2026-05-16 follow-up to v2: import is now a file operation only.
+    // The media lands in the MediaPool drawer and nothing else happens
+    // until the user explicitly drags it onto a timeline track. R.3 /
+    // V.3's "fresh hidden track per import" auto-creation is gone — it
+    // produced graveyard tracks the user had to clean up, and the
+    // hidden-track peek list now has nothing to surface for an
+    // unplaced import.
 
     // Derivatives (proxy / thumbnails / waveform) are content-addressed by
     // blake3 hash, so the cache key doesn't care whether the worker reads
@@ -1526,7 +1528,7 @@ pub async fn import_media(
     // immediately from the original path; they'll race the copy and the
     // results are valid either way.
     crate::jobs::enqueue_for_media(
-        app.clone(),
+        app,
         (*cache).clone(),
         (*handle).clone(),
         item_for_jobs,
@@ -1556,14 +1558,13 @@ pub async fn import_media(
     Ok(id.to_string())
 }
 
-/// A/B-roll redesign R.3 helper. Creates one (or two, for paired AV) fresh
-/// hidden tracks and lands the imported media as layer(s) at `t = 0`. The
-/// tracks have `role = None`, so AB display mode hides them; the user
-/// promotes a clip onto Video A/B (or Audio A/B) by dragging the layer
-/// in the timeline (or via the right-panel peek list).
-///
-/// A status-log entry surfaces the new tracks so the user has a visible
-/// signal that the import landed even when AB mode hides the result.
+/// **Deprecated 2026-05-16.** R.3 / V.3's auto-track-creation on
+/// import is gone — import is now a pool-only file operation. The
+/// helper is preserved so its signature / structure is on record if
+/// the auto-place flow is ever revived, but no live code path calls
+/// it. Suppress the dead-code warning explicitly so cargo doesn't
+/// flag it on every build.
+#[allow(dead_code)]
 async fn place_imported_media_on_fresh_tracks(
     app: &tauri::AppHandle,
     handle: &ProjectHandle,
