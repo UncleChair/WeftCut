@@ -27,6 +27,16 @@ pub struct Track {
     /// files load with `role = None`.
     #[serde(default)]
     pub role: Option<TrackRole>,
+    /// Auto-prune flag for the "every import lands a fresh hidden track"
+    /// rule (R.3 / R.4 of the A/B-roll redesign). When `true`, the actor's
+    /// mutation paths delete this track once its `layers` becomes empty so
+    /// the timeline doesn't accumulate a graveyard. Set on tracks created
+    /// by `import_media`; left `false` for the four reserved tracks, for
+    /// tracks the user/agent created explicitly, and for legacy `.vproj`
+    /// files (`#[serde(default)]` defaults to false, preserving prior
+    /// behaviour on load).
+    #[serde(default)]
+    pub transient: bool,
     pub height_px: u16,
     /// Sorted by `t_start_us`, never overlapping.
     pub layers: imbl::Vector<Layer>,
@@ -46,6 +56,7 @@ impl Track {
             locked: false,
             removable: true,
             role: None,
+            transient: false,
             height_px: 64,
             layers: imbl::Vector::new(),
         }

@@ -80,6 +80,11 @@ pub struct TrackSummary {
     /// UI uses this to drive the AB display-mode filter and the role-aware
     /// AV promotion path.
     pub role: Option<String>,
+    /// True when this track was spawned by R.3's "fresh hidden track per
+    /// import" path and is therefore subject to auto-prune. The UI can
+    /// use this to render the track-header chrome differently (it's
+    /// going to disappear the moment its layer is dragged off).
+    pub transient: bool,
     pub layers: Vec<LayerSummary>,
 }
 
@@ -364,6 +369,7 @@ pub async fn project_summary(handle: State<'_, ProjectHandle>) -> Result<Project
                 TrackRole::AudioA => "audio-a".to_string(),
                 TrackRole::AudioB => "audio-b".to_string(),
             }),
+            transient: t.transient,
             layers: t
                 .layers
                 .iter()
@@ -1567,9 +1573,12 @@ async fn place_imported_media_on_fresh_tracks(
         ),
     };
 
-    // Primary track + layer.
+    // Primary track + layer. `add_transient_track` flags the track so
+    // the actor's auto-prune sweep deletes it once the user drags the
+    // imported layer off onto Video A/B (or deletes it). The reserved
+    // role-stamped tracks aren't transient and survive.
     let primary_track_id = handle
-        .add_track(Actor::User, primary_kind, Some(track_label.clone()))
+        .add_transient_track(Actor::User, primary_kind, Some(track_label.clone()))
         .await
         .map_err(|e: CommandError| e.to_string())?;
     let primary_layer_id = handle
@@ -1595,7 +1604,7 @@ async fn place_imported_media_on_fresh_tracks(
         if snap.settings.auto_pair_audio_on_import {
             let audio_label = format!("{} (audio)", track_label);
             let audio_track_id = handle
-                .add_track(Actor::User, TrackKind::Audio, Some(audio_label))
+                .add_transient_track(Actor::User, TrackKind::Audio, Some(audio_label))
                 .await
                 .map_err(|e: CommandError| e.to_string())?;
             let audio_params = LayerParams::Audio(state::layer::AudioParams {

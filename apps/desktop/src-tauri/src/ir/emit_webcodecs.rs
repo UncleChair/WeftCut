@@ -517,6 +517,7 @@ mod tests {
             locked: false,
             removable: true,
             role: None,
+            transient: false,
             height_px: 64,
             layers: imbl::vector![layer],
         });
@@ -578,6 +579,7 @@ mod tests {
             locked: false,
             removable: true,
             role: None,
+            transient: false,
             height_px: 64,
             layers: imbl::vector![layer],
         });
@@ -596,6 +598,7 @@ mod tests {
             locked: false,
             removable: true,
             role: None,
+            transient: false,
             height_px: 48,
             layers: imbl::Vector::new(),
         });
@@ -648,6 +651,7 @@ mod tests {
             locked: false,
             removable: true,
             role: None,
+            transient: false,
             height_px: 64,
             layers: imbl::vector![layer],
         });
@@ -701,6 +705,7 @@ mod tests {
             locked: false,
             removable: true,
             role: None,
+            transient: false,
             height_px: 64,
             layers: imbl::vector![mk_clip(m1)],
         });
@@ -712,6 +717,7 @@ mod tests {
             locked: false,
             removable: true,
             role: None,
+            transient: false,
             height_px: 64,
             layers: imbl::vector![mk_clip(m2)],
         });
@@ -750,6 +756,7 @@ mod tests {
             locked: false,
             removable: true,
             role: None,
+            transient: false,
             height_px: 64,
             layers: imbl::vector![layer],
         });
