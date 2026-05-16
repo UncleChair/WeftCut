@@ -8,6 +8,7 @@
 // nested `Arc<Project>`.
 #![recursion_limit = "512"]
 
+mod app_settings;
 mod cache;
 mod cloud;
 mod commands;
@@ -95,6 +96,8 @@ pub fn run() {
             commands::keybindings_reset_all,
             commands::keybindings_export,
             commands::keybindings_import,
+            commands::app_settings_get,
+            commands::app_settings_set,
             commands::view_state_get,
             commands::view_state_set,
             commands::agent_session_get,
@@ -229,7 +232,15 @@ pub fn run() {
             // `recents.json`. The frontend `shortcuts/` module reads
             // this once at startup and re-fetches whenever the
             // Settings → Keyboard panel writes.
-            app.manage(keybindings::KeybindingsStore::new(config_dir));
+            app.manage(keybindings::KeybindingsStore::new(config_dir.clone()));
+
+            // A/B-roll redesign app prefs (`docs/ab-roll-redesign`). Same
+            // physical location as `keybindings.json` and `recents.json`.
+            // Display mode + peek-window + drawer-state live here; the
+            // inline pill / View menu / `T` shortcut all mutate this
+            // store directly and emit `app_settings:changed` so the
+            // frontend re-filters the timeline immediately.
+            app.manage(app_settings::AppSettingsStore::new(config_dir));
 
             // Auto-save subscriber. Listens to actor events, debounces
             // 500ms, writes `project.json` whenever a workspace is set.

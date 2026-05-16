@@ -423,6 +423,49 @@ export async function viewStateSet(state: ViewState): Promise<void> {
   return invoke<void>("view_state_set", { state });
 }
 
+// ============================================================
+// App-level settings (A/B-roll redesign, `docs/ab-roll-redesign`).
+// Strict app-level scope: same value across every project. The pill /
+// View menu / `T` shortcut all funnel through `appSettingsSet`. The
+// backend emits `app_settings:changed` on every successful write so
+// subscribers re-render without an extra round-trip.
+// ============================================================
+
+export type DisplayMode = "AbRoll" | "ShowAll";
+
+export interface AppSettings {
+  display_mode: DisplayMode;
+  /// Half-width of the symmetric peek window in microseconds (default
+  /// 10_000_000 = 10 s). Clamped server-side to [1 s, 5 min].
+  delta_window_us: number;
+  /// Remembered last-toggle of the left MediaPool drawer.
+  media_pool_drawer_open: boolean;
+}
+
+/// Patch shape — every field optional. The backend merges into the
+/// current settings, persists atomically, and returns the post-patch
+/// snapshot. Use this for one-field flips (e.g., `{ display_mode: "ShowAll" }`)
+/// instead of round-tripping the whole struct.
+export interface AppSettingsPatch {
+  display_mode?: DisplayMode;
+  delta_window_us?: number;
+  media_pool_drawer_open?: boolean;
+}
+
+export async function appSettingsGet(): Promise<AppSettings> {
+  return invoke<AppSettings>("app_settings_get");
+}
+
+export async function appSettingsSet(
+  patch: AppSettingsPatch,
+): Promise<AppSettings> {
+  return invoke<AppSettings>("app_settings_set", { patch });
+}
+
+export const APP_SETTINGS_EVENTS = {
+  changed: "app_settings:changed",
+} as const;
+
 export async function projectRestoreCheckpoint(checkpointId: string): Promise<void> {
   return invoke<void>("project_restore_checkpoint", { checkpointId });
 }
