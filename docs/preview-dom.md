@@ -7,6 +7,16 @@ WebCodecs + WebGL2 engine, and the cached/realtime/auto mode toggle UI
 are all deleted. **One** preview engine exists; ffmpeg runs only at
 import (proxy job) and export — never in the preview hot path.
 
+**Decision 5 revised 2026-05-16/17:** the originally-specced
+`<iframe srcdoc>` per-template mount hit a WebView2 white-canvas bug
+(four commits — `35875e7`, `1bf5391`, `9378367`, `71e55a0` — attempted
+fixes; only the last succeeded). Templates **ship as `<div>` + Shadow
+DOM** with `new Function`-shadowed globals (see `TemplateHandle.ts`).
+The §5 below describes the *originally-specced* approach; the actual
+shipped contract is the shadow-DOM one. Any forward design that wraps
+templates (notably [[html-render-groups]]) uses the shipped shadow-DOM
+contract, not the originally-specced iframe contract.
+
 ---
 
 ## Problem
@@ -20,8 +30,9 @@ benefits more from edit-time latency and architectural simplicity than
 from WYSIWYG-exact previews.
 
 A pure-DOM preview composition (Remotion-style: `<video>` for clips,
-`<div>` for color/text, `<iframe>` for templates, `<canvas>` for ASS via
-libass-wasm, Web Audio for mixing) gives:
+`<div>` for color/text, `<div>` + Shadow DOM for templates (originally
+specced as `<iframe srcdoc>`; see Status note above), `<canvas>` for
+ASS via libass-wasm, Web Audio for mixing) gives:
 
 - Edit-time latency ≈ next animation frame, no debounce + encode + swap.
 - ~2000 lines of Rust + ~3000 lines of TS deleted at cutover.
@@ -121,29 +132,44 @@ Audio scrub: pointermove mutes the master GainNode and advances the
 master clock + nudges `<video>.currentTime` only. Pointerup unmutes.
 Audio-scrub-on-drag (Premiere-style) deferred to a follow-up setting.
 
-### 5. Templates — `<iframe srcdoc>` per instance + `__setTime` (a + ii)
+### 5. Templates — `<div>` + Shadow DOM per instance + `setTime` (revised post-shipped)
 
-Each `Template` layer mounts a same-origin `<iframe srcdoc>` containing
-the composed template HTML. Prop updates and time updates go through
-direct contentWindow access:
+**Originally specced:** `<iframe srcdoc>` per `Template` layer, with
+prop / time updates via direct `iframe.contentWindow` access. This
+collided with a WebView2 white-canvas-under-srcdoc bug that no CSS
+path could reach. Four attempted fixes (commits `35875e7` →
+`1bf5391` → `9378367`) failed; commit `71e55a0` abandoned the iframe
+approach and shipped what we have today.
+
+**Actually shipped:** each `Template` layer mounts a `<div>` host
+with `attachShadow({ mode: 'open' })`. The template's `<style>`
+content goes into the shadow root for CSS isolation; the template's
+`<script>` body is extracted and executed via `new Function(...)`
+with per-instance shadowed globals — `document` → `shadowRoot`,
+`window` → proxy carrying `__props__`, `performance.now` /
+`Date.now` → synthetic clock, `requestAnimationFrame` → per-instance
+queue. See `apps/desktop/src/preview/dom/handles/TemplateHandle.ts`
+for the full pattern.
+
+Per-frame drive:
 
 ```ts
-iframe.contentWindow.__props__ = resolvedProps;     // sync, no reload
-iframe.contentWindow.__setTime(currentMasterT);     // sync, no awaits
+templateRuntime.setTime(localSec);   // advance closure clock, drain rAF queue
 ```
 
-Templates gain a new `__setTime(t)` entry point for preview — a
-no-await "update internal time, let rAF render naturally" hook. The
-existing `__seek_dispatch(t)` shim (with its fonts.ready + rAF flush +
-compositor wait) stays for offscreen rasterization at export. Both
-converge on a shared `renderAtTime(t, props)` function inside each
-template.
+The export-side `__seek_dispatch(t)` shim (with its
+`document.fonts.ready` + rAF flush + compositor wait, in
+`apps/desktop/src-tauri/src/raster/time_mock.js`) is unchanged — the
+offscreen raster webview still loads templates as full HTML pages
+and uses the time-mock shim. The two paths share the template
+artifact but diverge on rendering host.
 
-iframe vs shadow-DOM vs component-refactor was decided in favor of
-iframe because the existing template format keeps working unchanged
-(except for the `__setTime` addition), and the soft ceiling of ~10–15
-concurrent iframes comfortably exceeds the realistic upper bound (a user
-won't have 30 templates on screen at once).
+**Trade-off accepted vs the originally-specced iframe.** Shadow DOM
+provides CSS + DOM-query isolation, **not** JS realm isolation —
+shared `window`, `Promise`, `console`, `setTimeout`. Acceptable
+because templates are trusted (built-in catalog only). If
+user-supplied templates ever land, this is when iframe sandboxing
+has to come back and the white-canvas bug needs solving for real.
 
 ### 6. Source of truth — Project state via Zustand; no `emit_dom` IR target
 
@@ -236,15 +262,18 @@ landing on main.
 computes the set of layers within `[clock - 0.5 s, clock + 2 s]`; each
 becomes a `<Layer>` keyed by `layer.id`. Inside each `<Layer>`, a
 `useEffect([layer.id])` creates the appropriate DOM element (`<video>`,
-`<audio>`, `<iframe>`, `<img>`, `<canvas>`, `<div>`) and stores it on a
-ref; the element survives every parent re-render. A singleton
+`<audio>`, `<img>`, `<canvas>`, or `<div>` — the last serving both
+generic color/text layers *and* template hosts via Shadow DOM) and
+stores it on a ref; the element survives every parent re-render. A
+singleton
 `PlaybackEngine` owns the master clock (synthetic, RAF-driven), the Web
 Audio context with master + per-layer GainNodes wired through
 `createMediaElementSource()`, and a `Map<LayerId, LayerHandle>` of refs.
 Each RAF tick the engine: advances the clock, computes keyframe
 snapshots for each active layer, writes
-`style.transform / style.opacity / style.filter`, calls template
-`__setTime` and writes `iframe.contentWindow.__props__`, calls JASSUB
+`style.transform / style.opacity / style.filter`, calls per-template
+`setTime(localSec)` (TemplateHandle drains its per-instance rAF queue
+to advance the shadowed clock), calls JASSUB
 `setCurrentTime` on subtitle canvases, and nudges each media element's
 `currentTime` toward its target if drift exceeds 100 ms. No React
 re-render happens inside the inner loop. Scrub paths share the engine —
@@ -302,10 +331,14 @@ with missing `css` renders a warning badge on its layer.
 
 **New files:**
 
-- `apps/desktop/src/preview/dom/handles/TemplateHandle.ts` — iframe
-  srcdoc mount + RAF-driven `__setTime` + `__props__` updates.
-- Tests verifying `__setTime` and `__seek_dispatch` produce identical
-  visual state at the same `t`.
+- `apps/desktop/src/preview/dom/handles/TemplateHandle.ts` —
+  `<div>` + Shadow DOM mount + RAF-driven per-instance
+  `setTime(localSec)` that advances a shadowed clock and drains the
+  per-instance rAF queue. **Note:** originally specced as iframe
+  srcdoc; revised to shadow DOM at the end of Phase F (see Status
+  note at top of doc and commits `35875e7` → `71e55a0`).
+- Tests verifying `setTime` (preview path) and `__seek_dispatch`
+  (raster path) produce identical visual state at the same `t`.
 
 **Modified.** Each template in `apps/desktop/src-tauri/src/raster/templates/*`
 gets refactored to extract its render-at-time logic into a shared
@@ -399,9 +432,13 @@ entry.
   If seek precision regresses, GOP shortening (already in
   `PROXY_FORMAT_VERSION`'s scope) is the lever.
 
-- **Iframe-per-template overhead.** Soft ceiling ~10–15 concurrent
-  template iframes. If a project legitimately needs more, revisit Q5
-  (shadow DOM + namespaced globals). Unlikely.
+- **Shadow-DOM script-execution edge cases.** Templates that bare-
+  reference `globalThis` or `document.body` (instead of `document`)
+  lose context inside the shadowed-globals execution.
+  `TemplateHandle.instantiateTemplate` handles the common cases via
+  its `winProxy`, but new templates added to the catalog should be
+  tested. The previously-noted "iframe-per-template soft ceiling of
+  ~10–15" is obsolete — Shadow DOM doesn't have an equivalent cap.
 
 - **Long-lived branch merge conflicts.** Q8.a's main downside.
   Mitigation: rebase weekly; if Phase 4 keyframe MCP work starts in
