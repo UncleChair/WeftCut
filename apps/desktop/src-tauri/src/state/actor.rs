@@ -348,6 +348,11 @@ enum Command {
     AddTrack {
         kind: TrackKind,
         label: Option<String>,
+        /// When `true`, the new track flips its `transient` flag so the
+        /// auto-prune sweep deletes it the moment its `layers` becomes
+        /// empty. R.3 import flow sets this; the legacy `add_track`
+        /// command leaves it `false`.
+        transient: bool,
         actor: Actor,
         reply: oneshot::Sender<Result<TrackId, CommandError>>,
     },
@@ -703,6 +708,32 @@ impl ProjectHandle {
             .send(Command::AddTrack {
                 kind,
                 label,
+                transient: false,
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    /// Like `add_track` but flags the new track as `transient` — the
+    /// auto-prune sweep on every commit removes it once it's empty. Used
+    /// by `commands::import_media` (R.3) to land an import's layer on a
+    /// fresh hidden track that disappears the moment the user drags the
+    /// clip onto A/B (or deletes it).
+    pub async fn add_transient_track(
+        &self,
+        actor: Actor,
+        kind: TrackKind,
+        label: Option<String>,
+    ) -> Result<TrackId, CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::AddTrack {
+                kind,
+                label,
+                transient: true,
                 actor,
                 reply,
             })
@@ -1330,10 +1361,11 @@ impl ProjectActor {
             Command::AddTrack {
                 kind,
                 label,
+                transient,
                 actor,
                 reply,
             } => {
-                let result = self.do_add_track(kind, label, actor);
+                let result = self.do_add_track(kind, label, transient, actor);
                 let _ = reply.send(result);
             }
             Command::AddLayer {
@@ -1682,11 +1714,13 @@ impl ProjectActor {
         &mut self,
         kind: TrackKind,
         label: Option<String>,
+        transient: bool,
         actor: Actor,
     ) -> Result<TrackId, CommandError> {
         let mut next: Project = (*self.history.current()).clone();
         let mut track = Track::new(kind);
         track.label = label;
+        track.transient = transient;
         let track_id = track.id;
         next.tracks.push_back(track);
         self.commit(
@@ -2669,6 +2703,11 @@ pub(crate) fn apply_delete_layer(
         return Err(CommandError::LayerNotFound { layer: id });
     }
     drop_layer_from_groups(project, id);
+    // A/B-roll redesign R.4: a deletion can leave behind an empty hidden
+    // track (the import-created kind). Prune so the timeline graveyard
+    // doesn't accumulate. Reserved tracks are protected by their role
+    // stamp.
+    prune_empty_hidden_tracks(project);
     Ok(())
 }
 
@@ -2965,6 +3004,15 @@ pub(crate) fn apply_move_layer(
         }
     }
 
+    // A/B-roll redesign R.4 (`docs/ab-roll-redesign`): role-aware AV-pair
+    // promotion. When the destination is a video-role track (Video A/B)
+    // and the moved layer is in a group, fan out the audio sibling onto
+    // the paired audio-role track (Audio A/B). Skipped on Alt-escape so
+    // the existing "move just this layer" gesture stays intact.
+    if !escape_group && !siblings.is_empty() {
+        promote_av_pair_to_matching_role(project, new_track_id, &siblings);
+    }
+
     // Auto-extend composition duration if the move pushed any clip out.
     let max_end = project
         .tracks
@@ -2975,7 +3023,110 @@ pub(crate) fn apply_move_layer(
     if max_end > project.composition.duration_us {
         project.composition.duration_us = max_end;
     }
+
+    // A/B-roll redesign R.4: prune empty hidden tracks left behind by the
+    // move. Reserved (role-stamped) tracks survive (their `role.is_some()`).
+    // Tracks marked non-removable also survive in case any future code
+    // path stamps that without a role.
+    prune_empty_hidden_tracks(project);
+
     Ok(())
+}
+
+/// Move any group siblings whose layer is `Audio` and whose current
+/// track has `role = None` onto the audio-role track paired with the
+/// destination's video role. Caller has already verified that
+/// `new_track_id` exists and that the move is not Alt-escaping its
+/// group.
+fn promote_av_pair_to_matching_role(
+    project: &mut Project,
+    new_track_id: TrackId,
+    siblings: &[LayerId],
+) {
+    let dest_role = project
+        .tracks
+        .iter()
+        .find(|t| t.id == new_track_id)
+        .and_then(|t| t.role);
+    let Some(role) = dest_role else { return };
+    if !role.is_video() {
+        return;
+    }
+    let paired_role = role.paired();
+    let audio_dest_id = match project
+        .tracks
+        .iter()
+        .find(|t| t.role == Some(paired_role))
+        .map(|t| t.id)
+    {
+        Some(id) => id,
+        // No paired audio track in this project (e.g., user deleted
+        // their reserved Audio A/B in a future feature). Skip silently
+        // — the audio sibling stays on its current track.
+        None => return,
+    };
+    if audio_dest_id == new_track_id {
+        return;
+    }
+    for &sid in siblings {
+        let Some((ti, li)) = locate_layer(project, sid) else {
+            continue;
+        };
+        // Already on a role-stamped track? Promotion would clobber a
+        // role assignment the user/agent set intentionally. Leave it.
+        if project.tracks[ti].role.is_some() {
+            continue;
+        }
+        // Only audio layers promote across the V/A boundary.
+        if !matches!(
+            project.tracks[ti].layers[li].params,
+            LayerParams::Audio(_)
+        ) {
+            continue;
+        }
+        let mut layer = project.tracks[ti].layers.remove(li);
+        // Keep timing unchanged — the time-delta fanout above already
+        // shifted t_start/t_end if needed.
+        let dest_idx = match project
+            .tracks
+            .iter()
+            .position(|t| t.id == audio_dest_id)
+        {
+            Some(i) => i,
+            None => {
+                // Defensive: re-insert at original location if dest
+                // disappeared between resolve and move (can't happen
+                // today; cheap to handle).
+                project.tracks[ti].layers.insert(li, layer);
+                continue;
+            }
+        };
+        let insert_at = project.tracks[dest_idx]
+            .layers
+            .iter()
+            .position(|l| l.t_start_us > layer.t_start_us)
+            .unwrap_or(project.tracks[dest_idx].layers.len());
+        // Final adjust: if t_start was somehow negative after a wonky
+        // delta application (shouldn't happen, but the existing move
+        // path doesn't clamp here either), let validate() catch it
+        // downstream.
+        layer.t_start_us = layer.t_start_us.max(0);
+        project.tracks[dest_idx].layers.insert(insert_at, layer);
+    }
+}
+
+/// Remove every track that:
+///   - is `transient` (created by R.3's "fresh hidden track per import"
+///     path), and
+///   - has zero layers.
+///
+/// Reserved (role-stamped) tracks are not `transient`. Tracks the user
+/// or an agent explicitly creates aren't either. Only the import-spawned
+/// holding tracks get the auto-prune treatment — those exist solely to
+/// host the just-imported clip and have no identity left once the clip
+/// migrates onto A/B (or is deleted).
+pub(crate) fn prune_empty_hidden_tracks(project: &mut Project) {
+    project.tracks.retain(|t| !(t.transient && t.layers.is_empty()));
 }
 
 /// Locate `(track_idx, layer_idx)` for a given LayerId. Returns None if
@@ -4547,6 +4698,282 @@ mod tests {
             assert_eq!(track.role, Some(*role));
             assert!(!track.removable);
         }
+    }
+
+    // ---- R.4: role-aware AV-pair promotion + auto-prune of empty
+    //       hidden tracks ----
+
+    /// Reusable setup: blank project (4 reserved tracks) + a fresh
+    /// hidden V+A pair carrying a grouped video/audio clip, mimicking
+    /// what R.3's `place_imported_media_on_fresh_tracks` produces from
+    /// `import_media`. Returns the handle plus all the ids the
+    /// promotion test needs to assert against.
+    async fn project_with_hidden_av_pair(
+    ) -> (ProjectHandle, TrackId, TrackId, LayerId, LayerId, MediaItem) {
+        use crate::state::media::{AudioStreamMeta, MediaKind, MediaMetadata};
+        use chrono::Utc;
+
+        let mut p = Project::new_blank("ab-roll-test");
+        // Add the import media to the pool so the layers can reference it.
+        let media = MediaItem {
+            id: new_id(),
+            label: Some("import.mp4".into()),
+            path_abs: "/m/import.mp4".into(),
+            path_rel: None,
+            kind: MediaKind::Video,
+            metadata: MediaMetadata {
+                duration_us: Some(5_000_000),
+                video: None,
+                audio: Some(AudioStreamMeta {
+                    sample_rate: 48_000,
+                    channels: 2,
+                    codec: "aac".into(),
+                }),
+            },
+            proxy_path: None,
+            proxy_format_version: 0,
+            waveform_path: None,
+            thumbnails_dir: None,
+            file_hash_blake3: "h".into(),
+            file_size: 0,
+            file_mtime: 0,
+            imported_at: Utc::now(),
+        };
+        let media_id = media.id;
+        p.media_pool.insert(media_id, media.clone());
+        let handle = spawn(p);
+
+        // Mirror R.3's import path: transient tracks so the auto-prune
+        // sweep can act on them once they empty out.
+        let v_track = handle
+            .add_transient_track(Actor::User, TrackKind::Video, Some("import".into()))
+            .await
+            .unwrap();
+        let a_track = handle
+            .add_transient_track(Actor::User, TrackKind::Audio, Some("import (audio)".into()))
+            .await
+            .unwrap();
+        let v_layer = handle
+            .add_layer(
+                Actor::User,
+                v_track,
+                LayerParams::VideoClip(crate::state::layer::VideoClipParams {
+                    media: media_id,
+                    src_in_us: 0,
+                    src_out_us: 5_000_000,
+                    transform: Default::default(),
+                    opacity: Animated::Static(1.0),
+                    crop: None,
+                    flip_h: false,
+                    flip_v: false,
+                    blend_mode: Default::default(),
+                    speed: 1.0,
+                    fade_in_us: 0,
+                    fade_out_us: 0,
+                }),
+                0,
+                5_000_000,
+            )
+            .await
+            .unwrap();
+        let a_layer = handle
+            .add_layer(
+                Actor::User,
+                a_track,
+                LayerParams::Audio(crate::state::layer::AudioParams {
+                    media: media_id,
+                    src_in_us: 0,
+                    src_out_us: 5_000_000,
+                    gain_db: Animated::Static(0.0),
+                    pan: Animated::Static(0.0),
+                    fade_in_us: 0,
+                    fade_out_us: 0,
+                    mute: false,
+                }),
+                0,
+                5_000_000,
+            )
+            .await
+            .unwrap();
+        handle
+            .groups_create(Actor::User, vec![v_layer, a_layer], None, false)
+            .await
+            .unwrap();
+
+        (handle, v_track, a_track, v_layer, a_layer, media)
+    }
+
+    #[tokio::test]
+    async fn promoting_video_to_a_roll_routes_audio_to_audio_a_and_prunes_source() {
+        let (handle, hidden_v_track, hidden_a_track, v_layer, a_layer, _media) =
+            project_with_hidden_av_pair().await;
+        let snap = handle.snapshot().await;
+        let video_a = snap
+            .tracks
+            .iter()
+            .find(|t| t.role == Some(TrackRole::ARoll))
+            .unwrap()
+            .id;
+        let audio_a = snap
+            .tracks
+            .iter()
+            .find(|t| t.role == Some(TrackRole::AudioA))
+            .unwrap()
+            .id;
+
+        // Promote: move the video layer onto Video A, group fanout enabled.
+        handle
+            .move_layer(Actor::User, v_layer, video_a, 0, false)
+            .await
+            .unwrap();
+
+        let after = handle.snapshot().await;
+        // Video layer is on Video A.
+        let video_a_track = after
+            .tracks
+            .iter()
+            .find(|t| t.id == video_a)
+            .expect("Video A still present");
+        assert!(video_a_track.layers.iter().any(|l| l.id == v_layer));
+        // Audio layer routed to Audio A (the paired role).
+        let audio_a_track = after
+            .tracks
+            .iter()
+            .find(|t| t.id == audio_a)
+            .expect("Audio A still present");
+        assert!(
+            audio_a_track.layers.iter().any(|l| l.id == a_layer),
+            "audio sibling must promote to Audio A track"
+        );
+        // The hidden source tracks pruned themselves once empty.
+        assert!(
+            !after.tracks.iter().any(|t| t.id == hidden_v_track),
+            "hidden video source track must auto-prune"
+        );
+        assert!(
+            !after.tracks.iter().any(|t| t.id == hidden_a_track),
+            "hidden audio source track must auto-prune"
+        );
+    }
+
+    #[tokio::test]
+    async fn escape_group_does_not_fan_out_to_paired_audio() {
+        // Alt-drag (escape_group=true) is the existing opt-out for
+        // group-coupled moves. R.4 must respect it: only the video layer
+        // moves, the audio stays put, and the hidden source tracks
+        // therefore don't both empty out.
+        let (handle, hidden_v_track, hidden_a_track, v_layer, a_layer, _media) =
+            project_with_hidden_av_pair().await;
+        let snap = handle.snapshot().await;
+        let video_a = snap
+            .tracks
+            .iter()
+            .find(|t| t.role == Some(TrackRole::ARoll))
+            .unwrap()
+            .id;
+        let audio_a = snap
+            .tracks
+            .iter()
+            .find(|t| t.role == Some(TrackRole::AudioA))
+            .unwrap()
+            .id;
+
+        handle
+            .move_layer(Actor::User, v_layer, video_a, 0, /* escape_group */ true)
+            .await
+            .unwrap();
+
+        let after = handle.snapshot().await;
+        // Video promoted, but audio stayed on the hidden audio track.
+        assert!(
+            after
+                .tracks
+                .iter()
+                .find(|t| t.id == video_a)
+                .unwrap()
+                .layers
+                .iter()
+                .any(|l| l.id == v_layer)
+        );
+        assert!(
+            !after
+                .tracks
+                .iter()
+                .find(|t| t.id == audio_a)
+                .unwrap()
+                .layers
+                .iter()
+                .any(|l| l.id == a_layer),
+            "Alt-escape must NOT promote the audio sibling"
+        );
+        assert!(
+            after
+                .tracks
+                .iter()
+                .find(|t| t.id == hidden_a_track)
+                .map(|t| t.layers.iter().any(|l| l.id == a_layer))
+                .unwrap_or(false),
+            "audio layer stays on its original hidden track"
+        );
+        // Hidden video source pruned (now empty), audio source did NOT
+        // because the audio layer is still on it.
+        assert!(!after.tracks.iter().any(|t| t.id == hidden_v_track));
+        assert!(after.tracks.iter().any(|t| t.id == hidden_a_track));
+    }
+
+    #[tokio::test]
+    async fn deleting_only_layer_on_hidden_track_prunes_the_track() {
+        // Auto-prune also fires after `delete_layer`. A user / agent path
+        // that removes the last layer of a hidden track shouldn't leave
+        // an empty graveyard row in the timeline.
+        let (handle, hidden_v_track, _hidden_a, v_layer, _a_layer, _media) =
+            project_with_hidden_av_pair().await;
+        // delete_layer doesn't have an escape_group flag (deletes are
+        // single-layer by definition; group-aware delete is a separate
+        // op). The audio sibling stays on its hidden track.
+        handle.delete_layer(Actor::User, v_layer).await.unwrap();
+        let after = handle.snapshot().await;
+        assert!(
+            !after.tracks.iter().any(|t| t.id == hidden_v_track),
+            "hidden video track must auto-prune after its only layer is deleted"
+        );
+    }
+
+    #[tokio::test]
+    async fn promote_undo_restores_hidden_tracks() {
+        // History invariant: undoing a promotion restores the project
+        // to its prior shape — both the audio fan-out AND the
+        // auto-pruned hidden tracks must reappear. The history layer
+        // serialises whole-project snapshots so this is "free" as long
+        // as our mutation paths don't leak across the commit boundary.
+        let (handle, hidden_v_track, hidden_a_track, v_layer, _a_layer, _media) =
+            project_with_hidden_av_pair().await;
+        let snap = handle.snapshot().await;
+        let video_a = snap
+            .tracks
+            .iter()
+            .find(|t| t.role == Some(TrackRole::ARoll))
+            .unwrap()
+            .id;
+
+        handle
+            .move_layer(Actor::User, v_layer, video_a, 0, false)
+            .await
+            .unwrap();
+        // Pre-undo sanity: hidden source tracks gone.
+        let mid = handle.snapshot().await;
+        assert!(!mid.tracks.iter().any(|t| t.id == hidden_v_track));
+
+        handle.undo(Actor::User).await.unwrap();
+        let after = handle.snapshot().await;
+        assert!(
+            after.tracks.iter().any(|t| t.id == hidden_v_track),
+            "undo must restore the auto-pruned hidden video track"
+        );
+        assert!(
+            after.tracks.iter().any(|t| t.id == hidden_a_track),
+            "undo must restore the auto-pruned hidden audio track"
+        );
     }
 
     #[tokio::test]

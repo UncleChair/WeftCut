@@ -788,6 +788,7 @@ mod tests_lower_range {
             locked: false,
             removable: true,
             role: None,
+            transient: false,
             height_px: 64,
             layers: video_layers.into_iter().collect(),
         };
@@ -867,6 +868,7 @@ mod tests_lower_range {
             locked: false,
             removable: true,
             role: None,
+            transient: false,
             height_px: 48,
             layers: imbl::vector![audio_layer],
         };

@@ -143,6 +143,7 @@ mod tests {
             locked: false,
             removable: true,
             role: None,
+            transient: false,
             height_px: 64,
             layers: imbl::vector![layer],
         };

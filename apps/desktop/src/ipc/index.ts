@@ -127,6 +127,11 @@ export interface TrackSummary {
   /// SFX, captions, voiceover, etc.) and for legacy projects. AB display mode
   /// hides any track where `role === null`; Show-All ignores the field.
   role: TrackRole | null;
+  /// True when the track was spawned by the "one new hidden track per
+  /// import" path and is therefore auto-pruned the moment its layers go
+  /// to zero (R.4). The UI may render the track-header chrome differently
+  /// to signal the impermanence.
+  transient: boolean;
   layers: LayerSummary[];
 }
 

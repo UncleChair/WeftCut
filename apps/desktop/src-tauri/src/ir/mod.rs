@@ -133,6 +133,7 @@ mod tests {
             locked: false,
             removable: true,
             role: None,
+            transient: false,
             height_px: 64,
             layers: imbl::vector![layer],
         };
@@ -269,6 +270,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
             locked: false,
             removable: true,
             role: None,
+            transient: false,
             height_px: 48,
             layers: imbl::vector![layer],
         };
@@ -348,6 +350,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
             locked: false,
             removable: true,
             role: None,
+            transient: false,
             height_px: 64,
             layers: imbl::vector![layer],
         };
@@ -425,6 +428,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
             locked: false,
             removable: true,
             role: None,
+            transient: false,
             height_px: 64,
             layers: imbl::vector![layer],
         };
@@ -603,6 +607,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
             locked: false,
             removable: true,
             role: None,
+            transient: false,
             height_px: 64,
             layers: imbl::vector![layer],
         };
@@ -701,6 +706,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
             locked: false,
             removable: true,
             role: None,
+            transient: false,
             height_px: 32,
             layers: imbl::vector![layer],
         };
@@ -793,6 +799,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
             locked: false,
             removable: true,
             role: None,
+            transient: false,
             height_px: 32,
             layers: imbl::vector![layer],
         };
@@ -897,6 +904,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
             locked: false,
             removable: true,
             role: None,
+            transient: false,
             height_px: 64,
             layers: imbl::vector![a, b],
         };
@@ -1036,6 +1044,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
             locked: false,
             removable: true,
             role: None,
+            transient: false,
             height_px: 64,
             layers: imbl::vector![layer],
         };
@@ -1317,6 +1326,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
             locked: false,
             removable: true,
             role: None,
+            transient: false,
             height_px: 64,
             layers: imbl::vector![layer],
         };
