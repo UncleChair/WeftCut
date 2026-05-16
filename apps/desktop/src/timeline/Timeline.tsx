@@ -59,13 +59,13 @@ function parseMediaDrag(e: React.DragEvent): MediaDragPayload | null {
   }
 }
 
-function trackAcceptsMedia(trackKind: string, mediaKind: string): boolean {
-  const t = trackKind.toLowerCase();
-  const m = mediaKind.toLowerCase();
-  if (t === "video") return m === "video" || m === "image";
-  if (t === "audio") return m === "audio";
-  if (t === "subtitle") return m === "subtitle";
-  return false;
+// V.10 (A/B-roll v2): any media drops on any track. The function is
+// kept as a stub returning true to minimise churn at call-sites; future
+// cleanup can inline it away. Kind-based rejection logic is gone — the
+// backend's V.2 overlap rule + V.5 kind-agnostic tracks accept any
+// layer kind on any track.
+function trackAcceptsMedia(_trackKind: string, _mediaKind: string): boolean {
+  return true;
 }
 
 interface VisualTrack {
@@ -165,12 +165,13 @@ function visualOrderedTracks(tracks: TrackSummary[]): VisualTrack[] {
 }
 
 // Some media kinds (audio, subtitle) must live on a matching track kind for
-// the IR lowering to pick them up. The backend auto-creates / redirects to
-// that track on drop, so the drop-hit test should also accept these onto any
-// track to mirror that behaviour.
-function trackAcceptsMediaForAutoRoute(_trackKind: string, mediaKind: string): boolean {
-  const m = mediaKind.toLowerCase();
-  return m === "audio" || m === "subtitle";
+// V.10: under v2 every drop lands on its target track directly (no
+// auto-routing). The function was kept around for the few call-sites
+// that compose `trackAcceptsMedia || trackAcceptsMediaForAutoRoute`;
+// returning false here is a no-op since `trackAcceptsMedia` now
+// returns true unconditionally.
+function trackAcceptsMediaForAutoRoute(_trackKind: string, _mediaKind: string): boolean {
+  return false;
 }
 
 type DragKind = "move" | "trim-start" | "trim-end";
@@ -925,11 +926,11 @@ function DisplayModePill({ mode }: { mode: "AbRoll" | "ShowAll" }) {
   );
 }
 
-/// Cross-track drop only allowed within the same track kind. Cross-kind moves
-/// (e.g. video clip → audio track) would leave the layer in a state the IR
-/// compiler ignores, so we reject at the UI layer.
-function trackAcceptsForLayer(target: TrackSummary, drag: DragState): boolean {
-  return target.kind.toLowerCase() === drag.trackKind.toLowerCase();
+/// V.10: tracks are kind-agnostic; any layer can land on any track.
+/// The cross-kind reject the function used to enforce is gone — the
+/// IR routes by LayerParams (V.5), not by track kind.
+function trackAcceptsForLayer(_target: TrackSummary, _drag: DragState): boolean {
+  return true;
 }
 
 function EmptyHint({ mode }: { mode?: "AbRoll" | "ShowAll" }) {
