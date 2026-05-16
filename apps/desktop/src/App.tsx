@@ -54,15 +54,7 @@ import {
   PreviewSurface,
   type PreviewSurfaceHandle,
 } from "./preview/PreviewSurface";
-import { SegmentStatusBar } from "./preview/SegmentStatusBar";
-import { RealtimePreview } from "./preview/webcodecs/RealtimePreview";
-import { isRealtimeDevMode } from "./preview/webcodecs/devMode";
-import { probeRealtimeCapability } from "./preview/webcodecs/capability";
-import { useSetPreviewModeCapability } from "./preview/webcodecs/previewModeStore";
 
-// Phase B1 dev-mode toggle: evaluated once at module load. See
-// `preview/webcodecs/devMode.ts` for activation paths.
-const REALTIME_DEV_MODE = isRealtimeDevMode();
 import {
   Menu,
   MenuHeading,
@@ -244,18 +236,12 @@ export function App({ onCloseProject }: AppProps) {
     }
   }, [t]);
 
-  // Phase B4: run the WebCodecs+WebGL2 probe once at mount and seed
-  // the preview-mode store. Settings panel + dev-mode harness both
-  // read from the same store via atomic selectors.
-  const setPreviewCapability = useSetPreviewModeCapability();
-
   useEffect(() => {
     ping().then(setPong).catch((e) => setPong(`error: ${String(e)}`));
     refresh();
     exportQueueList().then(setQueue).catch(() => {});
     hwEncoderProbe().then(setHwProbe).catch(() => {});
     keybindingsGet().then(setKeybindings).catch(() => {});
-    void probeRealtimeCapability().then(setPreviewCapability);
     // Seed agent-session mode explicitly so the UI never flashes through
     // editor mode on a fresh app start when an MCP client has already
     // begun a session (e.g., on app re-launch via deeplink in the
@@ -945,16 +931,12 @@ export function App({ onCloseProject }: AppProps) {
       <main className={`app-main ${mediaPoolDrawerOpen ? "drawer-open" : ""}`}>
         <section className="preview">
           <div id="video-surface" className="video-surface">
-            {REALTIME_DEV_MODE ? (
-              <RealtimePreview />
-            ) : (
-              <PreviewSurface
-                ref={previewRef}
-                hasContent={(summary?.layer_count ?? 0) > 0}
-                onTimeUpdate={setCurrentTimeUs}
-                onPausedChange={setPaused}
-              />
-            )}
+            <PreviewSurface
+              ref={previewRef}
+              hasContent={(summary?.layer_count ?? 0) > 0}
+              onTimeUpdate={setCurrentTimeUs}
+              onPausedChange={setPaused}
+            />
           </div>
           <div className="preview-transport" role="toolbar" aria-label="Preview transport">
             {editingTimecode !== null ? (
@@ -1025,7 +1007,6 @@ export function App({ onCloseProject }: AppProps) {
         </section>
 
         <section className="timeline">
-          <SegmentStatusBar />
           <Timeline
             tracks={summary?.tracks ?? []}
             groups={summary?.groups ?? []}

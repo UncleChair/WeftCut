@@ -1743,53 +1743,6 @@ async fn place_imported_media_on_fresh_tracks(
     Ok(())
 }
 
-/// Return the current preview MP4 path (if a Phase-D render has landed)
-/// so the React `<PreviewSurface>` can pick the right `<video src>` on
-/// mount without waiting for the next commit-debounce-render cycle.
-#[tauri::command]
-pub async fn preview_current_path(
-    renderer: State<'_, crate::preview::PreviewRenderer>,
-) -> Result<Option<String>, String> {
-    Ok(renderer
-        .current_path()
-        .map(|p| p.to_string_lossy().to_string()))
-}
-
-/// Update the segmented-preview renderer's playhead position so the next
-/// queue push assigns `PriorityClass::Playhead` to the segment containing
-/// `t_us`. No-op when the segmented renderer isn't running (i.e., the
-/// `WEFTCUT_PREVIEW_SEGMENTED` env var wasn't set at startup).
-#[tauri::command]
-pub async fn preview_set_playhead(
-    app: tauri::AppHandle,
-    t_us: i64,
-) -> Result<(), String> {
-    use tauri::Manager;
-    if let Some(renderer) =
-        app.try_state::<crate::preview::segmented::SegmentedRenderer>()
-    {
-        renderer.set_playhead(t_us);
-    }
-    Ok(())
-}
-
-/// User-triggered manual retry of a failed segment. Returns true if the
-/// segment was found in the current manifest and queued. The Rust side
-/// has all the typed state — React just passes the hash string.
-#[tauri::command]
-pub async fn preview_retry_segment(
-    app: tauri::AppHandle,
-    hash: String,
-) -> Result<bool, String> {
-    use tauri::Manager;
-    let Some(renderer) =
-        app.try_state::<crate::preview::segmented::SegmentedRenderer>()
-    else {
-        return Ok(false);
-    };
-    Ok(renderer.retry_segment(&hash).await)
-}
-
 #[tauri::command]
 pub async fn import_cancel(
     import_queue: State<'_, crate::jobs::import::ImportQueue>,
@@ -1837,44 +1790,6 @@ pub async fn compile_project(
         maps: plan.maps,
         node_count: graph.nodes.len(),
     })
-}
-
-/// Phase B3: emit the WebCodecs composition recipe for the current
-/// project snapshot. Mirrors `compile_project`'s path (materialize
-/// templates + inline subtitles, snapshot the project) but produces
-/// the JSON recipe consumed by the WebGL2 compositor instead of the
-/// ffmpeg filter graph. Pure read; no mutation.
-#[tauri::command]
-pub async fn preview_webcodecs_recipe(
-    app: tauri::AppHandle,
-    handle: State<'_, ProjectHandle>,
-    cache: State<'_, crate::cache::CacheLayout>,
-) -> Result<ir::WebcodecsRecipe, String> {
-    let snap = handle.snapshot().await;
-    // `docs/preview-scrub.md` S.3 — recipe runs on the 540p proxy
-    // (when available) to give the WebCodecs decoder dense keyframes
-    // for fast `mp4box.seek`. `with_proxies_substituted` gracefully
-    // falls back to `media.path_abs` for items whose proxy hasn't
-    // been generated yet; segmented preview uses the same path.
-    let project_for_recipe = crate::preview::with_proxies_substituted(&snap);
-    let target = ir::RenderTarget::full(
-        project_for_recipe.composition.width,
-        project_for_recipe.composition.height,
-        Rational::new(
-            project_for_recipe.composition.fps.num,
-            project_for_recipe.composition.fps.den,
-        ),
-        project_for_recipe.composition.sample_rate,
-        project_for_recipe.composition.channels,
-    );
-    let template_renders = ir::materialize_templates(&project_for_recipe, &cache, &app)
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(ir::emit_webcodecs(
-        &project_for_recipe,
-        &target,
-        &template_renders,
-    ))
 }
 
 #[tauri::command]

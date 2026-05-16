@@ -11,14 +11,6 @@ import {
   settingsTestProvider,
 } from "../ipc";
 import { KeybindingPanel } from "./KeybindingPanel";
-import {
-  resolveEffectiveMode,
-  usePreviewModeCapability,
-  usePreviewModePreference,
-  useSetPreviewModePreference,
-  type PreviewModePreference,
-} from "../preview/webcodecs/previewModeStore";
-
 interface Props {
   onClose: () => void;
   /// Shortcut overrides owned by App.tsx. Threaded through so the
@@ -103,15 +95,6 @@ export function SettingsPanel({
           onError={setError}
         />
 
-        <h3>{t("settings.preview_engine_heading", "Preview engine")}</h3>
-        <p className="settings-blurb">
-          {t(
-            "settings.preview_engine_blurb",
-            "Real-time playback uses WebCodecs + WebGL2 for instant edit feedback; cached uses pre-rendered segments. Auto picks based on a capability probe.",
-          )}
-        </p>
-        <PreviewEngineSection />
-
         <h3>{t("settings.api_keys_heading")}</h3>
         <p className="settings-blurb">{t("settings.api_keys_blurb")}</p>
 
@@ -129,87 +112,6 @@ export function SettingsPanel({
             />
           ))
         )}
-      </div>
-    </div>
-  );
-}
-
-function PreviewEngineSection() {
-  const { t } = useTranslation();
-  const preference = usePreviewModePreference();
-  const capability = usePreviewModeCapability();
-  const setPreference = useSetPreviewModePreference();
-  const effective = resolveEffectiveMode(preference, capability);
-
-  const options: Array<{
-    value: PreviewModePreference;
-    label: string;
-    hint: string;
-  }> = [
-    {
-      value: "auto",
-      label: t("settings.preview_mode.auto", "Auto (recommended)"),
-      hint: t(
-        "settings.preview_mode.auto_hint",
-        "Real-time when the capability probe passes; cached otherwise.",
-      ),
-    },
-    {
-      value: "realtime",
-      label: t("settings.preview_mode.realtime", "Real-time"),
-      hint: t(
-        "settings.preview_mode.realtime_hint",
-        "Force WebCodecs + WebGL2. Falls back to cached only when the decoder is entirely absent.",
-      ),
-    },
-    {
-      value: "cached",
-      label: t("settings.preview_mode.cached", "Cached"),
-      hint: t(
-        "settings.preview_mode.cached_hint",
-        "Always use pre-rendered segments. Bug-report escape hatch.",
-      ),
-    },
-  ];
-
-  return (
-    <div className="settings-preview-engine">
-      <div className="settings-preview-options" role="radiogroup">
-        {options.map((opt) => (
-          <label key={opt.value} className="settings-preview-option">
-            <input
-              type="radio"
-              name="previewMode"
-              value={opt.value}
-              checked={preference === opt.value}
-              onChange={() => setPreference(opt.value)}
-            />
-            <span>
-              <span className="settings-toggle-label">{opt.label}</span>
-              <span className="settings-toggle-hint">{opt.hint}</span>
-            </span>
-          </label>
-        ))}
-      </div>
-      <div className="settings-preview-status">
-        <strong>{t("settings.preview_capability", "Capability probe")}:</strong>{" "}
-        {capability ? (
-          capability.ok ? (
-            <span className="settings-badge settings-badge-on">
-              {t("settings.preview_capability_ok", "ok — all stages passed")}
-            </span>
-          ) : (
-            <span className="settings-badge settings-badge-off">
-              {capability.stage}: {capability.detail}
-            </span>
-          )
-        ) : (
-          <span>{t("settings.preview_capability_probing", "probing…")}</span>
-        )}
-        <div>
-          <strong>{t("settings.preview_effective", "Effective engine")}:</strong>{" "}
-          <code>{effective}</code>
-        </div>
       </div>
     </div>
   );
