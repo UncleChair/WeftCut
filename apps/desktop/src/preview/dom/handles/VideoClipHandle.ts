@@ -12,9 +12,14 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { playbackPathFor, useProjectStore } from "../../../state/projectStore";
 import type { LayerSummary } from "../../../ipc";
 import type { AudioGraph, LayerSlot } from "../audio/AudioGraph";
+import { resolveFadeOpacity } from "../keyframes/fade";
 import type { HandleContext, LayerHandle } from "./types";
 
 const DRIFT_NUDGE_THRESHOLD_SEC = 0.1;
+/// Skip an opacity write if the new value is within this of the
+/// applied one. Avoids per-tick DOM churn on static layers and
+/// keeps the engine cheap even with many active layers.
+const OPACITY_WRITE_THRESHOLD = 0.001;
 
 export class VideoClipHandle implements LayerHandle {
   private video: HTMLVideoElement;
@@ -29,6 +34,10 @@ export class VideoClipHandle implements LayerHandle {
   /// `playbackRate`. Skip writes when unchanged to avoid layout
   /// thrash on every tick.
   private appliedSig: string | null = null;
+  /// Last opacity value written. Tracked separately from `appliedSig`
+  /// because fade ramps need per-tick writes; folding opacity into
+  /// the sig would invalidate it every frame during a fade.
+  private appliedOpacity = -1;
   private disposed = false;
 
   constructor(private ctx: HandleContext) {
@@ -72,6 +81,25 @@ export class VideoClipHandle implements LayerHandle {
 
     this.applyParams(/*initial=*/ false);
 
+    // Per-tick time-varying state: fade-resolved opacity. Separate
+    // from `applyParams` so a fade ramp doesn't invalidate its
+    // sig every frame.
+    const params = layer.params;
+    const eff = resolveFadeOpacity(
+      {
+        tStartUs: layer.t_start_us,
+        tEndUs: layer.t_end_us,
+        fadeInUs: params.fade_in_us,
+        fadeOutUs: params.fade_out_us,
+        baseOpacity: params.opacity,
+      },
+      masterUs,
+    );
+    if (Math.abs(this.appliedOpacity - eff) > OPACITY_WRITE_THRESHOLD) {
+      this.appliedOpacity = eff;
+      this.video.style.opacity = String(eff);
+    }
+
     this.video.style.visibility = "visible";
 
     // Engine controls play state; mirror to the element.
@@ -88,7 +116,6 @@ export class VideoClipHandle implements LayerHandle {
     // below in applyParams.
     if (!this.metadataReady) return;
 
-    const params = layer.params;
     const localUs = (masterUs - layer.t_start_us) * params.speed + params.src_in_us;
     const targetSec = Math.max(0, localUs / 1_000_000);
 
@@ -179,10 +206,13 @@ export class VideoClipHandle implements LayerHandle {
     // fit whatever CSS size we declare here — quality suffers when
     // upscaling, but that's the explicit fidelity trade-off of
     // proxy-everywhere from `docs/preview-dom.md` Q3.
+    //
+    // `opacity` is NOT in this sig; per-tick fade resolution owns
+    // the opacity write (see `tick`).
     const p = layer.params;
     const srcW = media?.width ?? 0;
     const srcH = media?.height ?? 0;
-    const sig = `${srcW}|${srcH}|${p.x}|${p.y}|${p.scale_x}|${p.scale_y}|${p.opacity}|${p.speed}|${p.flip_h ? 1 : 0}|${p.flip_v ? 1 : 0}`;
+    const sig = `${srcW}|${srcH}|${p.x}|${p.y}|${p.scale_x}|${p.scale_y}|${p.speed}|${p.flip_h ? 1 : 0}|${p.flip_v ? 1 : 0}`;
     if (sig === this.appliedSig) return;
     this.appliedSig = sig;
 
@@ -194,7 +224,6 @@ export class VideoClipHandle implements LayerHandle {
     const sx = (p.flip_h ? -1 : 1) * p.scale_x;
     const sy = (p.flip_v ? -1 : 1) * p.scale_y;
     this.video.style.transform = `translate(${p.x}px, ${p.y}px) scale(${sx}, ${sy})`;
-    this.video.style.opacity = String(p.opacity);
     this.video.playbackRate = Math.max(0.0625, p.speed); // browsers clamp to 0.0625–16
   }
 

@@ -6,12 +6,16 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 
 import { playbackPathFor, useProjectStore } from "../../../state/projectStore";
+import { resolveFadeOpacity } from "../keyframes/fade";
 import type { HandleContext, LayerHandle } from "./types";
+
+const OPACITY_WRITE_THRESHOLD = 0.001;
 
 export class ImageHandle implements LayerHandle {
   private img: HTMLImageElement;
   private currentSrc: string | null = null;
   private appliedSig: string | null = null;
+  private appliedOpacity = -1;
   private disposed = false;
 
   constructor(private ctx: HandleContext) {
@@ -41,6 +45,24 @@ export class ImageHandle implements LayerHandle {
       return;
     }
     this.applyParams();
+
+    // Per-tick fade-resolved opacity. Same pattern as VideoClipHandle.
+    const params = layer.params;
+    const eff = resolveFadeOpacity(
+      {
+        tStartUs: layer.t_start_us,
+        tEndUs: layer.t_end_us,
+        fadeInUs: params.fade_in_us,
+        fadeOutUs: params.fade_out_us,
+        baseOpacity: params.opacity,
+      },
+      masterUs,
+    );
+    if (Math.abs(this.appliedOpacity - eff) > OPACITY_WRITE_THRESHOLD) {
+      this.appliedOpacity = eff;
+      this.img.style.opacity = String(eff);
+    }
+
     this.img.style.visibility = "visible";
   }
 
@@ -64,10 +86,10 @@ export class ImageHandle implements LayerHandle {
       this.img.src = convertFileSrc(playbackPath);
     }
 
-    const sig = `${p.x}|${p.y}|${p.scale_x}|${p.scale_y}|${p.opacity}`;
+    // `opacity` excluded from sig; per-tick fade owns it.
+    const sig = `${p.x}|${p.y}|${p.scale_x}|${p.scale_y}`;
     if (sig === this.appliedSig) return;
     this.appliedSig = sig;
     this.img.style.transform = `translate(${p.x}px, ${p.y}px) scale(${p.scale_x}, ${p.scale_y})`;
-    this.img.style.opacity = String(p.opacity);
   }
 }
