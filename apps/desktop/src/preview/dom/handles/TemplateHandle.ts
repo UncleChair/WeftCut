@@ -261,9 +261,13 @@ export class TemplateHandle implements LayerHandle {
     if (!this.templateCache) return;
     const layer = useProjectStore.getState().layerById.get(this.ctx.layerId);
     if (!layer || layer.params.kind !== "Template") return;
+    const p = layer.params;
 
     // Template's manifest size — iframe is sized to the template's
     // native pixel dims, then transformed alongside other layers.
+    // `scale_x` / `scale_y` multiply on top of this size (matching
+    // the export-side `lower.rs` template branch where target_w =
+    // info.width * scale_x).
     const [w, h] = this.templateCache.size;
     const sizeSig = `${w}x${h}`;
     if (sizeSig !== this.appliedSizeSig) {
@@ -272,19 +276,14 @@ export class TemplateHandle implements LayerHandle {
       this.iframe.style.height = `${h}px`;
     }
 
-    // Template layers don't currently carry transform / opacity
-    // in their IPC view (LayerParamsView's Template variant is
-    // just `{ kind: "Template"; template_id }`). For now, render
-    // at (0, 0) at scale 1 / opacity 1. When the view picks up
-    // transform + opacity, this becomes a normal per-tick write.
-    const transformSig = `0|0|1|1`;
+    const transformSig = `${p.x}|${p.y}|${p.scale_x}|${p.scale_y}`;
     if (transformSig !== this.appliedTransformSig) {
       this.appliedTransformSig = transformSig;
-      this.iframe.style.transform = `translate(0px, 0px) scale(1, 1)`;
+      this.iframe.style.transform = `translate(${p.x}px, ${p.y}px) scale(${p.scale_x}, ${p.scale_y})`;
     }
-    if (this.appliedOpacity !== 1) {
-      this.appliedOpacity = 1;
-      this.iframe.style.opacity = "1";
+    if (Math.abs(this.appliedOpacity - p.opacity) > 0.001) {
+      this.appliedOpacity = p.opacity;
+      this.iframe.style.opacity = String(p.opacity);
     }
   }
 

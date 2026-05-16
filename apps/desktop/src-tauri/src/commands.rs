@@ -123,7 +123,18 @@ pub enum LayerParamsView {
     Color(ColorView),
     Audio(AudioView),
     Subtitles(SubtitlesView),
-    Template { template_id: String },
+    Template(TemplateView),
+}
+
+#[derive(Serialize, Clone)]
+pub struct TemplateView {
+    pub template_id: String,
+    /// Canvas-space pixel offset.
+    pub x: f64,
+    pub y: f64,
+    pub scale_x: f64,
+    pub scale_y: f64,
+    pub opacity: f64,
 }
 
 #[derive(Serialize, Clone)]
@@ -548,9 +559,14 @@ fn layer_params_view(
                 source_value: value,
             })
         }
-        LayerParams::Template(p) => LayerParamsView::Template {
+        LayerParams::Template(p) => LayerParamsView::Template(TemplateView {
             template_id: p.template_id.clone(),
-        },
+            x: static_or(&p.transform.x, 0.0),
+            y: static_or(&p.transform.y, 0.0),
+            scale_x: static_or(&p.transform.scale_x, 1.0),
+            scale_y: static_or(&p.transform.scale_y, 1.0),
+            opacity: static_or(&p.opacity, 1.0),
+        }),
     }
 }
 
