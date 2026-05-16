@@ -3,9 +3,18 @@
 /// mount-agnostic: the same content mounts both inside a Shadow DOM in
 /// preview *and* as a full root document in the offscreen export raster.
 ///
-/// H.0 scope: only `buildProbeHtml()` exists — the single-pixel
-/// transparency probe that decision 12 mandates lands before any other
-/// composition work. Real per-child generation arrives in Phase H.3.
+/// Two entry points:
+///   - `buildProbeHtml()` — the single-pixel transparency probe (H.0).
+///   - `buildComposition(state)` — the per-group composition (H.3).
+///
+/// H.3 supports Color / Text / VideoClip / ImageOverlay child kinds.
+/// Template + Subtitles children are H.3 follow-ups (templates need
+/// the `TemplateHandle` shadowed-globals dance integrated; subtitles
+/// need JASSUB plumbing). Effect-catalog integration is also a
+/// follow-up — the engine currently applies only transform/opacity +
+/// kind-specific styling.
+
+import { ENGINE_SOURCE, STATE_SCRIPT_ID, type CompositionState } from "./engine";
 
 /// Per-slot video binding. The composition embeds
 /// `<video data-source-layer="L-id">` slots; the preview-side resolver
@@ -143,3 +152,179 @@ export function checkProbePixel(actual: { r: number; g: number; b: number; a: nu
     .map(([name, got, want]) => `${name}=${got} (want ${want}±${PROBE_TOLERANCE})`);
   return drifted.length === 0 ? null : drifted.join(", ");
 }
+
+// ============================================================
+// Composition builder (H.3)
+// ============================================================
+
+/// Standard CSS shell for every composition. Same selectors regardless
+/// of mount surface (decision 11 — `#composition` not `:host`).
+const COMPOSITION_BASE_STYLES = `
+html, body { background: transparent; margin: 0; padding: 0; }
+#composition { position: relative; overflow: hidden; background: transparent; }
+.layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: top left;
+  pointer-events: none;
+  /* Hidden until the engine applies the per-frame opacity — avoids a
+     one-frame flash of unstyled content before __setTime fires. */
+  opacity: 0;
+}
+.layer-color, .layer-text {
+  /* These layer kinds carry their visual content via background-color
+     or text content directly on the host element. */
+}
+.layer-text {
+  white-space: pre-wrap;
+  line-height: 1.2;
+}
+.layer-video, .layer-image {
+  /* Resolver fills the slot; sizing comes from the inner element. */
+}
+.layer-video > video,
+.layer-video > img,
+.layer-image > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}`;
+
+function rgbaCss(c: { r: number; g: number; b: number; a: number }): string {
+  // The Rust Rgba carries channels as 0..255. CSS rgba() accepts 0..255
+  // for r/g/b and 0..1 for alpha — convert alpha at the boundary.
+  return `rgba(${c.r | 0}, ${c.g | 0}, ${c.b | 0}, ${(c.a / 255).toFixed(3)})`;
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function escapeAttr(s: string): string {
+  return escapeHtml(s);
+}
+
+/// Per-layer DOM subtree. The host element carries `data-layer-id` so the
+/// engine can locate it via querySelector. Per-kind `data-kind` is
+/// preserved so resolvers and a future inspector can introspect the
+/// composition.
+///
+/// Sizing strategy: layer kinds carry their own intrinsic size on the
+/// host element (Color: w/h; Text: auto from font metrics; VideoClip /
+/// ImageOverlay: filled by the resolver). The engine's transform stack
+/// positions and scales the host; intrinsic sizing happens in CSS.
+function renderLayerHtml(layer: CompositionState["layers"][number]): string {
+  const id = escapeAttr(layer.id);
+  switch (layer.params.kind) {
+    case "Color": {
+      const w = layer.params.width | 0;
+      const h = layer.params.height | 0;
+      const bg = rgbaCss(layer.params.rgba);
+      return (
+        `<div class="layer layer-color" data-layer-id="${id}" data-kind="Color" ` +
+        `style="width: ${w}px; height: ${h}px; background-color: ${bg};"></div>`
+      );
+    }
+    case "Text": {
+      const family = escapeAttr(layer.params.font_family);
+      const size = layer.params.font_size_px;
+      const fg = rgbaCss(layer.params.color);
+      const content = escapeHtml(layer.params.content);
+      return (
+        `<div class="layer layer-text" data-layer-id="${id}" data-kind="Text" ` +
+        `style="font-family: ${family}; font-size: ${size}px; color: ${fg};">${content}</div>`
+      );
+    }
+    case "VideoClip": {
+      // Resolver (preview: <video src=proxy>; export: <img src=...frame>)
+      // fills the slot at mount. We emit only the placeholder host.
+      return (
+        `<div class="layer layer-video" data-layer-id="${id}" data-kind="VideoClip" ` +
+        `data-media-id="${escapeAttr(layer.params.media_id)}"></div>`
+      );
+    }
+    case "ImageOverlay": {
+      return (
+        `<div class="layer layer-image" data-layer-id="${id}" data-kind="ImageOverlay" ` +
+        `data-media-id="${escapeAttr(layer.params.media_id)}"></div>`
+      );
+    }
+  }
+}
+
+/// Build the composition artifact for the given state. The returned
+/// `shadow` content embeds composition `<style>`, `#composition`
+/// subtree, the JSON state blob, and the engine `<script>`. The
+/// `document` is the same content wrapped in `<!doctype><html><body>`.
+///
+/// The state's `layers` are sorted by `z` ascending before emission so
+/// later DOM siblings paint on top — z-index doesn't apply to absolutely
+/// positioned siblings without explicit z-index, and using DOM order
+/// matches the export-time IR's bottom-to-top overlay walk.
+///
+/// `bindings` lists every VideoClip slot; the host's resolver consumes
+/// this at mount time. Empty for compositions with no video children.
+export function buildComposition(state: CompositionState): CompositionArtifact {
+  const sorted = [...state.layers].sort((a, b) => a.z - b.z);
+
+  const layerHtml = sorted.map(renderLayerHtml).join("\n");
+  const bindings: VideoBinding[] = sorted
+    .filter((l) => l.params.kind === "VideoClip")
+    .map((l) => ({
+      layerId: l.id,
+      slotSelector: `[data-layer-id="${l.id}"]`,
+    }));
+
+  // Composition-specific style block, plus the canvas size on
+  // `#composition`. Placed before the layer DOM so the .layer rule
+  // takes effect on first paint (avoiding flash of unstyled content).
+  const compositionStyle = `
+<style>
+${COMPOSITION_BASE_STYLES}
+#composition { width: ${state.width | 0}px; height: ${state.height | 0}px; }
+</style>`;
+
+  // State + engine emit at the END of body so the layer DOM exists by
+  // the time the engine first walks it.
+  const stateScript = `<script type="application/json" id="${STATE_SCRIPT_ID}">${
+    safeJsonEmbed(state)
+  }</script>`;
+  const engineScript = `<script>${ENGINE_SOURCE}</script>`;
+
+  const shadowBody =
+    `${compositionStyle}\n<div id="composition">\n${layerHtml}\n</div>\n${stateScript}\n${engineScript}`;
+
+  const documentBody = `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="normal">
+</head>
+<body>
+${shadowBody}
+</body>
+</html>`;
+
+  return {
+    shadow: shadowBody,
+    document: documentBody,
+    bindings,
+  };
+}
+
+/// Escape `</` inside JSON so a `</script>` token in a state value
+/// can't break out of the embedding `<script>` tag. The browser's
+/// JSON parser tolerates `\/` as a literal forward slash.
+function safeJsonEmbed(value: unknown): string {
+  return JSON.stringify(value).replace(/<\/(script)/gi, "<\\/$1");
+}
+
+export type { CompositionState };
+export { ENGINE_SOURCE };
