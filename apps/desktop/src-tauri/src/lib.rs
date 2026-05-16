@@ -61,6 +61,7 @@ pub fn run() {
             commands::reset_mcp_token,
             commands::project_summary,
             commands::add_video_track,
+            commands::separate_audio_to_new_track,
             commands::add_demo_color_layer,
             commands::add_media_layer,
             commands::add_text_layer,

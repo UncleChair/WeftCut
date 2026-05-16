@@ -263,6 +263,13 @@ pub enum CommandError {
     TrackNotFound { track: TrackId },
     #[error("layer {layer} not found")]
     LayerNotFound { layer: LayerId },
+    /// A/B-roll v2 V.7: returned when separate_audio_to_new_track is
+    /// invoked on a non-Audio layer.
+    #[error("layer {layer} is not a {expected} layer")]
+    WrongLayerKind {
+        layer: LayerId,
+        expected: &'static str,
+    },
     #[error("marker {marker} not found")]
     MarkerNotFound { marker: MarkerId },
     #[error("transition {transition} not found")]
@@ -360,6 +367,11 @@ enum Command {
         force: bool,
         actor: Actor,
         reply: oneshot::Sender<Result<(), CommandError>>,
+    },
+    SeparateAudio {
+        layer_id: LayerId,
+        actor: Actor,
+        reply: oneshot::Sender<Result<TrackId, CommandError>>,
     },
     AddLayer {
         track_id: TrackId,
@@ -780,6 +792,31 @@ impl ProjectHandle {
             .send(Command::DeleteTrack {
                 id,
                 force,
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    /// A/B-roll v2 V.7: lift `layer_id` (must be an Audio layer) onto a
+    /// freshly-created non-transient track inserted directly after the
+    /// layer's current track. Used by the timeline's "Separate audio"
+    /// context-menu action to break the combined-row rendering for a
+    /// specific AV pair without dissolving its group.
+    ///
+    /// Returns the newly-created track's id so the caller can scroll /
+    /// select if desired.
+    pub async fn separate_audio_to_new_track(
+        &self,
+        actor: Actor,
+        layer_id: LayerId,
+    ) -> Result<TrackId, CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::SeparateAudio {
+                layer_id,
                 actor,
                 reply,
             })
@@ -1386,6 +1423,14 @@ impl ProjectActor {
                 let result = self.do_delete_track(id, force, actor);
                 let _ = reply.send(result);
             }
+            Command::SeparateAudio {
+                layer_id,
+                actor,
+                reply,
+            } => {
+                let result = self.do_separate_audio(layer_id, actor);
+                let _ = reply.send(result);
+            }
             Command::SplitLayer {
                 id,
                 at_t_us,
@@ -1744,6 +1789,63 @@ impl ProjectActor {
             DiffHint::Layer(layer_id),
         )?;
         Ok(layer_id)
+    }
+
+    /// A/B-roll v2 V.7: lift an Audio layer onto a freshly-created
+    /// non-transient track inserted directly after the layer's current
+    /// track. The group membership (if any) survives — only the
+    /// data-model placement changes. UI consequence (V.6 combined-row
+    /// rendering): the source row collapses to V-only chrome and the
+    /// new row below shows the waveform on its own.
+    ///
+    /// Errors:
+    ///   - LayerNotFound: `layer_id` doesn't exist in the project
+    ///   - WrongLayerKind: layer isn't an Audio layer
+    fn do_separate_audio(
+        &mut self,
+        layer_id: LayerId,
+        actor: Actor,
+    ) -> Result<TrackId, CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+        // Locate.
+        let (ti, li) = locate_layer(&next, layer_id)
+            .ok_or(CommandError::LayerNotFound { layer: layer_id })?;
+        let source_track = &next.tracks[ti];
+        let layer = &source_track.layers[li];
+        if !matches!(layer.params, LayerParams::Audio(_)) {
+            return Err(CommandError::WrongLayerKind {
+                layer: layer_id,
+                expected: "Audio",
+            });
+        }
+        // Build the new non-transient track. Label derives from the
+        // source track ("X (audio)") so the user can see the
+        // relationship in the timeline header.
+        let mut new_track = Track::new();
+        let source_label = source_track.label.clone();
+        new_track.label = Some(match source_label.as_deref() {
+            Some(s) if !s.is_empty() => format!("{s} (audio)"),
+            _ => "Audio".to_string(),
+        });
+        // Insert AFTER the source track in the data-model order so V.8's
+        // visualOrderedTracks renders the new audio row directly below
+        // its source.
+        let new_track_id = new_track.id;
+        // Remove the audio layer from the source track.
+        let audio_layer = next.tracks[ti].layers.remove(li);
+        new_track.layers.push_back(audio_layer);
+        // Insert the new track right after `ti`. `imbl::Vector::insert`
+        // is O(log n) — fine for our handful-of-tracks workload.
+        next.tracks.insert(ti + 1, new_track);
+
+        self.commit(
+            next,
+            actor,
+            format!("Separated audio layer {layer_id} onto a new track"),
+            vec![EntityRef::Layer(layer_id), EntityRef::Track(new_track_id)],
+            DiffHint::Coarse,
+        )?;
+        Ok(new_track_id)
     }
 
     fn do_delete_track(
@@ -4860,6 +4962,97 @@ mod tests {
         // Hidden video source pruned (now empty), audio source did NOT.
         assert!(!after.tracks.iter().any(|t| t.id == hidden_v_track));
         assert!(after.tracks.iter().any(|t| t.id == hidden_a_track));
+    }
+
+    #[tokio::test]
+    async fn separate_audio_lifts_layer_onto_new_track_just_below_source() {
+        // V.7: an Audio layer is lifted onto a fresh non-transient
+        // track inserted directly after the source. Group membership
+        // is preserved (the V layer stays on the source track grouped
+        // with the moved A layer).
+        let (handle, _hidden_v, _hidden_a, v_layer, a_layer, _media) =
+            project_with_hidden_av_pair().await;
+        // Promote the pair to A roll first so we have a V+A on the
+        // same track to separate. After this, both V and A live on
+        // ARoll (V.4 sibling-follow).
+        let snap = handle.snapshot().await;
+        let a_roll = snap
+            .tracks
+            .iter()
+            .find(|t| t.role == Some(TrackRole::ARoll))
+            .unwrap()
+            .id;
+        handle
+            .move_layer(Actor::User, v_layer, a_roll, 0, false)
+            .await
+            .unwrap();
+
+        // Sanity: both layers now on ARoll.
+        let pre = handle.snapshot().await;
+        let pre_a_roll = pre
+            .tracks
+            .iter()
+            .find(|t| t.id == a_roll)
+            .unwrap();
+        assert!(pre_a_roll.layers.iter().any(|l| l.id == v_layer));
+        assert!(pre_a_roll.layers.iter().any(|l| l.id == a_layer));
+        let pre_a_roll_idx = pre.tracks.iter().position(|t| t.id == a_roll).unwrap();
+
+        // Separate the audio.
+        let new_track_id = handle
+            .separate_audio_to_new_track(Actor::User, a_layer)
+            .await
+            .expect("separate_audio_to_new_track");
+
+        let after = handle.snapshot().await;
+        // A layer is on the new track; V layer is still on ARoll.
+        let a_roll_track = after
+            .tracks
+            .iter()
+            .find(|t| t.id == a_roll)
+            .unwrap();
+        assert!(a_roll_track.layers.iter().any(|l| l.id == v_layer));
+        assert!(
+            !a_roll_track.layers.iter().any(|l| l.id == a_layer),
+            "audio layer must leave the source track"
+        );
+        let new_track = after
+            .tracks
+            .iter()
+            .find(|t| t.id == new_track_id)
+            .expect("new track present");
+        assert!(new_track.layers.iter().any(|l| l.id == a_layer));
+        assert!(!new_track.transient, "new track must be non-transient");
+        assert!(new_track.removable, "new track must be user-removable");
+        // The new track sits directly after the source in data-model
+        // order (V.7 contract).
+        let new_idx = after
+            .tracks
+            .iter()
+            .position(|t| t.id == new_track_id)
+            .unwrap();
+        assert_eq!(new_idx, pre_a_roll_idx + 1);
+        // Group membership preserved (V and A still grouped).
+        let groups = &after.groups;
+        let pair_group = groups
+            .iter()
+            .find(|g| g.members.contains(&v_layer) && g.members.contains(&a_layer))
+            .expect("group survives separate_audio");
+        assert_eq!(pair_group.members.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn separate_audio_rejects_video_layer() {
+        let (handle, _hidden_v, _hidden_a, v_layer, _a_layer, _media) =
+            project_with_hidden_av_pair().await;
+        let err = handle
+            .separate_audio_to_new_track(Actor::User, v_layer)
+            .await
+            .expect_err("video layer should reject");
+        assert!(matches!(
+            err,
+            CommandError::WrongLayerKind { expected: "Audio", .. }
+        ));
     }
 
     #[tokio::test]

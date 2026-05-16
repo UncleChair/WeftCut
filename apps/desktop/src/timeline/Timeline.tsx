@@ -12,6 +12,7 @@ import {
   groupsCreate,
   groupsDissolve,
   moveLayer,
+  separateAudioToNewTrack,
   trimLayer,
   updateLayer,
   viewStateGet,
@@ -320,6 +321,14 @@ export function Timeline({
   const widthPx = totalSec * pxPerSec;
   const [drag, setDrag] = useState<DragState | null>(null);
   const [heightDrag, setHeightDrag] = useState<HeightDragState | null>(null);
+  // V.7: right-click context-menu state. `null` when closed; otherwise
+  // anchors the menu at the cursor and stores the target layer id.
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    layerId: string;
+    layerKind: string;
+  } | null>(null);
   /// `docs/group-system.md` — multi-select for `Ctrl+G` and visual highlight.
   /// `selectedLayerId` (from App) is the primary (drives PropertyPanel);
   /// this set tracks every layer that should render with the selected
@@ -753,6 +762,45 @@ export function Timeline({
     [onMutated, pxPerSec],
   );
 
+  // V.7: context-menu open handler. Captures cursor position +
+  // target layer. Triggered by LayerBlock's onContextMenu (right-click).
+  const onContextMenu = useCallback(
+    (e: React.MouseEvent, layerId: string, layerKind: string) => {
+      setContextMenu({
+        x: e.clientX,
+        y: e.clientY,
+        layerId,
+        layerKind,
+      });
+    },
+    [],
+  );
+
+  // Close the context menu on any click outside its own area.
+  useEffect(() => {
+    if (!contextMenu) return;
+    const onDown = () => setContextMenu(null);
+    window.addEventListener("pointerdown", onDown);
+    window.addEventListener("scroll", onDown, true);
+    return () => {
+      window.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("scroll", onDown, true);
+    };
+  }, [contextMenu]);
+
+  const onSeparateAudio = useCallback(
+    async (layerId: string) => {
+      setContextMenu(null);
+      try {
+        await separateAudioToNewTrack(layerId);
+        await onMutated();
+      } catch (err) {
+        console.error("separate audio failed:", err);
+      }
+    },
+    [onMutated],
+  );
+
   const playheadX = (currentTimeUs / 1_000_000) * pxPerSec;
 
   const seekFromClientX = useCallback(
@@ -838,7 +886,63 @@ export function Timeline({
         </div>
       )}
     </div>
+    {contextMenu && (
+      <LayerContextMenu
+        x={contextMenu.x}
+        y={contextMenu.y}
+        layerId={contextMenu.layerId}
+        layerKind={contextMenu.layerKind}
+        onSeparateAudio={onSeparateAudio}
+      />
+    )}
     </>
+  );
+}
+
+/// V.7 floating context menu. Anchored at the cursor; closes on any
+/// outside pointer-down (wired in Timeline above). Shows action items
+/// scoped to the right-clicked layer's kind — today the only entry is
+/// "Separate audio to new track" when the target is an Audio layer.
+function LayerContextMenu({
+  x,
+  y,
+  layerId,
+  layerKind,
+  onSeparateAudio,
+}: {
+  x: number;
+  y: number;
+  layerId: string;
+  layerKind: string;
+  onSeparateAudio: (id: string) => void;
+}) {
+  const { t } = useTranslation();
+  // Stop propagation on pointerdown so the global close handler
+  // doesn't fire when the user clicks INTO the menu.
+  return (
+    <div
+      className="layer-context-menu"
+      style={{ left: x, top: y }}
+      onPointerDown={(e) => e.stopPropagation()}
+    >
+      {layerKind === "Audio" ? (
+        <button
+          type="button"
+          className="layer-context-menu-item"
+          onClick={() => onSeparateAudio(layerId)}
+        >
+          {t("timeline.separate_audio", {
+            defaultValue: "Separate audio to new track",
+          })}
+        </button>
+      ) : (
+        <span className="layer-context-menu-disabled">
+          {t("timeline.no_actions_here", {
+            defaultValue: "(no actions for this layer)",
+          })}
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -906,6 +1010,7 @@ function TrackLane({
   onSelectFromClick,
   onDragStart,
   onMediaDrop,
+  onContextMenu,
   isGroupStart,
   isRevealed,
   onHeightDragStart,
@@ -927,6 +1032,14 @@ function TrackLane({
     track: TrackSummary,
     payload: MediaDragPayload,
     e: React.DragEvent<HTMLDivElement>,
+  ) => void;
+  /// V.7 context-menu hook. LayerBlock fires this on right-click; the
+  /// Timeline shows a small floating menu and routes the chosen
+  /// action.
+  onContextMenu: (
+    e: React.MouseEvent,
+    layerId: string,
+    layerKind: string,
   ) => void;
   isGroupStart: boolean;
   /// R.7 inline-reveal flag. The lane renders with extra chrome
@@ -1014,6 +1127,7 @@ function TrackLane({
             onSelect={onSelect}
             onSelectFromClick={onSelectFromClick}
             onDragStart={onDragStart}
+            onContextMenu={onContextMenu}
           />
         ));
       })()}
@@ -1042,6 +1156,7 @@ function LayerBlock({
   onSelect,
   onSelectFromClick,
   onDragStart,
+  onContextMenu,
 }: {
   layer: LayerSummary;
   trackId: string;
@@ -1065,6 +1180,11 @@ function LayerBlock({
     e: { altKey: boolean; shiftKey: boolean; metaKey: boolean },
   ) => void;
   onDragStart: (state: DragState) => void;
+  onContextMenu: (
+    e: React.MouseEvent,
+    layerId: string,
+    layerKind: string,
+  ) => void;
 }) {
   const { t } = useTranslation();
   const isDragging = dragState?.layerId === layer.id;
@@ -1198,6 +1318,11 @@ function LayerBlock({
         });
       }}
       onPointerDown={beginDrag("move", trackKind)}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onContextMenu(e, layer.id, layer.kind);
+      }}
       title={`${layer.kind}: ${(liveStart / 1_000_000).toFixed(2)}s → ${(liveEnd / 1_000_000).toFixed(2)}s`}
     >
       {groupId !== null && layerWidthPx > 14 && (
