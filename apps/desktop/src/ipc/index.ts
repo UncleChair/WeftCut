@@ -30,6 +30,11 @@ export interface MediaSummary {
   /// to a real file. UI surfaces a "missing source" badge; project still
   /// opens; layers referencing the missing item render placeholders.
   available: boolean;
+  /// Absolute path of the 540p proxy MP4 (H.264 + AAC, 1 s GOP) once the
+  /// background job has produced it. `null` while pending or for media
+  /// kinds that don't get proxied (audio-only sources). DOM preview
+  /// falls back to `path` when null. See `docs/preview-dom.md`.
+  proxy_path: string | null;
 }
 
 export interface LayerSummary {

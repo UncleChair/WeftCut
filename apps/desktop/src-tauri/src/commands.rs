@@ -207,6 +207,11 @@ pub struct MediaSummary {
     /// when this is false (project opens anyway; layers referencing the
     /// missing item render placeholders).
     pub available: bool,
+    /// Absolute path of the proxy MP4 produced by `jobs/proxy.rs`, when
+    /// one exists. `None` until the background job completes (or for
+    /// media kinds that don't get proxied — e.g. audio-only sources).
+    /// DOM preview falls back to `path` when this is `None`.
+    pub proxy_path: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -345,6 +350,10 @@ pub async fn project_summary(handle: State<'_, ProjectHandle>) -> Result<Project
                         .map(|n| n.to_string_lossy().to_string())
                 })
                 .unwrap_or_else(|| m.path_abs.to_string_lossy().to_string());
+            let proxy_path = m
+                .proxy_path
+                .as_ref()
+                .and_then(|p| p.is_file().then(|| p.to_string_lossy().to_string()));
             MediaSummary {
                 id: m.id.to_string(),
                 label,
@@ -355,6 +364,7 @@ pub async fn project_summary(handle: State<'_, ProjectHandle>) -> Result<Project
                 height: m.metadata.video.as_ref().map(|v| v.height),
                 size_bytes: m.file_size,
                 available: m.path_abs.is_file(),
+                proxy_path,
             }
         })
         .collect();
