@@ -163,17 +163,38 @@ class ClipDecoder {
     }
   }
 
-  /// Latest frame whose timestamp ≤ localTimeUs. Returns null when
-  /// the ring is still warming up or the requested time is before
-  /// the earliest decoded frame.
+  /// Latest frame whose timestamp ≤ localTimeUs. When nothing is
+  /// at-or-before but the earliest frame is very close (within
+  /// `EARLIEST_PROXIMITY_US` of `localTimeUs`), return that —
+  /// covers the cold-start case where the clock is at 0 but the
+  /// source's first decoded frame has PTS = 33333us (1/30s).
+  /// Stale-frame returns (e.g., a pre-seek frame at 4.8s when the
+  /// caller is asking about t=1.5s) are blocked by the proximity
+  /// gate; otherwise `caughtUp` in `buildClipLayer` would treat
+  /// the stale frame as on-target and clear the seek state.
   frameAtOrBefore(localTimeUs: number): VideoFrame | null {
+    const EARLIEST_PROXIMITY_US = 100_000; // ~3 frames at 30 fps
     let best: RingEntry | null = null;
+    let earliest: RingEntry | null = null;
     for (const entry of this.ring) {
       if (entry.timestampUs <= localTimeUs) {
         if (!best || entry.timestampUs > best.timestampUs) best = entry;
       }
+      if (!earliest || entry.timestampUs < earliest.timestampUs) earliest = entry;
     }
-    return best?.frame ?? null;
+    if (best) return best.frame;
+    if (earliest && earliest.timestampUs - localTimeUs <= EARLIEST_PROXIMITY_US) {
+      return earliest.frame;
+    }
+    return null;
+  }
+
+  /// Push samples covering [localTimeUs, localTimeUs + lookaheadUs]
+  /// into the underlying WebCodecs decoder. Idempotent — call every
+  /// tick from `DecoderPool.syncToTime` to keep the decoder queue
+  /// ~2 s ahead of the playhead.
+  feedAhead(localTimeUs: number, lookaheadUs: number): void {
+    this.mp4?.feedAhead(localTimeUs, lookaheadUs);
   }
 
   /// Drop frames before `tUs`. Used by DecoderPool to keep the ring
@@ -317,6 +338,11 @@ class DecoderPool {
       // has a reference point — even on the first tick before any
       // frames have arrived.
       dec.setPlayheadLocal(localT);
+      // Keep the decoder primed ~2 s ahead of the playhead. Lazy
+      // feeding here (rather than dumping the whole file into the
+      // decoder at open) is what keeps the queue small enough that
+      // `dec.reset()` on seek is cheap.
+      dec.feedAhead(localT, 2_000_000);
     }
     for (const [id, dec] of this.decoders.entries()) {
       if (!wanted.has(id)) {
@@ -637,6 +663,19 @@ export class PlaybackEngine {
   /// is updated synchronously by every `seekTo` regardless of which
   /// seek is currently running.
   private clipsSeekingInFlight: Set<string> = new Set();
+  /// Per-clip last-dispatched seek target. Without this the scrub
+  /// loop re-fires `dec.seek(target)` every RAF tick after the prior
+  /// promise resolves (which is typically <16ms — faster than one
+  /// tick), wiping `ClipDecoder.ring` synchronously each time and
+  /// starving the new sample chain of breathing room to emit a frame
+  /// past the tolerance window. The user sees the fallback frame
+  /// frozen until some lucky alignment lets a usable frame survive
+  /// to `buildClipLayer`.
+  ///
+  /// Cleared per-clip when `buildClipLayer` clears `clipSeekTargets`
+  /// on a caught-up frame — so a future re-seek to the same position
+  /// (after the decoder has played past it) still dispatches.
+  private lastDispatchedTarget: Map<string, number> = new Map();
 
   constructor(canvas: HTMLCanvasElement, events: PlaybackEngineEvents = {}) {
     this.compositor = new WebGL2Compositor(canvas);
@@ -705,6 +744,7 @@ export class PlaybackEngine {
     this.rasterCache.clear();
     this.endedFired = false;
     this.clipSeekTargets.clear();
+    this.lastDispatchedTarget.clear();
     this.disposeAllFallbacks();
     this.clock.setBounds(recipe?.durationUs ?? null);
     if (!recipe) {
@@ -836,6 +876,9 @@ export class PlaybackEngine {
       this.audio = null;
     }
     this.disposeAllFallbacks();
+    this.clipSeekTargets.clear();
+    this.lastDispatchedTarget.clear();
+    this.clipsSeekingInFlight.clear();
     this.decoderPool.reset();
     this.rasterCache.dispose();
     this.compositor.dispose();
@@ -873,9 +916,20 @@ export class PlaybackEngine {
     // RAF tick reconsiders against the current target.
     for (const [layerId, target] of this.clipSeekTargets) {
       if (this.clipsSeekingInFlight.has(layerId)) continue;
+      // Skip re-dispatch when the most recent dispatch already
+      // targets this position — the decoder is either still working
+      // on it (caught by the in-flight check above) or it has
+      // arrived and is waiting for `buildClipLayer` to observe a
+      // caught-up frame and clear `clipSeekTargets`. Re-dispatching
+      // here would synchronously wipe `ClipDecoder.ring` and reset
+      // the warming sample chain, which is exactly the loop that
+      // freezes the canvas on the prior fallback frame until some
+      // lucky alignment lets a usable frame survive a tick.
+      if (this.lastDispatchedTarget.get(layerId) === target) continue;
       const dec = this.decoderPool.getDecoder(layerId);
       if (!dec) continue;
       this.clipsSeekingInFlight.add(layerId);
+      this.lastDispatchedTarget.set(layerId, target);
       void dec
         .seek(target)
         .catch(() => {
@@ -973,7 +1027,12 @@ export class PlaybackEngine {
         // resource has been recycled; harmless — we just won't have
         // a fallback for this layer until the next clean render.
       }
-      if (seekTarget !== undefined) this.clipSeekTargets.delete(clip.layerId);
+      if (seekTarget !== undefined) {
+        this.clipSeekTargets.delete(clip.layerId);
+        // Pair clear so a future re-seek to the same target after
+        // the decoder has played past it still dispatches.
+        this.lastDispatchedTarget.delete(clip.layerId);
+      }
       return {
         source: frame,
         transform: clip.transform,
