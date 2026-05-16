@@ -27,7 +27,9 @@ export type ActionId =
   | "export"
   | "splitFirstLayer"
   | "toggleLog"
-  | "focusLogSearch";
+  | "focusLogSearch"
+  | "toggleDisplayMode"
+  | "toggleMediaPool";
 
 export interface ActionDef {
   defaultKeys: string[];
@@ -49,6 +51,13 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   splitFirstLayer: { defaultKeys: ["Mod+K"],               labelKey: "actions.split_first" },
   toggleLog:       { defaultKeys: ["Mod+`"],               labelKey: "actions.toggle_log" },
   focusLogSearch:  { defaultKeys: ["Mod+Shift+`"],         labelKey: "actions.focus_log_search" },
+  // `docs/ab-roll-redesign` R.8: bare-letter `T` flips the app-level
+  // display_mode (AB ↔ Show All). Rebindable through Settings →
+  // Keyboard. Bare-letter chords don't fire in text inputs by default.
+  toggleDisplayMode: { defaultKeys: ["T"],                 labelKey: "actions.toggle_display_mode" },
+  // `docs/ab-roll-redesign` R.9: bare-letter `M` toggles the MediaPool
+  // left drawer (closed/open). The app-pref store remembers state.
+  toggleMediaPool:   { defaultKeys: ["M"],                 labelKey: "actions.toggle_media_pool" },
 };
 
 export const ACTION_IDS = Object.keys(ACTION_DEFS) as ActionId[];

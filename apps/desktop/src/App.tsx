@@ -86,7 +86,14 @@ import {
 import { StatusBar } from "./logs/StatusBar";
 import { LogConsole, type LogConsoleHandle } from "./logs/LogConsole";
 import { wireLogStream, useLogStore } from "./logs/store";
-import { wireAppSettingsStream } from "./settings/appSettingsStore";
+import {
+  setMediaPoolDrawerOpen,
+  toggleDisplayMode,
+  useAppSettingsStore,
+  useDisplayMode,
+  useMediaPoolDrawerOpen,
+  wireAppSettingsStream,
+} from "./settings/appSettingsStore";
 import { logEmit } from "./ipc";
 
 interface AppProps {
@@ -664,6 +671,19 @@ export function App({ onCloseProject }: AppProps) {
     splitFirstLayer: () => run(splitFirstLayer),
     toggleLog: toggleLogConsole,
     focusLogSearch,
+    // R.8: T flips the AB / Show-All display_mode at the app level.
+    // Mutates the same app-pref store the inline pill writes to;
+    // every subscriber re-renders via `app_settings:changed`.
+    toggleDisplayMode: () => {
+      void toggleDisplayMode();
+    },
+    // R.9: M toggles the MediaPool left drawer. Read current state via
+    // `getState()` instead of the hook (hooks can't run in a callback)
+    // and flip it. R.9's drawer wires up the visual changes.
+    toggleMediaPool: () => {
+      const current = useAppSettingsStore.getState().settings.media_pool_drawer_open;
+      void setMediaPoolDrawerOpen(!current);
+    },
   };
   // Memoised so `useShortcuts`'s `useMemo(entries)` doesn't churn each
   // render. The backend's `Record<string, string[]>` is structurally
@@ -824,6 +844,9 @@ export function App({ onCloseProject }: AppProps) {
             disabled={busy || !summary || summary.layer_count === 0}
           />
         </Menu>
+
+        <ViewMenu />
+
 
         <Menu label={t("menu.insert")}>
           <MenuItem
@@ -1088,6 +1111,61 @@ export function App({ onCloseProject }: AppProps) {
 /// finish in the background). Selector walks runningOps + entries
 /// once per store-update — O(running × entries) but `running` is
 /// typically 0-3 in practice. Renders nothing when count is 0.
+/// `docs/ab-roll-redesign` R.8: View menu — radio between A/B-roll and
+/// Show-All. Same setting the inline pill + `T` shortcut drive. Reads
+/// the current value from the app-pref store so the checkmark stays in
+/// sync regardless of how it changed.
+function ViewMenu() {
+  const { t } = useTranslation();
+  const mode = useDisplayMode();
+  const isDrawerOpen = useMediaPoolDrawerOpen();
+  return (
+    <Menu label={t("menu.view", { defaultValue: "View" })}>
+      <MenuHeading
+        label={t("view.display_mode_heading", {
+          defaultValue: "Track display",
+        })}
+      />
+      <MenuItem
+        actionId="toggleDisplayMode"
+        label={t("view.display_ab", {
+          defaultValue: "Display: A/B Roll only",
+        })}
+        checked={mode === "AbRoll"}
+        onSelect={() => {
+          if (mode !== "AbRoll") void toggleDisplayMode();
+        }}
+      />
+      <MenuItem
+        label={t("view.display_all", {
+          defaultValue: "Display: Show all tracks",
+        })}
+        checked={mode === "ShowAll"}
+        onSelect={() => {
+          if (mode !== "ShowAll") void toggleDisplayMode();
+        }}
+      />
+      <MenuSeparator />
+      <MenuItem
+        actionId="toggleMediaPool"
+        label={
+          isDrawerOpen
+            ? t("view.close_media_pool", {
+                defaultValue: "Close Media Pool drawer",
+              })
+            : t("view.open_media_pool", {
+                defaultValue: "Open Media Pool drawer",
+              })
+        }
+        onSelect={() => {
+          void setMediaPoolDrawerOpen(!isDrawerOpen);
+        }}
+      />
+    </Menu>
+  );
+}
+
+
 function AgentRunningPill() {
   const { t } = useTranslation();
   const count = useLogStore((s) => {
