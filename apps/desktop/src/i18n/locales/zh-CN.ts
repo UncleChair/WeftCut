@@ -154,6 +154,7 @@ const zhCN: Resources = {
     importing_cancel_hint: "取消导入",
     missing: "缺失",
     missing_hint: "源文件未找到：{{path}}",
+    click_drag_hint: "点击预览 · 拖到轨道添加",
   },
   preview: {
     empty_hint: "添加图层后预览将自动启动",

@@ -155,6 +155,7 @@ const enUS = {
     importing_cancel_hint: "Cancel import",
     missing: "Missing",
     missing_hint: "Source file not found: {{path}}",
+    click_drag_hint: "Click to preview · drag onto a track to add",
   },
   preview: {
     empty_hint: "Add a layer to start the preview",

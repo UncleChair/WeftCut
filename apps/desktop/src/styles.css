@@ -1356,61 +1356,93 @@ input.preview-timecode:focus {
   text-transform: uppercase;
 }
 
+/* 2026-05-16 MediaPool redesign: card grid. Thumbnail on top + name
+   strip at the bottom by default; details overlay fades in on hover.
+   Click to preview; HTML5 drag remains for drag-to-track. */
 .media-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
 }
 
 .media-item {
-  display: grid;
-  grid-template-columns: 48px 60px 1fr auto auto auto auto;
-  gap: 12px;
-  padding: 4px 8px;
-  font-size: 12px;
-  border-radius: 3px;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  background: #131822;
+  border-radius: 4px;
+  overflow: hidden;
+  cursor: pointer;
+  font-size: 11px;
+  outline: 1px solid transparent;
+  transition: outline-color 80ms ease-out, background 80ms ease-out;
   align-items: center;
 }
 
+.media-item-thumb {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #0a0c10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
 .media-thumbnail {
-  width: 48px;
-  height: 27px;
+  width: 100%;
+  height: 100%;
   object-fit: cover;
-  border-radius: 2px;
   background: #1f2937;
   display: block;
 }
 
 .media-thumbnail.is-placeholder {
-  /* keep the column slot reserved so non-video / pending rows align */
+  /* keep the slot reserved when no thumbnail is available */
   background: #0e131c;
 }
 
-.media-preview-btn {
-  background: #1f2937;
-  border: 1px solid #374151;
-  color: #cbd5e1;
-  padding: 1px 8px;
-  font-size: 11px;
-  border-radius: 3px;
-  cursor: pointer;
-  line-height: 1.2;
+.media-item-name {
+  padding: 5px 8px 6px;
+  color: #e5e7eb;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
 }
 
-.media-preview-btn:hover {
-  background: #374151;
-  color: #fafafa;
+/* Hover-revealed detail overlay sits on top of the thumbnail and fades
+   in on card hover. Pointer-events:none so it doesn't intercept the
+   click → preview gesture. */
+.media-item-details {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to top,
+    rgba(11, 13, 17, 0.92) 70%,
+    rgba(11, 13, 17, 0.5)
+  );
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 3px;
+  padding: 8px;
+  opacity: 0;
+  transition: opacity 80ms ease-out;
+  pointer-events: none;
+}
+
+.media-item:hover .media-item-details {
+  opacity: 1;
 }
 
 .media-item:hover {
-  background: #131822;
-}
-
-.media-item[draggable="true"] {
-  cursor: grab;
+  outline-color: rgba(96, 165, 250, 0.45);
+  background: #161c28;
 }
 
 .media-item[draggable="true"]:active {
@@ -1428,6 +1460,7 @@ input.preview-timecode:focus {
 }
 
 .media-kind {
+  align-self: flex-start;
   font-size: 10px;
   font-weight: 600;
   color: #cbd5e1;
@@ -1442,17 +1475,11 @@ input.preview-timecode:focus {
 .kind-image { background: #581c87; color: #d8b4fe; }
 .kind-subtitle { background: #713f12; color: #fcd34d; }
 
-.media-label {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: #e5e7eb;
-}
-
 .media-meta {
-  color: #9ca3af;
+  color: #cbd5e1;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  font-size: 10px;
 }
 
 .placeholder {
@@ -3065,30 +3092,43 @@ input.preview-timecode:focus {
   opacity: 0.7;
 }
 
+/* The importing / missing status indicators sit on top of the
+   thumbnail (inside .media-item-thumb) so the card's name strip stays
+   uncluttered. */
 .media-import-cancel {
-  background: rgba(96, 165, 250, 0.18);
-  border: 1px solid rgba(96, 165, 250, 0.4);
-  color: #bfdbfe;
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: rgba(96, 165, 250, 0.85);
+  border: 1px solid rgba(96, 165, 250, 0.9);
+  color: #0a0c10;
   border-radius: 3px;
   padding: 2px 8px;
   font-size: 11px;
+  font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
+  z-index: 2;
 }
 
 .media-import-cancel:hover {
-  background: rgba(96, 165, 250, 0.28);
+  background: rgba(96, 165, 250, 1);
 }
 
 .media-missing-badge {
-  background: rgba(248, 113, 113, 0.18);
-  border: 1px solid rgba(248, 113, 113, 0.4);
-  color: #fecaca;
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: rgba(248, 113, 113, 0.85);
+  border: 1px solid rgba(248, 113, 113, 0.9);
+  color: #0a0c10;
   border-radius: 3px;
   padding: 2px 8px;
   font-size: 11px;
+  font-weight: 600;
   white-space: nowrap;
   cursor: default;
+  z-index: 2;
 }
 
 /* Project-bar pill: "Generating N derivatives…" (Phase C.3). */

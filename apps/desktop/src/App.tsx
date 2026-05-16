@@ -1345,13 +1345,22 @@ function MediaPool({
         {media.map((m) => {
           const isImporting = importing.has(m.id);
           const isMissing = !m.available && !isImporting;
+          const interactive = !isImporting && !isMissing;
+          const onClick = async () => {
+            if (!interactive) return;
+            try {
+              await mpvPlayMedia(m.id);
+            } catch (err) {
+              console.error("preview failed:", err);
+            }
+          };
           return (
             <li
               key={m.id}
               className={`media-item${isMissing ? " is-missing" : ""}${
                 isImporting ? " is-importing" : ""
               }`}
-              draggable={!isImporting && !isMissing}
+              draggable={interactive}
               onDragStart={(e) => {
                 e.dataTransfer.setData(
                   "application/x-weftcut-media",
@@ -1359,64 +1368,77 @@ function MediaPool({
                 );
                 e.dataTransfer.effectAllowed = "copy";
               }}
-              title={t("media_pool.drag_hint", {
-                defaultValue: "Drag onto a timeline track to add",
-              })}
+              onClick={() => {
+                void onClick();
+              }}
+              title={
+                interactive
+                  ? t("media_pool.click_drag_hint", {
+                      defaultValue: "Click to preview · drag onto a track to add",
+                    })
+                  : isMissing
+                    ? t("media_pool.missing_hint", { path: m.path })
+                    : t("media_pool.importing")
+              }
             >
-              <MediaThumbnail mediaId={m.id} mediaKind={m.kind} />
-              <span className={`media-kind kind-${m.kind.toLowerCase()}`}>
-                {t(`kinds.${m.kind.toLowerCase()}`, { defaultValue: m.kind })}
-              </span>
-              <span className="media-label" title={m.path}>
+              <div className="media-item-thumb">
+                <MediaThumbnail mediaId={m.id} mediaKind={m.kind} />
+                {/* Hover-revealed details overlay. Shows kind, duration,
+                    dimensions, size. Hidden by default; opacity-faded
+                    in on hover so the card stays calm in the resting
+                    state. Importing / missing states swap in a pinned
+                    status badge instead. */}
+                <div className="media-item-details" aria-hidden="true">
+                  <span
+                    className={`media-kind kind-${m.kind.toLowerCase()}`}
+                  >
+                    {t(`kinds.${m.kind.toLowerCase()}`, {
+                      defaultValue: m.kind,
+                    })}
+                  </span>
+                  <span className="media-meta">
+                    {m.duration_us !== null
+                      ? t("media_pool.duration", {
+                          seconds: (m.duration_us / 1_000_000).toFixed(2),
+                        })
+                      : t("media_pool.no_duration")}
+                  </span>
+                  {m.width !== null && m.height !== null && (
+                    <span className="media-meta">
+                      {m.width}×{m.height}
+                    </span>
+                  )}
+                  <span className="media-meta">
+                    {formatBytes(m.size_bytes, t)}
+                  </span>
+                </div>
+                {isImporting && (
+                  <button
+                    className="media-import-cancel"
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      await onCancelImport(m.id);
+                    }}
+                    title={t("media_pool.importing_cancel_hint")}
+                  >
+                    {t("media_pool.importing")}
+                  </button>
+                )}
+                {isMissing && (
+                  <span
+                    className="media-missing-badge"
+                    title={t("media_pool.missing_hint", { path: m.path })}
+                  >
+                    {t("media_pool.missing")}
+                  </span>
+                )}
+              </div>
+              <span
+                className="media-item-name"
+                title={m.label}
+              >
                 {m.label}
               </span>
-              <span className="media-meta">
-                {m.duration_us !== null
-                  ? t("media_pool.duration", {
-                      seconds: (m.duration_us / 1_000_000).toFixed(2),
-                    })
-                  : t("media_pool.no_duration")}
-              </span>
-              {m.width !== null && m.height !== null && (
-                <span className="media-meta">
-                  {m.width}×{m.height}
-                </span>
-              )}
-              <span className="media-meta">{formatBytes(m.size_bytes, t)}</span>
-              {isImporting ? (
-                <button
-                  className="media-import-cancel"
-                  onClick={async (e) => {
-                    e.stopPropagation();
-                    await onCancelImport(m.id);
-                  }}
-                  title={t("media_pool.importing_cancel_hint")}
-                >
-                  {t("media_pool.importing")}
-                </button>
-              ) : isMissing ? (
-                <span
-                  className="media-missing-badge"
-                  title={t("media_pool.missing_hint", { path: m.path })}
-                >
-                  {t("media_pool.missing")}
-                </span>
-              ) : (
-                <button
-                  className="media-preview-btn"
-                  onClick={async (e) => {
-                    e.stopPropagation();
-                    try {
-                      await mpvPlayMedia(m.id);
-                    } catch (err) {
-                      console.error("preview failed:", err);
-                    }
-                  }}
-                  title={t("media_pool.preview")}
-                >
-                  ▶
-                </button>
-              )}
             </li>
           );
         })}
