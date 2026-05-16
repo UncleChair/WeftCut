@@ -66,21 +66,85 @@ export interface VideoResolver {
   unmount(slot: HTMLElement, binding: VideoSlotBinding): void;
 }
 
-/// H.3 stub. Throws on every method so a misconfigured H.4 mount
-/// surfaces immediately rather than silently rendering a blank frame.
-/// Replace with the real implementation in H.4 when the engine wires
-/// up to live Project state via `LiveLayers` + `HtmlGroupHandle`.
-export class PreviewVideoResolverStub implements VideoResolver {
-  mount(_slot: HTMLElement, binding: VideoSlotBinding): void {
-    throw new Error(
-      `PreviewVideoResolverStub.mount(${binding.layerId}): H.4 hasn't landed yet. ` +
-        `H.3 scope is composition generation + the engine; video element wiring is H.4.`,
-    );
+/// Phase H.4 preview resolver. Inserts a `<video>` into each slot and
+/// nudges `currentTime` per RAF tick (the same drift threshold the
+/// per-layer `VideoClipHandle` uses outside compositions). Audio is
+/// **muted** on the resolver's `<video>` — html-render groups route
+/// audio members through the main amix unchanged (decision 7), so the
+/// video element here only renders pixels.
+///
+/// Cross-platform note: Linux WebKitGTW without `gstreamer1.0-libav`
+/// can't play H.264 — same gap the preview-dom doc calls out under
+/// risks. Export (H.5) sidesteps it via path (iii) but preview shares
+/// the same constraint.
+export class PreviewVideoResolver implements VideoResolver {
+  /// Per-slot tracking: each slot owns one <video>. Caching the element
+  /// reference avoids a `querySelector` round-trip every applyAt.
+  private elements = new Map<HTMLElement, HTMLVideoElement>();
+
+  constructor(
+    /// Returns the playback URL for a video clip's media id, e.g. via
+    /// `convertFileSrc(playbackPathFor(media))`. The resolver doesn't
+    /// reach into the project store directly so it stays testable
+    /// outside React.
+    private readonly resolveSrc: (mediaId: string) => string | null,
+  ) {}
+
+  mount(slot: HTMLElement, binding: VideoSlotBinding): void {
+    if (this.elements.has(slot)) return; // idempotent
+    const video = document.createElement("video");
+    video.preload = "auto";
+    video.playsInline = true;
+    video.muted = true; // audio goes through the main amix; this is video-only
+    video.loop = false;
+    video.style.width = "100%";
+    video.style.height = "100%";
+    video.style.objectFit = "cover";
+    video.style.display = "block";
+
+    const src = this.resolveSrc(binding.mediaId);
+    if (src) video.src = src;
+    slot.appendChild(video);
+    this.elements.set(slot, video);
   }
-  applyAt(_slot: HTMLElement, _t: number, binding: VideoSlotBinding): void {
-    throw new Error(`PreviewVideoResolverStub.applyAt(${binding.layerId}): H.4 not implemented`);
+
+  applyAt(slot: HTMLElement, tSeconds: number, binding: VideoSlotBinding): void {
+    const video = this.elements.get(slot);
+    if (!video) return;
+
+    // Composition time → source time: subtract layer.t_start (local to
+    // composition; the distiller already shifted) and add srcInUs.
+    const tCompUs = Math.floor(tSeconds * 1e6);
+    const localUs = tCompUs - binding.tStartUs;
+    const targetSec = Math.max(0, (localUs + binding.srcInUs) / 1e6);
+
+    // No metadata yet — element hasn't fired loadedmetadata; the
+    // browser will pick up the target time once it does.
+    if (Number.isNaN(video.duration) || video.readyState < 1) {
+      return;
+    }
+    const drift = Math.abs(video.currentTime - targetSec);
+    if (drift > 0.1) {
+      try {
+        video.currentTime = targetSec;
+      } catch {
+        // Some media is briefly un-seekable around state transitions;
+        // the next tick retries with the same target.
+      }
+    }
   }
-  unmount(_slot: HTMLElement, binding: VideoSlotBinding): void {
-    throw new Error(`PreviewVideoResolverStub.unmount(${binding.layerId}): H.4 not implemented`);
+
+  unmount(slot: HTMLElement, _binding: VideoSlotBinding): void {
+    const video = this.elements.get(slot);
+    if (!video) return;
+    try {
+      video.pause();
+      video.removeAttribute("src");
+      video.load(); // release decoder resources promptly
+    } catch {
+      /* best-effort cleanup */
+    }
+    if (video.parentNode === slot) slot.removeChild(video);
+    this.elements.delete(slot);
   }
 }

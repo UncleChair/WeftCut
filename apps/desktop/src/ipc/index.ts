@@ -181,6 +181,10 @@ export interface GroupSummary {
   id: string;
   label: string | null;
   layer_ids: string[];
+  /// `"Native"` (default ffmpeg per-layer lowering) or `"Html"`
+  /// (html-render-groups island; see `docs/html-render-groups.md`).
+  /// LiveLayers + HtmlGroupHandle consult this to decide mount strategy.
+  render_mode: "Native" | "Html";
 }
 
 export interface MarkerSummary {
