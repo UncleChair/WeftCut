@@ -516,6 +516,7 @@ mod tests {
             enabled: true,
             locked: false,
             removable: true,
+            role: None,
             height_px: 64,
             layers: imbl::vector![layer],
         });
@@ -576,6 +577,7 @@ mod tests {
             enabled: false, // disabled — clips must be skipped
             locked: false,
             removable: true,
+            role: None,
             height_px: 64,
             layers: imbl::vector![layer],
         });
@@ -593,6 +595,7 @@ mod tests {
             enabled: true,
             locked: false,
             removable: true,
+            role: None,
             height_px: 48,
             layers: imbl::Vector::new(),
         });
@@ -644,6 +647,7 @@ mod tests {
             enabled: true,
             locked: false,
             removable: true,
+            role: None,
             height_px: 64,
             layers: imbl::vector![layer],
         });
@@ -696,6 +700,7 @@ mod tests {
             enabled: true,
             locked: false,
             removable: true,
+            role: None,
             height_px: 64,
             layers: imbl::vector![mk_clip(m1)],
         });
@@ -706,6 +711,7 @@ mod tests {
             enabled: true,
             locked: false,
             removable: true,
+            role: None,
             height_px: 64,
             layers: imbl::vector![mk_clip(m2)],
         });
@@ -743,6 +749,7 @@ mod tests {
             enabled: true,
             locked: false,
             removable: true,
+            role: None,
             height_px: 64,
             layers: imbl::vector![layer],
         });

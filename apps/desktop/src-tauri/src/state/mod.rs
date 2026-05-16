@@ -62,7 +62,7 @@ pub use marker::Marker;
 pub use media::{AudioStreamMeta, MediaItem, MediaKind, MediaMetadata, VideoStreamMeta};
 pub use project::{Project, ProjectMetadata, ProjectSettings, SCHEMA_VERSION};
 pub use time::{Rational, TimeUs, US_PER_MS, US_PER_SEC};
-pub use track::{Track, TrackKind};
+pub use track::{Track, TrackKind, TrackRole};
 pub use transform::{BlendMode, Rect, Transform};
 pub use transition::{Transition, TransitionKind};
 
@@ -142,6 +142,7 @@ mod tests {
             enabled: true,
             locked: false,
             removable: true,
+            role: None,
             height_px: 64,
             layers: imbl::vector![layer],
         };
