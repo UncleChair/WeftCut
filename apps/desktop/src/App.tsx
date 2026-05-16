@@ -104,6 +104,11 @@ export function App({ onCloseProject }: AppProps) {
   const [error, setError] = useState<string | null>(null);
   const [exportState, setExportState] = useState<ExportState | null>(null);
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
+  // R.7 inline-reveal: track id the user surfaced from the right-panel peek
+  // list. Single-track exclusive; persists across scrubs. Cleared by Esc, by
+  // selecting a layer on a different track, or by clicking another peek
+  // item (which replaces the value).
+  const [revealedTrackId, setRevealedTrackId] = useState<string | null>(null);
   const [currentTimeUs, setCurrentTimeUs] = useState<number>(0);
   const [paused, setPaused] = useState<boolean>(true);
   const [preset, setPreset] = useState<ExportPreset>("H264Mp4_1080p");
@@ -161,6 +166,40 @@ export function App({ onCloseProject }: AppProps) {
     setCurrentTimeUs(tUs);
     previewRef.current?.seekTo(tUs);
   }, []);
+
+  // R.7: click on a peek item → reveal that hidden track inline at its
+  // natural accretion slot AND select the clicked layer. Single-track
+  // exclusive (later peek-click replaces).
+  const revealTrack = useCallback((trackId: string, layerId: string) => {
+    setRevealedTrackId(trackId);
+    setSelectedLayerId(layerId);
+  }, []);
+
+  // R.7: Esc collapses the inline reveal.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setRevealedTrackId((cur) => (cur === null ? cur : null));
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // R.7: when the user clicks a layer on a DIFFERENT track from the
+  // revealed one, collapse the reveal. Plain deselect (selectedLayerId
+  // becomes null) does NOT collapse — the user might still want to peek
+  // back at that hidden layer's track. Only an active selection on a
+  // foreign track clears the reveal.
+  useEffect(() => {
+    if (revealedTrackId === null || selectedLayerId === null) return;
+    const owner = (summary?.tracks ?? []).find((t) =>
+      t.layers.some((l) => l.id === selectedLayerId),
+    );
+    if (owner && owner.id !== revealedTrackId) {
+      setRevealedTrackId(null);
+    }
+  }, [selectedLayerId, summary, revealedTrackId]);
 
   const commitTimecode = useCallback(() => {
     if (editingTimecode === null) return;
@@ -957,6 +996,7 @@ export function App({ onCloseProject }: AppProps) {
             durationUs={summary?.duration_us ?? 0}
             currentTimeUs={currentTimeUs}
             selectedLayerId={selectedLayerId}
+            revealedTrackId={revealedTrackId}
             onSelect={setSelectedLayerId}
             onSeek={seekTo}
             onMutated={refresh}
@@ -981,6 +1021,7 @@ export function App({ onCloseProject }: AppProps) {
             currentTimeUs={currentTimeUs}
             onSelect={setSelectedLayerId}
             onMutated={refresh}
+            onRevealTrack={revealTrack}
           />
         </section>
       </main>
