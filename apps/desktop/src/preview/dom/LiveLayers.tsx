@@ -15,12 +15,21 @@
 /// the playhead boundary. Comparing the new id list against the prior
 /// one and short-circuiting on equality keeps React re-renders to that
 /// rate.
+///
+/// **Phase H.4 — html-render groups** (`docs/html-render-groups.md`):
+/// when a layer is a member of a group whose `render_mode === "Html"`,
+/// the layer is **not** rendered individually. Instead, on the first
+/// active member encountered, one `<HtmlGroup>` is emitted at that
+/// position in the render order. Subsequent active members of the
+/// same group are skipped. The composition inside the html-group
+/// renders all its members as a single shadow-DOM-mounted artifact.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useProjectStore } from "../../state/projectStore";
-import type { TrackSummary } from "../../ipc";
+import type { GroupSummary, TrackSummary } from "../../ipc";
 import type { AudioGraph } from "./audio/AudioGraph";
+import { HtmlGroup } from "./HtmlGroup";
 import { Layer } from "./Layer";
 import type { PlaybackEngine } from "./PlaybackEngine";
 
@@ -38,34 +47,42 @@ interface Props {
   audioGraph: AudioGraph | null;
 }
 
+/// One "thing" rendered in the preview surface — either a single layer
+/// or an html-render group (which collapses several layers into one
+/// composition).
+type RenderUnit =
+  | { kind: "layer"; layerId: string }
+  | { kind: "html-group"; groupId: string };
+
 export function LiveLayers({ engine, audioGraph }: Props) {
   const tracks = useProjectStore((s) => s.summary?.tracks);
+  const groups = useProjectStore((s) => s.summary?.groups);
   const layerById = useProjectStore((s) => s.layerById);
-  /// IDs of layers currently mounted. Sorted by render-order (back to
+  /// Render units currently mounted. Sorted by render-order (back to
   /// front) so React reconciles a stable list when the active set
   /// changes.
-  const [activeIds, setActiveIds] = useState<string[]>([]);
+  const [activeUnits, setActiveUnits] = useState<RenderUnit[]>([]);
   /// Latest masterUs from the engine. Held in a ref so recompute()
   /// can recombine with tracks-changes without ping-ponging state.
   const lastMasterUsRef = useRef<number>(0);
-  const activeIdsRef = useRef<string[]>([]);
+  const activeUnitsRef = useRef<RenderUnit[]>([]);
 
   const recompute = useCallback(() => {
     const t = tracks;
     if (!t) {
-      if (activeIdsRef.current.length === 0) return;
-      activeIdsRef.current = [];
-      setActiveIds([]);
+      if (activeUnitsRef.current.length === 0) return;
+      activeUnitsRef.current = [];
+      setActiveUnits([]);
       return;
     }
     const masterUs = lastMasterUsRef.current;
     const lo = masterUs - LOOKBEHIND_US;
     const hi = masterUs + LOOKAHEAD_US;
-    const next = collectActive(t, lo, hi);
-    if (sameIdList(activeIdsRef.current, next)) return;
-    activeIdsRef.current = next;
-    setActiveIds(next);
-  }, [tracks]);
+    const next = collectActive(t, groups ?? [], lo, hi);
+    if (sameUnits(activeUnitsRef.current, next)) return;
+    activeUnitsRef.current = next;
+    setActiveUnits(next);
+  }, [tracks, groups]);
 
   // Subscribe to engine ticks. Throttled by PlaybackEngine to ~30 Hz,
   // which is fine for window membership changes (they're driven by
@@ -78,20 +95,23 @@ export function LiveLayers({ engine, audioGraph }: Props) {
     return unsub;
   }, [engine, recompute]);
 
-  // When tracks change (layer added / removed / moved / trimmed),
-  // re-evaluate the window using the last-known master time.
+  // When tracks/groups change (layer added / removed / moved / trimmed,
+  // group created / dissolved / render-mode toggled), re-evaluate.
   useEffect(() => {
     recompute();
-  }, [tracks, recompute]);
+  }, [tracks, groups, recompute]);
 
   return (
     <>
-      {activeIds.map((id) => {
-        const layer = layerById.get(id);
+      {activeUnits.map((u) => {
+        if (u.kind === "html-group") {
+          return <HtmlGroup key={`hg:${u.groupId}`} groupId={u.groupId} engine={engine} />;
+        }
+        const layer = layerById.get(u.layerId);
         if (!layer) return null;
         return (
           <Layer
-            key={id}
+            key={u.layerId}
             layer={layer}
             engine={engine}
             audioGraph={audioGraph}
@@ -102,42 +122,69 @@ export function LiveLayers({ engine, audioGraph }: Props) {
   );
 }
 
-/// Walk all tracks → layers and collect IDs whose visibility window
-/// overlaps `[lo, hi]`. Render order = tracks ASC, within each
-/// track layers in declaration order. In DOM stacking that means
-/// `tracks[0].layers[0]` renders deepest (behind everything); the
-/// last layer of the last track renders on top.
+/// Walk all tracks → layers and collect render units whose visibility
+/// window overlaps `[lo, hi]`. Render order = tracks ASC, within each
+/// track layers in declaration order.
 ///
-/// For typical projects this is O(layer_count) per call. With ~30
-/// calls/sec capped by the engine throttle and realistic projects
-/// staying under a few hundred layers, the cost is negligible.
+/// **Html-mode groups** (`docs/html-render-groups.md`): a layer that's
+/// a member of an `Html`-mode group is replaced in the render order by
+/// one `{ kind: "html-group", groupId }` entry at the position of the
+/// group's first encountered member. Subsequent members of the same
+/// group are skipped (the composition renders them collectively).
+///
+/// For typical projects this is O(layer_count + group_count) per call.
+/// With ~30 calls/sec capped by the engine throttle and realistic
+/// projects staying under a few hundred layers, the cost is negligible.
 function collectActive(
   tracks: readonly TrackSummary[],
+  groups: readonly GroupSummary[],
   lo: number,
   hi: number,
-): string[] {
-  const out: string[] = [];
+): RenderUnit[] {
+  // Index: which Html group does each layer belong to?
+  const htmlGroupByLayer = new Map<string, string>();
+  for (const g of groups) {
+    if (g.render_mode !== "Html") continue;
+    for (const lid of g.layer_ids) htmlGroupByLayer.set(lid, g.id);
+  }
+
+  const out: RenderUnit[] = [];
+  const emittedHtmlGroups = new Set<string>();
   for (const t of tracks) {
     if (!t.enabled) continue;
     for (const layer of t.layers) {
       if (!layer.enabled) continue;
       // Overlap test: window [lo, hi] overlaps layer [t_start, t_end]
       // iff t_start < hi && t_end > lo.
-      if (layer.t_start_us < hi && layer.t_end_us > lo) {
-        out.push(layer.id);
+      if (!(layer.t_start_us < hi && layer.t_end_us > lo)) continue;
+
+      const groupId = htmlGroupByLayer.get(layer.id);
+      if (groupId) {
+        if (!emittedHtmlGroups.has(groupId)) {
+          out.push({ kind: "html-group", groupId });
+          emittedHtmlGroups.add(groupId);
+        }
+        // Subsequent members of the same group are part of its
+        // composition — don't emit them individually.
+        continue;
       }
+      out.push({ kind: "layer", layerId: layer.id });
     }
   }
   return out;
 }
 
-/// Strict same-elements-same-order comparison. The set-of-IDs change
-/// is rare; this short-circuit is the difference between 30 React
-/// re-renders/sec and 1 every few seconds.
-function sameIdList(a: readonly string[], b: readonly string[]): boolean {
+/// Strict same-elements-same-order comparison for the render-unit list.
+/// The set rarely changes; this short-circuit is the difference between
+/// ~30 React re-renders/sec and 1 every few seconds.
+function sameUnits(a: readonly RenderUnit[], b: readonly RenderUnit[]): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) return false;
+    const ai = a[i]!;
+    const bi = b[i]!;
+    if (ai.kind !== bi.kind) return false;
+    if (ai.kind === "layer" && bi.kind === "layer" && ai.layerId !== bi.layerId) return false;
+    if (ai.kind === "html-group" && bi.kind === "html-group" && ai.groupId !== bi.groupId) return false;
   }
   return true;
 }

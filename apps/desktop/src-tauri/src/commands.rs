@@ -53,6 +53,12 @@ pub struct GroupSummary {
     pub id: String,
     pub label: Option<String>,
     pub layer_ids: Vec<String>,
+    /// Serialized as `"Native"` or `"Html"` (matches the Rust
+    /// `GroupRenderMode` variants). `docs/html-render-groups.md` — UI +
+    /// preview engine consult this to decide whether to mount each
+    /// member individually (Native) or collapse them into a single
+    /// HtmlGroupHandle (Html).
+    pub render_mode: String,
 }
 
 #[derive(Serialize, Clone)]
@@ -447,6 +453,10 @@ pub async fn project_summary(handle: State<'_, ProjectHandle>) -> Result<Project
             id: g.id.to_string(),
             label: g.label.clone(),
             layer_ids: g.members.iter().map(|m| m.to_string()).collect(),
+            render_mode: match g.render_mode {
+                crate::state::group::GroupRenderMode::Native => "Native".to_string(),
+                crate::state::group::GroupRenderMode::Html => "Html".to_string(),
+            },
         })
         .collect();
 
