@@ -804,6 +804,20 @@ export async function exportProject(
   return invoke<void>("export_project", { outputPath, preset });
 }
 
+/// Render the project synchronously into an OS temp MP4 and return
+/// the path. Used by the DOM preview's "Render & Play" verification
+/// path (`docs/preview-dom.md` Phase E). No `export:*` events fire.
+export async function exportToTempPreview(): Promise<string> {
+  return invoke<string>("export_to_temp_preview");
+}
+
+/// Delete a temp MP4 produced by `exportToTempPreview`. Safety-guarded
+/// on the Rust side: only files matching the temp-render naming
+/// convention under `std::env::temp_dir()` are removed.
+export async function cleanupTempPreview(path: string): Promise<void> {
+  return invoke<void>("cleanup_temp_preview", { path });
+}
+
 export type ExportQueueStatus =
   | { kind: "Pending" }
   | { kind: "Running" }

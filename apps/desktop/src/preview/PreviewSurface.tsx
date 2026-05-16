@@ -18,6 +18,7 @@ import { useProjectStore } from "../state/projectStore";
 import { AudioGraph } from "./dom/audio/AudioGraph";
 import { LiveLayers } from "./dom/LiveLayers";
 import { PlaybackEngine } from "./dom/PlaybackEngine";
+import { RenderAndPlay } from "./dom/RenderAndPlay";
 
 interface Props {
   /// True when the project has at least one layer. When false we
@@ -67,6 +68,11 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
 
     const outerRef = useRef<HTMLDivElement | null>(null);
     const [fitScale, setFitScale] = useState<number>(1);
+    /// True while Render & Play has taken over the surface (rendering
+    /// or playing the rendered MP4). LiveLayers is hidden so we
+    /// don't double-decode audio / contest the GPU with both
+    /// renderers.
+    const [renderPreviewActive, setRenderPreviewActive] = useState<boolean>(false);
 
     // Mount engine + audio graph once. Dispose on unmount.
     useEffect(() => {
@@ -90,6 +96,21 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
       // on every parent re-render.
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    // When Render & Play takes over, pause the live engine and mute
+    // the Web Audio master so the rendered `<video>`'s own audio is
+    // the only thing playing. Restore on return-to-live.
+    useEffect(() => {
+      if (!engine || !audioGraph) return;
+      if (renderPreviewActive) {
+        engine.pause();
+        audioGraph.muteMaster();
+      } else {
+        audioGraph.unmuteMaster();
+        // Don't auto-resume — the user explicitly chose to return,
+        // and may want to scrub the timeline before playing again.
+      }
+    }, [renderPreviewActive, engine, audioGraph]);
 
     // Outer-container size tracking → recompute fit scale.
     useEffect(() => {
@@ -170,12 +191,16 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
             height: composition.height,
             transformOrigin: "top left",
             transform: `scale(${fitScale})`,
+            // Hide live compositor while a rendered preview is
+            // active so we don't double-play audio.
+            visibility: renderPreviewActive ? "hidden" : "visible",
           }}
         >
           {engine && (
             <LiveLayers engine={engine} audioGraph={audioGraph} />
           )}
         </div>
+        <RenderAndPlay onActiveChange={setRenderPreviewActive} />
       </div>
     );
   },

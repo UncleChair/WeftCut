@@ -2285,6 +2285,54 @@ pub async fn mpv_play_media(
         .map_err(|e| format!("join: {e}"))?
 }
 
+/// Render the current project synchronously to a temp MP4 and return
+/// the absolute path. Used by the DOM preview's "Render & Play"
+/// escape hatch (`docs/preview-dom.md` Phase E) — the WYSIWYG
+/// verification path when CSS-rendered preview diverges from
+/// ffmpeg-rendered export. Silent: no `export:*` events; UI shows
+/// an indeterminate spinner while awaiting.
+///
+/// Pairs with `cleanup_temp_preview` for explicit teardown when the
+/// user dismisses the rendered playback.
+#[tauri::command]
+pub async fn export_to_temp_preview(
+    app: tauri::AppHandle,
+    handle: State<'_, ProjectHandle>,
+) -> Result<String, String> {
+    let snap = handle.snapshot().await;
+    let project = (*snap).clone();
+    let out = std::env::temp_dir()
+        .join(format!("weftcut-render-preview-{}.mp4", uuid::Uuid::now_v7().simple()));
+    let preset = export::ExportPreset::default();
+    export::run_render_silent(app, &project, &out, preset)
+        .await
+        .map_err(|e| format!("render: {e:#}"))?;
+    Ok(out.to_string_lossy().to_string())
+}
+
+/// Delete a temp render-preview file. Safety check: the path must
+/// live under `std::env::temp_dir()` and the filename must match
+/// the `weftcut-render-preview-*.mp4` prefix `export_to_temp_preview`
+/// emits — anything else is a no-op rather than an error so a stale
+/// UI ref doesn't poke holes elsewhere.
+#[tauri::command]
+pub async fn cleanup_temp_preview(path: String) -> Result<(), String> {
+    let p = PathBuf::from(path);
+    let temp = std::env::temp_dir();
+    if !p.starts_with(&temp) {
+        return Ok(());
+    }
+    let name = match p.file_name().and_then(|n| n.to_str()) {
+        Some(n) => n,
+        None => return Ok(()),
+    };
+    if !name.starts_with("weftcut-render-preview-") || !name.ends_with(".mp4") {
+        return Ok(());
+    }
+    let _ = std::fs::remove_file(&p);
+    Ok(())
+}
+
 /// Kicks off a render in the background. Progress / completion / failure are
 /// surfaced via Tauri events (`export:progress`, `export:complete`,
 /// `export:error`) so the UI can subscribe instead of awaiting.
