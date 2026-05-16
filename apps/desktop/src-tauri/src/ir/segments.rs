@@ -190,6 +190,7 @@ mod tests {
             enabled: true,
             locked: false,
             removable: true,
+            role: None,
             height_px: 64,
             layers: layers.into_iter().collect(),
         };

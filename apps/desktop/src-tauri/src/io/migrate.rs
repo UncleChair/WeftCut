@@ -75,6 +75,15 @@ pub async fn run(workspace: &Path, project: &mut Project) -> Result<MigrationRep
         // `validate_groups` runs on previously-untouched projects too.
         project.schema_version = 3;
     }
+    if project.schema_version < 4 {
+        // v4 = A/B-roll redesign (`docs/ab-roll-redesign`). `Track.role`
+        // defaults to `None` via `#[serde(default)]`, which is what we
+        // want: legacy projects keep their unstamped tracks and render
+        // best in Show-All mode. We deliberately do NOT auto-stamp the
+        // first video/audio tracks as A/B — the user toggles to Show-All
+        // manually (Q8 of the redesign locked "no migration").
+        project.schema_version = 4;
+    }
 
     Ok(report)
 }
@@ -255,7 +264,7 @@ mod tests {
 
         let report = run(&ws, &mut project).await.unwrap();
         assert_eq!(report.from_version, 1);
-        assert_eq!(report.to_version, 3);
+        assert_eq!(report.to_version, 4);
         assert_eq!(report.migrated, 1);
         assert_eq!(report.missing_sources, 0);
 
@@ -263,7 +272,7 @@ mod tests {
         assert_eq!(migrated.path_rel.as_ref().unwrap(), Path::new("Media/interview.mp4"));
         assert!(ws.join("Media").join("interview.mp4").is_file());
         assert!(ws.join("Backups").read_dir().unwrap().count() >= 1);
-        assert_eq!(project.schema_version, 3);
+        assert_eq!(project.schema_version, 4);
     }
 
     #[tokio::test]
@@ -287,7 +296,7 @@ mod tests {
         let still_legacy = project.media_pool.get(&id).unwrap();
         assert!(still_legacy.path_rel.is_none());
         assert_eq!(still_legacy.path_abs, Path::new("/nonexistent/missing.mp4"));
-        assert_eq!(project.schema_version, 3);
+        assert_eq!(project.schema_version, 4);
     }
 
     #[tokio::test]
@@ -330,39 +339,50 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn v2_to_v3_is_pure_version_bump() {
-        // A v2 project loads with `groups = []` via `#[serde(default)]`.
-        // The migration just stamps `schema_version = 3` — no media moves,
-        // no new files. The auto_pair_audio_on_import setting defaults to
-        // true. Existing media stays exactly where it is.
+    async fn v2_to_v4_is_pure_version_bump() {
+        // A v2 project loads with `groups = []` and `Track.role = None`
+        // via `#[serde(default)]`. The migration stamps `schema_version
+        // = 4` and changes nothing else on the wire: no media moves, no
+        // new tracks, no role auto-stamping. Reserved-track promotion
+        // is `Project::new_blank`'s job, not the migrator's (Q8 of the
+        // A/B-roll redesign locked "no auto-migration for legacy").
         let ws_dir = TempDir::new().unwrap();
         let ws = ws_dir.path().join("doc.vproj");
         fs::create_dir_all(&ws).unwrap();
 
         let mut project = Project::new_blank("v2-doc");
         project.schema_version = 2;
+        // Strip the role stamps so this looks like a real v2 project
+        // (which couldn't have had them — the field didn't exist yet).
+        for t in project.tracks.iter_mut() {
+            t.role = None;
+        }
         super::super::save_to_dir(&project, &ws).await.unwrap();
 
         let report = run(&ws, &mut project).await.unwrap();
         assert_eq!(report.from_version, 2);
-        assert_eq!(report.to_version, 3);
+        assert_eq!(report.to_version, 4);
         assert_eq!(report.migrated, 0);
         assert_eq!(report.missing_sources, 0);
-        assert_eq!(project.schema_version, 3);
+        assert_eq!(project.schema_version, 4);
         assert!(project.groups.is_empty());
         assert!(project.settings.auto_pair_audio_on_import);
+        // Legacy tracks stay unstamped — no auto-promote.
+        for t in project.tracks.iter() {
+            assert!(t.role.is_none(), "legacy track must stay unstamped");
+        }
     }
 
     #[tokio::test]
-    async fn v3_project_is_noop() {
+    async fn current_schema_project_is_noop() {
         let ws_dir = TempDir::new().unwrap();
         let ws = ws_dir.path().join("doc.vproj");
         fs::create_dir_all(&ws).unwrap();
-        let mut project = Project::new_blank("v3-doc");
+        let mut project = Project::new_blank("v4-doc");
         super::super::save_to_dir(&project, &ws).await.unwrap();
         let report = run(&ws, &mut project).await.unwrap();
-        assert_eq!(report.from_version, 3);
-        assert_eq!(report.to_version, 3);
-        assert_eq!(project.schema_version, 3);
+        assert_eq!(report.from_version, 4);
+        assert_eq!(report.to_version, 4);
+        assert_eq!(project.schema_version, 4);
     }
 }

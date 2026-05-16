@@ -113,12 +113,20 @@ export interface SubtitlesView {
   source_value: string;
 }
 
+/// A/B-roll role stamp (`docs/ab-roll-redesign`). Serialized from the Rust
+/// `TrackRole` enum as kebab-case. Null for additional / legacy tracks.
+export type TrackRole = "a-roll" | "b-roll" | "audio-a" | "audio-b";
+
 export interface TrackSummary {
   id: string;
   kind: string;
   label: string | null;
   enabled: boolean;
   locked: boolean;
+  /// `null` for tracks created after the reserved 4 (additional video, music,
+  /// SFX, captions, voiceover, etc.) and for legacy projects. AB display mode
+  /// hides any track where `role === null`; Show-All ignores the field.
+  role: TrackRole | null;
   layers: LayerSummary[];
 }
 

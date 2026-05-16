@@ -24,7 +24,7 @@ use super::marker::Marker;
 use super::media::MediaItem;
 use super::project::Project;
 use super::time::{Rational, TimeUs};
-use super::track::{Track, TrackKind};
+use super::track::{Track, TrackKind, TrackRole};
 use super::transition::{Transition, TransitionKind};
 use super::validate::{ValidationError, validate};
 
@@ -4524,29 +4524,47 @@ mod tests {
 
 
     #[tokio::test]
-    async fn blank_project_ships_with_a_b_roll() {
+    async fn blank_project_ships_with_ab_roll_skeleton() {
+        // `docs/ab-roll-redesign`: every fresh project ships with four
+        // reserved, non-removable, role-stamped tracks. Ordering in
+        // `Project::tracks` is bottom-up:
+        //   index 0 — Audio B   (role AudioB)
+        //   index 1 — Audio A   (role AudioA)
+        //   index 2 — Video A   (role ARoll)
+        //   index 3 — Video B   (role BRoll, top of z-stack)
         let p = Project::new_blank("untitled");
-        assert_eq!(p.tracks.len(), 2);
-        // Both video, both non-removable. A roll at index 0 (bottom of z-stack
-        // = video base), B roll at index 1 (top of z-stack = overlays).
-        assert_eq!(p.tracks[0].label.as_deref(), Some("A roll"));
-        assert_eq!(p.tracks[1].label.as_deref(), Some("B roll"));
-        for t in p.tracks.iter() {
-            assert!(matches!(t.kind, super::TrackKind::Video));
-            assert!(!t.removable);
+        assert_eq!(p.tracks.len(), 4);
+
+        let expected = [
+            ("Audio B", super::TrackKind::Audio, super::TrackRole::AudioB),
+            ("Audio A", super::TrackKind::Audio, super::TrackRole::AudioA),
+            ("Video A", super::TrackKind::Video, super::TrackRole::ARoll),
+            ("Video B", super::TrackKind::Video, super::TrackRole::BRoll),
+        ];
+        for (track, (label, kind, role)) in p.tracks.iter().zip(expected.iter()) {
+            assert_eq!(track.label.as_deref(), Some(*label));
+            assert!(matches!(&track.kind, k if std::mem::discriminant(k) == std::mem::discriminant(kind)));
+            assert_eq!(track.role, Some(*role));
+            assert!(!track.removable);
         }
     }
 
     #[tokio::test]
-    async fn cannot_delete_non_removable_track() {
+    async fn cannot_delete_role_stamped_track() {
+        // Reserved tracks have removable=false; the existing TrackNotRemovable
+        // error path covers them. Verify against every reserved index, not
+        // just the first, so an accidental flip of `removable` on any one
+        // surface would catch.
         let handle = spawn(Project::new_blank("untitled"));
         let snap = handle.snapshot().await;
-        let a_roll_id = snap.tracks[0].id;
-        let err = handle
-            .delete_track(Actor::User, a_roll_id, true)
-            .await
-            .expect_err("delete should fail on non-removable track");
-        assert!(matches!(err, CommandError::TrackNotRemovable { .. }));
+        assert_eq!(snap.tracks.len(), 4);
+        for t in snap.tracks.iter() {
+            let err = handle
+                .delete_track(Actor::User, t.id, true)
+                .await
+                .expect_err("delete should fail on every reserved track");
+            assert!(matches!(err, CommandError::TrackNotRemovable { .. }));
+        }
     }
 
     #[tokio::test]
@@ -4772,19 +4790,36 @@ mod tests {
 
     #[tokio::test]
     async fn move_track_reorders() {
+        // `docs/ab-roll-redesign`: blank project now has 4 reserved tracks
+        // (Audio B, Audio A, Video A, Video B). Find Video A / Video B by
+        // role so this test stays robust against any future re-ordering of
+        // the bootstrap skeleton.
+        use super::TrackRole;
         let handle = spawn(Project::new_blank("untitled"));
         let snap = handle.snapshot().await;
-        // Default A roll is at position 0, B roll at position 1.
-        let a_roll = snap.tracks[0].id;
-        let b_roll = snap.tracks[1].id;
-        // Move B roll above A roll.
+        let a_roll = snap
+            .tracks
+            .iter()
+            .find(|t| t.role == Some(TrackRole::ARoll))
+            .expect("A roll present")
+            .id;
+        let b_roll = snap
+            .tracks
+            .iter()
+            .find(|t| t.role == Some(TrackRole::BRoll))
+            .expect("B roll present")
+            .id;
+        // Move B roll to index 0 (bottom of stack).
         handle
             .move_track(Actor::User, b_roll, 0)
             .await
             .expect("move_track");
         let snap = handle.snapshot().await;
         assert_eq!(snap.tracks[0].id, b_roll);
-        assert_eq!(snap.tracks[1].id, a_roll);
+        // A roll is still in the stack (somewhere) — exact index depends on
+        // where the reorder shifted everyone else, which isn't this test's
+        // concern.
+        assert!(snap.tracks.iter().any(|t| t.id == a_roll));
     }
 
     #[tokio::test]

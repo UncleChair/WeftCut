@@ -19,6 +19,14 @@ pub struct Track {
     /// back-compat with `.vproj` files written before this field existed.
     #[serde(default = "default_removable")]
     pub removable: bool,
+    /// A/B-roll role stamp (`docs/ab-roll-redesign`). Role-stamped tracks are
+    /// the only tracks visible in AB display mode; everything else is hidden.
+    /// Set on the four reserved tracks at project creation (Video A / Video B
+    /// → ARoll/BRoll; Audio A / Audio B → AudioA/AudioB) and `None` for every
+    /// track imported afterwards. `#[serde(default)]` lets legacy `.vproj`
+    /// files load with `role = None`.
+    #[serde(default)]
+    pub role: Option<TrackRole>,
     pub height_px: u16,
     /// Sorted by `t_start_us`, never overlapping.
     pub layers: imbl::Vector<Layer>,
@@ -37,6 +45,7 @@ impl Track {
             enabled: true,
             locked: false,
             removable: true,
+            role: None,
             height_px: 64,
             layers: imbl::Vector::new(),
         }
@@ -48,4 +57,37 @@ pub enum TrackKind {
     Video,
     Audio,
     Subtitle,
+}
+
+/// A/B-roll role stamp. Drives AB display-mode filtering on the UI and the
+/// role-aware AV-pair fan-out when promoting hidden clips onto A or B
+/// (`docs/ab-roll-redesign`). The audio variants pair with the video variants
+/// of matching letter — promoting a video to `ARoll` translates a grouped
+/// audio member's destination to the track stamped `AudioA`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum TrackRole {
+    ARoll,
+    BRoll,
+    AudioA,
+    AudioB,
+}
+
+impl TrackRole {
+    /// The audio role paired with a video role, and vice versa. Used by the
+    /// group-fanout path when a layer is dragged across the V/A boundary
+    /// onto an A or B track.
+    pub fn paired(self) -> Self {
+        match self {
+            TrackRole::ARoll => TrackRole::AudioA,
+            TrackRole::BRoll => TrackRole::AudioB,
+            TrackRole::AudioA => TrackRole::ARoll,
+            TrackRole::AudioB => TrackRole::BRoll,
+        }
+    }
+
+    /// True for the two video-side roles. Used by the importer + UI filter
+    /// without leaking TrackKind dependency.
+    pub fn is_video(self) -> bool {
+        matches!(self, TrackRole::ARoll | TrackRole::BRoll)
+    }
 }

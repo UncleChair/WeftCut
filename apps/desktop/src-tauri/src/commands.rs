@@ -25,6 +25,7 @@ use crate::state::{
     animated::Animated,
     ids::new_id,
     time::{Rational, TimeUs},
+    track::TrackRole,
 };
 
 #[derive(Serialize, Clone)]
@@ -73,6 +74,12 @@ pub struct TrackSummary {
     pub label: Option<String>,
     pub enabled: bool,
     pub locked: bool,
+    /// A/B-roll role stamp (`docs/ab-roll-redesign`). Serializes as the
+    /// kebab-case variant name when present (`"a-roll" | "b-roll" |
+    /// "audio-a" | "audio-b"`) or `null` for additional/legacy tracks. The
+    /// UI uses this to drive the AB display-mode filter and the role-aware
+    /// AV promotion path.
+    pub role: Option<String>,
     pub layers: Vec<LayerSummary>,
 }
 
@@ -351,6 +358,12 @@ pub async fn project_summary(handle: State<'_, ProjectHandle>) -> Result<Project
             label: t.label.clone(),
             enabled: t.enabled,
             locked: t.locked,
+            role: t.role.map(|r| match r {
+                TrackRole::ARoll => "a-roll".to_string(),
+                TrackRole::BRoll => "b-roll".to_string(),
+                TrackRole::AudioA => "audio-a".to_string(),
+                TrackRole::AudioB => "audio-b".to_string(),
+            }),
             layers: t
                 .layers
                 .iter()

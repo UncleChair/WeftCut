@@ -571,6 +571,7 @@ mod tests {
             enabled: true,
             locked: false,
             removable: true,
+            role: None,
             height_px: 64,
             layers: imbl::vector![video_layer],
         };
@@ -581,6 +582,7 @@ mod tests {
             enabled: true,
             locked: false,
             removable: true,
+            role: None,
             height_px: 64,
             layers: imbl::vector![text_layer],
         };
@@ -722,6 +724,7 @@ mod tests {
             enabled: true,
             locked: false,
             removable: true,
+            role: None,
             height_px: 64,
             layers: imbl::vector![layer],
         };
