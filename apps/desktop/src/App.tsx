@@ -104,6 +104,10 @@ interface AppProps {
 
 export function App({ onCloseProject }: AppProps) {
   const { t, i18n } = useTranslation();
+  // R.9 — MediaPool drawer state lives in the app-pref store. Reading
+  // through the atomic selector so a flip doesn't re-render anything
+  // that doesn't depend on it.
+  const mediaPoolDrawerOpen = useMediaPoolDrawerOpen();
   const [pong, setPong] = useState<string>("…");
   const [summary, setSummary] = useState<ProjectSummary | null>(null);
   const [compiled, setCompiled] = useState<CompiledGraph | null>(null);
@@ -929,7 +933,7 @@ export function App({ onCloseProject }: AppProps) {
         </Menu>
       </section>
 
-      <main className="app-main">
+      <main className={`app-main ${mediaPoolDrawerOpen ? "drawer-open" : ""}`}>
         <section className="preview">
           <div id="video-surface" className="video-surface">
             {REALTIME_DEV_MODE ? (
