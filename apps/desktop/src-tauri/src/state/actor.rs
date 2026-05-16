@@ -359,6 +359,12 @@ enum Command {
         /// empty. R.3 import flow sets this; the legacy `add_track`
         /// command leaves it `false`.
         transient: bool,
+        /// V.8: insertion position in `project.tracks`. `None` = append
+        /// (top of z-stack, visually at top under the v2 reverse-data-
+        /// model rendering). `Some(0)` = prepend (bottom of z-stack,
+        /// visually at the bottom of the timeline — used by the V.3
+        /// import flow so transient holding tracks live out of the way).
+        position: Option<usize>,
         actor: Actor,
         reply: oneshot::Sender<Result<TrackId, CommandError>>,
     },
@@ -718,6 +724,7 @@ impl ProjectHandle {
             .send(Command::AddTrack {
                 label,
                 transient: false,
+                position: None,
                 actor,
                 reply,
             })
@@ -726,11 +733,11 @@ impl ProjectHandle {
         rx.await.expect("project actor terminated")
     }
 
-    /// Like `add_track` but flags the new track as `transient` — the
-    /// auto-prune sweep on every commit removes it once it's empty. Used
-    /// by `commands::import_media` (R.3) to land an import's layer on a
-    /// fresh hidden track that disappears the moment the user drags the
-    /// clip onto A/B (or deletes it).
+    /// Like `add_track` but flags the new track as `transient` AND
+    /// prepends it at data-model index 0 so V.8's visualOrderedTracks
+    /// renders it at the BOTTOM of the timeline UI (out of the way of
+    /// the reserved A/B-roll skeleton). Used by `import_media` (V.3)
+    /// to land an import's layer on a fresh hidden holding track.
     pub async fn add_transient_track(
         &self,
         actor: Actor,
@@ -741,6 +748,7 @@ impl ProjectHandle {
             .send(Command::AddTrack {
                 label,
                 transient: true,
+                position: Some(0),
                 actor,
                 reply,
             })
@@ -1393,10 +1401,11 @@ impl ProjectActor {
             Command::AddTrack {
                 label,
                 transient,
+                position,
                 actor,
                 reply,
             } => {
-                let result = self.do_add_track(label, transient, actor);
+                let result = self.do_add_track(label, transient, position, actor);
                 let _ = reply.send(result);
             }
             Command::AddLayer {
@@ -1753,6 +1762,7 @@ impl ProjectActor {
         &mut self,
         label: Option<String>,
         transient: bool,
+        position: Option<usize>,
         actor: Actor,
     ) -> Result<TrackId, CommandError> {
         let mut next: Project = (*self.history.current()).clone();
@@ -1760,7 +1770,13 @@ impl ProjectActor {
         track.label = label;
         track.transient = transient;
         let track_id = track.id;
-        next.tracks.push_back(track);
+        // V.8 insertion position. `None` = append (legacy / explicit
+        // adds). `Some(i)` = insert at index `i`, shifting existing
+        // tracks at `i..` up by one. Clamp to [0, len] so a too-high
+        // index degrades to "append" rather than panicking.
+        let len = next.tracks.len();
+        let insert_at = position.unwrap_or(len).min(len);
+        next.tracks.insert(insert_at, track);
         self.commit(
             next,
             actor,
@@ -1827,16 +1843,18 @@ impl ProjectActor {
             Some(s) if !s.is_empty() => format!("{s} (audio)"),
             _ => "Audio".to_string(),
         });
-        // Insert AFTER the source track in the data-model order so V.8's
-        // visualOrderedTracks renders the new audio row directly below
-        // its source.
+        // Insert BEFORE the source in data-model order. V.8's
+        // visualOrderedTracks renders tracks in REVERSE data-model
+        // order (last index = top of z-stack = top of screen), so
+        // inserting at `ti` puts the new audio track at lower
+        // z-stack position than the source — which renders the audio
+        // row directly BELOW its source video in the timeline UI. The
+        // source track's data-model index shifts up by 1.
         let new_track_id = new_track.id;
         // Remove the audio layer from the source track.
         let audio_layer = next.tracks[ti].layers.remove(li);
         new_track.layers.push_back(audio_layer);
-        // Insert the new track right after `ti`. `imbl::Vector::insert`
-        // is O(log n) — fine for our handful-of-tracks workload.
-        next.tracks.insert(ti + 1, new_track);
+        next.tracks.insert(ti, new_track);
 
         self.commit(
             next,
@@ -5024,14 +5042,21 @@ mod tests {
         assert!(new_track.layers.iter().any(|l| l.id == a_layer));
         assert!(!new_track.transient, "new track must be non-transient");
         assert!(new_track.removable, "new track must be user-removable");
-        // The new track sits directly after the source in data-model
-        // order (V.7 contract).
+        // V.7 / V.8 contract: the new audio track sits at LOWER data-
+        // model index than the source so visualOrderedTracks (V.8
+        // reverse-data-model) renders it visually BELOW its source.
         let new_idx = after
             .tracks
             .iter()
             .position(|t| t.id == new_track_id)
             .unwrap();
-        assert_eq!(new_idx, pre_a_roll_idx + 1);
+        let source_after_idx = after
+            .tracks
+            .iter()
+            .position(|t| t.id == a_roll)
+            .unwrap();
+        assert_eq!(new_idx, pre_a_roll_idx);
+        assert_eq!(source_after_idx, pre_a_roll_idx + 1);
         // Group membership preserved (V and A still grouped).
         let groups = &after.groups;
         let pair_group = groups

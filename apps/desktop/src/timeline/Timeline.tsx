@@ -120,97 +120,46 @@ function computeLayerSlices(
   return slices;
 }
 
-// Accretion-from-middle ordering (`docs/ab-roll-redesign` Q3 + Q11).
+// V.8 (`docs/ab-roll-redesign` v2) — track rendering order is now a
+// simple reverse of the data-model. Data-model convention (idx 0 =
+// bottom of z-stack, last = top) maps directly to "last index renders
+// at the top of the screen", matching the editor convention that the
+// top-of-z-stack composites visually on top.
 //
-//   ┌────────────┐  ↑ accretes upward
-//   │ extra V    │
-//   │ Video B    │  ← role: BRoll
-//   │ Video A    │  ← role: ARoll   (adjacent to the V/A boundary)
-//   │ Subtitles  │  ← between Video A and the middle line
-//   ├────────────┤  ═══ V/A boundary ═══
-//   │ Audio A    │  ← role: AudioA  (adjacent to the V/A boundary)
-//   │ Audio B    │  ← role: AudioB
-//   │ extra A    │
-//   └────────────┘  ↓ accretes downward
+//   data-model (bottom → top of z-stack)        visual (top → bottom of screen)
+//   ┌─────────────────────────────────┐         ┌─────────────────────────────┐
+//   │ idx 0 — additional / transient  │         │ B roll                      │
+//   │ idx 1 — A roll                  │   ⇄     │ B's separated audio (if any)│
+//   │ idx 2 — A's separated audio     │ reverse │ A roll                      │
+//   │ idx 3 — B roll                  │         │ A's separated audio (if any)│
+//   │ idx 4 — B's separated audio     │         │ additional / transient      │
+//   │ idx 5 — additional (extra)      │         └─────────────────────────────┘
+//   └─────────────────────────────────┘
 //
-// The rule "older tracks closer to the middle line" governs every kind.
-// Inside the video stack, A roll (the older role) sits just above the
-// middle line; B roll sits above A; additional video tracks added later
-// pile on top of B. Inside the audio stack, A roll sits just below the
-// middle; B sits below A; additional audio tracks pile below B.
+// Placement rules at creation time (NOT in this function):
+//   - import_media: prepends the transient track at idx 0 → visually
+//     at the bottom of the timeline, out of the way of A/B work.
+//   - separate_audio_to_new_track: inserts at `source.idx` (source
+//     shifts up) so audio sits BELOW its video visually.
 //
-// Data-model invariant: `tracks[0]` is the bottom of the z-stack,
-// `tracks[last]` is the top. R.1's `Project::new_blank` lays the
-// reserved skeleton down in that order — Audio B, Audio A, Video A,
-// Video B — and any agent/import-added track appends. The visual order
-// produced here is independent of the data order: we slot by role + kind.
+// Group-start dividers separate the kind-buckets visually. Today we
+// only emit a divider between the role-stamped tracks and the
+// transient tail (the "additional" region at the bottom). Future
+// kind-cluster dividers can be added if needed.
 function visualOrderedTracks(tracks: TrackSummary[]): VisualTrack[] {
-  // Bucket by (kind, role). Role-stamped slots are single occupants;
-  // additional tracks are everything else of that kind. We preserve the
-  // data-order of additional tracks so the per-project "added first =
-  // closer to middle" rule holds — earlier additions render adjacent
-  // to the reserved pair, later additions accrete outward.
-  let videoA: TrackSummary | undefined;
-  let videoB: TrackSummary | undefined;
-  let audioA: TrackSummary | undefined;
-  let audioB: TrackSummary | undefined;
-  const additionalVideo: TrackSummary[] = [];
-  const additionalAudio: TrackSummary[] = [];
-  const subtitle: TrackSummary[] = [];
-  for (const t of tracks) {
-    const kind = t.kind.toLowerCase();
-    switch (t.role) {
-      case "a-roll":
-        videoA = t;
-        continue;
-      case "b-roll":
-        videoB = t;
-        continue;
-      case "audio-a":
-        audioA = t;
-        continue;
-      case "audio-b":
-        audioB = t;
-        continue;
-    }
-    if (kind === "video") additionalVideo.push(t);
-    else if (kind === "audio") additionalAudio.push(t);
-    else if (kind === "subtitle") subtitle.push(t);
-  }
-
-  // Top → bottom: extra video (newest first), Video B, Video A,
-  // subtitles (newest first), then audio mirrored from the middle.
-  const ordered: TrackSummary[] = [];
-  // Newer additional video tracks accrete farthest from the middle, so
-  // reverse the data-order list (data-order is "added later = later in
-  // the array").
-  ordered.push(...additionalVideo.slice().reverse());
-  if (videoB) ordered.push(videoB);
-  if (videoA) ordered.push(videoA);
-  // Subtitle slot: between Video A and the V/A boundary. New subtitle
-  // tracks accrete upward into the video stack (closer to Video A is
-  // older, farther from the middle is newer). Reverse so newest first.
-  ordered.push(...subtitle.slice().reverse());
-  if (audioA) ordered.push(audioA);
-  if (audioB) ordered.push(audioB);
-  // Additional audio: newer farther from the middle = later in the
-  // array, i.e. preserve the data-order tail. No reverse here because
-  // the middle is at the TOP of the audio stack: data-order earliest
-  // sits adjacent to the middle, latest sits at the bottom.
-  ordered.push(...additionalAudio);
-
-  // Group-start dividers: the first row of each "kind block" gets a
-  // divider above it (except the very first row of the whole list).
-  // Today: divider above the first audio row (the V/A boundary), and
-  // a softer divider above the subtitle stack when subtitles are
-  // present (rendered the same way; CSS can differentiate later).
+  // Simple reverse: walk the data-model from last index to first.
+  const reversed = tracks.slice().reverse();
   const out: VisualTrack[] = [];
-  let prevKind: string | null = null;
-  for (const track of ordered) {
-    const kind = track.kind.toLowerCase();
-    const isGroupStart = prevKind !== null && kind !== prevKind;
+  let prevSection: "role" | "extra" | null = null;
+  for (const track of reversed) {
+    // Role-stamped tracks (the reserved A/B skeleton + their separated
+    // audio derivatives if any) form one section; everything else
+    // (transient imports, user/agent-added additional tracks) forms
+    // the bottom section. The boundary between them gets a divider.
+    const section: "role" | "extra" = track.role !== null ? "role" : "extra";
+    const isGroupStart = prevSection !== null && section !== prevSection;
     out.push({ track, isGroupStart });
-    prevKind = kind;
+    prevSection = section;
   }
   return out;
 }
