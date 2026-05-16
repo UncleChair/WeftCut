@@ -66,32 +66,102 @@ function trackAcceptsMedia(trackKind: string, mediaKind: string): boolean {
 interface VisualTrack {
   track: TrackSummary;
   /// True when this is the first lane of its kind group — the renderer adds
-  /// a divider line above it.
+  /// a divider line above it. Today the boundaries are: between the video
+  /// stack and subtitles, and between subtitles and the audio stack.
   isGroupStart: boolean;
 }
 
-// Group tracks by kind so the user sees a Premiere-style stack:
+// Accretion-from-middle ordering (`docs/ab-roll-redesign` Q3 + Q11).
 //
-//   ┌────────────┐ Video (top of z-stack at the top of the group; default
-//   │ Video B    │ A roll at the bottom)
-//   │ Video A    │
-//   ├────────────┤ ── divider
-//   │ Subtitles  │ Subtitle tracks (rare; sit between video and audio)
-//   ├────────────┤ ── divider
-//   │ Audio      │ Audio tracks at the bottom (no z-stack interaction; we
-//   └────────────┘ just want them visually below video)
+//   ┌────────────┐  ↑ accretes upward
+//   │ extra V    │
+//   │ Video B    │  ← role: BRoll
+//   │ Video A    │  ← role: ARoll   (adjacent to the V/A boundary)
+//   │ Subtitles  │  ← between Video A and the middle line
+//   ├────────────┤  ═══ V/A boundary ═══
+//   │ Audio A    │  ← role: AudioA  (adjacent to the V/A boundary)
+//   │ Audio B    │  ← role: AudioB
+//   │ extra A    │
+//   └────────────┘  ↓ accretes downward
 //
-// Within each group, lower-index data slots render BELOW higher-index ones
-// (matches the existing z-stack convention: tracks[last] = top of z-stack).
+// The rule "older tracks closer to the middle line" governs every kind.
+// Inside the video stack, A roll (the older role) sits just above the
+// middle line; B roll sits above A; additional video tracks added later
+// pile on top of B. Inside the audio stack, A roll sits just below the
+// middle; B sits below A; additional audio tracks pile below B.
+//
+// Data-model invariant: `tracks[0]` is the bottom of the z-stack,
+// `tracks[last]` is the top. R.1's `Project::new_blank` lays the
+// reserved skeleton down in that order — Audio B, Audio A, Video A,
+// Video B — and any agent/import-added track appends. The visual order
+// produced here is independent of the data order: we slot by role + kind.
 function visualOrderedTracks(tracks: TrackSummary[]): VisualTrack[] {
-  const video = tracks.filter((t) => t.kind.toLowerCase() === "video").slice().reverse();
-  const subtitle = tracks.filter((t) => t.kind.toLowerCase() === "subtitle").slice().reverse();
-  const audio = tracks.filter((t) => t.kind.toLowerCase() === "audio").slice().reverse();
+  // Bucket by (kind, role). Role-stamped slots are single occupants;
+  // additional tracks are everything else of that kind. We preserve the
+  // data-order of additional tracks so the per-project "added first =
+  // closer to middle" rule holds — earlier additions render adjacent
+  // to the reserved pair, later additions accrete outward.
+  let videoA: TrackSummary | undefined;
+  let videoB: TrackSummary | undefined;
+  let audioA: TrackSummary | undefined;
+  let audioB: TrackSummary | undefined;
+  const additionalVideo: TrackSummary[] = [];
+  const additionalAudio: TrackSummary[] = [];
+  const subtitle: TrackSummary[] = [];
+  for (const t of tracks) {
+    const kind = t.kind.toLowerCase();
+    switch (t.role) {
+      case "a-roll":
+        videoA = t;
+        continue;
+      case "b-roll":
+        videoB = t;
+        continue;
+      case "audio-a":
+        audioA = t;
+        continue;
+      case "audio-b":
+        audioB = t;
+        continue;
+    }
+    if (kind === "video") additionalVideo.push(t);
+    else if (kind === "audio") additionalAudio.push(t);
+    else if (kind === "subtitle") subtitle.push(t);
+  }
+
+  // Top → bottom: extra video (newest first), Video B, Video A,
+  // subtitles (newest first), then audio mirrored from the middle.
+  const ordered: TrackSummary[] = [];
+  // Newer additional video tracks accrete farthest from the middle, so
+  // reverse the data-order list (data-order is "added later = later in
+  // the array").
+  ordered.push(...additionalVideo.slice().reverse());
+  if (videoB) ordered.push(videoB);
+  if (videoA) ordered.push(videoA);
+  // Subtitle slot: between Video A and the V/A boundary. New subtitle
+  // tracks accrete upward into the video stack (closer to Video A is
+  // older, farther from the middle is newer). Reverse so newest first.
+  ordered.push(...subtitle.slice().reverse());
+  if (audioA) ordered.push(audioA);
+  if (audioB) ordered.push(audioB);
+  // Additional audio: newer farther from the middle = later in the
+  // array, i.e. preserve the data-order tail. No reverse here because
+  // the middle is at the TOP of the audio stack: data-order earliest
+  // sits adjacent to the middle, latest sits at the bottom.
+  ordered.push(...additionalAudio);
+
+  // Group-start dividers: the first row of each "kind block" gets a
+  // divider above it (except the very first row of the whole list).
+  // Today: divider above the first audio row (the V/A boundary), and
+  // a softer divider above the subtitle stack when subtitles are
+  // present (rendered the same way; CSS can differentiate later).
   const out: VisualTrack[] = [];
-  for (const group of [video, subtitle, audio]) {
-    group.forEach((track, i) => {
-      out.push({ track, isGroupStart: i === 0 && out.length > 0 });
-    });
+  let prevKind: string | null = null;
+  for (const track of ordered) {
+    const kind = track.kind.toLowerCase();
+    const isGroupStart = prevKind !== null && kind !== prevKind;
+    out.push({ track, isGroupStart });
+    prevKind = kind;
   }
   return out;
 }
