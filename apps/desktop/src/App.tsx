@@ -86,6 +86,7 @@ import {
 import { StatusBar } from "./logs/StatusBar";
 import { LogConsole, type LogConsoleHandle } from "./logs/LogConsole";
 import { wireLogStream, useLogStore } from "./logs/store";
+import { wireAppSettingsStream } from "./settings/appSettingsStore";
 import { logEmit } from "./ipc";
 
 interface AppProps {
@@ -254,6 +255,28 @@ export function App({ onCloseProject }: AppProps) {
     let cancelled = false;
     (async () => {
       const u = await wireLogStream();
+      if (cancelled) {
+        u();
+        return;
+      }
+      unlisten = u;
+    })();
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
+  }, []);
+
+  // App-level settings stream (`docs/ab-roll-redesign`). Seeds the store
+  // from the current value, then subscribes to `app_settings:changed`
+  // so any pill/menu/shortcut flip propagates to every consumer (the
+  // timeline filter, the right panel's peek-window width, the
+  // MediaPool drawer chevron, …).
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+    (async () => {
+      const u = await wireAppSettingsStream();
       if (cancelled) {
         u();
         return;

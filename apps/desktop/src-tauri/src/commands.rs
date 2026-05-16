@@ -1199,6 +1199,36 @@ pub async fn keybindings_import(
         .map_err(|e| format!("{e:#}"))
 }
 
+// ---- App-level settings (A/B-roll redesign) ----
+//
+// Strict app-level scope (`docs/ab-roll-redesign`): every project opens
+// under the same value. The pill / View menu / `T` shortcut all funnel
+// here; the inline pill is the natural setting mutator and the Settings
+// panel is mostly a reference UI.
+
+#[tauri::command]
+pub async fn app_settings_get(
+    store: State<'_, crate::app_settings::AppSettingsStore>,
+) -> Result<crate::app_settings::AppSettings, String> {
+    Ok(store.get())
+}
+
+#[tauri::command]
+pub async fn app_settings_set(
+    app: tauri::AppHandle,
+    store: State<'_, crate::app_settings::AppSettingsStore>,
+    patch: crate::app_settings::AppSettingsPatch,
+) -> Result<crate::app_settings::AppSettings, String> {
+    let after = store.apply(patch).map_err(|e| format!("{e:#}"))?;
+    // Fire-and-forget event so every UI subscriber re-renders. If a
+    // listener isn't attached yet, the emit is a no-op — the next
+    // `app_settings_get` (on first mount) will read the current value
+    // anyway.
+    use tauri::Emitter;
+    let _ = app.emit("app_settings:changed", &after);
+    Ok(after)
+}
+
 // ---- Agent-session view-mode slot ----
 //
 // Pre-MCP (the agent-session begin/end is the agent-mode entry; that
