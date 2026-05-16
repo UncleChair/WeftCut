@@ -749,8 +749,10 @@ input.preview-timecode:focus {
 
 .timeline-layer {
   position: absolute;
-  top: 4px;
-  bottom: 4px;
+  /* V.6: top + height come from inline style (computed per-layer
+     slice). The class supplies sensible defaults for the full-slice
+     case so removing/adding the slice class doesn't shift layers
+     vertically. */
   border-radius: 4px;
   padding: 0 8px;
   display: flex;
@@ -763,6 +765,20 @@ input.preview-timecode:focus {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
   user-select: none;
   transition: outline 60ms ease-out, transform 60ms ease-out;
+}
+
+/* V.6 combined-row chrome: a half-height block gets a subtle outline
+   to visually separate the V (top) and A (bottom) halves and to
+   reinforce that they're hit-test independent. */
+.timeline-layer.slice-top {
+  border-bottom: 1px solid rgba(0, 0, 0, 0.25);
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.timeline-layer.slice-bottom {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
 }
 
 .timeline-layer:hover {
