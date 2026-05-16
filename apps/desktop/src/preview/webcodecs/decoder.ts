@@ -51,11 +51,32 @@ export interface DecoderEvents {
   onError?: (err: string) => void;
 }
 
+interface CachedSample {
+  cts: number;
+  duration: number;
+  is_sync: boolean;
+  data: Uint8Array;
+  timescale: number;
+}
+
 export class Mp4Decoder {
   private readonly events: DecoderEvents;
   private mp4box: MP4File | null = null;
   private decoder: VideoDecoder | null = null;
+  private decoderConfig: VideoDecoderConfig | null = null;
   private closed = false;
+  /// Cached per-sample data captured during initial extraction.
+  /// `seek()` finds the RAP in this table and the engine's per-tick
+  /// `feedAhead()` walks it forward. We deliberately do NOT feed all
+  /// samples to the WebCodecs decoder at open time — that saturated
+  /// the decoder queue (~2300 chunks) which made `seek()`'s
+  /// `dec.flush()` effectively unbounded; instead we use lazy
+  /// feeding so the queue stays small enough that `dec.reset()` on
+  /// seek is cheap.
+  private samples: CachedSample[] = [];
+  /// Index of the next un-fed sample. Reset by `seek()`; advanced by
+  /// `feedAhead()` as it pushes samples into the decoder.
+  private nextFeedIndex = 0;
 
   constructor(events: DecoderEvents) {
     this.events = events;
@@ -143,38 +164,34 @@ export class Mp4Decoder {
             });
             decoder.configure(config);
             this.decoder = decoder;
+            this.decoderConfig = config;
             this.events.onReady?.({ codec, width, height, durationUs });
 
+            // onSamples only caches. The engine drives feeding via
+            // `feedAhead()` on each tick to keep the decoder queue
+            // small (~2 s lookahead) so `dec.reset()` on seek is
+            // cheap and `caughtUp` latency stays bounded.
             mp4.onSamples = (_trackId, _user, samples) => {
-              const dec = this.decoder;
-              if (!dec || this.closed) return;
+              if (this.closed) return;
               for (const sample of samples) {
-                const tsUs =
-                  sample.timescale > 0
-                    ? (sample.cts / sample.timescale) * 1_000_000
-                    : 0;
-                const durUs =
-                  sample.timescale > 0
-                    ? (sample.duration / sample.timescale) * 1_000_000
-                    : 0;
-                try {
-                  dec.decode(
-                    new EncodedVideoChunk({
-                      type: sample.is_sync ? "key" : "delta",
-                      timestamp: tsUs,
-                      duration: durUs,
-                      data: sample.data,
-                    }),
-                  );
-                } catch (e) {
-                  this.events.onError?.(`decode: ${String(e)}`);
-                  return;
-                }
+                this.samples.push({
+                  cts: sample.cts,
+                  duration: sample.duration,
+                  is_sync: sample.is_sync,
+                  data: sample.data,
+                  timescale: sample.timescale,
+                });
               }
             };
 
             mp4.setExtractionOptions(track.id, null, { nbSamples: 64 });
             mp4.start();
+
+            // After `mp4.start()` returns, mp4box has synchronously
+            // emitted onSamples for the whole file into our cache.
+            // Prime the decoder with the first ~2 s so the engine
+            // sees frames as soon as it starts polling.
+            this.feedAhead(0, 2_000_000);
 
             settled = true;
             resolve();
@@ -192,41 +209,94 @@ export class Mp4Decoder {
     });
   }
 
-  /// Reposition the demuxer + decoder to the previous random access
-  /// point at or before `localTimeUs`, drop in-flight frames, and
-  /// resume sample emission from that keyframe. The caller should
-  /// expect frames whose timestamps may be earlier than `localTimeUs`
-  /// — decoding has to walk forward from the keyframe to reach the
+  /// Reposition the decoder to the previous random access point at
+  /// or before `localTimeUs`, drop in-flight frames, and replay
+  /// samples from that keyframe onward. The caller should expect
+  /// frames whose timestamps may be earlier than `localTimeUs` —
+  /// decoding has to walk forward from the keyframe to reach the
   /// target. See `docs/preview-scrub.md` (S.4).
-  async seek(localTimeUs: number): Promise<void> {
-    const mp4 = this.mp4box;
+  ///
+  /// We feed samples manually from our cached sample table rather
+  /// than asking mp4box to restart extraction. mp4box treats the
+  /// whole-file `appendBuffer` + `flush` at open() as "done", and a
+  /// post-seek `mp4.seek` + `mp4.start` is a no-op — no fresh
+  /// `onSamples` calls fire. Replaying via the cache works around
+  /// that without forcing a per-seek file recreate.
+  /// Feed pending samples whose presentation time is at or before
+  /// `localTimeUs + lookaheadUs`. Idempotent: subsequent calls only
+  /// feed samples past `nextFeedIndex`. Drives both initial open
+  /// priming and steady-state catch-up.
+  feedAhead(localTimeUs: number, lookaheadUs: number): void {
     const dec = this.decoder;
-    if (!mp4 || !dec || this.closed) return;
-    // 1. Tell mp4box to jump the demuxer to the previous RAP at or
-    //    before the target. `true` = useRap (find a keyframe).
-    try {
-      mp4.seek(localTimeUs / 1_000_000, true);
-    } catch (e) {
-      this.events.onError?.(`mp4box.seek: ${String(e)}`);
-      return;
+    if (!dec || this.closed) return;
+    if (dec.state !== "configured") return;
+    const stopAtUs = localTimeUs + lookaheadUs;
+    while (this.nextFeedIndex < this.samples.length) {
+      const s = this.samples[this.nextFeedIndex];
+      if (!s) {
+        this.nextFeedIndex += 1;
+        continue;
+      }
+      const tsUs = s.timescale > 0 ? (s.cts / s.timescale) * 1_000_000 : 0;
+      if (tsUs > stopAtUs) break;
+      const durUs = s.timescale > 0 ? (s.duration / s.timescale) * 1_000_000 : 0;
+      try {
+        dec.decode(
+          new EncodedVideoChunk({
+            type: s.is_sync ? "key" : "delta",
+            timestamp: tsUs,
+            duration: durUs,
+            data: s.data,
+          }),
+        );
+      } catch (e) {
+        this.events.onError?.(`feedAhead decode: ${String(e)}`);
+        return;
+      }
+      this.nextFeedIndex += 1;
     }
-    // 2. Flush the WebCodecs decoder so it drops any in-flight chunks
-    //    and is ready to start decoding a new sample chain at the
-    //    upcoming keyframe.
+  }
+
+  /// Reposition the decoder to the previous random access point at
+  /// or before `localTimeUs`. Uses `dec.reset()` to drop any queued
+  /// chunks AND any in-flight decoded output synchronously — this
+  /// is what keeps a deep pre-seek queue from blocking the seek and
+  /// what prevents pre-seek frames from polluting the engine's ring
+  /// after the seek's synchronous ring wipe. The decoder is then
+  /// reconfigured (reset() un-configures it) and primed with ~2 s
+  /// of post-RAP samples. Steady-state feeding continues via
+  /// `feedAhead()` from the engine's per-tick loop.
+  async seek(localTimeUs: number): Promise<void> {
+    const dec = this.decoder;
+    if (!dec || this.closed) return;
+    if (this.samples.length === 0) return;
+    if (!this.decoderConfig) return;
+    let rapIndex = -1;
+    for (let i = 0; i < this.samples.length; i += 1) {
+      const s = this.samples[i];
+      if (!s) continue;
+      const tsUs = s.timescale > 0 ? (s.cts / s.timescale) * 1_000_000 : 0;
+      if (tsUs > localTimeUs) break;
+      if (s.is_sync) rapIndex = i;
+    }
+    if (rapIndex < 0) return;
     try {
-      await dec.flush();
+      dec.reset();
     } catch {
-      // flush() rejects when the decoder is reset / closed mid-
-      // flight; expected on rapid teardown, non-fatal.
+      // reset is idempotent at the spec level; ignore on double-reset.
     }
     if (this.closed) return;
-    // 3. Resume sample emission. mp4box's internal `nextSeekPosition`
-    //    state (set by `seek`) controls where extraction picks up.
     try {
-      mp4.start();
+      dec.configure(this.decoderConfig);
     } catch (e) {
-      this.events.onError?.(`mp4box.start after seek: ${String(e)}`);
+      this.events.onError?.(`reconfigure after seek: ${String(e)}`);
+      return;
     }
+    this.nextFeedIndex = rapIndex;
+    // Prime decoder with samples covering [localTimeUs, localTimeUs + 2s].
+    // The engine's per-tick `feedAhead` continues from there as the
+    // playhead advances.
+    this.feedAhead(localTimeUs, 2_000_000);
   }
 
   async close(): Promise<void> {

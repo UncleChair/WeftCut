@@ -474,12 +474,18 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
     );
 
     // B6b realtime engine lifecycle. The canvas only mounts when
-    // inRealtimeMode is true; this effect creates the engine on
-    // mount and disposes on unmount. It also runs an immediate
-    // recipe + audio fetch so the surface paints something before
-    // the next project:changed event.
+    // BOTH inRealtimeMode AND hasContent are true; this effect
+    // creates the engine on mount and disposes on unmount. It also
+    // runs an immediate recipe + audio fetch so the surface paints
+    // something before the next project:changed event. `hasContent`
+    // must be in the dep array — on cold-start the capability probe
+    // (local, fast) typically completes before `refresh()` flips
+    // `hasContent` true, so inRealtimeMode goes true first, this
+    // effect runs with a null canvas ref, and would never re-run
+    // when the canvas finally mounts.
     useEffect(() => {
       if (!inRealtimeMode) return;
+      if (!hasContent) return;
       const canvas = realtimeCanvasRef.current;
       if (!canvas) return;
       const engine = new PlaybackEngine(canvas, {
@@ -523,7 +529,7 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
         engine.dispose();
         engineRef.current = null;
       };
-    }, [inRealtimeMode, onTimeUpdate, onPausedChange]);
+    }, [inRealtimeMode, hasContent, onTimeUpdate, onPausedChange]);
 
     // Re-fetch the recipe on every project:changed while in
     // realtime mode. The legacy / segmented branches already react
