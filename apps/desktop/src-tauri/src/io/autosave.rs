@@ -229,7 +229,6 @@ async fn gc_snapshots(backups: &Path) -> Result<()> {
 mod tests {
     use super::*;
     use crate::state::{spawn, Actor, Project};
-    use crate::state::track::TrackKind;
     use tempfile::TempDir;
 
     /// End-to-end: spawn the loop, fire commits, observe debounced writes
@@ -255,7 +254,7 @@ mod tests {
         // Drive a mutation through the actor — anything that produces a
         // ChangeEvent. `add_video_track` is fine.
         handle
-            .add_track(Actor::User, TrackKind::Video, None)
+            .add_track(Actor::User, None)
             .await
             .unwrap();
 

@@ -60,7 +60,7 @@ mod tests {
         media::{MediaItem, MediaKind, MediaMetadata},
         project::{Project, ProjectMetadata},
         time::Rational,
-        track::{Track, TrackKind},
+        track::Track,
         transform::Transform,
         transition::{Transition, TransitionKind},
     };
@@ -127,7 +127,6 @@ mod tests {
 
         let track = Track {
             id: track_id,
-            kind: TrackKind::Video,
             label: None,
             enabled: true,
             locked: false,
@@ -264,7 +263,6 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
         };
         let track = Track {
             id: track_id,
-            kind: TrackKind::Audio,
             label: None,
             enabled: true,
             locked: false,
@@ -344,7 +342,6 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
         };
         let track = Track {
             id: track_id,
-            kind: TrackKind::Video,
             label: None,
             enabled: true,
             locked: false,
@@ -422,7 +419,6 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
         };
         let track = Track {
             id: track_id,
-            kind: TrackKind::Video,
             label: None,
             enabled: true,
             locked: false,
@@ -601,7 +597,6 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
         };
         let track = Track {
             id: track_id,
-            kind: TrackKind::Video,
             label: None,
             enabled: true,
             locked: false,
@@ -700,7 +695,6 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
         };
         let track = Track {
             id: track_id,
-            kind: TrackKind::Subtitle,
             label: None,
             enabled: true,
             locked: false,
@@ -793,7 +787,6 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
         };
         let track = Track {
             id: track_id,
-            kind: TrackKind::Subtitle,
             label: None,
             enabled: true,
             locked: false,
@@ -898,7 +891,6 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
         };
         let track = Track {
             id: track_id,
-            kind: TrackKind::Video,
             label: None,
             enabled: true,
             locked: false,
@@ -1038,7 +1030,6 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
         };
         let track = Track {
             id: track_id,
-            kind: TrackKind::Video,
             label: None,
             enabled: true,
             locked: false,
@@ -1320,7 +1311,6 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
         };
         let track = Track {
             id: track_id,
-            kind: TrackKind::Video,
             label: None,
             enabled: true,
             locked: false,

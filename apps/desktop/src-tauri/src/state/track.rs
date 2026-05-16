@@ -9,7 +9,6 @@ use super::layer::Layer;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Track {
     pub id: TrackId,
-    pub kind: TrackKind,
     pub label: Option<String>,
     pub enabled: bool,
     pub locked: bool,
@@ -21,24 +20,23 @@ pub struct Track {
     pub removable: bool,
     /// A/B-roll role stamp (`docs/ab-roll-redesign`). Role-stamped tracks are
     /// the only tracks visible in AB display mode; everything else is hidden.
-    /// Set on the four reserved tracks at project creation (Video A / Video B
-    /// → ARoll/BRoll; Audio A / Audio B → AudioA/AudioB) and `None` for every
-    /// track imported afterwards. `#[serde(default)]` lets legacy `.vproj`
-    /// files load with `role = None`.
+    /// Set on the two reserved tracks at project creation (A roll → ARoll, B
+    /// roll → BRoll). Legacy v4 projects may also carry `AudioA`/`AudioB`
+    /// variants — they load as-is. `None` for every track imported afterwards.
     #[serde(default)]
     pub role: Option<TrackRole>,
     /// Auto-prune flag for the "every import lands a fresh hidden track"
-    /// rule (R.3 / R.4 of the A/B-roll redesign). When `true`, the actor's
-    /// mutation paths delete this track once its `layers` becomes empty so
-    /// the timeline doesn't accumulate a graveyard. Set on tracks created
-    /// by `import_media`; left `false` for the four reserved tracks, for
-    /// tracks the user/agent created explicitly, and for legacy `.vproj`
-    /// files (`#[serde(default)]` defaults to false, preserving prior
-    /// behaviour on load).
+    /// rule (R.3 / R.4 / V.3). When `true`, the actor's mutation paths
+    /// delete this track once its `layers` becomes empty so the timeline
+    /// doesn't accumulate a graveyard. Set on tracks created by
+    /// `import_media`; left `false` for reserved tracks and explicit
+    /// user / agent adds.
     #[serde(default)]
     pub transient: bool,
     pub height_px: u16,
-    /// Sorted by `t_start_us`, never overlapping.
+    /// Layers sorted by `t_start_us`. Under A/B-roll v2 (V.2 invariant),
+    /// same-overlap-class layers can't overlap in time; different classes
+    /// can coexist (enables AV pairs on one track).
     pub layers: imbl::Vector<Layer>,
 }
 
@@ -47,10 +45,14 @@ fn default_removable() -> bool {
 }
 
 impl Track {
-    pub fn new(kind: TrackKind) -> Self {
+    /// V.5: tracks are kind-agnostic. The `kind` parameter and field
+    /// are gone — any layer kind can live on any track. The old
+    /// `TrackKind` enum is no longer needed because the IR routes by
+    /// `LayerParams` discriminator and the UI accepts any media on
+    /// any lane.
+    pub fn new() -> Self {
         Self {
             id: new_id(),
-            kind,
             label: None,
             enabled: true,
             locked: false,
@@ -63,11 +65,10 @@ impl Track {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TrackKind {
-    Video,
-    Audio,
-    Subtitle,
+impl Default for Track {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// A/B-roll role stamp. Drives AB display-mode filtering on the UI and the

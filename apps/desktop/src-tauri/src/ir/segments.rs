@@ -161,7 +161,7 @@ mod tests {
     use crate::state::ids::new_id;
     use crate::state::layer::{ColorParams, Layer, LayerParams};
     use crate::state::project::Project;
-    use crate::state::track::{Track, TrackKind};
+    use crate::state::track::Track;
     use crate::state::transition::{Transition, TransitionKind};
 
     fn color_layer(start: TimeUs, end: TimeUs) -> Layer {
@@ -185,7 +185,6 @@ mod tests {
     fn project_with_layers(duration_us: TimeUs, layers: Vec<Layer>) -> Project {
         let track = Track {
             id: new_id(),
-            kind: TrackKind::Video,
             label: None,
             enabled: true,
             locked: false,

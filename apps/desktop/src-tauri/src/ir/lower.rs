@@ -24,7 +24,6 @@ use crate::state::layer::{
 };
 use crate::state::project::Project;
 use crate::state::time::TimeUs;
-use crate::state::track::TrackKind;
 use crate::state::transition::TransitionKind;
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
@@ -71,17 +70,36 @@ pub fn lower(
     // crossfade naturally.
     let incoming = incoming_transition_map(project);
 
-    // Tracks: index 0 = bottom of stack, last = top.
+    // A/B-roll v2 (V.5): walk all tracks (no track-kind filter) and
+    // dispatch per LayerParams. Track index still controls z-order
+    // for visual layers (index 0 = bottom of stack, last = top); the
+    // in-track layer order produces the standard "layers paint in
+    // time order" cumulative blend. Audio layers contribute to the
+    // mixer regardless of which track they live on.
     for track in project.tracks.iter() {
         if !track.enabled {
             continue;
         }
-        match track.kind {
-            TrackKind::Video => {
-                for layer in track.layers.iter() {
-                    if !layer.enabled {
-                        continue;
+        for layer in track.layers.iter() {
+            if !layer.enabled {
+                continue;
+            }
+            match &layer.params {
+                LayerParams::Audio(_) => {
+                    if let Some(stream) = lower_audio_layer(&mut g, layer, project)? {
+                        audio_streams.push(stream);
                     }
+                }
+                // All visual-class kinds flow through the overlay
+                // chain: VideoClip / ImageOverlay / Color / Text /
+                // Template / Subtitles. The cumulative `current_v`
+                // is threaded forward in painted-on-top order.
+                LayerParams::VideoClip(_)
+                | LayerParams::ImageOverlay(_)
+                | LayerParams::Color(_)
+                | LayerParams::Text(_)
+                | LayerParams::Template(_)
+                | LayerParams::Subtitles(_) => {
                     current_v = lower_video_layer(
                         &mut g,
                         layer,
@@ -92,35 +110,6 @@ pub fn lower(
                         template_renders,
                         &incoming,
                     )?;
-                }
-            }
-            TrackKind::Audio => {
-                for layer in track.layers.iter() {
-                    if !layer.enabled {
-                        continue;
-                    }
-                    if let Some(stream) = lower_audio_layer(&mut g, layer, project)? {
-                        audio_streams.push(stream);
-                    }
-                }
-            }
-            TrackKind::Subtitle => {
-                for layer in track.layers.iter() {
-                    if !layer.enabled {
-                        continue;
-                    }
-                    if matches!(layer.params, LayerParams::Subtitles(_)) {
-                        current_v = lower_video_layer(
-                        &mut g,
-                        layer,
-                        current_v,
-                        project,
-                        target,
-                        inline_sub_paths,
-                        template_renders,
-                        &incoming,
-                    )?;
-                    }
                 }
             }
         }
@@ -203,16 +192,20 @@ pub(crate) fn rebase_project_for_segment(project: &Project, in_us: TimeUs, out_u
     let mut rebased = project.clone();
     rebased.composition.duration_us = seg_dur;
 
-    // Filter tracks: drop audio (whole-timeline rendered separately).
+    // V.5: filter at the LAYER level, not the track level. Audio
+    // layers don't render via the segmented-preview pipeline (audio
+    // is whole-timeline). Under v2 tracks are kind-agnostic, so a
+    // single track can hold both V and A — we keep the track and
+    // drop only the audio layers.
     let mut new_tracks = imbl::Vector::new();
     let mut surviving_layer_ids: std::collections::HashSet<LayerId> =
         std::collections::HashSet::new();
     for track in project.tracks.iter() {
-        if track.kind == TrackKind::Audio {
-            continue;
-        }
         let mut new_layers = imbl::Vector::new();
         for layer in track.layers.iter() {
+            if matches!(layer.params, LayerParams::Audio(_)) {
+                continue;
+            }
             if let Some(rebased_layer) = rebase_layer_for_segment(layer, in_us, out_us) {
                 surviving_layer_ids.insert(rebased_layer.id);
                 new_layers.push_back(rebased_layer);
@@ -702,7 +695,7 @@ mod tests_lower_range {
     use crate::state::media::{MediaItem, MediaKind, MediaMetadata};
     use crate::state::project::{Project, ProjectMetadata};
     use crate::state::time::Rational;
-    use crate::state::track::{Track, TrackKind};
+    use crate::state::track::Track;
     use crate::state::transform::Transform;
     use crate::state::transition::{Transition, TransitionKind};
 
@@ -782,7 +775,6 @@ mod tests_lower_range {
     fn mk_project(duration_us: i64, video_layers: Vec<Layer>) -> Project {
         let track = Track {
             id: new_id(),
-            kind: TrackKind::Video,
             label: None,
             enabled: true,
             locked: false,
@@ -862,7 +854,6 @@ mod tests_lower_range {
         };
         let audio_track = Track {
             id: new_id(),
-            kind: TrackKind::Audio,
             label: None,
             enabled: true,
             locked: false,

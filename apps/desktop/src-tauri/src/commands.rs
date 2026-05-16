@@ -20,7 +20,7 @@ use crate::mpv;
 use crate::raster::template as raster_template;
 use crate::state::{
     self, Actor, ColorParams, CommandError, LayerParams, MediaItem, MediaKind, ProjectHandle,
-    Rgba, SubtitlesParams, SubtitlesSource, TemplateParams, TrackKind, Transform,
+    Rgba, SubtitlesParams, SubtitlesSource, TemplateParams, Transform,
     actor::{CompositionPatch, LayerParamsPatch, LayerPatch},
     animated::Animated,
     ids::new_id,
@@ -70,6 +70,13 @@ pub struct MarkerSummary {
 #[derive(Serialize, Clone)]
 pub struct TrackSummary {
     pub id: String,
+    /// V.5 (A/B-roll v2): tracks are kind-agnostic. This field used to
+    /// expose `TrackKind` (Video / Audio / Subtitle). It's preserved
+    /// for transitional UI compatibility and now reports the dominant
+    /// layer-class on the track — `"Video"` when the track has any
+    /// visual-class layer, `"Audio"` when it's audio-only, `"Empty"`
+    /// when it has no layers at all. V.10 frontend cleanup removes
+    /// the field entirely from the wire.
     pub kind: String,
     pub label: Option<String>,
     pub enabled: bool,
@@ -359,7 +366,11 @@ pub async fn project_summary(handle: State<'_, ProjectHandle>) -> Result<Project
         .iter()
         .map(|t| TrackSummary {
             id: t.id.to_string(),
-            kind: format!("{:?}", t.kind),
+            // V.5: derive `kind` from the track's layers. Visual-class
+            // layers win; audio-only tracks report "Audio"; empty
+            // tracks report "Video" so the existing UI still styles
+            // the reserved A/B-roll rows as video lanes by default.
+            kind: derive_track_kind_label(t),
             label: t.label.clone(),
             enabled: t.enabled,
             locked: t.locked,
@@ -546,6 +557,45 @@ fn layer_kind(params: &LayerParams) -> String {
     .to_string()
 }
 
+/// V.5 transitional helper. Derives a `TrackKind`-like label from the
+/// track's layers so the existing UI can keep its kind-based styling
+/// (`.kind-video`, `.kind-audio`) until V.10 cleans the frontend up.
+///
+/// Rules:
+///   - any visual-class layer present → "Video"
+///   - audio-only → "Audio"
+///   - empty → "Video" (so reserved A/B-roll rows on a blank project
+///     still style as video lanes — keeps the timeline visual stable)
+fn derive_track_kind_label(track: &crate::state::Track) -> String {
+    let mut has_visual = false;
+    let mut has_audio = false;
+    for layer in track.layers.iter() {
+        match &layer.params {
+            LayerParams::Audio(_) => has_audio = true,
+            LayerParams::VideoClip(_)
+            | LayerParams::ImageOverlay(_)
+            | LayerParams::Color(_)
+            | LayerParams::Template(_)
+            | LayerParams::Text(_) => has_visual = true,
+            LayerParams::Subtitles(_) => {
+                // Subtitle-only tracks should style as Subtitle so the
+                // existing `.kind-subtitle` CSS still applies. If the
+                // track also has video, video wins.
+                if !has_visual {
+                    return "Subtitle".to_string();
+                }
+            }
+        }
+    }
+    if has_visual {
+        "Video".to_string()
+    } else if has_audio {
+        "Audio".to_string()
+    } else {
+        "Video".to_string()
+    }
+}
+
 fn layer_color_hint(layer: &crate::state::Layer) -> String {
     // Prefer the actual ColorParams color when the layer is a Color clip; otherwise
     // derive a stable color from the layer id so blocks look distinct.
@@ -586,8 +636,12 @@ fn hsl_to_hex(h: f32, s: f32, l: f32) -> String {
 
 #[tauri::command]
 pub async fn add_video_track(handle: State<'_, ProjectHandle>) -> Result<String, String> {
+    // V.5: tracks are kind-agnostic. The legacy "add_video_track"
+    // command keeps its name for IPC compatibility but produces a
+    // generic track (no kind). Removed from the Insert menu in R.10
+    // but the command stays callable for agent / test paths.
     let id = handle
-        .add_track(Actor::User, TrackKind::Video, Some("Video".into()))
+        .add_track(Actor::User, Some("Track".into()))
         .await
         .map_err(|e: CommandError| e.to_string())?;
     Ok(id.to_string())
@@ -666,18 +720,12 @@ pub async fn add_media_layer(
         ),
     };
 
-    // Subtitles must live on a Subtitle track for the lowering to apply them.
-    // Audio must live on an Audio track (the lowering only iterates audio
-    // layers on Audio tracks). Image overlays land on the "Overlay" Video
-    // track so they composite ABOVE base video — closing the UX paper-cut
-    // (option 3) where a dropped image went on the same track as the base
-    // video and got occluded by it. Mirrors the existing ensure_* pattern.
-    let track = match media_item.kind {
-        MediaKind::Subtitle => ensure_subtitle_track(handle.inner(), snap.as_ref()).await?,
-        MediaKind::Audio => ensure_audio_track(handle.inner(), snap.as_ref()).await?,
-        MediaKind::Image => ensure_overlay_track(handle.inner(), snap.as_ref()).await?,
-        _ => track,
-    };
+    // V.5 (A/B-roll v2): tracks are kind-agnostic — any media drops on
+    // the supplied target track directly. The old "route audio to an
+    // audio track / image to an Overlay track" auto-re-routing is
+    // gone; the IR routes by LayerParams discriminator, not track
+    // kind, so layer placement no longer determines what stream it
+    // contributes to.
 
     let t_end_us = t_start_us + span_us;
 
@@ -695,8 +743,10 @@ pub async fn add_media_layer(
         && media_item.metadata.audio.is_some()
         && snap.settings.auto_pair_audio_on_import
     {
-        let post_video_snap = handle.snapshot().await;
-        let audio_track = ensure_audio_track(handle.inner(), post_video_snap.as_ref()).await?;
+        // V.5: the paired audio layer lands on the SAME track as the
+        // video layer. V.2's overlap invariant accepts visual+audio
+        // co-existence; the timeline renderer (V.6) combines them
+        // into one row visually.
         let audio_params = LayerParams::Audio(state::layer::AudioParams {
             media,
             src_in_us: 0,
@@ -710,7 +760,7 @@ pub async fn add_media_layer(
         let audio_layer_id = handle
             .add_layer(
                 Actor::User,
-                audio_track,
+                track,
                 audio_params,
                 t_start_us,
                 t_end_us,
@@ -734,15 +784,13 @@ pub async fn add_media_layer(
 #[tauri::command]
 pub async fn add_demo_color_layer(handle: State<'_, ProjectHandle>) -> Result<String, String> {
     let snap = handle.snapshot().await;
-    // Find or create a video track.
-    let track_id = match snap
-        .tracks
-        .iter()
-        .find(|t| matches!(t.kind, TrackKind::Video))
-    {
+    // V.5: tracks are kind-agnostic, so demo color picks the first
+    // existing track (typically A roll on a fresh project) or creates
+    // one if the user has somehow dropped to zero tracks.
+    let track_id = match snap.tracks.front() {
         Some(t) => t.id,
         None => handle
-            .add_track(Actor::User, TrackKind::Video, Some("Video".into()))
+            .add_track(Actor::User, Some("Track".into()))
             .await
             .map_err(|e: CommandError| e.to_string())?,
     };
@@ -806,12 +854,17 @@ pub async fn add_text_layer(
 
 #[tauri::command]
 pub async fn add_demo_text_layer(handle: State<'_, ProjectHandle>) -> Result<String, String> {
-    // Append a 3s "TEXT" Text layer to the "Overlay" video track (auto-
-    // created at the top of z-stack if it doesn't exist yet). Prior to the
-    // UX paper-cut fix this landed on the first Video track, which is the
-    // BOTTOM of z-stack — text rendered behind base video.
+    // V.5: tracks are kind-agnostic; the demo text layer lands on
+    // whichever track is at the top of z-stack (= last in
+    // `project.tracks`). Falls back to a new track if zero exist.
     let snap = handle.snapshot().await;
-    let track_id = ensure_overlay_track(handle.inner(), snap.as_ref()).await?;
+    let track_id = match snap.tracks.last() {
+        Some(t) => t.id,
+        None => handle
+            .add_track(Actor::User, Some("Overlay".into()))
+            .await
+            .map_err(|e: CommandError| e.to_string())?,
+    };
     let snap = handle.snapshot().await;
     let track = snap
         .tracks
@@ -1519,9 +1572,11 @@ async fn place_imported_media_on_fresh_tracks(
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| label.clone());
 
-    let (primary_kind, primary_params, primary_span) = match item.kind {
+    // V.5: tracks are kind-agnostic. We pick the right LayerParams
+    // by MediaKind and pass a label for the track; no track-kind
+    // routing.
+    let (primary_params, primary_span) = match item.kind {
         MediaKind::Video => (
-            TrackKind::Video,
             LayerParams::VideoClip(state::layer::VideoClipParams {
                 media: media_id,
                 src_in_us: 0,
@@ -1539,7 +1594,6 @@ async fn place_imported_media_on_fresh_tracks(
             total_src,
         ),
         MediaKind::Audio => (
-            TrackKind::Audio,
             LayerParams::Audio(state::layer::AudioParams {
                 media: media_id,
                 src_in_us: 0,
@@ -1553,7 +1607,6 @@ async fn place_imported_media_on_fresh_tracks(
             total_src,
         ),
         MediaKind::Image => (
-            TrackKind::Video,
             LayerParams::ImageOverlay(state::layer::ImageOverlayParams {
                 media: media_id,
                 transform: Default::default(),
@@ -1565,7 +1618,6 @@ async fn place_imported_media_on_fresh_tracks(
             3_000_000,
         ),
         MediaKind::Subtitle => (
-            TrackKind::Subtitle,
             LayerParams::Subtitles(SubtitlesParams {
                 source: SubtitlesSource::Media(media_id),
             }),
@@ -1575,10 +1627,10 @@ async fn place_imported_media_on_fresh_tracks(
 
     // Primary track + layer. `add_transient_track` flags the track so
     // the actor's auto-prune sweep deletes it once the user drags the
-    // imported layer off onto Video A/B (or deletes it). The reserved
+    // imported layer off onto A/B (or deletes it). The reserved
     // role-stamped tracks aren't transient and survive.
     let primary_track_id = handle
-        .add_transient_track(Actor::User, primary_kind, Some(track_label.clone()))
+        .add_transient_track(Actor::User, Some(track_label.clone()))
         .await
         .map_err(|e: CommandError| e.to_string())?;
     let primary_layer_id = handle
@@ -1846,7 +1898,16 @@ pub async fn add_subtitles_layer(
             media_item.kind
         ));
     }
-    let track_id = ensure_subtitle_track(handle.inner(), snap.as_ref()).await?;
+    // V.5: tracks are kind-agnostic. Drop the subtitle layer on the
+    // topmost track (last index = top of z-stack, where overlays
+    // conventionally live).
+    let track_id = match snap.tracks.last() {
+        Some(t) => t.id,
+        None => handle
+            .add_track(Actor::User, Some("Overlay".into()))
+            .await
+            .map_err(|e: CommandError| e.to_string())?,
+    };
     let span = duration_us.max(100_000);
     let params = LayerParams::Subtitles(SubtitlesParams {
         source: SubtitlesSource::Media(media),
@@ -1855,76 +1916,6 @@ pub async fn add_subtitles_layer(
         .add_layer(Actor::User, track_id, params, t_start_us, t_start_us + span)
         .await
         .map(|id| id.to_string())
-        .map_err(|e: CommandError| e.to_string())
-}
-
-async fn ensure_subtitle_track(
-    handle: &ProjectHandle,
-    snap: &state::Project,
-) -> Result<state::TrackId, String> {
-    if let Some(t) = snap
-        .tracks
-        .iter()
-        .find(|t| matches!(t.kind, TrackKind::Subtitle))
-    {
-        return Ok(t.id);
-    }
-    handle
-        .add_track(Actor::User, TrackKind::Subtitle, Some("Subtitles".into()))
-        .await
-        .map_err(|e: CommandError| e.to_string())
-}
-
-async fn ensure_audio_track(
-    handle: &ProjectHandle,
-    snap: &state::Project,
-) -> Result<state::TrackId, String> {
-    if let Some(t) = snap
-        .tracks
-        .iter()
-        .find(|t| matches!(t.kind, TrackKind::Audio))
-    {
-        return Ok(t.id);
-    }
-    handle
-        .add_track(Actor::User, TrackKind::Audio, Some("Audio".into()))
-        .await
-        .map_err(|e: CommandError| e.to_string())
-}
-
-async fn ensure_template_target_track(
-    handle: &ProjectHandle,
-    snap: &state::Project,
-) -> Result<state::TrackId, String> {
-    // Templates are overlays — share the same "Overlay" track as image
-    // overlays and the demo text layer so the user doesn't accumulate one
-    // dedicated track per content type. Same z-stack rationale as
-    // `ensure_overlay_track`.
-    ensure_overlay_track(handle, snap).await
-}
-
-/// Find a Video track labeled "Overlay" or auto-create one at the top of
-/// z-stack. Image / Text overlays land here by default so they composite
-/// ABOVE base video tracks (A roll / B roll) instead of being occluded by
-/// them — the UX paper-cut closed 2026-05-12 (option 3 in
-/// `project_phase_status.md`).
-///
-/// The label match is exact: if the user renamed the Overlay track,
-/// subsequent drops create a new "Overlay" track rather than reusing the
-/// renamed one. That's deliberate — the rename is treated as opting out
-/// of the convention.
-async fn ensure_overlay_track(
-    handle: &ProjectHandle,
-    snap: &state::Project,
-) -> Result<state::TrackId, String> {
-    if let Some(t) = snap.tracks.iter().find(|t| {
-        matches!(t.kind, TrackKind::Video) && t.label.as_deref() == Some("Overlay")
-    }) {
-        return Ok(t.id);
-    }
-    handle
-        .add_track(Actor::User, TrackKind::Video, Some("Overlay".into()))
-        .await
         .map_err(|e: CommandError| e.to_string())
 }
 
@@ -2052,8 +2043,16 @@ pub async fn add_template(
     let track = match track_id {
         Some(s) => Uuid::parse_str(&s).map_err(|e| format!("track_id: {e}"))?,
         None => {
+            // V.5: templates land on the topmost track (overlay slot
+            // by convention). Tracks are kind-agnostic.
             let snap = handle.snapshot().await;
-            ensure_template_target_track(handle.inner(), snap.as_ref()).await?
+            match snap.tracks.last() {
+                Some(t) => t.id,
+                None => handle
+                    .add_track(Actor::User, Some("Overlay".into()))
+                    .await
+                    .map_err(|e: CommandError| e.to_string())?,
+            }
         }
     };
 

@@ -62,7 +62,7 @@ pub use marker::Marker;
 pub use media::{AudioStreamMeta, MediaItem, MediaKind, MediaMetadata, VideoStreamMeta};
 pub use project::{Project, ProjectMetadata, ProjectSettings, SCHEMA_VERSION};
 pub use time::{Rational, TimeUs, US_PER_MS, US_PER_SEC};
-pub use track::{Track, TrackKind, TrackRole};
+pub use track::{Track, TrackRole};
 pub use transform::{BlendMode, Rect, Transform};
 pub use transition::{Transition, TransitionKind};
 
@@ -137,7 +137,6 @@ mod tests {
 
         let track = Track {
             id: track_id,
-            kind: TrackKind::Video,
             label: Some("V1".into()),
             enabled: true,
             locked: false,

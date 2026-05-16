@@ -10,7 +10,7 @@ use super::group::Group;
 use super::ids::{MediaId, new_id};
 use super::marker::Marker;
 use super::media::MediaItem;
-use super::track::{Track, TrackKind, TrackRole};
+use super::track::{Track, TrackRole};
 use super::transition::Transition;
 
 // v1 — original .vproj format with absolute media paths.
@@ -75,12 +75,12 @@ impl Project {
         // created by V.7's "Separate audio" feature insert adjacent
         // to their source video, not at the bottom — visualOrderedTracks
         // (V.8) computes the on-screen order from this data order.
-        let mut a_roll = Track::new(TrackKind::Video);
+        let mut a_roll = Track::new();
         a_roll.label = Some("A roll".into());
         a_roll.removable = false;
         a_roll.role = Some(TrackRole::ARoll);
 
-        let mut b_roll = Track::new(TrackKind::Video);
+        let mut b_roll = Track::new();
         b_roll.label = Some("B roll".into());
         b_roll.removable = false;
         b_roll.role = Some(TrackRole::BRoll);

@@ -555,7 +555,7 @@ mod tests {
     use crate::state::layer::{ColorParams, Layer, LayerParams, VideoClipParams};
     use crate::state::media::{MediaItem, MediaKind, MediaMetadata};
     use crate::state::project::Project;
-    use crate::state::track::{Track, TrackKind};
+    use crate::state::track::Track;
     use crate::state::transform::Transform;
 
     fn blank() -> Project {
@@ -632,7 +632,7 @@ mod tests {
     #[test]
     fn rejects_inverted_layer_range() {
         let mut p = blank();
-        let mut track = Track::new(TrackKind::Video);
+        let mut track = Track::new();
         track.layers.push_back(color_layer(5_000_000, 1_000_000));
         p.tracks.push_back(track);
         assert!(matches!(
@@ -644,7 +644,7 @@ mod tests {
     #[test]
     fn rejects_overlapping_layers_on_same_track() {
         let mut p = blank();
-        let mut track = Track::new(TrackKind::Video);
+        let mut track = Track::new();
         track.layers.push_back(color_layer(0, 3_000_000));
         track.layers.push_back(color_layer(2_000_000, 4_000_000));
         p.tracks.push_back(track);
@@ -657,9 +657,9 @@ mod tests {
     #[test]
     fn allows_overlap_across_different_tracks() {
         let mut p = blank();
-        let mut t1 = Track::new(TrackKind::Video);
+        let mut t1 = Track::new();
         t1.layers.push_back(color_layer(0, 3_000_000));
-        let mut t2 = Track::new(TrackKind::Video);
+        let mut t2 = Track::new();
         t2.layers.push_back(color_layer(1_000_000, 2_000_000));
         p.tracks.push_back(t1);
         p.tracks.push_back(t2);
@@ -679,7 +679,7 @@ mod tests {
         let media_id = media.id;
         p.media_pool.insert(media_id, media);
 
-        let mut track = Track::new(TrackKind::Video);
+        let mut track = Track::new();
         // VideoClip-equivalent stand-in: the existing color_layer helper
         // makes a Visual-class layer; we use that for the visual side.
         track.layers.push_back(color_layer(0, 3_000_000));
@@ -720,7 +720,7 @@ mod tests {
         let media_id = media.id;
         p.media_pool.insert(media_id, media);
 
-        let mut track = Track::new(TrackKind::Audio);
+        let mut track = Track::new();
         let mk_audio = |id_seed: u8, t_start: TimeUs, t_end: TimeUs| Layer {
             id: new_id(),
             label: Some(format!("audio-{id_seed}")),
@@ -753,7 +753,7 @@ mod tests {
     #[test]
     fn rejects_dangling_media_reference() {
         let mut p = blank();
-        let mut track = Track::new(TrackKind::Video);
+        let mut track = Track::new();
         let layer = Layer {
             params: LayerParams::VideoClip(VideoClipParams {
                 media: new_id(), // never imported into media_pool
@@ -786,7 +786,7 @@ mod tests {
         let media_id = media.id;
         p.media_pool.insert(media_id, media);
 
-        let mut track = Track::new(TrackKind::Video);
+        let mut track = Track::new();
         let layer = Layer {
             params: LayerParams::VideoClip(VideoClipParams {
                 media: media_id,
@@ -819,7 +819,7 @@ mod tests {
         let media_id = media.id;
         p.media_pool.insert(media_id, media);
 
-        let mut track = Track::new(TrackKind::Video);
+        let mut track = Track::new();
         let layer = Layer {
             params: LayerParams::VideoClip(VideoClipParams {
                 media: media_id,
@@ -848,7 +848,7 @@ mod tests {
     #[test]
     fn rejects_keyframe_outside_layer_duration() {
         let mut p = blank();
-        let mut track = Track::new(TrackKind::Video);
+        let mut track = Track::new();
         let mut layer = color_layer(0, 1_000_000);
         // Keyframe at 5s on a 1s layer.
         let bad_kf = Keyframe {
@@ -882,7 +882,7 @@ mod tests {
     #[test]
     fn rejects_duplicate_effect_id() {
         let mut p = blank();
-        let mut track = Track::new(TrackKind::Video);
+        let mut track = Track::new();
         let mut layer = color_layer(0, 1_000_000);
         let same_id = new_id();
         let mk_effect = || Effect {
@@ -905,8 +905,8 @@ mod tests {
     #[test]
     fn rejects_duplicate_layer_id() {
         let mut p = blank();
-        let mut t1 = Track::new(TrackKind::Video);
-        let mut t2 = Track::new(TrackKind::Video);
+        let mut t1 = Track::new();
+        let mut t2 = Track::new();
         let dup_layer = color_layer(0, 1_000_000);
         t1.layers.push_back(dup_layer.clone());
         t2.layers.push_back(dup_layer);
@@ -931,7 +931,7 @@ mod tests {
         b_end: TimeUs,
     ) -> (Project, LayerId, LayerId) {
         let mut p = blank();
-        let mut t = Track::new(TrackKind::Video);
+        let mut t = Track::new();
         let a = color_layer(a_start, a_end);
         let b = color_layer(b_start, b_end);
         let a_id = a.id;
@@ -1012,8 +1012,8 @@ mod tests {
     #[test]
     fn transition_rejects_cross_track_layers() {
         let mut p = blank();
-        let mut t1 = Track::new(TrackKind::Video);
-        let mut t2 = Track::new(TrackKind::Video);
+        let mut t1 = Track::new();
+        let mut t2 = Track::new();
         let a = color_layer(0, 3_000_000);
         let b = color_layer(0, 3_000_000);
         let a_id = a.id;
@@ -1074,7 +1074,7 @@ mod tests {
     fn rejects_layer_in_two_transitions_on_same_side() {
         // Layer B receives from two different sources A and C → invalid.
         let mut p = blank();
-        let mut t = Track::new(TrackKind::Video);
+        let mut t = Track::new();
         let a = color_layer(0, 3_000_000);
         let b = color_layer(2_000_000, 5_000_000);
         let c = color_layer(4_000_000, 7_000_000);
@@ -1111,7 +1111,7 @@ mod tests {
         // B is the receiver from A AND the sender to C — that's fine (two
         // different sides). Layer A is only a sender, C is only a receiver.
         let mut p = blank();
-        let mut t = Track::new(TrackKind::Video);
+        let mut t = Track::new();
         let a = color_layer(0, 3_000_000);
         let b = color_layer(2_000_000, 5_000_000);
         let c = color_layer(4_000_000, 7_000_000);
@@ -1172,7 +1172,7 @@ mod tests {
 
     fn add_layer_to_new_video_track(p: &mut Project, l: Layer) -> LayerId {
         let id = l.id;
-        let mut t = Track::new(TrackKind::Video);
+        let mut t = Track::new();
         t.layers.push_back(l);
         p.tracks.push_back(t);
         id

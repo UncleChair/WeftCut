@@ -592,7 +592,7 @@ mod tests_segment_hash {
     use crate::state::media::{MediaItem, MediaKind, MediaMetadata};
     use crate::state::project::{Project, ProjectMetadata};
     use crate::state::time::Rational;
-    use crate::state::track::{Track, TrackKind};
+    use crate::state::track::Track;
     use crate::state::transform::Transform;
 
     fn mk_media(blake3: &str, duration_us: i64) -> MediaItem {
@@ -649,7 +649,6 @@ mod tests_segment_hash {
     fn mk_project(duration_us: i64, layers: Vec<Layer>, media: Vec<MediaItem>) -> Project {
         let track = Track {
             id: new_id(),
-            kind: TrackKind::Video,
             label: None,
             enabled: true,
             locked: false,

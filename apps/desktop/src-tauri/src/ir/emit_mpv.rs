@@ -478,7 +478,7 @@ mod tests {
             },
             media::{MediaItem, MediaKind, MediaMetadata},
             project::{Project, ProjectMetadata},
-            track::{Track, TrackKind},
+            track::Track,
             transform::Transform,
         };
 
@@ -566,7 +566,6 @@ mod tests {
 
         let v_track = Track {
             id: v_track_id,
-            kind: TrackKind::Video,
             label: None,
             enabled: true,
             locked: false,
@@ -578,7 +577,6 @@ mod tests {
         };
         let t_track = Track {
             id: t_track_id,
-            kind: TrackKind::Video,
             label: None,
             enabled: true,
             locked: false,
@@ -664,7 +662,7 @@ mod tests {
             layer::{Layer, LayerParams, VideoClipParams},
             media::{MediaItem, MediaKind, MediaMetadata},
             project::{Project, ProjectMetadata},
-            track::{Track, TrackKind},
+            track::Track,
             transform::Transform,
         };
 
@@ -721,7 +719,6 @@ mod tests {
 
         let track = Track {
             id: track_id,
-            kind: TrackKind::Video,
             label: None,
             enabled: true,
             locked: false,
