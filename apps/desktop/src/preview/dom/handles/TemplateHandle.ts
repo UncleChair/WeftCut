@@ -160,6 +160,9 @@ export class TemplateHandle implements LayerHandle {
   constructor(private ctx: HandleContext) {
     this.iframe = document.createElement("iframe");
     this.iframe.setAttribute("sandbox", "allow-scripts allow-same-origin");
+    // Deprecated Trident attribute but Chromium / WebView2 still
+    // honors it in places where modern CSS transparency falls through.
+    this.iframe.setAttribute("allowtransparency", "true");
     this.iframe.style.position = "absolute";
     this.iframe.style.top = "0";
     this.iframe.style.left = "0";
@@ -168,6 +171,7 @@ export class TemplateHandle implements LayerHandle {
     this.iframe.style.visibility = "hidden";
     this.iframe.style.border = "0";
     this.iframe.style.background = "transparent";
+    this.iframe.style.backgroundColor = "transparent";
     this.iframe.style.pointerEvents = "none";
     this.iframe.addEventListener("load", this.onIframeLoad);
     ctx.container.appendChild(this.iframe);
@@ -264,6 +268,25 @@ export class TemplateHandle implements LayerHandle {
 
   private onIframeLoad = () => {
     this.ready = true;
+    // Belt-and-braces transparency: even with `color-scheme: normal`
+    // + `!important` transparent backgrounds in the injected CSS,
+    // Chromium / WebView2 has been observed to paint a white
+    // surface under srcdoc iframes. Setting the document root
+    // styles imperatively after load forces the issue.
+    try {
+      const doc = this.iframe.contentDocument;
+      if (doc) {
+        doc.documentElement.style.background = "transparent";
+        doc.documentElement.style.backgroundColor = "transparent";
+        if (doc.body) {
+          doc.body.style.background = "transparent";
+          doc.body.style.backgroundColor = "transparent";
+        }
+      }
+    } catch {
+      // contentDocument access can throw on cross-origin (won't happen
+      // for srcdoc with allow-same-origin, but defensive).
+    }
   };
 
   /// Size + transform + visibility — read each tick (cheap) but
