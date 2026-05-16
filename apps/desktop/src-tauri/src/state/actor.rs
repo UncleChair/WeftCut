@@ -6873,4 +6873,182 @@ mod tests {
             .expect_err("locked sibling should reject");
         assert!(matches!(err, CommandError::GroupLockedMember { .. }));
     }
+
+    // ============================================================
+    // HTML render groups — Phase H.2 fan-out parity
+    //
+    // The fan-out rules (move/trim/split + escape_group + locked-member
+    // rejection) shouldn't notice the render-mode field — `render_mode`
+    // affects how the group materializes at *render* time, not how
+    // edits propagate among members at edit time. The tests below
+    // mirror their Native-mode counterparts with one extra step:
+    // toggle the freshly-created group to Html, then verify the same
+    // outcome.
+    //
+    // If any of these regress, that's the signal to revisit decision
+    // (in `docs/html-render-groups.md`) that calls for inheriting the
+    // existing group invariants — surface the divergence before
+    // building further on top.
+
+    #[tokio::test]
+    async fn html_group_move_propagates_time_delta_just_like_native() {
+        use crate::state::layer::AudioParams;
+        let (project, t1) = project_with_video_track();
+        let handle = spawn(project);
+        let t2 = handle
+            .add_track(Actor::User, Some("V2".into()))
+            .await
+            .unwrap();
+        let media = dummy_video_media(5_000_000);
+        let media_id = media.id;
+        handle.add_media_item(Actor::User, media).await.unwrap();
+
+        let a = handle
+            .add_layer(Actor::User, t1, color_layer(Rgba::WHITE), 0, 1_000_000)
+            .await
+            .unwrap();
+        let b = handle
+            .add_layer(
+                Actor::User,
+                t2,
+                LayerParams::Audio(AudioParams {
+                    media: media_id,
+                    src_in_us: 0,
+                    src_out_us: 1_000_000,
+                    gain_db: Animated::Static(0.0),
+                    pan: Animated::Static(0.0),
+                    fade_in_us: 0,
+                    fade_out_us: 0,
+                    mute: false,
+                }),
+                0,
+                1_000_000,
+            )
+            .await
+            .unwrap();
+        let g = handle
+            .groups_create(Actor::User, vec![a, b], None, false)
+            .await
+            .unwrap();
+        handle
+            .groups_set_render_mode(Actor::User, g, GroupRenderMode::Html)
+            .await
+            .expect("Html switch OK (no effects on members)");
+
+        handle
+            .move_layer(Actor::User, a, t1, 500_000, false)
+            .await
+            .unwrap();
+        let snap = handle.snapshot().await;
+        assert_eq!(layer(&snap, a).t_start_us, 500_000);
+        assert_eq!(layer(&snap, b).t_start_us, 500_000, "Html sibling shifts identically to Native");
+    }
+
+    #[tokio::test]
+    async fn html_group_trim_aligned_edges_propagate() {
+        let (handle, t1, _t2, a, b) = paired_layers_on_two_tracks().await;
+        let g = handle
+            .groups_create(Actor::User, vec![a, b], None, false)
+            .await
+            .unwrap();
+        handle
+            .groups_set_render_mode(Actor::User, g, GroupRenderMode::Html)
+            .await
+            .expect("Html switch OK");
+        let _ = t1;
+
+        handle
+            .trim_layer(Actor::User, a, LayerEdge::Out, 700_000, false)
+            .await
+            .unwrap();
+        let snap = handle.snapshot().await;
+        assert_eq!(layer(&snap, a).t_end_us, 700_000);
+        assert_eq!(layer(&snap, b).t_end_us, 700_000, "aligned-edge trim still fans out under Html");
+    }
+
+    #[tokio::test]
+    async fn html_group_split_fans_out_to_spanning_siblings() {
+        let (handle, _t1, _t2, a, b) = paired_layers_on_two_tracks().await;
+        let g = handle
+            .groups_create(Actor::User, vec![a, b], None, false)
+            .await
+            .unwrap();
+        handle
+            .groups_set_render_mode(Actor::User, g, GroupRenderMode::Html)
+            .await
+            .expect("Html switch OK");
+
+        let (_la, ra) = handle
+            .split_layer(Actor::User, a, 500_000, false)
+            .await
+            .unwrap();
+        let snap = handle.snapshot().await;
+        let on_track2: Vec<&Layer> = snap
+            .tracks
+            .iter()
+            .find(|t| t.layers.iter().any(|l| l.id == b))
+            .unwrap()
+            .layers
+            .iter()
+            .collect();
+        assert_eq!(on_track2.len(), 2, "B was split into 2 pieces");
+        assert!(on_track2.iter().any(|l| l.t_end_us == 500_000));
+        assert!(on_track2.iter().any(|l| l.t_start_us == 500_000));
+        assert_eq!(snap.groups.len(), 1);
+        assert_eq!(snap.groups[0].members.len(), 4);
+        assert!(snap.groups[0].members.contains(&ra));
+        // And the render_mode survives the split fan-out.
+        assert_eq!(snap.groups[0].render_mode, GroupRenderMode::Html);
+    }
+
+    #[tokio::test]
+    async fn html_group_locked_member_rejects_move() {
+        let (handle, t1, _t2, a, b) = paired_layers_on_two_tracks().await;
+        let g = handle
+            .groups_create(Actor::User, vec![a, b], None, false)
+            .await
+            .unwrap();
+        handle
+            .groups_set_render_mode(Actor::User, g, GroupRenderMode::Html)
+            .await
+            .expect("Html switch OK");
+        handle
+            .update_layer(
+                Actor::User,
+                b,
+                LayerPatch {
+                    locked: Some(true),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let err = handle
+            .move_layer(Actor::User, a, t1, 500_000, false)
+            .await
+            .expect_err("locked sibling should reject under Html mode too");
+        assert!(matches!(err, CommandError::GroupLockedMember { .. }));
+    }
+
+    #[tokio::test]
+    async fn html_group_escape_group_still_skips_fanout() {
+        let (handle, t1, _t2, a, b) = paired_layers_on_two_tracks().await;
+        let g = handle
+            .groups_create(Actor::User, vec![a, b], None, false)
+            .await
+            .unwrap();
+        handle
+            .groups_set_render_mode(Actor::User, g, GroupRenderMode::Html)
+            .await
+            .expect("Html switch OK");
+
+        // escape_group=true: A shifts; B doesn't follow.
+        handle
+            .move_layer(Actor::User, a, t1, 500_000, true)
+            .await
+            .unwrap();
+        let snap = handle.snapshot().await;
+        assert_eq!(layer(&snap, a).t_start_us, 500_000);
+        assert_eq!(layer(&snap, b).t_start_us, 0, "escape_group still skips fan-out under Html");
+    }
 }
