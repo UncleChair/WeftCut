@@ -619,6 +619,23 @@ input.preview-timecode:focus {
   font-size: 11px;
 }
 
+/* R.7 inline-reveal chrome (`docs/ab-roll-redesign`): a hidden track
+   that the user surfaced via the peek panel renders with a dashed
+   outline so it's visually distinguishable from the permanent A/B
+   skeleton. The chrome disappears the moment selection or Esc
+   collapses the reveal. */
+.timeline-track-lane.is-revealed {
+  outline: 1px dashed rgba(96, 165, 250, 0.55);
+  outline-offset: -1px;
+  background: rgba(96, 165, 250, 0.04);
+}
+
+.timeline-track-lane.is-revealed .track-label::after {
+  content: " (revealed)";
+  color: rgba(96, 165, 250, 0.7);
+  font-weight: 500;
+}
+
 .timeline-mode-pill {
   display: inline-flex;
   align-items: center;

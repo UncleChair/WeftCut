@@ -210,6 +210,12 @@ interface TimelineProps {
   durationUs: number;
   currentTimeUs: number;
   selectedLayerId: string | null;
+  /// R.7 (`docs/ab-roll-redesign`): when set, this hidden track is
+  /// included in the AB-mode ordered list at its natural accretion
+  /// slot. Cleared by the App when the user selects a layer on a
+  /// different track, presses Esc, or the peek list dispatches a new
+  /// reveal.
+  revealedTrackId?: string | null;
   onSelect: (id: string | null) => void;
   onSeek: (tUs: number) => void;
   onMutated: () => Promise<void>;
@@ -251,6 +257,7 @@ export function Timeline({
   durationUs,
   currentTimeUs,
   selectedLayerId,
+  revealedTrackId,
   onSelect,
   onSeek,
   onMutated,
@@ -286,13 +293,16 @@ export function Timeline({
   const orderedTracks = useMemo(() => {
     const all = visualOrderedTracks(tracks);
     if (displayMode === "ShowAll") return all;
-    // AB filter: keep only role-stamped tracks. Legacy projects (no
-    // role stamps on any track) end up with an empty list here — the
-    // EmptyHint below surfaces "switch to Show All to see your
-    // tracks". By design (Q3 in the redesign), legacy projects are
-    // not migrated; the user toggles the mode manually.
-    return all.filter(({ track }) => track.role !== null);
-  }, [tracks, displayMode]);
+    // AB filter: keep role-stamped tracks. R.7 inline-reveal lets one
+    // additional hidden track survive the filter at its natural
+    // accretion slot — the visualOrderedTracks output already has the
+    // slot computed, so we just need to keep that row alongside the
+    // role-stamped ones.
+    return all.filter(
+      ({ track }) =>
+        track.role !== null || track.id === (revealedTrackId ?? null),
+    );
+  }, [tracks, displayMode, revealedTrackId]);
 
   /// Map a click event on a layer chip to the resulting selection set.
   /// `docs/group-system.md`: plain click on a grouped layer selects the
@@ -767,6 +777,7 @@ export function Timeline({
             onDragStart={(state) => setDrag(state)}
             onMediaDrop={onMediaDrop}
             isGroupStart={isGroupStart}
+            isRevealed={track.id === (revealedTrackId ?? null)}
             onHeightDragStart={beginHeightDrag(track.id)}
           />
         ))}
@@ -849,6 +860,7 @@ function TrackLane({
   onDragStart,
   onMediaDrop,
   isGroupStart,
+  isRevealed,
   onHeightDragStart,
 }: {
   track: TrackSummary;
@@ -870,6 +882,10 @@ function TrackLane({
     e: React.DragEvent<HTMLDivElement>,
   ) => void;
   isGroupStart: boolean;
+  /// R.7 inline-reveal flag. The lane renders with extra chrome
+  /// (dashed border / "hidden" badge) so the user knows this row is
+  /// only here because they clicked a peek item.
+  isRevealed: boolean;
   onHeightDragStart: (e: React.PointerEvent) => void;
 }) {
   const { t } = useTranslation();
@@ -914,7 +930,9 @@ function TrackLane({
     <div
       className={`timeline-track-lane kind-${track.kind.toLowerCase()} ${
         isCrossTrackTarget ? "is-drop-target" : ""
-      } ${isGroupStart ? "is-group-start" : ""}`}
+      } ${isGroupStart ? "is-group-start" : ""} ${
+        isRevealed ? "is-revealed" : ""
+      }`}
       style={{ height }}
       onClick={(e) => {
         if (e.target === e.currentTarget) onSelect(null);
