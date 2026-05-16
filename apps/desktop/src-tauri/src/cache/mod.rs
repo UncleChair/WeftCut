@@ -291,63 +291,16 @@ mod tests {
             ws.path().join("Cache").join("proxies"),
         );
         assert!(layout.proxies_dir().is_dir());
-        assert!(layout.preview_dir().is_dir());
 
         // Idempotent: re-setting to the same workspace is a no-op.
         layout.set_workspace(ws.path()).unwrap();
-        assert!(layout.preview_dir().is_dir());
+        assert!(layout.proxies_dir().is_dir());
     }
 
-    #[test]
-    fn preview_path_is_state_hashed_mp4() {
-        let tmp = TempDir::new().unwrap();
-        let layout = CacheLayout::new(tmp.path().to_path_buf());
-        assert_eq!(
-            layout.preview("statehash123"),
-            tmp.path().join("preview").join("statehash123.mp4"),
-        );
-    }
-
-    #[test]
-    fn preview_segments_dir_is_flat_under_preview() {
-        let tmp = TempDir::new().unwrap();
-        let layout = CacheLayout::new(tmp.path().to_path_buf());
-        assert_eq!(
-            layout.preview_segments_dir(),
-            tmp.path().join("preview").join("segments"),
-        );
-        assert_eq!(
-            layout.preview_segment("seg-hash-abc"),
-            tmp.path().join("preview").join("segments").join("seg-hash-abc.m4s"),
-        );
-    }
-
-    #[test]
-    fn preview_manifest_init_audio_paths() {
-        let tmp = TempDir::new().unwrap();
-        let layout = CacheLayout::new(tmp.path().to_path_buf());
-        let gh = "globalhash999";
-        assert_eq!(
-            layout.preview_manifest(gh),
-            tmp.path().join("preview").join("globalhash999.manifest.json"),
-        );
-        assert_eq!(
-            layout.preview_init(gh),
-            tmp.path().join("preview").join("globalhash999.init.mp4"),
-        );
-        assert_eq!(
-            layout.preview_audio(gh),
-            tmp.path().join("preview").join("globalhash999.audio.m4a"),
-        );
-    }
-
-    #[test]
-    fn ensure_dirs_creates_segments_dir() {
-        let tmp = TempDir::new().unwrap();
-        let layout = CacheLayout::new(tmp.path().to_path_buf());
-        layout.ensure_dirs().unwrap();
-        assert!(layout.preview_segments_dir().is_dir());
-    }
+    // The preview/* paths (`preview_dir`, `preview`, `preview_segments_dir`,
+    // `preview_segment`, `preview_manifest`, `preview_init`, `preview_audio`)
+    // were deleted at the Phase F cutover (commit 5a4879d) alongside the
+    // cached + segmented + B.3 paths. Their tests are gone.
 
     #[test]
     fn inline_subs_path_includes_extension() {
