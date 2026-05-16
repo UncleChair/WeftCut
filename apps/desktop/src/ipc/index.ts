@@ -612,6 +612,38 @@ export const EXPORT_EVENTS = {
   queue: "export:queue",
 } as const;
 
+/// Phase H.7 — per-html-group raster progress (`docs/html-render-groups.md`).
+/// Fired by `raster::html_group::materialize_group`; a future ExportPanel
+/// extension subscribes to surface per-group progress next to the main
+/// `export:progress` bar.
+export const HTML_GROUP_EVENTS = {
+  start: "html_group:start",
+  progress: "html_group:progress",
+  complete: "html_group:complete",
+} as const;
+
+export interface HtmlGroupStartEvent {
+  groupId: string;
+  frameCount: number;
+  width: number;
+  height: number;
+  durationUs: number;
+}
+
+export interface HtmlGroupProgressEvent {
+  groupId: string;
+  frame: number;
+  total: number;
+}
+
+export interface HtmlGroupCompleteEvent {
+  groupId: string;
+  frameCount: number;
+  /// True when the rasterizer short-circuited via a cache hit — UI can
+  /// distinguish "0 seconds" from "ran for real".
+  cached: boolean;
+}
+
 /// Mirrors `ExportPreset` in `export/preset.rs`. Names match the Rust
 /// variants so serde tagging works without rename rules.
 export type ExportPreset =
@@ -784,6 +816,18 @@ export async function groupsCreate(
     label,
     reassign,
   });
+}
+
+/// Toggle a group's render mode between Native (default ffmpeg
+/// per-layer lowering) and Html (html-render-groups island; see
+/// `docs/html-render-groups.md`). Rejects with a string error if any
+/// member has a CSS-incompatible effect — surface the message to the
+/// user so they can remove the effect or stay in Native.
+export async function groupsSetRenderMode(
+  groupId: string,
+  mode: "Native" | "Html",
+): Promise<void> {
+  await invoke<null>("groups_set_render_mode", { groupId, mode });
 }
 
 export async function groupsDissolve(groupId: string): Promise<void> {

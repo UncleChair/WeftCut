@@ -28,13 +28,55 @@ use std::path::{Path, PathBuf};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, LogicalSize, Manager};
+use tauri::{AppHandle, Emitter, LogicalSize, Manager};
 
 use super::{
     capture_png_bytes, capture_via_webview, navigate_to_html, set_transparent_background,
     wait_seek,
 };
 use super::composition::{CompositionState, build_composition_document};
+
+// ============================================================
+// Phase H.7 — progress events
+// ============================================================
+
+/// Event names emitted during html-group materialization. Mirror the
+/// `export:*` family so future UI consumers can subscribe identically.
+/// The current ExportPanel/queue doesn't surface these yet — H.7 v1
+/// ships the wiring so a follow-up UI doesn't need a Rust-side
+/// change.
+pub const EVENT_HTML_GROUP_START: &str = "html_group:start";
+pub const EVENT_HTML_GROUP_PROGRESS: &str = "html_group:progress";
+pub const EVENT_HTML_GROUP_COMPLETE: &str = "html_group:complete";
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HtmlGroupStartEvent {
+    pub group_id: String,
+    pub frame_count: usize,
+    pub width: u32,
+    pub height: u32,
+    pub duration_us: i64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HtmlGroupProgressEvent {
+    pub group_id: String,
+    pub frame: usize,
+    pub total: usize,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HtmlGroupCompleteEvent {
+    pub group_id: String,
+    pub frame_count: usize,
+    /// `true` when the rasterizer skipped the webview entirely thanks to
+    /// a content-keyed cache hit; the UI can surface the difference
+    /// (a cache hit is near-instant; a real raster is seconds-to-minutes).
+    pub cached: bool,
+}
 
 /// Probe canvas dimensions. Kept in sync with the TS constants
 /// (`PROBE_CANVAS_W` / `PROBE_CANVAS_H`).
@@ -180,6 +222,26 @@ pub async fn materialize_group(
     let frame_count = ((dur_s * fps_f).ceil() as usize).max(1);
 
     if let Some(_loaded) = load_cached(&dest_dir, &manifest_path, frame_count) {
+        // Cache hit: emit start + complete (no per-frame progress —
+        // the consumer treats absence-of-progress as instant).
+        let _ = app.emit(
+            EVENT_HTML_GROUP_START,
+            HtmlGroupStartEvent {
+                group_id: group_id.to_string(),
+                frame_count,
+                width: state.width,
+                height: state.height,
+                duration_us,
+            },
+        );
+        let _ = app.emit(
+            EVENT_HTML_GROUP_COMPLETE,
+            HtmlGroupCompleteEvent {
+                group_id: group_id.to_string(),
+                frame_count,
+                cached: true,
+            },
+        );
         return Ok(HtmlGroupRender {
             pattern_path: dest_dir.join("frame_%05d.png"),
             frame_count,
@@ -190,6 +252,17 @@ pub async fn materialize_group(
             height: state.height,
         });
     }
+
+    let _ = app.emit(
+        EVENT_HTML_GROUP_START,
+        HtmlGroupStartEvent {
+            group_id: group_id.to_string(),
+            frame_count,
+            width: state.width,
+            height: state.height,
+            duration_us,
+        },
+    );
 
     let window = app
         .get_webview_window("raster-worker")
@@ -220,6 +293,16 @@ pub async fn materialize_group(
         wait_seek(&window, t).await?;
         let path = tmp_dir.join(format!("frame_{idx:05}.png"));
         let _ = capture_via_webview(&window, &path).await?;
+        // Emit progress every frame; the cost is one IPC roundtrip per
+        // captured frame, dominated by the capture itself.
+        let _ = app.emit(
+            EVENT_HTML_GROUP_PROGRESS,
+            HtmlGroupProgressEvent {
+                group_id: group_id.to_string(),
+                frame: idx + 1,
+                total: frame_count,
+            },
+        );
     }
 
     let manifest = HtmlGroupManifest {
@@ -243,6 +326,15 @@ pub async fn materialize_group(
     }
     std::fs::rename(&tmp_dir, &dest_dir)
         .map_err(|e| format!("promote html-group cache dir {}: {e}", dest_dir.display()))?;
+
+    let _ = app.emit(
+        EVENT_HTML_GROUP_COMPLETE,
+        HtmlGroupCompleteEvent {
+            group_id: group_id.to_string(),
+            frame_count,
+            cached: false,
+        },
+    );
 
     Ok(HtmlGroupRender {
         pattern_path: dest_dir.join("frame_%05d.png"),

@@ -908,6 +908,20 @@ input.preview-timecode:focus {
   z-index: 1;
 }
 
+/* `docs/html-render-groups.md` — Html-mode groups get a dashed
+   left-border instead of the default solid hue, so the user can tell
+   at a glance that this group renders via the html-render island
+   pipeline (CSS composition) rather than per-layer ffmpeg lowering. */
+.timeline-layer.is-grouped.is-html-render {
+  border-left-style: dashed !important;
+}
+.timeline-layer.is-grouped.is-html-render .layer-group-icon::after {
+  content: "·H";
+  margin-left: 2px;
+  font-size: 8px;
+  opacity: 0.9;
+}
+
 .timeline-track-lane.is-drop-target {
   background: #1a2030 !important;
   outline: 1px dashed #60a5fa;
