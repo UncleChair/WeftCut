@@ -111,10 +111,23 @@ const PREVIEW_SHIM = `
 })();
 `;
 
+/// Opt the iframe document out of Chromium's default light canvas
+/// color so `html { background: transparent }` actually paints
+/// transparent. Without `color-scheme: normal`, Chromium pre-paints
+/// a white surface UNDER the document and the CSS background can't
+/// reach it. Raster captures don't hit this because the offscreen
+/// webview has `SetDefaultBackgroundColor(transparent)` applied
+/// imperatively (`RASTERIZER_VERSION=2` in `raster/mod.rs`).
+const PREVIEW_BG_RESET = `
+:root { color-scheme: normal; background: transparent !important; }
+html, body { background: transparent !important; }
+`;
+
 function buildSrcdoc(template: TemplateSummary, props: Record<string, unknown>): string {
   const styled = template.html.replace("__STYLE__", template.style);
   const propsJson = JSON.stringify(props ?? {});
   const inject =
+    `<style>${PREVIEW_BG_RESET}</style>` +
     `<script>${PREVIEW_SHIM}</script>` +
     `<script>window.__props__ = ${propsJson};</script>`;
   if (styled.includes("</head>")) {
