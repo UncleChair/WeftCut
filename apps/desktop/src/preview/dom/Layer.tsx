@@ -20,6 +20,7 @@ import type { LayerHandle, PlaybackEngine } from "./PlaybackEngine";
 import { AudioHandle } from "./handles/AudioHandle";
 import { ColorHandle } from "./handles/ColorHandle";
 import { ImageHandle } from "./handles/ImageHandle";
+import { TemplateHandle } from "./handles/TemplateHandle";
 import { TextHandle } from "./handles/TextHandle";
 import { VideoClipHandle } from "./handles/VideoClipHandle";
 import type { HandleContext } from "./handles/types";
@@ -93,11 +94,12 @@ function createHandle(layer: LayerSummary, ctx: HandleContext): LayerHandle | nu
       return new ImageHandle(ctx);
     case "Text":
       return new TextHandle(ctx);
-    case "Subtitles":
     case "Template":
-      // Phase C (Template iframe), Phase D (Subtitles libass-wasm).
-      // Layer renders an empty stub until then; the export path
-      // still produces them correctly.
+      return new TemplateHandle(ctx);
+    case "Subtitles":
+      // Phase D (Subtitles libass-wasm). Layer renders an empty
+      // stub until then; the export path still produces them
+      // correctly.
       return null;
   }
 }
