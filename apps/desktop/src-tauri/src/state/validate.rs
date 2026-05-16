@@ -321,18 +321,37 @@ fn validate_track(
     let mut sorted: Vec<&Layer> = track.layers.iter().collect();
     sorted.sort_by_key(|l| l.t_start_us);
 
-    for (idx, layer) in sorted.iter().enumerate() {
+    // A/B-roll v2 (V.2): the overlap invariant is now per-class, not
+    // per-track. Visual-class layers (video / image / color / template
+    // / text / subtitle) can't overlap with each other on the same
+    // track; Audio layers can't overlap with each other; but a Visual
+    // layer and an Audio layer CAN coexist at the same time slot
+    // (enables AE-style combined-row rendering for AV pairs imported
+    // onto the same track). Track previous-seen per class as we walk
+    // the sorted layer list.
+    let mut prev_visual: Option<&Layer> = None;
+    let mut prev_audio: Option<&Layer> = None;
+
+    for layer in sorted.iter() {
         if !seen_layers.insert(layer.id) {
             return Err(ValidationError::DuplicateLayerId { layer: layer.id });
         }
         validate_layer(project, layer)?;
 
-        if let Some(prev) = sorted.get(idx.wrapping_sub(1)) {
-            if idx > 0 && layer.t_start_us < prev.t_end_us {
-                // Overlap detected. Reject UNLESS a transition authorizes it
-                // AND the overlap length matches exactly what the transition
-                // declares. (The cross-check is done in `validate_transitions`;
-                // here we just consult the authorized-pair lookup.)
+        let class = layer_overlap_class(&layer.params);
+        let prev = match class {
+            OverlapClass::Visual => prev_visual.as_ref(),
+            OverlapClass::Audio => prev_audio.as_ref(),
+        }
+        .copied();
+
+        if let Some(prev) = prev {
+            if layer.t_start_us < prev.t_end_us {
+                // Overlap detected within the same class. Reject UNLESS
+                // a transition authorizes it AND the overlap length
+                // matches what the transition declares. (Cross-class
+                // overlap never reaches here — see prev_visual /
+                // prev_audio split above.)
                 let overlap = prev.t_end_us - layer.t_start_us;
                 let key = pair(prev.id, layer.id);
                 let allowed = authorized.get(&key).copied().unwrap_or(0);
@@ -349,8 +368,51 @@ fn validate_track(
                 }
             }
         }
+
+        // Update the per-class "last seen" pointer. We pick whichever
+        // ends later so the next iteration's overlap check is against
+        // the longest-reaching prior layer of the same class — handles
+        // the case where a long clip starts earlier than a short one.
+        match class {
+            OverlapClass::Visual => {
+                prev_visual = Some(match prev_visual {
+                    Some(p) if p.t_end_us >= layer.t_end_us => p,
+                    _ => layer,
+                });
+            }
+            OverlapClass::Audio => {
+                prev_audio = Some(match prev_audio {
+                    Some(p) if p.t_end_us >= layer.t_end_us => p,
+                    _ => layer,
+                });
+            }
+        }
     }
     Ok(())
+}
+
+/// Class used for the within-track overlap rule (V.2). Visual covers
+/// every layer kind that contributes to the video output frame
+/// (VideoClip, ImageOverlay, Color, Template, Text, Subtitles). Audio
+/// is the only audio-class. New layer kinds added later default to
+/// Visual unless they're audio-only.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum OverlapClass {
+    Visual,
+    Audio,
+}
+
+fn layer_overlap_class(params: &super::layer::LayerParams) -> OverlapClass {
+    use super::layer::LayerParams;
+    match params {
+        LayerParams::Audio(_) => OverlapClass::Audio,
+        LayerParams::VideoClip(_)
+        | LayerParams::ImageOverlay(_)
+        | LayerParams::Color(_)
+        | LayerParams::Template(_)
+        | LayerParams::Text(_)
+        | LayerParams::Subtitles(_) => OverlapClass::Visual,
+    }
 }
 
 fn validate_layer(project: &Project, layer: &Layer) -> Result<(), ValidationError> {
@@ -602,6 +664,90 @@ mod tests {
         p.tracks.push_back(t1);
         p.tracks.push_back(t2);
         validate(&p).expect("overlap on different tracks is allowed");
+    }
+
+    #[test]
+    fn allows_visual_and_audio_on_same_track_at_same_time() {
+        // V.2 (A/B-roll v2): different overlap classes can coexist
+        // at the same time slot on the same track. This enables the
+        // AE-style combined-row rendering for AV pairs from import —
+        // both layers live on one track, validation accepts it.
+        use crate::state::layer::AudioParams;
+        let mut p = blank();
+        // Need a media item so the Audio layer's media_id resolves.
+        let media = dummy_video_media(5_000_000);
+        let media_id = media.id;
+        p.media_pool.insert(media_id, media);
+
+        let mut track = Track::new(TrackKind::Video);
+        // VideoClip-equivalent stand-in: the existing color_layer helper
+        // makes a Visual-class layer; we use that for the visual side.
+        track.layers.push_back(color_layer(0, 3_000_000));
+        // Audio layer overlapping the same window — different class.
+        let audio = Layer {
+            id: new_id(),
+            label: None,
+            t_start_us: 0,
+            t_end_us: 3_000_000,
+            enabled: true,
+            locked: false,
+            metadata: imbl::HashMap::new(),
+            effects: imbl::Vector::new(),
+            params: LayerParams::Audio(AudioParams {
+                media: media_id,
+                src_in_us: 0,
+                src_out_us: 3_000_000,
+                gain_db: Animated::Static(0.0),
+                pan: Animated::Static(0.0),
+                fade_in_us: 0,
+                fade_out_us: 0,
+                mute: false,
+            }),
+        };
+        track.layers.push_back(audio);
+        p.tracks.push_back(track);
+        validate(&p).expect("V + A on same track at same time is allowed under V.2");
+    }
+
+    #[test]
+    fn rejects_two_audio_layers_overlapping_on_same_track() {
+        // V.2 negative case: same-class overlap still rejected. Two
+        // audio layers can't share a time slot on one track (one
+        // waveform per audio bus position).
+        use crate::state::layer::AudioParams;
+        let mut p = blank();
+        let media = dummy_video_media(5_000_000);
+        let media_id = media.id;
+        p.media_pool.insert(media_id, media);
+
+        let mut track = Track::new(TrackKind::Audio);
+        let mk_audio = |id_seed: u8, t_start: TimeUs, t_end: TimeUs| Layer {
+            id: new_id(),
+            label: Some(format!("audio-{id_seed}")),
+            t_start_us: t_start,
+            t_end_us: t_end,
+            enabled: true,
+            locked: false,
+            metadata: imbl::HashMap::new(),
+            effects: imbl::Vector::new(),
+            params: LayerParams::Audio(AudioParams {
+                media: media_id,
+                src_in_us: 0,
+                src_out_us: t_end - t_start,
+                gain_db: Animated::Static(0.0),
+                pan: Animated::Static(0.0),
+                fade_in_us: 0,
+                fade_out_us: 0,
+                mute: false,
+            }),
+        };
+        track.layers.push_back(mk_audio(1, 0, 3_000_000));
+        track.layers.push_back(mk_audio(2, 2_000_000, 4_000_000));
+        p.tracks.push_back(track);
+        assert!(matches!(
+            validate(&p),
+            Err(ValidationError::LayerOverlap { .. })
+        ));
     }
 
     #[test]
