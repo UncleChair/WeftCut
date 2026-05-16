@@ -2180,6 +2180,29 @@ pub async fn groups_dissolve(
         .map_err(|e: CommandError| e.to_string())
 }
 
+/// Phase H.6 — UI counterpart to the MCP `groups_set_render_mode` tool.
+/// Same shape, same validation: commit fails if any member has a
+/// CSS-incompatible effect. The error string carries the offending
+/// (group, layer, effect, kind) tuple — surface verbatim so the user
+/// knows what to remove.
+#[tauri::command]
+pub async fn groups_set_render_mode(
+    handle: State<'_, ProjectHandle>,
+    group_id: String,
+    mode: String,
+) -> Result<(), String> {
+    let gid = Uuid::parse_str(&group_id).map_err(|e| format!("group_id: {e}"))?;
+    let mode = match mode.as_str() {
+        "Native" => crate::state::group::GroupRenderMode::Native,
+        "Html" => crate::state::group::GroupRenderMode::Html,
+        other => return Err(format!("unknown render mode {other:?}: expected 'Native' or 'Html'")),
+    };
+    handle
+        .groups_set_render_mode(Actor::User, gid, mode)
+        .await
+        .map_err(|e: CommandError| e.to_string())
+}
+
 #[tauri::command]
 pub async fn delete_layer(
     handle: State<'_, ProjectHandle>,
