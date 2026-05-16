@@ -239,12 +239,11 @@ export class TemplateHandle implements LayerHandle {
     this.appliedOpacity = -1;
     this.ready = false;
 
-    // Re-read current layer params for the initial props (the
-    // Template view doesn't expose props yet — they're set at
-    // creation via the add_template MCP and stored Rust-side).
-    // For now, mount with empty props; templates fall back to
-    // their manifest defaults via `start()` polling.
-    const props: Record<string, unknown> = {};
+    // Build srcdoc with the layer's actual props (validated server-side
+    // against the template manifest). The injected `<script>window.__props__ = ...`
+    // runs before the template's own script, so its `start()` poll
+    // resolves immediately to the right values.
+    const props = layer.params.props ?? {};
     const srcdoc = buildSrcdoc(tpl, props);
     this.iframe.srcdoc = srcdoc;
     this.appliedPropsSig = JSON.stringify(props);
