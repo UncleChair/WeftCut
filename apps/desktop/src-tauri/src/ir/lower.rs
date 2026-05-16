@@ -12,13 +12,16 @@ use std::collections::HashMap;
 
 use thiserror::Error;
 
+use std::collections::HashSet;
+
 use super::graph::IRGraph;
-use super::materialize::{InlineSubPaths, TemplateRenders};
+use super::materialize::{HtmlGroupRenders, InlineSubPaths, TemplateRenders};
 use super::node::{FadeKind, IRNode, NodeId, PixFmt};
 use super::target::RenderTarget;
 use crate::state::animated::Animated;
 use crate::state::color::Rgba;
-use crate::state::ids::{LayerId, MediaId};
+use crate::state::group::GroupRenderMode;
+use crate::state::ids::{GroupId, LayerId, MediaId};
 use crate::state::layer::{
     AudioParams, ImageOverlayParams, Layer, LayerParams, SubtitlesSource, VideoClipParams,
 };
@@ -38,6 +41,8 @@ pub enum LowerError {
     InlineSubtitlesNotMaterialized,
     #[error("template layer {0} not materialized — call ir::materialize_templates first")]
     TemplateNotMaterialized(LayerId),
+    #[error("html-render group {0} not materialized — call ir::materialize_html_groups first")]
+    HtmlGroupNotMaterialized(GroupId),
 }
 
 pub fn lower(
@@ -45,6 +50,7 @@ pub fn lower(
     target: RenderTarget,
     inline_sub_paths: &InlineSubPaths,
     template_renders: &TemplateRenders,
+    html_group_renders: &HtmlGroupRenders,
 ) -> Result<IRGraph, LowerError> {
     let mut g = IRGraph::new(target);
 
@@ -70,6 +76,26 @@ pub fn lower(
     // crossfade naturally.
     let incoming = incoming_transition_map(project);
 
+    // Phase H.5 — html-render groups (`docs/html-render-groups.md`):
+    // members of `Html`-mode groups are NOT lowered individually on the
+    // video side; their visual content is inside the pre-materialized
+    // composition PNG sequence. Build a `layer_id → group_id` lookup
+    // for fast detection and track which group overlays have been
+    // emitted so members after the first are silently skipped.
+    let html_group_by_layer: HashMap<LayerId, GroupId> = {
+        let mut m = HashMap::new();
+        for g in project.groups.iter() {
+            if g.render_mode != GroupRenderMode::Html {
+                continue;
+            }
+            for &lid in g.members.iter() {
+                m.insert(lid, g.id);
+            }
+        }
+        m
+    };
+    let mut emitted_html_groups: HashSet<GroupId> = HashSet::new();
+
     // A/B-roll v2 (V.5): walk all tracks (no track-kind filter) and
     // dispatch per LayerParams. Track index still controls z-order
     // for visual layers (index 0 = bottom of stack, last = top); the
@@ -86,6 +112,9 @@ pub fn lower(
             }
             match &layer.params {
                 LayerParams::Audio(_) => {
+                    // Audio always flows through the amix chain — decision 7
+                    // explicitly keeps audio members of Html-mode groups in
+                    // the regular audio path.
                     if let Some(stream) = lower_audio_layer(&mut g, layer, project)? {
                         audio_streams.push(stream);
                     }
@@ -100,6 +129,25 @@ pub fn lower(
                 | LayerParams::Text(_)
                 | LayerParams::Template(_)
                 | LayerParams::Subtitles(_) => {
+                    // Html-render group member? Emit one PngSeq overlay
+                    // for the whole group on the first encountered
+                    // member; subsequent members are part of that
+                    // composition and skipped here.
+                    if let Some(group_id) = html_group_by_layer.get(&layer.id) {
+                        if !emitted_html_groups.contains(group_id) {
+                            let info = html_group_renders.get(group_id).ok_or(
+                                LowerError::HtmlGroupNotMaterialized(*group_id),
+                            )?;
+                            current_v = lower_html_group_overlay(
+                                &mut g,
+                                current_v,
+                                info,
+                                target,
+                            );
+                            emitted_html_groups.insert(*group_id);
+                        }
+                        continue;
+                    }
                     current_v = lower_video_layer(
                         &mut g,
                         layer,
@@ -141,6 +189,54 @@ pub fn lower(
     Ok(g)
 }
 
+/// Emit the IR chain for one Html-render group:
+/// `PngSeq → Scale → SetPts → Overlay(base=current_v)`.
+///
+/// The composition was already pre-rasterized at `target` framerate over
+/// the group's full duration (see `materialize_html_groups`), so we
+/// just feed its frame sequence into the overlay chain at the
+/// composition's `t_start_us` offset. No per-frame trim — the PngSeq
+/// covers exactly the group's span.
+fn lower_html_group_overlay(
+    g: &mut IRGraph,
+    base: NodeId,
+    info: &super::materialize::HtmlGroupRenderInfo,
+    target: RenderTarget,
+) -> NodeId {
+    let input = g.add_png_seq(&info.pattern_path, info.fps_num, info.fps_den);
+    let pngseq = g.add_node(IRNode::PngSeq {
+        input,
+        duration_us: info.duration_us,
+        alpha: true,
+    });
+
+    // Composition is rendered at the project canvas dimensions
+    // (decision 10 — in-place flatten), so it should already match the
+    // target. Insert a Scale to the target's exact dimensions defensively
+    // — covers the case where a workspace canvas size change happens
+    // between materialization and lowering and the cache hasn't been
+    // invalidated yet.
+    let scaled = g.add_node(IRNode::Scale {
+        in_: pngseq,
+        width: target.width.max(1),
+        height: target.height.max(1),
+    });
+
+    let placed = g.add_node(IRNode::SetPts {
+        in_: scaled,
+        offset_us: info.t_start_us,
+    });
+
+    g.add_node(IRNode::Overlay {
+        base,
+        top: placed,
+        x: 0,
+        y: 0,
+        gate_start_us: info.t_start_us,
+        gate_end_us: info.t_start_us + info.duration_us,
+    })
+}
+
 /// Lower a *time window* of `project` to a video-only IR graph in
 /// segment-local time. Audio is intentionally dropped — per the segmented
 /// preview design (`docs/preview-segmented-cache.md` decision S4), audio is
@@ -176,7 +272,17 @@ pub fn lower_range(
     out_us: TimeUs,
 ) -> Result<IRGraph, LowerError> {
     let rebased = rebase_project_for_segment(project, in_us, out_us);
-    lower(&rebased, target, inline_sub_paths, template_renders)
+    // `lower_range` predates html-render-groups (originally for the
+    // deleted preview-segmented-cache path). Pass an empty Html-render
+    // map; rebase_project_for_segment doesn't expose group-aware
+    // semantics today.
+    lower(
+        &rebased,
+        target,
+        inline_sub_paths,
+        template_renders,
+        &Default::default(),
+    )
 }
 
 /// Clone `project` with layers rebased into segment-local time. Drops audio

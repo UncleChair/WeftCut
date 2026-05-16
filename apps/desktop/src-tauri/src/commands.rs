@@ -1822,8 +1822,17 @@ pub async fn compile_project(
     let template_renders = ir::materialize_templates(&snap, &cache, &app)
         .await
         .map_err(|e| e.to_string())?;
-    let graph = ir::lower(&snap, target, &inline_subs, &template_renders)
+    let html_group_renders = ir::materialize::materialize_html_groups(&snap, &cache, &app)
+        .await
         .map_err(|e| e.to_string())?;
+    let graph = ir::lower(
+        &snap,
+        target,
+        &inline_subs,
+        &template_renders,
+        &html_group_renders,
+    )
+    .map_err(|e| e.to_string())?;
     let plan = ir::emit_ffmpeg(&graph);
     Ok(CompiledGraph {
         // CompiledGraph is shown in a debug panel — just the paths, no

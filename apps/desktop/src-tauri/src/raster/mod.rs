@@ -16,6 +16,7 @@
 //!   Linux:   `webkit_web_view_get_snapshot` (async; soft spot — fall back to bundled
 //!            headless Chromium via `chromiumoxide` if WebKitGTK misbehaves).
 
+pub mod composition;
 pub mod html_group;
 pub mod template;
 
@@ -320,7 +321,7 @@ async fn inject_props(window: &tauri::WebviewWindow, canonical_json: &str) -> Re
 /// Dispatch `__seek(t)` and poll `__seek_status` until the async awaits
 /// inside the shim (rAF flush + fonts.ready + one real compositor frame)
 /// complete. Returns when `done >= seq` or after `MAX_WAIT_MS`.
-async fn wait_seek(window: &tauri::WebviewWindow, t: f64) -> Result<(), String> {
+pub async fn wait_seek(window: &tauri::WebviewWindow, t: f64) -> Result<(), String> {
     const POLL_MS: u64 = 10;
     const MAX_WAIT_MS: u128 = 2_000;
     let raw_seq = eval_async(window, format!("window.__seek_dispatch({t})")).await?;
@@ -367,7 +368,7 @@ fn parse_done_field(inner: &str) -> Option<i64> {
     tail[..end].parse().ok()
 }
 
-async fn capture_via_webview(
+pub async fn capture_via_webview(
     window: &tauri::WebviewWindow,
     dest: &std::path::Path,
 ) -> Result<u64, String> {

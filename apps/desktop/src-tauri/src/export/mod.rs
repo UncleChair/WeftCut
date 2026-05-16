@@ -117,7 +117,21 @@ async fn run_render_inner(
     let template_renders = crate::ir::materialize_templates(project, &cache, &app)
         .await
         .context("materialize templates")?;
-    let graph = lower(project, target, &inline_subs, &template_renders).context("lower IR")?;
+    // Phase H.5 — materialize Html-render groups (composition → PNG seq
+    // in the raster cache). Per-group cache hits short-circuit the
+    // webview entirely on subsequent exports.
+    let html_group_renders =
+        crate::ir::materialize::materialize_html_groups(project, &cache, &app)
+            .await
+            .context("materialize html-render groups")?;
+    let graph = lower(
+        project,
+        target,
+        &inline_subs,
+        &template_renders,
+        &html_group_renders,
+    )
+    .context("lower IR")?;
     let plan = emit_ffmpeg(&graph);
 
     let total_us = project.composition.duration_us.max(1_000_000);
