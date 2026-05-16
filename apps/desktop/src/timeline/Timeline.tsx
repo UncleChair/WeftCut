@@ -28,7 +28,10 @@ import { WaveformCanvas } from "./WaveformCanvas";
 const DEFAULT_PX_PER_SEC = 80;
 const MIN_PX_PER_SEC = 8;
 const MAX_PX_PER_SEC = 800;
-const DEFAULT_TRACK_HEIGHT = 36;
+// V.6 (A/B-roll v2): default row is taller so combined V+A rows have
+// room for a thumbnail strip (top half) + waveform strip (bottom half).
+// Single-class tracks still fit comfortably at this height.
+const DEFAULT_TRACK_HEIGHT = 56;
 const MIN_TRACK_HEIGHT = 24;
 const MAX_TRACK_HEIGHT = 200;
 const MIN_LAYER_DURATION_US = 100_000;
@@ -70,6 +73,50 @@ interface VisualTrack {
   /// a divider line above it. Today the boundaries are: between the video
   /// stack and subtitles, and between subtitles and the audio stack.
   isGroupStart: boolean;
+}
+
+/// V.6 layer-overlap class. Visual-class layers (VideoClip,
+/// ImageOverlay, Color, Template, Text, Subtitles) can't overlap each
+/// other on a track; Audio can't overlap Audio. Visual + Audio CAN
+/// coexist at the same time — that's the AE-style "combined row"
+/// trigger.
+type LayerOverlapClass = "visual" | "audio";
+
+function layerOverlapClass(layer: LayerSummary): LayerOverlapClass {
+  return layer.params.kind === "Audio" ? "audio" : "visual";
+}
+
+/// Vertical slice the layer occupies within its track row:
+///   - "full"   — uses the entire row height (default; no opposite-
+///                class layer overlaps in time)
+///   - "top"    — uses the top half (Visual layer paired with an
+///                Audio layer at the same time slot)
+///   - "bottom" — uses the bottom half (Audio layer paired with a
+///                Visual layer at the same time slot)
+type LayerSlice = "full" | "top" | "bottom";
+
+function computeLayerSlices(
+  layers: readonly LayerSummary[],
+): Map<string, LayerSlice> {
+  // Walk all (visual, audio) pairs; any overlap in time flips both
+  // sides to half-height. O(V × A) per track, which is fine because a
+  // typical track has at most a handful of layers.
+  const slices = new Map<string, LayerSlice>();
+  const visual = layers.filter((l) => layerOverlapClass(l) === "visual");
+  const audio = layers.filter((l) => layerOverlapClass(l) === "audio");
+  for (const v of visual) {
+    for (const a of audio) {
+      if (v.t_end_us > a.t_start_us && a.t_end_us > v.t_start_us) {
+        slices.set(v.id, "top");
+        slices.set(a.id, "bottom");
+      }
+    }
+  }
+  // Layers that didn't get a half-slot stay full-height.
+  for (const l of layers) {
+    if (!slices.has(l.id)) slices.set(l.id, "full");
+  }
+  return slices;
 }
 
 // Accretion-from-middle ordering (`docs/ab-roll-redesign` Q3 + Q11).
@@ -945,23 +992,31 @@ function TrackLane({
       {dragOverX !== null && (
         <div className="drop-indicator" style={{ left: dragOverX }} />
       )}
-      {track.layers.map((layer) => (
-        <LayerBlock
-          key={layer.id}
-          layer={layer}
-          trackId={track.id}
-          trackKind={track.kind}
-          pxPerSec={pxPerSec}
-          laneHeight={height}
-          isPrimary={selectedLayerId === layer.id}
-          isSelected={selectedLayerIds.has(layer.id)}
-          groupId={groupByLayerId.get(layer.id) ?? null}
-          dragState={dragState}
-          onSelect={onSelect}
-          onSelectFromClick={onSelectFromClick}
-          onDragStart={onDragStart}
-        />
-      ))}
+      {(() => {
+        // V.6: compute per-layer slice once per track render. Layers
+        // with a co-located opposite-class layer render half-height
+        // (top for visual, bottom for audio) so the user sees both in
+        // one row. Single-class layers fill the row at full height.
+        const slices = computeLayerSlices(track.layers);
+        return track.layers.map((layer) => (
+          <LayerBlock
+            key={layer.id}
+            layer={layer}
+            trackId={track.id}
+            trackKind={track.kind}
+            pxPerSec={pxPerSec}
+            laneHeight={height}
+            slice={slices.get(layer.id) ?? "full"}
+            isPrimary={selectedLayerId === layer.id}
+            isSelected={selectedLayerIds.has(layer.id)}
+            groupId={groupByLayerId.get(layer.id) ?? null}
+            dragState={dragState}
+            onSelect={onSelect}
+            onSelectFromClick={onSelectFromClick}
+            onDragStart={onDragStart}
+          />
+        ));
+      })()}
       <div
         className="track-resize-handle"
         title={t("timeline.resize_track_hint", {
@@ -979,6 +1034,7 @@ function LayerBlock({
   trackKind,
   pxPerSec,
   laneHeight,
+  slice,
   isPrimary,
   isSelected,
   groupId,
@@ -992,6 +1048,10 @@ function LayerBlock({
   trackKind: string;
   pxPerSec: number;
   laneHeight: number;
+  /// V.6 vertical slot. "full" = entire row; "top" = top half (visual
+  /// layer paired with audio); "bottom" = bottom half (audio paired
+  /// with visual). Determines the rendered height + top offset.
+  slice: LayerSlice;
   /// Primary selection (drives PropertyPanel). One layer at a time.
   isPrimary: boolean;
   /// Member of the current selection set (highlight only).
@@ -1077,6 +1137,30 @@ function LayerBlock({
 
   const layerWidthPx = Math.max(width, 4);
 
+  // V.6 vertical slot. Each row has a 4px outer breathing room so the
+  // chip doesn't touch the row edges. Within that interior:
+  //   - "full"   → one block spans top:4 to bottom-4 (legacy behavior)
+  //   - "top"    → top half (4 → midline-1)
+  //   - "bottom" → bottom half (midline+1 → height-4)
+  // The 1px gap at the midline visually separates V from A in the
+  // combined-row case so the user sees they're hit-test independent.
+  const ROW_PADDING = 4;
+  const interiorTop = ROW_PADDING;
+  const interiorHeight = Math.max(8, laneHeight - 2 * ROW_PADDING);
+  const halfHeight = Math.max(8, Math.floor((interiorHeight - 1) / 2));
+  let sliceTop: number;
+  let sliceHeight: number;
+  if (slice === "full") {
+    sliceTop = interiorTop;
+    sliceHeight = interiorHeight;
+  } else if (slice === "top") {
+    sliceTop = interiorTop;
+    sliceHeight = halfHeight;
+  } else {
+    sliceTop = interiorTop + halfHeight + 1;
+    sliceHeight = interiorHeight - halfHeight - 1;
+  }
+
   // `docs/group-system.md` — tinted left border + chain-link icon hue
   // derived from group_id so all members share an accent color.
   const groupStyle: React.CSSProperties = {};
@@ -1087,14 +1171,16 @@ function LayerBlock({
 
   return (
     <div
-      className={`timeline-layer ${isPrimary ? "is-primary" : ""} ${
+      className={`timeline-layer slice-${slice} ${isPrimary ? "is-primary" : ""} ${
         isSelected ? "is-selected" : ""
       } ${isDragging ? "is-dragging" : ""} ${layer.locked ? "is-locked" : ""} ${
         movedAcrossTracks ? "is-ghost" : ""
       } ${groupId !== null ? "is-grouped" : ""}`}
       style={{
         left,
+        top: sliceTop,
         width: layerWidthPx,
+        height: sliceHeight,
         background: layer.color_hint,
         opacity: movedAcrossTracks
           ? 0.3
@@ -1151,7 +1237,7 @@ function LayerBlock({
             srcInUs={liveSrcIn}
             srcOutUs={liveSrcOut}
             width={layerWidthPx}
-            height={Math.max(8, laneHeight - 4)}
+            height={Math.max(8, sliceHeight - 4)}
           />
         );
       })()}
