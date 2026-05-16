@@ -32,9 +32,11 @@ import {
   PROBE_CANVAS_W,
   PROBE_TARGET,
   PROBE_TOLERANCE,
+  buildComposition,
   buildProbeHtml,
   checkProbePixel,
 } from "./composition/CompositionGenerator";
+import { ENGINE_SOURCE, type CompositionState } from "./composition/engine";
 import { htmlGroupProbeTransparency, type HtmlGroupProbeResult } from "../../ipc";
 
 /// Mount the probe composition inside a `<div>` + outer Shadow DOM. Returns
@@ -195,6 +197,202 @@ export function SpikeHtmlGroup() {
       </button>
 
       <ExportProbeView state={exportProbe} />
+
+      <CompositionSmokeTest />
+    </div>
+  );
+}
+
+// ============================================================
+// Composition smoke test (H.3)
+// ============================================================
+
+/// Fixture composition for the smoke test — exercises both basic layer
+/// kinds shipped in H.3 (Color background + Text overlay) and the
+/// engine's time-gating (Text shows only during [1s, 2s]).
+function fixtureCompositionState(): CompositionState {
+  return {
+    width: 640,
+    height: 180,
+    layers: [
+      {
+        id: "L-bg",
+        z: 0,
+        t_start_us: 0,
+        t_end_us: 3_000_000,
+        opacity: 1,
+        x: 0,
+        y: 0,
+        scale_x: 1,
+        scale_y: 1,
+        params: {
+          kind: "Color",
+          rgba: { r: 30, g: 64, b: 120, a: 255 },
+          width: 640,
+          height: 180,
+        },
+      },
+      {
+        id: "L-title",
+        z: 1,
+        t_start_us: 1_000_000,
+        t_end_us: 2_000_000,
+        opacity: 1,
+        x: 40,
+        y: 60,
+        scale_x: 1,
+        scale_y: 1,
+        params: {
+          kind: "Text",
+          content: "Hello WeftCut — visible only between 1s and 2s",
+          font_family: "system-ui, sans-serif",
+          font_size_px: 28,
+          color: { r: 255, g: 255, b: 255, a: 255 },
+        },
+      },
+    ],
+  };
+}
+
+interface CompositionRuntime {
+  setTime: (tSeconds: number) => void;
+}
+
+/// Mount a composition inside a fresh shadow root with a per-instance
+/// engine execution context. This prefigures the H.4 mount strategy:
+/// `new Function(document, window, ...)` with the host shadow root
+/// shadowed as `document` and a Proxy `window` so the engine's writes
+/// to `window.__setTime` land on per-instance state instead of the
+/// real `window`. Without per-instance shadowing, multiple compositions
+/// on one page would overwrite each other's `__setTime` global.
+function mountComposition(
+  host: HTMLDivElement,
+  state: CompositionState,
+): CompositionRuntime | null {
+  if (host.shadowRoot) {
+    // Strict-mode double-effect — bail; shadow already attached.
+    return null;
+  }
+  const shadow = host.attachShadow({ mode: "open" });
+  const artifact = buildComposition(state);
+  shadow.innerHTML = artifact.shadow;
+
+  // The state-blob `<script type="application/json">` survives
+  // innerHTML; the engine `<script>` does NOT execute via innerHTML in
+  // any browser (HTML5 spec). Remove the inert engine script and run
+  // it explicitly via `new Function` with shadowed globals.
+  const engineScripts = Array.from(shadow.querySelectorAll('script:not([type="application/json"])'));
+  engineScripts.forEach((s) => s.remove());
+
+  // Per-instance window proxy: local properties win, everything else
+  // falls through to the real window. The engine's writes to
+  // `__setTime` / `__seek` / `__weftcutCompositionReady` land here.
+  const localWindow: Record<string | symbol, unknown> = {};
+  const winProxy = new Proxy(localWindow, {
+    get(target, prop) {
+      if (prop in target) return target[prop];
+      return (window as unknown as Record<string | symbol, unknown>)[prop];
+    },
+    set(target, prop, value) {
+      target[prop] = value;
+      return true;
+    },
+    has(target, prop) {
+      return prop in target || prop in window;
+    },
+  });
+
+  try {
+    // Shadow root acts as `document` so the engine's
+    // `getElementById(STATE_SCRIPT_ID)` finds the embedded state blob,
+    // and its querySelectorAll for layer hosts walks the shadow tree.
+    // `requestAnimationFrame` needs to be the real one — pull from the
+    // host window. `console` falls through the proxy too.
+    const fn = new Function("document", "window", "requestAnimationFrame", ENGINE_SOURCE);
+    fn(shadow, winProxy, window.requestAnimationFrame.bind(window));
+  } catch (e) {
+    console.error("SpikeHtmlGroup: composition engine execution failed", e);
+    return null;
+  }
+
+  const setTime = (winProxy as { __setTime?: (t: number) => void }).__setTime;
+  if (typeof setTime !== "function") {
+    console.error("SpikeHtmlGroup: engine did not register __setTime");
+    return null;
+  }
+  return { setTime: (t: number) => setTime(t) };
+}
+
+function CompositionSmokeTest() {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const runtimeRef = useRef<CompositionRuntime | null>(null);
+  const [tSeconds, setTSeconds] = useState(0);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const runtime = mountComposition(host, fixtureCompositionState());
+    if (!runtime) return;
+    runtimeRef.current = runtime;
+    runtime.setTime(0);
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    runtimeRef.current?.setTime(tSeconds);
+  }, [tSeconds]);
+
+  return (
+    <div style={{ marginTop: 32 }}>
+      <h2>Composition generator — H.3 smoke test</h2>
+      <p style={{ color: "#aaa", maxWidth: 720 }}>
+        Generates a 640×180 composition with two layers (blue Color
+        background + a Text overlay visible only between 1s and 2s) and
+        mounts it inside a shadow root with a per-instance engine. Drag
+        the slider — the text should appear at t=1.0 and disappear at
+        t=2.0. If time-gating works, H.3's engine logic is sound.
+      </p>
+      <div style={{ display: "flex", gap: 24, alignItems: "flex-start", flexWrap: "wrap", marginTop: 12 }}>
+        <figure style={{ margin: 0 }}>
+          <div
+            ref={hostRef}
+            style={{
+              width: 640,
+              height: 180,
+              outline: "1px solid #444",
+              backgroundImage: checkerBg(),
+              backgroundColor: "#888",
+              backgroundSize: "20px 20px",
+            }}
+          />
+          <figcaption style={{ color: "#aaa", marginTop: 6, fontSize: 13 }}>
+            Composition mount (over checker so transparent regions show through)
+          </figcaption>
+        </figure>
+        <div style={{ minWidth: 280 }}>
+          <label style={{ display: "block", color: "#aaa", fontSize: 13, marginBottom: 6 }}>
+            t = {tSeconds.toFixed(2)} s
+          </label>
+          <input
+            type="range"
+            min={0}
+            max={3}
+            step={0.05}
+            value={tSeconds}
+            onChange={(e) => setTSeconds(Number(e.target.value))}
+            style={{ width: 280 }}
+            disabled={!mounted}
+          />
+          <div style={{ color: "#888", fontSize: 12, marginTop: 8, fontFamily: "monospace" }}>
+            Layer 0 (blue Color): visible [0, 3]<br />
+            Layer 1 (white Text): visible [1, 2]
+          </div>
+          <div style={{ color: mounted ? "#4f4" : "#f55", fontSize: 13, marginTop: 8 }}>
+            engine: {mounted ? "mounted" : "not mounted"}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
