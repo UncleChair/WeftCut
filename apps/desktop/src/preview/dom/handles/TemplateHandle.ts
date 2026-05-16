@@ -138,6 +138,9 @@ function buildSrcdoc(template: TemplateSummary, props: Record<string, unknown>):
 
 export class TemplateHandle implements LayerHandle {
   private iframe: HTMLIFrameElement;
+  /// Active blob: URL feeding the iframe's `src`. Revoked on each
+  /// refresh + on dispose to avoid leaks.
+  private blobUrl: string | null = null;
   /// Track current template id so we re-mount only when it changes,
   /// not on every param edit.
   private currentTemplateId: string | null = null;
@@ -218,6 +221,10 @@ export class TemplateHandle implements LayerHandle {
     if (this.disposed) return;
     this.disposed = true;
     this.iframe.removeEventListener("load", this.onIframeLoad);
+    if (this.blobUrl) {
+      URL.revokeObjectURL(this.blobUrl);
+      this.blobUrl = null;
+    }
     if (this.iframe.parentNode) {
       this.iframe.parentNode.removeChild(this.iframe);
     }
@@ -256,13 +263,23 @@ export class TemplateHandle implements LayerHandle {
     this.appliedOpacity = -1;
     this.ready = false;
 
-    // Build srcdoc with the layer's actual props (validated server-side
+    // Build the HTML with the layer's actual props (validated server-side
     // against the template manifest). The injected `<script>window.__props__ = ...`
     // runs before the template's own script, so its `start()` poll
     // resolves immediately to the right values.
+    //
+    // Why blob URL not srcdoc: WebView2 paints a hardcoded white
+    // canvas under srcdoc iframes that no CSS path can override.
+    // Loading from a blob URL goes through Chromium's regular
+    // document-loading path which respects transparent CSS.
     const props = layer.params.props ?? {};
-    const srcdoc = buildSrcdoc(tpl, props);
-    this.iframe.srcdoc = srcdoc;
+    const html = buildSrcdoc(tpl, props);
+    if (this.blobUrl) {
+      URL.revokeObjectURL(this.blobUrl);
+      this.blobUrl = null;
+    }
+    this.blobUrl = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+    this.iframe.src = this.blobUrl;
     this.appliedPropsSig = JSON.stringify(props);
   }
 
