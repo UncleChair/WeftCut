@@ -2716,7 +2716,22 @@ impl ServerHandler for WeftCutServer {
                             ));
                         }
                     };
-                match ir::lower(&snap, target, &inline_subs, &template_renders) {
+                let html_group_renders = match ir::materialize::materialize_html_groups(
+                    &snap,
+                    &self.cache,
+                    &self.app,
+                )
+                .await
+                {
+                    Ok(m) => m,
+                    Err(e) => {
+                        return Err(McpError::internal_error(
+                            format!("materialize html-render groups: {e}"),
+                            None,
+                        ));
+                    }
+                };
+                match ir::lower(&snap, target, &inline_subs, &template_renders, &html_group_renders) {
                     Ok(graph) => serde_json::to_value(&graph).map_err(serialize_err)?,
                     Err(e) => {
                         return Err(McpError::internal_error(

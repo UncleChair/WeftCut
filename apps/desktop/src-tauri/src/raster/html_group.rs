@@ -24,10 +24,17 @@
 //! generator, only the TS side will own the content and the Rust side
 //! will accept a passed-in HTML string.
 
+use std::path::{Path, PathBuf};
+
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, LogicalSize, Manager};
 
-use super::{capture_png_bytes, navigate_to_html, set_transparent_background};
+use super::{
+    capture_png_bytes, capture_via_webview, navigate_to_html, set_transparent_background,
+    wait_seek,
+};
+use super::composition::{CompositionState, build_composition_document};
 
 /// Probe canvas dimensions. Kept in sync with the TS constants
 /// (`PROBE_CANVAS_W` / `PROBE_CANVAS_H`).
@@ -87,6 +94,191 @@ pub struct ProbeResult {
     pub width: u32,
     pub height: u32,
 }
+
+// ============================================================
+// Phase H.5 — group materialization
+// ============================================================
+
+/// Rasterizer version for html-group outputs. Bumped independently
+/// from the template `RASTERIZER_VERSION` so a template-side fix
+/// doesn't gratuitously invalidate every html-group output (and vice
+/// versa).
+const HTML_GROUP_RASTERIZER_VERSION: u32 = 1;
+
+/// Per-group materialization result the IR lower pass consumes.
+/// Shape parallels `TemplateRenderInfo` (`ir::materialize`) so the
+/// lowering can emit a `PngSeq` chain identically.
+#[derive(Clone, Debug)]
+pub struct HtmlGroupRender {
+    /// `dir/frame_%05d.png` printf glob fed to ffmpeg via `-i`.
+    pub pattern_path: PathBuf,
+    pub frame_count: usize,
+    pub fps_num: u32,
+    pub fps_den: u32,
+    pub duration_us: i64,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct HtmlGroupManifest {
+    rasterizer_version: u32,
+    group_id: String,
+    state_hash: String,
+    fps_num: u32,
+    fps_den: u32,
+    width: u32,
+    height: u32,
+    duration_us: i64,
+    frame_count: usize,
+}
+
+/// Stable content key over a CompositionState. Captures every field
+/// the engine reads at runtime — changes invalidate cached frames.
+pub fn state_hash(state: &CompositionState) -> String {
+    // serde_json is deterministic for our shape (no maps with random
+    // iteration order — Vec layers preserve order). Layer fields are
+    // primitives + simple enums, so the JSON canonicalization is
+    // stable across runs.
+    let json = serde_json::to_vec(state).expect("CompositionState serialize");
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(&HTML_GROUP_RASTERIZER_VERSION.to_le_bytes());
+    hasher.update(&json);
+    hasher.finalize().to_hex().to_string()
+}
+
+/// Materialize one Html-mode group's composition to a PNG sequence.
+///
+/// The output dir lives under `<cache>/raster/<state_hash>/` (sharing
+/// the cache layout's `raster_dir` with templates — cache keys are
+/// disjoint by structural prefix). Re-runs against an unchanged
+/// composition state hit the cache and skip the webview entirely.
+///
+/// H.5 v1 limitation: `VideoClip` and `ImageOverlay` members render
+/// as translucent placeholders inside the composition (the
+/// composition generator emits them as such). Real per-frame video
+/// extraction lands in a H.5 follow-up; for v1 the export pipeline is
+/// architecturally complete but visual output for video-bearing
+/// html-groups isn't pixel-correct yet.
+pub async fn materialize_group(
+    app: &AppHandle,
+    cache: &crate::cache::CacheLayout,
+    group_id: &str,
+    state: &CompositionState,
+    fps_num: u32,
+    fps_den: u32,
+    duration_us: i64,
+) -> Result<HtmlGroupRender, String> {
+    let key = state_hash(state);
+    let dest_dir = cache.raster_dir(&key);
+    let manifest_path = dest_dir.join("manifest.json");
+
+    let fps_num = fps_num.max(1);
+    let fps_den = fps_den.max(1);
+    let fps_f = fps_num as f64 / fps_den as f64;
+    let dur_s = duration_us.max(1) as f64 / 1_000_000.0;
+    let frame_count = ((dur_s * fps_f).ceil() as usize).max(1);
+
+    if let Some(_loaded) = load_cached(&dest_dir, &manifest_path, frame_count) {
+        return Ok(HtmlGroupRender {
+            pattern_path: dest_dir.join("frame_%05d.png"),
+            frame_count,
+            fps_num,
+            fps_den,
+            duration_us,
+            width: state.width,
+            height: state.height,
+        });
+    }
+
+    let window = app
+        .get_webview_window("raster-worker")
+        .ok_or_else(|| "raster-worker window not spawned".to_string())?;
+
+    set_transparent_background(&window).await?;
+    window
+        .set_size(LogicalSize::new(state.width as f64, state.height as f64))
+        .map_err(|e| format!("resize raster worker to {}x{}: {e}", state.width, state.height))?;
+
+    let document =
+        build_composition_document(state).map_err(|e| format!("compose document: {e}"))?;
+    navigate_to_html(&window, &document).await?;
+
+    // Brief settle for the engine's initial-state JSON parse + first
+    // paint. The first __seek's await still covers fonts.ready + rAF
+    // but the immediate-after-navigate `document.readyState` going to
+    // `complete` doesn't guarantee the script has fully run.
+    tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+
+    let tmp_dir = crate::cache::temp_path(&dest_dir);
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+    std::fs::create_dir_all(&tmp_dir)
+        .map_err(|e| format!("create html-group tmp dir {}: {e}", tmp_dir.display()))?;
+
+    for idx in 0..frame_count {
+        let t = idx as f64 / fps_f;
+        wait_seek(&window, t).await?;
+        let path = tmp_dir.join(format!("frame_{idx:05}.png"));
+        let _ = capture_via_webview(&window, &path).await?;
+    }
+
+    let manifest = HtmlGroupManifest {
+        rasterizer_version: HTML_GROUP_RASTERIZER_VERSION,
+        group_id: group_id.to_string(),
+        state_hash: key.clone(),
+        fps_num,
+        fps_den,
+        width: state.width,
+        height: state.height,
+        duration_us,
+        frame_count,
+    };
+    let manifest_bytes =
+        serde_json::to_vec_pretty(&manifest).map_err(|e| format!("manifest serialize: {e}"))?;
+    std::fs::write(tmp_dir.join("manifest.json"), manifest_bytes)
+        .map_err(|e| format!("write manifest: {e}"))?;
+
+    if dest_dir.exists() {
+        let _ = std::fs::remove_dir_all(&dest_dir);
+    }
+    std::fs::rename(&tmp_dir, &dest_dir)
+        .map_err(|e| format!("promote html-group cache dir {}: {e}", dest_dir.display()))?;
+
+    Ok(HtmlGroupRender {
+        pattern_path: dest_dir.join("frame_%05d.png"),
+        frame_count,
+        fps_num,
+        fps_den,
+        duration_us,
+        width: state.width,
+        height: state.height,
+    })
+}
+
+fn load_cached(dest_dir: &Path, manifest_path: &Path, expected_count: usize) -> Option<()> {
+    if !manifest_path.exists() {
+        return None;
+    }
+    let bytes = std::fs::read(manifest_path).ok()?;
+    let manifest: HtmlGroupManifest = serde_json::from_slice(&bytes).ok()?;
+    if manifest.frame_count != expected_count {
+        return None;
+    }
+    if manifest.rasterizer_version != HTML_GROUP_RASTERIZER_VERSION {
+        return None;
+    }
+    for idx in 0..expected_count {
+        let path = dest_dir.join(format!("frame_{idx:05}.png"));
+        if !crate::cache::cached_ok(&path) {
+            return None;
+        }
+    }
+    Some(())
+}
+
+// ============================================================
+// H.0 transparency probe (unchanged)
+// ============================================================
 
 /// Run the export-side transparency probe.
 ///

@@ -42,6 +42,27 @@ pub struct TemplateRenderInfo {
 
 pub type TemplateRenders = imbl::HashMap<LayerId, TemplateRenderInfo>;
 
+/// Per-Html-group materialization result. Parallels `TemplateRenderInfo`
+/// (the lower pass emits the same `PngSeq → SetPts → Overlay` chain) but
+/// also tracks the group's earliest-member t_start so the SetPts offset
+/// places the composition correctly on the parent timeline.
+#[derive(Clone, Debug)]
+pub struct HtmlGroupRenderInfo {
+    pub pattern_path: PathBuf,
+    pub frame_count: usize,
+    pub fps_num: u32,
+    pub fps_den: u32,
+    pub duration_us: i64,
+    pub width: u32,
+    pub height: u32,
+    /// Earliest visual member's `t_start_us` in main-timeline. The IR
+    /// `SetPts` node uses this as its offset; engine-side time is
+    /// composition-local (member.t_start − this value).
+    pub t_start_us: i64,
+}
+
+pub type HtmlGroupRenders = imbl::HashMap<crate::state::ids::GroupId, HtmlGroupRenderInfo>;
+
 #[derive(Debug, Error)]
 pub enum MaterializeError {
     #[error("write inline subtitle for layer {layer}: {source}")]
@@ -200,6 +221,267 @@ pub async fn materialize_templates(
         }
     }
     Ok(out)
+}
+
+// ============================================================
+// Phase H.5 — html-render groups materialization
+// ============================================================
+
+/// Walk every `Html`-mode group, distill its `CompositionState`, and
+/// drive the offscreen raster worker to produce a PNG sequence per
+/// group. Returns the resulting `HtmlGroupRenders` map; `lower()`
+/// consults it to emit `PngSeq` nodes in place of the group's
+/// individual member overlays.
+///
+/// H.5 v1 limitation: VideoClip + ImageOverlay members render as
+/// placeholders inside the composition (real per-frame extraction
+/// arrives in the H.5 follow-up). Template + Subtitles members are
+/// skipped with a warn — the composition generator + engine don't
+/// support those kinds yet (H.3 follow-up).
+pub async fn materialize_html_groups(
+    project: &Project,
+    cache: &CacheLayout,
+    app: &tauri::AppHandle,
+) -> Result<HtmlGroupRenders, MaterializeError> {
+    use crate::raster::composition::{
+        CompositionLayer, CompositionLayerParams, CompositionState, Rgba8,
+    };
+    use crate::raster::html_group;
+    use crate::state::group::GroupRenderMode;
+    use crate::state::layer::LayerParams;
+
+    let mut out = HtmlGroupRenders::new();
+    let fps_num = project.composition.fps.num.max(1);
+    let fps_den = project.composition.fps.den.max(1);
+    let canvas_w = project.composition.width;
+    let canvas_h = project.composition.height;
+
+    // Build a layer-id → (Layer, track_index) lookup once.
+    let mut layer_lookup: std::collections::HashMap<
+        LayerId,
+        (&crate::state::layer::Layer, usize),
+    > = std::collections::HashMap::new();
+    for (idx, track) in project.tracks.iter().enumerate() {
+        for layer in track.layers.iter() {
+            layer_lookup.insert(layer.id, (layer, idx));
+        }
+    }
+
+    for group in project.groups.iter() {
+        if group.render_mode != GroupRenderMode::Html {
+            continue;
+        }
+
+        // Collect supported visual members.
+        let mut members: Vec<(&crate::state::layer::Layer, usize)> = Vec::new();
+        for &lid in group.members.iter() {
+            let Some(&(layer, track_idx)) = layer_lookup.get(&lid) else {
+                continue;
+            };
+            if !layer.enabled {
+                continue;
+            }
+            match &layer.params {
+                LayerParams::Audio(_) => continue, // routed via amix
+                LayerParams::Template(_) | LayerParams::Subtitles(_) => {
+                    tracing::warn!(
+                        "html-render group {}: skipping layer {} (kind={}) — H.3 follow-up",
+                        group.id,
+                        lid,
+                        layer_kind_str(&layer.params),
+                    );
+                    continue;
+                }
+                LayerParams::Color(_)
+                | LayerParams::Text(_)
+                | LayerParams::VideoClip(_)
+                | LayerParams::ImageOverlay(_) => {
+                    members.push((layer, track_idx));
+                }
+            }
+        }
+        if members.is_empty() {
+            continue;
+        }
+        members.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.t_start_us.cmp(&b.0.t_start_us)));
+
+        let group_t_start_us = members
+            .iter()
+            .map(|(l, _)| l.t_start_us)
+            .min()
+            .unwrap_or(0);
+        let group_t_end_us = members
+            .iter()
+            .map(|(l, _)| l.t_end_us)
+            .max()
+            .unwrap_or(group_t_start_us);
+        let duration_us = (group_t_end_us - group_t_start_us).max(1);
+
+        // Distill composition state.
+        let layers: Vec<CompositionLayer> = members
+            .iter()
+            .enumerate()
+            .map(|(idx, (l, _))| {
+                let params = composition_params(&l.params);
+                let (opacity, x, y, scale_x, scale_y) = position_for(&l.params);
+                CompositionLayer {
+                    id: l.id.to_string(),
+                    z: idx as u32,
+                    t_start_us: l.t_start_us - group_t_start_us,
+                    t_end_us: l.t_end_us - group_t_start_us,
+                    opacity,
+                    x,
+                    y,
+                    scale_x,
+                    scale_y,
+                    params,
+                }
+            })
+            .collect();
+
+        let state = CompositionState {
+            width: canvas_w,
+            height: canvas_h,
+            layers,
+        };
+
+        let group_id_str = group.id.to_string();
+        let render = html_group::materialize_group(
+            app,
+            cache,
+            &group_id_str,
+            &state,
+            fps_num,
+            fps_den,
+            duration_us,
+        )
+        .await
+        .map_err(|detail| MaterializeError::Render {
+            // No layer id here — the error is per-group. Surface the
+            // group id as the "layer" slot for consistency with the
+            // existing error shape until a richer variant lands.
+            layer: members[0].0.id,
+            detail: format!("html-group {}: {detail}", group_id_str),
+        })?;
+
+        out.insert(
+            group.id,
+            HtmlGroupRenderInfo {
+                pattern_path: render.pattern_path,
+                frame_count: render.frame_count,
+                fps_num: render.fps_num,
+                fps_den: render.fps_den,
+                duration_us: render.duration_us,
+                width: render.width,
+                height: render.height,
+                t_start_us: group_t_start_us,
+            },
+        );
+
+        // Suppress unused-Rgba8 warning when the only constructed
+        // variant is via composition_params below.
+        let _ = std::marker::PhantomData::<Rgba8>;
+    }
+    Ok(out)
+}
+
+fn position_for(params: &crate::state::layer::LayerParams) -> (f64, f64, f64, f64, f64) {
+    use crate::state::animated::Animated;
+    use crate::state::layer::LayerParams;
+    fn static_or<T: Copy>(a: &Animated<T>, default: T) -> T {
+        match a {
+            Animated::Static(v) => *v,
+            Animated::Keyframed(kfs) => kfs.front().map(|k| k.value).unwrap_or(default),
+        }
+    }
+    match params {
+        LayerParams::VideoClip(p) => (
+            static_or(&p.opacity, 1.0),
+            static_or(&p.transform.x, 0.0),
+            static_or(&p.transform.y, 0.0),
+            static_or(&p.transform.scale_x, 1.0),
+            static_or(&p.transform.scale_y, 1.0),
+        ),
+        LayerParams::ImageOverlay(p) => (
+            static_or(&p.opacity, 1.0),
+            static_or(&p.transform.x, 0.0),
+            static_or(&p.transform.y, 0.0),
+            static_or(&p.transform.scale_x, 1.0),
+            static_or(&p.transform.scale_y, 1.0),
+        ),
+        LayerParams::Text(p) => (
+            static_or(&p.opacity, 1.0),
+            static_or(&p.transform.x, 0.0),
+            static_or(&p.transform.y, 0.0),
+            static_or(&p.transform.scale_x, 1.0),
+            static_or(&p.transform.scale_y, 1.0),
+        ),
+        LayerParams::Color(_) => (1.0, 0.0, 0.0, 1.0, 1.0),
+        _ => (1.0, 0.0, 0.0, 1.0, 1.0),
+    }
+}
+
+fn composition_params(
+    params: &crate::state::layer::LayerParams,
+) -> crate::raster::composition::CompositionLayerParams {
+    use crate::raster::composition::{CompositionLayerParams, Rgba8};
+    use crate::state::animated::Animated;
+    use crate::state::color::Rgba;
+    use crate::state::layer::LayerParams;
+
+    fn static_rgba(a: &Animated<Rgba>) -> Rgba {
+        match a {
+            Animated::Static(v) => *v,
+            Animated::Keyframed(kfs) => kfs.front().map(|k| k.value).unwrap_or(Rgba::BLACK),
+        }
+    }
+
+    match params {
+        LayerParams::Color(p) => CompositionLayerParams::Color {
+            rgba: rgba_to_8(static_rgba(&p.color)),
+            width: p.width,
+            height: p.height,
+        },
+        LayerParams::Text(p) => CompositionLayerParams::Text {
+            content: p.content.clone(),
+            font_family: p.font.family.clone(),
+            font_size_px: p.font.size_px as f64,
+            color: rgba_to_8(static_rgba(&p.color)),
+        },
+        LayerParams::VideoClip(p) => CompositionLayerParams::VideoClip {
+            media_id: p.media.to_string(),
+            src_in_us: p.src_in_us,
+            src_out_us: p.src_out_us,
+        },
+        LayerParams::ImageOverlay(p) => CompositionLayerParams::ImageOverlay {
+            media_id: p.media.to_string(),
+        },
+        // Defensive — caller filtered these out.
+        LayerParams::Audio(_) | LayerParams::Template(_) | LayerParams::Subtitles(_) => {
+            CompositionLayerParams::Color {
+                rgba: Rgba8 { r: 0, g: 0, b: 0, a: 0 },
+                width: 1,
+                height: 1,
+            }
+        }
+    }
+}
+
+fn rgba_to_8(c: crate::state::color::Rgba) -> crate::raster::composition::Rgba8 {
+    crate::raster::composition::Rgba8 { r: c.r, g: c.g, b: c.b, a: c.a }
+}
+
+fn layer_kind_str(params: &crate::state::layer::LayerParams) -> &'static str {
+    use crate::state::layer::LayerParams;
+    match params {
+        LayerParams::VideoClip(_) => "VideoClip",
+        LayerParams::ImageOverlay(_) => "ImageOverlay",
+        LayerParams::Text(_) => "Text",
+        LayerParams::Color(_) => "Color",
+        LayerParams::Audio(_) => "Audio",
+        LayerParams::Template(_) => "Template",
+        LayerParams::Subtitles(_) => "Subtitles",
+    }
 }
 
 #[cfg(test)]

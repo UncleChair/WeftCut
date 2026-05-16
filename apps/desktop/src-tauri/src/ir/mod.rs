@@ -1,4 +1,4 @@
-﻿//! Render graph IR: resolve â†’ pre-rasterize â†’ lower â†’ optimize â†’ validate â†’ emit.
+//! Render graph IR: resolve â†’ pre-rasterize â†’ lower â†’ optimize â†’ validate â†’ emit.
 //!
 //! One IR, two emit targets: ffmpeg `-filter_complex_script` for export and
 //! libmpv `--lavfi-complex` for live preview. Identical pixels at different scales.
@@ -159,7 +159,7 @@ mod tests {
     #[test]
     fn empty_project_emits_minimal_color_canvas() {
         let p = Project::new_blank("empty");
-        let g = lower(&p, fixture_target(), &Default::default(), &Default::default()).expect("lower");
+        let g = lower(&p, fixture_target(), &Default::default(), &Default::default(), &Default::default()).expect("lower");
         // Color base + OutV. No audio.
         assert_eq!(g.inputs.len(), 0);
         assert!(g.video_out.is_some());
@@ -175,7 +175,7 @@ mod tests {
     #[test]
     fn one_video_clip_lowers_to_decode_scale_fps_setpts_overlay() {
         let p = project_with_one_clip();
-        let g = lower(&p, fixture_target(), &Default::default(), &Default::default()).expect("lower");
+        let g = lower(&p, fixture_target(), &Default::default(), &Default::default(), &Default::default()).expect("lower");
         assert_eq!(g.inputs.len(), 1);
         assert_eq!(g.inputs[0].path.to_str().unwrap(), "/m/a.mp4");
         assert_eq!(g.inputs[0].framerate, None);
@@ -206,7 +206,7 @@ mod tests {
     #[test]
     fn ffmpeg_emit_matches_expected_clip_pipeline() {
         let p = project_with_one_clip();
-        let g = lower(&p, fixture_target(), &Default::default(), &Default::default()).expect("lower");
+        let g = lower(&p, fixture_target(), &Default::default(), &Default::default(), &Default::default()).expect("lower");
         let plan = emit_ffmpeg(&g);
 
         assert_eq!(plan.inputs.len(), 1);
@@ -269,7 +269,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
         p.media_pool.insert(media_id, media);
         p.tracks.push_back(track);
 
-        let g = lower(&p, fixture_target(), &Default::default(), &Default::default()).expect("lower");
+        let g = lower(&p, fixture_target(), &Default::default(), &Default::default(), &Default::default()).expect("lower");
         let plan = emit_ffmpeg(&g);
         assert!(plan.maps.contains(&"[aout]".to_string()));
         // Single audio source: no amix node, OutA wraps the Adelay directly.
@@ -348,7 +348,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
         p.media_pool.insert(media_id, media);
         p.tracks.push_back(track);
 
-        let g = lower(&p, fixture_target(), &Default::default(), &Default::default()).expect("lower");
+        let g = lower(&p, fixture_target(), &Default::default(), &Default::default(), &Default::default()).expect("lower");
         assert_eq!(g.inputs.len(), 1);
         assert!(matches!(
             g.nodes.iter().find(|n| matches!(n, IRNode::ImageDecode { .. })),
@@ -424,7 +424,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
         p.composition.duration_us = 5_000_000;
         p.tracks.push_back(track);
 
-        let g = lower(&p, fixture_target(), &Default::default(), &Default::default()).expect("lower");
+        let g = lower(&p, fixture_target(), &Default::default(), &Default::default(), &Default::default()).expect("lower");
         // No external inputs for a text-only project.
         assert!(g.inputs.is_empty());
         // Should contain a DrawText node.
@@ -513,7 +513,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
             return;
         }
         let p = Project::new_blank("empty");
-        let g = lower(&p, fixture_target(), &Default::default(), &Default::default()).expect("lower");
+        let g = lower(&p, fixture_target(), &Default::default(), &Default::default(), &Default::default()).expect("lower");
         let plan = emit_ffmpeg(&g);
 
         // -filter_complex_script reads from stdin when given `-`. Map the only
@@ -600,7 +600,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
         let mut p = Project::new_blank("text-render");
         p.composition.duration_us = 1_000_000;
         p.tracks.push_back(track);
-        let g = lower(&p, fixture_target(), &Default::default(), &Default::default()).expect("lower");
+        let g = lower(&p, fixture_target(), &Default::default(), &Default::default(), &Default::default()).expect("lower");
         let plan = emit_ffmpeg(&g);
 
         let Some((ok, out, stderr)) = run_graph_through_ffmpeg(
@@ -700,7 +700,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
         p.media_pool.insert(media_id, media);
         p.tracks.push_back(track);
 
-        let g = match lower(&p, fixture_target(), &Default::default(), &Default::default()) {
+        let g = match lower(&p, fixture_target(), &Default::default(), &Default::default(), &Default::default()) {
             Ok(g) => g,
             Err(e) => {
                 let _ = std::fs::remove_file(&srt_path);
@@ -793,7 +793,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
 
         let inline_subs = materialize_inline_subtitles(&p, &cache).expect("materialize");
         assert_eq!(inline_subs.len(), 1);
-        let g = lower(&p, fixture_target(), &inline_subs, &Default::default()).expect("lower");
+        let g = lower(&p, fixture_target(), &inline_subs, &Default::default(), &Default::default()).expect("lower");
         let plan = emit_ffmpeg(&g);
 
         let Some((ok, out, stderr)) = run_graph_through_ffmpeg(
@@ -907,7 +907,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
         // ever drifts away from "authorized overlap with matching duration".
         crate::state::validate::validate(&p).expect("validation");
 
-        let g = lower(&p, fixture_target(), &Default::default(), &Default::default()).expect("lower");
+        let g = lower(&p, fixture_target(), &Default::default(), &Default::default(), &Default::default()).expect("lower");
         let plan = emit_ffmpeg(&g);
 
         // The emitted graph MUST contain the alpha-fade clause and a
@@ -963,8 +963,8 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
     /// Stage E2 smoke: a Project with a Template layer + a hand-built
     /// `TemplateRenders` map (pointing at a fixture PNG sequence so the
     /// test doesn't depend on a webview) flows through
-    /// `lower → emit_ffmpeg → ffmpeg` into a non-empty mp4. Catches
-    /// regressions across the full Template → PngSeq → Overlay seam
+    /// `lower ? emit_ffmpeg ? ffmpeg` into a non-empty mp4. Catches
+    /// regressions across the full Template ? PngSeq ? Overlay seam
     /// without needing an offscreen webview in CI.
     #[test]
     fn template_layer_renders_through_ffmpeg() {
@@ -1051,7 +1051,7 @@ color=c=0x000000@1.000000:s=1920x1080:r=30:d=5 [c1];
             },
         );
 
-        let g = lower(&p, fixture_target(), &Default::default(), &renders).expect("lower");
+        let g = lower(&p, fixture_target(), &Default::default(), &renders, &Default::default()).expect("lower");
         let plan = emit_ffmpeg(&g);
 
         // Sanity: the input must carry the framerate flag; the graph must
