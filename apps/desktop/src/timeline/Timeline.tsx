@@ -20,6 +20,7 @@ import {
   type LayerSummary,
   type TrackSummary,
 } from "../ipc";
+import { useDisplayMode, toggleDisplayMode } from "../settings/appSettingsStore";
 import { WaveformCanvas } from "./WaveformCanvas";
 
 // Zoom + height bounds. The defaults match the pre-refactor constants so
@@ -275,7 +276,23 @@ export function Timeline({
 
   const groupByLayerId = useMemo(() => indexGroups(groups), [groups]);
 
-  const orderedTracks = useMemo(() => visualOrderedTracks(tracks), [tracks]);
+  // A/B-roll display mode comes from the app-level settings store
+  // (`docs/ab-roll-redesign`). The store hydrates on app mount via
+  // `wireAppSettingsStream`. Atomic selector — never include the rest of
+  // the settings struct in a single selector (feedback_zustand_composite_
+  // selector).
+  const displayMode = useDisplayMode();
+
+  const orderedTracks = useMemo(() => {
+    const all = visualOrderedTracks(tracks);
+    if (displayMode === "ShowAll") return all;
+    // AB filter: keep only role-stamped tracks. Legacy projects (no
+    // role stamps on any track) end up with an empty list here — the
+    // EmptyHint below surfaces "switch to Show All to see your
+    // tracks". By design (Q3 in the redesign), legacy projects are
+    // not migrated; the user toggles the mode manually.
+    return all.filter(({ track }) => track.role !== null);
+  }, [tracks, displayMode]);
 
   /// Map a click event on a layer chip to the resulting selection set.
   /// `docs/group-system.md`: plain click on a grouped layer selects the
@@ -710,6 +727,10 @@ export function Timeline({
   );
 
   return (
+    <>
+    <div className="timeline-toolbar">
+      <DisplayModePill mode={displayMode} />
+    </div>
     <div
       ref={rootRef}
       className={`timeline-root ${drag ? "is-dragging" : ""} ${
@@ -723,7 +744,7 @@ export function Timeline({
         className="timeline-canvas"
         style={{ width: Math.max(widthPx, 200) }}
       >
-        {tracks.length === 0 && <EmptyHint />}
+        {orderedTracks.length === 0 && <EmptyHint mode={displayMode} />}
         {/*
           Data model: `tracks[0]` is the bottom of the z-stack, `tracks[last]`
           is the top (see `Project::tracks` doc-comment). The visual order
@@ -759,6 +780,37 @@ export function Timeline({
         </div>
       )}
     </div>
+    </>
+  );
+}
+
+/// `docs/ab-roll-redesign` R.5b. The pill IS the setting: a click
+/// flips the app-level `display_mode` (`appSettingsSet` round-trips
+/// through Rust which emits `app_settings:changed` so every
+/// subscriber syncs). Same surface the View menu and `T` shortcut
+/// (R.8) drive.
+function DisplayModePill({ mode }: { mode: "AbRoll" | "ShowAll" }) {
+  const { t } = useTranslation();
+  const label = mode === "AbRoll" ? "A/B" : t("timeline.mode_all", { defaultValue: "All" });
+  const ariaLabel =
+    mode === "AbRoll"
+      ? t("timeline.mode_ab_hint", { defaultValue: "Showing A/B-roll tracks only. Click to show all." })
+      : t("timeline.mode_all_hint", { defaultValue: "Showing all tracks. Click to filter to A/B-roll only." });
+  return (
+    <button
+      type="button"
+      className={`timeline-mode-pill ${mode === "AbRoll" ? "is-ab" : ""}`}
+      onClick={() => {
+        void toggleDisplayMode();
+      }}
+      title={ariaLabel}
+      aria-label={ariaLabel}
+      aria-pressed={mode === "AbRoll"}
+    >
+      {mode === "AbRoll"
+        ? t("timeline.mode_ab", { defaultValue: "A/B" })
+        : label}
+    </button>
   );
 }
 
@@ -769,11 +821,19 @@ function trackAcceptsForLayer(target: TrackSummary, drag: DragState): boolean {
   return target.kind.toLowerCase() === drag.trackKind.toLowerCase();
 }
 
-function EmptyHint() {
+function EmptyHint({ mode }: { mode?: "AbRoll" | "ShowAll" }) {
   const { t } = useTranslation();
-  return (
-    <div className="timeline-empty">{t("timeline.empty_placeholder")}</div>
-  );
+  // Legacy projects render here when the user is in AB mode but no
+  // track carries a role stamp — the user toggles to Show-All
+  // manually (Q3 of the redesign locked "no legacy handling").
+  const message =
+    mode === "AbRoll"
+      ? t("timeline.empty_ab_mode", {
+          defaultValue:
+            "No A/B-roll content here. Drop a clip on Video A or Video B, or click the A/B pill above to switch to Show All.",
+        })
+      : t("timeline.empty_placeholder");
+  return <div className="timeline-empty">{message}</div>;
 }
 
 function TrackLane({
