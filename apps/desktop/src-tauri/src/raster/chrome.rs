@@ -176,6 +176,10 @@ pub async fn smoke_capture_one_frame(
         .arg("--run-all-compositor-stages-before-draw")
         .arg("--disable-gpu") // GPU compositor in headless is flaky on Windows
         .arg("--hide-scrollbars")
+        // See rasterize_chunk's comment — pin DPR to 1 so the captured
+        // PNG's device pixels line up 1:1 with the composition's CSS
+        // pixels regardless of host system DPI scaling.
+        .arg("--force-device-scale-factor=1")
         .arg(format!("--window-size={},{}", width, height))
         .build()
         .map_err(|e| anyhow!("chromiumoxide BrowserConfig: {e}"))?;
@@ -516,6 +520,15 @@ async fn rasterize_chunk(
         .arg("--disable-gpu")
         .arg("--hide-scrollbars")
         .arg("--allow-file-access-from-files") // composition.html loads sibling source/<lid>/frame_NNNNN.png as file://
+        // Force CSS-pixel == device-pixel. Without this, chrome-headless-shell
+        // inherits the host system's DPR (commonly 1.25 / 1.5 / 2.0 on
+        // high-DPI Windows displays). A 1920×1080 window with DPR=1.5 gives
+        // a 1280×720 CSS viewport, so a 1920×1080 composition overflows the
+        // viewport and the captured PNG is a top-left crop of the layout —
+        // user-visible as "zoomed in" content. Pinning DPR to 1.0 keeps the
+        // composition's CSS pixels aligned with the captured device pixels
+        // regardless of host scaling.
+        .arg("--force-device-scale-factor=1")
         .arg(format!("--window-size={},{}", width, height))
         .build()
         .map_err(|e| anyhow!("chromiumoxide BrowserConfig: {e}"))?;
