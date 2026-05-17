@@ -4214,7 +4214,8 @@ input.preview-timecode:focus {
 /* `properties/GroupEffectsSection.tsx` — author HtmlTransform on the
    selected layer's group. See `docs/html-render-groups.md` 2026-05-17
    redesign. */
-.group-effects-section {
+.group-effects-section,
+.effects-section {
   border-top: 1px solid #1f2937;
   padding-top: 8px;
   margin-top: 6px;
@@ -4224,6 +4225,71 @@ input.preview-timecode:focus {
   font-weight: 400;
   font-size: 11px;
   text-transform: none;
+}
+.effects-list {
+  list-style: none;
+  margin: 0 0 8px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.effect-card {
+  background: #0a0d12;
+  border: 1px solid #1f2937;
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+.effect-card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.effect-card-header .effect-name {
+  flex: 1;
+  font-size: 11px;
+  color: #d1d5db;
+  font-weight: 600;
+}
+.effect-enable {
+  display: flex;
+  align-items: center;
+}
+.add-effect {
+  position: relative;
+  display: inline-block;
+}
+.add-effect-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 10;
+  list-style: none;
+  margin: 4px 0 0 0;
+  padding: 4px 0;
+  background: #0e1218;
+  border: 1px solid #1f2937;
+  border-radius: 4px;
+  min-width: 140px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+.add-effect-menu li {
+  list-style: none;
+}
+.add-effect-menu button {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  color: #e5e7eb;
+  padding: 4px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.add-effect-menu button:hover {
+  background: #1f2937;
 }
 .html-transform-empty {
   display: flex;

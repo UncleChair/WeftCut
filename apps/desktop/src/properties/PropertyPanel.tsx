@@ -1,15 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  groupsSetEffects,
+  layersSetEffects,
   updateLayer,
   updateLayerParams,
+  type Effect,
   type GroupSummary,
   type LayerParamsPatch,
   type LayerSummary,
   type Rgba,
   type TrackSummary,
 } from "../ipc";
-import { GroupEffectsSection } from "./GroupEffectsSection";
+import { EffectsSection } from "./EffectsSection";
 
 interface Props {
   tracks: TrackSummary[];
@@ -41,6 +44,8 @@ export function PropertyPanel({
     );
   }
 
+  const group = groups.find((g) => g.layer_ids.includes(layer.id));
+
   return (
     <aside className="property-panel">
       <h2>
@@ -50,7 +55,29 @@ export function PropertyPanel({
       <EnvelopeFields layer={layer} onMutated={onMutated} />
       <hr />
       <KindFields layer={layer} onMutated={onMutated} />
-      <GroupEffectsSection layer={layer} groups={groups} onMutated={onMutated} />
+      <EffectsSection
+        heading={t("property_panel.layer_effects_heading", {
+          defaultValue: "Layer effects",
+        })}
+        chain={layer.effects ?? []}
+        onCommit={async (chain: Effect[]) => {
+          await layersSetEffects(layer.id, chain);
+          await onMutated();
+        }}
+      />
+      {group && (
+        <EffectsSection
+          heading={t("property_panel.group_effects_heading", {
+            label: group.label ?? `group ${group.id.slice(0, 6)}`,
+            defaultValue: "Group effects ({{label}})",
+          })}
+          chain={group.effects}
+          onCommit={async (chain: Effect[]) => {
+            await groupsSetEffects(group.id, chain);
+            await onMutated();
+          }}
+        />
+      )}
     </aside>
   );
 }
