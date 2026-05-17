@@ -12,6 +12,11 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { playbackPathFor, useProjectStore } from "../../../state/projectStore";
 import type { LayerSummary } from "../../../ipc";
 import type { AudioGraph, LayerSlot } from "../audio/AudioGraph";
+import {
+  buildLayerFilter,
+  buildLayerOpacityMultiplier,
+  buildLayerTransform,
+} from "../effects/applyFilter";
 import { resolveFadeOpacity } from "../keyframes/fade";
 import type { HandleContext, LayerHandle } from "./types";
 
@@ -38,6 +43,14 @@ export class VideoClipHandle implements LayerHandle {
   /// because fade ramps need per-tick writes; folding opacity into
   /// the sig would invalidate it every frame during a fade.
   private appliedOpacity = -1;
+  /// Last CSS filter string written. Avoids per-tick DOM writes for
+  /// static-radius blurs; keyframed radii naturally invalidate via
+  /// the changing value.
+  private appliedFilter = "";
+  /// Last composed transform string written. Keyframed HtmlTransforms
+  /// drive per-tick re-composition; the string compare skips DOM
+  /// writes when neither base params nor effects produced a delta.
+  private appliedTransform = "";
   private disposed = false;
 
   constructor(private ctx: HandleContext) {
@@ -95,9 +108,30 @@ export class VideoClipHandle implements LayerHandle {
       },
       masterUs,
     );
-    if (Math.abs(this.appliedOpacity - eff) > OPACITY_WRITE_THRESHOLD) {
-      this.appliedOpacity = eff;
-      this.video.style.opacity = String(eff);
+    const tLocalUs = masterUs - layer.t_start_us;
+    const opacityMul = buildLayerOpacityMultiplier(layer.effects, tLocalUs);
+    const composedOpacity = eff * opacityMul;
+    if (Math.abs(this.appliedOpacity - composedOpacity) > OPACITY_WRITE_THRESHOLD) {
+      this.appliedOpacity = composedOpacity;
+      this.video.style.opacity = String(composedOpacity);
+    }
+
+    const baseSx = (params.flip_h ? -1 : 1) * params.scale_x;
+    const baseSy = (params.flip_v ? -1 : 1) * params.scale_y;
+    const transform = buildLayerTransform(
+      { x: params.x, y: params.y, scale_x: baseSx, scale_y: baseSy },
+      layer.effects,
+      tLocalUs,
+    );
+    if (transform !== this.appliedTransform) {
+      this.appliedTransform = transform;
+      this.video.style.transform = transform;
+    }
+
+    const filter = buildLayerFilter(layer.effects, tLocalUs);
+    if (filter !== this.appliedFilter) {
+      this.appliedFilter = filter;
+      this.video.style.filter = filter;
     }
 
     this.video.style.visibility = "visible";
@@ -221,9 +255,9 @@ export class VideoClipHandle implements LayerHandle {
       this.video.style.height = `${srcH}px`;
     }
 
-    const sx = (p.flip_h ? -1 : 1) * p.scale_x;
-    const sy = (p.flip_v ? -1 : 1) * p.scale_y;
-    this.video.style.transform = `translate(${p.x}px, ${p.y}px) scale(${sx}, ${sy})`;
+    // Transform is now composed per-tick in tick() so HtmlTransform
+    // effects can layer on top — see buildLayerTransform. applyParams
+    // owns dimensions + playbackRate only.
     this.video.playbackRate = Math.max(0.0625, p.speed); // browsers clamp to 0.0625–16
   }
 

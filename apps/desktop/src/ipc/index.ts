@@ -228,7 +228,7 @@ export interface Effect {
 export type EffectParams =
   | { kind: "HtmlTransform"; x: AnimTrack<number>; y: AnimTrack<number>; scale_x: AnimTrack<number>; scale_y: AnimTrack<number>; rotation_deg: AnimTrack<number>; opacity: AnimTrack<number> }
   | { kind: "ColorCorrect"; [k: string]: unknown }
-  | { kind: "Blur"; [k: string]: unknown }
+  | { kind: "Blur"; radius: AnimTrack<number> }
   | { kind: "ChromaKey"; [k: string]: unknown }
   | { kind: "Speed"; [k: string]: unknown }
   | { kind: "Vignette"; [k: string]: unknown };

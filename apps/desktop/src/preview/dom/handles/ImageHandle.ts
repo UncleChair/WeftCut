@@ -6,6 +6,11 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 
 import { playbackPathFor, useProjectStore } from "../../../state/projectStore";
+import {
+  buildLayerFilter,
+  buildLayerOpacityMultiplier,
+  buildLayerTransform,
+} from "../effects/applyFilter";
 import { resolveFadeOpacity } from "../keyframes/fade";
 import type { HandleContext, LayerHandle } from "./types";
 
@@ -14,8 +19,9 @@ const OPACITY_WRITE_THRESHOLD = 0.001;
 export class ImageHandle implements LayerHandle {
   private img: HTMLImageElement;
   private currentSrc: string | null = null;
-  private appliedSig: string | null = null;
   private appliedOpacity = -1;
+  private appliedFilter = "";
+  private appliedTransform = "";
   private disposed = false;
 
   constructor(private ctx: HandleContext) {
@@ -58,9 +64,28 @@ export class ImageHandle implements LayerHandle {
       },
       masterUs,
     );
-    if (Math.abs(this.appliedOpacity - eff) > OPACITY_WRITE_THRESHOLD) {
-      this.appliedOpacity = eff;
-      this.img.style.opacity = String(eff);
+    const tLocalUs = masterUs - layer.t_start_us;
+    const opacityMul = buildLayerOpacityMultiplier(layer.effects, tLocalUs);
+    const composedOpacity = eff * opacityMul;
+    if (Math.abs(this.appliedOpacity - composedOpacity) > OPACITY_WRITE_THRESHOLD) {
+      this.appliedOpacity = composedOpacity;
+      this.img.style.opacity = String(composedOpacity);
+    }
+
+    const transform = buildLayerTransform(
+      { x: params.x, y: params.y, scale_x: params.scale_x, scale_y: params.scale_y },
+      layer.effects,
+      tLocalUs,
+    );
+    if (transform !== this.appliedTransform) {
+      this.appliedTransform = transform;
+      this.img.style.transform = transform;
+    }
+
+    const filter = buildLayerFilter(layer.effects, tLocalUs);
+    if (filter !== this.appliedFilter) {
+      this.appliedFilter = filter;
+      this.img.style.filter = filter;
     }
 
     this.img.style.visibility = "visible";
@@ -85,11 +110,7 @@ export class ImageHandle implements LayerHandle {
       this.currentSrc = playbackPath;
       this.img.src = convertFileSrc(playbackPath);
     }
-
-    // `opacity` excluded from sig; per-tick fade owns it.
-    const sig = `${p.x}|${p.y}|${p.scale_x}|${p.scale_y}`;
-    if (sig === this.appliedSig) return;
-    this.appliedSig = sig;
-    this.img.style.transform = `translate(${p.x}px, ${p.y}px) scale(${p.scale_x}, ${p.scale_y})`;
+    // Transform now composed per-tick in tick() (HtmlTransform layers
+    // on top of base x/y/scale); applyParams owns src only.
   }
 }

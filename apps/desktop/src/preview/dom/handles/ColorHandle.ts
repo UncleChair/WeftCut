@@ -3,12 +3,20 @@
 /// No audio, no media element, no decoder warmup.
 
 import { useProjectStore } from "../../../state/projectStore";
+import {
+  buildLayerFilter,
+  buildLayerOpacityMultiplier,
+  buildLayerTransform,
+} from "../effects/applyFilter";
 import type { HandleContext, LayerHandle } from "./types";
 
 export class ColorHandle implements LayerHandle {
   private div: HTMLDivElement;
   /// Cached `<background, w, h>` sig; skip DOM writes on unchanged.
   private appliedSig: string | null = null;
+  private appliedFilter = "";
+  private appliedTransform = "";
+  private appliedOpacity = -1;
   private disposed = false;
 
   constructor(private ctx: HandleContext) {
@@ -36,6 +44,30 @@ export class ColorHandle implements LayerHandle {
       return;
     }
     this.applyParams();
+
+    const tLocalUs = masterUs - layer.t_start_us;
+    const opacityMul = buildLayerOpacityMultiplier(layer.effects, tLocalUs);
+    if (Math.abs(this.appliedOpacity - opacityMul) > 0.001) {
+      this.appliedOpacity = opacityMul;
+      this.div.style.opacity = String(opacityMul);
+    }
+
+    const transform = buildLayerTransform(
+      { x: 0, y: 0, scale_x: 1, scale_y: 1 },
+      layer.effects,
+      tLocalUs,
+    );
+    if (transform !== this.appliedTransform) {
+      this.appliedTransform = transform;
+      this.div.style.transform = transform;
+    }
+
+    const filter = buildLayerFilter(layer.effects, tLocalUs);
+    if (filter !== this.appliedFilter) {
+      this.appliedFilter = filter;
+      this.div.style.filter = filter;
+    }
+
     this.div.style.visibility = "visible";
   }
 

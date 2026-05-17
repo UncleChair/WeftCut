@@ -233,6 +233,14 @@ function EffectBody({
       />
     );
   }
+  if (effect.params.kind === "Blur") {
+    return (
+      <BlurEditor
+        params={effect.params as EffectParams & { kind: "Blur" }}
+        onChange={onParamsChange}
+      />
+    );
+  }
   return (
     <p className="placeholder">
       {t("effects_section.placeholder_body", {
@@ -241,6 +249,36 @@ function EffectBody({
           "{{kind}} — params editor coming in a future release. The effect is in the chain but has no UI controls yet.",
       })}
     </p>
+  );
+}
+
+// ===== Blur editor =====
+
+function BlurEditor({
+  params,
+  onChange,
+}: {
+  params: EffectParams & { kind: "Blur" };
+  onChange: (params: EffectParams) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="blur-editor">
+      <FieldEditor
+        label={t("effects_section.field_blur_radius", {
+          defaultValue: "radius (px)",
+        })}
+        identityValue={0}
+        track={params.radius}
+        onChange={(track) => onChange({ kind: "Blur", radius: track })}
+      />
+      <p className="html-transform-hint">
+        {t("effects_section.blur_hint", {
+          defaultValue:
+            "Inside an Html-mode group, radius drives CSS filter: blur(Npx) per frame. Identity (radius=0) clears the filter so no stacking context is created.",
+        })}
+      </p>
+    </div>
   );
 }
 

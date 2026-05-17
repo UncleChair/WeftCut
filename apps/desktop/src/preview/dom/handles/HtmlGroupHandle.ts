@@ -482,7 +482,14 @@ function computeStateSig(group: GroupSummary): string {
 
 function layerSig(l: LayerSummary): string {
   const p = l.params;
-  const base = `${l.id}:${l.kind}:${l.t_start_us}:${l.t_end_us}:${l.enabled}`;
+  // Per-layer effect chain MUST be in the sig — distilled state
+  // includes pickHtmlTransform/pickBlur on layer.effects, so edits to
+  // a member's effect params (radius, scale_x keyframe values, etc.)
+  // need to invalidate the composition or the engine keeps the stale
+  // JSON state until something else rebuilds. JSON.stringify is fine
+  // here (effect chains are short).
+  const fx = `:fx=${JSON.stringify(l.effects ?? [])}`;
+  const base = `${l.id}:${l.kind}:${l.t_start_us}:${l.t_end_us}:${l.enabled}${fx}`;
   switch (p.kind) {
     case "Color":
       return `${base}:rgba(${p.color.r},${p.color.g},${p.color.b},${p.color.a}):${p.width}x${p.height}`;
