@@ -1138,65 +1138,48 @@ impl WeftCutServer {
     }
 
     #[tool(
-        description = "Drop every `HtmlTransform` effect from a group's chain. \
-                       The group reverts to ffmpeg per-layer rendering. No-op if \
-                       the group has no `HtmlTransform`."
+        description = "Replace a group's entire effect chain. Each effect is `{ id, enabled, \
+                       params: { kind, ... } }`. Today only `HtmlTransform` is a render-affecting \
+                       kind; other kinds (ColorCorrect, Blur, ChromaKey, Speed, Vignette) are \
+                       scaffolded but not yet wired through the engine. An `HtmlTransform`'s six \
+                       fields (x, y, scale_x, scale_y, rotation_deg, opacity) are each \
+                       `Animated<f64>` (Static or Keyframed). Adding any HtmlTransform with \
+                       keyframes flips the group to html-cap rendering."
     )]
-    async fn groups_clear_html_transform(
+    async fn groups_set_effects(
         &self,
-        #[tool(aggr)] args: GroupIdArgs,
+        #[tool(aggr)] args: GroupsSetEffectsArgs,
     ) -> Result<CallToolResult, McpError> {
         let gid = parse_uuid(&args.group_id, "group_id")?;
+        let effects: Vec<crate::state::effect::Effect> =
+            serde_json::from_value(args.effects).map_err(|e| {
+                McpError::invalid_params(format!("effects: {e}"), None)
+            })?;
         self.project
-            .groups_clear_html_transform(agent_actor(), gid)
+            .groups_set_effects(agent_actor(), gid, effects)
             .await
             .map_err(map_command_error)?;
         Ok(ok_void())
     }
 
     #[tool(
-        description = "Replace (or create) a group's `HtmlTransform` effect. \
-                       Each of `x, y, scale_x, scale_y, rotation_deg, opacity` is an \
-                       `Animated<f64>` track shape (`{ mode: \"Static\", value }` or \
-                       `{ mode: \"Keyframed\", value: [{ id, t_us, value, interp: { kind } }, ...] }`). \
-                       Keyframe times are group-local (relative to the earliest member's t_start). \
-                       Identity defaults: 0 for translate/rotate, 1 for scale/opacity. \
-                       Adding any keyframes flags the group for html-cap rendering in preview + export. \
-                       The first and last keyframes per field implicitly bound the html-cap window; \
-                       outside the window the field returns to its default (smooth handoff is the \
-                       author's responsibility — add a closing keyframe at the identity value if \
-                       continuity matters)."
+        description = "Replace a layer's entire effect chain. Same shape as `groups_set_effects`. \
+                       Layer-level `HtmlTransform` composes on top of the layer's static transform \
+                       from `params` and only renders when the layer is inside a group that runs \
+                       through the html-cap path (because the group has its own `HtmlTransform`, \
+                       or any other member does)."
     )]
-    async fn groups_set_html_transform(
+    async fn layers_set_effects(
         &self,
-        #[tool(aggr)] args: GroupsSetHtmlTransformArgs,
+        #[tool(aggr)] args: LayersSetEffectsArgs,
     ) -> Result<CallToolResult, McpError> {
-        let gid = parse_uuid(&args.group_id, "group_id")?;
-        fn parse_track(
-            field: &str,
-            v: serde_json::Value,
-        ) -> Result<crate::state::animated::Animated<f64>, McpError> {
-            serde_json::from_value(v).map_err(|e| {
-                McpError::invalid_params(format!("{field}: {e}"), None)
-            })
-        }
-        let x = parse_track("x", args.x)?;
-        let y = parse_track("y", args.y)?;
-        let scale_x = parse_track("scale_x", args.scale_x)?;
-        let scale_y = parse_track("scale_y", args.scale_y)?;
-        let rotation_deg = parse_track("rotation_deg", args.rotation_deg)?;
-        let opacity = parse_track("opacity", args.opacity)?;
+        let id = parse_uuid(&args.layer_id, "layer_id")?;
+        let effects: Vec<crate::state::effect::Effect> =
+            serde_json::from_value(args.effects).map_err(|e| {
+                McpError::invalid_params(format!("effects: {e}"), None)
+            })?;
         self.project
-            .groups_set_html_transform(
-                agent_actor(),
-                gid,
-                x,
-                y,
-                scale_x,
-                scale_y,
-                rotation_deg,
-                opacity,
-            )
+            .layers_set_effects(agent_actor(), id, effects)
             .await
             .map_err(map_command_error)?;
         Ok(ok_void())
@@ -1886,27 +1869,25 @@ pub struct GroupView {
     pub layer_ids: Vec<String>,
 }
 
-/// MCP args for `groups_set_html_transform`. Each animated field is a
-/// raw `serde_json::Value` so we don't have to spread `JsonSchema`
-/// across the `Animated<T>` / `Keyframe<T>` / `Uuid` / `imbl::Vector`
-/// stack — the handler `serde_json::from_value`s into the typed
-/// shape and reports parse errors verbatim.
+/// MCP args for `groups_set_effects` / `layers_set_effects`. `effects`
+/// is a raw `serde_json::Value` so we don't have to spread
+/// `JsonSchema` across `Effect` / `EffectParams` / `Animated<T>` /
+/// `Keyframe<T>` / `Uuid` / `imbl::Vector` — the handler
+/// `serde_json::from_value`s into `Vec<Effect>` and reports parse
+/// errors verbatim.
 ///
-/// Wire shape per field (matches `Animated<f64>`):
-///   { "mode": "Static",    "value": 1.0 }
-///   { "mode": "Keyframed", "value": [
-///     { "id": "uuid", "t_us": 0,       "value": 1.0, "interp": { "kind": "Linear" } },
-///     { "id": "uuid", "t_us": 5000000, "value": 1.3, "interp": { "kind": "Linear" } }
-///   ] }
+/// Wire shape: an array of `{ id, enabled, params: { kind, ... } }`.
+/// See `state/effect.rs::EffectParams` for the per-kind field set.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct GroupsSetHtmlTransformArgs {
+pub struct GroupsSetEffectsArgs {
     pub group_id: String,
-    pub x: serde_json::Value,
-    pub y: serde_json::Value,
-    pub scale_x: serde_json::Value,
-    pub scale_y: serde_json::Value,
-    pub rotation_deg: serde_json::Value,
-    pub opacity: serde_json::Value,
+    pub effects: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct LayersSetEffectsArgs {
+    pub layer_id: String,
+    pub effects: serde_json::Value,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

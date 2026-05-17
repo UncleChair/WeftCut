@@ -860,36 +860,19 @@ export async function groupsCreate(
   });
 }
 
-/// Replace (or create) the group's `HtmlTransform` effect. Six
-/// animated tracks: x, y, scale_x, scale_y, rotation_deg, opacity.
-/// Each is an `Animated<number>` wire shape (Static or Keyframed).
-/// Adding any keyframes flags the group for html-cap rendering in
-/// preview + export.
-export async function groupsSetHtmlTransform(args: {
-  groupId: string;
-  x: AnimTrack<number>;
-  y: AnimTrack<number>;
-  scaleX: AnimTrack<number>;
-  scaleY: AnimTrack<number>;
-  rotationDeg: AnimTrack<number>;
-  opacity: AnimTrack<number>;
-}): Promise<void> {
-  await invoke<null>("groups_set_html_transform", {
-    groupId: args.groupId,
-    x: args.x,
-    y: args.y,
-    scaleX: args.scaleX,
-    scaleY: args.scaleY,
-    rotationDeg: args.rotationDeg,
-    opacity: args.opacity,
-  });
+/// Replace a group's entire effect chain. The UI's effects editor
+/// sends the full chain on every (debounced) commit — granular
+/// add/remove/update ops are deferred.
+export async function groupsSetEffects(groupId: string, effects: Effect[]): Promise<void> {
+  await invoke<null>("groups_set_effects", { groupId, effects });
 }
 
-/// Drop every `HtmlTransform` from a group's effect chain. The group
-/// reverts to ffmpeg per-layer rendering. No-op if the group has no
-/// `HtmlTransform`.
-export async function groupsClearHtmlTransform(groupId: string): Promise<void> {
-  await invoke<null>("groups_clear_html_transform", { groupId });
+/// Replace a layer's entire effect chain. Layer-level effects compose
+/// on top of the layer's static transform from `params`. A layer's
+/// `HtmlTransform` only renders when the layer is inside a group
+/// that's running through the html-cap path.
+export async function layersSetEffects(layerId: string, effects: Effect[]): Promise<void> {
+  await invoke<null>("layers_set_effects", { layerId, effects });
 }
 
 export async function groupsDissolve(groupId: string): Promise<void> {

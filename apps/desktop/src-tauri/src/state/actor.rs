@@ -541,26 +541,24 @@ enum Command {
         actor: Actor,
         reply: oneshot::Sender<Result<(), CommandError>>,
     },
-    /// Remove every `HtmlTransform` effect from the group's effect
-    /// chain. The group reverts to ffmpeg-only rendering (no html-cap
-    /// path) once the chain has no html-required effects left.
-    GroupsClearHtmlTransform {
+    /// Replace the group's entire effect chain. The UI's effects
+    /// editor sends the full new list on every commit (debounced) —
+    /// `groups_set_effects` is the only mutation primitive for group
+    /// effects right now. Granular add/remove/update ops can land
+    /// later if undo granularity becomes a concern.
+    GroupsSetEffects {
         id: GroupId,
+        effects: Vec<super::effect::Effect>,
         actor: Actor,
         reply: oneshot::Sender<Result<(), CommandError>>,
     },
-    /// Replace (or create) the group's first `HtmlTransform` effect
-    /// with the supplied keyframe tracks. v1 supports exactly one
-    /// HtmlTransform per group; calling this on a group that already
-    /// has one mutates it in place.
-    GroupsSetHtmlTransform {
-        id: GroupId,
-        x: super::animated::Animated<f64>,
-        y: super::animated::Animated<f64>,
-        scale_x: super::animated::Animated<f64>,
-        scale_y: super::animated::Animated<f64>,
-        rotation_deg: super::animated::Animated<f64>,
-        opacity: super::animated::Animated<f64>,
+    /// Mirror of `GroupsSetEffects` for layer-level effect chains.
+    /// Each layer carries its own chain (`Layer.effects`); the engine
+    /// composes a layer's HtmlTransform on top of the layer's static
+    /// transform from `params`.
+    LayersSetEffects {
+        id: LayerId,
+        effects: Vec<super::effect::Effect>,
         actor: Actor,
         reply: oneshot::Sender<Result<(), CommandError>>,
     },
@@ -1230,49 +1228,38 @@ impl ProjectHandle {
         rx.await.expect("project actor terminated")
     }
 
-    /// Drop every `HtmlTransform` from the group's chain. The group
-    /// reverts to ffmpeg per-layer rendering once it has no html-
-    /// required effects.
-    pub async fn groups_clear_html_transform(
+    /// Replace the group's entire effect chain.
+    pub async fn groups_set_effects(
         &self,
         actor: Actor,
         id: GroupId,
+        effects: Vec<super::effect::Effect>,
     ) -> Result<(), CommandError> {
         let (reply, rx) = oneshot::channel();
         self.tx
-            .send(Command::GroupsClearHtmlTransform { id, actor, reply })
+            .send(Command::GroupsSetEffects {
+                id,
+                effects,
+                actor,
+                reply,
+            })
             .await
             .expect("project actor terminated");
         rx.await.expect("project actor terminated")
     }
 
-    /// Replace (or create) the group's first `HtmlTransform` effect.
-    /// Pass `Animated::Static(default)` for fields the caller doesn't
-    /// want to animate (identity values: x/y/rotation=0,
-    /// scale_x/scale_y/opacity=1). Adding any keyframes to any field
-    /// flags the group for html-cap rendering at preview + export.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn groups_set_html_transform(
+    /// Replace the layer's entire effect chain.
+    pub async fn layers_set_effects(
         &self,
         actor: Actor,
-        id: GroupId,
-        x: super::animated::Animated<f64>,
-        y: super::animated::Animated<f64>,
-        scale_x: super::animated::Animated<f64>,
-        scale_y: super::animated::Animated<f64>,
-        rotation_deg: super::animated::Animated<f64>,
-        opacity: super::animated::Animated<f64>,
+        id: LayerId,
+        effects: Vec<super::effect::Effect>,
     ) -> Result<(), CommandError> {
         let (reply, rx) = oneshot::channel();
         self.tx
-            .send(Command::GroupsSetHtmlTransform {
+            .send(Command::LayersSetEffects {
                 id,
-                x,
-                y,
-                scale_x,
-                scale_y,
-                rotation_deg,
-                opacity,
+                effects,
                 actor,
                 reply,
             })
@@ -1710,24 +1697,22 @@ impl ProjectActor {
                 let result = self.do_groups_rename(id, label, actor);
                 let _ = reply.send(result);
             }
-            Command::GroupsClearHtmlTransform { id, actor, reply } => {
-                let result = self.do_groups_clear_html_transform(id, actor);
-                let _ = reply.send(result);
-            }
-            Command::GroupsSetHtmlTransform {
+            Command::GroupsSetEffects {
                 id,
-                x,
-                y,
-                scale_x,
-                scale_y,
-                rotation_deg,
-                opacity,
+                effects,
                 actor,
                 reply,
             } => {
-                let result = self.do_groups_set_html_transform(
-                    id, x, y, scale_x, scale_y, rotation_deg, opacity, actor,
-                );
+                let result = self.do_groups_set_effects(id, effects, actor);
+                let _ = reply.send(result);
+            }
+            Command::LayersSetEffects {
+                id,
+                effects,
+                actor,
+                reply,
+            } => {
+                let result = self.do_layers_set_effects(id, effects, actor);
                 let _ = reply.send(result);
             }
             Command::Undo { actor, reply } => {
@@ -2538,50 +2523,36 @@ impl ProjectActor {
         Ok(())
     }
 
-    fn do_groups_clear_html_transform(
+    fn do_groups_set_effects(
         &mut self,
         id: GroupId,
+        effects: Vec<super::effect::Effect>,
         actor: Actor,
     ) -> Result<(), CommandError> {
         let mut next: Project = (*self.history.current()).clone();
-        apply_groups_clear_html_transform(&mut next, id)?;
+        apply_groups_set_effects(&mut next, id, effects)?;
         self.commit(
             next,
             actor,
-            format!("Cleared html transform on group {id}"),
+            format!("Set group {id} effects"),
             Vec::new(),
             DiffHint::Coarse,
         )?;
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn do_groups_set_html_transform(
+    fn do_layers_set_effects(
         &mut self,
-        id: GroupId,
-        x: super::animated::Animated<f64>,
-        y: super::animated::Animated<f64>,
-        scale_x: super::animated::Animated<f64>,
-        scale_y: super::animated::Animated<f64>,
-        rotation_deg: super::animated::Animated<f64>,
-        opacity: super::animated::Animated<f64>,
+        id: LayerId,
+        effects: Vec<super::effect::Effect>,
         actor: Actor,
     ) -> Result<(), CommandError> {
         let mut next: Project = (*self.history.current()).clone();
-        apply_groups_set_html_transform(
-            &mut next,
-            id,
-            x,
-            y,
-            scale_x,
-            scale_y,
-            rotation_deg,
-            opacity,
-        )?;
+        apply_layers_set_effects(&mut next, id, effects)?;
         self.commit(
             next,
             actor,
-            format!("Set group {id} html transform"),
+            format!("Set layer {id} effects"),
             Vec::new(),
             DiffHint::Coarse,
         )?;
@@ -3135,71 +3106,32 @@ pub(crate) fn apply_groups_rename(
     Ok(())
 }
 
-pub(crate) fn apply_groups_clear_html_transform(
+pub(crate) fn apply_groups_set_effects(
     project: &mut Project,
     id: GroupId,
+    effects: Vec<super::effect::Effect>,
 ) -> Result<(), CommandError> {
-    use super::effect::EffectParams;
     let gi = project
         .groups
         .iter()
         .position(|g| g.id == id)
         .ok_or(CommandError::GroupNotFound { group: id })?;
-    let group = &mut project.groups[gi];
-    group
-        .effects
-        .retain(|e| !matches!(e.params, EffectParams::HtmlTransform { .. }));
+    project.groups[gi].effects = effects.into_iter().collect();
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn apply_groups_set_html_transform(
+pub(crate) fn apply_layers_set_effects(
     project: &mut Project,
-    id: GroupId,
-    x: super::animated::Animated<f64>,
-    y: super::animated::Animated<f64>,
-    scale_x: super::animated::Animated<f64>,
-    scale_y: super::animated::Animated<f64>,
-    rotation_deg: super::animated::Animated<f64>,
-    opacity: super::animated::Animated<f64>,
+    id: LayerId,
+    effects: Vec<super::effect::Effect>,
 ) -> Result<(), CommandError> {
-    use super::effect::{Effect, EffectParams};
-    use super::ids::new_id;
-
-    let gi = project
-        .groups
-        .iter()
-        .position(|g| g.id == id)
-        .ok_or(CommandError::GroupNotFound { group: id })?;
-
-    let new_params = EffectParams::HtmlTransform {
-        x,
-        y,
-        scale_x,
-        scale_y,
-        rotation_deg,
-        opacity,
-    };
-
-    // Replace the first existing HtmlTransform in-place (preserves its
-    // effect id so undo/redo + IPC subscribers see a "modified" rather
-    // than "added + removed"). Otherwise append a new one.
-    let group = &mut project.groups[gi];
-    if let Some(existing) = group
-        .effects
-        .iter_mut()
-        .find(|e| matches!(e.params, EffectParams::HtmlTransform { .. }))
-    {
-        existing.params = new_params;
-        existing.enabled = true;
-    } else {
-        group.effects.push_back(Effect {
-            id: new_id(),
-            enabled: true,
-            params: new_params,
-        });
+    for track in project.tracks.iter_mut() {
+        if let Some(layer) = track.layers.iter_mut().find(|l| l.id == id) {
+            layer.effects = effects.into_iter().collect();
+            return Ok(());
+        }
     }
-    Ok(())
+    Err(CommandError::LayerNotFound { layer: id })
 }
 
 

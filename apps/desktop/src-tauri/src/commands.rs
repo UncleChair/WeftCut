@@ -2178,62 +2178,35 @@ pub async fn groups_dissolve(
         .map_err(|e: CommandError| e.to_string())
 }
 
-/// Drop every `HtmlTransform` from the group's effect chain.
-/// Counterpart to the MCP `groups_clear_html_transform` tool. The
-/// group reverts to ffmpeg per-layer rendering once it has no
-/// html-required effects left.
+/// Replace a group's entire effect chain. Effects on the wire are
+/// the same JSON shape as in the project file — `{ id, enabled,
+/// params: { kind, ... } }`. The UI's effects editor sends the
+/// full chain on every (debounced) commit.
 #[tauri::command]
-pub async fn groups_clear_html_transform(
+pub async fn groups_set_effects(
     handle: State<'_, ProjectHandle>,
     group_id: String,
+    effects: Vec<state::Effect>,
 ) -> Result<(), String> {
     let gid = Uuid::parse_str(&group_id).map_err(|e| format!("group_id: {e}"))?;
     handle
-        .groups_clear_html_transform(Actor::User, gid)
+        .groups_set_effects(Actor::User, gid, effects)
         .await
         .map_err(|e: CommandError| e.to_string())
 }
 
-/// Phase H effect-redesign 4/4 — Tauri counterpart to the MCP
-/// `groups_set_html_transform` tool. Each field is a JSON-encoded
-/// `Animated<f64>` (the same shape the project file uses) — pass
-/// `{ "mode": "Static", "value": 1.0 }` for fields you don't want
-/// to animate, or `{ "mode": "Keyframed", "value": [{...}, ...] }`
-/// to author keyframes. The whole HtmlTransform on the group is
-/// replaced (created if absent).
+/// Replace a layer's entire effect chain. Same wire shape as the
+/// group counterpart; the engine composes a layer's HtmlTransform
+/// on top of the layer's static transform from `params`.
 #[tauri::command]
-pub async fn groups_set_html_transform(
+pub async fn layers_set_effects(
     handle: State<'_, ProjectHandle>,
-    group_id: String,
-    x: serde_json::Value,
-    y: serde_json::Value,
-    scale_x: serde_json::Value,
-    scale_y: serde_json::Value,
-    rotation_deg: serde_json::Value,
-    opacity: serde_json::Value,
+    layer_id: String,
+    effects: Vec<state::Effect>,
 ) -> Result<(), String> {
-    let gid = Uuid::parse_str(&group_id).map_err(|e| format!("group_id: {e}"))?;
-    let x = serde_json::from_value::<state::Animated<f64>>(x).map_err(|e| format!("x: {e}"))?;
-    let y = serde_json::from_value::<state::Animated<f64>>(y).map_err(|e| format!("y: {e}"))?;
-    let scale_x = serde_json::from_value::<state::Animated<f64>>(scale_x)
-        .map_err(|e| format!("scale_x: {e}"))?;
-    let scale_y = serde_json::from_value::<state::Animated<f64>>(scale_y)
-        .map_err(|e| format!("scale_y: {e}"))?;
-    let rotation_deg = serde_json::from_value::<state::Animated<f64>>(rotation_deg)
-        .map_err(|e| format!("rotation_deg: {e}"))?;
-    let opacity = serde_json::from_value::<state::Animated<f64>>(opacity)
-        .map_err(|e| format!("opacity: {e}"))?;
+    let id = Uuid::parse_str(&layer_id).map_err(|e| format!("layer_id: {e}"))?;
     handle
-        .groups_set_html_transform(
-            Actor::User,
-            gid,
-            x,
-            y,
-            scale_x,
-            scale_y,
-            rotation_deg,
-            opacity,
-        )
+        .layers_set_effects(Actor::User, id, effects)
         .await
         .map_err(|e: CommandError| e.to_string())
 }
