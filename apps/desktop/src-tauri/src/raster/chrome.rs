@@ -320,6 +320,205 @@ impl chromiumoxide::Command for GenericCommand {
 }
 
 // ============================================================================
+// Phase X.2: rasterize an entire composition to a PNG sequence.
+//
+// Spawns ONE chrome-headless-shell instance, navigates to the composition
+// HTML via file://, then per-frame: drive the engine's window.__setTime,
+// wait for any newly-set <img> resources to decode, then BeginFrame +
+// screenshot. Frames land at `out_dir/frame_NNNNN.png`. Phase X.4 parallelizes
+// across N instances; this fn is the single-instance baseline.
+// ============================================================================
+
+/// One-shot rasterize of a composition to a PNG sequence on disk. Single
+/// chrome-headless-shell instance, no parallelism (Phase X.4).
+///
+/// - `composition_html_path` is the file path to write into a `file://` URL.
+///   The HTML must already exist on disk; we don't write it here.
+/// - `times_s` is the per-frame timestamps (composition-local seconds) to
+///   capture. One PNG written per entry.
+/// - `width`/`height` set the headless viewport — must match the composition's
+///   canvas, otherwise the captured PNG is the viewport size, not the canvas.
+/// - `out_dir` receives `frame_00000.png`, `frame_00001.png`, … one per
+///   entry in `times_s`. Caller pre-creates the directory.
+/// - `on_progress(done, total)` fires after each captured frame; suitable for
+///   driving the `html_group:progress` event emitter on the AppHandle side.
+pub async fn rasterize_to_dir<F>(
+    binary: &ChromiumBinary,
+    composition_html_path: &Path,
+    times_s: &[f64],
+    width: u32,
+    height: u32,
+    out_dir: &Path,
+    mut on_progress: F,
+) -> Result<()>
+where
+    F: FnMut(usize, usize),
+{
+    let config = BrowserConfig::builder()
+        .chrome_executable(&binary.exe)
+        .arg("--enable-begin-frame-control")
+        .arg("--run-all-compositor-stages-before-draw")
+        .arg("--disable-gpu")
+        .arg("--hide-scrollbars")
+        .arg("--allow-file-access-from-files") // composition.html loads sibling source/<lid>/frame_NNNNN.png as file://
+        .arg(format!("--window-size={},{}", width, height))
+        .build()
+        .map_err(|e| anyhow!("chromiumoxide BrowserConfig: {e}"))?;
+
+    let (mut browser, mut handler) = Browser::launch(config)
+        .await
+        .context("launch chrome-headless-shell")?;
+    let handler_task = tokio::spawn(async move {
+        while let Some(_event) = handler.next().await {}
+    });
+
+    let result = rasterize_inner(
+        &mut browser,
+        composition_html_path,
+        times_s,
+        out_dir,
+        &mut on_progress,
+    )
+    .await;
+
+    // Best-effort cleanup so the chrome process exits even on error.
+    let _ = browser.close().await;
+    let _ = handler_task.await;
+    result
+}
+
+async fn rasterize_inner<F>(
+    browser: &mut Browser,
+    composition_html_path: &Path,
+    times_s: &[f64],
+    out_dir: &Path,
+    on_progress: &mut F,
+) -> Result<()>
+where
+    F: FnMut(usize, usize),
+{
+    // Windows file path → file URL: backslashes to forward, ensure the
+    // canonical `file:///C:/...` shape (three slashes).
+    let path_str = composition_html_path
+        .to_str()
+        .ok_or_else(|| anyhow!("composition html path not UTF-8: {:?}", composition_html_path))?
+        .replace('\\', "/");
+    let file_url = if path_str.starts_with('/') {
+        format!("file://{path_str}")
+    } else {
+        format!("file:///{path_str}")
+    };
+
+    let page = browser
+        .new_page(CreateTargetParams::new(file_url.clone()))
+        .await
+        .context("open composition page")?;
+    page.wait_for_navigation()
+        .await
+        .context("wait_for_navigation on composition.html")?;
+
+    // One-time settle: await fonts.ready so the first frame's text shapes
+    // are stable, then a tiny tick so the engine's IIFE has installed
+    // `window.__setTime`. After this, every per-frame setup is sync-CSS
+    // + img.decode().
+    let _ = page
+        .execute(GenericCommand {
+            method: std::borrow::Cow::Borrowed("Runtime.evaluate"),
+            params: serde_json::json!({
+                "expression": "(async () => { try { if (document.fonts) await document.fonts.ready; } catch (e) {} })()",
+                "awaitPromise": true,
+                "returnByValue": true,
+            }),
+        })
+        .await
+        .context("await fonts.ready")?;
+
+    // Warmup BeginFrame: the first one after navigation typically commits
+    // an empty frame as the compositor wires up. Burn it before the real
+    // capture loop so the first written PNG isn't blank.
+    let _ = page
+        .execute(GenericCommand {
+            method: std::borrow::Cow::Borrowed("HeadlessExperimental.beginFrame"),
+            params: serde_json::json!({
+                "frameTimeTicks": 1,
+                "interval": 16,
+                "noDisplayUpdates": false,
+            }),
+        })
+        .await
+        .context("HeadlessExperimental.beginFrame (warmup)")?;
+
+    let total = times_s.len();
+    // virtualTime accumulator — every BeginFrame must advance the simulated
+    // clock to keep the engine's `frameTimeTicks` monotonically increasing.
+    let mut frame_time_ticks: i64 = 2;
+
+    for (idx, &t_seconds) in times_s.iter().enumerate() {
+        // Drive the engine + wait for all <img> in the composition to be
+        // decoded so the BeginFrame paint reflects this frame's source
+        // PNG (the VideoClip slot's per-tick `<img src=...>` swap is
+        // sync from JS's POV but the decoded bitmap isn't immediate).
+        let setup_js = format!(
+            "(async () => {{ \
+                if (typeof window.__setTime === 'function') window.__setTime({t:.6}); \
+                const imgs = document.querySelectorAll('img'); \
+                await Promise.all(Array.from(imgs).map(i => i.decode().catch(() => null))); \
+            }})()",
+            t = t_seconds,
+        );
+        let _ = page
+            .execute(GenericCommand {
+                method: std::borrow::Cow::Borrowed("Runtime.evaluate"),
+                params: serde_json::json!({
+                    "expression": setup_js,
+                    "awaitPromise": true,
+                    "returnByValue": true,
+                }),
+            })
+            .await
+            .with_context(|| format!("frame {idx}: setup __setTime + decode"))?;
+
+        // BeginFrame with screenshot: atomic paint + capture + hasDamage.
+        // PNG format with no `optimizeForSpeed` (alpha-safe encode);
+        // BeginFrame's screenshot params don't accept that field anyway
+        // (silently drops the screenshot if present).
+        let resp = page
+            .execute(GenericCommand {
+                method: std::borrow::Cow::Borrowed("HeadlessExperimental.beginFrame"),
+                params: serde_json::json!({
+                    "frameTimeTicks": frame_time_ticks,
+                    "interval": 16,
+                    "screenshot": { "format": "png" },
+                }),
+            })
+            .await
+            .with_context(|| format!("frame {idx}: BeginFrame"))?;
+        frame_time_ticks += 16;
+
+        let screenshot_b64 = resp
+            .result
+            .get("screenshotData")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                anyhow!(
+                    "frame {idx}: BeginFrame returned no screenshotData (hasDamage={:?})",
+                    resp.result.get("hasDamage"),
+                )
+            })?;
+        let bytes = base64_decode(screenshot_b64)
+            .with_context(|| format!("frame {idx}: decode screenshotData"))?;
+
+        let path = out_dir.join(format!("frame_{idx:05}.png"));
+        std::fs::write(&path, &bytes)
+            .with_context(|| format!("frame {idx}: write {}", path.display()))?;
+
+        on_progress(idx + 1, total);
+    }
+
+    Ok(())
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
