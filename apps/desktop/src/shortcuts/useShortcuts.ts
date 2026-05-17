@@ -62,10 +62,18 @@ interface UseShortcutsOptions {
 
 const EMPTY_OVERRIDES: OverrideMap = {};
 
-/// Call **exactly once** at the top of `App.tsx`. Mounts a single
-/// `window` keydown listener for the app's lifetime; handler identities
-/// are read through a ref each event so React's render churn doesn't
-/// force the listener to reattach.
+/// Mounts a `window` keydown listener that dispatches to the handlers
+/// passed in. Handler identities are read through a ref each event so
+/// React's render churn doesn't force the listener to reattach.
+///
+/// **Multiple instances are supported** as long as their handler maps
+/// are disjoint (no two instances both define `handlers[id]` for the
+/// same `id`). In v1 the App-level call covers global actions; the
+/// Timeline call covers `groupSelected` + `dissolveSelectedGroup`
+/// (group ops need `selectedLayerIds`, which is Timeline-local).
+/// Each instance's dispatcher short-circuits on the first matched
+/// entry; entries without a handler don't preventDefault, so the
+/// other instance's matching handler can still fire.
 ///
 /// Dispatch rules:
 /// - Always `preventDefault` + `stopPropagation` on a matched event.

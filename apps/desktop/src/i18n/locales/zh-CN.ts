@@ -119,6 +119,8 @@ const zhCN: Resources = {
     focus_log_search: "聚焦活动日志搜索",
     toggle_display_mode: "切换 A/B 轨 / 显示全部",
     toggle_media_pool: "切换素材库抽屉",
+    group_selected: "将所选图层编组",
+    dissolve_selected_group: "解散所选图层所在的编组",
   },
   compiler: {
     panel_title: "编译后的滤镜图（{{count}} 个节点）",

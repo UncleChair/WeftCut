@@ -120,6 +120,8 @@ const enUS = {
     focus_log_search: "Focus activity-log search",
     toggle_display_mode: "Toggle A/B Roll / Show All",
     toggle_media_pool: "Toggle Media Pool drawer",
+    group_selected: "Group selected layers",
+    dissolve_selected_group: "Dissolve group of selected layer",
   },
   compiler: {
     panel_title: "Compiled filter graph ({{count}} nodes)",

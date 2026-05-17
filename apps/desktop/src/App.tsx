@@ -1014,6 +1014,7 @@ export function App({ onCloseProject }: AppProps) {
             currentTimeUs={currentTimeUs}
             selectedLayerId={selectedLayerId}
             revealedTrackId={revealedTrackId}
+            keybindings={keybindings}
             onSelect={setSelectedLayerId}
             onSeek={seekTo}
             onMutated={refresh}
