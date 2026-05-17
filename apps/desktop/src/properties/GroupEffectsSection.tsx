@@ -16,19 +16,20 @@
 ///     number input; Keyframed = a list of (time, value, interp) rows
 ///     with add/remove.
 ///   - All edits debounce 250ms before committing via
-///     `groupsSetHtmlTransform` so dragging a number field doesn't
-///     flood the actor.
-///   - The Remove button calls `groupsClearHtmlTransform`, dropping
-///     the effect from the chain and reverting the group to ffmpeg
-///     rendering.
+///     `groupsSetEffects` (full-chain replace) so dragging a number
+///     field doesn't flood the actor. We preserve other effects in
+///     the chain and only mutate the (single) HtmlTransform card.
+///   - The Remove button calls `groupsSetEffects` with the chain
+///     minus its HtmlTransform, reverting the group to ffmpeg
+///     rendering if no other html-required effects remain.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
-  groupsClearHtmlTransform,
-  groupsSetHtmlTransform,
+  groupsSetEffects,
   type AnimTrack,
+  type Effect,
   type EffectParams,
   type GroupSummary,
   type Interpolation,
@@ -151,25 +152,18 @@ function HtmlTransformEditor({
         if (!payload) return;
         const sig = stateSig(payload);
         lastAppliedSigRef.current = sig;
+        const chain = withHtmlTransform(group.effects, payload);
         void (async () => {
           try {
-            await groupsSetHtmlTransform({
-              groupId: group.id,
-              x: payload.x,
-              y: payload.y,
-              scaleX: payload.scaleX,
-              scaleY: payload.scaleY,
-              rotationDeg: payload.rotationDeg,
-              opacity: payload.opacity,
-            });
+            await groupsSetEffects(group.id, chain);
             await onMutated();
           } catch (e) {
-            console.warn("groups_set_html_transform failed:", e);
+            console.warn("groups_set_effects (html_transform) failed:", e);
           }
         })();
       }, COMMIT_DEBOUNCE_MS);
     },
-    [group.id, onMutated],
+    [group.id, group.effects, onMutated],
   );
 
   useEffect(() => {
@@ -199,15 +193,7 @@ function HtmlTransformEditor({
     setState(next);
     lastAppliedSigRef.current = stateSig(next);
     try {
-      await groupsSetHtmlTransform({
-        groupId: group.id,
-        x: next.x,
-        y: next.y,
-        scaleX: next.scaleX,
-        scaleY: next.scaleY,
-        rotationDeg: next.rotationDeg,
-        opacity: next.opacity,
-      });
+      await groupsSetEffects(group.id, withHtmlTransform(group.effects, next));
       await onMutated();
     } catch (e) {
       console.warn("add zoom preset failed:", e);
@@ -216,10 +202,10 @@ function HtmlTransformEditor({
 
   const onRemove = async () => {
     try {
-      await groupsClearHtmlTransform(group.id);
+      await groupsSetEffects(group.id, withoutHtmlTransform(group.effects));
       await onMutated();
     } catch (e) {
-      console.warn("groups_clear_html_transform failed:", e);
+      console.warn("groups_set_effects (clear html_transform) failed:", e);
     }
   };
 
@@ -491,4 +477,37 @@ function toState(params: EffectParams & { kind: "HtmlTransform" }): TransformSta
 
 function stateSig(s: TransformState): string {
   return JSON.stringify(s);
+}
+
+/// Replace (or insert) the chain's single `HtmlTransform` with one
+/// built from the editor's transform state. We preserve the existing
+/// HtmlTransform's `id` and `enabled` flag if present so chain
+/// ordering stays stable across edits.
+function withHtmlTransform(chain: Effect[], next: TransformState): Effect[] {
+  const params: EffectParams = {
+    kind: "HtmlTransform",
+    x: next.x,
+    y: next.y,
+    scale_x: next.scaleX,
+    scale_y: next.scaleY,
+    rotation_deg: next.rotationDeg,
+    opacity: next.opacity,
+  };
+  let replaced = false;
+  const out: Effect[] = chain.map((e) => {
+    if (!replaced && e.params.kind === "HtmlTransform") {
+      replaced = true;
+      return { id: e.id, enabled: e.enabled, params };
+    }
+    return e;
+  });
+  if (!replaced) {
+    out.push({ id: crypto.randomUUID(), enabled: true, params });
+  }
+  return out;
+}
+
+/// Drop every `HtmlTransform` from the chain, preserving the rest.
+function withoutHtmlTransform(chain: Effect[]): Effect[] {
+  return chain.filter((e) => e.params.kind !== "HtmlTransform");
 }
