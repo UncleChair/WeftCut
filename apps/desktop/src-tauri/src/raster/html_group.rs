@@ -145,13 +145,18 @@ pub struct ProbeResult {
 /// from the template `RASTERIZER_VERSION` so a template-side fix
 /// doesn't gratuitously invalidate every html-group output (and vice
 /// versa).
-/// Bumped to 3 (2026-05-17) for F.3 follow-up: engine registers
-/// `window.__onSeek` so the time-mock shim's seek dispatch actually
-/// drives our applyAll. v2 captures don't (the shim's __seek_impl
-/// never reached the engine), so every layer stayed at the CSS
-/// default `opacity: 0` and frames were all-black. Bump invalidates
-/// the v2 caches.
-const HTML_GROUP_RASTERIZER_VERSION: u32 = 3;
+/// v2 (2026-05-17): F.3 — engine reads `__weftcutCompositionStatus`,
+/// extraction pre-step.
+/// v3 (2026-05-17): F.3 follow-up — engine registers `window.__onSeek`
+/// so the time-mock shim's seek dispatch actually drives our applyAll.
+/// v4 (2026-05-17): Phase X.2 — chrome-headless-shell BeginFrame raster
+/// path replaces WebView2 CapturePreview when the bundled binary is
+/// present. Atomic paint+capture, no rAF wait, no PNG-encode-on-Windows
+/// cost. WebView2 path is the fallback when the binary isn't found.
+/// Bumped because the two paths have small pixel deltas (font hinting
+/// + subpixel positioning differ between WebView2 and chrome-headless-
+/// shell); cache hits from v3 would mix pixel sources.
+const HTML_GROUP_RASTERIZER_VERSION: u32 = 4;
 
 /// Per-group materialization result the IR lower pass consumes.
 /// Shape parallels `TemplateRenderInfo` (`ir::materialize`) so the
@@ -293,15 +298,6 @@ pub async fn materialize_group(
         },
     );
 
-    let window = app
-        .get_webview_window("raster-worker")
-        .ok_or_else(|| "raster-worker window not spawned".to_string())?;
-
-    set_transparent_background(&window).await?;
-    window
-        .set_size(LogicalSize::new(state.width as f64, state.height as f64))
-        .map_err(|e| format!("resize raster worker to {}x{}: {e}", state.width, state.height))?;
-
     let tmp_dir = crate::cache::temp_path(&dest_dir);
     let _ = std::fs::remove_dir_all(&tmp_dir);
     std::fs::create_dir_all(&tmp_dir)
@@ -378,55 +374,106 @@ pub async fn materialize_group(
         "F.3: navigating raster-worker to composition.html",
     );
 
-    super::navigate_to_file(&window, &composition_path).await?;
+    // Dispatch on whether the bundled chrome-headless-shell binary is
+    // present. The Chrome path uses CDP `HeadlessExperimental.beginFrame`
+    // for atomic paint+capture per frame; the WebView2 fallback uses the
+    // long-lived raster-worker window's `CapturePreview` (the original
+    // shipped path). Both write `frame_NNNNN.png` to `tmp_dir` and emit
+    // identical `html_group:progress` events so downstream code doesn't
+    // need to know which fired.
+    let times_s: Vec<f64> = (0..frame_count).map(|idx| idx as f64 / fps_f).collect();
 
-    // Brief settle for the engine's initial-state JSON parse + first
-    // paint. The first __seek's await still covers fonts.ready + rAF
-    // but the immediate-after-navigate `document.readyState` going to
-    // `complete` doesn't guarantee the script has fully run.
-    tokio::time::sleep(std::time::Duration::from_millis(80)).await;
-
-    // F.3 diagnostic: ask the engine what it parsed. `ready=false`
-    // means the state-script-tag wasn't found (HTML didn't load /
-    // engine didn't run); `layers=0` with `ready=true` means the
-    // JSON parse failed silently. Either way, the captured frames
-    // will be blank; the log narrows the next investigation.
-    match super::eval_async(
-        &window,
-        "JSON.stringify((typeof window.__weftcutCompositionStatus === 'function') \
-            ? window.__weftcutCompositionStatus() \
-            : { error: 'status fn not registered' })"
-            .into(),
-    )
-    .await
-    {
-        Ok(status) => tracing::info!(
+    if let Some(binary) = super::chrome::find_chromium() {
+        tracing::info!(
             target: "html_group",
-            status = %status,
-            "F.3: engine status post-nav",
-        ),
-        Err(e) => tracing::warn!(
-            target: "html_group",
-            error = %e,
-            "F.3: failed to read engine status",
-        ),
-    }
-
-    for idx in 0..frame_count {
-        let t = idx as f64 / fps_f;
-        wait_seek(&window, t).await?;
-        let path = tmp_dir.join(format!("frame_{idx:05}.png"));
-        let _ = capture_via_webview(&window, &path).await?;
-        // Emit progress every frame; the cost is one IPC roundtrip per
-        // captured frame, dominated by the capture itself.
-        let _ = app.emit(
-            EVENT_HTML_GROUP_PROGRESS,
-            HtmlGroupProgressEvent {
-                group_id: group_id.to_string(),
-                frame: idx + 1,
-                total: frame_count,
-            },
+            chromium_exe = %binary.exe.display(),
+            "Phase X.2: rasterizing via chrome-headless-shell BeginFrame",
         );
+        let group_id_owned = group_id.to_string();
+        let app_clone = app.clone();
+        super::chrome::rasterize_to_dir(
+            &binary,
+            &composition_path,
+            &times_s,
+            state.width,
+            state.height,
+            &tmp_dir,
+            move |done, total| {
+                let _ = app_clone.emit(
+                    EVENT_HTML_GROUP_PROGRESS,
+                    HtmlGroupProgressEvent {
+                        group_id: group_id_owned.clone(),
+                        frame: done,
+                        total,
+                    },
+                );
+            },
+        )
+        .await
+        .map_err(|e| format!("chrome rasterize: {e:?}"))?;
+    } else {
+        tracing::info!(
+            target: "html_group",
+            "Phase X.2 fallback: chrome-headless-shell binary not found, using WebView2 raster",
+        );
+        let window = app
+            .get_webview_window("raster-worker")
+            .ok_or_else(|| "raster-worker window not spawned".to_string())?;
+
+        set_transparent_background(&window).await?;
+        window
+            .set_size(LogicalSize::new(state.width as f64, state.height as f64))
+            .map_err(|e| {
+                format!("resize raster worker to {}x{}: {e}", state.width, state.height)
+            })?;
+
+        super::navigate_to_file(&window, &composition_path).await?;
+
+        // Brief settle for the engine's initial-state JSON parse + first
+        // paint. The first __seek's await still covers fonts.ready + rAF
+        // but the immediate-after-navigate `document.readyState` going to
+        // `complete` doesn't guarantee the script has fully run.
+        tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+
+        // F.3 diagnostic: ask the engine what it parsed. `ready=false`
+        // means the state-script-tag wasn't found (HTML didn't load /
+        // engine didn't run); `layers=0` with `ready=true` means the
+        // JSON parse failed silently. Either way, the captured frames
+        // will be blank; the log narrows the next investigation.
+        match super::eval_async(
+            &window,
+            "JSON.stringify((typeof window.__weftcutCompositionStatus === 'function') \
+                ? window.__weftcutCompositionStatus() \
+                : { error: 'status fn not registered' })"
+                .into(),
+        )
+        .await
+        {
+            Ok(status) => tracing::info!(
+                target: "html_group",
+                status = %status,
+                "F.3: engine status post-nav",
+            ),
+            Err(e) => tracing::warn!(
+                target: "html_group",
+                error = %e,
+                "F.3: failed to read engine status",
+            ),
+        }
+
+        for (idx, &t) in times_s.iter().enumerate() {
+            wait_seek(&window, t).await?;
+            let path = tmp_dir.join(format!("frame_{idx:05}.png"));
+            let _ = capture_via_webview(&window, &path).await?;
+            let _ = app.emit(
+                EVENT_HTML_GROUP_PROGRESS,
+                HtmlGroupProgressEvent {
+                    group_id: group_id.to_string(),
+                    frame: idx + 1,
+                    total: frame_count,
+                },
+            );
+        }
     }
 
     let manifest = HtmlGroupManifest {
