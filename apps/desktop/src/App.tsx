@@ -9,8 +9,12 @@ import {
   compileProject,
   deleteLayer,
   EXPORT_EVENTS,
+  HTML_GROUP_EVENTS,
   keybindingsGet,
   type AgentSession,
+  type HtmlGroupCompleteEvent,
+  type HtmlGroupProgressEvent,
+  type HtmlGroupStartEvent,
   type KeybindingsMap,
   EXPORT_PRESETS,
   exportProject,
@@ -104,6 +108,14 @@ export function App({ onCloseProject }: AppProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [exportState, setExportState] = useState<ExportState | null>(null);
+  /// Tracks the in-progress html-render-group raster phase. Populated by
+  /// `html_group:start`, advanced by `html_group:progress`, cleared by
+  /// `html_group:complete`. At most one group is rasterizing at a time
+  /// (export pipeline is serial); subsequent groups overwrite. ExportPanel
+  /// renders a sub-progress bar from this so users see real progress
+  /// during the pre-raster phase instead of "Starting…" flatlining for
+  /// 30+ seconds on group-heavy projects.
+  const [htmlGroupRaster, setHtmlGroupRaster] = useState<HtmlGroupRasterState | null>(null);
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
   // R.7 inline-reveal: track id the user surfaced from the right-panel peek
   // list. Single-track exclusive; persists across scrubs. Cleared by Esc, by
@@ -471,13 +483,63 @@ export function App({ onCloseProject }: AppProps) {
       const onError = await listen<string>(EXPORT_EVENTS.error, (e) => {
         setExportState({ kind: "error", detail: e.payload });
       });
+      // html-group raster phase — fires before ffmpeg `export:progress`
+      // and dominates wall-clock for any project with an html-render
+      // group. Without these listeners the panel sits on "Starting…"
+      // for the duration of the raster.
+      const onHtmlStart = await listen<HtmlGroupStartEvent>(
+        HTML_GROUP_EVENTS.start,
+        (e) => {
+          setHtmlGroupRaster({
+            groupId: e.payload.groupId,
+            frame: 0,
+            total: e.payload.frameCount,
+          });
+        },
+      );
+      const onHtmlProgress = await listen<HtmlGroupProgressEvent>(
+        HTML_GROUP_EVENTS.progress,
+        (e) => {
+          setHtmlGroupRaster((prev) =>
+            prev && prev.groupId === e.payload.groupId
+              ? {
+                  groupId: prev.groupId,
+                  frame: e.payload.frame,
+                  total: e.payload.total,
+                }
+              : prev,
+          );
+        },
+      );
+      const onHtmlComplete = await listen<HtmlGroupCompleteEvent>(
+        HTML_GROUP_EVENTS.complete,
+        (e) => {
+          // Clear only when the completion matches the currently-tracked
+          // group; a delayed event from an aborted prior export shouldn't
+          // wipe the in-flight one. Cache-hit completions fire instantly
+          // after `:start` so the sub-bar barely renders — fine.
+          setHtmlGroupRaster((prev) =>
+            prev && prev.groupId === e.payload.groupId ? null : prev,
+          );
+        },
+      );
       if (cancelled) {
         onProgress();
         onComplete();
         onError();
+        onHtmlStart();
+        onHtmlProgress();
+        onHtmlComplete();
         return;
       }
-      unlisteners.push(onProgress, onComplete, onError);
+      unlisteners.push(
+        onProgress,
+        onComplete,
+        onError,
+        onHtmlStart,
+        onHtmlProgress,
+        onHtmlComplete,
+      );
     })();
     return () => {
       cancelled = true;
@@ -1053,6 +1115,7 @@ export function App({ onCloseProject }: AppProps) {
       {exportState && (
         <ExportPanel
           state={exportState}
+          htmlGroupRaster={htmlGroupRaster}
           onClose={() => setExportState(null)}
         />
       )}
@@ -1256,11 +1319,24 @@ type ExportState =
   | { kind: "complete"; payload: ExportComplete }
   | { kind: "error"; detail: string };
 
+/// Side-channel state for the html-render-group raster phase. Distinct
+/// from `ExportState` because both can be live simultaneously: ffmpeg's
+/// `export:progress` ticks while a later html-group is rasterizing into
+/// its cache for a still-pending segment. (Today the pipeline is
+/// strictly raster-then-encode, but the shape allows both.)
+interface HtmlGroupRasterState {
+  groupId: string;
+  frame: number;
+  total: number;
+}
+
 function ExportPanel({
   state,
+  htmlGroupRaster,
   onClose,
 }: {
   state: ExportState;
+  htmlGroupRaster: HtmlGroupRasterState | null;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
@@ -1301,6 +1377,37 @@ function ExportPanel({
       break;
   }
 
+  // html-group raster sub-progress. Renders only while a group is
+  // actively rasterizing and the export hasn't errored/completed.
+  // total > 0 guard sidesteps a divide-by-zero if a start event arrives
+  // with frameCount=0 (defensive — Rust side rejects that case already).
+  const htmlSubProgress =
+    htmlGroupRaster && htmlGroupRaster.total > 0 && inProgress ? (
+      <div className="export-html-group-row">
+        <span className="export-html-group-label">
+          {t("export.html_group_label", {
+            shortId: htmlGroupRaster.groupId.slice(0, 8),
+            frame: htmlGroupRaster.frame,
+            total: htmlGroupRaster.total,
+            defaultValue:
+              "Rasterizing group {{shortId}}… {{frame}} / {{total}} frames",
+          })}
+        </span>
+        <div className="progress-track is-sub">
+          <div
+            className="progress-fill"
+            style={{
+              width: `${
+                (htmlGroupRaster.frame /
+                  Math.max(1, htmlGroupRaster.total)) *
+                100
+              }%`,
+            }}
+          />
+        </div>
+      </div>
+    ) : null;
+
   return (
     <aside className="export-panel">
       <header>
@@ -1319,6 +1426,7 @@ function ExportPanel({
           }}
         />
       </div>
+      {htmlSubProgress}
     </aside>
   );
 }
