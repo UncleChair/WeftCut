@@ -19,7 +19,12 @@ Prerequisites for building WeftCut on each supported OS, and the first-run flow.
    ~6 GB. Required once.
 3. **WebView2 Runtime** — preinstalled on Windows 11; nothing to do.
 4. **Node 20+** — `winget install -e --id OpenJS.NodeJS.LTS`.
-5. **libmpv** — needed once you start working on `src/mpv/`. `libmpv2` is now an **optional Cargo feature** (`mpv`); the regular `cargo build` skips it entirely. To enable preview work:
+5. **chrome-headless-shell** — required for the fast export raster path (`raster::chrome`). Without it, exports silently fall back to the slower WebView2 `CapturePreview` path and a one-shot dialog asks you to install. Run once after clone:
+   ```powershell
+   pwsh apps/desktop/src-tauri/vendor/chrome-headless-shell/download.ps1
+   ```
+   Pulls the latest stable Chrome for Testing build (~268 MB extracted) into `apps/desktop/src-tauri/vendor/chrome-headless-shell/`. Gitignored. The discovery in `raster::chrome::find_chromium` walks ancestors of the running exe to find it; dev builds run from `target/debug/...` so the vendor dir at the repo root is found automatically. Production builds bundle the directory next to `weftcut.exe` via `tauri.windows.conf.json -> bundle.resources`.
+6. **libmpv** — needed once you start working on `src/mpv/`. `libmpv2` is now an **optional Cargo feature** (`mpv`); the regular `cargo build` skips it entirely. To enable preview work:
    1. Download a libmpv "dev" build for Windows: <https://github.com/shinchiro/mpv-winbuild-cmake/releases> → `mpv-dev-x86_64-*.7z` (contains `libmpv-2.dll`, `libmpv-2.lib`, headers).
    2. **Runtime DLL**: drop `libmpv-2.dll` somewhere on `PATH`. Convention for WeftCut dev: `apps/desktop/src-tauri/target/debug/libmpv-2.dll` so `cargo run` finds it via the binary's directory.
    3. **Link-time import lib**: rename `libmpv-2.lib` → `mpv.lib` and put it in a directory on `%LIB%`, or set `set RUSTFLAGS=-L C:\path\to\libmpv\lib` before `cargo build`. Convention: keep all libmpv files under `C:\dev\libmpv\` and add that path to both `%PATH%` and `%LIB%` in your shell profile.

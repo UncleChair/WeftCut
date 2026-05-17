@@ -1,10 +1,11 @@
 # HTML render groups — design
 
-**Status:** Designed in a grilling session on 2026-05-17. Not yet
-implemented. Builds on top of the shipped [[preview-dom]] (loose-parity
-DOM compositor) and [[group-system]] (Phases G.1–G.6, flat groups with
-fan-out edits). Branch name TBD (`feat/html-render-groups` if landed as
-big-bang; see Phase plan for a smaller alternative).
+**Status:** Shipped 2026-05-17. Phases H.0–H.7 + effect-redesign A–D +
+F.1–F.3 landed on `feat/preview-dom`, merged into `main` at `b608125`.
+Follow-on work (Blur effect runtime, headless-Chromium export raster,
+ExportPanel progress UI) shipped through commit `7142afd`. Builds on
+top of [[preview-dom]] (loose-parity DOM compositor) and
+[[group-system]] (flat groups with fan-out edits).
 
 ---
 
@@ -573,20 +574,74 @@ instead of jumping 0% → 80% → crawl.
 
 **Modified files:**
 
-- `apps/desktop/src-tauri/src/export/html_groups.rs` — emit
-  `html_group:source_extract_progress`, `:raster_progress`,
-  `:encode_progress`, `:complete` events per group.
-- `apps/desktop/src/export/ExportPanel.tsx` — render a per-group
-  progress sub-bar during phases 1–3.
+- `apps/desktop/src-tauri/src/raster/html_group.rs` — emit
+  `html_group:start`, `:progress`, `:complete` events per group.
+- `apps/desktop/src/App.tsx` — `ExportPanel` subscribes to the events,
+  threads a `htmlGroupRaster` side-channel state through the panel.
+  Shipped `77b40b8` (sub-bar) → `7142afd` (folded into the main bar
+  with a 0–50% / 50–100% phase split).
 
 **Verification.** Export a multi-html-group project; progress
-indicator never flatlines.
+indicator never flatlines. ✓
 
 **Total scope ~2–3 weeks of single-developer time.** Smaller than
 preview-dom because the raster machinery, the offscreen webview,
 the time-mock shim, the group system, the IR lowering pass, and the
 effect catalog all exist. New surface is composition generation +
 HtmlGroupHandle + the export-driver glue.
+
+### Phase F.1–F.3 — Real VideoClip + ImageOverlay pixels (shipped)
+
+Originally listed as v1 limitations in this doc, these followups
+landed during the same window as H.0–H.7 and produce real media
+pixels (instead of placeholder colors) inside compositions:
+
+- **F.1 (5d963a9):** Preview-side `PreviewImageResolver` mounts
+  `<img src=asset://...>` into `ImageOverlay` slots.
+- **F.2 (a1f1c83):** VideoClip + ImageOverlay slot dimensions carry
+  through to the composition DOM so the layer's CSS transform
+  composes against the right base size.
+- **F.3 (d087e41 + fix series):** Export-side resolver
+  pre-extracts source video frames into the per-group tmp dir and
+  the engine's `__seek` swaps `<img src=source/<lid>/frame_NNNNN.png>`
+  per tick. Plus diagnostic plumbing and the `__onSeek` shim
+  registration so the time-mock shim actually drives our applyAll.
+
+### Phase effects-redesign A–D — Generic effects chains (shipped)
+
+Originally `Group.render_mode: Native | Html` was an explicit flag;
+the redesign (2026-05-17, commits `c60b002` → `baddab8`) replaced
+the flag with derived-from-effect-chain semantics:
+
+- **A:** generic `groups_set_effects` / `layers_set_effects` ops.
+- **B:** engine + distiller compose per-layer HtmlTransform on top
+  of the static layer transform.
+- **C:** html-cap detection in `LiveLayers` widens to member-layer
+  effects (so a per-layer HtmlTransform flips the group).
+- **D:** generic effects UI for both layer + group chains.
+- Plus `2d565fa`: `Group.render_mode` field dropped (breaking).
+
+### Phase effects-runtime: Blur as the first real catalog effect (shipped)
+
+The H.7 followup added Blur — first non-HtmlTransform effect with
+a runtime impl on both the composition path AND the standalone
+per-handle path (a layer with Blur outside any html-cap group still
+blurs in preview via `style.filter = "blur(Npx)"`). Shipped
+commits `a65659c` (initial wire) + the `layerSig` fix that ensured
+`HtmlGroupHandle` re-distills when a layer's effect chain changes
+(otherwise the composition kept stale JSON state). Standalone path
+also gets HtmlTransform composition so a transform-only layer
+without a group renders rotation/scale correctly.
+
+### Phase X.1–X.5 — Headless Chromium export raster (shipped)
+
+Replaces WebView2 `CapturePreview` with bundled
+`chrome-headless-shell` driven via CDP. ~10× speedup on the export
+raster phase. See [[project_headless_chrome_export]] for the full
+phase list + decisions. Net effect on this design: Phase H.5's
+"raster composite + capture (~30–100 ms / frame)" line now reads
+"raster composite + capture (~30 ms / frame, parallelized 4×)" —
+the per-frame snapshot risk listed below is materially reduced.
 
 ---
 
