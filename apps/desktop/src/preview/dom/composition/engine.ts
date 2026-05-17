@@ -367,7 +367,7 @@ export const ENGINE_SOURCE: string = String.raw`
   // → __onSeek(t) if defined. Without registering this, the shim's
   // seek path runs through fonts.ready + rAF flush but never reaches
   // our applyAll — every captured frame ends up at the layer CSS
-  // default of `opacity: 0` and the export looks all-black.
+  // default opacity 0 and the export looks all-black.
   window.__onSeek = function (tSeconds) {
     applyAll(Number(tSeconds) || 0);
   };
