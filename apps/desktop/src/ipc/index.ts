@@ -860,6 +860,38 @@ export async function groupsCreate(
   });
 }
 
+/// Replace (or create) the group's `HtmlTransform` effect. Six
+/// animated tracks: x, y, scale_x, scale_y, rotation_deg, opacity.
+/// Each is an `Animated<number>` wire shape (Static or Keyframed).
+/// Adding any keyframes flags the group for html-cap rendering in
+/// preview + export.
+export async function groupsSetHtmlTransform(args: {
+  groupId: string;
+  x: AnimTrack<number>;
+  y: AnimTrack<number>;
+  scaleX: AnimTrack<number>;
+  scaleY: AnimTrack<number>;
+  rotationDeg: AnimTrack<number>;
+  opacity: AnimTrack<number>;
+}): Promise<void> {
+  await invoke<null>("groups_set_html_transform", {
+    groupId: args.groupId,
+    x: args.x,
+    y: args.y,
+    scaleX: args.scaleX,
+    scaleY: args.scaleY,
+    rotationDeg: args.rotationDeg,
+    opacity: args.opacity,
+  });
+}
+
+/// Drop every `HtmlTransform` from a group's effect chain. The group
+/// reverts to ffmpeg per-layer rendering. No-op if the group has no
+/// `HtmlTransform`.
+export async function groupsClearHtmlTransform(groupId: string): Promise<void> {
+  await invoke<null>("groups_clear_html_transform", { groupId });
+}
+
 export async function groupsDissolve(groupId: string): Promise<void> {
   return invoke<void>("groups_dissolve", { groupId });
 }

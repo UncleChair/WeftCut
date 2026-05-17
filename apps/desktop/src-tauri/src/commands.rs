@@ -2178,6 +2178,22 @@ pub async fn groups_dissolve(
         .map_err(|e: CommandError| e.to_string())
 }
 
+/// Drop every `HtmlTransform` from the group's effect chain.
+/// Counterpart to the MCP `groups_clear_html_transform` tool. The
+/// group reverts to ffmpeg per-layer rendering once it has no
+/// html-required effects left.
+#[tauri::command]
+pub async fn groups_clear_html_transform(
+    handle: State<'_, ProjectHandle>,
+    group_id: String,
+) -> Result<(), String> {
+    let gid = Uuid::parse_str(&group_id).map_err(|e| format!("group_id: {e}"))?;
+    handle
+        .groups_clear_html_transform(Actor::User, gid)
+        .await
+        .map_err(|e: CommandError| e.to_string())
+}
+
 /// Phase H effect-redesign 4/4 — Tauri counterpart to the MCP
 /// `groups_set_html_transform` tool. Each field is a JSON-encoded
 /// `Animated<f64>` (the same shape the project file uses) — pass

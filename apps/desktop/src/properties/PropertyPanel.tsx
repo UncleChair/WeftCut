@@ -3,21 +3,29 @@ import { useTranslation } from "react-i18next";
 import {
   updateLayer,
   updateLayerParams,
+  type GroupSummary,
   type LayerParamsPatch,
   type LayerSummary,
   type Rgba,
   type TrackSummary,
 } from "../ipc";
+import { GroupEffectsSection } from "./GroupEffectsSection";
 
 interface Props {
   tracks: TrackSummary[];
+  groups: GroupSummary[];
   selectedLayerId: string | null;
   onMutated: () => Promise<void>;
 }
 
 const COMMIT_DEBOUNCE_MS = 250;
 
-export function PropertyPanel({ tracks, selectedLayerId, onMutated }: Props) {
+export function PropertyPanel({
+  tracks,
+  groups,
+  selectedLayerId,
+  onMutated,
+}: Props) {
   const { t } = useTranslation();
   const layer = useMemo(
     () => findLayer(tracks, selectedLayerId),
@@ -42,6 +50,7 @@ export function PropertyPanel({ tracks, selectedLayerId, onMutated }: Props) {
       <EnvelopeFields layer={layer} onMutated={onMutated} />
       <hr />
       <KindFields layer={layer} onMutated={onMutated} />
+      <GroupEffectsSection layer={layer} groups={groups} onMutated={onMutated} />
     </aside>
   );
 }
