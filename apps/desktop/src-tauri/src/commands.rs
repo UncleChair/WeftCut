@@ -2178,6 +2178,50 @@ pub async fn groups_dissolve(
         .map_err(|e: CommandError| e.to_string())
 }
 
+/// Phase H effect-redesign 4/4 — Tauri counterpart to the MCP
+/// `groups_set_html_transform` tool. Each field is a JSON-encoded
+/// `Animated<f64>` (the same shape the project file uses) — pass
+/// `{ "mode": "Static", "value": 1.0 }` for fields you don't want
+/// to animate, or `{ "mode": "Keyframed", "value": [{...}, ...] }`
+/// to author keyframes. The whole HtmlTransform on the group is
+/// replaced (created if absent).
+#[tauri::command]
+pub async fn groups_set_html_transform(
+    handle: State<'_, ProjectHandle>,
+    group_id: String,
+    x: serde_json::Value,
+    y: serde_json::Value,
+    scale_x: serde_json::Value,
+    scale_y: serde_json::Value,
+    rotation_deg: serde_json::Value,
+    opacity: serde_json::Value,
+) -> Result<(), String> {
+    let gid = Uuid::parse_str(&group_id).map_err(|e| format!("group_id: {e}"))?;
+    let x = serde_json::from_value::<state::Animated<f64>>(x).map_err(|e| format!("x: {e}"))?;
+    let y = serde_json::from_value::<state::Animated<f64>>(y).map_err(|e| format!("y: {e}"))?;
+    let scale_x = serde_json::from_value::<state::Animated<f64>>(scale_x)
+        .map_err(|e| format!("scale_x: {e}"))?;
+    let scale_y = serde_json::from_value::<state::Animated<f64>>(scale_y)
+        .map_err(|e| format!("scale_y: {e}"))?;
+    let rotation_deg = serde_json::from_value::<state::Animated<f64>>(rotation_deg)
+        .map_err(|e| format!("rotation_deg: {e}"))?;
+    let opacity = serde_json::from_value::<state::Animated<f64>>(opacity)
+        .map_err(|e| format!("opacity: {e}"))?;
+    handle
+        .groups_set_html_transform(
+            Actor::User,
+            gid,
+            x,
+            y,
+            scale_x,
+            scale_y,
+            rotation_deg,
+            opacity,
+        )
+        .await
+        .map_err(|e: CommandError| e.to_string())
+}
+
 #[tauri::command]
 pub async fn delete_layer(
     handle: State<'_, ProjectHandle>,

@@ -15,6 +15,12 @@ use super::time::TimeUs;
 /// `T: Clone` is required because `imbl::Vector` uses structural sharing — the
 /// inner `Keyframe<T>` must be cloneable. Bounding the type is cleaner than
 /// repeating the bound at every use site.
+///
+/// **No `JsonSchema` derive**: `imbl::Vector` doesn't ship a `JsonSchema`
+/// impl, and `Uuid` requires schemars' `uuid1` feature. MCP tools that
+/// need to accept an `Animated<T>` from agents declare the field as
+/// `serde_json::Value` and deserialize inside the handler; the wire
+/// shape is the same.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "mode", content = "value")]
 pub enum Animated<T: Clone> {
