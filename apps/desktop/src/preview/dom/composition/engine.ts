@@ -81,6 +81,21 @@ export interface CompositionTransform {
   opacity: AnimTrack<number>;
 }
 
+/// CSS filter chain applied to a composition or per-layer host. v1
+/// carries `blur` only — radius in CSS pixels, animated like every
+/// other track. `null` / missing → no filter is written (the engine
+/// clears `style.filter` so a previous frame's value doesn't stick).
+///
+/// Future filter axes (brightness/contrast/saturate/hue-rotate) slot in
+/// here as additional optional fields; the engine composes them into
+/// one `filter:` string per frame so the CSS cascade sees a single
+/// value, not multiple competing rules.
+export interface CompositionFilter {
+  /// Blur radius in CSS pixels. Default 0 = no blur (CSS spec: 0
+  /// renders identity). Mirrors `EffectParams::Blur { radius }`.
+  blur_px: AnimTrack<number>;
+}
+
 /// JSON-serializable composition state. The generator builds this from
 /// `Project` state; the engine reads it inside the composition.
 ///
@@ -99,6 +114,9 @@ export interface CompositionState {
   /// Group-level transform driven by the group's `HtmlTransform`
   /// effect. Null/absent when the group has no `HtmlTransform`.
   compositionTransform?: CompositionTransform | null;
+  /// Group-level CSS filter chain (currently: blur). Null/absent when
+  /// the group has no filter-producing effects.
+  compositionFilter?: CompositionFilter | null;
 }
 
 /// Shared layer fields used by every kind. Per-kind specifics live in
@@ -127,6 +145,11 @@ export interface CompositionLayer {
   /// t_us=0 is the layer's t_start; the engine handles the
   /// composition→layer time shift.
   effectTransform?: CompositionTransform | null;
+  /// Per-layer CSS filter chain (currently: blur from `EffectParams::
+  /// Blur`). Keyframes are layer-local time, same convention as
+  /// `effectTransform`. Null/absent when the layer has no filter-
+  /// producing effects.
+  effectFilter?: CompositionFilter | null;
 }
 
 export type CompositionLayerParams =
@@ -268,6 +291,22 @@ export const ENGINE_SOURCE: string = String.raw`
     compositionEl.style.opacity = String(op);
   }
 
+  // ---- Composition-level CSS filter (blur for v1). --------------------
+  // Clearing to "" (not "blur(0px)") matters: a non-empty filter creates
+  // a containing block that re-parents fixed/abs descendants and can
+  // change paint order. The neutral state must leave the cascade
+  // unchanged.
+  function applyCompositionFilter(tCompUs) {
+    if (!compositionEl) return;
+    var cf = STATE && STATE.compositionFilter;
+    if (!cf) {
+      compositionEl.style.filter = "";
+      return;
+    }
+    var blur = resolveAnimated(cf.blur_px, tCompUs, 0);
+    compositionEl.style.filter = blur > 0 ? "blur(" + blur + "px)" : "";
+  }
+
   // ---- Per-frame writer. -----------------------------------------------
   function applyLayer(layer, tSeconds) {
     var host = hostOf(layer.id);
@@ -306,6 +345,17 @@ export const ENGINE_SOURCE: string = String.raw`
       "translate(" + tx + "px, " + ty + "px) rotate(" + rot + "deg) scale(" + sx + ", " + sy + ")";
     host.style.opacity = String(op);
 
+    // Per-layer CSS filter (blur for v1). Layer-local time matches
+    // effectTransform; same clear-to-"" discipline as the composition
+    // filter avoids creating a stray containing block at blur=0.
+    var filterStr = "";
+    var ef = layer.effectFilter;
+    if (ef) {
+      var blurLayer = resolveAnimated(ef.blur_px, tLayerUs, 0);
+      if (blurLayer > 0) filterStr = "blur(" + blurLayer + "px)";
+    }
+    host.style.filter = filterStr;
+
     // Export path: VideoClip with a pre-extracted frame pattern.
     // Swap the slot's <img>.src to the right per-tick frame. Preview
     // path leaves framePattern undefined and the host's
@@ -332,6 +382,7 @@ export const ENGINE_SOURCE: string = String.raw`
     if (!STATE) return;
     var tCompUs = Math.floor(tSeconds * 1e6);
     applyCompositionTransform(tCompUs);
+    applyCompositionFilter(tCompUs);
     for (var i = 0; i < STATE.layers.length; i++) {
       applyLayer(STATE.layers[i], tSeconds);
     }

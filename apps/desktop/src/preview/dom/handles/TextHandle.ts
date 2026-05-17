@@ -9,12 +9,19 @@
 /// Render & Play is the verification path when it matters.
 
 import { useProjectStore } from "../../../state/projectStore";
+import {
+  buildLayerFilter,
+  buildLayerOpacityMultiplier,
+  buildLayerTransform,
+} from "../effects/applyFilter";
 import type { HandleContext, LayerHandle } from "./types";
 
 export class TextHandle implements LayerHandle {
   private div: HTMLDivElement;
   private appliedSig: string | null = null;
   private appliedOpacity = -1;
+  private appliedFilter = "";
+  private appliedTransform = "";
   private disposed = false;
 
   constructor(private ctx: HandleContext) {
@@ -53,10 +60,33 @@ export class TextHandle implements LayerHandle {
     // Static opacity for text — fade_in_us/fade_out_us not exposed
     // on TextView today. When the IPC view picks up the intro/outro
     // presets from TextParams, this becomes a real animated path.
-    const eff = layer.params.opacity;
-    if (Math.abs(this.appliedOpacity - eff) > 0.001) {
-      this.appliedOpacity = eff;
-      this.div.style.opacity = String(eff);
+    const tLocalUs = masterUs - layer.t_start_us;
+    const opacityMul = buildLayerOpacityMultiplier(layer.effects, tLocalUs);
+    const composedOpacity = layer.params.opacity * opacityMul;
+    if (Math.abs(this.appliedOpacity - composedOpacity) > 0.001) {
+      this.appliedOpacity = composedOpacity;
+      this.div.style.opacity = String(composedOpacity);
+    }
+
+    const transform = buildLayerTransform(
+      {
+        x: layer.params.x,
+        y: layer.params.y,
+        scale_x: 1,
+        scale_y: 1,
+      },
+      layer.effects,
+      tLocalUs,
+    );
+    if (transform !== this.appliedTransform) {
+      this.appliedTransform = transform;
+      this.div.style.transform = transform;
+    }
+
+    const filter = buildLayerFilter(layer.effects, tLocalUs);
+    if (filter !== this.appliedFilter) {
+      this.appliedFilter = filter;
+      this.div.style.filter = filter;
     }
 
     this.div.style.visibility = "visible";
@@ -82,6 +112,7 @@ export class TextHandle implements LayerHandle {
     this.div.style.fontSize = `${p.font_size_px}px`;
     const alpha = p.color.a / 255;
     this.div.style.color = `rgba(${p.color.r}, ${p.color.g}, ${p.color.b}, ${alpha})`;
-    this.div.style.transform = `translate(${p.x}px, ${p.y}px)`;
+    // Transform composed per-tick in tick() (HtmlTransform layers on
+    // top of the base translate).
   }
 }

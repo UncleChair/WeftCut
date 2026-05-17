@@ -29,6 +29,7 @@ import type {
   MediaSummary,
 } from "../../../ipc";
 import type {
+  CompositionFilter,
   CompositionLayer,
   CompositionLayerParams,
   CompositionState,
@@ -125,6 +126,7 @@ export function distillCompositionState(input: DistillInputs): DistillResult {
       input.canvasHeight,
     );
     const effectTransform = pickHtmlTransform(layer.effects);
+    const effectFilter = pickBlur(layer.effects);
     return {
       id: layer.id,
       // Use the sorted index as z so successive distillations produce
@@ -137,6 +139,7 @@ export function distillCompositionState(input: DistillInputs): DistillResult {
       ...positionFor(layer),
       params,
       ...(effectTransform ? { effectTransform } : {}),
+      ...(effectFilter ? { effectFilter } : {}),
     };
     // `trackIndex` retained in scope only to surface the field as
     // documentation; the engine reads `z` for ordering.
@@ -144,12 +147,14 @@ export function distillCompositionState(input: DistillInputs): DistillResult {
   });
 
   const compositionTransform = pickCompositionTransform(input.group);
+  const compositionFilter = pickBlur(input.group.effects);
 
   const state: CompositionState = {
     width: input.canvasWidth,
     height: input.canvasHeight,
     layers,
     ...(compositionTransform ? { compositionTransform } : {}),
+    ...(compositionFilter ? { compositionFilter } : {}),
   };
   return { state, groupTStartUs, skipped, mediaByLayer };
 }
@@ -172,6 +177,22 @@ function pickCompositionTransform(group: GroupSummary): CompositionTransform | n
 /// `HtmlTransform`'s tracks as a `CompositionTransform`. Returns `null`
 /// when none present. Multiple HtmlTransforms in one chain isn't
 /// supported in v1 (the first wins).
+/// Walk an effect chain (group or layer) and return the first enabled
+/// `Blur`'s `radius` track as a `CompositionFilter`. Returns `null`
+/// when none present. Multiple Blurs in one chain isn't supported in
+/// v1 (the first wins, same convention as `pickHtmlTransform`).
+function pickBlur(
+  effects: ReadonlyArray<{ enabled: boolean; params: { kind: string } & Record<string, unknown> }>,
+): CompositionFilter | null {
+  for (const e of effects) {
+    if (!e.enabled) continue;
+    if (e.params.kind !== "Blur") continue;
+    const p = e.params as unknown as { radius: AnimTrack<number> };
+    return { blur_px: p.radius };
+  }
+  return null;
+}
+
 function pickHtmlTransform(
   effects: ReadonlyArray<{ enabled: boolean; params: { kind: string } & Record<string, unknown> }>,
 ): CompositionTransform | null {
