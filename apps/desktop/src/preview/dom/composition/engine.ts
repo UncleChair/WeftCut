@@ -181,7 +181,28 @@ export type CompositionLayerParams =
       /// directory. Absent on the preview path.
       imageSrc?: string;
     }
-  | { kind: "Template"; template_id: string; props: Record<string, unknown> };
+  | {
+      kind: "Template";
+      template_id: string;
+      /// Combined CSS body from every `<style>` block in the (composed)
+      /// template HTML. Set on the per-template shadow root as a
+      /// `<style>` sibling of the body, after a `:host {...}` size
+      /// block that pins the host dimensions.
+      style: string;
+      /// Combined JS body from every `<script>` block. Run via
+      /// `new Function` with per-instance shadowed globals so two
+      /// templates with overlapping ids don't collide.
+      scripts: string;
+      /// Template body markup with `<script>` and `<style>` elements
+      /// stripped (innerHTML doesn't execute scripts but they clutter
+      /// the shadow and confuse `querySelector` walks).
+      body: string;
+      /// Per-instance props injected as `window.__props__` before
+      /// scripts run. Templates poll for it in their `start()` loop.
+      props: Record<string, unknown>;
+      width: number;
+      height: number;
+    };
 
 /// CSS id used by the engine to find its state blob.
 export const STATE_SCRIPT_ID = "weftcut-composition";
@@ -237,6 +258,130 @@ export const ENGINE_SOURCE: string = String.raw`
     return String(s).replace(/["\\]/g, "\\$&");
   }
   var compositionEl = document.getElementById("composition");
+
+  // ---- Template mount ----------------------------------------------------
+  // Each Template member is rendered as an empty data-kind=Template
+  // placeholder host by the generator. The engine walks them once at
+  // startup, attachShadows each, and runs the template's scripts inside
+  // a new Function with per-instance shadowed globals (document =
+  // template shadow root, window proxy carrying __props__, synthetic
+  // performance/Date driven by the engine's clock, per-instance rAF
+  // queue). Mirrors TemplateHandle.instantiateTemplate so preview and
+  // export render the same template output.
+  //
+  // Runtimes are stored in templateRuntimes keyed by layer id; the
+  // per-layer driver in applyLayer looks up the runtime and calls
+  // setTime(tLayerSec) after writing transform/opacity to the host.
+  var templateRuntimes = Object.create(null);
+
+  function instantiateCompositionTemplate(hostDiv, style, scripts, body, props, w, h) {
+    if (hostDiv.shadowRoot) return null; // idempotent — already mounted
+    var shadow = hostDiv.attachShadow({ mode: "open" });
+    var hostStyle =
+      "<style>:host { display: block; position: relative; width: " +
+      (w | 0) + "px; height: " + (h | 0) +
+      "px; overflow: hidden; }</style>";
+    shadow.innerHTML = hostStyle + "<style>" + (style || "") + "</style>" + (body || "");
+
+    var clock = { t: 0 };
+    var rafQueue = Object.create(null);
+    var rafSeq = 0;
+
+    var winState = { __props__: props || {} };
+    var winProxy = new Proxy(winState, {
+      get: function (target, prop) {
+        if (prop in target) return target[prop];
+        return window[prop];
+      },
+      set: function (target, prop, value) {
+        target[prop] = value;
+        return true;
+      },
+      has: function (target, prop) {
+        return prop in target || prop in window;
+      }
+    });
+
+    var perfProxy = { now: function () { return clock.t * 1000; } };
+    // Date proxy: instances delegate to real Date; static .now reflects
+    // the synthetic clock. Templates rely on the static call site
+    // Date.now() so the delegating constructor is defensive only.
+    var DateCtor = window.Date;
+    function DateShim() {
+      if (arguments.length === 0) return new DateCtor();
+      if (arguments.length === 1) return new DateCtor(arguments[0]);
+      return new DateCtor(
+        arguments[0], arguments[1], arguments[2],
+        arguments[3], arguments[4], arguments[5], arguments[6]
+      );
+    }
+    DateShim.now = function () { return clock.t * 1000; };
+
+    var rafFn = function (cb) {
+      var id = ++rafSeq;
+      rafQueue[id] = cb;
+      return id;
+    };
+    var cancelRafFn = function (id) {
+      delete rafQueue[id];
+    };
+
+    try {
+      var fn = new Function(
+        "document",
+        "window",
+        "performance",
+        "Date",
+        "requestAnimationFrame",
+        "cancelAnimationFrame",
+        scripts || ""
+      );
+      fn(shadow, winProxy, perfProxy, DateShim, rafFn, cancelRafFn);
+    } catch (e) {
+      console.warn("composition: template script execution failed", e);
+    }
+
+    return {
+      setTime: function (seconds) {
+        clock.t = Number(seconds) || 0;
+        var keys = Object.keys(rafQueue);
+        var pending = [];
+        for (var i = 0; i < keys.length; i++) pending.push(rafQueue[keys[i]]);
+        rafQueue = Object.create(null);
+        var tMs = clock.t * 1000;
+        for (var j = 0; j < pending.length; j++) {
+          try { pending[j](tMs); }
+          catch (e) { console.error("composition: template rAF cb threw", e); }
+        }
+      }
+    };
+  }
+
+  function mountCompositionTemplates() {
+    if (!STATE || !Array.isArray(STATE.layers)) return;
+    for (var i = 0; i < STATE.layers.length; i++) {
+      var layer = STATE.layers[i];
+      if (!layer || !layer.params || layer.params.kind !== "Template") continue;
+      var host = hostOf(layer.id);
+      if (!host) continue;
+      try {
+        var rt = instantiateCompositionTemplate(
+          host,
+          layer.params.style,
+          layer.params.scripts,
+          layer.params.body,
+          layer.params.props,
+          layer.params.width | 0,
+          layer.params.height | 0
+        );
+        if (rt) templateRuntimes[layer.id] = rt;
+      } catch (e) {
+        console.error("composition: instantiateCompositionTemplate threw for", layer.id, e);
+      }
+    }
+  }
+
+  mountCompositionTemplates();
 
   // ---- AnimTrack resolution. -------------------------------------------
   // Wire shape mirrors the Rust Animated<T> enum (serde tag "mode",
@@ -374,6 +519,18 @@ export const ENGINE_SOURCE: string = String.raw`
         while (padded.length < 5) padded = "0" + padded;
         var newSrc = layer.params.framePattern.replace("%05d", padded);
         if (img.getAttribute("src") !== newSrc) img.setAttribute("src", newSrc);
+      }
+    }
+
+    // Template layers: advance the per-instance runtime to the
+    // layer-local time so its rAF-driven animations re-render. The
+    // engine already gated visibility via opacity above; the runtime
+    // just needs the matching local clock.
+    if (layer.params && layer.params.kind === "Template") {
+      var rt = templateRuntimes[layer.id];
+      if (rt) {
+        try { rt.setTime(tLayerUs / 1e6); }
+        catch (e) { console.error("composition: template setTime threw", e); }
       }
     }
   }

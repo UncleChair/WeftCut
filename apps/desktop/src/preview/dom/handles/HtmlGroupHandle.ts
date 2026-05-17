@@ -34,11 +34,7 @@ import {
   type VideoResolver,
   type VideoSlotBinding,
 } from "../composition/videoResolver";
-import {
-  instantiateTemplate,
-  loadTemplates,
-  type TemplateRuntime,
-} from "./TemplateHandle";
+import { loadTemplates } from "./TemplateHandle";
 import type { LayerHandle } from "./types";
 
 export interface HtmlGroupContext {
@@ -57,15 +53,6 @@ interface MountedRuntime {
     slot: HTMLElement;
     binding: VideoSlotBinding;
     resolver: VideoResolver;
-  }>;
-  /// One TemplateRuntime per Template member layer. The composition's
-  /// engine handles transform + opacity + time-gating on the
-  /// placeholder host; the template runtime drives the inner shadow's
-  /// rAF queue + animations via `setTime(localSec)`.
-  templates: Array<{
-    layerId: string;
-    host: HTMLDivElement;
-    runtime: TemplateRuntime;
   }>;
   groupTStartUs: number;
 }
@@ -114,18 +101,10 @@ export class HtmlGroupHandle implements LayerHandle {
         console.error("HtmlGroupHandle: video resolver applyAt threw", e);
       }
     }
-    // Drive each Template runtime's per-instance synthetic clock.
-    // Template-local time = composition-local time. Inside the
-    // composition the engine has already time-gated the placeholder
-    // via opacity; the runtime just needs to advance its rAF queue
-    // so CSS animations / canvas redraws keep pace.
-    for (const { runtime } of this.runtime.templates) {
-      try {
-        runtime.setTime(localSec);
-      } catch (e) {
-        console.error("HtmlGroupHandle: template runtime.setTime threw", e);
-      }
-    }
+    // Template runtimes are driven by the composition engine itself
+    // (per-layer setTime call inside applyLayer), so the handle doesn't
+    // need an outer driver loop. Per-instance shadows + scripted globals
+    // are owned by the engine's `mountCompositionTemplates`.
   }
 
   dispose(): void {
@@ -148,13 +127,8 @@ export class HtmlGroupHandle implements LayerHandle {
         console.error("HtmlGroupHandle: resolver.unmount threw", e);
       }
     }
-    for (const { runtime } of this.runtime.templates) {
-      try {
-        runtime.dispose();
-      } catch (e) {
-        console.error("HtmlGroupHandle: template runtime.dispose threw", e);
-      }
-    }
+    // Template runtimes live inside the composition's shadow tree
+    // (engine-owned) — replacing the host removes them implicitly.
     if (this.runtime.host.parentNode === this.container) {
       this.container.removeChild(this.runtime.host);
     }
@@ -186,6 +160,20 @@ export class HtmlGroupHandle implements LayerHandle {
       for (const layer of t.layers) trackIndexByLayerId.set(layer.id, idx);
     });
 
+    // Resolve the template catalog upfront so the distiller can embed
+    // `(style, scripts, body)` for each Template member. `loadTemplates`
+    // is cached, so this is a no-op after the first mount in the
+    // session. A failure to load still lets the composition mount —
+    // Template members just emit empty placeholders.
+    let templatesById: Map<string, import("../../../ipc").TemplateSummary> | undefined;
+    try {
+      const catalog = await loadTemplates();
+      if (this.disposed) return;
+      templatesById = new Map(catalog.map((t) => [t.id, t]));
+    } catch (e) {
+      console.warn("HtmlGroupHandle: loadTemplates failed; templates will be empty", e);
+    }
+
     const distilled: DistillResult = distillCompositionState({
       group,
       layerById: store.layerById,
@@ -193,6 +181,7 @@ export class HtmlGroupHandle implements LayerHandle {
       trackIndexByLayerId,
       canvasWidth: summary.composition.width,
       canvasHeight: summary.composition.height,
+      templatesById,
     });
 
     // Tear down prior runtime first (cleanly unmounts video resolvers,
@@ -328,83 +317,19 @@ export class HtmlGroupHandle implements LayerHandle {
       videoSlots.push({ slot, binding: slotBinding, resolver });
     }
 
-    // Template-in-composition (2026-05-17 followup): for each Template
-    // child in the distilled state, walk the shadow tree for the
-    // matching placeholder and call `TemplateHandle.instantiateTemplate`
-    // on it. The placeholder's host element becomes the template's
-    // shadow host — inner DOM, CSS, scripts are installed by
-    // `instantiateTemplate` (which `attachShadow`s the host fresh).
-    // Sized from `template.size` here because the generator deliberately
-    // leaves width/height off the placeholder (see CSS comment in
-    // CompositionGenerator). Mounting is async (`loadTemplates()` IPC)
-    // — kick off the load + populate `runtime.templates` when it
-    // settles; the per-tick driver tolerates the array growing under it.
-    const templates: MountedRuntime["templates"] = [];
-    const templateLayers = distilled.state.layers.filter(
-      (l) => l.params.kind === "Template",
-    );
-    if (templateLayers.length > 0) {
-      void loadTemplates()
-        .then((catalog) => {
-          // Guard against unmount-during-load: if the runtime swapped
-          // between the IPC call and the resolution, drop the work.
-          if (this.disposed || this.runtime?.shadow !== shadow) return;
-          for (const layer of templateLayers) {
-            if (layer.params.kind !== "Template") continue;
-            const tplId = layer.params.template_id;
-            const tpl = catalog.find((c) => c.id === tplId);
-            if (!tpl) {
-              console.warn(
-                `HtmlGroupHandle: template '${tplId}' (layer ${layer.id}) not in catalog; skipping`,
-              );
-              continue;
-            }
-            const tplHost = shadow.querySelector<HTMLDivElement>(
-              `[data-layer-id="${layer.id}"][data-kind="Template"]`,
-            );
-            if (!tplHost) {
-              console.warn(
-                `HtmlGroupHandle: template host for ${layer.id} missing in composition; skipping`,
-              );
-              continue;
-            }
-            // Size the host from the template's manifest BEFORE attaching
-            // the shadow so the first paint shows the template at its
-            // native dimensions (the shadow's `:host { width: Wpx ... }`
-            // would size it too, but only after the shadow root is
-            // populated — without this, there's a brief 0×0 flash).
-            const [w, h] = tpl.size;
-            tplHost.style.width = `${w}px`;
-            tplHost.style.height = `${h}px`;
-            try {
-              const runtime = instantiateTemplate(tplHost, tpl, layer.params.props);
-              templates.push({ layerId: layer.id, host: tplHost, runtime });
-              // First tick — drive it to the right local time so the
-              // template doesn't render at t=0 before the next RAF.
-              if (this.runtime) {
-                const localSec =
-                  (lastMasterUs() - this.runtime.groupTStartUs) / 1_000_000;
-                runtime.setTime(localSec);
-              }
-            } catch (e) {
-              console.error(
-                `HtmlGroupHandle: instantiateTemplate failed for ${layer.id}`,
-                e,
-              );
-            }
-          }
-        })
-        .catch((e) => {
-          console.warn("HtmlGroupHandle: loadTemplates failed; templates skipped", e);
-        });
-    }
+    // Template members are now mounted by the composition engine itself
+    // (`mountCompositionTemplates`, byte-aligned across the Rust + TS
+    // ENGINE_SOURCE constants). Their per-instance shadows + scripted
+    // globals + rAF queues live inside the composition's outer shadow,
+    // driven by the engine's per-tick `applyLayer` setTime call. The
+    // handle no longer needs an outer driver loop or a template runtime
+    // registry.
 
     this.runtime = {
       host,
       shadow,
       setTime,
       videoSlots,
-      templates,
       groupTStartUs: distilled.groupTStartUs,
     };
     this.appliedSig = computeStateSig(group);

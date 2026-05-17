@@ -292,19 +292,28 @@ pub async fn materialize_html_groups(
             }
             match &layer.params {
                 LayerParams::Audio(_) => continue, // routed via amix
-                LayerParams::Template(_) | LayerParams::Subtitles(_) => {
+                LayerParams::Subtitles(_) => {
+                    // Subtitles in html-cap compositions need libass-wasm
+                    // (JASSUB) inside the offscreen webview. Tracked as a
+                    // follow-up; for now keep the standalone Subtitles
+                    // render path (ffmpeg `subtitles=` filter) running
+                    // outside any html-cap group.
                     tracing::warn!(
-                        "html-render group {}: skipping layer {} (kind={}) — H.3 follow-up",
+                        "html-render group {}: skipping layer {} (kind=Subtitles) — JASSUB integration pending",
                         group.id,
                         lid,
-                        layer_kind_str(&layer.params),
                     );
                     continue;
                 }
                 LayerParams::Color(_)
                 | LayerParams::Text(_)
                 | LayerParams::VideoClip(_)
-                | LayerParams::ImageOverlay(_) => {
+                | LayerParams::ImageOverlay(_)
+                | LayerParams::Template(_) => {
+                    // Templates now render inside compositions via the
+                    // engine's per-host shadow-DOM + scripted-globals path
+                    // (the materializer below embeds the parsed template
+                    // pieces into the composition state).
                     members.push((layer, track_idx));
                 }
             }
@@ -542,8 +551,94 @@ fn composition_params_for_export(
                 image_src: Some(image_src),
             }
         }
+        LayerParams::Template(_) => {
+            // Embed the parsed template artifacts directly into the
+            // composition state. The engine will attachShadow on the
+            // placeholder host and run the scripts with per-instance
+            // shadowed globals — matching the preview-side path.
+            template_composition_params(&layer.params, canvas_w, canvas_h)
+        }
         // Other kinds fall through to the simpler helper.
         _ => composition_params(&layer.params, project, canvas_w, canvas_h),
+    }
+}
+
+/// Build the `CompositionLayerParams::Template` for a Template layer,
+/// looking up the template, validating + canonicalizing props, composing
+/// the HTML, and extracting style/scripts/body via
+/// `parse_composed_template`. On any lookup or validation failure,
+/// returns a `Color` placeholder so the export doesn't hard-fail (a
+/// missing template at export time has already been flagged by the
+/// validator at edit time).
+fn template_composition_params(
+    params: &crate::state::layer::LayerParams,
+    canvas_w: u32,
+    canvas_h: u32,
+) -> crate::raster::composition::CompositionLayerParams {
+    use crate::raster::composition::{CompositionLayerParams, Rgba8};
+    use crate::raster::template::{builtins, parse_composed_template};
+    use crate::state::layer::LayerParams;
+
+    let LayerParams::Template(p) = params else {
+        return CompositionLayerParams::Color {
+            rgba: Rgba8 { r: 0, g: 0, b: 0, a: 0 },
+            width: 1,
+            height: 1,
+        };
+    };
+
+    let Some(tpl) = builtins().into_iter().find(|t| t.id() == p.template_id) else {
+        tracing::warn!(
+            "composition: template `{}` not in builtins catalog — emitting placeholder",
+            p.template_id,
+        );
+        return CompositionLayerParams::Color {
+            rgba: Rgba8 { r: 0, g: 0, b: 0, a: 0 },
+            width: 1,
+            height: 1,
+        };
+    };
+
+    // Convert imbl::HashMap<String, Value> → serde_json::Value::Object
+    // so canonicalize_props sees the expected shape.
+    let provided = serde_json::Value::Object(
+        p.props
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
+    );
+    let canonical_json = match tpl.canonicalize_props(&provided) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(
+                "composition: template `{}` prop validation failed: {} — emitting placeholder",
+                p.template_id,
+                e,
+            );
+            return CompositionLayerParams::Color {
+                rgba: Rgba8 { r: 0, g: 0, b: 0, a: 0 },
+                width: 1,
+                height: 1,
+            };
+        }
+    };
+    let props_value: serde_json::Value =
+        serde_json::from_str(&canonical_json).unwrap_or(serde_json::Value::Object(Default::default()));
+
+    let composed = tpl.html.replace("__STYLE__", &tpl.style);
+    let parsed = parse_composed_template(&composed);
+
+    let (w, h) = tpl.size();
+    let _ = (canvas_w, canvas_h); // unused — template sizes itself off the manifest
+
+    CompositionLayerParams::Template {
+        template_id: tpl.id().to_string(),
+        style: parsed.style,
+        scripts: parsed.scripts,
+        body: parsed.body,
+        props: props_value,
+        width: w,
+        height: h,
     }
 }
 
