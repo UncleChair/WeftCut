@@ -860,6 +860,7 @@ export function Timeline({
             onSelect={onSelect}
             onSelectFromClick={selectFromClick}
             onDragStart={(state) => setDrag(state)}
+            onContextMenu={onContextMenu}
             onMediaDrop={onMediaDrop}
             isGroupStart={isGroupStart}
             isRevealed={track.id === (revealedTrackId ?? null)}
