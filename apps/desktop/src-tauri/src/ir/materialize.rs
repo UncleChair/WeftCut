@@ -326,12 +326,19 @@ pub async fn materialize_html_groups(
             .unwrap_or(group_t_start_us);
         let duration_us = (group_t_end_us - group_t_start_us).max(1);
 
-        // Distill composition state.
+        // Distill composition state. Builds the per-layer
+        // `CompositionLayerParams` AND the parallel list of media
+        // sources to pre-extract — VideoClip frame patterns +
+        // ImageOverlay normalized images live next to the
+        // composition.html in the per-group cache dir.
+        let mut sources: Vec<html_group::VideoSource> = Vec::new();
         let layers: Vec<CompositionLayer> = members
             .iter()
             .enumerate()
             .map(|(idx, (l, _))| {
-                let params = composition_params(&l.params, project, canvas_w, canvas_h);
+                let params = composition_params_for_export(
+                    l, project, canvas_w, canvas_h, fps_num, fps_den, &mut sources,
+                );
                 let (opacity, x, y, scale_x, scale_y) = position_for(&l.params);
                 let effect_transform = pick_html_transform(l.effects.iter());
                 CompositionLayer {
@@ -354,6 +361,8 @@ pub async fn materialize_html_groups(
         let state = CompositionState {
             width: canvas_w,
             height: canvas_h,
+            fps_num,
+            fps_den,
             layers,
             composition_transform,
         };
@@ -364,6 +373,7 @@ pub async fn materialize_html_groups(
             cache,
             &group_id_str,
             &state,
+            &sources,
             fps_num,
             fps_den,
             duration_us,
@@ -434,6 +444,109 @@ fn position_for(params: &crate::state::layer::LayerParams) -> (f64, f64, f64, f6
     }
 }
 
+/// Variant of `composition_params` that also fills VideoClip /
+/// ImageOverlay export fields (`frame_pattern` + `frame_count` /
+/// `image_src`) and appends a matching `VideoSource` to the
+/// extraction list. Called per-member from `materialize_html_groups`.
+fn composition_params_for_export(
+    layer: &crate::state::layer::Layer,
+    project: &crate::state::project::Project,
+    canvas_w: u32,
+    canvas_h: u32,
+    fps_num: u32,
+    fps_den: u32,
+    sources: &mut Vec<crate::raster::html_group::VideoSource>,
+) -> crate::raster::composition::CompositionLayerParams {
+    use crate::raster::composition::CompositionLayerParams;
+    use crate::raster::html_group::{VideoSource, VideoSourceKind};
+    use crate::state::layer::LayerParams;
+
+    match &layer.params {
+        LayerParams::VideoClip(p) => {
+            // Same native-dims lookup as `composition_params` (kept inline
+            // because we also need the media's `path_abs` for extraction).
+            let (w, h, path_abs) = project
+                .media_pool
+                .get(&p.media)
+                .map(|m| {
+                    let dims = m
+                        .metadata
+                        .video
+                        .as_ref()
+                        .map(|v| (v.width, v.height))
+                        .unwrap_or((canvas_w, canvas_h));
+                    (dims.0, dims.1, Some(m.path_abs.clone()))
+                })
+                .unwrap_or((canvas_w, canvas_h, None));
+
+            let frame_count = crate::raster::source_frames::frame_count(
+                p.src_in_us,
+                p.src_out_us,
+                fps_num,
+                fps_den,
+            );
+            let lid = layer.id.to_string();
+            let frame_pattern = format!("source/{}/frame_%05d.png", lid);
+
+            if let Some(media_path) = path_abs {
+                sources.push(VideoSource {
+                    layer_id: lid,
+                    media_path,
+                    kind: VideoSourceKind::Video {
+                        src_in_us: p.src_in_us,
+                        src_out_us: p.src_out_us,
+                    },
+                });
+            }
+
+            CompositionLayerParams::VideoClip {
+                media_id: p.media.to_string(),
+                src_in_us: p.src_in_us,
+                src_out_us: p.src_out_us,
+                width: w,
+                height: h,
+                frame_pattern: Some(frame_pattern),
+                frame_count: Some(frame_count),
+            }
+        }
+        LayerParams::ImageOverlay(p) => {
+            let (w, h, path_abs) = project
+                .media_pool
+                .get(&p.media)
+                .map(|m| {
+                    let dims = m
+                        .metadata
+                        .video
+                        .as_ref()
+                        .map(|v| (v.width, v.height))
+                        .unwrap_or((canvas_w, canvas_h));
+                    (dims.0, dims.1, Some(m.path_abs.clone()))
+                })
+                .unwrap_or((canvas_w, canvas_h, None));
+
+            let lid = layer.id.to_string();
+            let image_src = format!("source/{}/frame_00000.png", lid);
+
+            if let Some(media_path) = path_abs {
+                sources.push(VideoSource {
+                    layer_id: lid,
+                    media_path,
+                    kind: VideoSourceKind::Image,
+                });
+            }
+
+            CompositionLayerParams::ImageOverlay {
+                media_id: p.media.to_string(),
+                width: w,
+                height: h,
+                image_src: Some(image_src),
+            }
+        }
+        // Other kinds fall through to the simpler helper.
+        _ => composition_params(&layer.params, project, canvas_w, canvas_h),
+    }
+}
+
 fn composition_params(
     params: &crate::state::layer::LayerParams,
     project: &crate::state::project::Project,
@@ -485,6 +598,8 @@ fn composition_params(
                 src_out_us: p.src_out_us,
                 width: w,
                 height: h,
+                frame_pattern: None,
+                frame_count: None,
             }
         }
         LayerParams::ImageOverlay(p) => {
@@ -493,6 +608,7 @@ fn composition_params(
                 media_id: p.media.to_string(),
                 width: w,
                 height: h,
+                image_src: None,
             }
         }
         // Defensive — caller filtered these out.

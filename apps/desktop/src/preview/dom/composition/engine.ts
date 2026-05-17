@@ -90,6 +90,11 @@ export interface CompositionState {
   /// Composition canvas in CSS pixels.
   width: number;
   height: number;
+  /// Project canvas fps. Engine uses this to compute the current
+  /// frame index for export-path VideoClip `<img>` swaps. Preview
+  /// path may omit; engine falls back to 30/1.
+  fpsNum?: number;
+  fpsDen?: number;
   layers: CompositionLayer[];
   /// Group-level transform driven by the group's `HtmlTransform`
   /// effect. Null/absent when the group has no `HtmlTransform`.
@@ -138,8 +143,21 @@ export type CompositionLayerParams =
       /// on top.
       width: number;
       height: number;
+      /// Export-path: pattern of pre-extracted frames relative to
+      /// the composition's directory, e.g. "source/<lid>/frame_%05d.png".
+      /// Absent on the preview path (resolver drives `<video>` instead).
+      framePattern?: string;
+      frameCount?: number;
     }
-  | { kind: "ImageOverlay"; media_id: string; width: number; height: number }
+  | {
+      kind: "ImageOverlay";
+      media_id: string;
+      width: number;
+      height: number;
+      /// Export-path: image source path relative to the composition's
+      /// directory. Absent on the preview path.
+      imageSrc?: string;
+    }
   | { kind: "Template"; template_id: string; props: Record<string, unknown> };
 
 /// CSS id used by the engine to find its state blob.
@@ -270,13 +288,13 @@ export const ENGINE_SOURCE: string = String.raw`
     // rotation is effect-only (no static layer rotation today).
     // Layer-local time: keyframes on layer.effectTransform are
     // anchored at layer.t_start_us.
+    var tLayerUs = tUs - layer.t_start_us;
     var tx = layer.x, ty = layer.y;
     var sx = layer.scale_x, sy = layer.scale_y;
     var rot = 0;
     var op = layer.opacity;
     var et = layer.effectTransform;
     if (et) {
-      var tLayerUs = tUs - layer.t_start_us;
       tx  += resolveAnimated(et.x,            tLayerUs, 0);
       ty  += resolveAnimated(et.y,            tLayerUs, 0);
       sx  *= resolveAnimated(et.scale_x,      tLayerUs, 1);
@@ -287,6 +305,27 @@ export const ENGINE_SOURCE: string = String.raw`
     host.style.transform =
       "translate(" + tx + "px, " + ty + "px) rotate(" + rot + "deg) scale(" + sx + ", " + sy + ")";
     host.style.opacity = String(op);
+
+    // Export path: VideoClip with a pre-extracted frame pattern.
+    // Swap the slot's <img>.src to the right per-tick frame. Preview
+    // path leaves framePattern undefined and the host's
+    // PreviewVideoResolver drives a <video> instead — this branch
+    // is a no-op there.
+    if (layer.params && layer.params.kind === "VideoClip" && layer.params.framePattern) {
+      var img = host.firstElementChild;
+      if (img && img.tagName === "IMG") {
+        var fpsNum = (STATE && STATE.fpsNum) || 30;
+        var fpsDen = (STATE && STATE.fpsDen) || 1;
+        var idx = Math.floor(tLayerUs * fpsNum / (1e6 * fpsDen));
+        var maxIdx = (layer.params.frameCount || 1) - 1;
+        if (idx < 0) idx = 0;
+        if (idx > maxIdx) idx = maxIdx;
+        var padded = String(idx);
+        while (padded.length < 5) padded = "0" + padded;
+        var newSrc = layer.params.framePattern.replace("%05d", padded);
+        if (img.getAttribute("src") !== newSrc) img.setAttribute("src", newSrc);
+      }
+    }
   }
 
   function applyAll(tSeconds) {
