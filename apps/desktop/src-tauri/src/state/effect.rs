@@ -26,6 +26,7 @@ impl Effect {
             EffectParams::ChromaKey { .. } => EffectKind::ChromaKey,
             EffectParams::Speed { .. } => EffectKind::Speed,
             EffectParams::Vignette { .. } => EffectKind::Vignette,
+            EffectParams::HtmlTransform { .. } => EffectKind::HtmlTransform,
         }
     }
 }
@@ -37,6 +38,14 @@ pub enum EffectKind {
     ChromaKey,
     Speed,
     Vignette,
+    /// `docs/html-render-groups.md` (2026-05-17 redesign) — a CSS
+    /// transform animation. Carries `Animated<f64>` tracks for
+    /// translate/scale/rotate/opacity. First and last keyframes
+    /// implicitly mark the html-cap render window; outside the window
+    /// the effect is inactive (the layer / group / member renders
+    /// with no transform, fully via ffmpeg in the export planner's
+    /// segment-stitching path).
+    HtmlTransform,
 }
 
 impl EffectKind {
@@ -70,15 +79,17 @@ impl EffectKind {
     /// impossible.
     pub fn supports_css(self) -> bool {
         match self {
-            EffectKind::ColorCorrect | EffectKind::Blur => true,
+            EffectKind::ColorCorrect | EffectKind::Blur | EffectKind::HtmlTransform => true,
             EffectKind::ChromaKey | EffectKind::Speed | EffectKind::Vignette => false,
         }
     }
 
-    /// Whether this effect has an ffmpeg lavfi lowering. Always `true`
-    /// today — every effect must lower to ffmpeg or it couldn't ship.
-    /// The mirror of `supports_css` for symmetry; consulted by lowering
-    /// if/when an export-only-via-CSS effect ever lands.
+    /// Whether this effect has an ffmpeg lavfi lowering. The
+    /// `HtmlTransform` variant is **CSS-only** — its semantics (3D
+    /// transforms, perspective, complex CSS animation) can't be
+    /// expressed in lavfi. Its presence on a layer/group flags the
+    /// affected time window for html-cap rendering; the export
+    /// planner segments the timeline accordingly.
     pub fn supports_ffmpeg(self) -> bool {
         match self {
             EffectKind::ColorCorrect
@@ -86,7 +97,18 @@ impl EffectKind {
             | EffectKind::ChromaKey
             | EffectKind::Speed
             | EffectKind::Vignette => true,
+            EffectKind::HtmlTransform => false,
         }
+    }
+
+    /// True iff this kind's presence on a layer/group *requires* html-
+    /// cap rendering during its active window. Distinct from
+    /// `!supports_ffmpeg()` because some future effects might be
+    /// "html-preferred but ffmpeg-fallback OK"; the planner currently
+    /// uses this for strict segment-stitching (decision 2 of the
+    /// 2026-05-17 redesign).
+    pub fn requires_html(self) -> bool {
+        !self.supports_ffmpeg()
     }
 }
 
@@ -113,5 +135,28 @@ pub enum EffectParams {
     },
     Vignette {
         amount: Animated<f64>,
+    },
+    /// CSS transform animation. Each field's `Animated<f64>` carries a
+    /// keyframe track in **owner-local** time (layer t_start_us for
+    /// layer effects, group earliest-member t_start_us for group
+    /// effects). The effect's render window is implicitly defined by
+    /// the **union** of keyframe time ranges across all six fields —
+    /// the smallest first_kf.t and largest last_kf.t. Outside that
+    /// window the effect is inactive (planner picks ffmpeg).
+    ///
+    /// Default values when a field has no keyframes:
+    ///   x, y, rotation_deg → 0.0
+    ///   scale_x, scale_y, opacity → 1.0
+    ///
+    /// All static-initialized variants land on the value with no
+    /// animation; the keyframed path is what the user authors via
+    /// the property panel / MCP.
+    HtmlTransform {
+        x: Animated<f64>,
+        y: Animated<f64>,
+        scale_x: Animated<f64>,
+        scale_y: Animated<f64>,
+        rotation_deg: Animated<f64>,
+        opacity: Animated<f64>,
     },
 }

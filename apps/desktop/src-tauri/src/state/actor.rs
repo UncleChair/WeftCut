@@ -2950,6 +2950,7 @@ pub(crate) fn apply_groups_create(
         label,
         members: unique,
         render_mode: GroupRenderMode::default(),
+        effects: imbl::Vector::new(),
     });
     Ok(id)
 }

@@ -35,7 +35,12 @@ use super::transition::Transition;
 //      `Group.render_mode: GroupRenderMode { Native | Html }` field.
 //      Legacy v5 groups load as `Native` via `#[serde(default)]`. Pure
 //      version bump; the migration is a no-op.
-pub const SCHEMA_VERSION: u32 = 6;
+// v7 — effect-chain redesign (2026-05-17): `Group.effects` field for
+//      group-level effects; new `EffectParams::HtmlTransform` variant
+//      with `Animated<f64>` keyframe tracks. `render_mode` will be
+//      dropped in step 3 of the redesign; the field stays present in
+//      v7 for additive landing and is removed in v8.
+pub const SCHEMA_VERSION: u32 = 7;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Project {
