@@ -541,6 +541,21 @@ enum Command {
         actor: Actor,
         reply: oneshot::Sender<Result<(), CommandError>>,
     },
+    /// Replace (or create) the group's first `HtmlTransform` effect
+    /// with the supplied keyframe tracks. v1 supports exactly one
+    /// HtmlTransform per group; calling this on a group that already
+    /// has one mutates it in place.
+    GroupsSetHtmlTransform {
+        id: GroupId,
+        x: super::animated::Animated<f64>,
+        y: super::animated::Animated<f64>,
+        scale_x: super::animated::Animated<f64>,
+        scale_y: super::animated::Animated<f64>,
+        rotation_deg: super::animated::Animated<f64>,
+        opacity: super::animated::Animated<f64>,
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
     Undo {
         actor: Actor,
         reply: oneshot::Sender<Result<(), CommandError>>,
@@ -1207,6 +1222,41 @@ impl ProjectHandle {
         rx.await.expect("project actor terminated")
     }
 
+    /// Replace (or create) the group's first `HtmlTransform` effect.
+    /// Pass `Animated::Static(default)` for fields the caller doesn't
+    /// want to animate (identity values: x/y/rotation=0,
+    /// scale_x/scale_y/opacity=1). Adding any keyframes to any field
+    /// flags the group for html-cap rendering at preview + export.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn groups_set_html_transform(
+        &self,
+        actor: Actor,
+        id: GroupId,
+        x: super::animated::Animated<f64>,
+        y: super::animated::Animated<f64>,
+        scale_x: super::animated::Animated<f64>,
+        scale_y: super::animated::Animated<f64>,
+        rotation_deg: super::animated::Animated<f64>,
+        opacity: super::animated::Animated<f64>,
+    ) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::GroupsSetHtmlTransform {
+                id,
+                x,
+                y,
+                scale_x,
+                scale_y,
+                rotation_deg,
+                opacity,
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
 
     pub async fn move_track(
         &self,
@@ -1634,6 +1684,22 @@ impl ProjectActor {
                 reply,
             } => {
                 let result = self.do_groups_rename(id, label, actor);
+                let _ = reply.send(result);
+            }
+            Command::GroupsSetHtmlTransform {
+                id,
+                x,
+                y,
+                scale_x,
+                scale_y,
+                rotation_deg,
+                opacity,
+                actor,
+                reply,
+            } => {
+                let result = self.do_groups_set_html_transform(
+                    id, x, y, scale_x, scale_y, rotation_deg, opacity, actor,
+                );
                 let _ = reply.send(result);
             }
             Command::Undo { actor, reply } => {
@@ -2444,6 +2510,39 @@ impl ProjectActor {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn do_groups_set_html_transform(
+        &mut self,
+        id: GroupId,
+        x: super::animated::Animated<f64>,
+        y: super::animated::Animated<f64>,
+        scale_x: super::animated::Animated<f64>,
+        scale_y: super::animated::Animated<f64>,
+        rotation_deg: super::animated::Animated<f64>,
+        opacity: super::animated::Animated<f64>,
+        actor: Actor,
+    ) -> Result<(), CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+        apply_groups_set_html_transform(
+            &mut next,
+            id,
+            x,
+            y,
+            scale_x,
+            scale_y,
+            rotation_deg,
+            opacity,
+        )?;
+        self.commit(
+            next,
+            actor,
+            format!("Set group {id} html transform"),
+            Vec::new(),
+            DiffHint::Coarse,
+        )?;
+        Ok(())
+    }
+
 
     fn do_move_track(
         &mut self,
@@ -2988,6 +3087,56 @@ pub(crate) fn apply_groups_rename(
         .position(|g| g.id == id)
         .ok_or(CommandError::GroupNotFound { group: id })?;
     project.groups[gi].label = label;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn apply_groups_set_html_transform(
+    project: &mut Project,
+    id: GroupId,
+    x: super::animated::Animated<f64>,
+    y: super::animated::Animated<f64>,
+    scale_x: super::animated::Animated<f64>,
+    scale_y: super::animated::Animated<f64>,
+    rotation_deg: super::animated::Animated<f64>,
+    opacity: super::animated::Animated<f64>,
+) -> Result<(), CommandError> {
+    use super::effect::{Effect, EffectParams};
+    use super::ids::new_id;
+
+    let gi = project
+        .groups
+        .iter()
+        .position(|g| g.id == id)
+        .ok_or(CommandError::GroupNotFound { group: id })?;
+
+    let new_params = EffectParams::HtmlTransform {
+        x,
+        y,
+        scale_x,
+        scale_y,
+        rotation_deg,
+        opacity,
+    };
+
+    // Replace the first existing HtmlTransform in-place (preserves its
+    // effect id so undo/redo + IPC subscribers see a "modified" rather
+    // than "added + removed"). Otherwise append a new one.
+    let group = &mut project.groups[gi];
+    if let Some(existing) = group
+        .effects
+        .iter_mut()
+        .find(|e| matches!(e.params, EffectParams::HtmlTransform { .. }))
+    {
+        existing.params = new_params;
+        existing.enabled = true;
+    } else {
+        group.effects.push_back(Effect {
+            id: new_id(),
+            enabled: true,
+            params: new_params,
+        });
+    }
     Ok(())
 }
 
