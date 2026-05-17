@@ -185,7 +185,52 @@ export interface GroupSummary {
   /// (html-render-groups island; see `docs/html-render-groups.md`).
   /// LiveLayers + HtmlGroupHandle consult this to decide mount strategy.
   render_mode: "Native" | "Html";
+  /// Group-level effect chain (`docs/html-render-groups.md` 2026-05-17
+  /// redesign). The TS distiller reads `HtmlTransform` from here to
+  /// build the engine's `compositionTransform`. Non-`HtmlTransform`
+  /// variants pass through opaquely — agents and lowering on the
+  /// Rust side own the typed shape.
+  effects: Effect[];
 }
+
+/// Wire-compatible mirror of the Rust `Interpolation` enum.
+export type Interpolation =
+  | { kind: "Hold" }
+  | { kind: "Linear" }
+  | { kind: "EaseIn" }
+  | { kind: "EaseOut" }
+  | { kind: "Bezier"; p1: [number, number]; p2: [number, number] };
+
+export interface Keyframe<T> {
+  id: string;
+  t_us: number;
+  value: T;
+  interp: Interpolation;
+}
+
+/// Wire-compatible mirror of the Rust `Animated<T>` enum
+/// (`#[serde(tag = "mode", content = "value")]`).
+export type AnimTrack<T> =
+  | { mode: "Static"; value: T }
+  | { mode: "Keyframed"; value: Keyframe<T>[] };
+
+export interface Effect {
+  id: string;
+  enabled: boolean;
+  params: EffectParams;
+}
+
+/// Effect params discriminated union. Today we only need the
+/// `HtmlTransform` variant typed for the preview-side distiller;
+/// other variants pass through opaquely. When per-effect authoring
+/// lands, fill in the others.
+export type EffectParams =
+  | { kind: "HtmlTransform"; x: AnimTrack<number>; y: AnimTrack<number>; scale_x: AnimTrack<number>; scale_y: AnimTrack<number>; rotation_deg: AnimTrack<number>; opacity: AnimTrack<number> }
+  | { kind: "ColorCorrect"; [k: string]: unknown }
+  | { kind: "Blur"; [k: string]: unknown }
+  | { kind: "ChromaKey"; [k: string]: unknown }
+  | { kind: "Speed"; [k: string]: unknown }
+  | { kind: "Vignette"; [k: string]: unknown };
 
 export interface MarkerSummary {
   id: string;

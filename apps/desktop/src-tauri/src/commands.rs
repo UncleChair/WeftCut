@@ -59,6 +59,13 @@ pub struct GroupSummary {
     /// member individually (Native) or collapse them into a single
     /// HtmlGroupHandle (Html).
     pub render_mode: String,
+    /// Group-level effect chain. Surfaced verbatim from
+    /// `state::Group.effects` via `serde_json::to_value`, so the TS
+    /// distiller can read `HtmlTransform` keyframes without us having
+    /// to mirror the whole effect schema in this `Serialize`-only
+    /// summary type. The TS side validates the shape against its own
+    /// `EffectParams` discriminated union at the call site.
+    pub effects: Vec<state::Effect>,
 }
 
 #[derive(Serialize, Clone)]
@@ -457,6 +464,7 @@ pub async fn project_summary(handle: State<'_, ProjectHandle>) -> Result<Project
                 crate::state::group::GroupRenderMode::Native => "Native".to_string(),
                 crate::state::group::GroupRenderMode::Html => "Html".to_string(),
             },
+            effects: g.effects.iter().cloned().collect(),
         })
         .collect();
 

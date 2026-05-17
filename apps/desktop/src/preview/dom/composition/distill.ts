@@ -22,11 +22,17 @@
 /// because validation operates on effect kinds, not layer kinds; the
 /// runtime drop is the v1 limitation.
 
-import type { GroupSummary, LayerSummary, MediaSummary } from "../../../ipc";
+import type {
+  AnimTrack,
+  GroupSummary,
+  LayerSummary,
+  MediaSummary,
+} from "../../../ipc";
 import type {
   CompositionLayer,
   CompositionLayerParams,
   CompositionState,
+  CompositionTransform,
 } from "./engine";
 
 export interface DistillResult {
@@ -129,12 +135,42 @@ export function distillCompositionState(input: DistillInputs): DistillResult {
     void trackIndex;
   });
 
+  const compositionTransform = pickCompositionTransform(input.group);
+
   const state: CompositionState = {
     width: input.canvasWidth,
     height: input.canvasHeight,
     layers,
+    ...(compositionTransform ? { compositionTransform } : {}),
   };
   return { state, groupTStartUs, skipped, mediaByLayer };
+}
+
+/// Find the group's first `HtmlTransform` effect and convert its
+/// `Animated<f64>` tracks into the engine-facing `CompositionTransform`
+/// shape. Returns `null` when the group has no `HtmlTransform` — the
+/// engine then writes `compositionEl.style.transform = ""`, matching
+/// the no-effect ffmpeg render exactly.
+///
+/// Multi-`HtmlTransform` composition isn't supported in v1 (only the
+/// first wins). Authors should put complex motion into one effect's
+/// keyframe tracks; multiple effects with overlapping windows can land
+/// later if the use case shows up.
+function pickCompositionTransform(group: GroupSummary): CompositionTransform | null {
+  for (const e of group.effects) {
+    if (!e.enabled) continue;
+    if (e.params.kind !== "HtmlTransform") continue;
+    const p = e.params;
+    return {
+      x: p.x as AnimTrack<number>,
+      y: p.y as AnimTrack<number>,
+      scale_x: p.scale_x as AnimTrack<number>,
+      scale_y: p.scale_y as AnimTrack<number>,
+      rotation_deg: p.rotation_deg as AnimTrack<number>,
+      opacity: p.opacity as AnimTrack<number>,
+    };
+  }
+  return null;
 }
 
 function positionFor(layer: LayerSummary): {
