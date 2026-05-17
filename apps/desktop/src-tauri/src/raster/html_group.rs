@@ -165,13 +165,15 @@ pub struct ProbeResult {
 /// viewport smaller than the window, so the composition overflowed
 /// and the capture was a top-left CSS crop — visually a zoomed-in
 /// frame. Cache invalidated because pixel content shifts.
-/// v6 (2026-05-18): added `Emulation.setDeviceMetricsOverride` via CDP
-/// after page open — belt-and-suspenders for the flag, since v5
-/// didn't fully fix the zoom on some Windows DPI configurations.
-/// Pins viewport + DPR per-page unambiguously. Diagnostic log emits
-/// chrome's reported `window.devicePixelRatio` and `innerWidth/Height`
-/// per chunk so any future regression on this surfaces in the export
-/// log without a debug build.
+/// v6 (2026-05-18): diagnostic log emits chrome's reported
+/// `window.devicePixelRatio` + `innerWidth/innerHeight` per chunk
+/// after page open. Lets us pin down DPR-related export regressions
+/// from the production log without a debug build. (An earlier draft
+/// of this version called `Emulation.setDeviceMetricsOverride` to
+/// belt-and-suspender the CLI flag, but that broke BeginFrame's
+/// screenshot pipeline — likely the viewport change invalidated the
+/// compositor surface mid-warmup. Reverted; the CLI flag stays as
+/// the only DPR mechanism while we read the diagnostic first.)
 const HTML_GROUP_RASTERIZER_VERSION: u32 = 6;
 
 /// Per-group materialization result the IR lower pass consumes.

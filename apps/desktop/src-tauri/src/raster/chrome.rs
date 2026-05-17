@@ -588,29 +588,11 @@ async fn rasterize_chunk_inner(
         .await
         .context("wait_for_navigation on composition.html")?;
 
-    // Pin viewport + DPR explicitly via CDP. Belt-and-suspenders over
-    // `--force-device-scale-factor=1` — the command-line flag is the
-    // primary mechanism but reports of it not fully taking effect under
-    // some Windows DPI configurations have surfaced; this CDP call is
-    // explicit per-page and unambiguous. The captured PNG ends up at
-    // `width × height` device pixels with 1 CSS pixel = 1 device pixel.
-    let _ = page
-        .execute(GenericCommand {
-            method: std::borrow::Cow::Borrowed("Emulation.setDeviceMetricsOverride"),
-            params: serde_json::json!({
-                "width": width,
-                "height": height,
-                "deviceScaleFactor": 1,
-                "mobile": false,
-            }),
-        })
-        .await
-        .context("Emulation.setDeviceMetricsOverride")?;
-
-    // Diagnostic: read what chrome actually sees for viewport + DPR so a
-    // future regression on this surfaces in the export log without a
-    // debug rebuild. Logged once per chunk, so a 4-worker export emits
-    // 4 lines.
+    // Diagnostic: read what chrome actually sees for viewport + DPR so
+    // we can pin down DPR-related export bugs without a debug rebuild.
+    // Logged once per chunk, so a 4-worker export emits 4 lines.
+    // Expected values when `--force-device-scale-factor=1` is honored:
+    // dpr=1, vw=canvas_w, vh=canvas_h.
     if let Ok(resp) = page
         .execute(GenericCommand {
             method: std::borrow::Cow::Borrowed("Runtime.evaluate"),
@@ -627,7 +609,12 @@ async fn rasterize_chunk_inner(
             .and_then(|r| r.get("value"))
             .and_then(|v| v.as_str())
         {
-            tracing::info!(target: "html_group", diagnostics = %s, "chrome viewport diagnostics");
+            tracing::info!(
+                target: "html_group",
+                window = format!("{}x{}", width, height),
+                diagnostics = %s,
+                "chrome viewport diagnostics",
+            );
         }
     }
 
