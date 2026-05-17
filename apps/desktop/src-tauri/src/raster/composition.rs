@@ -232,9 +232,18 @@ pub enum CompositionLayerParams {
         media_id: String,
         src_in_us: i64,
         src_out_us: i64,
+        /// Slot pixel dimensions on the composition canvas (the engine
+        /// reads them via the JSON state blob and the generator
+        /// emits the size on the slot's style). Defaults to media
+        /// native dims via the materializer; falls back to canvas
+        /// dims when ffprobe didn't return a size.
+        width: u32,
+        height: u32,
     },
     ImageOverlay {
         media_id: String,
+        width: u32,
+        height: u32,
     },
 }
 
@@ -321,24 +330,25 @@ fn render_layer_html(layer: &CompositionLayer) -> String {
                 content = escape_html(content),
             )
         }
-        CompositionLayerParams::VideoClip { media_id, .. } => {
+        CompositionLayerParams::VideoClip { media_id, width, height, .. } => {
             // v1 limitation: per-frame source extraction (decision 4 +
             // section "Phase 1 — source frame extraction") isn't in
-            // H.5 v1. Render as a translucent placeholder so the user
-            // can see the layout/transform on the composition; real
-            // pixels come once the resolver lands.
+            // H.5 v1. Render as a translucent placeholder sized to
+            // the slot's native dims so the layout/transform composes
+            // correctly even before real pixels arrive.
             format!(
-                r#"<div class="layer layer-video placeholder" data-layer-id="{id}" data-kind="VideoClip" data-media-id="{m}" style="width: 100%; height: 100%;"></div>"#,
+                r#"<div class="layer layer-video placeholder" data-layer-id="{id}" data-kind="VideoClip" data-media-id="{m}" style="width: {w}px; height: {h}px;"></div>"#,
                 m = escape_html(media_id),
+                w = width,
+                h = height,
             )
         }
-        CompositionLayerParams::ImageOverlay { media_id } => {
-            // Same v1 limitation as VideoClip — placeholder. ImageOverlay
-            // is structurally simpler (one frame) and is a faster
-            // follow-up target than full VideoClip extraction.
+        CompositionLayerParams::ImageOverlay { media_id, width, height } => {
             format!(
-                r#"<div class="layer layer-image placeholder" data-layer-id="{id}" data-kind="ImageOverlay" data-media-id="{m}" style="width: 100%; height: 100%;"></div>"#,
+                r#"<div class="layer layer-image placeholder" data-layer-id="{id}" data-kind="ImageOverlay" data-media-id="{m}" style="width: {w}px; height: {h}px;"></div>"#,
                 m = escape_html(media_id),
+                w = width,
+                h = height,
             )
         }
     }

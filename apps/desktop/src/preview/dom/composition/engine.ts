@@ -127,8 +127,19 @@ export interface CompositionLayer {
 export type CompositionLayerParams =
   | { kind: "Color"; rgba: { r: number; g: number; b: number; a: number }; width: number; height: number }
   | { kind: "Text"; content: string; font_family: string; font_size_px: number; color: { r: number; g: number; b: number; a: number } }
-  | { kind: "VideoClip"; media_id: string; src_in_us: number; src_out_us: number }
-  | { kind: "ImageOverlay"; media_id: string }
+  | {
+      kind: "VideoClip";
+      media_id: string;
+      src_in_us: number;
+      src_out_us: number;
+      /// Slot pixel dimensions on the composition canvas (defaults to
+      /// media native dims, falls back to canvas dims when media meta
+      /// is missing). The layer's transform.scale_x/y still applies
+      /// on top.
+      width: number;
+      height: number;
+    }
+  | { kind: "ImageOverlay"; media_id: string; width: number; height: number }
   | { kind: "Template"; template_id: string; props: Record<string, unknown> };
 
 /// CSS id used by the engine to find its state blob.
