@@ -268,9 +268,16 @@ pub async fn materialize_html_groups(
 
     for group in project.groups.iter() {
         // Effect-chain redesign: a group materializes for html-cap iff
-        // any enabled effect in its chain `requires_html()`. Today the
-        // only such kind is `HtmlTransform`.
-        if !group.requires_html() {
+        // any enabled effect on the group OR any enabled effect on
+        // any member layer `requires_html()`. Today the only such
+        // kind is `HtmlTransform`.
+        let needs_html = crate::state::group_requires_html(group, |lid| {
+            layer_lookup
+                .get(&lid)
+                .map(|(l, _)| l.requires_html())
+                .unwrap_or(false)
+        });
+        if !needs_html {
             continue;
         }
 

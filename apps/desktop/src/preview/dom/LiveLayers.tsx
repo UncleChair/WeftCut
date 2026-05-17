@@ -145,13 +145,25 @@ function collectActive(
   hi: number,
 ): RenderUnit[] {
   // Index: which html-rendered group does each layer belong to? A
-  // group is html-rendered iff its effect chain has any enabled
-  // effect whose kind requires html-cap (today: HtmlTransform).
+  // group is html-rendered iff its own effect chain OR any of its
+  // enabled member layers' effect chains has any enabled effect
+  // whose kind requires html-cap (today: HtmlTransform). The member
+  // case lets a per-layer HtmlTransform flip the containing group
+  // into html-cap rendering without the group itself needing an
+  // effect — mirrors Rust `group_requires_html` in state/group.rs.
+  const layerHtml = new Map<string, boolean>();
+  for (const t of tracks) {
+    for (const l of t.layers) {
+      if (l.effects?.some((e) => e.enabled && e.params.kind === "HtmlTransform")) {
+        layerHtml.set(l.id, true);
+      }
+    }
+  }
   const htmlGroupByLayer = new Map<string, string>();
   for (const g of groups) {
-    const requiresHtml = g.effects.some(
-      (e) => e.enabled && e.params.kind === "HtmlTransform",
-    );
+    const requiresHtml =
+      g.effects.some((e) => e.enabled && e.params.kind === "HtmlTransform") ||
+      g.layer_ids.some((lid) => layerHtml.get(lid) === true);
     if (!requiresHtml) continue;
     for (const lid of g.layer_ids) htmlGroupByLayer.set(lid, g.id);
   }

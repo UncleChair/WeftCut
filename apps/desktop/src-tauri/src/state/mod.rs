@@ -48,7 +48,7 @@ pub use animated::{Animated, Interpolation, Keyframe};
 pub use color::{ColorSpace, Rgba};
 pub use composition::Composition;
 pub use effect::{Effect, EffectKind, EffectParams};
-pub use group::{Group, index_groups};
+pub use group::{Group, group_requires_html, index_groups};
 pub use ids::{
     CheckpointId, EffectId, GroupId, KeyframeId, LayerId, MarkerId, MediaId, OpId, TrackId,
     TransitionId, new_id,
