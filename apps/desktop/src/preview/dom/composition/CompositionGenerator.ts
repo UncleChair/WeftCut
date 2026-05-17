@@ -16,15 +16,21 @@
 
 import { ENGINE_SOURCE, STATE_SCRIPT_ID, type CompositionState } from "./engine";
 
-/// Per-slot video binding. The composition embeds
-/// `<video data-source-layer="L-id">` slots; the preview-side resolver
-/// fills `<video src="asset://proxy">` and the export-side resolver
-/// fills `<img src="tmp/frame_NNNNN.png">` (decision 5). Empty in H.0
-/// probe; populated by the H.3 generator.
+/// Per-slot media binding. The composition embeds
+/// `<div class="layer-video|layer-image" data-layer-id="...">` slots;
+/// the preview-side resolvers fill them with `<video>` / `<img>`
+/// elements and the export-side resolver (decision 5) fills them with
+/// per-frame extracted `<img>`s. The `kind` discriminator lets the
+/// host dispatch to the right resolver. Empty in H.0 probe; populated
+/// by the H.3 generator (VideoClip) and the F.1 follow-up
+/// (ImageOverlay).
 export interface VideoBinding {
   layerId: string;
+  /// `"VideoClip"` mounts a `<video>` element + per-tick currentTime
+  /// nudge. `"ImageOverlay"` mounts a static `<img>`.
+  kind: "VideoClip" | "ImageOverlay";
   /// Selector inside the composition that resolves to the slot element.
-  /// `#L-<id>-video` is the planned shape.
+  /// `[data-layer-id="<id>"]` is the shipped shape.
   slotSelector: string;
 }
 
@@ -300,9 +306,12 @@ export function buildComposition(state: CompositionState): CompositionArtifact {
 
   const layerHtml = sorted.map(renderLayerHtml).join("\n");
   const bindings: VideoBinding[] = sorted
-    .filter((l) => l.params.kind === "VideoClip")
+    .filter(
+      (l) => l.params.kind === "VideoClip" || l.params.kind === "ImageOverlay",
+    )
     .map((l) => ({
       layerId: l.id,
+      kind: l.params.kind as "VideoClip" | "ImageOverlay",
       slotSelector: `[data-layer-id="${l.id}"]`,
     }));
 

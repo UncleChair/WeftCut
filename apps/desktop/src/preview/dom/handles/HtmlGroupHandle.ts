@@ -29,6 +29,7 @@ import { buildComposition } from "../composition/CompositionGenerator";
 import { distillCompositionState, type DistillResult } from "../composition/distill";
 import { ENGINE_SOURCE } from "../composition/engine";
 import {
+  PreviewImageResolver,
   PreviewVideoResolver,
   type VideoResolver,
   type VideoSlotBinding,
@@ -274,6 +275,7 @@ export class HtmlGroupHandle implements LayerHandle {
       }
     };
     const videoResolver = new PreviewVideoResolver(resolveSrc);
+    const imageResolver = new PreviewImageResolver(resolveSrc);
 
     const videoSlots: MountedRuntime["videoSlots"] = [];
     for (const binding of artifact.bindings) {
@@ -288,22 +290,42 @@ export class HtmlGroupHandle implements LayerHandle {
       // slot binding's timing + src fields. The distiller already
       // captured this in `state.layers`.
       const layer = distilled.state.layers.find((l) => l.id === binding.layerId);
-      if (!layer || layer.params.kind !== "VideoClip") continue;
-      const slotBinding: VideoSlotBinding = {
-        layerId: binding.layerId,
-        mediaId: layer.params.media_id,
-        tStartUs: layer.t_start_us,
-        tEndUs: layer.t_end_us,
-        srcInUs: layer.params.src_in_us,
-        srcOutUs: layer.params.src_out_us,
-      };
-      try {
-        videoResolver.mount(slot, slotBinding);
-      } catch (e) {
-        console.error("HtmlGroupHandle: video resolver mount threw", e);
+      if (!layer) continue;
+      let slotBinding: VideoSlotBinding;
+      let resolver: VideoResolver;
+      if (binding.kind === "VideoClip" && layer.params.kind === "VideoClip") {
+        slotBinding = {
+          layerId: binding.layerId,
+          mediaId: layer.params.media_id,
+          tStartUs: layer.t_start_us,
+          tEndUs: layer.t_end_us,
+          srcInUs: layer.params.src_in_us,
+          srcOutUs: layer.params.src_out_us,
+        };
+        resolver = videoResolver;
+      } else if (
+        binding.kind === "ImageOverlay" &&
+        layer.params.kind === "ImageOverlay"
+      ) {
+        slotBinding = {
+          layerId: binding.layerId,
+          mediaId: layer.params.media_id,
+          tStartUs: layer.t_start_us,
+          tEndUs: layer.t_end_us,
+          srcInUs: 0,
+          srcOutUs: 0,
+        };
+        resolver = imageResolver;
+      } else {
         continue;
       }
-      videoSlots.push({ slot, binding: slotBinding, resolver: videoResolver });
+      try {
+        resolver.mount(slot, slotBinding);
+      } catch (e) {
+        console.error("HtmlGroupHandle: media resolver mount threw", e);
+        continue;
+      }
+      videoSlots.push({ slot, binding: slotBinding, resolver });
     }
 
     // Template-in-composition (2026-05-17 followup): for each Template
