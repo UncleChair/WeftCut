@@ -145,7 +145,11 @@ pub struct ProbeResult {
 /// from the template `RASTERIZER_VERSION` so a template-side fix
 /// doesn't gratuitously invalidate every html-group output (and vice
 /// versa).
-const HTML_GROUP_RASTERIZER_VERSION: u32 = 1;
+/// Bumped to 2 (2026-05-17) for F.3: per-frame VideoClip + ImageOverlay
+/// source extraction + file:// composition nav + CSS overflow:hidden
+/// guard. Older cached html-group frames are pre-F.3 placeholders
+/// or post-F.3 scrollbar-bleeding captures and need to be re-rastered.
+const HTML_GROUP_RASTERIZER_VERSION: u32 = 2;
 
 /// Per-group materialization result the IR lower pass consumes.
 /// Shape parallels `TemplateRenderInfo` (`ir::materialize`) so the
@@ -348,6 +352,30 @@ pub async fn materialize_group(
     let composition_path = tmp_dir.join("composition.html");
     std::fs::write(&composition_path, document)
         .map_err(|e| format!("write composition html {}: {e}", composition_path.display()))?;
+
+    // F.3 diagnostic: log the navigation target + state shape so a
+    // black-frames bug report can be pinned to file:// nav, frame
+    // extraction, or engine startup without a debug build.
+    let source_summary: Vec<String> = sources
+        .iter()
+        .map(|s| {
+            let kind = match &s.kind {
+                VideoSourceKind::Video { .. } => "Video",
+                VideoSourceKind::Image => "Image",
+            };
+            format!("{}={}", s.layer_id, kind)
+        })
+        .collect();
+    tracing::info!(
+        target: "html_group",
+        composition_html = %composition_path.display(),
+        layer_count = state.layers.len(),
+        source_count = sources.len(),
+        sources = ?source_summary,
+        canvas = format!("{}x{}", state.width, state.height),
+        "F.3: navigating raster-worker to composition.html",
+    );
+
     super::navigate_to_file(&window, &composition_path).await?;
 
     // Brief settle for the engine's initial-state JSON parse + first
@@ -355,6 +383,32 @@ pub async fn materialize_group(
     // but the immediate-after-navigate `document.readyState` going to
     // `complete` doesn't guarantee the script has fully run.
     tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+
+    // F.3 diagnostic: ask the engine what it parsed. `ready=false`
+    // means the state-script-tag wasn't found (HTML didn't load /
+    // engine didn't run); `layers=0` with `ready=true` means the
+    // JSON parse failed silently. Either way, the captured frames
+    // will be blank; the log narrows the next investigation.
+    match super::eval_async(
+        &window,
+        "JSON.stringify((typeof window.__weftcutCompositionStatus === 'function') \
+            ? window.__weftcutCompositionStatus() \
+            : { error: 'status fn not registered' })"
+            .into(),
+    )
+    .await
+    {
+        Ok(status) => tracing::info!(
+            target: "html_group",
+            status = %status,
+            "F.3: engine status post-nav",
+        ),
+        Err(e) => tracing::warn!(
+            target: "html_group",
+            error = %e,
+            "F.3: failed to read engine status",
+        ),
+    }
 
     for idx in 0..frame_count {
         let t = idx as f64 / fps_f;
