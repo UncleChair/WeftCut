@@ -326,6 +326,7 @@ pub async fn materialize_html_groups(
             .map(|(idx, (l, _))| {
                 let params = composition_params(&l.params);
                 let (opacity, x, y, scale_x, scale_y) = position_for(&l.params);
+                let effect_transform = pick_html_transform(l.effects.iter());
                 CompositionLayer {
                     id: l.id.to_string(),
                     z: idx as u32,
@@ -337,6 +338,7 @@ pub async fn materialize_html_groups(
                     scale_x,
                     scale_y,
                     params,
+                    effect_transform,
                 }
             })
             .collect();
@@ -484,8 +486,20 @@ fn rgba_to_8(c: crate::state::color::Rgba) -> crate::raster::composition::Rgba8 
 fn pick_composition_transform(
     group: &crate::state::group::Group,
 ) -> Option<crate::raster::composition::CompositionTransform> {
+    pick_html_transform(group.effects.iter())
+}
+
+/// Walk an effect chain (group or layer) and return the first enabled
+/// `HtmlTransform`'s tracks as a `CompositionTransform`. Returns
+/// `None` when the chain has no `HtmlTransform`. Multi-HtmlTransform
+/// in one chain isn't supported in v1 (the first wins). Mirrors
+/// `pickHtmlTransform` in TS `distill.ts`.
+fn pick_html_transform<'a, I>(effects: I) -> Option<crate::raster::composition::CompositionTransform>
+where
+    I: IntoIterator<Item = &'a crate::state::effect::Effect>,
+{
     use crate::state::effect::EffectParams;
-    for e in group.effects.iter() {
+    for e in effects {
         if !e.enabled {
             continue;
         }
