@@ -232,6 +232,8 @@ const zhCN: Resources = {
     starting: "正在启动导出…",
     progress_label:
       "{{percent}}% · 第 {{frame}} 帧 · {{fps}}fps · {{speed}}x",
+    rastering_label:
+      "{{percent}}% · 正在光栅化第 {{frame}}/{{total}} 帧",
     complete: "已导出到 {{path}}",
     failed: "导出失败：{{detail}}",
     cancel: "取消",

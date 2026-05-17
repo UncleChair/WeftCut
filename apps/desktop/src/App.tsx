@@ -1342,14 +1342,43 @@ function ExportPanel({
   const { t } = useTranslation();
   const inProgress = state.kind === "starting" || state.kind === "progress";
 
+  // Unified phase model: the pipeline is strictly raster-then-encode,
+  // so we map the two phases onto one bar split at the midpoint —
+  // raster phase occupies 0–50%, encode occupies 50–100%. Picking 50/50
+  // is wrong in absolute terms (raster dominates wall-clock by ~10×),
+  // but the bar serves as "phase visualization" more than "ETA":
+  // crossing 50% is the visible cue that raster finished and encode
+  // began. A future improvement could weight the split by historical
+  // observed durations; for v1 the simple split is clear and honest.
+  const RASTER_WEIGHT = 0.5;
+
   let body: React.ReactNode;
   let percent = 0;
   switch (state.kind) {
     case "starting":
-      body = <span>{t("export.starting")}</span>;
+      if (htmlGroupRaster && htmlGroupRaster.total > 0) {
+        // Raster phase: map frame/total onto the first half of the bar.
+        const rasterFrac = htmlGroupRaster.frame / htmlGroupRaster.total;
+        percent = Math.round(rasterFrac * RASTER_WEIGHT * 100);
+        body = (
+          <span>
+            {t("export.rastering_label", {
+              percent,
+              frame: htmlGroupRaster.frame,
+              total: htmlGroupRaster.total,
+            })}
+          </span>
+        );
+      } else {
+        // Pre-raster slice: spawning chrome workers, building composition,
+        // etc. Could be sub-second on cache hit or ~3 s on cold start.
+        body = <span>{t("export.starting")}</span>;
+      }
       break;
     case "progress": {
-      percent = Math.round(state.progress.progress * 100);
+      // Encode phase: ffmpeg progress is 0..1 → maps to 50..100% of the bar.
+      const encodeFrac = state.progress.progress;
+      percent = Math.round((RASTER_WEIGHT + encodeFrac * (1 - RASTER_WEIGHT)) * 100);
       body = (
         <span>
           {t("export.progress_label", {
@@ -1377,37 +1406,6 @@ function ExportPanel({
       break;
   }
 
-  // html-group raster sub-progress. Renders only while a group is
-  // actively rasterizing and the export hasn't errored/completed.
-  // total > 0 guard sidesteps a divide-by-zero if a start event arrives
-  // with frameCount=0 (defensive — Rust side rejects that case already).
-  const htmlSubProgress =
-    htmlGroupRaster && htmlGroupRaster.total > 0 && inProgress ? (
-      <div className="export-html-group-row">
-        <span className="export-html-group-label">
-          {t("export.html_group_label", {
-            shortId: htmlGroupRaster.groupId.slice(0, 8),
-            frame: htmlGroupRaster.frame,
-            total: htmlGroupRaster.total,
-            defaultValue:
-              "Rasterizing group {{shortId}}… {{frame}} / {{total}} frames",
-          })}
-        </span>
-        <div className="progress-track is-sub">
-          <div
-            className="progress-fill"
-            style={{
-              width: `${
-                (htmlGroupRaster.frame /
-                  Math.max(1, htmlGroupRaster.total)) *
-                100
-              }%`,
-            }}
-          />
-        </div>
-      </div>
-    ) : null;
-
   return (
     <aside className="export-panel">
       <header>
@@ -1426,7 +1424,6 @@ function ExportPanel({
           }}
         />
       </div>
-      {htmlSubProgress}
     </aside>
   );
 }

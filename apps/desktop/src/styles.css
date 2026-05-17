@@ -304,32 +304,6 @@ html, body, #root { height: 100%; margin: 0; }
   background: #f87171;
 }
 
-/* Html-render-group raster sub-progress — distinct from the main
- * ffmpeg progress so the two phases read clearly. The sub-bar is
- * thinner and accent-colored. */
-.export-html-group-row {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 6px 12px 8px;
-  border-top: 1px solid #1f2937;
-  background: #07090c;
-}
-
-.export-html-group-label {
-  font-size: 11px;
-  color: #9ca3af;
-  font-variant-numeric: tabular-nums;
-}
-
-.progress-track.is-sub {
-  height: 3px;
-}
-
-.progress-track.is-sub .progress-fill {
-  background: #a78bfa;
-}
-
 .error {
   color: #f87171;
   font-size: 12px;
