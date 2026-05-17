@@ -580,10 +580,37 @@ async fn rasterize_chunk_inner(
         format!("file:///{path_str}")
     };
 
+    // Open at about:blank FIRST so we can set the viewport via CDP
+    // before any composition content loads. chrome-headless-shell
+    // ignores `--window-size` for the CSS viewport (it defaults to
+    // 800×600 regardless) and the only reliable way to set viewport
+    // is `Emulation.setDeviceMetricsOverride`. Calling that AFTER
+    // navigation triggers a reflow that breaks BeginFrame's screenshot
+    // pipeline (commit f9e544a hit this); calling it BEFORE means the
+    // composition loads into the correct viewport from the first byte.
     let page = browser
-        .new_page(CreateTargetParams::new(file_url.clone()))
+        .new_page(CreateTargetParams::new("about:blank"))
         .await
-        .context("open composition page")?;
+        .context("open blank composition page")?;
+    page.execute(GenericCommand {
+        method: std::borrow::Cow::Borrowed("Emulation.setDeviceMetricsOverride"),
+        params: serde_json::json!({
+            "width": width,
+            "height": height,
+            "deviceScaleFactor": 1,
+            "mobile": false,
+        }),
+    })
+    .await
+    .context("Emulation.setDeviceMetricsOverride")?;
+
+    // Now navigate into the correctly-sized viewport.
+    page.execute(GenericCommand {
+        method: std::borrow::Cow::Borrowed("Page.navigate"),
+        params: serde_json::json!({ "url": file_url.clone() }),
+    })
+    .await
+    .context("Page.navigate to composition.html")?;
     page.wait_for_navigation()
         .await
         .context("wait_for_navigation on composition.html")?;
