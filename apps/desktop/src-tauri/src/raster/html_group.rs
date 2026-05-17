@@ -158,7 +158,14 @@ pub struct ProbeResult {
 /// Bumped because the two paths have small pixel deltas (font hinting
 /// + subpixel positioning differ between WebView2 and chrome-headless-
 /// shell); cache hits from v3 would mix pixel sources.
-const HTML_GROUP_RASTERIZER_VERSION: u32 = 4;
+/// v5 (2026-05-18): chrome launched with `--force-device-scale-factor=1`
+/// so the captured PNG's device pixels match the composition's CSS
+/// pixels regardless of host DPI scaling. Without this, a high-DPI
+/// host (very common: 125 / 150 / 200% Windows scaling) gave a CSS
+/// viewport smaller than the window, so the composition overflowed
+/// and the capture was a top-left CSS crop — visually a zoomed-in
+/// frame. Cache invalidated because pixel content shifts.
+const HTML_GROUP_RASTERIZER_VERSION: u32 = 5;
 
 /// Per-group materialization result the IR lower pass consumes.
 /// Shape parallels `TemplateRenderInfo` (`ir::materialize`) so the
