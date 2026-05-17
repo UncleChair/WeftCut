@@ -311,7 +311,21 @@ pub struct Rgba8 {
 }
 
 const COMPOSITION_BASE_STYLES: &str = r#"
-html, body { background: transparent; margin: 0; padding: 0; }
+html, body {
+  background: transparent;
+  margin: 0;
+  padding: 0;
+  /* Suppress scrollbars unconditionally — `#composition` is sized
+     to the canvas, but if the offscreen window's inner viewport is
+     even a pixel smaller (e.g. titlebar / borders on decorated
+     windows), the body overflows and scrollbars appear in the
+     captured frame. F.3 hit this when the export switched from a
+     data: URL to file:// and the chrome arithmetic stopped
+     matching. */
+  overflow: hidden;
+  width: 100%;
+  height: 100%;
+}
 #composition { position: relative; overflow: hidden; background: transparent; }
 .layer {
   position: absolute;
