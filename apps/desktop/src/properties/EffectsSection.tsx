@@ -124,11 +124,26 @@ export function EffectsSection({ heading, chain, onCommit }: Props) {
     <section className="prop-section effects-section">
       <h3>{heading}</h3>
       {state.length === 0 ? (
-        <p className="placeholder">
-          {t("effects_section.empty", {
-            defaultValue: "No effects. Use the + Add menu below.",
-          })}
-        </p>
+        <div className="effects-empty">
+          <p className="placeholder">
+            {t("effects_section.empty", {
+              defaultValue: "No effects. Use the + Add menu below.",
+            })}
+          </p>
+          <button
+            type="button"
+            className="button-primary"
+            onClick={() => update([zoomPresetEffect()])}
+            title={t("effects_section.zoom_preset_hint", {
+              defaultValue:
+                "Insert an HtmlTransform with a 5s scale 1.0 → 1.3 keyframe pair on scale_x and scale_y.",
+            })}
+          >
+            {t("effects_section.add_zoom_preset", {
+              defaultValue: "+ Add 5s zoom (1.0 → 1.3)",
+            })}
+          </button>
+        </div>
       ) : (
         <ul className="effects-list">
           {state.map((effect, idx) => (
@@ -497,6 +512,42 @@ function kf(t_us: number, value: number): Keyframe<number> {
 function parseNumber(raw: string, fallback: number): number {
   const n = Number(raw);
   return Number.isFinite(n) ? n : fallback;
+}
+
+/// HtmlTransform preset: 5s scale 1.0 → 1.3 keyframe pair on both
+/// scale axes; everything else identity. Preserved from the prior
+/// GroupEffectsSection UX because the demo flow is "I just want
+/// something to animate, fast" and the alternative — add identity
+/// HtmlTransform → switch field to Keyframed → add two rows by hand
+/// — is fiddly.
+function zoomPresetEffect(): Effect {
+  const id = crypto.randomUUID();
+  const kfPair = (a: number, b: number): AnimTrack<number> => ({
+    mode: "Keyframed",
+    value: [
+      { id: crypto.randomUUID(), t_us: 0, value: a, interp: { kind: "Linear" } },
+      {
+        id: crypto.randomUUID(),
+        t_us: 5_000_000,
+        value: b,
+        interp: { kind: "Linear" },
+      },
+    ],
+  });
+  const stat = (v: number): AnimTrack<number> => ({ mode: "Static", value: v });
+  return {
+    id,
+    enabled: true,
+    params: {
+      kind: "HtmlTransform",
+      x: stat(0),
+      y: stat(0),
+      scale_x: kfPair(1.0, 1.3),
+      scale_y: kfPair(1.0, 1.3),
+      rotation_deg: stat(0),
+      opacity: stat(1),
+    },
+  };
 }
 
 /// Default-shape effect for the chosen kind. Param values mirror the

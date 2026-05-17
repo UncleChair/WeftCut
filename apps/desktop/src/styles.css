@@ -4226,6 +4226,18 @@ input.preview-timecode:focus {
   font-size: 11px;
   text-transform: none;
 }
+.effects-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.effects-empty .placeholder {
+  color: #9ca3af;
+  font-size: 11px;
+  margin: 0;
+  line-height: 1.4;
+}
 .effects-list {
   list-style: none;
   margin: 0 0 8px 0;
