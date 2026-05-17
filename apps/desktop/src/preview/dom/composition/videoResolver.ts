@@ -148,3 +148,48 @@ export class PreviewVideoResolver implements VideoResolver {
     this.elements.delete(slot);
   }
 }
+
+/// Phase H.8 preview resolver for `ImageOverlay`. Same shape as the
+/// video resolver but `applyAt` is a no-op — an image's source frame
+/// doesn't change over time. The host still calls it per tick so the
+/// dispatch path can stay one switch-free `for binding of bindings`
+/// loop.
+///
+/// `binding.srcInUs` / `srcOutUs` are ignored; the layer's `t_start`
+/// / `t_end` already control visibility via the engine's opacity
+/// gate.
+export class PreviewImageResolver implements VideoResolver {
+  private elements = new Map<HTMLElement, HTMLImageElement>();
+
+  constructor(private readonly resolveSrc: (mediaId: string) => string | null) {}
+
+  mount(slot: HTMLElement, binding: VideoSlotBinding): void {
+    if (this.elements.has(slot)) return;
+    const img = document.createElement("img");
+    img.style.width = "100%";
+    img.style.height = "100%";
+    img.style.objectFit = "cover";
+    img.style.display = "block";
+    const src = this.resolveSrc(binding.mediaId);
+    if (src) img.src = src;
+    slot.appendChild(img);
+    this.elements.set(slot, img);
+  }
+
+  applyAt(_slot: HTMLElement, _tSeconds: number, _binding: VideoSlotBinding): void {
+    // ImageOverlay is time-invariant; visibility comes from the
+    // engine's opacity gate on the host element.
+  }
+
+  unmount(slot: HTMLElement, _binding: VideoSlotBinding): void {
+    const img = this.elements.get(slot);
+    if (!img) return;
+    try {
+      img.removeAttribute("src");
+    } catch {
+      /* best-effort */
+    }
+    if (img.parentNode === slot) slot.removeChild(img);
+    this.elements.delete(slot);
+  }
+}
