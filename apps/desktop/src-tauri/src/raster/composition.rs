@@ -63,6 +63,130 @@ pub const ENGINE_SOURCE: &str = r#"
   }
   var compositionEl = document.getElementById("composition");
 
+  // ---- Template mount ----------------------------------------------------
+  // Each Template member is rendered as an empty data-kind=Template
+  // placeholder host by the generator. The engine walks them once at
+  // startup, attachShadows each, and runs the template's scripts inside
+  // a new Function with per-instance shadowed globals (document =
+  // template shadow root, window proxy carrying __props__, synthetic
+  // performance/Date driven by the engine's clock, per-instance rAF
+  // queue). Mirrors TemplateHandle.instantiateTemplate so preview and
+  // export render the same template output.
+  //
+  // Runtimes are stored in templateRuntimes keyed by layer id; the
+  // per-layer driver in applyLayer looks up the runtime and calls
+  // setTime(tLayerSec) after writing transform/opacity to the host.
+  var templateRuntimes = Object.create(null);
+
+  function instantiateCompositionTemplate(hostDiv, style, scripts, body, props, w, h) {
+    if (hostDiv.shadowRoot) return null; // idempotent — already mounted
+    var shadow = hostDiv.attachShadow({ mode: "open" });
+    var hostStyle =
+      "<style>:host { display: block; position: relative; width: " +
+      (w | 0) + "px; height: " + (h | 0) +
+      "px; overflow: hidden; }</style>";
+    shadow.innerHTML = hostStyle + "<style>" + (style || "") + "</style>" + (body || "");
+
+    var clock = { t: 0 };
+    var rafQueue = Object.create(null);
+    var rafSeq = 0;
+
+    var winState = { __props__: props || {} };
+    var winProxy = new Proxy(winState, {
+      get: function (target, prop) {
+        if (prop in target) return target[prop];
+        return window[prop];
+      },
+      set: function (target, prop, value) {
+        target[prop] = value;
+        return true;
+      },
+      has: function (target, prop) {
+        return prop in target || prop in window;
+      }
+    });
+
+    var perfProxy = { now: function () { return clock.t * 1000; } };
+    // Date proxy: instances delegate to real Date; static .now reflects
+    // the synthetic clock. Templates rely on the static call site
+    // Date.now() so the delegating constructor is defensive only.
+    var DateCtor = window.Date;
+    function DateShim() {
+      if (arguments.length === 0) return new DateCtor();
+      if (arguments.length === 1) return new DateCtor(arguments[0]);
+      return new DateCtor(
+        arguments[0], arguments[1], arguments[2],
+        arguments[3], arguments[4], arguments[5], arguments[6]
+      );
+    }
+    DateShim.now = function () { return clock.t * 1000; };
+
+    var rafFn = function (cb) {
+      var id = ++rafSeq;
+      rafQueue[id] = cb;
+      return id;
+    };
+    var cancelRafFn = function (id) {
+      delete rafQueue[id];
+    };
+
+    try {
+      var fn = new Function(
+        "document",
+        "window",
+        "performance",
+        "Date",
+        "requestAnimationFrame",
+        "cancelAnimationFrame",
+        scripts || ""
+      );
+      fn(shadow, winProxy, perfProxy, DateShim, rafFn, cancelRafFn);
+    } catch (e) {
+      console.warn("composition: template script execution failed", e);
+    }
+
+    return {
+      setTime: function (seconds) {
+        clock.t = Number(seconds) || 0;
+        var keys = Object.keys(rafQueue);
+        var pending = [];
+        for (var i = 0; i < keys.length; i++) pending.push(rafQueue[keys[i]]);
+        rafQueue = Object.create(null);
+        var tMs = clock.t * 1000;
+        for (var j = 0; j < pending.length; j++) {
+          try { pending[j](tMs); }
+          catch (e) { console.error("composition: template rAF cb threw", e); }
+        }
+      }
+    };
+  }
+
+  function mountCompositionTemplates() {
+    if (!STATE || !Array.isArray(STATE.layers)) return;
+    for (var i = 0; i < STATE.layers.length; i++) {
+      var layer = STATE.layers[i];
+      if (!layer || !layer.params || layer.params.kind !== "Template") continue;
+      var host = hostOf(layer.id);
+      if (!host) continue;
+      try {
+        var rt = instantiateCompositionTemplate(
+          host,
+          layer.params.style,
+          layer.params.scripts,
+          layer.params.body,
+          layer.params.props,
+          layer.params.width | 0,
+          layer.params.height | 0
+        );
+        if (rt) templateRuntimes[layer.id] = rt;
+      } catch (e) {
+        console.error("composition: instantiateCompositionTemplate threw for", layer.id, e);
+      }
+    }
+  }
+
+  mountCompositionTemplates();
+
   function resolveAnimated(track, tCompUs, defaultValue) {
     if (!track) return defaultValue;
     if (track.mode === "Static") return track.value;
@@ -150,6 +274,18 @@ pub const ENGINE_SOURCE: &str = r#"
         while (padded.length < 5) padded = "0" + padded;
         var newSrc = layer.params.framePattern.replace("%05d", padded);
         if (img.getAttribute("src") !== newSrc) img.setAttribute("src", newSrc);
+      }
+    }
+
+    // Template layers: advance the per-instance runtime to the
+    // layer-local time so its rAF-driven animations re-render. The
+    // engine already gated visibility via opacity above; the runtime
+    // just needs the matching local clock.
+    if (layer.params && layer.params.kind === "Template") {
+      var rt = templateRuntimes[layer.id];
+      if (rt) {
+        try { rt.setTime(tLayerUs / 1e6); }
+        catch (e) { console.error("composition: template setTime threw", e); }
       }
     }
   }
@@ -310,6 +446,36 @@ pub enum CompositionLayerParams {
         #[serde(rename = "imageSrc", skip_serializing_if = "Option::is_none")]
         image_src: Option<String>,
     },
+    /// Template member inside an Html-mode composition. Carries the
+    /// template's parsed parts so the engine can instantiate a fresh
+    /// Shadow DOM per layer + run scripts with per-instance shadowed
+    /// globals (mirrors `TemplateHandle.instantiateTemplate`'s preview
+    /// pattern). `props` is per-layer post-canonicalization JSON; the
+    /// engine assigns it to the per-instance `window.__props__` so the
+    /// template's script reads its inputs without an IPC round-trip.
+    ///
+    /// Width/height are the template manifest's `size` — baked into the
+    /// placeholder host's style so the layer paints at its native
+    /// dimensions from the first frame.
+    Template {
+        template_id: String,
+        /// Combined CSS body from every `<style>` block in the
+        /// composed template HTML (after `__STYLE__` substitution).
+        style: String,
+        /// Combined JS body from every `<script>` block. Run via
+        /// `new Function` with shadowed globals (decision parity with
+        /// the standalone `TemplateHandle`).
+        scripts: String,
+        /// Template body markup with `<script>` and `<style>` elements
+        /// stripped. Set as the shadow root's `innerHTML` after the
+        /// `:host{...}` size block + the combined styles.
+        body: String,
+        /// Per-instance props injected as `window.__props__` before
+        /// scripts run.
+        props: serde_json::Value,
+        width: u32,
+        height: u32,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -461,6 +627,28 @@ fn render_layer_html(layer: &CompositionLayer) -> String {
                 h = height,
             ),
         },
+        CompositionLayerParams::Template {
+            template_id,
+            width,
+            height,
+            ..
+        } => {
+            // Empty placeholder host. The engine walks the document for
+            // `[data-kind="Template"]` at startup, calls `attachShadow`
+            // on each, and instantiates the template via its `style`,
+            // `scripts`, `body`, `props` (all present on the layer
+            // params JSON, NOT on this DOM). Width/height baked in here
+            // so the layer paints at its native size before the engine
+            // runs — matches the standalone TemplateHandle's behavior
+            // where the host is sized off `template.size` from the
+            // manifest.
+            format!(
+                r#"<div class="layer layer-template" data-layer-id="{id}" data-kind="Template" data-template-id="{tid}" style="width: {w}px; height: {h}px;"></div>"#,
+                tid = escape_html(template_id),
+                w = width,
+                h = height,
+            )
+        }
     }
 }
 
@@ -571,6 +759,78 @@ mod tests {
         assert!(doc.contains(r#"data-layer-id="L2""#));
         assert!(doc.contains(r#"id="weftcut-composition""#));
         assert!(doc.contains("__setTime"));
+    }
+
+    #[test]
+    fn build_document_emits_template_placeholder_and_state() {
+        // Pull a real built-in's parsed pieces so the embedded state shape
+        // is exactly what materialize_html_groups produces in production.
+        let tpl = crate::raster::template::builtin_title_card();
+        let composed = tpl.html.replace("__STYLE__", &tpl.style);
+        let parsed = crate::raster::template::parse_composed_template(&composed);
+
+        let state = CompositionState {
+            composition_transform: None,
+            fps_num: 30,
+            fps_den: 1,
+            width: 1920,
+            height: 1080,
+            layers: vec![CompositionLayer {
+                id: "tpl_1".into(),
+                z: 0,
+                t_start_us: 0,
+                t_end_us: 3_000_000,
+                opacity: 1.0,
+                x: 0.0,
+                y: 0.0,
+                scale_x: 1.0,
+                scale_y: 1.0,
+                effect_transform: None,
+                params: CompositionLayerParams::Template {
+                    template_id: tpl.id().to_string(),
+                    style: parsed.style.clone(),
+                    scripts: parsed.scripts.clone(),
+                    body: parsed.body.clone(),
+                    props: serde_json::json!({
+                        "title": "Hello",
+                        "subtitle": "World",
+                        "color": "#0050ff"
+                    }),
+                    width: tpl.size().0,
+                    height: tpl.size().1,
+                },
+            }],
+        };
+        let doc = build_composition_document(&state).unwrap();
+
+        // Placeholder div carries layer id, kind, template id, and size.
+        assert!(doc.contains(r#"data-layer-id="tpl_1""#));
+        assert!(doc.contains(r#"data-kind="Template""#));
+        assert!(doc.contains(r#"data-template-id="title-card""#));
+
+        // State JSON embeds the parsed style + scripts + body so the
+        // engine's instantiateCompositionTemplate can mount the template
+        // without an IPC round-trip.
+        let snippet = parsed.style.lines().next().unwrap_or("").trim();
+        if !snippet.is_empty() {
+            assert!(
+                doc.contains(snippet),
+                "composition document does not embed the template style"
+            );
+        }
+        // Templates poll for window.__props__ in their start() loop; the
+        // unique substring "while (!window.__props__)" appears verbatim
+        // in every built-in's script body. If the parser ate the script
+        // block, this is the canary.
+        assert!(
+            doc.contains("while (!window.__props__)"),
+            "composition document does not embed the template scripts"
+        );
+
+        // Engine source must include the template-mount entry points.
+        assert!(doc.contains("instantiateCompositionTemplate"));
+        assert!(doc.contains("mountCompositionTemplates"));
+        assert!(doc.contains("templateRuntimes"));
     }
 
     #[test]

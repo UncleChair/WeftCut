@@ -15,18 +15,21 @@
 ///     `masterUs → localSec` conversion at tick time using
 ///     `groupTStartUs` returned alongside the state.
 ///
-/// H.4 supports Color / Text / VideoClip / ImageOverlay members.
-/// Template + Subtitles members are skipped with a `console.warn` —
-/// the composition generator + engine don't support them yet
-/// (H.3 follow-up). The skip is silent at the validator level
-/// because validation operates on effect kinds, not layer kinds; the
-/// runtime drop is the v1 limitation.
+/// Color / Text / VideoClip / ImageOverlay / Template members all
+/// render inside an Html-mode composition. Template embedding is
+/// driven by `mountCompositionTemplates` in the engine — distill
+/// embeds each template's parsed `(style, scripts, body, props,
+/// width, height)` into the layer params via the cached catalog
+/// (`templatesById`); HtmlGroupHandle threads it in. Subtitles
+/// members are still skipped with a `console.warn` until libass-wasm
+/// (JASSUB) integration lands.
 
 import type {
   AnimTrack,
   GroupSummary,
   LayerSummary,
   MediaSummary,
+  TemplateSummary,
 } from "../../../ipc";
 import type {
   CompositionFilter,
@@ -66,6 +69,50 @@ export interface DistillInputs {
   /// decision 10 (in-place flatten).
   canvasWidth: number;
   canvasHeight: number;
+  /// Template catalog keyed by id (caller awaits `loadTemplates()` +
+  /// builds the map). The distiller pre-parses each Template member's
+  /// composed HTML into the embedded `style`/`scripts`/`body` strings
+  /// the engine's `instantiateCompositionTemplate` consumes. Absent →
+  /// any Template member is emitted as a placeholder (engine will mount
+  /// nothing). HtmlGroupHandle is the only known caller and threads
+  /// this in.
+  templatesById?: ReadonlyMap<string, TemplateSummary>;
+}
+
+/// Pieces a composed template HTML splits into for the composition
+/// engine. Mirrors the Rust `ParsedComposed` shape.
+interface ParsedTemplate {
+  style: string;
+  scripts: string;
+  body: string;
+}
+
+/// Parse a composed template (post `__STYLE__` substitution) into the
+/// three pieces the composition engine consumes. Uses DOMParser for the
+/// extraction — the harvested `<style>` / `<script>` blocks are stripped
+/// from the body so the engine doesn't re-parse them via innerHTML.
+///
+/// Mirrors `parse_composed_template` in `apps/desktop/src-tauri/src/raster/template.rs`
+/// so preview-side and export-side compositions feed the engine
+/// identical `(style, scripts, body)` triples.
+function parseTemplateComposed(composed: string): ParsedTemplate {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(composed, "text/html");
+  const style = Array.from(doc.querySelectorAll("style"))
+    .map((s) => s.textContent ?? "")
+    .join("\n");
+  const scripts = Array.from(doc.querySelectorAll("script"))
+    .map((s) => s.textContent ?? "")
+    .join("\n;\n");
+  // Strip script + style elements from the body so the engine's
+  // shadow `innerHTML` assignment doesn't recreate them as inert
+  // siblings.
+  Array.from(doc.body.querySelectorAll("script, style")).forEach((el) => el.remove());
+  return {
+    style: style.trim(),
+    scripts: scripts.trim(),
+    body: doc.body.innerHTML.trim(),
+  };
 }
 
 /// Build the engine state for a group. Members are processed in
@@ -77,11 +124,11 @@ export function distillCompositionState(input: DistillInputs): DistillResult {
 
   // Resolve members + filter audio (decision 7 — audio passes through
   // to amix, never enters the composition) + filter unsupported kinds.
-  // Template is supported preview-side post Template-in-composition
-  // followup (2026-05-17); HtmlGroupHandle walks the composition's
-  // shadow for `[data-kind="Template"]` placeholders after the engine
-  // mounts and instantiates each via TemplateHandle.instantiateTemplate.
-  // Subtitles still skipped — JASSUB integration is a separate piece.
+  // Template renders inside the composition via the engine's
+  // `mountCompositionTemplates` — distill embeds the parsed template
+  // pieces in layer.params (see Template branch in
+  // `compositionLayerParams`). Subtitles still skipped — JASSUB
+  // integration is a separate follow-up.
   type Resolved = { layer: LayerSummary; trackIndex: number };
   const resolved: Resolved[] = [];
   for (const lid of input.group.layer_ids) {
@@ -124,6 +171,7 @@ export function distillCompositionState(input: DistillInputs): DistillResult {
       mediaByLayer,
       input.canvasWidth,
       input.canvasHeight,
+      input.templatesById,
     );
     const effectTransform = pickHtmlTransform(layer.effects);
     const effectFilter = pickBlur(layer.effects);
@@ -262,6 +310,7 @@ function compositionLayerParams(
   mediaByLayer: Map<string, MediaSummary>,
   canvasFallbackW: number,
   canvasFallbackH: number,
+  templatesById: ReadonlyMap<string, TemplateSummary> | undefined,
 ): CompositionLayerParams {
   const p = layer.params;
   switch (p.kind) {
@@ -305,12 +354,40 @@ function compositionLayerParams(
       const h = media?.height ?? canvasFallbackH;
       return { kind: "ImageOverlay", media_id: p.media_id, width: w, height: h };
     }
-    case "Template":
+    case "Template": {
+      // Look up the template + parse the composed HTML into the engine-
+      // facing (style, scripts, body) triple. Missing catalog or unknown
+      // template_id → emit a placeholder with empty strings; the engine
+      // attachShadows but renders nothing. Matches the Rust materializer's
+      // defensive fallback so a corrupted state doesn't hard-fail the
+      // composition mount.
+      const tpl = templatesById?.get(p.template_id);
+      if (!tpl) {
+        return {
+          kind: "Template",
+          template_id: p.template_id,
+          style: "",
+          scripts: "",
+          body: "",
+          props: { ...p.props },
+          width: 0,
+          height: 0,
+        };
+      }
+      const composed = tpl.html.replace("__STYLE__", tpl.style);
+      const parsed = parseTemplateComposed(composed);
+      const [w, h] = tpl.size;
       return {
         kind: "Template",
         template_id: p.template_id,
+        style: parsed.style,
+        scripts: parsed.scripts,
+        body: parsed.body,
         props: { ...p.props },
+        width: w,
+        height: h,
       };
+    }
     // Defensive — the resolved set already filtered these.
     case "Audio":
     case "Subtitles":

@@ -177,6 +177,132 @@ fn validate_prop(
     Ok(())
 }
 
+/// Parsed pieces of a composed template HTML, shaped for the
+/// composition engine's `instantiateCompositionTemplate(host, style,
+/// scripts, body, ...)` entry. The engine attaches a fresh Shadow DOM
+/// per template host and concatenates `<style>` + `body` into the
+/// shadow innerHTML, then runs `scripts` via `new Function`.
+///
+/// **Only used by the html-render-groups path.** The standalone
+/// raster::render path navigates the offscreen webview to the full
+/// composed HTML and lets the browser parse + execute it; this parser
+/// is only needed when the template is embedded inside a larger
+/// composition document.
+#[derive(Clone, Debug)]
+pub struct ParsedComposed {
+    pub style: String,
+    pub scripts: String,
+    pub body: String,
+}
+
+/// Parse a composed template HTML (i.e. after `__STYLE__` substitution)
+/// into its three composition-relevant pieces. Mirrors
+/// `TemplateHandle.parseTemplate` on the TS side.
+///
+/// The parser is intentionally simple: scan for `<style>...</style>` and
+/// `<script>...</script>` runs, harvest their content into the
+/// `style` / `scripts` outputs, and emit everything between them as the
+/// `body` output. Built-in templates all follow a uniform structure
+/// (one `<style>` in head, one `<script>` at end of body, rest is
+/// markup) so a regex-or-DOM-grade parser is overkill.
+///
+/// `<style>` is matched case-insensitively. Attributes on the opening
+/// tag are tolerated. Nested tags are NOT — templates don't nest
+/// style/script and we'd need a real HTML parser if they did.
+pub fn parse_composed_template(composed: &str) -> ParsedComposed {
+    let mut style = String::new();
+    let mut scripts = String::new();
+    let mut body = String::new();
+
+    let bytes = composed.as_bytes();
+    let lower: String = composed.to_ascii_lowercase();
+    let mut cursor = 0;
+    while cursor < composed.len() {
+        // Find the next `<style` / `<script` opener.
+        let style_idx = lower[cursor..].find("<style").map(|i| cursor + i);
+        let script_idx = lower[cursor..].find("<script").map(|i| cursor + i);
+        let (next_open, kind) = match (style_idx, script_idx) {
+            (Some(a), Some(b)) if a < b => (a, "style"),
+            (Some(_), Some(b)) => (b, "script"),
+            (Some(a), None) => (a, "style"),
+            (None, Some(b)) => (b, "script"),
+            (None, None) => {
+                // No more style/script — append the rest as body and finish.
+                body.push_str(&composed[cursor..]);
+                break;
+            }
+        };
+        // Everything between cursor and next_open is body markup.
+        body.push_str(&composed[cursor..next_open]);
+
+        // Find the end of the opening tag `>`.
+        let after_open = match lower[next_open..].find('>') {
+            Some(i) => next_open + i + 1,
+            None => {
+                // Malformed — surface what we have and bail.
+                body.push_str(&composed[next_open..]);
+                break;
+            }
+        };
+        // Find the matching close tag.
+        let close_tag = format!("</{}", kind);
+        let close_pos = match lower[after_open..].find(&close_tag) {
+            Some(i) => after_open + i,
+            None => {
+                // Unterminated — treat the rest as content and finish.
+                let content = &composed[after_open..];
+                if kind == "style" {
+                    if !style.is_empty() {
+                        style.push('\n');
+                    }
+                    style.push_str(content);
+                } else {
+                    if !scripts.is_empty() {
+                        scripts.push_str("\n;\n");
+                    }
+                    scripts.push_str(content);
+                }
+                break;
+            }
+        };
+        let content = &composed[after_open..close_pos];
+        if kind == "style" {
+            if !style.is_empty() {
+                style.push('\n');
+            }
+            style.push_str(content);
+        } else {
+            if !scripts.is_empty() {
+                scripts.push_str("\n;\n");
+            }
+            scripts.push_str(content);
+        }
+        // Skip past the `</style>` / `</script>` close tag.
+        let _ = bytes; // suppress dead-code warning when no edge case fires
+        cursor = match lower[close_pos..].find('>') {
+            Some(i) => close_pos + i + 1,
+            None => composed.len(),
+        };
+    }
+
+    // Strip the `<head>...</head>` wrapper from `body` if present — the
+    // built-in templates put their `<style>` inside `<head>`, and once
+    // we've harvested those styles, an empty `<head></head>` shell is
+    // left over. Same for `<!doctype>` / `<html>` / `<body>` tags.
+    body = body.replace("<!doctype html>", "");
+    body = body.replace("<!DOCTYPE html>", "");
+    // Strip simple html/head/body opening + closing tags (no attrs).
+    for tag in ["<html>", "</html>", "<head>", "</head>", "<body>", "</body>"] {
+        body = body.replace(tag, "");
+    }
+
+    ParsedComposed {
+        style: style.trim().to_string(),
+        scripts: scripts.trim().to_string(),
+        body: body.trim().to_string(),
+    }
+}
+
 fn is_hex_color(s: &str) -> bool {
     if !s.starts_with('#') {
         return false;
@@ -436,5 +562,63 @@ mod tests {
                 t.id()
             );
         }
+    }
+
+    /// `parse_composed_template` is load-bearing for the html-render-groups
+    /// path: the composition engine reads `style` / `scripts` / `body`
+    /// from the embedded state JSON. A regression that swallows the
+    /// `<script>` body means templates render styled-but-static (no
+    /// animation) inside compositions. Cover the round-trip against every
+    /// built-in so a new template with a different structure (e.g. two
+    /// `<script>` blocks) trips an actionable failure here, not at the
+    /// first preview/export.
+    #[test]
+    fn parse_composed_extracts_each_builtin() {
+        for t in builtins() {
+            let composed = t.html.replace("__STYLE__", &t.style);
+            let parsed = parse_composed_template(&composed);
+            assert!(
+                !parsed.style.is_empty(),
+                "{}: parsed style empty",
+                t.id()
+            );
+            assert!(
+                !parsed.scripts.is_empty(),
+                "{}: parsed scripts empty",
+                t.id()
+            );
+            // Body keeps the visible markup (e.g. the title div).
+            assert!(!parsed.body.is_empty(), "{}: parsed body empty", t.id());
+            // No `<style>` / `<script>` tags should remain in the body —
+            // those went to the dedicated buckets.
+            assert!(
+                !parsed.body.to_ascii_lowercase().contains("<style"),
+                "{}: parsed body still contains <style>",
+                t.id()
+            );
+            assert!(
+                !parsed.body.to_ascii_lowercase().contains("<script"),
+                "{}: parsed body still contains <script>",
+                t.id()
+            );
+        }
+    }
+
+    #[test]
+    fn parse_composed_handles_multiple_style_blocks() {
+        let composed = "<!doctype html><html><head>\
+            <style>a { color: red; }</style>\
+            <style>b { color: blue; }</style>\
+            </head><body><div>hi</div>\
+            <script>var x = 1;</script>\
+            </body></html>";
+        let parsed = parse_composed_template(composed);
+        assert!(parsed.style.contains("color: red"));
+        assert!(parsed.style.contains("color: blue"));
+        assert!(parsed.scripts.contains("var x = 1"));
+        assert!(parsed.body.contains("<div>hi</div>"));
+        // No html shell tags should leak into body.
+        assert!(!parsed.body.contains("<html>"));
+        assert!(!parsed.body.contains("<body>"));
     }
 }
