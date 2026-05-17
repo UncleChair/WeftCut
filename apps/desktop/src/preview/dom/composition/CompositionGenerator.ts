@@ -259,16 +259,26 @@ function renderLayerHtml(layer: CompositionState["layers"][number]): string {
     }
     case "VideoClip": {
       // Resolver (preview: <video src=proxy>; export: <img src=...frame>)
-      // fills the slot at mount. We emit only the placeholder host.
+      // fills the slot at mount. We bake the slot's native pixel size
+      // here so the `<video>`/`<img>` child can be `width: 100%; height:
+      // 100%` of the slot and the layer's CSS transform (scale_x/y)
+      // composes on top — same model as the standalone VideoClipHandle
+      // outside compositions (style.width = srcW + style.transform).
+      const w = layer.params.width | 0;
+      const h = layer.params.height | 0;
       return (
         `<div class="layer layer-video" data-layer-id="${id}" data-kind="VideoClip" ` +
-        `data-media-id="${escapeAttr(layer.params.media_id)}"></div>`
+        `data-media-id="${escapeAttr(layer.params.media_id)}" ` +
+        `style="width: ${w}px; height: ${h}px;"></div>`
       );
     }
     case "ImageOverlay": {
+      const w = layer.params.width | 0;
+      const h = layer.params.height | 0;
       return (
         `<div class="layer layer-image" data-layer-id="${id}" data-kind="ImageOverlay" ` +
-        `data-media-id="${escapeAttr(layer.params.media_id)}"></div>`
+        `data-media-id="${escapeAttr(layer.params.media_id)}" ` +
+        `style="width: ${w}px; height: ${h}px;"></div>`
       );
     }
     case "Template": {

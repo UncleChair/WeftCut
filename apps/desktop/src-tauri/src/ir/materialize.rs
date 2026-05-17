@@ -331,7 +331,7 @@ pub async fn materialize_html_groups(
             .iter()
             .enumerate()
             .map(|(idx, (l, _))| {
-                let params = composition_params(&l.params);
+                let params = composition_params(&l.params, project, canvas_w, canvas_h);
                 let (opacity, x, y, scale_x, scale_y) = position_for(&l.params);
                 let effect_transform = pick_html_transform(l.effects.iter());
                 CompositionLayer {
@@ -436,10 +436,14 @@ fn position_for(params: &crate::state::layer::LayerParams) -> (f64, f64, f64, f6
 
 fn composition_params(
     params: &crate::state::layer::LayerParams,
+    project: &crate::state::project::Project,
+    canvas_w: u32,
+    canvas_h: u32,
 ) -> crate::raster::composition::CompositionLayerParams {
     use crate::raster::composition::{CompositionLayerParams, Rgba8};
     use crate::state::animated::Animated;
     use crate::state::color::Rgba;
+    use crate::state::ids::MediaId;
     use crate::state::layer::LayerParams;
 
     fn static_rgba(a: &Animated<Rgba>) -> Rgba {
@@ -448,6 +452,18 @@ fn composition_params(
             Animated::Keyframed(kfs) => kfs.front().map(|k| k.value).unwrap_or(Rgba::BLACK),
         }
     }
+
+    // Native dims for a media id with `canvas_w`/`canvas_h` fallback.
+    // ImageOverlay encodes its single frame under `metadata.video`
+    // (same `VideoStreamMeta` shape) so this works for both kinds.
+    let media_dims = |media_id: MediaId| -> (u32, u32) {
+        project
+            .media_pool
+            .get(&media_id)
+            .and_then(|m| m.metadata.video.as_ref())
+            .map(|v| (v.width, v.height))
+            .unwrap_or((canvas_w, canvas_h))
+    };
 
     match params {
         LayerParams::Color(p) => CompositionLayerParams::Color {
@@ -461,14 +477,24 @@ fn composition_params(
             font_size_px: p.font.size_px as f64,
             color: rgba_to_8(static_rgba(&p.color)),
         },
-        LayerParams::VideoClip(p) => CompositionLayerParams::VideoClip {
-            media_id: p.media.to_string(),
-            src_in_us: p.src_in_us,
-            src_out_us: p.src_out_us,
-        },
-        LayerParams::ImageOverlay(p) => CompositionLayerParams::ImageOverlay {
-            media_id: p.media.to_string(),
-        },
+        LayerParams::VideoClip(p) => {
+            let (w, h) = media_dims(p.media);
+            CompositionLayerParams::VideoClip {
+                media_id: p.media.to_string(),
+                src_in_us: p.src_in_us,
+                src_out_us: p.src_out_us,
+                width: w,
+                height: h,
+            }
+        }
+        LayerParams::ImageOverlay(p) => {
+            let (w, h) = media_dims(p.media);
+            CompositionLayerParams::ImageOverlay {
+                media_id: p.media.to_string(),
+                width: w,
+                height: h,
+            }
+        }
         // Defensive — caller filtered these out.
         LayerParams::Audio(_) | LayerParams::Template(_) | LayerParams::Subtitles(_) => {
             CompositionLayerParams::Color {

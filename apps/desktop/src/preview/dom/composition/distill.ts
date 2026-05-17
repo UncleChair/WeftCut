@@ -117,7 +117,13 @@ export function distillCompositionState(input: DistillInputs): DistillResult {
   const groupTStartUs = resolved.length > 0 ? resolved[0]!.layer.t_start_us : 0;
 
   const layers: CompositionLayer[] = resolved.map(({ layer, trackIndex }, idx) => {
-    const params = compositionLayerParams(layer, input.mediaById, mediaByLayer);
+    const params = compositionLayerParams(
+      layer,
+      input.mediaById,
+      mediaByLayer,
+      input.canvasWidth,
+      input.canvasHeight,
+    );
     const effectTransform = pickHtmlTransform(layer.effects);
     return {
       id: layer.id,
@@ -233,6 +239,8 @@ function compositionLayerParams(
   layer: LayerSummary,
   mediaById: ReadonlyMap<string, MediaSummary>,
   mediaByLayer: Map<string, MediaSummary>,
+  canvasFallbackW: number,
+  canvasFallbackH: number,
 ): CompositionLayerParams {
   const p = layer.params;
   switch (p.kind) {
@@ -254,17 +262,27 @@ function compositionLayerParams(
     case "VideoClip": {
       const media = mediaById.get(p.media_id);
       if (media) mediaByLayer.set(layer.id, media);
+      // Slot is sized to the source media's native dimensions so the
+      // layer's transform (x/y/scale) operates in the same coordinate
+      // space as the standalone VideoClipHandle outside compositions.
+      // Falls back to canvas dims when ffprobe didn't return a size.
+      const w = media?.width ?? canvasFallbackW;
+      const h = media?.height ?? canvasFallbackH;
       return {
         kind: "VideoClip",
         media_id: p.media_id,
         src_in_us: p.src_in_us,
         src_out_us: p.src_out_us,
+        width: w,
+        height: h,
       };
     }
     case "ImageOverlay": {
       const media = mediaById.get(p.media_id);
       if (media) mediaByLayer.set(layer.id, media);
-      return { kind: "ImageOverlay", media_id: p.media_id };
+      const w = media?.width ?? canvasFallbackW;
+      const h = media?.height ?? canvasFallbackH;
+      return { kind: "ImageOverlay", media_id: p.media_id, width: w, height: h };
     }
     case "Template":
       return {
