@@ -48,13 +48,31 @@ per-effect lavfi mapping.
 These twelve choices, settled in the grilling session, define the
 architecture. Phases below assume them.
 
-### 1. Trigger — capability gap, not maintenance gap
+### 1. Trigger — capability gap **or** keyframe gap
 
-The motivating use-case is **CSS effects on real media that ffmpeg
-expresses badly or not at all**. Maintenance burden (the
-`ffmpeg(params)` ↔ `css(params, t)` catalog parity) is real but
-secondary; we're not unifying on CSS to delete the ffmpeg side, we're
-adding a CSS island for what the ffmpeg side can't do.
+The motivating use-cases are two:
+
+1. **CSS effects on real media that ffmpeg can't express** —
+   3D perspective, multi-axis transform stacks, animated clip-paths,
+   conic gradients over video, compound transform-origin animation.
+2. **Keyframed animation of effect parameters that ffmpeg can't
+   express cleanly** — `gblur` has no expression-driven sigma; only
+   `boxblur` accepts an expression on `luma_radius`, and even that
+   requires hand-written conditional expressions that don't match
+   the CSS-blur math. For keyframed authoring the engine path is the
+   only one that produces visually-correct, easing-aware animation.
+
+Concretely (2026-05-17 routing rule extension): the lower pass
+inspects each enabled effect via `Effect::has_keyframed_params()`.
+Static params (`Animated::Static(v)` and single-keyframe `Keyframed`)
+stay on the ffmpeg path — Blur lowers to `gblur=sigma=N`, future
+ColorCorrect lowers to `eq=brightness=N:contrast=M`, etc. Multi-
+keyframe params force the owning layer/group into html-cap mode.
+
+Maintenance burden (the `ffmpeg(params)` ↔ `css(params, t)` catalog
+parity) is real but secondary; we're not unifying on CSS to delete the
+ffmpeg side, we're adding a CSS island for what the ffmpeg side can't
+do, including time-varying parameters.
 
 Rejected framings:
 
@@ -64,6 +82,11 @@ Rejected framings:
   Per-frame snapshot is far slower than lavfi for the cases lavfi
   already handles. Use lavfi where it works; use the HTML island only
   where lavfi doesn't.
+- *Generate per-frame lavfi expressions for keyframed effects.*
+  Possible for some filters (`boxblur` only), but the expression
+  language can't easily express our `Hold`/`Linear`/`EaseIn`/`EaseOut`
+  semantics without piecewise hand-construction, and the math differs
+  from preview. Routing keyframed authoring to html-cap is cleaner.
 
 ### 2. Granularity — per-group sub-composition
 
