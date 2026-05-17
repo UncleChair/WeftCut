@@ -39,6 +39,48 @@
 /// installed by the host via `videoResolver.ts` and the existing
 /// `TemplateHandle`.
 
+/// Wire-compatible mirror of the Rust `Interpolation` enum.
+/// `Bezier`'s control points are typed loosely as `[number, number]`
+/// pairs to match the Rust tuple-of-tuples serde shape.
+export type Interpolation =
+  | { kind: "Hold" }
+  | { kind: "Linear" }
+  | { kind: "EaseIn" }
+  | { kind: "EaseOut" }
+  | { kind: "Bezier"; p1: [number, number]; p2: [number, number] };
+
+export interface Keyframe<T> {
+  id: string;
+  t_us: number;
+  value: T;
+  interp: Interpolation;
+}
+
+/// Wire-compatible mirror of the Rust `Animated<T>` enum, serialized
+/// with `#[serde(tag = "mode", content = "value")]`. The engine reads
+/// this shape and resolves per frame via `resolveAnimated()`.
+export type AnimTrack<T> =
+  | { mode: "Static"; value: T }
+  | { mode: "Keyframed"; value: Keyframe<T>[] };
+
+/// Composition-level transform applied to the `#composition` element
+/// before any per-layer transforms. Sourced from the group's
+/// `HtmlTransform` effect chain (one HtmlTransform per group in v1;
+/// future versions can compose multiple).
+///
+/// All fields are `AnimTrack<number>` so authoring keyframes is
+/// uniform; the engine resolves each at every tick. Defaults when an
+/// `HtmlTransform` is missing or omits a field: identity values
+/// (x/y/rotation=0; scale/opacity=1).
+export interface CompositionTransform {
+  x: AnimTrack<number>;
+  y: AnimTrack<number>;
+  scale_x: AnimTrack<number>;
+  scale_y: AnimTrack<number>;
+  rotation_deg: AnimTrack<number>;
+  opacity: AnimTrack<number>;
+}
+
 /// JSON-serializable composition state. The generator builds this from
 /// `Project` state; the engine reads it inside the composition.
 ///
@@ -49,6 +91,9 @@ export interface CompositionState {
   width: number;
   height: number;
   layers: CompositionLayer[];
+  /// Group-level transform driven by the group's `HtmlTransform`
+  /// effect. Null/absent when the group has no `HtmlTransform`.
+  compositionTransform?: CompositionTransform | null;
 }
 
 /// Shared layer fields used by every kind. Per-kind specifics live in
@@ -133,6 +178,60 @@ export const ENGINE_SOURCE: string = String.raw`
   function cssEscape(s) {
     return String(s).replace(/["\\]/g, "\\$&");
   }
+  var compositionEl = document.getElementById("composition");
+
+  // ---- AnimTrack resolution. -------------------------------------------
+  // Wire shape mirrors the Rust Animated<T> enum (serde tag "mode",
+  // content "value"). Static: { mode, value }. Keyframed: { mode,
+  // value: [{ id, t_us, value, interp: { kind, ... } }, ...] }.
+  // Owner-local time on keyframes; for the composition transform
+  // that's also composition-local, so the resolver compares directly
+  // against tCompUs.
+  function resolveAnimated(track, tCompUs, defaultValue) {
+    if (!track) return defaultValue;
+    if (track.mode === "Static") return track.value;
+    var kfs = track.value;
+    if (!kfs || kfs.length === 0) return defaultValue;
+    if (kfs.length === 1) return kfs[0].value;
+    if (tCompUs <= kfs[0].t_us) return kfs[0].value;
+    if (tCompUs >= kfs[kfs.length - 1].t_us) return kfs[kfs.length - 1].value;
+    var i = 0;
+    while (i < kfs.length - 1 && kfs[i + 1].t_us <= tCompUs) i++;
+    var a = kfs[i];
+    var b = kfs[i + 1];
+    var span = b.t_us - a.t_us;
+    if (span <= 0) return b.value;
+    var u = (tCompUs - a.t_us) / span;
+    var interp = a.interp && a.interp.kind;
+    if (interp === "Hold") return a.value;
+    if (interp === "EaseIn") u = u * u;
+    else if (interp === "EaseOut") { var iu = 1 - u; u = 1 - iu * iu; }
+    // Bezier: skip cubic for v1; treat as linear. Editor can land
+    // the cubic-bezier solver later — most authoring needs Linear /
+    // EaseIn / EaseOut anyway.
+    return a.value + (b.value - a.value) * u;
+  }
+
+  // ---- Composition-level transform application. ------------------------
+  function applyCompositionTransform(tCompUs) {
+    if (!compositionEl) return;
+    var ct = STATE && STATE.compositionTransform;
+    if (!ct) {
+      compositionEl.style.transform = "";
+      compositionEl.style.opacity = "";
+      return;
+    }
+    var x   = resolveAnimated(ct.x,            tCompUs, 0);
+    var y   = resolveAnimated(ct.y,            tCompUs, 0);
+    var sx  = resolveAnimated(ct.scale_x,      tCompUs, 1);
+    var sy  = resolveAnimated(ct.scale_y,      tCompUs, 1);
+    var rot = resolveAnimated(ct.rotation_deg, tCompUs, 0);
+    var op  = resolveAnimated(ct.opacity,      tCompUs, 1);
+    compositionEl.style.transform =
+      "translate(" + x + "px, " + y + "px) rotate(" + rot + "deg) scale(" + sx + ", " + sy + ")";
+    compositionEl.style.transformOrigin = "center center";
+    compositionEl.style.opacity = String(op);
+  }
 
   // ---- Per-frame writer. -----------------------------------------------
   function applyLayer(layer, tSeconds) {
@@ -159,6 +258,8 @@ export const ENGINE_SOURCE: string = String.raw`
 
   function applyAll(tSeconds) {
     if (!STATE) return;
+    var tCompUs = Math.floor(tSeconds * 1e6);
+    applyCompositionTransform(tCompUs);
     for (var i = 0; i < STATE.layers.length; i++) {
       applyLayer(STATE.layers[i], tSeconds);
     }

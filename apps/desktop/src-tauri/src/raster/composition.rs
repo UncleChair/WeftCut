@@ -61,6 +61,49 @@ pub const ENGINE_SOURCE: &str = r#"
   function cssEscape(s) {
     return String(s).replace(/["\\]/g, "\\$&");
   }
+  var compositionEl = document.getElementById("composition");
+
+  function resolveAnimated(track, tCompUs, defaultValue) {
+    if (!track) return defaultValue;
+    if (track.mode === "Static") return track.value;
+    var kfs = track.value;
+    if (!kfs || kfs.length === 0) return defaultValue;
+    if (kfs.length === 1) return kfs[0].value;
+    if (tCompUs <= kfs[0].t_us) return kfs[0].value;
+    if (tCompUs >= kfs[kfs.length - 1].t_us) return kfs[kfs.length - 1].value;
+    var i = 0;
+    while (i < kfs.length - 1 && kfs[i + 1].t_us <= tCompUs) i++;
+    var a = kfs[i];
+    var b = kfs[i + 1];
+    var span = b.t_us - a.t_us;
+    if (span <= 0) return b.value;
+    var u = (tCompUs - a.t_us) / span;
+    var interp = a.interp && a.interp.kind;
+    if (interp === "Hold") return a.value;
+    if (interp === "EaseIn") u = u * u;
+    else if (interp === "EaseOut") { var iu = 1 - u; u = 1 - iu * iu; }
+    return a.value + (b.value - a.value) * u;
+  }
+
+  function applyCompositionTransform(tCompUs) {
+    if (!compositionEl) return;
+    var ct = STATE && STATE.compositionTransform;
+    if (!ct) {
+      compositionEl.style.transform = "";
+      compositionEl.style.opacity = "";
+      return;
+    }
+    var x   = resolveAnimated(ct.x,            tCompUs, 0);
+    var y   = resolveAnimated(ct.y,            tCompUs, 0);
+    var sx  = resolveAnimated(ct.scale_x,      tCompUs, 1);
+    var sy  = resolveAnimated(ct.scale_y,      tCompUs, 1);
+    var rot = resolveAnimated(ct.rotation_deg, tCompUs, 0);
+    var op  = resolveAnimated(ct.opacity,      tCompUs, 1);
+    compositionEl.style.transform =
+      "translate(" + x + "px, " + y + "px) rotate(" + rot + "deg) scale(" + sx + ", " + sy + ")";
+    compositionEl.style.transformOrigin = "center center";
+    compositionEl.style.opacity = String(op);
+  }
 
   function applyLayer(layer, tSeconds) {
     var host = hostOf(layer.id);
@@ -78,6 +121,8 @@ pub const ENGINE_SOURCE: &str = r#"
 
   function applyAll(tSeconds) {
     if (!STATE) return;
+    var tCompUs = Math.floor(tSeconds * 1e6);
+    applyCompositionTransform(tCompUs);
     for (var i = 0; i < STATE.layers.length; i++) {
       applyLayer(STATE.layers[i], tSeconds);
     }
@@ -114,6 +159,25 @@ pub struct CompositionState {
     pub width: u32,
     pub height: u32,
     pub layers: Vec<CompositionLayer>,
+    /// Group-level transform driven by the group's `HtmlTransform`
+    /// effect. Serializes via `camelCase` field rename to match the
+    /// TS `compositionTransform` field name; `None` → field omitted
+    /// from the JSON (matches the TS `?: CompositionTransform | null`).
+    #[serde(rename = "compositionTransform", skip_serializing_if = "Option::is_none")]
+    pub composition_transform: Option<CompositionTransform>,
+}
+
+/// Mirror of the TS `CompositionTransform`. Each field is a wire-
+/// compatible serialization of the Rust `Animated<f64>` enum
+/// (`#[serde(tag = "mode", content = "value")]`).
+#[derive(Clone, Debug, Serialize)]
+pub struct CompositionTransform {
+    pub x: crate::state::animated::Animated<f64>,
+    pub y: crate::state::animated::Animated<f64>,
+    pub scale_x: crate::state::animated::Animated<f64>,
+    pub scale_y: crate::state::animated::Animated<f64>,
+    pub rotation_deg: crate::state::animated::Animated<f64>,
+    pub opacity: crate::state::animated::Animated<f64>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -319,6 +383,7 @@ mod tests {
     #[test]
     fn build_document_contains_layers_and_state() {
         let state = CompositionState {
+            composition_transform: None,
             width: 800,
             height: 200,
             layers: vec![
@@ -367,6 +432,7 @@ mod tests {
     #[test]
     fn embedded_state_is_script_close_safe() {
         let state = CompositionState {
+            composition_transform: None,
             width: 64,
             height: 64,
             layers: vec![CompositionLayer {

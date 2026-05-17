@@ -339,10 +339,12 @@ pub async fn materialize_html_groups(
             })
             .collect();
 
+        let composition_transform = pick_composition_transform(group);
         let state = CompositionState {
             width: canvas_w,
             height: canvas_h,
             layers,
+            composition_transform,
         };
 
         let group_id_str = group.id.to_string();
@@ -469,6 +471,42 @@ fn composition_params(
 
 fn rgba_to_8(c: crate::state::color::Rgba) -> crate::raster::composition::Rgba8 {
     crate::raster::composition::Rgba8 { r: c.r, g: c.g, b: c.b, a: c.a }
+}
+
+/// Find the group's first enabled `HtmlTransform` effect and convert
+/// its `Animated<f64>` tracks into the engine-facing `CompositionTransform`.
+/// Returns `None` when the group has no `HtmlTransform` — the engine
+/// then writes no transform to `#composition`, matching the no-effect
+/// ffmpeg render exactly. Mirrors `pickCompositionTransform` in TS
+/// `distill.ts`.
+fn pick_composition_transform(
+    group: &crate::state::group::Group,
+) -> Option<crate::raster::composition::CompositionTransform> {
+    use crate::state::effect::EffectParams;
+    for e in group.effects.iter() {
+        if !e.enabled {
+            continue;
+        }
+        if let EffectParams::HtmlTransform {
+            x,
+            y,
+            scale_x,
+            scale_y,
+            rotation_deg,
+            opacity,
+        } = &e.params
+        {
+            return Some(crate::raster::composition::CompositionTransform {
+                x: x.clone(),
+                y: y.clone(),
+                scale_x: scale_x.clone(),
+                scale_y: scale_y.clone(),
+                rotation_deg: rotation_deg.clone(),
+                opacity: opacity.clone(),
+            });
+        }
+    }
+    None
 }
 
 fn layer_kind_str(params: &crate::state::layer::LayerParams) -> &'static str {
