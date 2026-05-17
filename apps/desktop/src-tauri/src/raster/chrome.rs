@@ -9,19 +9,19 @@
 //! flag, so unchanged frames can be skipped entirely. This module is the
 //! Rust side of porting that technique.
 //!
-//! **Scope of Phase X.1**: Chrome/Edge discovery on Windows + a smoke
-//! function that spawns headless Chrome, captures one frame from a static
-//! data URL via `HeadlessExperimental.beginFrame`, and returns the PNG
-//! bytes. Phase X.2 swaps this into the actual export pipeline; Phase X.3
-//! adds the `hasDamage` skip; Phase X.4 parallelizes across N instances;
-//! Phase X.5 wires the fallback dialog when no Chrome is found.
-//!
-//! **Why detect-only (no bundled Chromium)** for v1: bundling ships
-//! ~150 MB of binary inside the installer. ~95% of Windows users have
-//! Chrome or Edge installed (Edge ships with Windows 10+). We surface a
-//! clear "install Chrome for faster exports" dialog when neither is
-//! present and fall back to the WebView2 rasterizer (which still works,
-//! just slower).
+//! **Bundled chrome-headless-shell — sole supported binary.** Chrome 132+
+//! removed legacy headless from `chrome.exe`, and `--headless=new`
+//! doesn't expose `HeadlessExperimental.beginFrame` at all. The only
+//! way to keep the atomic paint+capture + `hasDamage` skip on modern
+//! installs is the standalone `chrome-headless-shell` binary that
+//! Google still ships under Chrome for Testing for exactly this use
+//! case. We bundle it under `vendor/chrome-headless-shell/` and don't
+//! fall back to a detected user-installed Chrome — different binary
+//! (no BeginFrame), different launch flags, different rasterizer
+//! version key. If the bundled binary isn't present at runtime
+//! (installer bug, user moved files, dev environment without the
+//! download script run yet), we surface a dialog and fall back to the
+//! WebView2 rasterizer in `raster/mod.rs`.
 //!
 //! **Why alpha-PNG output, not JPEG**: the html-render-group artifact is
 //! VP9 + `yuva420p`, which needs real alpha. JPEG has no alpha channel
@@ -36,97 +36,54 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
 
-/// Resolved Chromium-family browser, used to invoke headless Chrome.
-/// Edge is a fallback for users without Chrome; both are Chromium-based
-/// and expose the same CDP surface including `HeadlessExperimental`.
+/// Path to the bundled `chrome-headless-shell.exe`. Only one binary
+/// matters; if it's missing we fall back to WebView2, not to a detected
+/// user-installed Chrome (different binary, no BeginFrame, different
+/// rasterizer version key).
 #[derive(Clone, Debug)]
 pub struct ChromiumBinary {
     pub exe: PathBuf,
-    pub flavor: ChromiumFlavor,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ChromiumFlavor {
-    /// Bundled `chrome-headless-shell` (legacy-headless renamed binary, from
-    /// Chrome for Testing). The only flavor where
-    /// `HeadlessExperimental.beginFrame` works on modern installs — we
-    /// prefer it for the atomic paint+capture + `hasDamage` skip.
-    HeadlessShell,
-    /// Detected installed Chrome (chrome.exe). Falls back to
-    /// `Page.captureScreenshot` since Chrome 132+ removed legacy headless.
-    Chrome,
-    /// Detected installed Edge (msedge.exe). Same fallback path as Chrome.
-    Edge,
-}
-
-/// Locate a Chromium binary suitable for headless export raster.
-///
-/// Lookup order (first hit wins):
-///   1. `CHROMIUM_EXPORT_EXE` env var (escape hatch for testing).
-///   2. Bundled `chrome-headless-shell.exe` from `vendor/chrome-headless-shell/`
-///      — this is the renamed legacy-headless binary, the ONLY Chromium build
-///      that still exposes `HeadlessExperimental.beginFrame`. Chrome 132+ and
-///      modern Edge dropped legacy headless from `chrome.exe`; chrome-headless-
-///      shell is published separately under Chrome for Testing exactly for this
-///      automation use case.
-///   3. Installed Chrome at the standard `Program Files` / `Local\\AppData`
-///      paths (fallback to `Page.captureScreenshot` since BeginFrame is gone).
-///   4. Installed Edge at the standard `Program Files` paths (always present
-///      on Windows 10+, so this is the "always works" last resort).
-///
-/// Returns `None` only when *no* Chromium binary is found — at that point the
-/// caller should surface the install-hint dialog (Phase X.5) and fall back to
+/// Locate the bundled `chrome-headless-shell.exe`. Returns `None` when
+/// the binary isn't where we expect — that's an installer or dev-setup
+/// problem (run `vendor/chrome-headless-shell/download.ps1` for the
+/// latter). Caller surfaces the install-hint dialog and falls back to
 /// the WebView2 rasterizer (`raster/mod.rs`).
+///
+/// Search order:
+///   1. `CHROMIUM_EXPORT_EXE` env var — escape hatch for testing a custom
+///      build outside the bundled path.
+///   2. The vendor dir next to the running exe (production install) or
+///      the workspace root (dev / cargo-test runs).
 pub fn find_chromium() -> Option<ChromiumBinary> {
     if let Ok(custom) = std::env::var("CHROMIUM_EXPORT_EXE") {
         let p = PathBuf::from(custom);
         if p.is_file() {
-            return Some(ChromiumBinary {
-                exe: p,
-                flavor: ChromiumFlavor::HeadlessShell,
-            });
+            return Some(ChromiumBinary { exe: p });
         }
     }
-
     for path in headless_shell_candidate_paths() {
         if path.is_file() {
-            return Some(ChromiumBinary {
-                exe: path,
-                flavor: ChromiumFlavor::HeadlessShell,
-            });
-        }
-    }
-    for path in chrome_candidate_paths() {
-        if path.is_file() {
-            return Some(ChromiumBinary {
-                exe: path,
-                flavor: ChromiumFlavor::Chrome,
-            });
-        }
-    }
-    for path in edge_candidate_paths() {
-        if path.is_file() {
-            return Some(ChromiumBinary {
-                exe: path,
-                flavor: ChromiumFlavor::Edge,
-            });
+            return Some(ChromiumBinary { exe: path });
         }
     }
     None
 }
 
-/// Candidate paths for the bundled `chrome-headless-shell.exe`. v1 looks in
-/// two places: (a) `vendor/chrome-headless-shell/` next to the running exe,
-/// for dev builds where `target/debug/weftcut.exe` runs from the repo, and
-/// (b) the Tauri-bundled resources dir at runtime (wired by
+/// Candidate paths for the bundled `chrome-headless-shell.exe`. v1 looks
+/// in two places: (a) `vendor/chrome-headless-shell/` next to the running
+/// exe, for dev builds where `target/debug/weftcut.exe` runs from the
+/// repo, and (b) the Tauri-bundled resources dir at runtime (wired by
 /// `tauri.conf.json -> bundle.resources` in Phase X.5).
 fn headless_shell_candidate_paths() -> Vec<PathBuf> {
     let mut out = Vec::new();
 
-    // Walk up from the running exe (or cwd in tests) to the repo root and
-    // look at `apps/desktop/src-tauri/vendor/chrome-headless-shell/...`.
-    // For dev/test, the exe is somewhere under `target/`; the vendor dir
-    // sits at a known relative offset from the workspace root.
+    // Walk up from the running exe (or cwd in tests) and look at
+    // `vendor/chrome-headless-shell/chrome-headless-shell.exe` at each
+    // ancestor. Covers the dev `target/debug/...` layout AND the
+    // production install dir where the vendor folder is a sibling of
+    // the app exe (via tauri.conf.json resources, Phase X.5).
     if let Ok(exe) = std::env::current_exe() {
         let mut ancestor = exe.parent();
         while let Some(dir) = ancestor {
@@ -148,29 +105,6 @@ fn headless_shell_candidate_paths() -> Vec<PathBuf> {
         out.push(candidate);
     }
     out
-}
-
-fn chrome_candidate_paths() -> Vec<PathBuf> {
-    let mut out = vec![
-        PathBuf::from(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
-        PathBuf::from(r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"),
-    ];
-    if let Ok(localappdata) = std::env::var("LOCALAPPDATA") {
-        let user_chrome = Path::new(&localappdata)
-            .join("Google")
-            .join("Chrome")
-            .join("Application")
-            .join("chrome.exe");
-        out.push(user_chrome);
-    }
-    out
-}
-
-fn edge_candidate_paths() -> Vec<PathBuf> {
-    vec![
-        PathBuf::from(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"),
-        PathBuf::from(r"C:\Program Files\Microsoft\Edge\Application\msedge.exe"),
-    ]
 }
 
 // ============================================================================
@@ -214,24 +148,22 @@ pub async fn smoke_capture_one_frame(
     height: u32,
     t_seconds: f64,
 ) -> Result<BeginFrameCapture> {
-    // Flavor-aware launch flags. `chrome-headless-shell` IS the legacy
-    // headless binary, so it doesn't need `--headless=...` at all and it
-    // honors `--enable-begin-frame-control`. Installed `chrome.exe` /
-    // `msedge.exe` need `--headless=new` and BeginFrame is unavailable
-    // there (the smoke + production paths transparently fall back to
-    // `Page.captureScreenshot` when BeginFrame returns "method not found").
-    let mut builder = BrowserConfig::builder()
+    // chrome-headless-shell IS the legacy-headless binary, so no
+    // `--headless=...` flag is needed — it's headless by definition. The
+    // BeginFrame control surface is unlocked by
+    // `--enable-begin-frame-control`; without it, BeginFrame returns
+    // "Another frame is pending" because the compositor is pacing itself
+    // off the wall clock. `--run-all-compositor-stages-before-draw`
+    // guarantees the screenshot the BeginFrame returns is fully composited
+    // (no "blank for one frame after navigation" race beyond the warmup
+    // we already do below).
+    let config = BrowserConfig::builder()
         .chrome_executable(&binary.exe)
+        .arg("--enable-begin-frame-control")
+        .arg("--run-all-compositor-stages-before-draw")
         .arg("--disable-gpu") // GPU compositor in headless is flaky on Windows
         .arg("--hide-scrollbars")
-        .arg(format!("--window-size={},{}", width, height));
-    builder = match binary.flavor {
-        ChromiumFlavor::HeadlessShell => builder
-            .arg("--enable-begin-frame-control")
-            .arg("--run-all-compositor-stages-before-draw"),
-        ChromiumFlavor::Chrome | ChromiumFlavor::Edge => builder.arg("--headless=new"),
-    };
-    let config = builder
+        .arg(format!("--window-size={},{}", width, height))
         .build()
         .map_err(|e| anyhow!("chromiumoxide BrowserConfig: {e}"))?;
 
@@ -296,48 +228,14 @@ pub async fn smoke_capture_one_frame(
             "interval": 16,
             "screenshot": { "format": "png" }
         });
-        // Try BeginFrame first (legacy-headless only — Chrome <132 / Edge old).
-        // On modern Chrome `--headless=new` removed this domain entirely, so
-        // we fall through to `Page.captureScreenshot` when it 404s. The
-        // fallback loses BeginFrame's atomic paint+capture guarantee but
-        // is the only path that works on Chrome 132+.
-        let begin_frame_result = page
+        let response = page
             .execute(GenericCommand {
                 method: std::borrow::Cow::Borrowed("HeadlessExperimental.beginFrame"),
                 params: cmd,
             })
-            .await;
-
-        let response_value: serde_json::Value = match begin_frame_result {
-            Ok(r) => r.result.clone(),
-            Err(e) if format!("{e}").contains("wasn't found") => {
-                tracing::info!(
-                    "BeginFrame unavailable (Chrome 132+ removed legacy headless); \
-                     falling back to Page.captureScreenshot"
-                );
-                let shot_cmd = serde_json::json!({
-                    "format": "png",
-                    "optimizeForSpeed": false,
-                    "captureBeyondViewport": false,
-                });
-                let shot = page
-                    .execute(GenericCommand {
-                        method: std::borrow::Cow::Borrowed("Page.captureScreenshot"),
-                        params: shot_cmd,
-                    })
-                    .await
-                    .context("Page.captureScreenshot (BeginFrame fallback)")?;
-                // Page.captureScreenshot returns `{ "data": "<base64>" }`.
-                // Synthesize a BeginFrame-shaped result so the unwrap below
-                // doesn't branch.
-                serde_json::json!({
-                    "screenshotData": shot.result.get("data").cloned().unwrap_or(serde_json::Value::Null),
-                    "hasDamage": true,
-                })
-            }
-            Err(e) => return Err(anyhow::Error::new(e).context("HeadlessExperimental.beginFrame")),
-        };
-        let result: &serde_json::Value = &response_value;
+            .await
+            .context("HeadlessExperimental.beginFrame")?;
+        let result: &serde_json::Value = &response.result;
 
         let has_damage = result
             .get("hasDamage")
