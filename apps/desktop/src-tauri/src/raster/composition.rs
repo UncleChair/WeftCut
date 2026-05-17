@@ -180,6 +180,16 @@ pub const ENGINE_SOURCE: &str = r#"
     });
   };
 
+  // Export-side hook: the offscreen raster's time-mock shim
+  // (raster/time_mock.js) calls __seek_dispatch(t) → __seek_impl(t)
+  // → __onSeek(t) if defined. Without registering this, the shim's
+  // seek path runs through fonts.ready + rAF flush but never reaches
+  // our applyAll — every captured frame ends up at the layer CSS
+  // default of `opacity: 0` and the export looks all-black.
+  window.__onSeek = function (tSeconds) {
+    applyAll(Number(tSeconds) || 0);
+  };
+
   window.__weftcutCompositionStatus = function () {
     return { ready: !!window.__weftcutCompositionReady, layers: STATE ? STATE.layers.length : 0 };
   };

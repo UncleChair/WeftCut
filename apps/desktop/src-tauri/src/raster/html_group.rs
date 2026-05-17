@@ -145,11 +145,13 @@ pub struct ProbeResult {
 /// from the template `RASTERIZER_VERSION` so a template-side fix
 /// doesn't gratuitously invalidate every html-group output (and vice
 /// versa).
-/// Bumped to 2 (2026-05-17) for F.3: per-frame VideoClip + ImageOverlay
-/// source extraction + file:// composition nav + CSS overflow:hidden
-/// guard. Older cached html-group frames are pre-F.3 placeholders
-/// or post-F.3 scrollbar-bleeding captures and need to be re-rastered.
-const HTML_GROUP_RASTERIZER_VERSION: u32 = 2;
+/// Bumped to 3 (2026-05-17) for F.3 follow-up: engine registers
+/// `window.__onSeek` so the time-mock shim's seek dispatch actually
+/// drives our applyAll. v2 captures don't (the shim's __seek_impl
+/// never reached the engine), so every layer stayed at the CSS
+/// default `opacity: 0` and frames were all-black. Bump invalidates
+/// the v2 caches.
+const HTML_GROUP_RASTERIZER_VERSION: u32 = 3;
 
 /// Per-group materialization result the IR lower pass consumes.
 /// Shape parallels `TemplateRenderInfo` (`ir::materialize`) so the
