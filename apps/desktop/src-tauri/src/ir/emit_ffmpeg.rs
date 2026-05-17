@@ -261,6 +261,16 @@ impl<'a> Emitter<'a> {
                 ));
                 lbl
             }
+            IRNode::Gblur { in_, sigma } => {
+                let in_lbl = self.emit_node(in_);
+                let lbl = self.fresh_label("gb");
+                // Clamp sigma to the ffmpeg-accepted range. gblur rejects
+                // sigma < 0.1 with "out of range" and large values waste
+                // CPU without visible change; cap at 1024.
+                let s = sigma.max(0.1).min(1024.0);
+                self.write_clause(&format!("{in_lbl} gblur=sigma={s:.3} {lbl}"));
+                lbl
+            }
             IRNode::DrawText {
                 in_,
                 content,

@@ -350,6 +350,7 @@ pub async fn materialize_html_groups(
                 );
                 let (opacity, x, y, scale_x, scale_y) = position_for(&l.params);
                 let effect_transform = pick_html_transform(l.effects.iter());
+                let effect_filter = pick_blur(l.effects.iter());
                 CompositionLayer {
                     id: l.id.to_string(),
                     z: idx as u32,
@@ -362,11 +363,13 @@ pub async fn materialize_html_groups(
                     scale_y,
                     params,
                     effect_transform,
+                    effect_filter,
                 }
             })
             .collect();
 
         let composition_transform = pick_composition_transform(group);
+        let composition_filter = pick_blur(group.effects.iter());
         let state = CompositionState {
             width: canvas_w,
             height: canvas_h,
@@ -374,6 +377,7 @@ pub async fn materialize_html_groups(
             fps_den,
             layers,
             composition_transform,
+            composition_filter,
         };
 
         let group_id_str = group.id.to_string();
@@ -731,6 +735,28 @@ fn pick_composition_transform(
     group: &crate::state::group::Group,
 ) -> Option<crate::raster::composition::CompositionTransform> {
     pick_html_transform(group.effects.iter())
+}
+
+/// Walk an effect chain and return the first enabled `Blur`'s radius
+/// track as a `CompositionFilter`. Returns `None` when the chain has no
+/// `Blur` effect. Mirrors `pickBlur` in TS `distill.ts`. Multi-Blur in
+/// one chain isn't supported in v1 (the first wins).
+fn pick_blur<'a, I>(effects: I) -> Option<crate::raster::composition::CompositionFilter>
+where
+    I: IntoIterator<Item = &'a crate::state::effect::Effect>,
+{
+    use crate::state::effect::EffectParams;
+    for e in effects {
+        if !e.enabled {
+            continue;
+        }
+        if let EffectParams::Blur { radius } = &e.params {
+            return Some(crate::raster::composition::CompositionFilter {
+                blur_px: radius.clone(),
+            });
+        }
+    }
+    None
 }
 
 /// Walk an effect chain (group or layer) and return the first enabled

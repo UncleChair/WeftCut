@@ -32,6 +32,25 @@ impl<T: Clone> Animated<T> {
     pub fn r#static(v: T) -> Self {
         Self::Static(v)
     }
+
+    /// True iff the value actually changes over time — `Keyframed` with
+    /// at least two keyframes. `Static`, empty `Keyframed`, and
+    /// single-keyframe `Keyframed` all read as not animated. The
+    /// renderer's static-vs-keyframed routing rule consults this:
+    /// animated tracks force html-cap rendering on the owning
+    /// layer/group; non-animated tracks can take the fast ffmpeg path.
+    ///
+    /// Doesn't compare values — `[t=0: v=5, t=10: v=5]` reports
+    /// animated even though it's effectively static. False positives
+    /// just route to html-cap unnecessarily; tightening to "any two
+    /// adjacent keyframes have distinct values" is a follow-up if it
+    /// matters.
+    pub fn is_animated(&self) -> bool {
+        match self {
+            Animated::Static(_) => false,
+            Animated::Keyframed(kfs) => kfs.len() > 1,
+        }
+    }
 }
 
 impl<T: Clone + Default> Default for Animated<T> {

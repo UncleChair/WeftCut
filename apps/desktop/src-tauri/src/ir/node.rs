@@ -85,6 +85,16 @@ pub enum IRNode {
         in_: NodeId,
         alpha: f64,
     },
+    /// ffmpeg `gblur=sigma=N` — Gaussian blur on a video stream. Emitted
+    /// by the lower pass for static `EffectParams::Blur { radius }`
+    /// (i.e. `Animated::Static(r)` with r > 0) outside any html-cap
+    /// group. Keyframed Blur is routed to html-cap via
+    /// `Layer::requires_html` before this node would be emitted, so
+    /// `sigma` here is a constant per the lower-pass invariant.
+    Gblur {
+        in_: NodeId,
+        sigma: f64,
+    },
     /// Burn text onto a video stream. Emits `drawtext=...:enable='between(...)'`.
     /// `font_family` resolves through fontconfig (`font=`) — works on Linux/macOS
     /// and Windows ffmpeg builds with fontconfig (e.g. winget Gyan.FFmpeg).
@@ -215,6 +225,7 @@ impl IRNode {
             | IRNode::Scale { .. }
             | IRNode::Fps { .. }
             | IRNode::Opacity { .. }
+            | IRNode::Gblur { .. }
             | IRNode::DrawText { .. }
             | IRNode::Fade { .. }
             | IRNode::Format { .. }
