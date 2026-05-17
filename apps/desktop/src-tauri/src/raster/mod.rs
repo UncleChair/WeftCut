@@ -52,6 +52,12 @@ pub fn spawn_spike(app: &AppHandle) -> Result<()> {
     let _window = WebviewWindowBuilder::new(app, "raster-worker", WebviewUrl::External(url))
         .initialization_script(TIME_MOCK_SHIM)
         .visible(false)
+        // No window chrome — every captured pixel is content. With
+        // default decorations, the inner viewport is a few pixels
+        // smaller than the requested window size, and a composition
+        // sized exactly to the canvas overflows by chrome-width,
+        // showing OS scrollbars in the capture (F.3 export regression).
+        .decorations(false)
         .inner_size(800.0, 200.0)
         .resizable(false)
         .skip_taskbar(true)

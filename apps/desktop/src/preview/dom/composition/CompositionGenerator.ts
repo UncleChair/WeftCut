@@ -166,7 +166,20 @@ export function checkProbePixel(actual: { r: number; g: number; b: number; a: nu
 /// Standard CSS shell for every composition. Same selectors regardless
 /// of mount surface (decision 11 — `#composition` not `:host`).
 const COMPOSITION_BASE_STYLES = `
-html, body { background: transparent; margin: 0; padding: 0; }
+html, body {
+  background: transparent;
+  margin: 0;
+  padding: 0;
+  /* Suppress scrollbars unconditionally — see the same comment in
+     Rust composition.rs. The export raster's offscreen window
+     viewport can be a pixel smaller than #composition; without
+     this rule, captured frames show OS scrollbars instead of
+     content. Harmless in the preview shadow-DOM mount where the
+     shadow root has no viewport scroll. */
+  overflow: hidden;
+  width: 100%;
+  height: 100%;
+}
 #composition { position: relative; overflow: hidden; background: transparent; }
 .layer {
   position: absolute;
