@@ -247,7 +247,6 @@ pub async fn materialize_html_groups(
         CompositionLayer, CompositionLayerParams, CompositionState, Rgba8,
     };
     use crate::raster::html_group;
-    use crate::state::group::GroupRenderMode;
     use crate::state::layer::LayerParams;
 
     let mut out = HtmlGroupRenders::new();
@@ -268,7 +267,10 @@ pub async fn materialize_html_groups(
     }
 
     for group in project.groups.iter() {
-        if group.render_mode != GroupRenderMode::Html {
+        // Effect-chain redesign: a group materializes for html-cap iff
+        // any enabled effect in its chain `requires_html()`. Today the
+        // only such kind is `HtmlTransform`.
+        if !group.requires_html() {
             continue;
         }
 

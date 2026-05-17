@@ -16,13 +16,16 @@
 /// one and short-circuiting on equality keeps React re-renders to that
 /// rate.
 ///
-/// **Phase H.4 — html-render groups** (`docs/html-render-groups.md`):
-/// when a layer is a member of a group whose `render_mode === "Html"`,
-/// the layer is **not** rendered individually. Instead, on the first
-/// active member encountered, one `<HtmlGroup>` is emitted at that
-/// position in the render order. Subsequent active members of the
-/// same group are skipped. The composition inside the html-group
-/// renders all its members as a single shadow-DOM-mounted artifact.
+/// **Html-render groups** (`docs/html-render-groups.md`): when a layer
+/// is a member of a group whose effect chain has any enabled
+/// `HtmlTransform` (or other html-required effect), the layer is
+/// **not** rendered individually. Instead, on the first active member
+/// encountered, one `<HtmlGroup>` is emitted at that position in the
+/// render order. Subsequent active members of the same group are
+/// skipped. The composition inside the html-group renders all its
+/// members as a single shadow-DOM-mounted artifact whose
+/// `#composition` transform interpolates per-frame from the
+/// HtmlTransform's keyframes.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -141,10 +144,15 @@ function collectActive(
   lo: number,
   hi: number,
 ): RenderUnit[] {
-  // Index: which Html group does each layer belong to?
+  // Index: which html-rendered group does each layer belong to? A
+  // group is html-rendered iff its effect chain has any enabled
+  // effect whose kind requires html-cap (today: HtmlTransform).
   const htmlGroupByLayer = new Map<string, string>();
   for (const g of groups) {
-    if (g.render_mode !== "Html") continue;
+    const requiresHtml = g.effects.some(
+      (e) => e.enabled && e.params.kind === "HtmlTransform",
+    );
+    if (!requiresHtml) continue;
     for (const lid of g.layer_ids) htmlGroupByLayer.set(lid, g.id);
   }
 

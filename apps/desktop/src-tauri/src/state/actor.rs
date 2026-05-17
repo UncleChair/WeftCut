@@ -15,7 +15,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use super::color::{ColorSpace, Rgba};
 use super::animated::Animated;
 use super::history::{History, HistoryEntry, HistoryView, NamedCheckpoint};
-use super::group::{Group, GroupRenderMode};
+use super::group::Group;
 use super::ids::{
     CheckpointId, GroupId, LayerId, MarkerId, MediaId, OpId, TrackId, TransitionId, new_id,
 };
@@ -538,12 +538,6 @@ enum Command {
     GroupsRename {
         id: GroupId,
         label: Option<String>,
-        actor: Actor,
-        reply: oneshot::Sender<Result<(), CommandError>>,
-    },
-    GroupsSetRenderMode {
-        id: GroupId,
-        mode: GroupRenderMode,
         actor: Actor,
         reply: oneshot::Sender<Result<(), CommandError>>,
     },
@@ -1213,33 +1207,6 @@ impl ProjectHandle {
         rx.await.expect("project actor terminated")
     }
 
-    /// Switch a group's render mode between `Native` (ffmpeg per-layer
-    /// lowering, the default) and `Html` (html-render-groups island —
-    /// `docs/html-render-groups.md`). Validation runs on commit; if any
-    /// member layer carries an effect with no CSS implementation, the
-    /// commit fails with
-    /// `ValidationError::GroupHtmlEffectNotSupported` (surfaced as
-    /// `CommandError::ValidationFailed`). Switching back to `Native`
-    /// always succeeds — the CSS-support invariant only constrains
-    /// `Html` mode.
-    pub async fn groups_set_render_mode(
-        &self,
-        actor: Actor,
-        id: GroupId,
-        mode: GroupRenderMode,
-    ) -> Result<(), CommandError> {
-        let (reply, rx) = oneshot::channel();
-        self.tx
-            .send(Command::GroupsSetRenderMode {
-                id,
-                mode,
-                actor,
-                reply,
-            })
-            .await
-            .expect("project actor terminated");
-        rx.await.expect("project actor terminated")
-    }
 
     pub async fn move_track(
         &self,
@@ -1667,15 +1634,6 @@ impl ProjectActor {
                 reply,
             } => {
                 let result = self.do_groups_rename(id, label, actor);
-                let _ = reply.send(result);
-            }
-            Command::GroupsSetRenderMode {
-                id,
-                mode,
-                actor,
-                reply,
-            } => {
-                let result = self.do_groups_set_render_mode(id, mode, actor);
                 let _ = reply.send(result);
             }
             Command::Undo { actor, reply } => {
@@ -2486,27 +2444,6 @@ impl ProjectActor {
         Ok(())
     }
 
-    fn do_groups_set_render_mode(
-        &mut self,
-        id: GroupId,
-        mode: GroupRenderMode,
-        actor: Actor,
-    ) -> Result<(), CommandError> {
-        let mut next: Project = (*self.history.current()).clone();
-        apply_groups_set_render_mode(&mut next, id, mode)?;
-        // `commit` runs `validate`, which rejects the switch if any
-        // member layer has an effect with no CSS implementation
-        // (decision 8 — strict refusal). Mode-switch then becomes a
-        // no-op against `self.history` because the commit fails first.
-        self.commit(
-            next,
-            actor,
-            format!("Set group {id} render mode to {mode:?}"),
-            Vec::new(),
-            DiffHint::Coarse,
-        )?;
-        Ok(())
-    }
 
     fn do_move_track(
         &mut self,
@@ -2949,7 +2886,6 @@ pub(crate) fn apply_groups_create(
         id,
         label,
         members: unique,
-        render_mode: GroupRenderMode::default(),
         effects: imbl::Vector::new(),
     });
     Ok(id)
@@ -3055,19 +2991,6 @@ pub(crate) fn apply_groups_rename(
     Ok(())
 }
 
-pub(crate) fn apply_groups_set_render_mode(
-    project: &mut Project,
-    id: GroupId,
-    mode: GroupRenderMode,
-) -> Result<(), CommandError> {
-    let gi = project
-        .groups
-        .iter()
-        .position(|g| g.id == id)
-        .ok_or(CommandError::GroupNotFound { group: id })?;
-    project.groups[gi].render_mode = mode;
-    Ok(())
-}
 
 fn layer_id_set(project: &Project) -> std::collections::HashSet<LayerId> {
     let mut s = std::collections::HashSet::new();
@@ -6129,120 +6052,11 @@ mod tests {
         assert_eq!(snap.groups[0].label.as_deref(), Some("new"));
     }
 
-    #[tokio::test]
-    async fn groups_set_render_mode_round_trips_native_html() {
-        let (handle, _t, a, b, _c) = three_layers_on_video_track().await;
-        let g = handle
-            .groups_create(Actor::User, vec![a, b], None, false)
-            .await
-            .unwrap();
-
-        // Default render mode is Native.
-        let snap = handle.snapshot().await;
-        assert_eq!(snap.groups[0].render_mode, GroupRenderMode::Native);
-
-        // Native → Html succeeds (no effects on the color layers).
-        handle
-            .groups_set_render_mode(Actor::User, g, GroupRenderMode::Html)
-            .await
-            .expect("Native → Html should succeed when no member has CSS-incompatible effects");
-        let snap = handle.snapshot().await;
-        assert_eq!(snap.groups[0].render_mode, GroupRenderMode::Html);
-
-        // Html → Native always succeeds.
-        handle
-            .groups_set_render_mode(Actor::User, g, GroupRenderMode::Native)
-            .await
-            .expect("Html → Native should always succeed");
-        let snap = handle.snapshot().await;
-        assert_eq!(snap.groups[0].render_mode, GroupRenderMode::Native);
-    }
-
-    #[tokio::test]
-    async fn groups_set_render_mode_unknown_id_fails() {
-        let (handle, _t, _a, _b, _c) = three_layers_on_video_track().await;
-        let err = handle
-            .groups_set_render_mode(Actor::User, new_id(), GroupRenderMode::Html)
-            .await
-            .expect_err("unknown group");
-        assert!(matches!(err, CommandError::GroupNotFound { .. }));
-    }
-
-    #[tokio::test]
-    async fn groups_set_render_mode_rejects_when_member_has_css_incompatible_effect() {
-        // Build the project state directly so we can pre-bake a
-        // ChromaKey effect (no actor surface for adding effects today).
-        // Then spawn, group the two layers, and try to switch to Html.
-        use crate::state::color::Rgba;
-        use crate::state::effect::{Effect, EffectParams};
-        use crate::state::layer::{ColorParams, Layer, LayerParams};
-
-        let (mut project, track_id) = project_with_video_track();
-        let mk_color_layer = |t_start: TimeUs, t_end: TimeUs| Layer {
-            id: new_id(),
-            label: None,
-            t_start_us: t_start,
-            t_end_us: t_end,
-            enabled: true,
-            locked: false,
-            metadata: imbl::HashMap::new(),
-            effects: imbl::Vector::new(),
-            params: LayerParams::Color(ColorParams {
-                color: Animated::Static(Rgba::WHITE),
-                width: 1920,
-                height: 1080,
-            }),
-        };
-        let mut l_a = mk_color_layer(0, 1_000_000);
-        let l_a_id = l_a.id;
-        // ChromaKey has no CSS implementation (EffectKind::supports_css == false).
-        l_a.effects.push_back(Effect {
-            id: new_id(),
-            enabled: true,
-            params: EffectParams::ChromaKey {
-                key: Rgba::WHITE,
-                similarity: Animated::Static(0.1),
-                smoothness: Animated::Static(0.1),
-            },
-        });
-        let l_b = mk_color_layer(2_000_000, 3_000_000);
-        let l_b_id = l_b.id;
-        let track = project
-            .tracks
-            .iter_mut()
-            .find(|t| t.id == track_id)
-            .expect("video track present");
-        track.layers.push_back(l_a);
-        track.layers.push_back(l_b);
-
-        let handle = spawn(project);
-        let g = handle
-            .groups_create(Actor::User, vec![l_a_id, l_b_id], None, false)
-            .await
-            .expect("group create");
-
-        // Switching to Html must reject — the ChromaKey effect has no
-        // CSS implementation, so the validator's strict-refusal kicks in.
-        let err = handle
-            .groups_set_render_mode(Actor::User, g, GroupRenderMode::Html)
-            .await
-            .expect_err("Html mode should reject when a member has a CSS-incompatible effect");
-        assert!(
-            matches!(
-                err,
-                CommandError::ValidationFailed(
-                    crate::state::validate::ValidationError::GroupHtmlEffectNotSupported { .. }
-                )
-            ),
-            "got {err:?}"
-        );
-
-        // And the group's render_mode stays Native (the failed commit
-        // never landed in history).
-        let snap = handle.snapshot().await;
-        let group = snap.groups.iter().find(|gg| gg.id == g).expect("group");
-        assert_eq!(group.render_mode, GroupRenderMode::Native);
-    }
+    // Tests for `groups_set_render_mode` removed 2026-05-17 alongside
+    // the field itself. The strict CSS-only-effect-in-html-mode
+    // invariant moved into the new `HtmlTransform` effect model:
+    // groups that need html-cap rendering carry an `HtmlTransform`
+    // effect; there is no toggle between Native and Html.
 
     #[tokio::test]
     async fn delete_layer_auto_removes_from_group_and_dissolves() {
@@ -6875,181 +6689,10 @@ mod tests {
         assert!(matches!(err, CommandError::GroupLockedMember { .. }));
     }
 
-    // ============================================================
-    // HTML render groups — Phase H.2 fan-out parity
-    //
-    // The fan-out rules (move/trim/split + escape_group + locked-member
-    // rejection) shouldn't notice the render-mode field — `render_mode`
-    // affects how the group materializes at *render* time, not how
-    // edits propagate among members at edit time. The tests below
-    // mirror their Native-mode counterparts with one extra step:
-    // toggle the freshly-created group to Html, then verify the same
-    // outcome.
-    //
-    // If any of these regress, that's the signal to revisit decision
-    // (in `docs/html-render-groups.md`) that calls for inheriting the
-    // existing group invariants — surface the divergence before
-    // building further on top.
-
-    #[tokio::test]
-    async fn html_group_move_propagates_time_delta_just_like_native() {
-        use crate::state::layer::AudioParams;
-        let (project, t1) = project_with_video_track();
-        let handle = spawn(project);
-        let t2 = handle
-            .add_track(Actor::User, Some("V2".into()))
-            .await
-            .unwrap();
-        let media = dummy_video_media(5_000_000);
-        let media_id = media.id;
-        handle.add_media_item(Actor::User, media).await.unwrap();
-
-        let a = handle
-            .add_layer(Actor::User, t1, color_layer(Rgba::WHITE), 0, 1_000_000)
-            .await
-            .unwrap();
-        let b = handle
-            .add_layer(
-                Actor::User,
-                t2,
-                LayerParams::Audio(AudioParams {
-                    media: media_id,
-                    src_in_us: 0,
-                    src_out_us: 1_000_000,
-                    gain_db: Animated::Static(0.0),
-                    pan: Animated::Static(0.0),
-                    fade_in_us: 0,
-                    fade_out_us: 0,
-                    mute: false,
-                }),
-                0,
-                1_000_000,
-            )
-            .await
-            .unwrap();
-        let g = handle
-            .groups_create(Actor::User, vec![a, b], None, false)
-            .await
-            .unwrap();
-        handle
-            .groups_set_render_mode(Actor::User, g, GroupRenderMode::Html)
-            .await
-            .expect("Html switch OK (no effects on members)");
-
-        handle
-            .move_layer(Actor::User, a, t1, 500_000, false)
-            .await
-            .unwrap();
-        let snap = handle.snapshot().await;
-        assert_eq!(layer(&snap, a).t_start_us, 500_000);
-        assert_eq!(layer(&snap, b).t_start_us, 500_000, "Html sibling shifts identically to Native");
-    }
-
-    #[tokio::test]
-    async fn html_group_trim_aligned_edges_propagate() {
-        let (handle, t1, _t2, a, b) = paired_layers_on_two_tracks().await;
-        let g = handle
-            .groups_create(Actor::User, vec![a, b], None, false)
-            .await
-            .unwrap();
-        handle
-            .groups_set_render_mode(Actor::User, g, GroupRenderMode::Html)
-            .await
-            .expect("Html switch OK");
-        let _ = t1;
-
-        handle
-            .trim_layer(Actor::User, a, LayerEdge::Out, 700_000, false)
-            .await
-            .unwrap();
-        let snap = handle.snapshot().await;
-        assert_eq!(layer(&snap, a).t_end_us, 700_000);
-        assert_eq!(layer(&snap, b).t_end_us, 700_000, "aligned-edge trim still fans out under Html");
-    }
-
-    #[tokio::test]
-    async fn html_group_split_fans_out_to_spanning_siblings() {
-        let (handle, _t1, _t2, a, b) = paired_layers_on_two_tracks().await;
-        let g = handle
-            .groups_create(Actor::User, vec![a, b], None, false)
-            .await
-            .unwrap();
-        handle
-            .groups_set_render_mode(Actor::User, g, GroupRenderMode::Html)
-            .await
-            .expect("Html switch OK");
-
-        let (_la, ra) = handle
-            .split_layer(Actor::User, a, 500_000, false)
-            .await
-            .unwrap();
-        let snap = handle.snapshot().await;
-        let on_track2: Vec<&Layer> = snap
-            .tracks
-            .iter()
-            .find(|t| t.layers.iter().any(|l| l.id == b))
-            .unwrap()
-            .layers
-            .iter()
-            .collect();
-        assert_eq!(on_track2.len(), 2, "B was split into 2 pieces");
-        assert!(on_track2.iter().any(|l| l.t_end_us == 500_000));
-        assert!(on_track2.iter().any(|l| l.t_start_us == 500_000));
-        assert_eq!(snap.groups.len(), 1);
-        assert_eq!(snap.groups[0].members.len(), 4);
-        assert!(snap.groups[0].members.contains(&ra));
-        // And the render_mode survives the split fan-out.
-        assert_eq!(snap.groups[0].render_mode, GroupRenderMode::Html);
-    }
-
-    #[tokio::test]
-    async fn html_group_locked_member_rejects_move() {
-        let (handle, t1, _t2, a, b) = paired_layers_on_two_tracks().await;
-        let g = handle
-            .groups_create(Actor::User, vec![a, b], None, false)
-            .await
-            .unwrap();
-        handle
-            .groups_set_render_mode(Actor::User, g, GroupRenderMode::Html)
-            .await
-            .expect("Html switch OK");
-        handle
-            .update_layer(
-                Actor::User,
-                b,
-                LayerPatch {
-                    locked: Some(true),
-                    ..Default::default()
-                },
-            )
-            .await
-            .unwrap();
-        let err = handle
-            .move_layer(Actor::User, a, t1, 500_000, false)
-            .await
-            .expect_err("locked sibling should reject under Html mode too");
-        assert!(matches!(err, CommandError::GroupLockedMember { .. }));
-    }
-
-    #[tokio::test]
-    async fn html_group_escape_group_still_skips_fanout() {
-        let (handle, t1, _t2, a, b) = paired_layers_on_two_tracks().await;
-        let g = handle
-            .groups_create(Actor::User, vec![a, b], None, false)
-            .await
-            .unwrap();
-        handle
-            .groups_set_render_mode(Actor::User, g, GroupRenderMode::Html)
-            .await
-            .expect("Html switch OK");
-
-        // escape_group=true: A shifts; B doesn't follow.
-        handle
-            .move_layer(Actor::User, a, t1, 500_000, true)
-            .await
-            .unwrap();
-        let snap = handle.snapshot().await;
-        assert_eq!(layer(&snap, a).t_start_us, 500_000);
-        assert_eq!(layer(&snap, b).t_start_us, 0, "escape_group still skips fan-out under Html");
-    }
+    // The Phase H.2 fan-out parity tests went away 2026-05-17 with the
+    // `render_mode` field. Fan-out logic never read the field — the
+    // tests existed to prove that. With the field gone (and the effect
+    // chain replacing it), fan-out is structurally indifferent to
+    // whether a group has effects; the existing fan-out tests above
+    // already cover the move/trim/split/locked-member surface.
 }

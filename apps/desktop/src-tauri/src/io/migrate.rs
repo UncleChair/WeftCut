@@ -413,11 +413,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn v5_to_v6_loads_groups_as_native_render_mode() {
-        // A v5 project's groups have no `render_mode` field on the
-        // wire; `#[serde(default)]` should fill `Native`. The migration
-        // is otherwise a pure version bump — no on-disk shape changes.
-        use crate::state::group::{Group, GroupRenderMode};
+    async fn v5_through_v7_pure_version_bumps_preserve_groups() {
+        // v5 → v6 → v7 are pure version bumps. A v5 project's groups
+        // round-trip with `#[serde(default)]` filling the empty
+        // `effects` chain (and serde dropping the unknown
+        // `render_mode` field that was on the wire between v6 and v7).
+        use crate::state::group::Group;
         use crate::state::ids::new_id;
 
         let ws_dir = TempDir::new().unwrap();
@@ -426,8 +427,6 @@ mod tests {
 
         let mut project = Project::new_blank("v5-doc");
         project.schema_version = 5;
-        // Synthesize a group of two layer ids; the group's render_mode
-        // field is what we're testing the default for.
         let l1 = new_id();
         let l2 = new_id();
         let group = Group::from_iter(new_id(), None, [l1, l2]);
@@ -439,6 +438,6 @@ mod tests {
         assert_eq!(report.to_version, 7);
         assert_eq!(project.schema_version, 7);
         let g = project.groups.front().expect("group survives migration");
-        assert_eq!(g.render_mode, GroupRenderMode::Native);
+        assert!(g.effects.is_empty(), "effects defaults to empty");
     }
 }
