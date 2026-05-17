@@ -25,10 +25,12 @@
 //! will accept a passed-in HTML string.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, LogicalSize, Manager};
+use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
 use super::{
     capture_png_bytes, capture_via_webview, navigate_to_html, set_transparent_background,
@@ -383,7 +385,19 @@ pub async fn materialize_group(
     // need to know which fired.
     let times_s: Vec<f64> = (0..frame_count).map(|idx| idx as f64 / fps_f).collect();
 
-    if let Some(binary) = super::chrome::find_chromium() {
+    // Build the discovery search-root list. Tauri's installed-build
+    // resources land under `app.path().resource_dir()`; in dev that's
+    // the temp dir tauri sets up, in installed builds it's alongside
+    // the exe. find_chromium() also walks the running-exe ancestors so
+    // dev builds running from `target/debug/...` still locate the
+    // repo's `vendor/chrome-headless-shell/`.
+    let mut search_roots = Vec::new();
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        search_roots.push(resource_dir);
+    }
+    let binary = super::chrome::find_chromium(&search_roots);
+
+    if let Some(binary) = binary {
         tracing::info!(
             target: "html_group",
             chromium_exe = %binary.exe.display(),
@@ -412,10 +426,11 @@ pub async fn materialize_group(
         .await
         .map_err(|e| format!("chrome rasterize: {e:?}"))?;
     } else {
-        tracing::info!(
+        tracing::warn!(
             target: "html_group",
-            "Phase X.2 fallback: chrome-headless-shell binary not found, using WebView2 raster",
+            "Phase X.5 fallback: chrome-headless-shell binary not found, using WebView2 raster (slower)",
         );
+        warn_chrome_missing_once(app);
         let window = app
             .get_webview_window("raster-worker")
             .ok_or_else(|| "raster-worker window not spawned".to_string())?;
@@ -516,6 +531,37 @@ pub async fn materialize_group(
         width: state.width,
         height: state.height,
     })
+}
+
+/// Surface the "chrome-headless-shell missing → exports will be slow"
+/// dialog at most ONCE per app session. Subsequent fallbacks log only
+/// (the warn lands in the status console either way).
+///
+/// Kept session-scoped because the typical case is: dev forgot to run
+/// `vendor/chrome-headless-shell/download.ps1`, sees the dialog the
+/// first time they export, runs the script, and from the next launch
+/// the bundled binary is found. Popping the dialog on every export
+/// would be obnoxious for the slow-but-functional WebView2 path that
+/// users might consciously stay on.
+fn warn_chrome_missing_once(app: &AppHandle) {
+    static SHOWN: AtomicBool = AtomicBool::new(false);
+    if SHOWN
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return; // already shown this session
+    }
+    let message = "chrome-headless-shell isn't installed alongside WeftCut. \
+                   Exports will use the slower WebView2 raster path \
+                   (≈3-4× slower).\n\n\
+                   To enable the fast path:\n\
+                   1. Run apps/desktop/src-tauri/vendor/chrome-headless-shell/download.ps1\n\
+                   2. Restart WeftCut";
+    app.dialog()
+        .message(message)
+        .title("WeftCut — slow export raster")
+        .kind(MessageDialogKind::Warning)
+        .show(|_| {});
 }
 
 fn load_cached(dest_dir: &Path, manifest_path: &Path, expected_count: usize) -> Option<()> {

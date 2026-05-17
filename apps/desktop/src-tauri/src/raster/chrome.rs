@@ -54,13 +54,26 @@ pub struct ChromiumBinary {
 /// Search order:
 ///   1. `CHROMIUM_EXPORT_EXE` env var — escape hatch for testing a custom
 ///      build outside the bundled path.
-///   2. The vendor dir next to the running exe (production install) or
-///      the workspace root (dev / cargo-test runs).
-pub fn find_chromium() -> Option<ChromiumBinary> {
+///   2. `extra_search_roots` — Tauri's `app.path().resource_dir()` for
+///      installed builds, where `bundle.resources` copies the vendor
+///      directory next to the exe. Pass `&[]` from non-Tauri contexts
+///      (the smoke test, unit tests).
+///   3. The vendor dir next to the running exe (production install) or
+///      walking up to the workspace root (dev / cargo-test runs).
+pub fn find_chromium(extra_search_roots: &[PathBuf]) -> Option<ChromiumBinary> {
     if let Ok(custom) = std::env::var("CHROMIUM_EXPORT_EXE") {
         let p = PathBuf::from(custom);
         if p.is_file() {
             return Some(ChromiumBinary { exe: p });
+        }
+    }
+    for root in extra_search_roots {
+        let candidate = root
+            .join("vendor")
+            .join("chrome-headless-shell")
+            .join("chrome-headless-shell.exe");
+        if candidate.is_file() {
+            return Some(ChromiumBinary { exe: candidate });
         }
     }
     for path in headless_shell_candidate_paths() {
@@ -740,14 +753,15 @@ mod tests {
 
     #[test]
     fn discovery_returns_some_on_dev_machine() {
-        // Skip when neither Chrome nor Edge is installed (CI without browsers).
-        // On developer machines this asserts we find one — the smoke test
-        // below depends on it.
-        let found = find_chromium();
+        // Skip when no chrome-headless-shell binary is installed
+        // (CI without the vendor download). On developer machines this
+        // asserts we find it — the smoke test below depends on it.
+        let found = find_chromium(&[]);
         if found.is_none() {
             eprintln!(
-                "skipped: no Chromium-family browser at standard paths; \
-                 set CHROMIUM_EXPORT_EXE to override"
+                "skipped: no chrome-headless-shell at standard paths; \
+                 set CHROMIUM_EXPORT_EXE to override or run \
+                 vendor/chrome-headless-shell/download.ps1"
             );
             return;
         }
@@ -759,7 +773,7 @@ mod tests {
     /// header. Skips when no Chrome installed (CI guard).
     #[tokio::test]
     async fn smoke_begin_frame_returns_png() {
-        let Some(binary) = find_chromium() else {
+        let Some(binary) = find_chromium(&[]) else {
             eprintln!("skipped: no Chrome/Edge installed");
             return;
         };
