@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::effect::Effect;
 use super::ids::{GroupId, LayerId};
 
 /// How a group renders at export time.
@@ -41,7 +42,12 @@ pub enum GroupRenderMode {
     Html,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+// `PartialEq` dropped 2026-05-17: `Effect` carries `Animated<f64>` which
+// could derive `PartialEq` but the chain of additional derives across
+// `EffectParams` / `Animated` / `Keyframe` / `Interpolation` isn't
+// motivated by current call sites (no `group == group` comparisons in
+// the codebase; tests compare fields).
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Group {
     pub id: GroupId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -53,6 +59,16 @@ pub struct Group {
     /// schema v5 → v6 migration is a pure version bump.
     #[serde(default)]
     pub render_mode: GroupRenderMode,
+    /// `docs/html-render-groups.md` (2026-05-17 redesign): group-level
+    /// effect chain. Effects here apply to the composed bundle of all
+    /// members — the engine writes resolved transforms to the
+    /// `#composition` element instead of any single `.layer` host. A
+    /// group whose effect chain contains an `HtmlTransform` (or any
+    /// other `requires_html()` kind) in an active window is rendered
+    /// via the html-cap path for that window. `#[serde(default)]` keeps
+    /// pre-v7 projects loadable as v7 with an empty chain.
+    #[serde(default)]
+    pub effects: imbl::Vector<Effect>,
 }
 
 impl Group {
@@ -62,6 +78,7 @@ impl Group {
             label,
             members,
             render_mode: GroupRenderMode::default(),
+            effects: imbl::Vector::new(),
         }
     }
 
@@ -76,6 +93,7 @@ impl Group {
             label,
             members: members.into_iter().collect(),
             render_mode: GroupRenderMode::default(),
+            effects: imbl::Vector::new(),
         }
     }
 }
