@@ -545,6 +545,8 @@ async fn rasterize_chunk(
         composition_html_path,
         times_s,
         offset,
+        width,
+        height,
         out_dir,
         progress_tx,
     )
@@ -561,6 +563,8 @@ async fn rasterize_chunk_inner(
     composition_html_path: &Path,
     times_s: &[f64],
     offset: usize,
+    width: u32,
+    height: u32,
     out_dir: &Path,
     progress_tx: tokio::sync::mpsc::UnboundedSender<()>,
 ) -> Result<()> {
@@ -583,6 +587,49 @@ async fn rasterize_chunk_inner(
     page.wait_for_navigation()
         .await
         .context("wait_for_navigation on composition.html")?;
+
+    // Pin viewport + DPR explicitly via CDP. Belt-and-suspenders over
+    // `--force-device-scale-factor=1` — the command-line flag is the
+    // primary mechanism but reports of it not fully taking effect under
+    // some Windows DPI configurations have surfaced; this CDP call is
+    // explicit per-page and unambiguous. The captured PNG ends up at
+    // `width × height` device pixels with 1 CSS pixel = 1 device pixel.
+    let _ = page
+        .execute(GenericCommand {
+            method: std::borrow::Cow::Borrowed("Emulation.setDeviceMetricsOverride"),
+            params: serde_json::json!({
+                "width": width,
+                "height": height,
+                "deviceScaleFactor": 1,
+                "mobile": false,
+            }),
+        })
+        .await
+        .context("Emulation.setDeviceMetricsOverride")?;
+
+    // Diagnostic: read what chrome actually sees for viewport + DPR so a
+    // future regression on this surfaces in the export log without a
+    // debug rebuild. Logged once per chunk, so a 4-worker export emits
+    // 4 lines.
+    if let Ok(resp) = page
+        .execute(GenericCommand {
+            method: std::borrow::Cow::Borrowed("Runtime.evaluate"),
+            params: serde_json::json!({
+                "expression": "JSON.stringify({ dpr: window.devicePixelRatio, vw: window.innerWidth, vh: window.innerHeight, doc: { sw: document.documentElement.clientWidth, sh: document.documentElement.clientHeight } })",
+                "returnByValue": true,
+            }),
+        })
+        .await
+    {
+        if let Some(s) = resp
+            .result
+            .get("result")
+            .and_then(|r| r.get("value"))
+            .and_then(|v| v.as_str())
+        {
+            tracing::info!(target: "html_group", diagnostics = %s, "chrome viewport diagnostics");
+        }
+    }
 
     // One-time settle: await fonts.ready so the first frame's text shapes
     // are stable. After this, every per-frame setup is sync-CSS +
