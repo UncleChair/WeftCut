@@ -167,14 +167,19 @@ pub struct ProbeResult {
 /// frame. Cache invalidated because pixel content shifts.
 /// v6 (2026-05-18): diagnostic log emits chrome's reported
 /// `window.devicePixelRatio` + `innerWidth/innerHeight` per chunk
-/// after page open. Lets us pin down DPR-related export regressions
-/// from the production log without a debug build. (An earlier draft
-/// of this version called `Emulation.setDeviceMetricsOverride` to
-/// belt-and-suspender the CLI flag, but that broke BeginFrame's
-/// screenshot pipeline — likely the viewport change invalidated the
-/// compositor surface mid-warmup. Reverted; the CLI flag stays as
-/// the only DPR mechanism while we read the diagnostic first.)
-const HTML_GROUP_RASTERIZER_VERSION: u32 = 6;
+/// after page open.
+/// v7 (2026-05-18): two-step navigation — open at about:blank,
+/// `Emulation.setDeviceMetricsOverride` to set viewport to canvas
+/// dims at DPR=1, THEN `Page.navigate` to composition.html. This
+/// is the actual fix for the "zoomed bigger" export bug. The diag
+/// from v6 revealed chrome-headless-shell ignores `--window-size`
+/// for the CSS viewport (defaults to 800×600 regardless of the
+/// flag), so a 1920×1080 composition was overflowing the 800×600
+/// viewport, captured as a top-left CSS crop. Setting the override
+/// BEFORE navigation (instead of after, which causes reflow during
+/// BeginFrame warmup — commit f9e544a hit this) means the page
+/// loads into the correct viewport from the start.
+const HTML_GROUP_RASTERIZER_VERSION: u32 = 7;
 
 /// Per-group materialization result the IR lower pass consumes.
 /// Shape parallels `TemplateRenderInfo` (`ir::materialize`) so the
