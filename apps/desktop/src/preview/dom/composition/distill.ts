@@ -118,6 +118,7 @@ export function distillCompositionState(input: DistillInputs): DistillResult {
 
   const layers: CompositionLayer[] = resolved.map(({ layer, trackIndex }, idx) => {
     const params = compositionLayerParams(layer, input.mediaById, mediaByLayer);
+    const effectTransform = pickHtmlTransform(layer.effects);
     return {
       id: layer.id,
       // Use the sorted index as z so successive distillations produce
@@ -129,6 +130,7 @@ export function distillCompositionState(input: DistillInputs): DistillResult {
       t_end_us: layer.t_end_us - groupTStartUs,
       ...positionFor(layer),
       params,
+      ...(effectTransform ? { effectTransform } : {}),
     };
     // `trackIndex` retained in scope only to surface the field as
     // documentation; the engine reads `z` for ordering.
@@ -157,17 +159,34 @@ export function distillCompositionState(input: DistillInputs): DistillResult {
 /// keyframe tracks; multiple effects with overlapping windows can land
 /// later if the use case shows up.
 function pickCompositionTransform(group: GroupSummary): CompositionTransform | null {
-  for (const e of group.effects) {
+  return pickHtmlTransform(group.effects);
+}
+
+/// Walk an effect chain (group or layer) and return the first enabled
+/// `HtmlTransform`'s tracks as a `CompositionTransform`. Returns `null`
+/// when none present. Multiple HtmlTransforms in one chain isn't
+/// supported in v1 (the first wins).
+function pickHtmlTransform(
+  effects: ReadonlyArray<{ enabled: boolean; params: { kind: string } & Record<string, unknown> }>,
+): CompositionTransform | null {
+  for (const e of effects) {
     if (!e.enabled) continue;
     if (e.params.kind !== "HtmlTransform") continue;
-    const p = e.params;
+    const p = e.params as unknown as {
+      x: AnimTrack<number>;
+      y: AnimTrack<number>;
+      scale_x: AnimTrack<number>;
+      scale_y: AnimTrack<number>;
+      rotation_deg: AnimTrack<number>;
+      opacity: AnimTrack<number>;
+    };
     return {
-      x: p.x as AnimTrack<number>,
-      y: p.y as AnimTrack<number>,
-      scale_x: p.scale_x as AnimTrack<number>,
-      scale_y: p.scale_y as AnimTrack<number>,
-      rotation_deg: p.rotation_deg as AnimTrack<number>,
-      opacity: p.opacity as AnimTrack<number>,
+      x: p.x,
+      y: p.y,
+      scale_x: p.scale_x,
+      scale_y: p.scale_y,
+      rotation_deg: p.rotation_deg,
+      opacity: p.opacity,
     };
   }
   return null;

@@ -119,6 +119,11 @@ pub struct LayerSummary {
     /// panel; mutates flow back through `update_layer_params` with the
     /// matching `LayerParamsPatch` variant.
     pub params: LayerParamsView,
+    /// Per-layer effect chain. Surfaced verbatim from
+    /// `state::Layer.effects`. Inside an html-render group, an
+    /// enabled `HtmlTransform` here composes on top of the layer's
+    /// static transform from `params` at every composition tick.
+    pub effects: Vec<state::Effect>,
 }
 
 #[derive(Serialize, Clone)]
@@ -430,6 +435,7 @@ pub async fn project_summary(handle: State<'_, ProjectHandle>) -> Result<Project
                     enabled: l.enabled,
                     locked: l.locked,
                     params: layer_params_view(&l.params, &snap.media_pool),
+                    effects: l.effects.iter().cloned().collect(),
                 })
                 .collect(),
         })

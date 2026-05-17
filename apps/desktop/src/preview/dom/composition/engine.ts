@@ -116,6 +116,12 @@ export interface CompositionLayer {
   scale_x: number;
   scale_y: number;
   params: CompositionLayerParams;
+  /// Per-layer effect transform driven by the layer's `HtmlTransform`
+  /// effect (if any). Null/absent when the layer has no
+  /// `HtmlTransform`. Keyframes here are **layer-local** time —
+  /// t_us=0 is the layer's t_start; the engine handles the
+  /// composition→layer time shift.
+  effectTransform?: CompositionTransform | null;
 }
 
 export type CompositionLayerParams =
@@ -248,12 +254,28 @@ export const ENGINE_SOURCE: string = String.raw`
       host.style.opacity = "0";
       return;
     }
-    // Transform: translate then scale. Use 2D for simplicity; html-group
-    // CSS effects (3D perspective etc.) lives in per-effect catalog and
-    // composes on top of this.
+    // Per-layer effect transform composes with the static layer
+    // transform: positions add, scales multiply, opacity multiplies,
+    // rotation is effect-only (no static layer rotation today).
+    // Layer-local time: keyframes on layer.effectTransform are
+    // anchored at layer.t_start_us.
+    var tx = layer.x, ty = layer.y;
+    var sx = layer.scale_x, sy = layer.scale_y;
+    var rot = 0;
+    var op = layer.opacity;
+    var et = layer.effectTransform;
+    if (et) {
+      var tLayerUs = tUs - layer.t_start_us;
+      tx  += resolveAnimated(et.x,            tLayerUs, 0);
+      ty  += resolveAnimated(et.y,            tLayerUs, 0);
+      sx  *= resolveAnimated(et.scale_x,      tLayerUs, 1);
+      sy  *= resolveAnimated(et.scale_y,      tLayerUs, 1);
+      rot  = resolveAnimated(et.rotation_deg, tLayerUs, 0);
+      op  *= resolveAnimated(et.opacity,      tLayerUs, 1);
+    }
     host.style.transform =
-      "translate(" + layer.x + "px, " + layer.y + "px) scale(" + layer.scale_x + ", " + layer.scale_y + ")";
-    host.style.opacity = String(layer.opacity);
+      "translate(" + tx + "px, " + ty + "px) rotate(" + rot + "deg) scale(" + sx + ", " + sy + ")";
+    host.style.opacity = String(op);
   }
 
   function applyAll(tSeconds) {

@@ -47,6 +47,10 @@ export interface LayerSummary {
   enabled: boolean;
   locked: boolean;
   params: LayerParamsView;
+  /// Per-layer effect chain. Inside an html-render group, an enabled
+  /// `HtmlTransform` here composes on top of the layer's static
+  /// transform from `params` at every composition tick.
+  effects: Effect[];
 }
 
 export type LayerParamsView =

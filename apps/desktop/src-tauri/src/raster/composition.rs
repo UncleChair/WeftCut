@@ -114,9 +114,23 @@ pub const ENGINE_SOURCE: &str = r#"
       host.style.opacity = "0";
       return;
     }
+    var tx = layer.x, ty = layer.y;
+    var sx = layer.scale_x, sy = layer.scale_y;
+    var rot = 0;
+    var op = layer.opacity;
+    var et = layer.effectTransform;
+    if (et) {
+      var tLayerUs = tUs - layer.t_start_us;
+      tx  += resolveAnimated(et.x,            tLayerUs, 0);
+      ty  += resolveAnimated(et.y,            tLayerUs, 0);
+      sx  *= resolveAnimated(et.scale_x,      tLayerUs, 1);
+      sy  *= resolveAnimated(et.scale_y,      tLayerUs, 1);
+      rot  = resolveAnimated(et.rotation_deg, tLayerUs, 0);
+      op  *= resolveAnimated(et.opacity,      tLayerUs, 1);
+    }
     host.style.transform =
-      "translate(" + layer.x + "px, " + layer.y + "px) scale(" + layer.scale_x + ", " + layer.scale_y + ")";
-    host.style.opacity = String(layer.opacity);
+      "translate(" + tx + "px, " + ty + "px) rotate(" + rot + "deg) scale(" + sx + ", " + sy + ")";
+    host.style.opacity = String(op);
   }
 
   function applyAll(tSeconds) {
@@ -192,6 +206,12 @@ pub struct CompositionLayer {
     pub scale_x: f64,
     pub scale_y: f64,
     pub params: CompositionLayerParams,
+    /// Per-layer effect transform driven by the layer's `HtmlTransform`
+    /// effect (if any). `None` → field omitted from the JSON (matches
+    /// the TS `?: CompositionTransform | null`). Keyframes here are
+    /// **layer-local** time: t_us=0 is the layer's t_start_us.
+    #[serde(rename = "effectTransform", skip_serializing_if = "Option::is_none")]
+    pub effect_transform: Option<CompositionTransform>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -397,6 +417,7 @@ mod tests {
                     y: 0.0,
                     scale_x: 1.0,
                     scale_y: 1.0,
+                    effect_transform: None,
                     params: CompositionLayerParams::Color {
                         rgba: Rgba8 { r: 255, g: 0, b: 0, a: 255 },
                         width: 100,
@@ -413,6 +434,7 @@ mod tests {
                     y: 10.0,
                     scale_x: 1.0,
                     scale_y: 1.0,
+                    effect_transform: None,
                     params: CompositionLayerParams::Text {
                         content: "Hi".into(),
                         font_family: "sans".into(),
@@ -445,6 +467,7 @@ mod tests {
                 y: 0.0,
                 scale_x: 1.0,
                 scale_y: 1.0,
+                effect_transform: None,
                 params: CompositionLayerParams::Text {
                     content: "</script><script>alert(1)</script>".into(),
                     font_family: "x".into(),
