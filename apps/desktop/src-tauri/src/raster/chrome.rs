@@ -320,28 +320,40 @@ impl chromiumoxide::Command for GenericCommand {
 }
 
 // ============================================================================
-// Phase X.2: rasterize an entire composition to a PNG sequence.
+// Phase X.2 / X.3 / X.4: rasterize an entire composition to a PNG sequence.
 //
-// Spawns ONE chrome-headless-shell instance, navigates to the composition
-// HTML via file://, then per-frame: drive the engine's window.__setTime,
-// wait for any newly-set <img> resources to decode, then BeginFrame +
-// screenshot. Frames land at `out_dir/frame_NNNNN.png`. Phase X.4 parallelizes
-// across N instances; this fn is the single-instance baseline.
+// X.2 spawned ONE chrome-headless-shell instance for the whole job.
+// X.4 splits the frame range across N instances running concurrently, each
+// owning a contiguous chunk. Cross-worker reuse of decoded `<img>` bitmaps
+// isn't possible (separate processes), but everything inside a chunk is
+// kept warm — image decode caches, the engine's per-frame state, even
+// font shaping. X.3 layers a `hasDamage` skip inside each worker so an
+// unchanged-from-prior-frame state reuses the prior PNG bytes instead of
+// re-decoding + re-writing them.
 // ============================================================================
 
-/// One-shot rasterize of a composition to a PNG sequence on disk. Single
-/// chrome-headless-shell instance, no parallelism (Phase X.4).
+/// Default worker count. 4 is the sweet spot in the HyperFrames parallel-
+/// coordinator notes — enough to mask paint cost, low enough to fit
+/// ~800 MB headroom on a 4-instance peak (each chrome-headless-shell
+/// process is ~200 MB resident). Override via `WEFTCUT_CHROME_WORKERS`.
+const DEFAULT_WORKERS: usize = 4;
+
+/// Rasterize a composition to a PNG sequence on disk.
 ///
-/// - `composition_html_path` is the file path to write into a `file://` URL.
-///   The HTML must already exist on disk; we don't write it here.
-/// - `times_s` is the per-frame timestamps (composition-local seconds) to
-///   capture. One PNG written per entry.
-/// - `width`/`height` set the headless viewport — must match the composition's
-///   canvas, otherwise the captured PNG is the viewport size, not the canvas.
-/// - `out_dir` receives `frame_00000.png`, `frame_00001.png`, … one per
-///   entry in `times_s`. Caller pre-creates the directory.
-/// - `on_progress(done, total)` fires after each captured frame; suitable for
-///   driving the `html_group:progress` event emitter on the AppHandle side.
+/// Splits `times_s` across N chrome-headless-shell instances running in
+/// parallel; each writes its frames directly into `out_dir` using the
+/// global index so the final layout is `frame_00000.png`, `frame_00001.png`,
+/// … contiguous and zero-padded regardless of which worker produced each.
+///
+/// - `composition_html_path` — the on-disk composition (must exist).
+/// - `times_s` — per-frame timestamps in composition-local seconds.
+/// - `width`/`height` — viewport size; must match composition canvas.
+/// - `out_dir` — receives one PNG per `times_s` entry; pre-created by caller.
+/// - `on_progress(done, total)` — fires once per completed frame from the
+///   coordinator task (serially, no synchronization required by caller).
+///
+/// Worker count: `WEFTCUT_CHROME_WORKERS` env var, clamped to
+/// `[1, times_s.len()]`. Falls back to `DEFAULT_WORKERS`.
 pub async fn rasterize_to_dir<F>(
     binary: &ChromiumBinary,
     composition_html_path: &Path,
@@ -352,8 +364,138 @@ pub async fn rasterize_to_dir<F>(
     mut on_progress: F,
 ) -> Result<()>
 where
-    F: FnMut(usize, usize),
+    F: FnMut(usize, usize) + Send,
 {
+    if times_s.is_empty() {
+        return Ok(());
+    }
+    let requested = std::env::var("WEFTCUT_CHROME_WORKERS")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_WORKERS);
+    let workers = requested.clamp(1, times_s.len());
+    tracing::info!(
+        target: "raster_chrome",
+        workers,
+        frames = times_s.len(),
+        "Phase X.4: spawning {workers} chrome-headless-shell workers for {} frames",
+        times_s.len(),
+    );
+
+    let chunks = split_chunks(times_s, workers);
+
+    // Progress channel: each worker sends `()` per completed frame; this
+    // coordinator drains, increments `done`, and fires `on_progress`.
+    // Sequential delivery into a single FnMut — no shared-state hazards
+    // for the caller.
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<()>();
+    let total = times_s.len();
+
+    let binary = binary.clone();
+    let composition_html_path = composition_html_path.to_path_buf();
+    let out_dir = out_dir.to_path_buf();
+
+    let mut handles = Vec::with_capacity(workers);
+    for chunk in chunks {
+        let binary = binary.clone();
+        let html_path = composition_html_path.clone();
+        let out_dir = out_dir.clone();
+        let tx = tx.clone();
+        handles.push(tokio::spawn(async move {
+            rasterize_chunk(
+                &binary,
+                &html_path,
+                &chunk.times,
+                chunk.offset,
+                width,
+                height,
+                &out_dir,
+                tx,
+            )
+            .await
+        }));
+    }
+    // Drop our copy so `rx.recv()` returns None once every worker's tx is
+    // dropped — i.e., once all workers exit.
+    drop(tx);
+
+    let mut done = 0usize;
+    while rx.recv().await.is_some() {
+        done += 1;
+        on_progress(done, total);
+    }
+
+    // All workers have closed their tx; join them and surface the first
+    // error if any. Workers run independently — a slow one doesn't block
+    // a fast one's completion, but a failure on any aborts the export.
+    let mut first_err: Option<anyhow::Error> = None;
+    for h in handles {
+        match h.await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                if first_err.is_none() {
+                    first_err = Some(e);
+                }
+            }
+            Err(e) => {
+                if first_err.is_none() {
+                    first_err = Some(anyhow::anyhow!("chrome worker join: {e}"));
+                }
+            }
+        }
+    }
+    if let Some(e) = first_err {
+        return Err(e);
+    }
+    Ok(())
+}
+
+/// One contiguous chunk of frames assigned to a single chrome instance.
+/// `offset` is the global index of the first frame so the worker can
+/// write filenames at the right slot.
+struct Chunk {
+    offset: usize,
+    times: Vec<f64>,
+}
+
+/// Split `times_s` into `workers` chunks of approximately equal size.
+/// Earlier chunks are one frame larger when the length isn't evenly
+/// divisible — standard rounding behavior so the last chunk isn't
+/// disproportionately bigger.
+fn split_chunks(times_s: &[f64], workers: usize) -> Vec<Chunk> {
+    let n = times_s.len();
+    let base = n / workers;
+    let extra = n % workers;
+    let mut out = Vec::with_capacity(workers);
+    let mut offset = 0;
+    for i in 0..workers {
+        let len = base + if i < extra { 1 } else { 0 };
+        if len == 0 {
+            break;
+        }
+        out.push(Chunk {
+            offset,
+            times: times_s[offset..offset + len].to_vec(),
+        });
+        offset += len;
+    }
+    out
+}
+
+/// Single-worker rasterize: spawn one chrome instance, navigate, capture
+/// every frame in `times_s`, write to `out_dir/frame_{offset+idx:05}.png`,
+/// and signal progress via `progress_tx`. Sends one `()` per written
+/// frame.
+async fn rasterize_chunk(
+    binary: &ChromiumBinary,
+    composition_html_path: &Path,
+    times_s: &[f64],
+    offset: usize,
+    width: u32,
+    height: u32,
+    out_dir: &Path,
+    progress_tx: tokio::sync::mpsc::UnboundedSender<()>,
+) -> Result<()> {
     let config = BrowserConfig::builder()
         .chrome_executable(&binary.exe)
         .arg("--enable-begin-frame-control")
@@ -372,12 +514,13 @@ where
         while let Some(_event) = handler.next().await {}
     });
 
-    let result = rasterize_inner(
+    let result = rasterize_chunk_inner(
         &mut browser,
         composition_html_path,
         times_s,
+        offset,
         out_dir,
-        &mut on_progress,
+        progress_tx,
     )
     .await;
 
@@ -387,16 +530,14 @@ where
     result
 }
 
-async fn rasterize_inner<F>(
+async fn rasterize_chunk_inner(
     browser: &mut Browser,
     composition_html_path: &Path,
     times_s: &[f64],
+    offset: usize,
     out_dir: &Path,
-    on_progress: &mut F,
-) -> Result<()>
-where
-    F: FnMut(usize, usize),
-{
+    progress_tx: tokio::sync::mpsc::UnboundedSender<()>,
+) -> Result<()> {
     // Windows file path → file URL: backslashes to forward, ensure the
     // canonical `file:///C:/...` shape (three slashes).
     let path_str = composition_html_path
@@ -418,9 +559,8 @@ where
         .context("wait_for_navigation on composition.html")?;
 
     // One-time settle: await fonts.ready so the first frame's text shapes
-    // are stable, then a tiny tick so the engine's IIFE has installed
-    // `window.__setTime`. After this, every per-frame setup is sync-CSS
-    // + img.decode().
+    // are stable. After this, every per-frame setup is sync-CSS +
+    // img.decode().
     let _ = page
         .execute(GenericCommand {
             method: std::borrow::Cow::Borrowed("Runtime.evaluate"),
@@ -448,12 +588,18 @@ where
         .await
         .context("HeadlessExperimental.beginFrame (warmup)")?;
 
-    let total = times_s.len();
-    // virtualTime accumulator — every BeginFrame must advance the simulated
-    // clock to keep the engine's `frameTimeTicks` monotonically increasing.
     let mut frame_time_ticks: i64 = 2;
+    // Phase X.3 hasDamage cache: when BeginFrame reports no damage, the
+    // renderer didn't paint anything new, so the previous frame's bytes
+    // are still the correct visual output. Save the PNG-decode + write
+    // by holding onto the last bytes and reusing them when damage is
+    // false. Per-worker (per-chunk) cache — cross-worker boundaries
+    // can't reuse since we'd have to ferry bytes between processes.
+    let mut last_bytes: Option<Vec<u8>> = None;
 
-    for (idx, &t_seconds) in times_s.iter().enumerate() {
+    for (chunk_idx, &t_seconds) in times_s.iter().enumerate() {
+        let global_idx = offset + chunk_idx;
+
         // Drive the engine + wait for all <img> in the composition to be
         // decoded so the BeginFrame paint reflects this frame's source
         // PNG (the VideoClip slot's per-tick `<img src=...>` swap is
@@ -476,12 +622,9 @@ where
                 }),
             })
             .await
-            .with_context(|| format!("frame {idx}: setup __setTime + decode"))?;
+            .with_context(|| format!("frame {global_idx}: setup __setTime + decode"))?;
 
         // BeginFrame with screenshot: atomic paint + capture + hasDamage.
-        // PNG format with no `optimizeForSpeed` (alpha-safe encode);
-        // BeginFrame's screenshot params don't accept that field anyway
-        // (silently drops the screenshot if present).
         let resp = page
             .execute(GenericCommand {
                 method: std::borrow::Cow::Borrowed("HeadlessExperimental.beginFrame"),
@@ -492,27 +635,59 @@ where
                 }),
             })
             .await
-            .with_context(|| format!("frame {idx}: BeginFrame"))?;
+            .with_context(|| format!("frame {global_idx}: BeginFrame"))?;
         frame_time_ticks += 16;
 
-        let screenshot_b64 = resp
+        let has_damage = resp
             .result
-            .get("screenshotData")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                anyhow!(
-                    "frame {idx}: BeginFrame returned no screenshotData (hasDamage={:?})",
-                    resp.result.get("hasDamage"),
-                )
-            })?;
-        let bytes = base64_decode(screenshot_b64)
-            .with_context(|| format!("frame {idx}: decode screenshotData"))?;
+            .get("hasDamage")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let screenshot_b64 = resp.result.get("screenshotData").and_then(|v| v.as_str());
 
-        let path = out_dir.join(format!("frame_{idx:05}.png"));
+        let bytes = match (has_damage, screenshot_b64, last_bytes.as_ref()) {
+            // Damage reported AND screenshot present — the common case.
+            (true, Some(b64), _) => {
+                let bytes = base64_decode(b64)
+                    .with_context(|| format!("frame {global_idx}: decode screenshotData"))?;
+                last_bytes = Some(bytes.clone());
+                bytes
+            }
+            // No damage but we have a previous frame — reuse. Skips the
+            // PNG decode entirely; the previous bytes are still the
+            // correct visual output.
+            (false, _, Some(prev)) => prev.clone(),
+            // Damage but no screenshot bytes — chrome returned nothing
+            // usable. Reuse the previous frame if we have one; otherwise
+            // error (the first frame must always produce bytes).
+            (true, None, Some(prev)) => {
+                tracing::warn!(
+                    target: "raster_chrome",
+                    frame = global_idx,
+                    "BeginFrame reported damage but returned no screenshotData; reusing prior frame",
+                );
+                prev.clone()
+            }
+            // No damage, no prior — first frame had nothing to render.
+            // Synthesize an empty PNG? Not really possible without an
+            // encoder. Error so the user sees the regression instead of
+            // a half-broken export.
+            (false, _, None) | (true, None, None) => {
+                return Err(anyhow!(
+                    "frame {global_idx}: BeginFrame returned no screenshotData and no prior frame to reuse (hasDamage={has_damage})"
+                ));
+            }
+        };
+
+        let path = out_dir.join(format!("frame_{global_idx:05}.png"));
         std::fs::write(&path, &bytes)
-            .with_context(|| format!("frame {idx}: write {}", path.display()))?;
+            .with_context(|| format!("frame {global_idx}: write {}", path.display()))?;
 
-        on_progress(idx + 1, total);
+        // Signal one completed frame to the coordinator. If the channel
+        // is closed (coordinator gave up), bail — no point continuing.
+        if progress_tx.send(()).is_err() {
+            break;
+        }
     }
 
     Ok(())
@@ -525,6 +700,43 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn split_chunks_even_division() {
+        let times: Vec<f64> = (0..12).map(|i| i as f64 * 0.1).collect();
+        let chunks = split_chunks(&times, 4);
+        assert_eq!(chunks.len(), 4);
+        for (i, c) in chunks.iter().enumerate() {
+            assert_eq!(c.offset, i * 3, "chunk {i} offset");
+            assert_eq!(c.times.len(), 3, "chunk {i} len");
+        }
+    }
+
+    #[test]
+    fn split_chunks_uneven_division() {
+        // 13 frames / 4 workers → first chunk gets one extra, rest get 3 each.
+        let times: Vec<f64> = (0..13).map(|i| i as f64 * 0.1).collect();
+        let chunks = split_chunks(&times, 4);
+        assert_eq!(chunks.len(), 4);
+        let lens: Vec<usize> = chunks.iter().map(|c| c.times.len()).collect();
+        assert_eq!(lens, vec![4, 3, 3, 3]);
+        // Coverage check: chunks tile times_s with no gaps or overlaps.
+        let total_len: usize = lens.iter().sum();
+        assert_eq!(total_len, 13);
+        let starts: Vec<usize> = chunks.iter().map(|c| c.offset).collect();
+        assert_eq!(starts, vec![0, 4, 7, 10]);
+    }
+
+    #[test]
+    fn split_chunks_more_workers_than_frames() {
+        // 3 frames / 8 workers → only 3 non-empty chunks; the rest are dropped.
+        let times: Vec<f64> = (0..3).map(|i| i as f64 * 0.1).collect();
+        let chunks = split_chunks(&times, 8);
+        assert_eq!(chunks.len(), 3);
+        for c in &chunks {
+            assert_eq!(c.times.len(), 1);
+        }
+    }
 
     #[test]
     fn discovery_returns_some_on_dev_machine() {
