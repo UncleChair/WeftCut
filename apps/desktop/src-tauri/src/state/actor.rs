@@ -541,6 +541,14 @@ enum Command {
         actor: Actor,
         reply: oneshot::Sender<Result<(), CommandError>>,
     },
+    /// Remove every `HtmlTransform` effect from the group's effect
+    /// chain. The group reverts to ffmpeg-only rendering (no html-cap
+    /// path) once the chain has no html-required effects left.
+    GroupsClearHtmlTransform {
+        id: GroupId,
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
     /// Replace (or create) the group's first `HtmlTransform` effect
     /// with the supplied keyframe tracks. v1 supports exactly one
     /// HtmlTransform per group; calling this on a group that already
@@ -1222,6 +1230,22 @@ impl ProjectHandle {
         rx.await.expect("project actor terminated")
     }
 
+    /// Drop every `HtmlTransform` from the group's chain. The group
+    /// reverts to ffmpeg per-layer rendering once it has no html-
+    /// required effects.
+    pub async fn groups_clear_html_transform(
+        &self,
+        actor: Actor,
+        id: GroupId,
+    ) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::GroupsClearHtmlTransform { id, actor, reply })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
     /// Replace (or create) the group's first `HtmlTransform` effect.
     /// Pass `Animated::Static(default)` for fields the caller doesn't
     /// want to animate (identity values: x/y/rotation=0,
@@ -1684,6 +1708,10 @@ impl ProjectActor {
                 reply,
             } => {
                 let result = self.do_groups_rename(id, label, actor);
+                let _ = reply.send(result);
+            }
+            Command::GroupsClearHtmlTransform { id, actor, reply } => {
+                let result = self.do_groups_clear_html_transform(id, actor);
                 let _ = reply.send(result);
             }
             Command::GroupsSetHtmlTransform {
@@ -2510,6 +2538,23 @@ impl ProjectActor {
         Ok(())
     }
 
+    fn do_groups_clear_html_transform(
+        &mut self,
+        id: GroupId,
+        actor: Actor,
+    ) -> Result<(), CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+        apply_groups_clear_html_transform(&mut next, id)?;
+        self.commit(
+            next,
+            actor,
+            format!("Cleared html transform on group {id}"),
+            Vec::new(),
+            DiffHint::Coarse,
+        )?;
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn do_groups_set_html_transform(
         &mut self,
@@ -3087,6 +3132,23 @@ pub(crate) fn apply_groups_rename(
         .position(|g| g.id == id)
         .ok_or(CommandError::GroupNotFound { group: id })?;
     project.groups[gi].label = label;
+    Ok(())
+}
+
+pub(crate) fn apply_groups_clear_html_transform(
+    project: &mut Project,
+    id: GroupId,
+) -> Result<(), CommandError> {
+    use super::effect::EffectParams;
+    let gi = project
+        .groups
+        .iter()
+        .position(|g| g.id == id)
+        .ok_or(CommandError::GroupNotFound { group: id })?;
+    let group = &mut project.groups[gi];
+    group
+        .effects
+        .retain(|e| !matches!(e.params, EffectParams::HtmlTransform { .. }));
     Ok(())
 }
 

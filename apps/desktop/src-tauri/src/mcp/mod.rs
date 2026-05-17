@@ -1138,6 +1138,23 @@ impl WeftCutServer {
     }
 
     #[tool(
+        description = "Drop every `HtmlTransform` effect from a group's chain. \
+                       The group reverts to ffmpeg per-layer rendering. No-op if \
+                       the group has no `HtmlTransform`."
+    )]
+    async fn groups_clear_html_transform(
+        &self,
+        #[tool(aggr)] args: GroupIdArgs,
+    ) -> Result<CallToolResult, McpError> {
+        let gid = parse_uuid(&args.group_id, "group_id")?;
+        self.project
+            .groups_clear_html_transform(agent_actor(), gid)
+            .await
+            .map_err(map_command_error)?;
+        Ok(ok_void())
+    }
+
+    #[tool(
         description = "Replace (or create) a group's `HtmlTransform` effect. \
                        Each of `x, y, scale_x, scale_y, rotation_deg, opacity` is an \
                        `Animated<f64>` track shape (`{ mode: \"Static\", value }` or \

@@ -103,7 +103,7 @@ function buildPeekItems(
 
 export function RightPanel({
   tracks,
-  groups: _groups,
+  groups,
   selectedLayerId,
   currentTimeUs,
   onSelect,
@@ -161,6 +161,7 @@ export function RightPanel({
       <section className="right-panel-inspector">
         <PropertyPanel
           tracks={tracks}
+          groups={groups}
           selectedLayerId={selectedLayerId}
           onMutated={onMutated}
         />
