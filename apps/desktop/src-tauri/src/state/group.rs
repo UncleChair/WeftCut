@@ -80,6 +80,27 @@ impl Group {
     }
 }
 
+/// True when the group should render through the html-cap path —
+/// either because the group's own effect chain has an html-required
+/// effect, or because at least one of its enabled member layers
+/// carries one. Materialize + lower both gate on this; the preview
+/// side mirrors it in `LiveLayers`.
+///
+/// `layer_lookup(layer_id) -> bool` returns true when the named
+/// layer requires html (i.e. `Layer::requires_html()`). The caller
+/// provides this so we don't depend on the whole `Project` shape
+/// here — different call sites already have their own layer
+/// indexes.
+pub fn group_requires_html<F>(group: &Group, mut layer_requires_html: F) -> bool
+where
+    F: FnMut(LayerId) -> bool,
+{
+    if group.requires_html() {
+        return true;
+    }
+    group.members.iter().any(|&lid| layer_requires_html(lid))
+}
+
 /// Build the derived `LayerId → GroupId` lookup. The actor rebuilds this
 /// on every commit that mutates `Project.groups` or `Project.tracks`;
 /// readers use it for O(1) "what group is this in" queries.

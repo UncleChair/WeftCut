@@ -403,12 +403,28 @@ function lookupGroup(groupId: string): GroupSummary | undefined {
   return useProjectStore.getState().summary?.groups.find((g) => g.id === groupId);
 }
 
-/// True iff the group's effect chain has any enabled effect that
-/// requires html-cap rendering. Mirrors Rust's `Group::requires_html`.
+/// True iff the group's effect chain OR any of its member layers'
+/// effect chains has any enabled effect that requires html-cap
+/// rendering. Mirrors Rust's `state::group_requires_html` and
+/// `LiveLayers.tsx`'s same-named detection — keep the three in sync.
 /// Today only `HtmlTransform` qualifies; the check will widen when
 /// more html-class effects land.
 function groupRequiresHtml(group: GroupSummary): boolean {
-  return group.effects.some((e) => e.enabled && e.params.kind === "HtmlTransform");
+  if (group.effects.some((e) => e.enabled && e.params.kind === "HtmlTransform")) {
+    return true;
+  }
+  const summary = useProjectStore.getState().summary;
+  if (!summary) return false;
+  const memberSet = new Set(group.layer_ids);
+  for (const t of summary.tracks) {
+    for (const l of t.layers) {
+      if (!memberSet.has(l.id)) continue;
+      if (l.effects?.some((e) => e.enabled && e.params.kind === "HtmlTransform")) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 /// Best-effort current master time read. The PlaybackEngine doesn't

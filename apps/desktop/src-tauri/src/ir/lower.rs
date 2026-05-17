@@ -82,12 +82,27 @@ pub fn lower(
     // for fast detection and track which group overlays have been
     // emitted so members after the first are silently skipped.
     let html_group_by_layer: HashMap<LayerId, GroupId> = {
+        // Layer-id → does-this-layer-require-html. Built once so the
+        // per-group decision below is O(members) instead of walking
+        // every track per group.
+        let mut layer_html: HashMap<LayerId, bool> = HashMap::new();
+        for t in project.tracks.iter() {
+            for l in t.layers.iter() {
+                if l.requires_html() {
+                    layer_html.insert(l.id, true);
+                }
+            }
+        }
         let mut m = HashMap::new();
         for g in project.groups.iter() {
             // Effect-chain redesign (2026-05-17): a group renders via
-            // html-cap iff its effect chain has any enabled effect
-            // whose kind `requires_html()` (today: HtmlTransform).
-            if !g.requires_html() {
+            // html-cap iff any enabled effect on the group OR any
+            // member layer has kind `requires_html()` (today:
+            // HtmlTransform).
+            let needs_html = crate::state::group_requires_html(g, |lid| {
+                *layer_html.get(&lid).unwrap_or(&false)
+            });
+            if !needs_html {
                 continue;
             }
             for &lid in g.members.iter() {
