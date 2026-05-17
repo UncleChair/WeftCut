@@ -190,6 +190,15 @@ html, body { background: transparent; margin: 0; padding: 0; }
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+.layer-template {
+  /* Width/height set imperatively after the host walks the shadow
+     and reads template.size from the catalog. Browsers treat
+     unset width/height on an absolutely-positioned div as
+     auto = the content's intrinsic size — which is 0×0 before
+     attachShadow runs, so the host is invisible for one frame.
+     Acceptable: HtmlGroupHandle.refresh() runs synchronously
+     immediately after innerHTML, so there's no perceptible flash. */
 }`;
 
 function rgbaCss(c: { r: number; g: number; b: number; a: number }): string {
@@ -254,6 +263,21 @@ function renderLayerHtml(layer: CompositionState["layers"][number]): string {
       return (
         `<div class="layer layer-image" data-layer-id="${id}" data-kind="ImageOverlay" ` +
         `data-media-id="${escapeAttr(layer.params.media_id)}"></div>`
+      );
+    }
+    case "Template": {
+      // Template-in-composition: HtmlGroupHandle walks the mounted
+      // shadow for `[data-kind="Template"]` placeholders after the
+      // engine runs and calls `TemplateHandle.instantiateTemplate` on
+      // each — which attachShadows the placeholder and runs the
+      // template's scripts with per-instance shadowed globals (same
+      // pattern as standalone Template layers outside compositions).
+      // The host's width/height are set at mount time from the
+      // template manifest's `size`; we leave size off the generated
+      // element so the first frame doesn't flash a default 0×0 box.
+      return (
+        `<div class="layer layer-template" data-layer-id="${id}" data-kind="Template" ` +
+        `data-template-id="${escapeAttr(layer.params.template_id)}"></div>`
       );
     }
   }

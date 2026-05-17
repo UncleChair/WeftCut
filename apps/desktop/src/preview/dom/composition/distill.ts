@@ -70,6 +70,11 @@ export function distillCompositionState(input: DistillInputs): DistillResult {
 
   // Resolve members + filter audio (decision 7 — audio passes through
   // to amix, never enters the composition) + filter unsupported kinds.
+  // Template is supported preview-side post Template-in-composition
+  // followup (2026-05-17); HtmlGroupHandle walks the composition's
+  // shadow for `[data-kind="Template"]` placeholders after the engine
+  // mounts and instantiates each via TemplateHandle.instantiateTemplate.
+  // Subtitles still skipped — JASSUB integration is a separate piece.
   type Resolved = { layer: LayerSummary; trackIndex: number };
   const resolved: Resolved[] = [];
   for (const lid of input.group.layer_ids) {
@@ -77,15 +82,15 @@ export function distillCompositionState(input: DistillInputs): DistillResult {
     if (!layer) continue;
     if (!layer.enabled) continue;
     if (layer.params.kind === "Audio") continue; // bypass (decision 7)
-    if (layer.params.kind === "Template" || layer.params.kind === "Subtitles") {
+    if (layer.params.kind === "Subtitles") {
       skipped.push({
         layerId: lid,
         kind: layer.params.kind,
-        reason: "html-render-groups H.4 doesn't render this kind yet",
+        reason: "Subtitles in html-render compositions not yet wired (JASSUB integration pending)",
       });
       console.warn(
         `HtmlGroupHandle: skipping layer ${lid} (kind=${layer.params.kind}) — ` +
-          "not yet supported in html-render compositions (H.3 follow-up).",
+          "Subtitles in compositions need JASSUB plumbing (separate follow-up).",
       );
       continue;
     }
@@ -206,9 +211,14 @@ function compositionLayerParams(
       if (media) mediaByLayer.set(layer.id, media);
       return { kind: "ImageOverlay", media_id: p.media_id };
     }
+    case "Template":
+      return {
+        kind: "Template",
+        template_id: p.template_id,
+        props: { ...p.props },
+      };
     // Defensive — the resolved set already filtered these.
     case "Audio":
-    case "Template":
     case "Subtitles":
       throw new Error(`distill: unexpected kind ${p.kind} after filtering`);
   }

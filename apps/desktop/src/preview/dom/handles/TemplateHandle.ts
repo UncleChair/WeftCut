@@ -44,9 +44,11 @@ import type { HandleContext, LayerHandle } from "./types";
 
 /// Cached across all TemplateHandle instances — `listTemplates()` is
 /// pure-read on the Rust side and the list is stable for the app
-/// session.
+/// session. Exported so `HtmlGroupHandle` (Phase H Template-in-
+/// composition followup) can share the cache — re-fetching catalog
+/// once per html-group mount would be wasteful.
 let templatesCache: Promise<TemplateSummary[]> | null = null;
-function loadTemplates(): Promise<TemplateSummary[]> {
+export function loadTemplates(): Promise<TemplateSummary[]> {
   if (!templatesCache) {
     templatesCache = listTemplates().catch((e) => {
       templatesCache = null;
@@ -56,7 +58,7 @@ function loadTemplates(): Promise<TemplateSummary[]> {
   return templatesCache;
 }
 
-interface TemplateRuntime {
+export interface TemplateRuntime {
   /// Advance the per-instance synthetic clock to `seconds` and
   /// drain the rAF queue so the template re-renders at that time.
   setTime(seconds: number): void;
@@ -91,7 +93,12 @@ function parseTemplate(composed: string): {
 /// Instantiate one template into `hostDiv`. Sets up the shadow,
 /// injects styles + body content, executes scripts with per-instance
 /// shadowed globals, and returns a runtime handle to drive time.
-function instantiateTemplate(
+///
+/// Exported because Phase H's `HtmlGroupHandle` mounts templates as
+/// children of a composition's shadow root — it walks the composition
+/// for `[data-kind="Template"]` placeholders after `buildComposition()`
+/// builds the outer DOM, and calls this to mount each one.
+export function instantiateTemplate(
   hostDiv: HTMLDivElement,
   template: TemplateSummary,
   props: Record<string, unknown>,

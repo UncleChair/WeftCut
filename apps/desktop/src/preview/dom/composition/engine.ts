@@ -77,7 +77,8 @@ export type CompositionLayerParams =
   | { kind: "Color"; rgba: { r: number; g: number; b: number; a: number }; width: number; height: number }
   | { kind: "Text"; content: string; font_family: string; font_size_px: number; color: { r: number; g: number; b: number; a: number } }
   | { kind: "VideoClip"; media_id: string; src_in_us: number; src_out_us: number }
-  | { kind: "ImageOverlay"; media_id: string };
+  | { kind: "ImageOverlay"; media_id: string }
+  | { kind: "Template"; template_id: string; props: Record<string, unknown> };
 
 /// CSS id used by the engine to find its state blob.
 export const STATE_SCRIPT_ID = "weftcut-composition";
