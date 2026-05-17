@@ -29,7 +29,9 @@ export type ActionId =
   | "toggleLog"
   | "focusLogSearch"
   | "toggleDisplayMode"
-  | "toggleMediaPool";
+  | "toggleMediaPool"
+  | "groupSelected"
+  | "dissolveSelectedGroup";
 
 export interface ActionDef {
   defaultKeys: string[];
@@ -58,6 +60,13 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   // `docs/ab-roll-redesign` R.9: bare-letter `M` toggles the MediaPool
   // left drawer (closed/open). The app-pref store remembers state.
   toggleMediaPool:   { defaultKeys: ["M"],                 labelKey: "actions.toggle_media_pool" },
+  // `docs/group-system.md` — Ctrl/Cmd+G groups the current multi-
+  // selection; Ctrl/Cmd+Shift+G dissolves every group represented in
+  // the selection. Handler lives in Timeline.tsx (needs `selectedLayerIds`
+  // which is Timeline-local). Surfaced here so the Keyboard Shortcuts
+  // panel shows them and the user can rebind.
+  groupSelected:          { defaultKeys: ["Mod+G"],        labelKey: "actions.group_selected" },
+  dissolveSelectedGroup:  { defaultKeys: ["Mod+Shift+G"],  labelKey: "actions.dissolve_selected_group" },
 };
 
 export const ACTION_IDS = Object.keys(ACTION_DEFS) as ActionId[];

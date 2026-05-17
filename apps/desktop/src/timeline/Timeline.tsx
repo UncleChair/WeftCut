@@ -19,10 +19,12 @@ import {
   viewStateGet,
   viewStateSet,
   type GroupSummary,
+  type KeybindingsMap,
   type LayerSummary,
   type TrackSummary,
 } from "../ipc";
 import { useDisplayMode, toggleDisplayMode } from "../settings/appSettingsStore";
+import { useShortcuts, type OverrideMap } from "../shortcuts";
 import { WaveformCanvas } from "./WaveformCanvas";
 
 // Zoom + height bounds. The defaults match the pre-refactor constants so
@@ -215,6 +217,10 @@ interface TimelineProps {
   /// different track, presses Esc, or the peek list dispatches a new
   /// reveal.
   revealedTrackId?: string | null;
+  /// User-overridden keybindings, threaded through from App for the
+  /// timeline-scoped `groupSelected` + `dissolveSelectedGroup`
+  /// actions. Missing entries fall back to `ACTION_DEFS` defaults.
+  keybindings: KeybindingsMap;
   onSelect: (id: string | null) => void;
   onSeek: (tUs: number) => void;
   onMutated: () => Promise<void>;
@@ -262,6 +268,7 @@ export function Timeline({
   currentTimeUs,
   selectedLayerId,
   revealedTrackId,
+  keybindings,
   onSelect,
   onSeek,
   onMutated,
@@ -360,50 +367,56 @@ export function Timeline({
     });
   }, [selectedLayerId, groupByLayerId, groups]);
 
-  /// `docs/group-system.md` — Ctrl+G groups the current selection,
-  /// Ctrl+Shift+G dissolves every group represented in the selection.
-  /// Bound here at the timeline root rather than via the global
-  /// keybinding registry so it only fires when the timeline is the
-  /// effective focus.
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      const mod = e.ctrlKey || e.metaKey;
-      if (!mod || e.key.toLowerCase() !== "g") return;
-      const target = e.target as HTMLElement | null;
-      // Ignore when typing in an input/textarea/contenteditable.
-      if (
-        target &&
-        (target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.isContentEditable)
-      ) {
-        return;
-      }
-      if (selectedLayerIds.size < 2 && !e.shiftKey) return;
-      e.preventDefault();
-      (async () => {
+  /// `docs/group-system.md` — Mod+G groups the current multi-selection;
+  /// Mod+Shift+G dissolves every group represented in the selection.
+  /// Wired through the global `useShortcuts` registry (Phase H-followup
+  /// 2026-05-17) so the Keyboard Shortcuts settings panel exposes them
+  /// and they're rebindable. Handlers read state via refs to avoid the
+  /// stale-closure trap of multi-key chord dispatch.
+  const selectedLayerIdsRef = useRef(selectedLayerIds);
+  selectedLayerIdsRef.current = selectedLayerIds;
+  const groupByLayerIdRef = useRef(groupByLayerId);
+  groupByLayerIdRef.current = groupByLayerId;
+  const onMutatedRef = useRef(onMutated);
+  onMutatedRef.current = onMutated;
+
+  const shortcutOverrides = useMemo<OverrideMap>(
+    () => keybindings as OverrideMap,
+    [keybindings],
+  );
+  useShortcuts({
+    overrides: shortcutOverrides,
+    handlers: {
+      groupSelected: async () => {
+        const sel = selectedLayerIdsRef.current;
+        if (sel.size < 2) return;
         try {
-          if (e.shiftKey) {
-            const targetGroups = new Set<string>();
-            selectedLayerIds.forEach((lid) => {
-              const gid = groupByLayerId.get(lid)?.id;
-              if (gid) targetGroups.add(gid);
-            });
-            for (const gid of targetGroups) {
-              await groupsDissolve(gid);
-            }
-          } else {
-            await groupsCreate(Array.from(selectedLayerIds), null, false);
-          }
-          await onMutated();
+          await groupsCreate(Array.from(sel), null, false);
+          await onMutatedRef.current();
         } catch (err) {
-          console.error("group op failed:", err);
+          console.error("groups_create failed:", err);
         }
-      })();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [selectedLayerIds, groupByLayerId, onMutated]);
+      },
+      dissolveSelectedGroup: async () => {
+        const sel = selectedLayerIdsRef.current;
+        if (sel.size < 1) return;
+        const targetGroups = new Set<string>();
+        sel.forEach((lid) => {
+          const gid = groupByLayerIdRef.current.get(lid)?.id;
+          if (gid) targetGroups.add(gid);
+        });
+        if (targetGroups.size === 0) return;
+        try {
+          for (const gid of targetGroups) {
+            await groupsDissolve(gid);
+          }
+          await onMutatedRef.current();
+        } catch (err) {
+          console.error("groups_dissolve failed:", err);
+        }
+      },
+    },
+  });
 
   // Cumulative (y, height) per visible track row. Heights vary now, so
   // hit-testing for "which track is the pointer over" needs a real
