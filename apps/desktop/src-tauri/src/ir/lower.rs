@@ -20,7 +20,6 @@ use super::node::{FadeKind, IRNode, NodeId, PixFmt};
 use super::target::RenderTarget;
 use crate::state::animated::Animated;
 use crate::state::color::Rgba;
-use crate::state::group::GroupRenderMode;
 use crate::state::ids::{GroupId, LayerId, MediaId};
 use crate::state::layer::{
     AudioParams, ImageOverlayParams, Layer, LayerParams, SubtitlesSource, VideoClipParams,
@@ -85,7 +84,10 @@ pub fn lower(
     let html_group_by_layer: HashMap<LayerId, GroupId> = {
         let mut m = HashMap::new();
         for g in project.groups.iter() {
-            if g.render_mode != GroupRenderMode::Html {
+            // Effect-chain redesign (2026-05-17): a group renders via
+            // html-cap iff its effect chain has any enabled effect
+            // whose kind `requires_html()` (today: HtmlTransform).
+            if !g.requires_html() {
                 continue;
             }
             for &lid in g.members.iter() {

@@ -53,18 +53,12 @@ pub struct GroupSummary {
     pub id: String,
     pub label: Option<String>,
     pub layer_ids: Vec<String>,
-    /// Serialized as `"Native"` or `"Html"` (matches the Rust
-    /// `GroupRenderMode` variants). `docs/html-render-groups.md` — UI +
-    /// preview engine consult this to decide whether to mount each
-    /// member individually (Native) or collapse them into a single
-    /// HtmlGroupHandle (Html).
-    pub render_mode: String,
     /// Group-level effect chain. Surfaced verbatim from
-    /// `state::Group.effects` via `serde_json::to_value`, so the TS
-    /// distiller can read `HtmlTransform` keyframes without us having
-    /// to mirror the whole effect schema in this `Serialize`-only
-    /// summary type. The TS side validates the shape against its own
-    /// `EffectParams` discriminated union at the call site.
+    /// `state::Group.effects`; the TS distiller reads
+    /// `HtmlTransform` keyframes from here. Presence of any enabled
+    /// effect whose kind `requires_html()` (today only
+    /// `HtmlTransform`) flags the group for html-cap rendering in
+    /// preview + export.
     pub effects: Vec<state::Effect>,
 }
 
@@ -460,10 +454,6 @@ pub async fn project_summary(handle: State<'_, ProjectHandle>) -> Result<Project
             id: g.id.to_string(),
             label: g.label.clone(),
             layer_ids: g.members.iter().map(|m| m.to_string()).collect(),
-            render_mode: match g.render_mode {
-                crate::state::group::GroupRenderMode::Native => "Native".to_string(),
-                crate::state::group::GroupRenderMode::Html => "Html".to_string(),
-            },
             effects: g.effects.iter().cloned().collect(),
         })
         .collect();
@@ -2184,29 +2174,6 @@ pub async fn groups_dissolve(
     let gid = Uuid::parse_str(&group_id).map_err(|e| format!("group_id: {e}"))?;
     handle
         .groups_dissolve(Actor::User, gid)
-        .await
-        .map_err(|e: CommandError| e.to_string())
-}
-
-/// Phase H.6 — UI counterpart to the MCP `groups_set_render_mode` tool.
-/// Same shape, same validation: commit fails if any member has a
-/// CSS-incompatible effect. The error string carries the offending
-/// (group, layer, effect, kind) tuple — surface verbatim so the user
-/// knows what to remove.
-#[tauri::command]
-pub async fn groups_set_render_mode(
-    handle: State<'_, ProjectHandle>,
-    group_id: String,
-    mode: String,
-) -> Result<(), String> {
-    let gid = Uuid::parse_str(&group_id).map_err(|e| format!("group_id: {e}"))?;
-    let mode = match mode.as_str() {
-        "Native" => crate::state::group::GroupRenderMode::Native,
-        "Html" => crate::state::group::GroupRenderMode::Html,
-        other => return Err(format!("unknown render mode {other:?}: expected 'Native' or 'Html'")),
-    };
-    handle
-        .groups_set_render_mode(Actor::User, gid, mode)
         .await
         .map_err(|e: CommandError| e.to_string())
 }

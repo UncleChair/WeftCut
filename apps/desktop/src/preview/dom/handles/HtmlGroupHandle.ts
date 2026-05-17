@@ -88,7 +88,7 @@ export class HtmlGroupHandle implements LayerHandle {
   tick(masterUs: number, _playing: boolean): void {
     if (this.disposed) return;
     const group = lookupGroup(this.ctx.groupId);
-    if (!group || group.render_mode !== "Html") {
+    if (!group || !groupRequiresHtml(group)) {
       this.unmount();
       return;
     }
@@ -168,7 +168,7 @@ export class HtmlGroupHandle implements LayerHandle {
   private async refresh(): Promise<void> {
     if (this.disposed) return;
     const group = lookupGroup(this.ctx.groupId);
-    if (!group || group.render_mode !== "Html") {
+    if (!group || !groupRequiresHtml(group)) {
       this.unmount();
       return;
     }
@@ -403,6 +403,14 @@ function lookupGroup(groupId: string): GroupSummary | undefined {
   return useProjectStore.getState().summary?.groups.find((g) => g.id === groupId);
 }
 
+/// True iff the group's effect chain has any enabled effect that
+/// requires html-cap rendering. Mirrors Rust's `Group::requires_html`.
+/// Today only `HtmlTransform` qualifies; the check will widen when
+/// more html-class effects land.
+function groupRequiresHtml(group: GroupSummary): boolean {
+  return group.effects.some((e) => e.enabled && e.params.kind === "HtmlTransform");
+}
+
 /// Best-effort current master time read. The PlaybackEngine doesn't
 /// expose a public `currentMasterUs()`; the handle's `tick` carries the
 /// value when active, but the initial post-mount setTime needs a
@@ -421,8 +429,11 @@ function lastMasterUs(): number {
 /// structural — they shift group-local time origin.
 function computeStateSig(group: GroupSummary): string {
   const layerById = useProjectStore.getState().layerById;
-  const parts: string[] = [`mode=${group.render_mode}`];
-  parts.push(`mems=${group.layer_ids.join(",")}`);
+  const parts: string[] = [`mems=${group.layer_ids.join(",")}`];
+  // Effect chain — JSON.stringify gives a stable string for change
+  // detection. Keyframe edits invalidate the sig and trigger a fresh
+  // composition mount.
+  parts.push(`fx=${JSON.stringify(group.effects)}`);
   for (const lid of group.layer_ids) {
     const l = layerById.get(lid);
     if (!l) continue;

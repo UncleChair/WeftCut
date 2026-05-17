@@ -181,15 +181,12 @@ export interface GroupSummary {
   id: string;
   label: string | null;
   layer_ids: string[];
-  /// `"Native"` (default ffmpeg per-layer lowering) or `"Html"`
-  /// (html-render-groups island; see `docs/html-render-groups.md`).
-  /// LiveLayers + HtmlGroupHandle consult this to decide mount strategy.
-  render_mode: "Native" | "Html";
   /// Group-level effect chain (`docs/html-render-groups.md` 2026-05-17
   /// redesign). The TS distiller reads `HtmlTransform` from here to
-  /// build the engine's `compositionTransform`. Non-`HtmlTransform`
-  /// variants pass through opaquely — agents and lowering on the
-  /// Rust side own the typed shape.
+  /// build the engine's `compositionTransform`. Any enabled effect
+  /// whose kind requires html-cap rendering (today only
+  /// `HtmlTransform`) flags the group for the html-render path —
+  /// there is no separate `render_mode` flag.
   effects: Effect[];
 }
 
@@ -861,18 +858,6 @@ export async function groupsCreate(
     label,
     reassign,
   });
-}
-
-/// Toggle a group's render mode between Native (default ffmpeg
-/// per-layer lowering) and Html (html-render-groups island; see
-/// `docs/html-render-groups.md`). Rejects with a string error if any
-/// member has a CSS-incompatible effect — surface the message to the
-/// user so they can remove the effect or stay in Native.
-export async function groupsSetRenderMode(
-  groupId: string,
-  mode: "Native" | "Html",
-): Promise<void> {
-  await invoke<null>("groups_set_render_mode", { groupId, mode });
 }
 
 export async function groupsDissolve(groupId: string): Promise<void> {

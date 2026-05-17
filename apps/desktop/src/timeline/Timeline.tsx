@@ -11,7 +11,6 @@ import {
   addMediaLayer,
   groupsCreate,
   groupsDissolve,
-  groupsSetRenderMode,
   moveLayer,
   separateAudioToNewTrack,
   trimLayer,
@@ -243,19 +242,14 @@ function groupHue(groupId: string): number {
   return raw < 60 ? raw : raw + 60;
 }
 
-/// Build the layer-id → group-summary lookup used by every render path
-/// that asks "what group is this in?". Phase H.6 extended the value
-/// shape from a bare id to `{ id, renderMode }` so the timeline can
-/// differentiate Html-mode groups visually without a second lookup.
-/// `groups` is small in practice (a handful), so a simple O(N*M) walk
-/// is cheaper than a Map allocation.
-function indexGroups(
-  groups: GroupSummary[],
-): Map<string, { id: string; renderMode: "Native" | "Html" }> {
-  const idx = new Map<string, { id: string; renderMode: "Native" | "Html" }>();
+/// Build the layer-id → group-id lookup used by every render path that
+/// asks "what group is this in?". `groups` is small in practice (a
+/// handful), so a simple O(N*M) walk is cheaper than a Map allocation.
+function indexGroups(groups: GroupSummary[]): Map<string, string> {
+  const idx = new Map<string, string>();
   for (const g of groups) {
     for (const lid of g.layer_ids) {
-      idx.set(lid, { id: g.id, renderMode: g.render_mode });
+      idx.set(lid, g.id);
     }
   }
   return idx;
@@ -330,7 +324,7 @@ export function Timeline({
   /// clicked layer's whole group if any).
   const selectFromClick = useCallback(
     (layerId: string, e: { altKey: boolean; shiftKey: boolean; metaKey: boolean }) => {
-      const gid = groupByLayerId.get(layerId)?.id;
+      const gid = groupByLayerId.get(layerId);
       const memberSet = (): Set<string> => {
         if (!gid || e.altKey) return new Set([layerId]);
         const g = groups.find((x) => x.id === gid);
@@ -360,7 +354,7 @@ export function Timeline({
     }
     setSelectedLayerIds((prev) => {
       if (prev.has(selectedLayerId)) return prev;
-      const gid = groupByLayerId.get(selectedLayerId)?.id;
+      const gid = groupByLayerId.get(selectedLayerId);
       if (!gid) return new Set([selectedLayerId]);
       const g = groups.find((x) => x.id === gid);
       return new Set(g?.layer_ids ?? [selectedLayerId]);
@@ -402,7 +396,7 @@ export function Timeline({
         if (sel.size < 1) return;
         const targetGroups = new Set<string>();
         sel.forEach((lid) => {
-          const gid = groupByLayerIdRef.current.get(lid)?.id;
+          const gid = groupByLayerIdRef.current.get(lid);
           if (gid) targetGroups.add(gid);
         });
         if (targetGroups.size === 0) return;
@@ -770,27 +764,6 @@ export function Timeline({
     [onMutated],
   );
 
-  /// Phase H.6 — toggle a group's render mode from the context menu.
-  /// Validation errors (CSS-incompatible effect in the group when
-  /// switching to Html) come back as a string from the Tauri command;
-  /// surface verbatim via window.alert so the user knows what to
-  /// remove. A real toast system is future work.
-  const onToggleGroupRenderMode = useCallback(
-    async (groupId: string, newMode: "Native" | "Html") => {
-      setContextMenu(null);
-      try {
-        await groupsSetRenderMode(groupId, newMode);
-        await onMutated();
-      } catch (err) {
-        console.error("groups_set_render_mode failed:", err);
-        const msg = typeof err === "string" ? err : err instanceof Error ? err.message : String(err);
-        // eslint-disable-next-line no-alert
-        window.alert(`Cannot switch group render mode:\n${msg}`);
-      }
-    },
-    [onMutated],
-  );
-
   const playheadX = (currentTimeUs / 1_000_000) * pxPerSec;
 
   const seekFromClientX = useCallback(
@@ -883,9 +856,7 @@ export function Timeline({
         y={contextMenu.y}
         layerId={contextMenu.layerId}
         layerKind={contextMenu.layerKind}
-        groups={groups}
         onSeparateAudio={onSeparateAudio}
-        onToggleGroupRenderMode={onToggleGroupRenderMode}
       />
     )}
     </>
@@ -896,37 +867,31 @@ export function Timeline({
 /// outside pointer-down (wired in Timeline above). Shows action items
 /// scoped to the right-clicked layer's kind — today the only entry is
 /// "Separate audio to new track" when the target is an Audio layer.
+/// (The 2026-05-17 effect-redesign removed the H.6 render-mode toggle;
+/// group html-rendering is now driven by the presence of an
+/// HtmlTransform effect on the group, authored via MCP / a future
+/// effects panel.)
 function LayerContextMenu({
   x,
   y,
   layerId,
   layerKind,
-  groups,
   onSeparateAudio,
-  onToggleGroupRenderMode,
 }: {
   x: number;
   y: number;
   layerId: string;
   layerKind: string;
-  groups: readonly GroupSummary[];
   onSeparateAudio: (id: string) => void;
-  onToggleGroupRenderMode: (groupId: string, newMode: "Native" | "Html") => void;
 }) {
   const { t } = useTranslation();
-  // Which group, if any, owns the targeted layer? Used by the
-  // Phase H.6 render-mode toggle (`docs/html-render-groups.md`).
-  const ownerGroup = groups.find((g) => g.layer_ids.includes(layerId));
-  const hasAnyAction = layerKind === "Audio" || !!ownerGroup;
-  // Stop propagation on pointerdown so the global close handler
-  // doesn't fire when the user clicks INTO the menu.
   return (
     <div
       className="layer-context-menu"
       style={{ left: x, top: y }}
       onPointerDown={(e) => e.stopPropagation()}
     >
-      {layerKind === "Audio" && (
+      {layerKind === "Audio" ? (
         <button
           type="button"
           className="layer-context-menu-item"
@@ -936,32 +901,7 @@ function LayerContextMenu({
             defaultValue: "Separate audio to new track",
           })}
         </button>
-      )}
-      {ownerGroup && (
-        <button
-          type="button"
-          className="layer-context-menu-item"
-          onClick={() =>
-            onToggleGroupRenderMode(
-              ownerGroup.id,
-              ownerGroup.render_mode === "Html" ? "Native" : "Html",
-            )
-          }
-          title={t("timeline.group_render_mode_hint", {
-            defaultValue:
-              "Html mode renders the group via a CSS composition (decision-12 in docs/html-render-groups.md). Switching may fail if a member has a CSS-incompatible effect.",
-          })}
-        >
-          {ownerGroup.render_mode === "Html"
-            ? t("timeline.group_render_mode_to_native", {
-                defaultValue: "Switch group render → Native (ffmpeg)",
-              })
-            : t("timeline.group_render_mode_to_html", {
-                defaultValue: "Switch group render → Html (CSS island)",
-              })}
-        </button>
-      )}
-      {!hasAnyAction && (
+      ) : (
         <span className="layer-context-menu-disabled">
           {t("timeline.no_actions_here", {
             defaultValue: "(no actions for this layer)",
@@ -1148,8 +1088,7 @@ function TrackLane({
             slice={slices.get(layer.id) ?? "full"}
             isPrimary={selectedLayerId === layer.id}
             isSelected={selectedLayerIds.has(layer.id)}
-            groupId={groupByLayerId.get(layer.id)?.id ?? null}
-            groupRenderMode={groupByLayerId.get(layer.id)?.renderMode ?? null}
+            groupId={groupByLayerId.get(layer.id) ?? null}
             dragState={dragState}
             onSelect={onSelect}
             onSelectFromClick={onSelectFromClick}
@@ -1179,7 +1118,6 @@ function LayerBlock({
   isPrimary,
   isSelected,
   groupId,
-  groupRenderMode,
   dragState,
   onSelect,
   onSelectFromClick,
@@ -1201,10 +1139,6 @@ function LayerBlock({
   isSelected: boolean;
   /// `docs/group-system.md` — null when ungrouped.
   groupId: string | null;
-  /// `docs/html-render-groups.md` — null when ungrouped; "Native" or
-  /// "Html" otherwise. Drives the dashed-border treatment for
-  /// html-render groups.
-  groupRenderMode: "Native" | "Html" | null;
   dragState: DragState | null;
   onSelect: (id: string | null) => void;
   onSelectFromClick: (
@@ -1327,9 +1261,7 @@ function LayerBlock({
         isSelected ? "is-selected" : ""
       } ${isDragging ? "is-dragging" : ""} ${layer.locked ? "is-locked" : ""} ${
         movedAcrossTracks ? "is-ghost" : ""
-      } ${groupId !== null ? "is-grouped" : ""} ${
-        groupRenderMode === "Html" ? "is-html-render" : ""
-      }`}
+      } ${groupId !== null ? "is-grouped" : ""}`}
       style={{
         left,
         top: sliceTop,
