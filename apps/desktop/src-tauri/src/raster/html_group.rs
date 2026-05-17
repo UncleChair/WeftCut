@@ -189,6 +189,27 @@ pub fn state_hash(state: &CompositionState) -> String {
     hasher.finalize().to_hex().to_string()
 }
 
+/// One media source to pre-extract before raster runs. The
+/// materializer builds this list alongside the `CompositionState`;
+/// `materialize_group` consumes it on cache miss to populate the
+/// group's `source/<layer_id>/` subdirectory with PNG frames.
+///
+/// `kind = Video` runs `source_frames::extract` (one PNG per output
+/// frame at canvas fps). `kind = Image` runs
+/// `source_frames::extract_single_image` (single PNG normalization).
+#[derive(Clone, Debug)]
+pub struct VideoSource {
+    pub layer_id: String,
+    pub media_path: std::path::PathBuf,
+    pub kind: VideoSourceKind,
+}
+
+#[derive(Clone, Debug)]
+pub enum VideoSourceKind {
+    Video { src_in_us: i64, src_out_us: i64 },
+    Image,
+}
+
 /// Materialize one Html-mode group's composition to a PNG sequence.
 ///
 /// The output dir lives under `<cache>/raster/<state_hash>/` (sharing
@@ -196,17 +217,19 @@ pub fn state_hash(state: &CompositionState) -> String {
 /// disjoint by structural prefix). Re-runs against an unchanged
 /// composition state hit the cache and skip the webview entirely.
 ///
-/// H.5 v1 limitation: `VideoClip` and `ImageOverlay` members render
-/// as translucent placeholders inside the composition (the
-/// composition generator emits them as such). Real per-frame video
-/// extraction lands in a H.5 follow-up; for v1 the export pipeline is
-/// architecturally complete but visual output for video-bearing
-/// html-groups isn't pixel-correct yet.
+/// **F.3 (2026-05-17 redesign — VideoClip + ImageOverlay extraction):**
+/// `sources` lists every video/image source that needs pre-extraction
+/// into the per-group cache directory's `source/<layer_id>/`. The
+/// composition HTML is written to disk alongside, and the raster
+/// worker navigates to `file://...composition.html` so its inline
+/// `<img src="source/<lid>/frame_NNNNN.png">` can load sibling files
+/// (a `data:` URL would be an opaque origin and couldn't).
 pub async fn materialize_group(
     app: &AppHandle,
     cache: &crate::cache::CacheLayout,
     group_id: &str,
     state: &CompositionState,
+    sources: &[VideoSource],
     fps_num: u32,
     fps_den: u32,
     duration_us: i64,
@@ -273,20 +296,65 @@ pub async fn materialize_group(
         .set_size(LogicalSize::new(state.width as f64, state.height as f64))
         .map_err(|e| format!("resize raster worker to {}x{}: {e}", state.width, state.height))?;
 
+    let tmp_dir = crate::cache::temp_path(&dest_dir);
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+    std::fs::create_dir_all(&tmp_dir)
+        .map_err(|e| format!("create html-group tmp dir {}: {e}", tmp_dir.display()))?;
+
+    // F.3: pre-extract every VideoClip + ImageOverlay source into
+    // `tmp_dir/source/<layer_id>/` before navigation. The
+    // composition state's `framePattern`/`imageSrc` fields point at
+    // these via relative paths, so the offscreen webview (loading
+    // composition.html from this directory via file://) can resolve
+    // them as same-origin siblings.
+    let source_root = tmp_dir.join("source");
+    std::fs::create_dir_all(&source_root)
+        .map_err(|e| format!("create source root {}: {e}", source_root.display()))?;
+    for source in sources {
+        let out_dir = source_root.join(&source.layer_id);
+        match &source.kind {
+            VideoSourceKind::Video { src_in_us, src_out_us } => {
+                super::source_frames::extract(
+                    &source.media_path,
+                    *src_in_us,
+                    *src_out_us,
+                    fps_num,
+                    fps_den,
+                    &out_dir,
+                )
+                .await
+                .map_err(|e| {
+                    format!(
+                        "extract source frames for layer {}: {e}",
+                        source.layer_id
+                    )
+                })?;
+            }
+            VideoSourceKind::Image => {
+                super::source_frames::extract_single_image(&source.media_path, &out_dir)
+                    .await
+                    .map_err(|e| {
+                        format!(
+                            "normalize image for layer {}: {e}",
+                            source.layer_id
+                        )
+                    })?;
+            }
+        }
+    }
+
     let document =
         build_composition_document(state).map_err(|e| format!("compose document: {e}"))?;
-    navigate_to_html(&window, &document).await?;
+    let composition_path = tmp_dir.join("composition.html");
+    std::fs::write(&composition_path, document)
+        .map_err(|e| format!("write composition html {}: {e}", composition_path.display()))?;
+    super::navigate_to_file(&window, &composition_path).await?;
 
     // Brief settle for the engine's initial-state JSON parse + first
     // paint. The first __seek's await still covers fonts.ready + rAF
     // but the immediate-after-navigate `document.readyState` going to
     // `complete` doesn't guarantee the script has fully run.
     tokio::time::sleep(std::time::Duration::from_millis(80)).await;
-
-    let tmp_dir = crate::cache::temp_path(&dest_dir);
-    let _ = std::fs::remove_dir_all(&tmp_dir);
-    std::fs::create_dir_all(&tmp_dir)
-        .map_err(|e| format!("create html-group tmp dir {}: {e}", tmp_dir.display()))?;
 
     for idx in 0..frame_count {
         let t = idx as f64 / fps_f;

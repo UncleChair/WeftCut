@@ -114,13 +114,13 @@ pub const ENGINE_SOURCE: &str = r#"
       host.style.opacity = "0";
       return;
     }
+    var tLayerUs = tUs - layer.t_start_us;
     var tx = layer.x, ty = layer.y;
     var sx = layer.scale_x, sy = layer.scale_y;
     var rot = 0;
     var op = layer.opacity;
     var et = layer.effectTransform;
     if (et) {
-      var tLayerUs = tUs - layer.t_start_us;
       tx  += resolveAnimated(et.x,            tLayerUs, 0);
       ty  += resolveAnimated(et.y,            tLayerUs, 0);
       sx  *= resolveAnimated(et.scale_x,      tLayerUs, 1);
@@ -131,6 +131,27 @@ pub const ENGINE_SOURCE: &str = r#"
     host.style.transform =
       "translate(" + tx + "px, " + ty + "px) rotate(" + rot + "deg) scale(" + sx + ", " + sy + ")";
     host.style.opacity = String(op);
+
+    // Export path: VideoClip with a pre-extracted frame pattern.
+    // Swap the slot's <img>.src to the right per-tick frame. Preview
+    // path leaves framePattern undefined and the host's
+    // PreviewVideoResolver drives a <video> instead — this branch
+    // is a no-op there.
+    if (layer.params && layer.params.kind === "VideoClip" && layer.params.framePattern) {
+      var img = host.firstElementChild;
+      if (img && img.tagName === "IMG") {
+        var fpsNum = (STATE && STATE.fpsNum) || 30;
+        var fpsDen = (STATE && STATE.fpsDen) || 1;
+        var idx = Math.floor(tLayerUs * fpsNum / (1e6 * fpsDen));
+        var maxIdx = (layer.params.frameCount || 1) - 1;
+        if (idx < 0) idx = 0;
+        if (idx > maxIdx) idx = maxIdx;
+        var padded = String(idx);
+        while (padded.length < 5) padded = "0" + padded;
+        var newSrc = layer.params.framePattern.replace("%05d", padded);
+        if (img.getAttribute("src") !== newSrc) img.setAttribute("src", newSrc);
+      }
+    }
   }
 
   function applyAll(tSeconds) {
@@ -173,12 +194,26 @@ pub struct CompositionState {
     pub width: u32,
     pub height: u32,
     pub layers: Vec<CompositionLayer>,
+    /// Project canvas fps. The engine needs it to compute the current
+    /// frame index for each VideoClip layer's `<img>` src swap.
+    /// Defaults to 30/1 when not provided (older callers).
+    #[serde(rename = "fpsNum", default = "default_fps_num")]
+    pub fps_num: u32,
+    #[serde(rename = "fpsDen", default = "default_fps_den")]
+    pub fps_den: u32,
     /// Group-level transform driven by the group's `HtmlTransform`
     /// effect. Serializes via `camelCase` field rename to match the
     /// TS `compositionTransform` field name; `None` → field omitted
     /// from the JSON (matches the TS `?: CompositionTransform | null`).
     #[serde(rename = "compositionTransform", skip_serializing_if = "Option::is_none")]
     pub composition_transform: Option<CompositionTransform>,
+}
+
+fn default_fps_num() -> u32 {
+    30
+}
+fn default_fps_den() -> u32 {
+    1
 }
 
 /// Mirror of the TS `CompositionTransform`. Each field is a wire-
@@ -239,11 +274,31 @@ pub enum CompositionLayerParams {
         /// dims when ffprobe didn't return a size.
         width: u32,
         height: u32,
+        /// Pattern of pre-extracted source frames relative to the
+        /// composition's directory, e.g. `"source/<lid>/frame_%05d.png"`.
+        /// When present (export path), the engine renders an `<img>`
+        /// and swaps its `src` per `__seek(t)`. Absent on the preview
+        /// path — the host's `PreviewVideoResolver` mounts a `<video>`
+        /// instead.
+        #[serde(rename = "framePattern", skip_serializing_if = "Option::is_none")]
+        frame_pattern: Option<String>,
+        /// Total extracted frames (0..frame_count-1). Engine clamps
+        /// the computed index at `frame_count - 1` so the last frame
+        /// shows for trailing time inside the layer window. Absent
+        /// alongside `frame_pattern`.
+        #[serde(rename = "frameCount", skip_serializing_if = "Option::is_none")]
+        frame_count: Option<usize>,
     },
     ImageOverlay {
         media_id: String,
         width: u32,
         height: u32,
+        /// Source `<img>` path relative to the composition's directory
+        /// (export path). Absent on the preview path — the host's
+        /// `PreviewImageResolver` mounts the `<img>` directly from
+        /// `convertFileSrc(media.path)`.
+        #[serde(rename = "imageSrc", skip_serializing_if = "Option::is_none")]
+        image_src: Option<String>,
     },
 }
 
@@ -330,27 +385,58 @@ fn render_layer_html(layer: &CompositionLayer) -> String {
                 content = escape_html(content),
             )
         }
-        CompositionLayerParams::VideoClip { media_id, width, height, .. } => {
-            // v1 limitation: per-frame source extraction (decision 4 +
-            // section "Phase 1 — source frame extraction") isn't in
-            // H.5 v1. Render as a translucent placeholder sized to
-            // the slot's native dims so the layout/transform composes
-            // correctly even before real pixels arrive.
-            format!(
-                r#"<div class="layer layer-video placeholder" data-layer-id="{id}" data-kind="VideoClip" data-media-id="{m}" style="width: {w}px; height: {h}px;"></div>"#,
+        CompositionLayerParams::VideoClip {
+            media_id,
+            width,
+            height,
+            frame_pattern,
+            ..
+        } => {
+            // Export path emits an `<img>` initialized to frame 0; the
+            // engine swaps the src per `__seek(t)` based on tLayerUs
+            // and the canvas fps in `CompositionState`. Falls back to
+            // a translucent placeholder div if `frame_pattern` is
+            // absent — defensive only; the materializer always sets
+            // it for export-side compositions.
+            match frame_pattern {
+                Some(pattern) => {
+                    let initial_src = pattern.replace("%05d", "00000");
+                    format!(
+                        r#"<div class="layer layer-video" data-layer-id="{id}" data-kind="VideoClip" data-media-id="{m}" style="width: {w}px; height: {h}px;"><img src="{src}" style="width: 100%; height: 100%; object-fit: cover; display: block;"></div>"#,
+                        m = escape_html(media_id),
+                        w = width,
+                        h = height,
+                        src = escape_html(&initial_src),
+                    )
+                }
+                None => format!(
+                    r#"<div class="layer layer-video placeholder" data-layer-id="{id}" data-kind="VideoClip" data-media-id="{m}" style="width: {w}px; height: {h}px;"></div>"#,
+                    m = escape_html(media_id),
+                    w = width,
+                    h = height,
+                ),
+            }
+        }
+        CompositionLayerParams::ImageOverlay {
+            media_id,
+            width,
+            height,
+            image_src,
+        } => match image_src {
+            Some(src) => format!(
+                r#"<div class="layer layer-image" data-layer-id="{id}" data-kind="ImageOverlay" data-media-id="{m}" style="width: {w}px; height: {h}px;"><img src="{src}" style="width: 100%; height: 100%; object-fit: cover; display: block;"></div>"#,
                 m = escape_html(media_id),
                 w = width,
                 h = height,
-            )
-        }
-        CompositionLayerParams::ImageOverlay { media_id, width, height } => {
-            format!(
+                src = escape_html(src),
+            ),
+            None => format!(
                 r#"<div class="layer layer-image placeholder" data-layer-id="{id}" data-kind="ImageOverlay" data-media-id="{m}" style="width: {w}px; height: {h}px;"></div>"#,
                 m = escape_html(media_id),
                 w = width,
                 h = height,
-            )
-        }
+            ),
+        },
     }
 }
 
@@ -414,6 +500,8 @@ mod tests {
     fn build_document_contains_layers_and_state() {
         let state = CompositionState {
             composition_transform: None,
+            fps_num: 30,
+            fps_den: 1,
             width: 800,
             height: 200,
             layers: vec![
@@ -465,6 +553,8 @@ mod tests {
     fn embedded_state_is_script_close_safe() {
         let state = CompositionState {
             composition_transform: None,
+            fps_num: 30,
+            fps_den: 1,
             width: 64,
             height: 64,
             layers: vec![CompositionLayer {

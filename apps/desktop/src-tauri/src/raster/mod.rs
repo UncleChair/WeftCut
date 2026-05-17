@@ -18,6 +18,7 @@
 
 pub mod composition;
 pub mod html_group;
+pub mod source_frames;
 pub mod template;
 
 use std::path::{Path, PathBuf};
@@ -263,6 +264,56 @@ async fn navigate_to_template(
 ) -> Result<(), String> {
     let composed = template.html.replace("__STYLE__", &template.style);
     navigate_to_html(window, &composed).await
+}
+
+/// Navigate the offscreen worker to a local `file://` URL and await
+/// `document.readyState === 'complete'`. Used by the html-render-groups
+/// raster path (F.3): the composition HTML is written to disk so its
+/// inline `<img src="source/...">` references can load sibling files —
+/// `data:` URLs are opaque origins and can't.
+pub async fn navigate_to_file(
+    window: &tauri::WebviewWindow,
+    path: &std::path::Path,
+) -> Result<(), String> {
+    // file:// URL formation — replace Windows backslashes with forward
+    // slashes and prepend `file:///`. Whitespace and reserved chars
+    // need percent-encoding too; use the same minimal escape the
+    // data: encoder uses, applied per path segment so `/` is preserved.
+    let p = path.display().to_string().replace('\\', "/");
+    let url_str = format!("file:///{}", percent_encode_path(&p.trim_start_matches('/')));
+    let url: tauri::Url = url_str
+        .parse()
+        .map_err(|e| format!("parse file URL {url_str:?}: {e}"))?;
+    window
+        .navigate(url)
+        .map_err(|e| format!("navigate: {e}"))?;
+
+    let start = std::time::Instant::now();
+    loop {
+        let state = eval_async(window, "document.readyState".into()).await?;
+        if state.trim().trim_matches('"') == "complete" {
+            return Ok(());
+        }
+        if start.elapsed().as_secs() > 5 {
+            return Err("navigation timeout".into());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+}
+
+/// Percent-encode characters that aren't safe in a file:// path while
+/// keeping `/` and `:` (Windows drive separator) literal.
+fn percent_encode_path(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' | b':' => {
+                out.push(b as char);
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 /// Navigate the offscreen worker to an arbitrary HTML document via a
