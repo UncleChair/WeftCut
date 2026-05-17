@@ -74,9 +74,9 @@ impl Group {
     /// `HtmlGroupHandle` (one composition) instead of per-member
     /// `<Layer>` components.
     pub fn requires_html(&self) -> bool {
-        self.effects
-            .iter()
-            .any(|e| e.enabled && e.kind().requires_html())
+        self.effects.iter().any(|e| {
+            e.enabled && (e.kind().requires_html() || e.has_keyframed_params())
+        })
     }
 }
 

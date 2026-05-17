@@ -29,6 +29,44 @@ impl Effect {
             EffectParams::HtmlTransform { .. } => EffectKind::HtmlTransform,
         }
     }
+
+    /// True iff any `Animated<T>` field on this effect's params is
+    /// actually keyframed (more than one keyframe). Used by the routing
+    /// rule that picks ffmpeg vs html-cap per layer/group: a Blur with
+    /// `radius: Animated::Static(...)` stays on the fast ffmpeg gblur
+    /// path; a Blur with two keyframes routes to html-cap where the
+    /// engine resolves the radius per tick.
+    ///
+    /// `HtmlTransform` always reports `false` here because its kind
+    /// already triggers html-cap regardless (no static-ffmpeg path
+    /// exists for HtmlTransform). Callers should compose with
+    /// `kind().requires_html()` to cover both reasons.
+    pub fn has_keyframed_params(&self) -> bool {
+        match &self.params {
+            EffectParams::Blur { radius } => radius.is_animated(),
+            EffectParams::ColorCorrect {
+                brightness,
+                contrast,
+                saturation,
+                gamma,
+            } => {
+                brightness.is_animated()
+                    || contrast.is_animated()
+                    || saturation.is_animated()
+                    || gamma.is_animated()
+            }
+            EffectParams::ChromaKey {
+                similarity,
+                smoothness,
+                ..
+            } => similarity.is_animated() || smoothness.is_animated(),
+            EffectParams::Speed { factor, .. } => factor.is_animated(),
+            EffectParams::Vignette { amount } => amount.is_animated(),
+            // HtmlTransform is always html-cap via its kind; no need to
+            // report keyframes separately.
+            EffectParams::HtmlTransform { .. } => false,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

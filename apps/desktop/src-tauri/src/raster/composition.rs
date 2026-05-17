@@ -229,6 +229,22 @@ pub const ENGINE_SOURCE: &str = r#"
     compositionEl.style.opacity = String(op);
   }
 
+  // ---- Composition-level CSS filter (blur for v1). --------------------
+  // Clearing to "" (not "blur(0px)") matters: a non-empty filter creates
+  // a containing block that re-parents fixed/abs descendants and can
+  // change paint order. The neutral state must leave the cascade
+  // unchanged.
+  function applyCompositionFilter(tCompUs) {
+    if (!compositionEl) return;
+    var cf = STATE && STATE.compositionFilter;
+    if (!cf) {
+      compositionEl.style.filter = "";
+      return;
+    }
+    var blur = resolveAnimated(cf.blur_px, tCompUs, 0);
+    compositionEl.style.filter = blur > 0 ? "blur(" + blur + "px)" : "";
+  }
+
   function applyLayer(layer, tSeconds) {
     var host = hostOf(layer.id);
     if (!host) return;
@@ -255,6 +271,17 @@ pub const ENGINE_SOURCE: &str = r#"
     host.style.transform =
       "translate(" + tx + "px, " + ty + "px) rotate(" + rot + "deg) scale(" + sx + ", " + sy + ")";
     host.style.opacity = String(op);
+
+    // Per-layer CSS filter (blur for v1). Layer-local time matches
+    // effectTransform; same clear-to-"" discipline as the composition
+    // filter avoids creating a stray containing block at blur=0.
+    var filterStr = "";
+    var ef = layer.effectFilter;
+    if (ef) {
+      var blurLayer = resolveAnimated(ef.blur_px, tLayerUs, 0);
+      if (blurLayer > 0) filterStr = "blur(" + blurLayer + "px)";
+    }
+    host.style.filter = filterStr;
 
     // Export path: VideoClip with a pre-extracted frame pattern.
     // Swap the slot's <img>.src to the right per-tick frame. Preview
@@ -294,6 +321,7 @@ pub const ENGINE_SOURCE: &str = r#"
     if (!STATE) return;
     var tCompUs = Math.floor(tSeconds * 1e6);
     applyCompositionTransform(tCompUs);
+    applyCompositionFilter(tCompUs);
     for (var i = 0; i < STATE.layers.length; i++) {
       applyLayer(STATE.layers[i], tSeconds);
     }
@@ -353,6 +381,20 @@ pub struct CompositionState {
     /// from the JSON (matches the TS `?: CompositionTransform | null`).
     #[serde(rename = "compositionTransform", skip_serializing_if = "Option::is_none")]
     pub composition_transform: Option<CompositionTransform>,
+    /// Group-level CSS filter chain (currently: blur). `None` →
+    /// `style.filter = ""` on `#composition`, matching the no-effect
+    /// ffmpeg render. Mirrors the TS `CompositionState.compositionFilter`.
+    #[serde(rename = "compositionFilter", skip_serializing_if = "Option::is_none")]
+    pub composition_filter: Option<CompositionFilter>,
+}
+
+/// CSS filter chain applied to the composition or to a per-layer host.
+/// v1 carries `blur` only — radius in CSS pixels, animated like every
+/// other track. Mirrors the TS `CompositionFilter`.
+#[derive(Clone, Debug, Serialize)]
+pub struct CompositionFilter {
+    #[serde(rename = "blur_px")]
+    pub blur_px: crate::state::animated::Animated<f64>,
 }
 
 fn default_fps_num() -> u32 {
@@ -393,6 +435,12 @@ pub struct CompositionLayer {
     /// **layer-local** time: t_us=0 is the layer's t_start_us.
     #[serde(rename = "effectTransform", skip_serializing_if = "Option::is_none")]
     pub effect_transform: Option<CompositionTransform>,
+    /// Per-layer CSS filter chain (currently: blur from
+    /// `EffectParams::Blur`). Keyframes are layer-local time, same
+    /// convention as `effect_transform`. `None` → no filter is written
+    /// for this layer's host.
+    #[serde(rename = "effectFilter", skip_serializing_if = "Option::is_none")]
+    pub effect_filter: Option<CompositionFilter>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -712,6 +760,7 @@ mod tests {
     fn build_document_contains_layers_and_state() {
         let state = CompositionState {
             composition_transform: None,
+            composition_filter: None,
             fps_num: 30,
             fps_den: 1,
             width: 800,
@@ -728,6 +777,7 @@ mod tests {
                     scale_x: 1.0,
                     scale_y: 1.0,
                     effect_transform: None,
+                    effect_filter: None,
                     params: CompositionLayerParams::Color {
                         rgba: Rgba8 { r: 255, g: 0, b: 0, a: 255 },
                         width: 100,
@@ -745,6 +795,7 @@ mod tests {
                     scale_x: 1.0,
                     scale_y: 1.0,
                     effect_transform: None,
+                    effect_filter: None,
                     params: CompositionLayerParams::Text {
                         content: "Hi".into(),
                         font_family: "sans".into(),
@@ -771,6 +822,7 @@ mod tests {
 
         let state = CompositionState {
             composition_transform: None,
+            composition_filter: None,
             fps_num: 30,
             fps_den: 1,
             width: 1920,
@@ -786,6 +838,7 @@ mod tests {
                 scale_x: 1.0,
                 scale_y: 1.0,
                 effect_transform: None,
+                    effect_filter: None,
                 params: CompositionLayerParams::Template {
                     template_id: tpl.id().to_string(),
                     style: parsed.style.clone(),
@@ -837,6 +890,7 @@ mod tests {
     fn embedded_state_is_script_close_safe() {
         let state = CompositionState {
             composition_transform: None,
+            composition_filter: None,
             fps_num: 30,
             fps_den: 1,
             width: 64,
@@ -852,6 +906,7 @@ mod tests {
                 scale_x: 1.0,
                 scale_y: 1.0,
                 effect_transform: None,
+                    effect_filter: None,
                 params: CompositionLayerParams::Text {
                     content: "</script><script>alert(1)</script>".into(),
                     font_family: "x".into(),

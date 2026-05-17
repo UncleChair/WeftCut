@@ -20,6 +20,7 @@ use super::node::{FadeKind, IRNode, NodeId, PixFmt};
 use super::target::RenderTarget;
 use crate::state::animated::Animated;
 use crate::state::color::Rgba;
+use crate::state::effect::{Effect, EffectParams};
 use crate::state::ids::{GroupId, LayerId, MediaId};
 use crate::state::layer::{
     AudioParams, ImageOverlayParams, Layer, LayerParams, SubtitlesSource, VideoClipParams,
@@ -491,12 +492,14 @@ fn lower_video_layer(
                 placed
             };
 
+            let with_effects = apply_static_effects(g, &layer.effects, with_alpha);
+
             let x = static_or(&p.transform.x, 0.0) as i32;
             let y = static_or(&p.transform.y, 0.0) as i32;
 
             Ok(g.add_node(IRNode::Overlay {
                 base,
-                top: with_alpha,
+                top: with_effects,
                 x,
                 y,
                 gate_start_us: layer.t_start_us,
@@ -527,9 +530,10 @@ fn lower_video_layer(
                 in_: with_fade,
                 offset_us: layer.t_start_us,
             });
+            let with_effects = apply_static_effects(g, &layer.effects, placed);
             Ok(g.add_node(IRNode::Overlay {
                 base,
-                top: placed,
+                top: with_effects,
                 x: 0,
                 y: 0,
                 gate_start_us: layer.t_start_us,
@@ -572,6 +576,8 @@ fn lower_video_layer(
                 placed
             };
 
+            let with_effects = apply_static_effects(g, &layer.effects, with_alpha);
+
             let x = static_or(&p.transform.x, 0.0) as i32;
             let y = static_or(&p.transform.y, 0.0) as i32;
 
@@ -580,7 +586,7 @@ fn lower_video_layer(
 
             Ok(g.add_node(IRNode::Overlay {
                 base,
-                top: with_alpha,
+                top: with_effects,
                 x,
                 y,
                 gate_start_us: layer.t_start_us,
@@ -669,12 +675,14 @@ fn lower_video_layer(
                 placed
             };
 
+            let with_effects = apply_static_effects(g, &layer.effects, with_alpha);
+
             let x = static_or(&p.transform.x, 0.0) as i32;
             let y = static_or(&p.transform.y, 0.0) as i32;
 
             Ok(g.add_node(IRNode::Overlay {
                 base,
-                top: with_alpha,
+                top: with_effects,
                 x,
                 y,
                 gate_start_us: layer.t_start_us,
@@ -740,6 +748,46 @@ fn incoming_transition_map(project: &Project) -> IncomingTransitions {
         }
     }
     map
+}
+
+/// Walk a layer's effect chain and emit IR filter nodes for each
+/// supported static effect. Returns the extended top NodeId. Keyframed
+/// effects are NOT handled here — `Layer::requires_html` routes
+/// any-keyframed-effect layers to the html-cap composition path before
+/// this is reached, so this helper sees only static-radius effects.
+///
+/// Today's catalog (commit 1): static `Blur` emits `IRNode::Gblur`.
+/// Other static effects (ColorCorrect, etc.) slot in here as their
+/// ffmpeg lowering lands.
+fn apply_static_effects(
+    g: &mut IRGraph,
+    effects: &imbl::Vector<Effect>,
+    in_: NodeId,
+) -> NodeId {
+    let mut top = in_;
+    for e in effects.iter() {
+        if !e.enabled {
+            continue;
+        }
+        match &e.params {
+            EffectParams::Blur { radius } => {
+                let sigma = static_or(radius, 0.0);
+                if sigma > 1e-6 {
+                    top = g.add_node(IRNode::Gblur { in_: top, sigma });
+                }
+            }
+            // Keyframed Blur (or any keyframed effect) shouldn't reach
+            // here — Layer::requires_html routes the whole layer to
+            // html-cap when has_keyframed_params returns true.
+            // HtmlTransform always requires_html → also unreachable.
+            // ColorCorrect / ChromaKey / Speed / Vignette have no
+            // ffmpeg lowering yet — silently skipped, matching pre-
+            // commit-1 behavior; their static cases land here as the
+            // catalog grows.
+            _ => {}
+        }
+    }
+    top
 }
 
 /// Apply a crossfade-in (`fade=alpha=1` ramping 0 → 1) over the incoming
