@@ -234,6 +234,8 @@ const enUS = {
     starting: "Starting export…",
     progress_label:
       "{{percent}}% · frame {{frame}} · {{fps}}fps · {{speed}}x",
+    rastering_label:
+      "{{percent}}% · rastering frame {{frame}}/{{total}}",
     complete: "Exported to {{path}}",
     failed: "Export failed: {{detail}}",
     cancel: "Cancel",
