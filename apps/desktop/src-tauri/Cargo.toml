@@ -95,6 +95,13 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "mul
 # on stable; `async-trait` is the standard workaround and keeps the
 # "add Deepgram in a single file" exit criterion clean.
 async-trait = "0.1"
+# Phase X.1: headless-Chromium-backed export rasterizer. We drive Chrome via
+# CDP from Rust, using `HeadlessExperimental.beginFrame` (single atomic
+# paint+capture + `hasDamage` skip) so export raster doesn't pay WebView2's
+# per-frame `CapturePreview` cost. Default-feature `tokio-runtime`; we
+# disable the audit feature because we don't need it on the CI critical
+# path. Pin range conservative (any 0.7.x).
+chromiumoxide = { version = "0.7", default-features = false, features = ["tokio-runtime"] }
 
 [dev-dependencies]
 insta = { version = "1", features = ["json", "yaml"] }

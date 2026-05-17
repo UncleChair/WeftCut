@@ -17,6 +17,8 @@
 //!            headless Chromium via `chromiumoxide` if WebKitGTK misbehaves).
 
 pub mod composition;
+#[cfg(windows)]
+pub mod chrome;
 pub mod html_group;
 pub mod source_frames;
 pub mod template;
