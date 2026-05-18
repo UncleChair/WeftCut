@@ -688,6 +688,7 @@ pub(crate) fn lower_video_layer(
             // `srcW × srcH` (`apps/desktop/src/preview/dom/handles/VideoClipHandle.ts:254`).
             let scale_x = static_or(&p.transform.scale_x, 1.0);
             let scale_y = static_or(&p.transform.scale_y, 1.0);
+            let metadata_present = media.metadata.video.is_some();
             let (src_w, src_h) = media
                 .metadata
                 .video
@@ -696,6 +697,27 @@ pub(crate) fn lower_video_layer(
                 .unwrap_or((target.width as f64, target.height as f64));
             let target_w = (src_w * scale_x) as u32;
             let target_h = (src_h * scale_y) as u32;
+            // Diagnostic: surfaces which inputs the Scale node was
+            // computed from. A `metadata_present=false` line with
+            // canvas-matching dims means the media item was loaded
+            // without ffprobe metadata (the fallback at `:696` fires),
+            // and the export will appear stretched if the source's
+            // real native dims differ from canvas.
+            tracing::info!(
+                target: "lower",
+                layer_id = %layer.id,
+                media_id = %p.media,
+                metadata_present,
+                src_w,
+                src_h,
+                scale_x,
+                scale_y,
+                target_w,
+                target_h,
+                canvas_w = target.width,
+                canvas_h = target.height,
+                "VideoClip Scale dims",
+            );
             let scaled = g.add_node(IRNode::Scale {
                 in_: dec,
                 width: target_w.max(1),
