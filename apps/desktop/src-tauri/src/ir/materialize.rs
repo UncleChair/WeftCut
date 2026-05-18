@@ -561,21 +561,19 @@ fn composition_params_for_export(
 
     match &layer.params {
         LayerParams::VideoClip(p) => {
-            // Same native-dims lookup as `composition_params` (kept inline
-            // because we also need the media's `path_abs` for extraction).
-            let (w, h, path_abs) = project
+            // Slot dims = CANVAS dims. The ffmpeg gap path does
+            // `scale=canvas_w:canvas_h` to fill the canvas (and the
+            // `<img>` CSS uses `object-fit: fill` so the stretch matches
+            // pixel-for-pixel — see `composition.rs::render_layer_html`).
+            // Pre-fix the slot was sized to source native dims, which
+            // caused a non-1.0 source aspect to leave a strip of chrome's
+            // opaque-white default background at the bottom of the
+            // captured PNG, while the ffmpeg path filled the canvas.
+            // The two paths now agree.
+            let path_abs = project
                 .media_pool
                 .get(&p.media)
-                .map(|m| {
-                    let dims = m
-                        .metadata
-                        .video
-                        .as_ref()
-                        .map(|v| (v.width, v.height))
-                        .unwrap_or((canvas_w, canvas_h));
-                    (dims.0, dims.1, Some(m.path_abs.clone()))
-                })
-                .unwrap_or((canvas_w, canvas_h, None));
+                .map(|m| m.path_abs.clone());
 
             let frame_count = crate::raster::source_frames::frame_count(
                 p.src_in_us,
@@ -601,8 +599,8 @@ fn composition_params_for_export(
                 media_id: p.media.to_string(),
                 src_in_us: p.src_in_us,
                 src_out_us: p.src_out_us,
-                width: w,
-                height: h,
+                width: canvas_w,
+                height: canvas_h,
                 frame_pattern: Some(frame_pattern),
                 frame_count: Some(frame_count),
             }
