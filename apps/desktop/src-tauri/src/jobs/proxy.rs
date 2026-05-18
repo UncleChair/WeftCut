@@ -1,10 +1,12 @@
-//! Proxy generation. Transcodes a video to a 540p H.264/AAC mp4 the libmpv
-//! preview can play smoothly even when the original is 4K. Output sits at
-//! `<cache>/proxies/<file_hash>.mp4`.
+//! Proxy generation. Transcodes a video to a 1080p-capped H.264/AAC mp4
+//! that the PixiJS + WebCodecs renderer decodes for both preview and
+//! export. Output sits at `<cache>/proxies/<file_hash>.mp4`.
 //!
-//! Encoder: libx264 -preset fast -crf 24 + AAC 128k. Software encode is
-//! intentional — proxies should be portable across machines, and the real
-//! HW-encoder selection (Phase 3) is reserved for the user's exports.
+//! Encoder: libx264 -preset fast -crf 22 + AAC 128k, capped at 1080p
+//! height (sources shorter stay native; never upscale). Software
+//! encode is intentional — proxies should be portable across machines,
+//! and the real HW-encoder selection is reserved for the user's
+//! exports.
 
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -16,19 +18,24 @@ use tokio::process::Command;
 use crate::cache::{CacheLayout, cached_ok, discard_temp, promote_temp, temp_path};
 use crate::state::MediaItem;
 
-const PROXY_HEIGHT: u32 = 540;
+/// Maximum proxy height. Sources taller than this scale down; sources
+/// shorter stay at native resolution (no upscaling).
+const PROXY_HEIGHT_CAP: u32 = 1080;
 
 /// Bump whenever the proxy ffmpeg args change in a way that affects
 /// playback / scrub behavior. `io::load_from_dir` compares each
 /// `MediaItem.proxy_format_version` against this constant on open
 /// and invalidates older proxies so the existing background job
-/// re-encodes them. See `docs/preview-scrub.md`.
+/// re-encodes them. See `docs/pixi-renderer-plan.md` (P1).
 ///
 /// Versions:
 ///   0 — pre-versioning / legacy. ~8 s GOP from libx264 defaults.
-///   1 — `-g 30 -keyint_min 30` for ~1 s keyframe spacing; enables
-///       fast scrub in the realtime preview's WebCodecs decoder.
-pub const PROXY_FORMAT_VERSION: u32 = 1;
+///   1 — `-g 30 -keyint_min 30` for ~1 s keyframe spacing; 540p cap.
+///   2 — 1080p cap (replaces 540p) for the PixiJS + WebCodecs renderer
+///       which uses the proxy as the master decode source for preview
+///       AND export. High profile / Level 4.2 / yuv420p so WebCodecs'
+///       `avc1.640028` config decodes universally.
+pub const PROXY_FORMAT_VERSION: u32 = 2;
 
 pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     if !ffmpeg_is_installed() {
@@ -43,11 +50,15 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     // Wipe any prior interrupted attempt.
     let _ = tokio::fs::remove_file(&tmp).await;
 
-    // -vf scale=-2:540 forces 540p tall, width auto-rounded to even (libx264
-    // requires even dims). -c:v libx264 -preset fast -crf 24 = a good
-    // size/speed/quality balance for editor scrubbing. -movflags +faststart
-    // puts the moov atom up front so the file plays before fully written
-    // when re-read. -c:a aac -b:a 128k for compatible audio.
+    // -vf scale=-2:'min(ih,N)' caps height at PROXY_HEIGHT_CAP without
+    // upscaling sources that are already smaller; width auto-rounded to
+    // even (libx264 requires even dims). High profile + Level 4.2 +
+    // yuv420p gives WebCodecs a universally-decodable `avc1.640028`
+    // stream. Dense 1 s GOP (`-g 30 -keyint_min 30`) bounds the
+    // `VideoDecoder` seek-to-IDR-then-decode-forward tail to ~30 frames.
+    // -movflags +faststart puts the moov atom up front so mp4box.js
+    // demuxes the file before it's fully written.
+    let scale_filter = format!("scale=-2:'min(ih,{PROXY_HEIGHT_CAP})'");
     let output = Command::new(ffmpeg_path())
         .args([
             "-y",
@@ -60,18 +71,17 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
         .arg(&media.path_abs)
         .args([
             "-vf",
-            &format!("scale=-2:{PROXY_HEIGHT}"),
+            &scale_filter,
             "-c:v",
             "libx264",
             "-preset",
             "fast",
             "-crf",
-            "24",
-            // Dense keyframes for the realtime preview's `mp4box.seek`
-            // path (`docs/preview-scrub.md`). 30 frames = 1 s at 30 fps;
-            // worst-case decoder-seek waits ~1 s for the next sample
-            // chain to reach the cursor. `keyint_min` blocks scene-
-            // change-driven keyframes from clustering.
+            "22",
+            "-profile:v",
+            "high",
+            "-level:v",
+            "4.2",
             "-g",
             "30",
             "-keyint_min",
