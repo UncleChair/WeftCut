@@ -210,7 +210,18 @@ pub struct ProbeResult {
 /// inputs even when the project's final pixels would still match;
 /// bumping forces a one-time re-raster on the first export after
 /// upgrade so users don't see confusing stale frames.
-const HTML_GROUP_RASTERIZER_VERSION: u32 = 8;
+/// v9 (2026-05-18): VideoClip aspect-ratio preservation. Pre-fix, a
+/// source whose dimensions didn't match the canvas exposed a
+/// disagreement between the ffmpeg gap path (which stretched to canvas
+/// via `scale=W:H`) and the html-cap path (which rendered at source
+/// native dims and left chrome's opaque-white default backdrop in the
+/// un-covered area). Both paths now render at native source aspect,
+/// chrome's backdrop is forced to alpha=0 via
+/// `Emulation.setDefaultBackgroundColorOverride`, and the un-covered
+/// canvas area shows the project background through ffmpeg's overlay
+/// chain. Captured PNG bytes differ for any project whose source
+/// aspect didn't match the canvas.
+const HTML_GROUP_RASTERIZER_VERSION: u32 = 9;
 
 /// Per-group materialization result the IR lower pass consumes.
 /// Shape parallels `TemplateRenderInfo` (`ir::materialize`) so the
