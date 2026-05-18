@@ -153,6 +153,29 @@ async fn run_render_inner(
     }
     std::fs::write(&script_path, &graph_body).context("write filter script")?;
 
+    // Diagnostic: dump the filter graph alongside the export output so
+    // post-mortem inspection is possible. The script_path itself is
+    // a temp file that gets unlinked at the end of this function.
+    // Useful when a "the video looks stretched / wrong-sized" report
+    // comes in: grep the .ffgraph.txt for the relevant `scale=W:H`
+    // clause to see whether the lower pass emitted source dims (post-
+    // 16dbad0 fix) or canvas dims (pre-fix / stale binary).
+    let graph_diag_path = output.with_extension("ffgraph.txt");
+    if let Err(e) = std::fs::write(&graph_diag_path, &graph_body) {
+        tracing::warn!(
+            target: "export",
+            error = %e,
+            path = %graph_diag_path.display(),
+            "failed to dump ffmpeg filter graph for diagnostics; continuing",
+        );
+    } else {
+        tracing::info!(
+            target: "export",
+            path = %graph_diag_path.display(),
+            "ffmpeg filter graph dumped",
+        );
+    }
+
     let mut cmd = Command::new(ffmpeg_path());
     cmd.arg("-y") // overwrite
         .arg("-hide_banner")
