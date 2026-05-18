@@ -180,11 +180,6 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
           // area when the canvas aspect doesn't match the preview
           // panel's. Matches the app theme's slate-800 panel color.
           background: "#1f2937",
-          // Center the inner canvas in the panel (flex + the inner's
-          // transform-origin: center on scale).
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
         }}
       >
         {/* Inner canvas at project-native resolution. CSS scale fits
@@ -195,20 +190,26 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
             smaller than the canvas (e.g. 1920×1032 source in a 1920×1080
             canvas) shows the same black backdrop as the exported mp4
             and the canvas boundary is visible against the lighter
-            surround. Centered via flex on the outer + center-origin
-            scale here; un-scaled width/height stay at the project's
-            native dims so layer absolute coordinates inside still map
-            1:1 to project pixels. */}
+            surround.
+            Positioning: `position: absolute; top: 50%; left: 50%;` puts
+            the inner's TOP-LEFT at the outer's center; the `translate(-50%, -50%)`
+            inside the transform then shifts by half the un-scaled
+            dims so the inner's true center lands on the outer's
+            center. `scale(${fitScale})` is composed with the translate
+            in the same transform — `transform-origin: center` (default)
+            keeps the scale anchored. The inner is absolute-positioned
+            so it doesn't participate in the outer's flex/block layout
+            and can't push the panel to grow on small windows. */}
         <div
           className="preview-dom-canvas"
           style={{
-            position: "relative",
+            position: "absolute",
+            top: "50%",
+            left: "50%",
             width: composition.width,
             height: composition.height,
-            transformOrigin: "center",
-            transform: `scale(${fitScale})`,
+            transform: `translate(-50%, -50%) scale(${fitScale})`,
             background: "#000",
-            flexShrink: 0,
             // Hide live compositor while a rendered preview is
             // active so we don't double-play audio.
             visibility: renderPreviewActive ? "hidden" : "visible",
