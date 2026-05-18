@@ -346,7 +346,8 @@ pub async fn materialize_html_groups(
         };
 
         let mut window_renders: Vec<HtmlGroupRenderInfo> = Vec::new();
-        for window in windows.html_caps.iter() {
+        let window_count = windows.html_caps.len();
+        for (window_index, window) in windows.html_caps.iter().enumerate() {
             let info = materialize_html_group_for_window(
                 app,
                 cache,
@@ -359,6 +360,8 @@ pub async fn materialize_html_groups(
                 fps_num,
                 fps_den,
                 members[0].0.id, // first member id for error reporting
+                window_index,
+                window_count,
             )
             .await?;
             window_renders.push(info);
@@ -407,6 +410,8 @@ async fn materialize_html_group_for_window(
     fps_num: u32,
     fps_den: u32,
     err_layer_id: LayerId,
+    window_index: usize,
+    window_count: usize,
 ) -> Result<HtmlGroupRenderInfo, MaterializeError> {
     use crate::raster::composition::{
         CompositionLayer, CompositionLayerParams, CompositionState, Rgba8,
@@ -477,6 +482,8 @@ async fn materialize_html_group_for_window(
         fps_num,
         fps_den,
         duration_us,
+        window_index,
+        window_count,
     )
     .await
     .map_err(|detail| MaterializeError::Render {

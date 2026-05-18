@@ -59,6 +59,16 @@ pub struct HtmlGroupStartEvent {
     pub width: u32,
     pub height: u32,
     pub duration_us: i64,
+    /// Pass B (`docs/effects-routing-pass-b.md` §B.6): 0-based index of
+    /// the html-cap window inside the group. For pre-Pass-B / one-window
+    /// groups this is 0 with `window_count = 1`.
+    #[serde(default)]
+    pub window_index: usize,
+    /// Total html-cap windows for this group. `window_count > 1` →
+    /// the group was split across multiple animating runs and the UI
+    /// can surface "window 2 of 4" alongside frame progress.
+    #[serde(default = "default_window_count")]
+    pub window_count: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -67,6 +77,10 @@ pub struct HtmlGroupProgressEvent {
     pub group_id: String,
     pub frame: usize,
     pub total: usize,
+    #[serde(default)]
+    pub window_index: usize,
+    #[serde(default = "default_window_count")]
+    pub window_count: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -78,6 +92,14 @@ pub struct HtmlGroupCompleteEvent {
     /// a content-keyed cache hit; the UI can surface the difference
     /// (a cache hit is near-instant; a real raster is seconds-to-minutes).
     pub cached: bool,
+    #[serde(default)]
+    pub window_index: usize,
+    #[serde(default = "default_window_count")]
+    pub window_count: usize,
+}
+
+fn default_window_count() -> usize {
+    1
 }
 
 /// Probe canvas dimensions. Kept in sync with the TS constants
@@ -267,6 +289,8 @@ pub async fn materialize_group(
     fps_num: u32,
     fps_den: u32,
     duration_us: i64,
+    window_index: usize,
+    window_count: usize,
 ) -> Result<HtmlGroupRender, String> {
     let key = state_hash(state);
     let dest_dir = cache.raster_dir(&key);
@@ -289,6 +313,8 @@ pub async fn materialize_group(
                 width: state.width,
                 height: state.height,
                 duration_us,
+                window_index,
+                window_count,
             },
         );
         let _ = app.emit(
@@ -297,6 +323,8 @@ pub async fn materialize_group(
                 group_id: group_id.to_string(),
                 frame_count,
                 cached: true,
+                window_index,
+                window_count,
             },
         );
         return Ok(HtmlGroupRender {
@@ -318,6 +346,8 @@ pub async fn materialize_group(
             width: state.width,
             height: state.height,
             duration_us,
+            window_index,
+            window_count,
         },
     );
 
@@ -440,6 +470,8 @@ pub async fn materialize_group(
                         group_id: group_id_owned.clone(),
                         frame: done,
                         total,
+                        window_index,
+                        window_count,
                     },
                 );
             },
@@ -507,6 +539,8 @@ pub async fn materialize_group(
                     group_id: group_id.to_string(),
                     frame: idx + 1,
                     total: frame_count,
+                    window_index,
+                    window_count,
                 },
             );
         }
@@ -540,6 +574,8 @@ pub async fn materialize_group(
             group_id: group_id.to_string(),
             frame_count,
             cached: false,
+            window_index,
+            window_count,
         },
     );
 

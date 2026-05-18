@@ -529,6 +529,10 @@ function KeyframeList({
         type="button"
         className="button-secondary kf-add"
         onClick={onAddRow}
+        title={t("effects_section.add_kf_hint", {
+          defaultValue:
+            "Pass B export speedup applies when keyframed values return to the effect's identity outside the animating range (e.g. blur radius 0, rotation 0°). A keyframe sequence that ends at a non-identity value forces the entire layer onto html-cap rendering for the tail.",
+        })}
       >
         {t("effects_section.add_kf", { defaultValue: "+ Add keyframe" })}
       </button>

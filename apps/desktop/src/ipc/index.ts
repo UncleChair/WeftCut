@@ -674,12 +674,20 @@ export interface HtmlGroupStartEvent {
   width: number;
   height: number;
   durationUs: number;
+  /// Pass B (`docs/effects-routing-pass-b.md` §B.6): 0-based index of
+  /// the html-cap window inside the group; `windowCount` is the total.
+  /// For pre-Pass-B / one-window groups (`windowCount === 1`), the UI
+  /// can collapse the index display.
+  windowIndex?: number;
+  windowCount?: number;
 }
 
 export interface HtmlGroupProgressEvent {
   groupId: string;
   frame: number;
   total: number;
+  windowIndex?: number;
+  windowCount?: number;
 }
 
 export interface HtmlGroupCompleteEvent {
@@ -688,6 +696,8 @@ export interface HtmlGroupCompleteEvent {
   /// True when the rasterizer short-circuited via a cache hit — UI can
   /// distinguish "0 seconds" from "ran for real".
   cached: boolean;
+  windowIndex?: number;
+  windowCount?: number;
 }
 
 /// Mirrors `ExportPreset` in `export/preset.rs`. Names match the Rust
