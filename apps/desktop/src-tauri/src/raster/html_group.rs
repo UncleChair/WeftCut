@@ -201,7 +201,16 @@ pub struct ProbeResult {
 /// BEFORE navigation (instead of after, which causes reflow during
 /// BeginFrame warmup — commit f9e544a hit this) means the page
 /// loads into the correct viewport from the start.
-const HTML_GROUP_RASTERIZER_VERSION: u32 = 7;
+/// v8 (2026-05-18): Pass B (`docs/effects-routing-pass-b.md`) shipped.
+/// The materializer now narrows the composition to per-window
+/// `[w_start, w_end)` and emits multiple PngSeqs per group. The
+/// CompositionState fed to the rasterizer differs from pre-Pass-B
+/// (negative `t_start_us` on layers that extend before the window;
+/// shorter `duration_us`). Pre-Pass-B cache entries are byte-different
+/// inputs even when the project's final pixels would still match;
+/// bumping forces a one-time re-raster on the first export after
+/// upgrade so users don't see confusing stale frames.
+const HTML_GROUP_RASTERIZER_VERSION: u32 = 8;
 
 /// Per-group materialization result the IR lower pass consumes.
 /// Shape parallels `TemplateRenderInfo` (`ir::materialize`) so the
