@@ -467,12 +467,14 @@ has no corresponding user pull yet; revisit when one lands.
 
 ### Phase B.4 — Per-window materialization + cache key (~2 days)
 
-**Prerequisite check (10 minutes, before any code):** verify the
-existing rasterizer-cache LRU policy walks
-`<cache>/raster/<state_hash>/` regardless of nesting depth. If it
-only enumerates the top level, multi-window cache growth is a real
-bug — not a documented risk. Grep `cache::evict` / equivalent;
-adjust the LRU traversal in the same phase if needed.
+**Prerequisite finding (verified 2026-05-18):** `cache::CacheLayout`
+has **no LRU eviction policy** — it accumulates indefinitely; the
+only cleanup is a user-initiated "Clear cache". So there's no
+traversal-depth bug to fix here. The disk-growth risk for multi-
+window caching is real but its mitigation is the same as for every
+other rasterizer cache entry today (user-driven). Surface a
+settings-page hint when the work for that landing surface happens
+naturally; don't block B.4 on it.
 
 `materialize_html_groups` becomes window-aware.
 
@@ -596,9 +598,12 @@ profiling shows the pattern.
 - **Per-window cache disk growth.** N cache dirs per multi-window
   group vs 1 per envelope group. Active projects with many
   keyframed effects could grow the cache linearly. **Mitigation:**
-  Phase B.4 starts with a prerequisite check verifying the LRU
-  policy walks the per-window cache dirs; document the disk-budget
-  implication in the user-facing settings page.
+  same as every other rasterizer cache entry today — the cache
+  has no LRU (verified 2026-05-18: `cache::CacheLayout` accumulates
+  indefinitely and relies on the user-initiated Clear cache). The
+  per-window dirs follow that same lifetime. Surface the
+  disk-budget implication in the user-facing settings page when
+  that landing surface comes up.
 
 - **Author confusion from the degenerate case.** Users keyframe a
   blur kick expecting fast export, see no improvement, blame the
