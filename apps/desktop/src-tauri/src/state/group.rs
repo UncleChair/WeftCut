@@ -82,6 +82,71 @@ impl Group {
     }
 }
 
+/// Namespace UUID for synthetic singleton groups produced by
+/// [`effective_groups`]. Stable, deterministic, and version-5 (so it
+/// cannot collide with `Uuid::now_v7()` real group ids — different
+/// version bits in the UUID's most-significant byte).
+const NS_SYNTHETIC_GROUP: uuid::Uuid =
+    uuid::uuid!("0a9c1a14-7d8b-5a36-b1f7-1c0ec9a3a2f5");
+
+/// Compute the deterministic synthetic `GroupId` for the given layer.
+/// Same layer → same group id across re-runs; rasterizer cache keys
+/// stay stable.
+///
+/// Used by [`effective_groups`] to manufacture singleton groups for
+/// layers that have keyframed effects but aren't in any real group.
+/// See `docs/effects-routing-pass-b.md` §2 and §11.
+pub fn synthetic_group_id_for_layer(layer_id: LayerId) -> GroupId {
+    uuid::Uuid::new_v5(&NS_SYNTHETIC_GROUP, layer_id.as_bytes())
+}
+
+/// Walk the project's real groups and synthesize a singleton `Group`
+/// for every ungrouped html-required layer. Returns an owned `Vec`
+/// of real-cloned-plus-synthetic groups; downstream code consumes
+/// this in place of `project.groups.iter()`.
+///
+/// Real groups are cloned (cheap — `imbl` structures share). The
+/// synthetic groups have:
+/// - `id` = `synthetic_group_id_for_layer(layer.id)` (deterministic).
+/// - `label` = `None`.
+/// - `members` = `{ layer.id }`.
+/// - `effects` = empty (the keyframed effect lives on the layer
+///   itself; the group is just a routing shell).
+///
+/// Filtering: a layer is "ungrouped" iff it's not a member of any
+/// real group. Layers that ARE members of a real group already get
+/// routed via that group's `html_group_by_layer` entry (`Layer::requires_html`
+/// flips the group's `group_requires_html` result), so synthesizing
+/// would double-route. See `docs/effects-routing-pass-b.md` §2.
+pub fn effective_groups(project: &super::project::Project) -> Vec<Group> {
+    let mut out: Vec<Group> = project.groups.iter().cloned().collect();
+    let in_real_groups: std::collections::HashSet<LayerId> = project
+        .groups
+        .iter()
+        .flat_map(|g| g.members.iter().copied())
+        .collect();
+    for track in project.tracks.iter() {
+        for layer in track.layers.iter() {
+            if !layer.enabled {
+                continue;
+            }
+            if in_real_groups.contains(&layer.id) {
+                continue;
+            }
+            if !layer.requires_html() {
+                continue;
+            }
+            out.push(Group {
+                id: synthetic_group_id_for_layer(layer.id),
+                label: None,
+                members: imbl::OrdSet::unit(layer.id),
+                effects: imbl::Vector::new(),
+            });
+        }
+    }
+    out
+}
+
 /// True when the group should render through the html-cap path —
 /// either because the group's own effect chain has an html-required
 /// effect, or because at least one of its enabled member layers
@@ -635,6 +700,129 @@ mod tests {
         assert!(w.html_caps[0].start_us <= 10_000_000);
         assert_eq!(w.html_caps[0].end_us, 30_000_000);
         assert!(w.static_gaps.is_empty());
+    }
+
+    #[test]
+    fn synthetic_group_id_is_deterministic() {
+        let lid = new_id();
+        let a = synthetic_group_id_for_layer(lid);
+        let b = synthetic_group_id_for_layer(lid);
+        assert_eq!(a, b, "same layer id must produce same synthetic group id");
+        // Different layer → different id.
+        let c = synthetic_group_id_for_layer(new_id());
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn synthetic_group_id_is_v5_not_v7() {
+        // Synthetic ids are v5 (namespace + SHA-1). Real ids are v7
+        // (time-based). The version field in the UUID's 7th byte
+        // distinguishes them and prevents collisions.
+        let lid = new_id(); // v7
+        let sid = synthetic_group_id_for_layer(lid);
+        assert_eq!(lid.get_version_num(), 7);
+        assert_eq!(sid.get_version_num(), 5);
+    }
+
+    #[test]
+    fn effective_groups_synthesizes_for_standalone_keyframed_layer() {
+        use crate::state::project::Project;
+        use crate::state::track::Track;
+
+        let blur_eff = blur(vec![
+            kf(0, 0.0, Interpolation::Linear),
+            kf(5_000_000, 8.0, Interpolation::Linear),
+        ]);
+        let layer = color_layer(0, 10_000_000, vec![blur_eff]);
+        let layer_id = layer.id;
+
+        let mut p = Project::new_blank("test");
+        let track = Track {
+            id: new_id(),
+            label: None,
+            enabled: true,
+            locked: false,
+            removable: true,
+            role: None,
+            transient: false,
+            height_px: 64,
+            layers: imbl::vector![layer],
+        };
+        p.tracks.push_back(track);
+
+        let effective = effective_groups(&p);
+        assert_eq!(effective.len(), 1, "expected one synthetic group");
+        assert_eq!(effective[0].id, synthetic_group_id_for_layer(layer_id));
+        assert_eq!(effective[0].members.len(), 1);
+        assert!(effective[0].members.contains(&layer_id));
+    }
+
+    #[test]
+    fn effective_groups_skips_layer_in_real_group() {
+        use crate::state::project::Project;
+        use crate::state::track::Track;
+
+        let blur_eff = blur(vec![
+            kf(0, 0.0, Interpolation::Linear),
+            kf(5_000_000, 8.0, Interpolation::Linear),
+        ]);
+        let layer = color_layer(0, 10_000_000, vec![blur_eff]);
+        let layer_id = layer.id;
+        let real_group = mk_group(vec![layer_id], vec![]);
+
+        let mut p = Project::new_blank("test");
+        let track = Track {
+            id: new_id(),
+            label: None,
+            enabled: true,
+            locked: false,
+            removable: true,
+            role: None,
+            transient: false,
+            height_px: 64,
+            layers: imbl::vector![layer],
+        };
+        p.tracks.push_back(track);
+        p.groups.push_back(real_group.clone());
+
+        let effective = effective_groups(&p);
+        // One group total: the real one. No synthetic for layer_id
+        // because it's a member of real_group.
+        assert_eq!(effective.len(), 1);
+        assert_eq!(effective[0].id, real_group.id);
+    }
+
+    #[test]
+    fn effective_groups_skips_layer_without_keyframed_effects() {
+        use crate::state::project::Project;
+        use crate::state::track::Track;
+
+        // Static-only blur — not keyframed, not html-required.
+        let static_blur = Effect {
+            id: new_id(),
+            enabled: true,
+            params: EffectParams::Blur {
+                radius: Animated::Static(4.0),
+            },
+        };
+        let layer = color_layer(0, 10_000_000, vec![static_blur]);
+
+        let mut p = Project::new_blank("test");
+        let track = Track {
+            id: new_id(),
+            label: None,
+            enabled: true,
+            locked: false,
+            removable: true,
+            role: None,
+            transient: false,
+            height_px: 64,
+            layers: imbl::vector![layer],
+        };
+        p.tracks.push_back(track);
+
+        let effective = effective_groups(&p);
+        assert!(effective.is_empty(), "static-effect layer needs no synthetic group");
     }
 
     #[test]

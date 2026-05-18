@@ -266,7 +266,11 @@ pub async fn materialize_html_groups(
         }
     }
 
-    for group in project.groups.iter() {
+    // Pass B.2 (`docs/effects-routing-pass-b.md` §2): use
+    // `effective_groups` so ungrouped html-required layers get
+    // materialized via a deterministic synthetic singleton group.
+    let effective = crate::state::effective_groups(project);
+    for group in effective.iter() {
         // Effect-chain redesign: a group materializes for html-cap iff
         // any enabled effect on the group OR any enabled effect on
         // any member layer `requires_html()`. Today the only such
