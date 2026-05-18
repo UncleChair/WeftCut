@@ -636,11 +636,21 @@ fn render_layer_html(layer: &CompositionLayer) -> String {
             // a translucent placeholder div if `frame_pattern` is
             // absent — defensive only; the materializer always sets
             // it for export-side compositions.
+            // `object-fit: fill` (literal stretch) is intentional —
+            // mirrors `lower_video_layer`'s `scale=canvas_w:canvas_h`
+            // on the ffmpeg gap path. Pre-fix used `cover` here, which
+            // preserved source aspect inside the slot — but the slot
+            // was sized to source-native dims and the canvas to canvas
+            // dims, so non-1.0 source aspect left a strip of chrome's
+            // opaque-white default at the bottom. The slot now matches
+            // canvas dims (see materialize.rs::composition_params_for_export)
+            // and `fill` makes the captured pixels agree with the
+            // ffmpeg path.
             match frame_pattern {
                 Some(pattern) => {
                     let initial_src = pattern.replace("%05d", "00000");
                     format!(
-                        r#"<div class="layer layer-video" data-layer-id="{id}" data-kind="VideoClip" data-media-id="{m}" style="width: {w}px; height: {h}px;"><img src="{src}" style="width: 100%; height: 100%; object-fit: cover; display: block;"></div>"#,
+                        r#"<div class="layer layer-video" data-layer-id="{id}" data-kind="VideoClip" data-media-id="{m}" style="width: {w}px; height: {h}px;"><img src="{src}" style="width: 100%; height: 100%; object-fit: fill; display: block;"></div>"#,
                         m = escape_html(media_id),
                         w = width,
                         h = height,
