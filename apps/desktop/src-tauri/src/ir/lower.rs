@@ -676,11 +676,26 @@ pub(crate) fn lower_video_layer(
                 src_out_us: p.src_out_us,
             });
 
-            // Scale: canvas dims, modulated by static transform scale.
+            // Scale: source native dims, modulated by static transform
+            // scale. Pre-fix this stretched to canvas dims regardless of
+            // source aspect — a 1920×1032 source on a 1920×1080 canvas
+            // would render with a ~4.6% vertical stretch and the
+            // composition side rendered at native aspect, so the two
+            // export paths disagreed. Now both paths render at native
+            // dims and the project background shows through the
+            // un-covered canvas area. Matches the standalone preview's
+            // `VideoClipHandle.applyParams` which sizes `<video>` to
+            // `srcW × srcH` (`apps/desktop/src/preview/dom/handles/VideoClipHandle.ts:254`).
             let scale_x = static_or(&p.transform.scale_x, 1.0);
             let scale_y = static_or(&p.transform.scale_y, 1.0);
-            let target_w = ((target.width as f64) * scale_x) as u32;
-            let target_h = ((target.height as f64) * scale_y) as u32;
+            let (src_w, src_h) = media
+                .metadata
+                .video
+                .as_ref()
+                .map(|v| (v.width as f64, v.height as f64))
+                .unwrap_or((target.width as f64, target.height as f64));
+            let target_w = (src_w * scale_x) as u32;
+            let target_h = (src_h * scale_y) as u32;
             let scaled = g.add_node(IRNode::Scale {
                 in_: dec,
                 width: target_w.max(1),
@@ -1768,6 +1783,52 @@ mod tests_lower_range {
             .collect();
         assert_eq!(overlays.len(), 1, "expected single html-cap overlay: {:?}", g.nodes);
         assert_eq!(overlays[0], (0, 30_000_000));
+    }
+
+    #[test]
+    fn video_clip_scale_preserves_source_native_dims() {
+        // Source 1920×1032 on a 1920×1080 canvas: the Scale node
+        // should emit (1920, 1032) — the source's native dims, NOT
+        // canvas dims. Pre-fix `lower_video_layer` stretched to canvas
+        // (`target_w = canvas_w * scale_x`), causing a ~4.6% vertical
+        // stretch and disagreeing with the composition + preview
+        // paths.
+        use crate::state::media::VideoStreamMeta;
+
+        let mut media = mk_media("/m/clip.mp4", 30_000_000, MediaKind::Video);
+        // Populate video metadata — pre-fix this was ignored by
+        // lower_video_layer's Scale, which always stretched to canvas.
+        media.metadata.video = Some(VideoStreamMeta {
+            width: 1920,
+            height: 1032,
+            fps_num: 30,
+            fps_den: 1,
+            codec: "h264".into(),
+            pix_fmt: "yuv420p".into(),
+        });
+        let media_id = media.id;
+        let clip = mk_video_clip(media_id, 0, 30_000_000, 0, 30_000_000);
+        let mut p = mk_project(30_000_000, vec![clip]);
+        p.media_pool.insert(media_id, media);
+
+        let g = lower(
+            &p,
+            target(),
+            &Default::default(),
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("lower should succeed");
+
+        let scale_dims = g.nodes.iter().find_map(|n| match n {
+            IRNode::Scale { width, height, .. } => Some((*width, *height)),
+            _ => None,
+        }).expect("expected a Scale node");
+        assert_eq!(
+            scale_dims,
+            (1920, 1032),
+            "Scale should preserve source aspect (1920×1032), not stretch to canvas (1920×1080)",
+        );
     }
 
     #[test]

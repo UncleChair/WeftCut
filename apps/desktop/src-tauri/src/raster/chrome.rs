@@ -604,6 +604,23 @@ async fn rasterize_chunk_inner(
     .await
     .context("Emulation.setDeviceMetricsOverride")?;
 
+    // Force chrome's compositor backdrop to alpha-0 so any area the
+    // composition doesn't cover (e.g. a 1920×1032 source layer in a
+    // 1920×1080 canvas — 48px of un-covered space) is transparent in
+    // the captured PNG rather than chrome's default opaque white. The
+    // composition's CSS sets `html, body { background: transparent }`,
+    // but chrome's underlying paint surface defaults to white anyway
+    // unless this override is applied. ffmpeg's overlay chain then
+    // composites the PngSeq's alpha-0 regions onto the project base.
+    page.execute(GenericCommand {
+        method: std::borrow::Cow::Borrowed("Emulation.setDefaultBackgroundColorOverride"),
+        params: serde_json::json!({
+            "color": { "r": 0, "g": 0, "b": 0, "a": 0 },
+        }),
+    })
+    .await
+    .context("Emulation.setDefaultBackgroundColorOverride")?;
+
     // Now navigate into the correctly-sized viewport.
     page.execute(GenericCommand {
         method: std::borrow::Cow::Borrowed("Page.navigate"),
