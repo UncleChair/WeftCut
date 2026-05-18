@@ -48,7 +48,7 @@ pub use animated::{Animated, Interpolation, Keyframe};
 pub use color::{ColorSpace, Rgba};
 pub use composition::Composition;
 pub use effect::{Effect, EffectKind, EffectParams};
-pub use group::{Group, group_requires_html, index_groups};
+pub use group::{Group, GroupTimeWindows, TimeWindow, group_requires_html, index_groups};
 pub use ids::{
     CheckpointId, EffectId, GroupId, KeyframeId, LayerId, MarkerId, MediaId, OpId, TrackId,
     TransitionId, new_id,
@@ -61,7 +61,7 @@ pub use layer::{
 pub use marker::Marker;
 pub use media::{AudioStreamMeta, MediaItem, MediaKind, MediaMetadata, VideoStreamMeta};
 pub use project::{Project, ProjectMetadata, ProjectSettings, SCHEMA_VERSION};
-pub use time::{Rational, TimeUs, US_PER_MS, US_PER_SEC};
+pub use time::{Rational, TimeUs, US_PER_MS, US_PER_SEC, snap_frame_ceil, snap_frame_floor};
 pub use track::{Track, TrackRole};
 pub use transform::{BlendMode, Rect, Transform};
 pub use transition::{Transition, TransitionKind};
