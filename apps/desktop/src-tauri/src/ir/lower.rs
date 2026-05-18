@@ -15,9 +15,27 @@ use thiserror::Error;
 use std::collections::HashSet;
 
 use super::graph::IRGraph;
-use super::materialize::{HtmlGroupRenders, InlineSubPaths, TemplateRenders};
+use super::materialize::{HtmlGroupRenderInfo, HtmlGroupRenders, InlineSubPaths, TemplateRenders};
 use super::node::{FadeKind, IRNode, NodeId, PixFmt};
 use super::target::RenderTarget;
+
+/// Per-effective-group precomputed plan. Built once at the top of
+/// [`lower`], dispatched when the first member of the group is hit
+/// in the track walk.
+struct GroupRenderPlan<'a> {
+    /// Visual member layers in canonical order (track index then
+    /// `t_start_us`), matching the order `materialize_html_groups`
+    /// uses so per-window decompositions align.
+    members: Vec<&'a Layer>,
+    /// `(html_caps, static_gaps)` decomposition over the group's
+    /// `[group_t_start, group_t_end)` lifetime.
+    windows: crate::state::group::GroupTimeWindows,
+    /// One `HtmlGroupRenderInfo` per `html_caps` entry, populated by
+    /// `materialize_html_groups`. Length must equal `windows.html_caps`
+    /// (verified in the pre-pass; otherwise
+    /// `LowerError::HtmlGroupNotMaterialized`).
+    render_infos: Vec<HtmlGroupRenderInfo>,
+}
 use crate::state::animated::Animated;
 use crate::state::color::Rgba;
 use crate::state::effect::{Effect, EffectParams};
@@ -77,15 +95,24 @@ pub fn lower(
     let incoming = incoming_transition_map(project);
 
     // Phase H.5 — html-render groups (`docs/html-render-groups.md`):
-    // members of `Html`-mode groups are NOT lowered individually on the
-    // video side; their visual content is inside the pre-materialized
-    // composition PNG sequence. Build a `layer_id → group_id` lookup
-    // for fast detection and track which group overlays have been
-    // emitted so members after the first are silently skipped.
-    let html_group_by_layer: HashMap<LayerId, GroupId> = {
-        // Layer-id → does-this-layer-require-html. Built once so the
-        // per-group decision below is O(members) instead of walking
-        // every track per group.
+    // members of an html-rendering group are NOT lowered individually
+    // on the video side; their visual content is inside the
+    // pre-materialized composition PNG sequence.
+    //
+    // Pass B (`docs/effects-routing-pass-b.md`): one group can produce
+    // MULTIPLE PngSeq overlays (one per html-cap window) PLUS static
+    // gap fallthroughs via `lower_group_static_gap`. The pre-pass
+    // below computes per-group plans up front; the layer walk just
+    // dispatches the plan when it hits the first member.
+    let layer_lookup: HashMap<LayerId, &Layer> = project
+        .tracks
+        .iter()
+        .flat_map(|t| t.layers.iter())
+        .map(|l| (l.id, l))
+        .collect();
+    let mut html_group_by_layer: HashMap<LayerId, GroupId> = HashMap::new();
+    let mut group_plans: HashMap<GroupId, GroupRenderPlan<'_>> = HashMap::new();
+    {
         let mut layer_html: HashMap<LayerId, bool> = HashMap::new();
         for t in project.tracks.iter() {
             for l in t.layers.iter() {
@@ -96,29 +123,72 @@ pub fn lower(
         }
         // Pass B.2 (`docs/effects-routing-pass-b.md` §2): walk
         // `effective_groups` — real groups plus synthetic singletons
-        // for ungrouped html-required layers — so a standalone
-        // keyframed-effect layer isn't silently dropped to ffmpeg
-        // where `apply_static_effects` would skip its keyframed
-        // entries.
+        // for ungrouped html-required layers.
         let effective = crate::state::effective_groups(project);
-        let mut m = HashMap::new();
-        for g in effective.iter() {
-            // Effect-chain redesign (2026-05-17): a group renders via
-            // html-cap iff any enabled effect on the group OR any
-            // member layer has kind `requires_html()` (today:
-            // HtmlTransform).
-            let needs_html = crate::state::group_requires_html(g, |lid| {
+        for g in effective.into_iter() {
+            let needs_html = crate::state::group_requires_html(&g, |lid| {
                 *layer_html.get(&lid).unwrap_or(&false)
             });
             if !needs_html {
                 continue;
             }
+            // Collect visual member refs in canonical (track-index then
+            // t_start_us) order so the materialize side's same iteration
+            // produces matching windows.
+            let mut visual_members: Vec<&Layer> = Vec::new();
             for &lid in g.members.iter() {
-                m.insert(lid, g.id);
+                let Some(&layer) = layer_lookup.get(&lid) else {
+                    continue;
+                };
+                if !layer.enabled {
+                    continue;
+                }
+                if matches!(layer.params, LayerParams::Audio(_) | LayerParams::Subtitles(_)) {
+                    continue;
+                }
+                visual_members.push(layer);
             }
+            // Sort by track index then t_start_us — same as materialize.rs.
+            // Build a layer-id → track-index map only for this group's members.
+            let mut track_index: HashMap<LayerId, usize> = HashMap::new();
+            for (idx, track) in project.tracks.iter().enumerate() {
+                for layer in track.layers.iter() {
+                    track_index.insert(layer.id, idx);
+                }
+            }
+            visual_members.sort_by(|a, b| {
+                let ia = *track_index.get(&a.id).unwrap_or(&0);
+                let ib = *track_index.get(&b.id).unwrap_or(&0);
+                ia.cmp(&ib).then(a.t_start_us.cmp(&b.t_start_us))
+            });
+            if visual_members.is_empty() {
+                continue;
+            }
+            let Some(windows) = g.time_windows(&visual_members, project.composition.fps) else {
+                continue;
+            };
+            // Match the materialize map's render_infos to the html_cap
+            // windows. Mismatch (or missing) → HtmlGroupNotMaterialized.
+            let render_infos = html_group_renders
+                .get(&g.id)
+                .cloned()
+                .unwrap_or_default();
+            if render_infos.len() != windows.html_caps.len() {
+                return Err(LowerError::HtmlGroupNotMaterialized(g.id));
+            }
+            for &lid in g.members.iter() {
+                html_group_by_layer.insert(lid, g.id);
+            }
+            group_plans.insert(
+                g.id,
+                GroupRenderPlan {
+                    members: visual_members,
+                    windows,
+                    render_infos,
+                },
+            );
         }
-        m
-    };
+    }
     let mut emitted_html_groups: HashSet<GroupId> = HashSet::new();
 
     // A/B-roll v2 (V.5): walk all tracks (no track-kind filter) and
@@ -154,21 +224,42 @@ pub fn lower(
                 | LayerParams::Text(_)
                 | LayerParams::Template(_)
                 | LayerParams::Subtitles(_) => {
-                    // Html-render group member? Emit one PngSeq overlay
-                    // for the whole group on the first encountered
-                    // member; subsequent members are part of that
-                    // composition and skipped here.
+                    // Html-render group member? On the first member
+                    // encountered, emit ALL the per-window PngSeq
+                    // overlays AND fall through to the static-gap
+                    // lowering helper for the gaps. Subsequent members
+                    // of the same group are skipped here.
                     if let Some(group_id) = html_group_by_layer.get(&layer.id) {
                         if !emitted_html_groups.contains(group_id) {
-                            let info = html_group_renders.get(group_id).ok_or(
+                            let plan = group_plans.get(group_id).ok_or(
                                 LowerError::HtmlGroupNotMaterialized(*group_id),
                             )?;
-                            current_v = lower_html_group_overlay(
-                                &mut g,
-                                current_v,
-                                info,
-                                target,
-                            );
+                            // One PngSeq overlay per html-cap window,
+                            // gated to that window's bounds.
+                            for info in plan.render_infos.iter() {
+                                current_v = lower_html_group_overlay(
+                                    &mut g,
+                                    current_v,
+                                    info,
+                                    target,
+                                );
+                            }
+                            // Per-member overlays for each static gap.
+                            // Identity-held effects make these no-op in
+                            // pixel terms; the ffmpeg path is just
+                            // faster than html-cap for the gap windows.
+                            for gap in plan.windows.static_gaps.iter() {
+                                current_v = lower_group_static_gap(
+                                    &mut g,
+                                    current_v,
+                                    &plan.members,
+                                    *gap,
+                                    project,
+                                    target,
+                                    inline_sub_paths,
+                                    template_renders,
+                                )?;
+                            }
                             emitted_html_groups.insert(*group_id);
                         }
                         continue;
@@ -1515,6 +1606,168 @@ mod tests_lower_range {
             _ => None,
         }).expect("expected an Overlay node");
         assert_eq!(gate, (15_000_000, 25_000_000));
+    }
+
+    #[test]
+    fn multi_window_blur_kick_emits_pngseq_overlay_plus_gap_overlays() {
+        // Pass B end-to-end through lower:
+        //   30s VideoClip with Blur radius [14:0, 15:8, 16:0] (Linear).
+        //   - Animating run: [14, 16).
+        //   - Held tail at sigma=0 outside → identity → static gaps survive.
+        //   - Expect: 1 html-cap overlay [14, 16) + 2 static-gap overlays
+        //     ([0, 14) and [16, 30)) on top of the base.
+        use crate::ir::materialize::HtmlGroupRenderInfo;
+        use crate::state::animated::{Animated, Interpolation, Keyframe};
+        use crate::state::effect::{Effect, EffectParams};
+        use crate::state::group::synthetic_group_id_for_layer;
+
+        let media = mk_media("/m/clip.mp4", 30_000_000, MediaKind::Video);
+        let media_id = media.id;
+        let mut clip = mk_video_clip(media_id, 0, 30_000_000, 0, 30_000_000);
+        clip.effects = imbl::vector![Effect {
+            id: new_id(),
+            enabled: true,
+            params: EffectParams::Blur {
+                radius: Animated::Keyframed(imbl::vector![
+                    Keyframe { id: new_id(), t_us: 14_000_000, value: 0.0, interp: Interpolation::Linear },
+                    Keyframe { id: new_id(), t_us: 15_000_000, value: 8.0, interp: Interpolation::Linear },
+                    Keyframe { id: new_id(), t_us: 16_000_000, value: 0.0, interp: Interpolation::Linear },
+                ]),
+            },
+        }];
+        let clip_id = clip.id;
+        let mut p = mk_project(30_000_000, vec![clip]);
+        p.media_pool.insert(media_id, media);
+
+        // Inject a stub HtmlGroupRenders entry for the synthetic group's
+        // single html-cap window so lower doesn't bail with
+        // HtmlGroupNotMaterialized. The pattern_path / frame_count are
+        // synthetic — lower just embeds them in the PngSeq IR node.
+        let synth_gid = synthetic_group_id_for_layer(clip_id);
+        let mut html_renders: HtmlGroupRenders = Default::default();
+        html_renders.insert(
+            synth_gid,
+            vec![HtmlGroupRenderInfo {
+                pattern_path: std::path::PathBuf::from("/tmp/stub/frame_%05d.png"),
+                frame_count: 60, // 2s @ 30fps
+                fps_num: 30,
+                fps_den: 1,
+                duration_us: 2_000_000,
+                width: 1920,
+                height: 1080,
+                t_start_us: 14_000_000,
+            }],
+        );
+
+        let g = lower(
+            &p,
+            target(),
+            &Default::default(),
+            &Default::default(),
+            &html_renders,
+        )
+        .expect("lower should succeed with single-window html_renders");
+
+        // Inspect emitted overlays. We expect:
+        //  - 1 base Color
+        //  - 1 PngSeq overlay gated to [14_000_000, 16_000_000) (html-cap)
+        //  - 2 VideoClip overlays for the [0, 14) and [16, 30) static gaps
+        let overlays: Vec<_> = g
+            .nodes
+            .iter()
+            .filter_map(|n| match n {
+                IRNode::Overlay { gate_start_us, gate_end_us, .. } => {
+                    Some((*gate_start_us, *gate_end_us))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(overlays.len(), 3, "expected 1 html-cap + 2 gap overlays: {:?}", g.nodes);
+        // The overlays' gates should cover [0,14), [14,16), [16,30) when
+        // sorted by start.
+        let mut gates = overlays.clone();
+        gates.sort_by_key(|(s, _)| *s);
+        assert_eq!(gates[0], (0, 14_000_000));
+        assert_eq!(gates[1], (14_000_000, 16_000_000));
+        assert_eq!(gates[2], (16_000_000, 30_000_000));
+
+        // PngSeq input registered.
+        assert!(g.inputs.iter().any(|s| s.framerate.is_some()));
+        // No Gblur — identity-held blur sigma=0 falls below the threshold.
+        let has_gblur = g.nodes.iter().any(|n| matches!(n, IRNode::Gblur { .. }));
+        assert!(!has_gblur, "identity-held blur should not emit Gblur");
+    }
+
+    #[test]
+    fn non_identity_tail_routes_whole_group_via_html_cap() {
+        // HtmlTransform rotation [0:0deg, 5:90deg] on a 30s layer.
+        // The held value past t=5 is 90deg (non-identity) → the gap
+        // absorbs into html-cap. Expect: 1 big html-cap overlay
+        // covering the full group lifetime, no static gaps.
+        use crate::ir::materialize::HtmlGroupRenderInfo;
+        use crate::state::animated::{Animated, Interpolation, Keyframe};
+        use crate::state::effect::{Effect, EffectParams};
+        use crate::state::group::synthetic_group_id_for_layer;
+
+        let media = mk_media("/m/clip.mp4", 30_000_000, MediaKind::Video);
+        let media_id = media.id;
+        let mut clip = mk_video_clip(media_id, 0, 30_000_000, 0, 30_000_000);
+        clip.effects = imbl::vector![Effect {
+            id: new_id(),
+            enabled: true,
+            params: EffectParams::HtmlTransform {
+                x: Animated::Static(0.0),
+                y: Animated::Static(0.0),
+                scale_x: Animated::Static(1.0),
+                scale_y: Animated::Static(1.0),
+                rotation_deg: Animated::Keyframed(imbl::vector![
+                    Keyframe { id: new_id(), t_us: 0, value: 0.0, interp: Interpolation::Linear },
+                    Keyframe { id: new_id(), t_us: 5_000_000, value: 90.0, interp: Interpolation::Linear },
+                ]),
+                opacity: Animated::Static(1.0),
+            },
+        }];
+        let clip_id = clip.id;
+        let mut p = mk_project(30_000_000, vec![clip]);
+        p.media_pool.insert(media_id, media);
+
+        let synth_gid = synthetic_group_id_for_layer(clip_id);
+        let mut html_renders: HtmlGroupRenders = Default::default();
+        html_renders.insert(
+            synth_gid,
+            vec![HtmlGroupRenderInfo {
+                pattern_path: std::path::PathBuf::from("/tmp/stub/frame_%05d.png"),
+                frame_count: 900, // 30s @ 30fps
+                fps_num: 30,
+                fps_den: 1,
+                duration_us: 30_000_000,
+                width: 1920,
+                height: 1080,
+                t_start_us: 0,
+            }],
+        );
+
+        let g = lower(
+            &p,
+            target(),
+            &Default::default(),
+            &Default::default(),
+            &html_renders,
+        )
+        .expect("lower should succeed");
+
+        let overlays: Vec<_> = g
+            .nodes
+            .iter()
+            .filter_map(|n| match n {
+                IRNode::Overlay { gate_start_us, gate_end_us, .. } => {
+                    Some((*gate_start_us, *gate_end_us))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(overlays.len(), 1, "expected single html-cap overlay: {:?}", g.nodes);
+        assert_eq!(overlays[0], (0, 30_000_000));
     }
 
     #[test]

@@ -61,7 +61,14 @@ pub struct HtmlGroupRenderInfo {
     pub t_start_us: i64,
 }
 
-pub type HtmlGroupRenders = imbl::HashMap<crate::state::ids::GroupId, HtmlGroupRenderInfo>;
+/// Pass B (`docs/effects-routing-pass-b.md` §6): per-group vec of
+/// per-html-cap-window render infos. Each entry's `t_start_us` is
+/// that window's start in main-timeline, and `duration_us` is the
+/// window's length — so the lower pass can emit one
+/// gated-Overlay-of-PngSeq per entry. The static gaps between
+/// windows are NOT stored here; the lower pass recomputes them via
+/// `Group::time_windows` and dispatches via `lower_group_static_gap`.
+pub type HtmlGroupRenders = imbl::HashMap<crate::state::ids::GroupId, Vec<HtmlGroupRenderInfo>>;
 
 #[derive(Debug, Error)]
 pub enum MaterializeError {
@@ -327,102 +334,169 @@ pub async fn materialize_html_groups(
         }
         members.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.t_start_us.cmp(&b.0.t_start_us)));
 
-        let group_t_start_us = members
-            .iter()
-            .map(|(l, _)| l.t_start_us)
-            .min()
-            .unwrap_or(0);
-        let group_t_end_us = members
-            .iter()
-            .map(|(l, _)| l.t_end_us)
-            .max()
-            .unwrap_or(group_t_start_us);
-        let duration_us = (group_t_end_us - group_t_start_us).max(1);
-
-        // Distill composition state. Builds the per-layer
-        // `CompositionLayerParams` AND the parallel list of media
-        // sources to pre-extract — VideoClip frame patterns +
-        // ImageOverlay normalized images live next to the
-        // composition.html in the per-group cache dir.
-        let mut sources: Vec<html_group::VideoSource> = Vec::new();
-        let layers: Vec<CompositionLayer> = members
-            .iter()
-            .enumerate()
-            .map(|(idx, (l, _))| {
-                let params = composition_params_for_export(
-                    l, project, canvas_w, canvas_h, fps_num, fps_den, &mut sources,
-                );
-                let (opacity, x, y, scale_x, scale_y) = position_for(&l.params);
-                let effect_transform = pick_html_transform(l.effects.iter());
-                let effect_filter = pick_blur(l.effects.iter());
-                CompositionLayer {
-                    id: l.id.to_string(),
-                    z: idx as u32,
-                    t_start_us: l.t_start_us - group_t_start_us,
-                    t_end_us: l.t_end_us - group_t_start_us,
-                    opacity,
-                    x,
-                    y,
-                    scale_x,
-                    scale_y,
-                    params,
-                    effect_transform,
-                    effect_filter,
-                }
-            })
-            .collect();
-
-        let composition_transform = pick_composition_transform(group);
-        let composition_filter = pick_blur(group.effects.iter());
-        let state = CompositionState {
-            width: canvas_w,
-            height: canvas_h,
-            fps_num,
-            fps_den,
-            layers,
-            composition_transform,
-            composition_filter,
+        // Pass B (`docs/effects-routing-pass-b.md` §3-§5): decompose
+        // the group's lifetime into html-cap windows + static gaps.
+        // Materialize one PngSeq per html-cap window; the static gaps
+        // get rendered later by `lower_group_static_gap`.
+        let member_refs: Vec<&crate::state::layer::Layer> =
+            members.iter().map(|(l, _)| *l).collect();
+        let windows = match group.time_windows(&member_refs, project.composition.fps) {
+            Some(w) => w,
+            None => continue,
         };
 
-        let group_id_str = group.id.to_string();
-        let render = html_group::materialize_group(
-            app,
-            cache,
-            &group_id_str,
-            &state,
-            &sources,
-            fps_num,
-            fps_den,
-            duration_us,
-        )
-        .await
-        .map_err(|detail| MaterializeError::Render {
-            // No layer id here — the error is per-group. Surface the
-            // group id as the "layer" slot for consistency with the
-            // existing error shape until a richer variant lands.
-            layer: members[0].0.id,
-            detail: format!("html-group {}: {detail}", group_id_str),
-        })?;
+        let mut window_renders: Vec<HtmlGroupRenderInfo> = Vec::new();
+        for window in windows.html_caps.iter() {
+            let info = materialize_html_group_for_window(
+                app,
+                cache,
+                project,
+                group,
+                &member_refs,
+                *window,
+                canvas_w,
+                canvas_h,
+                fps_num,
+                fps_den,
+                members[0].0.id, // first member id for error reporting
+            )
+            .await?;
+            window_renders.push(info);
+        }
 
-        out.insert(
-            group.id,
-            HtmlGroupRenderInfo {
-                pattern_path: render.pattern_path,
-                frame_count: render.frame_count,
-                fps_num: render.fps_num,
-                fps_den: render.fps_den,
-                duration_us: render.duration_us,
-                width: render.width,
-                height: render.height,
-                t_start_us: group_t_start_us,
-            },
-        );
+        if !window_renders.is_empty() {
+            out.insert(group.id, window_renders);
+        }
 
         // Suppress unused-Rgba8 warning when the only constructed
         // variant is via composition_params below.
         let _ = std::marker::PhantomData::<Rgba8>;
     }
     Ok(out)
+}
+
+/// Per-window materialization: build a `CompositionState` covering
+/// just `[window.start_us, window.end_us)` of the group's lifetime,
+/// pre-extract source frames, and drive the html-group raster.
+/// Returns one `HtmlGroupRenderInfo` whose `t_start_us` = window
+/// start and `duration_us` = window length (NOT the whole group).
+///
+/// Window-local rebase (`docs/effects-routing-pass-b.md` §8): every
+/// composition layer's `t_start_us` / `t_end_us` is set relative to
+/// `window.start_us`. Layers whose lifetime extends OUTSIDE the
+/// window get negative `t_start_us` (or `t_end_us` past the
+/// window's end); the engine's visibility check + tLayerUs math
+/// already handle this correctly because keyframes stay in
+/// layer-local time (verified against `engine.ts:475` —
+/// `tLayerUs = tUs - layer.t_start_us`).
+///
+/// Source pre-extraction is at the full layer source span (v1
+/// limitation): each window's cache dir gets its own copy of the
+/// source frames. Engine's frame-index lookup is layer-start-
+/// relative, so the full extraction is what it expects.
+/// Cross-window extract sharing is a follow-up optimization.
+async fn materialize_html_group_for_window(
+    app: &tauri::AppHandle,
+    cache: &CacheLayout,
+    project: &Project,
+    group: &crate::state::group::Group,
+    member_refs: &[&crate::state::layer::Layer],
+    window: crate::state::group::TimeWindow,
+    canvas_w: u32,
+    canvas_h: u32,
+    fps_num: u32,
+    fps_den: u32,
+    err_layer_id: LayerId,
+) -> Result<HtmlGroupRenderInfo, MaterializeError> {
+    use crate::raster::composition::{
+        CompositionLayer, CompositionLayerParams, CompositionState, Rgba8,
+    };
+    use crate::raster::html_group;
+
+    let _ = std::marker::PhantomData::<(CompositionLayerParams, Rgba8)>;
+
+    let duration_us = window.duration_us().max(1);
+    let mut sources: Vec<html_group::VideoSource> = Vec::new();
+    let layers: Vec<CompositionLayer> = member_refs
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, l)| {
+            // Skip members that don't overlap the window. The engine's
+            // visibility check would skip them anyway, but excluding
+            // them keeps the composition state smaller and avoids
+            // unnecessary source extraction.
+            if l.t_end_us <= window.start_us || l.t_start_us >= window.end_us {
+                return None;
+            }
+            let params = composition_params_for_export(
+                l, project, canvas_w, canvas_h, fps_num, fps_den, &mut sources,
+            );
+            let (opacity, x, y, scale_x, scale_y) = position_for(&l.params);
+            let effect_transform = pick_html_transform(l.effects.iter());
+            let effect_filter = pick_blur(l.effects.iter());
+            Some(CompositionLayer {
+                id: l.id.to_string(),
+                z: idx as u32,
+                // Window-local rebase: negative values are OK and
+                // intentional — the engine's `tUs >= layer.t_start_us`
+                // visibility check still works, and `tLayerUs` math
+                // resolves layer-local keyframes correctly.
+                t_start_us: l.t_start_us - window.start_us,
+                t_end_us: l.t_end_us - window.start_us,
+                opacity,
+                x,
+                y,
+                scale_x,
+                scale_y,
+                params,
+                effect_transform,
+                effect_filter,
+            })
+        })
+        .collect();
+
+    let composition_transform = pick_composition_transform(group);
+    let composition_filter = pick_blur(group.effects.iter());
+    let state = CompositionState {
+        width: canvas_w,
+        height: canvas_h,
+        fps_num,
+        fps_den,
+        layers,
+        composition_transform,
+        composition_filter,
+    };
+
+    let group_id_str = group.id.to_string();
+    let render = html_group::materialize_group(
+        app,
+        cache,
+        &group_id_str,
+        &state,
+        &sources,
+        fps_num,
+        fps_den,
+        duration_us,
+    )
+    .await
+    .map_err(|detail| MaterializeError::Render {
+        layer: err_layer_id,
+        detail: format!(
+            "html-group {} window [{}, {}): {detail}",
+            group_id_str, window.start_us, window.end_us,
+        ),
+    })?;
+
+    Ok(HtmlGroupRenderInfo {
+        pattern_path: render.pattern_path,
+        frame_count: render.frame_count,
+        fps_num: render.fps_num,
+        fps_den: render.fps_den,
+        duration_us: render.duration_us,
+        width: render.width,
+        height: render.height,
+        t_start_us: window.start_us,
+    })
 }
 
 fn position_for(params: &crate::state::layer::LayerParams) -> (f64, f64, f64, f64, f64) {
