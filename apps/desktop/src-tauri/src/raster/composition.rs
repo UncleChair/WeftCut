@@ -536,7 +536,15 @@ pub struct Rgba8 {
 
 const COMPOSITION_BASE_STYLES: &str = r#"
 html, body {
-  background: transparent;
+  /* Opaque BLACK matches the chrome backdrop set by
+     `Emulation.setDefaultBackgroundColorOverride` in
+     `raster/chrome.rs::rasterize_chunk_inner` and the ffmpeg
+     base `Color { rgba: project.composition.background }`
+     (project bg defaults to `Rgba::BLACK`). The un-covered area
+     of a slot smaller than the canvas (e.g. 1920×1032 source on
+     a 1920×1080 canvas → 48px gap) is captured as black in the
+     PNG so both render paths agree on the canvas color. */
+  background: #000;
   margin: 0;
   padding: 0;
   /* Suppress scrollbars unconditionally — `#composition` is sized
@@ -550,7 +558,7 @@ html, body {
   width: 100%;
   height: 100%;
 }
-#composition { position: relative; overflow: hidden; background: transparent; }
+#composition { position: relative; overflow: hidden; background: #000; }
 .layer {
   position: absolute;
   top: 0;

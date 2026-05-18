@@ -604,18 +604,28 @@ async fn rasterize_chunk_inner(
     .await
     .context("Emulation.setDeviceMetricsOverride")?;
 
-    // Force chrome's compositor backdrop to alpha-0 so any area the
-    // composition doesn't cover (e.g. a 1920×1032 source layer in a
-    // 1920×1080 canvas — 48px of un-covered space) is transparent in
-    // the captured PNG rather than chrome's default opaque white. The
-    // composition's CSS sets `html, body { background: transparent }`,
-    // but chrome's underlying paint surface defaults to white anyway
-    // unless this override is applied. ffmpeg's overlay chain then
-    // composites the PngSeq's alpha-0 regions onto the project base.
+    // Force chrome's compositor backdrop to OPAQUE BLACK. The
+    // un-covered composition area (e.g. a 1920×1032 source slot in a
+    // 1920×1080 canvas → 48px of un-covered space at the bottom)
+    // shows up in the captured PNG as black pixels, which matches the
+    // ffmpeg gap path's `Color { rgba: project.composition.background }`
+    // base (project bg defaults to `Rgba::BLACK`). Both render paths
+    // produce the same canvas color so a non-canvas-aspect source
+    // doesn't visibly disagree across the html-cap window vs. the
+    // surrounding gap segments.
+    //
+    // We previously set alpha=0 here for transparent composition
+    // mixing, but `Emulation.setDefaultBackgroundColorOverride` with
+    // alpha=0 didn't take effect reliably across chrome-headless-shell
+    // versions — chrome kept painting opaque white in the un-covered
+    // region. Opaque-black is robust to that quirk. Future
+    // composition-level transparency mixing (e.g. multiple html-cap
+    // groups stacking with alpha blending) is a v2 concern; for now
+    // single-group + black-background covers the shipped use case.
     page.execute(GenericCommand {
         method: std::borrow::Cow::Borrowed("Emulation.setDefaultBackgroundColorOverride"),
         params: serde_json::json!({
-            "color": { "r": 0, "g": 0, "b": 0, "a": 0 },
+            "color": { "r": 0, "g": 0, "b": 0, "a": 255 },
         }),
     })
     .await

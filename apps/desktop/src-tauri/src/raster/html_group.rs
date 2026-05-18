@@ -221,7 +221,14 @@ pub struct ProbeResult {
 /// canvas area shows the project background through ffmpeg's overlay
 /// chain. Captured PNG bytes differ for any project whose source
 /// aspect didn't match the canvas.
-const HTML_GROUP_RASTERIZER_VERSION: u32 = 9;
+/// v10 (2026-05-18): Chrome backdrop + composition body background
+/// switch from transparent to OPAQUE BLACK. Matches the ffmpeg base
+/// (project bg defaults to `Rgba::BLACK`) so both render paths show
+/// the same canvas color. The alpha-0 override from v9 didn't take
+/// effect reliably across chrome-headless-shell versions — chrome
+/// kept painting opaque white. Opaque-black is robust to that quirk;
+/// future composition-level transparency mixing is a v2 concern.
+const HTML_GROUP_RASTERIZER_VERSION: u32 = 10;
 
 /// Per-group materialization result the IR lower pass consumes.
 /// Shape parallels `TemplateRenderInfo` (`ir::materialize`) so the
