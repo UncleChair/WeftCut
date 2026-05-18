@@ -180,6 +180,11 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
           // area when the canvas aspect doesn't match the preview
           // panel's. Matches the app theme's slate-800 panel color.
           background: "#1f2937",
+          // Center the inner canvas in the panel (flex + the inner's
+          // transform-origin: center on scale).
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
         }}
       >
         {/* Inner canvas at project-native resolution. CSS scale fits
@@ -190,18 +195,20 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
             smaller than the canvas (e.g. 1920×1032 source in a 1920×1080
             canvas) shows the same black backdrop as the exported mp4
             and the canvas boundary is visible against the lighter
-            surround. */}
+            surround. Centered via flex on the outer + center-origin
+            scale here; un-scaled width/height stay at the project's
+            native dims so layer absolute coordinates inside still map
+            1:1 to project pixels. */}
         <div
           className="preview-dom-canvas"
           style={{
-            position: "absolute",
-            top: 0,
-            left: 0,
+            position: "relative",
             width: composition.width,
             height: composition.height,
-            transformOrigin: "top left",
+            transformOrigin: "center",
             transform: `scale(${fitScale})`,
             background: "#000",
+            flexShrink: 0,
             // Hide live compositor while a rendered preview is
             // active so we don't double-play audio.
             visibility: renderPreviewActive ? "hidden" : "visible",
