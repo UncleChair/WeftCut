@@ -1,6 +1,6 @@
 # Architecture
 
-> **Implementation status:** This is the design spec. Phase-by-phase implementation status lives in [`roadmap.md`](roadmap.md); workspace-folder data flow + DOM `<video>` preview shipped 2026-05-13/14 — see [`workspace-redesign.md`](workspace-redesign.md). At time of writing the MCP transport is SSE (rmcp 0.1.x; 1.x dropped SSE and the migration to streamable-HTTP is its own piece of work — see `feedback_rmcp_migration_blocked` memory) and the change-feed lives on a separate axum-backed `/events` endpoint rather than riding the MCP transport.
+> **Implementation status:** This is the design spec. Phase-by-phase implementation status lives in [`roadmap.md`](roadmap.md); workspace-folder data flow + DOM `<video>` preview shipped 2026-05-13/14 — see [`workspace-redesign.md`](workspace-redesign.md). The renderer is mid-rewrite to PixiJS v8 + WebCodecs — see [`pixi-renderer-plan.md`](pixi-renderer-plan.md) for the current plan-of-record. At time of writing the MCP transport is SSE (rmcp 0.1.x; 1.x dropped SSE and the migration to streamable-HTTP is its own piece of work — see `feedback_rmcp_migration_blocked` memory) and the change-feed lives on a separate axum-backed `/events` endpoint rather than riding the MCP transport.
 
 WeftCut is a Tauri 2 desktop app. The Rust core owns all state and side effects; the webview is a thin UI; external agents connect over MCP. **The workspace folder *is* the project** — opening a folder = opening the project; auto-save means closing the app loses nothing.
 
