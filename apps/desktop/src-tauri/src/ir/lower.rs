@@ -94,8 +94,15 @@ pub fn lower(
                 }
             }
         }
+        // Pass B.2 (`docs/effects-routing-pass-b.md` §2): walk
+        // `effective_groups` — real groups plus synthetic singletons
+        // for ungrouped html-required layers — so a standalone
+        // keyframed-effect layer isn't silently dropped to ffmpeg
+        // where `apply_static_effects` would skip its keyframed
+        // entries.
+        let effective = crate::state::effective_groups(project);
         let mut m = HashMap::new();
-        for g in project.groups.iter() {
+        for g in effective.iter() {
             // Effect-chain redesign (2026-05-17): a group renders via
             // html-cap iff any enabled effect on the group OR any
             // member layer has kind `requires_html()` (today:
@@ -1205,5 +1212,57 @@ mod tests_lower_range {
             .expect("lower_range");
         let found = g.nodes.iter().any(|n| matches!(n, IRNode::Color { duration_us: 5_000_000, .. }));
         assert!(found, "expected segment-local Color duration of 5s: {:?}", g.nodes);
+    }
+
+    #[test]
+    fn standalone_keyframed_layer_routes_to_html_group() {
+        // Pass B.2: a standalone (no-group) layer with a keyframed
+        // effect now routes via a synthetic singleton group. The
+        // lower pass should detect this and request html-group
+        // materialization for that layer's synthetic group id —
+        // when html_group_renders is empty, lower returns
+        // HtmlGroupNotMaterialized rather than silently dropping
+        // the keyframed effect (which was the pre-B.2 behavior at
+        // apply_static_effects skip-with-noop).
+        use crate::state::animated::{Animated, Interpolation, Keyframe};
+        use crate::state::effect::{Effect, EffectParams};
+        use crate::state::group::synthetic_group_id_for_layer;
+
+        let media = mk_media("/m/clip.mp4", 30_000_000, MediaKind::Video);
+        let media_id = media.id;
+        let mut clip = mk_video_clip(media_id, 0, 30_000_000, 0, 30_000_000);
+        // Attach a keyframed Blur to the standalone layer.
+        let kf_id = new_id();
+        clip.effects = imbl::vector![Effect {
+            id: new_id(),
+            enabled: true,
+            params: EffectParams::Blur {
+                radius: Animated::Keyframed(imbl::vector![
+                    Keyframe { id: kf_id, t_us: 14_000_000, value: 0.0, interp: Interpolation::Linear },
+                    Keyframe { id: new_id(), t_us: 15_000_000, value: 8.0, interp: Interpolation::Linear },
+                    Keyframe { id: new_id(), t_us: 16_000_000, value: 0.0, interp: Interpolation::Linear },
+                ]),
+            },
+        }];
+        let clip_id = clip.id;
+        let mut p = mk_project(30_000_000, vec![clip]);
+        p.media_pool.insert(media_id, media);
+
+        // No html_group_renders supplied; lower should error with the
+        // synthetic group id (proving the routing identified the layer).
+        let result = lower(
+            &p,
+            target(),
+            &Default::default(),
+            &Default::default(),
+            &Default::default(),
+        );
+        let expected_gid = synthetic_group_id_for_layer(clip_id);
+        match result {
+            Err(LowerError::HtmlGroupNotMaterialized(gid)) => {
+                assert_eq!(gid, expected_gid, "expected synthetic group id for standalone keyframed layer");
+            }
+            other => panic!("expected HtmlGroupNotMaterialized for standalone keyframed layer, got {:?}", other),
+        }
     }
 }
