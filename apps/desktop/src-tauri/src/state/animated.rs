@@ -53,6 +53,130 @@ impl<T: Clone> Animated<T> {
     }
 }
 
+impl<T: Clone + PartialEq> Animated<T> {
+    /// Owner-local intervals where this track is *actually animating*
+    /// — adjacent keyframe pairs with continuous-interp on the LEFT
+    /// keyframe AND distinct values.
+    ///
+    /// Interp-direction convention (verified against `engine.ts:402-408`
+    /// `resolveAnimated`): the segment `[kf[i].t_us, kf[i+1].t_us)` is
+    /// governed by `kf[i].interp`. Hold on the left → no motion in the
+    /// segment (value is constant `kf[i].value`); continuous interp
+    /// (Linear / EaseIn / EaseOut / Bezier) on the left WITH
+    /// `kf[i].value != kf[i+1].value` → motion across the segment.
+    ///
+    /// Static tracks and zero/one keyframe tracks return empty.
+    ///
+    /// See `docs/effects-routing-pass-b.md` §3.
+    pub fn animating_runs(&self) -> Vec<(TimeUs, TimeUs)> {
+        let Animated::Keyframed(kfs) = self else {
+            return Vec::new();
+        };
+        if kfs.len() < 2 {
+            return Vec::new();
+        }
+        let mut runs = Vec::new();
+        for i in 0..kfs.len() - 1 {
+            let a = &kfs[i];
+            let b = &kfs[i + 1];
+            if a.value == b.value {
+                continue;
+            }
+            if matches!(a.interp, Interpolation::Hold) {
+                continue;
+            }
+            if b.t_us <= a.t_us {
+                continue;
+            }
+            runs.push((a.t_us, b.t_us));
+        }
+        runs
+    }
+
+    /// Owner-local timestamps where a Hold-step occurs — the value
+    /// changes from one constant level to another at exactly
+    /// `kf[i+1].t_us` because `kf[i].interp == Hold` AND
+    /// `kf[i].value != kf[i+1].value`. The gap fragmenter consults
+    /// this so each fragmented static gap has a single held value.
+    ///
+    /// See `docs/effects-routing-pass-b.md` §4.
+    pub fn hold_step_times(&self) -> Vec<TimeUs> {
+        let Animated::Keyframed(kfs) = self else {
+            return Vec::new();
+        };
+        if kfs.len() < 2 {
+            return Vec::new();
+        }
+        let mut steps = Vec::new();
+        for i in 0..kfs.len() - 1 {
+            let a = &kfs[i];
+            let b = &kfs[i + 1];
+            if matches!(a.interp, Interpolation::Hold) && a.value != b.value {
+                steps.push(b.t_us);
+            }
+        }
+        steps
+    }
+}
+
+impl Animated<f64> {
+    /// Resolve the value at owner-local `t_us`. Mirrors `engine.ts`
+    /// `resolveAnimated` byte-for-byte:
+    /// - `Static(v)` → `v`
+    /// - empty `Keyframed` → `default`
+    /// - one keyframe → that keyframe's value
+    /// - `t_us` before the first keyframe → first keyframe's value (clamp)
+    /// - `t_us` at-or-after the last → last keyframe's value (clamp)
+    /// - else: locate the segment via `kf[i].t_us <= t_us < kf[i+1].t_us`
+    ///   and apply `kf[i].interp` (Hold → `a.value`; Linear/Bezier →
+    ///   lerp; EaseIn → `u*u`; EaseOut → `1 - (1-u)*(1-u)`)
+    ///
+    /// Bezier currently treats as Linear — same shortcut as the
+    /// engine. Editor can grow a real cubic-bezier solver later.
+    pub fn value_at(&self, t_us: TimeUs, default: f64) -> f64 {
+        match self {
+            Animated::Static(v) => *v,
+            Animated::Keyframed(kfs) => {
+                if kfs.is_empty() {
+                    return default;
+                }
+                if kfs.len() == 1 {
+                    return kfs[0].value;
+                }
+                let first = &kfs[0];
+                let last = &kfs[kfs.len() - 1];
+                if t_us <= first.t_us {
+                    return first.value;
+                }
+                if t_us >= last.t_us {
+                    return last.value;
+                }
+                let mut i = 0;
+                while i < kfs.len() - 1 && kfs[i + 1].t_us <= t_us {
+                    i += 1;
+                }
+                let a = &kfs[i];
+                let b = &kfs[i + 1];
+                let span = (b.t_us - a.t_us) as f64;
+                if span <= 0.0 {
+                    return b.value;
+                }
+                let mut u = (t_us - a.t_us) as f64 / span;
+                match a.interp {
+                    Interpolation::Hold => return a.value,
+                    Interpolation::EaseIn => u = u * u,
+                    Interpolation::EaseOut => {
+                        let iu = 1.0 - u;
+                        u = 1.0 - iu * iu;
+                    }
+                    Interpolation::Linear | Interpolation::Bezier { .. } => {}
+                }
+                a.value + (b.value - a.value) * u
+            }
+        }
+    }
+}
+
 impl<T: Clone + Default> Default for Animated<T> {
     fn default() -> Self {
         Self::Static(T::default())
@@ -77,4 +201,161 @@ pub enum Interpolation {
     EaseIn,
     EaseOut,
     Bezier { p1: (f64, f64), p2: (f64, f64) },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::ids::new_id;
+
+    fn kf(t_us: TimeUs, value: f64, interp: Interpolation) -> Keyframe<f64> {
+        Keyframe { id: new_id(), t_us, value, interp }
+    }
+
+    fn keyframed(kfs: Vec<Keyframe<f64>>) -> Animated<f64> {
+        Animated::Keyframed(kfs.into_iter().collect())
+    }
+
+    #[test]
+    fn static_animating_runs_empty() {
+        let a: Animated<f64> = Animated::Static(1.0);
+        assert_eq!(a.animating_runs(), Vec::<(TimeUs, TimeUs)>::new());
+    }
+
+    #[test]
+    fn single_kf_animating_runs_empty() {
+        let a = keyframed(vec![kf(0, 1.0, Interpolation::Linear)]);
+        assert_eq!(a.animating_runs(), Vec::<(TimeUs, TimeUs)>::new());
+    }
+
+    #[test]
+    fn linear_distinct_pair_yields_one_run() {
+        let a = keyframed(vec![
+            kf(5_000_000, 0.0, Interpolation::Linear),
+            kf(10_000_000, 8.0, Interpolation::Linear),
+        ]);
+        assert_eq!(a.animating_runs(), vec![(5_000_000, 10_000_000)]);
+    }
+
+    #[test]
+    fn equal_value_pair_yields_no_run() {
+        let a = keyframed(vec![
+            kf(0, 5.0, Interpolation::Linear),
+            kf(10_000_000, 5.0, Interpolation::Linear),
+        ]);
+        assert_eq!(a.animating_runs(), Vec::<(TimeUs, TimeUs)>::new());
+    }
+
+    #[test]
+    fn hold_left_interp_yields_no_run() {
+        let a = keyframed(vec![
+            kf(0, 0.0, Interpolation::Hold),
+            kf(5_000_000, 8.0, Interpolation::Hold),
+        ]);
+        assert_eq!(a.animating_runs(), Vec::<(TimeUs, TimeUs)>::new());
+    }
+
+    #[test]
+    fn hold_step_times_captures_value_step() {
+        let a = keyframed(vec![
+            kf(0, 0.0, Interpolation::Hold),
+            kf(5_000_000, 8.0, Interpolation::Hold),
+            kf(10_000_000, 8.0, Interpolation::Hold),
+        ]);
+        // Step at t=5 (value changes 0→8); no step at t=10 (8→8 same).
+        assert_eq!(a.hold_step_times(), vec![5_000_000]);
+    }
+
+    #[test]
+    fn hold_step_times_skips_left_continuous_interp() {
+        // Linear left interp doesn't step, it lerps. Even though the
+        // values differ, no hold_step entry.
+        let a = keyframed(vec![
+            kf(0, 0.0, Interpolation::Linear),
+            kf(5_000_000, 8.0, Interpolation::Linear),
+        ]);
+        assert_eq!(a.hold_step_times(), Vec::<TimeUs>::new());
+    }
+
+    #[test]
+    fn mixed_track_animating_and_hold_step() {
+        // [0:0 Linear, 5:8 Hold, 10:8 Hold, 10:0 Hold]
+        // Linear pair (0→8 over [0,5)) = animating run [0,5)
+        // Hold pair (5→10) values equal, no step.
+        // Hold pair (10→10) — careful: duplicate timestamps. Skip this case.
+        let a = keyframed(vec![
+            kf(0, 0.0, Interpolation::Linear),
+            kf(5_000_000, 8.0, Interpolation::Hold),
+            kf(10_000_000, 8.0, Interpolation::Hold),
+            kf(15_000_000, 0.0, Interpolation::Hold),
+        ]);
+        assert_eq!(a.animating_runs(), vec![(0, 5_000_000)]);
+        // Hold-step at t=15 only (value steps 8→0).
+        assert_eq!(a.hold_step_times(), vec![15_000_000]);
+    }
+
+    #[test]
+    fn value_at_static() {
+        let a: Animated<f64> = Animated::Static(7.5);
+        assert!((a.value_at(0, 0.0) - 7.5).abs() < 1e-9);
+        assert!((a.value_at(999_999, 0.0) - 7.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn value_at_empty_keyframed_returns_default() {
+        let a: Animated<f64> = Animated::Keyframed(imbl::Vector::new());
+        assert!((a.value_at(0, 4.2) - 4.2).abs() < 1e-9);
+    }
+
+    #[test]
+    fn value_at_single_keyframe() {
+        let a = keyframed(vec![kf(0, 3.0, Interpolation::Linear)]);
+        assert!((a.value_at(0, 0.0) - 3.0).abs() < 1e-9);
+        assert!((a.value_at(100_000, 0.0) - 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn value_at_clamps_before_first_and_after_last() {
+        let a = keyframed(vec![
+            kf(5_000_000, 2.0, Interpolation::Linear),
+            kf(10_000_000, 8.0, Interpolation::Linear),
+        ]);
+        // Before first
+        assert!((a.value_at(0, 0.0) - 2.0).abs() < 1e-9);
+        // After last
+        assert!((a.value_at(15_000_000, 0.0) - 8.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn value_at_linear_interpolates_midpoint() {
+        let a = keyframed(vec![
+            kf(0, 0.0, Interpolation::Linear),
+            kf(10_000_000, 10.0, Interpolation::Linear),
+        ]);
+        assert!((a.value_at(5_000_000, 0.0) - 5.0).abs() < 1e-6);
+        assert!((a.value_at(2_000_000, 0.0) - 2.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn value_at_hold_returns_left_value() {
+        let a = keyframed(vec![
+            kf(0, 3.0, Interpolation::Hold),
+            kf(10_000_000, 8.0, Interpolation::Hold),
+        ]);
+        // Mid-segment: held at left value, NOT lerped.
+        assert!((a.value_at(5_000_000, 0.0) - 3.0).abs() < 1e-9);
+        // At the right endpoint: clamp-to-last says 8.0.
+        assert!((a.value_at(10_000_000, 0.0) - 8.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn value_at_ease_in_quadratic() {
+        // EaseIn applies u*u to the parametric position. At u=0.5,
+        // result = 0 + (10-0) * 0.25 = 2.5
+        let a = keyframed(vec![
+            kf(0, 0.0, Interpolation::EaseIn),
+            kf(10_000_000, 10.0, Interpolation::EaseIn),
+        ]);
+        assert!((a.value_at(5_000_000, 0.0) - 2.5).abs() < 1e-6);
+    }
 }
