@@ -1,12 +1,16 @@
 # Effects routing — Pass B (multi-window) + Pass A standalone fix
 
-**Status:** Design only as of 2026-05-18. Pass A (per-layer/group
-envelope routing) shipped earlier the same day in commits `947c0a5`,
-`369496c` (doc), `7ecafcb` (viewport fix); see
-`memory/project_effects_routing.md` for that summary. This doc
-proposes Pass B (per-time-window routing) on top of Pass A and folds
-in a Pass A gap discovered during design: standalone layers (not in
-any group) with keyframed effects are silently dropped at export.
+**Status:** **Shipped 2026-05-18** across commits `eb4a0e9` (doc) →
+`f6830b7` (B.1 analysis helpers) → `ce32a6b` (B.2 Pass A standalone
+fix) → `04766fe` (B.3 per-gap lowering) → `f38c2f1` (B.4 + B.5
+per-window materialize + lower) → `da8cd55` (B.6 telemetry + UI
+hint). 389 lib tests pass. Pass A (per-layer/group envelope routing)
+shipped earlier the same day in commits `947c0a5`, `369496c` (doc),
+`7ecafcb` (viewport fix); see `memory/project_effects_routing.md`
+for that summary. This doc layered Pass B (per-time-window routing)
+on top of Pass A and folded in a Pass A gap discovered during
+design: standalone layers (not in any group) with keyframed effects
+used to be silently dropped at export. B.2 fixed that.
 
 Builds on [[html-render-groups]] (the composition + raster
 infrastructure), [[group-system]] (the group model + fan-out edits),
