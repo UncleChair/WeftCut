@@ -175,12 +175,22 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
           width: "100%",
           height: "100%",
           overflow: "hidden",
-          background: "#000",
+          // Lighter-dark surround so the project canvas (black) reads
+          // as a distinct rectangle against the preview's letterbox
+          // area when the canvas aspect doesn't match the preview
+          // panel's. Matches the app theme's slate-800 panel color.
+          background: "#1f2937",
         }}
       >
         {/* Inner canvas at project-native resolution. CSS scale fits
             it into the outer container; layers render at their
-            actual pixel coordinates inside. */}
+            actual pixel coordinates inside. Explicit black background
+            mirrors the export's `Color { rgba: project.composition.background }`
+            base (project bg defaults to `Rgba::BLACK`), so a layer
+            smaller than the canvas (e.g. 1920×1032 source in a 1920×1080
+            canvas) shows the same black backdrop as the exported mp4
+            and the canvas boundary is visible against the lighter
+            surround. */}
         <div
           className="preview-dom-canvas"
           style={{
@@ -191,6 +201,7 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
             height: composition.height,
             transformOrigin: "top left",
             transform: `scale(${fitScale})`,
+            background: "#000",
             // Hide live compositor while a rendered preview is
             // active so we don't double-play audio.
             visibility: renderPreviewActive ? "hidden" : "visible",
