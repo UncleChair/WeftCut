@@ -431,7 +431,137 @@ fn rebase_layer_for_segment(layer: &Layer, in_us: TimeUs, out_us: TimeUs) -> Opt
     })
 }
 
-fn lower_video_layer(
+/// Lower one or more group members within a single Pass B static gap.
+/// Each surviving member that overlaps the gap is rebased to the gap
+/// window, has its effects substituted with held-`Static` values at
+/// the gap's start, and is emitted via `lower_video_layer` so the
+/// existing per-kind machinery (gate_start/end, fades, transforms,
+/// `apply_static_effects`) does the real work.
+///
+/// Preconditions (callers must uphold):
+/// - `gap.start_us < gap.end_us`, both inside the parent group's span.
+/// - The gap was returned by `Group::time_windows` as a `static_gap`,
+///   which means every effect on every active member is identity-held
+///   at `gap.start_us`. Templates in static gaps are skipped with a
+///   warn per `docs/effects-routing-pass-b.md` B.3.
+/// - Audio members are filtered out by the caller — audio always
+///   flows through the regular amix path regardless of windowing.
+///
+/// Transitions are intentionally NOT applied to gap-rebased layers:
+/// the rebased layer keeps its original id, so an `incoming` lookup
+/// would fire on every sub-window of a layer crossing a gap boundary.
+/// Caller passes an empty `IncomingTransitions` for gap rebases.
+pub(crate) fn lower_group_static_gap(
+    g: &mut IRGraph,
+    base: NodeId,
+    members: &[&Layer],
+    gap: crate::state::group::TimeWindow,
+    project: &Project,
+    target: RenderTarget,
+    inline_sub_paths: &InlineSubPaths,
+    template_renders: &TemplateRenders,
+) -> Result<NodeId, LowerError> {
+    let mut current = base;
+    let empty_incoming: IncomingTransitions = IncomingTransitions::new();
+    for layer in members.iter() {
+        // Member must actually overlap the gap window. Half-open intervals.
+        if layer.t_end_us <= gap.start_us || layer.t_start_us >= gap.end_us {
+            continue;
+        }
+        // B.3 decision: Templates in static gaps render via the existing
+        // template PngSeq path is a real piece of work + no user pull.
+        // Skip-with-warn for v1.
+        if matches!(layer.params, LayerParams::Template(_)) {
+            tracing::warn!(
+                "Pass B static gap: skipping Template layer {} — Templates inside static gaps are not yet supported (docs/effects-routing-pass-b.md B.3).",
+                layer.id,
+            );
+            continue;
+        }
+        // Audio is filtered out by callers; defend the invariant.
+        if matches!(layer.params, LayerParams::Audio(_)) {
+            continue;
+        }
+        let rebased = rebase_layer_for_gap(layer, gap);
+        current = lower_video_layer(
+            g,
+            &rebased,
+            current,
+            project,
+            target,
+            inline_sub_paths,
+            template_renders,
+            &empty_incoming,
+        )?;
+    }
+    Ok(current)
+}
+
+/// Rebase a single layer onto a Pass B static gap window. The result
+/// has `t_start_us` / `t_end_us` clamped to the gap, `src_in_us` /
+/// `src_out_us` advanced for the clipped portion (VideoClip / Audio),
+/// fade-in / fade-out dropped unless the gap captures the matching
+/// original layer edge, and every effect replaced by its held-at
+/// `Static` value (per `held_at(gap.start_us - layer.t_start_us)`).
+///
+/// Mirrors the visual-only subset of `rebase_layer_for_segment` and
+/// adds the held-effect substitution. Templates pass through with
+/// unmodified params — caller skips them anyway.
+fn rebase_layer_for_gap(layer: &Layer, gap: crate::state::group::TimeWindow) -> Layer {
+    let new_t_start = layer.t_start_us.max(gap.start_us);
+    let new_t_end = layer.t_end_us.min(gap.end_us);
+    let src_advance = (new_t_start - layer.t_start_us).max(0);
+    let src_truncate = (layer.t_end_us - new_t_end).max(0);
+    let captures_layer_start = gap.start_us <= layer.t_start_us;
+    let captures_layer_end = gap.end_us >= layer.t_end_us;
+
+    let new_params = match &layer.params {
+        LayerParams::VideoClip(p) => LayerParams::VideoClip(VideoClipParams {
+            src_in_us: p.src_in_us + src_advance,
+            src_out_us: p.src_out_us - src_truncate,
+            fade_in_us: if captures_layer_start { p.fade_in_us } else { 0 },
+            fade_out_us: if captures_layer_end { p.fade_out_us } else { 0 },
+            ..p.clone()
+        }),
+        LayerParams::ImageOverlay(p) => LayerParams::ImageOverlay(ImageOverlayParams {
+            fade_in_us: if captures_layer_start { p.fade_in_us } else { 0 },
+            fade_out_us: if captures_layer_end { p.fade_out_us } else { 0 },
+            ..p.clone()
+        }),
+        // No source-time or fade params on these kinds.
+        LayerParams::Color(_)
+        | LayerParams::Text(_)
+        | LayerParams::Template(_)
+        | LayerParams::Subtitles(_)
+        | LayerParams::Audio(_) => layer.params.clone(),
+    };
+
+    // Substitute every effect at the gap's start (in owner-local time).
+    // Identity-held effects produce no-op Static values — `apply_static_effects`
+    // filters them via its sigma > 1e-6 threshold. Non-identity-held
+    // effects shouldn't appear here because `gap_is_all_identity` only
+    // approves a gap when every effect held at the boundary is identity.
+    let owner_local = gap.start_us - layer.t_start_us;
+    let new_effects: imbl::Vector<crate::state::effect::Effect> = layer
+        .effects
+        .iter()
+        .map(|e| e.held_at(owner_local))
+        .collect();
+
+    Layer {
+        id: layer.id,
+        label: layer.label.clone(),
+        t_start_us: new_t_start,
+        t_end_us: new_t_end,
+        enabled: layer.enabled,
+        locked: layer.locked,
+        metadata: layer.metadata.clone(),
+        effects: new_effects,
+        params: new_params,
+    }
+}
+
+pub(crate) fn lower_video_layer(
     g: &mut IRGraph,
     layer: &Layer,
     base: NodeId,
@@ -1212,6 +1342,179 @@ mod tests_lower_range {
             .expect("lower_range");
         let found = g.nodes.iter().any(|n| matches!(n, IRNode::Color { duration_us: 5_000_000, .. }));
         assert!(found, "expected segment-local Color duration of 5s: {:?}", g.nodes);
+    }
+
+    #[test]
+    fn gap_lowering_emits_member_chain_gated_to_gap() {
+        // Pass B.3: a static gap [0, 14) on a VideoClip member with a
+        // keyframed Blur returning to sigma=0 at the gap boundary.
+        // The gap-lowering helper should emit the VideoClip's
+        // Decode/Scale/Fps/SetPts/Overlay chain with the gap as the
+        // overlay's gate. The Blur held at sigma=0 should NOT emit a
+        // Gblur (apply_static_effects skips sigma < 1e-6).
+        use crate::ir::IRGraph;
+        use crate::state::animated::{Animated, Interpolation, Keyframe};
+        use crate::state::effect::{Effect, EffectParams};
+        use crate::state::group::TimeWindow;
+
+        let media = mk_media("/m/clip.mp4", 30_000_000, MediaKind::Video);
+        let media_id = media.id;
+        let mut clip = mk_video_clip(media_id, 0, 30_000_000, 0, 30_000_000);
+        clip.effects = imbl::vector![Effect {
+            id: new_id(),
+            enabled: true,
+            params: EffectParams::Blur {
+                radius: Animated::Keyframed(imbl::vector![
+                    Keyframe { id: new_id(), t_us: 14_000_000, value: 0.0, interp: Interpolation::Linear },
+                    Keyframe { id: new_id(), t_us: 15_000_000, value: 8.0, interp: Interpolation::Linear },
+                    Keyframe { id: new_id(), t_us: 16_000_000, value: 0.0, interp: Interpolation::Linear },
+                ]),
+            },
+        }];
+        let mut p = mk_project(30_000_000, vec![clip.clone()]);
+        p.media_pool.insert(media_id, media);
+
+        let mut graph = IRGraph::new(target());
+        // Seed with a base color so lower_group_static_gap has somewhere to overlay onto.
+        let base = graph.add_node(IRNode::Color {
+            rgba: crate::state::color::Rgba::BLACK,
+            width: 1920,
+            height: 1080,
+            fps_num: 30,
+            fps_den: 1,
+            duration_us: 30_000_000,
+        });
+
+        let gap = TimeWindow { start_us: 0, end_us: 14_000_000 };
+        let members: Vec<&Layer> = p.tracks.iter().flat_map(|t| t.layers.iter()).collect();
+        let result = lower_group_static_gap(
+            &mut graph,
+            base,
+            &members,
+            gap,
+            &p,
+            target(),
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("lower_group_static_gap");
+
+        // The returned NodeId is an Overlay on top of the base.
+        assert!(matches!(graph.node(result), IRNode::Overlay { .. }));
+
+        // The Overlay's gate matches the gap window (because the
+        // rebased layer has t_start_us=0, t_end_us=14_000_000 — both
+        // clipped to the gap).
+        if let IRNode::Overlay { gate_start_us, gate_end_us, .. } = graph.node(result) {
+            assert_eq!(*gate_start_us, 0);
+            assert_eq!(*gate_end_us, 14_000_000);
+        }
+
+        // No Gblur node should appear — Blur held at sigma=0 falls under
+        // the apply_static_effects threshold.
+        let has_gblur = graph.nodes.iter().any(|n| matches!(n, IRNode::Gblur { .. }));
+        assert!(!has_gblur, "identity-held blur should not emit Gblur:\n{:?}", graph.nodes);
+
+        // The clip's source range advances? Gap [0, 14) captures the
+        // layer's original start, so src_in stays at 0. The emitted
+        // DecodeV should reflect src_in=0, src_out=14_000_000.
+        let dec = graph.nodes.iter().find_map(|n| match n {
+            IRNode::DecodeV { src_in_us, src_out_us, .. } => Some((*src_in_us, *src_out_us)),
+            _ => None,
+        }).expect("expected a DecodeV node");
+        assert_eq!(dec, (0, 14_000_000));
+    }
+
+    #[test]
+    fn gap_lowering_skips_members_outside_gap() {
+        // A member layer [20, 30) outside gap [0, 14) contributes
+        // nothing — same base NodeId returned.
+        use crate::ir::IRGraph;
+        use crate::state::group::TimeWindow;
+
+        let media = mk_media("/m/clip.mp4", 30_000_000, MediaKind::Video);
+        let media_id = media.id;
+        let clip = mk_video_clip(media_id, 20_000_000, 30_000_000, 0, 10_000_000);
+        let mut p = mk_project(30_000_000, vec![clip]);
+        p.media_pool.insert(media_id, media);
+
+        let mut graph = IRGraph::new(target());
+        let base = graph.add_node(IRNode::Color {
+            rgba: crate::state::color::Rgba::BLACK,
+            width: 1920,
+            height: 1080,
+            fps_num: 30,
+            fps_den: 1,
+            duration_us: 30_000_000,
+        });
+
+        let gap = TimeWindow { start_us: 0, end_us: 14_000_000 };
+        let members: Vec<&Layer> = p.tracks.iter().flat_map(|t| t.layers.iter()).collect();
+        let result = lower_group_static_gap(
+            &mut graph,
+            base,
+            &members,
+            gap,
+            &p,
+            target(),
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("lower_group_static_gap");
+        // Same base NodeId — no work done.
+        assert_eq!(result, base);
+    }
+
+    #[test]
+    fn gap_lowering_clamps_source_window_on_partial_overlap() {
+        // VideoClip [10, 30) with source [0, 20). Gap [15, 25).
+        // Overlap: [15, 25). src advances by (15-10)=5, src truncates
+        // by (30-25)=5. So src window becomes [5, 15) in source time.
+        use crate::ir::IRGraph;
+        use crate::state::group::TimeWindow;
+
+        let media = mk_media("/m/clip.mp4", 30_000_000, MediaKind::Video);
+        let media_id = media.id;
+        let clip = mk_video_clip(media_id, 10_000_000, 30_000_000, 0, 20_000_000);
+        let mut p = mk_project(30_000_000, vec![clip]);
+        p.media_pool.insert(media_id, media);
+
+        let mut graph = IRGraph::new(target());
+        let base = graph.add_node(IRNode::Color {
+            rgba: crate::state::color::Rgba::BLACK,
+            width: 1920,
+            height: 1080,
+            fps_num: 30,
+            fps_den: 1,
+            duration_us: 30_000_000,
+        });
+
+        let gap = TimeWindow { start_us: 15_000_000, end_us: 25_000_000 };
+        let members: Vec<&Layer> = p.tracks.iter().flat_map(|t| t.layers.iter()).collect();
+        let _ = lower_group_static_gap(
+            &mut graph,
+            base,
+            &members,
+            gap,
+            &p,
+            target(),
+            &Default::default(),
+            &Default::default(),
+        )
+        .expect("lower_group_static_gap");
+
+        let dec = graph.nodes.iter().find_map(|n| match n {
+            IRNode::DecodeV { src_in_us, src_out_us, .. } => Some((*src_in_us, *src_out_us)),
+            _ => None,
+        }).expect("expected a DecodeV node");
+        assert_eq!(dec, (5_000_000, 15_000_000));
+
+        // Overlay gate matches the overlap window [15, 25).
+        let gate = graph.nodes.iter().find_map(|n| match n {
+            IRNode::Overlay { gate_start_us, gate_end_us, .. } => Some((*gate_start_us, *gate_end_us)),
+            _ => None,
+        }).expect("expected an Overlay node");
+        assert_eq!(gate, (15_000_000, 25_000_000));
     }
 
     #[test]
