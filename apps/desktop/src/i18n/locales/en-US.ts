@@ -236,6 +236,8 @@ const enUS = {
       "{{percent}}% · frame {{frame}} · {{fps}}fps · {{speed}}x",
     rastering_label:
       "{{percent}}% · rastering frame {{frame}}/{{total}}",
+    rastering_label_window:
+      "{{percent}}% · window {{windowOneBased}}/{{windowCount}} · rastering frame {{frame}}/{{total}}",
     complete: "Exported to {{path}}",
     failed: "Export failed: {{detail}}",
     cancel: "Cancel",

@@ -234,6 +234,8 @@ const zhCN: Resources = {
       "{{percent}}% · 第 {{frame}} 帧 · {{fps}}fps · {{speed}}x",
     rastering_label:
       "{{percent}}% · 正在光栅化第 {{frame}}/{{total}} 帧",
+    rastering_label_window:
+      "{{percent}}% · 第 {{windowOneBased}}/{{windowCount}} 窗 · 光栅化第 {{frame}}/{{total}} 帧",
     complete: "已导出到 {{path}}",
     failed: "导出失败：{{detail}}",
     cancel: "取消",

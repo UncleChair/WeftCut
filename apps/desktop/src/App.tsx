@@ -494,6 +494,8 @@ export function App({ onCloseProject }: AppProps) {
             groupId: e.payload.groupId,
             frame: 0,
             total: e.payload.frameCount,
+            windowIndex: e.payload.windowIndex,
+            windowCount: e.payload.windowCount,
           });
         },
       );
@@ -506,6 +508,8 @@ export function App({ onCloseProject }: AppProps) {
                   groupId: prev.groupId,
                   frame: e.payload.frame,
                   total: e.payload.total,
+                  windowIndex: e.payload.windowIndex ?? prev.windowIndex,
+                  windowCount: e.payload.windowCount ?? prev.windowCount,
                 }
               : prev,
           );
@@ -1328,6 +1332,14 @@ interface HtmlGroupRasterState {
   groupId: string;
   frame: number;
   total: number;
+  /// Pass B (`docs/effects-routing-pass-b.md` §B.6): the current
+  /// window's 0-based index and the total number of html-cap windows
+  /// for this group. When `windowCount > 1`, the label shows
+  /// "window 2 of 4" so the user understands why the per-window
+  /// progress restarts when a new window begins. One-window groups
+  /// leave both undefined; the UI collapses the indicator.
+  windowIndex?: number;
+  windowCount?: number;
 }
 
 function ExportPanel({
@@ -1360,12 +1372,19 @@ function ExportPanel({
         // Raster phase: map frame/total onto the first half of the bar.
         const rasterFrac = htmlGroupRaster.frame / htmlGroupRaster.total;
         percent = Math.round(rasterFrac * RASTER_WEIGHT * 100);
+        const windowCount = htmlGroupRaster.windowCount ?? 1;
+        const labelKey =
+          windowCount > 1
+            ? "export.rastering_label_window"
+            : "export.rastering_label";
         body = (
           <span>
-            {t("export.rastering_label", {
+            {t(labelKey, {
               percent,
               frame: htmlGroupRaster.frame,
               total: htmlGroupRaster.total,
+              windowOneBased: (htmlGroupRaster.windowIndex ?? 0) + 1,
+              windowCount,
             })}
           </span>
         );
