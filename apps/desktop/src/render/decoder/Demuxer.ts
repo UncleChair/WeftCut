@@ -214,11 +214,20 @@ export class Demuxer {
   private extractDescription(track: MP4VideoTrackInfo): Uint8Array {
     const t = this.file.getTrackById(track.id);
     if (!t) throw new Error(`Demuxer: no track ${track.id}`);
-    // Pick the configuration box matching the codec family.
-    const cfg = t.avcC ?? t.hvcC ?? t.vpcC;
+    // mp4box stores the codec config in the sample-description box:
+    //   trak.mdia.minf.stbl.stsd.entries[0].(avcC | hvcC | vpcC)
+    // The track object itself does NOT expose these as direct fields.
+    const entries = t.mdia?.minf?.stbl?.stsd?.entries;
+    if (!entries || entries.length === 0) {
+      throw new Error(
+        `Demuxer: track ${track.id} has no stsd entries; codec=${track.codec}`,
+      );
+    }
+    const entry = entries[0]!;
+    const cfg = entry.avcC ?? entry.hvcC ?? entry.vpcC;
     if (!cfg) {
       throw new Error(
-        `Demuxer: track ${track.id} has no avcC / hvcC / vpcC; codec=${track.codec}`,
+        `Demuxer: track ${track.id} stsd entry has no avcC / hvcC / vpcC; codec=${track.codec}`,
       );
     }
     const stream = new DataStream(undefined, 0, DataStream.BIG_ENDIAN);
