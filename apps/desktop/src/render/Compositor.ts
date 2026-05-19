@@ -48,6 +48,12 @@ export class Compositor {
   readonly app: Application;
   readonly stage: Container;
   readonly pool: SourceDecoderPool;
+  /// True once `app.init()` has fully resolved. We can't call
+  /// `app.destroy()` before this — PixiJS v8's plugins (e.g.
+  /// `ResizePlugin`) have a `destroy()` that assumes `init()` ran and
+  /// will null-deref otherwise. StrictMode-style cleanup that fires
+  /// between `new Compositor()` and the `await mount()` would hit
+  /// that path.
   private mounted = false;
   private clips = new Map<string, ActiveClip>();
   private projectSummary: ProjectSummary | null = null;
@@ -174,7 +180,22 @@ export class Compositor {
     for (const c of this.clips.values()) c.sprite.dispose();
     this.clips.clear();
     this.pool.dispose();
-    this.app.destroy(true, { children: true, texture: true });
+    if (this.mounted) {
+      try {
+        this.app.destroy(true, { children: true, texture: true });
+      } catch (e) {
+        // Defensive: PixiJS plugins occasionally throw during destroy
+        // even after init succeeded (e.g. WebGL context already lost).
+        // Don't propagate — disposal should be best-effort.
+        // eslint-disable-next-line no-console
+        console.warn("[weftcut/pixi] app.destroy threw:", e);
+      }
+    }
+    // If not mounted, the Application was constructed but never had
+    // init() complete — calling destroy() on it crashes inside
+    // ResizePlugin / CullerPlugin which assume init initialised their
+    // private state. Just drop our references; the Application itself
+    // has no GPU resources yet.
   }
 
   // ============================================================
