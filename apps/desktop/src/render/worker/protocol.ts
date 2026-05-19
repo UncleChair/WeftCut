@@ -1,25 +1,60 @@
 // postMessage protocol between the main thread and the export Worker.
 //
 // Plan: docs/pixi-renderer-plan.md (P8)
+//
+// The Worker is constructed once per export, receives one `start`
+// request, streams `progress` events, posts a final `done` (with
+// MP4 bytes) or `error`, then terminates. The main-thread shell
+// `terminate()`s the worker after `done` to release its heap.
+
+/// Snapshot of project state needed to render the export. The Worker
+/// receives this as a structured-clone of the live `ProjectSummary`,
+/// so live edits to the project after `start` do NOT affect the
+/// in-flight export.
+export interface ExportProjectSnapshot {
+  /// Composition dimensions. Echoed back in the encoder config.
+  width: number;
+  height: number;
+  /// Project fps (numerator / denominator). Determines the frame
+  /// grid the export iterates and the encoder's framerate.
+  fpsNum: number;
+  fpsDen: number;
+  /// Total composition duration in microseconds; the Worker may
+  /// clamp `endUs` against this.
+  durationUs: number;
+  /// Same shape `Compositor.setProject(summary)` consumes —
+  /// `tracks: [{ enabled, layers: [{ id, t_start_us, t_end_us,
+  /// enabled, params: { kind, ... } }] }]`. Worker treats this as
+  /// opaque and forwards to its own Compositor instance.
+  summary: unknown;
+  /// `media_id → asset URL` resolved on the main thread before the
+  /// Worker request is posted. The Worker can't call Tauri's
+  /// `convertFileSrc()` (no Tauri runtime inside the Worker), so
+  /// the main thread pre-resolves every URL the renderer might
+  /// need.
+  proxyAssetUrls: Record<string, string>;
+  originalAssetUrls: Record<string, string>;
+  /// `media_id → MediaSummary` slim copy. Worker reads dimensions
+  /// for fallback positioning math; the full MediaSummary is too
+  /// large to copy. Only `width` / `height` are needed.
+  mediaDims: Record<string, { width: number | null; height: number | null }>;
+}
 
 export type ExportRequest =
   | {
       type: "start";
-      /// Snapshot of project state needed to render (layers, timeline,
-      /// composition dimensions). P8 will firm up this shape; today
-      /// `unknown` is a placeholder until the snapshot module exists.
-      project: unknown;
-      /// Output dimensions in pixels.
-      width: number;
-      height: number;
-      /// Target frame rate.
-      fps: number;
-      /// Time range to encode in microseconds (inclusive of `startUs`,
-      /// exclusive of `endUs`).
+      project: ExportProjectSnapshot;
+      /// Time range to encode in microseconds (inclusive of
+      /// `startUs`, exclusive of `endUs`).
       startUs: number;
       endUs: number;
-      /// VideoEncoder config payload — codec / bitrate / hardware pref.
+      /// VideoEncoder config (codec / bitrate / hardware
+      /// preference / etc). Main thread builds this from the
+      /// ExportPreset.
       encoderConfig: VideoEncoderConfig;
+      /// OffscreenCanvas transferred from the main thread. Worker
+      /// hands it to the PixiJS Application as the render target.
+      canvas: OffscreenCanvas;
     }
   | { type: "cancel" };
 
