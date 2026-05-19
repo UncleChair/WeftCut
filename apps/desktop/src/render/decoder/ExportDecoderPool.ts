@@ -255,7 +255,6 @@ export class ExportSourceHandle implements DecoderHandle {
     // decoder every reference it needs for the GOP we just fed:
     // closed GOPs are fully self-contained; open-GOP B-frames that
     // reference the next GOP's IDR now have it available before flush.
-    const totalSamples = this.meta.nbSamples;
     let pos = startIdx;
     while (pos <= targetB) {
       // batchEnd = next IDR strictly after `pos`, or last sample if
