@@ -133,13 +133,44 @@ export class ExportSourceHandle implements DecoderHandle {
       `[weftcut/export] source ${this.mediaId} ready: codec=${meta.codec} ` +
         `${meta.codedWidth}x${meta.codedHeight} samples=${meta.nbSamples}`,
     );
+    let outputCount = 0;
     this.decoder = new VideoDecoder({
-      output: (frame: VideoFrame) => this.ring.push(frame),
+      output: (frame: VideoFrame) => {
+        outputCount += 1;
+        if (outputCount === 1 || outputCount % 30 === 0) {
+          // eslint-disable-next-line no-console
+          console.log(
+            `[weftcut/export] ${this.mediaId} output #${outputCount}: ` +
+              `pts=${frame.timestamp}us`,
+          );
+        }
+        this.ring.push(frame);
+      },
       error: (e: unknown) => {
         // eslint-disable-next-line no-console
         console.error(`[weftcut/export] decoder ${this.mediaId} error:`, e);
       },
     });
+    // Probe support before configuring — surfaces a clear error if the
+    // codec string isn't accepted on this machine.
+    if (typeof VideoDecoder.isConfigSupported === "function") {
+      try {
+        const supported = await VideoDecoder.isConfigSupported({
+          codec: meta.codec,
+          codedWidth: meta.codedWidth,
+          codedHeight: meta.codedHeight,
+          description: meta.description,
+        });
+        // eslint-disable-next-line no-console
+        console.log(
+          `[weftcut/export] ${this.mediaId} isConfigSupported=${supported.supported} ` +
+            `codec=${meta.codec}`,
+        );
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn(`[weftcut/export] isConfigSupported probe threw:`, e);
+      }
+    }
     this.decoder.configure({
       codec: meta.codec,
       codedWidth: meta.codedWidth,
@@ -190,6 +221,12 @@ export class ExportSourceHandle implements DecoderHandle {
     // Otherwise continue from where we left off in the current flow.
     const startIdx =
       this.lastDispatchedIndex < idr ? idr : this.lastDispatchedIndex + 1;
+    // eslint-disable-next-line no-console
+    console.log(
+      `[weftcut/export] ${this.mediaId} decodeRange ` +
+        `pts=[${aUs}..${bUs}]us → samples [${startIdx}..${targetB}] ` +
+        `(idr=${idr}, lastDispatched=${this.lastDispatchedIndex})`,
+    );
     if (startIdx > targetB) {
       // Nothing new to dispatch — everything needed is already in flight
       // or already in the ring.
@@ -197,21 +234,45 @@ export class ExportSourceHandle implements DecoderHandle {
       return;
     }
 
+    let dispatched = 0;
     for (let i = startIdx; i <= targetB; i++) {
       const s = this.demuxer.sampleAt(i);
       if (!s) break;
-      this.decoder.decode(
-        new EncodedVideoChunk({
-          type: s.keyframe ? "key" : "delta",
-          timestamp: s.ptsUs,
-          duration: s.durationUs,
-          data: s.data,
-        }),
-      );
+      try {
+        this.decoder.decode(
+          new EncodedVideoChunk({
+            type: s.keyframe ? "key" : "delta",
+            timestamp: s.ptsUs,
+            duration: s.durationUs,
+            data: s.data,
+          }),
+        );
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error(
+          `[weftcut/export] ${this.mediaId} decode threw at sample ${i} ` +
+            `(pts=${s.ptsUs}us, key=${s.keyframe}):`,
+          err,
+        );
+        throw err;
+      }
       this.lastDispatchedIndex = i;
+      dispatched++;
     }
 
+    const flushStartMs = performance.now();
+    // eslint-disable-next-line no-console
+    console.log(
+      `[weftcut/export] ${this.mediaId} dispatched ${dispatched} samples ` +
+        `(decodeQueue=${this.decoder.decodeQueueSize}); awaiting flush`,
+    );
     await this.decoder.flush();
+    // eslint-disable-next-line no-console
+    console.log(
+      `[weftcut/export] ${this.mediaId} flush done in ` +
+        `${(performance.now() - flushStartMs).toFixed(0)}ms; ` +
+        `ring=${this.ring.size()} frames`,
+    );
   }
 
   evictBefore(cutoffUs: number): void {
