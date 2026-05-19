@@ -44,12 +44,16 @@ export class PlaybackEngine {
 
   play(): void {
     if (this.clock.isPlaying()) return;
+    // eslint-disable-next-line no-console
+    console.log(`[weftcut/pixi] engine.play() @ tUs=${this.clock.positionUs()}`);
     this.clock.play();
     this.emitPlayState(true);
   }
 
   pause(): void {
     if (!this.clock.isPlaying()) return;
+    // eslint-disable-next-line no-console
+    console.log(`[weftcut/pixi] engine.pause() @ tUs=${this.clock.positionUs()}`);
     this.clock.pause();
     this.emitPlayState(false);
   }
@@ -57,9 +61,12 @@ export class PlaybackEngine {
   /// Hard seek to a composition time. P1 wires this into decoder
   /// scrub coalescing.
   seek(tUs: number): void {
+    // eslint-disable-next-line no-console
+    console.log(`[weftcut/pixi] engine.seek(${tUs}) from=${this.clock.positionUs()}`);
     this.clock.setPosition(tUs);
     this.compositor.setAnchorTime(tUs);
     this.compositor.compositeFrame(tUs);
+    this.lastEmittedUs = tUs;
     this.emitTime(tUs);
   }
 
