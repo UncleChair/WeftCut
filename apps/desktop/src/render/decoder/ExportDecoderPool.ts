@@ -151,31 +151,42 @@ export class ExportSourceHandle implements DecoderHandle {
         console.error(`[weftcut/export] decoder ${this.mediaId} error:`, e);
       },
     });
-    // Probe support before configuring — surfaces a clear error if the
-    // codec string isn't accepted on this machine.
+    // Probe support before configuring. We test BOTH hardware and
+    // software variants so we can see in the log whether hardware
+    // decode is actually available in this Worker context — Chrome's
+    // default "no-preference" sometimes silently lands on software in
+    // Worker scope, and software 1080p decode is ~2 fps which made
+    // the export look stuck.
     if (typeof VideoDecoder.isConfigSupported === "function") {
-      try {
-        const supported = await VideoDecoder.isConfigSupported({
-          codec: meta.codec,
-          codedWidth: meta.codedWidth,
-          codedHeight: meta.codedHeight,
-          description: meta.description,
-        });
-        // eslint-disable-next-line no-console
-        console.log(
-          `[weftcut/export] ${this.mediaId} isConfigSupported=${supported.supported} ` +
-            `codec=${meta.codec}`,
-        );
-      } catch (e) {
-        // eslint-disable-next-line no-console
-        console.warn(`[weftcut/export] isConfigSupported probe threw:`, e);
+      for (const hw of ["prefer-hardware", "prefer-software"] as const) {
+        try {
+          const supported = await VideoDecoder.isConfigSupported({
+            codec: meta.codec,
+            codedWidth: meta.codedWidth,
+            codedHeight: meta.codedHeight,
+            description: meta.description,
+            hardwareAcceleration: hw,
+          });
+          // eslint-disable-next-line no-console
+          console.log(
+            `[weftcut/export] ${this.mediaId} isConfigSupported(${hw})=${supported.supported}`,
+          );
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.warn(`[weftcut/export] isConfigSupported(${hw}) threw:`, e);
+        }
       }
     }
+    // Configure with prefer-hardware. The OS / browser still gets the
+    // last word — if HW decode isn't available in Worker scope, it
+    // falls back to software regardless. The probe above tells us which
+    // it actually picked.
     this.decoder.configure({
       codec: meta.codec,
       codedWidth: meta.codedWidth,
       codedHeight: meta.codedHeight,
       description: meta.description,
+      hardwareAcceleration: "prefer-hardware",
     });
     this.meta = meta;
     return meta;
