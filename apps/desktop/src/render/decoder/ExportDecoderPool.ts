@@ -128,10 +128,14 @@ export class ExportSourceHandle implements DecoderHandle {
   private async _doEnsureReady(): Promise<VideoTrackMeta> {
     const meta = await this.demuxer.open();
     await this.demuxer.ensureSamplesLoaded();
+    const descPreview = Array.from(meta.description.slice(0, 16))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join(" ");
     // eslint-disable-next-line no-console
     console.log(
       `[weftcut/export] source ${this.mediaId} ready: codec=${meta.codec} ` +
-        `${meta.codedWidth}x${meta.codedHeight} samples=${meta.nbSamples}`,
+        `${meta.codedWidth}x${meta.codedHeight} samples=${meta.nbSamples} ` +
+        `desc[0..16]=${descPreview} (total ${meta.description.byteLength}B)`,
     );
     let outputCount = 0;
     this.decoder = new VideoDecoder({
