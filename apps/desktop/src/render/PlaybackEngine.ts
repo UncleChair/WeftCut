@@ -70,6 +70,7 @@ export class PlaybackEngine {
     // see up to 50 ms of stale frame at the start of playback.
     this.scrubCoalescer.cancel();
     this.compositor.setScrubbing(false);
+    this.compositor.setMasterPlayState(true);
     this.clock.play();
     this.emitPlayState(true);
   }
@@ -78,6 +79,7 @@ export class PlaybackEngine {
     if (!this.clock.isPlaying()) return;
     // eslint-disable-next-line no-console
     console.log(`[weftcut/pixi] engine.pause() @ tUs=${this.clock.positionUs()}`);
+    this.compositor.setMasterPlayState(false);
     this.clock.pause();
     this.emitPlayState(false);
   }
