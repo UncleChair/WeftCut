@@ -13,6 +13,7 @@ import type { LayerSummary, MediaSummary, ProjectSummary } from "../ipc";
 import { SourceDecoderPool, type SourceHandle } from "./decoder/SourceDecoderPool";
 import { ColorSprite } from "./sprite/ColorSprite";
 import { ImageOverlaySprite } from "./sprite/ImageOverlaySprite";
+import { TextSprite } from "./sprite/TextSprite";
 import { VideoClipSprite } from "./sprite/VideoClipSprite";
 
 export interface CompositorInit {
@@ -56,6 +57,11 @@ interface ActiveColor {
   sprite: ColorSprite;
 }
 
+interface ActiveText {
+  layerId: string;
+  sprite: TextSprite;
+}
+
 export class Compositor {
   readonly app: Application;
   readonly stage: Container;
@@ -63,6 +69,7 @@ export class Compositor {
   private clips = new Map<string, ActiveClip>();
   private images = new Map<string, ActiveImage>();
   private colors = new Map<string, ActiveColor>();
+  private texts = new Map<string, ActiveText>();
   private projectSummary: ProjectSummary | null = null;
   private proxyAssetUrl: (mediaId: string) => string | null;
   private originalAssetUrl: (mediaId: string) => string | null;
@@ -166,6 +173,12 @@ export class Compositor {
         this.colors.delete(layerId);
       }
     }
+    for (const [layerId, t] of this.texts) {
+      if (!livingLayerIds.has(layerId)) {
+        t.sprite.dispose();
+        this.texts.delete(layerId);
+      }
+    }
   }
 
   /// Composite one frame at composition-time `tUs`.
@@ -229,8 +242,13 @@ export class Compositor {
           if (!color) continue;
           this.updateColor(color, layer, z++);
           this.stage.addChild(color.sprite.graphics);
+        } else if (kind === "Text") {
+          const text = this.ensureText(layer);
+          if (!text) continue;
+          this.updateText(text, layer, z++);
+          this.stage.addChild(text.sprite.text);
         }
-        // Text / Template / Subtitles render paths land in P4–P6.
+        // Template / Subtitles render paths land in P5–P6.
       }
     }
     // One-shot diagnostic the first time we transition from "stage
@@ -295,6 +313,8 @@ export class Compositor {
     this.images.clear();
     for (const c of this.colors.values()) c.sprite.dispose();
     this.colors.clear();
+    for (const t of this.texts.values()) t.sprite.dispose();
+    this.texts.clear();
     this.pool.dispose();
     try {
       this.app.stage.removeChild(this.stage);
@@ -459,5 +479,27 @@ export class Compositor {
     if (layer.params.kind !== "Color") return;
     color.sprite.update(layer.params);
     color.sprite.graphics.zIndex = z;
+  }
+
+  // ============================================================
+  // Text
+  // ============================================================
+
+  private ensureText(layer: LayerSummary): ActiveText | null {
+    if (layer.params.kind !== "Text") return null;
+    const existing = this.texts.get(layer.id);
+    if (existing) return existing;
+    const sprite = new TextSprite({ layerId: layer.id });
+    const text: ActiveText = { layerId: layer.id, sprite };
+    this.texts.set(layer.id, text);
+    // eslint-disable-next-line no-console
+    console.log(`[weftcut/pixi] text ${layer.id} attached`);
+    return text;
+  }
+
+  private updateText(text: ActiveText, layer: LayerSummary, z: number): void {
+    if (layer.params.kind !== "Text") return;
+    text.sprite.update(layer.params);
+    text.sprite.text.zIndex = z;
   }
 }
