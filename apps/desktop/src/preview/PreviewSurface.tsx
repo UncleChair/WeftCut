@@ -16,6 +16,7 @@ import { useTranslation } from "react-i18next";
 
 import { useProjectStore } from "../state/projectStore";
 import { isPixiPreviewEnabled, PixiPreview } from "../render/PixiPreview";
+import { PixiErrorBoundary } from "../render/PixiErrorBoundary";
 import { AudioGraph } from "./dom/audio/AudioGraph";
 import { LiveLayers } from "./dom/LiveLayers";
 import { PlaybackEngine } from "./dom/PlaybackEngine";
@@ -187,10 +188,12 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
             background: "#1f2937",
           }}
         >
-          <PixiPreview
-            onTimeUpdate={onTimeUpdate}
-            onPausedChange={onPausedChange}
-          />
+          <PixiErrorBoundary>
+            <PixiPreview
+              onTimeUpdate={onTimeUpdate}
+              onPausedChange={onPausedChange}
+            />
+          </PixiErrorBoundary>
         </div>
       );
     }

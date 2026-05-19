@@ -72,13 +72,29 @@ declare module "mp4box" {
     buffer: ArrayBuffer;
   }
 
-  /// Shape of a track returned by `file.getTrackById`. We only need
-  /// the avcC / hvcC / vpcC boxes' write() method to extract codec
-  /// extradata for VideoDecoder.configure({ description }).
-  export interface MP4Track {
+  /// Shape of a sample-description entry in the stsd box. mp4box.js
+  /// nests the codec configuration here:
+  /// `track.mdia.minf.stbl.stsd.entries[0].(avcC|hvcC|vpcC)`.
+  export interface MP4SampleDescriptionEntry {
     avcC?: { write(s: MP4DataStream): void };
     hvcC?: { write(s: MP4DataStream): void };
     vpcC?: { write(s: MP4DataStream): void };
+  }
+
+  /// Shape of a track returned by `file.getTrackById`. The codec
+  /// configuration box (avcC / hvcC / vpcC) lives nested under the
+  /// `mdia.minf.stbl.stsd.entries[*]` chain — mp4box.js does not
+  /// expose those boxes as direct properties of the track object.
+  export interface MP4Track {
+    mdia?: {
+      minf?: {
+        stbl?: {
+          stsd?: {
+            entries?: MP4SampleDescriptionEntry[];
+          };
+        };
+      };
+    };
   }
 
   export class DataStream {
