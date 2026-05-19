@@ -95,11 +95,34 @@ export class FrameRing {
     }
   }
 
-  /// Look up the frame whose presentation interval contains `tUs`.
-  /// Returns a borrowed reference — caller MUST NOT `.close()` it.
-  /// Returns `null` when no covering frame is cached.
+  /// Look up the frame to display at `tUs`. Returns a borrowed
+  /// reference — caller MUST NOT `.close()` it. Returns `null` only
+  /// when the ring is completely empty.
+  ///
+  /// Clamping policy: out-of-range timestamps clamp to the nearest
+  /// available frame. This matters because real-world proxies often
+  /// start at a non-zero PTS (an `-ss` or edit-list offset in the
+  /// source can leave the first decoded frame at PTS=33333µs even
+  /// though the timeline says t=0). Returning the nearest available
+  /// frame is the correct UX — the renderer paints SOMETHING at
+  /// every t, instead of going blank because the asked-for timestamp
+  /// fell outside the cached window.
   frameAt(tUs: number): VideoFrame | null {
-    // Binary search by ptsUs.
+    if (this.entries.length === 0) return null;
+
+    // Before the earliest cached frame → clamp to first.
+    const first = this.entries[0]!;
+    if (tUs < first.ptsUs) {
+      return first.frame;
+    }
+
+    // After the latest cached frame's interval → clamp to last.
+    const last = this.entries[this.entries.length - 1]!;
+    if (tUs >= last.ptsUs + (last.durationUs || 0)) {
+      return last.frame;
+    }
+
+    // Binary search for the entry whose interval contains tUs.
     let lo = 0;
     let hi = this.entries.length - 1;
     while (lo <= hi) {
@@ -111,12 +134,11 @@ export class FrameRing {
       if (e.ptsUs > tUs) hi = mid - 1;
       else lo = mid + 1;
     }
-    // Fall back to the nearest preceding frame so a tUs that landed
-    // between samples still paints something.
-    if (hi >= 0) {
-      return this.entries[hi]!.frame;
-    }
-    return null;
+
+    // Fallback: nearest preceding (only reachable if duration is
+    // zero on multiple consecutive entries, which shouldn't happen
+    // in practice).
+    return this.entries[hi]?.frame ?? this.entries[0]!.frame;
   }
 
   /// Drop everything. Use on seek beyond the lookahead window.
