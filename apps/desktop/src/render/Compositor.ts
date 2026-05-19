@@ -79,9 +79,12 @@ export class Compositor {
   private texts = new Map<string, ActiveText>();
   private audios = new Map<string, ActiveAudio>();
   /// Host element where AudioMixers append their hidden `<audio>`
-  /// elements. The Compositor owns lifecycle; mixers append /
-  /// remove themselves.
-  private audioHost: HTMLDivElement;
+  /// elements. Null in export mode (no DOM). The Compositor owns
+  /// lifecycle; mixers append / remove themselves under this host.
+  private audioHost: HTMLDivElement | null;
+  /// Preview or export. Affects audio setup + (future) hardware-
+  /// accel preferences.
+  private mode: "preview" | "export";
   private projectSummary: ProjectSummary | null = null;
   private proxyAssetUrl: (mediaId: string) => string | null;
   private originalAssetUrl: (mediaId: string) => string | null;
@@ -123,15 +126,20 @@ export class Compositor {
     this.mediaById = init.mediaById;
     this.compositionWidth = init.width;
     this.compositionHeight = init.height;
+    this.mode = init.mode;
     this.app.stage.addChild(this.stage);
-    // Hidden DOM host for AudioMixer's `<audio>` elements. Mounting
-    // them under one node keeps cleanup simple; using
-    // `display: none` keeps any browser-default audio chrome
-    // hidden.
-    this.audioHost = document.createElement("div");
-    this.audioHost.setAttribute("data-pixi-audio-host", "");
-    this.audioHost.style.display = "none";
-    document.body.appendChild(this.audioHost);
+    // Hidden DOM host for AudioMixer's `<audio>` elements. Only
+    // mounted in preview mode — the export Worker has no `document`
+    // and routes audio through Rust ffmpeg (P9 final mux). Without
+    // this gate the Worker would crash at construction.
+    if (this.mode === "preview" && typeof document !== "undefined") {
+      this.audioHost = document.createElement("div");
+      this.audioHost.setAttribute("data-pixi-audio-host", "");
+      this.audioHost.style.display = "none";
+      document.body.appendChild(this.audioHost);
+    } else {
+      this.audioHost = null;
+    }
   }
 
   /// Coalesced repaint at the current playhead time. Called by
@@ -248,23 +256,26 @@ export class Compositor {
     this.stage.removeChildren();
 
     // First pass: ensure audio mixers for every audio-bearing layer
-    // (VideoClip + Audio), regardless of whether the time-gate is
-    // currently active. Mixers track their own `t_start..t_end`
-    // window — when outside it they pause themselves but stay
-    // attached so they don't have to re-load the file on every
-    // entry/exit.
-    for (const track of this.projectSummary.tracks) {
-      if (!track.enabled) continue;
-      for (const layer of track.layers) {
-        if (!layer.enabled) continue;
-        if (layer.params.kind === "VideoClip" || layer.params.kind === "Audio") {
-          const audio = this.ensureAudio(layer);
-          if (audio) {
-            audio.mixer.updateLayerParams(
-              layer.t_start_us,
-              layer.params.src_in_us,
-            );
-            audio.mixer.tick(tUsSnapped, this.playing, layer.t_end_us);
+    // (VideoClip + Audio). Skipped entirely in export mode — the
+    // Worker has no DOM `<audio>` element to drive, and audio
+    // export rides the existing Rust ffmpeg compositor.
+    if (this.audioHost !== null) {
+      for (const track of this.projectSummary.tracks) {
+        if (!track.enabled) continue;
+        for (const layer of track.layers) {
+          if (!layer.enabled) continue;
+          if (
+            layer.params.kind === "VideoClip" ||
+            layer.params.kind === "Audio"
+          ) {
+            const audio = this.ensureAudio(layer);
+            if (audio) {
+              audio.mixer.updateLayerParams(
+                layer.t_start_us,
+                layer.params.src_in_us,
+              );
+              audio.mixer.tick(tUsSnapped, this.playing, layer.t_end_us);
+            }
           }
         }
       }
@@ -377,7 +388,7 @@ export class Compositor {
     this.texts.clear();
     for (const a of this.audios.values()) a.mixer.dispose();
     this.audios.clear();
-    if (this.audioHost.parentNode) {
+    if (this.audioHost && this.audioHost.parentNode) {
       this.audioHost.parentNode.removeChild(this.audioHost);
     }
     this.pool.dispose();
@@ -575,6 +586,7 @@ export class Compositor {
   private ensureAudio(layer: LayerSummary): ActiveAudio | null {
     const kind = layer.params.kind;
     if (kind !== "VideoClip" && kind !== "Audio") return null;
+    if (this.audioHost === null) return null;
     const existing = this.audios.get(layer.id);
     if (existing) return existing;
     const mediaId = layer.params.media_id;
