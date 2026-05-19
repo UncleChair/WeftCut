@@ -48,6 +48,11 @@ export class Compositor {
   private compositionWidth = 1920;
   private compositionHeight = 1080;
   private disposed = false;
+  /// Most recent composition time we composited at. Used by
+  /// `scheduleRepaint()` for async-arrived frames when the playhead
+  /// is paused (no rAF tick incoming).
+  private lastTUs = 0;
+  private repaintScheduled = false;
 
   constructor(init: CompositorInit) {
     this.app = init.app;
@@ -58,6 +63,22 @@ export class Compositor {
     this.compositionWidth = init.width;
     this.compositionHeight = init.height;
     this.app.stage.addChild(this.stage);
+  }
+
+  /// Coalesced repaint at the current playhead time. Called by
+  /// SourceHandle.onFirstFrame so the canvas updates as soon as a
+  /// decoded frame is available, even when the playback engine isn't
+  /// actively ticking (paused state).
+  scheduleRepaint(): void {
+    if (this.disposed) return;
+    if (this.repaintScheduled) return;
+    this.repaintScheduled = true;
+    requestAnimationFrame(() => {
+      this.repaintScheduled = false;
+      if (this.disposed) return;
+      this.setAnchorTime(this.lastTUs);
+      this.compositeFrame(this.lastTUs);
+    });
   }
 
   /// Replace the project snapshot. Sprites for layers that have
@@ -85,6 +106,7 @@ export class Compositor {
   /// Composite one frame at composition-time `tUs`.
   compositeFrame(tUs: number): void {
     if (this.disposed) return;
+    this.lastTUs = tUs;
     if (!this.projectSummary) {
       this.app.renderer.render(this.app.stage);
       return;
@@ -167,15 +189,31 @@ export class Compositor {
     if (existing) return existing;
     const mediaId = layer.params.media_id;
     const proxyUrl = this.proxyAssetUrl(mediaId);
-    if (!proxyUrl) return null;
+    if (!proxyUrl) {
+      // eslint-disable-next-line no-console
+      console.warn(`[weftcut/pixi] no proxy URL for media ${mediaId} (clip ${layer.id})`);
+      return null;
+    }
     const source = this.pool.acquire({ mediaId, proxyAssetUrl: proxyUrl });
+    // Subscribe to the first-frame notification BEFORE kicking off
+    // ensureReady so we don't miss the synchronous-fire case if the
+    // source happened to be pre-warmed by another clip referencing
+    // the same media.
+    source.onFirstFrame(() => {
+      this.scheduleRepaint();
+    });
+    // Kick off the async ensureReady. After it resolves, the next
+    // setAnchorTime() tick (or first decoded frame's onFirstFrame
+    // callback) will paint.
     void source.ensureReady().catch((e: unknown) => {
       // eslint-disable-next-line no-console
-      console.error(`Compositor: ensureReady ${mediaId} failed`, e);
+      console.error(`[weftcut/pixi] ensureReady ${mediaId} failed`, e);
     });
     const sprite = new VideoClipSprite({ layerId: layer.id, mediaId });
     const clip: ActiveClip = { layerId: layer.id, mediaId, source, sprite };
     this.clips.set(layer.id, clip);
+    // eslint-disable-next-line no-console
+    console.log(`[weftcut/pixi] clip ${layer.id} → media ${mediaId} attached`);
     return clip;
   }
 

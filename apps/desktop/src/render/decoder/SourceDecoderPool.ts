@@ -22,12 +22,22 @@ export class SourceHandle {
   readonly ring: FrameRing;
   private decoder: VideoDecoder | null = null;
   private meta: VideoTrackMeta | null = null;
+  /// In-flight `ensureReady` promise, cached so concurrent callers
+  /// don't each create a fresh `VideoDecoder` and overwrite each
+  /// other. Cleared on dispose.
+  private readyP: Promise<VideoTrackMeta> | null = null;
   /// Last sample index we issued to the decoder. -1 means none yet.
   private lastDecodedIndex = -1;
   /// First sample index of the currently-flowing decode run. We need
   /// this so we can issue an IDR before a non-keyframe target.
   private decodeFloor = 0;
   private lastUseMs = 0;
+  /// Notification fired after the first decoded frame lands in the
+  /// ring. Lets the Compositor schedule a repaint even when the
+  /// playhead is paused (otherwise the canvas stays blank because
+  /// `compositeFrame` is never called).
+  private onFirstFrameCb: (() => void) | null = null;
+  private firedFirstFrame = false;
 
   constructor(init: SourceHandleInit) {
     this.mediaId = init.mediaId;
@@ -35,19 +45,48 @@ export class SourceHandle {
     this.ring = new FrameRing();
   }
 
-  /// Initialize the decoder + open the demuxer. Idempotent.
+  /// Subscribe to "first frame decoded" notification. Fires exactly
+  /// once per SourceHandle. If the first frame already landed before
+  /// the caller subscribed, the callback fires synchronously.
+  onFirstFrame(cb: () => void): void {
+    if (this.firedFirstFrame) {
+      cb();
+      return;
+    }
+    this.onFirstFrameCb = cb;
+  }
+
+  /// Initialize the decoder + open the demuxer. Idempotent across
+  /// concurrent callers.
   async ensureReady(): Promise<VideoTrackMeta> {
     if (this.meta) return this.meta;
+    if (this.readyP) return this.readyP;
+    this.readyP = this._doEnsureReady();
+    return this.readyP;
+  }
+
+  private async _doEnsureReady(): Promise<VideoTrackMeta> {
     const meta = await this.demuxer.open();
     await this.demuxer.ensureSamplesLoaded();
+    // eslint-disable-next-line no-console
+    console.log(
+      `[weftcut/pixi] source ${this.mediaId} ready: codec=${meta.codec} ` +
+        `${meta.codedWidth}x${meta.codedHeight} samples=${meta.nbSamples}`,
+    );
     this.decoder = new VideoDecoder({
-      output: (frame: VideoFrame) => this.ring.push(frame),
+      output: (frame: VideoFrame) => {
+        this.ring.push(frame);
+        if (!this.firedFirstFrame) {
+          this.firedFirstFrame = true;
+          // eslint-disable-next-line no-console
+          console.log(`[weftcut/pixi] source ${this.mediaId} first frame decoded`);
+          this.onFirstFrameCb?.();
+          this.onFirstFrameCb = null;
+        }
+      },
       error: (e: unknown) => {
-        // VideoDecoder errors are surfaced via a callback rather
-        // than rejection; log and let the caller decide what to do
-        // by observing ring emptiness.
         // eslint-disable-next-line no-console
-        console.error(`SourceHandle(${this.mediaId}) decoder error:`, e);
+        console.error(`[weftcut/pixi] decoder ${this.mediaId} error:`, e);
       },
     });
     this.decoder.configure({
@@ -55,9 +94,6 @@ export class SourceHandle {
       codedWidth: meta.codedWidth,
       codedHeight: meta.codedHeight,
       description: meta.description,
-      // `hardwareAcceleration` defaults to no-preference; WebCodecs
-      // picks the implementation. The encoder side will explicitly
-      // `prefer-hardware`.
     });
     this.meta = meta;
     return meta;
@@ -147,6 +183,8 @@ export class SourceHandle {
     this.ring.dispose();
     this.demuxer.dispose();
     this.meta = null;
+    this.readyP = null;
+    this.onFirstFrameCb = null;
   }
 }
 
