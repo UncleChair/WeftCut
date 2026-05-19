@@ -1,7 +1,9 @@
-// PixiJS-backed composition root. Owns the `Application`, the scene
-// graph, and the per-frame composite. Same module serves both preview
-// (main thread, mounts against HTMLCanvasElement) and export (Worker,
-// mounts against OffscreenCanvas).
+// PixiJS-backed composition root. Owns the scene graph and the
+// per-frame composite. Does NOT own the PIXI `Application` lifecycle —
+// the host (`@pixi/react`'s `<Application>` for preview, or a Worker
+// shell for export) is responsible for constructing and destroying
+// the Application. The Compositor receives an already-initialized
+// `Application` reference at construction.
 //
 // Plan: docs/pixi-renderer-plan.md
 
@@ -12,35 +14,26 @@ import { SourceDecoderPool, type SourceHandle } from "./decoder/SourceDecoderPoo
 import { VideoClipSprite } from "./sprite/VideoClipSprite";
 
 export interface CompositorInit {
-  /// Canvas to render into. `HTMLCanvasElement` on the main thread for
-  /// preview; `OffscreenCanvas` inside the export Worker.
-  canvas: HTMLCanvasElement | OffscreenCanvas;
-  /// Project composition dimensions in pixels. Internal renderer size
-  /// stays at project resolution regardless of how the canvas is
-  /// CSS-scaled in preview.
+  /// Pre-initialized PIXI Application. The Compositor adds its stage
+  /// `Container` to `app.stage` and reads `app.renderer`. Lifecycle of
+  /// the Application is the host's responsibility.
+  app: Application;
+  /// Project composition dimensions in pixels.
   width: number;
   height: number;
   /// Preview can prefer interactive over throughput; export wants
-  /// throughput. Currently advisory — both modes initialize the same
-  /// Application.
+  /// throughput. Currently advisory.
   mode: "preview" | "export";
   /// Resolver for the asset URL of a media item's master proxy.
-  /// Caller supplies because the projectStore is a React/Zustand
-  /// hookline that the Compositor doesn't reach for directly.
   proxyAssetUrl: (mediaId: string) => string | null;
-  /// Lookup for media-side codec dimensions (we trust the demuxer for
-  /// the actual stream, but the project canvas dims drive layout).
+  /// Lookup for media-side codec dimensions.
   mediaById: (mediaId: string) => MediaSummary | undefined;
 }
 
 interface ActiveClip {
-  /// Layer id this clip renders.
   layerId: string;
-  /// MediaId backing the clip.
   mediaId: string;
-  /// Source-decoder pool handle for this media.
   source: SourceHandle;
-  /// PixiJS sprite + container slot.
   sprite: VideoClipSprite;
 }
 
@@ -48,13 +41,6 @@ export class Compositor {
   readonly app: Application;
   readonly stage: Container;
   readonly pool: SourceDecoderPool;
-  /// True once `app.init()` has fully resolved. We can't call
-  /// `app.destroy()` before this — PixiJS v8's plugins (e.g.
-  /// `ResizePlugin`) have a `destroy()` that assumes `init()` ran and
-  /// will null-deref otherwise. StrictMode-style cleanup that fires
-  /// between `new Compositor()` and the `await mount()` would hit
-  /// that path.
-  private mounted = false;
   private clips = new Map<string, ActiveClip>();
   private projectSummary: ProjectSummary | null = null;
   private proxyAssetUrl: (mediaId: string) => string | null;
@@ -64,28 +50,14 @@ export class Compositor {
   private disposed = false;
 
   constructor(init: CompositorInit) {
-    this.app = new Application();
+    this.app = init.app;
     this.stage = new Container();
     this.pool = new SourceDecoderPool();
     this.proxyAssetUrl = init.proxyAssetUrl;
     this.mediaById = init.mediaById;
     this.compositionWidth = init.width;
     this.compositionHeight = init.height;
-  }
-
-  /// Initialize the underlying renderer. Must be awaited before any
-  /// `compositeFrame()` call.
-  async mount(init: CompositorInit): Promise<void> {
-    await this.app.init({
-      canvas: init.canvas as HTMLCanvasElement,
-      width: init.width,
-      height: init.height,
-      antialias: true,
-      backgroundAlpha: 1,
-      background: 0x000000,
-    });
     this.app.stage.addChild(this.stage);
-    this.mounted = true;
   }
 
   /// Replace the project snapshot. Sprites for layers that have
@@ -94,13 +66,10 @@ export class Compositor {
   setProject(summary: ProjectSummary | null): void {
     this.projectSummary = summary;
     if (!summary) {
-      // Nothing to render. Tear down active clips so we don't keep
-      // GPU memory pinned.
       for (const c of this.clips.values()) c.sprite.dispose();
       this.clips.clear();
       return;
     }
-    // Drop clips whose layer no longer exists.
     const livingLayerIds = new Set<string>();
     for (const t of summary.tracks) {
       for (const l of t.layers) livingLayerIds.add(l.id);
@@ -113,19 +82,14 @@ export class Compositor {
     }
   }
 
-  /// Composite one frame at composition-time `tUs`. Idempotent and
-  /// safe to call at any cadence.
+  /// Composite one frame at composition-time `tUs`.
   compositeFrame(tUs: number): void {
-    if (!this.mounted || this.disposed) return;
+    if (this.disposed) return;
     if (!this.projectSummary) {
       this.app.renderer.render(this.app.stage);
       return;
     }
 
-    // Walk tracks in z-order (bottom-up; first track is bottommost).
-    // We rebuild the stage's child list each frame so the order
-    // matches the project's track order even if mid-frame structural
-    // edits happened.
     this.stage.removeChildren();
 
     let z = 0;
@@ -139,13 +103,12 @@ export class Compositor {
         if (!clip) continue;
         this.updateClip(clip, layer, tUs, z++);
         // Defense in depth: don't add a sprite to the stage while its
-        // texture is still the canonical `Texture.EMPTY`. PixiJS v8's
-        // batched renderer shader-compile path has crashed on empty
-        // placeholder textures in some WebView2 / ANGLE configurations
-        // (null-deref in `logPrettyShaderError`). Skipping the addChild
-        // means an active-but-not-yet-decoded clip simply renders
-        // nothing on its slot, which then naturally pops in once the
-        // first VideoFrame lands.
+        // texture is still `Texture.EMPTY`. PixiJS v8's batched
+        // renderer shader-compile path has crashed on empty placeholder
+        // textures in some WebView2 / ANGLE configurations. Skipping
+        // the addChild means an active-but-not-yet-decoded clip simply
+        // renders nothing on its slot, which then naturally pops in
+        // once the first VideoFrame lands.
         if (clip.sprite.sprite.texture !== Texture.EMPTY) {
           this.stage.addChild(clip.sprite.sprite);
         }
@@ -158,44 +121,30 @@ export class Compositor {
   /// Tell the decoder pool which time we're at so it can manage
   /// lookahead. Called by PlaybackEngine on every tick.
   setAnchorTime(tUs: number): void {
+    if (!this.projectSummary) return;
     for (const c of this.clips.values()) {
-      // Layer-local time for this clip = tUs - t_start_us.
-      // We need the LayerSummary to compute it accurately; if the
-      // project disappeared mid-call, skip.
       const layer = this.findLayer(c.layerId);
       if (!layer || layer.params.kind !== "VideoClip") continue;
       const layerLocalUs = tUs - layer.t_start_us;
-      const srcInUs = layer.params.src_in_us;
-      const srcTUs = srcInUs + layerLocalUs;
-      // Async: request frames around this anchor. Errors propagate
-      // through the source's error callback; we don't await here
-      // because the loop is hot.
+      const srcTUs = layer.params.src_in_us + layerLocalUs;
       void c.source.requestFrameAt(srcTUs);
     }
   }
 
+  /// Release every sprite + decoder + the stage container. Does NOT
+  /// touch the Application — the host owns its lifecycle.
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
     for (const c of this.clips.values()) c.sprite.dispose();
     this.clips.clear();
     this.pool.dispose();
-    if (this.mounted) {
-      try {
-        this.app.destroy(true, { children: true, texture: true });
-      } catch (e) {
-        // Defensive: PixiJS plugins occasionally throw during destroy
-        // even after init succeeded (e.g. WebGL context already lost).
-        // Don't propagate — disposal should be best-effort.
-        // eslint-disable-next-line no-console
-        console.warn("[weftcut/pixi] app.destroy threw:", e);
-      }
+    try {
+      this.app.stage.removeChild(this.stage);
+      this.stage.destroy({ children: true });
+    } catch {
+      // App may already be destroyed by the host; ignore.
     }
-    // If not mounted, the Application was constructed but never had
-    // init() complete — calling destroy() on it crashes inside
-    // ResizePlugin / CullerPlugin which assume init initialised their
-    // private state. Just drop our references; the Application itself
-    // has no GPU resources yet.
   }
 
   // ============================================================
@@ -218,11 +167,8 @@ export class Compositor {
     if (existing) return existing;
     const mediaId = layer.params.media_id;
     const proxyUrl = this.proxyAssetUrl(mediaId);
-    if (!proxyUrl) return null; // Proxy not ready; skip this frame.
+    if (!proxyUrl) return null;
     const source = this.pool.acquire({ mediaId, proxyAssetUrl: proxyUrl });
-    // Lazy ensureReady is async; sprite paints EMPTY texture until
-    // first decoded frame arrives. The async kick is fire-and-forget
-    // here; the next composite tick picks up the frame.
     void source.ensureReady().catch((e: unknown) => {
       // eslint-disable-next-line no-console
       console.error(`Compositor: ensureReady ${mediaId} failed`, e);
@@ -237,21 +183,14 @@ export class Compositor {
     if (layer.params.kind !== "VideoClip") return;
     const params = layer.params;
 
-    // Layer-local time → source PTS within the clip's src window.
     const layerLocalUs = tUs - layer.t_start_us;
     const srcTUs = params.src_in_us + layerLocalUs;
 
-    // Pull a decoded frame at srcTUs from the ring and update the
-    // sprite's persistent texture source in place.
     const frame = clip.source.ring.frameAt(srcTUs);
     if (frame) {
       clip.sprite.updateFrame(frame);
     }
 
-    // Sprite position + scale from the static LayerSummary view.
-    // Real keyframe interpolation lands once the IPC ships full
-    // AnimTrack<T> on top of LayerSummary; today this picks up the
-    // Rust-side evaluation at the IPC update tick.
     const media = this.mediaById(params.media_id);
     const nativeW = media?.width ?? this.compositionWidth;
     const nativeH = media?.height ?? this.compositionHeight;
