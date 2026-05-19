@@ -49,6 +49,10 @@ const LOG = "[weftcut/pixi]";
 
 export function PixiPreview({ onTimeUpdate, onPausedChange }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  /// React StrictMode runs the effect twice in dev. Holding the
+  /// in-flight Compositor / PlaybackEngine in local closure variables
+  /// (NOT just refs) means the cleanup function can dispose them even
+  /// before async `mount()` resolves and the refs get set.
   const compositorRef = useRef<Compositor | null>(null);
   const engineRef = useRef<PlaybackEngine | null>(null);
   const [status, setStatus] = useState<string>("Mounting…");
@@ -65,7 +69,17 @@ export function PixiPreview({ onTimeUpdate, onPausedChange }: Props) {
       setStatus("Waiting for project…");
       return;
     }
+    // Local copies the cleanup closure can see even before the
+    // async mount() promise resolves. Critical for StrictMode-safe
+    // double-effect behavior: the cleanup of the first effect must
+    // tear down the first Compositor (which has taken the canvas's
+    // WebGL context) before the second effect tries to mount onto
+    // the same canvas.
     let cancelled = false;
+    let compositor: Compositor | null = null;
+    let engine: PlaybackEngine | null = null;
+    let unsubTime: (() => void) | null = null;
+    let unsubPlay: (() => void) | null = null;
 
     const proxyAssetUrl = (mediaId: string): string | null => {
       const m = useProjectStore.getState().mediaById.get(mediaId);
@@ -78,64 +92,63 @@ export function PixiPreview({ onTimeUpdate, onPausedChange }: Props) {
     setStatus("Initializing PixiJS…");
     console.log(`${LOG} init w=${composition.width} h=${composition.height}`);
 
-    const compositor = new Compositor({
-      canvas,
-      width: composition.width,
-      height: composition.height,
-      mode: "preview",
-      proxyAssetUrl,
-      mediaById: lookupMedia,
-    });
-
-    void compositor
-      .mount({
-        canvas,
-        width: composition.width,
-        height: composition.height,
-        mode: "preview",
-        proxyAssetUrl,
-        mediaById: lookupMedia,
-      })
-      .then(() => {
+    (async () => {
+      try {
+        const c = new Compositor({
+          canvas,
+          width: composition.width,
+          height: composition.height,
+          mode: "preview",
+          proxyAssetUrl,
+          mediaById: lookupMedia,
+        });
+        compositor = c;
+        await c.mount({
+          canvas,
+          width: composition.width,
+          height: composition.height,
+          mode: "preview",
+          proxyAssetUrl,
+          mediaById: lookupMedia,
+        });
         if (cancelled) {
-          compositor.dispose();
+          c.dispose();
+          compositor = null;
           return;
         }
         console.log(`${LOG} compositor mounted`);
-        compositor.setProject(useProjectStore.getState().summary);
-        const engine = new PlaybackEngine({ compositor });
-        const unsubTime = engine.onTimeUpdate((t) => onTimeUpdate?.(t));
-        const unsubPlay = engine.onPlayStateChange((p) =>
-          onPausedChange?.(!p),
-        );
-        compositorRef.current = compositor;
-        engineRef.current = engine;
-        compositor.compositeFrame(0);
-        compositor.setAnchorTime(0);
+        c.setProject(useProjectStore.getState().summary);
+        const e = new PlaybackEngine({ compositor: c });
+        engine = e;
+        unsubTime = e.onTimeUpdate((t) => onTimeUpdate?.(t));
+        unsubPlay = e.onPlayStateChange((p) => onPausedChange?.(!p));
+        compositorRef.current = c;
+        engineRef.current = e;
+        c.setAnchorTime(0);
+        c.compositeFrame(0);
         setStatus("Ready");
-        return () => {
-          unsubTime();
-          unsubPlay();
-          engine.dispose();
-          compositor.dispose();
-        };
-      })
-      .catch((e: unknown) => {
-        const msg = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
-        console.error(`${LOG} mount failed:`, e);
+      } catch (err) {
+        const msg = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+        console.error(`${LOG} mount failed:`, err);
         setErrMsg(msg);
         setStatus("Mount failed");
-        try {
-          compositor.dispose();
-        } catch {
-          // ignore
+        if (compositor) {
+          try {
+            compositor.dispose();
+          } catch {
+            // ignore
+          }
+          compositor = null;
         }
-      });
+      }
+    })();
 
     return () => {
       cancelled = true;
-      engineRef.current?.dispose();
-      compositorRef.current?.dispose();
+      unsubTime?.();
+      unsubPlay?.();
+      engine?.dispose();
+      compositor?.dispose();
       compositorRef.current = null;
       engineRef.current = null;
     };
