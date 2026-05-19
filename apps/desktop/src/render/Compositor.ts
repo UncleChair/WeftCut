@@ -10,6 +10,7 @@
 import { Application, Container, Texture } from "pixi.js";
 
 import type { LayerSummary, MediaSummary, ProjectSummary } from "../ipc";
+import { AudioMixer } from "./audio/AudioMixer";
 import { SourceDecoderPool, type SourceHandle } from "./decoder/SourceDecoderPool";
 import { ColorSprite } from "./sprite/ColorSprite";
 import { ImageOverlaySprite } from "./sprite/ImageOverlaySprite";
@@ -62,6 +63,12 @@ interface ActiveText {
   sprite: TextSprite;
 }
 
+interface ActiveAudio {
+  layerId: string;
+  mediaId: string;
+  mixer: AudioMixer;
+}
+
 export class Compositor {
   readonly app: Application;
   readonly stage: Container;
@@ -70,6 +77,11 @@ export class Compositor {
   private images = new Map<string, ActiveImage>();
   private colors = new Map<string, ActiveColor>();
   private texts = new Map<string, ActiveText>();
+  private audios = new Map<string, ActiveAudio>();
+  /// Host element where AudioMixers append their hidden `<audio>`
+  /// elements. The Compositor owns lifecycle; mixers append /
+  /// remove themselves.
+  private audioHost: HTMLDivElement;
   private projectSummary: ProjectSummary | null = null;
   private proxyAssetUrl: (mediaId: string) => string | null;
   private originalAssetUrl: (mediaId: string) => string | null;
@@ -82,6 +94,10 @@ export class Compositor {
   /// is paused (no rAF tick incoming).
   private lastTUs = 0;
   private repaintScheduled = false;
+  /// Engine's playing state — written by PlaybackEngine on play /
+  /// pause / seek. AudioMixers consult this to decide whether to
+  /// `play()` or `pause()` their `<audio>` elements.
+  private playing = false;
   /// When true, `setAnchorTime` is a no-op. PlaybackEngine flips this
   /// during rapid scrub so the decoder isn't hammered with a new
   /// target on every mouse-move event; the rAF loop keeps painting
@@ -108,6 +124,14 @@ export class Compositor {
     this.compositionWidth = init.width;
     this.compositionHeight = init.height;
     this.app.stage.addChild(this.stage);
+    // Hidden DOM host for AudioMixer's `<audio>` elements. Mounting
+    // them under one node keeps cleanup simple; using
+    // `display: none` keeps any browser-default audio chrome
+    // hidden.
+    this.audioHost = document.createElement("div");
+    this.audioHost.setAttribute("data-pixi-audio-host", "");
+    this.audioHost.style.display = "none";
+    document.body.appendChild(this.audioHost);
   }
 
   /// Coalesced repaint at the current playhead time. Called by
@@ -132,6 +156,13 @@ export class Compositor {
   /// `compositeFrame` against whatever is already in the ring.
   setScrubbing(s: boolean): void {
     this.scrubbing = s;
+  }
+
+  /// PlaybackEngine writes its current play state here on play /
+  /// pause / seek so AudioMixers know whether to call .play() or
+  /// .pause() on their `<audio>` elements.
+  setMasterPlayState(playing: boolean): void {
+    this.playing = playing;
   }
 
   /// Replace the project snapshot. Sprites for layers that have
@@ -179,6 +210,12 @@ export class Compositor {
         this.texts.delete(layerId);
       }
     }
+    for (const [layerId, a] of this.audios) {
+      if (!livingLayerIds.has(layerId)) {
+        a.mixer.dispose();
+        this.audios.delete(layerId);
+      }
+    }
   }
 
   /// Composite one frame at composition-time `tUs`.
@@ -209,6 +246,29 @@ export class Compositor {
 
     const prevChildCount = this.stage.children.length;
     this.stage.removeChildren();
+
+    // First pass: ensure audio mixers for every audio-bearing layer
+    // (VideoClip + Audio), regardless of whether the time-gate is
+    // currently active. Mixers track their own `t_start..t_end`
+    // window — when outside it they pause themselves but stay
+    // attached so they don't have to re-load the file on every
+    // entry/exit.
+    for (const track of this.projectSummary.tracks) {
+      if (!track.enabled) continue;
+      for (const layer of track.layers) {
+        if (!layer.enabled) continue;
+        if (layer.params.kind === "VideoClip" || layer.params.kind === "Audio") {
+          const audio = this.ensureAudio(layer);
+          if (audio) {
+            audio.mixer.updateLayerParams(
+              layer.t_start_us,
+              layer.params.src_in_us,
+            );
+            audio.mixer.tick(tUsSnapped, this.playing, layer.t_end_us);
+          }
+        }
+      }
+    }
 
     let z = 0;
     for (const track of this.projectSummary.tracks) {
@@ -315,6 +375,11 @@ export class Compositor {
     this.colors.clear();
     for (const t of this.texts.values()) t.sprite.dispose();
     this.texts.clear();
+    for (const a of this.audios.values()) a.mixer.dispose();
+    this.audios.clear();
+    if (this.audioHost.parentNode) {
+      this.audioHost.parentNode.removeChild(this.audioHost);
+    }
     this.pool.dispose();
     try {
       this.app.stage.removeChild(this.stage);
@@ -501,5 +566,43 @@ export class Compositor {
     if (layer.params.kind !== "Text") return;
     text.sprite.update(layer.params);
     text.sprite.text.zIndex = z;
+  }
+
+  // ============================================================
+  // Audio
+  // ============================================================
+
+  private ensureAudio(layer: LayerSummary): ActiveAudio | null {
+    const kind = layer.params.kind;
+    if (kind !== "VideoClip" && kind !== "Audio") return null;
+    const existing = this.audios.get(layer.id);
+    if (existing) return existing;
+    const mediaId = layer.params.media_id;
+    // For VideoClip we use the proxy MP4 (it contains audio
+    // alongside the H.264 video track). For Audio-only media the
+    // resolver falls back to the original file. Either way an
+    // `<audio>` element can play it.
+    const url = this.proxyAssetUrl(mediaId);
+    if (!url) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[weftcut/pixi] no audio URL for media ${mediaId} (layer ${layer.id})`,
+      );
+      return null;
+    }
+    const mixer = new AudioMixer(
+      {
+        layerId: layer.id,
+        audioUrl: url,
+        layerTStartUs: layer.t_start_us,
+        srcInUs: layer.params.src_in_us,
+      },
+      this.audioHost,
+    );
+    const audio: ActiveAudio = { layerId: layer.id, mediaId, mixer };
+    this.audios.set(layer.id, audio);
+    // eslint-disable-next-line no-console
+    console.log(`[weftcut/pixi] audio ${layer.id} → media ${mediaId} attached`);
+    return audio;
   }
 }
