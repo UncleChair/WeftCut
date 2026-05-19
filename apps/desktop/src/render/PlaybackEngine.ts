@@ -55,6 +55,7 @@ export class PlaybackEngine {
   /// scrub coalescing.
   seek(tUs: number): void {
     this.clock.setPosition(tUs);
+    this.compositor.setAnchorTime(tUs);
     this.compositor.compositeFrame(tUs);
     this.emitTime(tUs);
   }
@@ -79,6 +80,7 @@ export class PlaybackEngine {
     const tick = () => {
       if (!this.clock.isPlaying()) return;
       const { tUs } = this.clock.tick();
+      this.compositor.setAnchorTime(tUs);
       this.compositor.compositeFrame(tUs);
       this.emitTime(tUs);
       this.rafHandle = requestAnimationFrame(tick);
