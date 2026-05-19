@@ -28,39 +28,11 @@ import { playbackPathFor, useProjectStore } from "../state/projectStore";
 import type { MediaSummary } from "../ipc";
 import { Compositor } from "./Compositor";
 import { PlaybackEngine } from "./PlaybackEngine";
+import type { PixiPreviewHandle } from "./pixiPreviewFlag";
 
 interface Props {
   onTimeUpdate?: (tUs: number) => void;
   onPausedChange?: (paused: boolean) => void;
-}
-
-/// Transport interface exposed by `<PixiPreview ref={...}>`. Mirrors
-/// `PreviewSurfaceHandle` so the parent's imperative handle can
-/// forward play/pause/seek straight through to the underlying PIXI
-/// `PlaybackEngine` when the flag is on.
-export interface PixiPreviewHandle {
-  play(): void;
-  pause(): void;
-  seek(tUs: number): void;
-  paused(): boolean;
-}
-
-export function isPixiPreviewEnabled(): boolean {
-  try {
-    const url = new URL(window.location.href);
-    const q = url.searchParams.get("pixi");
-    if (q === "1" || q === "true") return true;
-  } catch {
-    // not a browser
-  }
-  try {
-    if (typeof localStorage !== "undefined") {
-      return localStorage.getItem("weftcut.preview.pixi") === "1";
-    }
-  } catch {
-    // storage disabled
-  }
-  return false;
 }
 
 const LOG = "[weftcut/pixi]";

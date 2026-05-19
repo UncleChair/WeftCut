@@ -135,7 +135,17 @@ export class SourceHandle {
     if (!needsReset && targetIndex <= this.lastDecodedIndex) {
       const targetSample = this.demuxer.sampleAt(targetIndex);
       if (targetSample && !this.ring.containsPts(targetSample.ptsUs)) {
-        needsReset = true;
+        // We've dispatched a chunk for this target but the ring
+        // doesn't contain a frame at its PTS. Two cases:
+        //   (a) Decoder hasn't emitted it yet — still in queue.
+        //   (b) Decoder emitted it but lookbehind evicted it.
+        // Only case (b) needs a reset; case (a) just needs us to
+        // wait for the async output callback. Distinguish via
+        // `decodeQueueSize`: if the decoder still has queued work,
+        // assume in-flight output is on the way.
+        if (this.decoder.decodeQueueSize === 0) {
+          needsReset = true;
+        }
       }
     }
 
@@ -165,8 +175,21 @@ export class SourceHandle {
 
   private pumpLookahead(): void {
     if (!this.meta || !this.decoder) return;
+    // Backpressure cap. VideoDecoder.decode() is sync (queues
+    // internally) but the OUTPUT callback fires asynchronously, so
+    // checking `ring.isLookaheadFull()` inside this loop is useless
+    // — the ring stays empty until the next microtask. Cap on the
+    // decoder's own internal queue depth instead. ~12 frames at
+    // 60fps is ~200ms of buffered decode work, well below the
+    // implementations' soft limits (~24 typically), and gives the
+    // output callback plenty of time to fire before we issue more.
+    const MAX_QUEUE = 12;
     let i = this.lastDecodedIndex + 1;
-    while (i < this.meta.nbSamples && !this.ring.isLookaheadFull()) {
+    while (
+      i < this.meta.nbSamples &&
+      this.decoder.decodeQueueSize < MAX_QUEUE &&
+      !this.ring.isLookaheadFull()
+    ) {
       const s = this.demuxer.sampleAt(i);
       if (!s) break;
       // EncodedVideoChunk timestamps are in microseconds.
