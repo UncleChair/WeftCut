@@ -15,11 +15,11 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "re
 import { useTranslation } from "react-i18next";
 
 import { useProjectStore } from "../state/projectStore";
+import { PixiPreview } from "../render/PixiPreview";
 import {
   isPixiPreviewEnabled,
-  PixiPreview,
   type PixiPreviewHandle,
-} from "../render/PixiPreview";
+} from "../render/pixiPreviewFlag";
 import { PixiErrorBoundary } from "../render/PixiErrorBoundary";
 import { AudioGraph } from "./dom/audio/AudioGraph";
 import { LiveLayers } from "./dom/LiveLayers";
