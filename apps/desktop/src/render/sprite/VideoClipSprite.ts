@@ -1,22 +1,29 @@
 // Per-VideoClip sprite. Texture is fed by SourceDecoderPool's
 // FrameRing: each composite frame we look up the VideoFrame whose
-// presentation interval contains the layer-local time, build a
-// Texture from it, and assign it to the sprite.
+// presentation interval contains the layer-local time, and update the
+// sprite's persistent texture source from it.
 //
 // Plan: docs/pixi-renderer-plan.md (P2)
 //
-// Initial state is `Texture.EMPTY` — the canonical PixiJS 1×1 white
-// texture that's guaranteed safe in the batched renderer. We allocate
-// a real `Texture` only when a decoded `VideoFrame` arrives, and
-// destroy the previous one in place so the GPU footprint stays
-// bounded.
+// Implementation per PixiJS v8 docs:
 //
-// We deliberately do NOT create a `TextureSource({ width, height })`
-// without a `resource` — that combination crashes PixiJS v8's batched
-// renderer at shader-compile time when it tries to bind a source with
-// no backing GL texture.
+//   - `Texture.from(source)` is cache-only in v8: "The source should
+//     be loaded and ready to go." Passing a raw VideoFrame yields a
+//     texture that may not actually upload pixels to the GPU.
+//   - `ImageSource` is the correct TextureSource subclass for
+//     WebCodecs frames — it explicitly accepts HTMLImageElement,
+//     ImageBitmap, VideoFrame, and HTMLVideoElement.
+//   - `VideoSource` only handles HTMLVideoElement, NOT VideoFrame.
+//
+// Lifecycle: one persistent `ImageSource` per sprite. On each new
+// frame we swap `source.resource` and call `source.update()` to
+// notify the renderer; the same Texture object stays bound to the
+// sprite. This is the canonical "swap resource + update" pattern.
+// On the very first frame we allocate the ImageSource (we can't
+// allocate it earlier because ImageSource requires a non-empty
+// resource at construction).
 
-import { Sprite, Texture } from "pixi.js";
+import { ImageSource, Sprite, Texture } from "pixi.js";
 
 export interface VideoClipSpriteInit {
   layerId: string;
@@ -27,8 +34,11 @@ export class VideoClipSprite {
   readonly sprite: Sprite;
   readonly layerId: string;
   readonly mediaId: string;
-  /// The VideoFrame whose pixels currently sit on the GPU. Borrowed
-  /// from FrameRing — we do NOT close it.
+  /// Persistent ImageSource, lazily allocated on first updateFrame.
+  private source: ImageSource | null = null;
+  private texture: Texture | null = null;
+  /// Borrowed VideoFrame whose pixels are on the GPU. We do not
+  /// close this — the FrameRing owns it.
   private currentFrame: VideoFrame | null = null;
 
   constructor(init: VideoClipSpriteInit) {
@@ -38,38 +48,45 @@ export class VideoClipSprite {
   }
 
   /// Push a decoded frame onto the GPU. No-op if the same frame is
-  /// already current (identity check against the FrameRing's owned
-  /// VideoFrame). Destroys the previously-bound texture before
-  /// assigning the new one.
+  /// already current.
   updateFrame(frame: VideoFrame): void {
     if (this.currentFrame === frame) return;
     this.currentFrame = frame;
-    const prev = this.sprite.texture;
-    // PixiJS v8: `Texture.from` accepts any TexImageSource including
-    // VideoFrame. It also caches by source-identity, so a fresh
-    // VideoFrame produces a fresh Texture each call.
-    const next = Texture.from(frame);
-    this.sprite.texture = next;
-    // Drop the previous one unless it was the shared empty texture.
-    if (prev !== Texture.EMPTY && prev !== next) {
-      try {
-        prev.destroy(true);
-      } catch {
-        // Already destroyed elsewhere — ignore.
-      }
+
+    if (!this.source || !this.texture) {
+      // First frame — allocate the ImageSource bound to this
+      // VideoFrame. PixiJS v8 explicitly accepts VideoFrame as an
+      // ImageSource resource.
+      this.source = new ImageSource({
+        resource: frame,
+        // alphaMode "premultiply-alpha-on-upload" matches PixiJS's
+        // default; we leave it implicit but record the choice here
+        // for future readers.
+      });
+      this.texture = new Texture({ source: this.source });
+      this.sprite.texture = this.texture;
+      return;
     }
+
+    // Subsequent frames — swap the resource on the existing source
+    // and notify PixiJS to re-upload. The Texture object stays
+    // bound to the sprite; no new GPU texture handle is allocated.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (this.source as any).resource = frame;
+    this.source.update();
   }
 
   dispose(): void {
     this.currentFrame = null;
-    const tex = this.sprite.texture;
     this.sprite.destroy({ children: true });
-    if (tex !== Texture.EMPTY) {
+    if (this.texture) {
       try {
-        tex.destroy(true);
+        this.texture.destroy(true);
       } catch {
         // ignore
       }
+      this.texture = null;
     }
+    this.source = null;
   }
 }

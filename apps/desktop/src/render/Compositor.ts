@@ -104,13 +104,16 @@ export class Compositor {
   }
 
   /// Composite one frame at composition-time `tUs`.
+  ///
+  /// We do NOT call `app.renderer.render()` here. PixiJS v8's
+  /// `TickerPlugin` auto-renders the stage every frame (default
+  /// `autoStart: true`), and @pixi/react's Application reconciler is
+  /// wired against that ticker. compositeFrame's job is to mutate
+  /// the scene graph; the ticker presents it.
   compositeFrame(tUs: number): void {
     if (this.disposed) return;
     this.lastTUs = tUs;
-    if (!this.projectSummary) {
-      this.app.renderer.render(this.app.stage);
-      return;
-    }
+    if (!this.projectSummary) return;
 
     this.stage.removeChildren();
 
@@ -124,20 +127,16 @@ export class Compositor {
         const clip = this.ensureClip(layer);
         if (!clip) continue;
         this.updateClip(clip, layer, tUs, z++);
-        // Defense in depth: don't add a sprite to the stage while its
-        // texture is still `Texture.EMPTY`. PixiJS v8's batched
-        // renderer shader-compile path has crashed on empty placeholder
-        // textures in some WebView2 / ANGLE configurations. Skipping
-        // the addChild means an active-but-not-yet-decoded clip simply
-        // renders nothing on its slot, which then naturally pops in
-        // once the first VideoFrame lands.
+        // Skip sprites still on Texture.EMPTY. PixiJS v8's batched
+        // renderer has crashed on empty placeholder textures in some
+        // WebView2 / ANGLE configurations. Once the first VideoFrame
+        // arrives, `updateClip` swaps in an `ImageSource`-backed
+        // texture and the sprite naturally pops in.
         if (clip.sprite.sprite.texture !== Texture.EMPTY) {
           this.stage.addChild(clip.sprite.sprite);
         }
       }
     }
-
-    this.app.renderer.render(this.app.stage);
   }
 
   /// Tell the decoder pool which time we're at so it can manage
