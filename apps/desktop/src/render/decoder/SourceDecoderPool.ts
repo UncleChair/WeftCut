@@ -16,6 +16,37 @@ export interface SourceHandleInit {
   proxyAssetUrl: string;
 }
 
+/// Minimal frame-by-PTS surface the Compositor reads through. Implemented
+/// by `FrameRing` (preview) and `ExportFrameStore` (export).
+export interface FrameStore {
+  frameAt(tUs: number): VideoFrame | null;
+  containsPts(tUs: number): boolean;
+}
+
+/// Minimal decoder-handle surface the Compositor depends on. Both the
+/// preview `SourceHandle` and the export `ExportSourceHandle` satisfy
+/// it — the Compositor doesn't care which it gets.
+export interface DecoderHandle {
+  readonly mediaId: string;
+  readonly ring: FrameStore;
+  ensureReady(): Promise<VideoTrackMeta>;
+  /// Preview calls this every tick to nudge the decoder's lookahead;
+  /// export ignores it and pre-stages frames via its own driver.
+  requestFrameAt(tUs: number): Promise<void>;
+  /// Preview subscribes to repaint on first decoded frame; export
+  /// no-ops because the composite runs synchronously.
+  onFirstFrame(cb: () => void): void;
+  dispose(): void;
+}
+
+/// Pool surface used by the Compositor. Concrete pools may expose extra
+/// surface (preview's idle sweeper, export's `handles` access for the
+/// worker) but the Compositor only needs these two methods.
+export interface DecoderPool {
+  acquire(init: SourceHandleInit): DecoderHandle;
+  dispose(): void;
+}
+
 export class SourceHandle {
   readonly mediaId: string;
   readonly demuxer: Demuxer;

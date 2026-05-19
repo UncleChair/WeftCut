@@ -1,37 +1,42 @@
 // Web Worker entry point for export. Receives an ExportRequest,
 // constructs a Compositor against an OffscreenCanvas, runs the
-// sequential decode → composite → encode loop, posts progress, posts
+// chunked decode → composite → encode loop, posts progress, posts
 // the muxed MP4 bytes back, and exits.
 //
-// Plan: docs/pixi-renderer-plan.md (P8)
+// Plan: docs/pixi-renderer-plan.md (P8 perf rewrite)
 //
-// Limitations (v1 — iterate):
-//   - Frame-readiness wait is a simple poll on the FrameRing for
-//     each clip's expected PTS. If a clip never produces (decoder
-//     stall, unsupported codec), the loop times out per-frame and
-//     paints whatever's currently bound (could be wrong / blank).
-//   - Audio is OUT — the Worker has no DOM and audio export rides
+// Why chunked + dedicated decoder driver:
+//   The preview-tuned SourceDecoderPool gates decoding on a small
+//   lookahead window with `setTimeout(8 ms)` poll-and-yield. In
+//   export that produced ~0.2 fps because every frame waited the
+//   full timeout while the decoder pump was throttled to keep
+//   preview latency low.
+//
+//   This Worker now drives an `ExportDecoderPool` directly: per
+//   ~2 s chunk we feed every needed sample for every active clip
+//   in one shot, `await decoder.flush()`, then run the encode loop
+//   over the chunk with no per-frame waiting. After the chunk
+//   encodes we evict its consumed frames so memory stays bounded.
+//
+// Limitations (v1):
+//   - Audio is OUT. The Worker has no DOM and audio export rides
 //     the existing Rust ffmpeg compositor. P9 final mux combines
 //     video.mp4 (this output) with audio.m4a.
-//   - Templates / Subtitles render paths are absent here too
-//     (P5 / P6 not done). VideoClip / ImageOverlay / Color / Text
-//     render fine.
+//   - Templates / Subtitles render paths are absent here (P5 / P6).
+//     VideoClip / ImageOverlay / Color / Text render fine.
 
 import { Application, DOMAdapter, WebWorkerAdapter } from "pixi.js";
 
-import type { MediaSummary, ProjectSummary } from "../../ipc";
+import type { LayerSummary, MediaSummary, ProjectSummary } from "../../ipc";
 import { Compositor } from "../Compositor";
+import { ExportDecoderPool } from "../decoder/ExportDecoderPool";
 import { EncoderSink } from "./encoder";
-import type { ExportRequest, ExportEvent } from "./protocol";
+import type { ExportEvent, ExportRequest } from "./protocol";
 
 // PixiJS defaults to `BrowserAdapter`, which calls `document.*`
-// and `new Image()`. In a Worker neither exists, so any
-// renderer init throws "document is not defined". Swap to
-// `WebWorkerAdapter` BEFORE `new Application()` — the adapter
-// is read during `app.init()`.
-//
-// Plan: docs/pixi-renderer-plan.md (P8) — confirmed via the
-// pixijs-environments skill.
+// and `new Image()`. In a Worker neither exists, so any renderer
+// init throws "document is not defined". Swap to `WebWorkerAdapter`
+// BEFORE `new Application()`.
 DOMAdapter.set(WebWorkerAdapter);
 
 function post(ev: ExportEvent, transfer: Transferable[] = []): void {
@@ -55,12 +60,20 @@ self.onmessage = (e: MessageEvent<ExportRequest>) => {
   }
 };
 
-// Ready handshake so the main thread knows the Worker has parsed
-// and the message handler is attached.
+// Ready handshake so the main thread knows we've parsed and the
+// message handler is attached.
 post({ type: "ready" });
 
+/// Chunk size — how many output frames we decode + encode before
+/// evicting and moving on. ~2 s at 30 fps. Larger chunks reduce
+/// per-chunk overhead (decoder.flush latency) at the cost of more
+/// resident VideoFrames per active clip.
+const CHUNK_FRAMES = 60;
+
 async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
-  // 1. Initialize PixiJS Application against the OffscreenCanvas.
+  const startedAtMs = performance.now();
+
+  // 1. PixiJS Application against the transferred OffscreenCanvas.
   const app = new Application();
   await app.init({
     canvas: req.canvas as unknown as HTMLCanvasElement,
@@ -70,12 +83,17 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     autoStart: false,
   });
 
-  // 2. Compositor in export mode (no audio host, no DOM dependencies).
+  // 2. Dedicated export decoder pool — bypasses the preview-tuned
+  // lookahead pump entirely.
+  const exportPool = new ExportDecoderPool();
+
+  // 3. Compositor in export mode with the export pool injected.
   const compositor = new Compositor({
     app,
     width: req.project.width,
     height: req.project.height,
     mode: "export",
+    pool: exportPool,
     proxyAssetUrl: (mediaId: string) =>
       req.project.proxyAssetUrls[mediaId] ?? null,
     originalAssetUrl: (mediaId: string) =>
@@ -100,7 +118,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   compositor.setProject(req.project.summary as ProjectSummary);
   compositor.setMasterPlayState(false);
 
-  // 3. Encoder pipeline.
+  // 4. Encoder pipeline.
   const encoder = new EncoderSink({
     config: req.encoderConfig,
     width: req.project.width,
@@ -109,136 +127,163 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     fpsDen: req.project.fpsDen,
   });
 
-  // 4. Frame grid.
+  // 5. Frame grid.
   const frameDurUs = Math.round(
     (1_000_000 * req.project.fpsDen) / req.project.fpsNum,
   );
   const startUs = Math.max(0, req.startUs);
   const endUs = Math.min(req.project.durationUs, req.endUs);
   const totalFrames = Math.max(0, Math.ceil((endUs - startUs) / frameDurUs));
-  const gop = req.encoderConfig.bitrate
-    ? // Match the proxy GOP density — 1 second IDR cadence.
-      Math.round(req.project.fpsNum / req.project.fpsDen)
-    : 30;
+  // 1-second IDR cadence to match the master proxy's GOP density.
+  const gop = Math.max(
+    1,
+    Math.round(req.project.fpsNum / Math.max(1, req.project.fpsDen)),
+  );
 
-  // 5. Per-frame loop.
-  for (let i = 0; i < totalFrames; i++) {
+  const summary = req.project.summary as ProjectSummary;
+
+  // 6. Chunked decode + encode.
+  for (let chunkStart = 0; chunkStart < totalFrames; chunkStart += CHUNK_FRAMES) {
     if (cancelled) {
       // eslint-disable-next-line no-console
       console.log("[weftcut/export] cancelled");
-      encoder.dispose();
-      compositor.dispose();
-      app.destroy(true);
+      cleanup(encoder, compositor, exportPool, app);
       return;
     }
-    const tUs = startUs + i * frameDurUs;
+    const chunkEnd = Math.min(chunkStart + CHUNK_FRAMES, totalFrames);
+    const chunkStartUs = startUs + chunkStart * frameDurUs;
+    // End is exclusive in frame-index terms; convert to inclusive PTS by
+    // subtracting one µs so `sampleIndexForPtsUs` lands inside the last
+    // frame's interval rather than the next one.
+    const chunkEndUs = startUs + chunkEnd * frameDurUs - 1;
 
-    // Tell the compositor where we are. setAnchorTime kicks the
-    // decoder pool's requestFrameAt for each active VideoClip.
-    compositor.setAnchorTime(tUs);
-
-    // Poll until the decoder has produced frames at this PTS, or
-    // give up after ~5 s (decoder probably stuck; the worker will
-    // paint what's available and move on).
-    await waitForFramesReady(compositor, tUs, 5000);
-
-    // Composite the frame into the canvas.
-    compositor.compositeFrame(tUs);
-
-    // Force PixiJS to actually render. autoStart was disabled at
-    // init so we drive the render imperatively here.
-    app.render();
-
-    // Capture the canvas as a VideoFrame and hand it to the
-    // encoder.
-    const captured = new VideoFrame(
-      req.canvas as unknown as CanvasImageSource,
-      {
-        timestamp: tUs - startUs,
-        duration: frameDurUs,
-      },
+    // 6a. Stage decode for every active VideoClip in this chunk. Run
+    // per-clip decodeRange calls in parallel so multiple clips on
+    // overlapping tracks decode concurrently.
+    const stagedClips = activeVideoClips(summary, chunkStartUs, chunkEndUs);
+    await Promise.all(
+      stagedClips.map(async (c) => {
+        const proxyUrl = req.project.proxyAssetUrls[c.mediaId];
+        if (!proxyUrl) return;
+        const handle = exportPool.acquire({
+          mediaId: c.mediaId,
+          proxyAssetUrl: proxyUrl,
+        });
+        await handle.decodeRange(c.srcAUs, c.srcBUs);
+      }),
     );
-    const isKey = i % gop === 0;
-    encoder.encodeFrame(captured, isKey);
 
-    // Progress + backpressure every few frames so postMessage
-    // doesn't drown the main thread.
-    if (i % 5 === 0) {
-      post({ type: "progress", framesEncoded: i, totalFrames });
+    // 6b. Composite + encode every frame in the chunk. With frames
+    // pre-staged this is purely CPU/GPU bound — no per-frame waits.
+    for (let i = chunkStart; i < chunkEnd; i++) {
+      if (cancelled) {
+        cleanup(encoder, compositor, exportPool, app);
+        return;
+      }
+      const tUs = startUs + i * frameDurUs;
+
+      compositor.setAnchorTime(tUs);
+      compositor.compositeFrame(tUs);
+      app.render();
+
+      const captured = new VideoFrame(
+        req.canvas as unknown as CanvasImageSource,
+        {
+          timestamp: tUs - startUs,
+          duration: frameDurUs,
+        },
+      );
+      const isKey = i % gop === 0;
+      encoder.encodeFrame(captured, isKey);
+
+      if (i % 5 === 0) {
+        post({ type: "progress", framesEncoded: i, totalFrames });
+      }
+      await encoder.awaitQueueBelow(8);
     }
-    await encoder.awaitQueueBelow(8);
+
+    // 6c. Evict frames consumed by this chunk so the next chunk's
+    // decode doesn't pile up. We cut everything strictly before
+    // chunkEndUs + 1µs — i.e. drop frames whose interval ended before
+    // or at the chunk's last consumed frame.
+    for (const c of stagedClips) {
+      const handle = exportPool.handles.get(c.mediaId);
+      handle?.evictBefore(c.srcBUs + 1);
+    }
+
+    const elapsedMs = performance.now() - startedAtMs;
+    const fps = elapsedMs > 0 ? Math.round((chunkEnd * 1000) / elapsedMs) : 0;
+    // eslint-disable-next-line no-console
+    console.log(
+      `[weftcut/export] chunk [${chunkStart}..${chunkEnd}) done — ` +
+        `${chunkEnd}/${totalFrames} frames (~${fps} fps wall-clock)`,
+    );
   }
 
-  // 6. Finalize + send bytes.
+  // 7. Finalize.
   const bytes = await encoder.finalize();
   post({ type: "progress", framesEncoded: totalFrames, totalFrames });
   post({ type: "done", videoBytes: bytes }, [bytes]);
 
-  // Cleanup.
-  encoder.dispose();
-  compositor.dispose();
-  app.destroy(true);
+  // 8. Cleanup.
+  cleanup(encoder, compositor, exportPool, app);
 }
 
-/// Best-effort: wait until each active VideoClip's source ring
-/// contains a frame whose interval covers the layer-local PTS for
-/// `tUs`. Returns whether all rings were satisfied (false on
-/// timeout). Caller proceeds either way — the rendered frame just
-/// might be stale for the failed clip.
-async function waitForFramesReady(
+function cleanup(
+  encoder: EncoderSink,
   compositor: Compositor,
-  tUs: number,
-  timeoutMs: number,
-): Promise<boolean> {
-  const summary = (
-    compositor as unknown as { projectSummary: ProjectSummary | null }
-  ).projectSummary;
-  if (!summary) return true;
-
-  // Build a list of (layer, expected source PTS) pairs we need
-  // ready.
-  interface Want {
-    mediaId: string;
-    expectedPtsUs: number;
+  pool: ExportDecoderPool,
+  app: Application,
+): void {
+  encoder.dispose();
+  compositor.dispose();
+  pool.dispose();
+  try {
+    app.destroy(true);
+  } catch {
+    // app may already be in a torn-down state; ignore.
   }
-  const wants: Want[] = [];
+}
+
+interface StagedClip {
+  layerId: string;
+  mediaId: string;
+  /// Source-local PTS interval to decode for this chunk: [srcAUs, srcBUs].
+  srcAUs: number;
+  srcBUs: number;
+}
+
+/// Walk the project's tracks/layers and collect every VideoClip whose
+/// timeline interval overlaps [chunkStartUs, chunkEndUs]. Translate the
+/// overlap into source-local PTS bounds.
+function activeVideoClips(
+  summary: ProjectSummary,
+  chunkStartUs: number,
+  chunkEndUs: number,
+): StagedClip[] {
+  const out: StagedClip[] = [];
   for (const track of summary.tracks) {
     if (!track.enabled) continue;
-    for (const layer of track.layers) {
+    for (const layer of track.layers as LayerSummary[]) {
       if (!layer.enabled) continue;
       if (layer.params.kind !== "VideoClip") continue;
-      if (tUs < layer.t_start_us || tUs >= layer.t_end_us) continue;
-      const srcPts = layer.params.src_in_us + (tUs - layer.t_start_us);
-      wants.push({ mediaId: layer.params.media_id, expectedPtsUs: srcPts });
-    }
-  }
-  if (wants.length === 0) return true;
+      // Reject layers entirely outside the chunk.
+      if (layer.t_end_us <= chunkStartUs) continue;
+      if (layer.t_start_us > chunkEndUs) continue;
 
-  const deadlineMs = performance.now() + timeoutMs;
-  while (performance.now() < deadlineMs) {
-    let ready = true;
-    for (const w of wants) {
-      const handle = (
-        compositor.pool as unknown as {
-          handles: Map<
-            string,
-            { ring: { containsPts: (t: number) => boolean } }
-          >;
-        }
-      ).handles.get(w.mediaId);
-      if (!handle) {
-        ready = false;
-        break;
-      }
-      if (!handle.ring.containsPts(w.expectedPtsUs)) {
-        ready = false;
-        break;
-      }
+      const overlapStartUs = Math.max(layer.t_start_us, chunkStartUs);
+      const overlapEndUs = Math.min(layer.t_end_us - 1, chunkEndUs);
+      const srcAUs =
+        layer.params.src_in_us + (overlapStartUs - layer.t_start_us);
+      const srcBUs =
+        layer.params.src_in_us + (overlapEndUs - layer.t_start_us);
+      out.push({
+        layerId: layer.id,
+        mediaId: layer.params.media_id,
+        srcAUs,
+        srcBUs,
+      });
     }
-    if (ready) return true;
-    // Re-kick the decoder pump.
-    compositor.setAnchorTime(tUs);
-    await new Promise<void>((r) => setTimeout(r, 8));
   }
-  return false;
+  return out;
 }

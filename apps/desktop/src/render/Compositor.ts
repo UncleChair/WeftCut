@@ -11,7 +11,11 @@ import { Application, Container, Texture } from "pixi.js";
 
 import type { LayerSummary, MediaSummary, ProjectSummary } from "../ipc";
 import { AudioMixer } from "./audio/AudioMixer";
-import { SourceDecoderPool, type SourceHandle } from "./decoder/SourceDecoderPool";
+import {
+  SourceDecoderPool,
+  type DecoderHandle,
+  type DecoderPool,
+} from "./decoder/SourceDecoderPool";
 import { ColorSprite } from "./sprite/ColorSprite";
 import { ImageOverlaySprite } from "./sprite/ImageOverlaySprite";
 import { TextSprite } from "./sprite/TextSprite";
@@ -38,12 +42,17 @@ export interface CompositorInit {
   originalAssetUrl: (mediaId: string) => string | null;
   /// Lookup for media-side codec dimensions.
   mediaById: (mediaId: string) => MediaSummary | undefined;
+  /// Optional decoder pool override. Defaults to a preview-tuned
+  /// `SourceDecoderPool` with per-frame lookahead + ring eviction. The
+  /// export Worker injects an `ExportDecoderPool` that drives decoding
+  /// in batched chunks instead.
+  pool?: DecoderPool;
 }
 
 interface ActiveClip {
   layerId: string;
   mediaId: string;
-  source: SourceHandle;
+  source: DecoderHandle;
   sprite: VideoClipSprite;
 }
 
@@ -72,7 +81,7 @@ interface ActiveAudio {
 export class Compositor {
   readonly app: Application;
   readonly stage: Container;
-  readonly pool: SourceDecoderPool;
+  readonly pool: DecoderPool;
   private clips = new Map<string, ActiveClip>();
   private images = new Map<string, ActiveImage>();
   private colors = new Map<string, ActiveColor>();
@@ -120,7 +129,7 @@ export class Compositor {
   constructor(init: CompositorInit) {
     this.app = init.app;
     this.stage = new Container();
-    this.pool = new SourceDecoderPool();
+    this.pool = init.pool ?? new SourceDecoderPool();
     this.proxyAssetUrl = init.proxyAssetUrl;
     this.originalAssetUrl = init.originalAssetUrl;
     this.mediaById = init.mediaById;
