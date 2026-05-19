@@ -61,6 +61,9 @@ export class Demuxer {
   private allSamplesResolve!: () => void;
   private trackMeta: VideoTrackMeta | null = null;
   private disposed = false;
+  /// Idempotency guard for `open()` — multiple callers awaiting the
+  /// same readyP must not each trigger another fetch.
+  private streamingStarted = false;
 
   constructor(init: DemuxerInit) {
     this.assetUrl = init.assetUrl;
@@ -121,9 +124,18 @@ export class Demuxer {
     });
   }
 
-  /// Resolve once track metadata is parsed. Triggers the fetch.
+  /// Resolve once track metadata is parsed. Triggers the fetch on the
+  /// first call; subsequent calls share the in-flight `readyP`.
   async open(): Promise<VideoTrackMeta> {
-    void this.streamFile();
+    if (!this.streamingStarted) {
+      this.streamingStarted = true;
+      void this.streamFile().catch((err) => {
+        // Surface as an mp4box error so `onError` rejects readyP.
+        // eslint-disable-next-line no-console
+        console.error(`Demuxer streamFile failed for ${this.assetUrl}`, err);
+        this.file.onError?.(String(err));
+      });
+    }
     return this.readyP;
   }
 

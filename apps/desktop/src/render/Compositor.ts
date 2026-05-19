@@ -5,7 +5,7 @@
 //
 // Plan: docs/pixi-renderer-plan.md
 
-import { Application, Container, Texture } from "pixi.js";
+import { Application, Container } from "pixi.js";
 
 import type { LayerSummary, MediaSummary, ProjectSummary } from "../ipc";
 import { SourceDecoderPool, type SourceHandle } from "./decoder/SourceDecoderPool";
@@ -210,13 +210,11 @@ export class Compositor {
     const layerLocalUs = tUs - layer.t_start_us;
     const srcTUs = params.src_in_us + layerLocalUs;
 
-    // Pull a decoded frame at srcTUs from the ring.
+    // Pull a decoded frame at srcTUs from the ring and update the
+    // sprite's persistent texture source in place.
     const frame = clip.source.ring.frameAt(srcTUs);
     if (frame) {
-      // PixiJS v8: Texture.from accepts any TexImageSource including
-      // VideoFrame. We let PixiJS dispose the previous texture.
-      const next = Texture.from(frame);
-      clip.sprite.sprite.texture = next;
+      clip.sprite.updateFrame(frame);
     }
 
     // Sprite position + scale from the static LayerSummary view.
