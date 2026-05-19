@@ -27,6 +27,11 @@ export class PlaybackEngine {
 
   constructor(init: PlaybackEngineInit) {
     this.compositor = init.compositor;
+    // Always-running rAF loop. SyntheticClock.tick is a no-op when
+    // paused (returns the same time); compositeFrame still runs each
+    // tick so async-arrived decoded frames present even when the
+    // playhead isn't moving.
+    this.startLoop();
   }
 
   isPlaying(): boolean {
@@ -41,14 +46,12 @@ export class PlaybackEngine {
     if (this.clock.isPlaying()) return;
     this.clock.play();
     this.emitPlayState(true);
-    this.startLoop();
   }
 
   pause(): void {
     if (!this.clock.isPlaying()) return;
     this.clock.pause();
     this.emitPlayState(false);
-    this.stopLoop();
   }
 
   /// Hard seek to a composition time. P1 wires this into decoder
@@ -76,13 +79,20 @@ export class PlaybackEngine {
     this.playStateListeners.clear();
   }
 
+  private lastEmittedUs = -1;
+
   private startLoop(): void {
     const tick = () => {
-      if (!this.clock.isPlaying()) return;
       const { tUs } = this.clock.tick();
       this.compositor.setAnchorTime(tUs);
       this.compositor.compositeFrame(tUs);
-      this.emitTime(tUs);
+      // Only emit time updates when the playhead actually moved so we
+      // don't trigger 60×/s React re-renders in the parent while
+      // paused.
+      if (tUs !== this.lastEmittedUs) {
+        this.lastEmittedUs = tUs;
+        this.emitTime(tUs);
+      }
       this.rafHandle = requestAnimationFrame(tick);
     };
     this.rafHandle = requestAnimationFrame(tick);
