@@ -15,7 +15,11 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "re
 import { useTranslation } from "react-i18next";
 
 import { useProjectStore } from "../state/projectStore";
-import { isPixiPreviewEnabled, PixiPreview } from "../render/PixiPreview";
+import {
+  isPixiPreviewEnabled,
+  PixiPreview,
+  type PixiPreviewHandle,
+} from "../render/PixiPreview";
 import { PixiErrorBoundary } from "../render/PixiErrorBoundary";
 import { AudioGraph } from "./dom/audio/AudioGraph";
 import { LiveLayers } from "./dom/LiveLayers";
@@ -69,6 +73,7 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
     const [audioGraph, setAudioGraph] = useState<AudioGraph | null>(null);
 
     const outerRef = useRef<HTMLDivElement | null>(null);
+    const pixiRef = useRef<PixiPreviewHandle | null>(null);
     const [fitScale, setFitScale] = useState<number>(1);
     /// True while Render & Play has taken over the surface (rendering
     /// or playing the rendered MP4). LiveLayers is hidden so we
@@ -136,6 +141,14 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
       forwardedRef,
       (): PreviewSurfaceHandle => ({
         play() {
+          // When the PixiJS renderer is the active surface, route to
+          // its PlaybackEngine. The DOM `engine` + `audioGraph` belong
+          // to the legacy `LiveLayers` mount which is hidden in pixi
+          // mode and shouldn't be ticking.
+          if (isPixiPreviewEnabled()) {
+            pixiRef.current?.play();
+            return;
+          }
           if (!engine || !audioGraph) return;
           // AudioContext must be resumed under a user gesture
           // before any audio is audible. The parent's play button
@@ -144,12 +157,23 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
           void audioGraph.resume().then(() => engine.play());
         },
         pause() {
+          if (isPixiPreviewEnabled()) {
+            pixiRef.current?.pause();
+            return;
+          }
           engine?.pause();
         },
         seekTo(tUs: number) {
+          if (isPixiPreviewEnabled()) {
+            pixiRef.current?.seek(tUs);
+            return;
+          }
           engine?.seek(tUs);
         },
         paused() {
+          if (isPixiPreviewEnabled()) {
+            return pixiRef.current?.paused() ?? true;
+          }
           return !(engine?.isPlaying() ?? false);
         },
       }),
@@ -190,6 +214,7 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
         >
           <PixiErrorBoundary>
             <PixiPreview
+              ref={pixiRef}
               onTimeUpdate={onTimeUpdate}
               onPausedChange={onPausedChange}
             />
