@@ -87,23 +87,10 @@ export class PlaybackEngine {
   }
 
   private lastEmittedUs = -1;
-  /// Diagnostic: confirm the rAF loop is actually firing. Logs at
-  /// frame 1, 10, 60, 300 so the user can see it's still alive.
-  private tickCount = 0;
 
   private startLoop(): void {
     const tick = () => {
       try {
-        this.tickCount += 1;
-        if (
-          this.tickCount === 1 ||
-          this.tickCount === 10 ||
-          this.tickCount === 60 ||
-          this.tickCount === 300
-        ) {
-          // eslint-disable-next-line no-console
-          console.log(`[weftcut/pixi] rAF tick #${this.tickCount}`);
-        }
         const { tUs } = this.clock.tick();
         this.compositor.setAnchorTime(tUs);
         this.compositor.compositeFrame(tUs);

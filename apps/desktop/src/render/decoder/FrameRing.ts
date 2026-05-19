@@ -74,11 +74,6 @@ export class FrameRing {
     const durationUs = frame.duration ?? 0;
     // If this frame is already behind the lookbehind window, drop it.
     if (ptsUs + durationUs < this.anchorUs - this.lookbehindUs) {
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[weftcut/pixi] ring.push DROP: ptsUs=${ptsUs} dur=${durationUs} ` +
-          `anchor=${this.anchorUs} lookbehind=${this.lookbehindUs}`,
-      );
       frame.close();
       return;
     }
@@ -86,13 +81,6 @@ export class FrameRing {
     // Keep sorted by PTS. Decoder output is usually in display order
     // but B-frames can cause minor reordering on some encoders.
     this.entries.sort((a, b) => a.ptsUs - b.ptsUs);
-    if (this.entries.length === 1) {
-      // eslint-disable-next-line no-console
-      console.log(
-        `[weftcut/pixi] ring.push first frame: ptsUs=${ptsUs} dur=${durationUs} ` +
-          `anchor=${this.anchorUs} size=${this.entries.length}`,
-      );
-    }
   }
 
   /// Look up the frame to display at `tUs`. Returns a borrowed
@@ -161,6 +149,26 @@ export class FrameRing {
   /// the ring is empty. Diagnostic helper.
   lastPtsUs(): number | null {
     return this.entries[this.entries.length - 1]?.ptsUs ?? null;
+  }
+
+  /// True if some entry's presentation interval contains `tUs`.
+  /// Unlike `frameAt`, does NOT clamp out-of-range timestamps — it
+  /// reports literal coverage. Used by the decoder to decide whether
+  /// a backward seek requires a reset (target not cached) or can
+  /// rely on existing decoded frames.
+  containsPts(tUs: number): boolean {
+    if (this.entries.length === 0) return false;
+    let lo = 0;
+    let hi = this.entries.length - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      const e = this.entries[mid]!;
+      const end = e.ptsUs + (e.durationUs || 0);
+      if (e.ptsUs <= tUs && tUs < end) return true;
+      if (e.ptsUs > tUs) hi = mid - 1;
+      else lo = mid + 1;
+    }
+    return false;
   }
 
   dispose(): void {
