@@ -60,7 +60,20 @@ export function PixiPreview({ onTimeUpdate, onPausedChange }: Props) {
   // Compositor and PlaybackEngine against it.
   const handleInit = useCallback(
     (app: Application) => {
-      console.log(`${LOG} application init`);
+      console.log(
+        `${LOG} application init: canvas=${app.canvas.width}×${app.canvas.height} ` +
+          `renderer=${app.renderer.type}`,
+      );
+      // @pixi/react renders a bare <canvas> with no CSS sizing.
+      // Inline-replaced canvas elements default to their intrinsic
+      // pixel size (here 1920×1080), which overflows the preview
+      // panel. Force the display size to fill the wrapper while the
+      // internal pixel size stays at composition resolution.
+      const c = app.canvas as HTMLCanvasElement;
+      c.style.width = "100%";
+      c.style.height = "100%";
+      c.style.display = "block";
+      c.style.objectFit = "contain";
 
       // Dispose any prior Compositor (StrictMode re-mount).
       engineRef.current?.dispose();
