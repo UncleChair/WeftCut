@@ -5,7 +5,7 @@
 //
 // Plan: docs/pixi-renderer-plan.md
 
-import { Application, Container } from "pixi.js";
+import { Application, Container, Texture } from "pixi.js";
 
 import type { LayerSummary, MediaSummary, ProjectSummary } from "../ipc";
 import { SourceDecoderPool, type SourceHandle } from "./decoder/SourceDecoderPool";
@@ -132,7 +132,17 @@ export class Compositor {
         const clip = this.ensureClip(layer);
         if (!clip) continue;
         this.updateClip(clip, layer, tUs, z++);
-        this.stage.addChild(clip.sprite.sprite);
+        // Defense in depth: don't add a sprite to the stage while its
+        // texture is still the canonical `Texture.EMPTY`. PixiJS v8's
+        // batched renderer shader-compile path has crashed on empty
+        // placeholder textures in some WebView2 / ANGLE configurations
+        // (null-deref in `logPrettyShaderError`). Skipping the addChild
+        // means an active-but-not-yet-decoded clip simply renders
+        // nothing on its slot, which then naturally pops in once the
+        // first VideoFrame lands.
+        if (clip.sprite.sprite.texture !== Texture.EMPTY) {
+          this.stage.addChild(clip.sprite.sprite);
+        }
       }
     }
 
