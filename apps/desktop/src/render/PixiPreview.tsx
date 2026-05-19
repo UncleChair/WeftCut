@@ -27,6 +27,7 @@ import type { Application } from "pixi.js";
 import { playbackPathFor, useProjectStore } from "../state/projectStore";
 import type { MediaSummary } from "../ipc";
 import { Compositor } from "./Compositor";
+import { ExportSourceHandle } from "./decoder/ExportDecoderPool";
 import { PlaybackEngine } from "./PlaybackEngine";
 import type { PixiPreviewHandle } from "./pixiPreviewFlag";
 import { runExport } from "./worker/runExport";
@@ -199,6 +200,27 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       <button
         type="button"
         onClick={() => {
+          void runMainThreadProbe();
+        }}
+        style={{
+          position: "absolute",
+          top: 4,
+          right: 120,
+          padding: "4px 10px",
+          font: "12px ui-monospace, monospace",
+          color: "#fff",
+          background: "rgba(120,80,0,0.85)",
+          border: "none",
+          borderRadius: 3,
+          cursor: "pointer",
+          whiteSpace: "pre",
+        }}
+      >
+        MT Probe
+      </button>
+      <button
+        type="button"
+        onClick={() => {
           void handlePixiExport(
             setExporting,
             compositorRef.current,
@@ -226,6 +248,74 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
     </div>
   );
 });
+
+/// Diagnostic — construct an `ExportSourceHandle` in the MAIN thread
+/// and drive `decodeRange` directly. Discriminates Worker context vs.
+/// stream/extradata as the cause of the export-decoder wedge. Logs to
+/// the same `[weftcut/export]` namespace as the real Worker so the
+/// outputs are comparable.
+async function runMainThreadProbe(): Promise<void> {
+  const store = useProjectStore.getState();
+  const summary = store.summary;
+  if (!summary) {
+    // eslint-disable-next-line no-console
+    console.warn("[weftcut/mt-probe] no project");
+    return;
+  }
+  // Find the first active VideoClip in the project.
+  let target: { mediaId: string; layerId: string } | null = null;
+  for (const track of summary.tracks) {
+    for (const layer of track.layers) {
+      if (layer.params.kind === "VideoClip") {
+        target = {
+          mediaId: layer.params.media_id,
+          layerId: layer.id,
+        };
+        break;
+      }
+    }
+    if (target) break;
+  }
+  if (!target) {
+    // eslint-disable-next-line no-console
+    console.warn("[weftcut/mt-probe] no VideoClip layer in project");
+    return;
+  }
+  const m = store.mediaById.get(target.mediaId);
+  const proxyPath = m ? playbackPathFor(m) : null;
+  if (!proxyPath) {
+    // eslint-disable-next-line no-console
+    console.warn(`[weftcut/mt-probe] no proxy for media ${target.mediaId}`);
+    return;
+  }
+  const proxyAssetUrl = convertFileSrc(proxyPath);
+  // eslint-disable-next-line no-console
+  console.log(
+    `[weftcut/mt-probe] starting MT decode probe on media=${target.mediaId} ` +
+      `proxy=${proxyAssetUrl}`,
+  );
+  const handle = new ExportSourceHandle({
+    mediaId: target.mediaId,
+    proxyAssetUrl,
+  });
+  const startMs = performance.now();
+  try {
+    // Decode the first ~2 s — same range as chunk 0 of the Worker
+    // export.
+    await handle.decodeRange(0, 1_999_999);
+    const elapsedMs = performance.now() - startMs;
+    // eslint-disable-next-line no-console
+    console.log(
+      `[weftcut/mt-probe] decodeRange resolved in ${elapsedMs.toFixed(0)}ms; ` +
+        `ring=${(handle.ring as unknown as { size(): number }).size()} frames`,
+    );
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[weftcut/mt-probe] decodeRange threw:", err);
+  } finally {
+    handle.dispose();
+  }
+}
 
 async function handlePixiExport(
   setStatus: (s: string | null) => void,
