@@ -80,18 +80,35 @@ export class PlaybackEngine {
   }
 
   private lastEmittedUs = -1;
+  /// Diagnostic: confirm the rAF loop is actually firing. Logs at
+  /// frame 1, 10, 60, 300 so the user can see it's still alive.
+  private tickCount = 0;
 
   private startLoop(): void {
     const tick = () => {
-      const { tUs } = this.clock.tick();
-      this.compositor.setAnchorTime(tUs);
-      this.compositor.compositeFrame(tUs);
-      // Only emit time updates when the playhead actually moved so we
-      // don't trigger 60×/s React re-renders in the parent while
-      // paused.
-      if (tUs !== this.lastEmittedUs) {
-        this.lastEmittedUs = tUs;
-        this.emitTime(tUs);
+      try {
+        this.tickCount += 1;
+        if (
+          this.tickCount === 1 ||
+          this.tickCount === 10 ||
+          this.tickCount === 60 ||
+          this.tickCount === 300
+        ) {
+          // eslint-disable-next-line no-console
+          console.log(`[weftcut/pixi] rAF tick #${this.tickCount}`);
+        }
+        const { tUs } = this.clock.tick();
+        this.compositor.setAnchorTime(tUs);
+        this.compositor.compositeFrame(tUs);
+        if (tUs !== this.lastEmittedUs) {
+          this.lastEmittedUs = tUs;
+          this.emitTime(tUs);
+        }
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error("[weftcut/pixi] rAF tick threw — loop dying:", e);
+        // Don't re-throw: keep the loop alive so the user gets
+        // diagnostic visibility on subsequent ticks.
       }
       this.rafHandle = requestAnimationFrame(tick);
     };
