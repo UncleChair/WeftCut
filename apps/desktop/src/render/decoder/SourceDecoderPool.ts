@@ -112,24 +112,32 @@ export class SourceHandle {
     const idr = this.demuxer.idrAtOrBefore(targetIndex);
 
     // Reset the decoder + flush the ring when the target falls
-    // outside our current decode window. Two cases need this:
+    // outside what we can currently produce. Two genuine cases:
     //
-    //   1. Target is in a different GOP than the one we're
-    //      currently flowing from (`idr !== this.decodeFloor`). The
-    //      decoder needs a fresh IDR before it can produce any
-    //      delta-frame output for the new GOP.
+    //   1. Target is in a different GOP than the one we're flowing
+    //      from (`idr !== decodeFloor`). The decoder needs a fresh
+    //      IDR before it can produce delta-frame output for the new
+    //      GOP. (Forward GOP-crossing, backward GOP-crossing, or a
+    //      seek that lands in a not-yet-decoded region.)
     //
-    //   2. Target is BEFORE our last decoded sample (`targetIndex <
-    //      this.lastDecodedIndex`). This is a backward seek INSIDE
-    //      the same GOP — the decoder can't rewind without a fresh
-    //      IDR. Without this branch, the ring has stale frames from
-    //      far ahead of `tUs`, and `frameAt(tUs)` clamps to the
-    //      earliest cached frame (which is wrong: it's the frame at
-    //      the last-played position, not the new target). The user
-    //      sees the canvas "freeze" on the previous frame until
-    //      playback catches back up to the cached range.
-    const needsReset =
-      idr !== this.decodeFloor || targetIndex < this.lastDecodedIndex;
+    //   2. We've decoded past the target AND the target's sample is
+    //      no longer in the ring (lookbehind has evicted it). The
+    //      decoder can't rewind without a fresh IDR; reset + decode
+    //      from `idr` forward.
+    //
+    // Critical: `targetIndex < lastDecodedIndex` alone is NOT a
+    // valid backward-seek signal — when the playhead is held at any
+    // tUs, `pumpLookahead` advances `lastDecodedIndex` past the
+    // target naturally to fill the lookahead window. The previous
+    // version of this check fired on every tick after the first
+    // pump, resetting + flushing perpetually and starving the ring.
+    let needsReset = idr !== this.decodeFloor;
+    if (!needsReset && targetIndex <= this.lastDecodedIndex) {
+      const targetSample = this.demuxer.sampleAt(targetIndex);
+      if (targetSample && !this.ring.containsPts(targetSample.ptsUs)) {
+        needsReset = true;
+      }
+    }
 
     if (needsReset) {
       // eslint-disable-next-line no-console

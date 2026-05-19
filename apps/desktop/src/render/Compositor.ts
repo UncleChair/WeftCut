@@ -35,8 +35,6 @@ interface ActiveClip {
   mediaId: string;
   source: SourceHandle;
   sprite: VideoClipSprite;
-  /// Diagnostic-only tick counter for milestone logs.
-  ticks?: number;
 }
 
 export class Compositor {
@@ -255,23 +253,9 @@ export class Compositor {
       clip.sprite.updateFrame(frame);
     }
 
-    // Diagnostic: at fixed tick milestones, log the ring state +
-    // frameAt result. Helps localize whether the ring is empty
-    // (decode stalled), whether srcTUs falls outside the cached
-    // window (PTS lookup wrong), or whether frame is found but
-    // updateFrame is somehow no-op.
-    clip.ticks = (clip.ticks ?? 0) + 1;
-    if (clip.ticks === 1 || clip.ticks === 10 || clip.ticks === 60 || clip.ticks === 300) {
-      const ring = clip.source.ring;
-      // eslint-disable-next-line no-console
-      console.log(
-        `[weftcut/pixi] tick #${clip.ticks} clip=${layer.id} ` +
-          `srcTUs=${srcTUs} ring.size=${ring.size()} ` +
-          `firstPts=${ring.firstPtsUs() ?? "n/a"} lastPts=${ring.lastPtsUs() ?? "n/a"} ` +
-          `frameAt=${frame ? "hit" : "miss"} ` +
-          `sprite.texture.orig=${clip.sprite.sprite.texture.orig.width}×${clip.sprite.sprite.texture.orig.height}`,
-      );
-    }
+    // (Per-tick clip diagnostic removed; rAF tick milestones removed.
+    // Renderer is in steady state — bring them back only when a new
+    // class of bug surfaces.)
 
     // Use sprite.scale directly. The width/height setters in PixiJS v8
     // compute scale from `texture.orig.width/height`, so setting them
