@@ -29,6 +29,7 @@ import type { MediaSummary } from "../ipc";
 import { Compositor } from "./Compositor";
 import { PlaybackEngine } from "./PlaybackEngine";
 import type { PixiPreviewHandle } from "./pixiPreviewFlag";
+import { runExport } from "./worker/runExport";
 
 interface Props {
   onTimeUpdate?: (tUs: number) => void;
@@ -44,6 +45,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   const compositorRef = useRef<Compositor | null>(null);
   const engineRef = useRef<PlaybackEngine | null>(null);
   const [status, setStatus] = useState<string>("Initializing PixiJS…");
+  const [exporting, setExporting] = useState<string | null>(null);
 
   useImperativeHandle(
     ref,
@@ -194,6 +196,72 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       >
         {status}
       </div>
+      <button
+        type="button"
+        onClick={() => {
+          void handlePixiExport(setExporting);
+        }}
+        disabled={exporting !== null}
+        style={{
+          position: "absolute",
+          top: 4,
+          right: 4,
+          padding: "4px 10px",
+          font: "12px ui-monospace, monospace",
+          color: "#fff",
+          background:
+            exporting !== null ? "rgba(80,80,80,0.7)" : "rgba(0,120,0,0.8)",
+          border: "none",
+          borderRadius: 3,
+          cursor: exporting !== null ? "default" : "pointer",
+          whiteSpace: "pre",
+        }}
+      >
+        {exporting ?? "Pixi Export"}
+      </button>
     </div>
   );
 });
+
+async function handlePixiExport(
+  setStatus: (s: string | null) => void,
+): Promise<void> {
+  const store = useProjectStore.getState();
+  const summary = store.summary;
+  if (!summary) {
+    setStatus("No project");
+    setTimeout(() => setStatus(null), 1500);
+    return;
+  }
+  setStatus("Exporting 0%");
+  try {
+    const result = await runExport({
+      summary,
+      mediaById: store.mediaById,
+      onProgress: (encoded, total) => {
+        const pct = total > 0 ? Math.round((encoded / total) * 100) : 0;
+        setStatus(`Exporting ${pct}%`);
+      },
+    });
+    // Hand the bytes to the browser as a downloadable Blob so the
+    // user can save and inspect the result. Real ExportPanel wiring
+    // (and audio mux) is the next step.
+    const blob = new Blob([result.videoBytes], { type: "video/mp4" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `weftcut-pixi-export-${Date.now()}.mp4`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setStatus(`Done — ${result.framesEncoded}f`);
+    setTimeout(() => setStatus(null), 2500);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // eslint-disable-next-line no-console
+    console.error("[weftcut/pixi] export failed:", err);
+    setStatus(`Failed: ${msg.slice(0, 40)}`);
+    setTimeout(() => setStatus(null), 3500);
+  }
+}
