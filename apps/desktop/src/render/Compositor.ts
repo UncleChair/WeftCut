@@ -11,6 +11,8 @@ import { Application, Container, Texture } from "pixi.js";
 
 import type { LayerSummary, MediaSummary, ProjectSummary } from "../ipc";
 import { SourceDecoderPool, type SourceHandle } from "./decoder/SourceDecoderPool";
+import { ColorSprite } from "./sprite/ColorSprite";
+import { ImageOverlaySprite } from "./sprite/ImageOverlaySprite";
 import { VideoClipSprite } from "./sprite/VideoClipSprite";
 
 export interface CompositorInit {
@@ -25,7 +27,13 @@ export interface CompositorInit {
   /// throughput. Currently advisory.
   mode: "preview" | "export";
   /// Resolver for the asset URL of a media item's master proxy.
+  /// Used for VideoClip layers (decoded via WebCodecs).
   proxyAssetUrl: (mediaId: string) => string | null;
+  /// Resolver for the asset URL of a media item's ORIGINAL file.
+  /// Used for ImageOverlay layers (loaded via `createImageBitmap`).
+  /// May return the same URL as `proxyAssetUrl` for media kinds
+  /// that don't get proxied (images, audio).
+  originalAssetUrl: (mediaId: string) => string | null;
   /// Lookup for media-side codec dimensions.
   mediaById: (mediaId: string) => MediaSummary | undefined;
 }
@@ -37,13 +45,27 @@ interface ActiveClip {
   sprite: VideoClipSprite;
 }
 
+interface ActiveImage {
+  layerId: string;
+  mediaId: string;
+  sprite: ImageOverlaySprite;
+}
+
+interface ActiveColor {
+  layerId: string;
+  sprite: ColorSprite;
+}
+
 export class Compositor {
   readonly app: Application;
   readonly stage: Container;
   readonly pool: SourceDecoderPool;
   private clips = new Map<string, ActiveClip>();
+  private images = new Map<string, ActiveImage>();
+  private colors = new Map<string, ActiveColor>();
   private projectSummary: ProjectSummary | null = null;
   private proxyAssetUrl: (mediaId: string) => string | null;
+  private originalAssetUrl: (mediaId: string) => string | null;
   private mediaById: (mediaId: string) => MediaSummary | undefined;
   private compositionWidth = 1920;
   private compositionHeight = 1080;
@@ -74,6 +96,7 @@ export class Compositor {
     this.stage = new Container();
     this.pool = new SourceDecoderPool();
     this.proxyAssetUrl = init.proxyAssetUrl;
+    this.originalAssetUrl = init.originalAssetUrl;
     this.mediaById = init.mediaById;
     this.compositionWidth = init.width;
     this.compositionHeight = init.height;
@@ -131,6 +154,18 @@ export class Compositor {
         this.clips.delete(layerId);
       }
     }
+    for (const [layerId, i] of this.images) {
+      if (!livingLayerIds.has(layerId)) {
+        i.sprite.dispose();
+        this.images.delete(layerId);
+      }
+    }
+    for (const [layerId, c] of this.colors) {
+      if (!livingLayerIds.has(layerId)) {
+        c.sprite.dispose();
+        this.colors.delete(layerId);
+      }
+    }
   }
 
   /// Composite one frame at composition-time `tUs`.
@@ -167,20 +202,35 @@ export class Compositor {
       if (!track.enabled) continue;
       for (const layer of track.layers) {
         if (!layer.enabled) continue;
-        if (layer.params.kind !== "VideoClip") continue;
         if (tUsSnapped < layer.t_start_us || tUsSnapped >= layer.t_end_us)
           continue;
-        const clip = this.ensureClip(layer);
-        if (!clip) continue;
-        this.updateClip(clip, layer, tUsSnapped, z++);
-        // Skip sprites still on Texture.EMPTY. PixiJS v8's batched
-        // renderer has crashed on empty placeholder textures in some
-        // WebView2 / ANGLE configurations. Once the first VideoFrame
-        // arrives, `updateClip` swaps in an `ImageSource`-backed
-        // texture and the sprite naturally pops in.
-        if (clip.sprite.sprite.texture !== Texture.EMPTY) {
-          this.stage.addChild(clip.sprite.sprite);
+
+        const kind = layer.params.kind;
+        if (kind === "VideoClip") {
+          const clip = this.ensureClip(layer);
+          if (!clip) continue;
+          this.updateClip(clip, layer, tUsSnapped, z++);
+          // Skip empty-texture sprites — PixiJS v8's batched
+          // renderer crashes on the placeholder in some WebView2
+          // configs. Once the first VideoFrame lands, updateClip
+          // swaps to a real texture and the sprite pops in.
+          if (clip.sprite.sprite.texture !== Texture.EMPTY) {
+            this.stage.addChild(clip.sprite.sprite);
+          }
+        } else if (kind === "ImageOverlay") {
+          const image = this.ensureImage(layer);
+          if (!image) continue;
+          this.updateImage(image, layer, tUsSnapped, z++);
+          if (image.sprite.sprite.texture !== Texture.EMPTY) {
+            this.stage.addChild(image.sprite.sprite);
+          }
+        } else if (kind === "Color") {
+          const color = this.ensureColor(layer);
+          if (!color) continue;
+          this.updateColor(color, layer, z++);
+          this.stage.addChild(color.sprite.graphics);
         }
+        // Text / Template / Subtitles render paths land in P4–P6.
       }
     }
     // One-shot diagnostic the first time we transition from "stage
@@ -241,6 +291,10 @@ export class Compositor {
     this.disposed = true;
     for (const c of this.clips.values()) c.sprite.dispose();
     this.clips.clear();
+    for (const i of this.images.values()) i.sprite.dispose();
+    this.images.clear();
+    for (const c of this.colors.values()) c.sprite.dispose();
+    this.colors.clear();
     this.pool.dispose();
     try {
       this.app.stage.removeChild(this.stage);
@@ -338,5 +392,72 @@ export class Compositor {
     clip.sprite.sprite.position.set(params.x, params.y);
     clip.sprite.sprite.alpha = params.opacity;
     clip.sprite.sprite.zIndex = z;
+  }
+
+  // ============================================================
+  // ImageOverlay
+  // ============================================================
+
+  private ensureImage(layer: LayerSummary): ActiveImage | null {
+    if (layer.params.kind !== "ImageOverlay") return null;
+    const existing = this.images.get(layer.id);
+    if (existing) return existing;
+    const mediaId = layer.params.media_id;
+    const url = this.originalAssetUrl(mediaId);
+    if (!url) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[weftcut/pixi] no asset URL for media ${mediaId} (image ${layer.id})`,
+      );
+      return null;
+    }
+    const sprite = new ImageOverlaySprite({ layerId: layer.id, mediaId });
+    void sprite.loadFromAsset(url).then(() => {
+      // Trigger a repaint once the bitmap lands.
+      this.scheduleRepaint();
+    });
+    const image: ActiveImage = { layerId: layer.id, mediaId, sprite };
+    this.images.set(layer.id, image);
+    // eslint-disable-next-line no-console
+    console.log(
+      `[weftcut/pixi] image ${layer.id} → media ${mediaId} attached`,
+    );
+    return image;
+  }
+
+  private updateImage(
+    image: ActiveImage,
+    layer: LayerSummary,
+    tUs: number,
+    z: number,
+  ): void {
+    if (layer.params.kind !== "ImageOverlay") return;
+    const params = layer.params;
+    const tInLayerUs = tUs - layer.t_start_us;
+    const durationUs = layer.t_end_us - layer.t_start_us;
+    image.sprite.update(params, tInLayerUs, durationUs);
+    image.sprite.sprite.zIndex = z;
+  }
+
+  // ============================================================
+  // Color
+  // ============================================================
+
+  private ensureColor(layer: LayerSummary): ActiveColor | null {
+    if (layer.params.kind !== "Color") return null;
+    const existing = this.colors.get(layer.id);
+    if (existing) return existing;
+    const sprite = new ColorSprite({ layerId: layer.id });
+    const color: ActiveColor = { layerId: layer.id, sprite };
+    this.colors.set(layer.id, color);
+    // eslint-disable-next-line no-console
+    console.log(`[weftcut/pixi] color ${layer.id} attached`);
+    return color;
+  }
+
+  private updateColor(color: ActiveColor, layer: LayerSummary, z: number): void {
+    if (layer.params.kind !== "Color") return;
+    color.sprite.update(layer.params);
+    color.sprite.graphics.zIndex = z;
   }
 }
