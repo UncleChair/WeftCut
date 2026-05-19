@@ -111,17 +111,32 @@ export class SourceHandle {
     const targetIndex = this.demuxer.sampleIndexForPtsUs(tUs);
     const idr = this.demuxer.idrAtOrBefore(targetIndex);
 
-    // If we've already decoded past the target *and* we're inside
-    // the current GOP, no action needed.
-    if (this.lastDecodedIndex >= targetIndex && this.decodeFloor <= idr) {
-      // Pump lookahead frames if we haven't filled the window.
-      this.pumpLookahead();
-      return;
-    }
+    // Reset the decoder + flush the ring when the target falls
+    // outside our current decode window. Two cases need this:
+    //
+    //   1. Target is in a different GOP than the one we're
+    //      currently flowing from (`idr !== this.decodeFloor`). The
+    //      decoder needs a fresh IDR before it can produce any
+    //      delta-frame output for the new GOP.
+    //
+    //   2. Target is BEFORE our last decoded sample (`targetIndex <
+    //      this.lastDecodedIndex`). This is a backward seek INSIDE
+    //      the same GOP — the decoder can't rewind without a fresh
+    //      IDR. Without this branch, the ring has stale frames from
+    //      far ahead of `tUs`, and `frameAt(tUs)` clamps to the
+    //      earliest cached frame (which is wrong: it's the frame at
+    //      the last-played position, not the new target). The user
+    //      sees the canvas "freeze" on the previous frame until
+    //      playback catches back up to the cached range.
+    const needsReset =
+      idr !== this.decodeFloor || targetIndex < this.lastDecodedIndex;
 
-    // If the target is in a new (earlier or different) GOP, reset
-    // the decoder so we start from a fresh IDR.
-    if (this.lastDecodedIndex < idr || this.decodeFloor !== idr) {
+    if (needsReset) {
+      // eslint-disable-next-line no-console
+      console.log(
+        `[weftcut/pixi] decoder reset: target=${targetIndex} idr=${idr} ` +
+          `lastDecoded=${this.lastDecodedIndex} prevFloor=${this.decodeFloor}`,
+      );
       this.decoder.reset();
       this.decoder.configure({
         codec: this.meta.codec,
@@ -129,6 +144,9 @@ export class SourceHandle {
         codedHeight: this.meta.codedHeight,
         description: this.meta.description,
       });
+      // Drop stale cached frames so `frameAt` can't return a frame
+      // from the wrong region of the timeline.
+      this.ring.flush();
       this.lastDecodedIndex = idr - 1;
       this.decodeFloor = idr;
     }
