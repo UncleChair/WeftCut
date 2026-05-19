@@ -15,6 +15,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "re
 import { useTranslation } from "react-i18next";
 
 import { useProjectStore } from "../state/projectStore";
+import { isPixiPreviewEnabled, PixiPreview } from "../render/PixiPreview";
 import { AudioGraph } from "./dom/audio/AudioGraph";
 import { LiveLayers } from "./dom/LiveLayers";
 import { PlaybackEngine } from "./dom/PlaybackEngine";
@@ -162,6 +163,34 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
         <div className="preview-loading" aria-live="polite">
           <span className="preview-spinner" aria-hidden="true" />
           <span className="placeholder">{t("preview.preparing")}</span>
+        </div>
+      );
+    }
+
+    // Flag-gated parallel mount for the PixiJS + WebCodecs renderer
+    // (P2 of the renderer rewrite). The legacy `<video>` DOM
+    // compositor remains the default; pass `?pixi=1` or set
+    // `localStorage.weftcut.preview.pixi = "1"` to opt in. The two
+    // mounts are mutually exclusive — `PixiPreview` owns its own
+    // PlaybackEngine + Compositor and does not share state with
+    // `LiveLayers` + the DOM `PlaybackEngine`.
+    if (isPixiPreviewEnabled()) {
+      return (
+        <div
+          ref={outerRef}
+          className="preview-video"
+          style={{
+            position: "relative",
+            width: "100%",
+            height: "100%",
+            overflow: "hidden",
+            background: "#1f2937",
+          }}
+        >
+          <PixiPreview
+            onTimeUpdate={onTimeUpdate}
+            onPausedChange={onPausedChange}
+          />
         </div>
       );
     }
