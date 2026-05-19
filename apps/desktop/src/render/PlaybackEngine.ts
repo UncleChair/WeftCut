@@ -10,6 +10,7 @@
 
 import type { Compositor } from "./Compositor";
 import { SyntheticClock } from "./clock";
+import { ScrubCoalescer } from "./decoder/scrub";
 
 export interface PlaybackEngineInit {
   compositor: Compositor;
@@ -24,9 +25,26 @@ export class PlaybackEngine {
   private timeListeners = new Set<TimeListener>();
   private playStateListeners = new Set<PlayStateListener>();
   private compositor: Compositor;
+  /// Debounces rapid `seek()` calls during timeline drag. While the
+  /// debounce window is active, `Compositor.scrubbing` is true so the
+  /// rAF loop's `setAnchorTime` is a no-op — the decoder isn't
+  /// churned for each interim seek target. When the debounce expires
+  /// with a stable target, we clear `scrubbing` + reissue
+  /// setAnchorTime so the decoder catches up to the final position.
+  private scrubCoalescer: ScrubCoalescer;
 
   constructor(init: PlaybackEngineInit) {
     this.compositor = init.compositor;
+    this.scrubCoalescer = new ScrubCoalescer({
+      debounceMs: 50,
+      onStableSeek: async (tUs: number) => {
+        // Resume normal decoder behavior and force a precise
+        // setAnchorTime for the stable target.
+        this.compositor.setScrubbing(false);
+        this.compositor.setAnchorTime(tUs);
+        this.compositor.compositeFrame(tUs);
+      },
+    });
     // Always-running rAF loop. SyntheticClock.tick is a no-op when
     // paused (returns the same time); compositeFrame still runs each
     // tick so async-arrived decoded frames present even when the
@@ -46,6 +64,12 @@ export class PlaybackEngine {
     if (this.clock.isPlaying()) return;
     // eslint-disable-next-line no-console
     console.log(`[weftcut/pixi] engine.play() @ tUs=${this.clock.positionUs()}`);
+    // If a scrub-debounce is still pending, cancel it and exit
+    // scrubbing immediately so the rAF loop's setAnchorTime resumes
+    // feeding the decoder as time advances. Otherwise the user would
+    // see up to 50 ms of stale frame at the start of playback.
+    this.scrubCoalescer.cancel();
+    this.compositor.setScrubbing(false);
     this.clock.play();
     this.emitPlayState(true);
   }
@@ -58,16 +82,25 @@ export class PlaybackEngine {
     this.emitPlayState(false);
   }
 
-  /// Hard seek to a composition time. P1 wires this into decoder
-  /// scrub coalescing.
+  /// Hard seek to a composition time. Routes through the
+  /// ScrubCoalescer: clock + visual feedback are immediate; the
+  /// decoder is asked to actually fetch the target frame only after
+  /// 50 ms of no further seeks (a "stable target"). Rapid scrubs
+  /// during a timeline drag thus paint the nearest-cached frame
+  /// each rAF without thrashing the decoder, and the precise frame
+  /// snaps in within 50 ms of the user releasing the drag.
   seek(tUs: number): void {
-    // eslint-disable-next-line no-console
-    console.log(`[weftcut/pixi] engine.seek(${tUs}) from=${this.clock.positionUs()}`);
     this.clock.setPosition(tUs);
-    this.compositor.setAnchorTime(tUs);
+    // Immediate visual feedback: paint whatever's currently in the
+    // ring nearest to this position. compositeFrame doesn't issue
+    // new decoder work.
+    this.compositor.setScrubbing(true);
     this.compositor.compositeFrame(tUs);
     this.lastEmittedUs = tUs;
     this.emitTime(tUs);
+    // Schedule the precise decoder seek + final paint after the
+    // debounce window.
+    this.scrubCoalescer.requestSeek(tUs);
   }
 
   onTimeUpdate(cb: TimeListener): () => void {
@@ -82,6 +115,7 @@ export class PlaybackEngine {
 
   dispose(): void {
     this.stopLoop();
+    this.scrubCoalescer.cancel();
     this.timeListeners.clear();
     this.playStateListeners.clear();
   }

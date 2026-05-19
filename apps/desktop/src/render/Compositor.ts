@@ -53,6 +53,21 @@ export class Compositor {
   /// is paused (no rAF tick incoming).
   private lastTUs = 0;
   private repaintScheduled = false;
+  /// When true, `setAnchorTime` is a no-op. PlaybackEngine flips this
+  /// during rapid scrub so the decoder isn't hammered with a new
+  /// target on every mouse-move event; the rAF loop keeps painting
+  /// whatever frame is already in the ring (approximate but immediate
+  /// visual feedback). Cleared after the scrub coalescer fires its
+  /// stable-target callback, at which point the decoder catches up.
+  private scrubbing = false;
+  /// Composition frame duration in microseconds, derived from the
+  /// project's fps_num/fps_den. Used to snap `tUs` to project-frame
+  /// boundaries before frame lookup so that on a 60 Hz display with
+  /// a 60fps source in a 30fps project we don't show ~30 source
+  /// frames per second + ~30 duplicate-or-skip frames due to rAF
+  /// jitter; instead we show one consistent project-frame's worth
+  /// of source every two rAFs (matching what export produces).
+  private frameDurUs = 33333;
 
   constructor(init: CompositorInit) {
     this.app = init.app;
@@ -81,6 +96,14 @@ export class Compositor {
     });
   }
 
+  /// PlaybackEngine flips this during rapid scrub. While true,
+  /// `setAnchorTime` is suppressed so the decoder isn't churned by a
+  /// new target on every mouse-move; the canvas still updates via
+  /// `compositeFrame` against whatever is already in the ring.
+  setScrubbing(s: boolean): void {
+    this.scrubbing = s;
+  }
+
   /// Replace the project snapshot. Sprites for layers that have
   /// disappeared get evicted; new layers will appear on the next
   /// `compositeFrame()` if active.
@@ -89,7 +112,14 @@ export class Compositor {
     if (!summary) {
       for (const c of this.clips.values()) c.sprite.dispose();
       this.clips.clear();
+      this.frameDurUs = 33333;
       return;
+    }
+    // Recompute frame-snap duration whenever the project changes
+    // (composition fps could differ between projects).
+    const c = summary.composition;
+    if (c.fps_num > 0 && c.fps_den > 0) {
+      this.frameDurUs = Math.round((1_000_000 * c.fps_den) / c.fps_num);
     }
     const livingLayerIds = new Set<string>();
     for (const t of summary.tracks) {
@@ -115,6 +145,20 @@ export class Compositor {
     this.lastTUs = tUs;
     if (!this.projectSummary) return;
 
+    // Snap wall-clock tUs to the project's frame grid. Without this,
+    // rAF jitter (real-world ticks at 14–19 ms instead of a clean
+    // 16.67 ms) causes high-fps source frames to land in two
+    // different rAF windows, showing one source frame twice while
+    // skipping its neighbor — the "frame missing" stutter the user
+    // saw with 60fps content in a 30fps project. Snapping keeps the
+    // frame selection consistent across rAF ticks at the cost of
+    // rendering at the project's authored fps rather than the
+    // display's native rate (the export behavior, matched).
+    const tUsSnapped =
+      this.frameDurUs > 0
+        ? Math.floor(tUs / this.frameDurUs) * this.frameDurUs
+        : tUs;
+
     const prevChildCount = this.stage.children.length;
     this.stage.removeChildren();
 
@@ -124,10 +168,11 @@ export class Compositor {
       for (const layer of track.layers) {
         if (!layer.enabled) continue;
         if (layer.params.kind !== "VideoClip") continue;
-        if (tUs < layer.t_start_us || tUs >= layer.t_end_us) continue;
+        if (tUsSnapped < layer.t_start_us || tUsSnapped >= layer.t_end_us)
+          continue;
         const clip = this.ensureClip(layer);
         if (!clip) continue;
-        this.updateClip(clip, layer, tUs, z++);
+        this.updateClip(clip, layer, tUsSnapped, z++);
         // Skip sprites still on Texture.EMPTY. PixiJS v8's batched
         // renderer has crashed on empty placeholder textures in some
         // WebView2 / ANGLE configurations. Once the first VideoFrame
@@ -164,12 +209,26 @@ export class Compositor {
 
   /// Tell the decoder pool which time we're at so it can manage
   /// lookahead. Called by PlaybackEngine on every tick.
+  ///
+  /// Suppressed while `scrubbing` is true — fast scrub events would
+  /// otherwise issue a new decoder target every mouse-move, forcing
+  /// the decoder to constantly re-prioritize and never produce a
+  /// stable frame at any one position. The ScrubCoalescer in
+  /// PlaybackEngine clears `scrubbing` after the debounce expires
+  /// and calls setAnchorTime once with the final target.
   setAnchorTime(tUs: number): void {
     if (!this.projectSummary) return;
+    if (this.scrubbing) return;
+    // Use the same snap as compositeFrame so the decoder's anchor
+    // matches the frame we're actually painting.
+    const tUsSnapped =
+      this.frameDurUs > 0
+        ? Math.floor(tUs / this.frameDurUs) * this.frameDurUs
+        : tUs;
     for (const c of this.clips.values()) {
       const layer = this.findLayer(c.layerId);
       if (!layer || layer.params.kind !== "VideoClip") continue;
-      const layerLocalUs = tUs - layer.t_start_us;
+      const layerLocalUs = tUsSnapped - layer.t_start_us;
       const srcTUs = layer.params.src_in_us + layerLocalUs;
       void c.source.requestFrameAt(srcTUs);
     }
