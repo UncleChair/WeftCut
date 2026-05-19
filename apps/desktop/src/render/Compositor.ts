@@ -35,6 +35,8 @@ interface ActiveClip {
   mediaId: string;
   source: SourceHandle;
   sprite: VideoClipSprite;
+  /// Diagnostic-only: one-shot flag for the first-null-frame warning.
+  loggedFirstNull?: boolean;
 }
 
 export class Compositor {
@@ -251,6 +253,19 @@ export class Compositor {
     const frame = clip.source.ring.frameAt(srcTUs);
     if (frame) {
       clip.sprite.updateFrame(frame);
+    } else if (!clip.loggedFirstNull) {
+      // Diagnostic: log the first time frameAt returns null after the
+      // source's first frame has been decoded. If this fires AFTER
+      // the SourceHandle "first frame decoded" log, the ring/PTS
+      // lookup is the smoking gun.
+      clip.loggedFirstNull = true;
+      const ring = clip.source.ring;
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[weftcut/pixi] frameAt null: layer=${layer.id} srcTUs=${srcTUs} ` +
+          `(tUs=${tUs} t_start=${layer.t_start_us} src_in=${params.src_in_us}) ` +
+          `ring.size=${ring.size()}`,
+      );
     }
 
     // Use sprite.scale directly. The width/height setters in PixiJS v8
