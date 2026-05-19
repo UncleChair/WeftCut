@@ -17,12 +17,22 @@
 //     (P5 / P6 not done). VideoClip / ImageOverlay / Color / Text
 //     render fine.
 
-import { Application } from "pixi.js";
+import { Application, DOMAdapter, WebWorkerAdapter } from "pixi.js";
 
 import type { MediaSummary, ProjectSummary } from "../../ipc";
 import { Compositor } from "../Compositor";
 import { EncoderSink } from "./encoder";
 import type { ExportRequest, ExportEvent } from "./protocol";
+
+// PixiJS defaults to `BrowserAdapter`, which calls `document.*`
+// and `new Image()`. In a Worker neither exists, so any
+// renderer init throws "document is not defined". Swap to
+// `WebWorkerAdapter` BEFORE `new Application()` — the adapter
+// is read during `app.init()`.
+//
+// Plan: docs/pixi-renderer-plan.md (P8) — confirmed via the
+// pixijs-environments skill.
+DOMAdapter.set(WebWorkerAdapter);
 
 function post(ev: ExportEvent, transfer: Transferable[] = []): void {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
