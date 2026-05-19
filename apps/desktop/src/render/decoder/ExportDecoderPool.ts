@@ -245,18 +245,32 @@ export class ExportSourceHandle implements DecoderHandle {
       return;
     }
 
-    // Dispatch in small batches with an intervening flush. A single
-    // mega-dispatch (e.g. 116 samples in queue at once) has been seen
-    // to wedge Chrome's WebCodecs decoder in a Worker — output #1
-    // fires, then nothing, and flush() never resolves. Capping the
-    // queue depth around the reorder-buffer size keeps each flush()
-    // short and avoids that path entirely.
-    const BATCH = 24;
-    let dispatchedTotal = 0;
-    for (let batchStart = startIdx; batchStart <= targetB; batchStart += BATCH) {
-      const batchEnd = Math.min(batchStart + BATCH - 1, targetB);
+    // Dispatch in GOP-aligned batches. The fixed-size BATCH=24 we
+    // tried first wedged Chrome's WebCodecs decoder: it cuts mid-GOP,
+    // leaving B-frames at the batch's tail waiting on a P-frame in
+    // the *next* batch. Chrome's flush() doesn't drain those — they
+    // sit in the reorder buffer forever, blocking new input.
+    //
+    // Snapping `batchEnd` to the next IDR (inclusive) gives the
+    // decoder every reference it needs for the GOP we just fed:
+    // closed GOPs are fully self-contained; open-GOP B-frames that
+    // reference the next GOP's IDR now have it available before flush.
+    const totalSamples = this.meta.nbSamples;
+    let pos = startIdx;
+    while (pos <= targetB) {
+      // batchEnd = next IDR strictly after `pos`, or last sample if
+      // we're in the file's final GOP.
+      let batchEnd = totalSamples - 1;
+      for (let i = pos + 1; i < totalSamples; i++) {
+        const s = this.demuxer.sampleAt(i);
+        if (s?.keyframe) {
+          batchEnd = i;
+          break;
+        }
+      }
+
       let dispatched = 0;
-      for (let i = batchStart; i <= batchEnd; i++) {
+      for (let i = pos; i <= batchEnd; i++) {
         const s = this.demuxer.sampleAt(i);
         if (!s) break;
         try {
@@ -279,17 +293,14 @@ export class ExportSourceHandle implements DecoderHandle {
         }
         this.lastDispatchedIndex = i;
         dispatched++;
-        dispatchedTotal++;
       }
 
       const flushStartMs = performance.now();
       // eslint-disable-next-line no-console
       console.log(
-        `[weftcut/export] ${this.mediaId} batch [${batchStart}..${batchEnd}] ` +
+        `[weftcut/export] ${this.mediaId} GOP batch [${pos}..${batchEnd}] ` +
           `→ ${dispatched} dispatched (queue=${this.decoder.decodeQueueSize}); flush`,
       );
-      // Watchdog: log every 5s while flush is pending so we can see
-      // if the decoder is making progress or genuinely wedged.
       const wd = setInterval(() => {
         // eslint-disable-next-line no-console
         console.warn(
@@ -308,8 +319,9 @@ export class ExportSourceHandle implements DecoderHandle {
           `${(performance.now() - flushStartMs).toFixed(0)}ms; ` +
           `ring=${this.ring.size()} frames`,
       );
+
+      pos = batchEnd + 1;
     }
-    void dispatchedTotal;
   }
 
   evictBefore(cutoffUs: number): void {
