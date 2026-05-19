@@ -117,6 +117,13 @@ export class Compositor {
   /// visual feedback). Cleared after the scrub coalescer fires its
   /// stable-target callback, at which point the decoder catches up.
   private scrubbing = false;
+  /// Suspended state — both `compositeFrame` and `setAnchorTime` are
+  /// no-ops while true. Used by the export flow to release the
+  /// preview's VideoDecoders so the export Worker's decoder doesn't
+  /// fight for the hardware decode slot. On resume the next
+  /// `compositeFrame` lazily re-acquires fresh handles via
+  /// `ensureClip`.
+  private suspended = false;
   /// Composition frame duration in microseconds, derived from the
   /// project's fps_num/fps_den. Used to snap `tUs` to project-frame
   /// boundaries before frame lookup so that on a 60 Hz display with
@@ -182,6 +189,30 @@ export class Compositor {
     this.playing = playing;
   }
 
+  /// Suspend / resume the compositor. While suspended, every
+  /// VideoClip's decoder is closed (releasing its hardware decode
+  /// slot), audio mixers are torn down, and `compositeFrame` /
+  /// `setAnchorTime` are short-circuited so the engine's rAF loop
+  /// can't lazily re-create decoders. The next `compositeFrame` after
+  /// `setSuspended(false)` re-acquires fresh handles via the normal
+  /// `ensureClip` path.
+  ///
+  /// Used by export: the export Worker's decoder otherwise wedges
+  /// when the preview's decoder is still holding a hardware video-
+  /// decode slot for the same source.
+  setSuspended(s: boolean): void {
+    if (this.suspended === s) return;
+    this.suspended = s;
+    if (s) {
+      for (const c of this.clips.values()) c.sprite.dispose();
+      this.clips.clear();
+      for (const a of this.audios.values()) a.mixer.dispose();
+      this.audios.clear();
+      this.stage.removeChildren();
+      this.pool.dispose();
+    }
+  }
+
   /// Replace the project snapshot. Sprites for layers that have
   /// disappeared get evicted; new layers will appear on the next
   /// `compositeFrame()` if active.
@@ -244,6 +275,7 @@ export class Compositor {
   /// the scene graph; the ticker presents it.
   compositeFrame(tUs: number): void {
     if (this.disposed) return;
+    if (this.suspended) return;
     this.lastTUs = tUs;
     if (!this.projectSummary) return;
 
@@ -367,6 +399,7 @@ export class Compositor {
   setAnchorTime(tUs: number): void {
     if (!this.projectSummary) return;
     if (this.scrubbing) return;
+    if (this.suspended) return;
     // Use the same snap as compositeFrame so the decoder's anchor
     // matches the frame we're actually painting.
     const tUsSnapped =

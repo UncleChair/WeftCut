@@ -199,7 +199,11 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       <button
         type="button"
         onClick={() => {
-          void handlePixiExport(setExporting);
+          void handlePixiExport(
+            setExporting,
+            compositorRef.current,
+            engineRef.current,
+          );
         }}
         disabled={exporting !== null}
         style={{
@@ -225,6 +229,8 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
 
 async function handlePixiExport(
   setStatus: (s: string | null) => void,
+  compositor: Compositor | null,
+  engine: PlaybackEngine | null,
 ): Promise<void> {
   const store = useProjectStore.getState();
   const summary = store.summary;
@@ -233,6 +239,15 @@ async function handlePixiExport(
     setTimeout(() => setStatus(null), 1500);
     return;
   }
+  // Suspend the preview compositor so its VideoDecoder releases the
+  // hardware video-decode slot. The export Worker's decoder otherwise
+  // wedges fighting for the same slot. Engine is paused first so its
+  // rAF loop can't squeeze in another setAnchorTime tick before
+  // suspend takes effect.
+  const wasPlaying = engine?.isPlaying() ?? false;
+  engine?.pause();
+  compositor?.setSuspended(true);
+
   setStatus("Exporting 0%");
   try {
     const result = await runExport({
@@ -263,5 +278,15 @@ async function handlePixiExport(
     console.error("[weftcut/pixi] export failed:", err);
     setStatus(`Failed: ${msg.slice(0, 40)}`);
     setTimeout(() => setStatus(null), 3500);
+  } finally {
+    compositor?.setSuspended(false);
+    // Force re-init: the engine's rAF loop will re-acquire decoders
+    // via ensureClip on its next tick, but kick the compositor once
+    // here so the canvas isn't blank for a frame.
+    const t = engine?.positionUs() ?? 0;
+    compositor?.setProject(useProjectStore.getState().summary);
+    compositor?.setAnchorTime(t);
+    compositor?.compositeFrame(t);
+    if (wasPlaying) engine?.play();
   }
 }
