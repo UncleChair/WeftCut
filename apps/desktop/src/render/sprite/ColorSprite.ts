@@ -1,34 +1,46 @@
-// Color layer — a flat colored rect at the project canvas dimensions.
+// Color layer — a flat rectangle of `(width, height)` at the
+// composition origin, filled with the layer's animated `Rgba`.
+// The Rust schema stores `color: Animated<Rgba>` but the LayerSummary
+// view ships only the static-resolved snapshot (`color: Rgba`); per-
+// frame keyframe interpolation will arrive when the IPC ships full
+// `AnimTrack<T>` (separate work).
 //
 // Plan: docs/pixi-renderer-plan.md (P3)
-//
-// P0 stub.
 
 import { Graphics } from "pixi.js";
 
+import type { ColorView } from "../../ipc";
+
 export interface ColorSpriteInit {
   layerId: string;
-  width: number;
-  height: number;
 }
 
 export class ColorSprite {
   readonly graphics: Graphics;
   readonly layerId: string;
-  private width: number;
-  private height: number;
+  /// Cached signature of the most recently-drawn fill. Skips the
+  /// per-frame `graphics.clear().rect().fill()` cycle when nothing
+  /// visible has changed.
+  private appliedSig: string | null = null;
 
   constructor(init: ColorSpriteInit) {
     this.layerId = init.layerId;
-    this.width = init.width;
-    this.height = init.height;
     this.graphics = new Graphics();
-    this.graphics.rect(0, 0, this.width, this.height).fill(0x000000);
   }
 
-  update(_tUs: number): void {
-    // P3: sample Animated color → graphics.clear().rect(...).fill(rgba)
-    // sample Animated opacity → graphics.alpha
+  update(view: ColorView): void {
+    const sig = `${view.color.r},${view.color.g},${view.color.b},${view.color.a}|${view.width}x${view.height}`;
+    if (sig === this.appliedSig) return;
+    this.appliedSig = sig;
+    // Pixi v8 Color accepts `{r,g,b,a}` with components in 0–255 by
+    // default. The schema's Rgba uses 0–255 for all four channels,
+    // so we pass through.
+    const fillColor = (view.color.r << 16) | (view.color.g << 8) | view.color.b;
+    const fillAlpha = view.color.a / 255;
+    this.graphics.clear();
+    this.graphics
+      .rect(0, 0, view.width, view.height)
+      .fill({ color: fillColor, alpha: fillAlpha });
   }
 
   dispose(): void {

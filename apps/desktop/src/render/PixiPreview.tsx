@@ -96,6 +96,11 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         const path = playbackPathFor(m);
         return path ? convertFileSrc(path) : null;
       };
+      const originalAssetUrl = (mediaId: string): string | null => {
+        const m = useProjectStore.getState().mediaById.get(mediaId);
+        if (!m) return null;
+        return convertFileSrc(m.path);
+      };
       const lookupMedia = (mediaId: string): MediaSummary | undefined =>
         useProjectStore.getState().mediaById.get(mediaId);
 
@@ -105,6 +110,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         height: app.canvas.height,
         mode: "preview",
         proxyAssetUrl,
+        originalAssetUrl,
         mediaById: lookupMedia,
       });
       compositor.setProject(useProjectStore.getState().summary);
