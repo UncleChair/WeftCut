@@ -56,15 +56,22 @@ export class VideoClipSprite {
     if (!this.source || !this.texture) {
       // First frame — allocate the ImageSource bound to this
       // VideoFrame. PixiJS v8 explicitly accepts VideoFrame as an
-      // ImageSource resource.
+      // ImageSource resource. We pass width/height explicitly so
+      // the texture's `orig` dimensions are correct before any
+      // upload completes (sprite scale math reads them).
       this.source = new ImageSource({
         resource: frame,
-        // alphaMode "premultiply-alpha-on-upload" matches PixiJS's
-        // default; we leave it implicit but record the choice here
-        // for future readers.
+        width: frame.codedWidth,
+        height: frame.codedHeight,
       });
       this.texture = new Texture({ source: this.source });
       this.sprite.texture = this.texture;
+      // eslint-disable-next-line no-console
+      console.log(
+        `[weftcut/pixi] sprite ${this.layerId} first texture bound: ` +
+          `${frame.codedWidth}×${frame.codedHeight} ` +
+          `texture.orig=${this.texture.orig.width}×${this.texture.orig.height}`,
+      );
       return;
     }
 

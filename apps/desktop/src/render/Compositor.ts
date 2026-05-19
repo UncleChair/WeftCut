@@ -115,6 +115,7 @@ export class Compositor {
     this.lastTUs = tUs;
     if (!this.projectSummary) return;
 
+    const prevChildCount = this.stage.children.length;
     this.stage.removeChildren();
 
     let z = 0;
@@ -136,6 +137,28 @@ export class Compositor {
           this.stage.addChild(clip.sprite.sprite);
         }
       }
+    }
+    // One-shot diagnostic the first time we transition from "stage
+    // has no children" to "stage has some" so the user can confirm
+    // sprites are reaching the scene graph.
+    if (prevChildCount === 0 && this.stage.children.length > 0) {
+      const s = this.stage.children[0] as unknown as {
+        x: number;
+        y: number;
+        scale: { x: number; y: number };
+        alpha: number;
+        texture: { orig: { width: number; height: number } };
+        visible: boolean;
+      };
+      // eslint-disable-next-line no-console
+      console.log(
+        `[weftcut/pixi] first sprite added to stage: ` +
+          `pos=(${s.x},${s.y}) scale=(${s.scale.x},${s.scale.y}) ` +
+          `alpha=${s.alpha} visible=${s.visible} ` +
+          `tex=${s.texture.orig.width}×${s.texture.orig.height} ` +
+          `compStage.children=${this.stage.children.length} ` +
+          `appStage.children=${this.app.stage.children.length}`,
+      );
     }
   }
 
