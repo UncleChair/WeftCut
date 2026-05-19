@@ -224,21 +224,34 @@ export class Compositor {
     const layerLocalUs = tUs - layer.t_start_us;
     const srcTUs = params.src_in_us + layerLocalUs;
 
+    // Upload the current frame BEFORE adjusting transforms so the
+    // sprite's natural size reflects the real texture dimensions.
     const frame = clip.source.ring.frameAt(srcTUs);
     if (frame) {
       clip.sprite.updateFrame(frame);
     }
 
-    const media = this.mediaById(params.media_id);
-    const nativeW = media?.width ?? this.compositionWidth;
-    const nativeH = media?.height ?? this.compositionHeight;
-    clip.sprite.sprite.width = nativeW * params.scale_x;
-    clip.sprite.sprite.height = nativeH * params.scale_y;
+    // Use sprite.scale directly. The width/height setters in PixiJS v8
+    // compute scale from `texture.orig.width/height`, so setting them
+    // while the texture is still `Texture.EMPTY` (1×1) leaves the
+    // sprite with scale-as-pixel-count — when the real video texture
+    // lands later, the sprite renders thousands of times larger than
+    // intended. With scale alone, the sprite naturally adapts to
+    // whatever texture is bound: scale 1.0 = texture-native size.
+    //
+    // Caveat for v1: the master proxy is capped at 1080p height, so
+    // sources whose native dim > 1080p actually render slightly
+    // smaller than their nominal source size. Source ≤ 1080p (the
+    // common case) is unaffected. A future fix can multiply by
+    // `media.width / texture.width` to recover source-pixel
+    // semantics, but that needs the texture's actual size which we
+    // only know after `updateFrame()`.
+    clip.sprite.sprite.scale.set(
+      params.scale_x * (params.flip_h ? -1 : 1),
+      params.scale_y * (params.flip_v ? -1 : 1),
+    );
     clip.sprite.sprite.position.set(params.x, params.y);
     clip.sprite.sprite.alpha = params.opacity;
-    if (params.flip_h) clip.sprite.sprite.scale.x = -Math.abs(clip.sprite.sprite.scale.x);
-    if (params.flip_v) clip.sprite.sprite.scale.y = -Math.abs(clip.sprite.sprite.scale.y);
-
     clip.sprite.sprite.zIndex = z;
   }
 }
