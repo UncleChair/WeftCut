@@ -12,7 +12,14 @@
 //
 // Plan: docs/pixi-renderer-plan.md (P2)
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { Application as PixiApplication } from "@pixi/react";
 import type { Application } from "pixi.js";
@@ -25,6 +32,17 @@ import { PlaybackEngine } from "./PlaybackEngine";
 interface Props {
   onTimeUpdate?: (tUs: number) => void;
   onPausedChange?: (paused: boolean) => void;
+}
+
+/// Transport interface exposed by `<PixiPreview ref={...}>`. Mirrors
+/// `PreviewSurfaceHandle` so the parent's imperative handle can
+/// forward play/pause/seek straight through to the underlying PIXI
+/// `PlaybackEngine` when the flag is on.
+export interface PixiPreviewHandle {
+  play(): void;
+  pause(): void;
+  seek(tUs: number): void;
+  paused(): boolean;
 }
 
 export function isPixiPreviewEnabled(): boolean {
@@ -47,10 +65,32 @@ export function isPixiPreviewEnabled(): boolean {
 
 const LOG = "[weftcut/pixi]";
 
-export function PixiPreview({ onTimeUpdate, onPausedChange }: Props) {
+export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPreview(
+  { onTimeUpdate, onPausedChange },
+  ref,
+) {
   const compositorRef = useRef<Compositor | null>(null);
   const engineRef = useRef<PlaybackEngine | null>(null);
   const [status, setStatus] = useState<string>("Initializing PixiJS…");
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      play() {
+        engineRef.current?.play();
+      },
+      pause() {
+        engineRef.current?.pause();
+      },
+      seek(tUs: number) {
+        engineRef.current?.seek(tUs);
+      },
+      paused() {
+        return !(engineRef.current?.isPlaying() ?? false);
+      },
+    }),
+    [],
+  );
   const summary = useProjectStore((s) => s.summary);
   const mediaById = useProjectStore((s) => s.mediaById);
   const composition = summary?.composition;
@@ -178,4 +218,4 @@ export function PixiPreview({ onTimeUpdate, onPausedChange }: Props) {
       </div>
     </div>
   );
-}
+});
