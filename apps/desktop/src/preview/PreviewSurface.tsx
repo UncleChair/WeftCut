@@ -82,7 +82,20 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
     const [renderPreviewActive, setRenderPreviewActive] = useState<boolean>(false);
 
     // Mount engine + audio graph once. Dispose on unmount.
+    //
+    // SKIPPED when pixi mode is on: the legacy DOM `PlaybackEngine`
+    // unconditionally starts a `requestAnimationFrame` loop in its
+    // constructor and fires `onTimeUpdate(0)` every ~33 ms even when
+    // paused (its masterUs stays 0 because nothing ever called play()
+    // on it). In pixi mode that emit stream stomps over the PIXI
+    // engine's correct time updates, which manifests as "playhead
+    // jumps back to 0 when pause is hit."
     useEffect(() => {
+      if (isPixiPreviewEnabled()) {
+        // PixiPreview owns its own PlaybackEngine + Compositor; the
+        // legacy DOM stack is unused in this mode.
+        return;
+      }
       const ag = new AudioGraph();
       const e = new PlaybackEngine({ audioGraph: ag });
       setAudioGraph(ag);
