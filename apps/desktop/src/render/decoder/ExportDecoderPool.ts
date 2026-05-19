@@ -234,45 +234,71 @@ export class ExportSourceHandle implements DecoderHandle {
       return;
     }
 
-    let dispatched = 0;
-    for (let i = startIdx; i <= targetB; i++) {
-      const s = this.demuxer.sampleAt(i);
-      if (!s) break;
-      try {
-        this.decoder.decode(
-          new EncodedVideoChunk({
-            type: s.keyframe ? "key" : "delta",
-            timestamp: s.ptsUs,
-            duration: s.durationUs,
-            data: s.data,
-          }),
-        );
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.error(
-          `[weftcut/export] ${this.mediaId} decode threw at sample ${i} ` +
-            `(pts=${s.ptsUs}us, key=${s.keyframe}):`,
-          err,
-        );
-        throw err;
+    // Dispatch in small batches with an intervening flush. A single
+    // mega-dispatch (e.g. 116 samples in queue at once) has been seen
+    // to wedge Chrome's WebCodecs decoder in a Worker — output #1
+    // fires, then nothing, and flush() never resolves. Capping the
+    // queue depth around the reorder-buffer size keeps each flush()
+    // short and avoids that path entirely.
+    const BATCH = 24;
+    let dispatchedTotal = 0;
+    for (let batchStart = startIdx; batchStart <= targetB; batchStart += BATCH) {
+      const batchEnd = Math.min(batchStart + BATCH - 1, targetB);
+      let dispatched = 0;
+      for (let i = batchStart; i <= batchEnd; i++) {
+        const s = this.demuxer.sampleAt(i);
+        if (!s) break;
+        try {
+          this.decoder.decode(
+            new EncodedVideoChunk({
+              type: s.keyframe ? "key" : "delta",
+              timestamp: s.ptsUs,
+              duration: s.durationUs,
+              data: s.data,
+            }),
+          );
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.error(
+            `[weftcut/export] ${this.mediaId} decode threw at sample ${i} ` +
+              `(pts=${s.ptsUs}us, key=${s.keyframe}):`,
+            err,
+          );
+          throw err;
+        }
+        this.lastDispatchedIndex = i;
+        dispatched++;
+        dispatchedTotal++;
       }
-      this.lastDispatchedIndex = i;
-      dispatched++;
-    }
 
-    const flushStartMs = performance.now();
-    // eslint-disable-next-line no-console
-    console.log(
-      `[weftcut/export] ${this.mediaId} dispatched ${dispatched} samples ` +
-        `(decodeQueue=${this.decoder.decodeQueueSize}); awaiting flush`,
-    );
-    await this.decoder.flush();
-    // eslint-disable-next-line no-console
-    console.log(
-      `[weftcut/export] ${this.mediaId} flush done in ` +
-        `${(performance.now() - flushStartMs).toFixed(0)}ms; ` +
-        `ring=${this.ring.size()} frames`,
-    );
+      const flushStartMs = performance.now();
+      // eslint-disable-next-line no-console
+      console.log(
+        `[weftcut/export] ${this.mediaId} batch [${batchStart}..${batchEnd}] ` +
+          `→ ${dispatched} dispatched (queue=${this.decoder.decodeQueueSize}); flush`,
+      );
+      // Watchdog: log every 5s while flush is pending so we can see
+      // if the decoder is making progress or genuinely wedged.
+      const wd = setInterval(() => {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[weftcut/export] ${this.mediaId} flush still pending ` +
+            `(queue=${this.decoder?.decodeQueueSize}, ring=${this.ring.size()})`,
+        );
+      }, 5000);
+      try {
+        await this.decoder.flush();
+      } finally {
+        clearInterval(wd);
+      }
+      // eslint-disable-next-line no-console
+      console.log(
+        `[weftcut/export] ${this.mediaId} batch flush done in ` +
+          `${(performance.now() - flushStartMs).toFixed(0)}ms; ` +
+          `ring=${this.ring.size()} frames`,
+      );
+    }
+    void dispatchedTotal;
   }
 
   evictBefore(cutoffUs: number): void {
