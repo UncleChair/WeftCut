@@ -29,7 +29,7 @@ import type { MediaSummary } from "../ipc";
 import { Compositor } from "./Compositor";
 import { ExportSourceHandle } from "./decoder/ExportDecoderPool";
 import { PlaybackEngine } from "./PlaybackEngine";
-import type { PixiPreviewHandle } from "./pixiPreviewFlag";
+import type { PixiExportResult, PixiPreviewHandle } from "./pixiPreviewFlag";
 import { runExport } from "./worker/runExport";
 
 interface Props {
@@ -64,7 +64,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       },
       runExport(opts) {
         return handlePixiExport(
-          opts?.onStatus ?? (() => {}),
+          opts?.onProgress,
           compositorRef.current,
           engineRef.current,
         );
@@ -297,16 +297,14 @@ async function runMainThreadProbe(): Promise<void> {
 }
 
 async function handlePixiExport(
-  setStatus: (s: string | null) => void,
+  onProgress: ((encoded: number, total: number) => void) | undefined,
   compositor: Compositor | null,
   engine: PlaybackEngine | null,
-): Promise<void> {
+): Promise<PixiExportResult> {
   const store = useProjectStore.getState();
   const summary = store.summary;
   if (!summary) {
-    setStatus("No project");
-    setTimeout(() => setStatus(null), 1500);
-    return;
+    throw new Error("No project loaded");
   }
   // Suspend the preview compositor so its VideoDecoder releases the
   // hardware video-decode slot. The export Worker's decoder otherwise
@@ -317,36 +315,19 @@ async function handlePixiExport(
   engine?.pause();
   compositor?.setSuspended(true);
 
-  setStatus("Exporting 0%");
   try {
     const result = await runExport({
       summary,
       mediaById: store.mediaById,
-      onProgress: (encoded, total) => {
-        const pct = total > 0 ? Math.round((encoded / total) * 100) : 0;
-        setStatus(`Exporting ${pct}%`);
-      },
+      onProgress,
     });
-    // Hand the bytes to the browser as a downloadable Blob so the
-    // user can save and inspect the result. Real ExportPanel wiring
-    // (and audio mux) is the next step.
-    const blob = new Blob([result.videoBytes], { type: "video/mp4" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `weftcut-pixi-export-${Date.now()}.mp4`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    setStatus(`Done — ${result.framesEncoded}f`);
-    setTimeout(() => setStatus(null), 2500);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    // eslint-disable-next-line no-console
-    console.error("[weftcut/pixi] export failed:", err);
-    setStatus(`Failed: ${msg.slice(0, 40)}`);
-    setTimeout(() => setStatus(null), 3500);
+    return {
+      videoBytes: result.videoBytes,
+      framesEncoded: result.framesEncoded,
+      totalFrames: result.totalFrames,
+      fpsNum: summary.composition.fps_num,
+      fpsDen: summary.composition.fps_den,
+    };
   } finally {
     compositor?.setSuspended(false);
     // Force re-init: the engine's rAF loop will re-acquire decoders
