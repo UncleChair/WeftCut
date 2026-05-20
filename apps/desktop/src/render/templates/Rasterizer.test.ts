@@ -3,6 +3,7 @@ import {
   buildForeignObjectSvg,
   canonicalizeProps,
   rasterCacheKey,
+  substituteTemplate,
 } from "./Rasterizer";
 import type { TemplateManifest } from "./catalog";
 
@@ -85,6 +86,56 @@ describe("canonicalizeProps", () => {
       sampleManifest,
     );
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+  });
+});
+
+describe("substituteTemplate", () => {
+  test("replaces __STYLE__ with the css content", () => {
+    const out = substituteTemplate({
+      html: "<style>__STYLE__</style><body>hi</body>",
+      css: ".a { color: red }",
+      props: {},
+    });
+    expect(out).toContain(".a { color: red }");
+    expect(out).not.toContain("__STYLE__");
+  });
+
+  test("replaces {{key}} placeholders with their string-coerced prop value", () => {
+    const out = substituteTemplate({
+      html: "<h1>{{title}}</h1><p>{{subtitle}}</p>",
+      css: "",
+      props: { title: "Hello", subtitle: "World" },
+    });
+    expect(out).toContain("<h1>Hello</h1>");
+    expect(out).toContain("<p>World</p>");
+  });
+
+  test("HTML-escapes prop values to keep markup safe", () => {
+    const out = substituteTemplate({
+      html: "<p>{{title}}</p>",
+      css: "",
+      props: { title: "<script>alert(1)</script>" },
+    });
+    expect(out).not.toContain("<script>alert");
+    expect(out).toContain("&lt;script&gt;");
+  });
+
+  test("leaves placeholders for missing keys untouched (renderable as literal)", () => {
+    const out = substituteTemplate({
+      html: "<p>{{title}} - {{missing}}</p>",
+      css: "",
+      props: { title: "X" },
+    });
+    expect(out).toContain("<p>X - {{missing}}</p>");
+  });
+
+  test("non-string prop values stringify", () => {
+    const out = substituteTemplate({
+      html: "<p>{{count}}</p>",
+      css: "",
+      props: { count: 42 },
+    });
+    expect(out).toContain("<p>42</p>");
   });
 });
 

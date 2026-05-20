@@ -22,6 +22,41 @@ export interface BuildSvgInput {
   height: number;
 }
 
+export interface SubstituteTemplateInput {
+  html: string;
+  css: string;
+  props: Record<string, unknown>;
+}
+
+const HTML_ESCAPE_MAP: Record<string, string> = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+  "'": "&#39;",
+};
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => HTML_ESCAPE_MAP[c]!);
+}
+
+/// Resolve `__STYLE__` and `{{key}}` placeholders before SVG-wrapping.
+/// Scripts inside `foreignObject` rasters don't execute (browser
+/// security sandbox on createImageBitmap), so prop values must be
+/// baked into the markup at build time rather than read from
+/// `window.__props__` at runtime. Unknown placeholders pass through
+/// untouched so they show up in the raster — visible signal that a
+/// template prop is missing.
+export function substituteTemplate(input: SubstituteTemplateInput): string {
+  let out = input.html.replace(/__STYLE__/g, input.css);
+  out = out.replace(/\{\{(\w+)\}\}/g, (match, key) => {
+    if (!Object.prototype.hasOwnProperty.call(input.props, key)) return match;
+    const v = input.props[key];
+    return escapeHtml(v == null ? "" : String(v));
+  });
+  return out;
+}
+
 /// Build a self-contained SVG with the template HTML wrapped in a
 /// foreignObject. The body sits inside an XHTML-namespaced wrapper so
 /// the browser parses the inner markup as HTML, not SVG.
