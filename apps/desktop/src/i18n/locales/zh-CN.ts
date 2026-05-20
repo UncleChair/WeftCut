@@ -105,6 +105,9 @@ const zhCN: Resources = {
     redo: "重做",
     queue_export: "+ 排队",
     queue_export_hint: "将导出加入渲染队列（在当前任务后执行）。",
+    pixi_export: "Pixi 导出…",
+    pixi_export_hint:
+      "通过 PixiJS + WebCodecs Worker 管线导出。需要启用 Pixi 预览模式（?pixi=1）。",
     connect_agent: "连接代理…",
     connect_agent_hint:
       "显示外部代理（Claude Desktop、Cursor）通过 MCP 驱动 WeftCut 所需的 URL 和令牌。",

@@ -688,6 +688,22 @@ export function App({ onCloseProject }: AppProps) {
     }
   }, [preset, t]);
 
+  // Pixi/WebCodecs export. Routes through PreviewSurface's imperative
+  // handle: when pixi mode is active the handle suspends the preview
+  // compositor (so its VideoDecoder releases the hardware decode slot)
+  // and drives the export Worker; when pixi mode is off the handle
+  // is a no-op with a status message.
+  const [pixiExportStatus, setPixiExportStatus] = useState<string | null>(null);
+  const runPixiExport = useCallback(async () => {
+    try {
+      await previewRef.current?.runPixiExport({
+        onStatus: setPixiExportStatus,
+      });
+    } catch (e) {
+      console.error("[weftcut/pixi] export failed:", e);
+    }
+  }, []);
+
   // Phase D: no React-side preview init step is needed. The Rust
   // `preview::PreviewRenderer` task subscribes to actor commits and
   // produces `<workspace>/Cache/preview/<hash>.mp4` on its own; the
@@ -976,6 +992,16 @@ export function App({ onCloseProject }: AppProps) {
             hint={t("actions.queue_export_hint")}
             onSelect={addToExportQueue}
             disabled={busy}
+          />
+          <MenuSeparator />
+          <MenuItem
+            label={t("actions.pixi_export", { defaultValue: "Pixi Export…" })}
+            hint={t("actions.pixi_export_hint", {
+              defaultValue:
+                "Export through the PixiJS + WebCodecs Worker pipeline. Requires pixi preview mode.",
+            })}
+            onSelect={runPixiExport}
+            disabled={busy || pixiExportStatus !== null}
           />
         </Menu>
 

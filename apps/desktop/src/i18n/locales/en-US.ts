@@ -102,6 +102,9 @@ const enUS = {
     redo: "Redo",
     queue_export: "+ Queue",
     queue_export_hint: "Add an export to the render queue (runs after current job).",
+    pixi_export: "Pixi Export…",
+    pixi_export_hint:
+      "Export through the PixiJS + WebCodecs Worker pipeline. Requires pixi preview mode (?pixi=1).",
     connect_agent: "Connect agent…",
     connect_agent_hint:
       "Show the URL + token an external agent (Claude Desktop, Cursor) needs to drive WeftCut over MCP.",

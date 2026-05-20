@@ -43,6 +43,13 @@ export interface PreviewSurfaceHandle {
   pause(): void;
   seekTo(tUs: number): void;
   paused(): boolean;
+  /// Run the PixiJS export pipeline. Only works when pixi mode is
+  /// active — in DOM mode this resolves immediately with a status
+  /// "Pixi preview not active" so the menu item is harmless when the
+  /// flag is off.
+  runPixiExport(opts?: {
+    onStatus?: (s: string | null) => void;
+  }): Promise<void>;
 }
 
 /// Visual scaling: we render the layer canvas at the project's
@@ -188,6 +195,20 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
             return pixiRef.current?.paused() ?? true;
           }
           return !(engine?.isPlaying() ?? false);
+        },
+        async runPixiExport(opts) {
+          if (!isPixiPreviewEnabled()) {
+            opts?.onStatus?.("Pixi preview not active");
+            setTimeout(() => opts?.onStatus?.(null), 2500);
+            return;
+          }
+          const handle = pixiRef.current;
+          if (!handle) {
+            opts?.onStatus?.("Pixi preview not ready");
+            setTimeout(() => opts?.onStatus?.(null), 2500);
+            return;
+          }
+          await handle.runExport(opts);
         },
       }),
       [engine, audioGraph],
