@@ -1,0 +1,23 @@
+{
+  "id": "lower-third-simple",
+  "name": "Simple Lower Third",
+  "version": 1,
+  "size": [800, 200],
+  "default_duration_s": 5.0,
+  "props_schema": {
+    "title": {
+      "type": "string",
+      "default": "Title",
+      "max_length": 80
+    },
+    "subtitle": {
+      "type": "string",
+      "default": "",
+      "max_length": 120
+    },
+    "color": {
+      "type": "color",
+      "default": "#0050ff"
+    }
+  }
+}

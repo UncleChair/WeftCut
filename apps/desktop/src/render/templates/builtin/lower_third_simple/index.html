@@ -1,0 +1,47 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>__STYLE__</style>
+</head>
+<body>
+  <div id="lt" class="lt">
+    <div id="title" class="title"></div>
+    <div id="subtitle" class="subtitle"></div>
+  </div>
+  <script>
+    // The host injects window.__props__ after navigation but before the
+    // first __seek call. Poll until ready, then apply once and let __seek
+    // drive the slide-in animation (60px → 60px from the left over 0.6s).
+    async function start() {
+      while (!window.__props__) {
+        await new Promise((r) => setTimeout(r, 5));
+      }
+      const p = window.__props__;
+      document.getElementById('title').textContent = p.title || '';
+      document.getElementById('subtitle').textContent = p.subtitle || '';
+      const lt = document.getElementById('lt');
+      lt.style.background = p.color || '#0050ff';
+
+      const SLIDE_DURATION = 0.6; // seconds
+      const SLIDE_START_X = -560;
+      const SLIDE_END_X = 60;
+      function tick() {
+        const t = performance.now() / 1000;
+        const u = Math.max(0, Math.min(1, t / SLIDE_DURATION));
+        // Ease-out cubic for the slide-in.
+        const eased = 1 - Math.pow(1 - u, 3);
+        const x = SLIDE_START_X + (SLIDE_END_X - SLIDE_START_X) * eased;
+        lt.style.left = x + 'px';
+        requestAnimationFrame(tick);
+      }
+      tick();
+
+      // Tell the rasterizer "first paint is ready". The shim's __seek
+      // looks for `window.__ready__` to gate the first capture.
+      window.__ready__ = Promise.resolve();
+    }
+    start();
+  </script>
+</body>
+</html>

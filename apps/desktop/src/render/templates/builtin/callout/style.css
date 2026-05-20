@@ -1,0 +1,38 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  font-family: 'Segoe UI', 'Helvetica Neue', system-ui, sans-serif;
+  color: #111;
+  overflow: hidden;
+  width: 100vw;
+  height: 100vh;
+}
+
+.target {
+  position: absolute;
+  width: 56px;
+  height: 56px;
+  margin-left: -28px;
+  margin-top: -28px;
+  border: 4px solid #ffcc00;
+  border-radius: 50%;
+  box-shadow: 0 0 18px rgba(255, 204, 0, 0.55);
+  opacity: 0;
+}
+
+.box {
+  position: absolute;
+  /* placement set inline by JS — keeps label inside the frame regardless of x/y */
+  padding: 16px 24px;
+  background: #ffcc00;
+  color: #111;
+  border-radius: 8px;
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: 0.3px;
+  max-width: 560px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+}
