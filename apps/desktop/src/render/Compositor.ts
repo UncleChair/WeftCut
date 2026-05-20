@@ -18,6 +18,7 @@ import {
 } from "./decoder/SourceDecoderPool";
 import { ColorSprite } from "./sprite/ColorSprite";
 import { ImageOverlaySprite } from "./sprite/ImageOverlaySprite";
+import { SubtitlesSprite } from "./sprite/SubtitlesSprite";
 import { TemplateSprite } from "./sprite/TemplateSprite";
 import { TextSprite } from "./sprite/TextSprite";
 import { VideoClipSprite } from "./sprite/VideoClipSprite";
@@ -79,6 +80,11 @@ interface ActiveTemplate {
   sprite: TemplateSprite;
 }
 
+interface ActiveSubtitles {
+  layerId: string;
+  sprite: SubtitlesSprite;
+}
+
 interface ActiveAudio {
   layerId: string;
   mediaId: string;
@@ -94,6 +100,7 @@ export class Compositor {
   private colors = new Map<string, ActiveColor>();
   private texts = new Map<string, ActiveText>();
   private templates = new Map<string, ActiveTemplate>();
+  private subtitles = new Map<string, ActiveSubtitles>();
   private audios = new Map<string, ActiveAudio>();
   /// Host element where AudioMixers append their hidden `<audio>`
   /// elements. Null in export mode (no DOM). The Compositor owns
@@ -272,6 +279,12 @@ export class Compositor {
         this.templates.delete(layerId);
       }
     }
+    for (const [layerId, s] of this.subtitles) {
+      if (!livingLayerIds.has(layerId)) {
+        s.sprite.dispose();
+        this.subtitles.delete(layerId);
+      }
+    }
     for (const [layerId, a] of this.audios) {
       if (!livingLayerIds.has(layerId)) {
         a.mixer.dispose();
@@ -380,8 +393,14 @@ export class Compositor {
           if (tmpl.sprite.sprite.texture !== Texture.EMPTY) {
             this.stage.addChild(tmpl.sprite.sprite);
           }
+        } else if (kind === "Subtitles") {
+          const subs = this.ensureSubtitles(layer);
+          if (!subs) continue;
+          this.updateSubtitles(subs, layer, tUsSnapped, z++);
+          if (subs.sprite.sprite.texture !== Texture.EMPTY) {
+            this.stage.addChild(subs.sprite.sprite);
+          }
         }
-        // Subtitles render path lands in P6.
       }
     }
     // One-shot diagnostic the first time we transition from "stage
@@ -451,6 +470,8 @@ export class Compositor {
     this.texts.clear();
     for (const t of this.templates.values()) t.sprite.dispose();
     this.templates.clear();
+    for (const s of this.subtitles.values()) s.sprite.dispose();
+    this.subtitles.clear();
     for (const a of this.audios.values()) a.mixer.dispose();
     this.audios.clear();
     if (this.audioHost && this.audioHost.parentNode) {
@@ -675,6 +696,44 @@ export class Compositor {
     if (layer.params.kind !== "Template") return;
     tmpl.sprite.update(layer.params);
     tmpl.sprite.sprite.zIndex = z;
+  }
+
+  // ============================================================
+  // Subtitles
+  // ============================================================
+
+  private ensureSubtitles(layer: LayerSummary): ActiveSubtitles | null {
+    if (layer.params.kind !== "Subtitles") return null;
+    // JASSUB needs a real DOM canvas; export Worker has no DOM, so we
+    // can't render subtitles into the export pipeline yet. Skip
+    // silently — the legacy ffmpeg export path is still wired and
+    // will own subtitles export through the v1 cutover.
+    if (this.audioHost === null) return null;
+    const existing = this.subtitles.get(layer.id);
+    if (existing) return existing;
+    const sprite = new SubtitlesSprite({
+      layerId: layer.id,
+      width: this.compositionWidth,
+      height: this.compositionHeight,
+      host: this.audioHost,
+    });
+    const subs: ActiveSubtitles = { layerId: layer.id, sprite };
+    this.subtitles.set(layer.id, subs);
+    // eslint-disable-next-line no-console
+    console.log(`[weftcut/pixi] subtitles ${layer.id} attached`);
+    return subs;
+  }
+
+  private updateSubtitles(
+    subs: ActiveSubtitles,
+    layer: LayerSummary,
+    tUs: number,
+    z: number,
+  ): void {
+    if (layer.params.kind !== "Subtitles") return;
+    const tInLayerUs = tUs - layer.t_start_us;
+    subs.sprite.update(layer.params, tInLayerUs);
+    subs.sprite.sprite.zIndex = z;
   }
 
   // ============================================================
