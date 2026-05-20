@@ -10,7 +10,9 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev --features mpv",
     "tauri:build": "tauri build --features mpv",
-    "typecheck": "tsc -b --noEmit"
+    "typecheck": "tsc -b --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@pixi/react": "^8.0.5",
@@ -34,6 +36,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
     "typescript": "^6.0.3",
-    "vite": "^8.0.13"
+    "vite": "^8.0.13",
+    "vitest": "^4.1.7"
   }
 }

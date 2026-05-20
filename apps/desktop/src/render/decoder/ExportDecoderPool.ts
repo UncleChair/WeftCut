@@ -18,6 +18,7 @@
 
 import { Demuxer, type VideoTrackMeta } from "./Demuxer";
 import type { DecoderHandle, DecoderPool, FrameStore, SourceHandleInit } from "./SourceDecoderPool";
+import { handleDecodeError } from "./decoderFallback";
 
 interface RingEntry {
   ptsUs: number;
@@ -145,6 +146,12 @@ export class ExportSourceHandle implements DecoderHandle {
   private readyP: Promise<VideoTrackMeta> | null = null;
   /// Highest sample index we've fed to the decoder. -1 = none yet.
   private lastDispatchedIndex = -1;
+  /// Frames emitted by the decoder since (re)configure. Drives the
+  /// first-frame software-fallback heuristic.
+  private outputFrameCount = 0;
+  /// True after a software-fallback downgrade. Prevents repeated
+  /// downgrade attempts on subsequent errors.
+  private downgraded = false;
 
   constructor(init: SourceHandleInit) {
     this.mediaId = init.mediaId;
@@ -171,22 +178,38 @@ export class ExportSourceHandle implements DecoderHandle {
         `${meta.codedWidth}x${meta.codedHeight} samples=${meta.nbSamples} ` +
         `desc[0..16]=${descPreview} (total ${meta.description.byteLength}B)`,
     );
-    let outputCount = 0;
     this.decoder = new VideoDecoder({
       output: (frame: VideoFrame) => {
-        outputCount += 1;
-        if (outputCount === 1 || outputCount % 30 === 0) {
+        this.outputFrameCount += 1;
+        if (this.outputFrameCount === 1 || this.outputFrameCount % 30 === 0) {
           // eslint-disable-next-line no-console
           console.log(
-            `[weftcut/export] ${this.mediaId} output #${outputCount}: ` +
+            `[weftcut/export] ${this.mediaId} output #${this.outputFrameCount}: ` +
               `pts=${frame.timestamp}us`,
           );
         }
         this.ring.push(frame);
       },
       error: (e: unknown) => {
+        const err = e instanceof Error ? e : new Error(String(e));
         // eslint-disable-next-line no-console
-        console.error(`[weftcut/export] decoder ${this.mediaId} error:`, e);
+        console.error(`[weftcut/export] decoder ${this.mediaId} error:`, err.message);
+        const action = handleDecodeError({
+          err,
+          outputFrameCount: this.outputFrameCount,
+          alreadyDowngraded: this.downgraded,
+          mediaId: this.mediaId,
+          // Worker context — Tauri `invoke` isn't reachable here, so the
+          // inactivity warning lands in the Worker's console instead of
+          // the LogBus. Main-thread postMessage relay is a future polish.
+          // eslint-disable-next-line no-console
+          log: (msg) => console.warn(`[weftcut/export] ${msg}`),
+        });
+        if (action.kind === "downgrade-to-software") {
+          this.downgradeToSoftware();
+        } else if (action.kind === "inactivity-rebuild") {
+          this.rebuildAfterInactivity();
+        }
       },
     });
     // Probe support before configuring. We test BOTH hardware and
@@ -219,15 +242,67 @@ export class ExportSourceHandle implements DecoderHandle {
     // last word — if HW decode isn't available in Worker scope, it
     // falls back to software regardless. The probe above tells us which
     // it actually picked.
-    this.decoder.configure({
+    this.decoder.configure(this.buildConfig(meta));
+    this.meta = meta;
+    return meta;
+  }
+
+  /// Build the decoder config for `meta`, honoring the current
+  /// `downgraded` flag. Used by initial configure + the software-
+  /// fallback rebuild.
+  private buildConfig(meta: VideoTrackMeta): VideoDecoderConfig {
+    return {
       codec: meta.codec,
       codedWidth: meta.codedWidth,
       codedHeight: meta.codedHeight,
       description: meta.description,
-      hardwareAcceleration: "prefer-hardware",
-    });
-    this.meta = meta;
-    return meta;
+      hardwareAcceleration: this.downgraded ? "prefer-software" : "prefer-hardware",
+    };
+  }
+
+  /// Software-fallback path: flip the downgraded flag, reset the
+  /// existing decoder, reconfigure with prefer-software, and rewind
+  /// the dispatch cursor so the next `decodeRange` re-feeds from the
+  /// current GOP's IDR. Frames already in the store stay.
+  private downgradeToSoftware(): void {
+    if (!this.meta || !this.decoder) return;
+    this.downgraded = true;
+    try {
+      this.decoder.reset();
+      this.decoder.configure(this.buildConfig(this.meta));
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[weftcut/export] decoder ${this.mediaId} software-fallback reconfigure failed:`,
+        e,
+      );
+      return;
+    }
+    // Rewind so the next decodeRange re-issues the GOP we were on.
+    // The dispatch cursor is the "highest sample index fed"; setting
+    // it back to (idr - 1) would require recomputing idr here. Simpler:
+    // -1, forcing the next decodeRange's IDR-jump branch to take over.
+    this.lastDispatchedIndex = -1;
+  }
+
+  /// Inactivity recovery: drop the dead decoder so `ensureReady`
+  /// lazily rebuilds on the next `decodeRange` call. `Demuxer.open()`
+  /// is idempotent, so the rebuild only reconstructs the `VideoDecoder`.
+  /// Theoretical for the export path — the Worker stays active for the
+  /// run — but kept for symmetry with the preview pool and as belt-and-
+  /// suspenders against very long exports. `downgraded` and the in-store
+  /// frames stay; `lastDispatchedIndex = -1` so the next decodeRange
+  /// re-feeds the current GOP's IDR through the rebuilt decoder.
+  private rebuildAfterInactivity(): void {
+    try {
+      this.decoder?.close();
+    } catch {
+      // Decoder may already be closed.
+    }
+    this.decoder = null;
+    this.readyP = null;
+    this.meta = null;
+    this.lastDispatchedIndex = -1;
   }
 
   /// Compositor's `setAnchorTime` reaches us through this. Export
@@ -372,6 +447,8 @@ export class ExportSourceHandle implements DecoderHandle {
     this.demuxer.dispose();
     this.meta = null;
     this.readyP = null;
+    this.outputFrameCount = 0;
+    this.downgraded = false;
   }
 }
 
