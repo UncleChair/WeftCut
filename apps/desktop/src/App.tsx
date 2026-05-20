@@ -1,6 +1,9 @@
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { writeFile } from "@tauri-apps/plugin-fs";
+import { join, tempDir } from "@tauri-apps/api/path";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { remove, writeFile } from "@tauri-apps/plugin-fs";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -19,10 +22,12 @@ import {
   type KeybindingsMap,
   EXPORT_PRESETS,
   exportProject,
+  exportProjectAudioOnly,
   exportQueueClearFinished,
   exportQueueEnqueue,
   exportQueueList,
   exportQueueRemove,
+  muxExport,
   hwEncoderProbe,
   IMPORT_EVENTS,
   importCancel,
@@ -689,17 +694,23 @@ export function App({ onCloseProject }: AppProps) {
     }
   }, [preset, t]);
 
-  // Pixi/WebCodecs export. The PreviewSurface handle suspends the
-  // preview compositor (so its VideoDecoder releases the hardware
-  // decode slot), drives the export Worker, and returns the encoded
-  // MP4 bytes. This callback owns the surrounding UX — save dialog,
-  // ExportPanel state transitions, file write — so the existing
-  // panel renders the Pixi pipeline the same way it renders the
-  // legacy ffmpeg one.
+  // Pixi/WebCodecs export. Three-stage pipeline:
   //
-  // Audio is NOT yet muxed in: the Worker's output is video-only.
-  // The final stream-copy mux + audio compositor wiring lands in
-  // P9 part 3.
+  //   1. PreviewSurface handle suspends the preview compositor,
+  //      drives the Worker, returns video-only MP4 bytes.
+  //   2. Rust audio-only export produces a sibling .m4a.
+  //   3. Rust stream-copy mux joins the two into the user-chosen path.
+  //
+  // The Worker emits progress on every encoded frame; that maps to
+  // the encode phase of ExportPanel. Audio + mux run silently in
+  // the "finalizing" tail (panel stays at progress=1.0 with the
+  // last Worker fps numbers) — they should be sub-2-second for any
+  // typical project.
+  //
+  // Temp files live under the OS temp dir with UUIDs; cleaned in
+  // a finally block. If cleanup itself fails the user's output is
+  // still good — we just leave the temps for the next reboot to
+  // clear.
   const runPixiExport = useCallback(async () => {
     const path = await saveDialog({
       title: t("dialogs.export_title"),
@@ -710,6 +721,13 @@ export function App({ onCloseProject }: AppProps) {
     });
     if (typeof path !== "string") return;
 
+    // Allocate unique temp paths up-front so cleanup in `finally`
+    // can hit them whether or not the respective stage completed.
+    const tempBase = await tempDir();
+    const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const tempVideoPath = await join(tempBase, `weftcut-pixi-${stamp}.mp4`);
+    const tempAudioPath = await join(tempBase, `weftcut-pixi-${stamp}.m4a`);
+
     setExportState({ kind: "starting" });
     const startedAtMs = performance.now();
     let result;
@@ -719,18 +737,12 @@ export function App({ onCloseProject }: AppProps) {
           if (total <= 0) return;
           const elapsedSec = (performance.now() - startedAtMs) / 1000;
           const fps = elapsedSec > 0 ? encoded / elapsedSec : 0;
-          // Frame duration in the project's timebase; the Worker's
-          // output PTS is encoded frames × frameDur. The exact fps_num
-          // / fps_den only lands in the result on success, so for
-          // mid-progress we approximate via the panel state's existing
-          // shape (it only needs currentTimeUs for display).
           const summary = useProjectStore.getState().summary;
           const fpsNum = summary?.composition.fps_num ?? 30;
           const fpsDen = summary?.composition.fps_den ?? 1;
           const frameDurUs = Math.round((1_000_000 * fpsDen) / fpsNum);
           const currentTimeUs = encoded * frameDurUs;
-          const realtimeUs = currentTimeUs;
-          const speed = elapsedSec > 0 ? realtimeUs / 1e6 / elapsedSec : 0;
+          const speed = elapsedSec > 0 ? currentTimeUs / 1e6 / elapsedSec : 0;
           setExportState({
             kind: "progress",
             progress: {
@@ -750,24 +762,39 @@ export function App({ onCloseProject }: AppProps) {
       return;
     }
     if (!result) {
-      // Handle was null (preview not mounted). Treat as user error.
       setExportState({
         kind: "error",
         detail: "Preview not initialized.",
       });
       return;
     }
+
     try {
-      await writeFile(path, new Uint8Array(result.videoBytes));
+      // (1) Write Worker bytes to temp video.mp4.
+      await writeFile(tempVideoPath, new Uint8Array(result.videoBytes));
+
+      // (2) Audio-only Rust export → temp audio.m4a. Awaitable;
+      // emits no `export:*` events so the panel state stays where
+      // the Worker progress left it.
+      await exportProjectAudioOnly(tempAudioPath);
+
+      // (3) Stream-copy mux → user-chosen path. ~100 ms.
+      await muxExport(tempVideoPath, tempAudioPath, path);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      console.error("[weftcut/pixi] writeFile failed:", e);
+      console.error("[weftcut/pixi] finalize failed:", e);
       setExportState({
         kind: "error",
-        detail: `Could not write ${path}: ${msg}`,
+        detail: `Finalize failed: ${msg}`,
       });
       return;
+    } finally {
+      // Best-effort cleanup. Failures here are intentionally
+      // swallowed — the user's MP4 is already at `path`.
+      void remove(tempVideoPath).catch(() => {});
+      void remove(tempAudioPath).catch(() => {});
     }
+
     const durationUs = Math.round(
       (result.totalFrames * 1_000_000 * result.fpsDen) / result.fpsNum,
     );
@@ -776,6 +803,36 @@ export function App({ onCloseProject }: AppProps) {
       payload: { outputPath: path, durationUs },
     });
   }, [t]);
+
+  // Render & Play: open a Tauri webview popup pointing at the
+  // exported MP4 via the asset protocol. The popup HTML lives at
+  // /render-play.html (vite copies from public/); URL hash carries
+  // the asset URL + display path. Each invocation gets a unique
+  // label so multiple plays can coexist (and so the capability
+  // pattern `render-play-*` matches every variant).
+  const openRenderPlayPopup = useCallback(async (path: string) => {
+    const src = convertFileSrc(path);
+    const label = `render-play-${Date.now()}`;
+    const url =
+      `/render-play.html#src=${encodeURIComponent(src)}` +
+      `&path=${encodeURIComponent(path)}`;
+    try {
+      const win = new WebviewWindow(label, {
+        url,
+        title: "WeftCut — Render & Play",
+        width: 960,
+        height: 600,
+        resizable: true,
+      });
+      // Surface webview-create errors so silent failures (CSP /
+      // capability misconfig) don't look like a no-op click.
+      win.once("tauri://error", (e) => {
+        console.error("[weftcut/render-play] webview error:", e);
+      });
+    } catch (e) {
+      console.error("[weftcut/render-play] failed to open popup:", e);
+    }
+  }, []);
 
   // Phase D: no React-side preview init step is needed. The Rust
   // `preview::PreviewRenderer` task subscribes to actor commits and
@@ -1224,6 +1281,7 @@ export function App({ onCloseProject }: AppProps) {
           state={exportState}
           htmlGroupRaster={htmlGroupRaster}
           onClose={() => setExportState(null)}
+          onPlay={openRenderPlayPopup}
         />
       )}
       {queue.length > 0 && (
@@ -1449,10 +1507,16 @@ function ExportPanel({
   state,
   htmlGroupRaster,
   onClose,
+  onPlay,
 }: {
   state: ExportState;
   htmlGroupRaster: HtmlGroupRasterState | null;
   onClose: () => void;
+  /// When set, the panel renders a "Play" button next to the dismiss
+  /// button on the complete state. Clicking opens a popup window
+  /// playing the just-exported file. Set by App.tsx; pure UX —
+  /// unset means no button.
+  onPlay?: (path: string) => void;
 }) {
   const { t } = useTranslation();
   const inProgress = state.kind === "starting" || state.kind === "progress";
@@ -1532,6 +1596,16 @@ function ExportPanel({
     <aside className="export-panel">
       <header>
         {body}
+        {state.kind === "complete" && onPlay && (
+          <button
+            onClick={() => onPlay(state.payload.outputPath)}
+            title={t("export.play_hint", {
+              defaultValue: "Open the exported MP4 in a Render & Play popup.",
+            })}
+          >
+            {t("export.play", { defaultValue: "Play" })}
+          </button>
+        )}
         {!inProgress && (
           <button onClick={onClose}>{t("export.dismiss")}</button>
         )}
