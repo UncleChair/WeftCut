@@ -36,4 +36,11 @@ export interface PixiPreviewHandle {
   pause(): void;
   seek(tUs: number): void;
   paused(): boolean;
+  /// Run the PixiJS-backed export and hand back the resulting MP4
+  /// bytes as a downloaded file. The compositor + engine are
+  /// suspended for the duration so the preview decoder doesn't fight
+  /// the export decoder for the hardware decode slot. Resolves when
+  /// the export finishes (or rejects on failure); callers can show a
+  /// status string via `onStatus`.
+  runExport(opts?: { onStatus?: (s: string | null) => void }): Promise<void>;
 }

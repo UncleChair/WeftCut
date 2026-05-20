@@ -46,7 +46,6 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   const compositorRef = useRef<Compositor | null>(null);
   const engineRef = useRef<PlaybackEngine | null>(null);
   const [status, setStatus] = useState<string>("Initializing PixiJS…");
-  const [exporting, setExporting] = useState<string | null>(null);
 
   useImperativeHandle(
     ref,
@@ -62,6 +61,13 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       },
       paused() {
         return !(engineRef.current?.isPlaying() ?? false);
+      },
+      runExport(opts) {
+        return handlePixiExport(
+          opts?.onStatus ?? (() => {}),
+          compositorRef.current,
+          engineRef.current,
+        );
       },
     }),
     [],
@@ -217,33 +223,6 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         }}
       >
         MT Probe
-      </button>
-      <button
-        type="button"
-        onClick={() => {
-          void handlePixiExport(
-            setExporting,
-            compositorRef.current,
-            engineRef.current,
-          );
-        }}
-        disabled={exporting !== null}
-        style={{
-          position: "absolute",
-          top: 4,
-          right: 4,
-          padding: "4px 10px",
-          font: "12px ui-monospace, monospace",
-          color: "#fff",
-          background:
-            exporting !== null ? "rgba(80,80,80,0.7)" : "rgba(0,120,0,0.8)",
-          border: "none",
-          borderRadius: 3,
-          cursor: exporting !== null ? "default" : "pointer",
-          whiteSpace: "pre",
-        }}
-      >
-        {exporting ?? "Pixi Export"}
       </button>
     </div>
   );
