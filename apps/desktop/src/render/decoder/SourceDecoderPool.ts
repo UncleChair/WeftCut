@@ -117,8 +117,18 @@ export class SourceHandle {
         `${meta.codedWidth}x${meta.codedHeight} samples=${meta.nbSamples} ` +
         `desc[0..16]=${descPreview} (total ${meta.description.byteLength}B)`,
     );
-    this.decoder = new VideoDecoder({
+    // Capture the decoder identity so that stale error callbacks from
+    // a decoder we've since replaced (via inactivity-rebuild) bail
+    // before re-firing the recovery path. Chrome can deliver multiple
+    // errors against a dying decoder; without this gate we'd log N
+    // warnings per reclaim event and call rebuild recursively.
+    let dec: VideoDecoder;
+    dec = new VideoDecoder({
       output: (frame: VideoFrame) => {
+        if (this.decoder !== dec) {
+          frame.close();
+          return;
+        }
         this.outputFrameCount += 1;
         this.ring.push(frame);
         if (!this.firedFirstFrame) {
@@ -130,6 +140,7 @@ export class SourceHandle {
         }
       },
       error: (e: unknown) => {
+        if (this.decoder !== dec) return;
         const err = e instanceof Error ? e : new Error(String(e));
         // eslint-disable-next-line no-console
         console.error(`[weftcut/pixi] decoder ${this.mediaId} error:`, err.message);
@@ -154,6 +165,7 @@ export class SourceHandle {
         }
       },
     });
+    this.decoder = dec;
     this.decoder.configure(this.buildConfig(meta));
     this.meta = meta;
     return meta;
