@@ -734,6 +734,28 @@ export async function exportProject(
   return invoke<void>("export_project", { outputPath, preset });
 }
 
+/// Audio-only export — AAC .m4a at `outputPath`. Awaitable: resolves
+/// when ffmpeg's audio-only pass is done. Used by the Pixi export
+/// path between the Worker video render and the final stream-copy
+/// mux. Emits no `export:*` events; the JS orchestrator drives the
+/// unified ExportPanel state.
+export async function exportProjectAudioOnly(
+  outputPath: string,
+): Promise<void> {
+  return invoke<void>("export_project_audio_only", { outputPath });
+}
+
+/// Stream-copy mux: `ffmpeg -y -i video -i audio -c copy out`.
+/// Resolves when ffmpeg exits; rejects with the stderr tail on
+/// failure.
+export async function muxExport(
+  videoPath: string,
+  audioPath: string,
+  outputPath: string,
+): Promise<void> {
+  return invoke<void>("mux_export", { videoPath, audioPath, outputPath });
+}
+
 /// Render the project synchronously into an OS temp MP4 and return
 /// the path. Used by the DOM preview's "Render & Play" verification
 /// path (`docs/preview-dom.md` Phase E). No `export:*` events fire.

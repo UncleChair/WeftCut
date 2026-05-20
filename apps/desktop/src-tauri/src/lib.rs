@@ -114,6 +114,8 @@ pub fn run() {
             commands::import_queue_list,
             commands::compile_project,
             commands::export_project,
+            commands::export_project_audio_only,
+            commands::mux_export,
             commands::export_to_temp_preview,
             commands::cleanup_temp_preview,
             commands::export_queue_enqueue,
