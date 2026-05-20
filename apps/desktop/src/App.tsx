@@ -1,5 +1,6 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { writeFile } from "@tauri-apps/plugin-fs";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -79,7 +80,7 @@ import {
 import { StatusBar } from "./logs/StatusBar";
 import { LogConsole, type LogConsoleHandle } from "./logs/LogConsole";
 import { wireLogStream, useLogStore } from "./logs/store";
-import { wireProjectStore } from "./state/projectStore";
+import { useProjectStore, wireProjectStore } from "./state/projectStore";
 import {
   setMediaPoolDrawerOpen,
   toggleDisplayMode,
@@ -688,21 +689,93 @@ export function App({ onCloseProject }: AppProps) {
     }
   }, [preset, t]);
 
-  // Pixi/WebCodecs export. Routes through PreviewSurface's imperative
-  // handle: when pixi mode is active the handle suspends the preview
-  // compositor (so its VideoDecoder releases the hardware decode slot)
-  // and drives the export Worker; when pixi mode is off the handle
-  // is a no-op with a status message.
-  const [pixiExportStatus, setPixiExportStatus] = useState<string | null>(null);
+  // Pixi/WebCodecs export. The PreviewSurface handle suspends the
+  // preview compositor (so its VideoDecoder releases the hardware
+  // decode slot), drives the export Worker, and returns the encoded
+  // MP4 bytes. This callback owns the surrounding UX — save dialog,
+  // ExportPanel state transitions, file write — so the existing
+  // panel renders the Pixi pipeline the same way it renders the
+  // legacy ffmpeg one.
+  //
+  // Audio is NOT yet muxed in: the Worker's output is video-only.
+  // The final stream-copy mux + audio compositor wiring lands in
+  // P9 part 3.
   const runPixiExport = useCallback(async () => {
+    const path = await saveDialog({
+      title: t("dialogs.export_title"),
+      defaultPath: "weftcut-pixi-export.mp4",
+      filters: [
+        { name: t("dialogs.export_filter"), extensions: ["mp4"] },
+      ],
+    });
+    if (typeof path !== "string") return;
+
+    setExportState({ kind: "starting" });
+    const startedAtMs = performance.now();
+    let result;
     try {
-      await previewRef.current?.runPixiExport({
-        onStatus: setPixiExportStatus,
+      result = await previewRef.current?.runPixiExport({
+        onProgress: (encoded, total) => {
+          if (total <= 0) return;
+          const elapsedSec = (performance.now() - startedAtMs) / 1000;
+          const fps = elapsedSec > 0 ? encoded / elapsedSec : 0;
+          // Frame duration in the project's timebase; the Worker's
+          // output PTS is encoded frames × frameDur. The exact fps_num
+          // / fps_den only lands in the result on success, so for
+          // mid-progress we approximate via the panel state's existing
+          // shape (it only needs currentTimeUs for display).
+          const summary = useProjectStore.getState().summary;
+          const fpsNum = summary?.composition.fps_num ?? 30;
+          const fpsDen = summary?.composition.fps_den ?? 1;
+          const frameDurUs = Math.round((1_000_000 * fpsDen) / fpsNum);
+          const currentTimeUs = encoded * frameDurUs;
+          const realtimeUs = currentTimeUs;
+          const speed = elapsedSec > 0 ? realtimeUs / 1e6 / elapsedSec : 0;
+          setExportState({
+            kind: "progress",
+            progress: {
+              progress: encoded / total,
+              currentTimeUs,
+              frame: encoded,
+              fps,
+              speed,
+            },
+          });
+        },
       });
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
       console.error("[weftcut/pixi] export failed:", e);
+      setExportState({ kind: "error", detail: msg });
+      return;
     }
-  }, []);
+    if (!result) {
+      // Handle was null (preview not mounted). Treat as user error.
+      setExportState({
+        kind: "error",
+        detail: "Preview not initialized.",
+      });
+      return;
+    }
+    try {
+      await writeFile(path, new Uint8Array(result.videoBytes));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("[weftcut/pixi] writeFile failed:", e);
+      setExportState({
+        kind: "error",
+        detail: `Could not write ${path}: ${msg}`,
+      });
+      return;
+    }
+    const durationUs = Math.round(
+      (result.totalFrames * 1_000_000 * result.fpsDen) / result.fpsNum,
+    );
+    setExportState({
+      kind: "complete",
+      payload: { outputPath: path, durationUs },
+    });
+  }, [t]);
 
   // Phase D: no React-side preview init step is needed. The Rust
   // `preview::PreviewRenderer` task subscribes to actor commits and
@@ -1001,7 +1074,11 @@ export function App({ onCloseProject }: AppProps) {
                 "Export through the PixiJS + WebCodecs Worker pipeline. Requires pixi preview mode.",
             })}
             onSelect={runPixiExport}
-            disabled={busy || pixiExportStatus !== null}
+            disabled={
+              busy ||
+              exportState?.kind === "starting" ||
+              exportState?.kind === "progress"
+            }
           />
         </Menu>
 

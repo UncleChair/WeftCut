@@ -18,6 +18,7 @@ import { useProjectStore } from "../state/projectStore";
 import { PixiPreview } from "../render/PixiPreview";
 import {
   isPixiPreviewEnabled,
+  type PixiExportResult,
   type PixiPreviewHandle,
 } from "../render/pixiPreviewFlag";
 import { PixiErrorBoundary } from "../render/PixiErrorBoundary";
@@ -43,13 +44,13 @@ export interface PreviewSurfaceHandle {
   pause(): void;
   seekTo(tUs: number): void;
   paused(): boolean;
-  /// Run the PixiJS export pipeline. Only works when pixi mode is
-  /// active — in DOM mode this resolves immediately with a status
-  /// "Pixi preview not active" so the menu item is harmless when the
-  /// flag is off.
+  /// Run the PixiJS export pipeline. Resolves with the encoded MP4
+  /// bytes; rejects if pixi mode is off or the export fails. App.tsx
+  /// owns the save dialog + file write so the existing ExportPanel
+  /// can drive both pipelines uniformly.
   runPixiExport(opts?: {
-    onStatus?: (s: string | null) => void;
-  }): Promise<void>;
+    onProgress?: (encoded: number, total: number) => void;
+  }): Promise<PixiExportResult>;
 }
 
 /// Visual scaling: we render the layer canvas at the project's
@@ -198,17 +199,13 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
         },
         async runPixiExport(opts) {
           if (!isPixiPreviewEnabled()) {
-            opts?.onStatus?.("Pixi preview not active");
-            setTimeout(() => opts?.onStatus?.(null), 2500);
-            return;
+            throw new Error("Pixi preview mode is not active (?pixi=1).");
           }
           const handle = pixiRef.current;
           if (!handle) {
-            opts?.onStatus?.("Pixi preview not ready");
-            setTimeout(() => opts?.onStatus?.(null), 2500);
-            return;
+            throw new Error("Pixi preview is not initialized yet.");
           }
-          await handle.runExport(opts);
+          return handle.runExport(opts);
         },
       }),
       [engine, audioGraph],
