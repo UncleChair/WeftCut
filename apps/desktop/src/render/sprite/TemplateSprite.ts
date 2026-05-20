@@ -11,6 +11,7 @@ import {
   canonicalizeProps,
   rasterCacheKey,
   rasterizeForeignObject,
+  substituteTemplate,
 } from "../templates/Rasterizer";
 import { TemplateRasterCache } from "../templates/Cache";
 import { getTemplate, type Template } from "../templates/catalog";
@@ -99,10 +100,17 @@ export class TemplateSprite {
     height: number,
   ): Promise<void> {
     if (!this.template) return;
-    // Templates expect `window.__props__` available before their JS
-    // runs. Inject a tiny script before the template HTML body.
-    const propsScript = `<script>window.__props__ = ${JSON.stringify(canonicalProps)};</script>`;
-    const html = propsScript + this.template.html;
+    // Scripts don't execute inside foreignObject when rendered through
+    // createImageBitmap (browser security sandbox), so we substitute
+    // CSS + prop values into the markup at build time. Templates that
+    // still rely on `window.__props__` need conversion to {{key}}
+    // placeholders before they'll render correctly in this path —
+    // chunk 2 handles the bulk conversion.
+    const html = substituteTemplate({
+      html: this.template.html,
+      css: this.template.css,
+      props: canonicalProps,
+    });
     try {
       const bitmap = await rasterizeForeignObject({
         html,
