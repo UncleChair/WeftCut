@@ -3,10 +3,12 @@
 // first frame request; idle-dispose 5 s after the source's last clip
 // leaves the lookahead window.
 //
-// Plan: docs/pixi-renderer-plan.md (8b.2 + 8c.2 + P1)
+// Plan: docs/pixi-renderer-plan.md (8b.2 + 8c.2 + P1; robustness in P9.5)
 
+import { logEmit } from "../../ipc";
 import { Demuxer, type VideoTrackMeta } from "./Demuxer";
 import { FrameRing } from "./FrameRing";
+import { handleDecodeError } from "./decoderFallback";
 
 const IDLE_DISPOSE_MS = 5_000;
 
@@ -69,6 +71,13 @@ export class SourceHandle {
   /// `compositeFrame` is never called).
   private onFirstFrameCb: (() => void) | null = null;
   private firedFirstFrame = false;
+  /// Total frames the decoder has emitted since the last reset.
+  /// Drives the first-frame software-fallback heuristic.
+  private outputFrameCount = 0;
+  /// True once we've reconfigured with `hardwareAcceleration:
+  /// 'prefer-software'`. Prevents repeated downgrade attempts when
+  /// the software path also errors.
+  private downgraded = false;
 
   constructor(init: SourceHandleInit) {
     this.mediaId = init.mediaId;
@@ -110,6 +119,7 @@ export class SourceHandle {
     );
     this.decoder = new VideoDecoder({
       output: (frame: VideoFrame) => {
+        this.outputFrameCount += 1;
         this.ring.push(frame);
         if (!this.firedFirstFrame) {
           this.firedFirstFrame = true;
@@ -120,18 +130,92 @@ export class SourceHandle {
         }
       },
       error: (e: unknown) => {
+        const err = e instanceof Error ? e : new Error(String(e));
         // eslint-disable-next-line no-console
-        console.error(`[weftcut/pixi] decoder ${this.mediaId} error:`, e);
+        console.error(`[weftcut/pixi] decoder ${this.mediaId} error:`, err.message);
+        const action = handleDecodeError({
+          err,
+          outputFrameCount: this.outputFrameCount,
+          alreadyDowngraded: this.downgraded,
+          mediaId: this.mediaId,
+          log: (msg) => {
+            void logEmit({
+              level: "warn",
+              category: { kind: "Other", name: "Render" },
+              source: { kind: "System" },
+              message: msg,
+            });
+          },
+        });
+        if (action.kind === "downgrade-to-software") {
+          this.downgradeToSoftware();
+        } else if (action.kind === "inactivity-rebuild") {
+          this.rebuildAfterInactivity();
+        }
       },
     });
-    this.decoder.configure({
+    this.decoder.configure(this.buildConfig(meta));
+    this.meta = meta;
+    return meta;
+  }
+
+  /// Build the decoder config for `meta`, honoring the current
+  /// `downgraded` flag. Used by initial configure + GOP-reset
+  /// reconfigure + the software-fallback rebuild.
+  private buildConfig(meta: VideoTrackMeta): VideoDecoderConfig {
+    return {
       codec: meta.codec,
       codedWidth: meta.codedWidth,
       codedHeight: meta.codedHeight,
       description: meta.description,
-    });
-    this.meta = meta;
-    return meta;
+      hardwareAcceleration: this.downgraded ? "prefer-software" : "prefer-hardware",
+    };
+  }
+
+  /// Software-fallback path: flip the downgraded flag, reset + reconfigure
+  /// the existing decoder, and rewind the decode cursor so the next pump
+  /// re-feeds the current GOP from its IDR. Frames already in the ring
+  /// stay — they're valid regardless of which path decoded them.
+  private downgradeToSoftware(): void {
+    if (!this.meta || !this.decoder) return;
+    this.downgraded = true;
+    try {
+      this.decoder.reset();
+      this.decoder.configure(this.buildConfig(this.meta));
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[weftcut/pixi] decoder ${this.mediaId} software-fallback reconfigure failed:`,
+        e,
+      );
+      return;
+    }
+    // Re-pump from the current GOP's IDR. `decodeFloor` already points at
+    // the IDR; rewind `lastDecodedIndex` so `pumpLookahead` re-issues it.
+    this.lastDecodedIndex = this.decodeFloor - 1;
+  }
+
+  /// Inactivity recovery: drop the dead decoder + clear the readiness
+  /// promise so the next `ensureReady` lazily rebuilds. `Demuxer.open()`
+  /// is idempotent (guards on `streamingStarted`), so the rebuild
+  /// short-circuits the streaming work and only reconstructs the
+  /// `VideoDecoder`. Ring entries get flushed on the next
+  /// `requestFrameAt` via the GOP-crossing reset path; we accept that
+  /// short blank window as the cost of inactivity recovery. We don't
+  /// reset `outputFrameCount` or `downgraded`: a source that needed
+  /// software fallback before still needs it now, and the heuristic
+  /// shouldn't re-arm.
+  private rebuildAfterInactivity(): void {
+    try {
+      this.decoder?.close();
+    } catch {
+      // Decoder may already be closed.
+    }
+    this.decoder = null;
+    this.readyP = null;
+    this.meta = null;
+    this.lastDecodedIndex = -1;
+    this.decodeFloor = 0;
   }
 
   /// Schedule decode of the GOP containing `tUs` and forward up to
@@ -191,12 +275,7 @@ export class SourceHandle {
           `lastDecoded=${this.lastDecodedIndex} prevFloor=${this.decodeFloor}`,
       );
       this.decoder.reset();
-      this.decoder.configure({
-        codec: this.meta.codec,
-        codedWidth: this.meta.codedWidth,
-        codedHeight: this.meta.codedHeight,
-        description: this.meta.description,
-      });
+      this.decoder.configure(this.buildConfig(this.meta));
       // Drop stale cached frames so `frameAt` can't return a frame
       // from the wrong region of the timeline.
       this.ring.flush();
@@ -269,6 +348,8 @@ export class SourceHandle {
     this.meta = null;
     this.readyP = null;
     this.onFirstFrameCb = null;
+    this.outputFrameCount = 0;
+    this.downgraded = false;
   }
 }
 
