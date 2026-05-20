@@ -142,6 +142,18 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
 
   const summary = req.project.summary as ProjectSummary;
 
+  // Aggregated per-span timings across the whole export. Per-chunk
+  // deltas are logged inline; the final summary below lets us spot the
+  // dominant cost without scrolling through every chunk line.
+  const totals = {
+    decodeMs: 0,
+    compositeMs: 0,
+    captureMs: 0,
+    encodeMs: 0,
+    queueWaitMs: 0,
+    evictMs: 0,
+  };
+
   // 6. Chunked decode + encode.
   for (let chunkStart = 0; chunkStart < totalFrames; chunkStart += CHUNK_FRAMES) {
     if (cancelled) {
@@ -161,6 +173,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     // per-clip decodeRange calls in parallel so multiple clips on
     // overlapping tracks decode concurrently.
     const stagedClips = activeVideoClips(summary, chunkStartUs, chunkEndUs);
+    const decodeT0 = performance.now();
     await Promise.all(
       stagedClips.map(async (c) => {
         const proxyUrl = req.project.proxyAssetUrls[c.mediaId];
@@ -172,9 +185,15 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
         await handle.decodeRange(c.srcAUs, c.srcBUs);
       }),
     );
+    const decodeMs = performance.now() - decodeT0;
+    totals.decodeMs += decodeMs;
 
     // 6b. Composite + encode every frame in the chunk. With frames
     // pre-staged this is purely CPU/GPU bound — no per-frame waits.
+    let compositeMs = 0;
+    let captureMs = 0;
+    let encodeMs = 0;
+    let queueWaitMs = 0;
     for (let i = chunkStart; i < chunkEnd; i++) {
       if (cancelled) {
         cleanup(encoder, compositor, exportPool, app);
@@ -182,10 +201,13 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
       }
       const tUs = startUs + i * frameDurUs;
 
+      const compT0 = performance.now();
       compositor.setAnchorTime(tUs);
       compositor.compositeFrame(tUs);
       app.render();
+      compositeMs += performance.now() - compT0;
 
+      const capT0 = performance.now();
       const captured = new VideoFrame(
         req.canvas as unknown as CanvasImageSource,
         {
@@ -193,32 +215,73 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
           duration: frameDurUs,
         },
       );
+      captureMs += performance.now() - capT0;
+
       const isKey = i % gop === 0;
+      const encT0 = performance.now();
       encoder.encodeFrame(captured, isKey);
+      encodeMs += performance.now() - encT0;
 
       if (i % 5 === 0) {
         post({ type: "progress", framesEncoded: i, totalFrames });
       }
+      const qT0 = performance.now();
       await encoder.awaitQueueBelow(8);
+      queueWaitMs += performance.now() - qT0;
     }
+    totals.compositeMs += compositeMs;
+    totals.captureMs += captureMs;
+    totals.encodeMs += encodeMs;
+    totals.queueWaitMs += queueWaitMs;
 
     // 6c. Evict frames consumed by this chunk so the next chunk's
     // decode doesn't pile up. We cut everything strictly before
     // chunkEndUs + 1µs — i.e. drop frames whose interval ended before
     // or at the chunk's last consumed frame.
+    const evictT0 = performance.now();
     for (const c of stagedClips) {
       const handle = exportPool.handles.get(c.mediaId);
       handle?.evictBefore(c.srcBUs + 1);
     }
+    const evictMs = performance.now() - evictT0;
+    totals.evictMs += evictMs;
 
     const elapsedMs = performance.now() - startedAtMs;
     const fps = elapsedMs > 0 ? Math.round((chunkEnd * 1000) / elapsedMs) : 0;
+    const nFrames = chunkEnd - chunkStart;
     // eslint-disable-next-line no-console
     console.log(
       `[weftcut/export] chunk [${chunkStart}..${chunkEnd}) done — ` +
-        `${chunkEnd}/${totalFrames} frames (~${fps} fps wall-clock)`,
+        `${chunkEnd}/${totalFrames} frames (~${fps} fps wall-clock) | ` +
+        `decode=${decodeMs.toFixed(0)}ms ` +
+        `composite=${compositeMs.toFixed(0)}ms ` +
+        `(${(compositeMs / nFrames).toFixed(1)}ms/f) ` +
+        `capture=${captureMs.toFixed(0)}ms ` +
+        `(${(captureMs / nFrames).toFixed(1)}ms/f) ` +
+        `encode=${encodeMs.toFixed(0)}ms ` +
+        `queueWait=${queueWaitMs.toFixed(0)}ms ` +
+        `evict=${evictMs.toFixed(0)}ms`,
     );
   }
+
+  const totalMs = performance.now() - startedAtMs;
+  const overallFps = totalMs > 0 ? (totalFrames * 1000) / totalMs : 0;
+  const pct = (ms: number) => ((ms / totalMs) * 100).toFixed(1);
+  // eslint-disable-next-line no-console
+  console.log(
+    `[weftcut/export] PERF SUMMARY: ${totalFrames} frames in ${totalMs.toFixed(0)}ms ` +
+      `(${overallFps.toFixed(1)} fps wall-clock)\n` +
+      `  decode      ${totals.decodeMs.toFixed(0).padStart(7)}ms  (${pct(totals.decodeMs)}%)\n` +
+      `  composite   ${totals.compositeMs.toFixed(0).padStart(7)}ms  (${pct(totals.compositeMs)}%)  ` +
+      `${(totals.compositeMs / totalFrames).toFixed(2)} ms/frame\n` +
+      `  capture     ${totals.captureMs.toFixed(0).padStart(7)}ms  (${pct(totals.captureMs)}%)  ` +
+      `${(totals.captureMs / totalFrames).toFixed(2)} ms/frame  ← GPU readback\n` +
+      `  encode      ${totals.encodeMs.toFixed(0).padStart(7)}ms  (${pct(totals.encodeMs)}%)  ` +
+      `${(totals.encodeMs / totalFrames).toFixed(2)} ms/frame\n` +
+      `  queueWait   ${totals.queueWaitMs.toFixed(0).padStart(7)}ms  (${pct(totals.queueWaitMs)}%)  ` +
+      `← awaiting encoder backpressure\n` +
+      `  evict       ${totals.evictMs.toFixed(0).padStart(7)}ms  (${pct(totals.evictMs)}%)`,
+  );
 
   // 7. Finalize.
   const bytes = await encoder.finalize();
