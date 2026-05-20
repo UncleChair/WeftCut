@@ -1,0 +1,23 @@
+{
+  "id": "title-card",
+  "name": "Title Card",
+  "version": 1,
+  "size": [1920, 1080],
+  "default_duration_s": 4.0,
+  "props_schema": {
+    "title": {
+      "type": "string",
+      "default": "Title",
+      "max_length": 120
+    },
+    "subtitle": {
+      "type": "string",
+      "default": "",
+      "max_length": 160
+    },
+    "color": {
+      "type": "color",
+      "default": "#0b1320"
+    }
+  }
+}

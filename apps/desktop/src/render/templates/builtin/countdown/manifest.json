@@ -1,0 +1,19 @@
+{
+  "id": "countdown",
+  "name": "Countdown",
+  "version": 1,
+  "size": [480, 480],
+  "default_duration_s": 5.0,
+  "props_schema": {
+    "seconds": {
+      "type": "number",
+      "default": 5.0,
+      "min": 1.0,
+      "max": 60.0
+    },
+    "color": {
+      "type": "color",
+      "default": "#ff3366"
+    }
+  }
+}

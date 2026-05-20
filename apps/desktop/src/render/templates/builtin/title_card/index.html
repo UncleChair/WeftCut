@@ -1,0 +1,53 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>__STYLE__</style>
+</head>
+<body>
+  <div id="bg" class="bg"></div>
+  <div id="card" class="center">
+    <div id="title" class="title"></div>
+    <div id="rule" class="rule"></div>
+    <div id="subtitle" class="subtitle"></div>
+  </div>
+  <script>
+    // Full-frame title card. Background fades up; title block fades + scales
+    // slightly. The optional subtitle and rule appear together with the
+    // title — no staggered entrances for portability across short clips.
+    async function start() {
+      while (!window.__props__) {
+        await new Promise((r) => setTimeout(r, 5));
+      }
+      const p = window.__props__;
+      document.getElementById('title').textContent = p.title || '';
+      const subtitleText = p.subtitle || '';
+      document.getElementById('subtitle').textContent = subtitleText;
+      if (!subtitleText) {
+        document.getElementById('rule').style.display = 'none';
+        document.getElementById('subtitle').style.display = 'none';
+      }
+      document.getElementById('bg').style.background = p.color || '#0b1320';
+
+      const FADE_BG = 0.4;
+      const FADE_TXT = 0.6;
+      const bg = document.getElementById('bg');
+      const card = document.getElementById('card');
+      function tick() {
+        const t = performance.now() / 1000;
+        bg.style.opacity = Math.min(1, t / FADE_BG).toFixed(3);
+        const u = Math.max(0, Math.min(1, (t - 0.15) / FADE_TXT));
+        const eased = 1 - Math.pow(1 - u, 3);
+        card.style.opacity = eased.toFixed(3);
+        const scale = 0.985 + 0.015 * eased;
+        card.style.transform = `scale(${scale.toFixed(4)})`;
+        requestAnimationFrame(tick);
+      }
+      tick();
+
+      window.__ready__ = Promise.resolve();
+    }
+    start();
+  </script>
+</body>
+</html>

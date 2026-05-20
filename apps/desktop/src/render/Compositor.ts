@@ -18,6 +18,7 @@ import {
 } from "./decoder/SourceDecoderPool";
 import { ColorSprite } from "./sprite/ColorSprite";
 import { ImageOverlaySprite } from "./sprite/ImageOverlaySprite";
+import { TemplateSprite } from "./sprite/TemplateSprite";
 import { TextSprite } from "./sprite/TextSprite";
 import { VideoClipSprite } from "./sprite/VideoClipSprite";
 
@@ -72,6 +73,12 @@ interface ActiveText {
   sprite: TextSprite;
 }
 
+interface ActiveTemplate {
+  layerId: string;
+  templateId: string;
+  sprite: TemplateSprite;
+}
+
 interface ActiveAudio {
   layerId: string;
   mediaId: string;
@@ -86,6 +93,7 @@ export class Compositor {
   private images = new Map<string, ActiveImage>();
   private colors = new Map<string, ActiveColor>();
   private texts = new Map<string, ActiveText>();
+  private templates = new Map<string, ActiveTemplate>();
   private audios = new Map<string, ActiveAudio>();
   /// Host element where AudioMixers append their hidden `<audio>`
   /// elements. Null in export mode (no DOM). The Compositor owns
@@ -258,6 +266,12 @@ export class Compositor {
         this.texts.delete(layerId);
       }
     }
+    for (const [layerId, t] of this.templates) {
+      if (!livingLayerIds.has(layerId)) {
+        t.sprite.dispose();
+        this.templates.delete(layerId);
+      }
+    }
     for (const [layerId, a] of this.audios) {
       if (!livingLayerIds.has(layerId)) {
         a.mixer.dispose();
@@ -359,8 +373,15 @@ export class Compositor {
           if (!text) continue;
           this.updateText(text, layer, z++);
           this.stage.addChild(text.sprite.text);
+        } else if (kind === "Template") {
+          const tmpl = this.ensureTemplate(layer);
+          if (!tmpl) continue;
+          this.updateTemplate(tmpl, layer, z++);
+          if (tmpl.sprite.sprite.texture !== Texture.EMPTY) {
+            this.stage.addChild(tmpl.sprite.sprite);
+          }
         }
-        // Template / Subtitles render paths land in P5–P6.
+        // Subtitles render path lands in P6.
       }
     }
     // One-shot diagnostic the first time we transition from "stage
@@ -428,6 +449,8 @@ export class Compositor {
     this.colors.clear();
     for (const t of this.texts.values()) t.sprite.dispose();
     this.texts.clear();
+    for (const t of this.templates.values()) t.sprite.dispose();
+    this.templates.clear();
     for (const a of this.audios.values()) a.mixer.dispose();
     this.audios.clear();
     if (this.audioHost && this.audioHost.parentNode) {
@@ -619,6 +642,39 @@ export class Compositor {
     if (layer.params.kind !== "Text") return;
     text.sprite.update(layer.params);
     text.sprite.text.zIndex = z;
+  }
+
+  // ============================================================
+  // Template
+  // ============================================================
+
+  private ensureTemplate(layer: LayerSummary): ActiveTemplate | null {
+    if (layer.params.kind !== "Template") return null;
+    const existing = this.templates.get(layer.id);
+    if (existing) return existing;
+    const templateId = layer.params.template_id;
+    const sprite = new TemplateSprite({
+      layerId: layer.id,
+      templateId,
+      onLoaded: () => this.scheduleRepaint(),
+    });
+    const tmpl: ActiveTemplate = { layerId: layer.id, templateId, sprite };
+    this.templates.set(layer.id, tmpl);
+    // eslint-disable-next-line no-console
+    console.log(
+      `[weftcut/pixi] template ${layer.id} → ${templateId} attached`,
+    );
+    return tmpl;
+  }
+
+  private updateTemplate(
+    tmpl: ActiveTemplate,
+    layer: LayerSummary,
+    z: number,
+  ): void {
+    if (layer.params.kind !== "Template") return;
+    tmpl.sprite.update(layer.params);
+    tmpl.sprite.sprite.zIndex = z;
   }
 
   // ============================================================

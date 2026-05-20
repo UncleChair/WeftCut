@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>__STYLE__</style>
+</head>
+<body>
+  <div id="row" class="row">
+    <div id="bar" class="bar"></div>
+    <div class="text">
+      <div id="title" class="title"></div>
+      <div id="subtitle" class="subtitle"></div>
+    </div>
+  </div>
+  <script>
+    // Slide-in lower third with a colored accent bar on the left. The bar
+    // tracks the user-supplied color; the text is a fixed light tone for
+    // contrast against any background.
+    async function start() {
+      while (!window.__props__) {
+        await new Promise((r) => setTimeout(r, 5));
+      }
+      const p = window.__props__;
+      document.getElementById('title').textContent = p.title || '';
+      document.getElementById('subtitle').textContent = p.subtitle || '';
+      document.getElementById('bar').style.background = p.color || '#ff6633';
+      const row = document.getElementById('row');
+
+      const SLIDE_DURATION = 0.55;
+      const SLIDE_START_X = -600;
+      const SLIDE_END_X = 60;
+      function tick() {
+        const t = performance.now() / 1000;
+        const u = Math.max(0, Math.min(1, t / SLIDE_DURATION));
+        // Ease-out quint for a snappier settle.
+        const eased = 1 - Math.pow(1 - u, 5);
+        const x = SLIDE_START_X + (SLIDE_END_X - SLIDE_START_X) * eased;
+        row.style.left = x + 'px';
+        requestAnimationFrame(tick);
+      }
+      tick();
+
+      window.__ready__ = Promise.resolve();
+    }
+    start();
+  </script>
+</body>
+</html>

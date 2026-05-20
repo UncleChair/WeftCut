@@ -1,0 +1,39 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>__STYLE__</style>
+</head>
+<body>
+  <div id="badge" class="badge">
+    <div id="text" class="text"></div>
+  </div>
+  <script>
+    // Corner-style text watermark — a stopgap until PropSpec supports an
+    // image type. Fades in over the first ~0.3s, then holds. Text uses the
+    // user-supplied accent color; the badge backdrop stays neutral.
+    async function start() {
+      while (!window.__props__) {
+        await new Promise((r) => setTimeout(r, 5));
+      }
+      const p = window.__props__;
+      const text = document.getElementById('text');
+      text.textContent = p.text || '';
+      text.style.color = p.color || '#ffffff';
+      const badge = document.getElementById('badge');
+
+      const FADE_DURATION = 0.3;
+      function tick() {
+        const t = performance.now() / 1000;
+        const fade = Math.max(0, Math.min(1, t / FADE_DURATION));
+        badge.style.opacity = fade.toFixed(3);
+        requestAnimationFrame(tick);
+      }
+      tick();
+
+      window.__ready__ = Promise.resolve();
+    }
+    start();
+  </script>
+</body>
+</html>

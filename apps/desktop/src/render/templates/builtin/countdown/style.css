@@ -1,0 +1,52 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  font-family: 'Segoe UI', 'Helvetica Neue', system-ui, sans-serif;
+  color: #fff;
+  overflow: hidden;
+  width: 100vw;
+  height: 100vh;
+}
+
+.wrap {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.disc {
+  position: relative;
+  width: 360px;
+  height: 360px;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0.2));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
+}
+
+.ring {
+  position: absolute;
+  inset: 12px;
+  border-radius: 50%;
+  border: 8px solid #ff3366;
+  opacity: 0.85;
+}
+
+.num {
+  font-size: 220px;
+  font-weight: 800;
+  line-height: 1;
+  text-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+  letter-spacing: -2px;
+}
+
+.go {
+  font-size: 140px;
+  font-weight: 800;
+  letter-spacing: 6px;
+}

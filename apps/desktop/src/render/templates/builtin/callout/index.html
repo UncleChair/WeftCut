@@ -1,0 +1,67 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>__STYLE__</style>
+</head>
+<body>
+  <div id="target" class="target"></div>
+  <div id="box" class="box"></div>
+  <script>
+    // Positionable callout: a ring marks the focal point (x_percent, y_percent)
+    // and a label sits next to it. The label is auto-clamped against the frame
+    // edges so percentages near the borders still produce readable output.
+    async function start() {
+      while (!window.__props__) {
+        await new Promise((r) => setTimeout(r, 5));
+      }
+      const p = window.__props__;
+      const W = window.innerWidth;
+      const H = window.innerHeight;
+      const x = (p.x_percent ?? 50) / 100 * W;
+      const y = (p.y_percent ?? 50) / 100 * H;
+      const color = p.color || '#ffcc00';
+
+      const target = document.getElementById('target');
+      target.style.left = x + 'px';
+      target.style.top = y + 'px';
+      target.style.borderColor = color;
+      target.style.boxShadow = `0 0 18px ${color}`;
+
+      const box = document.getElementById('box');
+      box.textContent = p.text || '';
+      box.style.background = color;
+      // First-pass layout so we can measure the label and clamp it inside
+      // the viewport. We do this once, after setting text, then position it
+      // 48px to the right of the target (or to the left if it'd overflow).
+      box.style.left = '0px';
+      box.style.top = '0px';
+      box.style.opacity = '0';
+      const rect = box.getBoundingClientRect();
+      const labelW = rect.width;
+      const labelH = rect.height;
+      let lx = x + 48;
+      if (lx + labelW > W - 24) lx = x - 48 - labelW;
+      if (lx < 24) lx = 24;
+      let ly = y - labelH / 2;
+      if (ly < 24) ly = 24;
+      if (ly + labelH > H - 24) ly = H - 24 - labelH;
+      box.style.left = lx + 'px';
+      box.style.top = ly + 'px';
+
+      const FADE = 0.35;
+      function tick() {
+        const t = performance.now() / 1000;
+        const u = Math.max(0, Math.min(1, t / FADE));
+        target.style.opacity = u.toFixed(3);
+        box.style.opacity = u.toFixed(3);
+        requestAnimationFrame(tick);
+      }
+      tick();
+
+      window.__ready__ = Promise.resolve();
+    }
+    start();
+  </script>
+</body>
+</html>
