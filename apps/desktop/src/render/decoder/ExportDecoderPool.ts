@@ -27,6 +27,13 @@ interface RingEntry {
 
 export class ExportFrameStore implements FrameStore {
   private entries: RingEntry[] = [];
+  /// Pending `waitForPts` resolvers. On every `push` we resolve and
+  /// remove the ones whose tUs is now covered. The Worker uses this
+  /// to await each source frame before composing the next output
+  /// frame — keeps the WebCodecs decoder pool from piling up
+  /// unconsumed frames (pool exhaustion at ~8 outstanding frames
+  /// was the export-stuck wedge).
+  private waiters: Array<{ tUs: number; resolve: () => void }> = [];
 
   push(frame: VideoFrame): void {
     this.entries.push({
@@ -38,6 +45,28 @@ export class ExportFrameStore implements FrameStore {
     // streams can reorder. Sort defensively — cost is negligible for
     // chunk-sized stores (~60 entries).
     this.entries.sort((a, b) => a.ptsUs - b.ptsUs);
+    if (this.waiters.length > 0) {
+      const stillWaiting: typeof this.waiters = [];
+      for (const w of this.waiters) {
+        if (this.containsPts(w.tUs)) {
+          w.resolve();
+        } else {
+          stillWaiting.push(w);
+        }
+      }
+      this.waiters = stillWaiting;
+    }
+  }
+
+  /// Await a frame whose presentation interval contains `tUs`. If
+  /// already in the store, resolves synchronously; otherwise
+  /// resolves the next time `push()` delivers a covering frame.
+  /// Producer→consumer sync point for the export Worker.
+  waitForPts(tUs: number): Promise<void> {
+    if (this.containsPts(tUs)) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      this.waiters.push({ tUs, resolve });
+    });
   }
 
   frameAt(tUs: number): VideoFrame | null {
@@ -91,6 +120,11 @@ export class ExportFrameStore implements FrameStore {
   flush(): void {
     for (const e of this.entries) e.frame.close();
     this.entries = [];
+    // Any caller still awaiting waitForPts is now in a state where
+    // their wait will never resolve naturally. Don't resolve them —
+    // that would mislead the caller into thinking a frame is
+    // present. Caller is expected to bail out via the dispose path.
+    this.waiters = [];
   }
 
   size(): number {
@@ -243,9 +277,9 @@ export class ExportSourceHandle implements DecoderHandle {
         `(idr=${idr}, lastDispatched=${this.lastDispatchedIndex})`,
     );
     if (startIdx > targetB) {
-      // Nothing new to dispatch — everything needed is already in flight
-      // or already in the ring.
-      await this.decoder.flush();
+      // Nothing new to dispatch — everything needed is already in
+      // flight or already in the ring. No flush: the consumer's
+      // `waitForPts` resolves as outputs trickle in.
       return;
     }
 
@@ -258,7 +292,20 @@ export class ExportSourceHandle implements DecoderHandle {
     // Snapping `batchEnd` to the next IDR (inclusive) gives the
     // decoder every reference it needs for the GOP we just fed:
     // closed GOPs are fully self-contained; open-GOP B-frames that
-    // reference the next GOP's IDR now have it available before flush.
+    // reference the next GOP's IDR now have it available without
+    // an explicit flush.
+    //
+    // We DO NOT `await decoder.flush()` between batches. flush()
+    // forces the decoder to drain its reorder buffer immediately —
+    // but emitting buffered frames requires VideoFrame pool slots
+    // (Chrome's hardware decoder caps outstanding frames at ~8).
+    // When the export Worker holds frames in the ExportFrameStore
+    // pending its encode loop, those slots are taken and flush
+    // deadlocks. Instead, dispatch and return — the Worker awaits
+    // each frame via `ring.waitForPts(srcPts)`, which resolves on
+    // the decoder's async `output` callback. The encoder loop runs
+    // concurrently with the decoder, evicting (closing) source
+    // frames after composition; the pool stays drained naturally.
     let pos = startIdx;
     while (pos <= targetB) {
       // batchEnd = next IDR strictly after `pos`, or last sample if
@@ -298,29 +345,10 @@ export class ExportSourceHandle implements DecoderHandle {
         dispatched++;
       }
 
-      const flushStartMs = performance.now();
       // eslint-disable-next-line no-console
       console.log(
         `[weftcut/export] ${this.mediaId} GOP batch [${pos}..${batchEnd}] ` +
-          `→ ${dispatched} dispatched (queue=${this.decoder.decodeQueueSize}); flush`,
-      );
-      const wd = setInterval(() => {
-        // eslint-disable-next-line no-console
-        console.warn(
-          `[weftcut/export] ${this.mediaId} flush still pending ` +
-            `(queue=${this.decoder?.decodeQueueSize}, ring=${this.ring.size()})`,
-        );
-      }, 5000);
-      try {
-        await this.decoder.flush();
-      } finally {
-        clearInterval(wd);
-      }
-      // eslint-disable-next-line no-console
-      console.log(
-        `[weftcut/export] ${this.mediaId} batch flush done in ` +
-          `${(performance.now() - flushStartMs).toFixed(0)}ms; ` +
-          `ring=${this.ring.size()} frames`,
+          `→ ${dispatched} dispatched (queue=${this.decoder.decodeQueueSize})`,
       );
 
       pos = batchEnd + 1;
