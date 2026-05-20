@@ -178,8 +178,14 @@ export class ExportSourceHandle implements DecoderHandle {
         `${meta.codedWidth}x${meta.codedHeight} samples=${meta.nbSamples} ` +
         `desc[0..16]=${descPreview} (total ${meta.description.byteLength}B)`,
     );
-    this.decoder = new VideoDecoder({
+    // Identity gate — see SourceDecoderPool for rationale.
+    let dec: VideoDecoder;
+    dec = new VideoDecoder({
       output: (frame: VideoFrame) => {
+        if (this.decoder !== dec) {
+          frame.close();
+          return;
+        }
         this.outputFrameCount += 1;
         if (this.outputFrameCount === 1 || this.outputFrameCount % 30 === 0) {
           // eslint-disable-next-line no-console
@@ -191,6 +197,7 @@ export class ExportSourceHandle implements DecoderHandle {
         this.ring.push(frame);
       },
       error: (e: unknown) => {
+        if (this.decoder !== dec) return;
         const err = e instanceof Error ? e : new Error(String(e));
         // eslint-disable-next-line no-console
         console.error(`[weftcut/export] decoder ${this.mediaId} error:`, err.message);
@@ -212,6 +219,7 @@ export class ExportSourceHandle implements DecoderHandle {
         }
       },
     });
+    this.decoder = dec;
     // Probe support before configuring. We test BOTH hardware and
     // software variants so we can see in the log whether hardware
     // decode is actually available in this Worker context — Chrome's
