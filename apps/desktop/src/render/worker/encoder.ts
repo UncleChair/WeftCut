@@ -39,6 +39,12 @@ export class EncoderSink {
   private height: number;
   private fpsNum: number;
   private fpsDen: number;
+  /// MessageChannel reused by `awaitQueueBelow` to yield to the next
+  /// task without the 4 ms `setTimeout(1)` clamp browsers apply. One
+  /// channel + a queue of pending resolvers is enough; we keep the
+  /// onmessage handler installed for the encoder's lifetime.
+  private yieldChannel: MessageChannel;
+  private yieldWaiters: Array<() => void> = [];
 
   constructor(init: EncoderInit) {
     this.width = init.width;
@@ -46,6 +52,16 @@ export class EncoderSink {
     this.fpsNum = init.fpsNum;
     this.fpsDen = init.fpsDen;
     this.mp4 = createFile();
+
+    this.yieldChannel = new MessageChannel();
+    this.yieldChannel.port1.onmessage = () => {
+      // Drain every waiter that posted before this message arrived.
+      // postMessage delivery on a MessageChannel is FIFO, so resolving
+      // in-order matches the await order.
+      const waiters = this.yieldWaiters;
+      this.yieldWaiters = [];
+      for (const r of waiters) r();
+    };
 
     this.encoder = new VideoEncoder({
       output: (chunk, metadata) => this.onEncodedChunk(chunk, metadata),
@@ -65,9 +81,19 @@ export class EncoderSink {
 
   /// Yield until the encoder's internal queue drains below `threshold`.
   /// Caller uses this between frames to bound memory.
+  ///
+  /// Yields via `MessageChannel.postMessage`, not `setTimeout(1)`:
+  /// browsers clamp `setTimeout` to a 4 ms minimum after a few nested
+  /// calls, which over a multi-thousand-frame export adds seconds of
+  /// pure timer stalls. MessageChannel yields to the next task
+  /// (giving the encoder's output callback a chance to fire) with no
+  /// clamp.
   async awaitQueueBelow(threshold: number): Promise<void> {
     while (this.encoder.encodeQueueSize > threshold) {
-      await new Promise<void>((r) => setTimeout(r, 1));
+      await new Promise<void>((resolve) => {
+        this.yieldWaiters.push(resolve);
+        this.yieldChannel.port2.postMessage(null);
+      });
     }
   }
 
@@ -99,6 +125,13 @@ export class EncoderSink {
     } catch {
       // already closed
     }
+    // Close the yield channel so its onmessage handler can be GC'd.
+    // Any in-flight awaitQueueBelow resolvers were resolved in the
+    // last drain; if anything is still pending, dropping the channel
+    // is intentional — caller is tearing down.
+    this.yieldChannel.port1.close();
+    this.yieldChannel.port2.close();
+    this.yieldWaiters = [];
   }
 
   private onEncodedChunk(
