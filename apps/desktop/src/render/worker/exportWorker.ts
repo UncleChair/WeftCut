@@ -147,6 +147,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   // dominant cost without scrolling through every chunk line.
   const totals = {
     decodeMs: 0,
+    waitMs: 0,
     compositeMs: 0,
     captureMs: 0,
     encodeMs: 0,
@@ -169,9 +170,11 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     // frame's interval rather than the next one.
     const chunkEndUs = startUs + chunkEnd * frameDurUs - 1;
 
-    // 6a. Stage decode for every active VideoClip in this chunk. Run
-    // per-clip decodeRange calls in parallel so multiple clips on
-    // overlapping tracks decode concurrently.
+    // 6a. Dispatch decode for every active VideoClip in this chunk.
+    // After the P8 wedge fix this is non-blocking: decodeRange feeds
+    // the decoder and returns immediately. No flush. The decoder
+    // emits frames asynchronously via its output callback; the
+    // encode loop below pulls them via `ring.waitForPts`.
     const stagedClips = activeVideoClips(summary, chunkStartUs, chunkEndUs);
     const decodeT0 = performance.now();
     await Promise.all(
@@ -188,18 +191,41 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     const decodeMs = performance.now() - decodeT0;
     totals.decodeMs += decodeMs;
 
-    // 6b. Composite + encode every frame in the chunk. With frames
-    // pre-staged this is purely CPU/GPU bound — no per-frame waits.
+    // 6b. Composite + encode every frame in the chunk. Each iteration:
+    //   1. Await every active clip's source frame at this output time.
+    //      The decoder runs concurrently — this is where we sync.
+    //   2. Compose + capture + encode the output frame.
+    //   3. Evict source frames whose presentation interval ends at or
+    //      before the next output frame's source PTS. This frees
+    //      VideoFrame pool slots so the decoder can produce more —
+    //      the missing piece that caused the original "wedge at
+    //      output #8" deadlock.
     let compositeMs = 0;
     let captureMs = 0;
     let encodeMs = 0;
     let queueWaitMs = 0;
+    let waitMs = 0;
     for (let i = chunkStart; i < chunkEnd; i++) {
       if (cancelled) {
         cleanup(encoder, compositor, exportPool, app);
         return;
       }
       const tUs = startUs + i * frameDurUs;
+      const activeNow = stagedClips.filter(
+        (c) => c.tStartUs <= tUs && tUs < c.tEndUs,
+      );
+
+      const waitT0 = performance.now();
+      if (activeNow.length > 0) {
+        await Promise.all(
+          activeNow.map((c) => {
+            const handle = exportPool.handles.get(c.mediaId);
+            if (!handle) return Promise.resolve();
+            return handle.ring.waitForPts(clipSrcPtsAt(c, tUs));
+          }),
+        );
+      }
+      waitMs += performance.now() - waitT0;
 
       const compT0 = performance.now();
       compositor.setAnchorTime(tUs);
@@ -222,6 +248,23 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
       encoder.encodeFrame(captured, isKey);
       encodeMs += performance.now() - encT0;
 
+      // Per-frame evict — drop source frames whose intervals end at
+      // or before the NEXT output frame's source PTS. For the last
+      // output frame in the chunk, drop everything through srcBUs.
+      // This is what keeps the WebCodecs decoder pool from
+      // saturating.
+      const nextTUs =
+        i + 1 < chunkEnd ? startUs + (i + 1) * frameDurUs : null;
+      for (const c of activeNow) {
+        const handle = exportPool.handles.get(c.mediaId);
+        if (!handle) continue;
+        const cutoff =
+          nextTUs !== null && c.tStartUs <= nextTUs && nextTUs < c.tEndUs
+            ? clipSrcPtsAt(c, nextTUs)
+            : c.srcBUs + 1;
+        handle.evictBefore(cutoff);
+      }
+
       if (i % 5 === 0) {
         post({ type: "progress", framesEncoded: i, totalFrames });
       }
@@ -233,11 +276,14 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     totals.captureMs += captureMs;
     totals.encodeMs += encodeMs;
     totals.queueWaitMs += queueWaitMs;
+    totals.waitMs += waitMs;
 
-    // 6c. Evict frames consumed by this chunk so the next chunk's
-    // decode doesn't pile up. We cut everything strictly before
-    // chunkEndUs + 1µs — i.e. drop frames whose interval ended before
-    // or at the chunk's last consumed frame.
+    // 6c. Defensive end-of-chunk evict: anything still sitting in
+    // any handle's ring beyond the encoder's last consumed PTS.
+    // After the per-frame evict above this should be a no-op for
+    // single-clip projects, but multi-clip projects can leave
+    // stale frames in handles that weren't active at the last
+    // output frame.
     const evictT0 = performance.now();
     for (const c of stagedClips) {
       const handle = exportPool.handles.get(c.mediaId);
@@ -253,7 +299,9 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     console.log(
       `[weftcut/export] chunk [${chunkStart}..${chunkEnd}) done — ` +
         `${chunkEnd}/${totalFrames} frames (~${fps} fps wall-clock) | ` +
-        `decode=${decodeMs.toFixed(0)}ms ` +
+        `dispatch=${decodeMs.toFixed(0)}ms ` +
+        `wait=${waitMs.toFixed(0)}ms ` +
+        `(${(waitMs / nFrames).toFixed(1)}ms/f) ` +
         `composite=${compositeMs.toFixed(0)}ms ` +
         `(${(compositeMs / nFrames).toFixed(1)}ms/f) ` +
         `capture=${captureMs.toFixed(0)}ms ` +
@@ -271,7 +319,10 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   console.log(
     `[weftcut/export] PERF SUMMARY: ${totalFrames} frames in ${totalMs.toFixed(0)}ms ` +
       `(${overallFps.toFixed(1)} fps wall-clock)\n` +
-      `  decode      ${totals.decodeMs.toFixed(0).padStart(7)}ms  (${pct(totals.decodeMs)}%)\n` +
+      `  dispatch    ${totals.decodeMs.toFixed(0).padStart(7)}ms  (${pct(totals.decodeMs)}%)  ` +
+      `← decoder feed (no flush)\n` +
+      `  wait        ${totals.waitMs.toFixed(0).padStart(7)}ms  (${pct(totals.waitMs)}%)  ` +
+      `${(totals.waitMs / totalFrames).toFixed(2)} ms/frame  ← awaiting decoder output\n` +
       `  composite   ${totals.compositeMs.toFixed(0).padStart(7)}ms  (${pct(totals.compositeMs)}%)  ` +
       `${(totals.compositeMs / totalFrames).toFixed(2)} ms/frame\n` +
       `  capture     ${totals.captureMs.toFixed(0).padStart(7)}ms  (${pct(totals.captureMs)}%)  ` +
@@ -311,9 +362,27 @@ function cleanup(
 interface StagedClip {
   layerId: string;
   mediaId: string;
-  /// Source-local PTS interval to decode for this chunk: [srcAUs, srcBUs].
+  /// Source-local PTS interval to dispatch for this chunk: [srcAUs, srcBUs].
   srcAUs: number;
   srcBUs: number;
+  /// Timeline interval the clip occupies on the composition. The
+  /// per-frame encode loop checks `tStartUs <= tUs && tUs < tEndUs`
+  /// to know whether to await a source frame for this clip.
+  tStartUs: number;
+  tEndUs: number;
+  /// Source-in offset — source-local PTS for a timeline time t is
+  /// `srcInUs + (t - tStartUs)`. Same shape activeVideoClips uses
+  /// to compute srcAUs/srcBUs; we keep the raw inputs so the
+  /// encode loop can compute the per-frame srcPts itself.
+  srcInUs: number;
+}
+
+/// Compute the source-local PTS that an output time `tUs` maps to
+/// inside the clip's source media. Caller must ensure the clip is
+/// active at tUs (tStartUs <= tUs < tEndUs) — outside that range
+/// the value is meaningless.
+function clipSrcPtsAt(c: StagedClip, tUs: number): number {
+  return c.srcInUs + (tUs - c.tStartUs);
 }
 
 /// Walk the project's tracks/layers and collect every VideoClip whose
@@ -345,6 +414,9 @@ function activeVideoClips(
         mediaId: layer.params.media_id,
         srcAUs,
         srcBUs,
+        tStartUs: layer.t_start_us,
+        tEndUs: layer.t_end_us,
+        srcInUs: layer.params.src_in_us,
       });
     }
   }
