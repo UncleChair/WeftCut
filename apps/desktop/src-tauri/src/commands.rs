@@ -2376,6 +2376,41 @@ pub async fn export_project(
     Ok(())
 }
 
+/// Audio-only export. AWAITABLE (not fire-and-forget) — App.tsx
+/// awaits this between the Pixi Worker video export and the final
+/// stream-copy mux. Emits no `export:*` events so the ExportPanel
+/// state stays under the JS orchestrator's control.
+#[tauri::command]
+pub async fn export_project_audio_only(
+    app: tauri::AppHandle,
+    handle: State<'_, ProjectHandle>,
+    output_path: String,
+) -> Result<(), String> {
+    let snap = handle.snapshot().await;
+    let project = (*snap).clone();
+    let path = PathBuf::from(output_path);
+    export::export_audio_only(app, &project, &path)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Stream-copy mux of `video_path` + `audio_path` into `output_path`.
+/// AWAITABLE. Runs `ffmpeg -y -i v -i a -c copy out`.
+#[tauri::command]
+pub async fn mux_export(
+    video_path: String,
+    audio_path: String,
+    output_path: String,
+) -> Result<(), String> {
+    export::mux_to_file(
+        &PathBuf::from(video_path),
+        &PathBuf::from(audio_path),
+        &PathBuf::from(output_path),
+    )
+    .await
+    .map_err(|e| format!("{e:#}"))
+}
+
 #[tauri::command]
 pub async fn export_queue_enqueue(
     queue: State<'_, export::ExportQueue>,

@@ -61,7 +61,7 @@ pub async fn run_render(
     output: &Path,
     preset: ExportPreset,
 ) -> Result<()> {
-    run_render_inner(app, project, output, preset, true).await
+    run_render_inner(app, project, output, preset, true, false).await
 }
 
 /// Silent variant — same ffmpeg dance, but does NOT emit
@@ -75,7 +75,29 @@ pub async fn run_render_silent(
     output: &Path,
     preset: ExportPreset,
 ) -> Result<()> {
-    run_render_inner(app, project, output, preset, false).await
+    run_render_inner(app, project, output, preset, false, false).await
+}
+
+/// Audio-only export. Produces an `.m4a` (AAC) at `output` containing
+/// just the project's audio chain. Used by the PixiJS export path:
+/// the Worker emits video.mp4 via WebCodecs; this fills in audio.m4a;
+/// `mux_to_file` combines them with `ffmpeg -c copy`.
+///
+/// Emits no `export:*` events — the caller (App.tsx) drives the
+/// unified ExportPanel state. We strip `video_out` from the lowered
+/// graph so the emitted filter script contains the audio chain only;
+/// `emit_ffmpeg::emit` is reachability-driven so no video filter
+/// clauses are produced when `video_out` is `None`. Inputs that were
+/// only referenced by the video chain still appear in the `-i` list
+/// because the graph's input dedupe is shared; ffmpeg opens them and
+/// ignores them, which is harmless when the files exist
+/// (`materialize_*` ran).
+pub async fn export_audio_only(
+    app: AppHandle,
+    project: &Project,
+    output: &Path,
+) -> Result<()> {
+    run_render_inner(app, project, output, ExportPreset::default(), false, true).await
 }
 
 async fn run_render_inner(
@@ -84,6 +106,7 @@ async fn run_render_inner(
     output: &Path,
     preset: ExportPreset,
     emit_events: bool,
+    audio_only: bool,
 ) -> Result<()> {
     if !ffmpeg_is_installed() {
         anyhow::bail!(
@@ -124,7 +147,7 @@ async fn run_render_inner(
         crate::ir::materialize::materialize_html_groups(project, &cache, &app)
             .await
             .context("materialize html-render groups")?;
-    let graph = lower(
+    let mut graph = lower(
         project,
         target,
         &inline_subs,
@@ -132,6 +155,13 @@ async fn run_render_inner(
         &html_group_renders,
     )
     .context("lower IR")?;
+    if audio_only {
+        // emit_ffmpeg's walker is reachability-driven from
+        // video_out / audio_out (ir/emit_ffmpeg.rs:124-132); nulling
+        // the video terminal means no video filter clauses get
+        // emitted and no video [vfinal] map appears in plan.maps.
+        graph.video_out = None;
+    }
     let plan = emit_ffmpeg(&graph);
 
     let total_us = project.composition.duration_us.max(1_000_000);
@@ -189,31 +219,41 @@ async fn run_render_inner(
 
     cmd.arg("-filter_complex_script").arg(&script_path);
 
-    // Preset may override the final video label (e.g. GIF emits [vgif]).
-    let final_v_label = preset.final_video_label();
-    cmd.arg("-map").arg(final_v_label);
-    if preset.has_audio() {
+    if audio_only {
+        // plan.maps contains only the audio terminal because we
+        // nulled video_out above. No preset video codec; just AAC
+        // at a reasonable bitrate for downstream stream-copy mux.
         for map in &plan.maps {
-            // Skip the video map — we already added the (possibly-renamed)
-            // version above.
-            if map.starts_with("[v") {
-                continue;
-            }
             cmd.arg("-map").arg(map);
         }
-    }
+        cmd.args(["-c:a", "aac", "-b:a", "192k"]);
+    } else {
+        // Preset may override the final video label (e.g. GIF emits [vgif]).
+        let final_v_label = preset.final_video_label();
+        cmd.arg("-map").arg(final_v_label);
+        if preset.has_audio() {
+            for map in &plan.maps {
+                // Skip the video map — we already added the (possibly-renamed)
+                // version above.
+                if map.starts_with("[v") {
+                    continue;
+                }
+                cmd.arg("-map").arg(map);
+            }
+        }
 
-    // HW encoder selection. We resolve through the AppHandle-managed cache
-    // when available (probed once at startup) and fall back to a fresh probe
-    // only if the cache isn't installed (e.g. tests calling run_render
-    // directly without going through the Tauri setup hook). Per-export probes
-    // would otherwise add up to several seconds on hosts where some
-    // candidates time out.
-    let hw = match app.try_state::<HwEncoderCache>() {
-        Some(c) => c.get().await,
-        None => probe_hw_encoders().await.recommended,
-    };
-    preset.apply_to_command(&mut cmd, hw);
+        // HW encoder selection. We resolve through the AppHandle-managed cache
+        // when available (probed once at startup) and fall back to a fresh probe
+        // only if the cache isn't installed (e.g. tests calling run_render
+        // directly without going through the Tauri setup hook). Per-export probes
+        // would otherwise add up to several seconds on hosts where some
+        // candidates time out.
+        let hw = match app.try_state::<HwEncoderCache>() {
+            Some(c) => c.get().await,
+            None => probe_hw_encoders().await.recommended,
+        };
+        preset.apply_to_command(&mut cmd, hw);
+    }
 
     // -progress pipe:1 → clean key=value blocks on stdout, one per ~0.5s.
     cmd.args(["-progress", "pipe:1"]);
@@ -225,12 +265,15 @@ async fn run_render_inner(
         .stderr(Stdio::piped())
         .kill_on_drop(true);
 
-    info!(
-        "ffmpeg export starting → {} (preset={:?}, hw={:?})",
-        output.display(),
-        preset,
-        hw
-    );
+    if audio_only {
+        info!("ffmpeg audio-only export starting → {}", output.display());
+    } else {
+        info!(
+            "ffmpeg export starting → {} (preset={:?})",
+            output.display(),
+            preset,
+        );
+    }
     let mut child = cmd.spawn().context("spawn ffmpeg")?;
 
     let stdout = child.stdout.take().context("take ffmpeg stdout")?;
@@ -323,6 +366,64 @@ async fn run_render_inner(
         );
     }
 
+    Ok(())
+}
+
+/// Stream-copy mux of one video file + one audio file into a single
+/// MP4. Runs `ffmpeg -y -i video -i audio -c copy out`. Used by the
+/// PixiJS export path to combine the Worker's video.mp4 with the
+/// audio-only Rust export.
+pub async fn mux_to_file(
+    video_path: &Path,
+    audio_path: &Path,
+    output: &Path,
+) -> Result<()> {
+    if !ffmpeg_is_installed() {
+        anyhow::bail!("ffmpeg is not installed");
+    }
+    let mut cmd = Command::new(ffmpeg_path());
+    cmd.arg("-y")
+        .arg("-hide_banner")
+        .arg("-nostats")
+        .arg("-i")
+        .arg(video_path)
+        .arg("-i")
+        .arg(audio_path)
+        .arg("-c")
+        .arg("copy")
+        .arg(output);
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    info!(
+        "ffmpeg mux: {} + {} → {}",
+        video_path.display(),
+        audio_path.display(),
+        output.display()
+    );
+    let mut child = cmd.spawn().context("spawn ffmpeg mux")?;
+    let stderr = child.stderr.take().context("take ffmpeg stderr")?;
+    let stderr_task = tokio::spawn(async move {
+        let mut reader = BufReader::new(stderr).lines();
+        let mut tail: Vec<String> = Vec::new();
+        while let Ok(Some(line)) = reader.next_line().await {
+            tail.push(line);
+            if tail.len() > 50 {
+                tail.remove(0);
+            }
+        }
+        tail.join("\n")
+    });
+    let status = child.wait().await.context("await ffmpeg mux")?;
+    let stderr_tail = stderr_task.await.unwrap_or_default();
+    if !status.success() {
+        anyhow::bail!(
+            "ffmpeg mux exited {}. Tail:\n{}",
+            status,
+            stderr_tail.lines().rev().take(8).collect::<Vec<_>>().join("\n")
+        );
+    }
     Ok(())
 }
 
