@@ -1,11 +1,16 @@
 // foreignObject SVG → ImageBitmap rasterizer for template HTML.
 //
 // Splits into pure helpers (testable in Node) and the actual
-// rasterization (browser-only via `createImageBitmap`).
-//
-// Plan: docs/pixi-renderer-plan.md (P5 chunk 1 — no font embedding or
-// image pre-fetch yet; those land in chunk 2.)
+// rasterization (browser-only via `createImageBitmap`). External
+// font + image references in the template inputs are inlined as
+// `data:` URLs via `embedTemplateAssets` before SVG-wrap — workspace
+// templates that ship their own woff2 / png assets render correctly
+// inside the foreignObject (which can't issue subresource requests).
 
+import {
+  embedTemplateAssets,
+  type EmbedTemplateAssetsResult,
+} from "./assetEmbed";
 import type { TemplateManifest } from "./catalog";
 
 export interface RasterizeInput {
@@ -13,6 +18,13 @@ export interface RasterizeInput {
   css: string;
   width: number;
   height: number;
+  /// Optional asset resolver invoked once per external URL discovered
+  /// in `html` or `css` (font files, `<img>` srcs). Returns the
+  /// asset's bytes to inline as a `data:` URL, or null to leave the
+  /// reference alone. Built-in templates don't reference anything
+  /// external — workspace templates with bundled woff2 / png assets
+  /// supply this. See `assetEmbed.ts`.
+  fetchAsset?: (url: string) => Promise<Uint8Array | null>;
 }
 
 export interface BuildSvgInput {
@@ -118,10 +130,36 @@ export function rasterCacheKey(input: RasterCacheKeyInput): string {
 
 /// Browser-only: rasterize the SVG to an `ImageBitmap` via a blob URL.
 /// Throws when called outside a window context (no Image, no Blob URL).
+/// If `fetchAsset` is supplied, external font + image references in the
+/// template inputs are embedded as `data:` URLs first.
 export async function rasterizeForeignObject(
   input: RasterizeInput,
 ): Promise<ImageBitmap> {
-  const svg = buildForeignObjectSvg(input);
+  let html = input.html;
+  let css = input.css;
+  if (input.fetchAsset) {
+    const embedded: EmbedTemplateAssetsResult = await embedTemplateAssets({
+      html,
+      css,
+      fetchAsset: input.fetchAsset,
+    });
+    html = embedded.html;
+    css = embedded.css;
+    if (embedded.skipped.length > 0) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[weftcut/templates] rasterize skipped ${embedded.skipped.length} ` +
+          `unresolvable asset(s): ${embedded.skipped.slice(0, 4).join(", ")}` +
+          (embedded.skipped.length > 4 ? " …" : ""),
+      );
+    }
+  }
+  const svg = buildForeignObjectSvg({
+    html,
+    css,
+    width: input.width,
+    height: input.height,
+  });
   const blob = new Blob([svg], { type: "image/svg+xml" });
   const url = URL.createObjectURL(blob);
   try {
