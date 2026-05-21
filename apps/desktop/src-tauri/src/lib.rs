@@ -117,6 +117,7 @@ pub fn run() {
             commands::export_project_audio_only,
             commands::mux_export,
             commands::extract_video_frame,
+            commands::compare_fixture_frame,
             commands::export_to_temp_preview,
             commands::cleanup_temp_preview,
             commands::export_queue_enqueue,
