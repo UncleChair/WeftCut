@@ -1,8 +1,10 @@
 // Template layer rendered via foreignObject SVG raster → texture.
 //
-// Plan: docs/pixi-renderer-plan.md (P5 chunk 1 — no font embedding,
-// no image data URLs, no animation. Templates render at their first
-// canonical-prop set and re-raster on prop changes.)
+// Rasters are stored in a process-wide `sharedTemplateRasterCache` so
+// two sprites referencing the same template with the same canonical
+// props at the same composition dims share one ImageBitmap. Sprite
+// dispose tears down the sprite's Pixi Texture wrapper but does NOT
+// close the underlying bitmap — the cache owns its lifetime.
 
 import { ImageSource, Sprite, Texture } from "pixi.js";
 
@@ -13,7 +15,7 @@ import {
   rasterizeForeignObject,
   substituteTemplate,
 } from "../templates/Rasterizer";
-import { TemplateRasterCache } from "../templates/Cache";
+import { sharedTemplateRasterCache } from "../templates/Cache";
 import { getTemplate, type Template } from "../templates/catalog";
 
 export interface TemplateSpriteInit {
@@ -30,9 +32,6 @@ export class TemplateSprite {
   readonly layerId: string;
   readonly templateId: string;
   private template: Template | null;
-  /// Per-sprite cache. Cross-sprite sharing (templates with identical
-  /// prop sets across multiple layers) is a chunk 2 optimization.
-  private cache = new TemplateRasterCache();
   /// Cache key currently displayed (or in-flight for display).
   private boundKey: string | null = null;
   private source: ImageSource | null = null;
@@ -85,7 +84,7 @@ export class TemplateSprite {
     if (key === this.boundKey) return;
     this.boundKey = key;
 
-    const cached = this.cache.get(key);
+    const cached = sharedTemplateRasterCache.get(key);
     if (cached) {
       this.bindBitmap(cached);
       return;
@@ -119,10 +118,13 @@ export class TemplateSprite {
         height,
       });
       if (this.disposed) {
-        bitmap.close();
+        // Sprite died while we were rastering. Don't close the bitmap —
+        // another sprite may want this key. Hand it to the shared cache
+        // so the work isn't wasted.
+        sharedTemplateRasterCache.set(key, bitmap);
         return;
       }
-      this.cache.set(key, bitmap);
+      sharedTemplateRasterCache.set(key, bitmap);
       // A later update could have superseded this key while we waited;
       // only bind if we still want what we just rastered.
       if (this.boundKey === key) {
@@ -162,6 +164,10 @@ export class TemplateSprite {
     this.disposed = true;
     if (this.texture && this.texture !== Texture.EMPTY) {
       try {
+        // destroy(false) frees the Pixi Texture wrapper but leaves the
+        // underlying ImageBitmap alone — the shared cache may still hand
+        // it to another sprite. The cache is responsible for the bitmap's
+        // ultimate close().
         this.texture.destroy(false);
       } catch {
         // ignore
@@ -169,7 +175,6 @@ export class TemplateSprite {
     }
     this.texture = null;
     this.source = null;
-    this.cache.dispose();
     this.sprite.destroy({ children: true });
   }
 }
