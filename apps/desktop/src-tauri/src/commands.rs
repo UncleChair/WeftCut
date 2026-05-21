@@ -2411,6 +2411,96 @@ pub async fn mux_export(
     .map_err(|e| format!("{e:#}"))
 }
 
+/// Extract one PNG frame from an in-memory MP4 at composition-time `t_us`.
+///
+/// P10a fixture-runner support. The JS-side `runFixture` produces an MP4
+/// in memory via the export Worker, then asks Rust to fish out specific
+/// frames for baseline generation / DSSIM compare. The JS side can't
+/// shell out to ffmpeg, so the bytes round-trip here.
+///
+/// Implementation: writes the input bytes to a temp file (ffmpeg seeks
+/// faster on a real file than on stdin for non-fragmented MP4), runs
+/// `ffmpeg -ss <t> -i in.mp4 -frames:v 1 -f image2 -c:v png out.png`,
+/// reads out.png and returns its bytes. Both temps are dropped on exit.
+///
+/// `-ss` is placed BEFORE `-i` for the fast (keyframe-bounded) seek; for
+/// 1 s-GOP exports that's accurate enough. Tests / fixtures pick sample
+/// times near keyframe boundaries to avoid GOP-walk drift.
+#[tauri::command]
+pub async fn extract_video_frame(
+    mp4_bytes: Vec<u8>,
+    t_us: i64,
+) -> Result<Vec<u8>, String> {
+    use ffmpeg_sidecar::paths::ffmpeg_path;
+    use std::process::Stdio;
+    use tokio::process::Command;
+
+    if t_us < 0 {
+        return Err("t_us must be >= 0".into());
+    }
+    if mp4_bytes.is_empty() {
+        return Err("mp4_bytes is empty".into());
+    }
+
+    let mp4_temp = tempfile::Builder::new()
+        .prefix("weftcut-fixture-")
+        .suffix(".mp4")
+        .tempfile()
+        .map_err(|e| format!("create mp4 tempfile: {e}"))?;
+    let mp4_path = mp4_temp.path().to_path_buf();
+    let png_temp = tempfile::Builder::new()
+        .prefix("weftcut-fixture-")
+        .suffix(".png")
+        .tempfile()
+        .map_err(|e| format!("create png tempfile: {e}"))?;
+    let png_path = png_temp.path().to_path_buf();
+
+    tokio::fs::write(&mp4_path, &mp4_bytes)
+        .await
+        .map_err(|e| format!("write mp4 tempfile: {e}"))?;
+
+    let t_seconds = (t_us as f64) / 1_000_000.0;
+    let output = Command::new(ffmpeg_path())
+        .args([
+            "-y",
+            "-hide_banner",
+            "-nostats",
+            "-loglevel",
+            "error",
+            "-ss",
+            &format!("{t_seconds}"),
+            "-i",
+        ])
+        .arg(&mp4_path)
+        .args(["-frames:v", "1", "-update", "1", "-f", "image2", "-c:v", "png"])
+        .arg(&png_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .map_err(|e| format!("spawn ffmpeg: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "ffmpeg exited with {} extracting frame at {t_us}µs: {}",
+            output.status,
+            stderr.trim()
+        ));
+    }
+
+    let bytes = tokio::fs::read(&png_path)
+        .await
+        .map_err(|e| format!("read extracted png: {e}"))?;
+    if bytes.is_empty() {
+        return Err(format!(
+            "ffmpeg wrote zero bytes for frame at {t_us}µs (silent failure)"
+        ));
+    }
+    Ok(bytes)
+}
+
 #[tauri::command]
 pub async fn export_queue_enqueue(
     queue: State<'_, export::ExportQueue>,

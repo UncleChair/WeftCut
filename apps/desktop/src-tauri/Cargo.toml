@@ -102,10 +102,13 @@ async-trait = "0.1"
 # disable the audit feature because we don't need it on the CI critical
 # path. Pin range conservative (any 0.7.x).
 chromiumoxide = { version = "0.7", default-features = false, features = ["tokio-runtime"] }
+# P10a: `commands::extract_video_frame` writes the JS-side MP4 bytes to
+# disk so ffmpeg can seek into it. RAII drop on `NamedTempFile` cleans
+# both temps automatically. Already a dev-dep; promoted to production.
+tempfile = "3"
 
 [dev-dependencies]
 insta = { version = "1", features = ["json", "yaml"] }
-tempfile = "3"
 
 # Phase 5: capture PNGs from the offscreen WebView2 webview via
 # CapturePreview. Pinned to the same transitive versions tauri 2.11 already

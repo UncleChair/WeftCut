@@ -1,0 +1,52 @@
+{
+  "project_id": "00000000-0000-0000-0000-000000000001",
+  "name": "001_color",
+  "composition": {
+    "width": 1920,
+    "height": 1080,
+    "fps_num": 30,
+    "fps_den": 1
+  },
+  "track_count": 1,
+  "layer_count": 1,
+  "duration_us": 2000000,
+  "history": {
+    "cursor": 0,
+    "len": 0,
+    "can_undo": false,
+    "can_redo": false
+  },
+  "media": [],
+  "tracks": [
+    {
+      "id": "00000000-0000-0000-0000-000000000101",
+      "name": "Track 1",
+      "kind": "Video",
+      "role": null,
+      "enabled": true,
+      "muted": false,
+      "transient": false,
+      "layers": [
+        {
+          "id": "00000000-0000-0000-0000-000000000201",
+          "label": null,
+          "t_start_us": 0,
+          "t_end_us": 2000000,
+          "kind": "Color",
+          "color_hint": "#ff0000",
+          "enabled": true,
+          "locked": false,
+          "params": {
+            "kind": "Color",
+            "color": { "r": 255, "g": 0, "b": 0, "a": 255 },
+            "width": 1920,
+            "height": 1080
+          },
+          "effects": []
+        }
+      ]
+    }
+  ],
+  "markers": [],
+  "groups": []
+}
