@@ -1,6 +1,6 @@
 # MCP Server & Agent UX
 
-> **Implementation status:** This is the design spec. Current implementation reality (what's wired, what's intentionally deferred to Phase 4.x or later) lives in [`roadmap.md`'s Phase 4 closeout](roadmap.md#phase-4-status-2026-05-08). Notable deltas at time of writing: SSE transport instead of Streamable HTTP (we stay on rmcp 0.1.x deliberately — 1.6.x dropped SSE entirely in favor of Streamable HTTP, but Claude Desktop is SSE-only for local servers as of Anthropic's 2026-05-03 statement, so migrating would break the integration); token surfaced but not enforced (rmcp 0.1.x's `SseServer` exposes no middleware hook; localhost-only binding is the active isolation); change feed lives on a separate `/events` axum endpoint rather than as MCP notifications; effects/keyframe MCP tools deferred until IR-lowering lands.
+> **Transport notes.** SSE on rmcp 0.1.x. 1.x dropped SSE in favor of streamable-HTTP; we stay on 0.1.x deliberately because Claude Desktop is SSE-only for local servers. Token surfaced but not enforced (rmcp 0.1.x's `SseServer` exposes no middleware hook; localhost-only binding is the active isolation). Change feed lives on a separate `/events` axum endpoint rather than as MCP notifications.
 
 WeftCut exposes itself as an MCP server. External agents (Claude Desktop, Cursor, Cline, custom Python clients) connect over a localhost HTTP server and edit the project through a structured tool surface.
 
@@ -67,15 +67,12 @@ Around 25 tools. Don't expose 100; agents get confused.
 | `project://media` | media pool listing |
 | `project://tracks` | tracks + layer summaries |
 | `project://layers/{id}` | one layer in detail |
-| `project://layers/{id}/effects` | effects on that layer |
 | `project://markers` | all markers |
 | `project://history` | recent ops + checkpoints |
-| `project://compiled` | current IR (JSON) for agents that want structural reasoning |
 | `media://{id}/thumbnail` | poster frame as image |
 | `media://{id}/frame/{time}` | extracted frame as image (multimodal-friendly) |
 | `media://{id}/waveform` | audio peaks |
 | `templates://current` | built-in template catalog (id, name, size, default_duration_s, props_schema) — same payload as `list_templates` |
-| `templates://{id}/preview` | thumbnail PNG of the built-in template at default props, captured at a "settled" time (default_duration_s × 0.5, clamped to [0, 1]s) so the entrance animation has finished. Goes through the same offscreen-webview raster pipeline IR Template layers use, so what an agent sees here matches what would render on the timeline. Cached by `raster::cache_key`; first request per template is ~200–700ms on a cold cache, subsequent calls are free. |
 
 Returning images from `media://{id}/frame/{time}` is what makes this useful with multimodal agents — they can *see* the video and make spatial/temporal judgments before editing.
 
@@ -91,7 +88,6 @@ Returning images from `media://{id}/frame/{time}` is what makes this useful with
 Each maps 1:1 to a project actor command (see [data-model.md](data-model.md) "Mutation surface"):
 
 - `import_media`, `add_track`, `add_layer`, `update_layer`, `move_layer`, `split_layer`, `delete_layer`, `duplicate_layer`
-- `add_effect`, `update_effect`, `move_effect`, `remove_effect`
 - `add_keyframe`, `update_keyframe`, `remove_keyframe`
 - `add_marker`, `update_marker`, `remove_marker`
 - `set_composition`
