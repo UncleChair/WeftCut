@@ -8,7 +8,6 @@ use uuid::Uuid;
 pub type MediaId = Uuid;
 pub type TrackId = Uuid;
 pub type LayerId = Uuid;
-pub type EffectId = Uuid;
 pub type KeyframeId = Uuid;
 pub type MarkerId = Uuid;
 pub type CheckpointId = Uuid;

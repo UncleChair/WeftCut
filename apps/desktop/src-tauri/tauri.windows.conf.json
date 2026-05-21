@@ -2,8 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "bundle": {
     "resources": {
-      "vendor/libmpv/libmpv-2.dll": "libmpv-2.dll",
-      "vendor/chrome-headless-shell/**/*": "vendor/chrome-headless-shell/"
+      "vendor/libmpv/libmpv-2.dll": "libmpv-2.dll"
     }
   }
 }

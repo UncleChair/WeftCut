@@ -22,10 +22,10 @@ mod keybindings;
 mod logs;
 mod mcp;
 mod preview;
-mod raster;
 mod agent_session;
 mod recents;
 mod state;
+mod templates;
 mod view_state;
 mod workspace;
 
@@ -133,8 +133,6 @@ pub fn run() {
             commands::get_media_thumbnail,
             commands::list_templates,
             commands::add_template,
-            commands::template_preview,
-            commands::html_group_probe_transparency,
             commands::log_list,
             commands::log_clear,
             commands::log_emit,
@@ -158,9 +156,9 @@ pub fn run() {
             app.manage(log_slot.clone());
             let log_slot_for_ui_events = log_slot.clone();
             // libmpv was the media-pool popup preview's backing — deleted
-            // in P12-d alongside the chromiumoxide / chrome-headless-shell
-            // bundling. The Pixi compositor now handles every preview
-            // surface in v1.
+            // in P12-d. The offscreen-webview rasterizer (chromiumoxide +
+            // chrome-headless-shell bundling) went in P12-c. The Pixi
+            // compositor now handles every preview surface in v1.
 
             // Cache layout. **Per workspace-redesign Q3** (`docs/workspace-
             // redesign.md`), the cache lives at `<workspace>/Cache/` once a
@@ -244,7 +242,6 @@ pub fn run() {
             // exists — ffmpeg runs only at import (proxies) and export
             // (Render & Play + `export_project`).
             let cache_for_mcp = cache_layout.clone();
-            let cache_for_spike = cache_layout.clone();
             app.manage(cache_layout);
 
             // Render queue. Single-task FIFO; emits `export:queue` events on
@@ -273,15 +270,6 @@ pub fn run() {
                 }
             });
 
-            if let Err(e) = raster::spawn_spike(app.handle()) {
-                tracing::error!("raster spike failed: {e:?}");
-            } else {
-                // Phase 5 spike: snapshot the offscreen webview to a PNG once,
-                // shortly after startup. The log line `raster capture spike:
-                // wrote N bytes …` confirms the load-bearing capture path
-                // works before we build the rest of the rasterizer.
-                raster::schedule_capture_spike(app.handle(), cache_for_spike);
-            }
             tauri::async_runtime::spawn(async {
                 match ffmpeg::bootstrap().await {
                     Ok(ffmpeg::BootstrapStatus::Ready(v)) => tracing::info!("ffmpeg: {v}"),

@@ -21,7 +21,6 @@ pub mod actor;
 pub mod animated;
 pub mod color;
 pub mod composition;
-pub mod effect;
 pub mod group;
 pub mod history;
 pub mod ids;
@@ -47,13 +46,9 @@ pub use validate::{ValidationError, validate as validate_project};
 pub use animated::{Animated, Interpolation, Keyframe};
 pub use color::{ColorSpace, Rgba};
 pub use composition::Composition;
-pub use effect::{Effect, EffectKind, EffectParams};
-pub use group::{
-    Group, GroupTimeWindows, TimeWindow, effective_groups, group_requires_html, index_groups,
-    synthetic_group_id_for_layer,
-};
+pub use group::{Group, index_groups};
 pub use ids::{
-    CheckpointId, EffectId, GroupId, KeyframeId, LayerId, MarkerId, MediaId, OpId, TrackId,
+    CheckpointId, GroupId, KeyframeId, LayerId, MarkerId, MediaId, OpId, TrackId,
     TransitionId, new_id,
 };
 pub use layer::{
@@ -121,7 +116,6 @@ mod tests {
             enabled: true,
             locked: false,
             metadata: imbl::HashMap::new(),
-            effects: imbl::Vector::new(),
             params: LayerParams::VideoClip(VideoClipParams {
                 media: media_id,
                 src_in_us: 0,

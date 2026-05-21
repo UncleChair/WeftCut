@@ -2783,7 +2783,6 @@ pub(crate) fn apply_add_layer(
         enabled: true,
         locked: false,
         metadata: imbl::HashMap::new(),
-        effects: imbl::Vector::new(),
         params,
     };
     let track = project
@@ -2889,7 +2888,6 @@ pub(crate) fn apply_groups_create(
         id,
         label,
         members: unique,
-        effects: imbl::Vector::new(),
     });
     Ok(id)
 }
