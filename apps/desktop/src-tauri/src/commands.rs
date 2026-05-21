@@ -2184,38 +2184,10 @@ pub async fn groups_dissolve(
         .map_err(|e: CommandError| e.to_string())
 }
 
-/// Replace a group's entire effect chain. Effects on the wire are
-/// the same JSON shape as in the project file — `{ id, enabled,
-/// params: { kind, ... } }`. The UI's effects editor sends the
-/// full chain on every (debounced) commit.
-#[tauri::command]
-pub async fn groups_set_effects(
-    handle: State<'_, ProjectHandle>,
-    group_id: String,
-    effects: Vec<state::Effect>,
-) -> Result<(), String> {
-    let gid = Uuid::parse_str(&group_id).map_err(|e| format!("group_id: {e}"))?;
-    handle
-        .groups_set_effects(Actor::User, gid, effects)
-        .await
-        .map_err(|e: CommandError| e.to_string())
-}
-
-/// Replace a layer's entire effect chain. Same wire shape as the
-/// group counterpart; the engine composes a layer's HtmlTransform
-/// on top of the layer's static transform from `params`.
-#[tauri::command]
-pub async fn layers_set_effects(
-    handle: State<'_, ProjectHandle>,
-    layer_id: String,
-    effects: Vec<state::Effect>,
-) -> Result<(), String> {
-    let id = Uuid::parse_str(&layer_id).map_err(|e| format!("layer_id: {e}"))?;
-    handle
-        .layers_set_effects(Actor::User, id, effects)
-        .await
-        .map_err(|e: CommandError| e.to_string())
-}
+// groups_set_effects / layers_set_effects commands removed in P12-a.
+// The Pixi renderer doesn't read effects; the mutation surface for
+// them is dead in v1. P12-b deletes the Layer::effects / Group::effects
+// fields proper, alongside the IR visual half.
 
 #[tauri::command]
 pub async fn delete_layer(

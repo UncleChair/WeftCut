@@ -541,27 +541,11 @@ enum Command {
         actor: Actor,
         reply: oneshot::Sender<Result<(), CommandError>>,
     },
-    /// Replace the group's entire effect chain. The UI's effects
-    /// editor sends the full new list on every commit (debounced) —
-    /// `groups_set_effects` is the only mutation primitive for group
-    /// effects right now. Granular add/remove/update ops can land
-    /// later if undo granularity becomes a concern.
-    GroupsSetEffects {
-        id: GroupId,
-        effects: Vec<super::effect::Effect>,
-        actor: Actor,
-        reply: oneshot::Sender<Result<(), CommandError>>,
-    },
-    /// Mirror of `GroupsSetEffects` for layer-level effect chains.
-    /// Each layer carries its own chain (`Layer.effects`); the engine
-    /// composes a layer's HtmlTransform on top of the layer's static
-    /// transform from `params`.
-    LayersSetEffects {
-        id: LayerId,
-        effects: Vec<super::effect::Effect>,
-        actor: Actor,
-        reply: oneshot::Sender<Result<(), CommandError>>,
-    },
+    // GroupsSetEffects / LayersSetEffects ops were removed in P12-a:
+    // the Pixi renderer doesn't read effects in v1, so the mutation
+    // surface for them is dead. The `effects` field on Layer / Group
+    // stays alive (P12-b sweeps it together with the IR visual half)
+    // but nothing can write to it from the UI / MCP layer anymore.
     Undo {
         actor: Actor,
         reply: oneshot::Sender<Result<(), CommandError>>,
@@ -1228,47 +1212,6 @@ impl ProjectHandle {
         rx.await.expect("project actor terminated")
     }
 
-    /// Replace the group's entire effect chain.
-    pub async fn groups_set_effects(
-        &self,
-        actor: Actor,
-        id: GroupId,
-        effects: Vec<super::effect::Effect>,
-    ) -> Result<(), CommandError> {
-        let (reply, rx) = oneshot::channel();
-        self.tx
-            .send(Command::GroupsSetEffects {
-                id,
-                effects,
-                actor,
-                reply,
-            })
-            .await
-            .expect("project actor terminated");
-        rx.await.expect("project actor terminated")
-    }
-
-    /// Replace the layer's entire effect chain.
-    pub async fn layers_set_effects(
-        &self,
-        actor: Actor,
-        id: LayerId,
-        effects: Vec<super::effect::Effect>,
-    ) -> Result<(), CommandError> {
-        let (reply, rx) = oneshot::channel();
-        self.tx
-            .send(Command::LayersSetEffects {
-                id,
-                effects,
-                actor,
-                reply,
-            })
-            .await
-            .expect("project actor terminated");
-        rx.await.expect("project actor terminated")
-    }
-
-
     pub async fn move_track(
         &self,
         actor: Actor,
@@ -1695,24 +1638,6 @@ impl ProjectActor {
                 reply,
             } => {
                 let result = self.do_groups_rename(id, label, actor);
-                let _ = reply.send(result);
-            }
-            Command::GroupsSetEffects {
-                id,
-                effects,
-                actor,
-                reply,
-            } => {
-                let result = self.do_groups_set_effects(id, effects, actor);
-                let _ = reply.send(result);
-            }
-            Command::LayersSetEffects {
-                id,
-                effects,
-                actor,
-                reply,
-            } => {
-                let result = self.do_layers_set_effects(id, effects, actor);
                 let _ = reply.send(result);
             }
             Command::Undo { actor, reply } => {
@@ -2523,43 +2448,6 @@ impl ProjectActor {
         Ok(())
     }
 
-    fn do_groups_set_effects(
-        &mut self,
-        id: GroupId,
-        effects: Vec<super::effect::Effect>,
-        actor: Actor,
-    ) -> Result<(), CommandError> {
-        let mut next: Project = (*self.history.current()).clone();
-        apply_groups_set_effects(&mut next, id, effects)?;
-        self.commit(
-            next,
-            actor,
-            format!("Set group {id} effects"),
-            Vec::new(),
-            DiffHint::Coarse,
-        )?;
-        Ok(())
-    }
-
-    fn do_layers_set_effects(
-        &mut self,
-        id: LayerId,
-        effects: Vec<super::effect::Effect>,
-        actor: Actor,
-    ) -> Result<(), CommandError> {
-        let mut next: Project = (*self.history.current()).clone();
-        apply_layers_set_effects(&mut next, id, effects)?;
-        self.commit(
-            next,
-            actor,
-            format!("Set layer {id} effects"),
-            Vec::new(),
-            DiffHint::Coarse,
-        )?;
-        Ok(())
-    }
-
-
     fn do_move_track(
         &mut self,
         id: TrackId,
@@ -3105,35 +2993,6 @@ pub(crate) fn apply_groups_rename(
     project.groups[gi].label = label;
     Ok(())
 }
-
-pub(crate) fn apply_groups_set_effects(
-    project: &mut Project,
-    id: GroupId,
-    effects: Vec<super::effect::Effect>,
-) -> Result<(), CommandError> {
-    let gi = project
-        .groups
-        .iter()
-        .position(|g| g.id == id)
-        .ok_or(CommandError::GroupNotFound { group: id })?;
-    project.groups[gi].effects = effects.into_iter().collect();
-    Ok(())
-}
-
-pub(crate) fn apply_layers_set_effects(
-    project: &mut Project,
-    id: LayerId,
-    effects: Vec<super::effect::Effect>,
-) -> Result<(), CommandError> {
-    for track in project.tracks.iter_mut() {
-        if let Some(layer) = track.layers.iter_mut().find(|l| l.id == id) {
-            layer.effects = effects.into_iter().collect();
-            return Ok(());
-        }
-    }
-    Err(CommandError::LayerNotFound { layer: id })
-}
-
 
 fn layer_id_set(project: &Project) -> std::collections::HashSet<LayerId> {
     let mut s = std::collections::HashSet::new();

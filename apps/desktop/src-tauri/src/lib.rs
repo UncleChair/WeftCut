@@ -138,8 +138,6 @@ pub fn run() {
             commands::add_template,
             commands::template_preview,
             commands::html_group_probe_transparency,
-            commands::groups_set_effects,
-            commands::layers_set_effects,
             commands::log_list,
             commands::log_clear,
             commands::log_emit,

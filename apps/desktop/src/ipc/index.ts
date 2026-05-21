@@ -896,20 +896,12 @@ export async function groupsCreate(
   });
 }
 
-/// Replace a group's entire effect chain. The UI's effects editor
-/// sends the full chain on every (debounced) commit — granular
-/// add/remove/update ops are deferred.
-export async function groupsSetEffects(groupId: string, effects: Effect[]): Promise<void> {
-  await invoke<null>("groups_set_effects", { groupId, effects });
-}
-
-/// Replace a layer's entire effect chain. Layer-level effects compose
-/// on top of the layer's static transform from `params`. A layer's
-/// `HtmlTransform` only renders when the layer is inside a group
-/// that's running through the html-cap path.
-export async function layersSetEffects(layerId: string, effects: Effect[]): Promise<void> {
-  await invoke<null>("layers_set_effects", { layerId, effects });
-}
+// groupsSetEffects / layersSetEffects deleted in P12-a — the Pixi
+// renderer doesn't read effects in v1, so the mutation surface for
+// them is gone. The `effects: Effect[]` field on `LayerSummary` /
+// `GroupSummary` (above) stays alive until P12-b sweeps the IR visual
+// half; legacy DOM preview consumers continue to read it (always
+// empty now since nothing can write).
 
 export async function groupsDissolve(groupId: string): Promise<void> {
   return invoke<void>("groups_dissolve", { groupId });

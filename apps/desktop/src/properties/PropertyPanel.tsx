@@ -1,18 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  groupsSetEffects,
-  layersSetEffects,
   updateLayer,
   updateLayerParams,
-  type Effect,
   type GroupSummary,
   type LayerParamsPatch,
   type LayerSummary,
   type Rgba,
   type TrackSummary,
 } from "../ipc";
-import { EffectsSection } from "./EffectsSection";
+// EffectsSection + effects-related ipc calls removed in P12-a.
 
 interface Props {
   tracks: TrackSummary[];
@@ -44,7 +41,10 @@ export function PropertyPanel({
     );
   }
 
-  const group = groups.find((g) => g.layer_ids.includes(layer.id));
+  // `groups` is unused after the EffectsSection removal but kept in the
+  // prop signature to avoid churn at the call site. P12-b's IR cleanup
+  // can reconsider once `layer.effects` / `group.effects` are gone.
+  void groups;
 
   return (
     <aside className="property-panel">
@@ -55,29 +55,6 @@ export function PropertyPanel({
       <EnvelopeFields layer={layer} onMutated={onMutated} />
       <hr />
       <KindFields layer={layer} onMutated={onMutated} />
-      <EffectsSection
-        heading={t("property_panel.layer_effects_heading", {
-          defaultValue: "Layer effects",
-        })}
-        chain={layer.effects ?? []}
-        onCommit={async (chain: Effect[]) => {
-          await layersSetEffects(layer.id, chain);
-          await onMutated();
-        }}
-      />
-      {group && (
-        <EffectsSection
-          heading={t("property_panel.group_effects_heading", {
-            label: group.label ?? `group ${group.id.slice(0, 6)}`,
-            defaultValue: "Group effects ({{label}})",
-          })}
-          chain={group.effects}
-          onCommit={async (chain: Effect[]) => {
-            await groupsSetEffects(group.id, chain);
-            await onMutated();
-          }}
-        />
-      )}
     </aside>
   );
 }
