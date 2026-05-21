@@ -112,19 +112,10 @@ pub fn run() {
             commands::import_media,
             commands::import_cancel,
             commands::import_queue_list,
-            commands::compile_project,
-            commands::export_project,
             commands::export_project_audio_only,
             commands::mux_export,
             commands::extract_video_frame,
             commands::compare_fixture_frame,
-            commands::export_to_temp_preview,
-            commands::cleanup_temp_preview,
-            commands::export_queue_enqueue,
-            commands::export_queue_list,
-            commands::export_queue_remove,
-            commands::export_queue_clear_finished,
-            commands::hw_encoder_probe,
             commands::settings_get_api_key_status,
             commands::settings_set_api_key,
             commands::settings_clear_api_key,
@@ -237,38 +228,19 @@ pub fn run() {
                 );
             app.manage(autosave);
 
-            // Preview pipeline moved to the DOM compositor on the React
-            // side (`docs/preview-dom.md`). No Rust-side preview renderer
-            // exists — ffmpeg runs only at import (proxies) and export
-            // (Render & Play + `export_project`).
+            // Pixi renderer owns preview + video export; Rust supplies the
+            // audio-only m4a + stream-copy mux, both invoked synchronously
+            // from the JS orchestrator (no events, no queue, no preset
+            // selector).
             let cache_for_mcp = cache_layout.clone();
             app.manage(cache_layout);
 
-            // Render queue. Single-task FIFO; emits `export:queue` events on
-            // every state change. Lives for the app lifetime.
-            let export_queue = export::ExportQueue::new(app.handle().clone());
-            app.manage(export_queue);
-
-            // Import queue. Single-task FIFO, like `export_queue`. Pops a
-            // PendingImport, copies source → `<workspace>/Media/...`,
-            // dispatches an actor command to flip the MediaItem's
-            // `path_abs` + `path_rel`. Emits `import:queue` / `started` /
-            // `complete` / `error`. See workspace-redesign.md Q6.
+            // Import queue. Single-task FIFO. Pops a PendingImport, copies
+            // source → `<workspace>/Media/...`, dispatches an actor command
+            // to flip the MediaItem's `path_abs` + `path_rel`. Emits
+            // `import:queue` / `started` / `complete` / `error`.
             let import_queue = jobs::import::ImportQueue::new(app.handle().clone());
             app.manage(import_queue);
-
-            // HW encoder cache. Probes the host (NVENC/QSV/AMF/VideoToolbox/
-            // VAAPI) on first access, memoized for the process lifetime. We
-            // kick off a background probe at startup so the first export
-            // doesn't pay the latency.
-            let hw_cache = export::HwEncoderCache::new();
-            app.manage(hw_cache);
-            let hw_for_warmup = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                if let Some(c) = hw_for_warmup.try_state::<export::HwEncoderCache>() {
-                    let _ = c.probe().await;
-                }
-            });
 
             tauri::async_runtime::spawn(async {
                 match ffmpeg::bootstrap().await {

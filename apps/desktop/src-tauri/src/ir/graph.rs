@@ -28,7 +28,6 @@ pub struct IRGraph {
     pub inputs: Vec<InputSpec>,
     /// Nodes in topological order — each node references only earlier indices.
     pub nodes: Vec<IRNode>,
-    pub video_out: Option<NodeId>,
     pub audio_out: Option<NodeId>,
 }
 
@@ -38,7 +37,6 @@ impl IRGraph {
             target,
             inputs: Vec::new(),
             nodes: Vec::new(),
-            video_out: None,
             audio_out: None,
         }
     }

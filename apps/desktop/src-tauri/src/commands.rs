@@ -1498,14 +1498,6 @@ pub async fn view_state_set(
     crate::view_state::save(&ws, &state).map_err(|e| format!("{e:#}"))
 }
 
-#[derive(Serialize, Clone)]
-pub struct CompiledGraph {
-    pub inputs: Vec<String>,
-    pub filter_graph: String,
-    pub maps: Vec<String>,
-    pub node_count: usize,
-}
-
 #[tauri::command]
 pub async fn import_media(
     app: tauri::AppHandle,
@@ -1790,30 +1782,6 @@ pub async fn import_queue_list(
     import_queue: State<'_, crate::jobs::import::ImportQueue>,
 ) -> Result<Vec<crate::jobs::import::ImportEntry>, String> {
     Ok(import_queue.list())
-}
-
-#[tauri::command]
-pub async fn compile_project(
-    _app: tauri::AppHandle,
-    handle: State<'_, ProjectHandle>,
-    _cache: State<'_, crate::cache::CacheLayout>,
-) -> Result<CompiledGraph, String> {
-    let snap = handle.snapshot().await;
-    let target = ir::RenderTarget::full(
-        snap.composition.width,
-        snap.composition.height,
-        Rational::new(snap.composition.fps.num, snap.composition.fps.den),
-        snap.composition.sample_rate,
-        snap.composition.channels,
-    );
-    let graph = ir::lower(&snap, target).map_err(|e| e.to_string())?;
-    let plan = ir::emit_ffmpeg(&graph);
-    Ok(CompiledGraph {
-        inputs: plan.inputs.iter().map(|i| i.path.clone()).collect(),
-        filter_graph: plan.filter_graph,
-        maps: plan.maps,
-        node_count: graph.nodes.len(),
-    })
 }
 
 #[tauri::command]
@@ -2146,74 +2114,6 @@ pub async fn add_marker(
 // was the only consumer; users drop the clip on the timeline + see it
 // through the Pixi preview instead.
 
-/// Render the current project synchronously to a temp MP4 and return
-/// the absolute path. Used by the DOM preview's "Render & Play"
-/// escape hatch (`docs/preview-dom.md` Phase E) — the WYSIWYG
-/// verification path when CSS-rendered preview diverges from
-/// ffmpeg-rendered export. Silent: no `export:*` events; UI shows
-/// an indeterminate spinner while awaiting.
-///
-/// Pairs with `cleanup_temp_preview` for explicit teardown when the
-/// user dismisses the rendered playback.
-#[tauri::command]
-pub async fn export_to_temp_preview(
-    app: tauri::AppHandle,
-    handle: State<'_, ProjectHandle>,
-) -> Result<String, String> {
-    let snap = handle.snapshot().await;
-    let project = (*snap).clone();
-    let out = std::env::temp_dir()
-        .join(format!("weftcut-render-preview-{}.mp4", uuid::Uuid::now_v7().simple()));
-    let preset = export::ExportPreset::default();
-    export::run_render_silent(app, &project, &out, preset)
-        .await
-        .map_err(|e| format!("render: {e:#}"))?;
-    Ok(out.to_string_lossy().to_string())
-}
-
-/// Delete a temp render-preview file. Safety check: the path must
-/// live under `std::env::temp_dir()` and the filename must match
-/// the `weftcut-render-preview-*.mp4` prefix `export_to_temp_preview`
-/// emits — anything else is a no-op rather than an error so a stale
-/// UI ref doesn't poke holes elsewhere.
-#[tauri::command]
-pub async fn cleanup_temp_preview(path: String) -> Result<(), String> {
-    let p = PathBuf::from(path);
-    let temp = std::env::temp_dir();
-    if !p.starts_with(&temp) {
-        return Ok(());
-    }
-    let name = match p.file_name().and_then(|n| n.to_str()) {
-        Some(n) => n,
-        None => return Ok(()),
-    };
-    if !name.starts_with("weftcut-render-preview-") || !name.ends_with(".mp4") {
-        return Ok(());
-    }
-    let _ = std::fs::remove_file(&p);
-    Ok(())
-}
-
-/// Kicks off a render in the background. Progress / completion / failure are
-/// surfaced via Tauri events (`export:progress`, `export:complete`,
-/// `export:error`) so the UI can subscribe instead of awaiting.
-#[tauri::command]
-pub async fn export_project(
-    app: tauri::AppHandle,
-    handle: State<'_, ProjectHandle>,
-    output_path: String,
-    preset: Option<export::ExportPreset>,
-) -> Result<(), String> {
-    let snap = handle.snapshot().await;
-    let path = PathBuf::from(output_path);
-    let project = (*snap).clone();
-    let preset = preset.unwrap_or_default();
-    tauri::async_runtime::spawn(async move {
-        export::export_with_preset_logged(app, &project, path, preset).await;
-    });
-    Ok(())
-}
-
 /// Audio-only export. AWAITABLE (not fire-and-forget) — App.tsx
 /// awaits this between the Pixi Worker video export and the final
 /// stream-copy mux. Emits no `export:*` events so the ExportPanel
@@ -2289,52 +2189,6 @@ pub async fn compare_fixture_frame(
     })
     .await
     .map_err(|e| format!("ssim join: {e}"))?
-}
-
-#[tauri::command]
-pub async fn export_queue_enqueue(
-    queue: State<'_, export::ExportQueue>,
-    handle: State<'_, ProjectHandle>,
-    output_path: String,
-    preset: Option<export::ExportPreset>,
-) -> Result<String, String> {
-    let snap = handle.snapshot().await;
-    let preset = preset.unwrap_or_default();
-    let id = queue
-        .enqueue(snap, output_path, preset)
-        .await;
-    Ok(id.to_string())
-}
-
-#[tauri::command]
-pub async fn export_queue_list(
-    queue: State<'_, export::ExportQueue>,
-) -> Result<Vec<export::ExportQueueItem>, String> {
-    Ok(queue.list().await)
-}
-
-#[tauri::command]
-pub async fn export_queue_remove(
-    queue: State<'_, export::ExportQueue>,
-    id: String,
-) -> Result<(), String> {
-    let id = Uuid::parse_str(&id).map_err(|e| format!("id: {e}"))?;
-    queue.remove(id).await
-}
-
-#[tauri::command]
-pub async fn export_queue_clear_finished(
-    queue: State<'_, export::ExportQueue>,
-) -> Result<(), String> {
-    queue.clear_finished().await;
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn hw_encoder_probe(
-    cache: State<'_, export::HwEncoderCache>,
-) -> Result<export::HwEncoderProbe, String> {
-    Ok((*cache.probe().await).clone())
 }
 
 #[tauri::command]

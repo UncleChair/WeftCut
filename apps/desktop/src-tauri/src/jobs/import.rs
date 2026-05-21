@@ -19,8 +19,8 @@
 //!      - `import:complete`→ media_id + path_rel, fires on success
 //!      - `import:error`   → media_id + detail, fires on failure
 //!
-//! Single-worker FIFO matches `ExportQueue` — disk write bandwidth is the
-//! bottleneck, parallel workers thrash. Cancellation between jobs is
+//! Single-worker FIFO — disk write bandwidth is the bottleneck, parallel
+//! workers thrash. Cancellation between jobs is
 //! supported (a pending job that hasn't started yet gets dropped and its
 //! MediaItem removed); cancellation **mid-copy** is best-effort via a
 //! shared atomic flag the chunked copy checks per buffer.
