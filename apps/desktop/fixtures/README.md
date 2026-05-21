@@ -14,14 +14,18 @@ intentionally re-baseline with a justification in the commit message.
 
 ## Status
 
-**P10a + P10b shipped:** format, JS-side runner, `extract_video_frame`
-Tauri command, and SSIM compare (`compare_fixture_frame` + `checkFixture`
-+ `checkFixtureSuite`). Local re-baselining and ad-hoc regression
-checks work end-to-end from devtools.
+**Shipped:**
+- **P10a** — format, JS-side runner, `extract_video_frame` command,
+  001_color fixture.
+- **P10b** — SSIM compare (`compare_fixture_frame` +
+  `checkFixture` + `checkFixtureSuite`), 002_color_stack fixture.
+- **P10c-1** — Rust CLI `fixture_compare` + vitest browser-mode test
+  driving the render half. `npm run fixtures:check` runs the whole
+  suite from the command line, no webview needed.
 
-**Still owed (P10c):** a headless-Tauri binary that drives the same
-paths from CI without a webview, plus tolerance tuning + the broader
-fixture set.
+**Still owed (P10c-2):** GitHub Actions workflow + tolerance tuning
+informed by actual CI data + more fixtures (Text, ImageOverlay, etc.
+once the binary-fixture design is settled).
 
 ## On-disk layout
 
@@ -158,12 +162,67 @@ which raises:
 These trade-offs deserve their own decision before the first binary
 fixture lands — flagged here so a future PR doesn't quietly ship one.
 
-## CI gate (P10c)
+## CI-style gate (`npm run fixtures:check`)
 
-A headless Tauri binary will drive `runFixture` + `checkFixture` from
-the command line and exit non-zero on any regression. Until that
-lands, the gate is "developers run `__weftcut_check_fixture_suite`
-before pushing changes to `render/**`" + reviewers' eyes on screenshots.
+The end-to-end flow that doesn't need a webview or DevTools:
+
+```
+# One-time, per machine (Playwright pulls Chromium ~150 MB):
+npm install
+npx playwright install chromium
+
+# Every check:
+cd apps/desktop
+npm run fixtures:check
+```
+
+Under the hood the script:
+
+1. Runs `npm run fixtures:render` — a vitest browser-mode test
+   (`*.browser.test.ts`) drives the export Worker for each fixture
+   and writes the resulting MP4 to `apps/desktop/build/fixtures/<name>.mp4`
+   via a Node-side vitest command.
+2. For each fixture, invokes `cargo run --bin fixture_compare --
+   --fixture <root> --mp4 <build/fixtures/<name>.mp4>` — the Rust
+   binary extracts a PNG per `sample_times_us` via ffmpeg, SSIM-compares
+   against `expected/`, prints a JSON report, exits 0/1.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | All fixtures passed |
+| `1` | SSIM regression OR hard error (decode failure, manifest unreadable, etc.) |
+| `2` | Missing baselines — run `__weftcut_generate_baselines` to fill them in (or pass `--allow-missing-baseline` to ignore this class) |
+
+### Flags
+
+- `--skip-render` — assume `build/fixtures/*.mp4` already exist;
+  skip the vitest render step. Useful when iterating on the compare
+  half.
+- `--allow-missing-baseline` — treat fixtures whose baselines aren't
+  committed yet as passing. Default fails on them so a fixture
+  without baselines doesn't slip into CI as a silent no-op.
+
+### Why two halves
+
+Render needs a real browser (WebGL + WebCodecs + Worker +
+OffscreenCanvas). Compare is pure Rust. Splitting the pipeline at
+the MP4 boundary keeps the moving parts independently debuggable
+and lets CI cache the Playwright Chromium install across runs without
+also caching ffmpeg / image-compare state.
+
+### Per-fixture invocation
+
+For ad-hoc runs against one fixture without re-rendering the rest:
+
+```
+npm run fixtures:compare -- \
+  --fixture fixtures/001_color \
+  --mp4 build/fixtures/001_color.mp4
+```
+
+Same flags as the wrapper; same exit codes.
 
 ## What lives outside a fixture
 
