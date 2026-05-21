@@ -323,19 +323,24 @@ export class Compositor {
     const prevChildCount = this.stage.children.length;
     this.stage.removeChildren();
 
-    // First pass: ensure audio mixers for every audio-bearing layer
-    // (VideoClip + Audio). Skipped entirely in export mode — the
-    // Worker has no DOM `<audio>` element to drive, and audio
-    // export rides the existing Rust ffmpeg compositor.
+    // First pass: ensure audio mixers for every Audio layer. Skipped
+    // entirely in export mode — the Worker has no DOM `<audio>` element
+    // to drive, and audio export rides the existing Rust ffmpeg
+    // compositor.
+    //
+    // VideoClip layers are NOT eligible. Mirrors `ir/lower.rs`'s
+    // canonical export routing: only `LayerParams::Audio(_)` contributes
+    // to the IR's `audio_streams`; VideoClips are video-only. Import's
+    // `auto_pair_audio_on_import` (default-on) places a sibling Audio
+    // layer on the same media for the audio track. Treating the
+    // VideoClip as also audio-bearing here would play the same proxy
+    // through two `<audio>` elements — the audible doubling bug.
     if (this.audioHost !== null) {
       for (const track of this.projectSummary.tracks) {
         if (!track.enabled) continue;
         for (const layer of track.layers) {
           if (!layer.enabled) continue;
-          if (
-            layer.params.kind === "VideoClip" ||
-            layer.params.kind === "Audio"
-          ) {
+          if (layer.params.kind === "Audio") {
             const audio = this.ensureAudio(layer);
             if (audio) {
               audio.mixer.updateLayerParams(
@@ -742,15 +747,15 @@ export class Compositor {
 
   private ensureAudio(layer: LayerSummary): ActiveAudio | null {
     const kind = layer.params.kind;
-    if (kind !== "VideoClip" && kind !== "Audio") return null;
+    if (kind !== "Audio") return null;
     if (this.audioHost === null) return null;
     const existing = this.audios.get(layer.id);
     if (existing) return existing;
     const mediaId = layer.params.media_id;
-    // For VideoClip we use the proxy MP4 (it contains audio
-    // alongside the H.264 video track). For Audio-only media the
-    // resolver falls back to the original file. Either way an
-    // `<audio>` element can play it.
+    // Audio-only media has no proxy; `proxyAssetUrl` falls back to the
+    // original file. AV-paired Audio layers reference the same media as
+    // a sibling VideoClip and use that media's proxy MP4, whose audio
+    // track an `<audio>` element decodes correctly.
     const url = this.proxyAssetUrl(mediaId);
     if (!url) {
       // eslint-disable-next-line no-console
