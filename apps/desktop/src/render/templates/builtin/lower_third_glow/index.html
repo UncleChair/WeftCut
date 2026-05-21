@@ -5,41 +5,14 @@
   <style>__STYLE__</style>
 </head>
 <body>
-  <div id="lt" class="lt">
-    <div id="title" class="title"></div>
-    <div id="subtitle" class="subtitle"></div>
+  <!-- Glow lower third. Inline `opacity: 1` overrides the CSS's 0 (the JS
+       fade-in pre-chunk-2 is gone). `--accent` drives the border + glow
+       color via the CSS rules; `box-shadow` is set directly here at the
+       baseline pulse value (the sine-wave pulse animation is gone too). -->
+  <div id="lt" class="lt"
+       style="opacity: 1; --accent: {{color}}; box-shadow: 0 0 24px {{color}};">
+    <div id="title" class="title">{{title}}</div>
+    <div id="subtitle" class="subtitle">{{subtitle}}</div>
   </div>
-  <script>
-    // The host injects window.__props__ after navigation but before the
-    // first __seek call. Poll until ready, then apply once and let __seek
-    // drive the fade-in + soft pulse on the outer glow.
-    async function start() {
-      while (!window.__props__) {
-        await new Promise((r) => setTimeout(r, 5));
-      }
-      const p = window.__props__;
-      const accent = p.color || '#00aaff';
-      document.getElementById('title').textContent = p.title || '';
-      document.getElementById('subtitle').textContent = p.subtitle || '';
-      const lt = document.getElementById('lt');
-      lt.style.setProperty('--accent', accent);
-
-      const FADE_DURATION = 0.4; // seconds
-      const PULSE_BASE = 24;     // px box-shadow blur baseline
-      const PULSE_AMP = 8;       // ± px on top of baseline
-      function tick() {
-        const t = performance.now() / 1000;
-        const fade = Math.max(0, Math.min(1, t / FADE_DURATION));
-        lt.style.opacity = fade.toFixed(3);
-        const pulse = PULSE_BASE + Math.sin(t * Math.PI) * PULSE_AMP;
-        lt.style.boxShadow = `0 0 ${pulse.toFixed(1)}px ${accent}`;
-        requestAnimationFrame(tick);
-      }
-      tick();
-
-      window.__ready__ = Promise.resolve();
-    }
-    start();
-  </script>
 </body>
 </html>
