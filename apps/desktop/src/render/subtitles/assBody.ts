@@ -1,11 +1,10 @@
 // Subtitle body normalization for JASSUB.
 //
 // libass (and JASSUB) only accepts ASS bodies. Inline SRT bodies — what
-// Whisper auto-caption emits — go through `srtToAss` first. File-backed
-// (`Media`) subtitles are deferred: chunk 2 will read them via a Tauri
-// asset URL and dispatch the same way.
-//
-// Plan: docs/pixi-renderer-plan.md (P6 chunk 1)
+// Whisper auto-caption emits — and `.srt`-on-disk go through `srtToAss`
+// first. `.ass` / `.ssa` bodies pass through verbatim. File-backed
+// reads happen in `SubtitlesSprite`; this module is pure so it stays
+// testable without DOM.
 
 import type { SubtitlesView } from "../../ipc";
 
@@ -68,6 +67,41 @@ export function subtitlesViewToAssBody(view: SubtitlesView): string | null {
     case "InlineSrt":
       return srtToAss(view.source_value);
     case "Media":
+      // Media bodies need an async file read; SubtitlesSprite handles
+      // that and feeds the result through `subtitleBodyFromFile`.
       return null;
   }
+}
+
+/// Dispatch a fetched subtitle file's contents to the ASS body the
+/// JASSUB binding wants. `.ass` / `.ssa` pass through verbatim; `.srt`
+/// is converted via `srtToAss`. Anything else (`.vtt`, unknown
+/// extensions) returns null — the caller surfaces the skip.
+///
+/// Pure so chunk 2's file-fetch path stays testable in Node without
+/// real assets. The caller picks the path off `MediaItem.path`.
+export function subtitleBodyFromFile(
+  path: string,
+  content: string,
+): string | null {
+  const ext = extensionOf(path);
+  switch (ext) {
+    case "ass":
+    case "ssa":
+      return content;
+    case "srt":
+      return srtToAss(content);
+    default:
+      return null;
+  }
+}
+
+function extensionOf(path: string): string {
+  // Strip query / fragment defensively (asset URLs in Tauri may carry
+  // a port-token query string), then take the last `.`-tail and
+  // normalize to lowercase.
+  const cleaned = path.replace(/[?#].*$/, "");
+  const idx = cleaned.lastIndexOf(".");
+  if (idx < 0) return "";
+  return cleaned.slice(idx + 1).toLowerCase();
 }

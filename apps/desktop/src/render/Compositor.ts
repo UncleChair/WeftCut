@@ -721,6 +721,13 @@ export class Compositor {
       width: this.compositionWidth,
       height: this.compositionHeight,
       host: this.audioHost,
+      resolveMedia: (mediaId) => {
+        const media = this.mediaById(mediaId);
+        if (!media) return null;
+        const url = this.originalAssetUrl(mediaId);
+        if (!url) return null;
+        return { path: media.path, assetUrl: url };
+      },
     });
     const subs: ActiveSubtitles = { layerId: layer.id, sprite };
     this.subtitles.set(layer.id, subs);
