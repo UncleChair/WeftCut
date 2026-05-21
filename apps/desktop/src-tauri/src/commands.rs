@@ -2415,158 +2415,39 @@ pub async fn mux_export(
 ///
 /// P10a fixture-runner support. The JS-side `runFixture` produces an MP4
 /// in memory via the export Worker, then asks Rust to fish out specific
-/// frames for baseline generation / DSSIM compare. The JS side can't
-/// shell out to ffmpeg, so the bytes round-trip here.
-///
-/// Implementation: writes the input bytes to a temp file (ffmpeg seeks
-/// faster on a real file than on stdin for non-fragmented MP4), runs
-/// `ffmpeg -ss <t> -i in.mp4 -frames:v 1 -f image2 -c:v png out.png`,
-/// reads out.png and returns its bytes. Both temps are dropped on exit.
-///
-/// `-ss` is placed BEFORE `-i` for the fast (keyframe-bounded) seek; for
-/// 1 s-GOP exports that's accurate enough. Tests / fixtures pick sample
-/// times near keyframe boundaries to avoid GOP-walk drift.
+/// frames for baseline generation / SSIM compare. The JS side can't
+/// shell out to ffmpeg, so the bytes round-trip here. Delegates to
+/// `crate::fixtures::extract_frame_from_bytes` so the `fixture_compare`
+/// CLI (P10c) and this command share one ffmpeg invocation.
 #[tauri::command]
 pub async fn extract_video_frame(
     mp4_bytes: Vec<u8>,
     t_us: i64,
 ) -> Result<Vec<u8>, String> {
-    use ffmpeg_sidecar::paths::ffmpeg_path;
-    use std::process::Stdio;
-    use tokio::process::Command;
-
-    if t_us < 0 {
-        return Err("t_us must be >= 0".into());
-    }
-    if mp4_bytes.is_empty() {
-        return Err("mp4_bytes is empty".into());
-    }
-
-    let mp4_temp = tempfile::Builder::new()
-        .prefix("weftcut-fixture-")
-        .suffix(".mp4")
-        .tempfile()
-        .map_err(|e| format!("create mp4 tempfile: {e}"))?;
-    let mp4_path = mp4_temp.path().to_path_buf();
-    let png_temp = tempfile::Builder::new()
-        .prefix("weftcut-fixture-")
-        .suffix(".png")
-        .tempfile()
-        .map_err(|e| format!("create png tempfile: {e}"))?;
-    let png_path = png_temp.path().to_path_buf();
-
-    tokio::fs::write(&mp4_path, &mp4_bytes)
-        .await
-        .map_err(|e| format!("write mp4 tempfile: {e}"))?;
-
-    let t_seconds = (t_us as f64) / 1_000_000.0;
-    let output = Command::new(ffmpeg_path())
-        .args([
-            "-y",
-            "-hide_banner",
-            "-nostats",
-            "-loglevel",
-            "error",
-            "-ss",
-            &format!("{t_seconds}"),
-            "-i",
-        ])
-        .arg(&mp4_path)
-        .args(["-frames:v", "1", "-update", "1", "-f", "image2", "-c:v", "png"])
-        .arg(&png_path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .output()
-        .await
-        .map_err(|e| format!("spawn ffmpeg: {e}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!(
-            "ffmpeg exited with {} extracting frame at {t_us}µs: {}",
-            output.status,
-            stderr.trim()
-        ));
-    }
-
-    let bytes = tokio::fs::read(&png_path)
-        .await
-        .map_err(|e| format!("read extracted png: {e}"))?;
-    if bytes.is_empty() {
-        return Err(format!(
-            "ffmpeg wrote zero bytes for frame at {t_us}µs (silent failure)"
-        ));
-    }
-    Ok(bytes)
+    tokio::task::spawn_blocking(move || {
+        crate::fixtures::extract_frame_from_bytes(&mp4_bytes, t_us)
+            .map_err(|e| format!("{e:#}"))
+    })
+    .await
+    .map_err(|e| format!("extract join: {e}"))?
 }
 
 /// SSIM-compare an actual PNG (in-memory, fresh from `extract_video_frame`)
 /// against a committed baseline PNG on disk. Returns a similarity score
-/// in [0, 1] where 1.0 means pixel-identical. The renderer fixture suite
-/// passes a sample when the score is >= a per-suite threshold (see
-/// `FIXTURE_SSIM_PASS_THRESHOLD` in `runFixture.ts`).
-///
-/// Implementation: decodes both PNGs with `image`, asserts same dims,
-/// runs `image_compare::rgb_similarity_structure` with `MSSIMSimple`.
-/// MIT-licensed throughout (dssim-core is AGPL-3.0 and unsuitable for
-/// this app's eventual ship target). Result is a single scalar score
-/// — caller can format / threshold however.
+/// in [0, 1] where 1.0 means pixel-identical. Delegates to
+/// `crate::fixtures::compare_ssim_pngs` so the algorithm + threshold
+/// match what `fixture_compare` (P10c) uses.
 #[tauri::command]
 pub async fn compare_fixture_frame(
     actual_png_bytes: Vec<u8>,
     expected_png_path: String,
 ) -> Result<f64, String> {
-    use image::ImageReader;
-    use image_compare::Algorithm;
-    use std::io::Cursor;
-
-    if actual_png_bytes.is_empty() {
-        return Err("actual_png_bytes is empty".into());
-    }
     let expected_bytes = tokio::fs::read(&expected_png_path)
         .await
         .map_err(|e| format!("read expected png {expected_png_path}: {e}"))?;
-    if expected_bytes.is_empty() {
-        return Err(format!(
-            "expected png is empty: {expected_png_path}"
-        ));
-    }
-
-    // Decode both PNGs to RGB8. We do this in a blocking task because
-    // SSIM is CPU-heavy enough to want to keep off the async runtime
-    // worker pool.
-    tokio::task::spawn_blocking(move || -> Result<f64, String> {
-        let actual = ImageReader::new(Cursor::new(actual_png_bytes))
-            .with_guessed_format()
-            .map_err(|e| format!("guess actual format: {e}"))?
-            .decode()
-            .map_err(|e| format!("decode actual png: {e}"))?
-            .to_rgb8();
-        let expected = ImageReader::new(Cursor::new(expected_bytes))
-            .with_guessed_format()
-            .map_err(|e| format!("guess expected format: {e}"))?
-            .decode()
-            .map_err(|e| format!("decode expected png: {e}"))?
-            .to_rgb8();
-
-        if actual.dimensions() != expected.dimensions() {
-            return Err(format!(
-                "dimensions disagree: actual {}×{} vs expected {}×{}",
-                actual.width(),
-                actual.height(),
-                expected.width(),
-                expected.height(),
-            ));
-        }
-
-        let result = image_compare::rgb_similarity_structure(
-            &Algorithm::MSSIMSimple,
-            &actual,
-            &expected,
-        )
-        .map_err(|e| format!("ssim compare failed: {e}"))?;
-        Ok(result.score)
+    tokio::task::spawn_blocking(move || {
+        crate::fixtures::compare_ssim_pngs(&actual_png_bytes, &expected_bytes)
+            .map_err(|e| format!("{e:#}"))
     })
     .await
     .map_err(|e| format!("ssim join: {e}"))?

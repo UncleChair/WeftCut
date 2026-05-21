@@ -20,6 +20,6 @@
     "exactOptionalPropertyTypes": true,
     "noUncheckedIndexedAccess": true
   },
-  "include": ["src"],
+  "include": ["src", "fixtures/**/*.json"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

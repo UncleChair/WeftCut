@@ -14,6 +14,7 @@ mod cloud;
 mod commands;
 mod export;
 mod ffmpeg;
+pub mod fixtures;
 mod io;
 mod ir;
 mod jobs;
