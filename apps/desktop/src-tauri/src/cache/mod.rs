@@ -151,26 +151,15 @@ impl CacheLayout {
         self.voiceover_dir().join(format!("{hash}.{ext}"))
     }
 
-    /// Per-render PNG sequence directory. Historically content-addressed
-    /// by blake3 of the canonical render inputs for the offscreen-webview
-    /// rasterizer; the rasterizer was deleted with P12-c but the on-disk
-    /// directory survives in existing workspaces.
-    pub fn raster_root(&self) -> PathBuf {
-        self.current_root().join("raster")
-    }
-
-    pub fn raster_dir(&self, key: &str) -> PathBuf {
-        self.raster_root().join(key)
-    }
-
     /// Create the top-level cache directory tree. Idempotent. Called
     /// implicitly by `set_workspace`; the boot fallback also calls it once.
     ///
-    /// `Cache/preview/` is intentionally NOT created — the cached + segmented
-    /// preview paths were deleted in `docs/preview-dom.md` Phase F. Existing
-    /// workspaces may have an orphan `Cache/preview/` tree from a prior
-    /// version; it's left in place rather than auto-deleted (call out in the
-    /// design doc) so a user reverting to an older build keeps their cache.
+    /// `Cache/preview/` and `Cache/raster/` are intentionally NOT created —
+    /// the cached + segmented preview paths and the offscreen-webview
+    /// rasterizer were deleted in preview-dom Phase F and pixi-renderer
+    /// P12-c respectively. Existing workspaces may have orphan trees from
+    /// a prior version; they're left in place rather than auto-deleted so
+    /// a user reverting to an older build keeps their cache.
     pub fn ensure_dirs(&self) -> Result<()> {
         let root = self.current_root();
         for p in [
@@ -182,7 +171,6 @@ impl CacheLayout {
             self.inline_subs_dir(),
             self.transcribe_audio_dir(),
             self.voiceover_dir(),
-            self.raster_root(),
         ] {
             fs::create_dir_all(&p)
                 .with_context(|| format!("create cache dir {}", p.display()))?;
