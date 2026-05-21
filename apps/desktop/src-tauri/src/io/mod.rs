@@ -61,36 +61,15 @@ pub async fn load_from_dir(dir: &Path) -> Result<Project> {
     .context("load_from_dir join")??;
 
     let mut project: Project = serde_json::from_str(&json).context("deserialize project")?;
-    if project.schema_version > SCHEMA_VERSION {
-        anyhow::bail!(
-            "project was saved with schema_version {} but this build supports up to {}",
-            project.schema_version,
-            SCHEMA_VERSION
-        );
-    }
 
-    // Auto-migrate older schemas. Per workspace-redesign Q9 we write a
-    // pre-migration backup first, then run the migration to bring media
-    // into `<workspace>/Media/` + populate `path_rel`. If migration fails
-    // partway, the backup file is the recovery anchor.
-    if project.schema_version < SCHEMA_VERSION {
-        let report = migrate::run(dir, &mut project)
-            .await
-            .with_context(|| format!("migrate {}", dir.display()))?;
-        info!(
-            "migrated {} from schema {} to {}: {} migrated, {} missing, {} reused",
-            dir.display(),
-            report.from_version,
-            report.to_version,
-            report.migrated,
-            report.missing_sources,
-            report.reused_existing,
-        );
-        // Persist the migrated project state so subsequent loads skip
-        // the migration path (and the new path_abs / path_rel pairs are
-        // canonical on disk).
-        save_to_dir(&project, dir).await.context("re-save after migration")?;
-    }
+    // P11 cut-over: only `SCHEMA_VERSION` projects load. Pre-release,
+    // so we don't carry forward older `.vproj` folders — `migrate::run`
+    // either passes through silently or returns a guidance error the
+    // shell surfaces to the user. Higher versions also error (this
+    // build doesn't know how to read them).
+    migrate::run(dir, &project)
+        .await
+        .with_context(|| format!("load {}", dir.display()))?;
 
     // Reconcile media `path_abs` against the workspace location. The
     // serialized `path_abs` is whatever was correct at save time; if the
@@ -292,7 +271,9 @@ mod tests {
         save_to_dir(&p, &vproj).await.unwrap();
 
         let err = load_from_dir(&vproj).await.expect_err("future schema");
-        assert!(format!("{err:#}").contains("schema_version"));
+        // migrate::run's "newer than this build" guidance surfaces here
+        // because load_from_dir delegates the version gate to it.
+        assert!(format!("{err:#}").contains("newer than this build"));
     }
 
     /// `docs/preview-scrub.md` S.2 — proxies whose recorded

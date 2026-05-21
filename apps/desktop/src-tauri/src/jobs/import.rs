@@ -395,8 +395,9 @@ impl ImportQueue {
 
 /// Pick a destination filename in `<workspace>/Media/`. Prefers the source
 /// basename; if that name is already taken on disk, prefix with the first
-/// 8 hex chars of the source's blake3 hash to disambiguate. Mirrors
-/// `io::migrate::pick_dest_filename` — eventual factor-out is fine.
+/// 8 hex chars of the source's blake3 hash to disambiguate. (The companion
+/// helper in `io::migrate` was deleted when migration shrank to a
+/// version-gate; this one is the only collision-resolver left in the tree.)
 fn pick_dest_filename(media_dir: &Path, source: &Path, hash_hint: Option<&str>) -> PathBuf {
     let base = source
         .file_name()

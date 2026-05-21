@@ -40,7 +40,13 @@ use super::transition::Transition;
 //      with `Animated<f64>` keyframe tracks. `render_mode` will be
 //      dropped in step 3 of the redesign; the field stays present in
 //      v7 for additive landing and is removed in v8.
-pub const SCHEMA_VERSION: u32 = 7;
+// v8 — pixi-renderer cut-over (P11). The visual half of the IR / effects
+//      surface is gone; `layer.effects` and `group.effects` are no
+//      longer load-bearing on the renderer (P12 deletes the fields).
+//      Pre-release, so we do NOT migrate v1–v7 forward: `io::load_from_dir`
+//      rejects anything below `SCHEMA_VERSION` with a clear error. Old
+//      `.vproj` folders need to be re-created.
+pub const SCHEMA_VERSION: u32 = 8;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Project {
