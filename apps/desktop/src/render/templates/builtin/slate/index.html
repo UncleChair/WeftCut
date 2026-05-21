@@ -5,6 +5,12 @@
   <style>__STYLE__</style>
 </head>
 <body>
+  <!-- Production slate. The clapper stripes are static; pre-chunk-2 the JS
+       faded the white clap-flash overlay out over 0.25s. Without script
+       execution the raster shows the clean settled board — the flash
+       overlay's CSS already starts at `opacity: 0`, which is the right
+       final state. Project / scene / take / camera / director / date come
+       in as direct text placeholders. -->
   <div class="bg"></div>
   <div class="frame">
     <div class="clapper">
@@ -15,47 +21,16 @@
       <div class="stripe" style="background: #fff"></div>
       <div class="stripe" style="background: #111"></div>
     </div>
-    <div id="project" class="project">Project</div>
+    <div id="project" class="project">{{project}}</div>
     <div class="subhead">Production Slate</div>
     <div class="grid">
-      <div class="cell"><span class="key">Scene</span><span id="scene" class="value"></span></div>
-      <div class="cell"><span class="key">Take</span><span id="take" class="value"></span></div>
-      <div class="cell"><span class="key">Camera</span><span id="camera" class="value"></span></div>
-      <div class="cell"><span class="key">Director</span><span id="director" class="value"></span></div>
-      <div class="cell"><span class="key">Date</span><span id="date" class="value"></span></div>
+      <div class="cell"><span class="key">Scene</span><span id="scene" class="value">{{scene}}</span></div>
+      <div class="cell"><span class="key">Take</span><span id="take" class="value">{{take}}</span></div>
+      <div class="cell"><span class="key">Camera</span><span id="camera" class="value">{{camera}}</span></div>
+      <div class="cell"><span class="key">Director</span><span id="director" class="value">{{director}}</span></div>
+      <div class="cell"><span class="key">Date</span><span id="date" class="value">{{date}}</span></div>
     </div>
   </div>
   <div id="flash" class="flash"></div>
-  <script>
-    // Production slate. The clapper stripes are static; the white-flash
-    // overlay simulates the clap at t=0 and fades out over the first ~0.25s
-    // so a 30fps render captures the flash on frame 0 and the clean board
-    // from frame ~8 onward.
-    async function start() {
-      while (!window.__props__) {
-        await new Promise((r) => setTimeout(r, 5));
-      }
-      const p = window.__props__;
-      document.getElementById('project').textContent = p.project || '';
-      document.getElementById('scene').textContent = p.scene || '';
-      document.getElementById('take').textContent = p.take || '';
-      document.getElementById('camera').textContent = p.camera || '';
-      document.getElementById('director').textContent = p.director || '';
-      document.getElementById('date').textContent = p.date || '';
-      const flash = document.getElementById('flash');
-
-      const FLASH_DURATION = 0.25;
-      function tick() {
-        const t = performance.now() / 1000;
-        const u = Math.max(0, Math.min(1, t / FLASH_DURATION));
-        flash.style.opacity = (1 - u).toFixed(3);
-        requestAnimationFrame(tick);
-      }
-      tick();
-
-      window.__ready__ = Promise.resolve();
-    }
-    start();
-  </script>
 </body>
 </html>

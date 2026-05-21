@@ -5,50 +5,16 @@
   <style>__STYLE__</style>
 </head>
 <body>
+  <!-- Countdown numeral. Pre-chunk-2 the JS ticked the digit down each
+       second; without script execution the raster shows the starting
+       value (`seconds` prop) as the static frame. The ring tracks the
+       accent color. Multi-frame raster (chunk 2e) would restore the
+       animation. -->
   <div class="wrap">
     <div class="disc">
-      <div id="ring" class="ring"></div>
-      <div id="num" class="num">5</div>
+      <div id="ring" class="ring" style="border-color: {{color}};"></div>
+      <div id="num" class="num">{{seconds}}</div>
     </div>
   </div>
-  <script>
-    // Tick the ceiling-rounded remaining seconds. e.g. seconds=5 produces
-    // 5 → 4 → 3 → 2 → 1 → GO!. Each digit pulses briefly on change for a
-    // mechanical-clock feel; ring color tracks the accent prop.
-    async function start() {
-      while (!window.__props__) {
-        await new Promise((r) => setTimeout(r, 5));
-      }
-      const p = window.__props__;
-      const total = Math.max(1, Math.min(60, p.seconds ?? 5));
-      const color = p.color || '#ff3366';
-      document.getElementById('ring').style.borderColor = color;
-
-      const num = document.getElementById('num');
-      function tick() {
-        const t = performance.now() / 1000;
-        const remaining = total - t;
-        if (remaining > 0) {
-          num.className = 'num';
-          num.textContent = Math.ceil(remaining).toString();
-          // Scale dips slightly across the sub-second so each capture in a
-          // multi-frame render shows distinct motion within the digit.
-          const frac = remaining - Math.floor(remaining);
-          const scale = 0.92 + 0.08 * frac; // 0.92 → 1.0 across the second
-          num.style.transform = `scale(${scale.toFixed(3)})`;
-        } else {
-          num.className = 'go';
-          num.textContent = 'GO!';
-          num.style.color = color;
-          num.style.transform = 'scale(1.0)';
-        }
-        requestAnimationFrame(tick);
-      }
-      tick();
-
-      window.__ready__ = Promise.resolve();
-    }
-    start();
-  </script>
 </body>
 </html>
