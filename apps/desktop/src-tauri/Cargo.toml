@@ -106,6 +106,16 @@ chromiumoxide = { version = "0.7", default-features = false, features = ["tokio-
 # disk so ffmpeg can seek into it. RAII drop on `NamedTempFile` cleans
 # both temps automatically. Already a dev-dep; promoted to production.
 tempfile = "3"
+# P10b: `commands::compare_fixture_frame` SSIM-compares an actual PNG
+# (from `extract_video_frame`) against a committed baseline. We use
+# `image-compare`'s `rgb_similarity_structure` with `MSSIMSimple` —
+# returns a score in [0, 1] where 1.0 is pixel-identical. License is
+# MIT (`dssim-core`'s AGPL-3.0 is incompatible with what this app may
+# eventually ship under, so we pick the friendlier alternative even
+# though the algorithm is the same family). `image` (MIT/Apache-2.0)
+# decodes the PNG bytes; both libs together add ~150 KB to the binary.
+image = { version = "0.25", default-features = false, features = ["png"] }
+image-compare = "0.5"
 
 [dev-dependencies]
 insta = { version = "1", features = ["json", "yaml"] }

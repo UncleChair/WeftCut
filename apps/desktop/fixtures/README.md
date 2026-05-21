@@ -14,11 +14,14 @@ intentionally re-baseline with a justification in the commit message.
 
 ## Status
 
-This is the **P10a foundation**. Format, JS-side runner, and the
-`extract_video_frame` Tauri command land here. The headless Tauri binary
-that drives this in CI (`bin/render_fixture.rs`) plus the DSSIM compare
-land in P10b. Baselines are generated locally for now via the dev-only
-"Generate Baselines" surface (see below).
+**P10a + P10b shipped:** format, JS-side runner, `extract_video_frame`
+Tauri command, and SSIM compare (`compare_fixture_frame` + `checkFixture`
++ `checkFixtureSuite`). Local re-baselining and ad-hoc regression
+checks work end-to-end from devtools.
+
+**Still owed (P10c):** a headless-Tauri binary that drives the same
+paths from CI without a webview, plus tolerance tuning + the broader
+fixture set.
 
 ## On-disk layout
 
@@ -82,25 +85,85 @@ For a 2-second layer, sampling at 0 and 1000000 (1s) catches the entry
 state + steady state. Add boundary samples (e.g., 1999999) only when the
 layer's behavior at end-of-life is what's being tested.
 
-## Generating baselines
+## Generating baselines (once per fixture)
 
-P10a ships the runner + Tauri command but not the auto-baseline UI. Until
-P10b lands, the loop is:
+There's no UI surface; baseline authoring runs from devtools. The
+loop:
 
-1. Open the desktop app in dev mode with the fixtures dev panel visible.
-2. Pick a fixture root.
-3. Click "Generate Baselines" — the runner runs the export, extracts
-   frames at each sample time, and writes them to `expected/`.
-4. Visually inspect the PNGs. If they look right, commit them. If not,
-   the renderer (or the fixture itself) needs fixing — do that first,
-   then re-generate.
-5. Commit `manifest.json` + `project.json` + `media/*` + `expected/*` in
-   one commit per fixture.
+1. Boot the desktop app with the pixi preview enabled — append
+   `?pixi=1` to the URL or set the localStorage flag in
+   `apps/desktop/src/render/pixiPreviewFlag.ts`.
+2. Open DevTools.
+3. Run:
+   ```js
+   await window.__weftcut_generate_baselines(
+     "C:/abs/path/to/apps/desktop/fixtures/001_color"
+   );
+   ```
+   The runner executes the export Worker end-to-end, extracts a PNG
+   at each `sample_times_us`, and writes them to `expected/`.
+4. Visually inspect the PNGs. If they look right, `git add fixtures/<NNN>_…/`
+   and commit. If not, fix the fixture or the renderer first, then
+   re-generate.
+5. Commit `manifest.json` + `project.json` + `media/*` + `expected/*`
+   in one commit per fixture so future contributors can reproduce the
+   baseline from source.
 
-After P10b lands, CI will compare freshly-rendered frames against the
-committed `expected/` PNGs via DSSIM. Above a tolerance threshold, the PR
-fails — either the change accidentally regressed pixels, or the change
-was intentional and the baselines need re-generating.
+## Checking against baselines (every render change)
+
+```js
+// Single fixture:
+await window.__weftcut_check_fixture(
+  "C:/abs/path/to/apps/desktop/fixtures/001_color"
+);
+// → { pass, samples: [{ tUs, score, pass, expectedPath, … }] }
+
+// Whole suite (every subdir of `fixtures/` with a manifest.json):
+await window.__weftcut_check_fixture_suite(
+  "C:/abs/path/to/apps/desktop/fixtures"
+);
+// → { pass, fixtures: [...] }
+```
+
+The compare is SSIM via the Rust `image-compare` crate
+(`MSSIMSimple`), scores in [0, 1] where 1.0 is pixel-identical. The
+pass threshold (`FIXTURE_SSIM_PASS_THRESHOLD` in `runFixture.ts`)
+defaults to 0.995 — tight enough to catch real regressions (off-by-one
+shifts, blend changes, dropped layers) but loose enough to absorb the
+~bit-level noise between the canvas-rendered MP4 and the committed PNG.
+
+A `missingBaseline: true` sample isn't a failure — it's a "run
+`__weftcut_generate_baselines` once" signal for a fixture whose
+`expected/` is empty.
+
+## Binary-bearing fixtures (deferred)
+
+Every shipped fixture today is purely synthetic — no `media/` files,
+no woff2 fonts, no PNGs. That keeps the suite cheap to clone and free
+of license tangles. Adding fixtures that exercise `VideoClip` /
+`ImageOverlay` / `Subtitles` requires real media files in the repo,
+which raises:
+
+- **Size budget.** A 2 s `testsrc` H.264 is ~50 KB. A 1080p clip is
+  larger. Crossing some threshold (a few MB per fixture? a total
+  cap?) turns clone time + binary-diff churn into a real cost.
+- **Reproducibility.** Anyone re-baselining locally needs the same
+  exact bytes as committed. `ffmpeg testsrc` is deterministic given
+  identical args, but encoder versions drift. Either we commit the
+  resulting MP4 (binary-diffable but stable) or commit a script
+  that regenerates it (small, but at the mercy of the host ffmpeg).
+- **License / attribution.** Sample footage from elsewhere brings
+  attribution obligations.
+
+These trade-offs deserve their own decision before the first binary
+fixture lands — flagged here so a future PR doesn't quietly ship one.
+
+## CI gate (P10c)
+
+A headless Tauri binary will drive `runFixture` + `checkFixture` from
+the command line and exit non-zero on any regression. Until that
+lands, the gate is "developers run `__weftcut_check_fixture_suite`
+before pushing changes to `render/**`" + reviewers' eyes on screenshots.
 
 ## What lives outside a fixture
 

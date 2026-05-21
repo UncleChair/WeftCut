@@ -2501,6 +2501,77 @@ pub async fn extract_video_frame(
     Ok(bytes)
 }
 
+/// SSIM-compare an actual PNG (in-memory, fresh from `extract_video_frame`)
+/// against a committed baseline PNG on disk. Returns a similarity score
+/// in [0, 1] where 1.0 means pixel-identical. The renderer fixture suite
+/// passes a sample when the score is >= a per-suite threshold (see
+/// `FIXTURE_SSIM_PASS_THRESHOLD` in `runFixture.ts`).
+///
+/// Implementation: decodes both PNGs with `image`, asserts same dims,
+/// runs `image_compare::rgb_similarity_structure` with `MSSIMSimple`.
+/// MIT-licensed throughout (dssim-core is AGPL-3.0 and unsuitable for
+/// this app's eventual ship target). Result is a single scalar score
+/// — caller can format / threshold however.
+#[tauri::command]
+pub async fn compare_fixture_frame(
+    actual_png_bytes: Vec<u8>,
+    expected_png_path: String,
+) -> Result<f64, String> {
+    use image::ImageReader;
+    use image_compare::Algorithm;
+    use std::io::Cursor;
+
+    if actual_png_bytes.is_empty() {
+        return Err("actual_png_bytes is empty".into());
+    }
+    let expected_bytes = tokio::fs::read(&expected_png_path)
+        .await
+        .map_err(|e| format!("read expected png {expected_png_path}: {e}"))?;
+    if expected_bytes.is_empty() {
+        return Err(format!(
+            "expected png is empty: {expected_png_path}"
+        ));
+    }
+
+    // Decode both PNGs to RGB8. We do this in a blocking task because
+    // SSIM is CPU-heavy enough to want to keep off the async runtime
+    // worker pool.
+    tokio::task::spawn_blocking(move || -> Result<f64, String> {
+        let actual = ImageReader::new(Cursor::new(actual_png_bytes))
+            .with_guessed_format()
+            .map_err(|e| format!("guess actual format: {e}"))?
+            .decode()
+            .map_err(|e| format!("decode actual png: {e}"))?
+            .to_rgb8();
+        let expected = ImageReader::new(Cursor::new(expected_bytes))
+            .with_guessed_format()
+            .map_err(|e| format!("guess expected format: {e}"))?
+            .decode()
+            .map_err(|e| format!("decode expected png: {e}"))?
+            .to_rgb8();
+
+        if actual.dimensions() != expected.dimensions() {
+            return Err(format!(
+                "dimensions disagree: actual {}×{} vs expected {}×{}",
+                actual.width(),
+                actual.height(),
+                expected.width(),
+                expected.height(),
+            ));
+        }
+
+        let result = image_compare::rgb_similarity_structure(
+            &Algorithm::MSSIMSimple,
+            &actual,
+            &expected,
+        )
+        .map_err(|e| format!("ssim compare failed: {e}"))?;
+        Ok(result.score)
+    })
+    .await
+    .map_err(|e| format!("ssim join: {e}"))?
+}
+
 #[tauri::command]
 pub async fn export_queue_enqueue(
     queue: State<'_, export::ExportQueue>,
