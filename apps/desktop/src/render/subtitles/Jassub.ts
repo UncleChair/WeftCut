@@ -13,9 +13,10 @@ import JASSUB from "jassub";
 
 // Vite resolves these to stable URLs at build time. JASSUB needs the
 // worker + WASM + default font reachable as same-origin assets.
-import jassubWorkerUrl from "jassub/dist/jassub-worker.js?url";
-import jassubWasmUrl from "jassub/dist/jassub-worker.wasm?url";
-import jassubModernWasmUrl from "jassub/dist/jassub-worker-modern.wasm?url";
+// Worker + WASM live under `dist/wasm/`; only the font is at `dist/`.
+import jassubWorkerUrl from "jassub/dist/wasm/jassub-worker.js?url";
+import jassubWasmUrl from "jassub/dist/wasm/jassub-worker.wasm?url";
+import jassubModernWasmUrl from "jassub/dist/wasm/jassub-worker-modern.wasm?url";
 import defaultFontUrl from "jassub/dist/default.woff2?url";
 
 export interface JassubBindingInit {
