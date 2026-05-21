@@ -1,8 +1,7 @@
 # Data Model
 
-> **Implementation status:** This is the design spec for the type tree, mutation surface, and on-disk format. Phase history lives in [`roadmap.md`](roadmap.md); the workspace-folder format + autosave model shipped 2026-05-13/14 — see [`workspace-redesign.md`](workspace-redesign.md) for the shipped-log + design rationale. At time of writing: layer / track / marker / media / composition / checkpoint / undo+redo / replace_state actor commands are all in; `update_marker`, `remove_marker`, `move_track`, `remove_media` shipped in Phase 4 Stage 1. Effect and keyframe commands remain intentionally absent until their IR lowering lands (see `project_phase4_scope.md`).
-
-The project state is the single source of truth. UI, IR compiler, MCP server, and persistence are all clients of it.
+The project state is the single source of truth. UI, audio IR
+compiler, MCP server, and persistence are all clients of it.
 
 ## Foundational decisions
 
@@ -16,30 +15,39 @@ Stable, opaque, time-sortable. Never use array indices for identity — they shi
 type MediaId = Uuid;
 type TrackId = Uuid;
 type LayerId = Uuid;
-type EffectId = Uuid;
 type KeyframeId = Uuid;
 type MarkerId = Uuid;
 type CheckpointId = Uuid;
 type OpId = Uuid;
+type GroupId = Uuid;
+type TransitionId = Uuid;
 ```
 
 ### History: persistent-snapshot tree
 Every mutation produces a new `Arc<Project>`. Old `Arc`s stay alive in the history ring. Built on `imbl` (`im::Vector`, `im::HashMap`) so memory cost per edit is `O(depth)`, not `O(state)`.
 
 ### Track-based timeline
-Layers belong to one track; tracks are typed (`Video` / `Audio` / `Subtitle`). **Layers in the same track must not overlap in time** — a hard invariant; agents that violate it get a structured error suggesting "create new track" or "trim existing."
+Layers belong to one track. Tracks are kind-agnostic — any layer kind
+can live on any track. **Layers of the same class (video-class vs.
+audio-class) must not overlap in time on the same track** — a hard
+invariant; agents that violate it get a structured error suggesting
+"create new track" or "trim existing." Cross-class overlap on one
+track (e.g. a Video and an Audio layer at the same time) is allowed
+and is the default for paired AV imports.
 
 ## Top-level shape
 
 ```rust
 struct Project {
-    schema_version: u32,                          // 1 today
+    schema_version: u32,
     project_id: Uuid,                             // stable across saves
     metadata: ProjectMetadata,
     composition: Composition,
     media_pool: imbl::HashMap<MediaId, MediaItem>,
     tracks: imbl::Vector<Track>,                  // 0 = bottom z-stack, last = top
     markers: imbl::Vector<Marker>,
+    transitions: imbl::Vector<Transition>,
+    groups: imbl::Vector<Group>,
     settings: ProjectSettings,                    // proxy res, autosave, etc.
 }
 ```
@@ -88,19 +96,28 @@ struct MediaItem {
 ```rust
 struct Track {
     id: TrackId,
-    kind: TrackKind,                  // Video | Audio | Subtitle
     label: Option<String>,
     enabled: bool,                    // hides/mutes whole track
     locked: bool,                     // UI prevents edits; MCP can override with explicit flag
     removable: bool,                  // false → delete_track refuses; default tracks set this
+    transient: bool,                  // auto-prune candidate when emptied
+    role: Option<TrackRole>,          // "a-roll" | "b-roll" | "audio-a" | "audio-b" | None
     height_px: u16,                   // UI display preference
-    layers: imbl::Vector<Layer>,      // sorted by t_start, never overlapping
+    layers: imbl::Vector<Layer>,      // sorted by t_start; same-class layers never overlap
 }
 ```
 
-A fresh project ships with two non-removable video tracks labelled **"A roll"** (index 0 = bottom of z-stack, video base) and **"B roll"** (index 1 = top of z-stack, overlays / supplementary footage). This matches the Premiere/Resolve/FCP convention where V1 is the base and V2+ are overlays. They give every project a guaranteed drop target so the UI doesn't have to handle "no tracks exist" as a separate case, and they give agents a stable "where do I put this?" answer when they don't have other context. Users can rename them; they cannot delete them. `delete_track` returns `CommandError::TrackNotRemovable` if invoked on one.
+Tracks are kind-agnostic — any `LayerParams` variant can live on any
+track. The dominant class on a track ("Video", "Audio", "Empty") is
+derived from the layers it actually contains.
 
-`removable` defaults to `true` via `#[serde(default)]` so `.vproj` files written before this field existed deserialize as fully-removable tracks.
+A fresh project ships with non-removable tracks tagged with A-roll /
+B-roll / audio roles. They give every project a guaranteed drop
+target so the UI doesn't have to handle "no tracks exist" as a
+separate case, and they give agents a stable "where do I put this?"
+answer when they don't have other context. Users can rename them;
+they cannot delete them. `delete_track` returns
+`CommandError::TrackNotRemovable` if invoked on one.
 
 ## `Layer`
 
@@ -115,7 +132,6 @@ struct Layer {
     enabled: bool,
     locked: bool,
     metadata: imbl::HashMap<String, Value>,   // extension point
-    effects: imbl::Vector<Effect>,
     params: LayerParams,
 }
 
@@ -227,19 +243,6 @@ Keyframe times are **relative to the layer's start**. Otherwise moving a layer b
 
 For MVP: only `opacity`, `position`, `scale`, `rotation`, `gain_db`, `pan` are animatable.
 
-## `Effect`
-
-```rust
-struct Effect {
-    id: EffectId,
-    kind: EffectKind,                 // ColorCorrect | Blur | ChromaKey | Speed | Vignette | ...
-    enabled: bool,
-    params: EffectParams,             // kind-specific; animatable values inside
-}
-```
-
-Effects live on the layer, not as separate timeline tracks. Order in `Layer.effects` = render order (first applied first). `[ColorCorrect, Blur]` produces different pixels than `[Blur, ColorCorrect]`.
-
 ## `Marker`
 
 ```rust
@@ -341,7 +344,7 @@ struct ChangeEvent {
 | No two layers in the same track overlap in `[t_start, t_end)` | reject (with structured options) |
 | `composition.duration_us ≥ max(layer.t_end_us)` | auto-extend |
 | `composition.fps.den > 0`, `width/height > 0` | reject |
-| All references (`MediaId`/`LayerId`/`EffectId`) resolve | reject |
+| All references (`MediaId`/`LayerId`/`GroupId`/`TransitionId`) resolve | reject |
 | Keyframe times in `[0, layer.duration]` | reject |
 | Template props match template manifest's `props_schema` | reject |
 | `Animated` with empty keyframes ⇔ `Static` | normalize |
@@ -365,10 +368,6 @@ Every command maps directly to one MCP tool with the same name. Patches are **st
 | `split_layer(id, at_t_us)` → `(LayerId, LayerId)` | |
 | `delete_layer(id)` | |
 | `duplicate_layer(id, t_offset_us)` → `LayerId` | |
-| `add_effect(layer_id, effect)` → `EffectId` | |
-| `update_effect(id, patch)` | |
-| `move_effect(id, new_index)` | reorder within layer |
-| `remove_effect(id)` | |
 | `add_keyframe(layer_id, prop_path, t_us, value)` → `KeyframeId` | `prop_path` e.g. `"opacity"` or `"transform.x"` |
 | `update_keyframe(id, t_us?, value?, interp?)` | |
 | `remove_keyframe(id)` | |
@@ -410,17 +409,24 @@ The workspace folder *is* the project. Opening a workspace folder = opening the 
 ## Versioning
 
 ```json
-{ "schema_version": 2, "project": { ... } }
+{ "schema_version": N, "project": { ... } }
 ```
 
-`SCHEMA_VERSION = 2` after the workspace redesign. v1 projects (absolute paths, no `Media/` folder) auto-migrate on open: pre-migration backup → copy each `MediaItem.path_abs` source into `<workspace>/Media/` (hash-prefix on filename collisions) → set `path_rel` → bump schema. Missing sources stay in legacy mode with a "missing media" badge on the pool item; the editor still loads.
+`SCHEMA_VERSION` is bumped whenever the on-disk shape changes.
+`io/migrate.rs` carries a per-version migration chain; on load the
+migration chain `vN → vN+1 → ... → current` runs and mutates the
+in-memory Project before save-back. Missing source files stay in
+legacy mode with a "missing media" badge on the pool item; the
+editor still loads.
 
 On load:
 1. Read `schema_version`.
-2. Run migration chain `1 → 2 → ... → current`. Each migration is in `io/migrate.rs` and mutates the in-memory Project before save-back.
+2. Run the migration chain.
 3. Refuse to load a `schema_version` newer than the binary supports.
 
-Be **strict** at deserialization (unknown fields error) — catches typos and forgotten migrations early.
+Be permissive at deserialization (unknown fields are ignored) so a
+shipped binary can load projects authored by a slightly newer binary
+without crashing — the unknown fields drop on next save.
 
 ## Pitfalls
 
@@ -430,31 +436,6 @@ Be **strict** at deserialization (unknown fields error) — catches typos and fo
 4. **`enabled: false` ≠ deleted.** Disabled layers still serialize, still occupy their time range for layout. Agents will toggle these for A/B variations.
 5. **Keyframes are relative.** Document this prominently — it's the kind of bug that bites once and forever.
 6. **Schema migrations under MCP.** Including `schema_version` in every resource response is the simplest defense; agents holding `project://` reads then adapt.
-7. **Rasterized template invalidation.** Patch `TemplateParams.props` field-wise rather than replacing whole `params` — otherwise rasterizer cache thrashes on every prop tweak.
-
-## Implementation footprint
-
-| Component | LoC est. |
-|---|---|
-| Type definitions + serde derives | ~1500 |
-| `Animated<T>` evaluator | ~200 |
-| Validation pass | ~400 |
-| Mutation actor + commands | ~800 |
-| History (snapshots + checkpoints) | ~300 |
-| Save/load + migrations | ~400 |
-| MCP resource serializers (`schemars` export) | ~200 |
-| Tauri command bridge (`ts-rs` types) | ~150 |
-| Tests (invariants, round-trip, migrations) | ~1500 |
-
-**Total: ~5K LoC of Rust** for the schema + actor + persistence layer. Build in this order:
-
-1. Type definitions + JSON round-trip.
-2. Single-writer actor with two commands (`add_layer`, `delete_layer`) — prove the model.
-3. History.
-4. Validation invariants.
-5. Full mutation surface.
-6. Save/load with `schema_version: 1`.
-7. MCP resource serialization + tool wiring.
-8. UI bridge.
-
-Don't parallelize stages 1–4 — they're load-bearing.
+7. **Template raster invalidation.** Patch `TemplateParams.props`
+   field-wise rather than replacing whole `params` — otherwise the
+   raster cache thrashes on every prop tweak.

@@ -2,7 +2,7 @@
 
 Phased delivery to v1. Single-developer estimates; double for first time touching Tauri/Rust/ffmpeg.
 
-> **Note 2026-05-14:** The libmpv-embed work that runs through Phases 0, 1, and 1.x in this document was **deleted in workspace-redesign Phase D** (commit `3cb42d2`). The project preview is now a DOM `<video>` element backed by state-hashed MP4 renders in `<workspace>/Cache/preview/`. libmpv survives only for the media-pool play-on-click popup (standalone OS window, no z-order conflict). See [`workspace-redesign.md`](workspace-redesign.md) for the shipped log + design rationale. Historical entries below are preserved as a project journal — the work happened, it just didn't survive the redesign.
+> **Status note.** Entries below are preserved as a project journal — the work happened in the shape described. The current rendering architecture is the PixiJS + WebCodecs pipeline (see [`render.md`](render.md), [`preview.md`](preview.md), [`rendering.md`](rendering.md)); libmpv, the offscreen Chromium rasterizer, and the ffmpeg-as-visual-compositor pipeline are all gone.
 
 ## Phase 0 — Spike (1 week)
 
