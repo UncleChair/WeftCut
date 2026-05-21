@@ -929,17 +929,8 @@ export async function deleteLayer(layerId: string): Promise<void> {
   return invoke<void>("delete_layer", { layerId });
 }
 
-export async function mpvPlayFile(path: string): Promise<void> {
-  return invoke<void>("mpv_play_file", { path });
-}
-
-/// Open a libmpv popup window for the given media item. Used by the
-/// media-pool play button. Survives Phase D — it's a standalone OS
-/// window (no z-order conflict with the DOM `<video>` element), so it
-/// keeps libmpv only for that single isolated use.
-export async function mpvPlayMedia(mediaId: string): Promise<void> {
-  return invoke<void>("mpv_play_media", { mediaId });
-}
+// mpvPlayFile / mpvPlayMedia were the media-pool "click to preview a
+// raw clip" surface. Deleted in P12-d alongside the libmpv module.
 
 export interface McpInfoView {
   bind: string;

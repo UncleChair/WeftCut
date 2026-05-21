@@ -16,7 +16,6 @@ use uuid::Uuid;
 use crate::export;
 use crate::io;
 use crate::ir;
-use crate::mpv;
 use crate::raster::template as raster_template;
 use crate::state::{
     self, Actor, ColorParams, CommandError, LayerParams, MediaItem, MediaKind, ProjectHandle,
@@ -2241,44 +2240,10 @@ pub async fn add_marker(
         .map_err(|e: CommandError| e.to_string())
 }
 
-/// Open a libmpv popup window and play the given raw file. Uses the popup
-/// slot (no host HWND registered) so it lands in a standalone top-level
-/// window — separate from the embedded project preview. Closed by the user
-/// via the OS close button; the drain-events poller cleans up the handle.
-#[tauri::command]
-pub async fn mpv_play_file(
-    popup: tauri::State<'_, mpv::MpvPopupSlot>,
-    path: String,
-) -> Result<(), String> {
-    let slot = popup.inner().0.clone();
-    tokio::task::spawn_blocking(move || mpv::play_file(&slot, &path))
-        .await
-        .map_err(|e| format!("join: {e}"))?
-}
-
-/// Resolve a `MediaId` to its absolute path and open it in a popup preview
-/// window. Uses the popup slot — a standalone OS window with no z-order
-/// conflict against the Phase-D DOM `<video>` preview, so libmpv survives
-/// for this one isolated path while the embedded project preview is
-/// gone.
-#[tauri::command]
-pub async fn mpv_play_media(
-    handle: State<'_, ProjectHandle>,
-    popup: tauri::State<'_, mpv::MpvPopupSlot>,
-    media_id: String,
-) -> Result<(), String> {
-    let id = uuid::Uuid::parse_str(&media_id).map_err(|e| format!("media_id: {e}"))?;
-    let snap = handle.snapshot().await;
-    let item = snap
-        .media_pool
-        .get(&id)
-        .ok_or_else(|| "media not found in pool".to_string())?;
-    let path = item.path_abs.to_string_lossy().to_string();
-    let slot = popup.inner().0.clone();
-    tokio::task::spawn_blocking(move || mpv::play_file(&slot, &path))
-        .await
-        .map_err(|e| format!("join: {e}"))?
-}
+// mpv_play_file / mpv_play_media commands deleted in P12-d alongside the
+// libmpv module. The media-pool "click to preview a raw clip" feature
+// was the only consumer; users drop the clip on the timeline + see it
+// through the Pixi preview instead.
 
 /// Render the current project synchronously to a temp MP4 and return
 /// the absolute path. Used by the DOM preview's "Render & Play"

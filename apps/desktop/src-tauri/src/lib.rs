@@ -21,7 +21,6 @@ mod jobs;
 mod keybindings;
 mod logs;
 mod mcp;
-mod mpv;
 mod preview;
 mod raster;
 mod agent_session;
@@ -126,8 +125,6 @@ pub fn run() {
             commands::export_queue_remove,
             commands::export_queue_clear_finished,
             commands::hw_encoder_probe,
-            commands::mpv_play_file,
-            commands::mpv_play_media,
             commands::settings_get_api_key_status,
             commands::settings_set_api_key,
             commands::settings_clear_api_key,
@@ -160,27 +157,10 @@ pub fn run() {
             // from our crate into whichever bus is current.
             app.manage(log_slot.clone());
             let log_slot_for_ui_events = log_slot.clone();
-            // libmpv survives only for the media-pool popup preview (a
-            // standalone OS window with no z-order conflict against the
-            // Phase-D DOM `<video>` project preview). The embed slot
-            // (`mpv_slot`) stays in the type system for cross-platform
-            // parity but has no HWND wired up and is never play_graph'd.
-            let mpv_slot = mpv::MpvSlot::default();
-            let mpv_popup_slot = mpv::MpvPopupSlot::default();
-            #[cfg(feature = "mpv")]
-            let mpv_popup_for_events = mpv_popup_slot.clone();
-
-            // Per workspace-redesign Q10 / Phase D: the project preview is
-            // a DOM `<video>` element backed by `preview::PreviewRenderer`,
-            // not an embedded libmpv HWND. No host HWND is created here.
-            // The popup slot below (`mpv_popup_slot`) survives — it backs
-            // the media-pool play-on-click preview, which is a standalone
-            // top-level window and has no z-order conflict. The embed
-            // slot stays in the type system to keep cross-platform parity
-            // until Phase D.4 cleanup deletes it outright.
-
-            app.manage(mpv_slot);
-            app.manage(mpv_popup_slot);
+            // libmpv was the media-pool popup preview's backing — deleted
+            // in P12-d alongside the chromiumoxide / chrome-headless-shell
+            // bundling. The Pixi compositor now handles every preview
+            // surface in v1.
 
             // Cache layout. **Per workspace-redesign Q3** (`docs/workspace-
             // redesign.md`), the cache lives at `<workspace>/Cache/` once a
@@ -401,29 +381,6 @@ pub fn run() {
                     Err(e) => tracing::error!("mcp serve failed: {e:?}"),
                 }
             });
-            tauri::async_runtime::spawn_blocking(mpv::spike);
-
-            // Popup-slot event drain. The media-pool play button opens a
-            // standalone libmpv window via `mpv_play_media` — mpv binds
-            // CLOSE_WIN→quit by default, but the resulting Shutdown event
-            // doesn't release the window resource until our handle is
-            // dropped. The 33ms tick drains those events so the OS close
-            // button actually closes the popup. The embed slot is gone
-            // (Phase D), so only the popup is drained.
-            #[cfg(feature = "mpv")]
-            tauri::async_runtime::spawn(async move {
-                let mut tick =
-                    tokio::time::interval(std::time::Duration::from_millis(33));
-                loop {
-                    tick.tick().await;
-                    let popup = mpv_popup_for_events.0.clone();
-                    let _ = tokio::task::spawn_blocking(move || {
-                        mpv::drain_events_and_close_if_shutdown(&popup);
-                    })
-                    .await;
-                }
-            });
-
             Ok(())
         })
         .run(tauri::generate_context!())

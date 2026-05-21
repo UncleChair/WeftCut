@@ -52,12 +52,6 @@ regex = "1"
 
 # --- Phase 0 spike deps. Pin/upgrade once verified to compile. ---
 ffmpeg-sidecar = "2"
-# libmpv2 is gated behind the `mpv` feature. Enabling the feature makes
-# `libmpv2-sys`'s build script emit `cargo:rustc-link-lib=mpv`, so the linker
-# needs `mpv.lib` on `LIB` and the runtime needs `libmpv-2.dll` on `PATH`.
-# See `docs/setup.md` for the install + bundling story. Default features
-# stay empty so plain `cargo build` works without libmpv installed.
-libmpv2 = { version = "6", optional = true }
 # Anthropic Rust MCP SDK. Pinned to 0.1.x: 1.x dropped the
 # `transport-sse-server` feature in favor of streamable-HTTP only. Our
 # `mcp/mod.rs::serve` uses `rmcp::transport::sse_server::SseServer`,
@@ -137,7 +131,3 @@ windows = { version = "0.61", features = [
 [features]
 default = []
 custom-protocol = ["tauri/custom-protocol"]
-# Enable libmpv-backed preview. Requires `libmpv-2.dll` (runtime) and `mpv.lib`
-# (link time) on the host — see `docs/setup.md`. Build with
-# `cargo build --features mpv` or `tauri dev -- --features mpv` once installed.
-mpv = ["dep:libmpv2"]

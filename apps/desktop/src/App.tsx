@@ -34,7 +34,6 @@ import {
   importMedia,
   importQueueList,
   MEDIA_JOB_EVENTS,
-  mpvPlayMedia,
   ping,
   presetExtension,
   projectRedo,
@@ -1652,14 +1651,9 @@ function MediaPool({
           const isImporting = importing.has(m.id);
           const isMissing = !m.available && !isImporting;
           const interactive = !isImporting && !isMissing;
-          const onClick = async () => {
-            if (!interactive) return;
-            try {
-              await mpvPlayMedia(m.id);
-            } catch (err) {
-              console.error("preview failed:", err);
-            }
-          };
+          // click-to-preview (libmpv popup) was deleted in P12-d alongside
+          // the libmpv module. Drop the clip on the timeline to preview
+          // through the Pixi compositor instead.
           return (
             <li
               key={m.id}
@@ -1674,13 +1668,10 @@ function MediaPool({
                 );
                 e.dataTransfer.effectAllowed = "copy";
               }}
-              onClick={() => {
-                void onClick();
-              }}
               title={
                 interactive
-                  ? t("media_pool.click_drag_hint", {
-                      defaultValue: "Click to preview · drag onto a track to add",
+                  ? t("media_pool.drag_hint", {
+                      defaultValue: "Drag onto a track to add",
                     })
                   : isMissing
                     ? t("media_pool.missing_hint", { path: m.path })
