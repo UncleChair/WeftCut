@@ -2,8 +2,6 @@ import React, { useCallback, useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { App } from "./App";
 import { StartupScreen } from "./startup/StartupScreen";
-import { SpikePreview } from "./preview/dom/SpikePreview";
-import { SpikeHtmlGroup } from "./preview/dom/SpikeHtmlGroup";
 import {
   projectOpen,
   recentsGetReopenOnLaunch,
@@ -15,47 +13,9 @@ import "./styles.css";
 const root = document.getElementById("root");
 if (!root) throw new Error("#root missing from index.html");
 
-/// Branch-only dev hatch: navigating to `#dom-spike` mounts the Phase A.0
-/// spike instead of the normal app tree. Removed at Phase F cutover.
-///
-/// Tauri webview has no visible URL bar — easiest activation is to open
-/// DevTools (F12) and run `__weftDomSpike()`, which sets the hash and
-/// reloads. The console hint below makes the function discoverable
-/// without having to remember the URL trick.
-declare global {
-  interface Window {
-    __weftDomSpike?: () => void;
-    __weftHtmlGroupSpike?: () => void;
-  }
-}
-window.__weftDomSpike = () => {
-  window.location.hash = "#dom-spike";
-  window.location.reload();
-};
-/// Phase H.0 dev hatch — mirrors `__weftDomSpike`. Removed at Phase H
-/// closure. See `docs/html-render-groups.md` decision 12.
-window.__weftHtmlGroupSpike = () => {
-  window.location.hash = "#html-group-spike";
-  window.location.reload();
-};
-// eslint-disable-next-line no-console
-console.info(
-  "%c[DOM preview spike] %crun %c__weftDomSpike()%c to load — Phase A.0 only, removed at Phase F cutover",
-  "color:#3a6;font-weight:bold",
-  "color:#aaa",
-  "color:#eee;background:#222;padding:2px 4px;border-radius:2px;font-family:monospace",
-  "color:#aaa",
-);
-// eslint-disable-next-line no-console
-console.info(
-  "%c[HTML render groups spike] %crun %c__weftHtmlGroupSpike()%c to load — Phase H.0 transparency probe",
-  "color:#3a6;font-weight:bold",
-  "color:#aaa",
-  "color:#eee;background:#222;padding:2px 4px;border-radius:2px;font-family:monospace",
-  "color:#aaa",
-);
-const isDomSpike = window.location.hash === "#dom-spike";
-const isHtmlGroupSpike = window.location.hash === "#html-group-spike";
+// Phase A.0 / H.0 dev-spike hatches removed in P12-e along with the
+// legacy DOM preview. The Pixi compositor is the only preview surface
+// now.
 
 /// Top-level router per workspace-redesign Q7. The app boots into the
 /// StartupScreen by default; once the user picks Create / Open / Recent
@@ -115,6 +75,6 @@ function Root() {
 
 ReactDOM.createRoot(root).render(
   <React.StrictMode>
-    {isDomSpike ? <SpikePreview /> : isHtmlGroupSpike ? <SpikeHtmlGroup /> : <Root />}
+    <Root />
   </React.StrictMode>,
 );

@@ -1,31 +1,10 @@
-// Activation flag + handle type for the PixiJS preview surface,
-// kept in a non-component module so Vite's React Fast Refresh
-// doesn't bail on `PixiPreview.tsx` ("component file exports
-// non-component values").
+// Handle types for the PixiJS preview surface. Kept in a non-
+// component module so Vite's React Fast Refresh doesn't bail on
+// `PixiPreview.tsx` ("component file exports non-component values").
 //
-// Plan: docs/pixi-renderer-plan.md (P2)
-
-/// Decides whether the user has opted into the new PixiJS preview.
-/// True if either:
-///   - URL has `?pixi=1` (or `?pixi=true`), OR
-///   - `localStorage.weftcut.preview.pixi === "1"`.
-export function isPixiPreviewEnabled(): boolean {
-  try {
-    const url = new URL(window.location.href);
-    const q = url.searchParams.get("pixi");
-    if (q === "1" || q === "true") return true;
-  } catch {
-    // not a browser
-  }
-  try {
-    if (typeof localStorage !== "undefined") {
-      return localStorage.getItem("weftcut.preview.pixi") === "1";
-    }
-  } catch {
-    // storage disabled
-  }
-  return false;
-}
+// The `?pixi=1` opt-in flag is gone — the Pixi compositor is the only
+// preview surface after P12-e. Devtools hooks check
+// `window.__weftcut_*` directly and no longer need the flag.
 
 /// Result of a successful Pixi export. The handle just delivers
 /// the bytes — writing them to disk + showing UI is the caller's
