@@ -10,44 +10,24 @@ import {
   AGENT_SESSION_EVENTS,
   agentSessionEnd,
   agentSessionGet,
-  compileProject,
   deleteLayer,
-  EXPORT_EVENTS,
-  HTML_GROUP_EVENTS,
   keybindingsGet,
   type AgentSession,
-  type HtmlGroupCompleteEvent,
-  type HtmlGroupProgressEvent,
-  type HtmlGroupStartEvent,
   type KeybindingsMap,
-  EXPORT_PRESETS,
-  exportProject,
   exportProjectAudioOnly,
-  exportQueueClearFinished,
-  exportQueueEnqueue,
-  exportQueueList,
-  exportQueueRemove,
   muxExport,
-  hwEncoderProbe,
   IMPORT_EVENTS,
   importCancel,
   importMedia,
   importQueueList,
   MEDIA_JOB_EVENTS,
   ping,
-  presetExtension,
   projectRedo,
   projectSave,
   projectSaveAs,
   projectSummary,
   projectUndo,
   splitFirstLayer,
-  type CompiledGraph,
-  type ExportComplete,
-  type ExportPreset,
-  type ExportProgress,
-  type ExportQueueItem,
-  type HwEncoderProbe,
   type ImportEntry,
   type MediaSummary,
   type ProjectSummary,
@@ -109,18 +89,9 @@ export function App({ onCloseProject }: AppProps) {
   const mediaPoolDrawerOpen = useMediaPoolDrawerOpen();
   const [pong, setPong] = useState<string>("…");
   const [summary, setSummary] = useState<ProjectSummary | null>(null);
-  const [compiled, setCompiled] = useState<CompiledGraph | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [exportState, setExportState] = useState<ExportState | null>(null);
-  /// Tracks the in-progress html-render-group raster phase. Populated by
-  /// `html_group:start`, advanced by `html_group:progress`, cleared by
-  /// `html_group:complete`. At most one group is rasterizing at a time
-  /// (export pipeline is serial); subsequent groups overwrite. ExportPanel
-  /// renders a sub-progress bar from this so users see real progress
-  /// during the pre-raster phase instead of "Starting…" flatlining for
-  /// 30+ seconds on group-heavy projects.
-  const [htmlGroupRaster, setHtmlGroupRaster] = useState<HtmlGroupRasterState | null>(null);
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
   // R.7 inline-reveal: track id the user surfaced from the right-panel peek
   // list. Single-track exclusive; persists across scrubs. Cleared by Esc, by
@@ -129,9 +100,6 @@ export function App({ onCloseProject }: AppProps) {
   const [revealedTrackId, setRevealedTrackId] = useState<string | null>(null);
   const [currentTimeUs, setCurrentTimeUs] = useState<number>(0);
   const [paused, setPaused] = useState<boolean>(true);
-  const [preset, setPreset] = useState<ExportPreset>("H264Mp4_1080p");
-  const [queue, setQueue] = useState<ExportQueueItem[]>([]);
-  const [hwProbe, setHwProbe] = useState<HwEncoderProbe | null>(null);
   const [connectOpen, setConnectOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [logConsoleOpen, setLogConsoleOpen] = useState(false);
@@ -256,8 +224,6 @@ export function App({ onCloseProject }: AppProps) {
   useEffect(() => {
     ping().then(setPong).catch((e) => setPong(`error: ${String(e)}`));
     refresh();
-    exportQueueList().then(setQueue).catch(() => {});
-    hwEncoderProbe().then(setHwProbe).catch(() => {});
     keybindingsGet().then(setKeybindings).catch(() => {});
     // Seed agent-session mode explicitly so the UI never flashes through
     // editor mode on a fresh app start when an MCP client has already
@@ -362,26 +328,6 @@ export function App({ onCloseProject }: AppProps) {
     };
   }, []);
 
-  // Queue subscription — backend pushes a fresh list on every state change.
-  useEffect(() => {
-    let unlisten: (() => void) | null = null;
-    let cancelled = false;
-    (async () => {
-      const u = await listen<ExportQueueItem[]>(EXPORT_EVENTS.queue, (e) => {
-        setQueue(e.payload);
-      });
-      if (cancelled) {
-        u();
-        return;
-      }
-      unlisten = u;
-    })();
-    return () => {
-      cancelled = true;
-      if (unlisten) unlisten();
-    };
-  }, []);
-
   // Derivative-job tracker (Phase C.3 — workspace-redesign.md). Each
   // `media:job_started` increments; `media:job_complete` / `error`
   // decrement. The total is shown as a small pill near the project bar
@@ -459,100 +405,6 @@ export function App({ onCloseProject }: AppProps) {
     return () => {
       cancelled = true;
       if (unlisten) unlisten();
-    };
-  }, [refresh]);
-
-  // Export event subscriptions — kept up for the lifetime of the app so the
-  // panel can show progress for any in-flight render.
-  useEffect(() => {
-    const unlisteners: UnlistenFn[] = [];
-    let cancelled = false;
-    (async () => {
-      const onProgress = await listen<ExportProgress>(
-        EXPORT_EVENTS.progress,
-        (e) => {
-          setExportState((prev) =>
-            prev && prev.kind !== "complete" && prev.kind !== "error"
-              ? { kind: "progress", progress: e.payload }
-              : { kind: "progress", progress: e.payload },
-          );
-        },
-      );
-      const onComplete = await listen<ExportComplete>(
-        EXPORT_EVENTS.complete,
-        (e) => {
-          setExportState({ kind: "complete", payload: e.payload });
-          refresh();
-        },
-      );
-      const onError = await listen<string>(EXPORT_EVENTS.error, (e) => {
-        setExportState({ kind: "error", detail: e.payload });
-      });
-      // html-group raster phase — fires before ffmpeg `export:progress`
-      // and dominates wall-clock for any project with an html-render
-      // group. Without these listeners the panel sits on "Starting…"
-      // for the duration of the raster.
-      const onHtmlStart = await listen<HtmlGroupStartEvent>(
-        HTML_GROUP_EVENTS.start,
-        (e) => {
-          setHtmlGroupRaster({
-            groupId: e.payload.groupId,
-            frame: 0,
-            total: e.payload.frameCount,
-            windowIndex: e.payload.windowIndex,
-            windowCount: e.payload.windowCount,
-          });
-        },
-      );
-      const onHtmlProgress = await listen<HtmlGroupProgressEvent>(
-        HTML_GROUP_EVENTS.progress,
-        (e) => {
-          setHtmlGroupRaster((prev) =>
-            prev && prev.groupId === e.payload.groupId
-              ? {
-                  groupId: prev.groupId,
-                  frame: e.payload.frame,
-                  total: e.payload.total,
-                  windowIndex: e.payload.windowIndex ?? prev.windowIndex,
-                  windowCount: e.payload.windowCount ?? prev.windowCount,
-                }
-              : prev,
-          );
-        },
-      );
-      const onHtmlComplete = await listen<HtmlGroupCompleteEvent>(
-        HTML_GROUP_EVENTS.complete,
-        (e) => {
-          // Clear only when the completion matches the currently-tracked
-          // group; a delayed event from an aborted prior export shouldn't
-          // wipe the in-flight one. Cache-hit completions fire instantly
-          // after `:start` so the sub-bar barely renders — fine.
-          setHtmlGroupRaster((prev) =>
-            prev && prev.groupId === e.payload.groupId ? null : prev,
-          );
-        },
-      );
-      if (cancelled) {
-        onProgress();
-        onComplete();
-        onError();
-        onHtmlStart();
-        onHtmlProgress();
-        onHtmlComplete();
-        return;
-      }
-      unlisteners.push(
-        onProgress,
-        onComplete,
-        onError,
-        onHtmlStart,
-        onHtmlProgress,
-        onHtmlComplete,
-      );
-    })();
-    return () => {
-      cancelled = true;
-      for (const u of unlisteners) u();
     };
   }, [refresh]);
 
@@ -652,46 +504,6 @@ export function App({ onCloseProject }: AppProps) {
       }
     });
   }, [run, t]);
-
-  const showCompiledGraph = useCallback(() => {
-    run(async () => setCompiled(await compileProject()));
-  }, [run]);
-
-  const exportNow = useCallback(async () => {
-    const ext = presetExtension(preset);
-    const path = await saveDialog({
-      title: t("dialogs.export_title"),
-      defaultPath: `weftcut-export.${ext}`,
-      filters: [
-        { name: t("dialogs.export_filter"), extensions: [ext] },
-      ],
-    });
-    if (typeof path !== "string") return;
-    setExportState({ kind: "starting" });
-    try {
-      await exportProject(path, preset);
-    } catch (e) {
-      setExportState({ kind: "error", detail: String(e) });
-    }
-  }, [preset, t]);
-
-  const addToExportQueue = useCallback(async () => {
-    const ext = presetExtension(preset);
-    const path = await saveDialog({
-      title: t("dialogs.export_queue_title"),
-      defaultPath: `weftcut-export-queue.${ext}`,
-      filters: [
-        { name: t("dialogs.export_filter"), extensions: [ext] },
-      ],
-    });
-    if (typeof path !== "string") return;
-    try {
-      await exportQueueEnqueue(path, preset);
-      setQueue(await exportQueueList());
-    } catch (e) {
-      console.warn("queue enqueue failed:", e);
-    }
-  }, [preset, t]);
 
   // Pixi/WebCodecs export. Three-stage pipeline:
   //
@@ -1089,46 +901,10 @@ export function App({ onCloseProject }: AppProps) {
           />
         </Menu>
 
-        <Menu label={t("menu.export")} hint={t("export.preset_hint")}>
-          <MenuItem
-            label={t("actions.compile")}
-            onSelect={showCompiledGraph}
-            disabled={busy}
-          />
-          <MenuSeparator />
-          <MenuHeading label={t("menu.preset_heading")} />
-          {EXPORT_PRESETS.map((p) => (
-            <MenuItem
-              key={p}
-              label={t(`export.preset.${p}`, { defaultValue: p })}
-              checked={p === preset}
-              onSelect={() => setPreset(p)}
-            />
-          ))}
-          <MenuSeparator />
+        <Menu label={t("menu.export")}>
           <MenuItem
             actionId="export"
             label={t("actions.export")}
-            onSelect={exportNow}
-            disabled={
-              busy ||
-              exportState?.kind === "starting" ||
-              exportState?.kind === "progress"
-            }
-          />
-          <MenuItem
-            label={t("actions.queue_export")}
-            hint={t("actions.queue_export_hint")}
-            onSelect={addToExportQueue}
-            disabled={busy}
-          />
-          <MenuSeparator />
-          <MenuItem
-            label={t("actions.pixi_export", { defaultValue: "Pixi Export…" })}
-            hint={t("actions.pixi_export_hint", {
-              defaultValue:
-                "Export through the PixiJS + WebCodecs Worker pipeline. Requires pixi preview mode.",
-            })}
             onSelect={runPixiExport}
             disabled={
               busy ||
@@ -1269,31 +1045,11 @@ export function App({ onCloseProject }: AppProps) {
         </section>
       </main>
 
-      {compiled && (
-        <CompiledPanel
-          graph={compiled}
-          onClose={() => setCompiled(null)}
-        />
-      )}
       {exportState && (
         <ExportPanel
           state={exportState}
-          htmlGroupRaster={htmlGroupRaster}
           onClose={() => setExportState(null)}
           onPlay={openRenderPlayPopup}
-        />
-      )}
-      {queue.length > 0 && (
-        <QueuePanel
-          items={queue}
-          hwProbe={hwProbe}
-          onRemove={async (id) => {
-            await exportQueueRemove(id);
-          }}
-          onClearFinished={async () => {
-            await exportQueueClearFinished();
-            setQueue(await exportQueueList());
-          }}
         />
       )}
       {connectOpen && (
@@ -1411,70 +1167,17 @@ function AgentRunningPill() {
 }
 
 
-function QueuePanel({
-  items,
-  hwProbe,
-  onRemove,
-  onClearFinished,
-}: {
-  items: ExportQueueItem[];
-  hwProbe: HwEncoderProbe | null;
-  onRemove: (id: string) => Promise<void>;
-  onClearFinished: () => Promise<void>;
-}) {
-  const { t } = useTranslation();
-  const finishedCount = items.filter(
-    (i) =>
-      i.status.kind === "Completed" ||
-      i.status.kind === "Failed" ||
-      i.status.kind === "Cancelled",
-  ).length;
-  return (
-    <aside className="queue-panel">
-      <header>
-        <strong>{t("queue.title", { count: items.length })}</strong>
-        {hwProbe?.recommended && (
-          <span className="queue-hw">
-            {t("queue.hw_label")}: {hwProbe.recommended}
-          </span>
-        )}
-        {finishedCount > 0 && (
-          <button onClick={onClearFinished}>
-            {t("queue.clear_finished")}
-          </button>
-        )}
-      </header>
-      <ul className="queue-list">
-        {items.map((item) => (
-          <li key={item.id} className={`queue-item status-${item.status.kind.toLowerCase()}`}>
-            <span className={`queue-status status-${item.status.kind.toLowerCase()}`}>
-              {t(`queue.status.${item.status.kind}`, {
-                defaultValue: item.status.kind,
-              })}
-            </span>
-            <span className="queue-preset">
-              {t(`export.preset.${item.preset}`, { defaultValue: item.preset })}
-            </span>
-            <span className="queue-path truncate" title={item.output_path}>
-              {item.output_path}
-            </span>
-            {item.status.kind === "Failed" && (
-              <span className="error truncate" title={item.status.detail}>
-                {item.status.detail}
-              </span>
-            )}
-            <button
-              className="queue-remove"
-              onClick={() => onRemove(item.id)}
-              title={t("queue.remove_hint")}
-            >
-              ✕
-            </button>
-          </li>
-        ))}
-      </ul>
-    </aside>
-  );
+interface ExportProgress {
+  progress: number;
+  currentTimeUs: number;
+  frame: number;
+  fps: number;
+  speed: number;
+}
+
+interface ExportComplete {
+  outputPath: string;
+  durationUs: number;
 }
 
 type ExportState =
@@ -1483,87 +1186,29 @@ type ExportState =
   | { kind: "complete"; payload: ExportComplete }
   | { kind: "error"; detail: string };
 
-/// Side-channel state for the html-render-group raster phase. Distinct
-/// from `ExportState` because both can be live simultaneously: ffmpeg's
-/// `export:progress` ticks while a later html-group is rasterizing into
-/// its cache for a still-pending segment. (Today the pipeline is
-/// strictly raster-then-encode, but the shape allows both.)
-interface HtmlGroupRasterState {
-  groupId: string;
-  frame: number;
-  total: number;
-  /// Pass B (`docs/effects-routing-pass-b.md` §B.6): the current
-  /// window's 0-based index and the total number of html-cap windows
-  /// for this group. When `windowCount > 1`, the label shows
-  /// "window 2 of 4" so the user understands why the per-window
-  /// progress restarts when a new window begins. One-window groups
-  /// leave both undefined; the UI collapses the indicator.
-  windowIndex?: number;
-  windowCount?: number;
-}
-
 function ExportPanel({
   state,
-  htmlGroupRaster,
   onClose,
   onPlay,
 }: {
   state: ExportState;
-  htmlGroupRaster: HtmlGroupRasterState | null;
   onClose: () => void;
   /// When set, the panel renders a "Play" button next to the dismiss
   /// button on the complete state. Clicking opens a popup window
-  /// playing the just-exported file. Set by App.tsx; pure UX —
-  /// unset means no button.
+  /// playing the just-exported file.
   onPlay?: (path: string) => void;
 }) {
   const { t } = useTranslation();
   const inProgress = state.kind === "starting" || state.kind === "progress";
 
-  // Unified phase model: the pipeline is strictly raster-then-encode,
-  // so we map the two phases onto one bar split at the midpoint —
-  // raster phase occupies 0–50%, encode occupies 50–100%. Picking 50/50
-  // is wrong in absolute terms (raster dominates wall-clock by ~10×),
-  // but the bar serves as "phase visualization" more than "ETA":
-  // crossing 50% is the visible cue that raster finished and encode
-  // began. A future improvement could weight the split by historical
-  // observed durations; for v1 the simple split is clear and honest.
-  const RASTER_WEIGHT = 0.5;
-
   let body: React.ReactNode;
   let percent = 0;
   switch (state.kind) {
     case "starting":
-      if (htmlGroupRaster && htmlGroupRaster.total > 0) {
-        // Raster phase: map frame/total onto the first half of the bar.
-        const rasterFrac = htmlGroupRaster.frame / htmlGroupRaster.total;
-        percent = Math.round(rasterFrac * RASTER_WEIGHT * 100);
-        const windowCount = htmlGroupRaster.windowCount ?? 1;
-        const labelKey =
-          windowCount > 1
-            ? "export.rastering_label_window"
-            : "export.rastering_label";
-        body = (
-          <span>
-            {t(labelKey, {
-              percent,
-              frame: htmlGroupRaster.frame,
-              total: htmlGroupRaster.total,
-              windowOneBased: (htmlGroupRaster.windowIndex ?? 0) + 1,
-              windowCount,
-            })}
-          </span>
-        );
-      } else {
-        // Pre-raster slice: spawning chrome workers, building composition,
-        // etc. Could be sub-second on cache hit or ~3 s on cold start.
-        body = <span>{t("export.starting")}</span>;
-      }
+      body = <span>{t("export.starting")}</span>;
       break;
     case "progress": {
-      // Encode phase: ffmpeg progress is 0..1 → maps to 50..100% of the bar.
-      const encodeFrac = state.progress.progress;
-      percent = Math.round((RASTER_WEIGHT + encodeFrac * (1 - RASTER_WEIGHT)) * 100);
+      percent = Math.round(state.progress.progress * 100);
       body = (
         <span>
           {t("export.progress_label", {
@@ -1798,35 +1443,5 @@ function parseTimecode(input: string): number | null {
   if (![h, m, ss, ms].every((n) => Number.isFinite(n) && n >= 0)) return null;
   if (parts.length >= 2 && (m >= 60 || ss >= 60)) return null;
   return (((h * 3600 + m * 60 + ss) * 1000) + ms) * 1000;
-}
-
-function CompiledPanel({
-  graph,
-  onClose,
-}: {
-  graph: CompiledGraph;
-  onClose: () => void;
-}) {
-  const { t } = useTranslation();
-  return (
-    <aside className="compiler-panel">
-      <header>
-        <strong>{t("compiler.panel_title", { count: graph.node_count })}</strong>
-        <button onClick={onClose}>{t("compiler.close")}</button>
-      </header>
-      <div className="compiler-meta">
-        <span>
-          {t("compiler.inputs_label")}:{" "}
-          {graph.inputs.length === 0
-            ? t("compiler.no_inputs")
-            : graph.inputs.join(", ")}
-        </span>
-        <span>
-          {t("compiler.maps_label")}: {graph.maps.join(" ")}
-        </span>
-      </div>
-      <pre className="compiler-graph">{graph.filter_graph}</pre>
-    </aside>
-  );
 }
 

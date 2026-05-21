@@ -76,7 +76,6 @@ const enUS = {
     view: "View",
     export: "Export",
     tools: "Tools",
-    preset_heading: "Output preset",
   },
   view: {
     display_mode_heading: "Track display",
@@ -90,7 +89,6 @@ const enUS = {
     add_color_layer: "+ Color layer (2s)",
     add_text_layer: "+ Text (3s)",
     split_first: "Split first layer",
-    compile: "Compile",
     import_media: "Import media…",
     export: "Export…",
     save: "Save",
@@ -100,11 +98,6 @@ const enUS = {
       "Flush any pending edits to the workspace, then return to the project picker.",
     undo: "Undo",
     redo: "Redo",
-    queue_export: "+ Queue",
-    queue_export_hint: "Add an export to the render queue (runs after current job).",
-    pixi_export: "Pixi Export…",
-    pixi_export_hint:
-      "Export through the PixiJS + WebCodecs Worker pipeline. Requires pixi preview mode (?pixi=1).",
     connect_agent: "Connect agent…",
     connect_agent_hint:
       "Show the URL + token an external agent (Claude Desktop, Cursor) needs to drive WeftCut over MCP.",
@@ -126,13 +119,6 @@ const enUS = {
     group_selected: "Group selected layers",
     dissolve_selected_group: "Dissolve group of selected layer",
   },
-  compiler: {
-    panel_title: "Compiled filter graph ({{count}} nodes)",
-    inputs_label: "Inputs",
-    maps_label: "Maps",
-    no_inputs: "(none)",
-    close: "Close",
-  },
   dialogs: {
     save_title: "Save WeftCut project",
     open_title: "Open WeftCut project",
@@ -141,7 +127,6 @@ const enUS = {
     import_title: "Import media",
     media_filter: "Media files",
     export_title: "Export to video",
-    export_queue_title: "Add export to queue",
     export_default_name: "weftcut-export.mp4",
     export_filter: "Output file",
   },
@@ -237,36 +222,10 @@ const enUS = {
     starting: "Starting export…",
     progress_label:
       "{{percent}}% · frame {{frame}} · {{fps}}fps · {{speed}}x",
-    rastering_label:
-      "{{percent}}% · rastering frame {{frame}}/{{total}}",
-    rastering_label_window:
-      "{{percent}}% · window {{windowOneBased}}/{{windowCount}} · rastering frame {{frame}}/{{total}}",
     complete: "Exported to {{path}}",
     failed: "Export failed: {{detail}}",
     cancel: "Cancel",
     dismiss: "Dismiss",
-    preset_hint: "Pick a codec / container preset for the export.",
-    preset: {
-      H264Mp4_1080p: "H.264 MP4 (1080p)",
-      H264Mp4_4K: "H.264 MP4 (4K)",
-      ProResMov: "ProRes 422 HQ (MOV)",
-      Gif: "Animated GIF",
-    },
-  },
-  queue: {
-    title_one: "Render queue ({{count}})",
-    title_other: "Render queue ({{count}})",
-    title: "Render queue ({{count}})",
-    hw_label: "HW",
-    clear_finished: "Clear finished",
-    remove_hint: "Remove from queue (cancels if running)",
-    status: {
-      Pending: "Pending",
-      Running: "Running",
-      Completed: "Completed",
-      Failed: "Failed",
-      Cancelled: "Cancelled",
-    },
   },
   connect: {
     heading: "Connect an agent",

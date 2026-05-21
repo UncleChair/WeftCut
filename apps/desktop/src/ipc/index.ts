@@ -623,122 +623,14 @@ export async function importCancel(mediaId: string): Promise<boolean> {
   return invoke<boolean>("import_cancel", { mediaId });
 }
 
-export interface CompiledGraph {
-  inputs: string[];
-  filter_graph: string;
-  maps: string[];
-  node_count: number;
-}
-
-export async function compileProject(): Promise<CompiledGraph> {
-  return invoke<CompiledGraph>("compile_project");
-}
-
 export async function importMedia(path: string): Promise<string> {
   return invoke<string>("import_media", { path });
-}
-
-export interface ExportProgress {
-  progress: number;
-  currentTimeUs: number;
-  frame: number;
-  fps: number;
-  speed: number;
-}
-
-export interface ExportComplete {
-  outputPath: string;
-  durationUs: number;
-}
-
-export const EXPORT_EVENTS = {
-  progress: "export:progress",
-  complete: "export:complete",
-  error: "export:error",
-  queue: "export:queue",
-} as const;
-
-/// Phase H.7 — per-html-group raster progress (`docs/html-render-groups.md`).
-/// Fired by `raster::html_group::materialize_group`; a future ExportPanel
-/// extension subscribes to surface per-group progress next to the main
-/// `export:progress` bar.
-export const HTML_GROUP_EVENTS = {
-  start: "html_group:start",
-  progress: "html_group:progress",
-  complete: "html_group:complete",
-} as const;
-
-export interface HtmlGroupStartEvent {
-  groupId: string;
-  frameCount: number;
-  width: number;
-  height: number;
-  durationUs: number;
-  /// Pass B (`docs/effects-routing-pass-b.md` §B.6): 0-based index of
-  /// the html-cap window inside the group; `windowCount` is the total.
-  /// For pre-Pass-B / one-window groups (`windowCount === 1`), the UI
-  /// can collapse the index display.
-  windowIndex?: number;
-  windowCount?: number;
-}
-
-export interface HtmlGroupProgressEvent {
-  groupId: string;
-  frame: number;
-  total: number;
-  windowIndex?: number;
-  windowCount?: number;
-}
-
-export interface HtmlGroupCompleteEvent {
-  groupId: string;
-  frameCount: number;
-  /// True when the rasterizer short-circuited via a cache hit — UI can
-  /// distinguish "0 seconds" from "ran for real".
-  cached: boolean;
-  windowIndex?: number;
-  windowCount?: number;
-}
-
-/// Mirrors `ExportPreset` in `export/preset.rs`. Names match the Rust
-/// variants so serde tagging works without rename rules.
-export type ExportPreset =
-  | "H264Mp4_1080p"
-  | "H264Mp4_4K"
-  | "ProResMov"
-  | "Gif";
-
-export const EXPORT_PRESETS: ExportPreset[] = [
-  "H264Mp4_1080p",
-  "H264Mp4_4K",
-  "ProResMov",
-  "Gif",
-];
-
-export function presetExtension(p: ExportPreset): string {
-  switch (p) {
-    case "H264Mp4_1080p":
-    case "H264Mp4_4K":
-      return "mp4";
-    case "ProResMov":
-      return "mov";
-    case "Gif":
-      return "gif";
-  }
-}
-
-export async function exportProject(
-  outputPath: string,
-  preset?: ExportPreset,
-): Promise<void> {
-  return invoke<void>("export_project", { outputPath, preset });
 }
 
 /// Audio-only export — AAC .m4a at `outputPath`. Awaitable: resolves
 /// when ffmpeg's audio-only pass is done. Used by the Pixi export
 /// path between the Worker video render and the final stream-copy
-/// mux. Emits no `export:*` events; the JS orchestrator drives the
-/// unified ExportPanel state.
+/// mux. Emits no events; the JS orchestrator drives ExportPanel state.
 export async function exportProjectAudioOnly(
   outputPath: string,
 ): Promise<void> {
@@ -746,77 +638,13 @@ export async function exportProjectAudioOnly(
 }
 
 /// Stream-copy mux: `ffmpeg -y -i video -i audio -c copy out`.
-/// Resolves when ffmpeg exits; rejects with the stderr tail on
-/// failure.
+/// Resolves when ffmpeg exits; rejects with the stderr tail on failure.
 export async function muxExport(
   videoPath: string,
   audioPath: string,
   outputPath: string,
 ): Promise<void> {
   return invoke<void>("mux_export", { videoPath, audioPath, outputPath });
-}
-
-/// Render the project synchronously into an OS temp MP4 and return
-/// the path. Used by the DOM preview's "Render & Play" verification
-/// path (`docs/preview-dom.md` Phase E). No `export:*` events fire.
-export async function exportToTempPreview(): Promise<string> {
-  return invoke<string>("export_to_temp_preview");
-}
-
-/// Delete a temp MP4 produced by `exportToTempPreview`. Safety-guarded
-/// on the Rust side: only files matching the temp-render naming
-/// convention under `std::env::temp_dir()` are removed.
-export async function cleanupTempPreview(path: string): Promise<void> {
-  return invoke<void>("cleanup_temp_preview", { path });
-}
-
-export type ExportQueueStatus =
-  | { kind: "Pending" }
-  | { kind: "Running" }
-  | { kind: "Completed" }
-  | { kind: "Failed"; detail: string }
-  | { kind: "Cancelled" };
-
-export interface ExportQueueItem {
-  id: string;
-  output_path: string;
-  preset: ExportPreset;
-  status: ExportQueueStatus;
-}
-
-export async function exportQueueEnqueue(
-  outputPath: string,
-  preset?: ExportPreset,
-): Promise<string> {
-  return invoke<string>("export_queue_enqueue", { outputPath, preset });
-}
-
-export async function exportQueueList(): Promise<ExportQueueItem[]> {
-  return invoke<ExportQueueItem[]>("export_queue_list");
-}
-
-export async function exportQueueRemove(id: string): Promise<void> {
-  return invoke<void>("export_queue_remove", { id });
-}
-
-export async function exportQueueClearFinished(): Promise<void> {
-  return invoke<void>("export_queue_clear_finished");
-}
-
-export type HwEncoder =
-  | "Nvenc"
-  | "Qsv"
-  | "Amf"
-  | "VideoToolbox"
-  | "Vaapi";
-
-export interface HwEncoderProbe {
-  available: HwEncoder[];
-  recommended: HwEncoder | null;
-}
-
-export async function hwEncoderProbe(): Promise<HwEncoderProbe> {
-  return invoke<HwEncoderProbe>("hw_encoder_probe");
 }
 
 export async function updateLayer(layerId: string, patch: LayerPatch): Promise<void> {
@@ -1065,33 +893,6 @@ export async function addTemplate(args: {
     trackId: args.trackId,
     props: args.props,
   });
-}
-
-/// Render a static PNG thumbnail of a template at its manifest defaults.
-/// Returns a `data:image/png;base64,…` URL ready to drop into `<img src>`.
-/// First call per template is ~200–700ms (cold cache + offscreen webview
-/// render); subsequent calls hit the content-keyed raster cache and are
-/// near-instant. Pixel-accurate to what ffmpeg emits at render time.
-export async function templatePreview(templateId: string): Promise<string> {
-  const b64 = await invoke<string>("template_preview", { templateId });
-  return `data:image/png;base64,${b64}`;
-}
-
-/// Phase H.0 transparency probe — drives the export-side raster mount
-/// (offscreen webview navigates to the half-transparent-red probe
-/// document, captures, returns PNG bytes). The dev `#html-group-spike`
-/// page calls this, decodes the PNG into a canvas, reads the center
-/// pixel, and asserts vs. PROBE_TARGET. See
-/// `docs/html-render-groups.md` decision 12.
-export interface HtmlGroupProbeResult {
-  /// PNG bytes from `CapturePreview`, base64-encoded.
-  pngBase64: string;
-  width: number;
-  height: number;
-}
-
-export async function htmlGroupProbeTransparency(): Promise<HtmlGroupProbeResult> {
-  return invoke<HtmlGroupProbeResult>("html_group_probe_transparency");
 }
 
 // ============================================================
