@@ -1137,53 +1137,10 @@ impl WeftCutServer {
         Ok(ok_void())
     }
 
-    #[tool(
-        description = "Replace a group's entire effect chain. Each effect is `{ id, enabled, \
-                       params: { kind, ... } }`. Today only `HtmlTransform` is a render-affecting \
-                       kind; other kinds (ColorCorrect, Blur, ChromaKey, Speed, Vignette) are \
-                       scaffolded but not yet wired through the engine. An `HtmlTransform`'s six \
-                       fields (x, y, scale_x, scale_y, rotation_deg, opacity) are each \
-                       `Animated<f64>` (Static or Keyframed). Adding any HtmlTransform with \
-                       keyframes flips the group to html-cap rendering."
-    )]
-    async fn groups_set_effects(
-        &self,
-        #[tool(aggr)] args: GroupsSetEffectsArgs,
-    ) -> Result<CallToolResult, McpError> {
-        let gid = parse_uuid(&args.group_id, "group_id")?;
-        let effects: Vec<crate::state::effect::Effect> =
-            serde_json::from_value(args.effects).map_err(|e| {
-                McpError::invalid_params(format!("effects: {e}"), None)
-            })?;
-        self.project
-            .groups_set_effects(agent_actor(), gid, effects)
-            .await
-            .map_err(map_command_error)?;
-        Ok(ok_void())
-    }
-
-    #[tool(
-        description = "Replace a layer's entire effect chain. Same shape as `groups_set_effects`. \
-                       Layer-level `HtmlTransform` composes on top of the layer's static transform \
-                       from `params` and only renders when the layer is inside a group that runs \
-                       through the html-cap path (because the group has its own `HtmlTransform`, \
-                       or any other member does)."
-    )]
-    async fn layers_set_effects(
-        &self,
-        #[tool(aggr)] args: LayersSetEffectsArgs,
-    ) -> Result<CallToolResult, McpError> {
-        let id = parse_uuid(&args.layer_id, "layer_id")?;
-        let effects: Vec<crate::state::effect::Effect> =
-            serde_json::from_value(args.effects).map_err(|e| {
-                McpError::invalid_params(format!("effects: {e}"), None)
-            })?;
-        self.project
-            .layers_set_effects(agent_actor(), id, effects)
-            .await
-            .map_err(map_command_error)?;
-        Ok(ok_void())
-    }
+    // groups_set_effects / layers_set_effects MCP tools removed in P12-a.
+    // Effects aren't routed by the Pixi renderer in v1, so the agent-facing
+    // surface for them is gone. P12-b deletes the underlying Layer.effects /
+    // Group.effects fields together with the IR visual half.
 
     #[tool(description = "Duplicate a layer with a time offset. The copy is inserted on the same track. \
                           Returns the new layer id. The composition duration extends if needed.")]
@@ -1869,26 +1826,8 @@ pub struct GroupView {
     pub layer_ids: Vec<String>,
 }
 
-/// MCP args for `groups_set_effects` / `layers_set_effects`. `effects`
-/// is a raw `serde_json::Value` so we don't have to spread
-/// `JsonSchema` across `Effect` / `EffectParams` / `Animated<T>` /
-/// `Keyframe<T>` / `Uuid` / `imbl::Vector` — the handler
-/// `serde_json::from_value`s into `Vec<Effect>` and reports parse
-/// errors verbatim.
-///
-/// Wire shape: an array of `{ id, enabled, params: { kind, ... } }`.
-/// See `state/effect.rs::EffectParams` for the per-kind field set.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct GroupsSetEffectsArgs {
-    pub group_id: String,
-    pub effects: serde_json::Value,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct LayersSetEffectsArgs {
-    pub layer_id: String,
-    pub effects: serde_json::Value,
-}
+// GroupsSetEffectsArgs / LayersSetEffectsArgs removed in P12-a — see
+// the tool-handler comment higher up in this file for the rationale.
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct LayerIdArgs {
