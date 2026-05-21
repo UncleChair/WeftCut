@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { srtToAss, subtitlesViewToAssBody } from "./assBody";
+import {
+  srtToAss,
+  subtitleBodyFromFile,
+  subtitlesViewToAssBody,
+} from "./assBody";
 import type { SubtitlesView } from "../../ipc";
 
 describe("srtToAss", () => {
@@ -84,11 +88,48 @@ describe("subtitlesViewToAssBody", () => {
     expect(out).toContain("Hi");
   });
 
-  test("Media source returns null (file-backed subtitles deferred)", () => {
+  test("Media source returns null (SubtitlesSprite drives the async fetch)", () => {
     const view: SubtitlesView = {
       source_kind: "Media",
       source_value: "media-id-123",
     };
     expect(subtitlesViewToAssBody(view)).toBeNull();
+  });
+});
+
+describe("subtitleBodyFromFile", () => {
+  test(".ass passes through verbatim", () => {
+    const body = "[Script Info]\nfake ass";
+    expect(subtitleBodyFromFile("/x/captions.ass", body)).toBe(body);
+  });
+
+  test(".ssa passes through verbatim (treated as ASS)", () => {
+    const body = "[Script Info]\nlegacy ssa";
+    expect(subtitleBodyFromFile("/x/captions.ssa", body)).toBe(body);
+  });
+
+  test(".srt is converted via srtToAss", () => {
+    const srt = "1\n00:00:01,000 --> 00:00:02,000\nHi\n";
+    const out = subtitleBodyFromFile("/x/captions.srt", srt);
+    expect(out).not.toBeNull();
+    expect(out).toContain("[Events]");
+    expect(out).toContain("Hi");
+  });
+
+  test("uppercase extension still dispatches", () => {
+    const srt = "1\n00:00:01,000 --> 00:00:02,000\nHi\n";
+    expect(subtitleBodyFromFile("/x/cap.SRT", srt)).toContain("Hi");
+    expect(subtitleBodyFromFile("/x/cap.ASS", "[ass]")).toBe("[ass]");
+  });
+
+  test("unknown extensions (.vtt, no ext) return null", () => {
+    expect(subtitleBodyFromFile("/x/cap.vtt", "WEBVTT")).toBeNull();
+    expect(subtitleBodyFromFile("/x/cap", "raw")).toBeNull();
+  });
+
+  test("query-string or fragment on the path doesn't break extension probe", () => {
+    expect(
+      subtitleBodyFromFile("asset://localhost/cap.ass?p=1", "[ass]"),
+    ).toBe("[ass]");
   });
 });
