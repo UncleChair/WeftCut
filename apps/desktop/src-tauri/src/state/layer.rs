@@ -9,7 +9,6 @@ use serde_json::Value;
 
 use super::animated::Animated;
 use super::color::Rgba;
-use super::effect::Effect;
 use super::ids::{LayerId, MediaId};
 use super::time::TimeUs;
 use super::transform::{BlendMode, Rect, Transform};
@@ -25,8 +24,6 @@ pub struct Layer {
     pub locked: bool,
     #[serde(default)]
     pub metadata: imbl::HashMap<String, Value>,
-    #[serde(default)]
-    pub effects: imbl::Vector<Effect>,
     pub params: LayerParams,
 }
 
@@ -41,18 +38,6 @@ impl Layer {
 
     pub fn overlaps(&self, other: &Layer) -> bool {
         self.t_start_us < other.t_end_us && other.t_start_us < self.t_end_us
-    }
-
-    /// True when any enabled effect on this layer requires the
-    /// html-render path. A layer can't render through html on its
-    /// own — its containing group runs the composition — but this
-    /// flag widens the group's "needs html" detection so a
-    /// per-layer `HtmlTransform` flips the whole group regardless
-    /// of whether the group itself carries an html-required effect.
-    pub fn requires_html(&self) -> bool {
-        self.effects.iter().any(|e| {
-            e.enabled && (e.kind().requires_html() || e.has_keyframed_params())
-        })
     }
 }
 

@@ -16,7 +16,7 @@ use uuid::Uuid;
 use crate::export;
 use crate::io;
 use crate::ir;
-use crate::raster::template as raster_template;
+use crate::templates;
 use crate::state::{
     self, Actor, ColorParams, CommandError, LayerParams, MediaItem, MediaKind, ProjectHandle,
     Rgba, SubtitlesParams, SubtitlesSource, TemplateParams, Transform,
@@ -52,13 +52,6 @@ pub struct GroupSummary {
     pub id: String,
     pub label: Option<String>,
     pub layer_ids: Vec<String>,
-    /// Group-level effect chain. Surfaced verbatim from
-    /// `state::Group.effects`; the TS distiller reads
-    /// `HtmlTransform` keyframes from here. Presence of any enabled
-    /// effect whose kind `requires_html()` (today only
-    /// `HtmlTransform`) flags the group for html-cap rendering in
-    /// preview + export.
-    pub effects: Vec<state::Effect>,
 }
 
 #[derive(Serialize, Clone)]
@@ -118,11 +111,6 @@ pub struct LayerSummary {
     /// panel; mutates flow back through `update_layer_params` with the
     /// matching `LayerParamsPatch` variant.
     pub params: LayerParamsView,
-    /// Per-layer effect chain. Surfaced verbatim from
-    /// `state::Layer.effects`. Inside an html-render group, an
-    /// enabled `HtmlTransform` here composes on top of the layer's
-    /// static transform from `params` at every composition tick.
-    pub effects: Vec<state::Effect>,
 }
 
 #[derive(Serialize, Clone)]
@@ -434,7 +422,6 @@ pub async fn project_summary(handle: State<'_, ProjectHandle>) -> Result<Project
                     enabled: l.enabled,
                     locked: l.locked,
                     params: layer_params_view(&l.params, &snap.media_pool),
-                    effects: l.effects.iter().cloned().collect(),
                 })
                 .collect(),
         })
@@ -459,7 +446,6 @@ pub async fn project_summary(handle: State<'_, ProjectHandle>) -> Result<Project
             id: g.id.to_string(),
             label: g.label.clone(),
             layer_ids: g.members.iter().map(|m| m.to_string()).collect(),
-            effects: g.effects.iter().cloned().collect(),
         })
         .collect();
 
@@ -1808,9 +1794,9 @@ pub async fn import_queue_list(
 
 #[tauri::command]
 pub async fn compile_project(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     handle: State<'_, ProjectHandle>,
-    cache: State<'_, crate::cache::CacheLayout>,
+    _cache: State<'_, crate::cache::CacheLayout>,
 ) -> Result<CompiledGraph, String> {
     let snap = handle.snapshot().await;
     let target = ir::RenderTarget::full(
@@ -1820,27 +1806,9 @@ pub async fn compile_project(
         snap.composition.sample_rate,
         snap.composition.channels,
     );
-    let inline_subs =
-        ir::materialize_inline_subtitles(&snap, &cache).map_err(|e| e.to_string())?;
-    let template_renders = ir::materialize_templates(&snap, &cache, &app)
-        .await
-        .map_err(|e| e.to_string())?;
-    let html_group_renders = ir::materialize::materialize_html_groups(&snap, &cache, &app)
-        .await
-        .map_err(|e| e.to_string())?;
-    let graph = ir::lower(
-        &snap,
-        target,
-        &inline_subs,
-        &template_renders,
-        &html_group_renders,
-    )
-    .map_err(|e| e.to_string())?;
+    let graph = ir::lower(&snap, target).map_err(|e| e.to_string())?;
     let plan = ir::emit_ffmpeg(&graph);
     Ok(CompiledGraph {
-        // CompiledGraph is shown in a debug panel — just the paths, no
-        // framerate flags. Callers that build a real ffmpeg command line
-        // (export/mod.rs) should use `PlanInput::cli_args` directly.
         inputs: plan.inputs.iter().map(|i| i.path.clone()).collect(),
         filter_graph: plan.filter_graph,
         maps: plan.maps,
@@ -1924,7 +1892,7 @@ pub async fn add_subtitles_layer(
 /// UI-only and would just bloat agent context.
 #[tauri::command]
 pub async fn list_templates() -> Result<Vec<serde_json::Value>, String> {
-    raster_template::builtins()
+    templates::builtins()
         .into_iter()
         .map(|tpl| {
             let mut v = serde_json::to_value(&tpl.manifest)
@@ -1937,73 +1905,6 @@ pub async fn list_templates() -> Result<Vec<serde_json::Value>, String> {
             Ok(v)
         })
         .collect()
-}
-
-/// Render a static thumbnail of the named template at default props and a
-/// representative time, returning the PNG bytes base64-encoded so React
-/// can wrap them in a `data:image/png;base64,…` URL. Goes through the
-/// same offscreen-webview raster pipeline IR Template layers use, so the
-/// thumbnail is pixel-accurate to what ffmpeg would emit. First call per
-/// template is ~200–700ms on a cold cache; subsequent calls are
-/// near-instant via the content-keyed raster cache.
-#[tauri::command]
-pub async fn template_preview(
-    app: tauri::AppHandle,
-    cache: State<'_, crate::cache::CacheLayout>,
-    template_id: String,
-) -> Result<String, String> {
-    let template = raster_template::builtins()
-        .into_iter()
-        .find(|t| t.id() == template_id)
-        .ok_or_else(|| {
-            format!(
-                "unknown template_id '{template_id}' — call list_templates for the catalog",
-            )
-        })?;
-    // Default props match what the picker's card thumbnails currently feed
-    // their iframes, so the static-render swap is visually equivalent.
-    let canonical = template
-        .canonicalize_props(&serde_json::Value::Object(Default::default()))
-        .map_err(|e| format!("canonicalize defaults: {e}"))?;
-    // 0.5 * default_duration_s clamped at [0, 1] — same heuristic as the
-    // MCP `templates://<id>/preview` resource (kept in sync deliberately
-    // so card thumbnails and the agent-facing surface render identically).
-    let t = template.manifest.default_duration_s * 0.5;
-    let t = t.clamp(0.0, 1.0);
-    let job = crate::raster::RasterJob {
-        template,
-        props_canonical_json: canonical,
-        fps: 1,
-        times_s: vec![t],
-    };
-    let out = crate::raster::render(&app, cache.inner(), job).await?;
-    let frame = out
-        .frames
-        .first()
-        .ok_or_else(|| "render returned zero frames".to_string())?;
-    let bytes = tokio::fs::read(&frame.path)
-        .await
-        .map_err(|e| format!("read {}: {e}", frame.path.display()))?;
-    use base64::Engine;
-    Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
-}
-
-/// HTML-render-groups Phase H.0 transparency probe — drives the
-/// export-side mount surface (the offscreen `raster-worker` webview
-/// navigates to a full-document half-transparent-red probe and captures
-/// via WebView2 `CapturePreview`). Returns base64 PNG bytes; the dev
-/// `#html-group-spike` page decodes them, reads the center pixel, and
-/// asserts vs. (255, 0, 0, 128) ± 4. Removed when Phase H closes.
-///
-/// Decision 12 (`docs/html-render-groups.md`) requires this probe to
-/// pass *before* anything else in Phase H.* lands. If it fails, the
-/// iframe-transparency-bug arc has re-opened on a new surface and the
-/// fix needs to land before composition machinery is built on top.
-#[tauri::command]
-pub async fn html_group_probe_transparency(
-    app: tauri::AppHandle,
-) -> Result<crate::raster::html_group::ProbeResult, String> {
-    crate::raster::html_group::probe_transparency(&app).await
 }
 
 /// Stage F-Picker: UI counterpart to the MCP `add_template` tool. Mirrors
@@ -2021,7 +1922,7 @@ pub async fn add_template(
     track_id: Option<String>,
     props: Option<serde_json::Value>,
 ) -> Result<String, String> {
-    let template = raster_template::builtins()
+    let template = templates::builtins()
         .into_iter()
         .find(|t| t.id() == template_id)
         .ok_or_else(|| {

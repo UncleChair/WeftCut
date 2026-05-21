@@ -1,10 +1,13 @@
 //! Export pipeline — drive ffmpeg with the IR-compiled plan.
 //!
-//! Phase 3: presets (H264 1080p, H264 4K, ProRes, GIF), hardware encoder
-//! detection with software fallback, in-memory render queue (serial FIFO).
-//! Progress comes from `ffmpeg -progress pipe:1 -nostats` — clean key=value
-//! lines vs the noisy default stderr text. Each `progress=continue|end`
-//! line ends one block; we emit one `export:progress` Tauri event per block.
+//! Audio-only post P12-b — the IR visual half was deleted with the
+//! Pixi-renderer migration. The full-render path (`run_render` /
+//! `export_to_mp4` / `export_with_preset_logged`) now produces an
+//! audio-only file too; the legacy `ExportPanel` wrappers + the
+//! ffmpeg-export queue + their TS callers should be deleted in
+//! P12-c. The path that's actually correct today is
+//! `export_audio_only → mux_to_file` driven from the Pixi export
+//! orchestrator.
 
 mod hwencoder;
 mod preset;
@@ -20,12 +23,12 @@ use std::process::Stdio;
 use anyhow::{Context, Result};
 use ffmpeg_sidecar::{command::ffmpeg_is_installed, paths::ffmpeg_path};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tracing::{info, warn};
 
-use crate::ir::{RenderTarget, emit_ffmpeg, lower, materialize_inline_subtitles};
+use crate::ir::{RenderTarget, emit_ffmpeg, lower};
 use crate::state::Project;
 
 pub const EVENT_PROGRESS: &str = "export:progress";
@@ -59,54 +62,39 @@ pub async fn run_render(
     app: AppHandle,
     project: &Project,
     output: &Path,
-    preset: ExportPreset,
+    _preset: ExportPreset,
 ) -> Result<()> {
-    run_render_inner(app, project, output, preset, true, false).await
+    run_render_inner(app, project, output, true).await
 }
 
-/// Silent variant — same ffmpeg dance, but does NOT emit
-/// `export:progress` / `export:complete` / `export:error` events. Used
-/// by `preview::render` so the React `<ExportPanel>` doesn't pop up
-/// every time the project preview re-renders. The preview module
-/// emits its own `preview:render_*` events for status surfacing.
+/// Silent variant — no `export:*` events. Same audio-only emit as
+/// `run_render`.
 pub async fn run_render_silent(
     app: AppHandle,
     project: &Project,
     output: &Path,
-    preset: ExportPreset,
+    _preset: ExportPreset,
 ) -> Result<()> {
-    run_render_inner(app, project, output, preset, false, false).await
+    run_render_inner(app, project, output, false).await
 }
 
 /// Audio-only export. Produces an `.m4a` (AAC) at `output` containing
 /// just the project's audio chain. Used by the PixiJS export path:
 /// the Worker emits video.mp4 via WebCodecs; this fills in audio.m4a;
 /// `mux_to_file` combines them with `ffmpeg -c copy`.
-///
-/// Emits no `export:*` events — the caller (App.tsx) drives the
-/// unified ExportPanel state. We strip `video_out` from the lowered
-/// graph so the emitted filter script contains the audio chain only;
-/// `emit_ffmpeg::emit` is reachability-driven so no video filter
-/// clauses are produced when `video_out` is `None`. Inputs that were
-/// only referenced by the video chain still appear in the `-i` list
-/// because the graph's input dedupe is shared; ffmpeg opens them and
-/// ignores them, which is harmless when the files exist
-/// (`materialize_*` ran).
 pub async fn export_audio_only(
     app: AppHandle,
     project: &Project,
     output: &Path,
 ) -> Result<()> {
-    run_render_inner(app, project, output, ExportPreset::default(), false, true).await
+    run_render_inner(app, project, output, false).await
 }
 
 async fn run_render_inner(
     app: AppHandle,
     project: &Project,
     output: &Path,
-    preset: ExportPreset,
     emit_events: bool,
-    audio_only: bool,
 ) -> Result<()> {
     if !ffmpeg_is_installed() {
         anyhow::bail!(
@@ -122,92 +110,36 @@ async fn run_render_inner(
         project.composition.sample_rate,
         project.composition.channels,
     );
-    // Materialize inline subtitle bodies before lowering. The cache lives in
-    // app-managed state; if the export path is invoked from a context that
-    // didn't manage it (some tests do this), fall back to a tempdir-rooted
-    // layout so the materialization step doesn't hard-fail on absence.
-    let cache = app
-        .try_state::<crate::cache::CacheLayout>()
-        .map(|s| s.inner().clone())
-        .unwrap_or_else(|| {
-            let fallback = std::env::temp_dir().join("weftcut-export-cache");
-            let layout = crate::cache::CacheLayout::new(fallback);
-            let _ = layout.ensure_dirs();
-            layout
-        });
-    let inline_subs = materialize_inline_subtitles(project, &cache)
-        .context("materialize inline subtitles")?;
-    let template_renders = crate::ir::materialize_templates(project, &cache, &app)
-        .await
-        .context("materialize templates")?;
-    // Phase H.5 — materialize Html-render groups (composition → PNG seq
-    // in the raster cache). Per-group cache hits short-circuit the
-    // webview entirely on subsequent exports.
-    let html_group_renders =
-        crate::ir::materialize::materialize_html_groups(project, &cache, &app)
-            .await
-            .context("materialize html-render groups")?;
-    let mut graph = lower(
-        project,
-        target,
-        &inline_subs,
-        &template_renders,
-        &html_group_renders,
-    )
-    .context("lower IR")?;
-    if audio_only {
-        // emit_ffmpeg's walker is reachability-driven from
-        // video_out / audio_out (ir/emit_ffmpeg.rs:124-132); nulling
-        // the video terminal means no video filter clauses get
-        // emitted and no video [vfinal] map appears in plan.maps.
-        graph.video_out = None;
-    }
+    let graph = lower(project, target).context("lower IR")?;
     let plan = emit_ffmpeg(&graph);
+
+    if plan.maps.is_empty() {
+        // Audio-only export with no audio layers: produce nothing. The
+        // Pixi mux step tolerates a missing audio file by stream-copy
+        // muxing video-only.
+        warn!("audio-only export: project has no audio layers; skipping ffmpeg");
+        if emit_events {
+            let _ = app.emit(
+                EVENT_COMPLETE,
+                ExportComplete {
+                    output_path: output.to_string_lossy().to_string(),
+                    duration_us: project.composition.duration_us.max(1_000_000),
+                },
+            );
+        }
+        return Ok(());
+    }
 
     let total_us = project.composition.duration_us.max(1_000_000);
 
-    // Write the filter graph to a temp file — long graphs can blow argv limits.
     let script_path = std::env::temp_dir().join(format!(
         "weftcut-export-{}.txt",
         uuid::Uuid::now_v7().simple()
     ));
-    let mut graph_body = plan.filter_graph.clone();
-    if let Some(suffix) = preset.filter_graph_suffix() {
-        // Make sure we re-use the [vfinal] label by appending a suffix that
-        // splits/palettes the existing terminal stream. Trim trailing
-        // newlines so the join is clean.
-        while graph_body.ends_with('\n') {
-            graph_body.pop();
-        }
-        graph_body.push_str(suffix);
-    }
-    std::fs::write(&script_path, &graph_body).context("write filter script")?;
-
-    // Diagnostic: dump the filter graph alongside the export output so
-    // post-mortem inspection is possible. The script_path itself is
-    // a temp file that gets unlinked at the end of this function.
-    // Useful when a "the video looks stretched / wrong-sized" report
-    // comes in: grep the .ffgraph.txt for the relevant `scale=W:H`
-    // clause to see whether the lower pass emitted source dims (post-
-    // 16dbad0 fix) or canvas dims (pre-fix / stale binary).
-    let graph_diag_path = output.with_extension("ffgraph.txt");
-    if let Err(e) = std::fs::write(&graph_diag_path, &graph_body) {
-        tracing::warn!(
-            target: "export",
-            error = %e,
-            path = %graph_diag_path.display(),
-            "failed to dump ffmpeg filter graph for diagnostics; continuing",
-        );
-    } else {
-        tracing::info!(
-            target: "export",
-            path = %graph_diag_path.display(),
-            "ffmpeg filter graph dumped",
-        );
-    }
+    std::fs::write(&script_path, &plan.filter_graph).context("write filter script")?;
 
     let mut cmd = Command::new(ffmpeg_path());
-    cmd.arg("-y") // overwrite
+    cmd.arg("-y")
         .arg("-hide_banner")
         .arg("-nostats");
 
@@ -219,43 +151,11 @@ async fn run_render_inner(
 
     cmd.arg("-filter_complex_script").arg(&script_path);
 
-    if audio_only {
-        // plan.maps contains only the audio terminal because we
-        // nulled video_out above. No preset video codec; just AAC
-        // at a reasonable bitrate for downstream stream-copy mux.
-        for map in &plan.maps {
-            cmd.arg("-map").arg(map);
-        }
-        cmd.args(["-c:a", "aac", "-b:a", "192k"]);
-    } else {
-        // Preset may override the final video label (e.g. GIF emits [vgif]).
-        let final_v_label = preset.final_video_label();
-        cmd.arg("-map").arg(final_v_label);
-        if preset.has_audio() {
-            for map in &plan.maps {
-                // Skip the video map — we already added the (possibly-renamed)
-                // version above.
-                if map.starts_with("[v") {
-                    continue;
-                }
-                cmd.arg("-map").arg(map);
-            }
-        }
-
-        // HW encoder selection. We resolve through the AppHandle-managed cache
-        // when available (probed once at startup) and fall back to a fresh probe
-        // only if the cache isn't installed (e.g. tests calling run_render
-        // directly without going through the Tauri setup hook). Per-export probes
-        // would otherwise add up to several seconds on hosts where some
-        // candidates time out.
-        let hw = match app.try_state::<HwEncoderCache>() {
-            Some(c) => c.get().await,
-            None => probe_hw_encoders().await.recommended,
-        };
-        preset.apply_to_command(&mut cmd, hw);
+    for map in &plan.maps {
+        cmd.arg("-map").arg(map);
     }
+    cmd.args(["-c:a", "aac", "-b:a", "192k"]);
 
-    // -progress pipe:1 → clean key=value blocks on stdout, one per ~0.5s.
     cmd.args(["-progress", "pipe:1"]);
 
     cmd.arg(output);
@@ -265,21 +165,12 @@ async fn run_render_inner(
         .stderr(Stdio::piped())
         .kill_on_drop(true);
 
-    if audio_only {
-        info!("ffmpeg audio-only export starting → {}", output.display());
-    } else {
-        info!(
-            "ffmpeg export starting → {} (preset={:?})",
-            output.display(),
-            preset,
-        );
-    }
+    info!("ffmpeg audio-only export starting → {}", output.display());
     let mut child = cmd.spawn().context("spawn ffmpeg")?;
 
     let stdout = child.stdout.take().context("take ffmpeg stdout")?;
     let stderr = child.stderr.take().context("take ffmpeg stderr")?;
 
-    // Stream the cleaner -progress key=value lines.
     let app_progress = app.clone();
     let progress_task = tokio::spawn(async move {
         let mut reader = BufReader::new(stdout).lines();
@@ -300,14 +191,11 @@ async fn run_render_inner(
                         }
                     }
                     "out_time_us" | "out_time_ms" => {
-                        // Despite the name `out_time_ms` is microseconds in
-                        // most ffmpeg builds; trust whichever lands first.
                         if let Ok(us) = value.parse::<i64>() {
                             snapshot.current_time_us = us;
                         }
                     }
                     "speed" => {
-                        // "1.02x" → 1.02
                         let trimmed = value.trim_end_matches('x');
                         if let Ok(s) = trimmed.parse::<f64>() {
                             snapshot.speed = s;
@@ -326,8 +214,6 @@ async fn run_render_inner(
         }
     });
 
-    // Drain stderr just to keep the pipe from filling. Keep last few lines so
-    // we can surface them on failure.
     let stderr_task = tokio::spawn(async move {
         let mut reader = BufReader::new(stderr).lines();
         let mut tail: Vec<String> = Vec::new();
@@ -427,8 +313,6 @@ pub async fn mux_to_file(
     Ok(())
 }
 
-/// Convenience wrapper that swallows path conversion + emits an error event on
-/// failure so the UI can show a toast even when the awaiting handle isn't.
 pub async fn export_to_mp4_logged(app: AppHandle, project: &Project, output: PathBuf) {
     export_with_preset_logged(app, project, output, ExportPreset::default()).await
 }
@@ -439,10 +323,6 @@ pub async fn export_with_preset_logged(
     output: PathBuf,
     preset: ExportPreset,
 ) {
-    // Status-log producer: one Started entry, one Ok/Err pair per
-    // export. The ExportPanel still owns detailed progress UI; the
-    // log shows the lifecycle and surfaces failures so the bar's
-    // error counter increments on bad renders.
     let log_op_id = uuid::Uuid::now_v7();
     crate::logs::emit_via_app(
         &app,

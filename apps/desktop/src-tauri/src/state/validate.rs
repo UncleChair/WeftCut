@@ -11,8 +11,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use super::animated::Animated;
-use super::effect::EffectKind;
-use super::ids::{EffectId, GroupId, KeyframeId, LayerId, MediaId, TrackId, TransitionId};
+use super::ids::{GroupId, KeyframeId, LayerId, MediaId, TrackId, TransitionId};
 use super::layer::{Layer, LayerParams};
 use super::project::Project;
 use super::time::TimeUs;
@@ -82,9 +81,6 @@ pub enum ValidationError {
 
     #[error("duplicate layer id {layer}")]
     DuplicateLayerId { layer: LayerId },
-
-    #[error("duplicate effect id {effect} on layer {layer}")]
-    DuplicateEffectId { layer: LayerId, effect: EffectId },
 
     #[error("transition {transition} references unknown layer {layer}")]
     TransitionLayerMissing {
@@ -435,16 +431,6 @@ fn validate_layer(project: &Project, layer: &Layer) -> Result<(), ValidationErro
     }
     let duration = layer.t_end_us - layer.t_start_us;
 
-    let mut seen_effects: HashSet<EffectId> = HashSet::new();
-    for effect in layer.effects.iter() {
-        if !seen_effects.insert(effect.id) {
-            return Err(ValidationError::DuplicateEffectId {
-                layer: layer.id,
-                effect: effect.id,
-            });
-        }
-    }
-
     match &layer.params {
         LayerParams::VideoClip(p) => {
             check_media_ref(project, layer.id, p.media)?;
@@ -560,7 +546,6 @@ mod tests {
     use super::*;
     use crate::state::animated::{Animated, Interpolation, Keyframe};
     use crate::state::color::Rgba;
-    use crate::state::effect::{Effect, EffectParams};
     use crate::state::ids::new_id;
     use crate::state::layer::{ColorParams, Layer, LayerParams, VideoClipParams};
     use crate::state::media::{MediaItem, MediaKind, MediaMetadata};
@@ -581,7 +566,6 @@ mod tests {
             enabled: true,
             locked: false,
             metadata: imbl::HashMap::new(),
-            effects: imbl::Vector::new(),
             params: LayerParams::Color(ColorParams {
                 color: Animated::Static(Rgba::WHITE),
                 width: 1920,
@@ -702,7 +686,6 @@ mod tests {
             enabled: true,
             locked: false,
             metadata: imbl::HashMap::new(),
-            effects: imbl::Vector::new(),
             params: LayerParams::Audio(AudioParams {
                 media: media_id,
                 src_in_us: 0,
@@ -739,7 +722,6 @@ mod tests {
             enabled: true,
             locked: false,
             metadata: imbl::HashMap::new(),
-            effects: imbl::Vector::new(),
             params: LayerParams::Audio(AudioParams {
                 media: media_id,
                 src_in_us: 0,
@@ -886,29 +868,6 @@ mod tests {
         assert!(matches!(
             validate(&p),
             Err(ValidationError::KeyframeOutOfRange { .. })
-        ));
-    }
-
-    #[test]
-    fn rejects_duplicate_effect_id() {
-        let mut p = blank();
-        let mut track = Track::new();
-        let mut layer = color_layer(0, 1_000_000);
-        let same_id = new_id();
-        let mk_effect = || Effect {
-            id: same_id,
-            enabled: true,
-            params: EffectParams::Blur {
-                radius: Animated::Static(1.0),
-            },
-        };
-        layer.effects.push_back(mk_effect());
-        layer.effects.push_back(mk_effect());
-        track.layers.push_back(layer);
-        p.tracks.push_back(track);
-        assert!(matches!(
-            validate(&p),
-            Err(ValidationError::DuplicateEffectId { .. })
         ));
     }
 

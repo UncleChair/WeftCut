@@ -151,10 +151,10 @@ impl CacheLayout {
         self.voiceover_dir().join(format!("{hash}.{ext}"))
     }
 
-    /// Per-render PNG sequence directory for the rasterizer. Content-addressed
-    /// by blake3 of the canonical render inputs — see `raster::cache_key`. A
-    /// hit means we already have every frame on disk and can skip the
-    /// expensive webview rasterization entirely.
+    /// Per-render PNG sequence directory. Historically content-addressed
+    /// by blake3 of the canonical render inputs for the offscreen-webview
+    /// rasterizer; the rasterizer was deleted with P12-c but the on-disk
+    /// directory survives in existing workspaces.
     pub fn raster_root(&self) -> PathBuf {
         self.current_root().join("raster")
     }

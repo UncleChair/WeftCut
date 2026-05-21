@@ -183,11 +183,10 @@ fn validate_prop(
 /// per template host and concatenates `<style>` + `body` into the
 /// shadow innerHTML, then runs `scripts` via `new Function`.
 ///
-/// **Only used by the html-render-groups path.** The standalone
-/// raster::render path navigates the offscreen webview to the full
-/// composed HTML and lets the browser parse + execute it; this parser
-/// is only needed when the template is embedded inside a larger
-/// composition document.
+/// Used by the html-render-groups composition path to embed a
+/// template inside a larger composition document. (The standalone
+/// offscreen-webview rasterizer that read the composed HTML directly
+/// was deleted with P12-c.)
 #[derive(Clone, Debug)]
 pub struct ParsedComposed {
     pub style: String,
@@ -341,9 +340,9 @@ pub enum TemplateError {
 macro_rules! builtin_template {
     ($fn_name:ident, $dir:literal) => {
         pub fn $fn_name() -> Template {
-            const MANIFEST: &str = include_str!(concat!("templates/", $dir, "/manifest.json"));
-            const HTML: &str = include_str!(concat!("templates/", $dir, "/index.html"));
-            const STYLE: &str = include_str!(concat!("templates/", $dir, "/style.css"));
+            const MANIFEST: &str = include_str!(concat!($dir, "/manifest.json"));
+            const HTML: &str = include_str!(concat!($dir, "/index.html"));
+            const STYLE: &str = include_str!(concat!($dir, "/style.css"));
             let manifest: Manifest =
                 serde_json::from_str(MANIFEST).expect("built-in manifest must parse");
             Template {
