@@ -2595,8 +2595,7 @@ impl ProjectActor {
         // Mirrors `do_add_media_item`: derivatives sit outside the editing
         // undo stack. We patch every snapshot's `media_pool` so cached paths
         // remain consistent across undo cursors of unrelated edits, then
-        // broadcast a non-recorded ChangeEvent so subscribers (UI, libmpv
-        // hot-reload) re-fetch.
+        // broadcast a non-recorded ChangeEvent so subscribers re-fetch.
         let current = self.history.current();
         let mut next_pool = current.media_pool.clone();
         let item = next_pool

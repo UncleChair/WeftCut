@@ -3,6 +3,6 @@ target-*/
 gen/
 WixTools/
 
-# Vendored binary deps (libmpv-2.dll is ~110 MB; regenerate via the install
-# steps in docs/setup.md). Headers and the generated mpv.lib live alongside.
+# Vendored binary deps (none currently in active use; reserved for any
+# future bundled binaries).
 vendor/*
