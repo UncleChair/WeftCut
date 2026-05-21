@@ -49,8 +49,8 @@ export type ExportRequest =
       startUs: number;
       endUs: number;
       /// VideoEncoder config (codec / bitrate / hardware
-      /// preference / etc). Main thread builds this from the
-      /// ExportPreset.
+      /// preference / etc). Main thread builds this from
+      /// `defaultEncoderConfig(width, height)` in `runExport.ts`.
       encoderConfig: VideoEncoderConfig;
       /// OffscreenCanvas transferred from the main thread. Worker
       /// hands it to the PixiJS Application as the render target.

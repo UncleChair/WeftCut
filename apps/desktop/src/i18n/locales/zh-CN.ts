@@ -80,7 +80,6 @@ const zhCN: Resources = {
     view: "视图",
     export: "导出",
     tools: "工具",
-    preset_heading: "输出预设",
   },
   view: {
     display_mode_heading: "轨道显示",
@@ -94,7 +93,6 @@ const zhCN: Resources = {
     add_color_layer: "+ 颜色层（2秒）",
     add_text_layer: "+ 文本（3秒）",
     split_first: "切分首个图层",
-    compile: "编译",
     import_media: "导入素材…",
     export: "导出…",
     save: "保存",
@@ -103,11 +101,6 @@ const zhCN: Resources = {
     save_and_close_hint: "将待保存的编辑写入工作区，并返回项目选择页。",
     undo: "撤销",
     redo: "重做",
-    queue_export: "+ 排队",
-    queue_export_hint: "将导出加入渲染队列（在当前任务后执行）。",
-    pixi_export: "Pixi 导出…",
-    pixi_export_hint:
-      "通过 PixiJS + WebCodecs Worker 管线导出。需要启用 Pixi 预览模式（?pixi=1）。",
     connect_agent: "连接代理…",
     connect_agent_hint:
       "显示外部代理（Claude Desktop、Cursor）通过 MCP 驱动 WeftCut 所需的 URL 和令牌。",
@@ -125,13 +118,6 @@ const zhCN: Resources = {
     group_selected: "将所选图层编组",
     dissolve_selected_group: "解散所选图层所在的编组",
   },
-  compiler: {
-    panel_title: "编译后的滤镜图（{{count}} 个节点）",
-    inputs_label: "输入",
-    maps_label: "映射",
-    no_inputs: "（无）",
-    close: "关闭",
-  },
   dialogs: {
     save_title: "保存 WeftCut 项目",
     open_title: "打开 WeftCut 项目",
@@ -140,7 +126,6 @@ const zhCN: Resources = {
     import_title: "导入素材",
     media_filter: "媒体文件",
     export_title: "导出视频",
-    export_queue_title: "加入导出队列",
     export_default_name: "weftcut-导出.mp4",
     export_filter: "输出文件",
   },
@@ -235,36 +220,10 @@ const zhCN: Resources = {
     starting: "正在启动导出…",
     progress_label:
       "{{percent}}% · 第 {{frame}} 帧 · {{fps}}fps · {{speed}}x",
-    rastering_label:
-      "{{percent}}% · 正在光栅化第 {{frame}}/{{total}} 帧",
-    rastering_label_window:
-      "{{percent}}% · 第 {{windowOneBased}}/{{windowCount}} 窗 · 光栅化第 {{frame}}/{{total}} 帧",
     complete: "已导出到 {{path}}",
     failed: "导出失败：{{detail}}",
     cancel: "取消",
     dismiss: "关闭",
-    preset_hint: "选择导出的编解码器 / 容器预设。",
-    preset: {
-      H264Mp4_1080p: "H.264 MP4（1080p）",
-      H264Mp4_4K: "H.264 MP4（4K）",
-      ProResMov: "ProRes 422 HQ（MOV）",
-      Gif: "动画 GIF",
-    },
-  },
-  queue: {
-    title_one: "渲染队列（{{count}}）",
-    title_other: "渲染队列（{{count}}）",
-    title: "渲染队列（{{count}}）",
-    hw_label: "硬件",
-    clear_finished: "清除已完成",
-    remove_hint: "从队列移除（运行中则取消）",
-    status: {
-      Pending: "等待中",
-      Running: "进行中",
-      Completed: "已完成",
-      Failed: "失败",
-      Cancelled: "已取消",
-    },
   },
   connect: {
     heading: "连接代理",
