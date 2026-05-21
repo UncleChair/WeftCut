@@ -2109,11 +2109,6 @@ pub async fn add_marker(
         .map_err(|e: CommandError| e.to_string())
 }
 
-// mpv_play_file / mpv_play_media commands deleted in P12-d alongside the
-// libmpv module. The media-pool "click to preview a raw clip" feature
-// was the only consumer; users drop the clip on the timeline + see it
-// through the Pixi preview instead.
-
 /// Audio-only export. AWAITABLE (not fire-and-forget) — App.tsx
 /// awaits this between the Pixi Worker video export and the final
 /// stream-copy mux. Emits no `export:*` events so the ExportPanel

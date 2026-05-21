@@ -131,7 +131,7 @@ pub struct ProjectMetadata {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProjectSettings {
-    /// Resolution used for libmpv preview (proxy/draft).
+    /// Proxy resolution used for live preview (Pixi compositor draft pass).
     pub preview_width: u32,
     pub preview_height: u32,
     pub autosave_interval_secs: Option<u32>,

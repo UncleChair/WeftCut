@@ -146,10 +146,6 @@ pub fn run() {
             // from our crate into whichever bus is current.
             app.manage(log_slot.clone());
             let log_slot_for_ui_events = log_slot.clone();
-            // libmpv was the media-pool popup preview's backing — deleted
-            // in P12-d. The offscreen-webview rasterizer (chromiumoxide +
-            // chrome-headless-shell bundling) went in P12-c. The Pixi
-            // compositor now handles every preview surface in v1.
 
             // Cache layout. **Per workspace-redesign Q3** (`docs/workspace-
             // redesign.md`), the cache lives at `<workspace>/Cache/` once a

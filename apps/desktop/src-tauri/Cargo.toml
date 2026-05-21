@@ -107,20 +107,6 @@ image-compare = "0.5"
 [dev-dependencies]
 insta = { version = "1", features = ["json", "yaml"] }
 
-# Phase 5: capture PNGs from the offscreen WebView2 webview via
-# CapturePreview. Pinned to the same transitive versions tauri 2.11 already
-# pulls in (webview2-com 0.38, windows 0.61) so we don't fork the dep graph.
-# `windows` features cover only what `raster/mod.rs` uses now — the
-# libmpv-embed Gdi / LibraryLoader / UI_WindowsAndMessaging features were
-# dropped in workspace-redesign Phase D.4.
-[target.'cfg(windows)'.dependencies]
-webview2-com = "0.38"
-windows = { version = "0.61", features = [
-    "Win32_Foundation",
-    "Win32_System_Com",
-    "Win32_System_Com_StructuredStorage",
-] }
-
 [features]
 default = []
 custom-protocol = ["tauri/custom-protocol"]
