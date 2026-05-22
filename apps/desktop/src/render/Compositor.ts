@@ -56,6 +56,11 @@ interface ActiveClip {
   mediaId: string;
   source: DecoderHandle;
   sprite: VideoClipSprite;
+  /// Diagnostic edge-trigger: true if the last `updateClip` call
+  /// found `ring.frameAt(srcTUs)` returned null. Used so the
+  /// `frameAt → null` log fires once per transition rather than
+  /// every rAF tick during the null window.
+  loggedNull: boolean;
 }
 
 interface ActiveImage {
@@ -432,6 +437,35 @@ export class Compositor {
     }
   }
 
+  /// True if every active VideoClip layer at composition time `tUs`
+  /// has a decoded frame at its source-time mapping AND at least
+  /// `minLookaheadUs` of additional ring contents past it.
+  ///
+  /// Used by `PlaybackEngine.play()` to defer the clock start until
+  /// the decoder pipeline has produced enough output to absorb its
+  /// own first-frame warm-up latency. Without this gate, hardware-
+  /// decoder init burns ~50–200 ms on cold start while the clock
+  /// races ahead — the painter clamps to the latest-emitted frame
+  /// and the user sees a stutter for the first dozen frames.
+  ///
+  /// Returns true immediately when no VideoClip is active (e.g. the
+  /// playhead is over an empty region, or only non-decoded layers).
+  hasLookaheadAt(tUs: number, minLookaheadUs: number): boolean {
+    if (!this.projectSummary) return true;
+    for (const c of this.clips.values()) {
+      const layer = this.findLayer(c.layerId);
+      if (!layer || layer.params.kind !== "VideoClip") continue;
+      if (tUs < layer.t_start_us || tUs >= layer.t_end_us) continue;
+      const layerLocalUs = tUs - layer.t_start_us;
+      const srcTUs = layer.params.src_in_us + layerLocalUs;
+      const ring = c.source.ring;
+      if (!ring.containsPts(srcTUs)) return false;
+      const last = ring.lastPtsUs();
+      if (last === null || last < srcTUs + minLookaheadUs) return false;
+    }
+    return true;
+  }
+
   /// Tell the decoder pool which time we're at so it can manage
   /// lookahead. Called by PlaybackEngine on every tick.
   ///
@@ -532,7 +566,7 @@ export class Compositor {
       console.error(`[weftcut/pixi] ensureReady ${mediaId} failed`, e);
     });
     const sprite = new VideoClipSprite({ layerId: layer.id, mediaId });
-    const clip: ActiveClip = { layerId: layer.id, mediaId, source, sprite };
+    const clip: ActiveClip = { layerId: layer.id, mediaId, source, sprite, loggedNull: false };
     this.clips.set(layer.id, clip);
     // eslint-disable-next-line no-console
     console.log(`[weftcut/pixi] clip ${layer.id} → media ${mediaId} attached`);
@@ -551,7 +585,22 @@ export class Compositor {
     const frame = clip.source.ring.frameAt(srcTUs);
     if (frame) {
       clip.sprite.updateFrame(frame);
+    } else {
+      // Diagnostic: log when frameAt returns null (painter holds
+      // previous frame). Throttled to "only when this clip's state
+      // transitions from has-frame to null" to avoid spamming during
+      // a long null window.
+      if (clip.sprite.sprite.texture !== Texture.EMPTY && !clip.loggedNull) {
+        clip.loggedNull = true;
+        // eslint-disable-next-line no-console
+        console.log(
+          `[weftcut/pixi] frameAt(${srcTUs}) → null for ${clip.layerId} ` +
+            `(ringFirst=${clip.source.ring.firstPtsUs()} ` +
+            `ringLast=${clip.source.ring.lastPtsUs()})`,
+        );
+      }
     }
+    if (frame) clip.loggedNull = false;
 
     // (Per-tick clip diagnostic removed; rAF tick milestones removed.
     // Renderer is in steady state — bring them back only when a new

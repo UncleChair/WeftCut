@@ -89,6 +89,10 @@ export class ExportFrameStore implements FrameStore {
     return this.entries[hi]?.frame ?? this.entries[0]!.frame;
   }
 
+  lastPtsUs(): number | null {
+    return this.entries[this.entries.length - 1]?.ptsUs ?? null;
+  }
+
   containsPts(tUs: number): boolean {
     if (this.entries.length === 0) return false;
     let lo = 0;

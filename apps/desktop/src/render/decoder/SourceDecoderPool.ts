@@ -12,6 +12,15 @@ import { handleDecodeError } from "./decoderFallback";
 
 const IDLE_DISPOSE_MS = 5_000;
 
+/// Forward-seek threshold (in samples) past which we reset the
+/// decoder + jump the pump cursor instead of slogging through the
+/// intervening chunks. Sized to roughly one lookahead window (~60
+/// frames ≈ 1 s at 60 fps source); seeks within this distance
+/// catch up naturally as the pump dispatches forward, seeks beyond
+/// would otherwise stall the user waiting for the decoder to chew
+/// through hundreds of chunks. See ADR 0003.
+const FORWARD_SEEK_RESET_THRESHOLD = 60;
+
 export interface SourceHandleInit {
   mediaId: string;
   /// `asset://` URL of the source's 1080p master proxy.
@@ -23,6 +32,10 @@ export interface SourceHandleInit {
 export interface FrameStore {
   frameAt(tUs: number): VideoFrame | null;
   containsPts(tUs: number): boolean;
+  /// PTS in microseconds of the latest cached frame, or null if
+  /// the store is empty. Used to gauge how much lookahead the
+  /// decoder has produced past a given playhead position.
+  lastPtsUs(): number | null;
 }
 
 /// Minimal decoder-handle surface the Compositor depends on. Both the
@@ -78,6 +91,12 @@ export class SourceHandle {
   /// 'prefer-software'`. Prevents repeated downgrade attempts when
   /// the software path also errors.
   private downgraded = false;
+  /// Diagnostic throughput counter: outputs in the current ~1s
+  /// window. Logged + reset every 1000ms so we can read actual
+  /// decoder fps from the console (vs reasoning about it from
+  /// timing in user-visible behavior).
+  private outputsInWindow = 0;
+  private windowStartMs = 0;
 
   constructor(init: SourceHandleInit) {
     this.mediaId = init.mediaId;
@@ -137,6 +156,20 @@ export class SourceHandle {
           console.log(`[weftcut/pixi] source ${this.mediaId} first frame decoded`);
           this.onFirstFrameCb?.();
           this.onFirstFrameCb = null;
+        }
+        // Throughput diagnostic: log decoder fps once per second.
+        const nowMs = performance.now();
+        if (this.windowStartMs === 0) this.windowStartMs = nowMs;
+        this.outputsInWindow += 1;
+        if (nowMs - this.windowStartMs >= 1000) {
+          // eslint-disable-next-line no-console
+          console.log(
+            `[weftcut/pixi] decoder throughput: ${this.outputsInWindow} frames in ` +
+              `${(nowMs - this.windowStartMs).toFixed(0)}ms ` +
+              `(${((this.outputsInWindow * 1000) / (nowMs - this.windowStartMs)).toFixed(1)} fps)`,
+          );
+          this.outputsInWindow = 0;
+          this.windowStartMs = nowMs;
         }
       },
       error: (e: unknown) => {
@@ -241,50 +274,108 @@ export class SourceHandle {
 
     const targetIndex = this.demuxer.sampleIndexForPtsUs(tUs);
     const idr = this.demuxer.idrAtOrBefore(targetIndex);
+    // The IDR of the GOP the pump is currently flowing through. The
+    // decoder's reference state comes from this IDR; chunks from
+    // earlier GOPs can't decode against it.
+    const pumpGopIdr =
+      this.lastDecodedIndex >= 0
+        ? this.demuxer.idrAtOrBefore(this.lastDecodedIndex)
+        : 0;
 
-    // Reset the decoder + flush the ring when the target falls
-    // outside what we can currently produce. Two genuine cases:
+    // Reset the decoder + flush the ring when the target lies past
+    // what the pump can sequentially deliver. Two genuine cases:
     //
-    //   1. Target is in a different GOP than the one we're flowing
-    //      from (`idr !== decodeFloor`). The decoder needs a fresh
-    //      IDR before it can produce delta-frame output for the new
-    //      GOP. (Forward GOP-crossing, backward GOP-crossing, or a
-    //      seek that lands in a not-yet-decoded region.)
+    //   1. Target's IDR is far past our pump frontier (long forward
+    //      seek). The pump COULD catch up sequentially — IDR chunks
+    //      self-refresh references mid-stream — but slogging through
+    //      hundreds of intervening chunks burns seconds of decode
+    //      work. Threshold = one lookahead window's worth of samples;
+    //      anything within that, the pump catches up naturally;
+    //      beyond, jump.
     //
-    //   2. We've decoded past the target AND the target's sample is
-    //      no longer in the ring (lookbehind has evicted it). The
-    //      decoder can't rewind without a fresh IDR; reset + decode
-    //      from `idr` forward.
+    //   2. Target's frame is missing from the ring AND the decoder
+    //      can't reach it by continuing to pump forward — either the
+    //      pump is idle (queue empty, the frame was evicted from
+    //      lookbehind) or target's IDR is BEHIND the pump's current
+    //      GOP (decoder's references are stale; only a reset can
+    //      restore them). Forward-pumpable misses (queue still busy,
+    //      target's IDR ≥ pump's GOP) just need to wait for the
+    //      output callback — no reset.
+    //
+    // Continuous forward play — including crossing GOP boundaries —
+    // does NOT reset. The pump dispatches the new GOP's IDR through
+    // the same VideoDecoder in stream and the ring carries
+    // continuously across the boundary. See ADR 0003 — re-adding
+    // an unconditional `idr !== decodeFloor` reset re-introduces a
+    // visible playback stall at every GOP boundary, which is the
+    // bug the ADR exists to prevent.
     //
     // Critical: `targetIndex < lastDecodedIndex` alone is NOT a
     // valid backward-seek signal — when the playhead is held at any
     // tUs, `pumpLookahead` advances `lastDecodedIndex` past the
-    // target naturally to fill the lookahead window. The previous
+    // target naturally to fill the lookahead window. A prior
     // version of this check fired on every tick after the first
     // pump, resetting + flushing perpetually and starving the ring.
-    let needsReset = idr !== this.decodeFloor;
+    let needsReset = idr > this.lastDecodedIndex + FORWARD_SEEK_RESET_THRESHOLD;
     if (!needsReset && targetIndex <= this.lastDecodedIndex) {
       const targetSample = this.demuxer.sampleAt(targetIndex);
       if (targetSample && !this.ring.containsPts(targetSample.ptsUs)) {
-        // We've dispatched a chunk for this target but the ring
-        // doesn't contain a frame at its PTS. Two cases:
-        //   (a) Decoder hasn't emitted it yet — still in queue.
-        //   (b) Decoder emitted it but lookbehind evicted it.
-        // Only case (b) needs a reset; case (a) just needs us to
-        // wait for the async output callback. Distinguish via
-        // `decodeQueueSize`: if the decoder still has queued work,
-        // assume in-flight output is on the way.
-        if (this.decoder.decodeQueueSize === 0) {
+        // Target's PTS isn't in the ring. Reset only if the decoder
+        // can't reach it by continuing to pump forward:
+        //   - Target's PTS is BEFORE the ring's first entry: the
+        //     lookbehind evicted it (or we just backward-seeked
+        //     past it). Pump only goes forward; in-flight chunks
+        //     can't deliver it. Reset to re-dispatch from target's
+        //     IDR. Covers both within-GOP-beyond-lookbehind AND
+        //     backward-GOP-crossing in one signal — both manifest
+        //     as "target's PTS is older than what we still cache."
+        //   - Idle queue (`decodeQueueSize === 0`): nothing in
+        //     flight to fill the gap, so a missing target's frame
+        //     must have already been emitted and evicted.
+        // Otherwise (queue still busy, target's PTS within or ahead
+        // of ring) the output callback will deliver soon — wait
+        // rather than reset.
+        //
+        // Note: an earlier version also checked `idr < pumpGopIdr`
+        // (target's IDR behind pump's current GOP). That fired in a
+        // reset loop during paused state once the pump's lookahead
+        // naturally crossed a GOP boundary ahead of the playhead —
+        // each loop iteration flushed away the target frame the
+        // decoder was about to emit, restarting from chunk 0. The
+        // `targetIsBeforeRing` signal already covers the
+        // backward-GOP case (target's PTS < ring's first PTS) and
+        // doesn't misfire during normal lookahead-filling.
+        const firstPts = this.ring.firstPtsUs();
+        const targetIsBeforeRing =
+          firstPts !== null && targetSample.ptsUs < firstPts;
+        if (targetIsBeforeRing || this.decoder.decodeQueueSize === 0) {
           needsReset = true;
         }
       }
+    }
+
+    // Diagnostic: log notable backward seeks (target way behind ring's
+    // current first entry). Catches the case where lookbehind has
+    // evicted the target's GOP and a reset SHOULD fire. Useful for
+    // tracking down "jump-to-head shows wrong frame" reports.
+    const firstPtsDiag = this.ring.firstPtsUs();
+    const targetPtsDiag = this.demuxer.sampleAt(targetIndex)?.ptsUs ?? -1;
+    if (firstPtsDiag !== null && targetPtsDiag >= 0 && targetPtsDiag + 100_000 < firstPtsDiag) {
+      // eslint-disable-next-line no-console
+      console.log(
+        `[weftcut/pixi] backward seek beyond ring: target=${targetIndex} (pts=${targetPtsDiag}) ` +
+          `ringFirst=${firstPtsDiag} ringLast=${this.ring.lastPtsUs()} ` +
+          `lastDec=${this.lastDecodedIndex} idr=${idr} pumpGopIdr=${pumpGopIdr} ` +
+          `needsReset=${needsReset}`,
+      );
     }
 
     if (needsReset) {
       // eslint-disable-next-line no-console
       console.log(
         `[weftcut/pixi] decoder reset: target=${targetIndex} idr=${idr} ` +
-          `lastDecoded=${this.lastDecodedIndex} prevFloor=${this.decodeFloor}`,
+          `lastDecoded=${this.lastDecodedIndex} pumpGopIdr=${pumpGopIdr} ` +
+          `prevFloor=${this.decodeFloor}`,
       );
       this.decoder.reset();
       this.decoder.configure(this.buildConfig(this.meta));
@@ -305,11 +396,14 @@ export class SourceHandle {
     // internally) but the OUTPUT callback fires asynchronously, so
     // checking `ring.isLookaheadFull()` inside this loop is useless
     // — the ring stays empty until the next microtask. Cap on the
-    // decoder's own internal queue depth instead. ~12 frames at
-    // 60fps is ~200ms of buffered decode work, well below the
-    // implementations' soft limits (~24 typically), and gives the
-    // output callback plenty of time to fire before we issue more.
-    const MAX_QUEUE = 12;
+    // decoder's own internal queue depth instead. 24 is sized at
+    // the typical implementation soft limit and keeps the queue
+    // from running dry between pump calls — important during scrub
+    // where `setAnchorTime` is suppressed (scrubbing flag) so pump
+    // only runs once per `scrubCoalescer.onStableSeek` (~every
+    // 50ms). At a 12 cap the decoder would idle between drag
+    // pauses; at 24 it stays fed.
+    const MAX_QUEUE = 24;
     let i = this.lastDecodedIndex + 1;
     while (
       i < this.meta.nbSamples &&

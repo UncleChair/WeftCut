@@ -7,6 +7,12 @@
 //! encode is intentional — proxies should be portable across machines,
 //! and the real HW-encoder selection is reserved for the user's
 //! exports.
+//!
+//! GOP size scales with source fps so the proxy is always ~1
+//! source-second per IDR. This bounds the WebCodecs decoder's
+//! seek-to-IDR-then-decode-forward tail to ~1 s regardless of the
+//! source's frame rate (a constant 30-frame GOP would be 0.5 s on
+//! 60 fps source — see ADR 0003).
 
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -35,7 +41,9 @@ const PROXY_HEIGHT_CAP: u32 = 1080;
 ///       which uses the proxy as the master decode source for preview
 ///       AND export. High profile / Level 4.2 / yuv420p so WebCodecs'
 ///       `avc1.640028` config decodes universally.
-pub const PROXY_FORMAT_VERSION: u32 = 2;
+///   3 — GOP scales with source fps (`-g <round(fps)>`) so 60 fps
+///       source proxies stay at 1 s GOP, not 0.5 s. See ADR 0003.
+pub const PROXY_FORMAT_VERSION: u32 = 3;
 
 pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     if !ffmpeg_is_installed() {
@@ -54,11 +62,13 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     // upscaling sources that are already smaller; width auto-rounded to
     // even (libx264 requires even dims). High profile + Level 4.2 +
     // yuv420p gives WebCodecs a universally-decodable `avc1.640028`
-    // stream. Dense 1 s GOP (`-g 30 -keyint_min 30`) bounds the
-    // `VideoDecoder` seek-to-IDR-then-decode-forward tail to ~30 frames.
+    // stream. GOP = round(source_fps) keeps every proxy at ~1 source-
+    // second per IDR, bounding the `VideoDecoder` seek-to-IDR-then-
+    // decode-forward tail to ~1 s regardless of source frame rate.
     // -movflags +faststart puts the moov atom up front so mp4box.js
     // demuxes the file before it's fully written.
     let scale_filter = format!("scale=-2:'min(ih,{PROXY_HEIGHT_CAP})'");
+    let gop = gop_size_for(media).to_string();
     let output = Command::new(ffmpeg_path())
         .args([
             "-y",
@@ -83,9 +93,9 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
             "-level:v",
             "4.2",
             "-g",
-            "30",
+            &gop,
             "-keyint_min",
-            "30",
+            &gop,
             "-pix_fmt",
             "yuv420p",
             "-c:a",
@@ -127,6 +137,29 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
 
     promote_temp(&dest)?;
     Ok(dest)
+}
+
+/// GOP size in frames for `media`'s proxy: `round(source_fps)` so the
+/// proxy carries one IDR per source-second, clamped to a safe range
+/// to avoid pathological encoder behavior on missing or absurd
+/// metadata. Falls back to 30 when video metadata is absent (should
+/// not happen — proxy generation is gated on `MediaKind::Video` —
+/// but keeps the call infallible).
+fn gop_size_for(media: &MediaItem) -> u32 {
+    let fps = media
+        .metadata
+        .video
+        .as_ref()
+        .and_then(|v| {
+            if v.fps_den == 0 {
+                None
+            } else {
+                Some((v.fps_num as f64 / v.fps_den as f64).round() as i64)
+            }
+        })
+        .filter(|f| *f > 0)
+        .unwrap_or(30);
+    fps.clamp(1, 240) as u32
 }
 
 #[cfg(test)]
@@ -285,5 +318,67 @@ mod tests {
         assert_eq!(returned, dest);
         // File untouched.
         assert_eq!(tokio::fs::read(&dest).await.unwrap(), b"already here");
+    }
+
+    fn media_with_fps(num: u32, den: u32) -> MediaItem {
+        use crate::state::VideoStreamMeta;
+        MediaItem {
+            id: new_id(),
+            label: None,
+            path_abs: "x.mp4".into(),
+            path_rel: None,
+            kind: MediaKind::Video,
+            metadata: MediaMetadata {
+                duration_us: Some(1),
+                video: Some(VideoStreamMeta {
+                    width: 640,
+                    height: 360,
+                    fps_num: num,
+                    fps_den: den,
+                    codec: "h264".into(),
+                    pix_fmt: "yuv420p".into(),
+                }),
+                audio: None,
+            },
+            proxy_path: None,
+            proxy_format_version: 0,
+            waveform_path: None,
+            thumbnails_dir: None,
+            file_hash_blake3: "x".into(),
+            file_size: 0,
+            file_mtime: 0,
+            imported_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn gop_size_scales_with_fps() {
+        assert_eq!(gop_size_for(&media_with_fps(30, 1)), 30);
+        assert_eq!(gop_size_for(&media_with_fps(60, 1)), 60);
+        // 59.94 fps (NTSC 60) — rounds to 60.
+        assert_eq!(gop_size_for(&media_with_fps(60_000, 1_001)), 60);
+        // 23.976 fps — rounds to 24.
+        assert_eq!(gop_size_for(&media_with_fps(24_000, 1_001)), 24);
+        // 120 fps high-speed source.
+        assert_eq!(gop_size_for(&media_with_fps(120, 1)), 120);
+    }
+
+    #[test]
+    fn gop_size_falls_back_when_metadata_missing() {
+        let mut media = media_with_fps(30, 1);
+        media.metadata.video = None;
+        assert_eq!(gop_size_for(&media), 30);
+    }
+
+    #[test]
+    fn gop_size_falls_back_on_zero_denominator() {
+        // fps_den == 0 would divide-by-zero; fall back to default.
+        assert_eq!(gop_size_for(&media_with_fps(60, 0)), 30);
+    }
+
+    #[test]
+    fn gop_size_clamps_pathological_fps() {
+        // Some files report ridiculous fps; clamp to a safe upper bound.
+        assert_eq!(gop_size_for(&media_with_fps(10_000, 1)), 240);
     }
 }
