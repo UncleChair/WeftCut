@@ -27,10 +27,19 @@ export interface SourceHandleInit {
   proxyAssetUrl: string;
 }
 
+/// Decoded-frame surface as exposed to the Compositor / VideoClipSprite.
+/// Preview returns `ImageBitmap` (decoupled from the WebCodecs hardware
+/// decoder's buffer pool — see the snapshot path in `SourceHandle.output`);
+/// export returns `VideoFrame` (frames are evicted after each composited
+/// output, so the pool stays drained naturally — see `ExportFrameStore`).
+/// `PixiJS v8 ImageSource` accepts both types as a resource, so the
+/// sprite consumes either without branching.
+export type DecodedFrame = VideoFrame | ImageBitmap;
+
 /// Minimal frame-by-PTS surface the Compositor reads through. Implemented
 /// by `FrameRing` (preview) and `ExportFrameStore` (export).
 export interface FrameStore {
-  frameAt(tUs: number): VideoFrame | null;
+  frameAt(tUs: number): DecodedFrame | null;
   containsPts(tUs: number): boolean;
   /// PTS in microseconds of the latest cached frame, or null if
   /// the store is empty. Used to gauge how much lookahead the
@@ -148,29 +157,88 @@ export class SourceHandle {
           frame.close();
           return;
         }
-        this.outputFrameCount += 1;
-        this.ring.push(frame);
-        if (!this.firedFirstFrame) {
-          this.firedFirstFrame = true;
-          // eslint-disable-next-line no-console
-          console.log(`[weftcut/pixi] source ${this.mediaId} first frame decoded`);
-          this.onFirstFrameCb?.();
-          this.onFirstFrameCb = null;
-        }
-        // Throughput diagnostic: log decoder fps once per second.
-        const nowMs = performance.now();
-        if (this.windowStartMs === 0) this.windowStartMs = nowMs;
-        this.outputsInWindow += 1;
-        if (nowMs - this.windowStartMs >= 1000) {
-          // eslint-disable-next-line no-console
-          console.log(
-            `[weftcut/pixi] decoder throughput: ${this.outputsInWindow} frames in ` +
-              `${(nowMs - this.windowStartMs).toFixed(0)}ms ` +
-              `(${((this.outputsInWindow * 1000) / (nowMs - this.windowStartMs)).toFixed(1)} fps)`,
-          );
-          this.outputsInWindow = 0;
-          this.windowStartMs = nowMs;
-        }
+        // Snapshot pixels into an ImageBitmap so the source VideoFrame
+        // can be closed immediately — this returns the hardware
+        // decoder's buffer slot to its pool. Without this, the ring
+        // pinned 8 + decoder reorder buffer ~5 = 13 buffers, hitting
+        // the GPU decoder's pool ceiling (~13 on common desktop GPUs)
+        // and stalling decode until eviction (`bitmap.close()` on
+        // playback's anchor advance) freed a slot. The browser
+        // optimizes `createImageBitmap(VideoFrame)` to keep pixels on
+        // the GPU side; we pay a per-frame conversion but stop
+        // holding the decoder's buffers across many ticks.
+        const ptsUs = frame.timestamp;
+        const durationUs = frame.duration ?? 0;
+        createImageBitmap(frame).then(
+          (bitmap) => {
+            frame.close();
+            // Re-check decoder identity after the async hop. An
+            // inactivity-rebuild or software-downgrade between the
+            // output() callback and `createImageBitmap` resolution
+            // could have replaced `this.decoder`; pushing into the
+            // new generation's ring would mix frames from a dead
+            // decoder into the live store.
+            if (this.decoder !== dec) {
+              bitmap.close();
+              return;
+            }
+            this.outputFrameCount += 1;
+            this.ring.push(bitmap, ptsUs, durationUs);
+            if (!this.firedFirstFrame) {
+              this.firedFirstFrame = true;
+              // eslint-disable-next-line no-console
+              console.log(
+                `[weftcut/pixi] source ${this.mediaId} first frame decoded`,
+              );
+              this.onFirstFrameCb?.();
+              this.onFirstFrameCb = null;
+            }
+            // Throughput diagnostic: log decoder fps once per second.
+            // Lives inside the `.then` so its `ring=…@…ms` field
+            // reflects the post-push state and `total=` matches the
+            // `outputFrameCount` we just incremented. The first log
+            // line also reads as a one-shot warm-up summary since
+            // `windowStartMs` is captured at first output and only
+            // reset when this log fires.
+            const nowMs = performance.now();
+            if (this.windowStartMs === 0) this.windowStartMs = nowMs;
+            this.outputsInWindow += 1;
+            if (nowMs - this.windowStartMs >= 1000) {
+              const ringLastUs = this.ring.lastPtsUs();
+              const ringLastMs =
+                ringLastUs !== null ? (ringLastUs / 1000).toFixed(0) : "—";
+              // eslint-disable-next-line no-console
+              console.log(
+                `[weftcut/pixi] decoder throughput: ${this.outputsInWindow} frames in ` +
+                  `${(nowMs - this.windowStartMs).toFixed(0)}ms ` +
+                  `(${((this.outputsInWindow * 1000) / (nowMs - this.windowStartMs)).toFixed(1)} fps) ` +
+                  `[total=${this.outputFrameCount} queue=${dec.decodeQueueSize} ` +
+                  `ring=${this.ring.size()}@${ringLastMs}ms]`,
+              );
+              this.outputsInWindow = 0;
+              this.windowStartMs = nowMs;
+            }
+          },
+          (err: unknown) => {
+            // Conversion failed — release the source frame and log;
+            // the decoder keeps running, we just drop this output.
+            // Common cause: an unsupported pixel format reaching
+            // `createImageBitmap`. Not fatal; the next output may
+            // succeed (the decoder isn't required to emit identical
+            // formats every chunk).
+            try {
+              frame.close();
+            } catch {
+              // Already closed; ignore.
+            }
+            // eslint-disable-next-line no-console
+            console.warn(
+              `[weftcut/pixi] createImageBitmap failed for source ${this.mediaId} ` +
+                `(pts=${ptsUs}us):`,
+              err,
+            );
+          },
+        );
       },
       error: (e: unknown) => {
         if (this.decoder !== dec) return;

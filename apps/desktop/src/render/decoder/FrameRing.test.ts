@@ -1,27 +1,33 @@
 // Locks down `FrameRing.frameAt` / `containsPts` semantics — in
-// particular that lookup works even when `VideoFrame.duration` is 0.
-// WebCodecs lets implementations leave `duration` null on output;
-// an earlier version of these methods used `duration ||
-// POSITIVE_INFINITY` as the predicate upper-bound, which made the
-// binary search return whichever mid happened to satisfy `pts <= t`
-// first instead of the latest such entry. With ~33 frames in the
-// ring, asking for frame 9 deterministically returned frame 7 — the
-// "stuck on frame N" symptom the user saw in preview.
+// particular that lookup works even when the source frame's duration
+// was 0 at push time (WebCodecs lets implementations leave
+// `VideoFrame.duration` null on output, and the producer side passes
+// `frame.duration ?? 0` into the ring along with the snapshotted
+// `ImageBitmap`). An earlier version of these methods used
+// `duration || POSITIVE_INFINITY` as the predicate upper-bound, which
+// made the binary search return whichever mid happened to satisfy
+// `pts <= t` first instead of the latest such entry. With ~33 frames
+// in the ring, asking for frame 9 deterministically returned frame 7
+// — the "stuck on frame N" symptom the user saw in preview.
 
 import { describe, expect, it } from "vitest";
 
 import { FrameRing } from "./FrameRing";
 
-/// Stub `VideoFrame` carrying only the fields `FrameRing` reads.
-/// `duration` is parameterized so tests can simulate both "browser
-/// propagated EncodedVideoChunk.duration" (16667) and "browser left
-/// it null" (0).
-function makeFrame(ptsUs: number, durationUs: number): VideoFrame {
+/// Stub `ImageBitmap` carrying only the fields `FrameRing` and its
+/// consumers touch. We tag each stub with `ptsUs` so the assertions
+/// below can verify which entry's bitmap came back from `frameAt`.
+interface BitmapStub extends ImageBitmap {
+  ptsUs: number;
+}
+
+function makeBitmap(ptsUs: number): BitmapStub {
   return {
-    timestamp: ptsUs,
-    duration: durationUs || null,
+    width: 1920,
+    height: 1080,
     close: () => undefined,
-  } as unknown as VideoFrame;
+    ptsUs,
+  } as unknown as BitmapStub;
 }
 
 function pushFrames(
@@ -32,8 +38,14 @@ function pushFrames(
 ): void {
   const frameDurUs = Math.round(1_000_000 / fpsHz);
   for (let i = 0; i < count; i++) {
-    ring.push(makeFrame(i * frameDurUs, durationUs));
+    const ptsUs = i * frameDurUs;
+    ring.push(makeBitmap(ptsUs), ptsUs, durationUs);
   }
+}
+
+function ptsOf(bitmap: ImageBitmap | null): number | null {
+  if (!bitmap) return null;
+  return (bitmap as BitmapStub).ptsUs;
 }
 
 describe("FrameRing.frameAt", () => {
@@ -42,25 +54,25 @@ describe("FrameRing.frameAt", () => {
     pushFrames(ring, 33, 16667);
     // frame N covers [N*16667, (N+1)*16667). Asking exactly at PTS
     // and inside the interval should both return that frame.
-    expect(ring.frameAt(0)!.timestamp).toBe(0);
-    expect(ring.frameAt(8000)!.timestamp).toBe(0);
-    expect(ring.frameAt(16667)!.timestamp).toBe(16667);
-    expect(ring.frameAt(150003)!.timestamp).toBe(150003);
-    expect(ring.frameAt(150010)!.timestamp).toBe(150003);
+    expect(ptsOf(ring.frameAt(0))).toBe(0);
+    expect(ptsOf(ring.frameAt(8000))).toBe(0);
+    expect(ptsOf(ring.frameAt(16667))).toBe(16667);
+    expect(ptsOf(ring.frameAt(150003))).toBe(150003);
+    expect(ptsOf(ring.frameAt(150010))).toBe(150003);
   });
 
-  it("returns the right frame when VideoFrame.duration is null", () => {
+  it("returns the right frame when source duration was null", () => {
     // Regression: prior implementation used `duration ||
     // POSITIVE_INFINITY` in the search predicate, returning the
     // wrong frame deterministically when duration was absent.
     const ring = new FrameRing();
     pushFrames(ring, 33, 0); // duration null
-    expect(ring.frameAt(150003)!.timestamp).toBe(150003);
-    expect(ring.frameAt(133336)!.timestamp).toBe(133336);
-    expect(ring.frameAt(8 * 16667)!.timestamp).toBe(8 * 16667);
-    expect(ring.frameAt(9 * 16667)!.timestamp).toBe(9 * 16667);
-    expect(ring.frameAt(20 * 16667)!.timestamp).toBe(20 * 16667);
-    expect(ring.frameAt(32 * 16667)!.timestamp).toBe(32 * 16667);
+    expect(ptsOf(ring.frameAt(150003))).toBe(150003);
+    expect(ptsOf(ring.frameAt(133336))).toBe(133336);
+    expect(ptsOf(ring.frameAt(8 * 16667))).toBe(8 * 16667);
+    expect(ptsOf(ring.frameAt(9 * 16667))).toBe(9 * 16667);
+    expect(ptsOf(ring.frameAt(20 * 16667))).toBe(20 * 16667);
+    expect(ptsOf(ring.frameAt(32 * 16667))).toBe(32 * 16667);
   });
 
   it("clamps before the first entry when the gap is within CTS-offset range", () => {
@@ -69,10 +81,10 @@ describe("FrameRing.frameAt", () => {
     // ring clamps to the first entry in this case so the painter
     // shows something at the start of the timeline.
     const r = new FrameRing();
-    r.push(makeFrame(33333, 16667));
-    r.push(makeFrame(50000, 16667));
-    expect(r.frameAt(0)!.timestamp).toBe(33333);
-    expect(r.frameAt(20000)!.timestamp).toBe(33333);
+    r.push(makeBitmap(33333), 33333, 16667);
+    r.push(makeBitmap(50000), 50000, 16667);
+    expect(ptsOf(r.frameAt(0))).toBe(33333);
+    expect(ptsOf(r.frameAt(20000))).toBe(33333);
   });
 
   it("returns null when tUs is far before the first entry", () => {
@@ -82,15 +94,15 @@ describe("FrameRing.frameAt", () => {
     // rebuilds — return null instead so the painter holds the
     // previous frame.
     const r = new FrameRing();
-    r.push(makeFrame(1_000_000, 16667));
-    r.push(makeFrame(1_016_667, 16667));
+    r.push(makeBitmap(1_000_000), 1_000_000, 16667);
+    r.push(makeBitmap(1_016_667), 1_016_667, 16667);
     expect(r.frameAt(0)).toBeNull();
     expect(r.frameAt(500_000)).toBeNull();
     // Right at the threshold (100ms gap): still returns null
     // because the check is strict-greater.
-    expect(r.frameAt(900_001)!.timestamp).toBe(1_000_000);
+    expect(ptsOf(r.frameAt(900_001))).toBe(1_000_000);
     // Inside the threshold: clamp to first.
-    expect(r.frameAt(950_000)!.timestamp).toBe(1_000_000);
+    expect(ptsOf(r.frameAt(950_000))).toBe(1_000_000);
   });
 
   it("clamps after the last entry to the last frame", () => {
@@ -98,7 +110,7 @@ describe("FrameRing.frameAt", () => {
     pushFrames(ring, 10, 16667);
     // last entry is frame 9 at 150003. tUs past last interval ends
     // should return it.
-    expect(ring.frameAt(10_000_000)!.timestamp).toBe(9 * 16667);
+    expect(ptsOf(ring.frameAt(10_000_000))).toBe(9 * 16667);
   });
 
   it("returns null on an empty ring", () => {

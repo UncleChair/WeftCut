@@ -25,9 +25,22 @@
 
 import { ImageSource, Sprite, Texture } from "pixi.js";
 
+import type { DecodedFrame } from "../decoder/SourceDecoderPool";
+
 export interface VideoClipSpriteInit {
   layerId: string;
   mediaId: string;
+}
+
+/// Read the natural dimensions off either flavour of `DecodedFrame`.
+/// `VideoFrame` exposes `codedWidth/codedHeight`; `ImageBitmap` exposes
+/// plain `width/height`. PixiJS's `ImageSource` accepts both as a
+/// resource but needs us to declare the size at construction time.
+function decodedDims(frame: DecodedFrame): { width: number; height: number } {
+  if ("codedWidth" in frame) {
+    return { width: frame.codedWidth, height: frame.codedHeight };
+  }
+  return { width: frame.width, height: frame.height };
 }
 
 export class VideoClipSprite {
@@ -37,9 +50,13 @@ export class VideoClipSprite {
   /// Persistent ImageSource, lazily allocated on first updateFrame.
   private source: ImageSource | null = null;
   private texture: Texture | null = null;
-  /// Borrowed VideoFrame whose pixels are on the GPU. We do not
-  /// close this — the FrameRing owns it.
-  private currentFrame: VideoFrame | null = null;
+  /// Borrowed decoded frame whose pixels are uploaded to the GPU. We
+  /// do not close this — the FrameRing / ExportFrameStore owns it.
+  /// Preview's ring holds `ImageBitmap`s (decoupled from the WebCodecs
+  /// decoder buffer pool); export's store holds `VideoFrame`s and
+  /// evicts them after each composited output. Both satisfy
+  /// PixiJS v8 `ImageSource` as a resource.
+  private currentFrame: DecodedFrame | null = null;
 
   constructor(init: VideoClipSpriteInit) {
     this.layerId = init.layerId;
@@ -49,27 +66,24 @@ export class VideoClipSprite {
 
   /// Push a decoded frame onto the GPU. No-op if the same frame is
   /// already current.
-  updateFrame(frame: VideoFrame): void {
+  updateFrame(frame: DecodedFrame): void {
     if (this.currentFrame === frame) return;
     this.currentFrame = frame;
 
     if (!this.source || !this.texture) {
-      // First frame — allocate the ImageSource bound to this
-      // VideoFrame. PixiJS v8 explicitly accepts VideoFrame as an
-      // ImageSource resource. We pass width/height explicitly so
-      // the texture's `orig` dimensions are correct before any
+      // First frame — allocate the ImageSource bound to this frame.
+      // PixiJS v8 explicitly accepts both VideoFrame and ImageBitmap
+      // as an ImageSource resource. We pass width/height explicitly
+      // so the texture's `orig` dimensions are correct before any
       // upload completes (sprite scale math reads them).
-      this.source = new ImageSource({
-        resource: frame,
-        width: frame.codedWidth,
-        height: frame.codedHeight,
-      });
+      const { width, height } = decodedDims(frame);
+      this.source = new ImageSource({ resource: frame, width, height });
       this.texture = new Texture({ source: this.source });
       this.sprite.texture = this.texture;
       // eslint-disable-next-line no-console
       console.log(
         `[weftcut/pixi] sprite ${this.layerId} first texture bound: ` +
-          `${frame.codedWidth}×${frame.codedHeight} ` +
+          `${width}×${height} ` +
           `texture.orig=${this.texture.orig.width}×${this.texture.orig.height}`,
       );
       return;

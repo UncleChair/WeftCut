@@ -26,7 +26,7 @@ const CLAMP_TO_FIRST_GAP_US = 100_000;
 interface RingEntry {
   ptsUs: number;
   durationUs: number;
-  frame: VideoFrame;
+  bitmap: ImageBitmap;
 }
 
 export interface FrameRingInit {
@@ -53,7 +53,7 @@ export class FrameRing {
     while (this.entries.length > 0) {
       const first = this.entries[0]!;
       if (first.ptsUs + first.durationUs <= minKeepUs) {
-        first.frame.close();
+        first.bitmap.close();
         this.entries.shift();
       } else {
         break;
@@ -78,19 +78,22 @@ export class FrameRing {
     return last.ptsUs >= this.anchorUs + this.lookaheadUs;
   }
 
-  /// Push a decoded frame. Caller transfers ownership; we close the
-  /// frame on eviction. PTS is `frame.timestamp` in microseconds.
-  push(frame: VideoFrame): void {
-    const ptsUs = frame.timestamp;
-    const durationUs = frame.duration ?? 0;
+  /// Push a decoded frame as an ImageBitmap. Caller transfers
+  /// ownership; we close the bitmap on eviction. `ptsUs` and
+  /// `durationUs` come from the source `VideoFrame.timestamp` /
+  /// `.duration` (saved before the source frame was closed, since
+  /// `ImageBitmap` itself carries no PTS metadata).
+  push(bitmap: ImageBitmap, ptsUs: number, durationUs: number): void {
     // If this frame is already behind the lookbehind window, drop it.
     if (ptsUs + durationUs < this.anchorUs - this.lookbehindUs) {
-      frame.close();
+      bitmap.close();
       return;
     }
-    this.entries.push({ ptsUs, durationUs, frame });
+    this.entries.push({ ptsUs, durationUs, bitmap });
     // Keep sorted by PTS. Decoder output is usually in display order
-    // but B-frames can cause minor reordering on some encoders.
+    // but B-frames can cause minor reordering on some encoders, and
+    // the async `createImageBitmap` step in the producer can complete
+    // out-of-order across closely-spaced frames.
     this.entries.sort((a, b) => a.ptsUs - b.ptsUs);
   }
 
@@ -121,7 +124,7 @@ export class FrameRing {
   /// `ptsUs <= tUs` first, not the latest such entry. With 33 frames
   /// in the ring, asking for frame 9 deterministically returned
   /// frame 7. The "stuck on frame N" symptom.
-  frameAt(tUs: number): VideoFrame | null {
+  frameAt(tUs: number): ImageBitmap | null {
     if (this.entries.length === 0) return null;
     const firstPts = this.entries[0]!.ptsUs;
     if (tUs < firstPts) {
@@ -129,15 +132,15 @@ export class FrameRing {
       // offset); otherwise the painter should hold its previous
       // frame rather than flash a wrong-region frame.
       if (firstPts - tUs > CLAMP_TO_FIRST_GAP_US) return null;
-      return this.entries[0]!.frame;
+      return this.entries[0]!.bitmap;
     }
     const idx = this.findLatestAtOrBefore(tUs);
-    return idx === -1 ? null : this.entries[idx]!.frame;
+    return idx === -1 ? null : this.entries[idx]!.bitmap;
   }
 
   /// Drop everything. Use on seek beyond the lookahead window.
   flush(): void {
-    for (const e of this.entries) e.frame.close();
+    for (const e of this.entries) e.bitmap.close();
     this.entries = [];
   }
 
