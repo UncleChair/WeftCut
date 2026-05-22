@@ -8,12 +8,21 @@
 // `preview/dom/PlaybackEngine.ts` so the React mount layer (PreviewSurface)
 // can swap implementations with minimal churn when LiveLayers is replaced.
 
+import { UPDATE_PRIORITY, type Ticker } from "pixi.js";
+
 import type { Compositor } from "./Compositor";
 import { SyntheticClock } from "./clock";
 import { ScrubCoalescer } from "./decoder/scrub";
 
 export interface PlaybackEngineInit {
   compositor: Compositor;
+  /// PixiJS ticker driving the tick callback. Pass `app.ticker` in
+  /// production; tests pass a standalone `new Ticker()` and drive it
+  /// manually with `update()`. Registered at UPDATE_PRIORITY.HIGH so
+  /// our scene-graph mutation runs before TickerPlugin's render (LOW)
+  /// in the same frame — kills the 1-frame lag two independent rAF
+  /// loops would otherwise introduce.
+  ticker: Ticker;
 }
 
 type TimeListener = (tUs: number) => void;
@@ -34,7 +43,7 @@ const WARMUP_MAX_WAIT_MS = 250;
 
 export class PlaybackEngine {
   private clock = new SyntheticClock();
-  private rafHandle: number | null = null;
+  private ticker: Ticker;
   private timeListeners = new Set<TimeListener>();
   private playStateListeners = new Set<PlayStateListener>();
   private compositor: Compositor;
@@ -58,6 +67,7 @@ export class PlaybackEngine {
 
   constructor(init: PlaybackEngineInit) {
     this.compositor = init.compositor;
+    this.ticker = init.ticker;
     this.scrubCoalescer = new ScrubCoalescer({
       debounceMs: 50,
       onStableSeek: async (tUs: number) => {
@@ -70,11 +80,13 @@ export class PlaybackEngine {
         this.compositor.compositeFrame(tUs);
       },
     });
-    // Always-running rAF loop. SyntheticClock.tick is a no-op when
-    // paused (returns the same time); compositeFrame still runs each
-    // tick so async-arrived decoded frames present even when the
-    // playhead isn't moving.
-    this.startLoop();
+    // Always-on tick. SyntheticClock.tick is a no-op when paused
+    // (returns the same time); compositeFrame still runs each tick
+    // so async-arrived decoded frames present even when the
+    // playhead isn't moving. HIGH puts us before TickerPlugin's
+    // render (LOW) within the same ticker.update() so this tick's
+    // scene-graph mutation lands in this frame's render, not next.
+    this.ticker.add(this.tick, this, UPDATE_PRIORITY.HIGH);
   }
 
   isPlaying(): boolean {
@@ -148,7 +160,13 @@ export class PlaybackEngine {
   }
 
   dispose(): void {
-    this.stopLoop();
+    // Must `remove` BEFORE Pixi destroys its ticker (e.g. @pixi/react
+    // unmount). React useEffect cleanup runs inner→outer, so as long
+    // as PixiPreview's dispose effect runs before <Application>'s,
+    // the ticker is still alive here. Reference identity matters:
+    // `this.tick` is a stable class-field arrow so this matches the
+    // exact reference passed to `add` in the constructor.
+    this.ticker.remove(this.tick, this);
     this.cancelWarmup();
     this.scrubCoalescer.cancel();
     this.timeListeners.clear();
@@ -196,33 +214,26 @@ export class PlaybackEngine {
 
   private lastEmittedUs = -1;
 
-  private startLoop(): void {
-    const tick = () => {
-      try {
-        const { tUs } = this.clock.tick();
-        this.compositor.setAnchorTime(tUs);
-        this.compositor.compositeFrame(tUs);
-        if (tUs !== this.lastEmittedUs) {
-          this.lastEmittedUs = tUs;
-          this.emitTime(tUs);
-        }
-      } catch (e) {
-        // eslint-disable-next-line no-console
-        console.error("[weftcut/pixi] rAF tick threw — loop dying:", e);
-        // Don't re-throw: keep the loop alive so the user gets
-        // diagnostic visibility on subsequent ticks.
+  /// Arrow-function class field so `this` binds correctly when the
+  /// Ticker invokes it, and so reference identity is stable for
+  /// `ticker.remove(this.tick, this)` in dispose.
+  private tick = (): void => {
+    try {
+      const { tUs } = this.clock.tick();
+      this.compositor.setAnchorTime(tUs);
+      this.compositor.compositeFrame(tUs);
+      if (tUs !== this.lastEmittedUs) {
+        this.lastEmittedUs = tUs;
+        this.emitTime(tUs);
       }
-      this.rafHandle = requestAnimationFrame(tick);
-    };
-    this.rafHandle = requestAnimationFrame(tick);
-  }
-
-  private stopLoop(): void {
-    if (this.rafHandle !== null) {
-      cancelAnimationFrame(this.rafHandle);
-      this.rafHandle = null;
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error("[weftcut/pixi] tick threw — keeping ticker alive:", e);
+      // Don't re-throw: ticker would happily call us again next
+      // frame, but a thrown error inside a ticker listener prints a
+      // noisy stack — caught here for diagnostic clarity.
     }
-  }
+  };
 
   private emitTime(tUs: number): void {
     for (const cb of this.timeListeners) cb(tUs);
