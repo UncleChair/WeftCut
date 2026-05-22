@@ -355,29 +355,45 @@ A failed invariant returns a structured error to the caller (UI shows toast; MCP
 
 Every command maps directly to one MCP tool with the same name. Patches are **strongly typed**, not JSON Patch.
 
+The MCP surface mirrors this 1:1 (same names, schemars-derived schemas);
+the UI uses the same actor via Tauri commands.
+
 | Command | Notes |
 |---|---|
-| `import_media(path)` → `MediaId` | hashes, probes metadata, may schedule proxy gen |
-| `remove_media(id)` | rejects if any layer references it (unless `force`) |
-| `add_track(kind, position)` → `TrackId` | |
-| `remove_track(id)` | rejects if non-empty unless `force` |
+| `import_media(path)` → `MediaId` | hashes, probes metadata, fans out proxy / thumbnails / waveform jobs |
+| `remove_media(id, force?)` | rejects with `MediaInUse { referenced_by }` if any layer references it unless `force=true` |
+| `add_track(kind, label?)` → `TrackId` | `kind` is `"video" | "audio" | "subtitle"` |
+| `remove_track(id, force?)` | rejects if non-empty unless `force` |
 | `move_track(id, new_position)` | |
-| `add_layer(track_id, params, t_start_us, t_end_us)` → `LayerId` | rejects on overlap |
-| `update_layer(id, patch)` | typed partial update |
-| `move_layer(id, new_track_id, new_t_start_us)` | rejects on overlap |
-| `split_layer(id, at_t_us)` → `(LayerId, LayerId)` | |
-| `delete_layer(id)` | |
-| `duplicate_layer(id, t_offset_us)` → `LayerId` | |
-| `add_keyframe(layer_id, prop_path, t_us, value)` → `KeyframeId` | `prop_path` e.g. `"opacity"` or `"transform.x"` |
-| `update_keyframe(id, t_us?, value?, interp?)` | |
-| `remove_keyframe(id)` | |
+| `add_color_layer(track_id, t_start_us, t_end_us, color, width?, height?)` → `LayerId` | rejects on overlap |
+| `add_video_layer(track_id, media_id, t_start_us, t_end_us, src_in_us, src_out_us)` → `LayerId` | rejects on overlap |
+| `add_template(template_id, t_start_us, t_end_us?, track_id?, props?)` → `LayerId` | `t_end_us` defaults to `default_duration_s`; `track_id` auto-creates an "Overlay" track when absent |
+| `apply_subtitles(body, format?, track_id?, t_start_us?, t_end_us)` | body inline; format sniffed from `[Script Info]` |
+| `duplicate_layer(layer_id, t_offset_us)` → `LayerId` | |
+| `update_layer(layer_id, patch)` | envelope-only patch (label, time range, enabled, locked) |
+| `update_layer_params(layer_id, patch)` | kind-specific params |
+| `move_layer(layer_id, new_track_id, new_t_start_us, escape_group?)` | rejects on overlap; group-aware (see `groups.md`) |
+| `split_layer(layer_id, at_t_us, escape_group?)` → `(LayerId, LayerId)` | |
+| `trim_layer(layer_id, edge, new_t_us, escape_group?)` | `edge` ∈ `"in" | "out"` |
+| `delete_layer(layer_id)` | |
+| `groups_create(layer_ids, label?, reassign?)` → `GroupId` | |
+| `groups_dissolve(group_id)` / `groups_add_members(group_id, layer_ids, reassign?)` / `groups_remove_members(group_id, layer_ids)` / `groups_rename(group_id, label?)` | |
+| `groups_list()` / `groups_get(group_id)` | |
 | `add_marker(t_us, label, color, end_t_us?)` → `MarkerId` | |
-| `update_marker(id, patch)` / `remove_marker(id)` | |
+| `update_marker(marker_id, patch)` / `remove_marker(marker_id)` | |
 | `set_composition(patch)` | |
 | `checkpoint(label)` → `CheckpointId` | |
-| `restore_checkpoint(id)` | clears redo, replaces current |
+| `list_checkpoints()` / `restore_checkpoint(checkpoint_id)` | restore clears redo |
 | `undo()` / `redo()` | |
-| `replace_state(snapshot)` | for paste/template-instantiation; full validation |
+| `lock_history(reason)` / `unlock_history()` | freeze undo while a tool batch runs |
+| `dry_run(operations)` | applies the batch against a clone; halts at the first validation error; does not commit |
+| `replace_state(snapshot)` | for paste/template-instantiation; full validation; resets history |
+
+`add_keyframe` / `update_keyframe` / `remove_keyframe` are not yet
+implemented at the MCP surface — `Animated<T>` lowering is
+static-or-first-keyframe only, so exposing them now would succeed at
+the actor level but produce zero visual change. They land alongside
+the per-frame `Animated<T>` IR pass.
 
 ## On-disk format: workspace folder
 

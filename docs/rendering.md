@@ -109,18 +109,24 @@ to the output path.
 
 ## Proxies
 
-Heavy video clips render through a 1080p H.264 1-second-GOP proxy
-generated at import by `jobs/proxy.rs`. The proxy job:
+Heavy video clips render through a 1080p-capped H.264 proxy
+generated at import by `jobs/proxy.rs`. The proxy is the master
+decode source for both preview and export — the original is touched
+only at audio-export time. The proxy job:
 
-1. Probes the source via `ffprobe` for codec / dimensions / fps.
-2. Skips re-encoding if the source is already 1080p-or-smaller H.264
-   with 1 s GOP (the proxy *is* the source for that file).
-3. Otherwise re-encodes:
-   `ffmpeg -i <src> -c:v libx264 -preset veryfast -crf 23
-   -g <fps> -keyint_min <fps> -force_key_frames 'expr:gte(t,n_forced)'
-   -an -y <proxy_path>` (audio dropped — the original handles audio
-   sample-accurately).
-4. Writes the resulting path back via
+1. Caches at `<cache>/proxies/<file_hash>.mp4`. Skips work when the
+   cached file is non-empty.
+2. Re-encodes with:
+   `ffmpeg -i <src> -vf "scale=-2:'min(ih,1080)'" -c:v libx264
+   -preset fast -crf 22 -profile:v high -level:v 4.2
+   -g <round(src_fps)> -keyint_min <round(src_fps)> -pix_fmt yuv420p
+   -c:a aac -b:a 128k -movflags +faststart -f mp4 <proxy_path>`.
+   Audio is kept (AAC 128 k) so the proxy is independently playable
+   for preview; high profile / Level 4.2 / yuv420p gives WebCodecs a
+   universally-decodable `avc1.640028` stream. GOP scales with source
+   fps so every proxy is ~1 source-second per IDR, bounding the
+   seek-to-IDR-then-decode-forward tail (see ADR 0003).
+3. Writes the resulting path back via
    `MediaDerivativesPatch.proxy_path = Some(Some(proxy_path))`.
 
 The decoder pool on the webview side opens the proxy (when present)

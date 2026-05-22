@@ -11,13 +11,14 @@ Most editors bolt AI on as features. WeftCut exposes the editor *as* a tool surf
 | Layer | Choice |
 |---|---|
 | Shell | Tauri 2 (Rust core, system webview UI) |
-| Video engine | ffmpeg via `ffmpeg-sidecar` |
-| Preview player | libmpv as embedded native widget |
 | UI | React in the webview |
-| Agent protocol | MCP over Streamable HTTP (`rmcp` crate) |
-| Templated overlays | Offscreen webview rasterizer (built on `wry`) |
+| Renderer | PixiJS v8 + WebCodecs (preview on `<canvas>`, export on `OffscreenCanvas`) |
+| Audio export + final mux | ffmpeg via `ffmpeg-sidecar` |
+| Container demux/mux | `mp4box.js` |
+| Subtitles | JASSUB (libass-wasm) |
+| Agent protocol | MCP over SSE (`rmcp` 0.1.x) |
 | UI i18n | `i18next` + `react-i18next` (en-US, zh-CN) |
-| Optional cloud | Whisper API / Deepgram (user-supplied keys) |
+| Optional cloud | OpenAI (Whisper transcription, tts-1 TTS) — user-supplied key |
 
 No local AI models. No bundled Chromium. No server backend.
 
@@ -25,13 +26,16 @@ No local AI models. No bundled Chromium. No server backend.
 
 - **[Architecture](docs/architecture.md)** — system overview, components, data flow, repo layout.
 - **[Data model](docs/data-model.md)** — project state schema, history, persistence, validation.
-- **[Rendering](docs/rendering.md)** — IR compiler, render graph, offscreen rasterizer.
+- **[Render](docs/render.md)** — PixiJS + WebCodecs renderer architecture.
+- **[Preview](docs/preview.md)** — interactive preview surface and transport.
+- **[Rendering](docs/rendering.md)** — audio IR, audio export, final mux.
 - **[MCP server & agent UX](docs/mcp.md)** — protocol, tool surface, resources, multi-agent.
-- **[Roadmap](docs/roadmap.md)** — phased delivery plan and scope per phase.
-
-## Status
-
-Pre-alpha. Architecture defined. Implementation begins at Phase 0 (spike) — see [roadmap](docs/roadmap.md).
+- **[Groups](docs/groups.md)** — flat group model that bundles layers across tracks.
+- **[Status / Log system](docs/status-log.md)** — bottom-of-editor log bus.
+- **[Undo-stack scope](docs/undo-stack-scope.md)** — what records into history and what doesn't.
+- **[Setup](docs/setup.md)** — per-OS toolchain prerequisites and first-run flow.
+- **[Roadmap](docs/roadmap.md)** — phased delivery journal.
+- **ADRs** — [0001 audio compositing in TS](docs/adr/0001-audio-compositing-in-ts.md), [0002 mediabunny demux/mux](docs/adr/0002-mediabunny-demux-mux.md), [0003 forward GOP crossing](docs/adr/0003-forward-gop-crossing-no-decoder-reset.md), [0004 ImageBitmap snapshot](docs/adr/0004-imagebitmap-snapshot-frame-ring.md).
 
 ## Getting started
 
@@ -53,8 +57,7 @@ Project layout follows the [architecture doc](docs/architecture.md):
 
 ```
 apps/desktop/        Tauri 2 app
-  src-tauri/         Rust core (state, ir, ffmpeg, mpv, raster, mcp, io, cloud)
-  src/               React UI
-packages/templates/  built-in HTML overlay templates
+  src-tauri/         Rust core (state, ir, ffmpeg, jobs, mcp, io, cloud, templates)
+  src/               React UI + PixiJS/WebCodecs renderer
 docs/                design + architecture
 ```
