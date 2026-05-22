@@ -700,7 +700,7 @@ export function App({ onCloseProject }: AppProps) {
     togglePlay,
     deleteSelected,
     importMedia: importMediaFiles,
-    export: exportNow,
+    export: runPixiExport,
     splitFirstLayer: () => run(splitFirstLayer),
     toggleLog: toggleLogConsole,
     focusLogSearch,
