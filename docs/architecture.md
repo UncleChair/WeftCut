@@ -124,7 +124,7 @@ weftcut/
   apps/desktop/               ← the Tauri app
     src-tauri/                ← Rust core
       src/
-        state/                ← project state types, actor, history, persistence
+        state/                ← project state types, actor, history, validation
         ir/                   ← audio-only IR: lower → emit_ffmpeg
         export/               ← export_audio_only + mux_to_file
         ffmpeg/               ← sidecar wrapper, install bootstrap
@@ -132,18 +132,29 @@ weftcut/
                               ←   proxy, thumbnails, waveform, frame,
                               ←   import (workspace copy worker)
         cache/                ← workspace-scoped derivative cache
-                              ←   (workspace/Cache/{proxies,...})
+                              ←   (workspace/Cache/{proxies, thumbnails,
+                              ←    waveforms, frames, voiceover, …})
         templates/            ← built-in HTML template catalog
                               ←   (manifests + HTML + CSS, embedded)
-        mcp/                  ← rmcp server, tool definitions, resources
-        io/                   ← project.json save/load + autosave task +
-                              ←   io/migrate.rs (schema migrations)
-        recents.rs            ← startup-screen recents.json + prefs
-        workspace.rs          ← WorkspaceSlot tracking current workspace
+        mcp/                  ← rmcp server, tool definitions, resources,
+                              ←   prompts, /events change-feed
         cloud/                ← provider-agnostic cloud APIs:
                               ←   Transcriber / Synthesizer traits,
-                              ←   keyring-backed key storage
-        main.rs
+                              ←   keyring-backed key storage,
+                              ←   providers/openai.rs (Whisper + tts-1)
+        io/                   ← project.json save/load + autosave task +
+                              ←   io/migrate.rs (schema migrations)
+        logs/                 ← LogBus actor, JSONL writer, tracing bridge
+        preview/              ← preview-orchestrator state on the Rust side
+        commands.rs           ← Tauri command surface called by the UI
+        keybindings.rs        ← keybinding registry + persistence
+        view_state.rs         ← per-workspace UI view state
+        app_settings.rs       ← global preferences
+        agent_session.rs      ← agent-mode session lifecycle
+        recents.rs            ← startup-screen recents.json + prefs
+        workspace.rs          ← WorkspaceSlot tracking current workspace
+        fixtures.rs           ← fixture-suite helpers
+        main.rs / lib.rs
       Cargo.toml
       tauri.conf.json
     src/                      ← React + TypeScript UI
@@ -153,15 +164,21 @@ weftcut/
         Compositor.ts         ←   PixiJS Application owner
         clock.ts              ←   synthetic clock + Web Audio drift
         PlaybackEngine.ts     ←   transport
-        decoder/              ←   SourceDecoderPool, Demuxer, FrameRing, scrub
+        decoder/              ←   SourceDecoderPool, Demuxer, FrameRing,
+                              ←   ExportDecoderPool, scrub
         sprite/               ←   per-layer-kind Sprite implementations
         templates/            ←   foreignObject rasterizer + cache
         subtitles/            ←   JASSUB binding
         worker/               ←   exportWorker + encoder (OffscreenCanvas)
-        audio/                ←   AudioGraph (Web Audio mixer)
+        audio/                ←   AudioGraph + AudioMixer (Web Audio)
+        fixtures/             ←   runFixture + browser-test fixtures
       timeline/
       properties/
-      ipc/                    ← typed Tauri command wrappers
+      panels/                 ← side / floating panels
+      connect/                ← Connect-agent panel
+      settings/               ← Settings panel (cloud API keys, …)
+      logs/                   ← status bar + log console
+      menu/ shortcuts/ agent/ hooks/ ipc/ i18n/ state/
 ```
 
 ## External dependencies
