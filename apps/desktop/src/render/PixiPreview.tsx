@@ -185,6 +185,11 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         height={composition.height}
         background={0x000000}
         antialias
+        // Prefer WebGPU; PixiJS auto-falls back to WebGL when the
+        // runtime doesn't expose `navigator.gpu` (older WebView2,
+        // restricted contexts). `app.renderer.type` in the init log
+        // reads 2 for WebGPU, 1 for WebGL — useful sanity check.
+        preference="webgpu"
         onInit={handleInit}
         className="pixi-preview-canvas"
       />

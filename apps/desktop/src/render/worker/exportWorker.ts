@@ -74,6 +74,11 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   const startedAtMs = performance.now();
 
   // 1. PixiJS Application against the transferred OffscreenCanvas.
+  // `preference: "webgpu"` matches the preview surface; PixiJS auto-
+  // falls back to WebGL when the worker context doesn't expose
+  // `navigator.gpu`. Matching preference keeps export pixels
+  // identical to preview pixels (different backends can disagree on
+  // edge cases like sub-pixel rasterization).
   const app = new Application();
   await app.init({
     canvas: req.canvas as unknown as HTMLCanvasElement,
@@ -81,6 +86,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     height: req.project.height,
     background: 0x000000,
     autoStart: false,
+    preference: "webgpu",
   });
 
   // 2. Dedicated export decoder pool — bypasses the preview-tuned
