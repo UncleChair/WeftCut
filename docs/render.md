@@ -31,7 +31,7 @@ apps/desktop/src/render/
   decoder/
     SourceDecoderPool.ts     — one VideoDecoder per source media; idle-dispose
     Demuxer.ts               — mp4box.js wrapper; produces EncodedVideoChunks
-    FrameRing.ts             — 1 s lookahead / 0.5 s lookbehind ring per source
+    FrameRing.ts             — 1 s lookahead / 0.5 s lookbehind per source; stores ImageBitmap snapshots
     scrub.ts                 — debounced flush + seek-to-IDR + decode-forward
   sprite/
     VideoClipSprite.ts
@@ -99,6 +99,18 @@ that caches the most recent 1 s lookahead / 0.5 s lookbehind. The
 ring is what the compositor reads — decoder threads stay one step
 ahead of the playhead.
 
+The ring stores `ImageBitmap` snapshots, not `VideoFrame`s.
+`SourceHandle.output` runs `createImageBitmap(frame)` and closes the
+source `VideoFrame` on resolve — this returns the WebCodecs hardware
+decoder's buffer slot to its pool. Caching `VideoFrame`s directly
+would pin the pool (~13 slots on common desktop GPUs) at the ring's
+held count, exhaust it within a few frames, and stall the decoder
+silently. The export-side `ExportFrameStore` keeps `VideoFrame`s
+because its consumer closes them immediately after each encoded
+frame, so the pool stays drained without snapshotting; both stores
+satisfy a shared `FrameStore` interface that returns
+`DecodedFrame = VideoFrame | ImageBitmap`. See ADR 0004.
+
 Idle decoders are disposed 5 s after the last request and recreated
 on demand.
 
@@ -117,7 +129,7 @@ user sees a frame within ~1 frame-time per drag step.
 
 | Sprite | Source | Notes |
 |---|---|---|
-| `VideoClipSprite` | `VideoDecoder` output → `Texture` | The texture is rebuilt each frame from the latest decoded `VideoFrame`. |
+| `VideoClipSprite` | `FrameRing` snapshot → `Texture` | Consumes the `DecodedFrame` returned by `FrameStore.frameAt` — `ImageBitmap` from preview's `FrameRing`, `VideoFrame` from export's `ExportFrameStore`. PixiJS v8 `ImageSource` accepts both. |
 | `ImageOverlaySprite` | `createImageBitmap` → `Texture` | One-shot bitmap creation at sprite spawn; cached for the layer's lifetime. |
 | `TextSprite` | PixiJS `Text` (native canvas) | Shadow via drop-shadow filter; outline via stroke option; intro / outro presets are sprite-side animation. |
 | `TemplateSprite` | `Rasterizer` (foreignObject SVG → `ImageBitmap`) | Fonts embedded as base64 `@font-face`; raster cache keyed on content hash. |
