@@ -128,7 +128,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       });
       compositor.setProject(useProjectStore.getState().summary);
 
-      const engine = new PlaybackEngine({ compositor });
+      const engine = new PlaybackEngine({ compositor, ticker: app.ticker });
       if (onTimeUpdate) engine.onTimeUpdate(onTimeUpdate);
       if (onPausedChange) engine.onPlayStateChange((p) => onPausedChange(!p));
 
