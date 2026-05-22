@@ -12,6 +12,17 @@
 const DEFAULT_LOOKAHEAD_US = 1_000_000;
 const DEFAULT_LOOKBEHIND_US = 500_000;
 
+/// Maximum gap (microseconds) between requested `tUs` and the ring's
+/// first entry's PTS for `frameAt` to clamp to the first entry. Within
+/// this gap, clamping is the right UX — it handles real-world sources
+/// whose first decoded frame has a non-zero CTS (B-frame reorder
+/// offset, edit-list `-ss` offset). Beyond this gap, clamping would
+/// paint a frame from the wrong region of the timeline (e.g. after
+/// lookbehind has evicted the target frame on a backward seek), so
+/// `frameAt` returns null and the painter holds its previous frame
+/// until the decoder catches up.
+const CLAMP_TO_FIRST_GAP_US = 100_000;
+
 interface RingEntry {
   ptsUs: number;
   durationUs: number;
@@ -84,49 +95,44 @@ export class FrameRing {
   }
 
   /// Look up the frame to display at `tUs`. Returns a borrowed
-  /// reference — caller MUST NOT `.close()` it. Returns `null` only
-  /// when the ring is completely empty.
+  /// reference — caller MUST NOT `.close()` it. Returns `null` when
+  /// the ring is empty OR when `tUs` falls before the ring's first
+  /// entry by more than `CLAMP_TO_FIRST_GAP_US` (the painter should
+  /// hold its previous frame rather than display a frame from the
+  /// wrong region — e.g. after a backward seek where lookbehind has
+  /// evicted the target's GOP, the ring's first entry is far ahead
+  /// of the target and clamping to it would visibly flash the wrong
+  /// content while the decoder rebuilds).
   ///
-  /// Clamping policy: out-of-range timestamps clamp to the nearest
-  /// available frame. This matters because real-world proxies often
-  /// start at a non-zero PTS (an `-ss` or edit-list offset in the
-  /// source can leave the first decoded frame at PTS=33333µs even
-  /// though the timeline says t=0). Returning the nearest available
-  /// frame is the correct UX — the renderer paints SOMETHING at
-  /// every t, instead of going blank because the asked-for timestamp
-  /// fell outside the cached window.
+  /// Clamping policy: clamp to first entry ONLY if the gap between
+  /// `tUs` and `entries[0].ptsUs` is within `CLAMP_TO_FIRST_GAP_US`
+  /// (real-world CTS / edit-list offsets are usually one frame's
+  /// worth; the threshold covers them with headroom). Clamp to last
+  /// entry implicitly via the binary-search returning the latest
+  /// entry with `ptsUs <= tUs` (correct UX during play-time decode
+  /// latency — paint latest decoded while waiting for next).
+  ///
+  /// Implementation: locate the latest entry whose PTS is `<= tUs`,
+  /// without relying on `VideoFrame.duration`. WebCodecs allows
+  /// `duration` to be null even when the input chunk had it set,
+  /// and a previous version of this search used `duration ||
+  /// POSITIVE_INFINITY` as the upper-bound predicate — which made
+  /// the binary search land on whichever mid happened to satisfy
+  /// `ptsUs <= tUs` first, not the latest such entry. With 33 frames
+  /// in the ring, asking for frame 9 deterministically returned
+  /// frame 7. The "stuck on frame N" symptom.
   frameAt(tUs: number): VideoFrame | null {
     if (this.entries.length === 0) return null;
-
-    // Before the earliest cached frame → clamp to first.
-    const first = this.entries[0]!;
-    if (tUs < first.ptsUs) {
-      return first.frame;
+    const firstPts = this.entries[0]!.ptsUs;
+    if (tUs < firstPts) {
+      // Clamp to first only when the gap is small (CTS / edit-list
+      // offset); otherwise the painter should hold its previous
+      // frame rather than flash a wrong-region frame.
+      if (firstPts - tUs > CLAMP_TO_FIRST_GAP_US) return null;
+      return this.entries[0]!.frame;
     }
-
-    // After the latest cached frame's interval → clamp to last.
-    const last = this.entries[this.entries.length - 1]!;
-    if (tUs >= last.ptsUs + (last.durationUs || 0)) {
-      return last.frame;
-    }
-
-    // Binary search for the entry whose interval contains tUs.
-    let lo = 0;
-    let hi = this.entries.length - 1;
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1;
-      const e = this.entries[mid]!;
-      if (e.ptsUs <= tUs && tUs < e.ptsUs + (e.durationUs || Number.POSITIVE_INFINITY)) {
-        return e.frame;
-      }
-      if (e.ptsUs > tUs) hi = mid - 1;
-      else lo = mid + 1;
-    }
-
-    // Fallback: nearest preceding (only reachable if duration is
-    // zero on multiple consecutive entries, which shouldn't happen
-    // in practice).
-    return this.entries[hi]?.frame ?? this.entries[0]!.frame;
+    const idx = this.findLatestAtOrBefore(tUs);
+    return idx === -1 ? null : this.entries[idx]!.frame;
   }
 
   /// Drop everything. Use on seek beyond the lookahead window.
@@ -156,19 +162,41 @@ export class FrameRing {
   /// reports literal coverage. Used by the decoder to decide whether
   /// a backward seek requires a reset (target not cached) or can
   /// rely on existing decoded frames.
+  ///
+  /// Effective duration: the next entry's PTS bounds this entry's
+  /// interval when one exists; otherwise we fall back to the
+  /// recorded `durationUs`. This avoids depending on
+  /// `VideoFrame.duration` (which WebCodecs allows to be null).
   containsPts(tUs: number): boolean {
     if (this.entries.length === 0) return false;
+    const idx = this.findLatestAtOrBefore(tUs);
+    if (idx === -1) return false;
+    const e = this.entries[idx]!;
+    if (e.ptsUs > tUs) return false;
+    const next = this.entries[idx + 1];
+    const end = next
+      ? next.ptsUs
+      : e.durationUs > 0
+        ? e.ptsUs + e.durationUs
+        : e.ptsUs + 1;
+    return tUs < end;
+  }
+
+  /// Index of the latest entry with `ptsUs <= tUs`, or 0 if `tUs`
+  /// is before every entry (preserving frameAt's clamp-to-first
+  /// behavior), or -1 if the ring is empty. The search is duration-
+  /// independent.
+  private findLatestAtOrBefore(tUs: number): number {
+    if (this.entries.length === 0) return -1;
+    if (tUs < this.entries[0]!.ptsUs) return 0;
     let lo = 0;
     let hi = this.entries.length - 1;
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1;
-      const e = this.entries[mid]!;
-      const end = e.ptsUs + (e.durationUs || 0);
-      if (e.ptsUs <= tUs && tUs < end) return true;
-      if (e.ptsUs > tUs) hi = mid - 1;
-      else lo = mid + 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (this.entries[mid]!.ptsUs <= tUs) lo = mid;
+      else hi = mid - 1;
     }
-    return false;
+    return lo;
   }
 
   dispose(): void {

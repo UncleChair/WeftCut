@@ -36,6 +36,16 @@ A synthetic `currentTimeUs` is the source of truth. It advances on a
 directly by `seekTo`. When audio is playing the clock corrects against
 `audioCtx.currentTime` to absorb scheduler jitter.
 
+`play()` releases the clock only once the decoder has filled
+`WARMUP_MIN_LOOKAHEAD_US` (~150 ms) of ring past the play position,
+or after a `WARMUP_MAX_WAIT_MS` (~250 ms) safety cap. The UI play
+state flips immediately, so the button feels responsive; the rAF
+loop's `compositeFrame` keeps running at the held position during
+the gate, so the canvas shows the start frame still rather than
+stuttering through partial decoder outputs. `pause()` cancels the
+warm-up. This eliminates the cold-start stutter that hardware
+decoders' first-frame init latency would otherwise cause.
+
 `PlaybackEngine` exposes one frame-time per tick to every sprite in
 `LiveLayers`; sprites read project state out of their own `LayerSummary`
 and compute on-the-fly per-channel sample values via the shared
@@ -59,6 +69,15 @@ handle is marked downgraded. On `'Codec reclaimed due to inactivity'`
 the decoder closes and emits one LogBus warning; the next
 `requestFrameAt` rebuilds it.
 
+Forward GOP-crossings during continuous play do NOT reset the
+decoder. The pump dispatches the new GOP's IDR chunk through the
+same `VideoDecoder` in stream — H.264 IDR semantics clear
+reference state mid-stream — and the ring carries continuously
+across the boundary. Reset is reserved for backward seeks whose
+target isn't in the ring and for forward seeks far enough past
+the pump frontier that decoding through the gap would burn
+seconds. See [ADR 0003](adr/0003-forward-gop-crossing-no-decoder-reset.md).
+
 ## Scrub
 
 `scrub.ts` debounces drag input and, on commit, calls `decoder.flush()`,
@@ -80,8 +99,11 @@ Web Audio path is preview-only.
 
 ## Proxies
 
-Heavy video clips play through a 1080p H.264 1-second-GOP proxy
-generated at import by `jobs/proxy.rs`. The proxy is what the
+Heavy video clips play through a 1080p H.264 proxy generated at
+import by `jobs/proxy.rs`. The proxy's GOP is one source-second
+(`-g <round(source_fps)>`) so that seek-to-IDR-then-decode-forward
+tails stay bounded to roughly one second of source content
+regardless of the source's frame rate. The proxy is what the
 decoder pool opens for that media id; the original is referenced only
 at export time when the user wants full-quality output.
 
