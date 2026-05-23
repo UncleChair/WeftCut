@@ -178,14 +178,11 @@ function TemplateForm({
   const [insertAtSec, setInsertAtSec] = useState<number>(
     compositionDurationUs / 1_000_000,
   );
-  // If an "Overlay" video track already exists, prefer it as the default
-  // dropdown choice — the label is more honest than "(auto-create)" when
-  // no creation will actually happen. Backend resolves either path to the
-  // same outcome.
-  const [trackChoice, setTrackChoice] = useState<string>(() => {
-    const existingOverlay = tracks.find((tr) => tr.label === "Overlay");
-    return existingOverlay?.id ?? AUTO_OVERLAY_SENTINEL;
-  });
+  // Default to auto-create. The backend spawns a fresh Overlay track
+  // on every auto insert so consecutive templates never collide on
+  // the same track — picking an existing Overlay as the default would
+  // walk straight back into the overlap invariant.
+  const [trackChoice, setTrackChoice] = useState<string>(AUTO_OVERLAY_SENTINEL);
   const [busy, setBusy] = useState(false);
 
   const setProp = (key: string, value: unknown) =>

@@ -1875,32 +1875,13 @@ pub async fn list_templates() -> Result<Vec<serde_json::Value>, String> {
         .collect()
 }
 
-/// Find an existing "Overlay" track (the slot templates / subtitle
-/// overlays conventionally share). Skips role-stamped tracks so the
-/// reserved A/B-roll skeleton — and their separated-audio
-/// derivatives — never qualify as overlay slots.
-///
-/// Returns `None` when no overlay track exists; callers should then
-/// create one via `add_track`. Previous behavior was `tracks.last()`,
-/// which under the V.8 A/B-roll layout silently picks B-roll and
-/// trips the per-track no-overlap invariant the moment B-roll holds
-/// a clip.
-pub(crate) fn find_overlay_target_track(
-    project: &state::Project,
-) -> Option<state::TrackId> {
-    project
-        .tracks
-        .iter()
-        .find(|t| t.role.is_none() && t.label.as_deref() == Some("Overlay"))
-        .map(|t| t.id)
-}
-
 /// Stage F-Picker: UI counterpart to the MCP `add_template` tool. Mirrors
 /// the behavior 1:1 (canonicalize props through the Template module,
-/// default `t_end_us` from manifest duration, default the target track
-/// to the existing "Overlay" track or auto-create one), only the actor
-/// identity differs — `Actor::User` here vs. `Actor::Agent { client:
-/// "mcp" }` there.
+/// default `t_end_us` from manifest duration; when `track_id` is
+/// omitted, always spawn a fresh "Overlay" track so consecutive
+/// inserts never collide with each other on the same track). Only
+/// the actor identity differs — `Actor::User` here vs.
+/// `Actor::Agent { client: "mcp" }` there.
 #[tauri::command]
 pub async fn add_template(
     handle: State<'_, ProjectHandle>,
@@ -1947,19 +1928,14 @@ pub async fn add_template(
 
     let track = match track_id {
         Some(s) => Uuid::parse_str(&s).map_err(|e| format!("track_id: {e}"))?,
-        None => {
-            // Auto-route to a dedicated overlay slot. Falling onto
-            // `tracks.last()` would land on B-roll under the V.8
-            // skeleton — see `find_overlay_target_track`.
-            let snap = handle.snapshot().await;
-            match find_overlay_target_track(&snap) {
-                Some(id) => id,
-                None => handle
-                    .add_track(Actor::User, Some("Overlay".into()))
-                    .await
-                    .map_err(|e: CommandError| e.to_string())?,
-            }
-        }
+        None => handle
+            // Every auto-routed template insert gets its own track.
+            // Reusing an existing "Overlay" track would re-trip the
+            // per-track no-overlap invariant the moment a second
+            // template is added at a colliding range.
+            .add_track(Actor::User, Some("Overlay".into()))
+            .await
+            .map_err(|e: CommandError| e.to_string())?,
     };
 
     let params = LayerParams::Template(TemplateParams {
@@ -2340,49 +2316,4 @@ fn demo_color(idx: usize) -> Rgba {
     PALETTE[idx % PALETTE.len()]
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::state::{Project, Track, TrackRole};
-
-    #[test]
-    fn find_overlay_skips_reserved_a_b_roll_on_blank_project() {
-        let project = Project::new_blank("t");
-        // Fresh project has only role-stamped A/B-roll tracks; no
-        // overlay slot exists. Caller must create one.
-        assert!(find_overlay_target_track(&project).is_none());
-    }
-
-    #[test]
-    fn find_overlay_returns_existing_overlay_track() {
-        let mut project = Project::new_blank("t");
-        let mut overlay = Track::new();
-        overlay.label = Some("Overlay".into());
-        let expected = overlay.id;
-        project.tracks.push_back(overlay);
-        assert_eq!(find_overlay_target_track(&project), Some(expected));
-    }
-
-    #[test]
-    fn find_overlay_ignores_role_stamped_track_even_if_labeled_overlay() {
-        let mut project = Project::new_blank("t");
-        let mut imposter = Track::new();
-        imposter.label = Some("Overlay".into());
-        imposter.role = Some(TrackRole::BRoll);
-        project.tracks.push_back(imposter);
-        assert!(find_overlay_target_track(&project).is_none());
-    }
-
-    #[test]
-    fn find_overlay_ignores_unlabeled_or_other_label_tracks() {
-        let mut project = Project::new_blank("t");
-        let mut transient = Track::new();
-        transient.label = Some("Import 1".into());
-        project.tracks.push_back(transient);
-        let mut unlabeled = Track::new();
-        unlabeled.label = None;
-        project.tracks.push_back(unlabeled);
-        assert!(find_overlay_target_track(&project).is_none());
-    }
-}
 
