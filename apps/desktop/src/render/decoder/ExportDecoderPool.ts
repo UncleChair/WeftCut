@@ -156,6 +156,11 @@ export class ExportSourceHandle implements DecoderHandle {
   /// True after a software-fallback downgrade. Prevents repeated
   /// downgrade attempts on subsequent errors.
   private downgraded = false;
+  private _disposed = false;
+
+  get disposed(): boolean {
+    return this._disposed;
+  }
 
   constructor(init: SourceHandleInit) {
     this.mediaId = init.mediaId;
@@ -461,6 +466,7 @@ export class ExportSourceHandle implements DecoderHandle {
     this.readyP = null;
     this.outputFrameCount = 0;
     this.downgraded = false;
+    this._disposed = true;
   }
 }
 

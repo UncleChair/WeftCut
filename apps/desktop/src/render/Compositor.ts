@@ -521,6 +521,23 @@ export class Compositor {
     for (const c of this.clips.values()) {
       const layer = this.findLayer(c.layerId);
       if (!layer || layer.params.kind !== "VideoClip") continue;
+      // Mirror compositeFrame's window check. `this.clips` retains every
+      // clip that's ever been active (it's only pruned in `setProject`
+      // when a layer is deleted); without this filter every accumulated
+      // entry would fire `requestFrameAt` on each tick with srcTUs
+      // computed from a clip not under the playhead. When N clips share
+      // one media_id, the shared `SourceHandle` then receives N
+      // conflicting srcTUs per tick — the ring anchor jumps chaotically,
+      // each call retriggers `decoder.reset() + configure()`, and the
+      // sustained reconfigure churn eventually drives WebCodecs into
+      // the async "Unsupported configuration" rejection that closes
+      // the codec for good.
+      if (tUsSnapped < layer.t_start_us || tUsSnapped >= layer.t_end_us) continue;
+      // Stale handle (pool reclaimed during idle): skip this tick.
+      // The next `compositeFrame` runs immediately after this and its
+      // `ensureClip` swaps in a fresh source; the tick after that
+      // will see the revived handle here.
+      if (c.source.disposed) continue;
       const layerLocalUs = tUsSnapped - layer.t_start_us;
       const srcTUs = layer.params.src_in_us + layerLocalUs;
       void c.source.requestFrameAt(srcTUs);
@@ -575,7 +592,17 @@ export class Compositor {
   private ensureClip(layer: LayerSummary): ActiveClip | null {
     if (layer.params.kind !== "VideoClip") return null;
     const existing = this.clips.get(layer.id);
-    if (existing) return existing;
+    // `existing.source` can have been reclaimed by the pool's idle
+    // sweeper (`SourceDecoderPool` disposes handles after
+    // `IDLE_DISPOSE_MS` of no `requestFrameAt` traffic). After my
+    // fix to `setAnchorTime`, only the SourceHandle for the currently
+    // active media gets its `lastUseMs` touched, so handles for other
+    // media on the timeline are now genuine sweep candidates. When
+    // the user returns to one of those clips, the cached `source`
+    // points at a disposed handle whose ring is empty and whose
+    // demuxer samples have been freed — a fresh `pool.acquire()` is
+    // needed to revive the source.
+    if (existing && !existing.source.disposed) return existing;
     const mediaId = layer.params.media_id;
     const proxyUrl = this.proxyAssetUrl(mediaId);
     if (!proxyUrl) {
@@ -598,6 +625,15 @@ export class Compositor {
       // eslint-disable-next-line no-console
       console.error(`[weftcut/pixi] ensureReady ${mediaId} failed`, e);
     });
+    if (existing) {
+      // Revival path: keep the sprite (the bound texture from the
+      // last paint is still visible on the canvas, so the user sees
+      // a held frame rather than a flash to EMPTY while the new
+      // decoder warms up), just swap in the fresh source.
+      existing.source = source;
+      existing.loggedNull = false;
+      return existing;
+    }
     const sprite = new VideoClipSprite({ layerId: layer.id, mediaId });
     const clip: ActiveClip = { layerId: layer.id, mediaId, source, sprite, loggedNull: false };
     this.clips.set(layer.id, clip);
