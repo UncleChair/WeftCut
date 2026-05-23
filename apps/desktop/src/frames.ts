@@ -61,3 +61,39 @@ export function formatTimecode(
   const pad = (n: number, w: number) => n.toString().padStart(w, "0");
   return `${pad(h, 2)}:${pad(m, 2)}:${pad(s, 2)}:${pad(f, 2)}`;
 }
+
+/// Parse a SMPTE timecode string into microseconds, or null when invalid.
+/// Accepts SS, MM:SS, HH:MM:SS, HH:MM:SS:FF. Frame field is bounded by
+/// the composition fps. Inverse of `formatTimecode` — strings
+/// round-tripped through both functions return to the original snapped
+/// microseconds.
+export function parseTimecode(
+  input: string,
+  fpsNum: number,
+  fpsDen: number,
+): number | null {
+  const s = input.trim();
+  if (!s) return null;
+  const parts = s.split(":");
+  if (parts.length < 1 || parts.length > 4) return null;
+  const nums = parts.map((p) => Number(p));
+  if (!nums.every((n) => Number.isFinite(n) && n >= 0)) return null;
+  let h = 0;
+  let m = 0;
+  let ss = 0;
+  let f = 0;
+  if (parts.length === 4) {
+    [h, m, ss, f] = nums as [number, number, number, number];
+  } else if (parts.length === 3) {
+    [h, m, ss] = nums as [number, number, number];
+  } else if (parts.length === 2) {
+    [m, ss] = nums as [number, number];
+  } else {
+    ss = nums[0]!;
+  }
+  if (m >= 60 || ss >= 60) return null;
+  const framesPerSec = Math.max(1, Math.round(fpsNum / fpsDen));
+  if (f >= framesPerSec) return null;
+  const totalFrames = (h * 3600 + m * 60 + ss) * framesPerSec + f;
+  return Math.round((totalFrames * US_PER_SEC * fpsDen) / fpsNum);
+}

@@ -78,6 +78,7 @@ pub fn run() {
             commands::duplicate_layer,
             commands::delete_layer,
             commands::set_composition,
+            commands::fit_composition_to_layers,
             commands::add_marker,
             commands::project_undo,
             commands::project_redo,

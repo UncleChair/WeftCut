@@ -5,6 +5,11 @@ export interface CompositionSummary {
   height: number;
   fps_num: number;
   fps_den: number;
+  /// True when the user has explicitly set the composition duration via
+  /// `set_composition { duration_us }`. While pinned, layer edits no
+  /// longer mutate `duration_us` (except the `>= max(layer.t_end_us)`
+  /// overflow guard). `fit_composition_to_layers` clears it.
+  duration_pinned: boolean;
 }
 
 export interface HistoryView {
@@ -755,6 +760,31 @@ export async function duplicateLayer(
 
 export async function deleteLayer(layerId: string): Promise<void> {
   return invoke<void>("delete_layer", { layerId });
+}
+
+export interface CompositionPatchPartial {
+  width?: number;
+  height?: number;
+  fps?: { num: number; den: number };
+  duration_us?: number;
+  sample_rate?: number;
+  channels?: number;
+}
+
+/// Update one or more composition fields. Setting `duration_us` pins
+/// the composition duration — call `fitCompositionToLayers()` to clear
+/// the pin and resume auto-fit. See ADR 0005.
+export async function setComposition(
+  patch: CompositionPatchPartial,
+): Promise<void> {
+  return invoke<void>("set_composition", { patch });
+}
+
+/// Clear the composition's duration pin and snap `duration_us` to the
+/// layer high-water mark. After this call, subsequent layer edits
+/// track duration bidirectionally.
+export async function fitCompositionToLayers(): Promise<void> {
+  return invoke<void>("fit_composition_to_layers");
 }
 
 // mpvPlayFile / mpvPlayMedia were the media-pool "click to preview a

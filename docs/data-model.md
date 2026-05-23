@@ -77,7 +77,8 @@ struct Composition {
     width: u32,
     height: u32,
     fps: Rational,            // (num, den) — handles 23.976, 29.97 cleanly
-    duration_us: i64,         // computed from layers; user-overridable
+    duration_us: i64,         // auto-fits to max(layer.t_end_us) while !duration_pinned
+    duration_pinned: bool,    // explicit user override; cleared by fit_composition_to_layers
     sample_rate: u32,         // 48000 default
     channels: u8,             // 2 default
     color_space: ColorSpace,  // Bt709 default
@@ -86,6 +87,8 @@ struct Composition {
 ```
 
 `fps` MUST be rational. `30000/1001 ≠ 29.97`, and ffmpeg cares.
+
+`duration_us` follows `max(layer.t_end_us)` bidirectionally — growing on adds, shrinking on deletes / inward trims — until the user pins it by calling `set_composition { duration_us }`. While pinned, only an overflow guard moves the value (a new layer extending past the pinned duration still bumps it up; the pin stays set). `fit_composition_to_layers` clears the pin and snaps duration to the live high-water mark. See ADR 0005.
 
 ## `MediaItem`
 
@@ -361,7 +364,8 @@ struct ChangeEvent {
 | `t_start_us`, `t_end_us`, `composition.duration_us` snap to composition-frame grid | snap-round (half-up) before validation |
 | `0 ≤ src_in_us < src_out_us ≤ media.duration_us` | reject |
 | No two layers in the same track overlap in `[t_start, t_end)` | reject (with structured options) |
-| `composition.duration_us ≥ max(layer.t_end_us)` | auto-extend |
+| `composition.duration_us == max(layer.t_end_us)` while `duration_pinned == false` | auto-fit bidirectionally (grow on adds, shrink on deletes/inward trims) |
+| `composition.duration_us ≥ max(layer.t_end_us)` while `duration_pinned == true` | overflow guard only — pinned value grows if a layer extends past it, never shrinks |
 | `composition.fps.den > 0`, `width/height > 0` | reject |
 | All references (`MediaId`/`LayerId`/`GroupId`/`TransitionId`) resolve | reject |
 | Keyframe times in `[0, layer.duration]` | reject |

@@ -32,7 +32,7 @@ import {
   type MediaSummary,
   type ProjectSummary,
 } from "./ipc";
-import { formatTimecode, frameDurUs } from "./frames";
+import { formatTimecode, frameDurUs, parseTimecode } from "./frames";
 import { Timeline } from "./timeline/Timeline";
 import { AgentMode } from "./agent/AgentMode";
 import { RightPanel } from "./panels/RightPanel";
@@ -1059,6 +1059,24 @@ export function App({ onCloseProject }: AppProps) {
           onClose={() => setSettingsOpen(false)}
           keybindings={keybindings}
           onKeybindingsChanged={setKeybindings}
+          composition={
+            summary
+              ? {
+                  durationUs: summary.duration_us,
+                  durationPinned: summary.composition.duration_pinned,
+                  // The floor for a user-set duration: `max(layer.t_end_us)`
+                  // across every track/layer. Mirrors the Rust-side
+                  // `apply_duration_autofit` overflow guard so the UI can
+                  // pre-validate before invoking `set_composition`.
+                  layersMaxEndUs: summary.tracks
+                    .flatMap((t) => t.layers.map((l) => l.t_end_us))
+                    .reduce((a, b) => Math.max(a, b), 0),
+                  fpsNum: summary.composition.fps_num,
+                  fpsDen: summary.composition.fps_den,
+                }
+              : null
+          }
+          onCompositionChanged={refresh}
         />
       )}
       {templatePickerOpen && (
@@ -1421,41 +1439,5 @@ function formatBytes(
     return t("media_pool.size_kib", { value: (bytes / KIB).toFixed(0) });
   }
   return t("media_pool.size_bytes", { bytes });
-}
-
-// Parse a SMPTE timecode string into microseconds, or null when invalid.
-// Accepts: SS, MM:SS, HH:MM:SS, HH:MM:SS:FF. Frame field (4-part form)
-// is bounded by the composition fps. Inverse of `formatTimecode` —
-// strings round-tripped through both functions return to the original
-// snapped microseconds.
-function parseTimecode(
-  input: string,
-  fpsNum: number,
-  fpsDen: number,
-): number | null {
-  const s = input.trim();
-  if (!s) return null;
-  const parts = s.split(":");
-  if (parts.length < 1 || parts.length > 4) return null;
-  const nums = parts.map((p) => Number(p));
-  if (!nums.every((n) => Number.isFinite(n) && n >= 0)) return null;
-  let h = 0;
-  let m = 0;
-  let ss = 0;
-  let f = 0;
-  if (parts.length === 4) {
-    [h, m, ss, f] = nums;
-  } else if (parts.length === 3) {
-    [h, m, ss] = nums;
-  } else if (parts.length === 2) {
-    [m, ss] = nums;
-  } else {
-    ss = nums[0]!;
-  }
-  if (m >= 60 || ss >= 60) return null;
-  const framesPerSec = Math.max(1, Math.round(fpsNum / fpsDen));
-  if (f >= framesPerSec) return null;
-  const totalFrames = (h * 3600 + m * 60 + ss) * framesPerSec + f;
-  return Math.round((totalFrames * 1_000_000 * fpsDen) / fpsNum);
 }
 

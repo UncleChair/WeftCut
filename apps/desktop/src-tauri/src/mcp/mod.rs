@@ -1241,14 +1241,31 @@ impl WeftCutServer {
     // Composition tools
     // ============================================================
 
-    #[tool(description = "Update composition envelope (canvas size, fps, sample rate, channels, color space, background). \
-                          Only fields you set are applied. Width/height must be positive; fps denominator must be non-zero.")]
+    #[tool(description = "Update composition envelope (canvas size, fps, sample rate, channels, color space, background, duration). \
+                          Only fields you set are applied. Width/height must be positive; fps denominator must be non-zero. \
+                          Setting `duration_us` pins the composition duration — subsequent layer edits will no longer \
+                          auto-fit it (except an overflow guard if a layer extends past the pinned value). Use \
+                          `fit_composition_to_layers` to clear the pin and snap duration back to the layer high-water mark.")]
     async fn set_composition(
         &self,
         #[tool(aggr)] args: SetCompositionArgs,
     ) -> Result<CallToolResult, McpError> {
         self.project
             .set_composition(agent_actor(), args.patch)
+            .await
+            .map_err(map_command_error)?;
+        Ok(ok_void())
+    }
+
+    #[tool(description = "Clear the composition's duration pin and set `duration_us` to `max(layer.t_end_us)`. \
+                          The inverse of `set_composition { duration_us }`: that pins, this unpins. After this \
+                          call, subsequent layer edits track duration in both directions (grow on adds, shrink \
+                          on deletes/inward trims).")]
+    async fn fit_composition_to_layers(
+        &self,
+    ) -> Result<CallToolResult, McpError> {
+        self.project
+            .fit_composition_to_layers(agent_actor())
             .await
             .map_err(map_command_error)?;
         Ok(ok_void())

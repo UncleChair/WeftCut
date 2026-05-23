@@ -10,8 +10,16 @@ pub struct Composition {
     pub width: u32,
     pub height: u32,
     pub fps: Rational,
-    /// Computed from layers; user-overridable.
+    /// Auto-fits to `max(layer.t_end_us)` while `duration_pinned` is false.
+    /// An explicit `set_composition { duration_us }` sets the pin and freezes
+    /// the value until `fit_composition_to_layers` clears it. See ADR 0005.
     pub duration_us: TimeUs,
+    /// When true, layer edits no longer mutate `duration_us` (except to
+    /// guard the `duration_us >= max(layer.t_end_us)` invariant). Cleared
+    /// by `fit_composition_to_layers`. Old projects deserialize with this
+    /// false and self-heal on first edit.
+    #[serde(default)]
+    pub duration_pinned: bool,
     pub sample_rate: u32,
     pub channels: u8,
     #[serde(default)]
@@ -27,6 +35,7 @@ impl Default for Composition {
             height: 1080,
             fps: Rational::FPS_30,
             duration_us: 0,
+            duration_pinned: false,
             sample_rate: 48_000,
             channels: 2,
             color_space: ColorSpace::Bt709,

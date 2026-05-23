@@ -264,6 +264,15 @@ const zhCN: Resources = {
     reopen_on_launch: "启动时重新打开上一个项目",
     reopen_on_launch_hint:
       "开启后将跳过起始页，自动打开最近使用的项目。默认关闭——以防崩溃前的半提交状态被静默重新挂载。",
+    composition_heading: "合成",
+    composition_blurb:
+      "合成时长默认跟随最末一帧。需要固定时长且大于内容时可手动延长。",
+    pin_composition_duration: "延长合成时长",
+    pin_composition_duration_hint:
+      "将合成保持在下方时长。仅能设为 ≥ {{floor}}（内容末尾）。",
+    composition_duration_label: "时长",
+    composition_duration_invalid: "时间码格式无效。",
+    composition_duration_below_floor: "不得小于 {{floor}}（内容末尾）。",
     keybindings_heading: "键盘快捷键",
     keybindings_blurb:
       "点击快捷键可移除，点击 [+ 添加] 可绑定新组合。每个组合在所有操作中必须唯一——若想改绑已被占用的键，请先在原操作处取消。",
