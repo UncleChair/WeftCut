@@ -190,6 +190,11 @@ function PeekRow({
     item.layer.params.kind === "ImageOverlay"
       ? item.layer.params.media_id
       : null;
+  // Prefer the media filename for media-backed layers so the user
+  // can identify clips at a glance; fall back to a user-set layer
+  // label or the track label.
+  const mediaLabel = mediaLabelFor(item.layer);
+  const primaryLabel = item.layer.label ?? mediaLabel ?? item.trackLabel;
   return (
     <li>
       <button
@@ -198,7 +203,7 @@ function PeekRow({
           isSelected ? "is-selected" : ""
         } ${item.spansPlayhead ? "is-live" : ""}`}
         onClick={onClick}
-        title={item.layer.label ?? item.trackLabel}
+        title={primaryLabel}
       >
         <span className="peek-thumb">
           {thumbMediaId ? (
@@ -210,9 +215,7 @@ function PeekRow({
           )}
         </span>
         <span className="peek-meta">
-          <span className="peek-label">
-            {item.layer.label ?? item.trackLabel}
-          </span>
+          <span className="peek-label">{primaryLabel}</span>
           <span className="peek-sublabel">{item.trackLabel}</span>
         </span>
         <span className="peek-times">
@@ -240,6 +243,20 @@ function formatOffset(
     defaultValue: formatted,
     value: formatted,
   });
+}
+
+/// Media-backed layer params carry `media_label` (the filename / pool
+/// label). Surface it for clip identification; non-media layers
+/// (Text, Color, Subtitles, Template) have no associated media.
+function mediaLabelFor(layer: LayerSummary): string | null {
+  switch (layer.params.kind) {
+    case "VideoClip":
+    case "ImageOverlay":
+    case "Audio":
+      return layer.params.media_label;
+    default:
+      return null;
+  }
 }
 
 function iconForKind(kind: string): string {
