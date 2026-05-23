@@ -2094,14 +2094,22 @@ impl ProjectActor {
             || patch.channels.is_some()
             || patch.color_space.is_some()
             || patch.background.is_some();
-        let duration_change = patch.duration_us;
+        let current = self.history.current();
+        // Snap the explicit duration against the POST-patch fps (covers
+        // the same-patch fps+duration case where the new duration is
+        // sized to the new grid). The auto-extend after layer adds
+        // already inherits snap from t_end_us (Task 4), but this path
+        // takes a raw TimeUs and needs the explicit guard.
+        let post_fps = patch.fps.unwrap_or(current.composition.fps);
+        let duration_change = patch
+            .duration_us
+            .map(|d| crate::state::time::snap_frame_round(d, post_fps));
 
         // Atomicity: validate the full post-state (canvas + duration combined)
         // before mutating anything. Without this, an invalid mixed patch could
         // apply the canvas part to every snapshot and then fail on the
         // duration `commit`, leaving the caller with a partial change that
         // looks like a rollback to them.
-        let current = self.history.current();
         let mut new_canvas = current.composition.clone();
         if let Some(width) = patch.width {
             new_canvas.width = width;
@@ -3900,6 +3908,25 @@ mod tests {
             .find(|l| l.id == layer_id)
             .expect("layer");
         assert_eq!(layer.t_start_us, 33_333);
+    }
+
+    #[tokio::test]
+    async fn composition_duration_patch_snaps_to_frame() {
+        let (project, _track_id) = project_with_video_track();
+        let handle = spawn(project);
+        handle
+            .set_composition(
+                Actor::User,
+                CompositionPatch {
+                    duration_us: Some(50_000),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("set_composition");
+        let snap = handle.snapshot().await;
+        // 50_000us at 30fps rounds to frame 2 = 66_666us.
+        assert_eq!(snap.composition.duration_us, 66_666);
     }
 
     #[tokio::test]
