@@ -11,10 +11,10 @@ import {
 interface Props {
   onClose: () => void;
   onAdded: () => Promise<void>;
-  /// Composition duration in microseconds, used as the default "insert at"
-  /// time so the template appends after existing content instead of
-  /// colliding at t=0.
-  compositionDurationUs: number;
+  /// Current playhead position in microseconds. Used as the default
+  /// "insert at" time so the template lands wherever the user is
+  /// actively looking, matching AE/Premiere behavior.
+  currentTimeUs: number;
   /// Project's current tracks. The picker filters to Video tracks for the
   /// target dropdown — templates lower to PngSeq overlay nodes and would
   /// silently render nothing on an Audio/Subtitle lane.
@@ -29,7 +29,7 @@ const AUTO_OVERLAY_SENTINEL = "__auto_overlay__";
 export function TemplatePicker({
   onClose,
   onAdded,
-  compositionDurationUs,
+  currentTimeUs,
   tracks,
 }: Props) {
   const { t } = useTranslation();
@@ -109,7 +109,7 @@ export function TemplatePicker({
                 <TemplateForm
                   key={selected.id}
                   template={selected}
-                  compositionDurationUs={compositionDurationUs}
+                  currentTimeUs={currentTimeUs}
                   tracks={videoTracks}
                   onSubmit={async ({ tStartUs, props, trackId }) => {
                     setError(null);
@@ -158,12 +158,12 @@ function defaultPropsFor(template: TemplateSummary): Record<string, unknown> {
 
 function TemplateForm({
   template,
-  compositionDurationUs,
+  currentTimeUs,
   tracks,
   onSubmit,
 }: {
   template: TemplateSummary;
-  compositionDurationUs: number;
+  currentTimeUs: number;
   tracks: TrackSummary[];
   onSubmit: (args: {
     tStartUs: number;
@@ -176,7 +176,7 @@ function TemplateForm({
     defaultPropsFor(template),
   );
   const [insertAtSec, setInsertAtSec] = useState<number>(
-    compositionDurationUs / 1_000_000,
+    currentTimeUs / 1_000_000,
   );
   // Default to auto-create. The backend spawns a fresh Overlay track
   // on every auto insert so consecutive templates never collide on
