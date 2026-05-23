@@ -17,8 +17,19 @@ use super::transform::{BlendMode, Rect, Transform};
 pub struct Layer {
     pub id: LayerId,
     pub label: Option<String>,
+    /// Inclusive start of the layer's display interval, in composition µs.
+    /// Snapped to the comp-frame grid by the actor on every mutation.
     pub t_start_us: TimeUs,
-    /// Exclusive.
+    /// Exclusive end of the layer's display interval, in composition µs.
+    /// The half-open interval is `[t_start_us, t_end_us)` — the layer is
+    /// active at composition time `t` iff `t_start_us ≤ t < t_end_us`.
+    ///
+    /// This is a *boundary*, NOT a frame anchor. For a layer covering the
+    /// entire 10 s 30 fps comp, `t_end_us = 10_000_000` (the boundary
+    /// after frame 299, NOT frame 299's own start at 9_966_667). The
+    /// playhead, which IS a frame anchor, can never reach `t_end_us`;
+    /// see `apps/desktop/src/frames.ts::lastFrameAnchorUs` and
+    /// `docs/data-model.md` for the distinction.
     pub t_end_us: TimeUs,
     pub enabled: bool,
     pub locked: bool,

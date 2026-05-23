@@ -126,7 +126,10 @@ function EnvelopeFields({
           }}
         />
       </Field>
-      <Field label={t("property_panel.t_start_s")}>
+      <Field
+        label={t("property_panel.t_start_s")}
+        hint={t("property_panel.t_start_s_hint")}
+      >
         <input
           type="number"
           step="0.01"
@@ -135,7 +138,10 @@ function EnvelopeFields({
           onBlur={() => commit({ t_start_us: Math.round(tStartSec * 1_000_000) })}
         />
       </Field>
-      <Field label={t("property_panel.t_end_s")}>
+      <Field
+        label={t("property_panel.t_end_s")}
+        hint={t("property_panel.t_end_s_hint")}
+      >
         <input
           type="number"
           step="0.01"
@@ -652,14 +658,40 @@ function SubtitlesFields({
 
 function Field({
   label,
+  hint,
   children,
 }: {
   label: string;
+  /// Optional explanatory text. Rendered as a `?` icon next to the
+  /// label; hovering / keyboard-focusing the icon shows the hint in
+  /// a popover. Use for non-obvious field semantics — e.g. half-open
+  /// interval boundaries — where the label alone doesn't tell the
+  /// whole story.
+  hint?: string;
   children: React.ReactNode;
 }) {
   return (
     <label className="prop-field">
-      <span className="prop-field-label">{label}</span>
+      <span className="prop-field-label">
+        {label}
+        {hint ? (
+          <span
+            className="prop-field-hint"
+            tabIndex={0}
+            role="tooltip"
+            aria-label={hint}
+            // Stop clicks on the icon from also focusing the label's
+            // input — the user clicked the hint, not the value.
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+          >
+            ?
+            <span className="prop-field-hint-bubble">{hint}</span>
+          </span>
+        ) : null}
+      </span>
       <div className="prop-field-control">{children}</div>
     </label>
   );

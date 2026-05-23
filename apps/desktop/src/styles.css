@@ -1756,6 +1756,12 @@ input.preview-timecode:focus {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+  /* `overflow-y: auto` alone leaves the X axis at `visible`, so any
+     positioned descendant that extends past the inspector's right edge
+     (e.g. a property-panel hint bubble) would otherwise pull the column
+     wider and produce a horizontal scrollbar. Explicit `overflow-x:
+     hidden` clips X without disturbing the working vertical scroll. */
+  overflow-x: hidden;
 }
 
 .property-panel {
@@ -1796,21 +1802,107 @@ input.preview-timecode:focus {
 
 .prop-field {
   display: grid;
-  grid-template-columns: 96px 1fr;
+  /* `minmax(0, 1fr)` (NOT plain `1fr`) so the control column can shrink
+     below its intrinsic min-content. Without this, a child like
+     `<input type="range">` — which carries a ~129 px intrinsic min
+     width — would push the column past the inspector's right padding
+     and overflow into the panel's edge. With `0` as the lower bound,
+     flex children inside `.prop-field-control` shrink to fit instead. */
+  grid-template-columns: 96px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   font-size: 12px;
   color: #cbd5e1;
+  /* Positioned ancestor for `.prop-field-hint-bubble` so the bubble's
+     `right: 0; top: 100%` anchors to the row's bounds — never
+     overflowing horizontally into a scrollbar trigger. */
+  position: relative;
 }
 
 .prop-field-label {
   color: #9ca3af;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Small `?` icon next to a property label. Shows the hint bubble on
+   hover or keyboard focus. Pure-CSS — no popover library needed. The
+   bubble is positioned to the RIGHT of the icon so it doesn't overlap
+   the input (the right panel is narrow and an above/below bubble would
+   cover the value the user is reading). */
+.prop-field-hint {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #1f2937;
+  color: #9ca3af;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: help;
+  user-select: none;
+  outline: none;
+  /* Intentionally NOT `position: relative`: the bubble anchors to the
+     parent `.prop-field` row instead of this icon. See the comment on
+     `.prop-field-hint-bubble` for why. */
+}
+
+.prop-field-hint:hover,
+.prop-field-hint:focus-visible {
+  background: #334155;
+  color: #e5e7eb;
+}
+
+.prop-field-hint-bubble {
+  position: absolute;
+  /* Anchor to the parent row (`.prop-field`) rather than the icon: the
+     right panel is narrow (~280 px), so a 240 px bubble extending
+     rightward from the icon would either overflow the panel or trigger
+     a horizontal scrollbar. Right-anchored below the row keeps the
+     bubble fully inside the panel for any reasonable width. */
+  top: calc(100% + 4px);
+  right: 0;
+  left: auto;
+  z-index: 50;
+  /* Cap at the row's own width so the bubble can NEVER widen the
+     inspector column. Vast majority of hints fit in 240 px. */
+  width: min(240px, 100%);
+  padding: 8px 10px;
+  background: #0e1218;
+  border: 1px solid #1f2937;
+  border-radius: 4px;
+  color: #e5e7eb;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.45;
+  text-align: left;
+  white-space: normal;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 80ms ease-out, visibility 80ms ease-out;
+}
+
+.prop-field-hint:hover .prop-field-hint-bubble,
+.prop-field-hint:focus-visible .prop-field-hint-bubble {
+  opacity: 1;
+  visibility: visible;
 }
 
 .prop-field-control {
   display: flex;
   gap: 6px;
   align-items: center;
+  /* Allow flex children (range inputs in particular) to shrink below
+     their intrinsic min-content. Pairs with `minmax(0, 1fr)` on the
+     parent grid: the column makes room, this flex container actually
+     uses it. */
+  min-width: 0;
 }
 
 .prop-field-control input[type="text"],
@@ -1843,7 +1935,12 @@ input.preview-timecode:focus {
 }
 
 .prop-field-control input[type="range"] {
-  flex: 1;
+  /* `flex: 1 1 0` (instead of `flex: 1` = `1 1 0%`) is identical for
+     basis here, but combined with the explicit `min-width: 0` below
+     it overrides the ~129 px UA min for range inputs — letting the
+     track shrink to whatever the panel actually has room for. */
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 .prop-range-value {
@@ -1851,6 +1948,10 @@ input.preview-timecode:focus {
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   min-width: 32px;
+  /* Don't shrink the readout — opacity is 0.00–1.00, two digits past
+     the decimal need to stay readable even when the panel is narrow. */
+  flex: 0 0 auto;
+  text-align: right;
 }
 
 .truncate {

@@ -33,6 +33,70 @@ export function snapFrameRound(
   return Math.floor((frameIndex * US_PER_SEC * fpsDen) / fpsNum);
 }
 
+/// Snap `tUs` to the start of the frame containing it, on the comp
+/// fps grid, using EXACT rational arithmetic and HALF-UP rounding for
+/// the output value.
+///
+/// Two distinct things that have to be exact:
+///
+/// 1. Frame index — the integer N such that frame N's interval
+///    `[N·F_exact, (N+1)·F_exact)` contains `tUs`. Computed via the
+///    integer expression `floor(tUs·num / (US_PER_SEC·den))` with a
+///    correction loop for the rounding-direction edge case.
+///
+/// 2. Output grid value — the µs timestamp of frame N's start, used
+///    as the input to `ring.frameAt(...)`. Must use the SAME rounding
+///    direction as the demuxer (see
+///    `apps/desktop/src/render/decoder/Demuxer.ts:127`:
+///    `Math.round((s.cts / s.timescale) * 1e6)`). That's HALF-UP. If
+///    we floored instead, frame 299 of a 10 s 30 fps comp would snap
+///    to `9_966_666`, the source's last sample's PTS is `9_966_667`,
+///    and `findLatestAtOrBefore(9_966_666)` would fall back to sample
+///    298. The result: end-of-comp paint is the second-to-last source
+///    frame instead of the last.
+///
+/// The pre-rounded `frameDurUs(num, den)` integer (33_333 for 30 fps,
+/// truncated from 33_333.333…) is NOT safe for either computation —
+/// `Math.floor(tUs / 33_333) * 33_333` drifts by ~1 µs per frame and
+/// at frame 299 lands ~99 µs below the correct grid value.
+export function snapFrameFloor(
+  tUs: number,
+  fpsNum: number,
+  fpsDen: number,
+): number {
+  if (fpsNum <= 0 || fpsDen <= 0) return tUs;
+  const div = US_PER_SEC * fpsDen;
+  let n = Math.floor((tUs * fpsNum) / div);
+  if (n < 0) n = 0;
+  while (Math.floor(((n + 1) * div) / fpsNum) <= tUs) n++;
+  // Half-up: matches the demuxer's source-PTS rounding so the ring
+  // lookup at this value hits the source sample for the same frame N.
+  return Math.round((n * div) / fpsNum);
+}
+
+/// Start of the last displayable frame in a composition of length
+/// `durationUs` µs. The playhead's upper bound under the frame-anchor
+/// rule (see `docs/data-model.md`).
+///
+/// Half-up rounded so the value aligns with the demuxer's source-PTS
+/// for the same frame (see `snapFrameFloor` for the long version).
+///
+/// Boundary entities — layer `t_end_us`, `composition.duration_us`,
+/// trim-end handles — are unaffected; they remain exclusive and may
+/// equal `durationUs`. The clamp is per-tool, not per-time-value.
+export function lastFrameAnchorUs(
+  durationUs: number,
+  fpsNum: number,
+  fpsDen: number,
+): number {
+  if (fpsNum <= 0 || fpsDen <= 0 || durationUs <= 0) return 0;
+  // durationUs is on the comp-frame grid (snap invariant), so this
+  // is an integer total-frame count.
+  const totalFrames = Math.round((durationUs * fpsNum) / (US_PER_SEC * fpsDen));
+  if (totalFrames <= 1) return 0;
+  return Math.round(((totalFrames - 1) * US_PER_SEC * fpsDen) / fpsNum);
+}
+
 /// Format `us` as SMPTE-style `HH:MM:SS:FF` against the given comp fps.
 /// NDF (non-drop-frame): uniform frame intervals; at 29.97 the displayed
 /// timecode drifts vs wall-clock (~3.6 s/hour) — that's the v1 policy.

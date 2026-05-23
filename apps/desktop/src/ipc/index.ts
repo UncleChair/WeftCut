@@ -45,7 +45,19 @@ export interface MediaSummary {
 export interface LayerSummary {
   id: string;
   label: string | null;
+  /// Inclusive start of the layer's display interval, in composition µs.
+  /// Snapped to the comp-frame grid by the actor on every mutation.
   t_start_us: number;
+  /// EXCLUSIVE end of the layer's display interval, in composition µs.
+  /// The half-open interval is `[t_start_us, t_end_us)` — the layer is
+  /// active at composition time `t` iff `t_start_us ≤ t < t_end_us`.
+  ///
+  /// This is a *boundary*, NOT a frame anchor. For a layer covering the
+  /// entire 10 s 30 fps comp, `t_end_us = 10_000_000` (the boundary
+  /// after frame 299, not frame 299's own anchor at 9_966_667). The
+  /// playhead, which IS a frame anchor, can never reach `t_end_us` —
+  /// its upper bound is `lastFrameAnchorUs` in `frames.ts`. See
+  /// `docs/data-model.md` for the boundary-vs-anchor distinction.
   t_end_us: number;
   kind: string;
   color_hint: string;
@@ -175,6 +187,10 @@ export interface ProjectSummary {
   composition: CompositionSummary;
   track_count: number;
   layer_count: number;
+  /// Composition length as an EXCLUSIVE boundary; timeline interval is
+  /// `[0, duration_us)`. NOT a frame anchor — see `t_end_us` on
+  /// `LayerSummary` for the long version. The playhead's upper bound
+  /// is `lastFrameAnchorUs(duration_us, fpsNum, fpsDen)`.
   duration_us: number;
   history: HistoryView;
   media: MediaSummary[];

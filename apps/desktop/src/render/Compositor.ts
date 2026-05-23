@@ -9,6 +9,7 @@
 
 import { Application, Container, Texture } from "pixi.js";
 
+import { lastFrameAnchorUs as computeLastFrameStartUs, snapFrameFloor } from "../frames";
 import type { LayerSummary, MediaSummary, ProjectSummary } from "../ipc";
 import { AudioMixer } from "./audio/AudioMixer";
 import {
@@ -152,6 +153,16 @@ export class Compositor {
   /// jitter; instead we show one consistent project-frame's worth
   /// of source every two rAFs (matching what export produces).
   private frameDurUs = 33333;
+  /// Raw fps rational, kept alongside `frameDurUs` so `setAnchorTime` /
+  /// `compositeFrame` can snap with exact rational arithmetic via
+  /// `snapFrameFloor`. The pre-rounded `frameDurUs` accumulates ~1 µs
+  /// of drift per frame; by frame 299 (last frame of a 10 s 30 fps
+  /// comp) the cumulative error is large enough to drop the lookup
+  /// into the previous frame's source-PTS interval and paint the
+  /// wrong frame. Use `snapFrameFloor(tUs, this.fpsNum, this.fpsDen)`
+  /// instead of `Math.floor(tUs / this.frameDurUs) * this.frameDurUs`.
+  private fpsNum = 30;
+  private fpsDen = 1;
 
   constructor(init: CompositorInit) {
     this.app = init.app;
@@ -249,6 +260,8 @@ export class Compositor {
     const c = summary.composition;
     if (c.fps_num > 0 && c.fps_den > 0) {
       this.frameDurUs = Math.round((1_000_000 * c.fps_den) / c.fps_num);
+      this.fpsNum = c.fps_num;
+      this.fpsDen = c.fps_den;
     }
     const livingLayerIds = new Set<string>();
     for (const t of summary.tracks) {
@@ -320,10 +333,14 @@ export class Compositor {
     // frame selection consistent across rAF ticks at the cost of
     // rendering at the project's authored fps rather than the
     // display's native rate (the export behavior, matched).
-    const tUsSnapped =
-      this.frameDurUs > 0
-        ? Math.floor(tUs / this.frameDurUs) * this.frameDurUs
-        : tUs;
+    //
+    // Uses exact-rational `snapFrameFloor` instead of `Math.floor(tUs
+    // / this.frameDurUs) * this.frameDurUs`: the pre-rounded
+    // `frameDurUs` (33_333 for 30 fps, vs 33_333.333… exact) drifts
+    // ~1 µs/frame and by frame 299 of a 10 s 30 fps comp lands ~99 µs
+    // BEFORE the last frame's true source-PTS start, paint = the
+    // second-to-last frame.
+    const tUsSnapped = snapFrameFloor(tUs, this.fpsNum, this.fpsDen);
 
     const prevChildCount = this.stage.children.length;
     this.stage.removeChildren();
@@ -446,6 +463,19 @@ export class Compositor {
     return this.projectSummary?.duration_us ?? 0;
   }
 
+  /// Exact-rational "last frame start" for an exclusive `endUs`
+  /// boundary, against the current project's fps. Returns 0 if no
+  /// project / degenerate fps / `endUs <= 0`.
+  ///
+  /// Exposed so PlaybackEngine can park the playhead at the start of
+  /// the last visible frame on auto-pause without carrying its own
+  /// fps state, AND without the `endUs − pre-rounded-frameDurUs` drift
+  /// that would otherwise land 1 µs above the true frame-grid value
+  /// and confuse downstream lookups.
+  lastFrameAnchorUs(endUs: number): number {
+    return computeLastFrameStartUs(endUs, this.fpsNum, this.fpsDen);
+  }
+
   /// End of the last piece of *playable material* — the maximum
   /// `t_end_us` across enabled layers in enabled tracks. Returns 0
   /// when no enabled layer exists.
@@ -512,12 +542,11 @@ export class Compositor {
     if (!this.projectSummary) return;
     if (this.scrubbing) return;
     if (this.suspended) return;
-    // Use the same snap as compositeFrame so the decoder's anchor
-    // matches the frame we're actually painting.
-    const tUsSnapped =
-      this.frameDurUs > 0
-        ? Math.floor(tUs / this.frameDurUs) * this.frameDurUs
-        : tUs;
+    // Use the same exact-rational snap as `compositeFrame` so the
+    // decoder's anchor matches the frame we're actually painting.
+    // See `snapFrameFloor` and the long comment in `compositeFrame`
+    // for why the pre-rounded `frameDurUs` is not safe here.
+    const tUsSnapped = snapFrameFloor(tUs, this.fpsNum, this.fpsDen);
     for (const c of this.clips.values()) {
       const layer = this.findLayer(c.layerId);
       if (!layer || layer.params.kind !== "VideoClip") continue;
