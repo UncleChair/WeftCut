@@ -125,9 +125,14 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         originalAssetUrl,
         mediaById: lookupMedia,
       });
-      compositor.setProject(useProjectStore.getState().summary);
+      const initialSummary = useProjectStore.getState().summary;
+      compositor.setProject(initialSummary);
 
       const engine = new PlaybackEngine({ compositor, ticker: app.ticker });
+      engine.bindFps(
+        initialSummary?.composition.fps_num ?? 30,
+        initialSummary?.composition.fps_den ?? 1,
+      );
       if (onTimeUpdate) engine.onTimeUpdate(onTimeUpdate);
       if (onPausedChange) engine.onPlayStateChange((p) => onPausedChange(!p));
 
@@ -146,6 +151,10 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   useEffect(() => {
     if (!compositorRef.current) return;
     compositorRef.current.setProject(summary);
+    engineRef.current?.bindFps(
+      summary?.composition.fps_num ?? 30,
+      summary?.composition.fps_den ?? 1,
+    );
     const t = engineRef.current?.positionUs() ?? 0;
     compositorRef.current.setAnchorTime(t);
     compositorRef.current.compositeFrame(t);

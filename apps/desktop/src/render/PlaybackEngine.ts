@@ -97,6 +97,13 @@ export class PlaybackEngine {
     return this.clock.positionUs();
   }
 
+  /// Bind the composition fps so the clock snaps its position to
+  /// frame. Called by the host (`PixiPreview`) on project load and on
+  /// fps changes.
+  bindFps(num: number, den: number): void {
+    this.clock.bindFps(num, den);
+  }
+
   play(): void {
     if (this.intendedPlaying) return;
     // If the playhead is parked at (or past) the end of the
