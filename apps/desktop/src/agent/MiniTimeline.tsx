@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { formatTimecode } from "../frames";
 import type { MarkerSummary } from "../ipc";
 
 /// Agent-mode mini timeline. Strip with click/drag-to-seek + a tick
@@ -16,6 +17,8 @@ interface MiniTimelineProps {
   durationUs: number;
   markers: MarkerSummary[];
   onSeek: (tUs: number) => void;
+  fpsNum: number;
+  fpsDen: number;
 }
 
 // Pick a "nice number" tick interval (microseconds) such that the gap
@@ -58,22 +61,13 @@ function formatTickLabel(us: number): string {
   return `${m}:${pad(s, 2)}`;
 }
 
-function formatTimecode(us: number): string {
-  const totalMs = Math.max(0, Math.floor(us / 1000));
-  const ms = totalMs % 1000;
-  const totalSec = Math.floor(totalMs / 1000);
-  const s = totalSec % 60;
-  const m = Math.floor(totalSec / 60) % 60;
-  const h = Math.floor(totalSec / 3600);
-  const pad = (n: number, w: number) => n.toString().padStart(w, "0");
-  return `${pad(h, 2)}:${pad(m, 2)}:${pad(s, 2)}.${pad(ms, 3)}`;
-}
-
 export function MiniTimeline({
   currentTimeUs,
   durationUs,
   markers,
   onSeek,
+  fpsNum,
+  fpsDen,
 }: MiniTimelineProps) {
   const stripRef = useRef<HTMLDivElement | null>(null);
   // Strip width drives tick density. ResizeObserver writes into
@@ -187,7 +181,7 @@ export function MiniTimeline({
         <div className="mini-playhead" style={{ left: playheadLeft }} />
       </div>
       <div className="mini-timeline-tc">
-        {formatTimecode(currentTimeUs)} / {formatTimecode(durationUs)}
+        {formatTimecode(currentTimeUs, fpsNum, fpsDen)} / {formatTimecode(durationUs, fpsNum, fpsDen)}
       </div>
     </div>
   );

@@ -32,6 +32,7 @@ import {
   type MediaSummary,
   type ProjectSummary,
 } from "./ipc";
+import { formatTimecode } from "./frames";
 import { Timeline } from "./timeline/Timeline";
 import { AgentMode } from "./agent/AgentMode";
 import { RightPanel } from "./panels/RightPanel";
@@ -185,10 +186,12 @@ export function App({ onCloseProject }: AppProps) {
 
   const commitTimecode = useCallback(() => {
     if (editingTimecode === null) return;
-    const us = parseTimecode(editingTimecode);
+    const fpsNum = summary?.composition.fps_num ?? 30;
+    const fpsDen = summary?.composition.fps_den ?? 1;
+    const us = parseTimecode(editingTimecode, fpsNum, fpsDen);
     setEditingTimecode(null);
     if (us !== null) void seekTo(us);
-  }, [editingTimecode, seekTo]);
+  }, [editingTimecode, seekTo, summary?.composition.fps_num, summary?.composition.fps_den]);
 
   // Focus + select the timecode input the moment edit mode opens so the user
   // can immediately type to replace the current value.
@@ -918,15 +921,15 @@ export function App({ onCloseProject }: AppProps) {
                 role="button"
                 tabIndex={0}
                 title={t("transport.timecode_edit_hint")}
-                onClick={() => setEditingTimecode(formatTimecode(currentTimeUs))}
+                onClick={() => setEditingTimecode(formatTimecode(currentTimeUs, summary?.composition.fps_num ?? 30, summary?.composition.fps_den ?? 1))}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
-                    setEditingTimecode(formatTimecode(currentTimeUs));
+                    setEditingTimecode(formatTimecode(currentTimeUs, summary?.composition.fps_num ?? 30, summary?.composition.fps_den ?? 1));
                   }
                 }}
               >
-                {formatTimecode(currentTimeUs)}
+                {formatTimecode(currentTimeUs, summary?.composition.fps_num ?? 30, summary?.composition.fps_den ?? 1)}
               </span>
             )}
             <div className="transport-buttons">
@@ -1389,40 +1392,39 @@ function formatBytes(
   return t("media_pool.size_bytes", { bytes });
 }
 
-function formatTimecode(us: number): string {
-  const totalMs = Math.max(0, Math.floor(us / 1000));
-  const ms = totalMs % 1000;
-  const totalSec = Math.floor(totalMs / 1000);
-  const s = totalSec % 60;
-  const m = Math.floor(totalSec / 60) % 60;
-  const h = Math.floor(totalSec / 3600);
-  const pad = (n: number, w: number) => n.toString().padStart(w, "0");
-  return `${pad(h, 2)}:${pad(m, 2)}:${pad(s, 2)}.${pad(ms, 3)}`;
-}
-
-// Parse a flexible timecode string into microseconds, or null when invalid.
-// Accepts: SS, SS.mmm, MM:SS(.mmm), HH:MM:SS(.mmm). Trailing milliseconds
-// may be 1–3 digits and are padded right (e.g. "1.5" → 1500 ms).
-function parseTimecode(input: string): number | null {
+// Parse a SMPTE timecode string into microseconds, or null when invalid.
+// Accepts: SS, MM:SS, HH:MM:SS, HH:MM:SS:FF. Frame field (4-part form)
+// is bounded by the composition fps. Inverse of `formatTimecode` —
+// strings round-tripped through both functions return to the original
+// snapped microseconds.
+function parseTimecode(
+  input: string,
+  fpsNum: number,
+  fpsDen: number,
+): number | null {
   const s = input.trim();
   if (!s) return null;
   const parts = s.split(":");
-  if (parts.length > 3) return null;
-  const tail = parts[parts.length - 1];
-  const tailMatch = /^(\d+)(?:\.(\d{1,3}))?$/.exec(tail);
-  if (!tailMatch) return null;
-  const ss = Number(tailMatch[1]);
-  const ms = tailMatch[2] ? Number(tailMatch[2].padEnd(3, "0")) : 0;
+  if (parts.length < 1 || parts.length > 4) return null;
+  const nums = parts.map((p) => Number(p));
+  if (!nums.every((n) => Number.isFinite(n) && n >= 0)) return null;
   let h = 0;
   let m = 0;
-  if (parts.length === 3) {
-    h = Number(parts[0]);
-    m = Number(parts[1]);
+  let ss = 0;
+  let f = 0;
+  if (parts.length === 4) {
+    [h, m, ss, f] = nums;
+  } else if (parts.length === 3) {
+    [h, m, ss] = nums;
   } else if (parts.length === 2) {
-    m = Number(parts[0]);
+    [m, ss] = nums;
+  } else {
+    ss = nums[0]!;
   }
-  if (![h, m, ss, ms].every((n) => Number.isFinite(n) && n >= 0)) return null;
-  if (parts.length >= 2 && (m >= 60 || ss >= 60)) return null;
-  return (((h * 3600 + m * 60 + ss) * 1000) + ms) * 1000;
+  if (m >= 60 || ss >= 60) return null;
+  const framesPerSec = Math.max(1, Math.round(fpsNum / fpsDen));
+  if (f >= framesPerSec) return null;
+  const totalFrames = (h * 3600 + m * 60 + ss) * framesPerSec + f;
+  return Math.round((totalFrames * 1_000_000 * fpsDen) / fpsNum);
 }
 
