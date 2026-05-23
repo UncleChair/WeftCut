@@ -446,6 +446,30 @@ export class Compositor {
     return this.projectSummary?.duration_us ?? 0;
   }
 
+  /// End of the last piece of *playable material* — the maximum
+  /// `t_end_us` across enabled layers in enabled tracks. Returns 0
+  /// when no enabled layer exists.
+  ///
+  /// Why this and not `compositionDurationUs()`: composition duration
+  /// auto-extends to fit added layers but never auto-shrinks when
+  /// layers are deleted or trimmed. After such edits the composition
+  /// can outlast the material, and playing into the empty tail just
+  /// shows a black canvas while the clock ticks on. PlaybackEngine
+  /// uses this value to auto-pause as soon as there's nothing left to
+  /// show, so the playhead lands on the final visible frame.
+  playableEndUs(): number {
+    if (!this.projectSummary) return 0;
+    let end = 0;
+    for (const t of this.projectSummary.tracks) {
+      if (!t.enabled) continue;
+      for (const l of t.layers) {
+        if (!l.enabled) continue;
+        if (l.t_end_us > end) end = l.t_end_us;
+      }
+    }
+    return end;
+  }
+
   /// True if every active VideoClip layer at composition time `tUs`
   /// has a decoded frame at its source-time mapping AND at least
   /// `minLookaheadUs` of additional ring contents past it.
