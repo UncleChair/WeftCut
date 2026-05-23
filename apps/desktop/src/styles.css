@@ -645,8 +645,9 @@ input.preview-timecode:focus {
 
 /* A/B-roll redesign R.5b (`docs/ab-roll-redesign`): a thin toolbar
    above the scrollable timeline-root carries mode indicators that
-   must NOT scroll with content (the AB/All pill, future ruler
-   labels). Inside the parent `.timeline` flex-column. */
+   must NOT scroll with content (today the AB/All pill). The time
+   ruler with its scaling tick labels lives inside `.timeline-root`
+   instead so it horizontally scrolls with the canvas. */
 .timeline-toolbar {
   display: flex;
   align-items: center;
@@ -759,11 +760,62 @@ input.preview-timecode:focus {
   -ms-overflow-style: none;
   background: #0a0c10;
   position: relative;
-  /* Strip above the tracks where the playhead knob lives, sized so a
-     14 px knob (positioned 2 px below the strip top) fits without
-     overlapping the first lane. Kept on the scroll container so the
-     line + knob position relative to its padding box. */
-  padding-top: 18px;
+  /* No top padding — the `.timeline-ruler` child renders as the first
+     row inside the scroll content and provides the strip above the
+     tracks where the playhead knob sits, while also showing labelled
+     time ticks that scale with `pxPerSec`. */
+}
+
+/* Time ruler. Sized to the canvas width so horizontal scroll keeps it
+   aligned with the layers below. The 20 px height accommodates a 10 px
+   label in the upper half and 4–8 px tick marks at the bottom; the
+   playhead's `top: 2px` knob still lands inside this strip. */
+.timeline-ruler {
+  position: relative;
+  height: 20px;
+  flex: 0 0 auto;
+  background: #0e131c;
+  border-bottom: 1px solid #1f2937;
+  user-select: none;
+  color: #9ca3af;
+  font-size: 10px;
+}
+
+.ruler-tick {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  width: 0;
+  pointer-events: none;
+}
+
+/* Tick line — rendered as a ::after pseudo so the label can be a
+   sibling positioned alongside the tick. Majors are tall and bright
+   so the labelled grid reads cleanly; minors are short and dim. */
+.ruler-tick::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 1px;
+}
+
+.ruler-tick.is-major::after {
+  height: 8px;
+  background: rgba(229, 231, 235, 0.55);
+}
+
+.ruler-tick.is-minor::after {
+  height: 4px;
+  background: rgba(107, 114, 128, 0.55);
+}
+
+.ruler-label {
+  position: absolute;
+  left: 3px;
+  top: 1px;
+  line-height: 12px;
+  white-space: nowrap;
 }
 
 .timeline-root::-webkit-scrollbar {
@@ -791,13 +843,6 @@ input.preview-timecode:focus {
   position: relative;
   border-bottom: 1px solid #131822;
   background: #0a0c10;
-}
-
-/* Visual separator between the playhead strip (top padding of the canvas)
-   and the first track. Without this, the strip and the lane blend together
-   and the top of the tracks feels open-ended. */
-.timeline-track-lane:first-child {
-  border-top: 1px solid #1f2937;
 }
 
 .timeline-track-lane.kind-video { background: #0a0d12; }

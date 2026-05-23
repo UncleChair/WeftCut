@@ -26,10 +26,15 @@ import { useDisplayMode, toggleDisplayMode } from "../settings/appSettingsStore"
 import { useShortcuts, type OverrideMap } from "../shortcuts";
 import { WaveformCanvas } from "./WaveformCanvas";
 
-// Zoom + height bounds. The defaults match the pre-refactor constants so
+// Zoom + height bounds. The default matches the pre-refactor constant so
 // projects that have never written `view.json` look identical to before.
+// The lower bound is computed dynamically as `viewport / totalSec` so
+// Ctrl+wheel can always zoom out far enough to fit the entire timeline
+// in view, regardless of how long it is. `MIN_PX_PER_SEC_FLOOR` is a
+// tiny absolute floor that keeps the math sane in pathological cases
+// (zero-width viewport, zero-duration project).
 const DEFAULT_PX_PER_SEC = 80;
-const MIN_PX_PER_SEC = 8;
+const MIN_PX_PER_SEC_FLOOR = 0.05;
 const MAX_PX_PER_SEC = 800;
 // V.6 (A/B-roll v2): default row is taller so combined V+A rows have
 // room for a thumbnail strip (top half) + waveform strip (bottom half).
@@ -436,7 +441,11 @@ export function Timeline({
       .then((state) => {
         if (cancelled) return;
         setPxPerSec(
-          clamp(state.timeline_px_per_sec, MIN_PX_PER_SEC, MAX_PX_PER_SEC),
+          clamp(
+            state.timeline_px_per_sec,
+            MIN_PX_PER_SEC_FLOOR,
+            MAX_PX_PER_SEC,
+          ),
         );
         setTrackHeights(state.track_heights ?? {});
       })
@@ -455,12 +464,19 @@ export function Timeline({
   // need to restart with React's render cadence on every wheel tick.
   const pxPerSecRef = useRef(pxPerSec);
   const trackHeightsRef = useRef(trackHeights);
+  // Latest project duration — the wheel handler reads this to compute
+  // the "fit-to-viewport" min zoom each tick, so a project getting
+  // longer (new clips added) immediately widens the wheel-out range.
+  const durationUsRef = useRef(durationUs);
   useEffect(() => {
     pxPerSecRef.current = pxPerSec;
   }, [pxPerSec]);
   useEffect(() => {
     trackHeightsRef.current = trackHeights;
   }, [trackHeights]);
+  useEffect(() => {
+    durationUsRef.current = durationUs;
+  }, [durationUs]);
 
   useEffect(() => {
     if (!viewLoadedRef.current) return;
@@ -519,11 +535,18 @@ export function Timeline({
       // ones don't snap-jump. Negative px (scrolling up) zooms in.
       const factor = Math.exp(-px * 0.001);
       const oldPxPerSec = pxPerSecRef.current;
-      const newPxPerSec = clamp(
-        oldPxPerSec * factor,
-        MIN_PX_PER_SEC,
-        MAX_PX_PER_SEC,
+      // Lower bound = "fit-to-viewport" zoom — the level at which the
+      // whole timeline exactly fills the visible width. Beyond this
+      // there's only empty space to the right of the content, so this
+      // is the natural Ctrl+wheel stop for max zoom-out. Recomputed
+      // every tick so it tracks viewport resize + project growth.
+      const viewportWidth = root.clientWidth;
+      const totalSec = Math.max(durationUsRef.current / 1_000_000, 5);
+      const fitMin = Math.max(
+        MIN_PX_PER_SEC_FLOOR,
+        viewportWidth / totalSec,
       );
+      const newPxPerSec = clamp(oldPxPerSec * factor, fitMin, MAX_PX_PER_SEC);
       if (newPxPerSec === oldPxPerSec) return;
       wheelPendingRef.current = {
         scrollLeft: root.scrollLeft,
@@ -807,6 +830,11 @@ export function Timeline({
       onClick={() => onSelect(null)}
       onPointerDown={onCanvasPointerDown}
     >
+      <TimelineRuler
+        pxPerSec={pxPerSec}
+        totalSec={totalSec}
+        widthPx={Math.max(widthPx, 200)}
+      />
       <div
         ref={canvasRef}
         className="timeline-canvas"
@@ -947,6 +975,93 @@ function DisplayModePill({ mode }: { mode: "AbRoll" | "ShowAll" }) {
 /// IR routes by LayerParams (V.5), not by track kind.
 function trackAcceptsForLayer(_target: TrackSummary, _drag: DragState): boolean {
   return true;
+}
+
+/// Time ruler that lives at the top of the scrollable `.timeline-root`,
+/// replacing the legacy 18 px playhead-strip padding. Width matches the
+/// canvas so horizontal scroll keeps ticks aligned with the layers
+/// below, and tick density scales with `pxPerSec`: a "nice" step
+/// (1, 2, 5, 10, … s, plus sub-second steps when zoomed in) is picked
+/// so labelled majors land roughly every 100 px regardless of zoom.
+function TimelineRuler({
+  pxPerSec,
+  totalSec,
+  widthPx,
+}: {
+  pxPerSec: number;
+  totalSec: number;
+  widthPx: number;
+}) {
+  // Major-tick candidates: classic 1/2/5 decade ladder extended into
+  // sub-second territory for high-zoom cases. Anything above 600 s
+  // falls off the top of the ladder and clamps to 600.
+  const NICE_STEPS_SEC = [
+    0.1, 0.2, 0.5, 1, 2, 5, 10, 30, 60, 120, 300, 600,
+  ] as const;
+  const TARGET_MAJOR_PX = 100;
+  const SUBDIVISIONS = 5;
+
+  const { items, majorSec } = useMemo(() => {
+    const targetSec = TARGET_MAJOR_PX / pxPerSec;
+    let major = NICE_STEPS_SEC[NICE_STEPS_SEC.length - 1] ?? 1;
+    for (const s of NICE_STEPS_SEC) {
+      if (s >= targetSec) {
+        major = s;
+        break;
+      }
+    }
+    const minor = major / SUBDIVISIONS;
+    const out: { i: number; x: number; t: number; isMajor: boolean }[] = [];
+    // Allow a half-step over `totalSec` so the trailing major lands on
+    // a clean number if the timeline ends mid-interval — visually it
+    // gets clipped by the canvas width, but the major label stays on
+    // its grid until the very end.
+    const limit = totalSec + minor * 0.5;
+    for (let i = 0; ; i++) {
+      const t = i * minor;
+      if (t > limit) break;
+      out.push({ i, x: t * pxPerSec, t, isMajor: i % SUBDIVISIONS === 0 });
+    }
+    return { items: out, majorSec: major };
+    // NICE_STEPS_SEC, TARGET_MAJOR_PX, SUBDIVISIONS are module-level
+    // constants — stable across renders, no dependency entry needed.
+  }, [pxPerSec, totalSec]);
+
+  return (
+    <div className="timeline-ruler" style={{ width: widthPx }}>
+      {items.map((tk) => (
+        <div
+          key={tk.i}
+          className={`ruler-tick ${tk.isMajor ? "is-major" : "is-minor"}`}
+          style={{ left: tk.x }}
+        >
+          {tk.isMajor && (
+            <span className="ruler-label">
+              {formatRulerLabel(tk.t, majorSec)}
+            </span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/// `mm:ss` for second-grain steps, `mm:ss.cs` (centiseconds) for
+/// sub-second steps so the user sees a meaningful precision delta as
+/// they zoom in. Rounding is done in integer milliseconds to keep
+/// floating-point accumulation out of the label.
+function formatRulerLabel(seconds: number, majorSec: number): string {
+  const sec = Math.max(0, seconds);
+  const ms = Math.round(sec * 1000);
+  const totalSec = Math.floor(ms / 1000);
+  const mm = Math.floor(totalSec / 60);
+  const ss = totalSec % 60;
+  const ssStr = String(ss).padStart(2, "0");
+  if (majorSec < 1) {
+    const cs = Math.round((ms % 1000) / 10);
+    return `${mm}:${ssStr}.${String(cs).padStart(2, "0")}`;
+  }
+  return `${mm}:${ssStr}`;
 }
 
 function EmptyHint({ mode }: { mode?: "AbRoll" | "ShowAll" }) {
