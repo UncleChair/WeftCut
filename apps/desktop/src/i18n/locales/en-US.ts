@@ -4,6 +4,7 @@ const enUS = {
   app: {
     title: "WeftCut",
     core_status: "core: {{status}}",
+    window_title: "WeftCut — {{name}}",
   },
   startup: {
     subtitle: "Pick a project to open, or create a new one.",
@@ -133,6 +134,9 @@ const enUS = {
   media_pool: {
     heading: "Media pool",
     empty: "No media imported yet — click \"Import media…\" to add a file.",
+    search_placeholder: "Search media…",
+    no_matches: "No matches for “{{query}}”.",
+    clear_search: "Clear search",
     duration: "{{seconds}}s",
     size_bytes: "{{bytes}} B",
     size_kib: "{{value}} KiB",

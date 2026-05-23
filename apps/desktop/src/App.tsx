@@ -1,8 +1,9 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { listen } from "@tauri-apps/api/event";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { join, tempDir } from "@tauri-apps/api/path";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { remove, writeFile } from "@tauri-apps/plugin-fs";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -20,7 +21,6 @@ import {
   importCancel,
   importMedia,
   importQueueList,
-  MEDIA_JOB_EVENTS,
   ping,
   projectRedo,
   projectSave,
@@ -55,6 +55,7 @@ import {
   SUPPORTED_LOCALES,
   type Locale,
 } from "./i18n";
+import { GlobeIcon } from "./i18n/GlobeIcon";
 import {
   ShortcutBindingsProvider,
   useShortcuts,
@@ -127,11 +128,6 @@ export function App({ onCloseProject }: AppProps) {
   // libmpv-embed "previewInit" state machine is gone.
   const previewRef = useRef<PreviewSurfaceHandle | null>(null);
   const [importQueue, setImportQueue] = useState<ImportEntry[]>([]);
-  // Phase C.3 derivative-job tracker. Background proxy / thumbnails /
-  // waveform jobs emit `media:job_started` and `media:job_complete` /
-  // `media:job_error` — we keep a tiny counter to render a "Generating
-  // derivatives (N)…" pill while anything's in flight.
-  const [pendingDerivatives, setPendingDerivatives] = useState<number>(0);
 
   // Set of media_ids currently being copied into <workspace>/Media/. The
   // pool item renders a "Copying…" badge for these. Items that have moved
@@ -256,6 +252,26 @@ export function App({ onCloseProject }: AppProps) {
     };
   }, []);
 
+  // Bind the OS window title to the project name (AE-style: the
+  // project's identity lives in the window chrome, not in an in-app
+  // bar). Falls back to the bare app title when no project is loaded
+  // yet. Re-runs on locale flip so the dash / phrasing follows the
+  // user's language preference. Resets to the bare title on unmount
+  // (Save and Close) so the StartupScreen doesn't inherit a stale
+  // project name in the OS title bar.
+  useEffect(() => {
+    const win = getCurrentWindow();
+    const next = summary?.name
+      ? t("app.window_title", { name: summary.name })
+      : t("app.title");
+    void win.setTitle(next).catch(() => {});
+  }, [summary?.name, i18n.resolvedLanguage, t]);
+  useEffect(() => {
+    return () => {
+      void getCurrentWindow().setTitle("WeftCut").catch(() => {});
+    };
+  }, []);
+
   const exitAgentMode = useCallback(async () => {
     try {
       await agentSessionEnd();
@@ -325,38 +341,6 @@ export function App({ onCloseProject }: AppProps) {
     return () => {
       cancelled = true;
       if (unlisten) unlisten();
-    };
-  }, []);
-
-  // Derivative-job tracker (Phase C.3 — workspace-redesign.md). Each
-  // `media:job_started` increments; `media:job_complete` / `error`
-  // decrement. The total is shown as a small pill near the project bar
-  // when > 0 so the user has a visible signal that proxies / thumbnails /
-  // waveforms are still grinding in the background.
-  useEffect(() => {
-    const unlisteners: UnlistenFn[] = [];
-    let cancelled = false;
-    (async () => {
-      const onStarted = await listen(MEDIA_JOB_EVENTS.started, () => {
-        setPendingDerivatives((n) => n + 1);
-      });
-      const onComplete = await listen(MEDIA_JOB_EVENTS.complete, () => {
-        setPendingDerivatives((n) => Math.max(0, n - 1));
-      });
-      const onError = await listen(MEDIA_JOB_EVENTS.error, () => {
-        setPendingDerivatives((n) => Math.max(0, n - 1));
-      });
-      if (cancelled) {
-        onStarted();
-        onComplete();
-        onError();
-        return;
-      }
-      unlisteners.push(onStarted, onComplete, onError);
-    })();
-    return () => {
-      cancelled = true;
-      for (const u of unlisteners) u();
     };
   }, []);
 
@@ -876,59 +860,25 @@ export function App({ onCloseProject }: AppProps) {
           </section>
         </div>
         <div className="header-right">
-          <span className="ping">{t("app.core_status", { status: pong })}</span>
+          {pong !== "ok" && pong !== "…" && (
+            <span className="ping">
+              {t("app.core_status", { status: pong })}
+            </span>
+          )}
           <button
             className="locale-toggle"
             onClick={cycleLocale}
             title={t("language.switch_label")}
+            aria-label={t("language.switch_label")}
           >
-            {LOCALE_LABELS[(i18n.resolvedLanguage ?? "en-US") as Locale] ??
-              "EN"}
+            <GlobeIcon />
+            <span className="locale-toggle-label">
+              {LOCALE_LABELS[(i18n.resolvedLanguage ?? "en-US") as Locale] ??
+                "English"}
+            </span>
           </button>
         </div>
       </header>
-
-      <section className="project-bar">
-        {summary ? (
-          <>
-            <span className="project-name">{summary.name}</span>
-            <span className="meta">
-              {t("project.canvas", {
-                width: summary.composition.width,
-                height: summary.composition.height,
-                fps: fpsLabel,
-              })}
-            </span>
-            <span className="meta">
-              {t("project.tracks", { count: summary.track_count })} ·{" "}
-              {t("project.layers", { count: summary.layer_count })}
-            </span>
-            <span className="meta">
-              {t("project.duration_seconds", {
-                value: (summary.duration_us / 1_000_000).toFixed(2),
-              })}
-            </span>
-            <span className="meta">
-              {t("project.history_position", {
-                cursor: summary.history.cursor + 1,
-                len: summary.history.len,
-              })}
-            </span>
-          </>
-        ) : (
-          <span className="meta">{t("project.loading")}</span>
-        )}
-        {pendingDerivatives > 0 && (
-          <span
-            className="derivatives-pill"
-            title={t("project.derivatives_pending_hint")}
-          >
-            <span className="derivatives-pill-spinner" aria-hidden="true" />
-            {t("project.derivatives_pending", { count: pendingDerivatives })}
-          </span>
-        )}
-        <AgentRunningPill />
-      </section>
 
       <main className={`app-main ${mediaPoolDrawerOpen ? "drawer-open" : ""}`}>
         <section className="preview">
@@ -1004,7 +954,21 @@ export function App({ onCloseProject }: AppProps) {
                 {t("transport.to_end")}
               </button>
             </div>
-            <span className="preview-timecode-spacer" aria-hidden="true" />
+            <span className="preview-meta" aria-hidden="true">
+              {summary && (
+                <>
+                  {t("project.canvas", {
+                    width: summary.composition.width,
+                    height: summary.composition.height,
+                    fps: fpsLabel,
+                  })}
+                  {" · "}
+                  {t("project.duration_seconds", {
+                    value: (summary.duration_us / 1_000_000).toFixed(2),
+                  })}
+                </>
+              )}
+            </span>
           </div>
         </section>
 
@@ -1084,12 +1048,6 @@ export function App({ onCloseProject }: AppProps) {
 }
 
 
-/// Project-bar pill that surfaces agent-attributed running ops while
-/// the user is in editor mode. After exiting agent mode the user
-/// otherwise has no signal that the agent is still working (Q4: ops
-/// finish in the background). Selector walks runningOps + entries
-/// once per store-update — O(running × entries) but `running` is
-/// typically 0-3 in practice. Renders nothing when count is 0.
 /// `docs/ab-roll-redesign` R.8: View menu — radio between A/B-roll and
 /// Show-All. Same setting the inline pill + `T` shortcut drive. Reads
 /// the current value from the app-pref store so the checkmark stays in
@@ -1141,29 +1099,6 @@ function ViewMenu() {
         }}
       />
     </Menu>
-  );
-}
-
-
-function AgentRunningPill() {
-  const { t } = useTranslation();
-  const count = useLogStore((s) => {
-    let n = 0;
-    for (const opId of Object.keys(s.runningOps)) {
-      const e = s.entries.find((x) => x.op_id === opId);
-      if (e?.source.kind === "Agent") n += 1;
-    }
-    return n;
-  });
-  if (count === 0) return null;
-  return (
-    <span
-      className="agent-running-pill"
-      title={t("agent_mode.running_pill_hint")}
-    >
-      <span className="agent-running-spinner" aria-hidden="true" />
-      {t("agent_mode.running_pill", { count })}
-    </span>
   );
 }
 
@@ -1279,6 +1214,8 @@ function MediaPool({
   onCancelImport: (mediaId: string) => Promise<void>;
 }) {
   const { t } = useTranslation();
+  const [query, setQuery] = useState("");
+
   if (media.length === 0) {
     return (
       <div className="media-pool-inner">
@@ -1287,13 +1224,55 @@ function MediaPool({
       </div>
     );
   }
+
+  // Case-insensitive substring match on the human-facing label. Trim
+  // so trailing whitespace from a paste doesn't kill all matches.
+  const trimmed = query.trim();
+  const needle = trimmed.toLowerCase();
+  const filtered = needle
+    ? media.filter((m) => m.label.toLowerCase().includes(needle))
+    : media;
+
   return (
     <div className="media-pool-inner">
       <h2>
-        {t("media_pool.heading")} ({media.length})
+        {t("media_pool.heading")} (
+        {trimmed ? `${filtered.length}/${media.length}` : media.length})
       </h2>
-      <ul className="media-list">
-        {media.map((m) => {
+      <div className="media-pool-search">
+        <input
+          type="text"
+          className="media-pool-search-input"
+          placeholder={t("media_pool.search_placeholder")}
+          aria-label={t("media_pool.search_placeholder")}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape" && query !== "") {
+              e.preventDefault();
+              setQuery("");
+            }
+          }}
+        />
+        {query !== "" && (
+          <button
+            type="button"
+            className="media-pool-search-clear"
+            onClick={() => setQuery("")}
+            title={t("media_pool.clear_search")}
+            aria-label={t("media_pool.clear_search")}
+          >
+            ×
+          </button>
+        )}
+      </div>
+      {filtered.length === 0 ? (
+        <p className="placeholder">
+          {t("media_pool.no_matches", { query: trimmed })}
+        </p>
+      ) : (
+        <ul className="media-list">
+          {filtered.map((m) => {
           const isImporting = importing.has(m.id);
           const isMissing = !m.available && !isImporting;
           const interactive = !isImporting && !isMissing;
@@ -1385,7 +1364,8 @@ function MediaPool({
             </li>
           );
         })}
-      </ul>
+        </ul>
+      )}
     </div>
   );
 }

@@ -11,23 +11,9 @@ html, body, #root { height: 100%; margin: 0; }
 
 .app {
   display: grid;
-  /* Header (with inline menu-bar), project-bar, main (1fr), status-bar */
-  grid-template-rows: auto auto 1fr auto;
+  /* Header (with inline menu-bar), main (1fr), status-bar */
+  grid-template-rows: auto 1fr auto;
   height: 100%;
-}
-
-.project-bar {
-  display: flex;
-  gap: 16px;
-  align-items: center;
-  padding: 6px 16px;
-  border-bottom: 1px solid #1f2937;
-  font-size: 12px;
-}
-
-.project-name {
-  font-weight: 600;
-  color: #e5e7eb;
 }
 
 .meta {
@@ -358,18 +344,30 @@ html, body, #root { height: 100%; margin: 0; }
 }
 
 .locale-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   background: #1f2937;
   border: 1px solid #374151;
-  color: #e5e7eb;
-  padding: 2px 10px;
+  color: #d1d5db;
+  padding: 3px 10px;
   font-size: 12px;
   border-radius: 4px;
   cursor: pointer;
-  min-width: 32px;
 }
 
 .locale-toggle:hover {
   background: #374151;
+  color: #f3f4f6;
+}
+
+.locale-toggle .globe-icon {
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+
+.locale-toggle-label {
+  line-height: 1;
 }
 
 /* A/B-roll redesign R.9 (`docs/ab-roll-redesign`): MediaPool moves
@@ -395,9 +393,28 @@ html, body, #root { height: 100%; margin: 0; }
 .timeline { grid-area: timeline; }
 .media-pool {
   grid-area: mediapool;
-  overflow: hidden;
+  overflow-y: auto;
   border-right: 1px solid #1f2937;
   background: #0a0c10;
+  min-height: 0;
+}
+
+.media-pool::-webkit-scrollbar {
+  width: 8px;
+}
+
+.media-pool::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.media-pool::-webkit-scrollbar-thumb {
+  background-color: #374151;
+  border-radius: 4px;
+  background-clip: content-box;
+}
+
+.media-pool::-webkit-scrollbar-thumb:hover {
+  background-color: #4b5563;
 }
 .properties { grid-area: properties; }
 
@@ -578,8 +595,13 @@ input.preview-timecode:focus {
   border-color: #60a5fa;
 }
 
-.preview-timecode-spacer {
+.preview-meta {
   justify-self: end;
+  font-size: 11px;
+  color: #6b7280;
+  font-variant-numeric: tabular-nums;
+  padding-right: 4px;
+  user-select: none;
 }
 
 .preview-transport button {
@@ -1341,13 +1363,6 @@ input.preview-timecode:focus {
   border-radius: 1px;
 }
 
-.media-pool {
-  border-top: 1px solid #1f2937;
-  background: #0a0c10;
-  max-height: 200px;
-  overflow: auto;
-}
-
 .media-pool-inner {
   padding: 8px 16px;
 }
@@ -1361,6 +1376,57 @@ input.preview-timecode:focus {
   text-transform: uppercase;
 }
 
+.media-pool-search {
+  position: relative;
+  margin-bottom: 8px;
+}
+
+.media-pool-search-input {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  color: #e5e7eb;
+  padding: 4px 24px 4px 8px;
+  font-size: 12px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.media-pool-search-input::placeholder {
+  color: #6b7280;
+}
+
+.media-pool-search-input:focus {
+  border-color: #60a5fa;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.media-pool-search-clear {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  color: #6b7280;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.media-pool-search-clear:hover {
+  color: #e5e7eb;
+  background: rgba(255, 255, 255, 0.08);
+}
+
 /* 2026-05-16 MediaPool redesign: card grid. Thumbnail on top + name
    strip at the bottom by default; details overlay fades in on hover.
    Click to preview; HTML5 drag remains for drag-to-track. */
@@ -1369,7 +1435,7 @@ input.preview-timecode:focus {
   margin: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  grid-template-columns: 1fr;
   gap: 8px;
 }
 
@@ -2620,6 +2686,9 @@ input.preview-timecode:focus {
   position: absolute;
   top: 16px;
   right: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   padding: 4px 10px;
   background: transparent;
   border: 1px solid #1f2937;
@@ -2628,6 +2697,11 @@ input.preview-timecode:focus {
   font-size: 12px;
   cursor: pointer;
   transition: border-color 120ms, color 120ms;
+}
+
+.startup-locale-toggle .globe-icon {
+  opacity: 0.85;
+  flex-shrink: 0;
 }
 
 .startup-locale-toggle:hover {
@@ -3136,10 +3210,9 @@ input.preview-timecode:focus {
   z-index: 2;
 }
 
-/* Project-bar pill: "Generating N derivatives…" (Phase C.3). */
+/* Status-bar pill: "Generating N derivatives…" (Phase C.3). */
 
 .derivatives-pill {
-  margin-left: auto;
   display: inline-flex;
   align-items: center;
   gap: 6px;
