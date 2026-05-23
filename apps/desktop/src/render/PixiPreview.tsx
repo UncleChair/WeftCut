@@ -136,7 +136,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
 
       compositor.setAnchorTime(0);
       compositor.compositeFrame(0);
-      setStatus("Ready");
+      setStatus("");
     },
     [onTimeUpdate, onPausedChange],
   );
@@ -176,7 +176,12 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         position: "relative",
         width: "100%",
         height: "100%",
-        background: "#000",
+        // Letterbox surround: matches the editor's deepest-panel color
+        // so the preview area integrates with the rest of the chrome.
+        // The canvas itself stays pure black (`background={0x000000}`
+        // below) so true-black composition pixels stand apart from the
+        // surround when the aspect ratio doesn't fill the wrapper.
+        background: "#11151c",
       }}
     >
       <PixiApplication
@@ -192,25 +197,27 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         onInit={handleInit}
         className="pixi-preview-canvas"
       />
-      <div
-        style={{
-          position: "absolute",
-          top: 4,
-          left: 4,
-          padding: "2px 6px",
-          font: "12px ui-monospace, monospace",
-          color: "#9ca3af",
-          background: "rgba(0,0,0,0.6)",
-          pointerEvents: "none",
-          borderRadius: 3,
-          maxWidth: "90%",
-          whiteSpace: "pre-wrap",
-          wordBreak: "break-word",
-        }}
-        data-testid="pixi-preview-status"
-      >
-        {status}
-      </div>
+      {status && (
+        <div
+          style={{
+            position: "absolute",
+            top: 4,
+            left: 4,
+            padding: "2px 6px",
+            font: "12px ui-monospace, monospace",
+            color: "#9ca3af",
+            background: "rgba(0,0,0,0.6)",
+            pointerEvents: "none",
+            borderRadius: 3,
+            maxWidth: "90%",
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+          }}
+          data-testid="pixi-preview-status"
+        >
+          {status}
+        </div>
+      )}
     </div>
   );
 });
