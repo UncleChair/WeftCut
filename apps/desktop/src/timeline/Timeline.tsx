@@ -598,11 +598,31 @@ export function Timeline({
     [trackRows],
   );
 
+  /// Snap a raw drag delta so the dragged edge / clip-start lands on
+  /// a composition-frame boundary. Snapping the DESTINATION (not the
+  /// delta itself) handles the case where the source value was
+  /// already off-grid: we always end up on grid regardless of the
+  /// pre-state. Returns the adjusted deltaUs.
+  const snapDragDelta = useCallback(
+    (kind: DragState["kind"], originalTStart: number, originalTEnd: number, rawDeltaUs: number): number => {
+      const anchor = kind === "trim-end" ? originalTEnd : originalTStart;
+      const snappedDest = snapFrameRound(anchor + rawDeltaUs, fpsNum, fpsDen);
+      return snappedDest - anchor;
+    },
+    [fpsNum, fpsDen],
+  );
+
   const handlePointerMove = useCallback(
     (e: PointerEvent) => {
       if (!drag) return;
       const deltaPx = e.clientX - drag.startX;
-      const deltaUs = (deltaPx / pxPerSec) * 1_000_000;
+      const rawDeltaUs = (deltaPx / pxPerSec) * 1_000_000;
+      const deltaUs = snapDragDelta(
+        drag.kind,
+        drag.originalTStart,
+        drag.originalTEnd,
+        rawDeltaUs,
+      );
       const overTrack =
         drag.kind === "move" ? trackUnderPointer(e.clientY) : null;
       setDrag({
@@ -611,14 +631,20 @@ export function Timeline({
         overTrackId: overTrack?.id ?? null,
       });
     },
-    [drag, pxPerSec, trackUnderPointer],
+    [drag, pxPerSec, snapDragDelta, trackUnderPointer],
   );
 
   const handlePointerUp = useCallback(
     async (e: PointerEvent) => {
       if (!drag) return;
       const deltaPx = e.clientX - drag.startX;
-      const deltaUs = Math.round((deltaPx / pxPerSec) * 1_000_000);
+      const rawDeltaUs = Math.round((deltaPx / pxPerSec) * 1_000_000);
+      const deltaUs = snapDragDelta(
+        drag.kind,
+        drag.originalTStart,
+        drag.originalTEnd,
+        rawDeltaUs,
+      );
       const overTrack =
         drag.kind === "move" ? trackUnderPointer(e.clientY) : null;
       const committed = drag;
@@ -669,7 +695,7 @@ export function Timeline({
         console.error("timeline commit failed:", err);
       }
     },
-    [drag, onMutated, pxPerSec, trackUnderPointer],
+    [drag, onMutated, pxPerSec, snapDragDelta, trackUnderPointer],
   );
 
   useEffect(() => {
