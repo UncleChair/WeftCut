@@ -268,6 +268,15 @@ const enUS = {
     reopen_on_launch: "Reopen last project on launch",
     reopen_on_launch_hint:
       "When enabled, WeftCut skips the start screen and re-opens whichever project you used last. Off by default — a partial-commit state at crash time should not silently re-mount.",
+    composition_heading: "Composition",
+    composition_blurb:
+      "Composition duration follows the last visible frame by default. Extend it to hold a fixed runtime longer than the content.",
+    pin_composition_duration: "Extend composition duration",
+    pin_composition_duration_hint:
+      "Holds the composition at the value below. Can only be set ≥ {{floor}} (content end).",
+    composition_duration_label: "Duration",
+    composition_duration_invalid: "Invalid timecode.",
+    composition_duration_below_floor: "Must be ≥ {{floor}} (content end).",
     keybindings_heading: "Keyboard shortcuts",
     keybindings_blurb:
       "Click a chord to remove it, or [+ Add] to bind a new one. Each chord must be unique across actions — unset the current owner first if you want to repurpose a key.",

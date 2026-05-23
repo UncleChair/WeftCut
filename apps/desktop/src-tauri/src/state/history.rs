@@ -240,9 +240,9 @@ impl History {
 
     /// Apply the canvas-only fields of `canvas` to every snapshot's
     /// `composition` (history + checkpoints). Each snapshot keeps its own
-    /// `duration_us`, since duration is an editing-shaped field that lives
-    /// on the recorded stack. Same out-of-band-edit pattern as
-    /// `replace_media_pool_everywhere`.
+    /// `duration_us` and `duration_pinned`, since both are editing-shaped
+    /// fields that live on the recorded stack. Same out-of-band-edit
+    /// pattern as `replace_media_pool_everywhere`.
     pub fn replace_composition_canvas_everywhere(&mut self, canvas: &Composition) {
         for entry in self.snapshots.iter_mut() {
             let mut p = (*entry.snapshot).clone();
@@ -280,9 +280,10 @@ impl History {
     }
 }
 
-/// Copy the canvas-only fields (everything except `duration_us`) from `src`
-/// into `dst`. Used by `replace_composition_canvas_everywhere` and by
-/// `do_set_composition` when probing the post-state for validation.
+/// Copy the canvas-only fields (everything except `duration_us` and
+/// `duration_pinned`) from `src` into `dst`. Used by
+/// `replace_composition_canvas_everywhere` and by `do_set_composition`
+/// when probing the post-state for validation.
 fn apply_canvas_fields(dst: &mut Composition, src: &Composition) {
     dst.width = src.width;
     dst.height = src.height;

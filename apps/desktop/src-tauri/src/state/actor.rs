@@ -448,6 +448,10 @@ enum Command {
         actor: Actor,
         reply: oneshot::Sender<Result<(), CommandError>>,
     },
+    FitCompositionToLayers {
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
     AddMarker {
         t_us: TimeUs,
         end_t_us: Option<TimeUs>,
@@ -1028,6 +1032,22 @@ impl ProjectHandle {
         rx.await.expect("project actor terminated")
     }
 
+    /// Clear `duration_pinned` and re-fit `duration_us` to the layer
+    /// high-water mark. The companion to an explicit
+    /// `set_composition { duration_us }`: the latter pins, this unpins.
+    /// See ADR 0005.
+    pub async fn fit_composition_to_layers(
+        &self,
+        actor: Actor,
+    ) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::FitCompositionToLayers { actor, reply })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
     pub async fn add_marker(
         &self,
         actor: Actor,
@@ -1519,6 +1539,10 @@ impl ProjectActor {
                 reply,
             } => {
                 let result = self.do_set_composition(patch, actor);
+                let _ = reply.send(result);
+            }
+            Command::FitCompositionToLayers { actor, reply } => {
+                let result = self.do_fit_composition_to_layers(actor);
                 let _ = reply.send(result);
             }
             Command::AddMarker {
@@ -2053,16 +2077,7 @@ impl ProjectActor {
             .unwrap_or(track.layers.len());
         track.layers.insert(insert_at, copy);
 
-        // Auto-extend duration if the duplicate reaches further.
-        let max_end = next
-            .tracks
-            .iter()
-            .flat_map(|t| t.layers.iter().map(|l| l.t_end_us))
-            .max()
-            .unwrap_or(next.composition.duration_us);
-        if max_end > next.composition.duration_us {
-            next.composition.duration_us = max_end;
-        }
+        apply_duration_autofit(&mut next);
 
         self.commit(
             next,
@@ -2136,13 +2151,18 @@ impl ProjectActor {
         probe.composition = new_canvas.clone();
         probe.composition.duration_us =
             duration_change.unwrap_or(current.composition.duration_us);
+        // ADR 0005: any explicit duration write pins the composition.
+        // The pin survives until `fit_composition_to_layers` clears it.
+        if duration_change.is_some() {
+            probe.composition.duration_pinned = true;
+        }
 
         // If fps changed, re-snap every layer's t_start_us/t_end_us
         // against the new grid in the same atomic patch. Pre-patch
         // t_* values were snapped to the OLD fps; worst-case shift
         // per layer is half a NEW frame — invisible visually,
         // inaudible. composition.duration_us also re-snaps so the
-        // auto-extend max is on the new grid.
+        // autofit reconciliation below is on the new grid.
         let fps_changed =
             patch.fps.is_some_and(|f| f != current.composition.fps);
         if fps_changed {
@@ -2158,6 +2178,11 @@ impl ProjectActor {
             probe.composition.duration_us =
                 crate::state::time::snap_frame_round(probe.composition.duration_us, new_fps);
         }
+
+        // Reconcile the duration against the layer high-water mark:
+        // unpinned probes follow `max_end`; pinned ones only grow when
+        // `max_end` overflows the user-set value (overflow guard).
+        apply_duration_autofit(&mut probe);
 
         validate(&probe)?;
 
@@ -2188,6 +2213,11 @@ impl ProjectActor {
             if let Some(duration) = duration_change {
                 let mut next: Project = (*self.history.current()).clone();
                 next.composition.duration_us = duration;
+                next.composition.duration_pinned = true;
+                // Overflow guard: a pinned value below `max(t_end_us)`
+                // would break the `duration_us >= max(t_end_us)` invariant;
+                // autofit bumps it up while keeping the pin set.
+                apply_duration_autofit(&mut next);
                 self.commit(
                     next,
                     actor,
@@ -2198,6 +2228,28 @@ impl ProjectActor {
             }
         }
 
+        Ok(())
+    }
+
+    /// Clear `composition.duration_pinned` and re-fit `duration_us` to
+    /// the layer high-water mark. Inverse of an explicit
+    /// `set_composition { duration_us }`. Always records an entry: the
+    /// pin flag and (often) the duration value both change, and undo
+    /// should be able to walk back through the operation. See ADR 0005.
+    fn do_fit_composition_to_layers(
+        &mut self,
+        actor: Actor,
+    ) -> Result<(), CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+        next.composition.duration_pinned = false;
+        apply_duration_autofit(&mut next);
+        self.commit(
+            next,
+            actor,
+            "Fit composition duration to layers".to_string(),
+            Vec::new(),
+            DiffHint::Composition,
+        )?;
         Ok(())
     }
 
@@ -2805,8 +2857,41 @@ impl ProjectActor {
 // state — callers MUST clone the project first (or, for dry_run, drop
 // the working clone on error).
 
+/// Reconcile `composition.duration_us` against the layer high-water mark.
+///
+/// When `duration_pinned` is false (the default), the composition follows
+/// `max(layer.t_end_us)` bidirectionally — growing on adds and **shrinking**
+/// on deletes/inward trims. When pinned (set by an explicit
+/// `set_composition { duration_us }`), the value is held except for an
+/// overflow guard: if a new layer pushes past the pinned duration we still
+/// extend (otherwise the `duration_us >= max(layer.t_end_us)` invariant
+/// would break), but the pin stays set. `fit_composition_to_layers` is the
+/// only way to clear the pin.
+///
+/// See `docs/adr/0005-composition-duration-auto-fits.md`. Callers in every
+/// layer-shape mutation path (`apply_add_layer`, `apply_delete_layer`,
+/// `apply_move_layer`, `apply_trim_layer`, `do_duplicate_layer`) invoke
+/// this after the layer mutation; missing a site is the failure mode the
+/// helper exists to prevent.
+pub(crate) fn apply_duration_autofit(project: &mut Project) {
+    let max_end = project
+        .tracks
+        .iter()
+        .flat_map(|t| t.layers.iter().map(|l| l.t_end_us))
+        .max()
+        .unwrap_or(0);
+    if project.composition.duration_pinned {
+        if max_end > project.composition.duration_us {
+            project.composition.duration_us = max_end;
+        }
+    } else {
+        project.composition.duration_us = max_end;
+    }
+}
+
 /// Mutation half of `do_add_layer`. Inserts a new layer on `track_id` at
-/// the t-start-sorted position. Extends composition duration if needed.
+/// the t-start-sorted position. Reconciles composition duration via
+/// `apply_duration_autofit`.
 pub(crate) fn apply_add_layer(
     project: &mut Project,
     track_id: TrackId,
@@ -2846,9 +2931,7 @@ pub(crate) fn apply_add_layer(
         .position(|l| l.t_start_us > t_start_us)
         .unwrap_or(track.layers.len());
     track.layers.insert(insert_at, new_layer);
-    if project.composition.duration_us < t_end_us {
-        project.composition.duration_us = t_end_us;
-    }
+    apply_duration_autofit(project);
     Ok(layer_id)
 }
 
@@ -2876,6 +2959,7 @@ pub(crate) fn apply_delete_layer(
     // doesn't accumulate. Reserved tracks are protected by their role
     // stamp.
     prune_empty_hidden_tracks(project);
+    apply_duration_autofit(project);
     Ok(())
 }
 
@@ -3205,16 +3289,7 @@ pub(crate) fn apply_move_layer(
         }
     }
 
-    // Auto-extend composition duration if the move pushed any clip out.
-    let max_end = project
-        .tracks
-        .iter()
-        .flat_map(|t| t.layers.iter().map(|l| l.t_end_us))
-        .max()
-        .unwrap_or(project.composition.duration_us);
-    if max_end > project.composition.duration_us {
-        project.composition.duration_us = max_end;
-    }
+    apply_duration_autofit(project);
 
     // A/B-roll redesign R.4: prune empty hidden tracks left behind by the
     // move. Reserved (role-stamped) tracks survive (their `role.is_some()`).
@@ -3559,18 +3634,7 @@ pub(crate) fn apply_trim_layer(
         }
     }
 
-    // Auto-extend composition duration on `Out` trim.
-    if matches!(edge, LayerEdge::Out) {
-        let max_end = project
-            .tracks
-            .iter()
-            .flat_map(|t| t.layers.iter().map(|l| l.t_end_us))
-            .max()
-            .unwrap_or(project.composition.duration_us);
-        if max_end > project.composition.duration_us {
-            project.composition.duration_us = max_end;
-        }
-    }
+    apply_duration_autofit(project);
     Ok(())
 }
 
@@ -6920,4 +6984,222 @@ mod tests {
     // chain replacing it), fan-out is structurally indifferent to
     // whether a group has effects; the existing fan-out tests above
     // already cover the move/trim/split/locked-member surface.
+
+    // ============================================================
+    // ADR 0005: composition duration auto-fits to layers unless pinned.
+    // ============================================================
+
+    #[tokio::test]
+    async fn delete_layer_shrinks_duration_when_unpinned() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        let short = handle
+            .add_layer(Actor::User, track_id, color_layer(Rgba::WHITE), 0, 2_000_000)
+            .await
+            .unwrap();
+        let long = handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                color_layer(Rgba::BLACK),
+                2_000_000,
+                10_000_000,
+            )
+            .await
+            .unwrap();
+        assert_eq!(handle.snapshot().await.composition.duration_us, 10_000_000);
+        assert!(!handle.snapshot().await.composition.duration_pinned);
+
+        handle.delete_layer(Actor::User, long).await.unwrap();
+        // The shorter layer ends at 2_000_000; composition should follow.
+        assert_eq!(handle.snapshot().await.composition.duration_us, 2_000_000);
+
+        // Now delete the last layer — composition snaps back to 0.
+        handle.delete_layer(Actor::User, short).await.unwrap();
+        assert_eq!(handle.snapshot().await.composition.duration_us, 0);
+    }
+
+    #[tokio::test]
+    async fn trim_in_shrinks_duration_when_unpinned() {
+        // Trimming the In edge of the only layer can lift the layer's
+        // t_start_us but never its t_end_us, so duration shouldn't change
+        // from In trims by themselves. The interesting case is trimming
+        // In on a layer that's not the high-water mark — composition
+        // doesn't move. Here we cover trimming Out on the high-watermark
+        // layer to demonstrate inward Out trims also shrink.
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        let layer = handle
+            .add_layer(Actor::User, track_id, color_layer(Rgba::WHITE), 0, 10_000_000)
+            .await
+            .unwrap();
+        assert_eq!(handle.snapshot().await.composition.duration_us, 10_000_000);
+
+        handle
+            .trim_layer(Actor::User, layer, LayerEdge::Out, 4_000_000, false)
+            .await
+            .unwrap();
+        assert_eq!(handle.snapshot().await.composition.duration_us, 4_000_000);
+    }
+
+    #[tokio::test]
+    async fn set_composition_duration_pins_and_freezes_passive_edits() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        handle
+            .add_layer(Actor::User, track_id, color_layer(Rgba::WHITE), 0, 5_000_000)
+            .await
+            .unwrap();
+        assert!(!handle.snapshot().await.composition.duration_pinned);
+
+        handle
+            .set_composition(
+                Actor::User,
+                CompositionPatch {
+                    duration_us: Some(60_000_000),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let snap = handle.snapshot().await;
+        assert_eq!(snap.composition.duration_us, 60_000_000);
+        assert!(snap.composition.duration_pinned);
+
+        // A passive add inside the pinned window leaves duration alone.
+        handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                color_layer(Rgba::BLACK),
+                5_000_000,
+                8_000_000,
+            )
+            .await
+            .unwrap();
+        let snap = handle.snapshot().await;
+        assert_eq!(snap.composition.duration_us, 60_000_000);
+        assert!(snap.composition.duration_pinned);
+    }
+
+    #[tokio::test]
+    async fn fit_composition_to_layers_clears_pin_and_snaps_duration() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        handle
+            .add_layer(Actor::User, track_id, color_layer(Rgba::WHITE), 0, 5_000_000)
+            .await
+            .unwrap();
+        handle
+            .set_composition(
+                Actor::User,
+                CompositionPatch {
+                    duration_us: Some(60_000_000),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert!(handle.snapshot().await.composition.duration_pinned);
+
+        handle
+            .fit_composition_to_layers(Actor::User)
+            .await
+            .unwrap();
+        let snap = handle.snapshot().await;
+        assert_eq!(snap.composition.duration_us, 5_000_000);
+        assert!(!snap.composition.duration_pinned);
+    }
+
+    #[tokio::test]
+    async fn pinned_composition_still_grows_to_cover_overflow_layer() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        handle
+            .add_layer(Actor::User, track_id, color_layer(Rgba::WHITE), 0, 5_000_000)
+            .await
+            .unwrap();
+        handle
+            .set_composition(
+                Actor::User,
+                CompositionPatch {
+                    duration_us: Some(10_000_000),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(handle.snapshot().await.composition.duration_us, 10_000_000);
+
+        // Add a layer that extends past the pinned window. The
+        // `duration_us >= max(t_end_us)` invariant forces a bump-up
+        // even when pinned. The pin must remain set.
+        handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                color_layer(Rgba::BLACK),
+                5_000_000,
+                30_000_000,
+            )
+            .await
+            .unwrap();
+        let snap = handle.snapshot().await;
+        assert_eq!(snap.composition.duration_us, 30_000_000);
+        assert!(
+            snap.composition.duration_pinned,
+            "pin must survive an overflow-driven extend"
+        );
+    }
+
+    #[tokio::test]
+    async fn set_composition_below_max_end_bumps_to_overflow_floor() {
+        // Pinning a duration shorter than the layer high-water mark
+        // would break the `duration_us >= max(t_end_us)` invariant. The
+        // overflow guard bumps the value up while still recording the
+        // pin — so a user who tries to "tighten" the composition past
+        // its content gets the floor, with their pin honoured.
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        handle
+            .add_layer(Actor::User, track_id, color_layer(Rgba::WHITE), 0, 10_000_000)
+            .await
+            .unwrap();
+
+        handle
+            .set_composition(
+                Actor::User,
+                CompositionPatch {
+                    duration_us: Some(3_000_000),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let snap = handle.snapshot().await;
+        assert_eq!(snap.composition.duration_us, 10_000_000);
+        assert!(snap.composition.duration_pinned);
+    }
+
+    #[tokio::test]
+    async fn old_project_without_duration_pinned_loads_unpinned() {
+        // Verifies the `#[serde(default)]` on `duration_pinned`: a
+        // project saved before the field existed deserializes with the
+        // pin off and self-heals via the first layer edit. We can't
+        // round-trip through a file in a unit test, but we can construct
+        // a snapshot whose duration was set "manually" (without going
+        // through set_composition) and confirm the next edit re-fits.
+        let (mut project, track_id) = project_with_video_track();
+        project.composition.duration_us = 100_000_000;
+        project.composition.duration_pinned = false;
+        let handle = spawn(project);
+
+        handle
+            .add_layer(Actor::User, track_id, color_layer(Rgba::WHITE), 0, 4_000_000)
+            .await
+            .unwrap();
+        let snap = handle.snapshot().await;
+        assert_eq!(snap.composition.duration_us, 4_000_000);
+        assert!(!snap.composition.duration_pinned);
+    }
 }

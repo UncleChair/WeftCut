@@ -2214,7 +2214,7 @@ input.preview-timecode:focus {
 }
 
 .settings-panel h3 {
-  margin: 16px 16px 8px;
+  margin: 16px 0 8px;
   font-size: 12px;
   font-weight: 600;
   color: #d1d5db;
@@ -2224,13 +2224,13 @@ input.preview-timecode:focus {
 
 .settings-blurb,
 .settings-status {
-  margin: 0 16px 12px;
+  margin: 0 0 12px;
   font-size: 12px;
   color: #9ca3af;
 }
 
 .settings-error {
-  margin: 8px 16px;
+  margin: 8px 0;
   font-size: 12px;
   color: #f87171;
   background: rgba(248, 113, 113, 0.1);
@@ -2240,11 +2240,77 @@ input.preview-timecode:focus {
 }
 
 .settings-key-row {
-  margin: 8px 16px 16px;
+  margin: 8px 0 16px;
   padding: 10px;
   border: 1px solid #1f2937;
   border-radius: 4px;
-  background: #0e1116;
+  background: #11151b;
+}
+
+.settings-action {
+  margin: 4px 0 0;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: #e5e7eb;
+  background: #1f2937;
+  border: 1px solid #374151;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.settings-action:hover:not(:disabled) {
+  background: #2a3441;
+}
+
+.settings-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.settings-pin-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0 4px;
+}
+
+.settings-pin-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  /* Push the timecode input to the right edge of the row. */
+  flex: 1 1 auto;
+}
+
+.settings-pin-checkbox .settings-toggle-label {
+  margin: 0;
+}
+
+.settings-input {
+  width: 132px;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #e5e7eb;
+  background: #11151b;
+  border: 1px solid #374151;
+  border-radius: 4px;
+  text-align: center;
+}
+
+.settings-input:focus {
+  outline: none;
+  border-color: #3b82f6;
+}
+
+.settings-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.settings-input.is-invalid {
+  border-color: #f87171;
 }
 
 .settings-key-header {
@@ -3307,24 +3373,47 @@ input.preview-timecode:focus {
   animation: preview-spin 0.9s linear infinite;
 }
 
-/* --- Settings → Keyboard Shortcuts ---------------------------------- */
+/* --- Settings panel body + card -------------------------------------- */
 /*
- * The keyboard panel sits between the Startup section and the API
- * Keys section. The settings-panel root is `overflow: hidden` so the
- * keybindings block plus the API key rows can run tall; we let the
- * panel itself scroll vertically rather than reflowing the whole
- * settings overlay.
+ * The settings-panel root keeps `overflow: hidden` so the header stays
+ * pinned; the inner `.settings-body` wrapper carries the scroll.
+ * `min-height: 0` lets the flex item shrink below its content size —
+ * without it `overflow-y: auto` never engages because the body grows
+ * to fit its children. Same pattern as `.connect-agent-body`.
+ *
+ * `.settings-body` is a pure scroll container — no padding, no border.
+ * `.settings-card` fills the body edge-to-edge with a subtle bg shift
+ * and owns all the inner padding. Inner elements (`<h3>`,
+ * `.settings-blurb`, `.settings-toggle-row`, etc.) carry no horizontal
+ * margin of their own — vertical rhythm is the only thing they still
+ * control.
  */
 
-.settings-panel {
+.settings-body {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
 }
 
+.settings-card {
+  background: #0e1116;
+  padding: 16px;
+}
+
+.settings-card > :first-child {
+  margin-top: 0;
+}
+
+.settings-card > :last-child {
+  margin-bottom: 0;
+}
+
 .keybindings {
-  margin: 0 16px 16px;
+  margin: 0 0 16px;
   border: 1px solid #1f2937;
   border-radius: 4px;
   padding: 8px;
+  background: #11151b;
 }
 
 .keybindings-toolbar {

@@ -238,6 +238,9 @@ pub struct CompositionSummary {
     pub height: u32,
     pub fps_num: u32,
     pub fps_den: u32,
+    /// Mirrors `Composition.duration_pinned`. UI uses it to render the
+    /// "Pin composition duration" toggle state in the menu.
+    pub duration_pinned: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -457,6 +460,7 @@ pub async fn project_summary(handle: State<'_, ProjectHandle>) -> Result<Project
             height: snap.composition.height,
             fps_num: snap.composition.fps.num,
             fps_den: snap.composition.fps.den,
+            duration_pinned: snap.composition.duration_pinned,
         },
         track_count: snap.tracks.len(),
         layer_count,
@@ -2087,6 +2091,16 @@ pub async fn set_composition(
 ) -> Result<(), String> {
     handle
         .set_composition(Actor::User, patch)
+        .await
+        .map_err(|e: CommandError| e.to_string())
+}
+
+#[tauri::command]
+pub async fn fit_composition_to_layers(
+    handle: State<'_, ProjectHandle>,
+) -> Result<(), String> {
+    handle
+        .fit_composition_to_layers(Actor::User)
         .await
         .map_err(|e: CommandError| e.to_string())
 }

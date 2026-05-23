@@ -30,8 +30,10 @@ through `broadcast_unrecorded`.
 | `remove_media`, no references / `force=false` | **no** (new) — mirror import |
 | `remove_media`, `force=true` cascade-delete | yes (layers actually got deleted) |
 | `set_composition` canvas-only fields (`width`/`height`/`fps`/`sample_rate`/`channels`/`color_space`/`background`) | **no** (new) — setup, not editing |
-| `set_composition` patch containing `duration_us` | yes |
+| `set_composition` patch containing `duration_us` | yes (also sets `duration_pinned = true`) |
 | `set_composition` mixed patch | **split internally**: canvas part patched everywhere; duration delta recorded as one entry |
+| `fit_composition_to_layers` | yes (clears `duration_pinned`; the duration shrink rides the same entry) |
+| Passive duration shrink on layer delete / inward trim (unpinned) | **no separate entry** — rides the layer-edit commit that triggered it |
 | `replace_state` (open / new project) | **no** (new) — resets `History` to a fresh one-entry stack and clears checkpoints |
 | `undo`, `redo` | cursor-only, no new entry |
 | `restore_checkpoint` | yes (deliberate user/agent action) |

@@ -450,13 +450,13 @@ export class Compositor {
   /// `t_end_us` across enabled layers in enabled tracks. Returns 0
   /// when no enabled layer exists.
   ///
-  /// Why this and not `compositionDurationUs()`: composition duration
-  /// auto-extends to fit added layers but never auto-shrinks when
-  /// layers are deleted or trimmed. After such edits the composition
-  /// can outlast the material, and playing into the empty tail just
-  /// shows a black canvas while the clock ticks on. PlaybackEngine
-  /// uses this value to auto-pause as soon as there's nothing left to
-  /// show, so the playhead lands on the final visible frame.
+  /// Distinct from `compositionDurationUs()` only when the user pins
+  /// composition duration past the last visible frame (`set_composition
+  /// { duration_us: D }`, D > max layer end). For unpinned projects the
+  /// two values are equal by construction (see ADR 0005). PlaybackEngine
+  /// uses this for auto-pause so the playhead lands on the final visible
+  /// frame even when a pinned duration would otherwise carry the clock
+  /// into a black tail.
   playableEndUs(): number {
     if (!this.projectSummary) return 0;
     let end = 0;
