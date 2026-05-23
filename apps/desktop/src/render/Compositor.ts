@@ -437,6 +437,15 @@ export class Compositor {
     }
   }
 
+  /// Authored composition duration, in microseconds, from the current
+  /// project snapshot. Returns 0 when no project is loaded. Used by
+  /// PlaybackEngine to auto-pause once the playhead crosses the end —
+  /// the alternative is letting the clock run past the last layer into
+  /// the empty black region forever, which is never the user's intent.
+  compositionDurationUs(): number {
+    return this.projectSummary?.duration_us ?? 0;
+  }
+
   /// True if every active VideoClip layer at composition time `tUs`
   /// has a decoded frame at its source-time mapping AND at least
   /// `minLookaheadUs` of additional ring contents past it.

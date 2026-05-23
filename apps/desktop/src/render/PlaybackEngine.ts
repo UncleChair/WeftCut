@@ -99,6 +99,19 @@ export class PlaybackEngine {
 
   play(): void {
     if (this.intendedPlaying) return;
+    // If the playhead is parked at (or past) the end of the
+    // composition, treat play as "play from the start". Otherwise the
+    // button does nothing visible — auto-pause at the end leaves the
+    // clock pinned to `duration_us`, and a second click would just
+    // re-fire auto-pause on the next tick.
+    const durUs = this.compositor.compositionDurationUs();
+    if (durUs > 0 && this.clock.positionUs() >= durUs) {
+      this.clock.setPosition(0);
+      this.lastEmittedUs = 0;
+      this.emitTime(0);
+      this.compositor.setAnchorTime(0);
+      this.compositor.compositeFrame(0);
+    }
     this.intendedPlaying = true;
     // eslint-disable-next-line no-console
     console.log(`[weftcut/pixi] engine.play() @ tUs=${this.clock.positionUs()}`);
@@ -220,6 +233,25 @@ export class PlaybackEngine {
   private tick = (): void => {
     try {
       const { tUs } = this.clock.tick();
+      // Auto-pause when the playhead reaches the end of the
+      // composition. Only checked while the clock is actually running
+      // (not during play() warm-up where the clock is held but
+      // `intendedPlaying` is already true) so we don't fire before the
+      // user sees any frames. Position is clamped to exactly `dur` so
+      // the timecode reads the composition end, not whatever
+      // `dur + clock_step` happens to be.
+      const durUs = this.compositor.compositionDurationUs();
+      if (this.clock.isPlaying() && durUs > 0 && tUs >= durUs) {
+        this.clock.setPosition(durUs);
+        this.compositor.setAnchorTime(durUs);
+        this.compositor.compositeFrame(durUs);
+        if (durUs !== this.lastEmittedUs) {
+          this.lastEmittedUs = durUs;
+          this.emitTime(durUs);
+        }
+        this.pause();
+        return;
+      }
       this.compositor.setAnchorTime(tUs);
       this.compositor.compositeFrame(tUs);
       if (tUs !== this.lastEmittedUs) {
