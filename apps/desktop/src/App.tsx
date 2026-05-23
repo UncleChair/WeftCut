@@ -984,6 +984,8 @@ export function App({ onCloseProject }: AppProps) {
             selectedLayerId={selectedLayerId}
             revealedTrackId={revealedTrackId}
             keybindings={keybindings}
+            fpsNum={summary?.composition.fps_num ?? 30}
+            fpsDen={summary?.composition.fps_den ?? 1}
             onSelect={setSelectedLayerId}
             onSeek={seekTo}
             onMutated={refresh}
