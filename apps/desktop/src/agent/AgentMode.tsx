@@ -76,6 +76,8 @@ export const AgentMode = forwardRef(function AgentMode(
           durationUs={summary?.duration_us ?? 0}
           markers={summary?.markers ?? []}
           onSeek={onSeek}
+          fpsNum={summary?.composition.fps_num ?? 30}
+          fpsDen={summary?.composition.fps_den ?? 1}
         />
       </section>
 
