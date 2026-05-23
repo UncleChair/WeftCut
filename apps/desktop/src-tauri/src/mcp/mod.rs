@@ -1165,10 +1165,10 @@ impl WeftCutServer {
                           first render and cached content-addressably; subsequent renders are folder lookups. \
                           Args: `template_id` (from `list_templates`), `t_start_us` (timeline microseconds), \
                           optional `t_end_us` (defaults to `t_start_us + default_duration_s * 1e6`), optional \
-                          `track_id` (Video track; defaults to the first existing Video track or a new one \
-                          labeled 'Templates'), optional `props` (JSON object matched against the template's \
-                          `props_schema`; unknown keys reject, missing keys fall back to defaults). \
-                          Returns the new layer id.")]
+                          `track_id` (when omitted, routes to the existing track labeled 'Overlay' or \
+                          auto-creates one — never lands on the reserved A/B-roll skeleton), optional \
+                          `props` (JSON object matched against the template's `props_schema`; unknown keys \
+                          reject, missing keys fall back to defaults). Returns the new layer id.")]
     async fn add_template(
         &self,
         #[tool(aggr)] args: AddTemplateArgs,
@@ -2728,14 +2728,16 @@ impl WeftCutServer {
             .map_err(map_command_error)
     }
 
-    /// V.5: tracks are kind-agnostic. Templates compose on top of
-    /// existing content; land them on the topmost track (last index
-    /// in `project.tracks` = top of z-stack). Creates a new "Overlay"
-    /// track if zero exist.
+    /// Templates compose on top of existing content. Route to a
+    /// dedicated track labeled "Overlay" — never to the reserved
+    /// A/B-roll skeleton — creating one if it doesn't yet exist.
+    /// Shares its track-picker with the UI path via
+    /// `commands::find_overlay_target_track` so both surfaces stay
+    /// consistent.
     async fn ensure_template_target_track(&self) -> Result<TrackId, McpError> {
         let snap = self.project.snapshot().await;
-        if let Some(t) = snap.tracks.last() {
-            return Ok(t.id);
+        if let Some(id) = crate::commands::find_overlay_target_track(&snap) {
+            return Ok(id);
         }
         self.project
             .add_track(agent_actor(), Some("Overlay".into()))
