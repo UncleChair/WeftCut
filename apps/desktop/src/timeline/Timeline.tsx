@@ -869,6 +869,8 @@ export function Timeline({
         pxPerSec={pxPerSec}
         totalSec={totalSec}
         widthPx={Math.max(widthPx, 200)}
+        fpsNum={fpsNum}
+        fpsDen={fpsDen}
       />
       <div
         ref={canvasRef}
@@ -1015,17 +1017,29 @@ function trackAcceptsForLayer(_target: TrackSummary, _drag: DragState): boolean 
 /// Time ruler that lives at the top of the scrollable `.timeline-root`,
 /// replacing the legacy 18 px playhead-strip padding. Width matches the
 /// canvas so horizontal scroll keeps ticks aligned with the layers
-/// below, and tick density scales with `pxPerSec`: a "nice" step
-/// (1, 2, 5, 10, … s, plus sub-second steps when zoomed in) is picked
-/// so labelled majors land roughly every 100 px regardless of zoom.
+/// below, and tick density scales with `pxPerSec`.
+///
+/// Two regimes:
+///   - Below `pxPerFrame >= FRAME_MODE_THRESHOLD_PX`: classic
+///     second-level NICE_STEPS_SEC ladder, mm:ss labels.
+///   - At/above the threshold: switch to frame-grid mode. Major-tick
+///     stride is the largest of `NICE_STEPS_FRAMES` where
+///     `stride * pxPerFrame >= TARGET_MAJOR_PX_FRAME_MODE`, labels read
+///     SMPTE `HH:MM:SS:FF`, and minor ticks land at every single frame
+///     regardless of major stride so the user has a visible frame
+///     grid to align edits against.
 function TimelineRuler({
   pxPerSec,
   totalSec,
   widthPx,
+  fpsNum,
+  fpsDen,
 }: {
   pxPerSec: number;
   totalSec: number;
   widthPx: number;
+  fpsNum: number;
+  fpsDen: number;
 }) {
   // Major-tick candidates: classic 1/2/5 decade ladder extended into
   // sub-second territory for high-zoom cases. Anything above 600 s
@@ -1033,10 +1047,46 @@ function TimelineRuler({
   const NICE_STEPS_SEC = [
     0.1, 0.2, 0.5, 1, 2, 5, 10, 30, 60, 120, 300, 600,
   ] as const;
+  const NICE_STEPS_FRAMES = [1, 2, 5, 10, 30] as const;
   const TARGET_MAJOR_PX = 100;
+  const TARGET_MAJOR_PX_FRAME_MODE = 80;
   const SUBDIVISIONS = 5;
+  const FRAME_MODE_THRESHOLD_PX = 12;
 
-  const { items, majorSec } = useMemo(() => {
+  const { items, majorSec, isFrameMode } = useMemo(() => {
+    const fDur = frameDurUs(fpsNum, fpsDen);
+    const pxPerFrame = (fDur / 1_000_000) * pxPerSec;
+    const frameMode = pxPerFrame >= FRAME_MODE_THRESHOLD_PX;
+
+    if (frameMode) {
+      // Pick the largest stride from [1, 2, 5, 10, 30] where the
+      // major-tick spacing meets the target px. Fall back to the
+      // largest if none meet the target (very low zoom for a
+      // high-fps comp — rare).
+      let stride = NICE_STEPS_FRAMES[0]!;
+      for (let i = NICE_STEPS_FRAMES.length - 1; i >= 0; i--) {
+        if (NICE_STEPS_FRAMES[i]! * pxPerFrame >= TARGET_MAJOR_PX_FRAME_MODE) {
+          stride = NICE_STEPS_FRAMES[i]!;
+        }
+      }
+      // Minor ticks at every frame; majors at every `stride` frames.
+      const totalFrames =
+        Math.ceil(totalSec * 1_000_000 / fDur) + 1;
+      const out: { i: number; x: number; t: number; isMajor: boolean }[] = [];
+      for (let f = 0; f <= totalFrames; f++) {
+        const tUs = f * fDur;
+        out.push({
+          i: f,
+          x: (tUs / 1_000_000) * pxPerSec,
+          t: tUs / 1_000_000,
+          isMajor: f % stride === 0,
+        });
+      }
+      // stride retained in `f % stride === 0` above — not needed outside this branch.
+      void stride;
+      return { items: out, majorSec: 0, isFrameMode: true };
+    }
+
     const targetSec = TARGET_MAJOR_PX / pxPerSec;
     let major = NICE_STEPS_SEC[NICE_STEPS_SEC.length - 1] ?? 1;
     for (const s of NICE_STEPS_SEC) {
@@ -1057,10 +1107,8 @@ function TimelineRuler({
       if (t > limit) break;
       out.push({ i, x: t * pxPerSec, t, isMajor: i % SUBDIVISIONS === 0 });
     }
-    return { items: out, majorSec: major };
-    // NICE_STEPS_SEC, TARGET_MAJOR_PX, SUBDIVISIONS are module-level
-    // constants — stable across renders, no dependency entry needed.
-  }, [pxPerSec, totalSec]);
+    return { items: out, majorSec: major, isFrameMode: false };
+  }, [pxPerSec, totalSec, fpsNum, fpsDen]);
 
   return (
     <div className="timeline-ruler" style={{ width: widthPx }}>
@@ -1072,7 +1120,9 @@ function TimelineRuler({
         >
           {tk.isMajor && (
             <span className="ruler-label">
-              {formatRulerLabel(tk.t, majorSec)}
+              {isFrameMode
+                ? formatTimecode(Math.round(tk.t * 1_000_000), fpsNum, fpsDen)
+                : formatRulerLabel(tk.t, majorSec)}
             </span>
           )}
         </div>
