@@ -2136,28 +2136,66 @@ impl ProjectActor {
         probe.composition = new_canvas.clone();
         probe.composition.duration_us =
             duration_change.unwrap_or(current.composition.duration_us);
-        validate(&probe)?;
 
-        if canvas_changes {
-            self.history.replace_composition_canvas_everywhere(&new_canvas);
-            let snapshot = self.history.current();
-            self.broadcast_unrecorded(
-                actor.clone(),
-                "Updated composition canvas".to_string(),
-                snapshot,
-            );
+        // If fps changed, re-snap every layer's t_start_us/t_end_us
+        // against the new grid in the same atomic patch. Pre-patch
+        // t_* values were snapped to the OLD fps; worst-case shift
+        // per layer is half a NEW frame — invisible visually,
+        // inaudible. composition.duration_us also re-snaps so the
+        // auto-extend max is on the new grid.
+        let fps_changed =
+            patch.fps.is_some_and(|f| f != current.composition.fps);
+        if fps_changed {
+            let new_fps = probe.composition.fps;
+            for track in probe.tracks.iter_mut() {
+                for layer in track.layers.iter_mut() {
+                    layer.t_start_us =
+                        crate::state::time::snap_frame_round(layer.t_start_us, new_fps);
+                    layer.t_end_us =
+                        crate::state::time::snap_frame_round(layer.t_end_us, new_fps);
+                }
+            }
+            probe.composition.duration_us =
+                crate::state::time::snap_frame_round(probe.composition.duration_us, new_fps);
         }
 
-        if let Some(duration) = duration_change {
-            let mut next: Project = (*self.history.current()).clone();
-            next.composition.duration_us = duration;
+        validate(&probe)?;
+
+        if fps_changed {
+            // Layer geometry actually changed — commit as a recorded
+            // editing change rather than the unrecorded
+            // replace_composition_canvas_everywhere path. The commit
+            // also persists the canvas patch + any duration change in
+            // one transaction.
             self.commit(
-                next,
+                probe,
                 actor,
-                "Updated composition duration".to_string(),
+                "Updated composition fps + re-snapped layers".to_string(),
                 Vec::new(),
                 DiffHint::Composition,
             )?;
+        } else {
+            if canvas_changes {
+                self.history.replace_composition_canvas_everywhere(&new_canvas);
+                let snapshot = self.history.current();
+                self.broadcast_unrecorded(
+                    actor.clone(),
+                    "Updated composition canvas".to_string(),
+                    snapshot,
+                );
+            }
+
+            if let Some(duration) = duration_change {
+                let mut next: Project = (*self.history.current()).clone();
+                next.composition.duration_us = duration;
+                self.commit(
+                    next,
+                    actor,
+                    "Updated composition duration".to_string(),
+                    Vec::new(),
+                    DiffHint::Composition,
+                )?;
+            }
         }
 
         Ok(())
@@ -3908,6 +3946,40 @@ mod tests {
             .find(|l| l.id == layer_id)
             .expect("layer");
         assert_eq!(layer.t_start_us, 33_333);
+    }
+
+    #[tokio::test]
+    async fn fps_change_re_snaps_all_layer_t_fields() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        // Layer on the 30fps grid at frame 1 (33_333us) and frame 30
+        // (1_000_000us).
+        let layer_id = handle
+            .add_layer(Actor::User, track_id, color_layer(Rgba::WHITE), 33_333, 1_000_000)
+            .await
+            .expect("add_layer");
+        // Switch to 29.97fps (30000/1001). 33_333us at 29.97 rounds
+        // to frame 1 = 33_366us. 1_000_000us at 29.97 rounds to
+        // frame 30 = 1_001_000us.
+        handle
+            .set_composition(
+                Actor::User,
+                CompositionPatch {
+                    fps: Some(Rational::FPS_29_97),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("set_composition");
+        let snap = handle.snapshot().await;
+        let layer = snap
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .find(|l| l.id == layer_id)
+            .expect("layer");
+        assert_eq!(layer.t_start_us, 33_366);
+        assert_eq!(layer.t_end_us, 1_001_000);
     }
 
     #[tokio::test]
