@@ -36,6 +36,14 @@ A synthetic `currentTimeUs` is the source of truth. It advances on a
 directly by `seekTo`. When audio is playing the clock corrects against
 `audioCtx.currentTime` to absorb scheduler jitter.
 
+Internally the clock keeps raw wall-clock state so drift correction
+operates with sub-frame precision. Externally observable
+`positionUs()` and the `onTimeUpdate` emit stream return the value
+snapped to the composition-frame grid, deduped per snap — at 30 fps
+comp on a 60 Hz display, time-update listeners fire ~30/s instead of
+every rAF. Timecode display is SMPTE `HH:MM:SS:FF`, NDF; see
+[data-model.md](data-model.md) for the snap rule that anchors it.
+
 `play()` releases the clock only once the decoder has filled
 `WARMUP_MIN_LOOKAHEAD_US` (~150 ms) of ring past the play position,
 or after a `WARMUP_MAX_WAIT_MS` (~250 ms) safety cap. The UI play
