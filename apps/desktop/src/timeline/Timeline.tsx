@@ -22,6 +22,7 @@ import {
   type LayerSummary,
   type TrackSummary,
 } from "../ipc";
+import { formatTimecode, frameDurUs, snapFrameRound } from "../frames";
 import { useDisplayMode, toggleDisplayMode } from "../settings/appSettingsStore";
 import { useShortcuts, type OverrideMap } from "../shortcuts";
 import { WaveformCanvas } from "./WaveformCanvas";
@@ -225,6 +226,11 @@ interface TimelineProps {
   /// timeline-scoped `groupSelected` + `dissolveSelectedGroup`
   /// actions. Missing entries fall back to `ACTION_DEFS` defaults.
   keybindings: KeybindingsMap;
+  /// Composition fps for frame-grid snapping of seek / drag / scrub
+  /// targets. UI snaps eagerly so the ghost matches the actor's
+  /// commit-side snap; actor remains the authoritative enforcement.
+  fpsNum: number;
+  fpsDen: number;
   onSelect: (id: string | null) => void;
   onSeek: (tUs: number) => void;
   onMutated: () => Promise<void>;
@@ -268,6 +274,8 @@ export function Timeline({
   selectedLayerId,
   revealedTrackId,
   keybindings,
+  fpsNum,
+  fpsDen,
   onSelect,
   onSeek,
   onMutated,
@@ -794,9 +802,10 @@ export function Timeline({
       if (!canvasRef.current) return;
       const rect = canvasRef.current.getBoundingClientRect();
       const x = clientX - rect.left;
-      onSeek(Math.max(0, Math.round((x / pxPerSec) * 1_000_000)));
+      const rawUs = Math.max(0, Math.round((x / pxPerSec) * 1_000_000));
+      onSeek(snapFrameRound(rawUs, fpsNum, fpsDen));
     },
-    [onSeek, pxPerSec],
+    [onSeek, pxPerSec, fpsNum, fpsDen],
   );
 
   // Click/drag on empty canvas (lane background, gap below tracks) to seek.
