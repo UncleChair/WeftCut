@@ -776,7 +776,105 @@ export function App({ onCloseProject }: AppProps) {
     <ShortcutBindingsProvider overrides={shortcutOverrides}>
     <div className="app">
       <header className="app-header">
-        <h1>{t("app.title")}</h1>
+        <div className="header-left">
+          <h1>{t("app.title")}</h1>
+          <section className="menu-bar">
+            <Menu label={t("menu.file")}>
+              <MenuItem
+                actionId="importMedia"
+                label={t("actions.import_media")}
+                onSelect={importMediaFiles}
+                disabled={busy}
+              />
+              <MenuSeparator />
+              <MenuItem
+                actionId="save"
+                label={t("actions.save")}
+                onSelect={saveProjectNow}
+                disabled={busy}
+              />
+              <MenuItem
+                actionId="saveAs"
+                label={t("actions.save_as")}
+                onSelect={saveProject}
+                disabled={busy}
+              />
+              <MenuSeparator />
+              <MenuItem
+                actionId="closeProject"
+                label={t("actions.save_and_close")}
+                hint={t("actions.save_and_close_hint")}
+                onSelect={saveAndClose}
+                disabled={busy}
+              />
+            </Menu>
+
+            <Menu label={t("menu.edit")}>
+              <MenuItem
+                actionId="undo"
+                label={t("actions.undo")}
+                onSelect={() => run(projectUndo)}
+                disabled={busy || !summary?.history.can_undo}
+              />
+              <MenuItem
+                actionId="redo"
+                label={t("actions.redo")}
+                onSelect={() => run(projectRedo)}
+                disabled={busy || !summary?.history.can_redo}
+              />
+              <MenuSeparator />
+              <MenuItem
+                actionId="splitFirstLayer"
+                label={t("actions.split_first")}
+                onSelect={() => run(splitFirstLayer)}
+                disabled={busy || !summary || summary.layer_count === 0}
+              />
+            </Menu>
+
+            <ViewMenu />
+
+
+            <Menu label={t("menu.insert")}>
+              {/* R.10 + 2026-05-16 import revert: "Import Media" moved to
+                  the File menu (it's a file-operation, not a timeline
+                  insert). "Add Track" / "Add color layer" / "Add text
+                  layer" are gone. Only Templates remain as a true
+                  timeline-insert affordance. */}
+              <MenuItem
+                label={t("actions.templates")}
+                hint={t("actions.templates_hint")}
+                onSelect={() => setTemplatePickerOpen(true)}
+              />
+            </Menu>
+
+            <Menu label={t("menu.export")}>
+              <MenuItem
+                actionId="export"
+                label={t("actions.export")}
+                onSelect={runPixiExport}
+                disabled={
+                  busy ||
+                  exportState?.kind === "starting" ||
+                  exportState?.kind === "progress"
+                }
+              />
+            </Menu>
+
+            <Menu label={t("menu.tools")}>
+              <MenuItem
+                label={t("actions.connect_agent")}
+                hint={t("actions.connect_agent_hint")}
+                onSelect={() => setConnectOpen(true)}
+              />
+              <MenuSeparator />
+              <MenuItem
+                label={t("actions.settings")}
+                hint={t("actions.settings_hint")}
+                onSelect={() => setSettingsOpen(true)}
+              />
+            </Menu>
+          </section>
+        </div>
         <div className="header-right">
           <span className="ping">{t("app.core_status", { status: pong })}</span>
           <button
@@ -830,103 +928,6 @@ export function App({ onCloseProject }: AppProps) {
           </span>
         )}
         <AgentRunningPill />
-      </section>
-
-      <section className="menu-bar">
-        <Menu label={t("menu.file")}>
-          <MenuItem
-            actionId="importMedia"
-            label={t("actions.import_media")}
-            onSelect={importMediaFiles}
-            disabled={busy}
-          />
-          <MenuSeparator />
-          <MenuItem
-            actionId="save"
-            label={t("actions.save")}
-            onSelect={saveProjectNow}
-            disabled={busy}
-          />
-          <MenuItem
-            actionId="saveAs"
-            label={t("actions.save_as")}
-            onSelect={saveProject}
-            disabled={busy}
-          />
-          <MenuSeparator />
-          <MenuItem
-            actionId="closeProject"
-            label={t("actions.save_and_close")}
-            hint={t("actions.save_and_close_hint")}
-            onSelect={saveAndClose}
-            disabled={busy}
-          />
-        </Menu>
-
-        <Menu label={t("menu.edit")}>
-          <MenuItem
-            actionId="undo"
-            label={t("actions.undo")}
-            onSelect={() => run(projectUndo)}
-            disabled={busy || !summary?.history.can_undo}
-          />
-          <MenuItem
-            actionId="redo"
-            label={t("actions.redo")}
-            onSelect={() => run(projectRedo)}
-            disabled={busy || !summary?.history.can_redo}
-          />
-          <MenuSeparator />
-          <MenuItem
-            actionId="splitFirstLayer"
-            label={t("actions.split_first")}
-            onSelect={() => run(splitFirstLayer)}
-            disabled={busy || !summary || summary.layer_count === 0}
-          />
-        </Menu>
-
-        <ViewMenu />
-
-
-        <Menu label={t("menu.insert")}>
-          {/* R.10 + 2026-05-16 import revert: "Import Media" moved to
-              the File menu (it's a file-operation, not a timeline
-              insert). "Add Track" / "Add color layer" / "Add text
-              layer" are gone. Only Templates remain as a true
-              timeline-insert affordance. */}
-          <MenuItem
-            label={t("actions.templates")}
-            hint={t("actions.templates_hint")}
-            onSelect={() => setTemplatePickerOpen(true)}
-          />
-        </Menu>
-
-        <Menu label={t("menu.export")}>
-          <MenuItem
-            actionId="export"
-            label={t("actions.export")}
-            onSelect={runPixiExport}
-            disabled={
-              busy ||
-              exportState?.kind === "starting" ||
-              exportState?.kind === "progress"
-            }
-          />
-        </Menu>
-
-        <Menu label={t("menu.tools")}>
-          <MenuItem
-            label={t("actions.connect_agent")}
-            hint={t("actions.connect_agent_hint")}
-            onSelect={() => setConnectOpen(true)}
-          />
-          <MenuSeparator />
-          <MenuItem
-            label={t("actions.settings")}
-            hint={t("actions.settings_hint")}
-            onSelect={() => setSettingsOpen(true)}
-          />
-        </Menu>
       </section>
 
       <main className={`app-main ${mediaPoolDrawerOpen ? "drawer-open" : ""}`}>
