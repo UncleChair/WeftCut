@@ -2768,6 +2768,12 @@ pub(crate) fn apply_add_layer(
     t_start_us: TimeUs,
     t_end_us: TimeUs,
 ) -> Result<LayerId, CommandError> {
+    // Storage invariant: every persisted layer t_start_us/t_end_us is
+    // on a composition-frame boundary. Snap on entry so every caller
+    // — UI, MCP, future agents — produces aligned state without
+    // duplicating the rule.
+    let t_start_us = crate::state::time::snap_frame_round(t_start_us, project.composition.fps);
+    let t_end_us = crate::state::time::snap_frame_round(t_end_us, project.composition.fps);
     let track_idx = project
         .tracks
         .iter()
@@ -3063,6 +3069,9 @@ pub(crate) fn apply_move_layer(
     new_t_start_us: TimeUs,
     escape_group: bool,
 ) -> Result<(), CommandError> {
+    // Snap on entry — storage invariant per apply_add_layer.
+    let new_t_start_us =
+        crate::state::time::snap_frame_round(new_t_start_us, project.composition.fps);
     // Locate the target layer to compute the delta before we mutate anything.
     let cur_start = locate_layer(project, id)
         .map(|(ti, li)| project.tracks[ti].layers[li].t_start_us)
@@ -3255,6 +3264,8 @@ pub(crate) fn apply_split_layer(
     at_t_us: TimeUs,
     escape_group: bool,
 ) -> Result<(LayerId, LayerId), CommandError> {
+    // Snap on entry — storage invariant per apply_add_layer.
+    let at_t_us = crate::state::time::snap_frame_round(at_t_us, project.composition.fps);
     // Pre-flight on the target: existence + valid split point.
     {
         let (ti, li) = locate_layer(project, id).ok_or(CommandError::LayerNotFound { layer: id })?;
@@ -3326,6 +3337,9 @@ fn split_single_layer(
     id: LayerId,
     at_t_us: TimeUs,
 ) -> Result<(LayerId, LayerId), CommandError> {
+    // Snap on entry — idempotent with apply_split_layer's snap so other
+    // callers (group spanning splits) hit the invariant too.
+    let at_t_us = crate::state::time::snap_frame_round(at_t_us, project.composition.fps);
     let (ti, li) = locate_layer(project, id).ok_or(CommandError::LayerNotFound { layer: id })?;
     let original = project.tracks[ti].layers[li].clone();
     if at_t_us <= original.t_start_us || at_t_us >= original.t_end_us {
@@ -3376,6 +3390,8 @@ pub(crate) fn apply_trim_layer(
     new_t_us: TimeUs,
     escape_group: bool,
 ) -> Result<(), CommandError> {
+    // Snap on entry — storage invariant per apply_add_layer.
+    let new_t_us = crate::state::time::snap_frame_round(new_t_us, project.composition.fps);
     let (ti, li) = locate_layer(project, id).ok_or(CommandError::LayerNotFound { layer: id })?;
     let target = &project.tracks[ti].layers[li];
     let cur_start = target.t_start_us;
@@ -3796,6 +3812,117 @@ mod tests {
         assert_eq!(track.layers.len(), 1);
         assert_eq!(track.layers[0].id, layer_id);
         assert_eq!(snap.composition.duration_us, 5_000_000);
+    }
+
+    // ============================================================
+    // Frame-alignment storage invariant (Task 4 of 2026-05-23
+    // frame-aligned-timeline plan). Every persisted layer t_start_us
+    // and t_end_us must land on a composition-frame boundary. Each
+    // mutator (move / trim / split / add) snap-rounds its TimeUs
+    // parameters against project.composition.fps on entry, so any
+    // caller — UI, MCP, future agents — produces aligned state.
+    // ============================================================
+
+    #[tokio::test]
+    async fn add_layer_snaps_t_start_and_t_end_to_composition_frame() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        // snap_frame_round uses exact rational math (no pre-rounding to
+        // integer microseconds), so the snapped output for frame N at
+        // 30fps is floor(N * 1_000_000 / 30):
+        //   17_000us → frame 1 → 33_333us
+        //   1_017_001us → frame 31 → 1_033_333us
+        let layer_id = handle
+            .add_layer(Actor::User, track_id, color_layer(Rgba::WHITE), 17_000, 1_017_001)
+            .await
+            .expect("add_layer");
+        let snap = handle.snapshot().await;
+        let layer = snap
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .find(|l| l.id == layer_id)
+            .expect("layer");
+        assert_eq!(layer.t_start_us, 33_333);
+        assert_eq!(layer.t_end_us, 1_033_333);
+    }
+
+    #[tokio::test]
+    async fn move_layer_snaps_t_start_to_composition_frame() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        let layer_id = handle
+            .add_layer(Actor::User, track_id, color_layer(Rgba::WHITE), 0, 1_000_002)
+            .await
+            .expect("add_layer");
+        // 1_000_002 at 30fps → frame 30 → exact 1_000_000us (frame N
+        // for which N divides US_PER_SEC * den evenly snaps without
+        // truncation).
+        let initial_end = {
+            let snap = handle.snapshot().await;
+            snap.tracks[0].layers[0].t_end_us
+        };
+        assert_eq!(initial_end, 1_000_000);
+        handle
+            .move_layer(Actor::User, layer_id, track_id, 17_000, false)
+            .await
+            .expect("move");
+        let snap = handle.snapshot().await;
+        let layer = snap
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .find(|l| l.id == layer_id)
+            .expect("layer");
+        // 17_000 → frame 1 = 33_333us. delta = 33_333; t_end shifts
+        // by the same delta to 33_333 + 1_000_000 = 1_033_333.
+        assert_eq!(layer.t_start_us, 33_333);
+        assert_eq!(layer.t_end_us, 1_033_333);
+    }
+
+    #[tokio::test]
+    async fn trim_layer_snaps_new_edge_to_composition_frame() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        let layer_id = handle
+            .add_layer(Actor::User, track_id, color_layer(Rgba::WHITE), 0, 1_000_002)
+            .await
+            .expect("add_layer");
+        handle
+            .trim_layer(Actor::User, layer_id, LayerEdge::In, 17_000, false)
+            .await
+            .expect("trim");
+        let snap = handle.snapshot().await;
+        let layer = snap
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .find(|l| l.id == layer_id)
+            .expect("layer");
+        assert_eq!(layer.t_start_us, 33_333);
+    }
+
+    #[tokio::test]
+    async fn split_layer_snaps_at_t_to_composition_frame() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        let layer_id = handle
+            .add_layer(Actor::User, track_id, color_layer(Rgba::WHITE), 0, 1_000_002)
+            .await
+            .expect("add_layer");
+        let (_left, right) = handle
+            .split_layer(Actor::User, layer_id, 50_000, false)
+            .await
+            .expect("split");
+        let snap = handle.snapshot().await;
+        let right_layer = snap
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .find(|l| l.id == right)
+            .expect("right");
+        // 50_000us → frame 2 = 66_666us.
+        assert_eq!(right_layer.t_start_us, 66_666);
     }
 
     #[tokio::test]
