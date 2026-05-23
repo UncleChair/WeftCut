@@ -32,7 +32,7 @@ import {
   type MediaSummary,
   type ProjectSummary,
 } from "./ipc";
-import { formatTimecode } from "./frames";
+import { formatTimecode, frameDurUs } from "./frames";
 import { Timeline } from "./timeline/Timeline";
 import { AgentMode } from "./agent/AgentMode";
 import { RightPanel } from "./panels/RightPanel";
@@ -703,6 +703,35 @@ export function App({ onCloseProject }: AppProps) {
     toggleMediaPool: () => {
       const current = useAppSettingsStore.getState().settings.media_pool_drawer_open;
       void setMediaPoolDrawerOpen(!current);
+    },
+    // Playhead movement. The clock's setPosition snap (clock.ts) absorbs
+    // any sub-frame drift back to the canonical frame; we just send
+    // raw frame-delta targets and let it land.
+    seekFrameBack: () => {
+      const fps = summary?.composition;
+      const step = frameDurUs(fps?.fps_num ?? 30, fps?.fps_den ?? 1);
+      void seekTo(Math.max(0, currentTimeUs - step));
+    },
+    seekFrameForward: () => {
+      const fps = summary?.composition;
+      const step = frameDurUs(fps?.fps_num ?? 30, fps?.fps_den ?? 1);
+      const end = summary?.duration_us ?? 0;
+      void seekTo(end > 0 ? Math.min(end, currentTimeUs + step) : currentTimeUs + step);
+    },
+    seekSecondBack: () => {
+      void seekTo(Math.max(0, currentTimeUs - 1_000_000));
+    },
+    seekSecondForward: () => {
+      const end = summary?.duration_us ?? 0;
+      void seekTo(
+        end > 0 ? Math.min(end, currentTimeUs + 1_000_000) : currentTimeUs + 1_000_000,
+      );
+    },
+    seekStart: () => {
+      void seekTo(0);
+    },
+    seekEnd: () => {
+      void seekTo(summary?.duration_us ?? 0);
     },
   };
   // Memoised so `useShortcuts`'s `useMemo(entries)` doesn't churn each

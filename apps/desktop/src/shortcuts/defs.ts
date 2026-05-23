@@ -31,7 +31,13 @@ export type ActionId =
   | "toggleDisplayMode"
   | "toggleMediaPool"
   | "groupSelected"
-  | "dissolveSelectedGroup";
+  | "dissolveSelectedGroup"
+  | "seekFrameBack"
+  | "seekFrameForward"
+  | "seekSecondBack"
+  | "seekSecondForward"
+  | "seekStart"
+  | "seekEnd";
 
 export interface ActionDef {
   defaultKeys: string[];
@@ -67,6 +73,14 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   // panel shows them and the user can rebind.
   groupSelected:          { defaultKeys: ["Mod+G"],        labelKey: "actions.group_selected" },
   dissolveSelectedGroup:  { defaultKeys: ["Mod+Shift+G"],  labelKey: "actions.dissolve_selected_group" },
+  // Playhead movement — composition-frame grid. Repeatable so holding
+  // the arrow steps continuously.
+  seekFrameBack:     { defaultKeys: ["ArrowLeft"],         labelKey: "actions.seek_frame_back",     repeatable: true },
+  seekFrameForward:  { defaultKeys: ["ArrowRight"],        labelKey: "actions.seek_frame_forward",  repeatable: true },
+  seekSecondBack:    { defaultKeys: ["Shift+ArrowLeft"],   labelKey: "actions.seek_second_back",    repeatable: true },
+  seekSecondForward: { defaultKeys: ["Shift+ArrowRight"],  labelKey: "actions.seek_second_forward", repeatable: true },
+  seekStart:         { defaultKeys: ["Home"],              labelKey: "actions.seek_start" },
+  seekEnd:           { defaultKeys: ["End"],               labelKey: "actions.seek_end" },
 };
 
 export const ACTION_IDS = Object.keys(ACTION_DEFS) as ActionId[];
