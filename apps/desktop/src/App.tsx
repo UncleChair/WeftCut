@@ -1031,7 +1031,7 @@ export function App({ onCloseProject }: AppProps) {
         <TemplatePicker
           onClose={() => setTemplatePickerOpen(false)}
           onAdded={refresh}
-          compositionDurationUs={summary?.duration_us ?? 0}
+          currentTimeUs={currentTimeUs}
           tracks={summary?.tracks ?? []}
         />
       )}
