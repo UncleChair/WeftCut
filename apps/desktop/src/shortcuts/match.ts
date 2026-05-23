@@ -73,7 +73,7 @@ export function matchEvent(spec: ParsedBinding, e: KeyboardEvent): boolean {
     e.metaKey === spec.meta &&
     e.shiftKey === spec.shift &&
     e.altKey === spec.alt &&
-    e.key.toLowerCase() === spec.key
+    e.key.toLowerCase() === spec.key.toLowerCase()
   );
 }
 
