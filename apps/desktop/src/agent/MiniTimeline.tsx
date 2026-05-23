@@ -180,7 +180,15 @@ export function MiniTimeline({
         })}
         <div className="mini-playhead" style={{ left: playheadLeft }} />
       </div>
-      <div className="mini-timeline-tc">
+      <div
+        className="mini-timeline-tc"
+        title={
+          "Playhead position / composition duration. Numerator is a frame anchor " +
+          "(start of the currently-painted frame); denominator is the exclusive " +
+          "duration boundary. For a 10s 30fps comp at end of playback, this reads " +
+          "00:00:09:29 / 00:00:10:00 — both correct, different semantics."
+        }
+      >
         {formatTimecode(currentTimeUs, fpsNum, fpsDen)} / {formatTimecode(durationUs, fpsNum, fpsDen)}
       </div>
     </div>

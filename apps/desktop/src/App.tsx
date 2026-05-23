@@ -32,7 +32,7 @@ import {
   type MediaSummary,
   type ProjectSummary,
 } from "./ipc";
-import { formatTimecode, frameDurUs, parseTimecode } from "./frames";
+import { formatTimecode, frameDurUs, lastFrameAnchorUs, parseTimecode } from "./frames";
 import { Timeline } from "./timeline/Timeline";
 import { AgentMode } from "./agent/AgentMode";
 import { RightPanel } from "./panels/RightPanel";
@@ -145,10 +145,21 @@ export function App({ onCloseProject }: AppProps) {
   }, [importQueue]);
   const timecodeInputRef = useRef<HTMLInputElement | null>(null);
 
+  // Centralised playhead clamp — Q5 of the frame-anchor playhead spec.
+  // Every UI seek funnels through here so callers can pass raw boundary
+  // values (`duration_us`, `currentTimeUs + step`, parsed timecode) and
+  // the upper bound is enforced once. Lower bound at 0; upper at
+  // `lastFrameAnchorUs` so the playhead can never sit on the
+  // post-last-frame slot.
   const seekTo = useCallback((tUs: number) => {
-    setCurrentTimeUs(tUs);
-    previewRef.current?.seekTo(tUs);
-  }, []);
+    const fpsNum = summary?.composition.fps_num ?? 30;
+    const fpsDen = summary?.composition.fps_den ?? 1;
+    const durationUs = summary?.duration_us ?? 0;
+    const upper = lastFrameAnchorUs(durationUs, fpsNum, fpsDen);
+    const clamped = Math.max(0, Math.min(tUs, upper));
+    setCurrentTimeUs(clamped);
+    previewRef.current?.seekTo(clamped);
+  }, [summary?.composition.fps_num, summary?.composition.fps_den, summary?.duration_us]);
 
   // R.7: click on a peek item → reveal that hidden track inline at its
   // natural accretion slot AND select the clicked layer. Single-track
@@ -705,27 +716,23 @@ export function App({ onCloseProject }: AppProps) {
       void setMediaPoolDrawerOpen(!current);
     },
     // Playhead movement. The clock's setPosition snap (clock.ts) absorbs
-    // any sub-frame drift back to the canonical frame; we just send
-    // raw frame-delta targets and let it land.
+    // any sub-frame drift back to the canonical frame; `seekTo` clamps
+    // to [0, lastFrameAnchorUs]. Callers just hand it raw deltas.
     seekFrameBack: () => {
       const fps = summary?.composition;
       const step = frameDurUs(fps?.fps_num ?? 30, fps?.fps_den ?? 1);
-      void seekTo(Math.max(0, currentTimeUs - step));
+      void seekTo(currentTimeUs - step);
     },
     seekFrameForward: () => {
       const fps = summary?.composition;
       const step = frameDurUs(fps?.fps_num ?? 30, fps?.fps_den ?? 1);
-      const end = summary?.duration_us ?? 0;
-      void seekTo(end > 0 ? Math.min(end, currentTimeUs + step) : currentTimeUs + step);
+      void seekTo(currentTimeUs + step);
     },
     seekSecondBack: () => {
-      void seekTo(Math.max(0, currentTimeUs - 1_000_000));
+      void seekTo(currentTimeUs - 1_000_000);
     },
     seekSecondForward: () => {
-      const end = summary?.duration_us ?? 0;
-      void seekTo(
-        end > 0 ? Math.min(end, currentTimeUs + 1_000_000) : currentTimeUs + 1_000_000,
-      );
+      void seekTo(currentTimeUs + 1_000_000);
     },
     seekStart: () => {
       void seekTo(0);

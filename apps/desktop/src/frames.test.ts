@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { formatTimecode, frameDurUs, snapFrameRound } from "./frames";
+import {
+  formatTimecode,
+  frameDurUs,
+  lastFrameAnchorUs,
+  snapFrameFloor,
+  snapFrameRound,
+} from "./frames";
 
 describe("snapFrameRound", () => {
   it("snaps to nearest at 30fps integer boundaries", () => {
@@ -41,6 +47,67 @@ describe("frameDurUs", () => {
   it("falls back to a 30fps default on degenerate input", () => {
     expect(frameDurUs(0, 1)).toBe(33_333);
     expect(frameDurUs(30, 0)).toBe(33_333);
+  });
+});
+
+describe("lastFrameAnchorUs", () => {
+  it("returns the demuxer-aligned (half-up) last-frame start", () => {
+    // 10s 30fps comp: 300 frames. The exact start of frame 299 is
+    // 299/30 s = 9_966_666.667 µs. The demuxer rounds source PTSes
+    // half-up (see Demuxer.ts:127), so the source sample's pts ≈
+    // 9_966_667. lastFrameAnchorUs must match that rounding so the
+    // ring lookup at end-of-comp hits the last source sample.
+    expect(lastFrameAnchorUs(10_000_000, 30, 1)).toBe(9_966_667);
+  });
+
+  it("clamps at 0 for empty compositions", () => {
+    expect(lastFrameAnchorUs(0, 30, 1)).toBe(0);
+  });
+
+  it("returns 0 when duration equals one frame", () => {
+    expect(lastFrameAnchorUs(33_333, 30, 1)).toBe(0);
+  });
+
+  it("uses the comp fps, not 30fps default, at fractional rates", () => {
+    // 29.97 NDF: 300 frames span ~10.010 s. Frame 299 exact start =
+    // 299·1001/30000 s = 9_976_633.333 µs → half-up rounds DOWN to
+    // 9_976_633 (since 0.333 < 0.5).
+    expect(lastFrameAnchorUs(10_010_000, 30_000, 1001)).toBe(9_976_633);
+  });
+});
+
+describe("snapFrameFloor", () => {
+  it("rounds frame-grid values half-up to align with demuxer PTS rounding", () => {
+    // Frame 299 exact start = 9_966_666.667 → half-up rounds to
+    // 9_966_667. Demuxer.ts:127 uses the same Math.round, so this
+    // value matches the source's last sample PTS.
+    expect(snapFrameFloor(9_966_666, 30, 1)).toBe(9_966_667);
+    expect(snapFrameFloor(9_966_667, 30, 1)).toBe(9_966_667);
+    expect(snapFrameFloor(9_999_999, 30, 1)).toBe(9_966_667);
+  });
+
+  it("preserves zero and on-grid values whose exact start has no fractional µs", () => {
+    expect(snapFrameFloor(0, 30, 1)).toBe(0);
+    expect(snapFrameFloor(33_333, 30, 1)).toBe(33_333);
+    expect(snapFrameFloor(10_000_000, 30, 1)).toBe(10_000_000);
+  });
+
+  it("doesn't drift like the pre-rounded-frameDurUs floor", () => {
+    // Math.floor(9_966_666 / 33_333) * 33_333 = 9_966_567 (off by 100 µs
+    // at frame 299 from the demuxer-aligned grid value).
+    expect(snapFrameFloor(9_966_666, 30, 1)).toBe(9_966_667);
+    expect(Math.floor(9_966_666 / 33_333) * 33_333).toBe(9_966_567);
+  });
+
+  it("handles 29.97 NDF: half-up rounding gives 33_367 at frame 1", () => {
+    // Frame 1 exact start = 1·1001/30000 s = 33_366.667 µs → 33_367.
+    expect(snapFrameFloor(33_367, 30_000, 1001)).toBe(33_367);
+    expect(snapFrameFloor(40_000, 30_000, 1001)).toBe(33_367);
+  });
+
+  it("returns input unchanged on degenerate fps", () => {
+    expect(snapFrameFloor(12_345, 0, 1)).toBe(12_345);
+    expect(snapFrameFloor(12_345, 30, 0)).toBe(12_345);
   });
 });
 

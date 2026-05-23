@@ -106,13 +106,16 @@ export class PlaybackEngine {
 
   play(): void {
     if (this.intendedPlaying) return;
-    // If the playhead is parked at (or past) the end of the
-    // playable material, treat play as "play from the start".
-    // Otherwise the button does nothing visible — auto-pause at the
-    // end leaves the clock pinned to the end, and a second click
-    // would just re-fire auto-pause on the next tick.
+    // If the playhead is parked at the last frame of playable material,
+    // treat play as "play from the start". Under the frame-anchor
+    // playhead rule, "at end" means `position >= endUs − F` (the start
+    // of the last visible frame). Without this restart, the button
+    // looks dead — clock would advance one frame to endUs, immediately
+    // re-fire auto-pause, and emit no visible change because the last
+    // frame is already painted.
     const endUs = this.autoPauseEndUs();
-    if (endUs > 0 && this.clock.positionUs() >= endUs) {
+    const lastFrameStart = this.compositor.lastFrameAnchorUs(endUs);
+    if (endUs > 0 && this.clock.positionUs() >= lastFrameStart) {
       this.clock.setPosition(0);
       this.lastEmittedUs = 0;
       this.emitTime(0);
@@ -266,20 +269,27 @@ export class PlaybackEngine {
       // before the user sees any frames.
       const endUs = this.autoPauseEndUs();
       if (this.clock.isPlaying() && endUs > 0 && tUs >= endUs) {
-        // Park the clock at the exclusive end so the timecode
-        // displays the true end and the next play() restarts from 0.
-        // Composite one microsecond earlier: every layer's
-        // `t_end_us` is exclusive, so a snapped composite at exactly
-        // `endUs` falls off the last layer and shows black. Backing
-        // off by 1 µs keeps the snapped composite inside the final
-        // visible frame.
-        this.clock.setPosition(endUs);
-        const compositeUs = Math.max(0, endUs - 1);
-        this.compositor.setAnchorTime(compositeUs);
-        this.compositor.compositeFrame(compositeUs);
-        if (endUs !== this.lastEmittedUs) {
-          this.lastEmittedUs = endUs;
-          this.emitTime(endUs);
+        // Park the clock at the START of the last visible frame
+        // (frame-anchor playhead rule — see docs/data-model.md). That
+        // value is already inside the final layer's exclusive
+        // `[t_start, t_end)` interval, so the same value can drive
+        // both the emitted timecode AND the composite. No more
+        // `endUs − 1 µs` hack: the parked position IS the painted
+        // frame, end-of-comp display reads as the true last frame
+        // (e.g. `00:00:09:29` for a 10 s 30 fps comp).
+        //
+        // Exact-rational `lastFrameAnchorUs` is required here — the
+        // naive `endUs − pre-rounded-frameDurUs` drifts ~1 µs/frame
+        // and at frame 299 lands above the true grid value, so the
+        // compositor's frame lookup drops into the SECOND-to-last
+        // sample's PTS interval and paints the wrong frame.
+        const parkUs = this.compositor.lastFrameAnchorUs(endUs);
+        this.clock.setPosition(parkUs);
+        this.compositor.setAnchorTime(parkUs);
+        this.compositor.compositeFrame(parkUs);
+        if (parkUs !== this.lastEmittedUs) {
+          this.lastEmittedUs = parkUs;
+          this.emitTime(parkUs);
         }
         this.pause();
         return;

@@ -26,6 +26,20 @@ consumer-NLE territory; DF is reserved for a future per-project flag.
 Changing `composition.fps` re-snaps every layer's timeline fields
 atomically in the same patch transaction.
 
+The **playhead** is the one exception to boundary semantics. Every
+boundary entity above (`t_start_us`, `t_end_us`, `composition.duration_us`,
+trim handles) is exclusive and may equal `duration_us`. The playhead,
+in contrast, is a frame-anchor: it sits on the START of a real,
+displayable frame and is clamped to `[0, lastFrameAnchorUs]` where
+`lastFrameAnchorUs = max(0, duration_us − frameDurUs)`. The
+post-last-frame slot at exactly `duration_us` is unreachable for the
+playhead — pressing End in a 10 s 30 fps comp lands at `00:00:09:29`
+(the start of frame 299), not `00:00:10:00`. Helper:
+`lastFrameAnchorUs` in `apps/desktop/src/frames.ts`. The clamp lives in
+the App-level `seekTo` so every UI seek path inherits it once; the
+PlaybackEngine's auto-pause parks at the same value so the displayed
+timecode and the painted frame agree at the end of the timeline.
+
 ### Identity: UUID v7 everywhere
 Stable, opaque, time-sortable. Never use array indices for identity — they shift on every insert and break agent-held references mid-conversation.
 
