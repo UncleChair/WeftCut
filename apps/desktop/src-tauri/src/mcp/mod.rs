@@ -1165,8 +1165,8 @@ impl WeftCutServer {
                           first render and cached content-addressably; subsequent renders are folder lookups. \
                           Args: `template_id` (from `list_templates`), `t_start_us` (timeline microseconds), \
                           optional `t_end_us` (defaults to `t_start_us + default_duration_s * 1e6`), optional \
-                          `track_id` (when omitted, routes to the existing track labeled 'Overlay' or \
-                          auto-creates one — never lands on the reserved A/B-roll skeleton), optional \
+                          `track_id` (when omitted, always spawns a fresh track labeled 'Overlay' — never \
+                          reuses an existing track, so consecutive auto-inserts can't collide), optional \
                           `props` (JSON object matched against the template's `props_schema`; unknown keys \
                           reject, missing keys fall back to defaults). Returns the new layer id.")]
     async fn add_template(
@@ -2728,17 +2728,11 @@ impl WeftCutServer {
             .map_err(map_command_error)
     }
 
-    /// Templates compose on top of existing content. Route to a
-    /// dedicated track labeled "Overlay" — never to the reserved
-    /// A/B-roll skeleton — creating one if it doesn't yet exist.
-    /// Shares its track-picker with the UI path via
-    /// `commands::find_overlay_target_track` so both surfaces stay
-    /// consistent.
+    /// Every auto-routed template insert gets its own fresh "Overlay"
+    /// track. Reusing one would re-trip the per-track no-overlap
+    /// invariant the moment two templates land on intersecting ranges.
+    /// Agents that want stacking should pass an explicit `track_id`.
     async fn ensure_template_target_track(&self) -> Result<TrackId, McpError> {
-        let snap = self.project.snapshot().await;
-        if let Some(id) = crate::commands::find_overlay_target_track(&snap) {
-            return Ok(id);
-        }
         self.project
             .add_track(agent_actor(), Some("Overlay".into()))
             .await
