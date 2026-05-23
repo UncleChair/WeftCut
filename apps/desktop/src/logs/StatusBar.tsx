@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useLogStore, ERROR_STICKY_MS } from "./store";
-import type { LogEntry, LogLevel } from "../ipc";
+import { MEDIA_JOB_EVENTS, type LogEntry, type LogLevel } from "../ipc";
 
 /// Persistent ~28px status bar pinned to the bottom of the editor view.
 /// Phase 1 shape: severity dot + time + truncated message + source pill
@@ -25,6 +26,24 @@ export function StatusBar({ onToggleLogs }: { onToggleLogs?: () => void }) {
   const runningCount = useLogStore((s) =>
     Object.keys(s.runningOps).length,
   );
+  // Agent-attributed running ops: a subset of runningOps where the
+  // associated entry's source kind is "Agent". Surfaced as its own
+  // pill so the user has a signal that an MCP client is still working
+  // after exiting agent mode (Q4: ops finish in the background).
+  const agentRunningCount = useLogStore((s) => {
+    let n = 0;
+    for (const opId of Object.keys(s.runningOps)) {
+      const e = s.entries.find((x) => x.op_id === opId);
+      if (e?.source.kind === "Agent") n += 1;
+    }
+    return n;
+  });
+  // Derivative-job tracker. Increments on `media:job_started`,
+  // decrements on `media:job_complete` / `media:job_error`. The total
+  // renders a "Generating derivatives (N)…" pill so the user sees that
+  // proxies / thumbnails / waveforms are still grinding in the
+  // background.
+  const [pendingDerivatives, setPendingDerivatives] = useState<number>(0);
   // The visually-hidden live region is only updated on errors. Tracked
   // separately from `latest` so a flurry of low-severity entries
   // doesn't spam the screen reader.
@@ -35,6 +54,33 @@ export function StatusBar({ onToggleLogs }: { onToggleLogs?: () => void }) {
       setAnnounce(`${t("status_bar.announce_error_prefix")}: ${latest.message}`);
     }
   }, [latest, t]);
+
+  useEffect(() => {
+    const unlisteners: UnlistenFn[] = [];
+    let cancelled = false;
+    (async () => {
+      const onStarted = await listen(MEDIA_JOB_EVENTS.started, () => {
+        setPendingDerivatives((n) => n + 1);
+      });
+      const onComplete = await listen(MEDIA_JOB_EVENTS.complete, () => {
+        setPendingDerivatives((n) => Math.max(0, n - 1));
+      });
+      const onError = await listen(MEDIA_JOB_EVENTS.error, () => {
+        setPendingDerivatives((n) => Math.max(0, n - 1));
+      });
+      if (cancelled) {
+        onStarted();
+        onComplete();
+        onError();
+        return;
+      }
+      unlisteners.push(onStarted, onComplete, onError);
+    })();
+    return () => {
+      cancelled = true;
+      for (const u of unlisteners) u();
+    };
+  }, []);
 
   return (
     <footer
@@ -57,6 +103,24 @@ export function StatusBar({ onToggleLogs }: { onToggleLogs?: () => void }) {
         )}
       </div>
       <div className="status-bar-right">
+        {pendingDerivatives > 0 && (
+          <span
+            className="derivatives-pill"
+            title={t("project.derivatives_pending_hint")}
+          >
+            <span className="derivatives-pill-spinner" aria-hidden="true" />
+            {t("project.derivatives_pending", { count: pendingDerivatives })}
+          </span>
+        )}
+        {agentRunningCount > 0 && (
+          <span
+            className="agent-running-pill"
+            title={t("agent_mode.running_pill_hint")}
+          >
+            <span className="agent-running-spinner" aria-hidden="true" />
+            {t("agent_mode.running_pill", { count: agentRunningCount })}
+          </span>
+        )}
         {errorCount > 0 && (
           <button
             type="button"

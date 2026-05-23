@@ -6,6 +6,7 @@ const zhCN: Resources = {
   app: {
     title: "WeftCut",
     core_status: "核心：{{status}}",
+    window_title: "WeftCut — {{name}}",
   },
   startup: {
     subtitle: "选择要打开的项目，或新建一个。",
@@ -132,6 +133,9 @@ const zhCN: Resources = {
   media_pool: {
     heading: "素材库",
     empty: "尚未导入素材 — 点击「导入素材…」添加文件。",
+    search_placeholder: "搜索素材…",
+    no_matches: "未找到与「{{query}}」匹配的素材。",
+    clear_search: "清除搜索",
     duration: "{{seconds}} 秒",
     size_bytes: "{{bytes}} B",
     size_kib: "{{value}} KiB",

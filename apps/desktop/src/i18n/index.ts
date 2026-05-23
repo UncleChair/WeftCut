@@ -8,9 +8,14 @@ import zhCN from "./locales/zh-CN";
 export const SUPPORTED_LOCALES = ["en-US", "zh-CN"] as const;
 export type Locale = (typeof SUPPORTED_LOCALES)[number];
 
+/// Autonyms (each language's name in itself). Combined with a globe
+/// icon in the locale toggle, this gives the universally-recognized
+/// "language picker" affordance (Wikipedia / Google convention) and
+/// keeps the label readable across switches — a Chinese-only user
+/// sees "中文" on first launch, not the cryptic "中".
 export const LOCALE_LABELS: Record<Locale, string> = {
-  "en-US": "EN",
-  "zh-CN": "中",
+  "en-US": "English",
+  "zh-CN": "中文",
 };
 
 // Register the same payload under the bare language code as well as the

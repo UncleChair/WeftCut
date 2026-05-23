@@ -9,6 +9,7 @@ import {
   SUPPORTED_LOCALES,
   type Locale,
 } from "../i18n";
+import { GlobeIcon } from "../i18n/GlobeIcon";
 import {
   projectNewWorkspace,
   projectOpen,
@@ -131,7 +132,11 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
         title={t("language.switch_label")}
         aria-label={t("language.switch_label")}
       >
-        {LOCALE_LABELS[(i18n.resolvedLanguage ?? "en-US") as Locale] ?? "EN"}
+        <GlobeIcon />
+        <span className="locale-toggle-label">
+          {LOCALE_LABELS[(i18n.resolvedLanguage ?? "en-US") as Locale] ??
+            "English"}
+        </span>
       </button>
       <div className="startup-panel">
         <header className="startup-header">
