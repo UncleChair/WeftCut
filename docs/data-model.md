@@ -8,6 +8,24 @@ compiler, MCP server, and persistence are all clients of it.
 ### Time: integer microseconds (`i64`)
 Precise (1 µs ≪ any frame), fps-independent, integer arithmetic. f64 seconds is exposed only at API surfaces for ergonomics.
 
+### Timeline-field alignment: composition frame
+Every persisted layer `t_start_us`/`t_end_us` and the
+`composition.duration_us` is on a composition-frame boundary. The actor
+snap-rounds (half-up) every TimeUs parameter at the top of each
+mutator against `composition.fps`, so UI / MCP / future agents all
+produce aligned state without re-implementing the rule. Source-time
+fields (`src_in_us`/`src_out_us`) are NOT snapped — they're in the
+source media's own time space, and the renderer's
+`sampleIndexForPtsUs` naturally handles whatever value lands there.
+
+Display format follows the same grid: timecode reads SMPTE
+`HH:MM:SS:FF`, NDF (non-drop-frame) at every fps — at 29.97/59.94 the
+displayed timecode drifts vs. wall-clock by ~3.6s/hour. v1 is
+consumer-NLE territory; DF is reserved for a future per-project flag.
+
+Changing `composition.fps` re-snaps every layer's timeline fields
+atomically in the same patch transaction.
+
 ### Identity: UUID v7 everywhere
 Stable, opaque, time-sortable. Never use array indices for identity — they shift on every insert and break agent-held references mid-conversation.
 
@@ -340,6 +358,7 @@ struct ChangeEvent {
 | Invariant | Failure |
 |---|---|
 | `t_start_us < t_end_us` | reject |
+| `t_start_us`, `t_end_us`, `composition.duration_us` snap to composition-frame grid | snap-round (half-up) before validation |
 | `0 ≤ src_in_us < src_out_us ≤ media.duration_us` | reject |
 | No two layers in the same track overlap in `[t_start, t_end)` | reject (with structured options) |
 | `composition.duration_us ≥ max(layer.t_end_us)` | auto-extend |
