@@ -69,6 +69,22 @@ pub fn snap_frame_ceil(t_us: TimeUs, fps: Rational) -> TimeUs {
     snapped as TimeUs
 }
 
+/// Round `t_us` to the NEAREST canvas-fps frame boundary (half-up).
+/// Same i128 arithmetic as `snap_frame_floor`/`snap_frame_ceil`. For
+/// `t_us` exactly at a half-frame, snaps UP to the later frame.
+///
+/// Use this for round-to-nearest snap of timeline mutations (move,
+/// trim, split, seek). Floor/ceil exist for the rare cases where
+/// asymmetric snap is needed (Pass B effect routing).
+pub fn snap_frame_round(t_us: TimeUs, fps: Rational) -> TimeUs {
+    let prod = (t_us as i128) * (fps.num as i128);
+    let div = (US_PER_SEC as i128) * (fps.den as i128);
+    // Half-up: floor((prod + div/2) / div).
+    let frame_index = (prod + div / 2).div_euclid(div);
+    let snapped = frame_index * (US_PER_SEC as i128) * (fps.den as i128) / (fps.num as i128);
+    snapped as TimeUs
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,5 +137,40 @@ mod tests {
         assert!(lo <= t);
         assert!(t <= hi);
         assert!(hi - lo <= 33_334); // one frame at 30 fps
+    }
+
+    #[test]
+    fn snap_round_integer_fps() {
+        // At 30 fps, frame duration ≈ 33333.33 us. Integer snap_frame_round
+        // rounds half-up: anything from 16667 us (half-frame) onward goes
+        // to the next frame.
+        assert_eq!(snap_frame_round(0, Rational::FPS_30), 0);
+        assert_eq!(snap_frame_round(16_666, Rational::FPS_30), 0);
+        assert_eq!(snap_frame_round(16_667, Rational::FPS_30), 33_333);
+        assert_eq!(snap_frame_round(33_333, Rational::FPS_30), 33_333);
+        assert_eq!(snap_frame_round(49_999, Rational::FPS_30), 33_333);
+        assert_eq!(snap_frame_round(50_000, Rational::FPS_30), 66_666);
+    }
+
+    #[test]
+    fn snap_round_brackets_floor_and_ceil() {
+        // For any t_us, floor <= round <= ceil. At the half-frame mark,
+        // round picks ceil (half-up convention).
+        for t in [0_i64, 10_000, 17_000, 33_333, 50_000, 99_999] {
+            let lo = snap_frame_floor(t, Rational::FPS_30);
+            let mid = snap_frame_round(t, Rational::FPS_30);
+            let hi = snap_frame_ceil(t, Rational::FPS_30);
+            assert!(lo <= mid, "floor {lo} <= round {mid} (t={t})");
+            assert!(mid <= hi, "round {mid} <= ceil {hi} (t={t})");
+        }
+    }
+
+    #[test]
+    fn snap_round_29_97_doesnt_overflow_at_hour_scale() {
+        let one_hour = 3_600_000_000_i64;
+        let snapped = snap_frame_round(one_hour, Rational::FPS_29_97);
+        // Within half a frame of the input.
+        let half_frame_us = 16_700_i64;
+        assert!((snapped - one_hour).abs() <= half_frame_us);
     }
 }
