@@ -43,7 +43,22 @@ const PROXY_HEIGHT_CAP: u32 = 1080;
 ///       `avc1.640028` config decodes universally.
 ///   3 — GOP scales with source fps (`-g <round(fps)>`) so 60 fps
 ///       source proxies stay at 1 s GOP, not 0.5 s. See ADR 0003.
-pub const PROXY_FORMAT_VERSION: u32 = 3;
+///   4 — `-bf 0` disables B-frames in the proxy. Preset-fast's default
+///       3 B-frames carries a 2-frame CTS reorder offset through to
+///       the proxy: the proxy's last frame's PTS lands ~67 ms past
+///       the source's mvhd duration (which is what ffprobe reports
+///       as `format.duration` and what `MediaItem.duration_us` /
+///       layer `t_end_us` are sized to). The renderer's auto-pause
+///       snap then targets the source-time corresponding to
+///       `t_end_us − 1 µs`, which falls in the THIRD-to-last frame's
+///       interval because the trailing two frames sit past the
+///       clip's playable range. Disabling B-frames in the proxy
+///       eliminates the reorder offset entirely — every frame's
+///       PTS equals its DTS, the proxy's last frame lands inside
+///       `t_end_us`, and the snap correctly paints it. Proxies are
+///       local-only preview artifacts so the ~10–20 % size hit is
+///       acceptable.
+pub const PROXY_FORMAT_VERSION: u32 = 4;
 
 pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     if !ffmpeg_is_installed() {
@@ -96,6 +111,11 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
             &gop,
             "-keyint_min",
             &gop,
+            // No B-frames: keeps proxy PTS == DTS so the timing the
+            // renderer demuxes matches the source's mvhd duration. See
+            // PROXY_FORMAT_VERSION 4 above for the full reasoning.
+            "-bf",
+            "0",
             "-pix_fmt",
             "yuv420p",
             "-c:a",
@@ -278,6 +298,17 @@ mod tests {
             i_frames >= 4,
             "proxy should have >= 4 keyframes for 6s @ 30fps with -g 30 (got {i_frames}); \
              default GOP would produce 1. Means scrub-friendly keyframe density isn't being applied.\n{stdout}"
+        );
+        // PROXY_FORMAT_VERSION 4: `-bf 0` must produce a B-frame-free
+        // stream. Without it, libx264's preset-fast default of 3 B-
+        // frames pushes the proxy's last frame's PTS past mvhd duration,
+        // and the renderer's auto-pause snap lands on the third-to-last
+        // frame.
+        let b_frames = stdout.lines().filter(|l| l.trim() == "B").count();
+        assert_eq!(
+            b_frames, 0,
+            "proxy should have 0 B-frames with -bf 0 (got {b_frames}). \
+             Preserving B-frames carries the CTS reorder offset into the proxy."
         );
     }
 

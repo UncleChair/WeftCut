@@ -53,6 +53,10 @@ export interface FrameStore {
 export interface DecoderHandle {
   readonly mediaId: string;
   readonly ring: FrameStore;
+  /// True once `dispose()` has run. Compositor checks this so it can
+  /// drop its cached `ActiveClip.source` reference when the pool's
+  /// idle sweeper reclaims a handle out from under it.
+  readonly disposed: boolean;
   ensureReady(): Promise<VideoTrackMeta>;
   /// Preview calls this every tick to nudge the decoder's lookahead;
   /// export ignores it and pre-stages frames via its own driver.
@@ -106,6 +110,21 @@ export class SourceHandle {
   /// timing in user-visible behavior).
   private outputsInWindow = 0;
   private windowStartMs = 0;
+  private _disposed = false;
+  /// True after we've issued `decoder.flush()` for the current decode
+  /// run (since the last reset/configure). The pump dispatches the
+  /// last source sample but the decoder may still hold trailing
+  /// frames in its DPB reorder buffer waiting on a follow-up GOP
+  /// that doesn't exist at end-of-stream; without an explicit flush
+  /// the ring stays short the last frame and `requestFrameAt`'s
+  /// `targetIsBeforeRing` reset path fires every rAF tick after
+  /// auto-pause. Cleared by anything that brings the pump back below
+  /// end-of-stream — GOP reset, lazy rebuild, or explicit `flush()`.
+  private flushedThisRun = false;
+
+  get disposed(): boolean {
+    return this._disposed;
+  }
 
   constructor(init: SourceHandleInit) {
     this.mediaId = init.mediaId;
@@ -285,40 +304,20 @@ export class SourceHandle {
     };
   }
 
-  /// Software-fallback path: flip the downgraded flag, reset + reconfigure
-  /// the existing decoder, and rewind the decode cursor so the next pump
-  /// re-feeds the current GOP from its IDR. Frames already in the ring
-  /// stay — they're valid regardless of which path decoded them.
-  private downgradeToSoftware(): void {
-    if (!this.meta || !this.decoder) return;
-    this.downgraded = true;
-    try {
-      this.decoder.reset();
-      this.decoder.configure(this.buildConfig(this.meta));
-    } catch (e) {
-      // eslint-disable-next-line no-console
-      console.error(
-        `[weftcut/pixi] decoder ${this.mediaId} software-fallback reconfigure failed:`,
-        e,
-      );
-      return;
-    }
-    // Re-pump from the current GOP's IDR. `decodeFloor` already points at
-    // the IDR; rewind `lastDecodedIndex` so `pumpLookahead` re-issues it.
-    this.lastDecodedIndex = this.decodeFloor - 1;
-  }
-
-  /// Inactivity recovery: drop the dead decoder + clear the readiness
-  /// promise so the next `ensureReady` lazily rebuilds. `Demuxer.open()`
-  /// is idempotent (guards on `streamingStarted`), so the rebuild
-  /// short-circuits the streaming work and only reconstructs the
-  /// `VideoDecoder`. Ring entries get flushed on the next
+  /// Tear down the dead decoder + clear readiness so the next
+  /// `ensureReady` lazily rebuilds a fresh `VideoDecoder`. WebCodecs
+  /// transitions the codec to "closed" BEFORE firing the error callback,
+  /// so reset()/configure() on the just-errored decoder always throw
+  /// `InvalidStateError`; rebuilding is the only legitimate recovery.
+  /// `Demuxer.open()` is idempotent (guards on `streamingStarted`), so
+  /// the rebuild short-circuits the streaming work and only reconstructs
+  /// the `VideoDecoder`. Ring entries get flushed on the next
   /// `requestFrameAt` via the GOP-crossing reset path; we accept that
-  /// short blank window as the cost of inactivity recovery. We don't
-  /// reset `outputFrameCount` or `downgraded`: a source that needed
-  /// software fallback before still needs it now, and the heuristic
+  /// short blank window as the cost of recovery. We don't reset
+  /// `outputFrameCount` or `downgraded`: a source that needed software
+  /// fallback before still needs it now, and the first-frame heuristic
   /// shouldn't re-arm.
-  private rebuildAfterInactivity(): void {
+  private nullForRebuild(): void {
     try {
       this.decoder?.close();
     } catch {
@@ -329,6 +328,27 @@ export class SourceHandle {
     this.meta = null;
     this.lastDecodedIndex = -1;
     this.decodeFloor = 0;
+    this.flushedThisRun = false;
+  }
+
+  /// Software-fallback path: flip the downgraded flag, then drop the
+  /// dead decoder so the next `ensureReady` rebuilds with
+  /// `prefer-software`. We can't reset+reconfigure the just-errored
+  /// decoder — WebCodecs has already moved it to "closed" state by the
+  /// time this fires (a prior version's `reset()` here is what produced
+  /// the `InvalidStateError: Cannot call 'reset' on a closed codec`
+  /// secondary log).
+  private downgradeToSoftware(): void {
+    if (this.downgraded) return;
+    this.downgraded = true;
+    this.nullForRebuild();
+  }
+
+  /// Inactivity recovery: same teardown — the codec slot Chrome
+  /// reclaimed is already closed; only a fresh `VideoDecoder` is
+  /// usable.
+  private rebuildAfterInactivity(): void {
+    this.nullForRebuild();
   }
 
   /// Schedule decode of the GOP containing `tUs` and forward up to
@@ -416,7 +436,20 @@ export class SourceHandle {
         const firstPts = this.ring.firstPtsUs();
         const targetIsBeforeRing =
           firstPts !== null && targetSample.ptsUs < firstPts;
-        if (targetIsBeforeRing || this.decoder.decodeQueueSize === 0) {
+        if (targetIsBeforeRing) {
+          needsReset = true;
+        } else if (
+          this.decoder.decodeQueueSize === 0 &&
+          !this.flushedThisRun
+        ) {
+          // Queue empty + target not in ring + not yet flushed: the
+          // decoder can't reach this frame by pumping forward, so we
+          // need to reset and re-dispatch. After an end-of-stream
+          // flush has been issued, an empty queue is misleading —
+          // the trailing DPB frames are in flight from the async
+          // flush drain; resetting here would discard them and
+          // re-dispatch the same chunks into the same DPB dead-end,
+          // looping every rAF tick after auto-pause.
           needsReset = true;
         }
       }
@@ -452,6 +485,7 @@ export class SourceHandle {
       this.ring.flush();
       this.lastDecodedIndex = idr - 1;
       this.decodeFloor = idr;
+      this.flushedThisRun = false;
     }
 
     // Decode forward through target + lookahead window.
@@ -491,6 +525,48 @@ export class SourceHandle {
       this.lastDecodedIndex = i;
       i++;
     }
+    // We dispatched the source's final sample — drain the DPB. H.264
+    // decoders hold trailing B/P frames in the reorder buffer waiting
+    // on a follow-up GOP to confirm display order; at end-of-stream
+    // that follow-up never arrives, so the last 1–2 frames sit
+    // buffered. Without this flush, `requestFrameAt` at auto-pause
+    // sees the ring missing the final frame, the `targetIsBeforeRing`
+    // / `decodeQueueSize === 0` check fires `needsReset`, and the
+    // reset path re-dispatches the same chunks into the same DPB
+    // dead-end every rAF tick. We gate on a per-run flag so we don't
+    // re-flush on every pump call once the pump has settled at EOS.
+    if (
+      i >= this.meta.nbSamples &&
+      !this.flushedThisRun &&
+      this.decoder.state === "configured"
+    ) {
+      this.flushedThisRun = true;
+      const ringBefore = this.ring.size();
+      const queueBefore = this.decoder.decodeQueueSize;
+      const countBefore = this.outputFrameCount;
+      // eslint-disable-next-line no-console
+      console.log(
+        `[weftcut/pixi] EOS flush ${this.mediaId}: lastDecoded=${this.lastDecodedIndex} ` +
+          `nbSamples=${this.meta.nbSamples} ring=${ringBefore} queue=${queueBefore} ` +
+          `count=${countBefore}`,
+      );
+      void this.decoder.flush().then(
+        () => {
+          // eslint-disable-next-line no-console
+          console.log(
+            `[weftcut/pixi] EOS flush ${this.mediaId} resolved: ring=${this.ring.size()} ` +
+              `count=${this.outputFrameCount} ringLastPts=${this.ring.lastPtsUs()}`,
+          );
+        },
+        (err: unknown) => {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[weftcut/pixi] decoder ${this.mediaId} end-of-stream flush failed:`,
+            err,
+          );
+        },
+      );
+    }
   }
 
   /// `nowMs` from the pool's sweep tick. Returns true if this handle
@@ -524,6 +600,7 @@ export class SourceHandle {
     this.onFirstFrameCb = null;
     this.outputFrameCount = 0;
     this.downgraded = false;
+    this._disposed = true;
   }
 }
 
