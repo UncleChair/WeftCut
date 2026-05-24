@@ -501,7 +501,12 @@ export class SourceHandle {
     // pump, resetting + flushing perpetually and starving the ring.
     let needsReset = idr > this.lastDecodedIndex + FORWARD_SEEK_RESET_THRESHOLD;
     if (!needsReset && targetIndex <= this.lastDecodedIndex) {
-      const targetSample = this.demuxer.sampleAt(targetIndex);
+      // PTS-only lookup — we don't dispatch the target here, so we
+      // mustn't trigger a Range fetch via the data-bearing `sampleAt`.
+      // (Without this, a backward seek into an uncached block would
+      // see null from `sampleAt`, the reset path would skip, and the
+      // pump would stall trying to decode forward of the new anchor.)
+      const targetSample = this.demuxer.sampleMetaAt(targetIndex);
       if (targetSample && !this.ring.containsPts(targetSample.ptsUs)) {
         // Target's PTS isn't in the ring. Reset only if the decoder
         // can't reach it by continuing to pump forward:
@@ -555,7 +560,7 @@ export class SourceHandle {
     // evicted the target's GOP and a reset SHOULD fire. Useful for
     // tracking down "jump-to-head shows wrong frame" reports.
     const firstPtsDiag = this.ring.firstPtsUs();
-    const targetPtsDiag = this.demuxer.sampleAt(targetIndex)?.ptsUs ?? -1;
+    const targetPtsDiag = this.demuxer.sampleMetaAt(targetIndex)?.ptsUs ?? -1;
     if (firstPtsDiag !== null && targetPtsDiag >= 0 && targetPtsDiag + 100_000 < firstPtsDiag) {
       // eslint-disable-next-line no-console
       console.log(
