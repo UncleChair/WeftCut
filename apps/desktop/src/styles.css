@@ -13,6 +13,12 @@ html, body, #root { height: 100%; margin: 0; }
   display: grid;
   /* Header (with inline menu-bar), main (1fr), status-bar */
   grid-template-rows: auto 1fr auto;
+  /* `minmax(0, 1fr)` so the single implicit column does NOT grow to
+     `max-content` of its children — without this a nowrap line in the
+     status bar (a very long log message) pushes the column past the
+     viewport, and the inner `flex:1 / text-overflow: ellipsis` chain
+     has nothing to clip against. */
+  grid-template-columns: minmax(0, 1fr);
   height: 100%;
 }
 
