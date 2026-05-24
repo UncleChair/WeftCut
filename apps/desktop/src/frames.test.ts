@@ -13,7 +13,9 @@ describe("snapFrameRound", () => {
     expect(snapFrameRound(16_666, 30, 1)).toBe(0);
     expect(snapFrameRound(16_667, 30, 1)).toBe(33_333);
     expect(snapFrameRound(33_333, 30, 1)).toBe(33_333);
-    expect(snapFrameRound(50_000, 30, 1)).toBe(66_666);
+    // Output is half-up rounded to match Demuxer.ts source-PTS rounding
+    // (frame 2 true µs = 66_666.667 → 66_667).
+    expect(snapFrameRound(50_000, 30, 1)).toBe(66_667);
   });
 
   it("matches Rust snap_frame_round math at 29.97 hour-scale", () => {

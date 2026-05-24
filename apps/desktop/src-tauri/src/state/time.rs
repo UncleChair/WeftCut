@@ -76,12 +76,27 @@ pub fn snap_frame_ceil(t_us: TimeUs, fps: Rational) -> TimeUs {
 /// Use this for round-to-nearest snap of timeline mutations (move,
 /// trim, split, seek). Floor/ceil exist for the rare cases where
 /// asymmetric snap is needed (Pass B effect routing).
+///
+/// The OUTPUT value is also half-up rounded, matching the demuxer's
+/// source-PTS rounding (`apps/desktop/src/render/decoder/Demuxer.ts`:
+/// `Math.round((cts/timescale)*1e6)`). Without this, per-frame splits
+/// at frame indices where `N * 1_000_000 * den / num` has fractional
+/// > 0.5 (e.g. frames 2, 5, 8 at 30 fps) store `src_in_us` 1 µs below
+/// the demuxer's source PTS for the same frame, so `FrameRing.frameAt`
+/// falls into source frame N−1. The mismatch is masked at the un-moved
+/// position by `snapFrameFloor`'s half-up output (which yields a +1 µs
+/// `layerLocalUs` that cancels the offset) but surfaces the moment the
+/// layer is moved to a destination whose `t_start_us` has no truncation
+/// gap to subtract. Fixed by aligning this output rounding with the
+/// demuxer's.
 pub fn snap_frame_round(t_us: TimeUs, fps: Rational) -> TimeUs {
     let prod = (t_us as i128) * (fps.num as i128);
     let div = (US_PER_SEC as i128) * (fps.den as i128);
     // Half-up: floor((prod + div/2) / div).
     let frame_index = (prod + div / 2).div_euclid(div);
-    let snapped = frame_index * (US_PER_SEC as i128) * (fps.den as i128) / (fps.num as i128);
+    let num = fps.num as i128;
+    let numer = frame_index * (US_PER_SEC as i128) * (fps.den as i128);
+    let snapped = (numer + num / 2).div_euclid(num);
     snapped as TimeUs
 }
 
@@ -149,19 +164,27 @@ mod tests {
         assert_eq!(snap_frame_round(16_667, Rational::FPS_30), 33_333);
         assert_eq!(snap_frame_round(33_333, Rational::FPS_30), 33_333);
         assert_eq!(snap_frame_round(49_999, Rational::FPS_30), 33_333);
-        assert_eq!(snap_frame_round(50_000, Rational::FPS_30), 66_666);
+        // Output is half-up rounded to match Demuxer.ts source-PTS rounding
+        // (frame 2 true µs = 66_666.667 → 66_667).
+        assert_eq!(snap_frame_round(50_000, Rational::FPS_30), 66_667);
     }
 
     #[test]
     fn snap_round_brackets_floor_and_ceil() {
-        // For any t_us, floor <= round <= ceil. At the half-frame mark,
-        // round picks ceil (half-up convention).
+        // For any t_us, floor <= round <= ceil — within 1 µs slack on the
+        // upper bound. The slack exists because `snap_frame_round` now
+        // half-up rounds its OUTPUT (matching the demuxer) while
+        // `snap_frame_ceil` still truncates: for fractional > 0.5 frame
+        // boundaries (e.g. frame 2 at 30 fps is 66666.667 µs), ceil
+        // returns 66666 and round returns 66667. Bracket invariant holds
+        // on the FRAME INDEX; the µs output value can land 1 µs above
+        // ceil at those grid points.
         for t in [0_i64, 10_000, 17_000, 33_333, 50_000, 99_999] {
             let lo = snap_frame_floor(t, Rational::FPS_30);
             let mid = snap_frame_round(t, Rational::FPS_30);
             let hi = snap_frame_ceil(t, Rational::FPS_30);
             assert!(lo <= mid, "floor {lo} <= round {mid} (t={t})");
-            assert!(mid <= hi, "round {mid} <= ceil {hi} (t={t})");
+            assert!(mid <= hi + 1, "round {mid} <= ceil {hi} + 1 (t={t})");
         }
     }
 
