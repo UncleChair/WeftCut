@@ -2,105 +2,158 @@
 
 ## Problem
 
-Imported media appears in the Media Pool as soon as `import_media` returns (probe + hash run synchronously, ~10–100 ms), but the file copy into `<workspace>/Media/` happens asynchronously on a background FIFO worker. During the copy window the card visually shows a "Copying…" badge and slightly dims (opacity 0.85), and `draggable` is set to false at the source — but the only thing actually blocking operations is the `draggable` attribute itself. The disabled state is too subtle for users to read, the predicate is open-coded inside `MediaPool`, and the timeline's drop handler does not re-check status when a drop lands. As more entry points are added (right-click menu, keyboard shortcuts, MCP-triggered handlers), each new operation has to remember to re-implement the gate.
+Imported media appears in the Media Pool as soon as `import_media` returns (probe + hash run synchronously, ~10–100 ms), but several stages then run in the background:
+
+1. **Workspace copy** — the source file is copied into `<workspace>/Media/` via a FIFO worker.
+2. **Proxy generation** — `jobs/proxy.rs` transcodes the source to a 540p H.264+AAC proxy. The preview/export pipeline uses this proxy via `playbackPathFor` (source path is the fallback).
+3. **Thumbnails & waveform** — sprite for timeline preview, peaks for silence detection and waveform strip.
+
+Today the only gate on user operations is the source-side `draggable` attribute on a media card, and it only tracks stage 1 (workspace copy). For a large 4K source file, dragging onto the timeline immediately after copy completes places a clip whose playback path falls back to the original 4K source — WebCodecs decoding stalls or stutters at that resolution, so the placed clip is effectively unusable until the proxy lands. The card looks "done", but isn't.
+
+Additionally, the disabled state is visually subtle (`opacity: 0.85`, no `cursor: not-allowed`, no `aria-disabled`), and the readiness predicate is open-coded inside `MediaPool`. As more entry points are added (right-click menu, keyboard shortcuts, MCP-triggered UI handlers), each one would have to re-implement the gate.
 
 ## Goal
 
-While a media item is still copying into the workspace, no user-initiated operation on that item should succeed — except cancelling the import. Make the "not ready" state visually unmistakable, and centralise the predicate so future operations cannot bypass it.
+A media item must not be operable in the UI until its `media_id` is *actually* usable on the timeline. For video this means the proxy must be available; for other kinds, the workspace copy is sufficient. Make the not-ready state visually unmistakable, and centralise the predicate so future operations cannot bypass it. Proxy generation failures should surface clearly rather than silently degrade to a stuttering fallback.
 
-## Definition of "loading"
+## Definition of "ready"
 
-A media item is *loading* iff its `media_id` is in the frontend `importingMediaIds` Set — i.e. its `ImportEntry.status.kind` is `Pending` or `Copying`. Once the entry transitions to `Completed`, `Failed`, or `Cancelled`, the media is *ready* from this feature's perspective.
+| Kind | Ready when |
+|---|---|
+| Video | workspace copy is done **and** the proxy is ready (`media.proxy_path` non-null, or a `media:job_complete kind=proxy` event has fired for this `media_id`) |
+| Audio | workspace copy is done |
+| Image | workspace copy is done |
+| Subtitle | workspace copy is done |
 
-Out of scope:
-- Probe stage (synchronous; the item is not in the pool yet).
-- Derivative jobs (proxy, thumbnail sprite, waveform). Layers reference `media_id`, not paths; the renderer falls back to the source path when a proxy is missing. Blocking on derivatives would make large imports unusable.
+A video whose proxy job errors out (`media:job_error kind=proxy`) does **not** become ready. The card shows a clear failed state instead of silently falling back to source-path playback. Retry / re-import is left for the user; the UI surfaces the failure rather than masking it.
+
+Thumbnails and waveform never gate readiness — they are timeline decorations and an offline-analysis input, not a precondition for previewing the clip.
 
 ## Architecture
 
-Three small changes, all on the frontend:
+All changes are on the frontend.
 
-### 1. Centralised predicate
+### 1. Per-video proxy state tracker
 
-Introduce a single helper used by every consumer that decides whether the user may act on a pool item:
+A new piece of frontend state (in `App.tsx`, sibling to `importQueue`) tracks proxy progress for each video media:
+
+```ts
+type ProxyState = "pending" | "ready" | "failed";
+const [proxyState, setProxyState] = useState<Map<string, ProxyState>>(new Map());
+```
+
+Wiring:
+- On `media:job_started` with `kind === "proxy"`: set `proxyState[media_id] = "pending"`.
+- On `media:job_complete` with `kind === "proxy"`: set `proxyState[media_id] = "ready"` (the next `summary.media[*].proxy_path` will also reflect this; the explicit state is for fast UI reaction before the next `project:changed` refresh).
+- On `media:job_error` with `kind === "proxy"`: set `proxyState[media_id] = "failed"`.
+- Derived for any video already in the latest summary: if `proxy_path` is non-null, treat as `"ready"` regardless of map entry (covers the boot path where a previously-imported project has proxies on disk).
+
+Project-load boot path: for videos with `proxy_path === null` that we have no event for yet, treat them as `"pending"` until an event arrives. This matches the user's expectation that "I just opened the project and the proxy job is re-running on a video that lost its proxy file".
+
+### 2. Centralised predicate
+
+A single helper used by every consumer that decides whether the user may act on a pool item:
 
 ```ts
 // apps/desktop/src/panels/mediaReadiness.ts
-export function isMediaInteractive(
+export type MediaReadiness =
+  | { ready: true }
+  | { ready: false; reason: "importing" | "missing" | "proxy_pending" | "proxy_failed" };
+
+export function mediaReadiness(
   media: MediaSummary,
   importingIds: ReadonlySet<string>,
-): boolean {
-  return media.available && !importingIds.has(media.id);
+  proxyState: ReadonlyMap<string, ProxyState>,
+): MediaReadiness {
+  if (importingIds.has(media.id)) return { ready: false, reason: "importing" };
+  if (!media.available) return { ready: false, reason: "missing" };
+  if (media.kind === "Video") {
+    if (media.proxy_path) return { ready: true };
+    const s = proxyState.get(media.id) ?? "pending";
+    if (s === "ready") return { ready: true };
+    if (s === "failed") return { ready: false, reason: "proxy_failed" };
+    return { ready: false, reason: "proxy_pending" };
+  }
+  return { ready: true };
 }
 ```
 
-`MediaPool` replaces its inline `interactive` calculation with this. Any future handler (context menu, double-click, keyboard, MCP-triggered UI action) imports the same helper. The predicate stays UI-side; backend MCP tool rejection is a separate decision.
+`MediaPool` replaces its inline `interactive` calculation with this. Any future handler (context menu, double-click, keyboard, MCP-triggered UI action) imports the same helper.
 
-### 2. Visual + accessibility hardening in `MediaPool`
+### 3. MediaPool visual + accessibility hardening
 
 In `App.tsx` MediaPool body (around `App.tsx:1348`):
-- Add `aria-disabled={!interactive}` to the `<li>`.
-- Title attribute already swaps between drag-hint, missing-hint, and importing tooltip — keep.
-- `draggable={interactive}` stays.
+- Compute `readiness = mediaReadiness(m, importing, proxyState)`.
+- `draggable={readiness.ready}`.
+- `aria-disabled={!readiness.ready}`.
+- `className` adds a reason-specific modifier: `is-importing` (existing), `is-missing` (existing), new `is-proxy-pending`, new `is-proxy-failed`.
+- Badge text in the existing cancel-button overlay covers `importing` / `proxy_pending` (showing a label like "Preparing preview…" with no cancel action for the proxy case, or reuse the cancel overlay design with a different label and no click handler). Drop the cancel button for non-importing not-ready states.
+- For `proxy_failed`: show a distinct red/warn badge with the file name still visible; tooltip carries the error class.
 
-In `styles.css` `.media-item.is-importing` (currently at `styles.css:3350`):
-- Increase the dim from `opacity: 0.85` to `opacity: 0.55` so the card reads clearly as inactive.
-- Add `cursor: not-allowed`.
-- The cancel-import button overlay keeps `cursor: pointer` and `pointer-events: auto` (already absolute-positioned over the thumb; just confirm it is not affected by the parent cursor).
+In `styles.css` (after the existing `.media-item.is-importing` block at `styles.css:3350`):
+- Bump dim to `opacity: 0.55` for all not-ready states so the card reads clearly as inactive.
+- Add `cursor: not-allowed` on `.media-item:not(.is-ready):hover` (or equivalent — define a single not-ready selector).
+- `.media-item.is-proxy-failed` gets a warn-coloured border / badge.
+- The cancel-import button (when present) keeps `cursor: pointer` and `pointer-events: auto`.
 
-The visual treatment for `.is-missing` is left unchanged.
-
-### 3. Drop-side defensive check
+### 4. Drop-side defensive check
 
 In `Timeline.tsx onMediaDrop` (`Timeline.tsx:765`), before calling `addMediaLayer`:
 - Look up the media in the most recent project summary by `payload.mediaId`.
-- If the media is missing from the summary, or its id is in `importingMediaIds`, or `available` is false:
-  - No-op (do not call `addMediaLayer`, do not call `onMutated`).
-  - Emit a warn-level entry via the existing `LogBus` / status-log path so the rejection is visible in the status bar and console.
+- Compute readiness with the same `mediaReadiness` helper, with `proxyState` plumbed in from `App.tsx`.
+- If not ready: no-op (no `addMediaLayer`, no `onMutated`), emit a warn-level entry via the existing LogBus / status-log path. Message: `media drop rejected: <media_id> (<reason>)`.
 
-This requires plumbing `importingMediaIds` (or a `isMediaInteractive` callback closed over it) into `Timeline`. The MediaPool already receives the Set; the same value can be lifted in `App.tsx` and passed down to `<Timeline />` as a prop (or as a callback `canAcceptMediaDrop(mediaId)`).
-
-Rationale: the source-side `draggable=false` already prevents normal drag initiation. The drop-side check is defence-in-depth for two cases — (a) the status flipping mid-drag once we add more dynamic import flows, and (b) future non-drag entry points that route through the same drop pathway.
+Source-side `draggable=false` already blocks drag initiation; this drop-side check is defence-in-depth for status flipping mid-drag and for future non-drag drop pathways (e.g. paste, MCP-triggered drop).
 
 ## Data flow
 
 ```
-import_media (Rust)          import:queue event          App.tsx
-  │ probe sync                       │                       │
-  ├─ insert MediaItem ───────────────┘                       │
-  │                                                          │
-  └─ queue copy ──────► worker copy ──► import:complete ─────┤
-                                                             │
-                                  importingMediaIds (Set) ◄──┤
-                                                             │
-                       ┌─────────────────────────────────────┤
-                       ▼                                     ▼
-                   <MediaPool                            <Timeline
-                    importing= …>                         importing= …>
-                       │                                     │
-              interactive = isMediaInteractive(…)   onMediaDrop pre-check
-                       │                                     │
-              draggable, aria-disabled,             reject + LogBus warn
-              cursor: not-allowed via CSS           when not interactive
+import_media (Rust)
+  │ probe sync
+  ├─ insert MediaItem ─────────────► import:queue event ──► importingMediaIds
+  │
+  └─ queue copy → worker copy → import:complete event
+                                    │
+                                    └─► proxy job → media:job_started kind=proxy
+                                                    │
+                                                    └─► media:job_complete kind=proxy
+                                                        │
+                                                        └─► proxyState["mediaId"] = ready
+                                                            (or "failed" on error)
+        ┌────────────────────────────────────────────────────────────────────────┐
+        ▼                                                                        ▼
+   <MediaPool>                                                            <Timeline>
+   mediaReadiness(m, importing, proxyState)                              same helper at drop time
+        │
+        ├─ ready=true   → draggable, cursor: grab
+        └─ ready=false  → draggable=false, aria-disabled,
+                          cursor: not-allowed, reason-specific badge
 ```
 
 ## Error handling
 
-- Drop rejection: warn-level log via the existing log/status-log infrastructure. No modal, no toast. The status bar surfaces it briefly; the console keeps the full record. Wording: `media drop rejected: <media_id> is still importing` (or `is missing`).
-- Cancel-import button on a loading card continues to be the only interactive affordance and is unchanged.
+- **Drop rejection** (defence-in-depth path): warn-level entry through the existing LogBus / status-log infrastructure. No modal, no toast. Wording: `media drop rejected: <media_id> is <reason>`.
+- **Proxy failure**: the card stays in `is-proxy-failed` state until the user re-imports or otherwise retries. No automatic retry in this design. The error detail is available via the tooltip and the existing `media:job_error` log line.
+- **Cancel-import button** on an `is-importing` card continues to be the only interactive affordance on a not-ready card. For `is-proxy-pending` and `is-proxy-failed`, the whole card is inert (no cancel — cancelling a proxy job is not currently exposed).
 
 ## Testing
 
-- Manual: import a large file (≥200 MB so the copy phase is visible). While "Copying…" badge is showing, verify:
-  - Card opacity is clearly dim and `cursor: not-allowed` shows on hover.
-  - The card cannot be dragged (browser refuses to initiate the drag).
-  - The cancel-import button overlay is still clickable and cancels the import.
-  - Once the badge disappears, the card returns to full opacity and is draggable.
-- Drop-side defence: temporarily mark a media as importing via devtools and attempt a drag; the drop must be rejected and a warn line must appear in the status log.
-- Regression: a fully-imported media drags onto the timeline as before; status-log shows no warn lines.
+Manual scenarios:
+- **Large video import (≥1 GB, 4K)**: card cycles `is-importing` → `is-proxy-pending` → ready. Drag is blocked through both not-ready phases; opacity and `cursor: not-allowed` are obvious. Drop attempted via devtools (manually setting `draggable=true`) is rejected with a status-bar warn.
+- **Small video import**: `is-importing` is brief, `is-proxy-pending` is brief, transition to ready feels seamless.
+- **Audio import**: gate clears as soon as copy completes (no proxy step).
+- **Image / subtitle**: same as audio.
+- **Project reopen with proxies on disk**: video cards are ready immediately (driven by `media.proxy_path` from summary).
+- **Project reopen after losing proxy files**: cards re-enter `is-proxy-pending` until the re-enqueued proxy job completes.
+- **Proxy job error** (simulate via fault injection or a known-bad file): card lands in `is-proxy-failed` with the warn badge; drag is blocked; status-log carries the error.
+
+Regression:
+- A fully-ready media drags onto the timeline as before; status-log shows no warn lines.
+- The existing "Copying…" cancel-import overlay still cancels imports.
 
 ## Out of scope (deferred)
 
-- MCP tool rejection — `add_video_layer`, `update_layer`, etc. accepting an importing `media_id` is not blocked here. If an external agent races the import, the current behaviour (silently succeeds, layer references the source path until copy finishes the path swap) is unchanged. Revisit if external agents actually trigger this.
-- Blocking on derivative jobs — proxy, thumbnail sprite, waveform. The renderer tolerates their absence.
-- Visual treatment for the post-import "derivatives still running" state.
+- **Manual proxy retry / regenerate** from the UI. The current path is re-import. Add later if the failure rate justifies it.
+- **MCP tool rejection** — `add_video_layer`, `update_layer`, etc. accepting a not-ready `media_id` is unchanged. External agents racing the import is rare; revisit if it shows up.
+- **Thumbnail / waveform gating** — these are decorations, not preconditions for usability.
+- **Proxy-job cancellation** UX. Currently no way to cancel an in-flight proxy job; not part of this gate.
