@@ -44,14 +44,35 @@ function readMemory(): PerfMemory | null {
 /// P99 is meaningful over the window the HUD displays.
 const INTERVAL_RING_CAP = 120;
 
-function p50p99(values: number[]): { p50: number; p99: number } {
-  if (values.length === 0) return { p50: 0, p99: 0 };
-  const sorted = values.slice().sort((a, b) => a - b);
-  const p50Idx = Math.floor(sorted.length * 0.5);
-  const p99Idx = Math.floor(sorted.length * 0.99);
+/// Circular buffer for rAF intervals. Avoids the O(n) Array.shift on
+/// every overflow tick (~7200 shifts/sec at 60 Hz with CAP=120, each
+/// re-indexing the full ring — a measurable perturbation of the very
+/// interval we're trying to measure on slower machines).
+interface IntervalRing {
+  buf: number[];
+  writeIdx: number;
+  filled: boolean;
+}
+
+function newIntervalRing(): IntervalRing {
+  return { buf: new Array<number>(INTERVAL_RING_CAP), writeIdx: 0, filled: false };
+}
+
+function pushInterval(ring: IntervalRing, value: number): void {
+  ring.buf[ring.writeIdx] = value;
+  ring.writeIdx = (ring.writeIdx + 1) % INTERVAL_RING_CAP;
+  if (ring.writeIdx === 0) ring.filled = true;
+}
+
+function p50p99FromRing(ring: IntervalRing): { p50: number; p99: number } {
+  const len = ring.filled ? INTERVAL_RING_CAP : ring.writeIdx;
+  if (len === 0) return { p50: 0, p99: 0 };
+  const sorted = ring.buf.slice(0, len).sort((a, b) => a - b);
+  const p50Idx = Math.floor(len * 0.5);
+  const p99Idx = Math.floor(len * 0.99);
   return {
-    p50: sorted[Math.min(p50Idx, sorted.length - 1)] ?? 0,
-    p99: sorted[Math.min(p99Idx, sorted.length - 1)] ?? 0,
+    p50: sorted[Math.min(p50Idx, len - 1)] ?? 0,
+    p99: sorted[Math.min(p99Idx, len - 1)] ?? 0,
   };
 }
 
@@ -74,23 +95,41 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
   // rAF interval tracking. We keep the ring + last-tick time on refs
   // so the rAF callback doesn't re-render on every frame; the HUD only
   // re-renders when the 500 ms polling tick recomputes P50/P99.
-  const intervalsRef = useRef<number[]>([]);
+  const intervalsRef = useRef<IntervalRing>(newIntervalRing());
   const lastRafMsRef = useRef<number | null>(null);
 
   useEffect(() => {
+    // Reset on every (re)mount — StrictMode double-invokes effects,
+    // and lastRafMsRef.current would otherwise survive the unmount
+    // and feed a stale prev into the first tick of the re-mount.
+    lastRafMsRef.current = null;
     let rafHandle = 0;
     const tick = (nowMs: number): void => {
       const prev = lastRafMsRef.current;
       if (prev !== null) {
-        const ring = intervalsRef.current;
-        ring.push(nowMs - prev);
-        if (ring.length > INTERVAL_RING_CAP) ring.shift();
+        pushInterval(intervalsRef.current, nowMs - prev);
       }
       lastRafMsRef.current = nowMs;
       rafHandle = requestAnimationFrame(tick);
     };
     rafHandle = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafHandle);
+  }, []);
+
+  // When the tab is hidden/blurred, WebView2 pauses rAF. On unhide,
+  // the first tick computes a multi-second interval from the
+  // pre-hide timestamp and dumps that bogus number into the P50/P99
+  // ring for the next ~120 frames, making the HUD look like preview
+  // is stuttering. Clear `lastRafMsRef` so the first tick after
+  // unhide is treated as the start of a fresh measurement.
+  useEffect(() => {
+    const onVis = (): void => {
+      if (document.visibilityState === "visible") {
+        lastRafMsRef.current = null;
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
   }, []);
 
   // 500 ms polling: read Compositor snapshot, recompute rAF percentiles,
@@ -100,7 +139,7 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
     const id = setInterval(() => {
       const c = compositorRef.current;
       if (c) setSnap(c.getPerfSnapshot());
-      const { p50, p99 } = p50p99(intervalsRef.current);
+      const { p50, p99 } = p50p99FromRing(intervalsRef.current);
       setRafP50(p50);
       setRafP99(p99);
       setMemory(readMemory());
