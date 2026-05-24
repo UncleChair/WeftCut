@@ -1100,6 +1100,7 @@ export function App({ onCloseProject }: AppProps) {
           <MediaPool
             media={summary?.media ?? []}
             importing={importingMediaIds}
+            proxyState={proxyState}
             onCancelImport={async (id) => {
               await importCancel(id).catch(() => false);
             }}
@@ -1334,10 +1335,12 @@ function ExportPanel({
 function MediaPool({
   media,
   importing,
+  proxyState,
   onCancelImport,
 }: {
   media: MediaSummary[];
-  importing: Set<string>;
+  importing: ReadonlySet<string>;
+  proxyState: ReadonlyMap<string, ProxyState>;
   onCancelImport: (mediaId: string) => Promise<void>;
 }) {
   const { t } = useTranslation();
@@ -1400,19 +1403,23 @@ function MediaPool({
       ) : (
         <ul className="media-list">
           {filtered.map((m) => {
-          const isImporting = importing.has(m.id);
-          const isMissing = !m.available && !isImporting;
-          const interactive = !isImporting && !isMissing;
-          // click-to-preview (libmpv popup) was deleted in P12-d alongside
-          // the libmpv module. Drop the clip on the timeline to preview
-          // through the Pixi compositor instead.
+          const readiness = mediaReadiness(m, importing, proxyState);
+          const interactive = readiness.ready;
+          const reason = readiness.ready ? null : readiness.reason;
           return (
             <li
               key={m.id}
-              className={`media-item${isMissing ? " is-missing" : ""}${
-                isImporting ? " is-importing" : ""
-              }`}
+              className={[
+                "media-item",
+                reason === "importing" ? "is-importing" : "",
+                reason === "missing" ? "is-missing" : "",
+                reason === "proxy_pending" ? "is-proxy-pending" : "",
+                reason === "proxy_failed" ? "is-proxy-failed" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
               draggable={interactive}
+              aria-disabled={!interactive}
               onDragStart={(e) => {
                 e.dataTransfer.setData(
                   "application/x-weftcut-media",
@@ -1425,9 +1432,18 @@ function MediaPool({
                   ? t("media_pool.drag_hint", {
                       defaultValue: "Drag onto a track to add",
                     })
-                  : isMissing
+                  : reason === "missing"
                     ? t("media_pool.missing_hint", { path: m.path })
-                    : t("media_pool.importing")
+                    : reason === "proxy_pending"
+                      ? t("media_pool.proxy_pending_hint", {
+                          defaultValue: "Preview is being prepared…",
+                        })
+                      : reason === "proxy_failed"
+                        ? t("media_pool.proxy_failed_hint", {
+                            defaultValue:
+                              "Preview could not be prepared. Re-import to retry.",
+                          })
+                        : t("media_pool.importing")
               }
             >
               <div className="media-item-thumb">
@@ -1461,7 +1477,7 @@ function MediaPool({
                     {formatBytes(m.size_bytes, t)}
                   </span>
                 </div>
-                {isImporting && (
+                {reason === "importing" && (
                   <button
                     className="media-import-cancel"
                     onClick={async (e) => {
@@ -1473,12 +1489,37 @@ function MediaPool({
                     {t("media_pool.importing")}
                   </button>
                 )}
-                {isMissing && (
+                {reason === "missing" && (
                   <span
                     className="media-missing-badge"
                     title={t("media_pool.missing_hint", { path: m.path })}
                   >
                     {t("media_pool.missing")}
+                  </span>
+                )}
+                {reason === "proxy_pending" && (
+                  <span
+                    className="media-proxy-pending-badge"
+                    title={t("media_pool.proxy_pending_hint", {
+                      defaultValue: "Preview is being prepared…",
+                    })}
+                  >
+                    {t("media_pool.proxy_pending", {
+                      defaultValue: "Preparing…",
+                    })}
+                  </span>
+                )}
+                {reason === "proxy_failed" && (
+                  <span
+                    className="media-proxy-failed-badge"
+                    title={t("media_pool.proxy_failed_hint", {
+                      defaultValue:
+                        "Preview could not be prepared. Re-import to retry.",
+                    })}
+                  >
+                    {t("media_pool.proxy_failed", {
+                      defaultValue: "Preview failed",
+                    })}
                   </span>
                 )}
               </div>
