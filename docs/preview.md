@@ -15,7 +15,7 @@ covers the preview-side surface and transport.
        ├─ PlaybackEngine     — play / pause / seek / scrub
        │    ├─ clock         — synthetic clock + Web Audio drift correction
        │    └─ AudioGraph    — Web Audio mixer
-       ├─ SourceDecoderPool  — one VideoDecoder per source media
+       ├─ SourceDecoderPool  — per-clip VideoDecoder + ring; shared Demuxer per source
        └─ LiveLayers         — per-layer Sprite instances mounted on the stage
             ├─ VideoClipSprite
             ├─ ImageOverlaySprite
