@@ -1457,38 +1457,78 @@ function LayerBlock({
     dragState.overTrackId !== null &&
     dragState.overTrackId !== trackId;
 
-  const beginDrag = (kind: DragKind, trackKind: string) =>
-    (e: React.PointerEvent) => {
-      if (e.button !== 0 || layer.locked) return;
-      e.stopPropagation();
-      // Blade-tool mode hijacks pointerdown on any layer surface
-      // (body or trim handles): the click is a cut request, not a
-      // select/drag.
-      if (bladeMode) {
-        onBladeSplit(layer, e.clientX);
-        return;
-      }
-      // `docs/group-system.md` — match click-selection semantics on
-      // pointerdown so drag and click share the same group-aware path.
-      onSelectFromClick(layer.id, {
-        altKey: e.altKey,
-        shiftKey: e.shiftKey,
-        metaKey: e.metaKey,
-      });
-      onDragStart({
-        kind,
-        layerId: layer.id,
-        trackId,
-        trackKind,
-        startX: e.clientX,
-        startY: e.clientY,
-        originalTStart: layer.t_start_us,
-        originalTEnd: layer.t_end_us,
-        deltaUs: 0,
-        overTrackId: trackId,
-        escapeGroup: e.altKey,
-      });
-    };
+  // Edge-hover trim: pointerdown within EDGE_ZONE_PX of the layer's
+  // left/right edge dispatches trim-start/trim-end; everywhere else
+  // dispatches a move. The zone clamps to a third of the chip's width
+  // so the two edges never overlap on a narrow clip.
+  const EDGE_ZONE_PX = 6;
+  const [edgeHover, setEdgeHover] = useState<"left" | "right" | null>(null);
+
+  const edgeZoneFor = (
+    clientX: number,
+    rect: DOMRect,
+  ): "left" | "right" | null => {
+    const zone = Math.min(EDGE_ZONE_PX, Math.floor(rect.width / 3));
+    if (zone <= 0) return null;
+    const rel = clientX - rect.left;
+    if (rel < zone) return "left";
+    if (rect.width - rel < zone) return "right";
+    return null;
+  };
+
+  const onPointerMoveHover = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.buttons !== 0) return; // ignore moves with a button held (drag)
+    if (layer.locked || bladeMode || isDragging) {
+      if (edgeHover !== null) setEdgeHover(null);
+      return;
+    }
+    const next = edgeZoneFor(
+      e.clientX,
+      e.currentTarget.getBoundingClientRect(),
+    );
+    if (next !== edgeHover) setEdgeHover(next);
+  };
+
+  const onPointerLeaveHover = () => {
+    if (edgeHover !== null) setEdgeHover(null);
+  };
+
+  const onLayerPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0 || layer.locked) return;
+    e.stopPropagation();
+    // Blade-tool mode hijacks every pointerdown on the layer surface:
+    // the click is a cut request, not a select/drag.
+    if (bladeMode) {
+      onBladeSplit(layer, e.clientX);
+      return;
+    }
+    const zone = edgeZoneFor(
+      e.clientX,
+      e.currentTarget.getBoundingClientRect(),
+    );
+    const kind: DragKind =
+      zone === "left" ? "trim-start" : zone === "right" ? "trim-end" : "move";
+    // `docs/group-system.md` — match click-selection semantics on
+    // pointerdown so drag and click share the same group-aware path.
+    onSelectFromClick(layer.id, {
+      altKey: e.altKey,
+      shiftKey: e.shiftKey,
+      metaKey: e.metaKey,
+    });
+    onDragStart({
+      kind,
+      layerId: layer.id,
+      trackId,
+      trackKind,
+      startX: e.clientX,
+      startY: e.clientY,
+      originalTStart: layer.t_start_us,
+      originalTEnd: layer.t_end_us,
+      deltaUs: 0,
+      overTrackId: trackId,
+      escapeGroup: e.altKey,
+    });
+  };
 
   const layerWidthPx = Math.max(width, 4);
 
@@ -1542,6 +1582,13 @@ function LayerBlock({
           : layer.enabled
             ? 1
             : 0.45,
+        // Edge-hover signals "you can trim here"; falls through to the
+        // class-driven cursor (grab / grabbing / not-allowed / blade)
+        // otherwise.
+        cursor:
+          !layer.locked && !bladeMode && !isDragging && edgeHover !== null
+            ? "ew-resize"
+            : undefined,
         ...groupStyle,
       }}
       onClick={(e) => {
@@ -1555,7 +1602,9 @@ function LayerBlock({
           metaKey: e.metaKey,
         });
       }}
-      onPointerDown={beginDrag("move", trackKind)}
+      onPointerDown={onLayerPointerDown}
+      onPointerMove={onPointerMoveHover}
+      onPointerLeave={onPointerLeaveHover}
       onContextMenu={(e) => {
         e.preventDefault();
         e.stopPropagation();
