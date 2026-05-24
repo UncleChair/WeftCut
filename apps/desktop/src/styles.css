@@ -779,6 +779,15 @@ input.preview-timecode:focus {
   user-select: none;
   color: #9ca3af;
   font-size: 10px;
+  /* `.ruler-label` is `white-space: nowrap` and positioned at `left: 3px`
+     of an abs-positioned tick — the rightmost major's label spills past
+     widthPx and inflates the parent's scrollWidth, leaving a few px of
+     phantom horizontal scroll at fit-zoom that the user can't get rid of
+     by zooming further. Same for the trailing-frame tick the
+     `TimelineRuler` deliberately renders past `totalSec` (its comment
+     already documents "visually it gets clipped by the canvas width" —
+     this rule is what actually clips it). */
+  overflow: hidden;
 }
 
 .ruler-tick {
