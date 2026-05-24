@@ -29,9 +29,9 @@ apps/desktop/src/render/
   clock.ts                   — synthetic clock + Web Audio drift correction
   PlaybackEngine.ts          — transport (play/pause/seek/scrub)
   decoder/
-    SourceDecoderPool.ts     — one VideoDecoder per source media; idle-dispose
+    SourceDecoderPool.ts     — per-clip VideoDecoder + ring; refcounted shared Demuxer per source; idle-dispose
     Demuxer.ts               — mp4box.js wrapper; produces EncodedVideoChunks
-    FrameRing.ts             — 1 s lookahead / 0.5 s lookbehind per source; stores ImageBitmap snapshots
+    FrameRing.ts             — 1 s lookahead / 0.5 s lookbehind per clip; stores ImageBitmap snapshots
     scrub.ts                 — debounced flush + seek-to-IDR + decode-forward
   sprite/
     VideoClipSprite.ts
@@ -82,10 +82,17 @@ interpolation semantics exactly).
 
 ## Decoder pool
 
-`SourceDecoderPool` keys decoders by `MediaId`. A decoder is created
-on first `requestFrameAt(mediaId, tUs)` and reused for every
-subsequent request against the same source. The pool's
-`configureWithFallback` helper handles hardware-decode failures:
+`SourceDecoderPool` is two-tiered. Decoders + frame rings are keyed
+by `layerId` (one `SourceHandle` per clip), while the underlying
+`Demuxer` and parsed sample table live on a refcounted `SourceMedia`
+keyed by `mediaId`. Multiple clips of the same source — including
+overlapping copies on different tracks — each get their own
+`VideoDecoder` / `FrameRing` but share one fetch + mp4box parse of
+the proxy.
+
+A decoder is created on first `requestFrameAt(tUs)` against its
+handle and reused for every subsequent request from that clip. The
+hardware-decode fallback path stays the same as before:
 
 - **First-frame error (output count = 0):** reset the decoder with
   `hardwareAcceleration: 'prefer-software'` and mark the handle as
@@ -94,10 +101,9 @@ subsequent request against the same source. The pool's
   decoder, emit one LogBus warning, lazy-rebuild on next
   `requestFrameAt`.
 
-Each decoder owns a `Demuxer` (mp4box.js wrapper) and a `FrameRing`
-that caches the most recent 1 s lookahead / 0.5 s lookbehind. The
-ring is what the compositor reads — decoder threads stay one step
-ahead of the playhead.
+Each handle's `FrameRing` caches the most recent 1 s lookahead /
+0.5 s lookbehind. The ring is what the compositor reads — decoder
+threads stay one step ahead of the playhead.
 
 The ring stores `ImageBitmap` snapshots, not `VideoFrame`s.
 `SourceHandle.output` runs `createImageBitmap(frame)` and closes the
@@ -111,8 +117,65 @@ frame, so the pool stays drained without snapshotting; both stores
 satisfy a shared `FrameStore` interface that returns
 `DecodedFrame = VideoFrame | ImageBitmap`. See ADR 0004.
 
-Idle decoders are disposed 5 s after the last request and recreated
-on demand.
+Idle handles are disposed 5 s after the last `requestFrameAt` and
+recreated on demand. The shared `SourceMedia` is freed only once its
+refcount falls to 0 (the last referencing handle has disposed), at
+which point the cached proxy ArrayBuffer + sample table are
+released.
+
+### Why per-clip decoders
+
+The pool used to key everything by `mediaId` — every clip of the
+same source shared one decoder + ring. That assumed "only one clip
+of a source is under the playhead at a time," which holds for
+sequential cuts on a single track but breaks the moment overlapping
+copies of one source appear on the timeline (a common A/B-roll
+move). `Compositor.setAnchorTime` fires `requestFrameAt(srcTUs_i)`
+for every clip under the playhead; with one shared ring, N
+overlapping clips of the same media wrote N conflicting anchors per
+tick, the ring evicted its own contents, and the decoder reset once
+per overlapping clip per tick — observable as a continuous
+`[weftcut/pixi] decoder reset:` log spam with no clip ever painting
+a stable frame.
+
+Per-clip decoders give each layer a stable anchor + lookahead at the
+cost of a per-clip hardware decode session, well within the 8–32
+concurrent sessions modern Windows H.264 / HEVC stacks expose.
+
+### Future optimisation: shared decoder across sequential cuts
+
+The cost the current design pays is cold-start latency at every cut.
+Blade-splitting one clip into two layers gives each half its own
+decoder, so playback crossing the cut warms a fresh decoder for the
+second half (~100–300 ms first-frame). The pre-refactor design
+happened to hide this because both halves rode one already-warm
+decoder.
+
+The optimisation is to detect "same `mediaId`, contiguous
+source-time, sequential timeline-time" pairs at acquire-time and let
+the second clip continue the first clip's `SourceHandle` across the
+cut boundary instead of constructing its own. Constraints:
+
+- Same `mediaId`.
+- `layer_b.params.src_in_us` ≈
+  `layer_a.params.src_in_us + (layer_a.t_end_us − layer_a.t_start_us)`
+  (source-time stays contiguous across the cut, within one project
+  frame).
+- `layer_b.t_start_us` ≈ `layer_a.t_end_us` (timeline-time also
+  contiguous within one project frame).
+- Neither clip reverses, skips, or rate-changes the source (i.e.
+  default `1.0×` forward playback only).
+
+When all four hold, the cut is functionally a no-op for the decoder
+and a single warm pipeline can serve both layers. When any
+constraint fails — e.g. the user deliberately overlaps two cuts of
+one source on different tracks for split-screen — the current
+per-clip path applies.
+
+v1 doesn't ship this. The "cold decoder at every cut" penalty is
+acceptable for typical timelines; revisit if cuts dominate user
+projects and the latency becomes user-visible during scrub or
+preview.
 
 ## Scrub
 

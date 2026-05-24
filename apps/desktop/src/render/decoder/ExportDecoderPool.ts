@@ -473,6 +473,14 @@ export class ExportSourceHandle implements DecoderHandle {
 export class ExportDecoderPool implements DecoderPool {
   readonly handles = new Map<string, ExportSourceHandle>();
 
+  /// Export keeps the original mediaId-keyed sharing: the Worker drives
+  /// decoding sequentially per output frame, so the preview-side anchor-
+  /// thrash failure (multiple clips of one media racing each other in
+  /// the same tick) doesn't manifest here. The `init.layerId` field is
+  /// accepted for interface symmetry with the preview pool but ignored.
+  /// (Note: same-source clips with disjoint source-time ranges in one
+  /// chunk still cost an extra GOP jump per output frame — a separate
+  /// optimisation, not a correctness issue.)
   acquire(init: SourceHandleInit): ExportSourceHandle {
     let h = this.handles.get(init.mediaId);
     if (!h) {

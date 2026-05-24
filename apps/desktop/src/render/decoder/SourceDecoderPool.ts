@@ -1,7 +1,24 @@
-// One VideoDecoder per source media (not per clip). Multiple clips
-// referencing the same MediaId share one decoder. Lazy-create on
-// first frame request; idle-dispose 5 s after the source's last clip
-// leaves the lookahead window.
+// One VideoDecoder + FrameRing per *clip* (per layerId). The shared
+// Demuxer + sample table for a given source media is hoisted into a
+// refcounted `SourceMedia` keyed by mediaId, so clips that reference
+// the same source pay the fetch + mp4box parse cost once but each get
+// their own decoder pipeline.
+//
+// Earlier design pooled VideoDecoders by mediaId on the assumption that
+// only one clip of a source was active at any tUs (the normal cut case).
+// That broke as soon as multiple clips of the same source overlapped on
+// the timeline: `Compositor.setAnchorTime` fired N conflicting
+// `requestFrameAt(srcTUs_i)` per tick into the single shared ring, the
+// anchor thrashed across disjoint source regions, and the decoder reset
+// once per overlapping clip per tick — `[weftcut/pixi] decoder reset:`
+// would flood the console and no clip ever stabilised on its own frame.
+//
+// Per-clip decoders trade memory + decode slots for correctness under
+// overlap. Modern Windows H.264/HEVC stacks allow 8–32 concurrent
+// hardware sessions, so a handful of overlapping clips is well within
+// budget. Future optimisation if it ever matters: detect "same source,
+// contiguous source-time, sequential timeline-time" pairs and share a
+// decoder for them (warm cut-to-cut). v1 doesn't need that.
 //
 // Plan: docs/pixi-renderer-plan.md (8b.2 + 8c.2 + P1; robustness in P9.5)
 
@@ -22,6 +39,12 @@ const IDLE_DISPOSE_MS = 5_000;
 const FORWARD_SEEK_RESET_THRESHOLD = 60;
 
 export interface SourceHandleInit {
+  /// Per-clip identity. The preview pool keys decoder + ring instances
+  /// by this so that overlapping clips of the same source don't share
+  /// (and thrash) a single decoder. The export pool ignores it — it
+  /// still keys its `ExportSourceHandle` by `mediaId` because the
+  /// export Worker drives decoding sequentially per output frame.
+  layerId: string;
   mediaId: string;
   /// `asset://` URL of the source's 1080p master proxy.
   proxyAssetUrl: string;
@@ -75,9 +98,65 @@ export interface DecoderPool {
   dispose(): void;
 }
 
-export class SourceHandle {
+/// Shared per-source state: the demuxer (fetched proxy + parsed sample
+/// table) plus the once-per-source `VideoTrackMeta` readiness. Every
+/// `SourceHandle` for the same mediaId points at the same `SourceMedia`,
+/// so the proxy is fetched + parsed exactly once regardless of how many
+/// overlapping clips reference it. Lifetime is refcounted by the pool —
+/// disposed when the last referencing handle goes away.
+export class SourceMedia {
   readonly mediaId: string;
   readonly demuxer: Demuxer;
+  private meta: VideoTrackMeta | null = null;
+  /// Cached in-flight `ensureReady` promise so concurrent handles share
+  /// one fetch + parse. Cleared on dispose so a re-acquire after
+  /// dispose produces a fresh open() rather than re-awaiting the stale
+  /// resolved promise (whose Demuxer is gone).
+  private readyP: Promise<VideoTrackMeta> | null = null;
+  private _disposed = false;
+
+  get disposed(): boolean {
+    return this._disposed;
+  }
+
+  constructor(mediaId: string, proxyAssetUrl: string) {
+    this.mediaId = mediaId;
+    this.demuxer = new Demuxer({ assetUrl: proxyAssetUrl });
+  }
+
+  async ensureReady(): Promise<VideoTrackMeta> {
+    if (this.meta) return this.meta;
+    if (this.readyP) return this.readyP;
+    this.readyP = (async () => {
+      const meta = await this.demuxer.open();
+      await this.demuxer.ensureSamplesLoaded();
+      const descPreview = Array.from(meta.description.slice(0, 16))
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join(" ");
+      // eslint-disable-next-line no-console
+      console.log(
+        `[weftcut/pixi] source ${this.mediaId} ready: codec=${meta.codec} ` +
+          `${meta.codedWidth}x${meta.codedHeight} samples=${meta.nbSamples} ` +
+          `desc[0..16]=${descPreview} (total ${meta.description.byteLength}B)`,
+      );
+      this.meta = meta;
+      return meta;
+    })();
+    return this.readyP;
+  }
+
+  dispose(): void {
+    if (this._disposed) return;
+    this._disposed = true;
+    this.demuxer.dispose();
+    this.meta = null;
+    this.readyP = null;
+  }
+}
+
+export class SourceHandle {
+  readonly layerId: string;
+  readonly media: SourceMedia;
   readonly ring: FrameRing;
   private decoder: VideoDecoder | null = null;
   private meta: VideoTrackMeta | null = null;
@@ -126,10 +205,24 @@ export class SourceHandle {
     return this._disposed;
   }
 
-  constructor(init: SourceHandleInit) {
-    this.mediaId = init.mediaId;
-    this.demuxer = new Demuxer({ assetUrl: init.proxyAssetUrl });
+  /// MediaId mirrors `this.media.mediaId`; kept on the handle for the
+  /// `DecoderHandle` interface (and for log lines that want to identify
+  /// the source rather than the per-layer decoder instance).
+  get mediaId(): string {
+    return this.media.mediaId;
+  }
+
+  constructor(layerId: string, media: SourceMedia) {
+    this.layerId = layerId;
+    this.media = media;
     this.ring = new FrameRing();
+  }
+
+  /// Shorthand for `this.media.demuxer`. The pump code below reads
+  /// samples through this — every handle for the same media reads
+  /// the same sample table.
+  private get demuxer(): Demuxer {
+    return this.media.demuxer;
   }
 
   /// Subscribe to "first frame decoded" notification. Fires exactly
@@ -143,8 +236,11 @@ export class SourceHandle {
     this.onFirstFrameCb = cb;
   }
 
-  /// Initialize the decoder + open the demuxer. Idempotent across
-  /// concurrent callers.
+  /// Build this handle's decoder + wait on the shared media's demux
+  /// readiness. Idempotent across concurrent callers; the heavy fetch
+  /// + parse work lives on the shared `SourceMedia` so additional
+  /// handles for the same source only pay the per-handle VideoDecoder
+  /// construction.
   async ensureReady(): Promise<VideoTrackMeta> {
     if (this.meta) return this.meta;
     if (this.readyP) return this.readyP;
@@ -153,17 +249,7 @@ export class SourceHandle {
   }
 
   private async _doEnsureReady(): Promise<VideoTrackMeta> {
-    const meta = await this.demuxer.open();
-    await this.demuxer.ensureSamplesLoaded();
-    const descPreview = Array.from(meta.description.slice(0, 16))
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join(" ");
-    // eslint-disable-next-line no-console
-    console.log(
-      `[weftcut/pixi] source ${this.mediaId} ready: codec=${meta.codec} ` +
-        `${meta.codedWidth}x${meta.codedHeight} samples=${meta.nbSamples} ` +
-        `desc[0..16]=${descPreview} (total ${meta.description.byteLength}B)`,
-    );
+    const meta = await this.media.ensureReady();
     // Capture the decoder identity so that stale error callbacks from
     // a decoder we've since replaced (via inactivity-rebuild) bail
     // before re-firing the recovery path. Chrome can deliver multiple
@@ -207,7 +293,7 @@ export class SourceHandle {
               this.firedFirstFrame = true;
               // eslint-disable-next-line no-console
               console.log(
-                `[weftcut/pixi] source ${this.mediaId} first frame decoded`,
+                `[weftcut/pixi] layer ${this.layerId} (source ${this.mediaId}) first frame decoded`,
               );
               this.onFirstFrameCb?.();
               this.onFirstFrameCb = null;
@@ -594,7 +680,10 @@ export class SourceHandle {
       this.decoder = null;
     }
     this.ring.dispose();
-    this.demuxer.dispose();
+    // Demuxer lives on the shared `SourceMedia`; the pool releases it
+    // (refcounted) when the last handle on this mediaId goes away. We
+    // intentionally don't touch `this.media` here — other handles for
+    // the same source may still be reading it.
     this.meta = null;
     this.readyP = null;
     this.onFirstFrameCb = null;
@@ -604,29 +693,44 @@ export class SourceHandle {
   }
 }
 
+interface MediaEntry {
+  media: SourceMedia;
+  /// Number of live `SourceHandle`s currently referencing this media.
+  /// Incremented on acquire, decremented when a handle is released
+  /// (explicit release, idle sweep, or pool dispose). Media is freed
+  /// at 0.
+  refCount: number;
+}
+
 /// Process-wide pool. One instance lives in the Compositor.
+///
+/// Two-tier keying: `handles` are per-layer (each clip gets its own
+/// `VideoDecoder` + `FrameRing`), while `medias` are per-mediaId and
+/// refcounted (so the demuxer + sample table is shared across every
+/// handle referencing the same source proxy).
 export class SourceDecoderPool {
   private handles = new Map<string, SourceHandle>();
+  private medias = new Map<string, MediaEntry>();
   private sweepTimer: ReturnType<typeof setInterval> | null = null;
 
-  /// Acquire (or create) a handle for `mediaId`. The handle is
-  /// initialized lazily by the first `await ensureReady()` call.
+  /// Acquire (or create) a handle for `layerId`. Multiple layers may
+  /// share the same `mediaId`; each gets a distinct handle (decoder +
+  /// ring) but references a refcounted shared `SourceMedia`. The handle
+  /// is initialised lazily by the first `await ensureReady()` call.
   acquire(init: SourceHandleInit): SourceHandle {
-    let h = this.handles.get(init.mediaId);
-    if (!h) {
-      h = new SourceHandle(init);
-      this.handles.set(init.mediaId, h);
-      this.startSweeperIfNeeded();
-    }
+    const existing = this.handles.get(init.layerId);
+    if (existing) return existing;
+    const media = this.acquireMedia(init.mediaId, init.proxyAssetUrl);
+    const h = new SourceHandle(init.layerId, media);
+    this.handles.set(init.layerId, h);
+    this.startSweeperIfNeeded();
     return h;
   }
 
-  /// Drop the handle for `mediaId` if present.
-  release(mediaId: string): void {
-    const h = this.handles.get(mediaId);
-    if (!h) return;
-    h.dispose();
-    this.handles.delete(mediaId);
+  /// Drop the handle for `layerId` if present. The handle's referenced
+  /// `SourceMedia` is freed only when its refcount falls to 0.
+  release(layerId: string): void {
+    this.releaseHandle(layerId);
   }
 
   dispose(): void {
@@ -636,18 +740,54 @@ export class SourceDecoderPool {
     }
     for (const h of this.handles.values()) h.dispose();
     this.handles.clear();
+    for (const e of this.medias.values()) e.media.dispose();
+    this.medias.clear();
+  }
+
+  /// Get-or-create a shared `SourceMedia` for `mediaId` and bump its
+  /// refcount. The pool owns lifetime; callers (handles) hold a borrow.
+  private acquireMedia(mediaId: string, proxyAssetUrl: string): SourceMedia {
+    let entry = this.medias.get(mediaId);
+    if (!entry) {
+      entry = { media: new SourceMedia(mediaId, proxyAssetUrl), refCount: 0 };
+      this.medias.set(mediaId, entry);
+    }
+    entry.refCount += 1;
+    return entry.media;
+  }
+
+  /// Dispose the handle for `layerId` (if present) and drop the
+  /// matching media-refcount. When the refcount hits 0 the shared
+  /// `SourceMedia` is disposed and removed from the pool, releasing
+  /// the cached proxy ArrayBuffer + sample table.
+  private releaseHandle(layerId: string): void {
+    const h = this.handles.get(layerId);
+    if (!h) return;
+    const mediaId = h.mediaId;
+    h.dispose();
+    this.handles.delete(layerId);
+
+    const entry = this.medias.get(mediaId);
+    if (!entry) return;
+    entry.refCount -= 1;
+    if (entry.refCount <= 0) {
+      entry.media.dispose();
+      this.medias.delete(mediaId);
+    }
   }
 
   private startSweeperIfNeeded(): void {
     if (this.sweepTimer !== null) return;
     this.sweepTimer = setInterval(() => {
       const now = performance.now();
-      for (const [mediaId, h] of this.handles) {
-        if (h.isIdle(now)) {
-          h.dispose();
-          this.handles.delete(mediaId);
-        }
+      // Collect first so `releaseHandle` can safely mutate the map.
+      // Collecting plain layerIds avoids the `delete-during-iteration`
+      // hazard the previous in-loop `handles.delete(mediaId)` had.
+      const idle: string[] = [];
+      for (const [layerId, h] of this.handles) {
+        if (h.isIdle(now)) idle.push(layerId);
       }
+      for (const layerId of idle) this.releaseHandle(layerId);
       if (this.handles.size === 0 && this.sweepTimer !== null) {
         clearInterval(this.sweepTimer);
         this.sweepTimer = null;

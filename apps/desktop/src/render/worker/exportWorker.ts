@@ -188,6 +188,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
         const proxyUrl = req.project.proxyAssetUrls[c.mediaId];
         if (!proxyUrl) return;
         const handle = exportPool.acquire({
+          layerId: c.layerId,
           mediaId: c.mediaId,
           proxyAssetUrl: proxyUrl,
         });

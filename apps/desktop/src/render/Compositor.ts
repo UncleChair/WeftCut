@@ -554,13 +554,12 @@ export class Compositor {
       // clip that's ever been active (it's only pruned in `setProject`
       // when a layer is deleted); without this filter every accumulated
       // entry would fire `requestFrameAt` on each tick with srcTUs
-      // computed from a clip not under the playhead. When N clips share
-      // one media_id, the shared `SourceHandle` then receives N
-      // conflicting srcTUs per tick — the ring anchor jumps chaotically,
-      // each call retriggers `decoder.reset() + configure()`, and the
-      // sustained reconfigure churn eventually drives WebCodecs into
-      // the async "Unsupported configuration" rejection that closes
-      // the codec for good.
+      // computed from a clip not under the playhead, churning the
+      // decoder + ring with anchors for time-regions the user isn't
+      // viewing. With per-layer decoders (each clip owns its own
+      // SourceHandle / VideoDecoder / FrameRing) the "N clips of one
+      // mediaId fight over one decoder" failure mode is gone, but
+      // wasting work on out-of-window clips is still pointless.
       if (tUsSnapped < layer.t_start_us || tUsSnapped >= layer.t_end_us) continue;
       // Stale handle (pool reclaimed during idle): skip this tick.
       // The next `compositeFrame` runs immediately after this and its
@@ -639,7 +638,11 @@ export class Compositor {
       console.warn(`[weftcut/pixi] no proxy URL for media ${mediaId} (clip ${layer.id})`);
       return null;
     }
-    const source = this.pool.acquire({ mediaId, proxyAssetUrl: proxyUrl });
+    const source = this.pool.acquire({
+      layerId: layer.id,
+      mediaId,
+      proxyAssetUrl: proxyUrl,
+    });
     // Subscribe to the first-frame notification BEFORE kicking off
     // ensureReady so we don't miss the synchronous-fire case if the
     // source happened to be pre-warmed by another clip referencing
