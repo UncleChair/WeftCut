@@ -119,6 +119,33 @@ describe("FrameRing.frameAt", () => {
   });
 });
 
+describe("FrameRing.push", () => {
+  it("keeps order with monotonic PTS (proxy v4 / no B-frames)", () => {
+    // Fast path: every push has PTS strictly greater than the tail.
+    // The implementation skips the sort entirely; the assertion is
+    // that order is still correct, which proves no behavior change.
+    const r = new FrameRing();
+    pushFrames(r, 60, 16667);
+    expect(ptsOf(r.frameAt(0))).toBe(0);
+    expect(ptsOf(r.frameAt(16667 * 29))).toBe(16667 * 29);
+    expect(ptsOf(r.frameAt(16667 * 59))).toBe(16667 * 59);
+  });
+
+  it("still sorts out-of-order pushes (B-frame / async-bitmap races)", () => {
+    // Slow path: push frame 2 before frame 1 (mimics async
+    // `createImageBitmap` resolves landing out of order). The
+    // safety-net sort must still kick in so `frameAt` returns the
+    // correct frame.
+    const r = new FrameRing();
+    r.push(makeBitmap(0), 0, 16667);
+    r.push(makeBitmap(2 * 16667), 2 * 16667, 16667);
+    r.push(makeBitmap(1 * 16667), 1 * 16667, 16667);
+    expect(ptsOf(r.frameAt(0))).toBe(0);
+    expect(ptsOf(r.frameAt(1 * 16667))).toBe(1 * 16667);
+    expect(ptsOf(r.frameAt(2 * 16667))).toBe(2 * 16667);
+  });
+});
+
 describe("FrameRing.containsPts", () => {
   it("returns true for PTS inside any entry's interval", () => {
     const ring = new FrameRing();

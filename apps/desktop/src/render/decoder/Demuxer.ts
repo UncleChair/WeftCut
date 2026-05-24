@@ -76,6 +76,13 @@ export class Demuxer {
   private trackMeta: VideoTrackMeta | null = null;
   private disposed = false;
   private streamingStarted = false;
+  /// The whole fetched proxy file, kept alive so per-sample `data`
+  /// views into it (`new Uint8Array(buffer, offset, size)`) stay
+  /// valid. Without this reference we had to `new Uint8Array(s.data)`
+  /// copy every sample's NAL bytes, doubling heap residency for the
+  /// proxy. For a 30-minute 1080p CRF22 proxy that's ~500 MB saved.
+  /// Released only on `dispose()`.
+  private proxyBuffer: ArrayBuffer | null = null;
 
   constructor(init: DemuxerInit) {
     this.assetUrl = init.assetUrl;
@@ -120,15 +127,31 @@ export class Demuxer {
       };
 
       this.file.onSamples = (_id: number, _user: unknown, batch: Sample[]) => {
+        const buf = this.proxyBuffer;
         for (const s of batch) {
-          const data = s.data ?? new Uint8Array(0);
+          // Prefer a zero-copy view into the shared proxy buffer. The
+          // raw NAL bytes for sample N sit at `[s.offset, s.offset+s.size)`
+          // in the source file; since `streamFile` appends with
+          // `fileStart=0`, file offset = buffer offset. Falls back to
+          // the (defensive) copy path only if the offsets don't fit
+          // the buffer — that shouldn't happen for a fully-fetched
+          // proxy, but if mp4box's box parser ever changed how it
+          // reports offsets we'd rather emit safe (slower) bytes than
+          // throw mid-render.
+          let data: Uint8Array;
+          if (buf && s.offset + s.size <= buf.byteLength) {
+            data = new Uint8Array(buf, s.offset, s.size);
+          } else {
+            const src = s.data ?? new Uint8Array(0);
+            data = new Uint8Array(src);
+          }
           this.samples.push({
             index: s.number,
             ptsUs: Math.round((s.cts / s.timescale) * 1e6),
             dtsUs: Math.round((s.dts / s.timescale) * 1e6),
             durationUs: Math.round((s.duration / s.timescale) * 1e6),
             keyframe: s.is_sync,
-            data: new Uint8Array(data),
+            data,
           });
         }
         if (this.trackMeta && this.samples.length >= this.trackMeta.nbSamples) {
@@ -199,6 +222,12 @@ export class Demuxer {
       // ignore
     }
     this.samples = [];
+    // Release the proxy ArrayBuffer last — sample `data` views
+    // pointed into it, so dropping their owning entries first is
+    // required (above) before this reference can be cleared. The
+    // VideoDecoder side already closes any in-flight chunks during
+    // its own teardown.
+    this.proxyBuffer = null;
   }
 
   // ============================================================
@@ -211,6 +240,11 @@ export class Demuxer {
       throw new Error(`Demuxer: fetch ${this.assetUrl} → ${res.status}`);
     }
     const buf = await res.arrayBuffer();
+    // Stash BEFORE the synchronous `appendBuffer` / `flush` below —
+    // mp4box drives `onReady` and `onSamples` synchronously during
+    // those calls, and `onSamples` reads `this.proxyBuffer` to build
+    // zero-copy NAL views into it.
+    this.proxyBuffer = buf;
     // mp4box 2.x requires MP4BoxBuffer (ArrayBuffer subclass with a
     // `fileStart` field).
     const mp4buf = MP4BoxBuffer.fromArrayBuffer(buf, 0);

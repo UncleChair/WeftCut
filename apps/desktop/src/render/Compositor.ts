@@ -116,6 +116,12 @@ export class Compositor {
   /// accel preferences.
   private mode: "preview" | "export";
   private projectSummary: ProjectSummary | null = null;
+  /// O(1) layer lookup by id. Rebuilt in `setProject` whenever the
+  /// project snapshot changes; read on every tick by `findLayer`.
+  /// Without this map, `findLayer` is O(layers) and gets called once
+  /// per active clip per tick from both `setAnchorTime` and
+  /// `compositeFrame` — quadratic per frame for long timelines.
+  private layerById = new Map<string, LayerSummary>();
   private proxyAssetUrl: (mediaId: string) => string | null;
   private originalAssetUrl: (mediaId: string) => string | null;
   private mediaById: (mediaId: string) => MediaSummary | undefined;
@@ -249,6 +255,7 @@ export class Compositor {
   /// `compositeFrame()` if active.
   setProject(summary: ProjectSummary | null): void {
     this.projectSummary = summary;
+    this.layerById.clear();
     if (!summary) {
       for (const c of this.clips.values()) c.sprite.dispose();
       this.clips.clear();
@@ -265,7 +272,10 @@ export class Compositor {
     }
     const livingLayerIds = new Set<string>();
     for (const t of summary.tracks) {
-      for (const l of t.layers) livingLayerIds.add(l.id);
+      for (const l of t.layers) {
+        livingLayerIds.add(l.id);
+        this.layerById.set(l.id, l);
+      }
     }
     for (const [layerId, c] of this.clips) {
       if (!livingLayerIds.has(layerId)) {
@@ -608,13 +618,7 @@ export class Compositor {
   // ============================================================
 
   private findLayer(layerId: string): LayerSummary | undefined {
-    if (!this.projectSummary) return undefined;
-    for (const t of this.projectSummary.tracks) {
-      for (const l of t.layers) {
-        if (l.id === layerId) return l;
-      }
-    }
-    return undefined;
+    return this.layerById.get(layerId);
   }
 
   private ensureClip(layer: LayerSummary): ActiveClip | null {

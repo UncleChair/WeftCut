@@ -89,12 +89,20 @@ export class FrameRing {
       bitmap.close();
       return;
     }
+    // Fast path: append in order. Proxy v4 disables B-frames
+    // (`-bf 0`, see proxy.rs) so the decoder emits frames in PTS
+    // order; the async `createImageBitmap` step is sequenced via
+    // microtasks per output, so consecutive resolves preserve order
+    // in practice too. When the new entry's PTS is >= the current
+    // tail, the array stays sorted by construction and we skip the
+    // O(n log n) sort entirely. Only out-of-order arrivals (B-frame
+    // sources, async-bitmap races on closely-spaced frames) hit the
+    // safety-net sort.
+    const prevLast = this.entries[this.entries.length - 1];
     this.entries.push({ ptsUs, durationUs, bitmap });
-    // Keep sorted by PTS. Decoder output is usually in display order
-    // but B-frames can cause minor reordering on some encoders, and
-    // the async `createImageBitmap` step in the producer can complete
-    // out-of-order across closely-spaced frames.
-    this.entries.sort((a, b) => a.ptsUs - b.ptsUs);
+    if (prevLast && prevLast.ptsUs > ptsUs) {
+      this.entries.sort((a, b) => a.ptsUs - b.ptsUs);
+    }
   }
 
   /// Look up the frame to display at `tUs`. Returns a borrowed
