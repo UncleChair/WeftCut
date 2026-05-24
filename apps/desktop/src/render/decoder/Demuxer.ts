@@ -35,7 +35,6 @@ import {
   MP4BoxBuffer,
   type ISOFile,
   type Movie,
-  type Sample,
   type Track,
 } from "mp4box";
 
@@ -152,6 +151,11 @@ export class Demuxer {
   /// `onReady` so `finalizeIndex` can call `releaseUsedSamples` even
   /// after `trackMeta` could in principle be cleared.
   private trackIdForExtraction = 0;
+  /// Set inside `onReady` so the prefix-fetch loop can stop once
+  /// moov has been parsed. We only need moov to drive preview — the
+  /// sample table is fully there; mdat is never touched at warmup
+  /// time, only via Range fetches on demand.
+  private readyFired = false;
 
   constructor(init: DemuxerInit) {
     this.assetUrl = init.assetUrl;
@@ -184,8 +188,15 @@ export class Demuxer {
           };
           this.trackMeta = meta;
           this.trackIdForExtraction = videoTrack.id;
-          this.file!.setExtractionOptions(videoTrack.id, null, { nbSamples: 100 });
-          this.file!.start();
+          this.readyFired = true;
+          // Intentionally NOT calling setExtractionOptions / start —
+          // those configure mp4box to emit sample bytes via onSamples,
+          // which requires us to feed it the full mdat. We only need
+          // sample metadata (PTS/DTS/duration/offset/size/keyframe)
+          // which is fully present in moov; `getTrackSamplesInfo`
+          // returns it without touching mdat. The prefix-fetch loop
+          // in streamFile reads `readyFired` to break out as soon as
+          // moov is parsed.
           resolve(meta);
         } catch (err) {
           reject(err as Error);
@@ -196,37 +207,9 @@ export class Demuxer {
         reject(new Error(`Demuxer: mp4box error: ${message}`));
       };
 
-      this.file!.onSamples = (_id: number, _user: unknown, batch: Sample[]) => {
-        // We only need (offset, size) plus timestamps — the raw NAL
-        // bytes (`s.data`) live in mp4box's `MultiBufferStream` and
-        // will be released wholesale when we drop the `file` ref in
-        // `finalizeIndex()`. Range-fetching on demand is how the pump
-        // gets bytes after that point.
-        for (const s of batch) {
-          this.samples.push({
-            index: s.number,
-            ptsUs: Math.round((s.cts / s.timescale) * 1e6),
-            dtsUs: Math.round((s.dts / s.timescale) * 1e6),
-            durationUs: Math.round((s.duration / s.timescale) * 1e6),
-            keyframe: s.is_sync,
-            byteOffset: s.offset,
-            byteSize: s.size,
-          });
-        }
-        if (this.trackMeta && this.samples.length >= this.trackMeta.nbSamples) {
-          this.samples.sort((a, b) => a.index - b.index);
-          // Build the block index synchronously so anyone awaiting
-          // `ensureSamplesLoaded()` sees a usable demuxer immediately.
-          // Defer the mp4box buffer-chain teardown to a microtask
-          // because we're still inside mp4box's own onSamples
-          // callstack — mutating `this.file` (releaseUsedSamples /
-          // stop / null) from inside its iteration is asking for
-          // trouble.
-          this.buildBlockIndex();
-          this.allSamplesResolve();
-          queueMicrotask(() => this.releaseMp4box());
-        }
-      };
+      // No `onSamples` handler — we extract sample metadata via
+      // `getTrackSamplesInfo` after moov is parsed, so mp4box never
+      // needs to deliver mdat-derived sample bytes. See streamFile.
     });
   }
 
@@ -353,52 +336,109 @@ export class Demuxer {
   // private
   // ============================================================
 
-  /// Stream the proxy into mp4box, chunk by chunk. We never construct
-  /// a single ArrayBuffer the size of the whole file in our scope —
-  /// each ~16–64 KB stream chunk is wrapped in an MP4BoxBuffer with
-  /// the right `fileStart` offset and forwarded into mp4box. mp4box's
-  /// `MultiBufferStream` concatenates them internally for parsing.
-  /// When we drop the file ref in `finalizeIndex()`, those internals
-  /// GC together.
+  /// Fetch ONLY enough of the proxy to parse moov, then extract the
+  /// sample table and stop. Preview never needs mdat at warmup time —
+  /// per-block byte fetches handle that on demand.
+  ///
+  /// Why this matters: Tauri's asset handler delivers an unbounded
+  /// `fetch(url)` response by buffering the entire file into the
+  /// WebView2 response body BEFORE exposing it via `getReader()`.
+  /// For a 700 MB proxy that pinned ~700 MB in the network layer +
+  /// ~700 MB in mp4box's `MultiBufferStream` = the ~1.6 GB warmup
+  /// peak the user observed. A bounded Range request keeps both
+  /// down to moov size (~1–2 MB for a 24-min H.264 proxy).
+  ///
+  /// `-movflags +faststart` (proxy.rs v4) guarantees moov is at the
+  /// front, so a small prefix suffices. We grow the window if mp4box
+  /// hasn't fired `onReady` after the first request — bounded so a
+  /// pathological proxy without moov-at-front can't pull the whole
+  /// file in.
   private async streamFile(): Promise<void> {
-    const res = await fetch(this.assetUrl, { signal: this.abortController.signal });
-    if (!res.ok) {
-      throw new Error(`Demuxer: fetch ${this.assetUrl} → ${res.status}`);
-    }
-    if (!res.body) {
-      // Some implementations don't expose `body` (older WebView2
-      // builds) — fall back to the one-shot load. Marginally more
-      // heap during init; same end state once `finalizeIndex` drops
-      // the file ref.
-      const buf = await res.arrayBuffer();
-      this.feedMp4box(buf, 0, true);
-      return;
-    }
-    const reader = res.body.getReader();
+    const INITIAL_PREFIX = 8 * 1024 * 1024;
+    const MAX_PREFIX = 32 * 1024 * 1024;
+
     let fileOffset = 0;
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      if (this.disposed) {
-        await reader.cancel();
-        return;
+    let prefixSize = INITIAL_PREFIX;
+
+    while (!this.readyFired) {
+      if (this.disposed) return;
+      const rangeStart = fileOffset;
+      const rangeEnd = fileOffset + prefixSize - 1;
+      const res = await fetch(this.assetUrl, {
+        headers: { Range: `bytes=${rangeStart}-${rangeEnd}` },
+        signal: this.abortController.signal,
+      });
+      if (res.status === 200) {
+        // Asset handler ignored Range and returned the whole file.
+        // Defeats the purpose — but degrade gracefully: feed the
+        // whole thing and let onReady fire from somewhere inside.
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[weftcut/pixi] moov prefix: asset handler returned 200 (full file) ` +
+            `for ${this.assetUrl} — warmup heap will be high.`,
+        );
+        const buf = await res.arrayBuffer();
+        this.feedMp4box(buf, 0, true);
+        break;
       }
-      // `value.buffer` may be a shared underlying buffer the stream
-      // reader recycles. Slice into a fresh ArrayBuffer so mp4box's
-      // long-lived references to this chunk stay valid until we
-      // drop the file ref.
-      const own = value.buffer.slice(
-        value.byteOffset,
-        value.byteOffset + value.byteLength,
-      );
-      this.feedMp4box(own, fileOffset, false);
-      fileOffset += value.byteLength;
+      if (!res.ok && res.status !== 206) {
+        throw new Error(
+          `Demuxer: moov prefix fetch ${rangeStart}-${rangeEnd}: status ${res.status}`,
+        );
+      }
+      const buf = await res.arrayBuffer();
+      this.feedMp4box(buf, fileOffset, false);
+      fileOffset += buf.byteLength;
+
+      // Server returned fewer bytes than asked for → we're at EOF.
+      const atEof = buf.byteLength < prefixSize;
+      if (this.readyFired) break;
+      if (atEof) {
+        // Whole file consumed and onReady never fired. Force-flush
+        // and surface the error; the user will see a console message
+        // and the preview will stay blank.
+        this.feedMp4box(new ArrayBuffer(0), fileOffset, true);
+        throw new Error(
+          `Demuxer: parsed entire file (${fileOffset} B) without onReady — moov not found at front?`,
+        );
+      }
+      if (fileOffset >= MAX_PREFIX) {
+        throw new Error(
+          `Demuxer: moov not in first ${MAX_PREFIX} bytes of ${this.assetUrl}`,
+        );
+      }
+      // Double the per-request window each round to recover quickly
+      // if the first estimate was too small (almost never; INITIAL is
+      // 8 MB and moov is typically <2 MB).
+      prefixSize = Math.min(prefixSize * 2, MAX_PREFIX - fileOffset);
     }
-    // Trailing zero-length appendBuffer with `last=true` is mp4box's
-    // signal to finish processing. Without it, the last partial box
-    // is left unparsed.
-    this.feedMp4box(new ArrayBuffer(0), fileOffset, true);
-    this.file?.flush();
+
+    if (this.disposed) return;
+    // moov is parsed → extract sample metadata from mp4box's tables
+    // (no mdat needed). Synchronous, fast — typical proxy has tens
+    // of thousands of samples, well below the cost of one rAF.
+    this.extractSamplesFromMetadata();
+    this.allSamplesResolve();
+    queueMicrotask(() => this.releaseMp4box());
+  }
+
+  /// Pull every sample's metadata out of the parsed moov tables.
+  /// Mirrors what the old `onSamples` extraction collected, minus
+  /// the per-sample `data` views (which would have required mdat).
+  private extractSamplesFromMetadata(): void {
+    if (!this.file || !this.trackMeta) return;
+    const raw = this.file.getTrackSamplesInfo(this.trackMeta.trackId);
+    this.samples = raw.map((s) => ({
+      index: s.number,
+      ptsUs: Math.round((s.cts / s.timescale) * 1e6),
+      dtsUs: Math.round((s.dts / s.timescale) * 1e6),
+      durationUs: Math.round((s.duration / s.timescale) * 1e6),
+      keyframe: s.is_sync,
+      byteOffset: s.offset,
+      byteSize: s.size,
+    }));
+    this.samples.sort((a, b) => a.index - b.index);
+    this.buildBlockIndex();
   }
 
   /// Wraps the appendBuffer + fileStart bookkeeping. Guarded against
