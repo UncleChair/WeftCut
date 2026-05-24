@@ -21,6 +21,8 @@ import {
   importCancel,
   importMedia,
   importQueueList,
+  MEDIA_JOB_EVENTS,
+  type MediaJobEvent,
   ping,
   projectRedo,
   projectSave,
@@ -39,6 +41,7 @@ import { ConnectAgentPanel } from "./connect/ConnectAgentPanel";
 import { SettingsPanel } from "./settings/SettingsPanel";
 import { TemplatePicker } from "./templates/TemplatePicker";
 import { MediaThumbnail } from "./panels/MediaThumbnail";
+import { mediaReadiness, type ProxyState } from "./panels/mediaReadiness";
 import {
   PreviewSurface,
   type PreviewSurfaceHandle,
@@ -147,6 +150,16 @@ export function App({ onCloseProject }: AppProps) {
     }
     return set;
   }, [importQueue]);
+  // Per-video proxy lifecycle for the current session. Filled by the
+  // `media:job_*` listener below (kind === "proxy") and consulted by
+  // `mediaReadiness` to decide whether a video clip is usable on the
+  // timeline. `MediaSummary.proxy_path` from the next summary refresh is
+  // the durable source of truth; this map is the fast, session-scoped
+  // reflection so the UI flips the moment the event fires instead of
+  // waiting on the project:changed round-trip.
+  const [proxyState, setProxyState] = useState<Map<string, ProxyState>>(
+    () => new Map(),
+  );
   const timecodeInputRef = useRef<HTMLInputElement | null>(null);
 
   // Centralised playhead clamp — Q5 of the frame-anchor playhead spec.
@@ -384,6 +397,55 @@ export function App({ onCloseProject }: AppProps) {
     return () => {
       cancelled = true;
       if (unlisten) unlisten();
+    };
+  }, []);
+
+  // Per-media derivative-job tracking — `kind === "proxy"` only. We do
+  // NOT gate the UI on thumbnails / waveform; those are decorations.
+  // The listener owns transitions started → pending, complete → ready,
+  // error → failed. `MediaSummary.proxy_path` from the next summary
+  // refresh is the durable source of truth; this map is the fast,
+  // session-scoped reflection so the UI flips the moment the event
+  // fires instead of waiting on the project:changed round-trip.
+  useEffect(() => {
+    let unlisteners: Array<() => void> = [];
+    let cancelled = false;
+    (async () => {
+      const set = (id: string, s: ProxyState) =>
+        setProxyState((prev) => {
+          const next = new Map(prev);
+          next.set(id, s);
+          return next;
+        });
+      const onStarted = await listen<MediaJobEvent>(
+        MEDIA_JOB_EVENTS.started,
+        (e) => {
+          if (e.payload.kind === "proxy") set(e.payload.media_id, "pending");
+        },
+      );
+      const onComplete = await listen<MediaJobEvent>(
+        MEDIA_JOB_EVENTS.complete,
+        (e) => {
+          if (e.payload.kind === "proxy") set(e.payload.media_id, "ready");
+        },
+      );
+      const onError = await listen<MediaJobEvent>(
+        MEDIA_JOB_EVENTS.error,
+        (e) => {
+          if (e.payload.kind === "proxy") set(e.payload.media_id, "failed");
+        },
+      );
+      if (cancelled) {
+        onStarted();
+        onComplete();
+        onError();
+        return;
+      }
+      unlisteners = [onStarted, onComplete, onError];
+    })();
+    return () => {
+      cancelled = true;
+      for (const u of unlisteners) u();
     };
   }, []);
 
