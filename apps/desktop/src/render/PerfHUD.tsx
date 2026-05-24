@@ -188,7 +188,11 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
         background: "rgba(0,0,0,0.72)",
         borderRadius: 4,
         pointerEvents: "auto",
-        zIndex: 50,
+        // Sits above the Pixi canvas + status pill, but BELOW page
+        // chrome popovers / dropdowns / modals (which use z-index 50+
+        // in styles.css). Without this the dev HUD covered the
+        // Settings popup and similar.
+        zIndex: 1,
         minWidth: 220,
         lineHeight: 1.35,
         userSelect: "none",
