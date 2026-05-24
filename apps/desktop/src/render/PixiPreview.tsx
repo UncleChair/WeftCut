@@ -27,6 +27,7 @@ import type { Application } from "pixi.js";
 import { playbackPathFor, useProjectStore } from "../state/projectStore";
 import type { MediaSummary } from "../ipc";
 import { Compositor } from "./Compositor";
+import { PerfHUD } from "./PerfHUD";
 import { PlaybackEngine } from "./PlaybackEngine";
 import type { PixiExportResult, PixiPreviewHandle } from "./pixiPreviewFlag";
 import { runExport } from "./worker/runExport";
@@ -226,6 +227,9 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         >
           {status}
         </div>
+      )}
+      {import.meta.env.DEV && (
+        <PerfHUD compositorRef={compositorRef} engineRef={engineRef} />
       )}
     </div>
   );

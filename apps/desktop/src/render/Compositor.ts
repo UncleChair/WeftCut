@@ -24,6 +24,26 @@ import { TemplateSprite } from "./sprite/TemplateSprite";
 import { TextSprite } from "./sprite/TextSprite";
 import { VideoClipSprite } from "./sprite/VideoClipSprite";
 
+/// Plain-numbers diagnostic snapshot for the dev `PerfHUD`. All fields
+/// are safe to ship to a React state hook every 500ms; no live decoder
+/// or sprite references leak out.
+export interface CompositorPerfSnapshot {
+  /// Most recent `compositeFrame` body duration in ms.
+  compositeMsLast: number;
+  /// Running peak since the last `resetPerfPeaks()`.
+  compositeMsMax: number;
+  clips: Array<{
+    layerId: string;
+    mediaId: string;
+    /// `VideoDecoder.decodeQueueSize` at sample time.
+    decodeQueueSize: number;
+    /// Number of frames currently cached in the per-clip ring.
+    ringSize: number;
+    /// PTS of the ring's latest frame; null if the ring is empty.
+    ringLastPtsUs: number | null;
+  }>;
+}
+
 export interface CompositorInit {
   /// Pre-initialized PIXI Application. The Compositor adds its stage
   /// `Container` to `app.stage` and reads `app.renderer`. Lifecycle of
@@ -169,6 +189,12 @@ export class Compositor {
   /// instead of `Math.floor(tUs / this.frameDurUs) * this.frameDurUs`.
   private fpsNum = 30;
   private fpsDen = 1;
+  /// Diagnostic counters for the dev `PerfHUD`. `compositeMsLast` is
+  /// the most recent `compositeFrame` duration; `compositeMsMax` is
+  /// the running max since last `resetPerfPeaks()`. Updated by
+  /// `compositeFrame` itself; reading is free.
+  private compositeMsLast = 0;
+  private compositeMsMax = 0;
 
   constructor(init: CompositorInit) {
     this.app = init.app;
@@ -333,6 +359,7 @@ export class Compositor {
     if (this.suspended) return;
     this.lastTUs = tUs;
     if (!this.projectSummary) return;
+    const compositeStart = performance.now();
 
     // Snap wall-clock tUs to the project's frame grid. Without this,
     // rAF jitter (real-world ticks at 14–19 ms instead of a clean
@@ -462,6 +489,13 @@ export class Compositor {
           `appStage.children=${this.app.stage.children.length}`,
       );
     }
+    // Stamp the duration last — anything that early-returns above
+    // (disposed, suspended, no project) is correctly excluded from
+    // the average, since the body did no real work.
+    this.compositeMsLast = performance.now() - compositeStart;
+    if (this.compositeMsLast > this.compositeMsMax) {
+      this.compositeMsMax = this.compositeMsLast;
+    }
   }
 
   /// Authored composition duration, in microseconds, from the current
@@ -580,6 +614,38 @@ export class Compositor {
       const srcTUs = layer.params.src_in_us + layerLocalUs;
       void c.source.requestFrameAt(srcTUs);
     }
+  }
+
+  /// Plain-number perf snapshot for the dev `PerfHUD`. Read whenever
+  /// (cheap — no allocation on the hot path; numbers come from fields
+  /// already updated by `compositeFrame`). Per-clip stats are filtered
+  /// to active (non-disposed) handles only, so a recently-swept entry
+  /// doesn't appear with bogus zeros.
+  getPerfSnapshot(): CompositorPerfSnapshot {
+    const clips: CompositorPerfSnapshot["clips"] = [];
+    for (const c of this.clips.values()) {
+      if (c.source.disposed) continue;
+      const ring = c.source.ring;
+      clips.push({
+        layerId: c.layerId,
+        mediaId: c.mediaId,
+        decodeQueueSize: c.source.decodeQueueSize?.() ?? 0,
+        ringSize: ring.size?.() ?? 0,
+        ringLastPtsUs: ring.lastPtsUs(),
+      });
+    }
+    return {
+      compositeMsLast: this.compositeMsLast,
+      compositeMsMax: this.compositeMsMax,
+      clips,
+    };
+  }
+
+  /// Reset the running peak for `compositeMsMax`. Called by the HUD's
+  /// "reset peaks" button so a momentary stall doesn't pin the max
+  /// forever.
+  resetPerfPeaks(): void {
+    this.compositeMsMax = 0;
   }
 
   /// Release every sprite + decoder + the stage container. Does NOT
