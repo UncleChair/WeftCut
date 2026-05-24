@@ -1089,6 +1089,9 @@ export function App({ onCloseProject }: AppProps) {
             fpsNum={summary?.composition.fps_num ?? 30}
             fpsDen={summary?.composition.fps_den ?? 1}
             bladeMode={bladeMode}
+            media={summary?.media ?? []}
+            importing={importingMediaIds}
+            proxyState={proxyState}
             onExitBlade={() => setBladeMode(false)}
             onSelect={setSelectedLayerId}
             onSeek={seekTo}

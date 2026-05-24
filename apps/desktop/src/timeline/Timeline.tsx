@@ -21,8 +21,10 @@ import {
   type GroupSummary,
   type KeybindingsMap,
   type LayerSummary,
+  type MediaSummary,
   type TrackSummary,
 } from "../ipc";
+import { mediaReadiness, type ProxyState } from "../panels/mediaReadiness";
 import { formatTimecode, frameDurUs, snapFrameRound } from "../frames";
 import { useDisplayMode, toggleDisplayMode } from "../settings/appSettingsStore";
 import { useShortcuts, type OverrideMap } from "../shortcuts";
@@ -236,6 +238,17 @@ interface TimelineProps {
   /// and the cursor turns into a razor. Stays on until the user toggles
   /// back off or presses Esc (handled here).
   bladeMode: boolean;
+  /// Snapshot of the current media pool — used by `onMediaDrop` to
+  /// validate readiness before lowering the drop to `addMediaLayer`.
+  media: MediaSummary[];
+  /// Media that are still copying into the workspace. Cards in this set
+  /// are not interactive in the pool; the drop handler rejects them as
+  /// defence in depth (e.g. status flipping mid-drag, future non-drag
+  /// drop pathways).
+  importing: ReadonlySet<string>;
+  /// Per-video proxy lifecycle from `media:job_*`. Same defence-in-depth
+  /// role at the drop site as `importing`.
+  proxyState: ReadonlyMap<string, ProxyState>;
   onExitBlade: () => void;
   onSelect: (id: string | null) => void;
   onSeek: (tUs: number) => void;
@@ -283,6 +296,9 @@ export function Timeline({
   fpsNum,
   fpsDen,
   bladeMode,
+  media,
+  importing,
+  proxyState,
   onExitBlade,
   onSelect,
   onSeek,
@@ -777,6 +793,20 @@ export function Timeline({
         );
         return;
       }
+      const m = media.find((mm) => mm.id === payload.mediaId);
+      if (!m) {
+        console.warn(
+          `media drop rejected: ${payload.mediaId} not found in current summary`,
+        );
+        return;
+      }
+      const readiness = mediaReadiness(m, importing, proxyState);
+      if (!readiness.ready) {
+        console.warn(
+          `media drop rejected: ${payload.mediaId} is ${readiness.reason}`,
+        );
+        return;
+      }
       const rect = e.currentTarget.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const tStartUs = Math.max(0, Math.round((x / pxPerSec) * 1_000_000));
@@ -787,7 +817,7 @@ export function Timeline({
         console.error("media drop failed:", err);
       }
     },
-    [onMutated, pxPerSec],
+    [importing, media, onMutated, proxyState, pxPerSec],
   );
 
   // V.7: context-menu open handler. Captures cursor position +
