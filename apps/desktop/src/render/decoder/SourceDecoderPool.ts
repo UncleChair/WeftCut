@@ -68,6 +68,10 @@ export interface FrameStore {
   /// the store is empty. Used to gauge how much lookahead the
   /// decoder has produced past a given playhead position.
   lastPtsUs(): number | null;
+  /// Number of cached entries, for the dev `PerfHUD`. Optional — the
+  /// export-side store (which drains frames after each composited
+  /// output) reports 0 implicitly.
+  size?(): number;
 }
 
 /// Minimal decoder-handle surface the Compositor depends on. Both the
@@ -87,6 +91,11 @@ export interface DecoderHandle {
   /// Preview subscribes to repaint on first decoded frame; export
   /// no-ops because the composite runs synchronously.
   onFirstFrame(cb: () => void): void;
+  /// Live decoder queue depth, for the dev `PerfHUD`. Optional so the
+  /// export path (which drives decoding synchronously and has no
+  /// queue concept) doesn't have to fake a value. Preview's
+  /// `SourceHandle` returns the wrapped `VideoDecoder.decodeQueueSize`.
+  decodeQueueSize?(): number;
   dispose(): void;
 }
 
@@ -659,6 +668,13 @@ export class SourceHandle {
   /// has been idle longer than the dispose threshold.
   isIdle(nowMs: number): boolean {
     return this.lastUseMs > 0 && nowMs - this.lastUseMs > IDLE_DISPOSE_MS;
+  }
+
+  /// Live decoder queue depth — `VideoDecoder.decodeQueueSize`. Returns
+  /// 0 when no decoder is active yet (or after dispose). Read by the
+  /// dev `PerfHUD`; not on the playback hot path.
+  decodeQueueSize(): number {
+    return this.decoder?.decodeQueueSize ?? 0;
   }
 
   /// Drop the decode pipeline + cached frames. Safe to re-init later
