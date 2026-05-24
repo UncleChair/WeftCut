@@ -3347,12 +3347,21 @@ input.preview-timecode:focus {
  * Media-pool badges (Phase C.1 + C.2 — workspace-redesign.md)
  * -------------------------------------------------------------------------- */
 
-.media-item.is-importing {
-  opacity: 0.85;
+/* Shared not-ready treatment — the card is visually inert and the
+ * pointer reads as not-allowed. The cancel-import button overlay
+ * re-enables its own cursor + pointer-events below. */
+.media-item.is-importing,
+.media-item.is-missing,
+.media-item.is-proxy-pending,
+.media-item.is-proxy-failed {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
-.media-item.is-missing {
-  opacity: 0.7;
+.media-item.is-proxy-failed {
+  /* Failed state needs to stand out from the merely-pending one. */
+  outline: 1px solid rgba(248, 113, 113, 0.6);
+  outline-offset: -1px;
 }
 
 /* The importing / missing status indicators sit on top of the
@@ -3372,6 +3381,7 @@ input.preview-timecode:focus {
   cursor: pointer;
   white-space: nowrap;
   z-index: 2;
+  pointer-events: auto;
 }
 
 .media-import-cancel:hover {
@@ -3391,6 +3401,38 @@ input.preview-timecode:focus {
   font-weight: 600;
   white-space: nowrap;
   cursor: default;
+  z-index: 2;
+}
+
+.media-proxy-pending-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: rgba(250, 204, 21, 0.85);
+  border: 1px solid rgba(250, 204, 21, 0.9);
+  color: #0a0c10;
+  border-radius: 3px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: not-allowed;
+  z-index: 2;
+}
+
+.media-proxy-failed-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: rgba(248, 113, 113, 0.9);
+  border: 1px solid rgba(248, 113, 113, 1);
+  color: #0a0c10;
+  border-radius: 3px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: help;
   z-index: 2;
 }
 
