@@ -867,7 +867,8 @@ input.preview-timecode:focus {
   pointer-events: none;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  z-index: 1;
+  /* No z-index: layers render after the label in DOM order, so any
+     clip covering the top-left corner naturally occludes the label. */
 }
 
 .timeline-layer {
