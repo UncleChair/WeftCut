@@ -87,8 +87,7 @@ by `layerId` (one `SourceHandle` per clip), while the underlying
 `Demuxer` and parsed sample table live on a refcounted `SourceMedia`
 keyed by `mediaId`. Multiple clips of the same source — including
 overlapping copies on different tracks — each get their own
-`VideoDecoder` / `FrameRing` but share one fetch + mp4box parse of
-the proxy.
+`VideoDecoder` / `FrameRing` but share one parsed sample table.
 
 A decoder is created on first `requestFrameAt(tUs)` against its
 handle and reused for every subsequent request from that clip. The
@@ -120,8 +119,70 @@ satisfy a shared `FrameStore` interface that returns
 Idle handles are disposed 5 s after the last `requestFrameAt` and
 recreated on demand. The shared `SourceMedia` is freed only once its
 refcount falls to 0 (the last referencing handle has disposed), at
-which point the cached proxy ArrayBuffer + sample table are
+which point the sample table + any resident GOP-block byte cache are
 released.
+
+### Demuxer byte handling
+
+The `Demuxer` never holds the full proxy in memory. On open it
+issues a bounded HTTP `Range` request against the proxy URL for an
+8 MB prefix (growing up to 32 MB if needed), feeds those bytes to
+mp4box, and breaks out the moment `onReady` fires — `+faststart` in
+the proxy guarantees moov sits at the front. The sample table is
+then read directly from the parsed boxes via
+`getTrackSamplesInfo(trackId)`; the `ISOFile` reference is dropped
+in a deferred microtask so mp4box's internal buffer chain can GC.
+
+A bounded `fetch(url)` without Range would defeat the design: Tauri's
+asset handler buffers the whole response body into the WebView2
+network layer before exposing `body.getReader()`, so a chunked
+`getReader()` loop reads from an already-resident buffer. Range
+requests are the only way to get true streaming — Tauri's asset
+handler honors them (it's the same path HTML5 `<video>` seeks
+through).
+
+After moov-only init the `Demuxer` keeps each sample's metadata
+(`{ ptsUs, dtsUs, durationUs, keyframe, byteOffset, byteSize }`)
+resident — ~80 B × nbSamples, a few MB even for hour-long sources.
+Per-sample NAL bytes are NOT kept; they're fetched on demand into a
+small LRU of GOP-aligned blocks (cap 4 blocks), each block one IDR
+to the next. Total resident proxy bytes: roughly four source-seconds.
+A 24-minute proxy uses ~2 MB of cache vs the file's ~500 MB.
+
+#### `sampleAt` vs `sampleMetaAt`
+
+- `sampleMetaAt(i)`: pure metadata lookup, never triggers a fetch,
+  never returns null for an in-range index. Use this when you only
+  need PTS / keyframe / offset — e.g. the pool's backward-seek reset
+  detection and diagnostic logging.
+- `sampleAt(i)`: returns an `IndexedSample` carrying a `data` view
+  into the currently-resident block bytes. Returns null transiently
+  when the containing block isn't cached, fires a `Range` fetch as
+  a side effect, and also prefetches the next block. The preview
+  pump's `if (!s) break;` retries on the next rAF; the bytes land
+  in ~25–50 ms via Tauri's asset handler.
+
+The export pump dispatches synchronously and so cannot tolerate
+transient nulls — it calls `await Demuxer.ensureBlocksLoaded(from, to)`
+before each batch's dispatch loop. Any future caller that consumes
+`sampleAt` outside an rAF retry loop must do the same; otherwise the
+worker deadlocks on `ring.waitForPts` with zero chunks dispatched.
+
+#### Failure backoff
+
+`fetchBlock` tracks consecutive failures per block. After 3 attempts
+the block is poisoned (one `console.error` fires; subsequent
+`sampleAt` calls for that block return null without re-triggering).
+Without this a stale URL / 404 / etc. turned into a 60 Hz refetch
+loop with a frozen preview and no visible signal. Poison clears on
+`dispose`.
+
+#### Promise rejection paths
+
+`demuxer.open()` and `demuxer.ensureSamplesLoaded()` reject on
+(a) the corrupt-file path (200 fallback where `onReady` never fires),
+(b) Range fetch failure, and (c) `dispose()` racing in mid-warmup.
+Callers awaiting those promises always settle.
 
 ### Why per-clip decoders
 
