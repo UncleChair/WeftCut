@@ -89,7 +89,7 @@ const enUS = {
     add_track: "+ Track",
     add_color_layer: "+ Color layer (2s)",
     add_text_layer: "+ Text (3s)",
-    split_first: "Split first layer",
+    toggle_blade_mode: "Blade tool",
     import_media: "Import media…",
     export: "Export…",
     save: "Save",

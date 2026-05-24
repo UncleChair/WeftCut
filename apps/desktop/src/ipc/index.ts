@@ -391,10 +391,6 @@ export async function projectRedo(): Promise<void> {
   return invoke<void>("project_redo");
 }
 
-export async function splitFirstLayer(): Promise<void> {
-  return invoke<void>("split_first_layer");
-}
-
 export async function projectSave(): Promise<void> {
   return invoke<void>("project_save");
 }

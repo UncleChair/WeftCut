@@ -27,7 +27,6 @@ import {
   projectSaveAs,
   projectSummary,
   projectUndo,
-  splitFirstLayer,
   type ImportEntry,
   type MediaSummary,
   type ProjectSummary,
@@ -95,6 +94,11 @@ export function App({ onCloseProject }: AppProps) {
   const [error, setError] = useState<string | null>(null);
   const [exportState, setExportState] = useState<ExportState | null>(null);
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
+  // Blade-tool mode: pressing `C` toggles it; clicks on layers in the
+  // timeline split the layer at the click point instead of selecting it.
+  // Exits on a second `C` press or `Esc`. Living at App level so the
+  // shortcut handler and the Timeline both see the same flag.
+  const [bladeMode, setBladeMode] = useState<boolean>(false);
   // R.7 inline-reveal: track id the user surfaced from the right-panel peek
   // list. Single-track exclusive; persists across scrubs. Cleared by Esc, by
   // selecting a layer on a different track, or by clicking another peek
@@ -699,7 +703,7 @@ export function App({ onCloseProject }: AppProps) {
     deleteSelected,
     importMedia: importMediaFiles,
     export: runPixiExport,
-    splitFirstLayer: () => run(splitFirstLayer),
+    toggleBladeMode: () => setBladeMode((v) => !v),
     toggleLog: toggleLogConsole,
     focusLogSearch,
     // R.8: T flips the AB / Show-All display_mode at the app level.
@@ -847,9 +851,9 @@ export function App({ onCloseProject }: AppProps) {
               />
               <MenuSeparator />
               <MenuItem
-                actionId="splitFirstLayer"
-                label={t("actions.split_first")}
-                onSelect={() => run(splitFirstLayer)}
+                actionId="toggleBladeMode"
+                label={t("actions.toggle_blade_mode")}
+                onSelect={() => setBladeMode((v) => !v)}
                 disabled={busy || !summary || summary.layer_count === 0}
               />
             </Menu>
@@ -1022,6 +1026,8 @@ export function App({ onCloseProject }: AppProps) {
             keybindings={keybindings}
             fpsNum={summary?.composition.fps_num ?? 30}
             fpsDen={summary?.composition.fps_den ?? 1}
+            bladeMode={bladeMode}
+            onExitBlade={() => setBladeMode(false)}
             onSelect={setSelectedLayerId}
             onSeek={seekTo}
             onMutated={refresh}

@@ -66,7 +66,6 @@ pub fn run() {
             commands::add_media_layer,
             commands::add_text_layer,
             commands::add_demo_text_layer,
-            commands::split_first_layer,
             commands::update_layer,
             commands::update_layer_params,
             commands::add_subtitles_layer,

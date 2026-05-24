@@ -13,6 +13,7 @@ import {
   groupsDissolve,
   moveLayer,
   separateAudioToNewTrack,
+  splitLayerGrouped,
   trimLayer,
   updateLayer,
   viewStateGet,
@@ -231,6 +232,12 @@ interface TimelineProps {
   /// commit-side snap; actor remains the authoritative enforcement.
   fpsNum: number;
   fpsDen: number;
+  /// Blade-tool mode (toggled at App level via the `C` shortcut). When
+  /// true, layer clicks split at the click point instead of selecting,
+  /// and the cursor turns into a razor. Stays on until the user toggles
+  /// back off or presses Esc (handled here).
+  bladeMode: boolean;
+  onExitBlade: () => void;
   onSelect: (id: string | null) => void;
   onSeek: (tUs: number) => void;
   onMutated: () => Promise<void>;
@@ -276,6 +283,8 @@ export function Timeline({
   keybindings,
   fpsNum,
   fpsDen,
+  bladeMode,
+  onExitBlade,
   onSelect,
   onSeek,
   onMutated,
@@ -834,12 +843,52 @@ export function Timeline({
     [onSeek, pxPerSec, fpsNum, fpsDen],
   );
 
+  // Blade-tool click handler: convert clientX → frame-snapped composition
+  // timestamp and ask the actor to split the layer at that point. Reject
+  // only when the snapped point lands exactly on a layer edge — the
+  // actor would refuse that anyway, and a frame-precise editor needs
+  // frame-precise cuts. After a split the user stays in blade mode
+  // (NLE convention); press `C` or `Esc` to exit.
+  const splitFromClientX = useCallback(
+    async (layer: LayerSummary, clientX: number) => {
+      if (!canvasRef.current) return;
+      const rect = canvasRef.current.getBoundingClientRect();
+      const x = clientX - rect.left;
+      const rawUs = Math.max(0, Math.round((x / pxPerSec) * 1_000_000));
+      const atUs = snapFrameRound(rawUs, fpsNum, fpsDen);
+      if (atUs <= layer.t_start_us || atUs >= layer.t_end_us) return;
+      try {
+        await splitLayerGrouped(layer.id, atUs, false);
+        await onMutated();
+      } catch (err) {
+        console.error("blade split failed:", err);
+      }
+    },
+    [pxPerSec, fpsNum, fpsDen, onMutated],
+  );
+
+  // Esc exits blade mode. Bound at the window level so it fires regardless
+  // of focus, and attached only while blade mode is on.
+  useEffect(() => {
+    if (!bladeMode) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onExitBlade();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [bladeMode, onExitBlade]);
+
   // Click/drag on empty canvas (lane background, gap below tracks) to seek.
   // Layer / trim-handle / resize-handle pointerdown stops propagation, so
-  // this never fires when interacting with an existing control.
+  // this never fires when interacting with an existing control. In blade
+  // mode the user is hunting for a layer to cut, not asking to scrub.
   const onCanvasPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       if (e.button !== 0) return;
+      if (bladeMode) return;
       seekFromClientX(e.clientX);
       const onMove = (ev: PointerEvent) => seekFromClientX(ev.clientX);
       const onUp = () => {
@@ -849,7 +898,7 @@ export function Timeline({
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
     },
-    [seekFromClientX],
+    [seekFromClientX, bladeMode],
   );
 
   return (
@@ -861,7 +910,7 @@ export function Timeline({
       ref={rootRef}
       className={`timeline-root ${drag ? "is-dragging" : ""} ${
         heightDrag ? "is-resizing-track" : ""
-      }`}
+      } ${bladeMode ? "is-blade-mode" : ""}`}
       onClick={() => onSelect(null)}
       onPointerDown={onCanvasPointerDown}
     >
@@ -895,6 +944,8 @@ export function Timeline({
             selectedLayerIds={selectedLayerIds}
             groupByLayerId={groupByLayerId}
             dragState={drag}
+            bladeMode={bladeMode}
+            onBladeSplit={splitFromClientX}
             onSelect={onSelect}
             onSelectFromClick={selectFromClick}
             onDragStart={(state) => setDrag(state)}
@@ -1172,6 +1223,8 @@ function TrackLane({
   selectedLayerIds,
   groupByLayerId,
   dragState,
+  bladeMode,
+  onBladeSplit,
   onSelect,
   onSelectFromClick,
   onDragStart,
@@ -1188,6 +1241,8 @@ function TrackLane({
   selectedLayerIds: Set<string>;
   groupByLayerId: Map<string, { id: string; renderMode: "Native" | "Html" }>;
   dragState: DragState | null;
+  bladeMode: boolean;
+  onBladeSplit: (layer: LayerSummary, clientX: number) => void;
   onSelect: (id: string | null) => void;
   onSelectFromClick: (
     layerId: string,
@@ -1290,6 +1345,8 @@ function TrackLane({
             isSelected={selectedLayerIds.has(layer.id)}
             groupId={groupByLayerId.get(layer.id) ?? null}
             dragState={dragState}
+            bladeMode={bladeMode}
+            onBladeSplit={onBladeSplit}
             onSelect={onSelect}
             onSelectFromClick={onSelectFromClick}
             onDragStart={onDragStart}
@@ -1319,6 +1376,8 @@ function LayerBlock({
   isSelected,
   groupId,
   dragState,
+  bladeMode,
+  onBladeSplit,
   onSelect,
   onSelectFromClick,
   onDragStart,
@@ -1340,6 +1399,10 @@ function LayerBlock({
   /// `docs/group-system.md` — null when ungrouped.
   groupId: string | null;
   dragState: DragState | null;
+  /// Blade-tool mode: pointerdown splits at the click point instead
+  /// of selecting/dragging. Cursor is set by the timeline-root class.
+  bladeMode: boolean;
+  onBladeSplit: (layer: LayerSummary, clientX: number) => void;
   onSelect: (id: string | null) => void;
   onSelectFromClick: (
     layerId: string,
@@ -1399,6 +1462,13 @@ function LayerBlock({
     (e: React.PointerEvent) => {
       if (e.button !== 0 || layer.locked) return;
       e.stopPropagation();
+      // Blade-tool mode hijacks pointerdown on any layer surface
+      // (body or trim handles): the click is a cut request, not a
+      // select/drag.
+      if (bladeMode) {
+        onBladeSplit(layer, e.clientX);
+        return;
+      }
       // `docs/group-system.md` — match click-selection semantics on
       // pointerdown so drag and click share the same group-aware path.
       onSelectFromClick(layer.id, {
@@ -1477,6 +1547,9 @@ function LayerBlock({
       }}
       onClick={(e) => {
         e.stopPropagation();
+        // In blade mode the pointerdown already handled the cut; the
+        // synthesised click that follows should not flip the selection.
+        if (bladeMode) return;
         onSelectFromClick(layer.id, {
           altKey: e.altKey,
           shiftKey: e.shiftKey,
