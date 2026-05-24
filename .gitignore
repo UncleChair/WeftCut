@@ -11,6 +11,9 @@ dist/
 build/
 out/
 *.tsbuildinfo
+# tsc -b emit from the composite vite-config project (emitDeclarationOnly).
+# Regenerated on every typecheck / build; never want it in the tree.
+apps/desktop/vite.config.d.ts
 
 # Vite
 .vite/
