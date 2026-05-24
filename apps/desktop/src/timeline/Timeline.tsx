@@ -26,7 +26,6 @@ import {
 import { formatTimecode, frameDurUs, snapFrameRound } from "../frames";
 import { useDisplayMode, toggleDisplayMode } from "../settings/appSettingsStore";
 import { useShortcuts, type OverrideMap } from "../shortcuts";
-import { WaveformCanvas } from "./WaveformCanvas";
 
 // Zoom + height bounds. The default matches the pre-refactor constant so
 // projects that have never written `view.json` look identical to before.
@@ -1531,7 +1530,7 @@ function LayerBlock({
         isSelected ? "is-selected" : ""
       } ${isDragging ? "is-dragging" : ""} ${layer.locked ? "is-locked" : ""} ${
         movedAcrossTracks ? "is-ghost" : ""
-      } ${groupId !== null ? "is-grouped" : ""}`}
+      }`}
       style={{
         left,
         top: sliceTop,
@@ -1564,56 +1563,7 @@ function LayerBlock({
       }}
       title={`${layer.kind}: ${(liveStart / 1_000_000).toFixed(2)}s → ${(liveEnd / 1_000_000).toFixed(2)}s`}
     >
-      {groupId !== null && layerWidthPx > 14 && (
-        <svg
-          className="layer-group-icon"
-          aria-label="grouped"
-          width="9"
-          height="9"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="3"
-          strokeLinecap="round"
-        >
-          {/* Two interlocked oval links — a chain-link mark without an emoji. */}
-          <title>In a group (Ctrl+G to add, Ctrl+Shift+G to dissolve)</title>
-          <path d="M9 12a4 4 0 0 1 4-4h2a4 4 0 0 1 0 8h-2" />
-          <path d="M15 12a4 4 0 0 1-4 4H9a4 4 0 0 1 0-8h2" />
-        </svg>
-      )}
-      {layer.params.kind === "Audio" && layerWidthPx > 8 && (() => {
-        // Source-window shifts mirror the timeline-window shifts during
-        // trim — no speed factor on Audio params, so dx applies 1:1.
-        let liveSrcIn = layer.params.src_in_us;
-        let liveSrcOut = layer.params.src_out_us;
-        if (isDragging && dragState) {
-          const dx = dragState.deltaUs;
-          if (dragState.kind === "trim-start") {
-            liveSrcIn = Math.min(liveSrcIn + dx, liveSrcOut - MIN_LAYER_DURATION_US);
-          } else if (dragState.kind === "trim-end") {
-            liveSrcOut = Math.max(liveSrcIn + MIN_LAYER_DURATION_US, liveSrcOut + dx);
-          }
-        }
-        return (
-          <WaveformCanvas
-            mediaId={layer.params.media_id}
-            srcInUs={liveSrcIn}
-            srcOutUs={liveSrcOut}
-            width={layerWidthPx}
-            height={Math.max(8, sliceHeight - 4)}
-          />
-        );
-      })()}
-      <div
-        className="layer-trim-handle left"
-        onPointerDown={beginDrag("trim-start", trackKind)}
-      />
       <span className="layer-label">{label}</span>
-      <div
-        className="layer-trim-handle right"
-        onPointerDown={beginDrag("trim-end", trackKind)}
-      />
     </div>
   );
 }
