@@ -149,6 +149,10 @@ const enUS = {
     importing_cancel_hint: "Cancel import",
     missing: "Missing",
     missing_hint: "Source file not found: {{path}}",
+    proxy_pending: "Preparing…",
+    proxy_pending_hint: "Preview is being prepared…",
+    proxy_failed: "Preview failed",
+    proxy_failed_hint: "Preview could not be prepared. Re-import to retry.",
     click_drag_hint: "Click to preview · drag onto a track to add",
   },
   preview: {

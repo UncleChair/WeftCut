@@ -148,6 +148,10 @@ const zhCN: Resources = {
     importing_cancel_hint: "取消导入",
     missing: "缺失",
     missing_hint: "源文件未找到：{{path}}",
+    proxy_pending: "准备中…",
+    proxy_pending_hint: "正在生成预览代理…",
+    proxy_failed: "预览准备失败",
+    proxy_failed_hint: "预览代理生成失败，请重新导入素材。",
     click_drag_hint: "点击预览 · 拖到轨道添加",
   },
   preview: {
