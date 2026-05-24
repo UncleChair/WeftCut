@@ -3230,7 +3230,14 @@ pub(crate) fn apply_move_layer(
     }
     let mut layer = moved.expect("layer existence already verified");
     layer.t_start_us = new_t_start_us;
-    layer.t_end_us += delta;
+    // Re-snap t_end_us to the comp-fps grid. At 30 fps the half-up grid
+    // has alternating 33_333 / 33_334 µs frame widths, so shifting by a
+    // raw delta can land t_end 1 µs past a grid point and overhang into
+    // the next composition frame — symptom: an N-frame layer occludes
+    // N+1 timeline frames after a move. Storage invariant per
+    // apply_add_layer: both edges live on the grid.
+    layer.t_end_us =
+        crate::state::time::snap_frame_round(layer.t_end_us + delta, project.composition.fps);
     let dest_idx = project
         .tracks
         .iter()
@@ -3266,8 +3273,17 @@ pub(crate) fn apply_move_layer(
             // the in-track sort order stays correct.
             let mut s = project.tracks[ti].layers.remove(li);
             if delta != 0 {
-                s.t_start_us += delta;
-                s.t_end_us += delta;
+                // Re-snap both edges after shift. The raw delta keeps
+                // sibling edges integer-µs but can land 1 µs off the
+                // half-up grid (frame widths alternate 33_333 / 33_334
+                // at 30 fps) when the anchor and sibling sat on grid
+                // points whose duration parity differs — same overhang
+                // hazard fixed for the moved anchor above.
+                let fps = project.composition.fps;
+                s.t_start_us =
+                    crate::state::time::snap_frame_round(s.t_start_us + delta, fps);
+                s.t_end_us =
+                    crate::state::time::snap_frame_round(s.t_end_us + delta, fps);
             }
             s.t_start_us = s.t_start_us.max(0);
             let dest_idx = project
@@ -3991,6 +4007,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn move_layer_re_snaps_t_end_to_avoid_grid_overhang() {
+        // At 30fps the half-up grid has alternating 33_333 / 33_334 µs
+        // frame widths. A single-frame layer occupying the 33_334 slot
+        // [33_333, 66_667) moved one frame back to [0, ?) must land on
+        // the next grid point (33_333), not 33_334 — otherwise the
+        // layer overhangs into the following frame and occludes it.
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        let layer_id = handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                color_layer(Rgba::WHITE),
+                33_333,
+                66_667,
+            )
+            .await
+            .expect("add_layer");
+        handle
+            .move_layer(Actor::User, layer_id, track_id, 0, false)
+            .await
+            .expect("move");
+        let snap = handle.snapshot().await;
+        let layer = snap
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .find(|l| l.id == layer_id)
+            .expect("layer");
+        assert_eq!(layer.t_start_us, 0);
+        // Original duration 33_334; raw shift would give t_end = 33_334
+        // (1 µs past frame 1's start at 33_333) — re-snap pulls it back
+        // onto the grid.
+        assert_eq!(layer.t_end_us, 33_333);
+    }
+
+    #[tokio::test]
     async fn trim_layer_snaps_new_edge_to_composition_frame() {
         let (project, track_id) = project_with_video_track();
         let handle = spawn(project);
@@ -4023,8 +4076,9 @@ mod tests {
             .await
             .expect("add_layer");
         // Switch to 29.97fps (30000/1001). 33_333us at 29.97 rounds
-        // to frame 1 = 33_366us. 1_000_000us at 29.97 rounds to
-        // frame 30 = 1_001_000us.
+        // to frame 1 = 33_367us (frame 1's true µs is 33_366.667;
+        // snap_frame_round half-ups the output to match the demuxer).
+        // 1_000_000us at 29.97 rounds to frame 30 = 1_001_000us (exact).
         handle
             .set_composition(
                 Actor::User,
@@ -4042,7 +4096,7 @@ mod tests {
             .flat_map(|t| t.layers.iter())
             .find(|l| l.id == layer_id)
             .expect("layer");
-        assert_eq!(layer.t_start_us, 33_366);
+        assert_eq!(layer.t_start_us, 33_367);
         assert_eq!(layer.t_end_us, 1_001_000);
     }
 
@@ -4061,8 +4115,9 @@ mod tests {
             .await
             .expect("set_composition");
         let snap = handle.snapshot().await;
-        // 50_000us at 30fps rounds to frame 2 = 66_666us.
-        assert_eq!(snap.composition.duration_us, 66_666);
+        // 50_000us at 30fps rounds to frame 2 = 66_667us (half-up output
+        // matching demuxer source-PTS rounding; see snap_frame_round docs).
+        assert_eq!(snap.composition.duration_us, 66_667);
     }
 
     #[tokio::test]
@@ -4084,8 +4139,8 @@ mod tests {
             .flat_map(|t| t.layers.iter())
             .find(|l| l.id == right)
             .expect("right");
-        // 50_000us → frame 2 = 66_666us.
-        assert_eq!(right_layer.t_start_us, 66_666);
+        // 50_000us → frame 2 = 66_667us (half-up output, see snap_frame_round).
+        assert_eq!(right_layer.t_start_us, 66_667);
     }
 
     #[tokio::test]

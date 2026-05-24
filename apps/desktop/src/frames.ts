@@ -17,7 +17,14 @@ export function frameDurUs(fpsNum: number, fpsDen: number): number {
 /// Round `tUs` to the nearest composition-fps frame boundary (half-up).
 /// Same algorithm as Rust `snap_frame_round`:
 ///   frame_index = floor((tUs * num + (US_PER_SEC * den) / 2) / (US_PER_SEC * den))
-///   snapped     = floor(frame_index * US_PER_SEC * den / num)
+///   snapped     = round(frame_index * US_PER_SEC * den / num)   ← half-up
+///
+/// The OUTPUT is half-up rounded to match the demuxer's source-PTS
+/// rounding (`Demuxer.ts`: `Math.round((cts/timescale)*1e6)`) — see the
+/// Rust `snap_frame_round` docstring for the bug this avoids. Both sides
+/// must use half-up output or the storage invariant for `t_start_us` /
+/// `src_in_us` lands 1 µs below the source frame's PTS at certain frame
+/// indices, breaking `FrameRing.frameAt` after a layer move.
 ///
 /// Safe for tUs up to ~2^53 / fpsNum (≈ 150 years at 60000 fps), which
 /// covers every realistic timeline.
@@ -30,7 +37,7 @@ export function snapFrameRound(
   const prod = tUs * fpsNum;
   const div = US_PER_SEC * fpsDen;
   const frameIndex = Math.floor((prod + div / 2) / div);
-  return Math.floor((frameIndex * US_PER_SEC * fpsDen) / fpsNum);
+  return Math.round((frameIndex * US_PER_SEC * fpsDen) / fpsNum);
 }
 
 /// Snap `tUs` to the start of the frame containing it, on the comp
