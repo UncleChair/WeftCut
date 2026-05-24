@@ -836,6 +836,18 @@ input.preview-timecode:focus {
   user-select: none;
 }
 
+/* Blade-tool mode (bare `C` shortcut). Angled single-edge razor with
+   the hotspot at the bottom-left cutting tip so the cursor's "cut
+   point" lines up with the click X. Extended to chips + trim handles
+   so the cursor doesn't flicker back to `grab` / `ew-resize` while
+   hovering content. `crosshair` is the fallback for browsers that
+   refuse SVG cursors. */
+.timeline-root.is-blade-mode,
+.timeline-root.is-blade-mode .timeline-layer,
+.timeline-root.is-blade-mode .layer-trim-handle {
+  cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'><polygon points='4,18 18,4 20,6 6,20' fill='%23e5e7eb' stroke='%23000' stroke-width='1' stroke-linejoin='round'/><line x1='5' y1='19' x2='19' y2='5' stroke='%23fbbf24' stroke-width='1' stroke-linecap='round'/></svg>") 4 18, crosshair;
+}
+
 .timeline-canvas {
   position: relative;
   min-width: 100%;

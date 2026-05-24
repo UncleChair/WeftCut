@@ -25,7 +25,7 @@ export type ActionId =
   | "deleteSelected"
   | "importMedia"
   | "export"
-  | "splitFirstLayer"
+  | "toggleBladeMode"
   | "toggleLog"
   | "focusLogSearch"
   | "toggleDisplayMode"
@@ -56,7 +56,12 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   deleteSelected:  { defaultKeys: ["Delete", "Backspace"], labelKey: "actions.delete_selected" },
   importMedia:     { defaultKeys: ["Mod+I"],               labelKey: "actions.import_media" },
   export:          { defaultKeys: ["Mod+E"],               labelKey: "actions.export" },
-  splitFirstLayer: { defaultKeys: ["Mod+K"],               labelKey: "actions.split_first" },
+  // Bare-letter `C` toggles blade-tool mode in the timeline. While
+  // active, clicking a layer splits it at the click point (snapped to
+  // the composition-frame grid) instead of selecting/dragging it.
+  // Press `C` again or `Esc` to exit. Bare-letter chords don't fire
+  // in text inputs by default.
+  toggleBladeMode: { defaultKeys: ["C"],                   labelKey: "actions.toggle_blade_mode" },
   toggleLog:       { defaultKeys: ["Mod+`"],               labelKey: "actions.toggle_log" },
   focusLogSearch:  { defaultKeys: ["Mod+Shift+`"],         labelKey: "actions.focus_log_search" },
   // `docs/ab-roll-redesign` R.8: bare-letter `T` flips the app-level

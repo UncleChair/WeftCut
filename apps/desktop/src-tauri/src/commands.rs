@@ -1020,28 +1020,6 @@ pub async fn project_restore_checkpoint(
     Ok(())
 }
 
-#[tauri::command]
-pub async fn split_first_layer(handle: State<'_, ProjectHandle>) -> Result<(), String> {
-    // Demo helper for the UI: find the topmost layer with duration > 200ms and
-    // split it at its midpoint. Production would let the user pick the layer +
-    // split time on the timeline; that's Phase 1.8 UI work.
-    let snap = handle.snapshot().await;
-    for track in snap.tracks.iter() {
-        for layer in track.layers.iter() {
-            let duration = layer.t_end_us - layer.t_start_us;
-            if duration > 200_000 {
-                let mid = layer.t_start_us + duration / 2;
-                handle
-                    .split_layer(Actor::User, layer.id, mid, false)
-                    .await
-                    .map_err(|e: CommandError| e.to_string())?;
-                return Ok(());
-            }
-        }
-    }
-    Err("no splittable layer (need at least 200ms)".to_string())
-}
-
 /// Force-flush autosave to disk for the current workspace. Safe to call
 /// unconditionally — if no workspace is set yet (the unreachable blank-boot
 /// window, in practice), `force_flush` is a no-op that just resolves.

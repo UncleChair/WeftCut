@@ -93,7 +93,7 @@ const zhCN: Resources = {
     add_track: "+ 轨道",
     add_color_layer: "+ 颜色层（2秒）",
     add_text_layer: "+ 文本（3秒）",
-    split_first: "切分首个图层",
+    toggle_blade_mode: "剪刀工具",
     import_media: "导入素材…",
     export: "导出…",
     save: "保存",
