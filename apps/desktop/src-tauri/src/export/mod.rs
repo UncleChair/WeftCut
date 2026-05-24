@@ -120,8 +120,37 @@ pub async fn export_audio_only(
     Ok(())
 }
 
-/// Stream-copy mux of one video file + one audio file into a single
-/// MP4. Runs `ffmpeg -y -i video -i audio -c copy out`.
+/// Build the ffmpeg argv for `mux_to_file`. Extracted out of the async
+/// fn so the omit-`-i audio`-when-missing decision is unit-testable
+/// without shelling out to ffmpeg.
+fn mux_args(
+    video_path: &Path,
+    audio_path: &Path,
+    output: &Path,
+) -> Vec<std::ffi::OsString> {
+    use std::ffi::OsString;
+    let mut args: Vec<OsString> = vec![
+        "-y".into(),
+        "-hide_banner".into(),
+        "-nostats".into(),
+        "-i".into(),
+        video_path.into(),
+    ];
+    if audio_path.exists() {
+        args.push("-i".into());
+        args.push(audio_path.into());
+    }
+    args.push("-c".into());
+    args.push("copy".into());
+    args.push(output.into());
+    args
+}
+
+/// Stream-copy mux of one video file (+ optional audio) into a single
+/// MP4. Runs `ffmpeg -y -i video [-i audio] -c copy out`. When
+/// `audio_path` doesn't exist the audio input is omitted — taken on
+/// projects with no audio layers, where `export_audio_only` returns
+/// without producing anything.
 pub async fn mux_to_file(
     video_path: &Path,
     audio_path: &Path,
@@ -130,27 +159,27 @@ pub async fn mux_to_file(
     if !ffmpeg_is_installed() {
         anyhow::bail!("ffmpeg is not installed");
     }
+    let has_audio = audio_path.exists();
     let mut cmd = Command::new(ffmpeg_path());
-    cmd.arg("-y")
-        .arg("-hide_banner")
-        .arg("-nostats")
-        .arg("-i")
-        .arg(video_path)
-        .arg("-i")
-        .arg(audio_path)
-        .arg("-c")
-        .arg("copy")
-        .arg(output);
+    cmd.args(mux_args(video_path, audio_path, output));
     cmd.stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    info!(
-        "ffmpeg mux: {} + {} → {}",
-        video_path.display(),
-        audio_path.display(),
-        output.display()
-    );
+    if has_audio {
+        info!(
+            "ffmpeg mux: {} + {} → {}",
+            video_path.display(),
+            audio_path.display(),
+            output.display()
+        );
+    } else {
+        info!(
+            "ffmpeg mux (video-only, no audio track): {} → {}",
+            video_path.display(),
+            output.display()
+        );
+    }
     let mut child = cmd.spawn().context("spawn ffmpeg mux")?;
     let stderr = child.stderr.take().context("take ffmpeg stderr")?;
     let stderr_task = tokio::spawn(async move {
@@ -174,4 +203,74 @@ pub async fn mux_to_file(
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mux_args;
+    use tempfile::TempDir;
+
+    /// Regression for the no-audio export path: `mux_to_file` must NOT
+    /// pass `-i audio_path` to ffmpeg when the audio file doesn't
+    /// exist. The previous shape always emitted both `-i`s, so projects
+    /// with no audio layers (where `export_audio_only` early-returns
+    /// without writing audio.m4a) failed at the mux step with
+    /// "No such file or directory".
+    #[test]
+    fn mux_args_omits_audio_input_when_audio_missing() {
+        let tmp = TempDir::new().unwrap();
+        let video = tmp.path().join("v.mp4");
+        std::fs::write(&video, b"").unwrap();
+        let audio_missing = tmp.path().join("does-not-exist.m4a");
+        let output = tmp.path().join("o.mp4");
+
+        let argv: Vec<String> = mux_args(&video, &audio_missing, &output)
+            .iter()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect();
+
+        assert_eq!(
+            argv.iter().filter(|a| *a == "-i").count(),
+            1,
+            "expected exactly one `-i` input (video-only), got argv: {argv:?}"
+        );
+        let audio_missing_str = audio_missing.to_string_lossy().into_owned();
+        assert!(
+            !argv.contains(&audio_missing_str),
+            "missing audio path must not appear in argv: {argv:?}"
+        );
+        let video_str = video.to_string_lossy().into_owned();
+        let output_str = output.to_string_lossy().into_owned();
+        assert!(argv.contains(&video_str), "video path missing: {argv:?}");
+        assert!(argv.contains(&output_str), "output path missing: {argv:?}");
+    }
+
+    #[test]
+    fn mux_args_includes_audio_input_when_audio_present() {
+        let tmp = TempDir::new().unwrap();
+        let video = tmp.path().join("v.mp4");
+        let audio = tmp.path().join("a.m4a");
+        std::fs::write(&video, b"").unwrap();
+        std::fs::write(&audio, b"").unwrap();
+        let output = tmp.path().join("o.mp4");
+
+        let argv: Vec<String> = mux_args(&video, &audio, &output)
+            .iter()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect();
+
+        assert_eq!(
+            argv.iter().filter(|a| *a == "-i").count(),
+            2,
+            "expected two `-i` inputs (video + audio), got argv: {argv:?}"
+        );
+        assert!(
+            argv.contains(&video.to_string_lossy().into_owned()),
+            "video path missing: {argv:?}"
+        );
+        assert!(
+            argv.contains(&audio.to_string_lossy().into_owned()),
+            "audio path missing: {argv:?}"
+        );
+    }
 }
