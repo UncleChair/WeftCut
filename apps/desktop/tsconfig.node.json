@@ -8,7 +8,12 @@
     "moduleResolution": "Bundler",
     "allowSyntheticDefaultImports": true,
     "strict": true,
-    "noEmit": true
+    // `composite: true` requires emit to stay on (project references can't
+    // depend on a no-emit project — TS6310). We only need the .d.ts to
+    // satisfy the reference, so emit declarations only — no .js lands on
+    // disk.
+    "emitDeclarationOnly": true,
+    "types": ["node"]
   },
   "include": ["vite.config.ts"]
 }
