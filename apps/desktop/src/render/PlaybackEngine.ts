@@ -28,6 +28,25 @@ export interface PlaybackEngineInit {
 type TimeListener = (tUs: number) => void;
 type PlayStateListener = (playing: boolean) => void;
 
+/// What released the warmup gate. `lookahead-ready` is the happy
+/// path (decoder produced enough lookahead within the budget);
+/// `deadline-hit` means we ran out the safety cap and started
+/// anyway — user may see initial-frame stutter. The HUD surfaces
+/// the reason so we can tell whether warmup is bounded by I/O or
+/// by the cap.
+export type WarmupReason = "lookahead-ready" | "deadline-hit";
+
+export interface WarmupStats {
+  /// Most recent warmup duration in ms, or null if no warmup has
+  /// completed since the last `resetWarmupStats()` (or process
+  /// start).
+  lastMs: number | null;
+  /// Running max since the last `resetWarmupStats()`.
+  maxMs: number;
+  /// Reason the last warmup released.
+  lastReason: WarmupReason | null;
+}
+
 /// Minimum decoded lookahead (microseconds past the play position)
 /// before `play()` releases the clock. Picked at ~9 frames of 60 fps
 /// content — enough to absorb hardware-decoder first-frame jitter
@@ -57,6 +76,13 @@ export class PlaybackEngine {
   /// waiting for the ring to fill; null otherwise. Cancelled by
   /// `pause()` so the user can abort a warm-up by clicking pause.
   private warmupHandle: number | null = null;
+  /// `performance.now()` at the moment `play()` was called for the
+  /// current attempt; null while not in warmup. Used by
+  /// `scheduleClockStart` to stamp `lastWarmupMs` on release.
+  private warmupStartMs: number | null = null;
+  private lastWarmupMs: number | null = null;
+  private maxWarmupMs = 0;
+  private lastWarmupReason: WarmupReason | null = null;
   /// Debounces rapid `seek()` calls during timeline drag. While the
   /// debounce window is active, `Compositor.scrubbing` is true so the
   /// rAF loop's `setAnchorTime` is a no-op — the decoder isn't
@@ -123,6 +149,7 @@ export class PlaybackEngine {
       this.compositor.compositeFrame(0);
     }
     this.intendedPlaying = true;
+    this.warmupStartMs = performance.now();
     // eslint-disable-next-line no-console
     console.log(`[weftcut/pixi] engine.play() @ tUs=${this.clock.positionUs()}`);
     // If a scrub-debounce is still pending, cancel it and exit
@@ -219,6 +246,16 @@ export class PlaybackEngine {
       );
       const deadlineHit = performance.now() >= deadline;
       if (lookaheadReady || deadlineHit) {
+        // Stamp warmup duration + reason for the HUD before
+        // releasing the clock. `warmupStartMs` is null if `pause()`
+        // raced in mid-warmup; skip the record in that case.
+        if (this.warmupStartMs !== null) {
+          const elapsed = performance.now() - this.warmupStartMs;
+          this.lastWarmupMs = elapsed;
+          if (elapsed > this.maxWarmupMs) this.maxWarmupMs = elapsed;
+          this.lastWarmupReason = lookaheadReady ? "lookahead-ready" : "deadline-hit";
+          this.warmupStartMs = null;
+        }
         this.compositor.setMasterPlayState(true);
         this.clock.play();
         return;
@@ -247,6 +284,29 @@ export class PlaybackEngine {
       cancelAnimationFrame(this.warmupHandle);
       this.warmupHandle = null;
     }
+    // Discard the in-flight warmup timestamp — pausing during
+    // warmup is a "didn't actually warm up" case, recording it
+    // would skew the HUD's max with the time the user was
+    // hovering on pause.
+    this.warmupStartMs = null;
+  }
+
+  /// HUD getter. Cheap — no allocation per call.
+  getWarmupStats(): WarmupStats {
+    return {
+      lastMs: this.lastWarmupMs,
+      maxMs: this.maxWarmupMs,
+      lastReason: this.lastWarmupReason,
+    };
+  }
+
+  /// Called by PerfHUD's reset button alongside Compositor's
+  /// `resetPerfPeaks()` so a one-off cold-start spike doesn't pin
+  /// the displayed max forever.
+  resetWarmupStats(): void {
+    this.lastWarmupMs = null;
+    this.maxWarmupMs = 0;
+    this.lastWarmupReason = null;
   }
 
   private lastEmittedUs = -1;

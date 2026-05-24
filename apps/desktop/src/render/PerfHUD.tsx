@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { Compositor, CompositorPerfSnapshot } from "./Compositor";
-import type { PlaybackEngine } from "./PlaybackEngine";
+import type { PlaybackEngine, WarmupStats } from "./PlaybackEngine";
 
 interface Props {
   /// Live Compositor ref. The HUD calls `getPerfSnapshot()` on it.
@@ -91,6 +91,11 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
   const [rafP99, setRafP99] = useState(0);
   const [memory, setMemory] = useState<PerfMemory | null>(null);
   const [playheadUs, setPlayheadUs] = useState(0);
+  const [warmup, setWarmup] = useState<WarmupStats>({
+    lastMs: null,
+    maxMs: 0,
+    lastReason: null,
+  });
 
   // rAF interval tracking. We keep the ring + last-tick time on refs
   // so the rAF callback doesn't re-render on every frame; the HUD only
@@ -143,7 +148,9 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
       setRafP50(p50);
       setRafP99(p99);
       setMemory(readMemory());
-      setPlayheadUs(engineRef.current?.positionUs() ?? 0);
+      const e = engineRef.current;
+      setPlayheadUs(e?.positionUs() ?? 0);
+      if (e) setWarmup(e.getWarmupStats());
     }, 500);
     return () => clearInterval(id);
   }, [compositorRef, engineRef]);
@@ -163,7 +170,9 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
 
   const onResetPeaks = useCallback(() => {
     compositorRef.current?.resetPerfPeaks();
-  }, [compositorRef]);
+    engineRef.current?.resetWarmupStats();
+    setWarmup({ lastMs: null, maxMs: 0, lastReason: null });
+  }, [compositorRef, engineRef]);
 
   if (!visible) return null;
 
@@ -212,6 +221,31 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
       <div>
         composite: {formatMs(snap?.compositeMsLast ?? 0)}ms · max{" "}
         {formatMs(snap?.compositeMsMax ?? 0)}ms
+      </div>
+      <div>
+        warmup:{" "}
+        {warmup.lastMs === null ? (
+          <span style={{ color: "#6b7280" }}>—</span>
+        ) : (
+          <>
+            {formatMs(warmup.lastMs)}ms · max {formatMs(warmup.maxMs)}ms
+            {warmup.lastReason && (
+              <span
+                style={{
+                  marginLeft: 4,
+                  color: warmup.lastReason === "deadline-hit" ? "#f59e0b" : "#6b7280",
+                }}
+                title={
+                  warmup.lastReason === "deadline-hit"
+                    ? "WARMUP_MAX_WAIT_MS cap hit — ring may not have been full; possible initial-frame stutter"
+                    : "Lookahead ready before the cap — healthy"
+                }
+              >
+                ({warmup.lastReason === "lookahead-ready" ? "lh" : "cap"})
+              </span>
+            )}
+          </>
+        )}
       </div>
       {memory && (
         <div>
