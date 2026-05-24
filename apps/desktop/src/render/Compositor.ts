@@ -137,10 +137,9 @@ export class Compositor {
   private mode: "preview" | "export";
   private projectSummary: ProjectSummary | null = null;
   /// O(1) layer lookup by id. Rebuilt in `setProject` whenever the
-  /// project snapshot changes; read on every tick by `findLayer`.
-  /// Without this map, `findLayer` is O(layers) and gets called once
-  /// per active clip per tick from both `setAnchorTime` and
-  /// `compositeFrame` — quadratic per frame for long timelines.
+  /// project snapshot changes; read on every tick from `setAnchorTime`
+  /// and `hasLookaheadAt`. Without this map those would be O(layers)
+  /// per active clip per tick — quadratic for long timelines.
   private layerById = new Map<string, LayerSummary>();
   private proxyAssetUrl: (mediaId: string) => string | null;
   private originalAssetUrl: (mediaId: string) => string | null;
@@ -560,7 +559,7 @@ export class Compositor {
   hasLookaheadAt(tUs: number, minLookaheadUs: number): boolean {
     if (!this.projectSummary) return true;
     for (const c of this.clips.values()) {
-      const layer = this.findLayer(c.layerId);
+      const layer = this.layerById.get(c.layerId);
       if (!layer || layer.params.kind !== "VideoClip") continue;
       if (tUs < layer.t_start_us || tUs >= layer.t_end_us) continue;
       const layerLocalUs = tUs - layer.t_start_us;
@@ -592,7 +591,7 @@ export class Compositor {
     // for why the pre-rounded `frameDurUs` is not safe here.
     const tUsSnapped = snapFrameFloor(tUs, this.fpsNum, this.fpsDen);
     for (const c of this.clips.values()) {
-      const layer = this.findLayer(c.layerId);
+      const layer = this.layerById.get(c.layerId);
       if (!layer || layer.params.kind !== "VideoClip") continue;
       // Mirror compositeFrame's window check. `this.clips` retains every
       // clip that's ever been active (it's only pruned in `setProject`
@@ -630,7 +629,7 @@ export class Compositor {
         layerId: c.layerId,
         mediaId: c.mediaId,
         decodeQueueSize: c.source.decodeQueueSize?.() ?? 0,
-        ringSize: ring.size?.() ?? 0,
+        ringSize: ring.size(),
         ringLastPtsUs: ring.lastPtsUs(),
       });
     }
@@ -682,10 +681,6 @@ export class Compositor {
   // ============================================================
   // private
   // ============================================================
-
-  private findLayer(layerId: string): LayerSummary | undefined {
-    return this.layerById.get(layerId);
-  }
 
   private ensureClip(layer: LayerSummary): ActiveClip | null {
     if (layer.params.kind !== "VideoClip") return null;

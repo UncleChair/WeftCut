@@ -93,6 +93,10 @@ export class ExportFrameStore implements FrameStore {
     return this.entries[this.entries.length - 1]?.ptsUs ?? null;
   }
 
+  firstPtsUs(): number | null {
+    return this.entries[0]?.ptsUs ?? null;
+  }
+
   containsPts(tUs: number): boolean {
     if (this.entries.length === 0) return false;
     let lo = 0;
@@ -401,15 +405,26 @@ export class ExportSourceHandle implements DecoderHandle {
     let pos = startIdx;
     while (pos <= targetB) {
       // batchEnd = next IDR strictly after `pos`, or last sample if
-      // we're in the file's final GOP.
+      // we're in the file's final GOP. Use sampleMetaAt here — we
+      // only need the keyframe flag, and sampleAt would trigger byte
+      // fetches for every block we scan, thrashing the LRU.
       let batchEnd = totalSamples - 1;
       for (let i = pos + 1; i < totalSamples; i++) {
-        const s = this.demuxer.sampleAt(i);
+        const s = this.demuxer.sampleMetaAt(i);
         if (s?.keyframe) {
           batchEnd = i;
           break;
         }
       }
+
+      // Fault in the GOP-block bytes BEFORE the dispatch loop. The
+      // new on-demand byte cache means sampleAt returns null on a
+      // cache miss; the preview pump's `if (!s) break;` handles that
+      // by retrying next rAF, but the export's synchronous dispatch
+      // would silently exit with zero chunks fed and the worker
+      // would deadlock on `waitForPts`. ensureBlocksLoaded awaits
+      // the Range fetches so sampleAt below always returns non-null.
+      await this.demuxer.ensureBlocksLoaded(pos, batchEnd);
 
       let dispatched = 0;
       for (let i = pos; i <= batchEnd; i++) {

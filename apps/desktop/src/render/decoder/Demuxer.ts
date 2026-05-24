@@ -115,23 +115,26 @@ interface SampleEntryWithConfig {
 /// next prefetch. At v4 proxy bitrate this is ~2 MB total.
 const BLOCK_CACHE_CAP = 4;
 
-/// Read-chunk size for the streaming fetch. The `body.getReader()`
-/// chunks aren't quite this large (WebView2 hands out 16–64 KB
-/// chunks), but we don't repack — each chunk is forwarded straight
-/// into mp4box.appendBuffer in order. The value is just a hint we
-/// don't actually use.
+/// Consecutive failure attempts at the same block before we give up
+/// and mark it poisoned. Without this, a stale asset URL or 404
+/// turns into a 60 Hz refetch storm (pump retries every rAF) with no
+/// user-visible signal beyond growing console.warn output.
+const BLOCK_FETCH_MAX_FAILURES = 3;
 
 export class Demuxer {
   private file: ISOFile | null;
   private assetUrl: string;
   private readyP: Promise<VideoTrackMeta>;
+  private readyResolve!: (meta: VideoTrackMeta) => void;
+  private readyReject!: (err: Error) => void;
   private samples: IndexedSampleMeta[] = [];
   private allSamplesP: Promise<void>;
   private allSamplesResolve!: () => void;
+  private allSamplesReject!: (err: Error) => void;
   private trackMeta: VideoTrackMeta | null = null;
   private disposed = false;
   private streamingStarted = false;
-  /// One block per GOP. Built in `finalizeIndex()` from the
+  /// One block per GOP. Built in `buildBlockIndex()` from the
   /// completed sample table.
   private blocks: Block[] = [];
   /// `sampleIdx → block index`. Built alongside `blocks`. Uint32Array
@@ -143,14 +146,19 @@ export class Demuxer {
   /// In-flight Range fetches keyed by block id. Multiple pumps asking
   /// for the same block coalesce onto one network round-trip.
   private blockInFlight = new Map<number, Promise<void>>();
+  /// Consecutive fetch failures per block. Reset on success. Once
+  /// `>= BLOCK_FETCH_MAX_FAILURES`, the block is moved to
+  /// `blockPoisoned` and no further fetches are attempted.
+  private blockFailures = new Map<number, number>();
+  /// Blocks that have failed enough times to give up. `sampleAt`
+  /// returns null without triggering a fetch for these; the preview
+  /// shows the last decoded frame frozen and a single LogBus error
+  /// fires (vs a 60 Hz console.warn flood). Cleared in `dispose`.
+  private blockPoisoned = new Set<number>();
   /// One controller for every fetch this Demuxer issues. Aborted in
   /// `dispose()` so pending Range fetches don't keep the project /
   /// closed window alive.
   private abortController = new AbortController();
-  /// `setExtractionOptions` requires a track id; we cache it from
-  /// `onReady` so `finalizeIndex` can call `releaseUsedSamples` even
-  /// after `trackMeta` could in principle be cleared.
-  private trackIdForExtraction = 0;
   /// Set inside `onReady` so the prefix-fetch loop can stop once
   /// moov has been parsed. We only need moov to drive preview — the
   /// sample table is fully there; mdat is never touched at warmup
@@ -159,67 +167,89 @@ export class Demuxer {
 
   constructor(init: DemuxerInit) {
     this.assetUrl = init.assetUrl;
-    this.file = createFile();
-    this.allSamplesP = new Promise<void>((res) => {
-      this.allSamplesResolve = res;
-    });
-
+    // Capture both resolve and reject so `dispose()` and `streamFile`
+    // can unblock callers awaiting these promises on failure paths
+    // (corrupt proxy, dispose-during-warmup). Without these handles,
+    // `await demuxer.ensureSamplesLoaded()` would hang forever in
+    // those cases — the leak the code review surfaced.
     this.readyP = new Promise<VideoTrackMeta>((resolve, reject) => {
-      this.file!.onReady = (info: Movie) => {
-        try {
-          const videoTrack: Track | undefined = info.videoTracks[0];
-          if (!videoTrack) {
-            reject(new Error("Demuxer: no video track found"));
-            return;
-          }
-          const description = this.extractDescription(videoTrack);
-          if (!videoTrack.video) {
-            reject(new Error(`Demuxer: track ${videoTrack.id} has no video metadata`));
-            return;
-          }
-          const meta: VideoTrackMeta = {
-            trackId: videoTrack.id,
-            codec: videoTrack.codec,
-            codedWidth: videoTrack.video.width,
-            codedHeight: videoTrack.video.height,
-            description,
-            nbSamples: videoTrack.nb_samples,
-            timescale: videoTrack.timescale,
-          };
-          this.trackMeta = meta;
-          this.trackIdForExtraction = videoTrack.id;
-          this.readyFired = true;
-          // Intentionally NOT calling setExtractionOptions / start —
-          // those configure mp4box to emit sample bytes via onSamples,
-          // which requires us to feed it the full mdat. We only need
-          // sample metadata (PTS/DTS/duration/offset/size/keyframe)
-          // which is fully present in moov; `getTrackSamplesInfo`
-          // returns it without touching mdat. The prefix-fetch loop
-          // in streamFile reads `readyFired` to break out as soon as
-          // moov is parsed.
-          resolve(meta);
-        } catch (err) {
-          reject(err as Error);
-        }
-      };
-
-      this.file!.onError = (_module: string, message: string) => {
-        reject(new Error(`Demuxer: mp4box error: ${message}`));
-      };
-
-      // No `onSamples` handler — we extract sample metadata via
-      // `getTrackSamplesInfo` after moov is parsed, so mp4box never
-      // needs to deliver mdat-derived sample bytes. See streamFile.
+      this.readyResolve = resolve;
+      this.readyReject = reject;
     });
+    this.allSamplesP = new Promise<void>((resolve, reject) => {
+      this.allSamplesResolve = resolve;
+      this.allSamplesReject = reject;
+    });
+
+    // Local const lets us assign callbacks without `this.file!`
+    // non-null assertions; the field type stays honest as
+    // `ISOFile | null` for everywhere else.
+    const file = createFile();
+    this.file = file;
+    file.onReady = (info: Movie) => {
+      try {
+        const videoTrack: Track | undefined = info.videoTracks[0];
+        if (!videoTrack) {
+          this.readyReject(new Error("Demuxer: no video track found"));
+          return;
+        }
+        const description = this.extractDescription(videoTrack);
+        if (!videoTrack.video) {
+          this.readyReject(
+            new Error(`Demuxer: track ${videoTrack.id} has no video metadata`),
+          );
+          return;
+        }
+        const meta: VideoTrackMeta = {
+          trackId: videoTrack.id,
+          codec: videoTrack.codec,
+          codedWidth: videoTrack.video.width,
+          codedHeight: videoTrack.video.height,
+          description,
+          nbSamples: videoTrack.nb_samples,
+          timescale: videoTrack.timescale,
+        };
+        this.trackMeta = meta;
+        this.readyFired = true;
+        // Intentionally NOT calling setExtractionOptions / start —
+        // those configure mp4box to emit sample bytes via onSamples,
+        // which requires us to feed it the full mdat. We only need
+        // sample metadata (PTS/DTS/duration/offset/size/keyframe)
+        // which is fully present in moov; `getTrackSamplesInfo`
+        // returns it without touching mdat. The prefix-fetch loop
+        // in streamFile reads `readyFired` to break out as soon as
+        // moov is parsed.
+        this.readyResolve(meta);
+      } catch (err) {
+        this.readyReject(err as Error);
+      }
+    };
+    file.onError = (_module: string, message: string) => {
+      this.readyReject(new Error(`Demuxer: mp4box error: ${message}`));
+    };
+    // No `onSamples` handler — we extract sample metadata via
+    // `getTrackSamplesInfo` after moov is parsed, so mp4box never
+    // needs to deliver mdat-derived sample bytes. See streamFile.
   }
 
   async open(): Promise<VideoTrackMeta> {
     if (!this.streamingStarted) {
       this.streamingStarted = true;
       void this.streamFile().catch((err: unknown) => {
+        // AbortError on dispose is expected and routes through the
+        // explicit `readyReject` in `dispose()`; logging it as a hard
+        // error spams the console for every project-close. Match
+        // `fetchBlock`'s catch behaviour.
+        if ((err as { name?: string }).name === "AbortError") return;
         // eslint-disable-next-line no-console
         console.error(`Demuxer streamFile failed for ${this.assetUrl}`, err);
-        this.file?.onError?.("streamFile", String(err));
+        // Reject the promises directly. Calling `this.file?.onError?.`
+        // here used to be how this got surfaced, but after the
+        // `releaseMp4box` microtask runs the file ref is null and the
+        // optional chain silently swallows the error.
+        const reason = err instanceof Error ? err : new Error(String(err));
+        this.readyReject(reason);
+        this.allSamplesReject(reason);
       });
     }
     return this.readyP;
@@ -254,6 +284,10 @@ export class Demuxer {
     const blockId = this.blockBySampleIdx[index]!;
     const blockBytes = this.blockCache.get(blockId);
     if (!blockBytes) {
+      // Poisoned blocks have given up after repeated fetch failures;
+      // don't trigger more retries (60 Hz pump would otherwise loop
+      // forever). The user gets one console.error from fetchBlock.
+      if (this.blockPoisoned.has(blockId)) return null;
       // Miss: schedule the fetch and let the pump retry on the next
       // tick. Also prefetch the next block to keep the pump fed
       // across GOP boundaries without an extra round-trip every
@@ -282,6 +316,33 @@ export class Demuxer {
       keyframe: meta.keyframe,
       data,
     };
+  }
+
+  /// Make sure every GOP block covering samples `[fromIdx..toIdx]`
+  /// is in the byte cache before returning. Used by the export
+  /// decoder, which dispatches synchronously and so can't tolerate
+  /// `sampleAt` returning null mid-batch. Preview's pump just retries
+  /// next rAF; export would deadlock its `waitForPts` consumer.
+  ///
+  /// Resolves once every required block is either in the cache or
+  /// poisoned (giving up on that block — the caller will see null
+  /// from `sampleAt` and surface its own error). Pre-faults blocks
+  /// in parallel so a multi-GOP batch costs one Range round-trip
+  /// worth of latency, not N.
+  async ensureBlocksLoaded(fromIdx: number, toIdx: number): Promise<void> {
+    if (this.samples.length === 0) return;
+    const lo = Math.max(0, Math.min(fromIdx, this.samples.length - 1));
+    const hi = Math.max(0, Math.min(toIdx, this.samples.length - 1));
+    const firstBlock = this.blockBySampleIdx[lo]!;
+    const lastBlock = this.blockBySampleIdx[hi]!;
+    const inFlight: Promise<void>[] = [];
+    for (let b = firstBlock; b <= lastBlock; b++) {
+      if (this.blockCache.has(b)) continue;
+      if (this.blockPoisoned.has(b)) continue;
+      inFlight.push(this.fetchBlock(b));
+    }
+    if (inFlight.length === 0) return;
+    await Promise.all(inFlight);
   }
 
   idrAtOrBefore(targetIndex: number): number {
@@ -319,17 +380,21 @@ export class Demuxer {
     if (this.disposed) return;
     this.disposed = true;
     this.abortController.abort();
-    try {
-      this.file?.stop();
-    } catch {
-      // ignore
-    }
+    // Reject any pending readiness Promises so awaiters unblock
+    // instead of leaking forever. Safe whether or not they've
+    // already resolved — settled Promises ignore further settle
+    // calls per spec.
+    const disposeErr = new Error("Demuxer disposed");
+    this.readyReject(disposeErr);
+    this.allSamplesReject(disposeErr);
     this.file = null;
     this.samples = [];
     this.blocks = [];
     this.blockBySampleIdx = new Uint32Array(0);
     this.blockCache.clear();
     this.blockInFlight.clear();
+    this.blockFailures.clear();
+    this.blockPoisoned.clear();
   }
 
   // ============================================================
@@ -414,6 +479,23 @@ export class Demuxer {
     }
 
     if (this.disposed) return;
+    // The loop only exits when `readyFired` is true, EXCEPT on the
+    // 200-fallback path where we break unconditionally after feeding
+    // the full file. If mp4box never fires onReady from that feed
+    // (corrupt proxy / missing moov), `readyFired` is still false
+    // here. Reject explicitly — without this, `extractSamplesFromMetadata`
+    // would early-return on `!trackMeta`, `allSamplesResolve()` would
+    // resolve with zero samples, but `readyP` would never resolve
+    // because onReady never fired. Any `await ensureReady()` hangs
+    // forever.
+    if (!this.readyFired) {
+      const err = new Error(
+        `Demuxer: parsed file but onReady never fired — proxy likely missing moov`,
+      );
+      this.readyReject(err);
+      this.allSamplesReject(err);
+      return;
+    }
     // moov is parsed → extract sample metadata from mp4box's tables
     // (no mdat needed). Synchronous, fast — typical proxy has tens
     // of thousands of samples, well below the cost of one rAF.
@@ -425,9 +507,27 @@ export class Demuxer {
   /// Pull every sample's metadata out of the parsed moov tables.
   /// Mirrors what the old `onSamples` extraction collected, minus
   /// the per-sample `data` views (which would have required mdat).
+  ///
+  /// The mp4box typings claim `getTrackSamplesInfo` returns
+  /// `Sample[]`, but the impl returns `undefined` if the trakBox
+  /// lookup misses (the typing lies). In practice the trackId came
+  /// from `info.videoTracks[0]` in the same parse so it always
+  /// resolves — but a defensive throw converts a future API drift
+  /// from `Cannot read properties of undefined (reading 'map')`
+  /// into a clear demuxer error that flows through `readyReject`.
   private extractSamplesFromMetadata(): void {
     if (!this.file || !this.trackMeta) return;
-    const raw = this.file.getTrackSamplesInfo(this.trackMeta.trackId);
+    const raw = this.file.getTrackSamplesInfo(this.trackMeta.trackId) as
+      | ReturnType<ISOFile["getTrackSamplesInfo"]>
+      | undefined;
+    if (!raw) {
+      throw new Error(
+        `Demuxer: getTrackSamplesInfo returned undefined for track ${this.trackMeta.trackId}`,
+      );
+    }
+    // No defensive sort — mp4box returns samples in stored (decode)
+    // order, which IS the order we want. Keeping the sort would cost
+    // O(n log n) on tens of thousands of entries every demuxer open.
     this.samples = raw.map((s) => ({
       index: s.number,
       ptsUs: Math.round((s.cts / s.timescale) * 1e6),
@@ -437,7 +537,6 @@ export class Demuxer {
       byteOffset: s.offset,
       byteSize: s.size,
     }));
-    this.samples.sort((a, b) => a.index - b.index);
     this.buildBlockIndex();
   }
 
@@ -480,27 +579,18 @@ export class Demuxer {
     }
   }
 
-  /// Release mp4box's sample-table + internal buffer chain. Called as
-  /// a deferred microtask AFTER the on-samples completion so we don't
-  /// mutate `this.file` while we're inside mp4box's own callstack.
-  /// This is the actual "free 500 MB" step — the rest of the file
-  /// (`buildBlockIndex` etc.) is just bookkeeping.
+  /// Drop the `ISOFile` ref so the parsed boxes + appended buffer
+  /// chain can GC. After this point we only go back to the proxy via
+  /// Range fetches. We don't call `releaseUsedSamples` / `stop()` —
+  /// those would only have effect if we'd enabled extraction via
+  /// `setExtractionOptions` + `start()`, which we don't. The
+  /// `this.file = null` assignment is the entire reclamation step.
+  ///
+  /// Runs as a deferred microtask AFTER `streamFile` completes so we
+  /// don't mutate `this.file` while still inside one of mp4box's own
+  /// callstacks (onReady / parsing).
   private releaseMp4box(): void {
-    if (this.disposed || !this.file) return;
-    if (this.trackIdForExtraction > 0 && this.samples.length > 0) {
-      try {
-        this.file.releaseUsedSamples(this.trackIdForExtraction, this.samples.length - 1);
-      } catch {
-        // Older mp4box variants may not implement this; harmless.
-      }
-    }
-    try {
-      this.file.stop();
-    } catch {
-      // ignore
-    }
-    // Drop the file ref so the parse leftovers can GC. After this
-    // point we'll only ever go back to the proxy via Range fetches.
+    if (this.disposed) return;
     this.file = null;
   }
 
@@ -508,9 +598,16 @@ export class Demuxer {
   /// `Range` request. Inserts the bytes into the LRU cache on
   /// success; the in-flight promise is held so concurrent pumps for
   /// the same block coalesce.
+  ///
+  /// On failure, increments `blockFailures` for this block and
+  /// poisons after `BLOCK_FETCH_MAX_FAILURES` consecutive failures —
+  /// the pump retries via `sampleAt` every rAF, so without a backoff
+  /// the first failure would turn into a 60 Hz console.warn flood
+  /// and the preview would stay frozen with no clear error surfaced.
   private async fetchBlock(blockId: number): Promise<void> {
     if (this.disposed) return;
     if (this.blockCache.has(blockId)) return;
+    if (this.blockPoisoned.has(blockId)) return;
     const inFlight = this.blockInFlight.get(blockId);
     if (inFlight) return inFlight;
     const block = this.blocks[blockId];
@@ -525,26 +622,42 @@ export class Demuxer {
         });
         // Most servers reply 206 Partial Content for honored Range
         // requests. A 200 means the server returned the FULL file —
-        // we still trust the slice we wanted to be at the same
-        // offset, but log loudly because that's a sign the asset
-        // handler isn't honoring Range and our heap savings won't
-        // materialize.
+        // we have to slice the window out ourselves, AND we must
+        // copy the bytes off the giant buffer (not view into it) or
+        // each cached block pins the entire proxy.
         if (res.status === 200) {
           // eslint-disable-next-line no-console
           console.warn(
             `[weftcut/pixi] Range request returned 200 (full file) for ${this.assetUrl}; ` +
-              `asset handler may not honor Range — heap will stay high.`,
+              `asset handler may not honor Range — falling back to full-file slice.`,
           );
         } else if (res.status !== 206) {
           throw new Error(`block ${blockId} fetch: status ${res.status}`);
         }
         if (this.disposed) return;
         const buf = await res.arrayBuffer();
-        // For the 200 fallback case, slice the requested window out
-        // of the full file. For 206 the body is already the slice.
+        // Re-check after the async hop — dispose may have fired
+        // while we were awaiting the body. Without this, we'd write
+        // into a Map the disposer just cleared.
+        if (this.disposed) return;
         let bytes: Uint8Array;
         if (res.status === 200) {
-          bytes = new Uint8Array(buf, rangeStart, block.byteSize);
+          // Bounds-check against the actual response length, not
+          // Content-Length, so a truncated body throws cleanly
+          // rather than silently producing zero-padded NAL bytes.
+          if (rangeStart + block.byteSize > buf.byteLength) {
+            throw new Error(
+              `block ${blockId} 200-fallback: response is ${buf.byteLength}B, ` +
+                `needed bytes ${rangeStart}..${rangeStart + block.byteSize}`,
+            );
+          }
+          // COPY out of the full-file buffer into a fresh
+          // ArrayBuffer so the ~700 MB `buf` can GC once we return.
+          // The previous design used `new Uint8Array(buf, start, size)`
+          // — a view — which pinned the full file per cache entry,
+          // multiplying heap by the cache cap.
+          bytes = new Uint8Array(block.byteSize);
+          bytes.set(new Uint8Array(buf, rangeStart, block.byteSize));
         } else {
           bytes = new Uint8Array(buf);
         }
@@ -556,6 +669,7 @@ export class Demuxer {
           );
         }
         this.blockCache.set(blockId, bytes);
+        this.blockFailures.delete(blockId);
         // Evict oldest entries (insertion order) past the cap.
         while (this.blockCache.size > BLOCK_CACHE_CAP) {
           const oldest = this.blockCache.keys().next().value;
@@ -564,8 +678,25 @@ export class Demuxer {
         }
       } catch (e) {
         if ((e as { name?: string }).name === "AbortError") return;
-        // eslint-disable-next-line no-console
-        console.warn(`[weftcut/pixi] block ${blockId} fetch failed:`, e);
+        const failures = (this.blockFailures.get(blockId) ?? 0) + 1;
+        this.blockFailures.set(blockId, failures);
+        if (failures >= BLOCK_FETCH_MAX_FAILURES) {
+          this.blockPoisoned.add(blockId);
+          this.blockFailures.delete(blockId);
+          // eslint-disable-next-line no-console
+          console.error(
+            `[weftcut/pixi] block ${blockId} fetch failed ${failures} times — giving up. ` +
+              `Preview will be frozen on this clip. Last error:`,
+            e,
+          );
+        } else {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[weftcut/pixi] block ${blockId} fetch failed (attempt ${failures}/` +
+              `${BLOCK_FETCH_MAX_FAILURES}):`,
+            e,
+          );
+        }
       } finally {
         this.blockInFlight.delete(blockId);
       }

@@ -68,10 +68,12 @@ export interface FrameStore {
   /// the store is empty. Used to gauge how much lookahead the
   /// decoder has produced past a given playhead position.
   lastPtsUs(): number | null;
-  /// Number of cached entries, for the dev `PerfHUD`. Optional — the
-  /// export-side store (which drains frames after each composited
-  /// output) reports 0 implicitly.
-  size?(): number;
+  /// PTS in microseconds of the earliest cached frame, or null if
+  /// the store is empty. Diagnostic — `Compositor.updateClip` logs
+  /// it on frame-lookup misses.
+  firstPtsUs(): number | null;
+  /// Number of cached entries, for the dev `PerfHUD`.
+  size(): number;
 }
 
 /// Minimal decoder-handle surface the Compositor depends on. Both the
