@@ -11,6 +11,7 @@
     "core:webview:default",
     "dialog:default",
     "fs:default",
+    "fs:allow-temp-write-recursive",
     "shell:default"
   ]
 }
