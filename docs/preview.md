@@ -61,21 +61,20 @@ and compute on-the-fly per-channel sample values via the shared
 
 ## Decode
 
-`SourceDecoderPool` keeps one `VideoDecoder` per source media. Each
-decoder owns:
+`SourceDecoderPool` keeps one `VideoDecoder` + one `FrameRing` per
+*clip* (per `layerId`). The `Demuxer` and parsed sample table live
+on a refcounted `SourceMedia` keyed by `mediaId` so multiple clips of
+the same source share one parse but each get their own decode
+pipeline. Each handle's `FrameRing` caches 1 s lookahead / 0.5 s
+lookbehind of `ImageBitmap` snapshots around the current playhead.
+The ring is what the compositor reads.
 
-- A `Demuxer` (mp4box.js wrapper) that pulls `EncodedVideoChunk`s out of
-  the underlying file.
-- A `FrameRing` with 1 s lookahead / 0.5 s lookbehind around the current
-  playhead. The ring is the cache the compositor reads.
-
-Decoders are idle-disposed 5 s after last use; they re-spin on the next
-`requestFrameAt`. The pool's `configureWithFallback` helper handles
-hardware-decode failures: on a zero-output first-frame error, the
-decoder resets with `hardwareAcceleration: 'prefer-software'` and the
-handle is marked downgraded. On `'Codec reclaimed due to inactivity'`
-the decoder closes and emits one LogBus warning; the next
-`requestFrameAt` rebuilds it.
+Decoders are idle-disposed 5 s after last use and rebuild on the next
+`requestFrameAt`. Hardware-decode failures route through
+`decoderFallback.ts`: a zero-output first-frame error reconfigures
+the decoder with `hardwareAcceleration: 'prefer-software'`; a
+`'Codec reclaimed due to inactivity'` error closes the decoder and
+lazy-rebuilds.
 
 Forward GOP-crossings during continuous play do NOT reset the
 decoder. The pump dispatches the new GOP's IDR chunk through the
@@ -85,6 +84,13 @@ across the boundary. Reset is reserved for backward seeks whose
 target isn't in the ring and for forward seeks far enough past
 the pump frontier that decoding through the gap would burn
 seconds. See [ADR 0003](adr/0003-forward-gop-crossing-no-decoder-reset.md).
+
+The `Demuxer` itself never holds the full proxy in memory. Warmup
+issues a bounded `Range` request for the moov prefix only; per-sample
+NAL bytes are fetched on demand into a small LRU of GOP-aligned
+blocks. See [`render.md`](render.md#demuxer-byte-handling) for the
+byte-cache contract — relevant when adding a new caller of
+`Demuxer.sampleAt`.
 
 ## Scrub
 
@@ -134,6 +140,34 @@ base64 `@font-face` declarations, and the SVG is converted to an
 Pixi texture. The raster cache is keyed on content hash
 (template id + props + composition canvas size), shared across sprite
 instances of the same template.
+
+## Diagnostics
+
+`PerfHUD.tsx` is a `import.meta.env.DEV`-gated overlay mounted in
+the top-right corner of the preview surface (`Ctrl+Shift+P` toggles).
+It reads the Compositor and PlaybackEngine via refs every 500 ms and
+displays:
+
+- **rAF P50 / P99** — frame-interval percentiles over a 120-entry
+  circular window. Resets on `visibilitychange` so a tab-unhide
+  doesn't pollute the ring with the multi-second pause interval.
+- **composite ms (last · max)** — `compositeFrame` body duration.
+  The running max persists until the reset button is clicked.
+- **warmup ms (last · max + reason)** — time from `play()` to the
+  clock actually starting. The `(lh)` suffix means the lookahead
+  check fired; `(cap)` in amber means the `WARMUP_MAX_WAIT_MS` cap
+  fired without the ring being ready (possible initial-frame
+  stutter).
+- **heap** — Chromium's `performance.memory.usedJSHeapSize /
+  totalJSHeapSize`. WebView2 exposes this.
+- **per-clip** — `decodeQueueSize`, ring entry count, ring's latest
+  PTS for every active clip (clips with disposed handles are
+  filtered out).
+
+The HUD's reset button clears the Compositor's `compositeMsMax` AND
+the engine's warmup max so a one-off cold-start spike doesn't pin
+the displayed max forever. The HUD's z-index sits below page
+chrome popovers / settings dialogs so it doesn't obscure them.
 
 ## Render & Play
 
