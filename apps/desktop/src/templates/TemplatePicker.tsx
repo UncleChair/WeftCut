@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { formatTimecode, parseTimecode } from "../frames";
 import {
   addTemplate,
   listTemplates,
@@ -19,6 +20,8 @@ interface Props {
   /// target dropdown — templates lower to PngSeq overlay nodes and would
   /// silently render nothing on an Audio/Subtitle lane.
   tracks: TrackSummary[];
+  fpsNum: number;
+  fpsDen: number;
 }
 
 /// `<select>` value when the user wants the picker to find-or-create the
@@ -31,6 +34,8 @@ export function TemplatePicker({
   onAdded,
   currentTimeUs,
   tracks,
+  fpsNum,
+  fpsDen,
 }: Props) {
   const { t } = useTranslation();
   const [templates, setTemplates] = useState<TemplateSummary[] | null>(null);
@@ -97,7 +102,7 @@ export function TemplatePicker({
                   <TemplateCardThumbnail template={tpl} />
                   <span className="template-card-name">{tpl.name}</span>
                   <span className="template-card-meta">
-                    {tpl.size[0]}×{tpl.size[1]} · {tpl.default_duration_s}s
+                    {tpl.size[0]}×{tpl.size[1]} · {formatTimecode(Math.round(tpl.default_duration_s * 1_000_000), fpsNum, fpsDen)}
                   </span>
                   <span className="template-card-id">{tpl.id}</span>
                 </button>
@@ -111,6 +116,8 @@ export function TemplatePicker({
                   template={selected}
                   currentTimeUs={currentTimeUs}
                   tracks={videoTracks}
+                  fpsNum={fpsNum}
+                  fpsDen={fpsDen}
                   onSubmit={async ({ tStartUs, props, trackId }) => {
                     setError(null);
                     try {
@@ -160,11 +167,15 @@ function TemplateForm({
   template,
   currentTimeUs,
   tracks,
+  fpsNum,
+  fpsDen,
   onSubmit,
 }: {
   template: TemplateSummary;
   currentTimeUs: number;
   tracks: TrackSummary[];
+  fpsNum: number;
+  fpsDen: number;
   onSubmit: (args: {
     tStartUs: number;
     props: Record<string, unknown>;
@@ -175,8 +186,8 @@ function TemplateForm({
   const [propValues, setPropValues] = useState<Record<string, unknown>>(() =>
     defaultPropsFor(template),
   );
-  const [insertAtSec, setInsertAtSec] = useState<number>(
-    currentTimeUs / 1_000_000,
+  const [insertAtTc, setInsertAtTc] = useState<string>(
+    formatTimecode(currentTimeUs, fpsNum, fpsDen),
   );
   // Default to auto-create. The backend spawns a fresh Overlay track
   // on every auto insert so consecutive templates never collide on
@@ -195,7 +206,7 @@ function TemplateForm({
   const submit = async () => {
     setBusy(true);
     try {
-      const tStartUs = Math.max(0, Math.round(insertAtSec * 1_000_000));
+      const tStartUs = Math.max(0, parseTimecode(insertAtTc, fpsNum, fpsDen) ?? 0);
       const trackId =
         trackChoice === AUTO_OVERLAY_SENTINEL ? undefined : trackChoice;
       await onSubmit({ tStartUs, props: propValues, trackId });
@@ -235,11 +246,17 @@ function TemplateForm({
       <label className="template-picker-field">
         <span>{t("template_picker.insert_at")}</span>
         <input
-          type="number"
-          min={0}
-          step={0.1}
-          value={insertAtSec}
-          onChange={(e) => setInsertAtSec(Number(e.target.value))}
+          type="text"
+          value={insertAtTc}
+          onChange={(e) => setInsertAtTc(e.target.value)}
+          onBlur={() => {
+            const us = parseTimecode(insertAtTc, fpsNum, fpsDen);
+            if (us !== null) {
+              setInsertAtTc(formatTimecode(us, fpsNum, fpsDen));
+            } else {
+              setInsertAtTc(formatTimecode(currentTimeUs, fpsNum, fpsDen));
+            }
+          }}
         />
       </label>
       <label className="template-picker-field">
@@ -260,7 +277,7 @@ function TemplateForm({
       </label>
       <p className="template-picker-hint">
         {t("template_picker.duration_hint", {
-          seconds: template.default_duration_s,
+          value: formatTimecode(Math.round(template.default_duration_s * 1_000_000), fpsNum, fpsDen),
         })}
       </p>
 
