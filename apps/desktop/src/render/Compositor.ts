@@ -37,6 +37,9 @@ export interface CompositorPerfSnapshot {
   compositeMsLast: number;
   /// Running peak since the last `resetPerfPeaks()`.
   compositeMsMax: number;
+  /// Last preview-only upcoming-clip prewarm attempt. Null before
+  /// the first `setAnchorTime()` tick or in export mode.
+  upcomingPrewarm: UpcomingClipPrewarmSnapshot | null;
   clips: Array<{
     layerId: string;
     mediaId: string;
@@ -45,6 +48,26 @@ export interface CompositorPerfSnapshot {
     /// Number of frames currently cached in the per-clip ring.
     ringSize: number;
     /// PTS of the ring's latest frame; null if the ring is empty.
+    ringLastPtsUs: number | null;
+  }>;
+}
+
+export interface UpcomingClipPrewarmSnapshot {
+  /// Composition time that drove the prewarm decision.
+  anchorUs: number;
+  /// Future window scanned for the next clip boundary.
+  windowUs: number;
+  /// Start time of the nearest future VideoClip in the window.
+  /// Null means no upcoming VideoClip was found.
+  nextStartUs: number | null;
+  clips: Array<{
+    layerId: string;
+    mediaId: string;
+    /// True if a DecoderHandle existed or was created and
+    /// `requestFrameAt(src_in_us)` was issued.
+    requested: boolean;
+    decodeQueueSize: number;
+    ringSize: number;
     ringLastPtsUs: number | null;
   }>;
 }
@@ -199,6 +222,7 @@ export class Compositor {
   /// `compositeFrame` itself; reading is free.
   private compositeMsLast = 0;
   private compositeMsMax = 0;
+  private upcomingPrewarm: UpcomingClipPrewarmSnapshot | null = null;
 
   constructor(init: CompositorInit) {
     this.app = init.app;
@@ -644,6 +668,7 @@ export class Compositor {
     return {
       compositeMsLast: this.compositeMsLast,
       compositeMsMax: this.compositeMsMax,
+      upcomingPrewarm: this.upcomingPrewarm,
       clips,
     };
   }
@@ -714,12 +739,37 @@ export class Compositor {
       }
     }
 
+    const clips: UpcomingClipPrewarmSnapshot["clips"] = [];
     for (const layer of candidates) {
       const clip = this.ensureClip(layer);
-      if (!clip || clip.source.disposed) continue;
+      if (!clip || clip.source.disposed) {
+        clips.push({
+          layerId: layer.id,
+          mediaId: layer.params.media_id,
+          requested: false,
+          decodeQueueSize: 0,
+          ringSize: 0,
+          ringLastPtsUs: null,
+        });
+        continue;
+      }
       const srcTUs = layer.params.src_in_us;
       void clip.source.requestFrameAt(srcTUs);
+      clips.push({
+        layerId: layer.id,
+        mediaId: layer.params.media_id,
+        requested: true,
+        decodeQueueSize: clip.source.decodeQueueSize?.() ?? 0,
+        ringSize: clip.source.ring.size(),
+        ringLastPtsUs: clip.source.ring.lastPtsUs(),
+      });
     }
+    this.upcomingPrewarm = {
+      anchorUs: tUs,
+      windowUs: UPCOMING_CLIP_PREWARM_US,
+      nextStartUs,
+      clips,
+    };
   }
 
   private ensureClip(layer: LayerSummary): ActiveClip | null {
