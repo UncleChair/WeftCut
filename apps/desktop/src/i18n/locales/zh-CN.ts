@@ -277,6 +277,14 @@ const zhCN: Resources = {
     composition_duration_label: "时长",
     composition_duration_invalid: "时间码格式无效。",
     composition_duration_below_floor: "不得小于 {{floor}}（内容末尾）。",
+    timeline_heading: "时间线",
+    timeline_blurb: "控制图层移动和放置时的时间线编辑偏好。",
+    tail_snap_enabled: "移动图层时吸附到片段边界和播放头",
+    tail_snap_enabled_hint:
+      "拖动图层时，将图层起点吸附到可见轨道上最近的图层起止边界或播放头。",
+    tail_snap_strength: "吸附强度",
+    tail_snap_strength_hint:
+      "以屏幕像素为单位；当前时间线缩放越低，对应的时间范围越大。",
     keybindings_heading: "键盘快捷键",
     keybindings_blurb:
       "点击快捷键可移除，点击 [+ 添加] 可绑定新组合。每个组合在所有操作中必须唯一——若想改绑已被占用的键，请先在原操作处取消。",

@@ -537,6 +537,10 @@ export interface AppSettings {
   delta_window_us: number;
   /// Remembered last-toggle of the left MediaPool drawer.
   media_pool_drawer_open: boolean;
+  /// Snap moved timeline layers to nearby layer boundaries and playhead.
+  tail_snap_enabled: boolean;
+  /// Pixel threshold for boundary snapping. Clamped server-side.
+  tail_snap_strength_px: number;
 }
 
 /// Patch shape — every field optional. The backend merges into the
@@ -547,6 +551,8 @@ export interface AppSettingsPatch {
   display_mode?: DisplayMode;
   delta_window_us?: number;
   media_pool_drawer_open?: boolean;
+  tail_snap_enabled?: boolean;
+  tail_snap_strength_px?: number;
 }
 
 export async function appSettingsGet(): Promise<AppSettings> {

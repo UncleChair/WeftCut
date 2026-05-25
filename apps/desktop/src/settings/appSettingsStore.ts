@@ -40,6 +40,8 @@ const FALLBACK: AppSettings = {
   display_mode: "AbRoll",
   delta_window_us: 10_000_000,
   media_pool_drawer_open: false,
+  tail_snap_enabled: true,
+  tail_snap_strength_px: 12,
 };
 
 export const useAppSettingsStore = create<AppSettingsState & AppSettingsActions>(
@@ -58,6 +60,10 @@ export const useDeltaWindowUs = (): number =>
   useAppSettingsStore((s) => s.settings.delta_window_us);
 export const useMediaPoolDrawerOpen = (): boolean =>
   useAppSettingsStore((s) => s.settings.media_pool_drawer_open);
+export const useTailSnapEnabled = (): boolean =>
+  useAppSettingsStore((s) => s.settings.tail_snap_enabled);
+export const useTailSnapStrengthPx = (): number =>
+  useAppSettingsStore((s) => s.settings.tail_snap_strength_px);
 export const useAppSettingsLoaded = (): boolean =>
   useAppSettingsStore((s) => s.loaded);
 

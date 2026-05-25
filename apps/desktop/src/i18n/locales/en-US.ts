@@ -281,6 +281,15 @@ const enUS = {
     composition_duration_label: "Duration",
     composition_duration_invalid: "Invalid timecode.",
     composition_duration_below_floor: "Must be ≥ {{floor}} (content end).",
+    timeline_heading: "Timeline",
+    timeline_blurb:
+      "Timeline editing preferences for layer movement and placement.",
+    tail_snap_enabled: "Snap moved layers to clip edges and playhead",
+    tail_snap_enabled_hint:
+      "When dragging a layer, snap its start to the nearest layer start/end boundary on visible tracks or to the playhead.",
+    tail_snap_strength: "Snap strength",
+    tail_snap_strength_hint:
+      "Measured in screen pixels, so the effective time range follows the current timeline zoom.",
     keybindings_heading: "Keyboard shortcuts",
     keybindings_blurb:
       "Click a chord to remove it, or [+ Add] to bind a new one. Each chord must be unique across actions — unset the current owner first if you want to repurpose a key.",

@@ -2392,6 +2392,33 @@ input.preview-timecode:focus {
   border-color: #f87171;
 }
 
+.settings-input-narrow {
+  width: 64px;
+}
+
+.settings-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 0 6px;
+}
+
+.settings-slider-row input[type="range"] {
+  flex: 1 1 auto;
+  min-width: 120px;
+}
+
+.settings-slider-label {
+  min-width: 92px;
+  font-size: 12px;
+  color: #d1d5db;
+}
+
+.settings-slider-unit {
+  font-size: 11px;
+  color: #6b7280;
+}
+
 .settings-key-header {
   display: flex;
   align-items: center;
