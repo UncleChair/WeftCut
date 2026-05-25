@@ -10,6 +10,9 @@
 //!     symmetric window around the playhead. Default 10 s.
 //!   - `media_pool_drawer_open`: remembered last-toggle of the left
 //!     MediaPool drawer. False by default; `M` shortcut flips it.
+//!   - `tail_snap_enabled`: when true, dragging a timeline layer near
+//!     another layer boundary or the playhead snaps the moved layer start there.
+//!   - `tail_snap_strength_px`: pixel threshold for that boundary snap.
 //!
 //! File layout (`<app_config_dir>/app_settings.json`):
 //!
@@ -17,7 +20,9 @@
 //! {
 //!   "display_mode": "AbRoll",
 //!   "delta_window_us": 10000000,
-//!   "media_pool_drawer_open": false
+//!   "media_pool_drawer_open": false,
+//!   "tail_snap_enabled": true,
+//!   "tail_snap_strength_px": 12
 //! }
 //! ```
 //!
@@ -33,6 +38,8 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 const APP_SETTINGS_FILE: &str = "app_settings.json";
+const MIN_TAIL_SNAP_STRENGTH_PX: u32 = 2;
+const MAX_TAIL_SNAP_STRENGTH_PX: u32 = 80;
 
 /// Display mode for the timeline. Authoritative state for the AB filter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,10 +67,22 @@ pub struct AppSettings {
     pub delta_window_us: i64,
     #[serde(default)]
     pub media_pool_drawer_open: bool,
+    #[serde(default = "default_tail_snap_enabled")]
+    pub tail_snap_enabled: bool,
+    #[serde(default = "default_tail_snap_strength_px")]
+    pub tail_snap_strength_px: u32,
 }
 
 fn default_delta_window_us() -> i64 {
     10_000_000
+}
+
+fn default_tail_snap_enabled() -> bool {
+    true
+}
+
+fn default_tail_snap_strength_px() -> u32 {
+    12
 }
 
 impl Default for AppSettings {
@@ -72,6 +91,8 @@ impl Default for AppSettings {
             display_mode: DisplayMode::default(),
             delta_window_us: default_delta_window_us(),
             media_pool_drawer_open: false,
+            tail_snap_enabled: default_tail_snap_enabled(),
+            tail_snap_strength_px: default_tail_snap_strength_px(),
         }
     }
 }
@@ -83,6 +104,8 @@ pub struct AppSettingsPatch {
     pub display_mode: Option<DisplayMode>,
     pub delta_window_us: Option<i64>,
     pub media_pool_drawer_open: Option<bool>,
+    pub tail_snap_enabled: Option<bool>,
+    pub tail_snap_strength_px: Option<u32>,
 }
 
 /// Tauri-managed store. JSON-backed, lock-protected path. Loosely
@@ -160,6 +183,13 @@ impl AppSettingsStore {
         if let Some(v) = patch.media_pool_drawer_open {
             current.media_pool_drawer_open = v;
         }
+        if let Some(v) = patch.tail_snap_enabled {
+            current.tail_snap_enabled = v;
+        }
+        if let Some(v) = patch.tail_snap_strength_px {
+            current.tail_snap_strength_px =
+                v.clamp(MIN_TAIL_SNAP_STRENGTH_PX, MAX_TAIL_SNAP_STRENGTH_PX);
+        }
         self.write(&current)?;
         Ok(current)
     }
@@ -181,6 +211,8 @@ mod tests {
         assert_eq!(s.display_mode, DisplayMode::AbRoll);
         assert_eq!(s.delta_window_us, 10_000_000);
         assert!(!s.media_pool_drawer_open);
+        assert!(s.tail_snap_enabled);
+        assert_eq!(s.tail_snap_strength_px, 12);
     }
 
     #[test]
@@ -192,16 +224,22 @@ mod tests {
                 display_mode: Some(DisplayMode::ShowAll),
                 delta_window_us: Some(5_000_000),
                 media_pool_drawer_open: Some(true),
+                tail_snap_enabled: Some(false),
+                tail_snap_strength_px: Some(24),
             })
             .unwrap();
         assert_eq!(after.display_mode, DisplayMode::ShowAll);
         assert_eq!(after.delta_window_us, 5_000_000);
         assert!(after.media_pool_drawer_open);
+        assert!(!after.tail_snap_enabled);
+        assert_eq!(after.tail_snap_strength_px, 24);
         // Independent reader sees the same values from disk.
         let again = AppSettingsStore::new(tmp.path().to_path_buf()).get();
         assert_eq!(again.display_mode, DisplayMode::ShowAll);
         assert_eq!(again.delta_window_us, 5_000_000);
         assert!(again.media_pool_drawer_open);
+        assert!(!again.tail_snap_enabled);
+        assert_eq!(again.tail_snap_strength_px, 24);
     }
 
     #[test]
@@ -215,6 +253,8 @@ mod tests {
         assert_eq!(s.display_mode, DisplayMode::ShowAll);
         assert_eq!(s.delta_window_us, 10_000_000);
         assert!(!s.media_pool_drawer_open);
+        assert!(s.tail_snap_enabled);
+        assert_eq!(s.tail_snap_strength_px, 12);
     }
 
     #[test]
@@ -226,6 +266,8 @@ mod tests {
         // Defaults — no crash, no propagated error.
         assert_eq!(s.display_mode, DisplayMode::AbRoll);
         assert_eq!(s.delta_window_us, 10_000_000);
+        assert!(s.tail_snap_enabled);
+        assert_eq!(s.tail_snap_strength_px, 12);
     }
 
     #[test]
@@ -246,5 +288,25 @@ mod tests {
             })
             .unwrap();
         assert_eq!(too_big.delta_window_us, 300_000_000);
+    }
+
+    #[test]
+    fn tail_snap_strength_clamps_out_of_range() {
+        let tmp = TempDir::new().unwrap();
+        let store = fresh(&tmp);
+        let too_small = store
+            .apply(AppSettingsPatch {
+                tail_snap_strength_px: Some(0),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(too_small.tail_snap_strength_px, MIN_TAIL_SNAP_STRENGTH_PX);
+        let too_big = store
+            .apply(AppSettingsPatch {
+                tail_snap_strength_px: Some(200),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(too_big.tail_snap_strength_px, MAX_TAIL_SNAP_STRENGTH_PX);
     }
 }

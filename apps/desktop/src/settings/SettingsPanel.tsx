@@ -14,6 +14,14 @@ import {
 } from "../ipc";
 import { formatTimecode, parseTimecode } from "../frames";
 import { KeybindingPanel } from "./KeybindingPanel";
+import {
+  setAppSettings,
+  useTailSnapEnabled,
+  useTailSnapStrengthPx,
+} from "./appSettingsStore";
+
+const TAIL_SNAP_MIN_PX = 2;
+const TAIL_SNAP_MAX_PX = 80;
 
 interface CompositionState {
   durationUs: number;
@@ -120,6 +128,10 @@ export function SettingsPanel({
           onError={setError}
         />
 
+        <h3>{t("settings.timeline_heading")}</h3>
+        <p className="settings-blurb">{t("settings.timeline_blurb")}</p>
+        <TimelineSnapSection onError={setError} />
+
         <h3>{t("settings.keybindings_heading")}</h3>
         <p className="settings-blurb">{t("settings.keybindings_blurb")}</p>
         <KeybindingPanel
@@ -149,6 +161,117 @@ export function SettingsPanel({
         </div>
       </div>
     </div>
+  );
+}
+
+function TimelineSnapSection({
+  onError,
+}: {
+  onError: (msg: string) => void;
+}) {
+  const { t } = useTranslation();
+  const enabled = useTailSnapEnabled();
+  const strengthPx = useTailSnapStrengthPx();
+  const [draftStrengthPx, setDraftStrengthPx] = useState(strengthPx);
+
+  useEffect(() => {
+    setDraftStrengthPx(strengthPx);
+  }, [strengthPx]);
+
+  const clampStrength = (value: number): number =>
+    Math.round(Math.min(TAIL_SNAP_MAX_PX, Math.max(TAIL_SNAP_MIN_PX, value)));
+
+  const commitStrength = async (value: number) => {
+    const next = clampStrength(value);
+    setDraftStrengthPx(next);
+    onError("");
+    try {
+      await setAppSettings({ tail_snap_strength_px: next });
+    } catch (e) {
+      onError(String(e));
+      setDraftStrengthPx(strengthPx);
+    }
+  };
+
+  return (
+    <>
+      <label className="settings-toggle-row">
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={async (e) => {
+            const next = e.target.checked;
+            onError("");
+            try {
+              await setAppSettings({ tail_snap_enabled: next });
+            } catch (err) {
+              onError(String(err));
+            }
+          }}
+        />
+        <span>
+          <span className="settings-toggle-label">
+            {t("settings.tail_snap_enabled")}
+          </span>
+          <span className="settings-toggle-hint">
+            {t("settings.tail_snap_enabled_hint")}
+          </span>
+        </span>
+      </label>
+      <div className="settings-slider-row">
+        <span className="settings-slider-label">
+          {t("settings.tail_snap_strength")}
+        </span>
+        <input
+          type="range"
+          min={TAIL_SNAP_MIN_PX}
+          max={TAIL_SNAP_MAX_PX}
+          value={draftStrengthPx}
+          disabled={!enabled}
+          onChange={(e) => setDraftStrengthPx(Number(e.target.value))}
+          onPointerUp={(e) => {
+            void commitStrength(Number(e.currentTarget.value));
+          }}
+          onKeyUp={(e) => {
+            if (
+              e.key === "ArrowLeft" ||
+              e.key === "ArrowRight" ||
+              e.key === "Home" ||
+              e.key === "End"
+            ) {
+              void commitStrength(Number(e.currentTarget.value));
+            }
+          }}
+          onBlur={(e) => {
+            void commitStrength(Number(e.currentTarget.value));
+          }}
+          aria-label={t("settings.tail_snap_strength")}
+        />
+        <input
+          type="number"
+          className="settings-input settings-input-narrow"
+          min={TAIL_SNAP_MIN_PX}
+          max={TAIL_SNAP_MAX_PX}
+          value={draftStrengthPx}
+          disabled={!enabled}
+          onChange={(e) => setDraftStrengthPx(Number(e.target.value))}
+          onBlur={(e) => {
+            void commitStrength(Number(e.currentTarget.value));
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              void commitStrength(Number(e.currentTarget.value));
+            }
+          }}
+          aria-label={t("settings.tail_snap_strength")}
+        />
+        <span className="settings-slider-unit">px</span>
+      </div>
+      <p className="settings-toggle-hint">
+        {t("settings.tail_snap_strength_hint")}
+      </p>
+    </>
   );
 }
 

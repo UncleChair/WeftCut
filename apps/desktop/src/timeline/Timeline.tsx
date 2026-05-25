@@ -26,7 +26,12 @@ import {
 } from "../ipc";
 import { mediaReadiness, type ProxyState } from "../panels/mediaReadiness";
 import { formatTimecode, frameDurUs, snapFrameRound } from "../frames";
-import { useDisplayMode, toggleDisplayMode } from "../settings/appSettingsStore";
+import {
+  toggleDisplayMode,
+  useDisplayMode,
+  useTailSnapEnabled,
+  useTailSnapStrengthPx,
+} from "../settings/appSettingsStore";
 import { useShortcuts, type OverrideMap } from "../shortcuts";
 
 // Zoom + height bounds. The default matches the pre-refactor constant so
@@ -339,6 +344,8 @@ export function Timeline({
   // the settings struct in a single selector (feedback_zustand_composite_
   // selector).
   const displayMode = useDisplayMode();
+  const tailSnapEnabled = useTailSnapEnabled();
+  const tailSnapStrengthPx = useTailSnapStrengthPx();
 
   const orderedTracks = useMemo(() => {
     const all = visualOrderedTracks(tracks);
@@ -636,12 +643,79 @@ export function Timeline({
     [fpsNum, fpsDen],
   );
 
+  const snapMoveDeltaToClipBoundary = useCallback(
+    (
+      state: DragState,
+      frameDeltaUs: number,
+    ): number => {
+      if (!tailSnapEnabled || state.kind !== "move") return frameDeltaUs;
+      const desiredStart = Math.max(0, state.originalTStart + frameDeltaUs);
+      const desiredEnd = Math.max(0, state.originalTEnd + frameDeltaUs);
+      const thresholdUs = (Math.max(0, tailSnapStrengthPx) / pxPerSec) * 1_000_000;
+      if (thresholdUs <= 0) return frameDeltaUs;
+
+      const ignoredLayerIds = new Set<string>([state.layerId]);
+      if (!state.escapeGroup) {
+        const groupId = groupByLayerId.get(state.layerId);
+        const group = groupId ? groups.find((g) => g.id === groupId) : null;
+        for (const layerId of group?.layer_ids ?? []) {
+          ignoredLayerIds.add(layerId);
+        }
+      }
+
+      let bestDeltaUs: number | null = null;
+      let bestDistanceUs = Number.POSITIVE_INFINITY;
+      const considerDelta = (distanceUs: number, deltaUs: number) => {
+        if (state.originalTStart + deltaUs < 0) return;
+        if (distanceUs <= thresholdUs && distanceUs < bestDistanceUs) {
+          bestDistanceUs = distanceUs;
+          bestDeltaUs = deltaUs;
+        }
+      };
+      const considerBoundary = (boundaryUs: number) => {
+        const startDistanceUs = Math.abs(boundaryUs - desiredStart);
+        considerDelta(startDistanceUs, boundaryUs - state.originalTStart);
+
+        const endDistanceUs = Math.abs(boundaryUs - desiredEnd);
+        considerDelta(endDistanceUs, boundaryUs - state.originalTEnd);
+      };
+
+      for (const { track } of orderedTracks) {
+        for (const layer of track.layers) {
+          if (ignoredLayerIds.has(layer.id)) continue;
+          const boundaries = [
+            snapFrameRound(layer.t_start_us, fpsNum, fpsDen),
+            snapFrameRound(layer.t_end_us, fpsNum, fpsDen),
+          ];
+          for (const boundaryUs of boundaries) {
+            considerBoundary(boundaryUs);
+          }
+        }
+      }
+      const playheadUs = snapFrameRound(currentTimeUs, fpsNum, fpsDen);
+      considerBoundary(playheadUs);
+
+      return bestDeltaUs === null ? frameDeltaUs : bestDeltaUs;
+    },
+    [
+      currentTimeUs,
+      fpsNum,
+      fpsDen,
+      groupByLayerId,
+      groups,
+      orderedTracks,
+      pxPerSec,
+      tailSnapEnabled,
+      tailSnapStrengthPx,
+    ],
+  );
+
   const handlePointerMove = useCallback(
     (e: PointerEvent) => {
       if (!drag) return;
       const deltaPx = e.clientX - drag.startX;
       const rawDeltaUs = (deltaPx / pxPerSec) * 1_000_000;
-      const deltaUs = snapDragDelta(
+      const frameDeltaUs = snapDragDelta(
         drag.kind,
         drag.originalTStart,
         drag.originalTEnd,
@@ -649,13 +723,14 @@ export function Timeline({
       );
       const overTrack =
         drag.kind === "move" ? trackUnderPointer(e.clientY) : null;
+      const deltaUs = snapMoveDeltaToClipBoundary(drag, frameDeltaUs);
       setDrag({
         ...drag,
         deltaUs,
         overTrackId: overTrack?.id ?? null,
       });
     },
-    [drag, pxPerSec, snapDragDelta, trackUnderPointer],
+    [drag, pxPerSec, snapDragDelta, snapMoveDeltaToClipBoundary, trackUnderPointer],
   );
 
   const handlePointerUp = useCallback(
@@ -663,7 +738,7 @@ export function Timeline({
       if (!drag) return;
       const deltaPx = e.clientX - drag.startX;
       const rawDeltaUs = Math.round((deltaPx / pxPerSec) * 1_000_000);
-      const deltaUs = snapDragDelta(
+      const frameDeltaUs = snapDragDelta(
         drag.kind,
         drag.originalTStart,
         drag.originalTEnd,
@@ -671,6 +746,7 @@ export function Timeline({
       );
       const overTrack =
         drag.kind === "move" ? trackUnderPointer(e.clientY) : null;
+      const deltaUs = snapMoveDeltaToClipBoundary(drag, frameDeltaUs);
       const committed = drag;
       setDrag(null);
 
@@ -719,7 +795,7 @@ export function Timeline({
         console.error("timeline commit failed:", err);
       }
     },
-    [drag, onMutated, pxPerSec, snapDragDelta, trackUnderPointer],
+    [drag, onMutated, pxPerSec, snapDragDelta, snapMoveDeltaToClipBoundary, trackUnderPointer],
   );
 
   useEffect(() => {
