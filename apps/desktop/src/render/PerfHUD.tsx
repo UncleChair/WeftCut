@@ -84,6 +84,10 @@ function formatMs(ms: number): string {
   return ms < 10 ? ms.toFixed(2) : ms.toFixed(1);
 }
 
+function formatUsAsMs(us: number): string {
+  return (us / 1000).toFixed(0);
+}
+
 export function PerfHUD({ compositorRef, engineRef }: Props) {
   const [visible, setVisible] = useState(true);
   const [snap, setSnap] = useState<CompositorPerfSnapshot | null>(null);
@@ -251,6 +255,43 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
           </>
         )}
       </div>
+      <div>
+        prewarm:{" "}
+        {!snap?.upcomingPrewarm ? (
+          <span style={{ color: "#6b7280" }}>—</span>
+        ) : snap.upcomingPrewarm.nextStartUs === null ? (
+          <span style={{ color: "#6b7280" }}>
+            none &lt;{(snap.upcomingPrewarm.windowUs / 1_000_000).toFixed(1)}s
+          </span>
+        ) : (
+          <>
+            next{" "}
+            {formatUsAsMs(
+              Math.max(0, snap.upcomingPrewarm.nextStartUs - snap.upcomingPrewarm.anchorUs),
+            )}
+            ms ·{" "}
+            {snap.upcomingPrewarm.clips.filter((clip) => clip.requested).length}/
+            {snap.upcomingPrewarm.clips.length} req
+          </>
+        )}
+      </div>
+      {snap?.upcomingPrewarm?.clips.length ? (
+        <div style={{ color: "#9ca3af" }}>
+          {snap.upcomingPrewarm.clips.map((clip) => {
+            const lastMs =
+              clip.ringLastPtsUs !== null ? formatUsAsMs(clip.ringLastPtsUs) : "—";
+            return (
+              <div
+                key={`prewarm-${clip.layerId}`}
+                style={{ color: clip.requested ? "#9ca3af" : "#f59e0b" }}
+              >
+                pw {clip.layerId.slice(0, 6)}: q={clip.decodeQueueSize} ring=
+                {clip.ringSize}@{lastMs}ms
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
       {memory && (
         <div>
           heap: {formatMb(memory.usedJSHeapSize)} /{" "}
