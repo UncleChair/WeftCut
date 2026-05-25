@@ -24,6 +24,11 @@ import { TemplateSprite } from "./sprite/TemplateSprite";
 import { TextSprite } from "./sprite/TextSprite";
 import { VideoClipSprite } from "./sprite/VideoClipSprite";
 
+/// Match the preview ring's default lookahead window. We only use
+/// this to warm the next clip boundary; the play() warm-up gate stays
+/// smaller so clicking play remains responsive.
+const UPCOMING_CLIP_PREWARM_US = 1_000_000;
+
 /// Plain-numbers diagnostic snapshot for the dev `PerfHUD`. All fields
 /// are safe to ship to a React state hook every 500ms; no live decoder
 /// or sprite references leak out.
@@ -613,6 +618,9 @@ export class Compositor {
       const srcTUs = layer.params.src_in_us + layerLocalUs;
       void c.source.requestFrameAt(srcTUs);
     }
+    if (this.mode === "preview") {
+      this.prewarmUpcomingClipBoundary(tUsSnapped);
+    }
   }
 
   /// Plain-number perf snapshot for the dev `PerfHUD`. Read whenever
@@ -681,6 +689,38 @@ export class Compositor {
   // ============================================================
   // private
   // ============================================================
+
+  /// Warm the next VideoClip boundary inside the ring-sized lookahead
+  /// window. This keeps normal playback's current-frame pump unchanged
+  /// while giving the next clip's decoder a chance to parse, configure,
+  /// and fill its first-frame ring before the playhead reaches it.
+  private prewarmUpcomingClipBoundary(tUs: number): void {
+    if (!this.projectSummary) return;
+    const horizonEndUs = tUs + UPCOMING_CLIP_PREWARM_US;
+    let nextStartUs: number | null = null;
+    let candidates: LayerSummary[] = [];
+
+    for (const track of this.projectSummary.tracks) {
+      if (!track.enabled) continue;
+      for (const layer of track.layers) {
+        if (!layer.enabled || layer.params.kind !== "VideoClip") continue;
+        if (layer.t_start_us <= tUs || layer.t_start_us > horizonEndUs) continue;
+        if (nextStartUs === null || layer.t_start_us < nextStartUs) {
+          nextStartUs = layer.t_start_us;
+          candidates = [layer];
+        } else if (layer.t_start_us === nextStartUs) {
+          candidates.push(layer);
+        }
+      }
+    }
+
+    for (const layer of candidates) {
+      const clip = this.ensureClip(layer);
+      if (!clip || clip.source.disposed) continue;
+      const srcTUs = layer.params.src_in_us;
+      void clip.source.requestFrameAt(srcTUs);
+    }
+  }
 
   private ensureClip(layer: LayerSummary): ActiveClip | null {
     if (layer.params.kind !== "VideoClip") return null;
