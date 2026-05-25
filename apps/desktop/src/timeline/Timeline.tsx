@@ -1115,6 +1115,8 @@ export function Timeline({
             isGroupStart={isGroupStart}
             isRevealed={track.id === (revealedTrackId ?? null)}
             onHeightDragStart={beginHeightDrag(track.id)}
+            fpsNum={fpsNum}
+            fpsDen={fpsDen}
           />
         ))}
       </div>
@@ -1397,6 +1399,8 @@ function TrackLane({
   isGroupStart,
   isRevealed,
   onHeightDragStart,
+  fpsNum,
+  fpsDen,
 }: {
   track: TrackSummary;
   pxPerSec: number;
@@ -1435,6 +1439,8 @@ function TrackLane({
   /// only here because they clicked a peek item.
   isRevealed: boolean;
   onHeightDragStart: (e: React.PointerEvent) => void;
+  fpsNum: number;
+  fpsDen: number;
 }) {
   const { t } = useTranslation();
   const kindLabel = t(`kinds.${track.kind.toLowerCase()}`, {
@@ -1573,6 +1579,8 @@ function TrackLane({
             onSelectFromClick={onSelectFromClick}
             onDragStart={onDragStart}
             onContextMenu={onContextMenu}
+            fpsNum={fpsNum}
+            fpsDen={fpsDen}
           />
         ));
       })()}
@@ -1605,6 +1613,8 @@ function LayerBlock({
   onSelectFromClick,
   onDragStart,
   onContextMenu,
+  fpsNum,
+  fpsDen,
 }: {
   layer: LayerSummary;
   trackId: string;
@@ -1638,6 +1648,8 @@ function LayerBlock({
     layerId: string,
     layerKind: string,
   ) => void;
+  fpsNum: number;
+  fpsDen: number;
 }) {
   const { t } = useTranslation();
   const isDragging = dragState?.layerId === layer.id;
@@ -1840,7 +1852,7 @@ function LayerBlock({
         e.stopPropagation();
         onContextMenu(e, layer.id, layer.kind);
       }}
-      title={`${layer.kind}: ${(liveStart / 1_000_000).toFixed(2)}s → ${(liveEnd / 1_000_000).toFixed(2)}s`}
+      title={`${layer.kind}: ${formatTimecode(liveStart, fpsNum, fpsDen)} → ${formatTimecode(liveEnd, fpsNum, fpsDen)}`}
     >
       <span className="layer-label">{label}</span>
     </div>

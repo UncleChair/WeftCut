@@ -1068,8 +1068,8 @@ export function App({ onCloseProject }: AppProps) {
                     fps: fpsLabel,
                   })}
                   {" · "}
-                  {t("project.duration_seconds", {
-                    value: (summary.duration_us / 1_000_000).toFixed(2),
+                  {t("project.duration", {
+                    value: formatTimecode(summary.duration_us, summary.composition.fps_num, summary.composition.fps_den),
                   })}
                 </>
               )}
@@ -1104,6 +1104,8 @@ export function App({ onCloseProject }: AppProps) {
             media={summary?.media ?? []}
             importing={importingMediaIds}
             proxyState={proxyState}
+            fpsNum={summary?.composition.fps_num ?? 30}
+            fpsDen={summary?.composition.fps_den ?? 1}
             onCancelImport={async (id) => {
               await importCancel(id).catch(() => false);
             }}
@@ -1118,6 +1120,8 @@ export function App({ onCloseProject }: AppProps) {
             currentTimeUs={currentTimeUs}
             onSelect={setSelectedLayerId}
             onMutated={refresh}
+            fpsNum={summary?.composition.fps_num ?? 30}
+            fpsDen={summary?.composition.fps_den ?? 1}
             onRevealTrack={revealTrack}
           />
         </section>
@@ -1164,6 +1168,8 @@ export function App({ onCloseProject }: AppProps) {
           onAdded={refresh}
           currentTimeUs={currentTimeUs}
           tracks={summary?.tracks ?? []}
+          fpsNum={summary?.composition.fps_num ?? 30}
+          fpsDen={summary?.composition.fps_den ?? 1}
         />
       )}
       {logConsoleOpen && (
@@ -1339,11 +1345,15 @@ function MediaPool({
   media,
   importing,
   proxyState,
+  fpsNum,
+  fpsDen,
   onCancelImport,
 }: {
   media: MediaSummary[];
   importing: ReadonlySet<string>;
   proxyState: ReadonlyMap<string, ProxyState>;
+  fpsNum: number;
+  fpsDen: number;
   onCancelImport: (mediaId: string) => Promise<void>;
 }) {
   const { t } = useTranslation();
@@ -1467,7 +1477,7 @@ function MediaPool({
                   <span className="media-meta">
                     {m.duration_us !== null
                       ? t("media_pool.duration", {
-                          seconds: (m.duration_us / 1_000_000).toFixed(2),
+                          value: formatTimecode(m.duration_us, fpsNum, fpsDen),
                         })
                       : t("media_pool.no_duration")}
                   </span>

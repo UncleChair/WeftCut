@@ -24,6 +24,7 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
+import { formatTimecode } from "../frames";
 import { type GroupSummary, type LayerSummary, type TrackSummary } from "../ipc";
 import { PropertyPanel } from "../properties/PropertyPanel";
 import { useDeltaWindowUs, useDisplayMode } from "../settings/appSettingsStore";
@@ -36,6 +37,8 @@ export interface RightPanelProps {
   currentTimeUs: number;
   onSelect: (id: string | null) => void;
   onMutated: () => Promise<void>;
+  fpsNum: number;
+  fpsDen: number;
   /// R.7 inline-reveal hook. When provided, clicking a peek item
   /// dispatches the track id so the Timeline can temporarily inject
   /// that row into its rendered list. R.6 leaves this `undefined`.
@@ -108,6 +111,8 @@ export function RightPanel({
   currentTimeUs,
   onSelect,
   onMutated,
+  fpsNum,
+  fpsDen,
   onRevealTrack,
 }: RightPanelProps) {
   const { t } = useTranslation();
@@ -138,7 +143,7 @@ export function RightPanel({
               })}
             </span>
             <span className="right-panel-peek-window">
-              ±{(deltaWindowUs / 1_000_000).toFixed(0)}s
+              ±{formatTimecode(deltaWindowUs, fpsNum, fpsDen)}
             </span>
           </header>
           <ul className="right-panel-peek-list">
@@ -147,6 +152,8 @@ export function RightPanel({
                 key={item.layer.id}
                 item={item}
                 isSelected={item.layer.id === selectedLayerId}
+                fpsNum={fpsNum}
+                fpsDen={fpsDen}
                 onClick={() => {
                   onSelect(item.layer.id);
                   if (onRevealTrack) {
@@ -164,6 +171,8 @@ export function RightPanel({
           groups={groups}
           selectedLayerId={selectedLayerId}
           onMutated={onMutated}
+          fpsNum={fpsNum}
+          fpsDen={fpsDen}
         />
       </section>
     </aside>
@@ -173,18 +182,22 @@ export function RightPanel({
 function PeekRow({
   item,
   isSelected,
+  fpsNum,
+  fpsDen,
   onClick,
 }: {
   item: PeekItem;
   isSelected: boolean;
+  fpsNum: number;
+  fpsDen: number;
   onClick: () => void;
 }) {
   const { t } = useTranslation();
   const durationUs = item.layer.t_end_us - item.layer.t_start_us;
   const offsetLabel = item.spansPlayhead
     ? t("peek.live", { defaultValue: "LIVE" })
-    : formatOffset(item.offsetUs, t);
-  const durationLabel = `${(durationUs / 1_000_000).toFixed(2)}s`;
+    : formatOffset(item.offsetUs, fpsNum, fpsDen, t);
+  const durationLabel = formatTimecode(durationUs, fpsNum, fpsDen);
   const thumbMediaId =
     item.layer.params.kind === "VideoClip" ||
     item.layer.params.kind === "ImageOverlay"
@@ -233,12 +246,12 @@ function PeekRow({
 
 function formatOffset(
   offsetUs: number,
+  fpsNum: number,
+  fpsDen: number,
   t: (k: string, v: Record<string, unknown>) => string,
 ): string {
-  const sec = offsetUs / 1_000_000;
-  // 1-decimal precision is enough at ±10s scale. Sign prefix is
-  // explicit so the reader can immediately tell past from future.
-  const formatted = `${sec >= 0 ? "+" : "−"}${Math.abs(sec).toFixed(1)}s`;
+  const tc = formatTimecode(Math.abs(offsetUs), fpsNum, fpsDen);
+  const formatted = `${offsetUs >= 0 ? "+" : "−"}${tc}`;
   return t("peek.offset", {
     defaultValue: formatted,
     value: formatted,

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { formatTimecode, parseTimecode } from "../frames";
 import {
   updateLayer,
   updateLayerParams,
@@ -16,6 +17,8 @@ interface Props {
   groups: GroupSummary[];
   selectedLayerId: string | null;
   onMutated: () => Promise<void>;
+  fpsNum: number;
+  fpsDen: number;
 }
 
 const COMMIT_DEBOUNCE_MS = 250;
@@ -25,6 +28,8 @@ export function PropertyPanel({
   groups,
   selectedLayerId,
   onMutated,
+  fpsNum,
+  fpsDen,
 }: Props) {
   const { t } = useTranslation();
   const layer = useMemo(
@@ -52,9 +57,9 @@ export function PropertyPanel({
         {t("property_panel.heading")} —{" "}
         {t(`kinds.${layer.kind.toLowerCase()}`, { defaultValue: layer.kind })}
       </h2>
-      <EnvelopeFields layer={layer} onMutated={onMutated} />
+      <EnvelopeFields layer={layer} onMutated={onMutated} fpsNum={fpsNum} fpsDen={fpsDen} />
       <hr />
-      <KindFields layer={layer} onMutated={onMutated} />
+      <KindFields layer={layer} onMutated={onMutated} fpsNum={fpsNum} fpsDen={fpsDen} />
     </aside>
   );
 }
@@ -74,23 +79,27 @@ function findLayer(
 function EnvelopeFields({
   layer,
   onMutated,
+  fpsNum,
+  fpsDen,
 }: {
   layer: LayerSummary;
   onMutated: () => Promise<void>;
+  fpsNum: number;
+  fpsDen: number;
 }) {
   const { t } = useTranslation();
   const [label, setLabel] = useState<string>(layer.label ?? "");
   const [enabled, setEnabled] = useState(layer.enabled);
-  const [tStartSec, setTStartSec] = useState(layer.t_start_us / 1_000_000);
-  const [tEndSec, setTEndSec] = useState(layer.t_end_us / 1_000_000);
+  const [tStartTc, setTStartTc] = useState(formatTimecode(layer.t_start_us, fpsNum, fpsDen));
+  const [tEndTc, setTEndTc] = useState(formatTimecode(layer.t_end_us, fpsNum, fpsDen));
 
   // Reset form state when the user selects a different layer.
   useEffect(() => {
     setLabel(layer.label ?? "");
     setEnabled(layer.enabled);
-    setTStartSec(layer.t_start_us / 1_000_000);
-    setTEndSec(layer.t_end_us / 1_000_000);
-  }, [layer.id, layer.label, layer.enabled, layer.t_start_us, layer.t_end_us]);
+    setTStartTc(formatTimecode(layer.t_start_us, fpsNum, fpsDen));
+    setTEndTc(formatTimecode(layer.t_end_us, fpsNum, fpsDen));
+  }, [layer.id, layer.label, layer.enabled, layer.t_start_us, layer.t_end_us, fpsNum, fpsDen]);
 
   const commit = async (
     patch: Parameters<typeof updateLayer>[1],
@@ -127,27 +136,39 @@ function EnvelopeFields({
         />
       </Field>
       <Field
-        label={t("property_panel.t_start_s")}
-        hint={t("property_panel.t_start_s_hint")}
+        label={t("property_panel.t_start")}
+        hint={t("property_panel.t_start_hint")}
       >
         <input
-          type="number"
-          step="0.01"
-          value={tStartSec}
-          onChange={(e) => setTStartSec(parseFloat(e.target.value) || 0)}
-          onBlur={() => commit({ t_start_us: Math.round(tStartSec * 1_000_000) })}
+          type="text"
+          value={tStartTc}
+          onChange={(e) => setTStartTc(e.target.value)}
+          onBlur={() => {
+            const us = parseTimecode(tStartTc, fpsNum, fpsDen);
+            if (us !== null) {
+              commit({ t_start_us: us });
+            } else {
+              setTStartTc(formatTimecode(layer.t_start_us, fpsNum, fpsDen));
+            }
+          }}
         />
       </Field>
       <Field
-        label={t("property_panel.t_end_s")}
-        hint={t("property_panel.t_end_s_hint")}
+        label={t("property_panel.t_end")}
+        hint={t("property_panel.t_end_hint")}
       >
         <input
-          type="number"
-          step="0.01"
-          value={tEndSec}
-          onChange={(e) => setTEndSec(parseFloat(e.target.value) || 0)}
-          onBlur={() => commit({ t_end_us: Math.round(tEndSec * 1_000_000) })}
+          type="text"
+          value={tEndTc}
+          onChange={(e) => setTEndTc(e.target.value)}
+          onBlur={() => {
+            const us = parseTimecode(tEndTc, fpsNum, fpsDen);
+            if (us !== null) {
+              commit({ t_end_us: us });
+            } else {
+              setTEndTc(formatTimecode(layer.t_end_us, fpsNum, fpsDen));
+            }
+          }}
         />
       </Field>
     </section>
@@ -157,9 +178,13 @@ function EnvelopeFields({
 function KindFields({
   layer,
   onMutated,
+  fpsNum,
+  fpsDen,
 }: {
   layer: LayerSummary;
   onMutated: () => Promise<void>;
+  fpsNum: number;
+  fpsDen: number;
 }) {
   const commit = async (patch: LayerParamsPatch): Promise<void> => {
     try {
@@ -173,10 +198,10 @@ function KindFields({
     case "Text":
       return <TextFields layer={layer} v={layer.params} commit={commit} />;
     case "VideoClip":
-      return <VideoClipFields layer={layer} v={layer.params} commit={commit} />;
+      return <VideoClipFields layer={layer} v={layer.params} commit={commit} fpsNum={fpsNum} fpsDen={fpsDen} />;
     case "ImageOverlay":
       return (
-        <ImageOverlayFields layer={layer} v={layer.params} commit={commit} />
+        <ImageOverlayFields layer={layer} v={layer.params} commit={commit} fpsNum={fpsNum} fpsDen={fpsDen} />
       );
     case "Color":
       return <ColorFields v={layer.params} commit={commit} />;
@@ -307,10 +332,14 @@ function VideoClipFields({
   layer,
   v,
   commit,
+  fpsNum,
+  fpsDen,
 }: {
   layer: LayerSummary;
   v: Extract<LayerSummary["params"], { kind: "VideoClip" }>;
   commit: Commit;
+  fpsNum: number;
+  fpsDen: number;
 }) {
   const { t } = useTranslation();
   const [opacity, setOpacity] = useState(v.opacity);
@@ -319,8 +348,8 @@ function VideoClipFields({
   const [x, setX] = useState(v.x);
   const [y, setY] = useState(v.y);
   const [speed, setSpeed] = useState(v.speed);
-  const [fadeIn, setFadeIn] = useState(v.fade_in_us / 1_000_000);
-  const [fadeOut, setFadeOut] = useState(v.fade_out_us / 1_000_000);
+  const [fadeInTc, setFadeInTc] = useState(formatTimecode(v.fade_in_us, fpsNum, fpsDen));
+  const [fadeOutTc, setFadeOutTc] = useState(formatTimecode(v.fade_out_us, fpsNum, fpsDen));
   useEffect(() => {
     setOpacity(v.opacity);
     setScaleX(v.scale_x);
@@ -328,9 +357,9 @@ function VideoClipFields({
     setX(v.x);
     setY(v.y);
     setSpeed(v.speed);
-    setFadeIn(v.fade_in_us / 1_000_000);
-    setFadeOut(v.fade_out_us / 1_000_000);
-  }, [layer.id, v]);
+    setFadeInTc(formatTimecode(v.fade_in_us, fpsNum, fpsDen));
+    setFadeOutTc(formatTimecode(v.fade_out_us, fpsNum, fpsDen));
+  }, [layer.id, v, fpsNum, fpsDen]);
 
   const debouncedCommit = useDebouncedCommit<LayerParamsPatch>(commit);
 
@@ -399,36 +428,34 @@ function VideoClipFields({
           onBlur={() => commit({ kind: "VideoClip", speed })}
         />
       </Field>
-      <Field label={t("property_panel.fade_in_s")}>
+      <Field label={t("property_panel.fade_in")}>
         <input
-          type="number"
-          step={0.05}
-          min={0}
-          value={fadeIn}
-          onChange={(e) => setFadeIn(Math.max(0, parseFloat(e.target.value) || 0))}
-          onBlur={() =>
-            commit({
-              kind: "VideoClip",
-              fade_in_us: Math.round(fadeIn * 1_000_000),
-            })
-          }
+          type="text"
+          value={fadeInTc}
+          onChange={(e) => setFadeInTc(e.target.value)}
+          onBlur={() => {
+            const us = parseTimecode(fadeInTc, fpsNum, fpsDen);
+            if (us !== null) {
+              commit({ kind: "VideoClip", fade_in_us: us });
+            } else {
+              setFadeInTc(formatTimecode(v.fade_in_us, fpsNum, fpsDen));
+            }
+          }}
         />
       </Field>
-      <Field label={t("property_panel.fade_out_s")}>
+      <Field label={t("property_panel.fade_out")}>
         <input
-          type="number"
-          step={0.05}
-          min={0}
-          value={fadeOut}
-          onChange={(e) =>
-            setFadeOut(Math.max(0, parseFloat(e.target.value) || 0))
-          }
-          onBlur={() =>
-            commit({
-              kind: "VideoClip",
-              fade_out_us: Math.round(fadeOut * 1_000_000),
-            })
-          }
+          type="text"
+          value={fadeOutTc}
+          onChange={(e) => setFadeOutTc(e.target.value)}
+          onBlur={() => {
+            const us = parseTimecode(fadeOutTc, fpsNum, fpsDen);
+            if (us !== null) {
+              commit({ kind: "VideoClip", fade_out_us: us });
+            } else {
+              setFadeOutTc(formatTimecode(v.fade_out_us, fpsNum, fpsDen));
+            }
+          }}
         />
       </Field>
       <Field label={t("property_panel.flip_h")}>
@@ -453,24 +480,28 @@ function ImageOverlayFields({
   layer,
   v,
   commit,
+  fpsNum,
+  fpsDen,
 }: {
   layer: LayerSummary;
   v: Extract<LayerSummary["params"], { kind: "ImageOverlay" }>;
   commit: Commit;
+  fpsNum: number;
+  fpsDen: number;
 }) {
   const { t } = useTranslation();
   const [opacity, setOpacity] = useState(v.opacity);
   const [x, setX] = useState(v.x);
   const [y, setY] = useState(v.y);
-  const [fadeIn, setFadeIn] = useState(v.fade_in_us / 1_000_000);
-  const [fadeOut, setFadeOut] = useState(v.fade_out_us / 1_000_000);
+  const [fadeInTc, setFadeInTc] = useState(formatTimecode(v.fade_in_us, fpsNum, fpsDen));
+  const [fadeOutTc, setFadeOutTc] = useState(formatTimecode(v.fade_out_us, fpsNum, fpsDen));
   useEffect(() => {
     setOpacity(v.opacity);
     setX(v.x);
     setY(v.y);
-    setFadeIn(v.fade_in_us / 1_000_000);
-    setFadeOut(v.fade_out_us / 1_000_000);
-  }, [layer.id, v]);
+    setFadeInTc(formatTimecode(v.fade_in_us, fpsNum, fpsDen));
+    setFadeOutTc(formatTimecode(v.fade_out_us, fpsNum, fpsDen));
+  }, [layer.id, v, fpsNum, fpsDen]);
   const debouncedCommit = useDebouncedCommit<LayerParamsPatch>(commit);
   return (
     <section className="prop-section">
@@ -508,36 +539,34 @@ function ImageOverlayFields({
           onBlur={() => commit({ kind: "ImageOverlay", y })}
         />
       </Field>
-      <Field label={t("property_panel.fade_in_s")}>
+      <Field label={t("property_panel.fade_in")}>
         <input
-          type="number"
-          step={0.05}
-          min={0}
-          value={fadeIn}
-          onChange={(e) => setFadeIn(Math.max(0, parseFloat(e.target.value) || 0))}
-          onBlur={() =>
-            commit({
-              kind: "ImageOverlay",
-              fade_in_us: Math.round(fadeIn * 1_000_000),
-            })
-          }
+          type="text"
+          value={fadeInTc}
+          onChange={(e) => setFadeInTc(e.target.value)}
+          onBlur={() => {
+            const us = parseTimecode(fadeInTc, fpsNum, fpsDen);
+            if (us !== null) {
+              commit({ kind: "ImageOverlay", fade_in_us: us });
+            } else {
+              setFadeInTc(formatTimecode(v.fade_in_us, fpsNum, fpsDen));
+            }
+          }}
         />
       </Field>
-      <Field label={t("property_panel.fade_out_s")}>
+      <Field label={t("property_panel.fade_out")}>
         <input
-          type="number"
-          step={0.05}
-          min={0}
-          value={fadeOut}
-          onChange={(e) =>
-            setFadeOut(Math.max(0, parseFloat(e.target.value) || 0))
-          }
-          onBlur={() =>
-            commit({
-              kind: "ImageOverlay",
-              fade_out_us: Math.round(fadeOut * 1_000_000),
-            })
-          }
+          type="text"
+          value={fadeOutTc}
+          onChange={(e) => setFadeOutTc(e.target.value)}
+          onBlur={() => {
+            const us = parseTimecode(fadeOutTc, fpsNum, fpsDen);
+            if (us !== null) {
+              commit({ kind: "ImageOverlay", fade_out_us: us });
+            } else {
+              setFadeOutTc(formatTimecode(v.fade_out_us, fpsNum, fpsDen));
+            }
+          }}
         />
       </Field>
     </section>
