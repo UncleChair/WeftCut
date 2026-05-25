@@ -216,6 +216,13 @@ interface HeightDragState {
   startHeight: number;
 }
 
+interface PendingLayerPlacement {
+  layerId: string;
+  trackId: string;
+  tStartUs: number;
+  tEndUs: number;
+}
+
 interface TimelineProps {
   tracks: TrackSummary[];
   /// `docs/group-system.md`. Empty array when no groups exist.
@@ -319,6 +326,8 @@ export function Timeline({
   const totalSec = Math.max(durationUs / 1_000_000, 5);
   const widthPx = totalSec * pxPerSec;
   const [drag, setDrag] = useState<DragState | null>(null);
+  const [pendingPlacement, setPendingPlacement] =
+    useState<PendingLayerPlacement | null>(null);
   const [heightDrag, setHeightDrag] = useState<HeightDragState | null>(null);
   // V.7: right-click context-menu state. `null` when closed; otherwise
   // anchors the menu at the cursor and stores the target layer id.
@@ -469,6 +478,41 @@ export function Timeline({
     }
     return rows;
   }, [orderedTracks, trackHeights]);
+
+  const pendingLayer = useMemo(() => {
+    if (!pendingPlacement) return null;
+    for (const track of tracks) {
+      const layer = track.layers.find(
+        (candidate) => candidate.id === pendingPlacement.layerId,
+      );
+      if (layer) return layer;
+    }
+    return null;
+  }, [pendingPlacement, tracks]);
+
+  const dragLayer = useMemo(() => {
+    if (!drag || drag.kind !== "move") return null;
+    for (const track of tracks) {
+      const layer = track.layers.find(
+        (candidate) => candidate.id === drag.layerId,
+      );
+      if (layer) return layer;
+    }
+    return null;
+  }, [drag?.kind, drag?.layerId, tracks]);
+
+  useEffect(() => {
+    if (!pendingPlacement) return;
+    const track = tracks.find((t) => t.id === pendingPlacement.trackId);
+    const layer = track?.layers.find((l) => l.id === pendingPlacement.layerId);
+    if (
+      layer &&
+      layer.t_start_us === pendingPlacement.tStartUs &&
+      layer.t_end_us === pendingPlacement.tEndUs
+    ) {
+      setPendingPlacement(null);
+    }
+  }, [pendingPlacement, tracks]);
 
   // -------- Initial load + debounced save --------
 
@@ -763,10 +807,18 @@ export function Timeline({
         switch (committed.kind) {
           case "move": {
             const newStart = Math.max(0, committed.originalTStart + deltaUs);
+            const newEnd =
+              newStart + (committed.originalTEnd - committed.originalTStart);
             const destTrackId =
               overTrack && trackAcceptsForLayer(overTrack, committed)
                 ? overTrack.id
                 : committed.trackId;
+            setPendingPlacement({
+              layerId: committed.layerId,
+              trackId: destTrackId,
+              tStartUs: newStart,
+              tEndUs: newEnd,
+            });
             await moveLayer(committed.layerId, destTrackId, newStart, escape);
             break;
           }
@@ -792,6 +844,7 @@ export function Timeline({
         }
         await onMutated();
       } catch (err) {
+        setPendingPlacement(null);
         console.error("timeline commit failed:", err);
       }
     },
@@ -1049,6 +1102,9 @@ export function Timeline({
             selectedLayerIds={selectedLayerIds}
             groupByLayerId={groupByLayerId}
             dragState={drag}
+            pendingPlacement={pendingPlacement}
+            pendingLayer={pendingLayer}
+            dragLayer={dragLayer}
             bladeMode={bladeMode}
             onBladeSplit={splitFromClientX}
             onSelect={onSelect}
@@ -1328,6 +1384,9 @@ function TrackLane({
   selectedLayerIds,
   groupByLayerId,
   dragState,
+  pendingPlacement,
+  pendingLayer,
+  dragLayer,
   bladeMode,
   onBladeSplit,
   onSelect,
@@ -1344,8 +1403,11 @@ function TrackLane({
   height: number;
   selectedLayerId: string | null;
   selectedLayerIds: Set<string>;
-  groupByLayerId: Map<string, { id: string; renderMode: "Native" | "Html" }>;
+  groupByLayerId: Map<string, string>;
   dragState: DragState | null;
+  pendingPlacement: PendingLayerPlacement | null;
+  pendingLayer: LayerSummary | null;
+  dragLayer: LayerSummary | null;
   bladeMode: boolean;
   onBladeSplit: (layer: LayerSummary, clientX: number) => void;
   onSelect: (id: string | null) => void;
@@ -1379,6 +1441,60 @@ function TrackLane({
     defaultValue: track.kind,
   });
   const [dragOverX, setDragOverX] = useState<number | null>(null);
+
+  const renderedLayers = useMemo(() => {
+    let layers = track.layers;
+
+    if (pendingPlacement && pendingLayer) {
+      const pendingRenderLayer = {
+        ...pendingLayer,
+        t_start_us: pendingPlacement.tStartUs,
+        t_end_us: pendingPlacement.tEndUs,
+      };
+
+      if (pendingPlacement.trackId === track.id) {
+        let replaced = false;
+        layers = layers.map((layer) => {
+          if (layer.id !== pendingPlacement.layerId) return layer;
+          replaced = true;
+          return pendingRenderLayer;
+        });
+        if (!replaced) layers = [...layers, pendingRenderLayer];
+      } else {
+        layers = layers.filter(
+          (layer) => layer.id !== pendingPlacement.layerId,
+        );
+      }
+    }
+
+    if (
+      dragState?.kind === "move" &&
+      dragLayer &&
+      dragState.overTrackId === track.id &&
+      dragState.trackId !== track.id &&
+      !layers.some((layer) => layer.id === dragLayer.id)
+    ) {
+      layers = [...layers, dragLayer];
+    }
+
+    if (
+      dragState?.kind === "move" &&
+      dragState.overTrackId !== null &&
+      dragState.overTrackId !== track.id &&
+      dragState.trackId === track.id
+    ) {
+      layers = layers.filter((layer) => layer.id !== dragState.layerId);
+    }
+
+    return layers;
+  }, [
+    dragLayer,
+    dragState,
+    pendingLayer,
+    pendingPlacement,
+    track.id,
+    track.layers,
+  ]);
 
   const onDragOver = useCallback(
     (e: React.DragEvent<HTMLDivElement>) => {
@@ -1436,8 +1552,8 @@ function TrackLane({
         // with a co-located opposite-class layer render half-height
         // (top for visual, bottom for audio) so the user sees both in
         // one row. Single-class layers fill the row at full height.
-        const slices = computeLayerSlices(track.layers);
-        return track.layers.map((layer) => (
+        const slices = computeLayerSlices(renderedLayers);
+        return renderedLayers.map((layer) => (
           <LayerBlock
             key={layer.id}
             layer={layer}
@@ -1450,6 +1566,7 @@ function TrackLane({
             isSelected={selectedLayerIds.has(layer.id)}
             groupId={groupByLayerId.get(layer.id) ?? null}
             dragState={dragState}
+            pendingPlacement={pendingPlacement}
             bladeMode={bladeMode}
             onBladeSplit={onBladeSplit}
             onSelect={onSelect}
@@ -1481,6 +1598,7 @@ function LayerBlock({
   isSelected,
   groupId,
   dragState,
+  pendingPlacement,
   bladeMode,
   onBladeSplit,
   onSelect,
@@ -1504,6 +1622,7 @@ function LayerBlock({
   /// `docs/group-system.md` — null when ungrouped.
   groupId: string | null;
   dragState: DragState | null;
+  pendingPlacement: PendingLayerPlacement | null;
   /// Blade-tool mode: pointerdown splits at the click point instead
   /// of selecting/dragging. Cursor is set by the timeline-root class.
   bladeMode: boolean;
@@ -1522,8 +1641,13 @@ function LayerBlock({
 }) {
   const { t } = useTranslation();
   const isDragging = dragState?.layerId === layer.id;
-  let liveStart = layer.t_start_us;
-  let liveEnd = layer.t_end_us;
+  const isPendingPlacement = pendingPlacement?.layerId === layer.id;
+  let liveStart = isPendingPlacement
+    ? pendingPlacement.tStartUs
+    : layer.t_start_us;
+  let liveEnd = isPendingPlacement
+    ? pendingPlacement.tEndUs
+    : layer.t_end_us;
   if (isDragging && dragState) {
     const dx = dragState.deltaUs;
     switch (dragState.kind) {
@@ -1553,15 +1677,15 @@ function LayerBlock({
   });
   const label = layer.label ?? kindLabel;
 
-  // Hide the layer from its source track during cross-track drag — it
-  // appears at the new track's position via the live-updated TrackLane render
-  // logic in our App tree (TrackLane keys the layer to its current track ID;
-  // for cross-track preview we just dim the source).
+  // Source copies are normally filtered out for cross-track drag/pending
+  // states. If one still renders during a transitional frame, keep it
+  // non-interactive and visually secondary.
   const movedAcrossTracks =
-    isDragging &&
-    dragState?.kind === "move" &&
-    dragState.overTrackId !== null &&
-    dragState.overTrackId !== trackId;
+    (isDragging &&
+      dragState?.kind === "move" &&
+      dragState.overTrackId !== null &&
+      dragState.overTrackId !== trackId) ||
+    (isPendingPlacement && pendingPlacement.trackId !== trackId);
 
   // Edge-hover trim: pointerdown within EDGE_ZONE_PX of the layer's
   // left/right edge dispatches trim-start/trim-end; everywhere else
