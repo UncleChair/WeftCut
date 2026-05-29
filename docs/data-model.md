@@ -114,7 +114,10 @@ struct MediaItem {
     path_rel: Option<PathBuf>,        // authoritative; relative to workspace root
     kind: MediaKind,                  // Video | Audio | Image | Subtitle
     metadata: MediaMetadata,
-    proxy_path: Option<PathBuf>,      // 540p H.264 in workspace/Cache/proxies/
+    proxy_path: Option<PathBuf>,      // full proxy: ≤1080p H.264 in Cache/proxies/
+    proxy_format_version: u32,        // a bump forces proxy regen on next load
+    quick_proxy_path: Option<PathBuf>,// preview-first ≤540p proxy; preview-only
+    proxy_bypassed: bool,             // source is WebCodecs-safe; no proxy made
     waveform_path: Option<PathBuf>,
     thumbnails_dir: Option<PathBuf>,
     file_hash_blake3: String,         // for relink-by-content + cache key
@@ -125,6 +128,8 @@ struct MediaItem {
 ```
 
 `path_rel` is the on-disk anchor (workspace-relative, e.g. `Media/clip.mp4`). On load, `io::load_from_dir` rewrites `path_abs = workspace.join(path_rel)` so workspace moves between machines don't break references. `path_abs` is the in-memory convenience path consumed by the IR compiler + background jobs. If `path_rel` is missing (legacy v1 project before migration) or the resolved file doesn't exist, the pool item gets a "missing media" badge — the project still loads.
+
+The three proxy fields encode a video's decode-readiness for the WebCodecs preview. An import picks one of three routes (ADR 0006): a source already safe to decode directly sets `proxy_bypassed = true` and gets no generated file; everything else generates a full `proxy_path`, optionally preceded by a fast `quick_proxy_path` so the clip is editable within seconds while the full proxy renders. `quick_proxy_path` is **preview-only** — export refuses it and waits for `proxy_path` or a bypass. It is session-scoped: `io::load_from_dir` clears it (and deletes the file) on every open, and the open-time derivative enqueue regenerates it if the full proxy still hasn't landed. A completed full proxy clears `quick_proxy_path`. Preview readiness is therefore `proxy_path || quick_proxy_path || proxy_bypassed`; export readiness is `proxy_path || proxy_bypassed`. Background derivative jobs may start before `file_hash_blake3` is final and are keyed on a temporary `pending-{media_id}` hash that migrates to the content hash when the import copy finishes (ADR 0007).
 
 ## `Track`
 

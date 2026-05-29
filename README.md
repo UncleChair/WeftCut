@@ -1,6 +1,6 @@
 # WeftCut
 
-A cross-platform desktop video editor where **external AI agents are first-class collaborators**. Connect Claude Desktop, Cursor, or any MCP-capable client to a localhost MCP server and let an agent edit your timeline through a structured tool surface — while you watch the changes land in the UI in real time.
+WeftCut is a cross-platform desktop video editor where **external AI agents are first-class collaborators**. Connect Claude Desktop, Cursor, or any MCP-capable client to a localhost MCP server and let an agent edit your timeline through a structured tool surface — while you watch the changes land in the UI in real time.
 
 ## Why this is different
 
