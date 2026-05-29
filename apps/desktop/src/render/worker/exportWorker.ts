@@ -120,6 +120,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
         proxy_path: null,
         quick_proxy_path: null,
         proxy_bypassed: false,
+        export_uses_original: false,
       };
     },
   });

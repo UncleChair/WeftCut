@@ -53,6 +53,7 @@ describe("buildMediaById", () => {
       proxy_path: proxy,
       quick_proxy_path: null,
       proxy_bypassed: false,
+      export_uses_original: false,
     };
   }
 

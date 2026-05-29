@@ -148,7 +148,9 @@ export function previewPlaybackPathFor(media: MediaSummary | undefined): string 
   if (media.kind === "Video") {
     if (media.proxy_path) return media.proxy_path;
     if (media.quick_proxy_path) return media.quick_proxy_path;
-    return media.proxy_bypassed ? media.path : null;
+    return media.proxy_bypassed || media.export_uses_original
+      ? media.path
+      : null;
   }
   return media.path;
 }
@@ -159,7 +161,9 @@ export function exportPlaybackPathFor(media: MediaSummary | undefined): string |
   if (!media) return null;
   if (media.kind === "Video") {
     if (media.proxy_path) return media.proxy_path;
-    return media.proxy_bypassed ? media.path : null;
+    return media.proxy_bypassed || media.export_uses_original
+      ? media.path
+      : null;
   }
   return media.path;
 }
