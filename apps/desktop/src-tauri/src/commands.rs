@@ -1344,6 +1344,19 @@ pub async fn app_settings_set(
     Ok(after)
 }
 
+/// Webview-reported WebCodecs decode capability for this machine (Plan 2).
+/// The probe (`src/decode/probeDecodeCaps.ts`) calls this once on startup;
+/// the persisted result feeds `jobs::proxy_decision::decide`.
+#[tauri::command]
+pub async fn report_decode_caps(
+    store: State<'_, crate::decode_caps::DecodeCapabilityStore>,
+    caps: crate::decode_caps::DecodeCaps,
+) -> Result<(), String> {
+    store.set(caps).map_err(|e| format!("{e:#}"))?;
+    tracing::info!("decode caps reported: {caps:?}");
+    Ok(())
+}
+
 // ---- Agent-session view-mode slot ----
 //
 // Pre-MCP (the agent-session begin/end is the agent-mode entry; that
