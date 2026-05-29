@@ -15,7 +15,7 @@ use crate::cache::{cached_ok, discard_temp, promote_temp, temp_path, CacheLayout
 use crate::jobs::hwaccel;
 use crate::state::MediaItem;
 
-const QUICK_PROXY_HEIGHT_CAP: u32 = 540;
+const QUICK_PROXY_HEIGHT_CAP: u32 = 720;
 
 pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     if !ffmpeg_is_installed() {

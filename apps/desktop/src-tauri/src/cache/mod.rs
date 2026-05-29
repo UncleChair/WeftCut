@@ -101,9 +101,11 @@ impl CacheLayout {
         self.proxies_dir().join(format!("{hash}.mp4"))
     }
 
-    /// Fast preview-first proxy for a hashed media file.
+    /// Fast preview-first proxy for a hashed media file. The `q2` segment is
+    /// the recipe version — bumped when the quick-proxy ffmpeg args change
+    /// (e.g. 540p → 720p) so stale cached proxies are regenerated, not reused.
     pub fn quick_proxy(&self, hash: &str) -> PathBuf {
-        self.proxies_dir().join(format!("{hash}.quick.mp4"))
+        self.proxies_dir().join(format!("{hash}.quick-q2.mp4"))
     }
 
     /// Per-media thumbnail directory; individual thumbnails sit inside as
@@ -293,7 +295,7 @@ mod tests {
         );
         assert_eq!(
             layout.quick_proxy("abc"),
-            tmp.path().join("proxies").join("abc.quick.mp4"),
+            tmp.path().join("proxies").join("abc.quick-q2.mp4"),
         );
         assert_eq!(
             layout.thumbnail("abc", 5),
