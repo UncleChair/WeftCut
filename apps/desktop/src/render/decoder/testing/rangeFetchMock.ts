@@ -31,7 +31,7 @@ export function makeRangeFetchMock(buffer: Uint8Array): RangeFetchMock {
     if (!range) {
       fullFetches += 1;
       served += buffer.byteLength;
-      return new Response(buffer, {
+      return new Response(new Uint8Array(buffer), {
         status: 200,
         headers: { "Content-Length": String(buffer.byteLength) },
       });
@@ -42,7 +42,7 @@ export function makeRangeFetchMock(buffer: Uint8Array): RangeFetchMock {
     const end = m[2] === "" ? buffer.byteLength - 1 : Number(m[2]); // inclusive
     const slice = buffer.subarray(start, end + 1);
     served += slice.byteLength;
-    return new Response(slice, {
+    return new Response(new Uint8Array(slice), {
       status: 206,
       headers: {
         "Content-Range": `bytes ${start}-${end}/${buffer.byteLength}`,
