@@ -24,7 +24,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { Application as PixiApplication } from "@pixi/react";
 import type { Application } from "pixi.js";
 
-import { playbackPathFor, useProjectStore } from "../state/projectStore";
+import { previewPlaybackPathFor, useProjectStore } from "../state/projectStore";
 import type { MediaSummary } from "../ipc";
 import { Compositor } from "./Compositor";
 import { PerfHUD } from "./PerfHUD";
@@ -106,7 +106,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
 
       const proxyAssetUrl = (mediaId: string): string | null => {
         const m = useProjectStore.getState().mediaById.get(mediaId);
-        const path = playbackPathFor(m);
+        const path = previewPlaybackPathFor(m);
         return path ? convertFileSrc(path) : null;
       };
       const originalAssetUrl = (mediaId: string): string | null => {

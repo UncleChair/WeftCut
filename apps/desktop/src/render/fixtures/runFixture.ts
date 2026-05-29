@@ -355,10 +355,14 @@ export function buildMediaById(
     const proxyAbs = m.proxy_path
       ? expandRelative(m.proxy_path, fixtureRoot)
       : null;
+    const quickProxyAbs = m.quick_proxy_path
+      ? expandRelative(m.quick_proxy_path, fixtureRoot)
+      : null;
     map.set(m.id, {
       ...m,
       path: absolutePath,
       proxy_path: proxyAbs,
+      quick_proxy_path: quickProxyAbs,
     });
   }
   return map;

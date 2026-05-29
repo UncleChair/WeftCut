@@ -51,6 +51,8 @@ describe("buildMediaById", () => {
       size_bytes: 0,
       available: true,
       proxy_path: proxy,
+      quick_proxy_path: null,
+      proxy_bypassed: false,
     };
   }
 

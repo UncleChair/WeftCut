@@ -141,12 +141,27 @@ export const useMediaById = (id: string | null | undefined): MediaSummary | unde
 export const useLayerById = (id: string | null | undefined): LayerSummary | undefined =>
   useProjectStore((s) => (id ? s.layerById.get(id) : undefined));
 
-/// Returns the effective playback path for a media item: proxy when
-/// available, source otherwise. Hides the fallback logic from layer
-/// handles.
-export function playbackPathFor(media: MediaSummary | undefined): string | null {
+/// Returns the effective preview path for a media item. Preview may use a
+/// quick proxy while the full proxy is still rendering; export must not.
+export function previewPlaybackPathFor(media: MediaSummary | undefined): string | null {
   if (!media) return null;
-  return media.proxy_path ?? media.path;
+  if (media.kind === "Video") {
+    if (media.proxy_path) return media.proxy_path;
+    if (media.quick_proxy_path) return media.quick_proxy_path;
+    return media.proxy_bypassed ? media.path : null;
+  }
+  return media.path;
+}
+
+/// Returns the effective export path for a media item. Quick proxies are
+/// intentionally excluded because they are low-quality preview artifacts.
+export function exportPlaybackPathFor(media: MediaSummary | undefined): string | null {
+  if (!media) return null;
+  if (media.kind === "Video") {
+    if (media.proxy_path) return media.proxy_path;
+    return media.proxy_bypassed ? media.path : null;
+  }
+  return media.path;
 }
 
 // Reused empty sentinels so `?? []` doesn't allocate a fresh array on

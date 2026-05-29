@@ -40,6 +40,10 @@ export interface MediaSummary {
   /// kinds that don't get proxied (audio-only sources). DOM preview
   /// falls back to `path` when null. See `docs/preview-dom.md`.
   proxy_path: string | null;
+  /// Preview-only fast proxy. Export must not use this path.
+  quick_proxy_path: string | null;
+  /// True when the original workspace copy can be decoded directly.
+  proxy_bypassed: boolean;
 }
 
 export interface LayerSummary {
