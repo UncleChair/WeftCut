@@ -290,6 +290,8 @@ mod tests {
             proxy_path: None,
 
             proxy_format_version: 0,
+            quick_proxy_path: None,
+            proxy_bypassed: false,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "deadbeef-wf".into(),
@@ -344,6 +346,8 @@ mod tests {
             proxy_path: None,
 
             proxy_format_version: 0,
+            quick_proxy_path: None,
+            proxy_bypassed: false,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "noaudio".into(),

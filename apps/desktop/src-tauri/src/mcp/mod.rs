@@ -811,6 +811,8 @@ impl WeftCutServer {
                 proxy_path: None,
 
                 proxy_format_version: 0,
+                quick_proxy_path: None,
+                proxy_bypassed: false,
                 waveform_path: None,
                 thumbnails_dir: None,
                 file_hash_blake3: cache_key_clone,
@@ -1341,6 +1343,8 @@ impl WeftCutServer {
                 proxy_path: None,
 
                 proxy_format_version: 0,
+                quick_proxy_path: None,
+                proxy_bypassed: false,
                 waveform_path: None,
                 thumbnails_dir: None,
                 file_hash_blake3: facts.blake3_hex,
@@ -3271,6 +3275,8 @@ mod tests {
             proxy_path: None,
 
             proxy_format_version: 0,
+            quick_proxy_path: None,
+            proxy_bypassed: false,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "media-hash".into(),

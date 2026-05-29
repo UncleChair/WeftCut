@@ -25,6 +25,14 @@ pub struct MediaItem {
     /// version 0.
     #[serde(default)]
     pub proxy_format_version: u32,
+    /// Fast preview-first proxy produced before the full proxy is ready.
+    /// Preview may use this; export must ignore it.
+    #[serde(default)]
+    pub quick_proxy_path: Option<PathBuf>,
+    /// True when the original workspace copy is safe enough for direct
+    /// WebCodecs use and no generated proxy is required.
+    #[serde(default)]
+    pub proxy_bypassed: bool,
     pub waveform_path: Option<PathBuf>,
     pub thumbnails_dir: Option<PathBuf>,
     pub file_hash_blake3: String,

@@ -29,6 +29,7 @@ use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::UNIX_EPOCH;
 
 use anyhow::{Context, Result};
 use serde::Serialize;
@@ -36,9 +37,11 @@ use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{info, warn};
 
+use crate::cache::{self, CacheLayout};
+use crate::io::probe::FileFacts;
 use crate::logs;
 use crate::state::ids::MediaId;
-use crate::state::{Actor, ProjectHandle};
+use crate::state::{Actor, MediaDerivativesPatch, ProjectHandle};
 
 const MEDIA_DIR: &str = "Media";
 const COPY_BUFFER: usize = 1024 * 1024; // 1 MB
@@ -88,6 +91,7 @@ struct PendingImport {
     source: PathBuf,
     workspace_root: PathBuf,
     handle: ProjectHandle,
+    cache: CacheLayout,
 }
 
 struct RunningImport {
@@ -114,6 +118,7 @@ impl ImportQueue {
     pub fn enqueue(
         &self,
         handle: ProjectHandle,
+        cache: CacheLayout,
         media_id: MediaId,
         source: PathBuf,
         workspace_root: PathBuf,
@@ -125,6 +130,7 @@ impl ImportQueue {
                 source: source.clone(),
                 workspace_root,
                 handle,
+                cache,
             });
             guard.history.push(ImportEntry {
                 media_id: media_id.to_string(),
@@ -260,15 +266,24 @@ impl ImportQueue {
             .await;
 
             match outcome {
-                Ok(Some(dest_rel)) => {
-                    let dest_abs = next.workspace_root.join(&dest_rel);
+                Ok(Some(copy)) => {
+                    let dest_abs = next.workspace_root.join(&copy.dest_rel);
+                    let pending_hash = pending_hash_for(media_id);
+                    if let Err(e) =
+                        cache::migrate_hash_artifacts(&next.cache, &pending_hash, &copy.facts.blake3_hex)
+                    {
+                        warn!("import: cache migrate failed for {media_id}: {e:#}");
+                    }
                     if let Err(e) = next
                         .handle
                         .set_media_workspace_paths(
                             Actor::User,
                             media_id,
                             dest_abs.clone(),
-                            dest_rel.clone(),
+                            copy.dest_rel.clone(),
+                            copy.facts.blake3_hex.clone(),
+                            copy.facts.size,
+                            copy.facts.mtime_secs,
                         )
                         .await
                     {
@@ -296,21 +311,29 @@ impl ImportQueue {
                             },
                         );
                     } else {
+                        patch_derivative_paths_after_hash_migration(
+                            &next.handle,
+                            media_id,
+                            &pending_hash,
+                            &copy.facts.blake3_hex,
+                        )
+                        .await;
+
                         info!(
                             "import: {} -> {}",
                             next.source.display(),
-                            dest_rel.display()
+                            copy.dest_rel.display()
                         );
                         self.finalize_with_dest(
                             media_id,
                             ImportStatus::Completed,
-                            Some(dest_rel.to_string_lossy().to_string()),
+                            Some(copy.dest_rel.to_string_lossy().to_string()),
                         );
                         let _ = self.app.emit(
                             events::COMPLETE,
                             serde_json::json!({
                                 "mediaId": media_id.to_string(),
-                                "pathRel": dest_rel.to_string_lossy(),
+                                "pathRel": copy.dest_rel.to_string_lossy(),
                             }),
                         );
                         logs::emit_via_app(
@@ -322,7 +345,7 @@ impl ImportQueue {
                                 message: format!(
                                     "Imported {} → {}",
                                     next.source.display(),
-                                    dest_rel.display()
+                                    copy.dest_rel.display()
                                 ),
                                 op_id: Some(log_op_id),
                                 op_state: Some(logs::OpState::Ok),
@@ -393,6 +416,80 @@ impl ImportQueue {
     }
 }
 
+struct CopyResult {
+    dest_rel: PathBuf,
+    facts: FileFacts,
+}
+
+fn pending_hash_for(media_id: MediaId) -> String {
+    format!("pending-{media_id}")
+}
+
+fn rewrite_hash_in_path(path: &Path, old_hash: &str, new_hash: &str) -> Option<PathBuf> {
+    let s = path.to_string_lossy();
+    if s.contains(old_hash) {
+        Some(PathBuf::from(s.replace(old_hash, new_hash)))
+    } else {
+        None
+    }
+}
+
+/// Derivative jobs may have committed paths containing the temporary
+/// `pending-{media_id}` cache key before the workspace copy finished hashing.
+async fn patch_derivative_paths_after_hash_migration(
+    handle: &ProjectHandle,
+    media_id: MediaId,
+    old_hash: &str,
+    new_hash: &str,
+) {
+    if old_hash == new_hash {
+        return;
+    }
+    let snap = handle.snapshot().await;
+    let Some(item) = snap.media_pool.get(&media_id) else {
+        return;
+    };
+
+    let mut patch = MediaDerivativesPatch::default();
+    let mut touched = false;
+
+    if let Some(ref p) = item.proxy_path {
+        if let Some(next) = rewrite_hash_in_path(p, old_hash, new_hash) {
+            patch.proxy_path = Some(Some(next));
+            touched = true;
+        }
+    }
+    if let Some(ref p) = item.quick_proxy_path {
+        if let Some(next) = rewrite_hash_in_path(p, old_hash, new_hash) {
+            patch.quick_proxy_path = Some(Some(next));
+            touched = true;
+        }
+    }
+    if let Some(ref p) = item.thumbnails_dir {
+        if let Some(next) = rewrite_hash_in_path(p, old_hash, new_hash) {
+            patch.thumbnails_dir = Some(next);
+            touched = true;
+        }
+    }
+    if let Some(ref p) = item.waveform_path {
+        if let Some(next) = rewrite_hash_in_path(p, old_hash, new_hash) {
+            patch.waveform_path = Some(next);
+            touched = true;
+        }
+    }
+
+    if !touched {
+        return;
+    }
+
+    if let Err(e) = handle
+        .set_media_derivatives(Actor::User, media_id, patch)
+        .await
+    {
+        warn!("import: derivative path patch failed for {media_id}: {e}");
+    }
+}
+
 /// Pick a destination filename in `<workspace>/Media/`. Prefers the source
 /// basename; if that name is already taken on disk, prefix with the first
 /// 8 hex chars of the source's blake3 hash to disambiguate. (The companion
@@ -425,15 +522,17 @@ fn rand_u32() -> u32 {
 }
 
 /// Copy `source` into `<workspace>/Media/<basename>` via a `.tmp + rename`
-/// atomic step, checking the cancel flag every chunk. Returns:
-///   - `Ok(Some(dest_rel))` on a successful copy + rename
+/// atomic step, checking the cancel flag every chunk. Blake3-hashes the
+/// copied bytes in the same pass so the final content hash is available
+/// without a second read of the file. Returns:
+///   - `Ok(Some(CopyResult))` on a successful copy + rename
 ///   - `Ok(None)` if the operation was cancelled before completion
 ///   - `Err(_)` on any I/O failure
 async fn copy_to_workspace(
     source: &Path,
     workspace_root: &Path,
     cancel: Arc<AtomicBool>,
-) -> Result<Option<PathBuf>> {
+) -> Result<Option<CopyResult>> {
     if !source.is_file() {
         anyhow::bail!("source not found: {}", source.display());
     }
@@ -459,6 +558,7 @@ async fn copy_to_workspace(
         .await
         .with_context(|| format!("create {}", tmp.display()))?;
     let mut buf = vec![0u8; COPY_BUFFER];
+    let mut hasher = blake3::Hasher::new();
 
     loop {
         if cancel.load(Ordering::Relaxed) {
@@ -473,6 +573,7 @@ async fn copy_to_workspace(
         if n == 0 {
             break;
         }
+        hasher.update(&buf[..n]);
         dst_file
             .write_all(&buf[..n])
             .await
@@ -488,7 +589,24 @@ async fn copy_to_workspace(
         .await
         .with_context(|| format!("promote {} -> {}", tmp.display(), dest_abs.display()))?;
 
-    Ok(Some(PathBuf::from(MEDIA_DIR).join(&dest_rel_basename)))
+    let metadata = tokio::fs::metadata(&dest_abs)
+        .await
+        .with_context(|| format!("stat {}", dest_abs.display()))?;
+    let facts = FileFacts {
+        size: metadata.len(),
+        mtime_secs: metadata
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+        blake3_hex: hasher.finalize().to_hex().to_string(),
+    };
+
+    Ok(Some(CopyResult {
+        dest_rel: PathBuf::from(MEDIA_DIR).join(&dest_rel_basename),
+        facts,
+    }))
 }
 
 #[cfg(test)]
@@ -524,6 +642,25 @@ mod tests {
         );
     }
 
+    #[test]
+    fn pending_hash_is_media_id_prefixed() {
+        let id = crate::state::new_id();
+        assert_eq!(pending_hash_for(id), format!("pending-{id}"));
+    }
+
+    #[test]
+    fn rewrite_hash_replaces_pending_token() {
+        let p = Path::new("/cache/proxies/pending-abc123.quick.mp4");
+        let out = rewrite_hash_in_path(p, "pending-abc123", "deadbeef").unwrap();
+        assert_eq!(out, PathBuf::from("/cache/proxies/deadbeef.quick.mp4"));
+    }
+
+    #[test]
+    fn rewrite_hash_returns_none_when_token_absent() {
+        let p = Path::new("/cache/proxies/sourcehash.mp4");
+        assert!(rewrite_hash_in_path(p, "pending-abc123", "deadbeef").is_none());
+    }
+
     #[tokio::test]
     async fn copy_to_workspace_writes_into_media_dir() {
         let ws = TempDir::new().unwrap();
@@ -533,10 +670,12 @@ mod tests {
 
         let cancel = Arc::new(AtomicBool::new(false));
         let result = copy_to_workspace(&src, ws.path(), cancel).await.unwrap();
-        let rel = result.expect("copy completed");
-        assert_eq!(rel, PathBuf::from("Media/video.mp4"));
-        let landed = ws.path().join(&rel);
+        let copy = result.expect("copy completed");
+        assert_eq!(copy.dest_rel, PathBuf::from("Media/video.mp4"));
+        let landed = ws.path().join(&copy.dest_rel);
         assert_eq!(std::fs::read(&landed).unwrap(), b"hello video");
+        assert_eq!(copy.facts.size, 11);
+        assert!(!copy.facts.blake3_hex.is_empty());
     }
 
     #[tokio::test]
