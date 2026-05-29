@@ -13,6 +13,8 @@ const baseVideo = (over: Partial<MediaSummary> = {}): MediaSummary => ({
   size_bytes: 10_000_000,
   available: true,
   proxy_path: null,
+  quick_proxy_path: null,
+  proxy_bypassed: false,
   ...over,
 });
 
@@ -39,6 +41,24 @@ describe("mediaReadiness", () => {
       baseVideo(),
       emptyImporting,
       new Map([["m1", "ready"]]),
+    );
+    expect(r).toEqual({ ready: true });
+  });
+
+  it("video is ready when quick_proxy_path is set", () => {
+    const r = mediaReadiness(
+      baseVideo({ quick_proxy_path: "C:/m/clip.quick.mp4" }),
+      emptyImporting,
+      emptyProxyState,
+    );
+    expect(r).toEqual({ ready: true });
+  });
+
+  it("video is ready when proxy is bypassed", () => {
+    const r = mediaReadiness(
+      baseVideo({ proxy_bypassed: true }),
+      emptyImporting,
+      emptyProxyState,
     );
     expect(r).toEqual({ ready: true });
   });

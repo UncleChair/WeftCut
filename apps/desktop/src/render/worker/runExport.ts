@@ -12,7 +12,7 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 
 import type { MediaSummary, ProjectSummary } from "../../ipc";
-import { playbackPathFor } from "../../state/projectStore";
+import { exportPlaybackPathFor } from "../../state/projectStore";
 import type {
   ExportEvent,
   ExportProjectSnapshot,
@@ -75,7 +75,12 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
   const originalAssetUrls: Record<string, string> = {};
   const mediaDims: Record<string, { width: number | null; height: number | null }> = {};
   for (const m of init.mediaById.values()) {
-    const proxyPath = playbackPathFor(m);
+    const proxyPath = exportPlaybackPathFor(m);
+    if (m.kind === "Video" && !proxyPath) {
+      throw new Error(
+        `Video "${m.label}" is still preparing its full proxy and cannot be exported yet.`,
+      );
+    }
     if (proxyPath) proxyAssetUrls[m.id] = convertFileSrc(proxyPath);
     originalAssetUrls[m.id] = convertFileSrc(m.path);
     mediaDims[m.id] = { width: m.width, height: m.height };

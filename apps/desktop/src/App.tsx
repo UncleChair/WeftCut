@@ -151,7 +151,8 @@ export function App({ onCloseProject }: AppProps) {
     return set;
   }, [importQueue]);
   // Per-video proxy lifecycle for the current session. Filled by the
-  // `media:job_*` listener below (kind === "proxy") and consulted by
+  // `media:job_*` listener below (proxy / quick_proxy / proxy_bypass)
+  // and consulted by
   // `mediaReadiness` to decide whether a video clip is usable on the
   // timeline. `MediaSummary.proxy_path` from the next summary refresh is
   // the durable source of truth; this map is the fast, session-scoped
@@ -400,8 +401,9 @@ export function App({ onCloseProject }: AppProps) {
     };
   }, []);
 
-  // Per-media derivative-job tracking — `kind === "proxy"` only. We do
-  // NOT gate the UI on thumbnails / waveform; those are decorations.
+  // Per-media preview-readiness job tracking — proxy / quick_proxy /
+  // proxy_bypass only. We do NOT gate the UI on thumbnails / waveform;
+  // those are decorations.
   // The listener owns transitions started → pending, complete → ready,
   // error → failed. `MediaSummary.proxy_path` from the next summary
   // refresh is the durable source of truth; this map is the fast,
@@ -420,19 +422,37 @@ export function App({ onCloseProject }: AppProps) {
       const onStarted = await listen<MediaJobEvent>(
         MEDIA_JOB_EVENTS.started,
         (e) => {
-          if (e.payload.kind === "proxy") set(e.payload.media_id, "pending");
+          if (
+            e.payload.kind === "proxy" ||
+            e.payload.kind === "quick_proxy" ||
+            e.payload.kind === "proxy_bypass"
+          ) {
+            set(e.payload.media_id, "pending");
+          }
         },
       );
       const onComplete = await listen<MediaJobEvent>(
         MEDIA_JOB_EVENTS.complete,
         (e) => {
-          if (e.payload.kind === "proxy") set(e.payload.media_id, "ready");
+          if (
+            e.payload.kind === "proxy" ||
+            e.payload.kind === "quick_proxy" ||
+            e.payload.kind === "proxy_bypass"
+          ) {
+            set(e.payload.media_id, "ready");
+          }
         },
       );
       const onError = await listen<MediaJobEvent>(
         MEDIA_JOB_EVENTS.error,
         (e) => {
-          if (e.payload.kind === "proxy") set(e.payload.media_id, "failed");
+          if (
+            e.payload.kind === "proxy" ||
+            e.payload.kind === "quick_proxy" ||
+            e.payload.kind === "proxy_bypass"
+          ) {
+            set(e.payload.media_id, "failed");
+          }
         },
       );
       if (cancelled) {
@@ -1569,4 +1589,3 @@ function formatBytes(
   }
   return t("media_pool.size_bytes", { bytes });
 }
-

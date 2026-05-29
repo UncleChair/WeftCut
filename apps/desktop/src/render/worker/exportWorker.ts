@@ -118,6 +118,8 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
         size_bytes: 0,
         available: true,
         proxy_path: null,
+        quick_proxy_path: null,
+        proxy_bypassed: false,
       };
     },
   });
