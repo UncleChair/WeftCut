@@ -14,27 +14,46 @@ const DIRECT_FULL_MAX_DURATION_US: i64 = 10_000_000;
 const DIRECT_FULL_MAX_SIZE_BYTES: u64 = 150 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ProxyDecision {
-    /// Use the workspace copy directly; no proxy job needed.
-    Bypass,
-    /// Generate the existing full-quality proxy directly.
+pub enum ProxyPlan {
+    /// No proxy. The workspace copy is used directly for BOTH preview and
+    /// export. (Formerly `Bypass`.)
+    DirectBoth,
+    /// Export decodes the original directly; a fast preview proxy is
+    /// generated for scrubbing only. No full proxy is produced.
+    DirectExportQuickPreview,
+    /// Small source: skip the fast phase, generate the full proxy directly.
     FullProxyOnly,
-    /// Generate a fast preview proxy first, then the full proxy in the
-    /// background.
-    QuickProxyThenFull,
+    /// Fast preview proxy first, then the full proxy in the background.
+    QuickThenFull,
 }
 
-pub fn decide(media: &MediaItem) -> ProxyDecision {
+pub fn decide(media: &MediaItem) -> ProxyPlan {
     if !matches!(media.kind, MediaKind::Video) {
-        return ProxyDecision::Bypass;
+        return ProxyPlan::DirectBoth;
     }
     if source_is_safe_to_bypass(media) {
-        return ProxyDecision::Bypass;
+        return ProxyPlan::DirectBoth;
+    }
+    if decodable_directly(media) {
+        return ProxyPlan::DirectExportQuickPreview;
     }
     if is_small_source(media) {
-        return ProxyDecision::FullProxyOnly;
+        return ProxyPlan::FullProxyOnly;
     }
-    ProxyDecision::QuickProxyThenFull
+    ProxyPlan::QuickThenFull
+}
+
+/// Static decode-capability predicate for Plan 1: a source WebCodecs can
+/// decode on ANY machine without a proxy. H.264 in an 8-bit browser-friendly
+/// pixel format qualifies regardless of resolution or bitrate — those only
+/// affect *scrub* comfort (handled by the preview proxy), not whether the
+/// export decoder can read the original. Plan 2 replaces this body with a
+/// per-machine `DecodeCapabilityProfile` lookup (adds HEVC/AV1/VP9).
+fn decodable_directly(media: &MediaItem) -> bool {
+    let Some(video) = media.metadata.video.as_ref() else {
+        return false;
+    };
+    codec_is_h264(&video.codec) && pix_fmt_is_browser_friendly(&video.pix_fmt)
 }
 
 fn source_is_safe_to_bypass(media: &MediaItem) -> bool {
@@ -113,6 +132,7 @@ mod tests {
             proxy_format_version: 0,
             quick_proxy_path: None,
             proxy_bypassed: false,
+            export_uses_original: false,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "abc".into(),
@@ -125,26 +145,61 @@ mod tests {
     }
 
     #[test]
-    fn bypasses_friendly_h264_1080p() {
-        assert_eq!(decide(&video(|_| {})), ProxyDecision::Bypass);
+    fn direct_both_for_friendly_h264_1080p() {
+        assert_eq!(decide(&video(|_| {})), ProxyPlan::DirectBoth);
     }
 
     #[test]
-    fn quick_proxy_for_large_hevc() {
+    fn direct_export_for_4k_h264() {
+        let item = video(|m| {
+            let v = m.metadata.video.as_mut().unwrap();
+            v.width = 3840;
+            v.height = 2160;
+        });
+        assert_eq!(decide(&item), ProxyPlan::DirectExportQuickPreview);
+    }
+
+    #[test]
+    fn direct_export_for_high_bitrate_h264_1080p() {
+        // 1080p H.264 but ~40 Mbps (over the 25 Mbps bypass ceiling).
+        let item = video(|m| {
+            m.metadata.duration_us = Some(10_000_000);
+            m.file_size = 50 * 1024 * 1024;
+        });
+        assert_eq!(decide(&item), ProxyPlan::DirectExportQuickPreview);
+    }
+
+    #[test]
+    fn proxy_both_for_large_hevc() {
         let item = video(|m| {
             m.metadata.video.as_mut().unwrap().codec = "hevc".into();
             m.metadata.duration_us = Some(600_000_000);
             m.file_size = 5 * 1024 * 1024 * 1024;
         });
-        assert_eq!(decide(&item), ProxyDecision::QuickProxyThenFull);
+        assert_eq!(decide(&item), ProxyPlan::QuickThenFull);
     }
 
     #[test]
-    fn full_proxy_for_small_non_bypass_source() {
+    fn full_proxy_for_small_non_decodable_source() {
         let item = video(|m| {
             m.metadata.video.as_mut().unwrap().codec = "hevc".into();
             m.file_size = 10_000_000;
         });
-        assert_eq!(decide(&item), ProxyDecision::FullProxyOnly);
+        assert_eq!(decide(&item), ProxyPlan::FullProxyOnly);
+    }
+
+    #[test]
+    fn proxy_both_for_10bit_h264() {
+        // 10-bit pixel format is not browser-friendly → not directly
+        // decodable; large source routes to QuickThenFull.
+        let item = video(|m| {
+            let v = m.metadata.video.as_mut().unwrap();
+            v.pix_fmt = "yuv420p10le".into();
+            v.width = 3840;
+            v.height = 2160;
+            m.metadata.duration_us = Some(600_000_000);
+            m.file_size = 5 * 1024 * 1024 * 1024;
+        });
+        assert_eq!(decide(&item), ProxyPlan::QuickThenFull);
     }
 }

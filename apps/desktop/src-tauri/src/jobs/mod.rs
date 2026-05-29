@@ -138,7 +138,7 @@ fn spawn_proxy_decision(
     tokio::spawn(async move {
         let media_id = media.id;
         match proxy_decision::decide(&media) {
-            proxy_decision::ProxyDecision::Bypass => {
+            proxy_decision::ProxyPlan::DirectBoth => {
                 emit(
                     &app,
                     EVENT_STARTED,
@@ -181,11 +181,57 @@ fn spawn_proxy_decision(
                 );
                 spawn_decorations(app, cache, project, media);
             }
-            proxy_decision::ProxyDecision::FullProxyOnly => {
+            proxy_decision::ProxyPlan::DirectExportQuickPreview => {
+                emit(
+                    &app,
+                    EVENT_STARTED,
+                    &JobStarted {
+                        media_id: media_id.to_string(),
+                        kind: JobKind::ProxyBypass,
+                    },
+                );
+                let patch = MediaDerivativesPatch {
+                    proxy_path: Some(None),
+                    proxy_bypassed: Some(false),
+                    export_uses_original: Some(true),
+                    ..Default::default()
+                };
+                if let Err(e) = project
+                    .set_media_derivatives(actor_for_jobs(), media_id, patch)
+                    .await
+                {
+                    warn!("direct-export commit failed for {media_id}: {e}");
+                    emit(
+                        &app,
+                        EVENT_ERROR,
+                        &JobError {
+                            media_id: media_id.to_string(),
+                            kind: JobKind::ProxyBypass,
+                            error: format!("commit: {e}"),
+                        },
+                    );
+                    return;
+                }
+                info!("direct-export accepted for {media_id}; preview proxy queued");
+                emit(
+                    &app,
+                    EVENT_COMPLETE,
+                    &JobComplete {
+                        media_id: media_id.to_string(),
+                        kind: JobKind::ProxyBypass,
+                        path: Some(media.path_abs.display().to_string()),
+                    },
+                );
+                // Thumbnails + waveform off the original; preview proxy in the
+                // background WITHOUT chaining a full proxy.
+                spawn_decorations(app.clone(), cache.clone(), project.clone(), media.clone());
+                spawn_quick_proxy(app, cache, project, media, false);
+            }
+            proxy_decision::ProxyPlan::FullProxyOnly => {
                 spawn_proxy(app, cache, project, media);
             }
-            proxy_decision::ProxyDecision::QuickProxyThenFull => {
-                spawn_quick_proxy(app, cache, project, media);
+            proxy_decision::ProxyPlan::QuickThenFull => {
+                spawn_quick_proxy(app, cache, project, media, true);
             }
         }
     });
@@ -261,7 +307,13 @@ fn spawn_thumbnails(app: AppHandle, cache: CacheLayout, project: ProjectHandle, 
     });
 }
 
-fn spawn_quick_proxy(app: AppHandle, cache: CacheLayout, project: ProjectHandle, media: MediaItem) {
+fn spawn_quick_proxy(
+    app: AppHandle,
+    cache: CacheLayout,
+    project: ProjectHandle,
+    media: MediaItem,
+    then_full: bool,
+) {
     tokio::spawn(async move {
         let media_id = media.id;
         emit(
@@ -331,10 +383,12 @@ fn spawn_quick_proxy(app: AppHandle, cache: CacheLayout, project: ProjectHandle,
             }
         }
 
-        // Full proxy chains after quick proxy; refresh hash/paths in case the
-        // workspace copy + blake3 landed while Phase 1 was queued.
-        let media = fresh_media_item(&project, media_id, media).await;
-        spawn_proxy(app, cache, project, media);
+        if then_full {
+            // Full proxy chains after the quick proxy; refresh hash/paths in
+            // case the workspace copy + blake3 landed while Phase 1 was queued.
+            let media = fresh_media_item(&project, media_id, media).await;
+            spawn_proxy(app, cache, project, media);
+        }
     });
 }
 

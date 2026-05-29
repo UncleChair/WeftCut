@@ -33,6 +33,12 @@ pub struct MediaItem {
     /// WebCodecs use and no generated proxy is required.
     #[serde(default)]
     pub proxy_bypassed: bool,
+    /// True when the export path may decode the ORIGINAL workspace copy
+    /// directly (WebCodecs can decode it) even though a preview proxy is
+    /// still generated for scrubbing. Distinct from `proxy_bypassed`, which
+    /// means *no proxy at all* (original for preview AND export).
+    #[serde(default)]
+    pub export_uses_original: bool,
     pub waveform_path: Option<PathBuf>,
     pub thumbnails_dir: Option<PathBuf>,
     pub file_hash_blake3: String,
@@ -71,4 +77,35 @@ pub struct AudioStreamMeta {
     pub sample_rate: u32,
     pub channels: u8,
     pub codec: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn export_uses_original_defaults_false_for_old_projects() {
+        // A `.vproj` MediaItem written before this field existed must load
+        // as `export_uses_original: false`.
+        let json = r#"{
+            "id": "00000000-0000-0000-0000-000000000000",
+            "label": null,
+            "path_abs": "clip.mp4",
+            "path_rel": null,
+            "kind": "Video",
+            "metadata": { "duration_us": null, "video": null, "audio": null },
+            "proxy_path": null,
+            "quick_proxy_path": null,
+            "proxy_bypassed": true,
+            "waveform_path": null,
+            "thumbnails_dir": null,
+            "file_hash_blake3": "abc",
+            "file_size": 1,
+            "file_mtime": 0,
+            "imported_at": "2026-05-29T00:00:00Z"
+        }"#;
+        let item: MediaItem = serde_json::from_str(json).unwrap();
+        assert!(!item.export_uses_original);
+        assert!(item.proxy_bypassed);
+    }
 }
