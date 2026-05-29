@@ -67,14 +67,9 @@ If any differs from the "Pinned mediabunny API" block above, update that block a
 Run: `npm --prefix apps/desktop test -- src/render/decoder`
 Expected: `rangeFetchMock`, `AssetRangeSource`, `decoderFallback`, `FrameRing`, and **`mediaInput` (MP4 + MKV parity + error case)** all green. This is the foundation Plan B sits on; if `mediaInput` is red, stop and fix Plan A before proceeding.
 
-- [ ] **Step 4: Commit only if the lockfile moved**
+- [ ] **Step 4: No dependency commit**
 
-If `npm install` changed `apps/desktop/package-lock.json`:
-```bash
-git add apps/desktop/package-lock.json
-git commit -m "chore(deps): sync mediabunny lockfile for Plan B"
-```
-Otherwise no commit — this task is environment setup.
+This repo does **not** track `apps/desktop/package-lock.json` (it's neither ignored nor ever committed — only `Cargo.lock` is tracked). `npm install` regenerating it is expected; **leave it untracked**, matching the established repo convention (Plan A didn't commit it either). Task 1 ends with no dependency commit.
 
 ---
 
@@ -1194,8 +1189,10 @@ The `MediaEntry` interface + `SourceDecoderPool` class below this point are unch
 
 - [ ] **Step 6: Type-check the whole app**
 
-Run: `npm --prefix apps/desktop run typecheck`
-Expected: PASS. In particular, no errors in `SourceDecoderPool.ts`, `ExportDecoderPool.ts` (it still implements the now-`Promise<unknown>` `DecoderHandle` via its `Promise<VideoTrackMeta>` `ensureReady`), `Compositor.ts`, or `index.ts`.
+⚠️ The `typecheck` npm script (`tsc -b --noEmit`) is **broken** in this repo (TS6310 — build mode + a referenced project with `noEmit`). Use the single-project invocation Plan A used, and the **baseline-diff** method (the repo has a pre-existing error baseline — 24 errors at the time of writing, in `App.tsx`, `Compositor.ts` (lines 208/748/756/760), `render/fixtures/*`, `PixiPreview.tsx`, `KeybindingPanel.tsx`, `match.ts`, `TemplatePicker.tsx`, `Timeline.tsx`):
+
+Run: `cd apps/desktop && npx tsc --noEmit -p tsconfig.json`
+Expected: the **same** error set as before this task — **no new errors** mentioning `SourceDecoderPool.ts`, `PacketPump.ts`, `ExportDecoderPool.ts` (it still implements the now-`Promise<unknown>` `DecoderHandle` via its `Promise<VideoTrackMeta>` `ensureReady`), or `Compositor.ts` (it must keep exactly its 4 pre-existing errors, no more). If `PumpPacketSink` assignability fails here, apply the adapter fallback below.
 
 If a `PumpPacketSink` assignability error surfaces (real `EncodedPacketSink` not assignable to the structural interface — TS method bivariance usually allows it, but a strict config may reject), fix it by wrapping the sink in `makePumpDeps`:
 ```ts
@@ -1229,9 +1226,10 @@ The pump's logic is unit-covered, but the live WebCodecs path (ImageBitmap snaps
 - [ ] **Step 1: Final automated sweep**
 
 ```bash
-npm --prefix apps/desktop run typecheck   # PASS
-npm --prefix apps/desktop test            # all green (Plan A + PacketPump + suite)
+cd apps/desktop && npx tsc --noEmit -p tsconfig.json   # baseline error set, no NEW errors (see Task 4 Step 6)
+npm --prefix apps/desktop test                         # all green (Plan A + PacketPump + suite)
 ```
+(The `typecheck` npm script is broken — TS6310; use the single-project `tsc` above.)
 
 - [ ] **Step 2: Runtime acceptance in `tauri:dev` — MP4 source**
 
@@ -1241,7 +1239,7 @@ Launch the app (`npm --prefix apps/desktop run tauri:dev` or the project's dev l
 - Forward seek: near (within ~1s → catches up by forward decode) and far (>1s → one reset+seek, frame appears promptly).
 - Backward seek: within lookbehind (no reset) and beyond it (one reset+seek).
 - Two overlapping clips of the same source: each stabilizes on its own frame, no decoder thrash / reset flood.
-- Scrub latency comparable to the pre-Plan-B mp4box path (no obvious per-frame lag). If it regresses, see the spec's mitigation (pre-buffer a small packet queue ahead of the decoder).
+- Scrub latency comparable to the pre-Plan-B mp4box path. **Make this concrete** (the spec's named risk): the real question is whether `getNextPacket` resolves in a microtask when bytes are already cached, or adds per-packet async overhead vs. the old sync `sampleAt`. Instrument it — log `performance.now()` deltas around `getNextPacket` during a scrub on cached data. If it's not sub-millisecond on cache hits, apply the spec's mitigation (pre-buffer a small packet queue ahead of the decoder) before declaring scrub fine.
 
 - [ ] **Step 3: Runtime acceptance — MKV source (the bug this migration fixes)**
 
@@ -1255,6 +1253,8 @@ Import an **MKV** clip whose codec lands on the direct path (H.264). Confirm pre
 - [ ] **Step 5: Record results**
 
 Note pass/fail per check in the PR / commit description. Any regression (scrub latency, HEVC config, heap) that can't be fixed in-session is a blocker for Plan C, not a silent carry.
+
+> **Coverage note:** the **software-downgrade / inactivity-rebuild recovery** path (the one the `PacketPump` generation guard protects) only fires on a real hardware decode failure, which normal manual play won't trigger. It is covered by the `PacketPump` unit test ("rebuild during an await does not resurrect the cursor"), NOT by this manual acceptance. Don't read "preview looks smooth" as "recovery works." Forcing a real hardware failure isn't worth engineering.
 
 ---
 
