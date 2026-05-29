@@ -137,7 +137,12 @@ fn spawn_proxy_decision(
 ) {
     tokio::spawn(async move {
         let media_id = media.id;
-        match proxy_decision::decide(&media) {
+        use tauri::Manager;
+        let caps = app
+            .try_state::<crate::decode_caps::DecodeCapabilityStore>()
+            .map(|s| s.get())
+            .unwrap_or_default();
+        match proxy_decision::decide(&media, &caps) {
             proxy_decision::ProxyPlan::DirectBoth => {
                 emit(
                     &app,
