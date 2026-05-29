@@ -576,6 +576,21 @@ export const APP_SETTINGS_EVENTS = {
   changed: "app_settings:changed",
 } as const;
 
+/// Codecs (beyond H.264, always assumed) that WebCodecs can decode on this
+/// machine. Probed in the webview and persisted by the backend to drive the
+/// proxy-decision policy. See `src/decode/probeDecodeCaps.ts`.
+export interface DecodeCaps {
+  hevc: boolean;
+  av1: boolean;
+  vp9: boolean;
+}
+
+/// Report this machine's WebCodecs decode capability to the backend, which
+/// persists it for the proxy-decision policy. Best-effort, fire-and-forget.
+export async function reportDecodeCaps(caps: DecodeCaps): Promise<void> {
+  await invoke("report_decode_caps", { caps });
+}
+
 export async function projectRestoreCheckpoint(checkpointId: string): Promise<void> {
   return invoke<void>("project_restore_checkpoint", { checkpointId });
 }
