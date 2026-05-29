@@ -100,6 +100,7 @@ pub fn run() {
             commands::keybindings_import,
             commands::app_settings_get,
             commands::app_settings_set,
+            commands::report_decode_caps,
             commands::view_state_get,
             commands::view_state_set,
             commands::agent_session_get,
