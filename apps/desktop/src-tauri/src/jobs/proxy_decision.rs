@@ -5,6 +5,7 @@
 //! browser-friendly pixel format, and moderate bitrate. Everything else gets
 //! a generated proxy path so scrub/decode behavior stays predictable.
 
+use crate::decode_caps::DecodeCaps;
 use crate::state::{MediaItem, MediaKind};
 
 const MAX_BYPASS_WIDTH: u32 = 1920;
@@ -27,14 +28,14 @@ pub enum ProxyPlan {
     QuickThenFull,
 }
 
-pub fn decide(media: &MediaItem) -> ProxyPlan {
+pub fn decide(media: &MediaItem, caps: &DecodeCaps) -> ProxyPlan {
     if !matches!(media.kind, MediaKind::Video) {
         return ProxyPlan::DirectBoth;
     }
     if source_is_safe_to_bypass(media) {
         return ProxyPlan::DirectBoth;
     }
-    if decodable_directly(media) {
+    if decodable_directly(media, caps) {
         return ProxyPlan::DirectExportQuickPreview;
     }
     if is_small_source(media) {
@@ -43,17 +44,33 @@ pub fn decide(media: &MediaItem) -> ProxyPlan {
     ProxyPlan::QuickThenFull
 }
 
-/// Static decode-capability predicate for Plan 1: a source WebCodecs can
-/// decode on ANY machine without a proxy. H.264 in an 8-bit browser-friendly
-/// pixel format qualifies regardless of resolution or bitrate — those only
-/// affect *scrub* comfort (handled by the preview proxy), not whether the
-/// export decoder can read the original. Plan 2 replaces this body with a
-/// per-machine `DecodeCapabilityProfile` lookup (adds HEVC/AV1/VP9).
-fn decodable_directly(media: &MediaItem) -> bool {
+/// A source WebCodecs can decode on THIS machine without a proxy. H.264 is
+/// universal; HEVC/AV1/VP9 are gated by the webview probe (`DecodeCaps`).
+/// Requires an 8-bit browser-friendly pixel format either way — 10-bit/HDR
+/// stays carved out to a proxy (the render+encode path is 8-bit). Resolution
+/// and bitrate don't matter here: they affect *scrub* comfort (the preview
+/// proxy's job), not whether the export decoder can read the original.
+fn decodable_directly(media: &MediaItem, caps: &DecodeCaps) -> bool {
     let Some(video) = media.metadata.video.as_ref() else {
         return false;
     };
-    codec_is_h264(&video.codec) && pix_fmt_is_browser_friendly(&video.pix_fmt)
+    if !pix_fmt_is_browser_friendly(&video.pix_fmt) {
+        return false;
+    }
+    let codec = video.codec.to_ascii_lowercase();
+    if codec_is_h264(&codec) {
+        return true;
+    }
+    if codec_is_hevc(&codec) {
+        return caps.hevc;
+    }
+    if codec_is_av1(&codec) {
+        return caps.av1;
+    }
+    if codec_is_vp9(&codec) {
+        return caps.vp9;
+    }
+    false
 }
 
 fn source_is_safe_to_bypass(media: &MediaItem) -> bool {
@@ -89,6 +106,21 @@ pub fn codec_is_h264(codec: &str) -> bool {
     matches!(c.as_str(), "h264" | "avc1" | "avc")
 }
 
+pub fn codec_is_hevc(codec: &str) -> bool {
+    matches!(
+        codec.to_ascii_lowercase().as_str(),
+        "hevc" | "h265" | "hvc1" | "hev1"
+    )
+}
+
+pub fn codec_is_av1(codec: &str) -> bool {
+    matches!(codec.to_ascii_lowercase().as_str(), "av1" | "av01")
+}
+
+pub fn codec_is_vp9(codec: &str) -> bool {
+    matches!(codec.to_ascii_lowercase().as_str(), "vp9" | "vp09")
+}
+
 pub fn pix_fmt_is_browser_friendly(pix_fmt: &str) -> bool {
     let p = pix_fmt.to_ascii_lowercase();
     matches!(p.as_str(), "yuv420p" | "nv12")
@@ -106,6 +138,7 @@ fn estimated_bitrate_bps(media: &MediaItem) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::decode_caps::DecodeCaps;
     use crate::state::{new_id, MediaKind, MediaMetadata, VideoStreamMeta};
     use chrono::Utc;
 
@@ -146,17 +179,24 @@ mod tests {
 
     #[test]
     fn direct_both_for_friendly_h264_1080p() {
-        assert_eq!(decide(&video(|_| {})), ProxyPlan::DirectBoth);
+        assert_eq!(
+            decide(&video(|_| {}), &DecodeCaps::none()),
+            ProxyPlan::DirectBoth
+        );
     }
 
     #[test]
-    fn direct_export_for_4k_h264() {
+    fn direct_export_for_4k_h264_without_caps() {
+        // 4K H.264 is decodable on any machine — no probe needed.
         let item = video(|m| {
             let v = m.metadata.video.as_mut().unwrap();
             v.width = 3840;
             v.height = 2160;
         });
-        assert_eq!(decide(&item), ProxyPlan::DirectExportQuickPreview);
+        assert_eq!(
+            decide(&item, &DecodeCaps::none()),
+            ProxyPlan::DirectExportQuickPreview
+        );
     }
 
     #[test]
@@ -166,17 +206,10 @@ mod tests {
             m.metadata.duration_us = Some(10_000_000);
             m.file_size = 50 * 1024 * 1024;
         });
-        assert_eq!(decide(&item), ProxyPlan::DirectExportQuickPreview);
-    }
-
-    #[test]
-    fn proxy_both_for_large_hevc() {
-        let item = video(|m| {
-            m.metadata.video.as_mut().unwrap().codec = "hevc".into();
-            m.metadata.duration_us = Some(600_000_000);
-            m.file_size = 5 * 1024 * 1024 * 1024;
-        });
-        assert_eq!(decide(&item), ProxyPlan::QuickThenFull);
+        assert_eq!(
+            decide(&item, &DecodeCaps::none()),
+            ProxyPlan::DirectExportQuickPreview
+        );
     }
 
     #[test]
@@ -185,21 +218,62 @@ mod tests {
             m.metadata.video.as_mut().unwrap().codec = "hevc".into();
             m.file_size = 10_000_000;
         });
-        assert_eq!(decide(&item), ProxyPlan::FullProxyOnly);
+        assert_eq!(decide(&item, &DecodeCaps::none()), ProxyPlan::FullProxyOnly);
     }
 
     #[test]
-    fn proxy_both_for_10bit_h264() {
-        // 10-bit pixel format is not browser-friendly → not directly
-        // decodable; large source routes to QuickThenFull.
+    fn hevc_is_proxy_both_without_caps() {
         let item = video(|m| {
-            let v = m.metadata.video.as_mut().unwrap();
-            v.pix_fmt = "yuv420p10le".into();
-            v.width = 3840;
-            v.height = 2160;
+            m.metadata.video.as_mut().unwrap().codec = "hevc".into();
             m.metadata.duration_us = Some(600_000_000);
             m.file_size = 5 * 1024 * 1024 * 1024;
         });
-        assert_eq!(decide(&item), ProxyPlan::QuickThenFull);
+        assert_eq!(decide(&item, &DecodeCaps::none()), ProxyPlan::QuickThenFull);
+    }
+
+    #[test]
+    fn hevc_is_direct_export_when_caps_allow() {
+        let item = video(|m| {
+            m.metadata.video.as_mut().unwrap().codec = "hevc".into();
+            m.metadata.duration_us = Some(600_000_000);
+            m.file_size = 5 * 1024 * 1024 * 1024;
+        });
+        let caps = DecodeCaps {
+            hevc: true,
+            ..Default::default()
+        };
+        assert_eq!(decide(&item, &caps), ProxyPlan::DirectExportQuickPreview);
+    }
+
+    #[test]
+    fn hevc_10bit_stays_proxy_even_with_caps() {
+        // 10-bit is not browser-friendly → carve-out regardless of caps.
+        let item = video(|m| {
+            let v = m.metadata.video.as_mut().unwrap();
+            v.codec = "hevc".into();
+            v.pix_fmt = "yuv420p10le".into();
+            m.metadata.duration_us = Some(600_000_000);
+            m.file_size = 5 * 1024 * 1024 * 1024;
+        });
+        let caps = DecodeCaps {
+            hevc: true,
+            ..Default::default()
+        };
+        assert_eq!(decide(&item, &caps), ProxyPlan::QuickThenFull);
+    }
+
+    #[test]
+    fn av1_gated_by_caps() {
+        let item = video(|m| {
+            m.metadata.video.as_mut().unwrap().codec = "av01".into();
+            m.metadata.duration_us = Some(600_000_000);
+            m.file_size = 5 * 1024 * 1024 * 1024;
+        });
+        assert_eq!(decide(&item, &DecodeCaps::none()), ProxyPlan::QuickThenFull);
+        let caps = DecodeCaps {
+            av1: true,
+            ..Default::default()
+        };
+        assert_eq!(decide(&item, &caps), ProxyPlan::DirectExportQuickPreview);
     }
 }
