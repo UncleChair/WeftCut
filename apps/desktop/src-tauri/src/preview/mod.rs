@@ -17,10 +17,11 @@
 use crate::state::Project;
 
 /// Clone the project with each `MediaItem.path_abs` replaced by its
-/// `proxy_path` when that proxy exists on disk. Per-clip proxies are
+/// full `proxy_path` when that proxy exists on disk. Per-clip proxies are
 /// `jobs::proxy::PROXY_HEIGHT` H.264 + AAC; export's `Scale` node
 /// upscales to canvas anyway, so resolution substitution is
-/// transparent.
+/// transparent. Quick proxies are preview-only TS-side artifacts and are
+/// deliberately ignored here.
 pub fn with_proxies_substituted(project: &Project) -> Project {
     let mut next = project.clone();
     let updates: Vec<_> = next

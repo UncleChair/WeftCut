@@ -230,6 +230,11 @@ pub struct MediaSummary {
     /// media kinds that don't get proxied — e.g. audio-only sources).
     /// DOM preview falls back to `path` when this is `None`.
     pub proxy_path: Option<String>,
+    /// Fast preview-only proxy. Export intentionally ignores this path.
+    pub quick_proxy_path: Option<String>,
+    /// True when the workspace copy is safe for direct WebCodecs use and no
+    /// generated proxy is required.
+    pub proxy_bypassed: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -375,6 +380,10 @@ pub async fn project_summary(handle: State<'_, ProjectHandle>) -> Result<Project
                 .proxy_path
                 .as_ref()
                 .and_then(|p| p.is_file().then(|| p.to_string_lossy().to_string()));
+            let quick_proxy_path = m
+                .quick_proxy_path
+                .as_ref()
+                .and_then(|p| p.is_file().then(|| p.to_string_lossy().to_string()));
             MediaSummary {
                 id: m.id.to_string(),
                 label,
@@ -386,6 +395,8 @@ pub async fn project_summary(handle: State<'_, ProjectHandle>) -> Result<Project
                 size_bytes: m.file_size,
                 available: m.path_abs.is_file(),
                 proxy_path,
+                quick_proxy_path,
+                proxy_bypassed: m.proxy_bypassed,
             }
         })
         .collect();
@@ -1490,17 +1501,29 @@ pub async fn import_media(
     path: String,
 ) -> Result<String, String> {
     let source_buf = PathBuf::from(&path);
+    let media_id = new_id();
+    let workspace_root = workspace.current();
+    let has_workspace = workspace_root.is_some();
     let item = tokio::task::spawn_blocking({
         let source_buf = source_buf.clone();
+        let media_id = media_id;
         move || -> Result<MediaItem, String> {
-            let facts = io::probe::hash_and_stat(&source_buf).map_err(|e| format!("{e:#}"))?;
+            let (file_size, file_mtime, file_hash_blake3) = if has_workspace {
+                let (size, mtime) = io::probe::stat_file(&source_buf)
+                    .map_err(|e| format!("{e:#}"))?;
+                (size, mtime, format!("pending-{media_id}"))
+            } else {
+                let facts = io::probe::hash_and_stat(&source_buf)
+                    .map_err(|e| format!("{e:#}"))?;
+                (facts.size, facts.mtime_secs, facts.blake3_hex)
+            };
             let metadata = io::probe::probe_metadata(&source_buf);
             let kind: MediaKind = io::probe::detect_kind(&source_buf, &metadata);
             let label = source_buf
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string());
             Ok(MediaItem {
-                id: new_id(),
+                id: media_id,
                 label,
                 // path_abs starts as the source location. The background
                 // import worker (jobs::import) flips it to the workspace
@@ -1512,11 +1535,13 @@ pub async fn import_media(
                 proxy_path: None,
 
                 proxy_format_version: 0,
+                quick_proxy_path: None,
+                proxy_bypassed: false,
                 waveform_path: None,
                 thumbnails_dir: None,
-                file_hash_blake3: facts.blake3_hex,
-                file_size: facts.size,
-                file_mtime: facts.mtime_secs,
+                file_hash_blake3,
+                file_size,
+                file_mtime,
                 imported_at: Utc::now(),
             })
         }
@@ -1524,28 +1549,18 @@ pub async fn import_media(
     .await
     .map_err(|e| format!("import join: {e}"))??;
 
-    let item_for_jobs = item.clone();
     let media_id = item.id;
+    let item_for_jobs = item.clone();
     let id = handle
         .add_media_item(Actor::User, item)
         .await
         .map_err(|e: CommandError| e.to_string())?;
 
-    // 2026-05-16 follow-up to v2: import is now a file operation only.
-    // The media lands in the MediaPool drawer and nothing else happens
-    // until the user explicitly drags it onto a timeline track. R.3 /
-    // V.3's "fresh hidden track per import" auto-creation is gone — it
-    // produced graveyard tracks the user had to clean up, and the
-    // hidden-track peek list now has nothing to surface for an
-    // unplaced import.
-
-    // Derivatives (proxy / thumbnails / waveform) are content-addressed by
-    // blake3 hash, so the cache key doesn't care whether the worker reads
-    // from the original or the post-copy workspace location. Kick them
-    // immediately from the original path; they'll race the copy and the
-    // results are valid either way.
+    // Derivative jobs read from `path_abs` (the original source) and are
+    // content-addressed by hash. They can start immediately while the
+    // workspace copy runs in the background.
     crate::jobs::enqueue_for_media(
-        app,
+        app.clone(),
         (*cache).clone(),
         (*handle).clone(),
         item_for_jobs,
@@ -1558,9 +1573,10 @@ pub async fn import_media(
     // makes this unreachable), skip the copy and leave the MediaItem
     // pointing at the original. The next save-as / open will set the
     // workspace and any future imports get copied normally.
-    if let Some(ws) = workspace.current() {
+    if let Some(ws) = workspace_root {
         import_queue.enqueue(
             (*handle).clone(),
+            (*cache).clone(),
             media_id,
             source_buf,
             ws,
@@ -2307,5 +2323,3 @@ fn demo_color(idx: usize) -> Rgba {
     ];
     PALETTE[idx % PALETTE.len()]
 }
-
-

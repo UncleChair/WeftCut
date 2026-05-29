@@ -22,6 +22,7 @@ use ffmpeg_sidecar::{command::ffmpeg_is_installed, paths::ffmpeg_path};
 use tokio::process::Command;
 
 use crate::cache::{CacheLayout, cached_ok, discard_temp, promote_temp, temp_path};
+use crate::jobs::hwaccel;
 use crate::state::MediaItem;
 
 /// Maximum proxy height. Sources taller than this scale down; sources
@@ -84,17 +85,15 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     // demuxes the file before it's fully written.
     let scale_filter = format!("scale=-2:'min(ih,{PROXY_HEIGHT_CAP})'");
     let gop = gop_size_for(media).to_string();
-    let output = Command::new(ffmpeg_path())
-        .args([
-            "-y",
-            "-hide_banner",
-            "-nostats",
-            "-loglevel",
-            "error",
-            "-i",
-        ])
-        .arg(&media.path_abs)
-        .args([
+    let input = media.path_abs.clone();
+    let tmp = tmp.clone();
+
+    let output = hwaccel::output_with_hw_decode_fallback("full proxy", |hw, cmd| {
+        cmd.args(["-y", "-hide_banner", "-nostats", "-loglevel", "error"]);
+        if hw {
+            hwaccel::push_hwaccel_args(cmd);
+        }
+        cmd.arg("-i").arg(&input).args([
             "-vf",
             &scale_filter,
             "-c:v",
@@ -111,9 +110,6 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
             &gop,
             "-keyint_min",
             &gop,
-            // No B-frames: keeps proxy PTS == DTS so the timing the
-            // renderer demuxes matches the source's mvhd duration. See
-            // PROXY_FORMAT_VERSION 4 above for the full reasoning.
             "-bf",
             "0",
             "-pix_fmt",
@@ -124,18 +120,16 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
             "128k",
             "-movflags",
             "+faststart",
-            // Output is `<dest>.mp4.tmp` — ffmpeg can't infer format from the
-            // double extension, so force mp4 muxer explicitly.
             "-f",
             "mp4",
-        ])
-        .arg(&tmp)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .output()
-        .await
-        .context("spawn ffmpeg for proxy")?;
+        ]);
+        cmd.arg(&tmp)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped());
+    })
+    .await
+    .context("full proxy transcode")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -253,6 +247,8 @@ mod tests {
             proxy_path: None,
 
             proxy_format_version: 0,
+            quick_proxy_path: None,
+            proxy_bypassed: false,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "deadbeef".into(),
@@ -337,6 +333,8 @@ mod tests {
             proxy_path: None,
 
             proxy_format_version: 0,
+            quick_proxy_path: None,
+            proxy_bypassed: false,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: hash.into(),
@@ -373,6 +371,8 @@ mod tests {
             },
             proxy_path: None,
             proxy_format_version: 0,
+            quick_proxy_path: None,
+            proxy_bypassed: false,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "x".into(),

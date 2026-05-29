@@ -23,7 +23,9 @@ pub struct FileFacts {
     pub blake3_hex: String,
 }
 
-pub fn hash_and_stat(path: &Path) -> Result<FileFacts> {
+/// File size + mtime only — used at import time when full blake3 hashing is
+/// deferred until the workspace copy lands.
+pub fn stat_file(path: &Path) -> Result<(u64, u64)> {
     let metadata = std::fs::metadata(path)
         .with_context(|| format!("stat {}", path.display()))?;
     let size = metadata.len();
@@ -33,6 +35,11 @@ pub fn hash_and_stat(path: &Path) -> Result<FileFacts> {
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
         .map(|d| d.as_secs())
         .unwrap_or(0);
+    Ok((size, mtime_secs))
+}
+
+pub fn hash_and_stat(path: &Path) -> Result<FileFacts> {
+    let (size, mtime_secs) = stat_file(path)?;
 
     let mut hasher = blake3::Hasher::new();
     let mut file = File::open(path).with_context(|| format!("open {}", path.display()))?;
@@ -245,6 +252,18 @@ mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::TempDir;
+
+    #[test]
+    fn stat_file_reads_size_and_mtime() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("a.bin");
+        let mut f = File::create(&path).unwrap();
+        f.write_all(b"hello").unwrap();
+        drop(f);
+
+        let (size, _mtime) = stat_file(&path).unwrap();
+        assert_eq!(size, 5);
+    }
 
     #[test]
     fn hash_is_deterministic() {

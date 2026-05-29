@@ -204,6 +204,10 @@ pub struct MediaDerivativesPatch {
     /// invalidation pass uses it to decide whether the cached proxy
     /// matches the current `jobs::proxy::PROXY_FORMAT_VERSION`.
     pub proxy_format_version: Option<u32>,
+    /// `Some(Some(path))` sets a fast preview proxy; `Some(None)` clears it.
+    pub quick_proxy_path: Option<Option<std::path::PathBuf>>,
+    /// Marks the original workspace copy as safe for direct WebCodecs use.
+    pub proxy_bypassed: Option<bool>,
     pub waveform_path: Option<std::path::PathBuf>,
     pub thumbnails_dir: Option<std::path::PathBuf>,
 }
@@ -511,6 +515,9 @@ enum Command {
         id: MediaId,
         path_abs: std::path::PathBuf,
         path_rel: std::path::PathBuf,
+        file_hash_blake3: String,
+        file_size: u64,
+        file_mtime: u64,
         actor: Actor,
         reply: oneshot::Sender<Result<(), CommandError>>,
     },
@@ -1280,6 +1287,9 @@ impl ProjectHandle {
         id: MediaId,
         path_abs: std::path::PathBuf,
         path_rel: std::path::PathBuf,
+        file_hash_blake3: String,
+        file_size: u64,
+        file_mtime: u64,
     ) -> Result<(), CommandError> {
         let (reply, rx) = oneshot::channel();
         self.tx
@@ -1287,6 +1297,9 @@ impl ProjectHandle {
                 id,
                 path_abs,
                 path_rel,
+                file_hash_blake3,
+                file_size,
+                file_mtime,
                 actor,
                 reply,
             })
@@ -1616,10 +1629,21 @@ impl ProjectActor {
                 id,
                 path_abs,
                 path_rel,
+                file_hash_blake3,
+                file_size,
+                file_mtime,
                 actor,
                 reply,
             } => {
-                let result = self.do_set_media_workspace_paths(id, path_abs, path_rel, actor);
+                let result = self.do_set_media_workspace_paths(
+                    id,
+                    path_abs,
+                    path_rel,
+                    file_hash_blake3,
+                    file_size,
+                    file_mtime,
+                    actor,
+                );
                 let _ = reply.send(result);
             }
             Command::GroupsCreate {
@@ -2661,6 +2685,9 @@ impl ProjectActor {
         id: MediaId,
         path_abs: std::path::PathBuf,
         path_rel: std::path::PathBuf,
+        file_hash_blake3: String,
+        file_size: u64,
+        file_mtime: u64,
         actor: Actor,
     ) -> Result<(), CommandError> {
         // Mirrors `do_set_media_derivatives`: patch every snapshot's
@@ -2674,6 +2701,9 @@ impl ProjectActor {
             .ok_or(CommandError::MediaNotFound { media: id })?;
         item.path_abs = path_abs;
         item.path_rel = Some(path_rel);
+        item.file_hash_blake3 = file_hash_blake3;
+        item.file_size = file_size;
+        item.file_mtime = file_mtime;
         self.history.replace_media_pool_everywhere(next_pool);
         let snapshot = self.history.current();
         self.broadcast_unrecorded(
@@ -2706,6 +2736,12 @@ impl ProjectActor {
         }
         if let Some(v) = patch.proxy_format_version {
             item.proxy_format_version = v;
+        }
+        if let Some(p) = patch.quick_proxy_path {
+            item.quick_proxy_path = p;
+        }
+        if let Some(bypassed) = patch.proxy_bypassed {
+            item.proxy_bypassed = bypassed;
         }
         if let Some(p) = patch.waveform_path {
             item.waveform_path = Some(p);
@@ -4980,6 +5016,8 @@ mod tests {
             proxy_path: None,
 
             proxy_format_version: 0,
+            quick_proxy_path: None,
+            proxy_bypassed: false,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "0".into(),
@@ -5139,6 +5177,8 @@ mod tests {
             },
             proxy_path: None,
             proxy_format_version: 0,
+            quick_proxy_path: None,
+            proxy_bypassed: false,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "h".into(),
@@ -5521,6 +5561,8 @@ mod tests {
             proxy_path: None,
 
             proxy_format_version: 0,
+            quick_proxy_path: None,
+            proxy_bypassed: false,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "0".into(),
@@ -5577,6 +5619,8 @@ mod tests {
             proxy_path: None,
 
             proxy_format_version: 0,
+            quick_proxy_path: None,
+            proxy_bypassed: false,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "0".into(),
@@ -5615,6 +5659,8 @@ mod tests {
             proxy_path: None,
 
             proxy_format_version: 0,
+            quick_proxy_path: None,
+            proxy_bypassed: false,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "0".into(),
@@ -6930,6 +6976,8 @@ mod tests {
             proxy_path: None,
 
             proxy_format_version: 0,
+            quick_proxy_path: None,
+            proxy_bypassed: false,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "0".into(),

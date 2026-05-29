@@ -16,16 +16,21 @@
 //! - `media:job_complete` — `{ media_id, kind, path? }`
 //! - `media:job_error`    — `{ media_id, kind, error }`
 //!
-//! Job kinds today: `thumbnails`, `proxy`, `waveform`.
+//! Job kinds today: `thumbnails`, `proxy`, `quick_proxy`, `proxy_bypass`,
+//! `waveform`.
 
 mod frame;
+pub mod hwaccel;
 pub mod import;
 pub mod proxy;
+pub mod proxy_decision;
+pub mod quick_proxy;
 mod thumbnails;
 pub mod waveform;
 
 pub use frame::extract as extract_frame;
 pub use proxy::run as run_proxy;
+pub use quick_proxy::run as run_quick_proxy;
 pub use thumbnails::run as run_thumbnails;
 pub use waveform::{read_peaks_file, run as run_waveform};
 
@@ -58,6 +63,10 @@ pub(crate) fn ffmpeg_sem() -> &'static Semaphore {
 pub enum JobKind {
     Thumbnails,
     Proxy,
+    #[serde(rename = "quick_proxy")]
+    QuickProxy,
+    #[serde(rename = "proxy_bypass")]
+    ProxyBypass,
     Waveform,
 }
 
@@ -91,12 +100,15 @@ pub fn enqueue_for_media(
 ) {
     match media.kind {
         MediaKind::Video => {
-            spawn_thumbnails(app.clone(), cache.clone(), project.clone(), media.clone());
-            spawn_proxy(app.clone(), cache.clone(), project.clone(), media.clone());
-            // Waveform: only spawn if the video actually has an audio stream
-            // (avoids a guaranteed-fail spawn for silent footage).
-            if media.metadata.audio.is_some() {
-                spawn_waveform(app.clone(), cache.clone(), project.clone(), media.clone());
+            let proxy_ready = media
+                .proxy_path
+                .as_ref()
+                .map(|p| p.is_file())
+                .unwrap_or(false);
+            if proxy_ready || media.proxy_bypassed {
+                spawn_decorations(app, cache, project, media);
+            } else {
+                spawn_proxy_decision(app, cache, project, media);
             }
         }
         MediaKind::Audio => {
@@ -108,7 +120,16 @@ pub fn enqueue_for_media(
     }
 }
 
-fn spawn_thumbnails(
+fn spawn_decorations(app: AppHandle, cache: CacheLayout, project: ProjectHandle, media: MediaItem) {
+    if matches!(media.kind, MediaKind::Video) {
+        spawn_thumbnails(app.clone(), cache.clone(), project.clone(), media.clone());
+    }
+    if media.metadata.audio.is_some() {
+        spawn_waveform(app, cache, project, media);
+    }
+}
+
+fn spawn_proxy_decision(
     app: AppHandle,
     cache: CacheLayout,
     project: ProjectHandle,
@@ -116,10 +137,71 @@ fn spawn_thumbnails(
 ) {
     tokio::spawn(async move {
         let media_id = media.id;
-        emit(&app, EVENT_STARTED, &JobStarted {
-            media_id: media_id.to_string(),
-            kind: JobKind::Thumbnails,
-        });
+        match proxy_decision::decide(&media) {
+            proxy_decision::ProxyDecision::Bypass => {
+                emit(
+                    &app,
+                    EVENT_STARTED,
+                    &JobStarted {
+                        media_id: media_id.to_string(),
+                        kind: JobKind::ProxyBypass,
+                    },
+                );
+                let patch = MediaDerivativesPatch {
+                    proxy_path: Some(None),
+                    quick_proxy_path: Some(None),
+                    proxy_bypassed: Some(true),
+                    ..Default::default()
+                };
+                if let Err(e) = project
+                    .set_media_derivatives(actor_for_jobs(), media_id, patch)
+                    .await
+                {
+                    warn!("proxy bypass commit failed for {media_id}: {e}");
+                    emit(
+                        &app,
+                        EVENT_ERROR,
+                        &JobError {
+                            media_id: media_id.to_string(),
+                            kind: JobKind::ProxyBypass,
+                            error: format!("commit: {e}"),
+                        },
+                    );
+                    return;
+                }
+                info!("proxy bypass accepted for {media_id}");
+                emit(
+                    &app,
+                    EVENT_COMPLETE,
+                    &JobComplete {
+                        media_id: media_id.to_string(),
+                        kind: JobKind::ProxyBypass,
+                        path: Some(media.path_abs.display().to_string()),
+                    },
+                );
+                spawn_decorations(app, cache, project, media);
+            }
+            proxy_decision::ProxyDecision::FullProxyOnly => {
+                spawn_proxy(app, cache, project, media);
+            }
+            proxy_decision::ProxyDecision::QuickProxyThenFull => {
+                spawn_quick_proxy(app, cache, project, media);
+            }
+        }
+    });
+}
+
+fn spawn_thumbnails(app: AppHandle, cache: CacheLayout, project: ProjectHandle, media: MediaItem) {
+    tokio::spawn(async move {
+        let media_id = media.id;
+        emit(
+            &app,
+            EVENT_STARTED,
+            &JobStarted {
+                media_id: media_id.to_string(),
+                kind: JobKind::Thumbnails,
+            },
+        );
 
         let permit = ffmpeg_sem().acquire().await;
         if permit.is_err() {
@@ -141,59 +223,158 @@ fn spawn_thumbnails(
                     .await
                 {
                     warn!("thumbnail commit failed for {media_id}: {e}");
-                    emit(&app, EVENT_ERROR, &JobError {
-                        media_id: media_id.to_string(),
-                        kind: JobKind::Thumbnails,
-                        error: format!("commit: {e}"),
-                    });
+                    emit(
+                        &app,
+                        EVENT_ERROR,
+                        &JobError {
+                            media_id: media_id.to_string(),
+                            kind: JobKind::Thumbnails,
+                            error: format!("commit: {e}"),
+                        },
+                    );
                     return;
                 }
                 info!("thumbnails ready for {media_id}");
-                emit(&app, EVENT_COMPLETE, &JobComplete {
-                    media_id: media_id.to_string(),
-                    kind: JobKind::Thumbnails,
-                    path: Some(path_str),
-                });
+                emit(
+                    &app,
+                    EVENT_COMPLETE,
+                    &JobComplete {
+                        media_id: media_id.to_string(),
+                        kind: JobKind::Thumbnails,
+                        path: Some(path_str),
+                    },
+                );
             }
             Err(e) => {
                 warn!("thumbnail job failed for {media_id}: {e:#}");
-                emit(&app, EVENT_ERROR, &JobError {
-                    media_id: media_id.to_string(),
-                    kind: JobKind::Thumbnails,
-                    error: format!("{e:#}"),
-                });
+                emit(
+                    &app,
+                    EVENT_ERROR,
+                    &JobError {
+                        media_id: media_id.to_string(),
+                        kind: JobKind::Thumbnails,
+                        error: format!("{e:#}"),
+                    },
+                );
             }
         }
     });
 }
 
-fn spawn_proxy(
-    app: AppHandle,
-    cache: CacheLayout,
-    project: ProjectHandle,
-    media: MediaItem,
-) {
+fn spawn_quick_proxy(app: AppHandle, cache: CacheLayout, project: ProjectHandle, media: MediaItem) {
     tokio::spawn(async move {
         let media_id = media.id;
-        emit(&app, EVENT_STARTED, &JobStarted {
-            media_id: media_id.to_string(),
-            kind: JobKind::Proxy,
-        });
+        emit(
+            &app,
+            EVENT_STARTED,
+            &JobStarted {
+                media_id: media_id.to_string(),
+                kind: JobKind::QuickProxy,
+            },
+        );
+
+        let permit = ffmpeg_sem().acquire().await;
+        if permit.is_err() {
+            warn!("quick proxy job: semaphore closed; skipping {media_id}");
+            return;
+        }
+        let media = fresh_media_item(&project, media_id, media).await;
+        let result = quick_proxy::run(&cache, &media).await;
+        drop(permit);
+
+        match result {
+            Ok(quick_proxy_path) => {
+                let path_str = quick_proxy_path.display().to_string();
+                let patch = MediaDerivativesPatch {
+                    quick_proxy_path: Some(Some(quick_proxy_path)),
+                    proxy_bypassed: Some(false),
+                    ..Default::default()
+                };
+                if let Err(e) = project
+                    .set_media_derivatives(actor_for_jobs(), media_id, patch)
+                    .await
+                {
+                    warn!("quick proxy commit failed for {media_id}: {e}");
+                    emit(
+                        &app,
+                        EVENT_ERROR,
+                        &JobError {
+                            media_id: media_id.to_string(),
+                            kind: JobKind::QuickProxy,
+                            error: format!("commit: {e}"),
+                        },
+                    );
+                } else {
+                    info!("quick proxy ready for {media_id}");
+                    emit(
+                        &app,
+                        EVENT_COMPLETE,
+                        &JobComplete {
+                            media_id: media_id.to_string(),
+                            kind: JobKind::QuickProxy,
+                            path: Some(path_str),
+                        },
+                    );
+                }
+            }
+            Err(e) => {
+                warn!("quick proxy job failed for {media_id}: {e:#}");
+                emit(
+                    &app,
+                    EVENT_ERROR,
+                    &JobError {
+                        media_id: media_id.to_string(),
+                        kind: JobKind::QuickProxy,
+                        error: format!("{e:#}"),
+                    },
+                );
+            }
+        }
+
+        // Full proxy chains after quick proxy; refresh hash/paths in case the
+        // workspace copy + blake3 landed while Phase 1 was queued.
+        let media = fresh_media_item(&project, media_id, media).await;
+        spawn_proxy(app, cache, project, media);
+    });
+}
+
+fn spawn_proxy(app: AppHandle, cache: CacheLayout, project: ProjectHandle, media: MediaItem) {
+    tokio::spawn(async move {
+        let media_id = media.id;
+        emit(
+            &app,
+            EVENT_STARTED,
+            &JobStarted {
+                media_id: media_id.to_string(),
+                kind: JobKind::Proxy,
+            },
+        );
 
         let permit = ffmpeg_sem().acquire().await;
         if permit.is_err() {
             warn!("proxy job: semaphore closed; skipping {media_id}");
             return;
         }
+        let media = fresh_media_item(&project, media_id, media).await;
         let result = proxy::run(&cache, &media).await;
         drop(permit);
 
         match result {
             Ok(proxy_path) => {
+                let quick_path = cache.quick_proxy(&media.file_hash_blake3);
+                if let Err(e) = tokio::fs::remove_file(&quick_path).await {
+                    if e.kind() != std::io::ErrorKind::NotFound {
+                        warn!("quick proxy cleanup failed for {media_id}: {e}");
+                    }
+                }
                 let path_str = proxy_path.display().to_string();
+                let mut thumbnail_media = media.clone();
+                thumbnail_media.path_abs = proxy_path.clone();
                 let patch = MediaDerivativesPatch {
                     proxy_path: Some(Some(proxy_path)),
                     proxy_format_version: Some(proxy::PROXY_FORMAT_VERSION),
+                    quick_proxy_path: Some(None),
+                    proxy_bypassed: Some(false),
                     ..Default::default()
                 };
                 if let Err(e) = project
@@ -201,44 +382,56 @@ fn spawn_proxy(
                     .await
                 {
                     warn!("proxy commit failed for {media_id}: {e}");
-                    emit(&app, EVENT_ERROR, &JobError {
-                        media_id: media_id.to_string(),
-                        kind: JobKind::Proxy,
-                        error: format!("commit: {e}"),
-                    });
+                    emit(
+                        &app,
+                        EVENT_ERROR,
+                        &JobError {
+                            media_id: media_id.to_string(),
+                            kind: JobKind::Proxy,
+                            error: format!("commit: {e}"),
+                        },
+                    );
                     return;
                 }
                 info!("proxy ready for {media_id}");
-                emit(&app, EVENT_COMPLETE, &JobComplete {
-                    media_id: media_id.to_string(),
-                    kind: JobKind::Proxy,
-                    path: Some(path_str),
-                });
+                emit(
+                    &app,
+                    EVENT_COMPLETE,
+                    &JobComplete {
+                        media_id: media_id.to_string(),
+                        kind: JobKind::Proxy,
+                        path: Some(path_str),
+                    },
+                );
+                spawn_decorations(app, cache, project, thumbnail_media);
             }
             Err(e) => {
                 warn!("proxy job failed for {media_id}: {e:#}");
-                emit(&app, EVENT_ERROR, &JobError {
-                    media_id: media_id.to_string(),
-                    kind: JobKind::Proxy,
-                    error: format!("{e:#}"),
-                });
+                emit(
+                    &app,
+                    EVENT_ERROR,
+                    &JobError {
+                        media_id: media_id.to_string(),
+                        kind: JobKind::Proxy,
+                        error: format!("{e:#}"),
+                    },
+                );
             }
         }
     });
 }
 
-fn spawn_waveform(
-    app: AppHandle,
-    cache: CacheLayout,
-    project: ProjectHandle,
-    media: MediaItem,
-) {
+fn spawn_waveform(app: AppHandle, cache: CacheLayout, project: ProjectHandle, media: MediaItem) {
     tokio::spawn(async move {
         let media_id = media.id;
-        emit(&app, EVENT_STARTED, &JobStarted {
-            media_id: media_id.to_string(),
-            kind: JobKind::Waveform,
-        });
+        emit(
+            &app,
+            EVENT_STARTED,
+            &JobStarted {
+                media_id: media_id.to_string(),
+                kind: JobKind::Waveform,
+            },
+        );
 
         let permit = ffmpeg_sem().acquire().await;
         if permit.is_err() {
@@ -260,27 +453,39 @@ fn spawn_waveform(
                     .await
                 {
                     warn!("waveform commit failed for {media_id}: {e}");
-                    emit(&app, EVENT_ERROR, &JobError {
-                        media_id: media_id.to_string(),
-                        kind: JobKind::Waveform,
-                        error: format!("commit: {e}"),
-                    });
+                    emit(
+                        &app,
+                        EVENT_ERROR,
+                        &JobError {
+                            media_id: media_id.to_string(),
+                            kind: JobKind::Waveform,
+                            error: format!("commit: {e}"),
+                        },
+                    );
                     return;
                 }
                 info!("waveform ready for {media_id}");
-                emit(&app, EVENT_COMPLETE, &JobComplete {
-                    media_id: media_id.to_string(),
-                    kind: JobKind::Waveform,
-                    path: Some(path_str),
-                });
+                emit(
+                    &app,
+                    EVENT_COMPLETE,
+                    &JobComplete {
+                        media_id: media_id.to_string(),
+                        kind: JobKind::Waveform,
+                        path: Some(path_str),
+                    },
+                );
             }
             Err(e) => {
                 warn!("waveform job failed for {media_id}: {e:#}");
-                emit(&app, EVENT_ERROR, &JobError {
-                    media_id: media_id.to_string(),
-                    kind: JobKind::Waveform,
-                    error: format!("{e:#}"),
-                });
+                emit(
+                    &app,
+                    EVENT_ERROR,
+                    &JobError {
+                        media_id: media_id.to_string(),
+                        kind: JobKind::Waveform,
+                        error: format!("{e:#}"),
+                    },
+                );
             }
         }
     });
@@ -288,6 +493,23 @@ fn spawn_waveform(
 
 fn emit<T: Serialize + Clone>(app: &AppHandle, event: &str, payload: &T) {
     let _ = app.emit(event, payload);
+}
+
+/// Re-read the latest `MediaItem` before ffmpeg starts so a background
+/// import hash finalize doesn't leave jobs writing to stale `pending-*`
+/// cache keys.
+async fn fresh_media_item(
+    project: &ProjectHandle,
+    media_id: MediaId,
+    fallback: MediaItem,
+) -> MediaItem {
+    project
+        .snapshot()
+        .await
+        .media_pool
+        .get(&media_id)
+        .cloned()
+        .unwrap_or(fallback)
 }
 
 /// Stamp every job-driven mutation with a stable Agent actor so history /

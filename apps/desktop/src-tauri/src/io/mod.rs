@@ -98,6 +98,7 @@ pub async fn load_from_dir(dir: &Path) -> Result<Project> {
     // `proxy_format_version` stays as-recorded; the job's success patch
     // will bump it to the current version once regeneration completes.
     invalidate_stale_proxies(&mut project).await;
+    clear_session_quick_proxies(&mut project).await;
 
     info!(
         "project loaded ({} → {}, schema {})",
@@ -106,6 +107,41 @@ pub async fn load_from_dir(dir: &Path) -> Result<Project> {
         project.schema_version
     );
     Ok(project)
+}
+
+/// Quick proxies are session-scoped preview accelerators. They can point at
+/// partial or low-quality files, so never trust serialized paths across app
+/// launches; the open-time derivative enqueue path can recreate them.
+async fn clear_session_quick_proxies(project: &mut crate::state::Project) {
+    let updated: Vec<(crate::state::ids::MediaId, crate::state::media::MediaItem)> = project
+        .media_pool
+        .iter()
+        .filter_map(|(id, item)| {
+            item.quick_proxy_path.as_ref().map(|_| {
+                let mut next = item.clone();
+                next.quick_proxy_path = None;
+                (*id, next)
+            })
+        })
+        .collect();
+
+    for (id, item) in updated {
+        if let Some(path) = project
+            .media_pool
+            .get(&id)
+            .and_then(|original| original.quick_proxy_path.clone())
+        {
+            if let Err(e) = tokio::fs::remove_file(&path).await {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    warn!(
+                        "quick proxy delete failed for {} (non-fatal): {e}",
+                        path.display()
+                    );
+                }
+            }
+        }
+        project.media_pool.insert(id, item);
+    }
 }
 
 /// Walk the media pool and clear `proxy_path` on every entry whose
@@ -183,6 +219,8 @@ mod tests {
             proxy_path: None,
 
             proxy_format_version: 0,
+            quick_proxy_path: None,
+            proxy_bypassed: false,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "deadbeef".into(),
@@ -244,6 +282,8 @@ mod tests {
             proxy_path: None,
 
             proxy_format_version: 0,
+            quick_proxy_path: None,
+            proxy_bypassed: false,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "abc".into(),
@@ -259,6 +299,50 @@ mod tests {
         // Legacy item: path_abs preserved verbatim. Phase A.4 migration is
         // what flips it into the workspace format.
         assert_eq!(loaded.media_pool.get(&id).unwrap().path_abs, legacy_abs);
+    }
+
+    #[tokio::test]
+    async fn open_clears_quick_proxies_and_deletes_files() {
+        use crate::state::media::{MediaItem, MediaKind, MediaMetadata};
+
+        let dir = TempDir::new().unwrap();
+        let quick = dir.path().join("clip.quick.mp4");
+        std::fs::write(&quick, b"quick").unwrap();
+
+        let mut project = Project::new_blank("qp-clear");
+        let id = uuid::Uuid::now_v7();
+        let item = MediaItem {
+            id,
+            label: None,
+            path_abs: dir.path().join("clip.mp4"),
+            path_rel: None,
+            kind: MediaKind::Video,
+            metadata: MediaMetadata::default(),
+            proxy_path: None,
+            proxy_format_version: 0,
+            quick_proxy_path: Some(quick.clone()),
+            proxy_bypassed: false,
+            waveform_path: None,
+            thumbnails_dir: None,
+            file_hash_blake3: "qp".into(),
+            file_size: 0,
+            file_mtime: 0,
+            imported_at: chrono::Utc::now(),
+        };
+        project.media_pool.insert(id, item);
+
+        clear_session_quick_proxies(&mut project).await;
+
+        assert!(
+            project
+                .media_pool
+                .get(&id)
+                .unwrap()
+                .quick_proxy_path
+                .is_none(),
+            "quick_proxy_path must be cleared on open"
+        );
+        assert!(!quick.exists(), "quick proxy file must be deleted on open");
     }
 
     #[tokio::test]
@@ -306,6 +390,8 @@ mod tests {
             // Marked as the OLD format version — invalidation must
             // clear `proxy_path` regardless of whether the file exists.
             proxy_format_version: PROXY_FORMAT_VERSION.saturating_sub(1),
+            quick_proxy_path: None,
+            proxy_bypassed: false,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "stale".into(),
@@ -346,6 +432,8 @@ mod tests {
             metadata: MediaMetadata::default(),
             proxy_path: Some(proxy_path.clone()),
             proxy_format_version: PROXY_FORMAT_VERSION, // current
+            quick_proxy_path: None,
+            proxy_bypassed: false,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "fresh".into(),
