@@ -26,6 +26,7 @@
     "i18next": "^26.2.0",
     "i18next-browser-languagedetector": "^8.2.1",
     "jassub": "^2.5.1",
+    "mediabunny": "^1.45.4",
     "mp4box": "^2.3.0",
     "pixi.js": "^8.18.1",
     "react": "^19.2.6",
