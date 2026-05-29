@@ -11,16 +11,25 @@ export interface RangeFetchMock {
   ) => Promise<Response>;
   /// Sum of body bytes returned across all calls.
   bytesServed: () => number;
+  /// Count of UNRANGED requests (no `Range` header → full-file 200). A lazy
+  /// reader should never do this; it's the access pattern that blows the heap.
+  fullFetches: () => number;
+  /// Total fetch invocations (size probe + data reads).
+  readCalls: () => number;
 }
 
 export function makeRangeFetchMock(buffer: Uint8Array): RangeFetchMock {
   let served = 0;
+  let fullFetches = 0;
+  let readCalls = 0;
   const fetchImpl = async (
     _input: string | URL,
     init?: { headers?: Record<string, string> },
   ): Promise<Response> => {
+    readCalls += 1;
     const range = init?.headers?.["Range"] ?? init?.headers?.["range"];
     if (!range) {
+      fullFetches += 1;
       served += buffer.byteLength;
       return new Response(buffer, {
         status: 200,
@@ -41,5 +50,10 @@ export function makeRangeFetchMock(buffer: Uint8Array): RangeFetchMock {
       },
     });
   };
-  return { fetch: fetchImpl, bytesServed: () => served };
+  return {
+    fetch: fetchImpl,
+    bytesServed: () => served,
+    fullFetches: () => fullFetches,
+    readCalls: () => readCalls,
+  };
 }
