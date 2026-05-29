@@ -235,6 +235,9 @@ pub struct MediaSummary {
     /// True when the workspace copy is safe for direct WebCodecs use and no
     /// generated proxy is required.
     pub proxy_bypassed: bool,
+    /// True when export may decode the original directly (preview still uses
+    /// a generated proxy). See `MediaItem::export_uses_original`.
+    pub export_uses_original: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -397,6 +400,7 @@ pub async fn project_summary(handle: State<'_, ProjectHandle>) -> Result<Project
                 proxy_path,
                 quick_proxy_path,
                 proxy_bypassed: m.proxy_bypassed,
+                export_uses_original: m.export_uses_original,
             }
         })
         .collect();

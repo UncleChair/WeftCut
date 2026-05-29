@@ -44,6 +44,9 @@ export interface MediaSummary {
   quick_proxy_path: string | null;
   /// True when the original workspace copy can be decoded directly.
   proxy_bypassed: boolean;
+  /// True when export may decode the original directly (preview still uses a
+  /// generated proxy). Export and preview resolvers treat it like a bypass.
+  export_uses_original: boolean;
 }
 
 export interface LayerSummary {

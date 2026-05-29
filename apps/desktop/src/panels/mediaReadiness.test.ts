@@ -15,6 +15,7 @@ const baseVideo = (over: Partial<MediaSummary> = {}): MediaSummary => ({
   proxy_path: null,
   quick_proxy_path: null,
   proxy_bypassed: false,
+  export_uses_original: false,
   ...over,
 });
 
@@ -57,6 +58,15 @@ describe("mediaReadiness", () => {
   it("video is ready when proxy is bypassed", () => {
     const r = mediaReadiness(
       baseVideo({ proxy_bypassed: true }),
+      emptyImporting,
+      emptyProxyState,
+    );
+    expect(r).toEqual({ ready: true });
+  });
+
+  it("video is ready when export_uses_original", () => {
+    const r = mediaReadiness(
+      baseVideo({ export_uses_original: true }),
       emptyImporting,
       emptyProxyState,
     );

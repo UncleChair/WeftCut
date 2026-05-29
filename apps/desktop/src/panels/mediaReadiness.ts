@@ -30,7 +30,12 @@ export function mediaReadiness(
     return { ready: false, reason: "missing" };
   }
   if (media.kind === "Video") {
-    if (media.proxy_path || media.quick_proxy_path || media.proxy_bypassed) {
+    if (
+      media.proxy_path ||
+      media.quick_proxy_path ||
+      media.proxy_bypassed ||
+      media.export_uses_original
+    ) {
       return { ready: true };
     }
     const s = proxyState.get(media.id);
