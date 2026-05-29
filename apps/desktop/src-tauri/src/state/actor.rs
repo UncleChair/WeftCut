@@ -208,6 +208,9 @@ pub struct MediaDerivativesPatch {
     pub quick_proxy_path: Option<Option<std::path::PathBuf>>,
     /// Marks the original workspace copy as safe for direct WebCodecs use.
     pub proxy_bypassed: Option<bool>,
+    /// Marks the original as the export decode source (preview still uses a
+    /// generated proxy). `None` leaves the flag unchanged.
+    pub export_uses_original: Option<bool>,
     pub waveform_path: Option<std::path::PathBuf>,
     pub thumbnails_dir: Option<std::path::PathBuf>,
 }
@@ -2743,6 +2746,9 @@ impl ProjectActor {
         if let Some(bypassed) = patch.proxy_bypassed {
             item.proxy_bypassed = bypassed;
         }
+        if let Some(v) = patch.export_uses_original {
+            item.export_uses_original = v;
+        }
         if let Some(p) = patch.waveform_path {
             item.waveform_path = Some(p);
         }
@@ -5018,6 +5024,7 @@ mod tests {
             proxy_format_version: 0,
             quick_proxy_path: None,
             proxy_bypassed: false,
+            export_uses_original: false,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "0".into(),
@@ -5179,6 +5186,7 @@ mod tests {
             proxy_format_version: 0,
             quick_proxy_path: None,
             proxy_bypassed: false,
+            export_uses_original: false,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "h".into(),
@@ -5563,6 +5571,7 @@ mod tests {
             proxy_format_version: 0,
             quick_proxy_path: None,
             proxy_bypassed: false,
+            export_uses_original: false,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "0".into(),
@@ -5621,6 +5630,7 @@ mod tests {
             proxy_format_version: 0,
             quick_proxy_path: None,
             proxy_bypassed: false,
+            export_uses_original: false,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "0".into(),
@@ -5661,6 +5671,7 @@ mod tests {
             proxy_format_version: 0,
             quick_proxy_path: None,
             proxy_bypassed: false,
+            export_uses_original: false,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "0".into(),
@@ -6042,6 +6053,7 @@ mod tests {
                 MediaDerivativesPatch {
                     proxy_path: Some(Some(PathBuf::from("/cache/proxies/abc.mp4"))),
                     thumbnails_dir: Some(PathBuf::from("/cache/thumbnails/abc")),
+                    export_uses_original: Some(true),
                     ..Default::default()
                 },
             )
@@ -6065,6 +6077,10 @@ mod tests {
             Some(std::path::Path::new("/cache/thumbnails/abc"))
         );
         assert!(m.waveform_path.is_none(), "untouched fields stay None");
+        assert!(
+            m.export_uses_original,
+            "export_uses_original patch applied"
+        );
     }
 
     #[tokio::test]
@@ -6978,6 +6994,7 @@ mod tests {
             proxy_format_version: 0,
             quick_proxy_path: None,
             proxy_bypassed: false,
+            export_uses_original: false,
             waveform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "0".into(),

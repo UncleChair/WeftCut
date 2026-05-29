@@ -1537,6 +1537,7 @@ pub async fn import_media(
                 proxy_format_version: 0,
                 quick_proxy_path: None,
                 proxy_bypassed: false,
+                export_uses_original: false,
                 waveform_path: None,
                 thumbnails_dir: None,
                 file_hash_blake3,
