@@ -209,7 +209,7 @@ pub fn run() {
             // inline pill / View menu / `T` shortcut all mutate this
             // store directly and emit `app_settings:changed` so the
             // frontend re-filters the timeline immediately.
-            app.manage(app_settings::AppSettingsStore::new(config_dir.clone()));
+            app.manage(app_settings::AppSettingsStore::new(config_dir));
 
             // Auto-save subscriber. Listens to actor events, debounces
             // 500ms, writes `project.json` whenever a workspace is set.
