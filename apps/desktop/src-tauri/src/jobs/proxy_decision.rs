@@ -5,7 +5,6 @@
 //! browser-friendly pixel format, and moderate bitrate. Everything else gets
 //! a generated proxy path so scrub/decode behavior stays predictable.
 
-use crate::decode_caps::DecodeCaps;
 use crate::state::{MediaItem, MediaKind};
 
 const MAX_BYPASS_WIDTH: u32 = 1920;
@@ -68,14 +67,14 @@ pub enum ProxyJob {
 /// Route an imported source onto the two axes. `source_gop_secs` is the
 /// source's largest keyframe interval (`probe::probe_max_keyframe_gap_secs`),
 /// or `None` if unknown.
-pub fn decide(media: &MediaItem, caps: &DecodeCaps, source_gop_secs: Option<f64>) -> ProxyRoute {
+pub fn decide(media: &MediaItem, source_gop_secs: Option<f64>) -> ProxyRoute {
     if !matches!(media.kind, MediaKind::Video) {
         return ProxyRoute {
             export: ExportSource::Original,
             preview: PreviewSource::Original,
         };
     }
-    let export = if decodable_directly(media, caps) {
+    let export = if export_decodable_statically(media) {
         ExportSource::Original
     } else {
         ExportSource::FullProxy
@@ -106,13 +105,12 @@ pub fn job_for(route: ProxyRoute, is_small: bool) -> ProxyJob {
     }
 }
 
-/// A source WebCodecs can decode on THIS machine without a proxy. H.264 is
-/// universal; HEVC/AV1/VP9 are gated by the webview probe (`DecodeCaps`).
-/// Requires an 8-bit browser-friendly pixel format either way — 10-bit/HDR
-/// stays carved out to a proxy (the render+encode path is 8-bit). Resolution
-/// and bitrate don't matter here: they affect *scrub* comfort (the preview
-/// proxy's job), not whether the export decoder can read the original.
-fn decodable_directly(media: &MediaItem, caps: &DecodeCaps) -> bool {
+/// A source WebCodecs can decode at export **in principle**, independent of
+/// this machine: an 8-bit browser-friendly pixel format and a codec in the
+/// WebCodecs family. The actual machine is confirmed by the export pre-flight
+/// (`probeSourceDecodable`), not here. VP8 is intentionally excluded (no
+/// `codec_is_vp8` helper; effectively extinct) — it routes to a full proxy.
+fn export_decodable_statically(media: &MediaItem) -> bool {
     let Some(video) = media.metadata.video.as_ref() else {
         return false;
     };
@@ -120,19 +118,10 @@ fn decodable_directly(media: &MediaItem, caps: &DecodeCaps) -> bool {
         return false;
     }
     let codec = video.codec.to_ascii_lowercase();
-    if codec_is_h264(&codec) {
-        return true;
-    }
-    if codec_is_hevc(&codec) {
-        return caps.hevc;
-    }
-    if codec_is_av1(&codec) {
-        return caps.av1;
-    }
-    if codec_is_vp9(&codec) {
-        return caps.vp9;
-    }
-    false
+    codec_is_h264(&codec)
+        || codec_is_hevc(&codec)
+        || codec_is_av1(&codec)
+        || codec_is_vp9(&codec)
 }
 
 fn source_is_safe_to_bypass(media: &MediaItem, source_gop_secs: Option<f64>) -> bool {
@@ -215,7 +204,6 @@ fn estimated_bitrate_bps(media: &MediaItem) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::decode_caps::DecodeCaps;
     use crate::state::{new_id, MediaKind, MediaMetadata, VideoStreamMeta};
     use chrono::Utc;
 
@@ -267,36 +255,22 @@ mod tests {
         preview: PreviewSource::Proxy,
     };
 
-    // --- decide(): the two-axis routing oracle (behavior snapshot) ---
+    // --- decide(): two-axis routing oracle (no machine caps) ---
 
     #[test]
     fn direct_both_for_friendly_h264_1080p() {
-        assert_eq!(
-            decide(&video(|_| {}), &DecodeCaps::none(), Some(0.2)),
-            BOTH_ORIGINAL
-        );
+        assert_eq!(decide(&video(|_| {}), Some(0.2)), BOTH_ORIGINAL);
     }
 
     #[test]
     fn long_gop_friendly_h264_previews_from_proxy() {
-        // A ~6 s GOP scrubs terribly decoded directly: export still reads the
-        // original (H.264 is decodable), preview gets a short-GOP scrub proxy.
-        assert_eq!(
-            decide(&video(|_| {}), &DecodeCaps::none(), Some(6.0)),
-            EXPORT_ORIGINAL_PREVIEW_PROXY
-        );
+        assert_eq!(decide(&video(|_| {}), Some(6.0)), EXPORT_ORIGINAL_PREVIEW_PROXY);
     }
 
     #[test]
     fn unknown_gop_previews_from_proxy() {
-        // Probe-failure (None): treat as NOT scrub-friendly. A mis-bypassed
-        // long-GOP original freezes on backward scrub with no recovery, so the
-        // graceful direction is to generate a scrub proxy. Export still reads
-        // the original (H.264 is decodable).
-        assert_eq!(
-            decide(&video(|_| {}), &DecodeCaps::none(), None),
-            EXPORT_ORIGINAL_PREVIEW_PROXY
-        );
+        // None-GOP fix (Piece A): unknown gap → preview proxy, export still original.
+        assert_eq!(decide(&video(|_| {}), None), EXPORT_ORIGINAL_PREVIEW_PROXY);
     }
 
     #[test]
@@ -306,123 +280,68 @@ mod tests {
             v.width = 3840;
             v.height = 2160;
         });
-        assert_eq!(
-            decide(&item, &DecodeCaps::none(), Some(0.2)),
-            EXPORT_ORIGINAL_PREVIEW_PROXY
-        );
+        assert_eq!(decide(&item, Some(0.2)), EXPORT_ORIGINAL_PREVIEW_PROXY);
     }
 
     #[test]
-    fn high_bitrate_h264_1080p_exports_original_previews_proxy() {
-        let item = video(|m| {
-            m.metadata.duration_us = Some(10_000_000);
-            m.file_size = 50 * 1024 * 1024;
-        });
-        assert_eq!(
-            decide(&item, &DecodeCaps::none(), Some(0.2)),
-            EXPORT_ORIGINAL_PREVIEW_PROXY
-        );
-    }
-
-    #[test]
-    fn small_undecodable_source_proxies_both() {
-        let item = video(|m| {
-            m.metadata.video.as_mut().unwrap().codec = "hevc".into();
-            m.file_size = 10_000_000;
-        });
-        assert_eq!(
-            decide(&item, &DecodeCaps::none(), Some(0.2)),
-            BOTH_PROXY
-        );
-    }
-
-    #[test]
-    fn large_hevc_without_caps_proxies_both() {
+    fn hevc_8bit_exports_original_previews_proxy() {
+        // No caps needed any more: a family codec (HEVC) 8-bit is export-decodable
+        // *statically*; the export pre-flight confirms the actual machine.
         let item = video(|m| {
             m.metadata.video.as_mut().unwrap().codec = "hevc".into();
             m.metadata.duration_us = Some(600_000_000);
             m.file_size = 5 * 1024 * 1024 * 1024;
         });
-        assert_eq!(
-            decide(&item, &DecodeCaps::none(), Some(0.2)),
-            BOTH_PROXY
-        );
+        assert_eq!(decide(&item, Some(0.2)), EXPORT_ORIGINAL_PREVIEW_PROXY);
     }
 
     #[test]
-    fn large_hevc_with_caps_exports_original_previews_proxy() {
-        let item = video(|m| {
-            m.metadata.video.as_mut().unwrap().codec = "hevc".into();
-            m.metadata.duration_us = Some(600_000_000);
-            m.file_size = 5 * 1024 * 1024 * 1024;
-        });
-        let caps = DecodeCaps {
-            hevc: true,
-            ..Default::default()
-        };
-        assert_eq!(decide(&item, &caps, Some(0.2)), EXPORT_ORIGINAL_PREVIEW_PROXY);
-    }
-
-    #[test]
-    fn small_hevc_with_caps_keeps_preview_proxy() {
-        // Drift guard: a short, small, decodable HEVC must NOT widen to
-        // preview-from-original. export=Original (decodable), preview=Proxy
-        // (source_is_safe_to_bypass requires H.264). Without this case the
-        // refactor could silently regress preview to HEVC originals.
-        let item = video(|m| {
-            m.metadata.video.as_mut().unwrap().codec = "hevc".into();
-            m.metadata.duration_us = Some(8_000_000); // small: <=10 s
-            m.file_size = 20 * 1024 * 1024; // small: <=150 MB
-        });
-        let caps = DecodeCaps {
-            hevc: true,
-            ..Default::default()
-        };
-        assert_eq!(decide(&item, &caps, Some(0.2)), EXPORT_ORIGINAL_PREVIEW_PROXY);
-    }
-
-    #[test]
-    fn hevc_10bit_stays_proxy_even_with_caps() {
-        let item = video(|m| {
-            let v = m.metadata.video.as_mut().unwrap();
-            v.codec = "hevc".into();
-            v.pix_fmt = "yuv420p10le".into();
-            m.metadata.duration_us = Some(600_000_000);
-            m.file_size = 5 * 1024 * 1024 * 1024;
-        });
-        let caps = DecodeCaps {
-            hevc: true,
-            ..Default::default()
-        };
-        assert_eq!(decide(&item, &caps, Some(0.2)), BOTH_PROXY);
-    }
-
-    #[test]
-    fn av1_export_axis_gated_by_caps() {
+    fn av1_8bit_exports_original_previews_proxy() {
         let item = video(|m| {
             m.metadata.video.as_mut().unwrap().codec = "av01".into();
             m.metadata.duration_us = Some(600_000_000);
             m.file_size = 5 * 1024 * 1024 * 1024;
         });
-        assert_eq!(decide(&item, &DecodeCaps::none(), Some(0.2)), BOTH_PROXY);
-        let caps = DecodeCaps {
-            av1: true,
-            ..Default::default()
-        };
-        assert_eq!(decide(&item, &caps, Some(0.2)), EXPORT_ORIGINAL_PREVIEW_PROXY);
+        assert_eq!(decide(&item, Some(0.2)), EXPORT_ORIGINAL_PREVIEW_PROXY);
+    }
+
+    #[test]
+    fn vp9_8bit_exports_original_previews_proxy() {
+        let item = video(|m| {
+            m.metadata.video.as_mut().unwrap().codec = "vp09".into();
+        });
+        assert_eq!(decide(&item, Some(0.2)), EXPORT_ORIGINAL_PREVIEW_PROXY);
+    }
+
+    #[test]
+    fn non_family_codec_proxies_both() {
+        // ProRes / MPEG-2 etc. are not WebCodecs-decodable on any machine → full proxy.
+        let item = video(|m| {
+            m.metadata.video.as_mut().unwrap().codec = "prores".into();
+        });
+        assert_eq!(decide(&item, Some(0.2)), BOTH_PROXY);
+    }
+
+    #[test]
+    fn hevc_10bit_proxies_both() {
+        // 10-bit pixfmt is not browser-friendly → full proxy regardless of codec.
+        let item = video(|m| {
+            let v = m.metadata.video.as_mut().unwrap();
+            v.codec = "hevc".into();
+            v.pix_fmt = "yuv420p10le".into();
+        });
+        assert_eq!(decide(&item, Some(0.2)), BOTH_PROXY);
     }
 
     #[test]
     fn non_video_routes_to_both_original() {
-        // Early return preserved: a non-video item never proxies, regardless
-        // of GOP or caps.
         let item = video(|m| {
             m.kind = MediaKind::Audio;
         });
-        assert_eq!(decide(&item, &DecodeCaps::none(), Some(6.0)), BOTH_ORIGINAL);
+        assert_eq!(decide(&item, Some(6.0)), BOTH_ORIGINAL);
     }
 
-    // --- job_for(): scheduling oracle (the is_small split) ---
+    // --- job_for(): scheduling oracle (the is_small split) — unchanged ---
 
     #[test]
     fn job_none_for_both_original() {

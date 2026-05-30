@@ -137,11 +137,6 @@ fn spawn_proxy_decision(
 ) {
     tokio::spawn(async move {
         let media_id = media.id;
-        use tauri::Manager;
-        let caps = app
-            .try_state::<crate::decode_caps::DecodeCapabilityStore>()
-            .map(|s| s.get())
-            .unwrap_or_default();
         // Probe the source's keyframe interval (on a blocking worker — it
         // shells out to ffprobe) so the routing policy can demote long-GOP
         // friendly H.264 to a short-GOP scrub proxy instead of a direct decode.
@@ -154,7 +149,7 @@ fn spawn_proxy_decision(
             .ok()
             .flatten()
         };
-        let route = proxy_decision::decide(&media, &caps, source_gop_secs);
+        let route = proxy_decision::decide(&media, source_gop_secs);
         let is_small = proxy_decision::is_small_source(&media);
         match proxy_decision::job_for(route, is_small) {
             proxy_decision::ProxyJob::None => {
