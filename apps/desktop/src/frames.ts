@@ -19,8 +19,8 @@ export function frameDurUs(fpsNum: number, fpsDen: number): number {
 ///   frame_index = floor((tUs * num + (US_PER_SEC * den) / 2) / (US_PER_SEC * den))
 ///   snapped     = round(frame_index * US_PER_SEC * den / num)   ← half-up
 ///
-/// The OUTPUT is half-up rounded to match the demuxer's source-PTS
-/// rounding (`Demuxer.ts`: `Math.round((cts/timescale)*1e6)`) — see the
+/// The OUTPUT is half-up rounded to match how a source frame's PTS is
+/// derived in µs (`Math.round(ptsSeconds * 1e6)`, half-up) — see the
 /// Rust `snap_frame_round` docstring for the bug this avoids. Both sides
 /// must use half-up output or the storage invariant for `t_start_us` /
 /// `src_in_us` lands 1 µs below the source frame's PTS at certain frame
@@ -53,9 +53,8 @@ export function snapFrameRound(
 ///
 /// 2. Output grid value — the µs timestamp of frame N's start, used
 ///    as the input to `ring.frameAt(...)`. Must use the SAME rounding
-///    direction as the demuxer (see
-///    `apps/desktop/src/render/decoder/Demuxer.ts:127`:
-///    `Math.round((s.cts / s.timescale) * 1e6)`). That's HALF-UP. If
+///    direction as the source-PTS-to-µs conversion
+///    (`Math.round(ptsSeconds * 1e6)`). That's HALF-UP. If
 ///    we floored instead, frame 299 of a 10 s 30 fps comp would snap
 ///    to `9_966_666`, the source's last sample's PTS is `9_966_667`,
 ///    and `findLatestAtOrBefore(9_966_666)` would fall back to sample

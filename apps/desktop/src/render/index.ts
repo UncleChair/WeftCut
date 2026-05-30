@@ -12,7 +12,6 @@ export type { ClockTickInfo } from "./clock";
 export { AudioGraph } from "./audio/AudioGraph";
 
 export { SourceDecoderPool, SourceHandle } from "./decoder/SourceDecoderPool";
-export { Demuxer } from "./decoder/Demuxer";
 export { FrameRing } from "./decoder/FrameRing";
 export { ScrubCoalescer } from "./decoder/scrub";
 
