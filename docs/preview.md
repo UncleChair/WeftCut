@@ -114,10 +114,11 @@ Web Audio path is preview-only.
 ## Proxies
 
 Heavy video clips play through a 1080p H.264 proxy generated at
-import by `jobs/proxy.rs`. The proxy's GOP is one source-second
-(`-g <round(source_fps)>`) so that seek-to-IDR-then-decode-forward
-tails stay bounded to roughly one second of source content
-regardless of the source's frame rate. The proxy is what the
+import by `jobs/proxy.rs`. The proxy uses a short fixed GOP
+(`-g <PROXY_GOP_FRAMES>`) so that any scrub target decodes at most a
+few frames from its keyframe — bounding the seek-to-IDR-then-decode-
+forward tail to a handful of frames and enabling frame-accurate live
+scrubbing (ADR 0008). The proxy is what the
 decoder pool opens for that media id; the original is referenced only
 at export time when the user wants full-quality output.
 

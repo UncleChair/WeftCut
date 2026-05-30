@@ -123,9 +123,11 @@ only at audio-export time. The proxy job:
    -c:a aac -b:a 128k -movflags +faststart -f mp4 <proxy_path>`.
    Audio is kept (AAC 128 k) so the proxy is independently playable
    for preview; high profile / Level 4.2 / yuv420p gives WebCodecs a
-   universally-decodable `avc1.640028` stream. GOP scales with source
-   fps so every proxy is ~1 source-second per IDR, bounding the
-   seek-to-IDR-then-decode-forward tail (see ADR 0003).
+   universally-decodable `avc1.640028` stream. A short fixed GOP
+   (`PROXY_GOP_FRAMES`) keeps a keyframe every few frames so any scrub
+   target decodes at most a handful of frames from its IDR — frame-
+   accurate live scrubbing (see ADR 0008; ADR 0003's no-reset-on-
+   forward-GOP-crossing still holds).
 3. Writes the resulting path back via
    `MediaDerivativesPatch.proxy_path = Some(Some(proxy_path))`.
 
@@ -140,7 +142,7 @@ All ffmpeg-driven derivatives live under `jobs/`:
 
 | Job | Output | Trigger |
 |---|---|---|
-| `proxy.rs` | 1080p H.264 1 s GOP per source | Auto on import |
+| `proxy.rs` | 1080p H.264, short scrub GOP per source | Auto on import |
 | `thumbnails.rs` | per-source thumb strip | Auto on import |
 | `waveform.rs` | `.peaks` binary file | Auto on import (audio-bearing sources) |
 | `frame.rs` | single PNG at a t_us | On-demand via `media://{id}/frame/{t}` |

@@ -96,6 +96,13 @@ export class PlaybackEngine {
     this.ticker = init.ticker;
     this.scrubCoalescer = new ScrubCoalescer({
       debounceMs: 50,
+      // Ceiling so an unbroken drag still re-targets the decoder a few
+      // times/sec (live scrub preview) instead of staying frozen on the
+      // last cached frame until the user pauses. Safe now that the proxy
+      // is short-GOP (ADR 0008): a seek decodes only a few frames, well
+      // within this window, so each fire's frame lands before the next
+      // re-target (no churn). > debounceMs so a real pause fires first.
+      maxWaitMs: 180,
       onStableSeek: async (tUs: number) => {
         // eslint-disable-next-line no-console
         console.log(`[weftcut/pixi] scrubCoalescer.onStableSeek(${tUs})`);
