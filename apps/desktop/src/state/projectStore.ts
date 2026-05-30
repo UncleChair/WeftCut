@@ -148,9 +148,10 @@ export function previewPlaybackPathFor(media: MediaSummary | undefined): string 
   if (media.kind === "Video") {
     if (media.proxy_path) return media.proxy_path;
     if (media.quick_proxy_path) return media.quick_proxy_path;
-    return media.proxy_bypassed || media.export_uses_original
-      ? media.path
-      : null;
+    // Preview from the original ONLY for DirectBoth (proxy_bypassed = H.264).
+    // A DirectExport source (export_uses_original) waits for its quick proxy —
+    // its original may be a non-H.264 codec this machine can't decode.
+    return media.proxy_bypassed ? media.path : null;
   }
   return media.path;
 }
