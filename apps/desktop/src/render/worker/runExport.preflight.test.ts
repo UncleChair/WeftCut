@@ -39,4 +39,16 @@ describe("preflightExportSources", () => {
     });
     expect(failed).toEqual(["m1"]);
   });
+
+  it("returns only the undecodable ids when some sources pass and some fail", async () => {
+    const pool = new Map([
+      ["m1", vid({ id: "m1", export_uses_original: true })],
+      ["m2", vid({ id: "m2", export_uses_original: true })],
+    ]);
+    const failed = await preflightExportSources(pool as any, {
+      urlFor: (m: any) => `asset://${m.id}`,
+      probe: vi.fn().mockImplementation((url: string) => Promise.resolve(url.endsWith("m1"))),
+    });
+    expect(failed).toEqual(["m2"]);
+  });
 });

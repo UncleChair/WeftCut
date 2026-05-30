@@ -70,6 +70,8 @@ export async function preflightExportSources(
   deps: PreflightDeps,
 ): Promise<string[]> {
   const failed: string[] = [];
+  // Sequential: N is almost always 0-1; Promise.all would spin up multiple
+  // concurrent WebCodecs decoders for no practical gain.
   for (const m of sourcesNeedingPreflight(mediaById)) {
     const ok = await deps.probe(deps.urlFor(m));
     if (!ok) failed.push(m.id);
