@@ -78,7 +78,6 @@ import {
   wireAppSettingsStream,
 } from "./settings/appSettingsStore";
 import { logEmit } from "./ipc";
-import { probeAndReportDecodeCaps } from "./decode/probeDecodeCaps";
 
 interface AppProps {
   /// Hop the root router back to the StartupScreen — wired by `main.tsx`.
@@ -254,10 +253,6 @@ export function App({ onCloseProject }: AppProps) {
     ping().then(setPong).catch((e) => setPong(`error: ${String(e)}`));
     refresh();
     keybindingsGet().then(setKeybindings).catch(() => {});
-    // Probe WebCodecs decode capability once and report it to the backend
-    // so the proxy-decision policy can DirectExport HEVC/AV1/VP9 where this
-    // machine can decode them. Fire-and-forget (see probeDecodeCaps.ts).
-    void probeAndReportDecodeCaps();
     // Seed agent-session mode explicitly so the UI never flashes through
     // editor mode on a fresh app start when an MCP client has already
     // begun a session (e.g., on app re-launch via deeplink in the
