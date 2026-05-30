@@ -21,37 +21,89 @@ const DIRECT_FULL_MAX_DURATION_US: i64 = 10_000_000;
 const DIRECT_FULL_MAX_SIZE_BYTES: u64 = 150 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ProxyPlan {
-    /// No proxy. The workspace copy is used directly for BOTH preview and
-    /// export. (Formerly `Bypass`.)
-    DirectBoth,
-    /// Export decodes the original directly; a fast preview proxy is
-    /// generated for scrubbing only. No full proxy is produced.
-    DirectExportQuickPreview,
-    /// Small source: skip the fast phase, generate the full proxy directly.
-    FullProxyOnly,
-    /// Fast preview proxy first, then the full proxy in the background.
+pub enum ExportSource {
+    /// WebCodecs can decode the original on this machine; export reads it.
+    Original,
+    /// Original isn't directly decodable here; export reads the full proxy.
+    FullProxy,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PreviewSource {
+    /// The original scrubs acceptably; preview reads it directly.
+    Original,
+    /// Original is heavy / long-GOP / undecodable; preview reads a proxy (the
+    /// quick scrub proxy, or the full proxy for small undecodable sources).
+    Proxy,
+}
+
+/// Per-source routing: two independent axes.
+///
+/// Invariant: `preview == Original` implies `export == Original`. The only
+/// path to preview-from-original is `source_is_safe_to_bypass`, which requires
+/// H.264 + a browser-friendly pixfmt -- a strict subset of the condition for
+/// `decodable_directly`. Hence `{ FullProxy, Original }` is unreachable.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProxyRoute {
+    pub export: ExportSource,
+    pub preview: PreviewSource,
+}
+
+/// Which background proxy job(s) a route implies, given whether the source is
+/// small enough to skip the fast phase. Pure policy, unit-tested in isolation
+/// so the `is_small` scheduling split keeps the coverage the flat `ProxyPlan`
+/// used to carry.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProxyJob {
+    /// No proxy: bypass. Preview + export both read the original.
+    None,
+    /// Standalone quick scrub proxy; export reads the original (DirectExport).
+    QuickOnly,
+    /// Full proxy directly, no quick phase (small undecodable source).
+    FullOnly,
+    /// Quick proxy first, then the full proxy in the background.
     QuickThenFull,
 }
 
-/// `source_gop_secs` is the source's largest keyframe interval in seconds
-/// (`probe::probe_max_keyframe_gap_secs`), or `None` if unknown. A long GOP
-/// blocks the full DirectBoth bypass — the source still needs a short-GOP
-/// scrub proxy even though export could decode it directly.
-pub fn decide(media: &MediaItem, caps: &DecodeCaps, source_gop_secs: Option<f64>) -> ProxyPlan {
+/// Route an imported source onto the two axes. `source_gop_secs` is the
+/// source's largest keyframe interval (`probe::probe_max_keyframe_gap_secs`),
+/// or `None` if unknown.
+pub fn decide(media: &MediaItem, caps: &DecodeCaps, source_gop_secs: Option<f64>) -> ProxyRoute {
     if !matches!(media.kind, MediaKind::Video) {
-        return ProxyPlan::DirectBoth;
+        return ProxyRoute {
+            export: ExportSource::Original,
+            preview: PreviewSource::Original,
+        };
     }
-    if source_is_safe_to_bypass(media, source_gop_secs) {
-        return ProxyPlan::DirectBoth;
+    let export = if decodable_directly(media, caps) {
+        ExportSource::Original
+    } else {
+        ExportSource::FullProxy
+    };
+    let preview = if source_is_safe_to_bypass(media, source_gop_secs) {
+        PreviewSource::Original
+    } else {
+        PreviewSource::Proxy
+    };
+    ProxyRoute { export, preview }
+}
+
+/// Map a route + small-source flag to the background job to run.
+pub fn job_for(route: ProxyRoute, is_small: bool) -> ProxyJob {
+    match (route.export, route.preview) {
+        (ExportSource::Original, PreviewSource::Original) => ProxyJob::None,
+        (ExportSource::Original, PreviewSource::Proxy) => ProxyJob::QuickOnly,
+        (ExportSource::FullProxy, PreviewSource::Proxy) => {
+            if is_small {
+                ProxyJob::FullOnly
+            } else {
+                ProxyJob::QuickThenFull
+            }
+        }
+        (ExportSource::FullProxy, PreviewSource::Original) => {
+            unreachable!("preview=Original implies export=Original (safe_to_bypass is a subset of decodable_directly)")
+        }
     }
-    if decodable_directly(media, caps) {
-        return ProxyPlan::DirectExportQuickPreview;
-    }
-    if is_small_source(media) {
-        return ProxyPlan::FullProxyOnly;
-    }
-    ProxyPlan::QuickThenFull
 }
 
 /// A source WebCodecs can decode on THIS machine without a proxy. H.264 is
@@ -114,7 +166,7 @@ pub fn gop_is_scrub_friendly(source_gop_secs: Option<f64>) -> bool {
     source_gop_secs.map_or(true, |g| g <= MAX_BYPASS_GOP_SECONDS)
 }
 
-fn is_small_source(media: &MediaItem) -> bool {
+pub fn is_small_source(media: &MediaItem) -> bool {
     media
         .metadata
         .duration_us
@@ -199,33 +251,51 @@ mod tests {
         item
     }
 
+    const BOTH_ORIGINAL: ProxyRoute = ProxyRoute {
+        export: ExportSource::Original,
+        preview: PreviewSource::Original,
+    };
+    const EXPORT_ORIGINAL_PREVIEW_PROXY: ProxyRoute = ProxyRoute {
+        export: ExportSource::Original,
+        preview: PreviewSource::Proxy,
+    };
+    const BOTH_PROXY: ProxyRoute = ProxyRoute {
+        export: ExportSource::FullProxy,
+        preview: PreviewSource::Proxy,
+    };
+
+    // --- decide(): the two-axis routing oracle (behavior snapshot) ---
+
     #[test]
     fn direct_both_for_friendly_h264_1080p() {
         assert_eq!(
             decide(&video(|_| {}), &DecodeCaps::none(), Some(0.2)),
-            ProxyPlan::DirectBoth
+            BOTH_ORIGINAL
         );
     }
 
     #[test]
-    fn long_gop_friendly_h264_is_not_direct_both() {
-        // Friendly H.264 1080p that WOULD bypass — but a ~6 s GOP makes it
-        // scrub terribly when decoded directly, so it must instead get a
-        // short-GOP scrub proxy (export still decodes the original directly).
+    fn long_gop_friendly_h264_previews_from_proxy() {
+        // A ~6 s GOP scrubs terribly decoded directly: export still reads the
+        // original (H.264 is decodable), preview gets a short-GOP scrub proxy.
         assert_eq!(
             decide(&video(|_| {}), &DecodeCaps::none(), Some(6.0)),
-            ProxyPlan::DirectExportQuickPreview
-        );
-        // Unknown GOP (probe failed) preserves fast-import bypass.
-        assert_eq!(
-            decide(&video(|_| {}), &DecodeCaps::none(), None),
-            ProxyPlan::DirectBoth
+            EXPORT_ORIGINAL_PREVIEW_PROXY
         );
     }
 
     #[test]
-    fn direct_export_for_4k_h264_without_caps() {
-        // 4K H.264 is decodable on any machine — no probe needed.
+    fn unknown_gop_preserves_bypass_in_task_1() {
+        // Behavior-preserving: probe-failure (None) is still bypass-eligible
+        // here. Task 2 flips this to EXPORT_ORIGINAL_PREVIEW_PROXY.
+        assert_eq!(
+            decide(&video(|_| {}), &DecodeCaps::none(), None),
+            BOTH_ORIGINAL
+        );
+    }
+
+    #[test]
+    fn four_k_h264_exports_original_previews_proxy() {
         let item = video(|m| {
             let v = m.metadata.video.as_mut().unwrap();
             v.width = 3840;
@@ -233,44 +303,49 @@ mod tests {
         });
         assert_eq!(
             decide(&item, &DecodeCaps::none(), Some(0.2)),
-            ProxyPlan::DirectExportQuickPreview
+            EXPORT_ORIGINAL_PREVIEW_PROXY
         );
     }
 
     #[test]
-    fn direct_export_for_high_bitrate_h264_1080p() {
-        // 1080p H.264 but ~40 Mbps (over the 25 Mbps bypass ceiling).
+    fn high_bitrate_h264_1080p_exports_original_previews_proxy() {
         let item = video(|m| {
             m.metadata.duration_us = Some(10_000_000);
             m.file_size = 50 * 1024 * 1024;
         });
         assert_eq!(
             decide(&item, &DecodeCaps::none(), Some(0.2)),
-            ProxyPlan::DirectExportQuickPreview
+            EXPORT_ORIGINAL_PREVIEW_PROXY
         );
     }
 
     #[test]
-    fn full_proxy_for_small_non_decodable_source() {
+    fn small_undecodable_source_proxies_both() {
         let item = video(|m| {
             m.metadata.video.as_mut().unwrap().codec = "hevc".into();
             m.file_size = 10_000_000;
         });
-        assert_eq!(decide(&item, &DecodeCaps::none(), Some(0.2)), ProxyPlan::FullProxyOnly);
+        assert_eq!(
+            decide(&item, &DecodeCaps::none(), Some(0.2)),
+            BOTH_PROXY
+        );
     }
 
     #[test]
-    fn hevc_is_proxy_both_without_caps() {
+    fn large_hevc_without_caps_proxies_both() {
         let item = video(|m| {
             m.metadata.video.as_mut().unwrap().codec = "hevc".into();
             m.metadata.duration_us = Some(600_000_000);
             m.file_size = 5 * 1024 * 1024 * 1024;
         });
-        assert_eq!(decide(&item, &DecodeCaps::none(), Some(0.2)), ProxyPlan::QuickThenFull);
+        assert_eq!(
+            decide(&item, &DecodeCaps::none(), Some(0.2)),
+            BOTH_PROXY
+        );
     }
 
     #[test]
-    fn hevc_is_direct_export_when_caps_allow() {
+    fn large_hevc_with_caps_exports_original_previews_proxy() {
         let item = video(|m| {
             m.metadata.video.as_mut().unwrap().codec = "hevc".into();
             m.metadata.duration_us = Some(600_000_000);
@@ -280,15 +355,29 @@ mod tests {
             hevc: true,
             ..Default::default()
         };
-        assert_eq!(
-            decide(&item, &caps, Some(0.2)),
-            ProxyPlan::DirectExportQuickPreview
-        );
+        assert_eq!(decide(&item, &caps, Some(0.2)), EXPORT_ORIGINAL_PREVIEW_PROXY);
+    }
+
+    #[test]
+    fn small_hevc_with_caps_keeps_preview_proxy() {
+        // Drift guard: a short, small, decodable HEVC must NOT widen to
+        // preview-from-original. export=Original (decodable), preview=Proxy
+        // (source_is_safe_to_bypass requires H.264). Without this case the
+        // refactor could silently regress preview to HEVC originals.
+        let item = video(|m| {
+            m.metadata.video.as_mut().unwrap().codec = "hevc".into();
+            m.metadata.duration_us = Some(8_000_000); // small: <=10 s
+            m.file_size = 20 * 1024 * 1024; // small: <=150 MB
+        });
+        let caps = DecodeCaps {
+            hevc: true,
+            ..Default::default()
+        };
+        assert_eq!(decide(&item, &caps, Some(0.2)), EXPORT_ORIGINAL_PREVIEW_PROXY);
     }
 
     #[test]
     fn hevc_10bit_stays_proxy_even_with_caps() {
-        // 10-bit is not browser-friendly → carve-out regardless of caps.
         let item = video(|m| {
             let v = m.metadata.video.as_mut().unwrap();
             v.codec = "hevc".into();
@@ -300,24 +389,55 @@ mod tests {
             hevc: true,
             ..Default::default()
         };
-        assert_eq!(decide(&item, &caps, Some(0.2)), ProxyPlan::QuickThenFull);
+        assert_eq!(decide(&item, &caps, Some(0.2)), BOTH_PROXY);
     }
 
     #[test]
-    fn av1_gated_by_caps() {
+    fn av1_export_axis_gated_by_caps() {
         let item = video(|m| {
             m.metadata.video.as_mut().unwrap().codec = "av01".into();
             m.metadata.duration_us = Some(600_000_000);
             m.file_size = 5 * 1024 * 1024 * 1024;
         });
-        assert_eq!(decide(&item, &DecodeCaps::none(), Some(0.2)), ProxyPlan::QuickThenFull);
+        assert_eq!(decide(&item, &DecodeCaps::none(), Some(0.2)), BOTH_PROXY);
         let caps = DecodeCaps {
             av1: true,
             ..Default::default()
         };
-        assert_eq!(
-            decide(&item, &caps, Some(0.2)),
-            ProxyPlan::DirectExportQuickPreview
-        );
+        assert_eq!(decide(&item, &caps, Some(0.2)), EXPORT_ORIGINAL_PREVIEW_PROXY);
+    }
+
+    #[test]
+    fn non_video_routes_to_both_original() {
+        // Early return preserved: a non-video item never proxies, regardless
+        // of GOP or caps.
+        let item = video(|m| {
+            m.kind = MediaKind::Audio;
+        });
+        assert_eq!(decide(&item, &DecodeCaps::none(), Some(6.0)), BOTH_ORIGINAL);
+    }
+
+    // --- job_for(): scheduling oracle (the is_small split) ---
+
+    #[test]
+    fn job_none_for_both_original() {
+        assert_eq!(job_for(BOTH_ORIGINAL, false), ProxyJob::None);
+        assert_eq!(job_for(BOTH_ORIGINAL, true), ProxyJob::None);
+    }
+
+    #[test]
+    fn job_quick_only_for_direct_export() {
+        assert_eq!(job_for(EXPORT_ORIGINAL_PREVIEW_PROXY, false), ProxyJob::QuickOnly);
+        assert_eq!(job_for(EXPORT_ORIGINAL_PREVIEW_PROXY, true), ProxyJob::QuickOnly);
+    }
+
+    #[test]
+    fn job_full_only_for_small_proxy_both() {
+        assert_eq!(job_for(BOTH_PROXY, true), ProxyJob::FullOnly);
+    }
+
+    #[test]
+    fn job_quick_then_full_for_large_proxy_both() {
+        assert_eq!(job_for(BOTH_PROXY, false), ProxyJob::QuickThenFull);
     }
 }

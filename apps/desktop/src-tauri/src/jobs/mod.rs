@@ -154,8 +154,10 @@ fn spawn_proxy_decision(
             .ok()
             .flatten()
         };
-        match proxy_decision::decide(&media, &caps, source_gop_secs) {
-            proxy_decision::ProxyPlan::DirectBoth => {
+        let route = proxy_decision::decide(&media, &caps, source_gop_secs);
+        let is_small = proxy_decision::is_small_source(&media);
+        match proxy_decision::job_for(route, is_small) {
+            proxy_decision::ProxyJob::None => {
                 emit(
                     &app,
                     EVENT_STARTED,
@@ -198,7 +200,7 @@ fn spawn_proxy_decision(
                 );
                 spawn_decorations(app, cache, project, media);
             }
-            proxy_decision::ProxyPlan::DirectExportQuickPreview => {
+            proxy_decision::ProxyJob::QuickOnly => {
                 emit(
                     &app,
                     EVENT_STARTED,
@@ -244,10 +246,10 @@ fn spawn_proxy_decision(
                 spawn_decorations(app.clone(), cache.clone(), project.clone(), media.clone());
                 spawn_quick_proxy(app, cache, project, media, false, source_gop_secs);
             }
-            proxy_decision::ProxyPlan::FullProxyOnly => {
+            proxy_decision::ProxyJob::FullOnly => {
                 spawn_proxy(app, cache, project, media);
             }
-            proxy_decision::ProxyPlan::QuickThenFull => {
+            proxy_decision::ProxyJob::QuickThenFull => {
                 spawn_quick_proxy(app, cache, project, media, true, source_gop_secs);
             }
         }
