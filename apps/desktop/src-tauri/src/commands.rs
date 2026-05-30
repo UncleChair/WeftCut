@@ -2239,6 +2239,30 @@ pub async fn get_media_thumbnail(
     Ok(format!("data:image/jpeg;base64,{b64}"))
 }
 
+/// Ensure a full export proxy exists/queued for a media item. Idempotent: a
+/// no-op if a full proxy is already present. Invoked by the export pre-flight
+/// when a DirectExport original cannot be decoded on this machine, and shared
+/// with the future per-clip "Generate proxy" action.
+#[tauri::command]
+pub async fn ensure_full_proxy(
+    app: tauri::AppHandle,
+    cache: State<'_, crate::cache::CacheLayout>,
+    handle: State<'_, ProjectHandle>,
+    media_id: String,
+) -> Result<(), String> {
+    let id = Uuid::parse_str(&media_id).map_err(|e| format!("invalid media_id: {e}"))?;
+    let snap = handle.snapshot().await;
+    let Some(item) = snap.media_pool.get(&id).cloned() else {
+        return Err(format!("no media {media_id}"));
+    };
+    // Already have a full proxy on disk → nothing to do.
+    if item.proxy_path.as_ref().map(|p| p.is_file()).unwrap_or(false) {
+        return Ok(());
+    }
+    crate::jobs::enqueue_full_proxy(app, (*cache).clone(), (*handle).clone(), item);
+    Ok(())
+}
+
 /// Read the cached peaks file for `media_id` and return the f32 array plus the
 /// peaks-per-second rate the timeline needs to map a layer's src window onto
 /// a slice of the peaks. Errors with `not_ready` if the waveform job hasn't

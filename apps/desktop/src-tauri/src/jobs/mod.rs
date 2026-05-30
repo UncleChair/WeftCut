@@ -90,6 +90,19 @@ struct JobError {
     error: String,
 }
 
+/// Enqueue ONLY the full export proxy for a media item (no quick proxy, no
+/// decision). Used by the export decode-failure recovery (`ensure_full_proxy`
+/// command) when a DirectExport original turns out to be undecodable on this
+/// machine. Returns immediately; the job runs on tokio::spawn.
+pub fn enqueue_full_proxy(
+    app: AppHandle,
+    cache: CacheLayout,
+    project: ProjectHandle,
+    media: MediaItem,
+) {
+    spawn_proxy(app, cache, project, media);
+}
+
 /// Look at a freshly imported `MediaItem` and fan out the appropriate
 /// background jobs. Returns immediately; jobs run on tokio::spawn.
 pub fn enqueue_for_media(
