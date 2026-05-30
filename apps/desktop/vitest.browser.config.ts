@@ -8,12 +8,14 @@
 ///     OffscreenCanvas — none of which exist in jsdom or Node).
 ///
 /// First-time setup the human owns:
-///   1. `npm install` in this package (pulls @vitest/browser + playwright).
+///   1. `npm install` at the repo root (pulls @vitest/browser +
+///      @vitest/browser-playwright + playwright; this is a workspace).
 ///   2. `npx playwright install chromium` (downloads the Chromium binary
 ///      Playwright drives — ~150 MB one-time per machine).
 /// CI: same two commands. The Playwright binary install is cacheable.
 
 import { defineConfig } from "vitest/config";
+import { playwright } from "@vitest/browser-playwright";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import react from "@vitejs/plugin-react";
@@ -33,7 +35,9 @@ export default defineConfig({
     /// `fixture_compare` CLI to consume.
     browser: {
       enabled: true,
-      provider: "playwright",
+      // vitest 4 takes a provider factory (from @vitest/browser-playwright),
+      // not the old `"playwright"` string.
+      provider: playwright(),
       headless: true,
       screenshotFailures: false,
       instances: [{ browser: "chromium" }],
