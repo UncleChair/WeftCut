@@ -142,7 +142,19 @@ fn spawn_proxy_decision(
             .try_state::<crate::decode_caps::DecodeCapabilityStore>()
             .map(|s| s.get())
             .unwrap_or_default();
-        match proxy_decision::decide(&media, &caps) {
+        // Probe the source's keyframe interval (on a blocking worker — it
+        // shells out to ffprobe) so the routing policy can demote long-GOP
+        // friendly H.264 to a short-GOP scrub proxy instead of a direct decode.
+        let source_gop_secs = {
+            let path = media.path_abs.clone();
+            tokio::task::spawn_blocking(move || {
+                crate::io::probe::probe_max_keyframe_gap_secs(&path)
+            })
+            .await
+            .ok()
+            .flatten()
+        };
+        match proxy_decision::decide(&media, &caps, source_gop_secs) {
             proxy_decision::ProxyPlan::DirectBoth => {
                 emit(
                     &app,
@@ -230,13 +242,13 @@ fn spawn_proxy_decision(
                 // Thumbnails + waveform off the original; preview proxy in the
                 // background WITHOUT chaining a full proxy.
                 spawn_decorations(app.clone(), cache.clone(), project.clone(), media.clone());
-                spawn_quick_proxy(app, cache, project, media, false);
+                spawn_quick_proxy(app, cache, project, media, false, source_gop_secs);
             }
             proxy_decision::ProxyPlan::FullProxyOnly => {
                 spawn_proxy(app, cache, project, media);
             }
             proxy_decision::ProxyPlan::QuickThenFull => {
-                spawn_quick_proxy(app, cache, project, media, true);
+                spawn_quick_proxy(app, cache, project, media, true, source_gop_secs);
             }
         }
     });
@@ -318,6 +330,7 @@ fn spawn_quick_proxy(
     project: ProjectHandle,
     media: MediaItem,
     then_full: bool,
+    source_gop_secs: Option<f64>,
 ) {
     tokio::spawn(async move {
         let media_id = media.id;
@@ -336,7 +349,7 @@ fn spawn_quick_proxy(
             return;
         }
         let media = fresh_media_item(&project, media_id, media).await;
-        let result = quick_proxy::run(&cache, &media).await;
+        let result = quick_proxy::run(&cache, &media, source_gop_secs).await;
         drop(permit);
 
         match result {

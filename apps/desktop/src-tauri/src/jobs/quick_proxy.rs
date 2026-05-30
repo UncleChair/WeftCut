@@ -17,7 +17,15 @@ use crate::state::MediaItem;
 
 const QUICK_PROXY_HEIGHT_CAP: u32 = 720;
 
-pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
+/// `source_gop_secs` is the source's largest keyframe interval in seconds, or
+/// `None` if unknown. A long-GOP source is NOT remuxed (which would carry the
+/// long GOP through and scrub badly) — it's transcoded to a short GOP so this
+/// preview proxy is scrub-friendly.
+pub async fn run(
+    cache: &CacheLayout,
+    media: &MediaItem,
+    source_gop_secs: Option<f64>,
+) -> Result<PathBuf> {
     if !ffmpeg_is_installed() {
         anyhow::bail!("ffmpeg not installed; cannot generate quick proxy");
     }
@@ -29,7 +37,7 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     let tmp = temp_path(&dest);
     let _ = tokio::fs::remove_file(&tmp).await;
 
-    let result = if can_remux(media) {
+    let result = if can_remux(media, source_gop_secs) {
         run_remux(media, &tmp).await
     } else {
         run_fast_transcode(media, &tmp).await
@@ -52,13 +60,16 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     Ok(dest)
 }
 
-fn can_remux(media: &MediaItem) -> bool {
+fn can_remux(media: &MediaItem, source_gop_secs: Option<f64>) -> bool {
     let Some(video) = media.metadata.video.as_ref() else {
         return false;
     };
     crate::jobs::proxy_decision::codec_is_h264(&video.codec)
         && crate::jobs::proxy_decision::pix_fmt_is_browser_friendly(&video.pix_fmt)
         && video.height <= 1080
+        // A long-GOP source must be transcoded to a short GOP for scrub, not
+        // remuxed (remux keeps the source's long GOP).
+        && crate::jobs::proxy_decision::gop_is_scrub_friendly(source_gop_secs)
 }
 
 async fn run_remux(media: &MediaItem, tmp: &PathBuf) -> Result<()> {
@@ -98,7 +109,10 @@ async fn run_remux(media: &MediaItem, tmp: &PathBuf) -> Result<()> {
 
 async fn run_fast_transcode(media: &MediaItem, tmp: &PathBuf) -> Result<()> {
     let scale_filter = format!("scale=-2:'min(ih,{QUICK_PROXY_HEIGHT_CAP})'");
-    let gop = gop_size_for(media).to_string();
+    // Short GOP so this preview proxy is scrub-friendly (ADR 0008), matching
+    // the full proxy. The quick proxy is the scrub source for DirectExport /
+    // long-GOP-demoted sources.
+    let gop = crate::jobs::proxy::PROXY_GOP_FRAMES.to_string();
     let input = media.path_abs.clone();
     let tmp = tmp.clone();
 
@@ -156,23 +170,6 @@ async fn run_fast_transcode(media: &MediaItem, tmp: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn gop_size_for(media: &MediaItem) -> u32 {
-    let fps = media
-        .metadata
-        .video
-        .as_ref()
-        .and_then(|v| {
-            if v.fps_den == 0 {
-                None
-            } else {
-                Some((v.fps_num as f64 / v.fps_den as f64).round() as i64)
-            }
-        })
-        .filter(|f| *f > 0)
-        .unwrap_or(30);
-    fps.clamp(1, 240) as u32
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,35 +217,44 @@ mod tests {
     }
 
     #[test]
-    fn remuxes_friendly_h264_1080p() {
-        assert!(can_remux(&video("h264", "yuv420p", 1920, 1080, 30, 1)));
+    fn remuxes_friendly_short_gop_h264_1080p() {
+        assert!(can_remux(
+            &video("h264", "yuv420p", 1920, 1080, 30, 1),
+            Some(0.2)
+        ));
+    }
+
+    #[test]
+    fn transcodes_long_gop_h264() {
+        // Friendly H.264 that would otherwise remux — but a long GOP must be
+        // transcoded to a short GOP for scrub, never remuxed (remux keeps it).
+        assert!(!can_remux(
+            &video("h264", "yuv420p", 1920, 1080, 30, 1),
+            Some(6.0)
+        ));
     }
 
     #[test]
     fn transcodes_hevc_source() {
-        assert!(!can_remux(&video("hevc", "yuv420p", 1920, 1080, 30, 1)));
+        assert!(!can_remux(
+            &video("hevc", "yuv420p", 1920, 1080, 30, 1),
+            Some(0.2)
+        ));
     }
 
     #[test]
     fn transcodes_h264_above_1080p() {
-        assert!(!can_remux(&video("h264", "yuv420p", 3840, 2160, 30, 1)));
+        assert!(!can_remux(
+            &video("h264", "yuv420p", 3840, 2160, 30, 1),
+            Some(0.2)
+        ));
     }
 
     #[test]
     fn transcodes_h264_with_unfriendly_pix_fmt() {
-        assert!(!can_remux(&video("h264", "yuv420p10le", 1920, 1080, 30, 1)));
-    }
-
-    #[test]
-    fn gop_follows_source_fps() {
-        assert_eq!(gop_size_for(&video("h264", "yuv420p", 1920, 1080, 60, 1)), 60);
-    }
-
-    #[test]
-    fn gop_defaults_to_30_when_fps_unknown() {
-        let mut m = video("h264", "yuv420p", 1920, 1080, 0, 0);
-        assert_eq!(gop_size_for(&m), 30);
-        m.metadata.video = None;
-        assert_eq!(gop_size_for(&m), 30);
+        assert!(!can_remux(
+            &video("h264", "yuv420p10le", 1920, 1080, 30, 1),
+            Some(0.2)
+        ));
     }
 }

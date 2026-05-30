@@ -11,6 +11,12 @@ use crate::state::{MediaItem, MediaKind};
 const MAX_BYPASS_WIDTH: u32 = 1920;
 const MAX_BYPASS_HEIGHT: u32 = 1080;
 const MAX_BYPASS_BITRATE_BPS: u64 = 25_000_000;
+/// Largest keyframe interval (seconds) a source may have and still scrub
+/// acceptably when decoded directly. Beyond this, a mid-GOP seek must decode
+/// too many frames from its keyframe (the freeze/churn the editor avoids), so
+/// the source is routed to a short-GOP scrub proxy instead of bypassed. ~0.5 s
+/// keeps a backward seek's decode bounded to a fraction of a second.
+const MAX_BYPASS_GOP_SECONDS: f64 = 0.5;
 const DIRECT_FULL_MAX_DURATION_US: i64 = 10_000_000;
 const DIRECT_FULL_MAX_SIZE_BYTES: u64 = 150 * 1024 * 1024;
 
@@ -28,11 +34,15 @@ pub enum ProxyPlan {
     QuickThenFull,
 }
 
-pub fn decide(media: &MediaItem, caps: &DecodeCaps) -> ProxyPlan {
+/// `source_gop_secs` is the source's largest keyframe interval in seconds
+/// (`probe::probe_max_keyframe_gap_secs`), or `None` if unknown. A long GOP
+/// blocks the full DirectBoth bypass — the source still needs a short-GOP
+/// scrub proxy even though export could decode it directly.
+pub fn decide(media: &MediaItem, caps: &DecodeCaps, source_gop_secs: Option<f64>) -> ProxyPlan {
     if !matches!(media.kind, MediaKind::Video) {
         return ProxyPlan::DirectBoth;
     }
-    if source_is_safe_to_bypass(media) {
+    if source_is_safe_to_bypass(media, source_gop_secs) {
         return ProxyPlan::DirectBoth;
     }
     if decodable_directly(media, caps) {
@@ -73,7 +83,7 @@ fn decodable_directly(media: &MediaItem, caps: &DecodeCaps) -> bool {
     false
 }
 
-fn source_is_safe_to_bypass(media: &MediaItem) -> bool {
+fn source_is_safe_to_bypass(media: &MediaItem, source_gop_secs: Option<f64>) -> bool {
     let Some(video) = media.metadata.video.as_ref() else {
         return false;
     };
@@ -89,7 +99,19 @@ fn source_is_safe_to_bypass(media: &MediaItem) -> bool {
     if estimated_bitrate_bps(media) > Some(MAX_BYPASS_BITRATE_BPS) {
         return false;
     }
+    if !gop_is_scrub_friendly(source_gop_secs) {
+        return false;
+    }
     true
+}
+
+/// True when a source's GOP is short enough to scrub directly (or unknown).
+/// `None` (probe failed) is treated as friendly so a probe hiccup never
+/// regresses fast-import bypass — only a KNOWN-long GOP demotes the source.
+/// Shared with `quick_proxy::can_remux` so a long-GOP source is transcoded to
+/// a short GOP rather than remuxed (which would carry the long GOP through).
+pub fn gop_is_scrub_friendly(source_gop_secs: Option<f64>) -> bool {
+    source_gop_secs.map_or(true, |g| g <= MAX_BYPASS_GOP_SECONDS)
 }
 
 fn is_small_source(media: &MediaItem) -> bool {
@@ -180,7 +202,23 @@ mod tests {
     #[test]
     fn direct_both_for_friendly_h264_1080p() {
         assert_eq!(
-            decide(&video(|_| {}), &DecodeCaps::none()),
+            decide(&video(|_| {}), &DecodeCaps::none(), Some(0.2)),
+            ProxyPlan::DirectBoth
+        );
+    }
+
+    #[test]
+    fn long_gop_friendly_h264_is_not_direct_both() {
+        // Friendly H.264 1080p that WOULD bypass — but a ~6 s GOP makes it
+        // scrub terribly when decoded directly, so it must instead get a
+        // short-GOP scrub proxy (export still decodes the original directly).
+        assert_eq!(
+            decide(&video(|_| {}), &DecodeCaps::none(), Some(6.0)),
+            ProxyPlan::DirectExportQuickPreview
+        );
+        // Unknown GOP (probe failed) preserves fast-import bypass.
+        assert_eq!(
+            decide(&video(|_| {}), &DecodeCaps::none(), None),
             ProxyPlan::DirectBoth
         );
     }
@@ -194,7 +232,7 @@ mod tests {
             v.height = 2160;
         });
         assert_eq!(
-            decide(&item, &DecodeCaps::none()),
+            decide(&item, &DecodeCaps::none(), Some(0.2)),
             ProxyPlan::DirectExportQuickPreview
         );
     }
@@ -207,7 +245,7 @@ mod tests {
             m.file_size = 50 * 1024 * 1024;
         });
         assert_eq!(
-            decide(&item, &DecodeCaps::none()),
+            decide(&item, &DecodeCaps::none(), Some(0.2)),
             ProxyPlan::DirectExportQuickPreview
         );
     }
@@ -218,7 +256,7 @@ mod tests {
             m.metadata.video.as_mut().unwrap().codec = "hevc".into();
             m.file_size = 10_000_000;
         });
-        assert_eq!(decide(&item, &DecodeCaps::none()), ProxyPlan::FullProxyOnly);
+        assert_eq!(decide(&item, &DecodeCaps::none(), Some(0.2)), ProxyPlan::FullProxyOnly);
     }
 
     #[test]
@@ -228,7 +266,7 @@ mod tests {
             m.metadata.duration_us = Some(600_000_000);
             m.file_size = 5 * 1024 * 1024 * 1024;
         });
-        assert_eq!(decide(&item, &DecodeCaps::none()), ProxyPlan::QuickThenFull);
+        assert_eq!(decide(&item, &DecodeCaps::none(), Some(0.2)), ProxyPlan::QuickThenFull);
     }
 
     #[test]
@@ -242,7 +280,10 @@ mod tests {
             hevc: true,
             ..Default::default()
         };
-        assert_eq!(decide(&item, &caps), ProxyPlan::DirectExportQuickPreview);
+        assert_eq!(
+            decide(&item, &caps, Some(0.2)),
+            ProxyPlan::DirectExportQuickPreview
+        );
     }
 
     #[test]
@@ -259,7 +300,7 @@ mod tests {
             hevc: true,
             ..Default::default()
         };
-        assert_eq!(decide(&item, &caps), ProxyPlan::QuickThenFull);
+        assert_eq!(decide(&item, &caps, Some(0.2)), ProxyPlan::QuickThenFull);
     }
 
     #[test]
@@ -269,11 +310,14 @@ mod tests {
             m.metadata.duration_us = Some(600_000_000);
             m.file_size = 5 * 1024 * 1024 * 1024;
         });
-        assert_eq!(decide(&item, &DecodeCaps::none()), ProxyPlan::QuickThenFull);
+        assert_eq!(decide(&item, &DecodeCaps::none(), Some(0.2)), ProxyPlan::QuickThenFull);
         let caps = DecodeCaps {
             av1: true,
             ..Default::default()
         };
-        assert_eq!(decide(&item, &caps), ProxyPlan::DirectExportQuickPreview);
+        assert_eq!(
+            decide(&item, &caps, Some(0.2)),
+            ProxyPlan::DirectExportQuickPreview
+        );
     }
 }

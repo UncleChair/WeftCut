@@ -100,6 +100,70 @@ pub fn probe_metadata(path: &Path) -> MediaMetadata {
     }
 }
 
+/// Seconds of source scanned to estimate the keyframe interval. A few
+/// seconds is enough to see several keyframes at any normal GOP; long-GOP
+/// sources (the ones we care about demoting) show 0–1 keyframes in this
+/// window and are reported as "long" via the 1-keyframe fallback below.
+const KEYFRAME_SCAN_SECONDS: f64 = 12.0;
+
+/// Estimate the source's largest keyframe interval, in SECONDS, by scanning
+/// the first few seconds with ffprobe. `-skip_frame nokey` makes ffprobe emit
+/// only keyframes (fast — no full decode). Returns `None` only when the probe
+/// yields nothing usable (ffprobe missing / parse failure); callers treat
+/// `None` as "unknown" and do NOT demote on it. Used by `proxy_decision`: a
+/// long-GOP source scrubs badly when decoded directly, so it gets a short-GOP
+/// scrub proxy instead of being bypassed.
+pub fn probe_max_keyframe_gap_secs(path: &Path) -> Option<f64> {
+    if !ffprobe_is_installed() {
+        return None;
+    }
+    let output = Command::new(ffprobe_path())
+        .args([
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-skip_frame", "nokey",
+            "-read_intervals", "%+12",
+            "-show_entries", "frame=pts_time",
+            "-of", "csv=p=0",
+        ])
+        .arg(path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let ts: Vec<f64> = stdout
+        .lines()
+        .filter_map(|l| l.trim().parse::<f64>().ok())
+        .collect();
+    max_keyframe_gap_secs(&ts, KEYFRAME_SCAN_SECONDS)
+}
+
+/// Largest gap (seconds) between consecutive keyframe timestamps.
+///   - 0 timestamps → `None` (probe gave nothing; caller treats as unknown).
+///   - 1 timestamp  → `Some(window)` — only one keyframe in the scan window,
+///     so the GOP is at least the window length: definitely "long".
+///   - ≥2           → `Some(max consecutive gap)`.
+/// Pure + testable; `probe_max_keyframe_gap_secs` is the ffprobe wrapper.
+fn max_keyframe_gap_secs(timestamps: &[f64], window_secs: f64) -> Option<f64> {
+    match timestamps.len() {
+        0 => None,
+        1 => Some(window_secs),
+        _ => {
+            let mut sorted: Vec<f64> = timestamps.to_vec();
+            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            let mut max_gap = 0.0_f64;
+            for w in sorted.windows(2) {
+                max_gap = max_gap.max(w[1] - w[0]);
+            }
+            Some(max_gap)
+        }
+    }
+}
+
 pub fn detect_kind(path: &Path, metadata: &MediaMetadata) -> MediaKind {
     if metadata.video.is_some() {
         return MediaKind::Video;
@@ -387,5 +451,18 @@ mod tests {
             detect_kind(Path::new("/x/blob.bin"), &with_video),
             MediaKind::Video
         );
+    }
+
+    #[test]
+    fn keyframe_gap_handles_each_arity() {
+        // No keyframes parsed → unknown.
+        assert_eq!(max_keyframe_gap_secs(&[], 12.0), None);
+        // Single keyframe in the window → at least the window length (long).
+        assert_eq!(max_keyframe_gap_secs(&[0.0], 12.0), Some(12.0));
+        // Regular ~0.2 s GOP → small max gap.
+        let dense: Vec<f64> = (0..40).map(|i| i as f64 * 0.2).collect();
+        assert!((max_keyframe_gap_secs(&dense, 12.0).unwrap() - 0.2).abs() < 1e-9);
+        // Sparse / unsorted: reports the LARGEST consecutive gap (~6 s).
+        assert!((max_keyframe_gap_secs(&[6.0, 0.0], 12.0).unwrap() - 6.0).abs() < 1e-9);
     }
 }

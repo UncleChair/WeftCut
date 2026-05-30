@@ -40,8 +40,8 @@ const PROXY_HEIGHT_CAP: u32 = 1080;
 /// PTS=DTS holds and the auto-pause last-frame snap is unaffected.
 /// Cost: a denser-keyframe proxy is ~50% larger, but proxies are
 /// local-only cache and export re-encodes (so exported files are
-/// unaffected). See ADR 0008.
-const PROXY_GOP_FRAMES: u32 = 6;
+/// unaffected). See ADR 0008. Shared with the quick (scrub) proxy.
+pub const PROXY_GOP_FRAMES: u32 = 6;
 
 /// Bump whenever the proxy ffmpeg args change in a way that affects
 /// playback / scrub behavior. `io::load_from_dir` compares each
