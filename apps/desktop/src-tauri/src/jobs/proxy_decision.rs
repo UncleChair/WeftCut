@@ -157,13 +157,16 @@ fn source_is_safe_to_bypass(media: &MediaItem, source_gop_secs: Option<f64>) -> 
     true
 }
 
-/// True when a source's GOP is short enough to scrub directly (or unknown).
-/// `None` (probe failed) is treated as friendly so a probe hiccup never
-/// regresses fast-import bypass — only a KNOWN-long GOP demotes the source.
-/// Shared with `quick_proxy::can_remux` so a long-GOP source is transcoded to
-/// a short GOP rather than remuxed (which would carry the long GOP through).
+/// True when a source's GOP is KNOWN to be short enough to scrub directly.
+/// `None` (probe failed) is treated as NOT friendly: an unknown GOP may be
+/// long, and a mis-bypassed long-GOP original freezes on backward scrub with
+/// no recovery (preview reads the original; no proxy is ever generated). The
+/// graceful failure is to generate a scrub proxy on a probe hiccup. Shared
+/// with `quick_proxy::can_remux`, where the same flip means an unknown-GOP
+/// source is transcoded to a short GOP rather than remuxed (remux would carry
+/// the unknown GOP through).
 pub fn gop_is_scrub_friendly(source_gop_secs: Option<f64>) -> bool {
-    source_gop_secs.map_or(true, |g| g <= MAX_BYPASS_GOP_SECONDS)
+    source_gop_secs.map_or(false, |g| g <= MAX_BYPASS_GOP_SECONDS)
 }
 
 pub fn is_small_source(media: &MediaItem) -> bool {
@@ -285,12 +288,14 @@ mod tests {
     }
 
     #[test]
-    fn unknown_gop_preserves_bypass_in_task_1() {
-        // Behavior-preserving: probe-failure (None) is still bypass-eligible
-        // here. Task 2 flips this to EXPORT_ORIGINAL_PREVIEW_PROXY.
+    fn unknown_gop_previews_from_proxy() {
+        // Probe-failure (None): treat as NOT scrub-friendly. A mis-bypassed
+        // long-GOP original freezes on backward scrub with no recovery, so the
+        // graceful direction is to generate a scrub proxy. Export still reads
+        // the original (H.264 is decodable).
         assert_eq!(
             decide(&video(|_| {}), &DecodeCaps::none(), None),
-            BOTH_ORIGINAL
+            EXPORT_ORIGINAL_PREVIEW_PROXY
         );
     }
 

@@ -257,4 +257,15 @@ mod tests {
             Some(0.2)
         ));
     }
+
+    #[test]
+    fn unknown_gop_does_not_remux() {
+        // Probe-failure: don't remux (would carry an unknown, possibly long
+        // GOP through); transcode to a short GOP instead. Mirrors the
+        // None-GOP flip in proxy_decision.
+        assert!(!can_remux(
+            &video("h264", "yuv420p", 1920, 1080, 30, 1),
+            None
+        ));
+    }
 }
