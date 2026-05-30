@@ -146,11 +146,13 @@ export const useLayerById = (id: string | null | undefined): LayerSummary | unde
 export function previewPlaybackPathFor(media: MediaSummary | undefined): string | null {
   if (!media) return null;
   if (media.kind === "Video") {
-    if (media.proxy_path) return media.proxy_path;
+    // Prefer the light quick proxy for preview. The full proxy is now a
+    // source-resolution EXPORT master (heavy to scrub); it's a last-resort
+    // preview source only if no quick proxy exists (ADR 0011).
     if (media.quick_proxy_path) return media.quick_proxy_path;
-    // Preview from the original ONLY for DirectBoth (proxy_bypassed = H.264).
-    // A DirectExport source (export_uses_original) waits for its quick proxy —
-    // its original may be a non-H.264 codec this machine can't decode.
+    if (media.proxy_path) return media.proxy_path;
+    // Preview from the original ONLY for DirectBoth (proxy_bypassed = H.264);
+    // a DirectExport source before its quick proxy lands stays null (blank).
     return media.proxy_bypassed ? media.path : null;
   }
   return media.path;

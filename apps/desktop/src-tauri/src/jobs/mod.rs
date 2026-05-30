@@ -451,7 +451,6 @@ fn spawn_proxy(app: AppHandle, cache: CacheLayout, project: ProjectHandle, media
                 let patch = MediaDerivativesPatch {
                     proxy_path: Some(Some(proxy_path)),
                     proxy_format_version: Some(proxy::PROXY_FORMAT_VERSION),
-                    quick_proxy_path: Some(None),
                     proxy_bypassed: Some(false),
                     ..Default::default()
                 };
