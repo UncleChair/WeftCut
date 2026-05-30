@@ -122,6 +122,7 @@ pub fn run() {
             commands::settings_test_provider,
             commands::get_waveform_peaks,
             commands::get_media_thumbnail,
+            commands::ensure_full_proxy,
             commands::list_templates,
             commands::add_template,
             commands::log_list,

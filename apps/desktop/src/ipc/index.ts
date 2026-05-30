@@ -892,6 +892,12 @@ export async function getMediaThumbnail(mediaId: string): Promise<string> {
   return invoke<string>("get_media_thumbnail", { mediaId });
 }
 
+/// Ask the backend to generate the full export proxy for a media item
+/// (decode-failure recovery / per-clip generate). Idempotent on the backend.
+export async function ensureFullProxy(mediaId: string): Promise<void> {
+  await invoke("ensure_full_proxy", { mediaId });
+}
+
 // ============================================================
 // Templates (Stage F + Stage F-Picker)
 // ============================================================
