@@ -4,63 +4,108 @@
 //
 // Behavior: caller `requestSeek(tUs)` may fire at scroll-wheel speed
 // (hundreds of times per second). The coalescer batches into one
-// `decoder.flush()` + seek-to-IDR + decode-forward operation per ~20ms
-// stable target. Mid-scrub frames are discarded; only the latest
-// target frame paints.
+// seek-to-IDR + decode operation per target. Mid-scrub frames are
+// discarded; only the latest target frame paints.
 //
-// P0 stub — implementation lands in P1.
+// Two timers gate a fire, whichever elapses first:
+//   - DEBOUNCE (quiet period): reset on every `requestSeek`, so a pause
+//     in the drag lands a precise final seek promptly.
+//   - MAX-WAIT (ceiling): armed once when a fresh pending sequence starts
+//     and NOT reset by subsequent seeks. Without it, a drag that never
+//     pauses for `debounceMs` keeps resetting the debounce timer forever,
+//     so the decoder is never re-targeted and the preview stays frozen on
+//     the last cached frame for the whole drag. The ceiling forces a fire
+//     every `maxWaitMs` → live scrub preview.
+//
+//     This is safe ONLY because the proxy now uses a short GOP (ADR 0008):
+//     a seek decodes at most a few frames from its keyframe, so each fire's
+//     decode completes well within `maxWaitMs` and the target frame lands
+//     before the next re-target. On the old ~1 s GOP the same timer churned
+//     (each seek's ~30-frame decode far outran the interval, so every fire
+//     flushed an unfinished decode and nothing ever painted). Keep
+//     `maxWaitMs` ≥ the worst-case short-GOP decode time.
 
 export interface ScrubCoalescerInit {
   /// Debounce window in ms. Default: 20.
   debounceMs?: number;
+  /// Ceiling (ms) after which a pending target fires even under an
+  /// unbroken stream of `requestSeek` calls. Must be > `debounceMs` so a
+  /// real pause still fires first, and ≥ the worst-case short-GOP decode
+  /// time so a fire's frame lands before the next re-target. Default: 180.
+  maxWaitMs?: number;
   /// Callback invoked with the stable target after the debounce window.
   onStableSeek: (tUs: number) => Promise<void>;
 }
 
 export class ScrubCoalescer {
   private debounceMs: number;
+  private maxWaitMs: number;
   private onStableSeek: (tUs: number) => Promise<void>;
-  private timer: ReturnType<typeof setTimeout> | null = null;
+  /// Quiet-period timer — reset on every `requestSeek`.
+  private debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  /// Ceiling timer — armed once per pending sequence, never reset, so a
+  /// continuous drag still fires.
+  private maxWaitTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingTarget: number | null = null;
   private inFlight = false;
 
   constructor(init: ScrubCoalescerInit) {
     this.debounceMs = init.debounceMs ?? 20;
+    this.maxWaitMs = init.maxWaitMs ?? 180;
     this.onStableSeek = init.onStableSeek;
   }
 
   requestSeek(tUs: number): void {
     this.pendingTarget = tUs;
-    if (this.timer !== null) clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.fire(), this.debounceMs);
+    // Quiet-period timer: reset each call so a pause fires promptly.
+    if (this.debounceTimer !== null) clearTimeout(this.debounceTimer);
+    this.debounceTimer = setTimeout(() => this.fire(), this.debounceMs);
+    // Ceiling timer: arm once per pending sequence; do NOT reset, so an
+    // unbroken drag still fires every `maxWaitMs`.
+    if (this.maxWaitTimer === null) {
+      this.maxWaitTimer = setTimeout(() => this.fire(), this.maxWaitMs);
+    }
   }
 
   cancel(): void {
-    if (this.timer !== null) {
-      clearTimeout(this.timer);
-      this.timer = null;
-    }
+    this.clearTimers();
     this.pendingTarget = null;
+  }
+
+  private clearTimers(): void {
+    if (this.debounceTimer !== null) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = null;
+    }
+    if (this.maxWaitTimer !== null) {
+      clearTimeout(this.maxWaitTimer);
+      this.maxWaitTimer = null;
+    }
   }
 
   private async fire(): Promise<void> {
     if (this.inFlight) {
-      // Re-debounce if a seek is in flight; let it finish, then process latest.
-      this.timer = setTimeout(() => this.fire(), this.debounceMs);
+      // A seek is still running; let it finish, then process the latest
+      // target via the quiet-period timer (the ceiling already elapsed).
+      if (this.debounceTimer !== null) clearTimeout(this.debounceTimer);
+      this.debounceTimer = setTimeout(() => this.fire(), this.debounceMs);
       return;
     }
     const target = this.pendingTarget;
-    if (target === null) return;
+    if (target === null) {
+      this.clearTimers();
+      return;
+    }
     this.pendingTarget = null;
-    this.timer = null;
+    this.clearTimers(); // both timers reset; next requestSeek re-arms the ceiling
     this.inFlight = true;
     try {
       await this.onStableSeek(target);
     } finally {
       this.inFlight = false;
-      // If new target arrived during seek, fire again.
+      // A new target arrived mid-seek → schedule it.
       if (this.pendingTarget !== null) {
-        this.timer = setTimeout(() => this.fire(), this.debounceMs);
+        this.debounceTimer = setTimeout(() => this.fire(), this.debounceMs);
       }
     }
   }

@@ -71,8 +71,8 @@ the renderer architecture.
 
 The Rust side runs ffmpeg only at:
 
-- **Import** — proxy generation (1080p H.264 1 s GOP), thumbnails,
-  waveform.
+- **Import** — proxy generation (1080p H.264, short scrub GOP),
+  thumbnails, waveform.
 - **Audio export** — the `lower → emit_ffmpeg → ffmpeg` audio pipeline
   produces `audio.m4a` for the user's project.
 - **Final mux** — `ffmpeg -c copy` stitches the WebCodecs-produced

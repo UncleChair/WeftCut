@@ -8,11 +8,14 @@
 //! and the real HW-encoder selection is reserved for the user's
 //! exports.
 //!
-//! GOP size scales with source fps so the proxy is always ~1
-//! source-second per IDR. This bounds the WebCodecs decoder's
-//! seek-to-IDR-then-decode-forward tail to ~1 s regardless of the
-//! source's frame rate (a constant 30-frame GOP would be 0.5 s on
-//! 60 fps source — see ADR 0003).
+//! GOP is a short fixed frame count (`PROXY_GOP_FRAMES`) so any scrub
+//! target decodes at most a few frames from its keyframe — the enabler
+//! for frame-accurate live scrubbing. This shortens the WebCodecs
+//! decoder's seek-to-IDR-then-decode-forward tail from ~1 s (the prior
+//! `round(source_fps)` GOP) to a few frames. See ADR 0008, which
+//! revisits the 1 s-GOP rationale in ADR 0003 (whose no-reset-on-
+//! forward-GOP-crossing behavior is retained, and more load-bearing
+//! now that crossings are more frequent).
 
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -28,6 +31,17 @@ use crate::state::MediaItem;
 /// Maximum proxy height. Sources taller than this scale down; sources
 /// shorter stay at native resolution (no upscaling).
 const PROXY_HEIGHT_CAP: u32 = 1080;
+
+/// Keyframe spacing (frames) for the full proxy. Short + fixed so any
+/// scrub target decodes at most `PROXY_GOP_FRAMES - 1` frames from its
+/// keyframe, bounding seek latency to a handful of frames regardless of
+/// source fps — the enabler for frame-accurate live scrubbing. Replaces
+/// the prior `round(source_fps)` (~1 s) GOP. `-bf 0` is retained, so
+/// PTS=DTS holds and the auto-pause last-frame snap is unaffected.
+/// Cost: a denser-keyframe proxy is ~50% larger, but proxies are
+/// local-only cache and export re-encodes (so exported files are
+/// unaffected). See ADR 0008.
+const PROXY_GOP_FRAMES: u32 = 6;
 
 /// Bump whenever the proxy ffmpeg args change in a way that affects
 /// playback / scrub behavior. `io::load_from_dir` compares each
@@ -59,7 +73,12 @@ const PROXY_HEIGHT_CAP: u32 = 1080;
 ///       `t_end_us`, and the snap correctly paints it. Proxies are
 ///       local-only preview artifacts so the ~10–20 % size hit is
 ///       acceptable.
-pub const PROXY_FORMAT_VERSION: u32 = 4;
+///   5 — short fixed GOP (`-g {PROXY_GOP_FRAMES} -keyint_min …`)
+///       replacing the `round(fps)` ~1 s GOP, so any scrub target
+///       decodes at most a few frames from its keyframe — frame-
+///       accurate live scrubbing. `-bf 0` retained. ~50% larger
+///       proxy; export unaffected (re-encodes). See ADR 0008.
+pub const PROXY_FORMAT_VERSION: u32 = 5;
 
 pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     if !ffmpeg_is_installed() {
@@ -78,13 +97,13 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     // upscaling sources that are already smaller; width auto-rounded to
     // even (libx264 requires even dims). High profile + Level 4.2 +
     // yuv420p gives WebCodecs a universally-decodable `avc1.640028`
-    // stream. GOP = round(source_fps) keeps every proxy at ~1 source-
-    // second per IDR, bounding the `VideoDecoder` seek-to-IDR-then-
-    // decode-forward tail to ~1 s regardless of source frame rate.
-    // -movflags +faststart puts the moov atom up front so mp4box.js
-    // demuxes the file before it's fully written.
+    // stream. GOP = PROXY_GOP_FRAMES (short, fixed) keeps a keyframe
+    // every few frames so any scrub target decodes at most a handful of
+    // frames from its IDR — frame-accurate live scrubbing (ADR 0008).
+    // -movflags +faststart puts the moov atom up front so the renderer
+    // can parse the file before it's fully written.
     let scale_filter = format!("scale=-2:'min(ih,{PROXY_HEIGHT_CAP})'");
-    let gop = gop_size_for(media).to_string();
+    let gop = PROXY_GOP_FRAMES.to_string();
     let input = media.path_abs.clone();
     let tmp = tmp.clone();
 
@@ -153,29 +172,6 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     Ok(dest)
 }
 
-/// GOP size in frames for `media`'s proxy: `round(source_fps)` so the
-/// proxy carries one IDR per source-second, clamped to a safe range
-/// to avoid pathological encoder behavior on missing or absurd
-/// metadata. Falls back to 30 when video metadata is absent (should
-/// not happen — proxy generation is gated on `MediaKind::Video` —
-/// but keeps the call infallible).
-fn gop_size_for(media: &MediaItem) -> u32 {
-    let fps = media
-        .metadata
-        .video
-        .as_ref()
-        .and_then(|v| {
-            if v.fps_den == 0 {
-                None
-            } else {
-                Some((v.fps_num as f64 / v.fps_den as f64).round() as i64)
-            }
-        })
-        .filter(|f| *f > 0)
-        .unwrap_or(30);
-    fps.clamp(1, 240) as u32
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,9 +194,10 @@ mod tests {
         // proxy generation; the proxy job's audio handling is a feature
         // not the contract under test here.
         //
-        // 6 seconds at 30 fps so the keyframe-density assertion below
-        // can distinguish "-g 30 applied" (~6 keyframes) from
-        // "default libx264 -g 250" (1 keyframe for the full clip).
+        // 6 seconds at 30 fps (180 frames) so the keyframe-density
+        // assertion below can confirm the short scrub GOP is applied
+        // (~180/PROXY_GOP_FRAMES keyframes) vs the old ~1 s GOP (~6) or
+        // libx264's default -g 250 (1 keyframe for the whole clip).
         let status = Command::new("ffmpeg")
             .args([
                 "-y", "-hide_banner", "-loglevel", "error",
@@ -271,12 +268,12 @@ mod tests {
             .expect("ffprobe");
         assert!(out.status.success(), "ffprobe rejected the proxy output");
 
-        // `docs/preview-scrub.md` S.1/S.7 — verify the GOP density.
-        // libx264 default `-g 250` would yield 1 keyframe for a 6 s
-        // / 30 fps (180-frame) source — the entire clip in one GOP.
-        // With `-g 30 -keyint_min 30` we expect ~6 keyframes (one
-        // per second). Lower bound at 4 to absorb edge-case encoder
-        // choices (e.g. ffmpeg dropping the final near-end keyframe).
+        // Verify the scrub-friendly GOP density (ADR 0008). With the
+        // short fixed GOP (`PROXY_GOP_FRAMES`) a 6 s / 30 fps (180-frame)
+        // source yields ~180/PROXY_GOP_FRAMES keyframes — far denser than
+        // the prior ~1 s GOP (~6) or libx264's default -g 250 (1). The
+        // lower bound is derived from the GOP so it tracks future tuning
+        // while still cleanly rejecting the old 1 s-GOP behavior.
         let kf = Command::new("ffprobe")
             .args([
                 "-v", "error",
@@ -291,10 +288,12 @@ mod tests {
         assert!(kf.status.success(), "ffprobe keyframe scan failed");
         let stdout = String::from_utf8_lossy(&kf.stdout);
         let i_frames = stdout.lines().filter(|l| l.trim() == "I").count();
+        // 180 frames / GOP, with a 1/3 margin for encoder edge choices.
+        let expected_min = (180 / PROXY_GOP_FRAMES as usize) * 2 / 3;
         assert!(
-            i_frames >= 4,
-            "proxy should have >= 4 keyframes for 6s @ 30fps with -g 30 (got {i_frames}); \
-             default GOP would produce 1. Means scrub-friendly keyframe density isn't being applied.\n{stdout}"
+            i_frames >= expected_min,
+            "proxy should have >= {expected_min} keyframes for 6s @ 30fps with -g {PROXY_GOP_FRAMES} \
+             (got {i_frames}); the short scrub GOP isn't being applied.\n{stdout}"
         );
         // PROXY_FORMAT_VERSION 4: `-bf 0` must produce a B-frame-free
         // stream. Without it, libx264's preset-fast default of 3 B-
@@ -351,68 +350,4 @@ mod tests {
         assert_eq!(tokio::fs::read(&dest).await.unwrap(), b"already here");
     }
 
-    fn media_with_fps(num: u32, den: u32) -> MediaItem {
-        use crate::state::VideoStreamMeta;
-        MediaItem {
-            id: new_id(),
-            label: None,
-            path_abs: "x.mp4".into(),
-            path_rel: None,
-            kind: MediaKind::Video,
-            metadata: MediaMetadata {
-                duration_us: Some(1),
-                video: Some(VideoStreamMeta {
-                    width: 640,
-                    height: 360,
-                    fps_num: num,
-                    fps_den: den,
-                    codec: "h264".into(),
-                    pix_fmt: "yuv420p".into(),
-                }),
-                audio: None,
-            },
-            proxy_path: None,
-            proxy_format_version: 0,
-            quick_proxy_path: None,
-            proxy_bypassed: false,
-            export_uses_original: false,
-            waveform_path: None,
-            thumbnails_dir: None,
-            file_hash_blake3: "x".into(),
-            file_size: 0,
-            file_mtime: 0,
-            imported_at: Utc::now(),
-        }
-    }
-
-    #[test]
-    fn gop_size_scales_with_fps() {
-        assert_eq!(gop_size_for(&media_with_fps(30, 1)), 30);
-        assert_eq!(gop_size_for(&media_with_fps(60, 1)), 60);
-        // 59.94 fps (NTSC 60) — rounds to 60.
-        assert_eq!(gop_size_for(&media_with_fps(60_000, 1_001)), 60);
-        // 23.976 fps — rounds to 24.
-        assert_eq!(gop_size_for(&media_with_fps(24_000, 1_001)), 24);
-        // 120 fps high-speed source.
-        assert_eq!(gop_size_for(&media_with_fps(120, 1)), 120);
-    }
-
-    #[test]
-    fn gop_size_falls_back_when_metadata_missing() {
-        let mut media = media_with_fps(30, 1);
-        media.metadata.video = None;
-        assert_eq!(gop_size_for(&media), 30);
-    }
-
-    #[test]
-    fn gop_size_falls_back_on_zero_denominator() {
-        // fps_den == 0 would divide-by-zero; fall back to default.
-        assert_eq!(gop_size_for(&media_with_fps(60, 0)), 30);
-    }
-
-    #[test]
-    fn gop_size_clamps_pathological_fps() {
-        // Some files report ridiculous fps; clamp to a safe upper bound.
-        assert_eq!(gop_size_for(&media_with_fps(10_000, 1)), 240);
-    }
 }
