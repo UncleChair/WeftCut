@@ -12,7 +12,9 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 
 import type { MediaSummary, ProjectSummary } from "../../ipc";
+import { ensureFullProxy } from "../../ipc";
 import { exportPlaybackPathFor } from "../../state/projectStore";
+import { probeSourceDecodable } from "../decoder/probeSourceDecodable";
 import type {
   ExportEvent,
   ExportProjectSnapshot,
@@ -44,6 +46,35 @@ export interface RunExportResult {
   /// (encoded, total). After a clean run, encoded === total.
   framesEncoded: number;
   totalFrames: number;
+}
+
+/// Video sources whose export path is the ORIGINAL via the DirectExport route
+/// (export_uses_original, no full proxy yet). DirectBoth (proxy_bypassed) is
+/// H.264 and universally decodable, so it is skipped.
+export function sourcesNeedingPreflight(
+  mediaById: ReadonlyMap<string, MediaSummary>,
+): MediaSummary[] {
+  return [...mediaById.values()].filter(
+    (m) => m.kind === "Video" && m.export_uses_original && !m.proxy_path,
+  );
+}
+
+export interface PreflightDeps {
+  urlFor: (m: MediaSummary) => string;
+  probe: (assetUrl: string) => Promise<boolean>;
+}
+
+/// Returns the media ids that failed the decode pre-flight.
+export async function preflightExportSources(
+  mediaById: ReadonlyMap<string, MediaSummary>,
+  deps: PreflightDeps,
+): Promise<string[]> {
+  const failed: string[] = [];
+  for (const m of sourcesNeedingPreflight(mediaById)) {
+    const ok = await deps.probe(deps.urlFor(m));
+    if (!ok) failed.push(m.id);
+  }
+  return failed;
 }
 
 /// Default 1080p H.264 encoder config used when the caller doesn't
@@ -84,6 +115,26 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     if (proxyPath) proxyAssetUrls[m.id] = convertFileSrc(proxyPath);
     originalAssetUrls[m.id] = convertFileSrc(m.path);
     mediaDims[m.id] = { width: m.width, height: m.height };
+  }
+
+  // Decode pre-flight: confirm this machine can actually decode each
+  // DirectExport original before committing to the export. On failure,
+  // enqueue a full proxy and abort with a retry message (the Worker is
+  // never launched, so no partial file is produced).
+  const undecodable = await preflightExportSources(init.mediaById, {
+    urlFor: (m) => originalAssetUrls[m.id],
+    probe: (url) => probeSourceDecodable(url),
+  });
+  if (undecodable.length > 0) {
+    await Promise.all(
+      undecodable.map((id) => ensureFullProxy(id)),
+    );
+    const labels = undecodable
+      .map((id) => init.mediaById.get(id)?.label ?? id)
+      .join(", ");
+    throw new Error(
+      `Can't decode ${labels} directly on this machine — preparing optimized media. Retry the export shortly.`,
+    );
   }
 
   const snapshot: ExportProjectSnapshot = {
