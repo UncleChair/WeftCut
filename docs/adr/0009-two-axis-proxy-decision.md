@@ -4,6 +4,14 @@ status: accepted
 
 # Two-axis proxy decision (export source × preview source)
 
+> **Superseded in part by [ADR 0010](0010-lazy-decodability.md).** The
+> export-axis decodability mechanism described below — `decodable_directly`
+> plus the per-machine `DecodeCaps` probe, and "the `DecodeCaps` oracle is
+> unchanged" — no longer holds: the oracle is removed and the export axis is a
+> static predicate (`export_decodable_statically`) confirmed by an export-time
+> pre-flight decode. The two-axis decomposition, the `job_for` scheduler, and
+> the unknown-GOP direction below still stand.
+
 `jobs::proxy_decision::decide` returns a `ProxyRoute { export, preview }`
 instead of a flat plan enum. The two axes are independent:
 
