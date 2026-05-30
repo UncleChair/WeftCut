@@ -3,13 +3,14 @@ import { raceFirstDecode } from "./probeSourceDecodable";
 
 // Minimal fake matching the Pick<VideoDecoder, "configure"|"decode"|"close"> shape
 // that raceFirstDecode drives. `behavior` decides what the fake does on decode().
-function makeFake(behavior: "output" | "error" | "silent" | "throw-configure") {
+function makeFake(behavior: "output" | "error" | "silent" | "throw-configure" | "throw-decode") {
   return (h: { output: (f: unknown) => void; error: (e: unknown) => void }) => ({
     configure() {
       if (behavior === "throw-configure") throw new Error("unsupported config");
     },
     decode() {
-      if (behavior === "output") h.output({ close() {} });
+      if (behavior === "throw-decode") throw new Error("malformed chunk");
+      else if (behavior === "output") h.output({ close() {} });
       else if (behavior === "error") h.error(new Error("decode failed"));
       // "silent": do nothing → timeout wins
     },
@@ -43,6 +44,11 @@ describe("raceFirstDecode", () => {
 
   it("undecodable when there is no key packet", async () => {
     const ok = await raceFirstDecode({ config: cfg, keyChunk: null, makeDecoder: makeFake("output"), deadlineMs: 100 });
+    expect(ok).toBe(false);
+  });
+
+  it("undecodable when decode throws synchronously", async () => {
+    const ok = await raceFirstDecode({ config: cfg, keyChunk: fakeChunk, makeDecoder: makeFake("throw-decode"), deadlineMs: 100 });
     expect(ok).toBe(false);
   });
 });
