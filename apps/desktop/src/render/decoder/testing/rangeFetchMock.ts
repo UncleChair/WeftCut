@@ -18,7 +18,22 @@ export interface RangeFetchMock {
   readCalls: () => number;
 }
 
-export function makeRangeFetchMock(buffer: Uint8Array): RangeFetchMock {
+export interface RangeFetchMockOptions {
+  /// Per-206-response body cap in bytes. Models the Tauri `asset://` /
+  /// WebView2 Range handler, which truncates each partial response to a
+  /// fixed ceiling (~1 MB observed) regardless of how many bytes the
+  /// `Range` header asked for. When set, a request spanning more than
+  /// `cap` bytes gets a SHORT 206 (only `cap` bytes, with a matching
+  /// `Content-Range`), so the reader must issue follow-up requests to
+  /// fulfill the full window. Defaults to unlimited.
+  cap?: number;
+}
+
+export function makeRangeFetchMock(
+  buffer: Uint8Array,
+  options: RangeFetchMockOptions = {},
+): RangeFetchMock {
+  const cap = options.cap ?? Infinity;
   let served = 0;
   let fullFetches = 0;
   let readCalls = 0;
@@ -39,7 +54,9 @@ export function makeRangeFetchMock(buffer: Uint8Array): RangeFetchMock {
     const m = /^bytes=(\d+)-(\d*)$/.exec(range);
     if (!m) throw new Error(`mock: bad Range ${range}`);
     const start = Number(m[1]);
-    const end = m[2] === "" ? buffer.byteLength - 1 : Number(m[2]); // inclusive
+    const reqEnd = m[2] === "" ? buffer.byteLength - 1 : Number(m[2]); // inclusive
+    // Truncate the served window to the per-response cap (see above).
+    const end = Number.isFinite(cap) ? Math.min(reqEnd, start + cap - 1) : reqEnd;
     const slice = buffer.subarray(start, end + 1);
     served += slice.byteLength;
     return new Response(new Uint8Array(slice), {

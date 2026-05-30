@@ -49,13 +49,42 @@ export class AssetRangeSource {
   }
 
   private async read(start: number, end: number): Promise<Uint8Array> {
-    const res = await fetch(this.assetUrl, {
-      headers: { Range: `bytes=${start}-${end - 1}` }, // inclusive HTTP range
-      signal: this.abort.signal,
-    });
-    const bytes = new Uint8Array(await res.arrayBuffer());
-    // 200 → server ignored Range and returned the whole file; slice the window.
-    if (res.status === 200) return bytes.slice(start, end);
-    return bytes;
+    // mediabunny's CustomSource contract requires `read` to return EXACTLY
+    // `end - start` bytes. The Tauri asset:// / WebView2 Range handler caps
+    // each 206 body at a fixed ceiling (~1 MB observed), so a single request
+    // for a larger window comes back short — and mediabunny throws
+    // "Requested N bytes, but got M", wedging the decoder. Loop across
+    // follow-up Range requests for the remaining tail until the window is
+    // filled. (The legacy mp4box demuxer never hit this because its GOP-block
+    // cache issued bounded sub-ceiling reads.)
+    const total = end - start;
+    const out = new Uint8Array(total);
+    let filled = 0;
+    while (filled < total) {
+      const res = await fetch(this.assetUrl, {
+        // inclusive HTTP range; re-anchored at the unfilled tail each pass
+        headers: { Range: `bytes=${start + filled}-${end - 1}` },
+        signal: this.abort.signal,
+      });
+      // 200 → server ignored Range and returned the whole file; slice the
+      // window and we're done (no partial-response ceiling applies).
+      if (res.status === 200) {
+        return new Uint8Array(await res.arrayBuffer()).slice(start, end);
+      }
+      const chunk = new Uint8Array(await res.arrayBuffer());
+      if (chunk.byteLength === 0) {
+        // No progress possible — fail loudly rather than hand mediabunny a
+        // short buffer (which surfaces as its opaque length-mismatch throw).
+        throw new Error(
+          `AssetRangeSource: short read for ${this.assetUrl} ` +
+            `bytes=${start}-${end - 1}: got ${filled} of ${total} bytes`,
+        );
+      }
+      // Clamp so a server that over-serves can't overflow `out`.
+      const n = Math.min(chunk.byteLength, total - filled);
+      out.set(chunk.subarray(0, n), filled);
+      filled += n;
+    }
+    return out;
   }
 }
