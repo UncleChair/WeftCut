@@ -73,6 +73,14 @@ describe("direct-export source resolution", () => {
     expect(previewPlaybackPathFor(m)).toBe("/quick.mp4");
   });
 
+  it("preview prefers the quick proxy over the full (export master) proxy", () => {
+    // ProxyBoth: once the source-res master lands the quick proxy is KEPT;
+    // preview must use the light quick proxy, not the heavy 4K master.
+    const m = video({ proxy_path: "/master.mp4", quick_proxy_path: "/q.mp4" });
+    expect(previewPlaybackPathFor(m)).toBe("/q.mp4");
+    expect(exportPlaybackPathFor(m)).toBe("/master.mp4");
+  });
+
   it("DirectBoth still previews and exports from the (H.264) original", () => {
     const m = {
       kind: "Video", path: "/orig.mp4",
