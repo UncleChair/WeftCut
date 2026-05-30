@@ -42,7 +42,10 @@ export async function raceFirstDecode(args: RaceFirstDecodeArgs): Promise<boolea
     const timer = setTimeout(() => finish(false), args.deadlineMs);
     try {
       decoder = args.makeDecoder({
-        output: () => finish(true),
+        output: (frame) => {
+          frame.close();
+          finish(true);
+        },
         error: () => finish(false),
       });
       decoder.configure(args.config);
