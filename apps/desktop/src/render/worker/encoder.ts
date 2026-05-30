@@ -1,26 +1,25 @@
-// VideoEncoder + mp4box.js mux of the encoded chunks into a regular
-// (non-fragmented) MP4 buffer. No audio — audio export rides the
-// existing Rust ffmpeg path; P9 final mux combines them.
+// VideoEncoder + mediabunny mux of the encoded chunks into a non-fragmented
+// MP4 buffer. No audio — audio export rides the Rust ffmpeg final-mux path.
 //
-// Plan: docs/pixi-renderer-plan.md (P8)
+// We keep our own VideoEncoder (config, GOP cadence, MessageChannel
+// backpressure) and hand only the CONTAINER to mediabunny: an
+// EncodedVideoPacketSource fed the encoder's output chunks, muxed by an
+// Output + Mp4OutputFormat into an in-memory BufferTarget. (Replaces the
+// prior mp4box createFile/addTrack/addSample/write path.)
 //
-// mp4box mux pattern (per `isofile-advanced-creation.js`):
-//   1. `createFile()` — ISOFile with no boxes.
-//   2. `addTrack({ type, width, height, timescale, avcDecoderConfigRecord })`
-//      — creates moov/trak/mdia/.../stsd entries. Returns trackId.
-//      Internally calls `init({...})` first to add ftyp + moov.
-//   3. For each encoded chunk: `addSample(trackId, data, { duration,
-//      cts, dts, is_sync })`.
-//   4. `file.write(stream)` — serialize everything to a DataStream.
-//      The stream's `buffer` is the final MP4 byte buffer.
-//
-// We deliberately do NOT use `setSegmentOptions` / `onSegment` —
-// those configure fragmented-MP4 (CMAF / DASH) output, which
-// requires `info.fragment_duration` from the demux side that
-// doesn't exist when we're MUXing from scratch. That mismatch was
-// the source of the prior "fragment_duration undefined" crash.
+// The encoder's `output` callback is synchronous, but `source.add` is async
+// (it returns a backpressure Promise). We serialize adds through a promise
+// chain headed by `output.start()`, capture the first error into `muxError`,
+// and rethrow it at `finalize()`.
 
-import { DataStream, createFile, type ISOFile } from "mp4box";
+import {
+  BufferTarget,
+  EncodedPacket,
+  EncodedVideoPacketSource,
+  Mp4OutputFormat,
+  Output,
+} from "mediabunny";
+import { webCodecsToMediabunnyVideoCodec } from "./muxCodec";
 
 export interface EncoderInit {
   config: VideoEncoderConfig;
@@ -32,32 +31,36 @@ export interface EncoderInit {
 
 export class EncoderSink {
   private encoder: VideoEncoder;
-  private mp4: ISOFile;
-  private trackId: number | null = null;
+  private output: Output<Mp4OutputFormat, BufferTarget>;
+  private target: BufferTarget;
+  private videoSource: EncodedVideoPacketSource;
+  /// Serializes the async `source.add` calls in encode/output order. Headed
+  /// by `output.start()` so the first add waits for the output to be ready.
+  private addChain: Promise<void>;
+  /// First mux error (from `source.add`), rethrown at finalize. Once set, we
+  /// stop adding so we don't pile errors.
+  private muxError: Error | null = null;
+  /// The encoder's decoder config rides the FIRST add only.
+  private firstAdd = true;
   private framesEncoded = 0;
-  private width: number;
-  private height: number;
-  private fpsNum: number;
-  private fpsDen: number;
-  /// MessageChannel reused by `awaitQueueBelow` to yield to the next
-  /// task without the 4 ms `setTimeout(1)` clamp browsers apply. One
-  /// channel + a queue of pending resolvers is enough; we keep the
-  /// onmessage handler installed for the encoder's lifetime.
   private yieldChannel: MessageChannel;
   private yieldWaiters: Array<() => void> = [];
 
   constructor(init: EncoderInit) {
-    this.width = init.width;
-    this.height = init.height;
-    this.fpsNum = init.fpsNum;
-    this.fpsDen = init.fpsDen;
-    this.mp4 = createFile();
+    this.target = new BufferTarget();
+    this.output = new Output({
+      format: new Mp4OutputFormat({ fastStart: "in-memory" }),
+      target: this.target,
+    });
+    this.videoSource = new EncodedVideoPacketSource(
+      webCodecsToMediabunnyVideoCodec(init.config.codec),
+    );
+    this.output.addVideoTrack(this.videoSource);
+    // Head the add-chain with start(); the first `source.add` awaits it.
+    this.addChain = this.output.start();
 
     this.yieldChannel = new MessageChannel();
     this.yieldChannel.port1.onmessage = () => {
-      // Drain every waiter that posted before this message arrived.
-      // postMessage delivery on a MessageChannel is FIFO, so resolving
-      // in-order matches the await order.
       const waiters = this.yieldWaiters;
       this.yieldWaiters = [];
       for (const r of waiters) r();
@@ -80,14 +83,7 @@ export class EncoderSink {
   }
 
   /// Yield until the encoder's internal queue drains below `threshold`.
-  /// Caller uses this between frames to bound memory.
-  ///
-  /// Yields via `MessageChannel.postMessage`, not `setTimeout(1)`:
-  /// browsers clamp `setTimeout` to a 4 ms minimum after a few nested
-  /// calls, which over a multi-thousand-frame export adds seconds of
-  /// pure timer stalls. MessageChannel yields to the next task
-  /// (giving the encoder's output callback a chance to fire) with no
-  /// clamp.
+  /// MessageChannel (not setTimeout) to dodge the 4 ms clamp.
   async awaitQueueBelow(threshold: number): Promise<void> {
     while (this.encoder.encodeQueueSize > threshold) {
       await new Promise<void>((resolve) => {
@@ -97,26 +93,18 @@ export class EncoderSink {
     }
   }
 
-  /// Drain the encoder, serialize the ISOFile to a single MP4 byte
-  /// buffer, and return it.
+  /// Drain the encoder, flush the mux add-chain, finalize the Output, and
+  /// return the MP4 byte buffer.
   async finalize(): Promise<ArrayBuffer> {
     await this.encoder.flush();
     this.encoder.close();
-
-    // Serialize moov + mdat into one DataStream. mp4box's
-    // ISOFile.write walks every accumulated box.
-    const stream = new DataStream();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (this.mp4 as any).write(stream);
-    // mp4box's DataStream uses an internal growing buffer; the
-    // current valid byte length is `position` after write.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const written = (stream as any).position as number | undefined;
-    const totalBytes = written ?? stream.buffer.byteLength;
-    // Return a fresh ArrayBuffer slice covering exactly the
-    // written bytes so the main thread can transfer it without
-    // dragging any extra capacity.
-    return stream.buffer.slice(0, totalBytes);
+    // Wait for every queued `source.add` to complete.
+    await this.addChain;
+    if (this.muxError) throw this.muxError;
+    await this.output.finalize();
+    const buf = this.target.buffer;
+    if (!buf) throw new Error("[weftcut/export] mux produced no buffer");
+    return buf;
   }
 
   dispose(): void {
@@ -125,10 +113,10 @@ export class EncoderSink {
     } catch {
       // already closed
     }
-    // Close the yield channel so its onmessage handler can be GC'd.
-    // Any in-flight awaitQueueBelow resolvers were resolved in the
-    // last drain; if anything is still pending, dropping the channel
-    // is intentional — caller is tearing down.
+    // Cancel the output if it never finalized, so internal resources free.
+    if (this.output.state !== "finalized" && this.output.state !== "canceled") {
+      void this.output.cancel();
+    }
     this.yieldChannel.port1.close();
     this.yieldChannel.port2.close();
     this.yieldWaiters = [];
@@ -138,55 +126,19 @@ export class EncoderSink {
     chunk: EncodedVideoChunk,
     metadata?: EncodedVideoChunkMetadata,
   ): void {
-    if (this.trackId === null) {
-      // Build the avc1 track using the encoder's reported codec
-      // description (the avcC payload for H.264).
-      const description = metadata?.decoderConfig?.description;
-      const descBytes =
-        description instanceof Uint8Array
-          ? description
-          : description instanceof ArrayBuffer
-            ? new Uint8Array(description)
-            : description
-              ? new Uint8Array(description as ArrayBufferLike)
-              : new Uint8Array(0);
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const id = (this.mp4 as any).addTrack({
-        type: "avc1",
-        width: this.width,
-        height: this.height,
-        // Timescale = 1e6 → sample CTS/DTS are microseconds (matches
-        // EncodedVideoChunk.timestamp).
-        timescale: 1_000_000,
-        // mp4box looks for `avcDecoderConfigRecord` on the options to
-        // populate the stsd's avcC payload. Pass as ArrayBuffer (slice
-        // off any offset).
-        avcDecoderConfigRecord: descBytes.buffer.slice(
-          descBytes.byteOffset,
-          descBytes.byteOffset + descBytes.byteLength,
-        ),
-      }) as number;
-      this.trackId = id;
-      // eslint-disable-next-line no-console
-      console.log(
-        `[weftcut/export] mp4 track added id=${id} ${this.width}×${this.height} ` +
-          `desc=${descBytes.byteLength}B`,
-      );
-    }
-
-    if (this.trackId == null) return;
-
-    const data = new Uint8Array(chunk.byteLength);
-    chunk.copyTo(data);
-    const sampleDurationUs =
-      chunk.duration ?? Math.round((1_000_000 * this.fpsDen) / this.fpsNum);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (this.mp4 as any).addSample(this.trackId, data, {
-      duration: sampleDurationUs,
-      cts: chunk.timestamp,
-      dts: chunk.timestamp,
-      is_sync: chunk.type === "key",
+    // Build the packet synchronously (fromEncodedChunk copies the bytes), so
+    // the transient chunk can be released; the decoder config rides the first
+    // add only.
+    const packet = EncodedPacket.fromEncodedChunk(chunk);
+    const meta = this.firstAdd ? metadata : undefined;
+    this.firstAdd = false;
+    this.addChain = this.addChain.then(async () => {
+      if (this.muxError) return;
+      try {
+        await this.videoSource.add(packet, meta);
+      } catch (e) {
+        this.muxError ??= e instanceof Error ? e : new Error(String(e));
+      }
     });
     void this.framesEncoded;
   }
