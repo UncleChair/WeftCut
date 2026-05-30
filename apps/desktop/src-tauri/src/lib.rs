@@ -12,7 +12,6 @@ mod app_settings;
 mod cache;
 mod cloud;
 mod commands;
-mod decode_caps;
 mod export;
 mod ffmpeg;
 pub mod fixtures;
@@ -100,7 +99,6 @@ pub fn run() {
             commands::keybindings_import,
             commands::app_settings_get,
             commands::app_settings_set,
-            commands::report_decode_caps,
             commands::view_state_get,
             commands::view_state_set,
             commands::agent_session_get,
@@ -212,11 +210,6 @@ pub fn run() {
             // store directly and emit `app_settings:changed` so the
             // frontend re-filters the timeline immediately.
             app.manage(app_settings::AppSettingsStore::new(config_dir.clone()));
-
-            // Per-machine WebCodecs decode capability (Plan 2). The webview
-            // probe reports on startup; persisted so the first import after
-            // launch uses last session's verdict.
-            app.manage(decode_caps::DecodeCapabilityStore::new(config_dir));
 
             // Auto-save subscriber. Listens to actor events, debounces
             // 500ms, writes `project.json` whenever a workspace is set.
