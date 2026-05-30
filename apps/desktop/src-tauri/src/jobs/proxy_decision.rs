@@ -16,8 +16,6 @@ const MAX_BYPASS_BITRATE_BPS: u64 = 25_000_000;
 /// the source is routed to a short-GOP scrub proxy instead of bypassed. ~0.5 s
 /// keeps a backward seek's decode bounded to a fraction of a second.
 const MAX_BYPASS_GOP_SECONDS: f64 = 0.5;
-const DIRECT_FULL_MAX_DURATION_US: i64 = 10_000_000;
-const DIRECT_FULL_MAX_SIZE_BYTES: u64 = 150 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ExportSource {
@@ -48,19 +46,14 @@ pub struct ProxyRoute {
     pub preview: PreviewSource,
 }
 
-/// Which background proxy job(s) a route implies, given whether the source is
-/// small enough to skip the fast phase. Pure policy, unit-tested in isolation
-/// so the `is_small` scheduling split keeps the coverage the flat `ProxyPlan`
-/// used to carry.
+/// Which background proxy job(s) a route implies. Pure policy, unit-tested.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProxyJob {
     /// No proxy: bypass. Preview + export both read the original.
     None,
     /// Standalone quick scrub proxy; export reads the original (DirectExport).
     QuickOnly,
-    /// Full proxy directly, no quick phase (small undecodable source).
-    FullOnly,
-    /// Quick proxy first, then the full proxy in the background.
+    /// Quick proxy first (preview), then the full export master in the background.
     QuickThenFull,
 }
 
@@ -87,18 +80,12 @@ pub fn decide(media: &MediaItem, source_gop_secs: Option<f64>) -> ProxyRoute {
     ProxyRoute { export, preview }
 }
 
-/// Map a route + small-source flag to the background job to run.
-pub fn job_for(route: ProxyRoute, is_small: bool) -> ProxyJob {
+/// Map a route to the background proxy job to run.
+pub fn job_for(route: ProxyRoute) -> ProxyJob {
     match (route.export, route.preview) {
         (ExportSource::Original, PreviewSource::Original) => ProxyJob::None,
         (ExportSource::Original, PreviewSource::Proxy) => ProxyJob::QuickOnly,
-        (ExportSource::FullProxy, PreviewSource::Proxy) => {
-            if is_small {
-                ProxyJob::FullOnly
-            } else {
-                ProxyJob::QuickThenFull
-            }
-        }
+        (ExportSource::FullProxy, PreviewSource::Proxy) => ProxyJob::QuickThenFull,
         (ExportSource::FullProxy, PreviewSource::Original) => {
             unreachable!("preview=Original implies export=Original (safe_to_bypass is a subset of export_decodable_statically)")
         }
@@ -156,15 +143,6 @@ fn source_is_safe_to_bypass(media: &MediaItem, source_gop_secs: Option<f64>) -> 
 /// the unknown GOP through).
 pub fn gop_is_scrub_friendly(source_gop_secs: Option<f64>) -> bool {
     source_gop_secs.map_or(false, |g| g <= MAX_BYPASS_GOP_SECONDS)
-}
-
-pub fn is_small_source(media: &MediaItem) -> bool {
-    media
-        .metadata
-        .duration_us
-        .map(|d| d > 0 && d <= DIRECT_FULL_MAX_DURATION_US)
-        .unwrap_or(false)
-        && media.file_size <= DIRECT_FULL_MAX_SIZE_BYTES
 }
 
 pub fn codec_is_h264(codec: &str) -> bool {
@@ -352,27 +330,22 @@ mod tests {
         assert_eq!(decide(&item, Some(6.0)), BOTH_ORIGINAL);
     }
 
-    // --- job_for(): scheduling oracle (the is_small split) — unchanged ---
+    // --- job_for(): scheduling oracle ---
 
     #[test]
     fn job_none_for_both_original() {
-        assert_eq!(job_for(BOTH_ORIGINAL, false), ProxyJob::None);
-        assert_eq!(job_for(BOTH_ORIGINAL, true), ProxyJob::None);
+        assert_eq!(job_for(BOTH_ORIGINAL), ProxyJob::None);
     }
 
     #[test]
     fn job_quick_only_for_direct_export() {
-        assert_eq!(job_for(EXPORT_ORIGINAL_PREVIEW_PROXY, false), ProxyJob::QuickOnly);
-        assert_eq!(job_for(EXPORT_ORIGINAL_PREVIEW_PROXY, true), ProxyJob::QuickOnly);
+        assert_eq!(job_for(EXPORT_ORIGINAL_PREVIEW_PROXY), ProxyJob::QuickOnly);
     }
 
     #[test]
-    fn job_full_only_for_small_proxy_both() {
-        assert_eq!(job_for(BOTH_PROXY, true), ProxyJob::FullOnly);
-    }
-
-    #[test]
-    fn job_quick_then_full_for_large_proxy_both() {
-        assert_eq!(job_for(BOTH_PROXY, false), ProxyJob::QuickThenFull);
+    fn job_quick_then_full_for_proxy_both() {
+        // Every FullProxy-export source gets a quick proxy first (preview),
+        // then the full master — no small-source skip-quick split.
+        assert_eq!(job_for(BOTH_PROXY), ProxyJob::QuickThenFull);
     }
 }
