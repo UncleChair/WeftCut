@@ -1,10 +1,17 @@
 // Export-only decoder pool. Drops every preview-tuned mechanism the
-// SourceDecoderPool needs (lookahead window, per-frame setAnchor, ring
-// eviction, polling-based catch-up) in favor of two batched primitives:
+// SourceDecoderPool needs (lookahead window, per-frame setAnchor, polling-
+// based catch-up) in favor of two batched primitives:
 //
-//   `decodeRange(aUs, bUs)` — feed every sample whose interval covers
-//   [aUs, bUs] in one shot, then `await decoder.flush()` so the caller
-//   resumes with every output frame already in the store.
+//   `decodeRange(aUs, bUs)` — an async seek-and-forward loop over the
+//   mediabunny EncodedPacketSink: seek to the GOP key at/before `aUs` (or
+//   continue from the packet cursor when the range moves forward of the
+//   dispatch frontier), then dispatch packets in DECODE order through the
+//   first key packet strictly after `bUs`, so every frame with presentation
+//   PTS ≤ bUs — including open-GOP B-frames referencing the next GOP's key —
+//   is fed. No `decoder.flush()` between ranges (flushing would deadlock
+//   against the VideoFrame pool slots the worker holds); the worker awaits
+//   each output frame via `ring.waitForPts`. Awaiting `getNextPacket` faults
+//   in uncached bytes natively, so there is no byte pre-fault.
 //
 //   `evictBefore(cutoffUs)` — drop frames whose presentation interval
 //   ends at or before `cutoffUs`. Called after the export chunk is
@@ -13,12 +20,11 @@
 // The store + handle expose `frameAt` / `containsPts` / `ensureReady`
 // / `requestFrameAt` (no-op) / `onFirstFrame` (no-op) so the Compositor
 // can plug this in as a drop-in replacement for `SourceDecoderPool`.
-//
-// Plan: docs/pixi-renderer-plan.md (P8 perf fix)
 
-import { Demuxer, type VideoTrackMeta } from "./Demuxer";
+import type { EncodedPacket } from "mediabunny";
 import type { DecoderHandle, DecoderPool, FrameStore, SourceHandleInit } from "./SourceDecoderPool";
 import { handleDecodeError } from "./decoderFallback";
+import { openMediaInput, type OpenedMedia } from "./mediaInput";
 
 interface RingEntry {
   ptsUs: number;
@@ -147,18 +153,18 @@ export class ExportFrameStore implements FrameStore {
 
 export class ExportSourceHandle implements DecoderHandle {
   readonly mediaId: string;
-  readonly demuxer: Demuxer;
+  private readonly proxyAssetUrl: string;
   readonly ring: ExportFrameStore;
+  private opened: OpenedMedia | null = null;
+  private config: VideoDecoderConfig | null = null;
   private decoder: VideoDecoder | null = null;
-  private meta: VideoTrackMeta | null = null;
-  private readyP: Promise<VideoTrackMeta> | null = null;
-  /// Highest sample index we've fed to the decoder. -1 = none yet.
-  private lastDispatchedIndex = -1;
-  /// Frames emitted by the decoder since (re)configure. Drives the
-  /// first-frame software-fallback heuristic.
+  private readyP: Promise<void> | null = null;
+  /// Last packet dispatched to the decoder (decode order); null = unpositioned.
+  private cursor: EncodedPacket | null = null;
+  /// Presentation PTS (µs) of `cursor` — the dispatch frontier. Sentinel
+  /// until the first dispatch; used to decide seek-vs-continue per range.
+  private lastDispatchedPtsUs = Number.NEGATIVE_INFINITY;
   private outputFrameCount = 0;
-  /// True after a software-fallback downgrade. Prevents repeated
-  /// downgrade attempts on subsequent errors.
   private downgraded = false;
   private _disposed = false;
 
@@ -168,30 +174,55 @@ export class ExportSourceHandle implements DecoderHandle {
 
   constructor(init: SourceHandleInit) {
     this.mediaId = init.mediaId;
-    this.demuxer = new Demuxer({ assetUrl: init.proxyAssetUrl });
+    this.proxyAssetUrl = init.proxyAssetUrl;
     this.ring = new ExportFrameStore();
   }
 
-  async ensureReady(): Promise<VideoTrackMeta> {
-    if (this.meta) return this.meta;
+  async ensureReady(): Promise<void> {
+    if (this.config && this.decoder) return;
     if (this.readyP) return this.readyP;
     this.readyP = this._doEnsureReady();
     return this.readyP;
   }
 
-  private async _doEnsureReady(): Promise<VideoTrackMeta> {
-    const meta = await this.demuxer.open();
-    await this.demuxer.ensureSamplesLoaded();
-    const descPreview = Array.from(meta.description.slice(0, 16))
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join(" ");
+  private async _doEnsureReady(): Promise<void> {
+    this.opened = await openMediaInput(this.proxyAssetUrl);
+    const config = await this.opened.videoTrack.getDecoderConfig();
+    if (!config) {
+      throw new Error(`[weftcut/export] ${this.mediaId}: no decoder config`);
+    }
+    this.config = config;
     // eslint-disable-next-line no-console
     console.log(
-      `[weftcut/export] source ${this.mediaId} ready: codec=${meta.codec} ` +
-        `${meta.codedWidth}x${meta.codedHeight} samples=${meta.nbSamples} ` +
-        `desc[0..16]=${descPreview} (total ${meta.description.byteLength}B)`,
+      `[weftcut/export] source ${this.mediaId} ready: codec=${config.codec} ` +
+        `${config.codedWidth ?? "?"}x${config.codedHeight ?? "?"}`,
     );
-    // Identity gate — see SourceDecoderPool for rationale.
+    // Diagnostic: log whether HW decode is actually available in Worker scope
+    // (Chrome sometimes silently lands on software; software 1080p ≈ 2 fps).
+    if (typeof VideoDecoder.isConfigSupported === "function") {
+      for (const hw of ["prefer-hardware", "prefer-software"] as const) {
+        try {
+          const supported = await VideoDecoder.isConfigSupported({
+            ...config,
+            hardwareAcceleration: hw,
+          });
+          // eslint-disable-next-line no-console
+          console.log(
+            `[weftcut/export] ${this.mediaId} isConfigSupported(${hw})=${supported.supported}`,
+          );
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.warn(`[weftcut/export] isConfigSupported(${hw}) threw:`, e);
+        }
+      }
+    }
+    this.decoder = this.buildDecoder();
+    this.decoder.configure(this.buildConfig());
+  }
+
+  /// Construct a fresh `VideoDecoder` with the identity-guarded output/error
+  /// callbacks. Used by initial ready + the rebuild recovery paths.
+  private buildDecoder(): VideoDecoder {
     let dec: VideoDecoder;
     dec = new VideoDecoder({
       output: (frame: VideoFrame) => {
@@ -219,247 +250,111 @@ export class ExportSourceHandle implements DecoderHandle {
           outputFrameCount: this.outputFrameCount,
           alreadyDowngraded: this.downgraded,
           mediaId: this.mediaId,
-          // Worker context — Tauri `invoke` isn't reachable here, so the
-          // inactivity warning lands in the Worker's console instead of
-          // the LogBus. Main-thread postMessage relay is a future polish.
           // eslint-disable-next-line no-console
           log: (msg) => console.warn(`[weftcut/export] ${msg}`),
         });
         if (action.kind === "downgrade-to-software") {
-          this.downgradeToSoftware();
+          this.downgraded = true;
+          this.rebuildDecoder();
         } else if (action.kind === "inactivity-rebuild") {
-          this.rebuildAfterInactivity();
+          this.rebuildDecoder();
         }
       },
     });
-    this.decoder = dec;
-    // Probe support before configuring. We test BOTH hardware and
-    // software variants so we can see in the log whether hardware
-    // decode is actually available in this Worker context — Chrome's
-    // default "no-preference" sometimes silently lands on software in
-    // Worker scope, and software 1080p decode is ~2 fps which made
-    // the export look stuck.
-    if (typeof VideoDecoder.isConfigSupported === "function") {
-      for (const hw of ["prefer-hardware", "prefer-software"] as const) {
-        try {
-          const supported = await VideoDecoder.isConfigSupported({
-            codec: meta.codec,
-            codedWidth: meta.codedWidth,
-            codedHeight: meta.codedHeight,
-            description: meta.description,
-            hardwareAcceleration: hw,
-          });
-          // eslint-disable-next-line no-console
-          console.log(
-            `[weftcut/export] ${this.mediaId} isConfigSupported(${hw})=${supported.supported}`,
-          );
-        } catch (e) {
-          // eslint-disable-next-line no-console
-          console.warn(`[weftcut/export] isConfigSupported(${hw}) threw:`, e);
-        }
-      }
-    }
-    // Configure with prefer-hardware. The OS / browser still gets the
-    // last word — if HW decode isn't available in Worker scope, it
-    // falls back to software regardless. The probe above tells us which
-    // it actually picked.
-    this.decoder.configure(this.buildConfig(meta));
-    this.meta = meta;
-    return meta;
+    return dec;
   }
 
-  /// Build the decoder config for `meta`, honoring the current
-  /// `downgraded` flag. Used by initial configure + the software-
-  /// fallback rebuild.
-  private buildConfig(meta: VideoTrackMeta): VideoDecoderConfig {
+  /// Build the decoder config, honoring `downgraded`. Spreads the full
+  /// mediabunny config (colorSpace etc.) and overrides only hwAccel.
+  private buildConfig(): VideoDecoderConfig {
+    if (!this.config) {
+      throw new Error(`[weftcut/export] ${this.mediaId}: buildConfig before ready`);
+    }
     return {
-      codec: meta.codec,
-      codedWidth: meta.codedWidth,
-      codedHeight: meta.codedHeight,
-      description: meta.description,
+      ...this.config,
       hardwareAcceleration: this.downgraded ? "prefer-software" : "prefer-hardware",
     };
   }
 
-  /// Software-fallback path: flip the downgraded flag, reset the
-  /// existing decoder, reconfigure with prefer-software, and rewind
-  /// the dispatch cursor so the next `decodeRange` re-feeds from the
-  /// current GOP's IDR. Frames already in the store stay.
-  private downgradeToSoftware(): void {
-    if (!this.meta || !this.decoder) return;
-    this.downgraded = true;
-    try {
-      this.decoder.reset();
-      this.decoder.configure(this.buildConfig(this.meta));
-    } catch (e) {
-      // eslint-disable-next-line no-console
-      console.error(
-        `[weftcut/export] decoder ${this.mediaId} software-fallback reconfigure failed:`,
-        e,
-      );
-      return;
-    }
-    // Rewind so the next decodeRange re-issues the GOP we were on.
-    // The dispatch cursor is the "highest sample index fed"; setting
-    // it back to (idr - 1) would require recomputing idr here. Simpler:
-    // -1, forcing the next decodeRange's IDR-jump branch to take over.
-    this.lastDispatchedIndex = -1;
-  }
-
-  /// Inactivity recovery: drop the dead decoder so `ensureReady`
-  /// lazily rebuilds on the next `decodeRange` call. `Demuxer.open()`
-  /// is idempotent, so the rebuild only reconstructs the `VideoDecoder`.
-  /// Theoretical for the export path — the Worker stays active for the
-  /// run — but kept for symmetry with the preview pool and as belt-and-
-  /// suspenders against very long exports. `downgraded` and the in-store
-  /// frames stay; `lastDispatchedIndex = -1` so the next decodeRange
-  /// re-feeds the current GOP's IDR through the rebuilt decoder.
-  private rebuildAfterInactivity(): void {
+  /// Recovery: WebCodecs closes the codec before firing `error`, so
+  /// reset()/configure() on the dead decoder throws — rebuild instead.
+  /// Keeps the opened media; resets the cursor so the next decodeRange
+  /// re-seeks a key packet into the fresh decoder. `downgraded` + in-store
+  /// frames stay.
+  private rebuildDecoder(): void {
     try {
       this.decoder?.close();
     } catch {
-      // Decoder may already be closed.
+      // already closed
     }
-    this.decoder = null;
-    this.readyP = null;
-    this.meta = null;
-    this.lastDispatchedIndex = -1;
+    this.decoder = this.buildDecoder();
+    this.decoder.configure(this.buildConfig());
+    this.cursor = null;
+    this.lastDispatchedPtsUs = Number.NEGATIVE_INFINITY;
   }
 
-  /// Compositor's `setAnchorTime` reaches us through this. Export
-  /// drives decoding via `decodeRange` instead, so this is a no-op.
+  /// Compositor's `setAnchorTime` reaches us here; export drives decoding via
+  /// `decodeRange`, so this is a no-op.
   requestFrameAt(_tUs: number): Promise<void> {
     return Promise.resolve();
   }
 
-  /// Preview uses this to schedule a paint when the first frame lands;
-  /// export composites frames synchronously, so we don't need it.
+  /// Export composites synchronously; no first-frame repaint needed.
   onFirstFrame(_cb: () => void): void {
     // intentional no-op
   }
 
-  /// Decode every sample whose presentation interval intersects
-  /// [aUs, bUs]. Returns once `decoder.flush()` resolves — every
-  /// dispatched chunk has produced its output frame into the ring.
-  ///
-  /// Sequential forward calls are cheap: if `aUs` lies inside the GOP
-  /// we're already mid-flow on, we just dispatch the next contiguous
-  /// run of samples. We never reset the decoder; IDR samples reset
-  /// internal state implicitly when fed in order, and `decoder.flush()`
-  /// drains without re-configure being required afterward.
+  /// Decode every packet needed to cover the presentation range [aUs, bUs].
+  /// Async: seeks to the GOP key at/before `aUs` (or continues from the
+  /// cursor when the range moves forward of the dispatch frontier), then
+  /// dispatches in DECODE order through the first key packet strictly after
+  /// `bUs` (inclusive) — so every frame with presentation PTS ≤ bUs, incl.
+  /// open-GOP B-frames referencing the next key, is fed. No flush (the
+  /// worker awaits each frame via `ring.waitForPts`; flushing would deadlock
+  /// against the held VideoFrame pool slots). Awaiting `getNextPacket`
+  /// faults in uncached bytes natively — no pre-fault needed.
   async decodeRange(aUs: number, bUs: number): Promise<void> {
-    if (!this.meta || !this.decoder) await this.ensureReady();
-    if (!this.meta || !this.decoder) return;
-    const totalSamples = this.meta.nbSamples;
-    if (totalSamples === 0) return;
+    if (!this.config || !this.decoder) await this.ensureReady();
+    if (!this.config || !this.decoder) return;
+    const packetSink = this.opened?.packetSink;
+    if (!packetSink) return;
 
-    const targetA = this.demuxer.sampleIndexForPtsUs(aUs);
-    const targetB = Math.min(
-      this.demuxer.sampleIndexForPtsUs(bUs),
-      totalSamples - 1,
-    );
-    if (targetB < targetA) return;
-    const idr = this.demuxer.idrAtOrBefore(targetA);
+    // Position: continue from the cursor when aUs is at/ahead of the frontier
+    // (the normal forward-export case); otherwise seek to aUs's GOP key.
+    let pkt: EncodedPacket | null;
+    if (this.cursor !== null && aUs >= this.lastDispatchedPtsUs) {
+      pkt = await packetSink.getNextPacket(this.cursor);
+    } else {
+      pkt = await packetSink.getKeyPacket(aUs / 1e6);
+    }
+    if (this._disposed) return;
 
-    // If we haven't yet reached this GOP, jump to its IDR. (IDR samples
-    // are self-contained so the decoder accepts a jump without reset.)
-    // Otherwise continue from where we left off in the current flow.
-    const startIdx =
-      this.lastDispatchedIndex < idr ? idr : this.lastDispatchedIndex + 1;
     // eslint-disable-next-line no-console
     console.log(
-      `[weftcut/export] ${this.mediaId} decodeRange ` +
-        `pts=[${aUs}..${bUs}]us → samples [${startIdx}..${targetB}] ` +
-        `(idr=${idr}, lastDispatched=${this.lastDispatchedIndex})`,
+      `[weftcut/export] ${this.mediaId} decodeRange pts=[${aUs}..${bUs}]us ` +
+        `(start=${pkt ? Math.round(pkt.timestamp * 1e6) : "none"}us, ` +
+        `frontier=${this.lastDispatchedPtsUs}us)`,
     );
-    if (startIdx > targetB) {
-      // Nothing new to dispatch — everything needed is already in
-      // flight or already in the ring. No flush: the consumer's
-      // `waitForPts` resolves as outputs trickle in.
-      return;
+
+    let dispatched = 0;
+    while (pkt) {
+      const ptsUs = Math.round(pkt.timestamp * 1e6);
+      this.decoder.decode(pkt.toEncodedVideoChunk());
+      this.cursor = pkt;
+      this.lastDispatchedPtsUs = ptsUs;
+      dispatched++;
+      // Stop AFTER dispatching the first key strictly past bUs — that key
+      // begins the GOP after bUs, so everything with PTS ≤ bUs (incl.
+      // open-GOP B-refs) has now been fed.
+      if (pkt.type === "key" && ptsUs > bUs) break;
+      pkt = await packetSink.getNextPacket(pkt);
+      if (this._disposed) return;
     }
-
-    // Dispatch in GOP-aligned batches. The fixed-size BATCH=24 we
-    // tried first wedged Chrome's WebCodecs decoder: it cuts mid-GOP,
-    // leaving B-frames at the batch's tail waiting on a P-frame in
-    // the *next* batch. Chrome's flush() doesn't drain those — they
-    // sit in the reorder buffer forever, blocking new input.
-    //
-    // Snapping `batchEnd` to the next IDR (inclusive) gives the
-    // decoder every reference it needs for the GOP we just fed:
-    // closed GOPs are fully self-contained; open-GOP B-frames that
-    // reference the next GOP's IDR now have it available without
-    // an explicit flush.
-    //
-    // We DO NOT `await decoder.flush()` between batches. flush()
-    // forces the decoder to drain its reorder buffer immediately —
-    // but emitting buffered frames requires VideoFrame pool slots
-    // (Chrome's hardware decoder caps outstanding frames at ~8).
-    // When the export Worker holds frames in the ExportFrameStore
-    // pending its encode loop, those slots are taken and flush
-    // deadlocks. Instead, dispatch and return — the Worker awaits
-    // each frame via `ring.waitForPts(srcPts)`, which resolves on
-    // the decoder's async `output` callback. The encoder loop runs
-    // concurrently with the decoder, evicting (closing) source
-    // frames after composition; the pool stays drained naturally.
-    let pos = startIdx;
-    while (pos <= targetB) {
-      // batchEnd = next IDR strictly after `pos`, or last sample if
-      // we're in the file's final GOP. Use sampleMetaAt here — we
-      // only need the keyframe flag, and sampleAt would trigger byte
-      // fetches for every block we scan, thrashing the LRU.
-      let batchEnd = totalSamples - 1;
-      for (let i = pos + 1; i < totalSamples; i++) {
-        const s = this.demuxer.sampleMetaAt(i);
-        if (s?.keyframe) {
-          batchEnd = i;
-          break;
-        }
-      }
-
-      // Fault in the GOP-block bytes BEFORE the dispatch loop. The
-      // new on-demand byte cache means sampleAt returns null on a
-      // cache miss; the preview pump's `if (!s) break;` handles that
-      // by retrying next rAF, but the export's synchronous dispatch
-      // would silently exit with zero chunks fed and the worker
-      // would deadlock on `waitForPts`. ensureBlocksLoaded awaits
-      // the Range fetches so sampleAt below always returns non-null.
-      await this.demuxer.ensureBlocksLoaded(pos, batchEnd);
-
-      let dispatched = 0;
-      for (let i = pos; i <= batchEnd; i++) {
-        const s = this.demuxer.sampleAt(i);
-        if (!s) break;
-        try {
-          this.decoder.decode(
-            new EncodedVideoChunk({
-              type: s.keyframe ? "key" : "delta",
-              timestamp: s.ptsUs,
-              duration: s.durationUs,
-              data: s.data,
-            }),
-          );
-        } catch (err) {
-          // eslint-disable-next-line no-console
-          console.error(
-            `[weftcut/export] ${this.mediaId} decode threw at sample ${i} ` +
-              `(pts=${s.ptsUs}us, key=${s.keyframe}):`,
-            err,
-          );
-          throw err;
-        }
-        this.lastDispatchedIndex = i;
-        dispatched++;
-      }
-
-      // eslint-disable-next-line no-console
-      console.log(
-        `[weftcut/export] ${this.mediaId} GOP batch [${pos}..${batchEnd}] ` +
-          `→ ${dispatched} dispatched (queue=${this.decoder.decodeQueueSize})`,
-      );
-
-      pos = batchEnd + 1;
-    }
+    // eslint-disable-next-line no-console
+    console.log(
+      `[weftcut/export] ${this.mediaId} decodeRange dispatched ${dispatched} ` +
+        `(queue=${this.decoder.decodeQueueSize})`,
+    );
   }
 
   evictBefore(cutoffUs: number): void {
@@ -471,14 +366,17 @@ export class ExportSourceHandle implements DecoderHandle {
       try {
         this.decoder.close();
       } catch {
-        // Already closed; ignore.
+        // already closed
       }
       this.decoder = null;
     }
     this.ring.dispose();
-    this.demuxer.dispose();
-    this.meta = null;
+    this.opened?.dispose();
+    this.opened = null;
+    this.config = null;
     this.readyP = null;
+    this.cursor = null;
+    this.lastDispatchedPtsUs = Number.NEGATIVE_INFINITY;
     this.outputFrameCount = 0;
     this.downgraded = false;
     this._disposed = true;
