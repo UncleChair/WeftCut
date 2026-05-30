@@ -41,7 +41,7 @@ pub enum PreviewSource {
 /// Invariant: `preview == Original` implies `export == Original`. The only
 /// path to preview-from-original is `source_is_safe_to_bypass`, which requires
 /// H.264 + a browser-friendly pixfmt -- a strict subset of the condition for
-/// `decodable_directly`. Hence `{ FullProxy, Original }` is unreachable.
+/// `export_decodable_statically`. Hence `{ FullProxy, Original }` is unreachable.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProxyRoute {
     pub export: ExportSource,
@@ -100,7 +100,7 @@ pub fn job_for(route: ProxyRoute, is_small: bool) -> ProxyJob {
             }
         }
         (ExportSource::FullProxy, PreviewSource::Original) => {
-            unreachable!("preview=Original implies export=Original (safe_to_bypass is a subset of decodable_directly)")
+            unreachable!("preview=Original implies export=Original (safe_to_bypass is a subset of export_decodable_statically)")
         }
     }
 }
@@ -309,6 +309,17 @@ mod tests {
     fn vp9_8bit_exports_original_previews_proxy() {
         let item = video(|m| {
             m.metadata.video.as_mut().unwrap().codec = "vp09".into();
+        });
+        assert_eq!(decide(&item, Some(0.2)), EXPORT_ORIGINAL_PREVIEW_PROXY);
+    }
+
+    #[test]
+    fn high_bitrate_h264_1080p_exports_original_previews_proxy() {
+        // ~40 Mbps (50 MB / 10 s) is over the 25 Mbps bypass ceiling, so it is
+        // not safe_to_bypass → preview proxy; H.264 stays export-from-original.
+        let item = video(|m| {
+            m.metadata.duration_us = Some(10_000_000);
+            m.file_size = 50 * 1024 * 1024;
         });
         assert_eq!(decide(&item, Some(0.2)), EXPORT_ORIGINAL_PREVIEW_PROXY);
     }
