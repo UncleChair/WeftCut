@@ -21,6 +21,25 @@ describe("AssetRangeSource", () => {
     vi.unstubAllGlobals();
   });
 
+  it("read fulfills a window larger than the server's per-response cap", async () => {
+    // The Tauri asset:// / WebView2 Range handler caps each 206 body at a
+    // fixed ceiling (~1 MB in production). mediabunny's "network" prefetch
+    // asks for larger windows, so `read` must loop across follow-up Range
+    // requests; otherwise it returns a short buffer and mediabunny throws
+    // "Requested N bytes, but got M" — the preview-freeze bug.
+    const big = new Uint8Array(Array.from({ length: 3000 }, (_, i) => i % 256));
+    const mock = makeRangeFetchMock(big, { cap: 1000 });
+    vi.stubGlobal("fetch", mock.fetch);
+    const src = new AssetRangeSource("asset://clip");
+    // Window of 2000 bytes at a non-zero start — exceeds the 1000-byte cap,
+    // so a correct reader needs ≥2 Range requests to fill it.
+    const out = (await src.options.read(500, 2500)) as Uint8Array;
+    expect(out.byteLength).toBe(2000);
+    expect(out).toEqual(big.subarray(500, 2500));
+    expect(mock.readCalls()).toBeGreaterThan(1);
+    vi.unstubAllGlobals();
+  });
+
   it("dispose aborts; subsequent read rejects with AbortError", async () => {
     vi.stubGlobal(
       "fetch",
