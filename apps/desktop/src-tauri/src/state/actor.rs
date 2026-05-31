@@ -6084,6 +6084,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn route_correction_clears_export_uses_original() {
+        let (project, _) = project_with_video_track();
+        let handle = spawn(project);
+        let item = dummy_video_media(5_000_000);
+        let media_id = item.id;
+        handle.add_media_item(Actor::User, item).await.unwrap();
+
+        // Seed DirectExport: export from the original, no proxy yet.
+        handle
+            .set_media_derivatives(
+                Actor::User,
+                media_id,
+                MediaDerivativesPatch {
+                    export_uses_original: Some(true),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("seed");
+
+        // The route-correction patch the new `ensure_full_proxy` issues before
+        // enqueuing the full proxy.
+        handle
+            .set_media_derivatives(
+                Actor::Agent {
+                    client: "jobs".to_string(),
+                },
+                media_id,
+                MediaDerivativesPatch {
+                    export_uses_original: Some(false),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("route-correct");
+
+        let snap = handle.snapshot().await;
+        let m = snap.media_pool.get(&media_id).unwrap();
+        assert!(!m.export_uses_original, "export_uses_original cleared");
+        assert!(m.proxy_path.is_none(), "proxy_path untouched by the clear");
+    }
+
+    #[tokio::test]
     async fn set_media_derivatives_unknown_id_errors() {
         let (project, _) = project_with_video_track();
         let handle = spawn(project);
