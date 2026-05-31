@@ -44,7 +44,15 @@ import { TemplatePicker } from "./templates/TemplatePicker";
 import { MediaThumbnail } from "./panels/MediaThumbnail";
 import { mediaReadiness, type ProxyState } from "./panels/mediaReadiness";
 import { probeSourceDecodable } from "./render/decoder/probeSourceDecodable";
-import { sourcesNeedingPreflight, type ProbeState } from "./render/exportReadiness";
+import { referencedVideoMediaIds } from "./render/activeVideoLayers";
+import {
+  sourcesNeedingPreflight,
+  prepareExportMedia,
+  waitForProxies,
+  ExportCancelled,
+  ExportProxyFailed,
+  type ProbeState,
+} from "./render/exportReadiness";
 import {
   PreviewSurface,
   type PreviewSurfaceHandle,
@@ -71,7 +79,11 @@ import {
 import { StatusBar } from "./logs/StatusBar";
 import { LogConsole, type LogConsoleHandle } from "./logs/LogConsole";
 import { wireLogStream, useLogStore } from "./logs/store";
-import { useProjectStore, wireProjectStore } from "./state/projectStore";
+import {
+  exportPlaybackPathFor,
+  useProjectStore,
+  wireProjectStore,
+} from "./state/projectStore";
 import {
   setMediaPoolDrawerOpen,
   toggleDisplayMode,
@@ -672,6 +684,96 @@ export function App({ onCloseProject }: AppProps) {
       ],
     });
     if (typeof path !== "string") return;
+
+    // ---- Export-readiness gate -------------------------------------------
+    // Confirm every video source the export will decode is ready. Undecodable
+    // DirectExport sources are route-corrected here; sources whose proxy is
+    // still encoding put the panel into "preparing" and auto-start when ready.
+    {
+      const store = useProjectStore.getState();
+      const proj = store.summary; // block-scoped; avoids shadowing App `summary`
+      if (!proj) {
+        setExportState({ kind: "error", detail: "No project loaded." });
+        return;
+      }
+      const startUs = 0;
+      const endUs = proj.duration_us;
+      const referencedIds = referencedVideoMediaIds(proj, startUs, endUs);
+      const referencedMedia = [...referencedIds]
+        .map((id) => store.mediaById.get(id))
+        .filter((m): m is MediaSummary => !!m);
+
+      setExportState({ kind: "starting" });
+      const prep = await prepareExportMedia(referencedMedia, {
+        probe: (url) => probeSourceDecodable(url),
+        ensureFullProxy: (id) => ensureFullProxy(id),
+        proxyStateOf: (id) => proxyStateRef.current.get(id),
+        urlForOriginal: (m) => convertFileSrc(m.path),
+        memo: decodeProbeMemo.current,
+      });
+
+      if (prep.failed.length > 0) {
+        const labels = prep.failed
+          .map((id) => store.mediaById.get(id)?.label ?? id)
+          .join(", ");
+        setExportState({
+          kind: "error",
+          detail: t("export.failed_prepare", { labels }),
+        });
+        return;
+      }
+
+      if (prep.waiting.length > 0) {
+        const ctrl = new AbortController();
+        const labels = prep.waiting.map(
+          (id) => store.mediaById.get(id)?.label ?? id,
+        );
+        setExportState({
+          kind: "preparing",
+          labels,
+          onCancel: () => ctrl.abort(),
+        });
+        try {
+          await waitForProxies(prep.waiting, {
+            pathReady: (id) =>
+              exportPlaybackPathFor(
+                useProjectStore.getState().mediaById.get(id),
+              ) != null,
+            subscribeStore: (cb) => useProjectStore.subscribe(cb),
+            onProxyError: (cb) => {
+              // `listen` is async; guard against it resolving after cleanup
+              // (which would leak the listener).
+              let off: (() => void) | null = null;
+              let disposed = false;
+              void listen<MediaJobEvent>(MEDIA_JOB_EVENTS.error, (e) => {
+                if (e.payload.kind === "proxy") cb(e.payload.media_id);
+              }).then((u) => {
+                if (disposed) u();
+                else off = u;
+              });
+              return () => {
+                disposed = true;
+                off?.();
+              };
+            },
+            signal: ctrl.signal,
+          });
+        } catch (e) {
+          if (e instanceof ExportCancelled) {
+            setExportState(null);
+            return;
+          }
+          const id = e instanceof ExportProxyFailed ? e.mediaId : "";
+          const label = store.mediaById.get(id)?.label ?? id;
+          setExportState({
+            kind: "error",
+            detail: t("export.failed_prepare", { labels: label }),
+          });
+          return;
+        }
+      }
+    }
+    // ---- end gate --------------------------------------------------------
 
     // Allocate unique temp paths up-front so cleanup in `finally`
     // can hit them whether or not the respective stage completed.
