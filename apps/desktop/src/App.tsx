@@ -12,6 +12,7 @@ import {
   agentSessionEnd,
   agentSessionGet,
   deleteLayer,
+  ensureFullProxy,
   keybindingsGet,
   type AgentSession,
   type KeybindingsMap,
@@ -42,6 +43,8 @@ import { SettingsPanel } from "./settings/SettingsPanel";
 import { TemplatePicker } from "./templates/TemplatePicker";
 import { MediaThumbnail } from "./panels/MediaThumbnail";
 import { mediaReadiness, type ProxyState } from "./panels/mediaReadiness";
+import { probeSourceDecodable } from "./render/decoder/probeSourceDecodable";
+import { sourcesNeedingPreflight, type ProbeState } from "./render/exportReadiness";
 import {
   PreviewSurface,
   type PreviewSurfaceHandle,
@@ -161,6 +164,16 @@ export function App({ onCloseProject }: AppProps) {
   const [proxyState, setProxyState] = useState<Map<string, ProxyState>>(
     () => new Map(),
   );
+  // Session decodability probe memo, shared by the import-time sweep and the
+  // export-readiness gate. id → "ok" (decoded a key frame this session) /
+  // "pending" (probe in flight). A decodable DirectExport source stays
+  // export_uses_original forever, so this memo is what stops re-probing it.
+  const decodeProbeMemo = useRef<Map<string, ProbeState>>(new Map());
+  // Fast mirror of proxyState for use inside callbacks (stale-closure-proof).
+  const proxyStateRef = useRef(proxyState);
+  useEffect(() => {
+    proxyStateRef.current = proxyState;
+  }, [proxyState]);
   const timecodeInputRef = useRef<HTMLInputElement | null>(null);
 
   // Centralised playhead clamp — Q5 of the frame-anchor playhead spec.
@@ -468,6 +481,50 @@ export function App({ onCloseProject }: AppProps) {
       for (const u of unlisteners) u();
     };
   }, []);
+
+  // Import-time decodability sweep. For every DirectExport video source not yet
+  // probed this session, decode one key frame in the background; on failure
+  // route-correct it (ensureFullProxy clears export_uses_original + enqueues a
+  // full proxy). Capable machines pay one sub-second probe and generate no
+  // master proxy. Sequential to avoid competing with preview decoders. Reads
+  // the fresh Zustand pool; re-runs when `summary` changes (every project:changed).
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const memo = decodeProbeMemo.current;
+      const pool = useProjectStore.getState().mediaById;
+      const candidates = sourcesNeedingPreflight(pool).filter(
+        (m) =>
+          m.available &&
+          memo.get(m.id) !== "ok" &&
+          memo.get(m.id) !== "pending",
+      );
+      for (const m of candidates) {
+        if (cancelled) return;
+        memo.set(m.id, "pending");
+        let ok = false;
+        try {
+          ok = await probeSourceDecodable(convertFileSrc(m.path));
+        } catch {
+          ok = false;
+        }
+        if (cancelled) return;
+        if (ok) {
+          memo.set(m.id, "ok");
+        } else {
+          memo.delete(m.id);
+          try {
+            await ensureFullProxy(m.id);
+          } catch (e) {
+            console.error("[weftcut] route-correct failed for", m.id, e);
+          }
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [summary]);
 
   // Project-change subscription — fired by the actor whenever a commit lands,
   // regardless of source (UI command, MCP tool call, undo/redo, checkpoint
