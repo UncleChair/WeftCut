@@ -1332,6 +1332,7 @@ interface ExportComplete {
 
 type ExportState =
   | { kind: "starting" }
+  | { kind: "preparing"; labels: string[]; onCancel: () => void }
   | { kind: "progress"; progress: ExportProgress }
   | { kind: "complete"; payload: ExportComplete }
   | { kind: "error"; detail: string };
@@ -1356,6 +1357,16 @@ function ExportPanel({
   switch (state.kind) {
     case "starting":
       body = <span>{t("export.starting")}</span>;
+      break;
+    case "preparing":
+      body = (
+        <span>
+          {t("export.preparing", {
+            labels: state.labels.join(", "),
+            count: state.labels.length,
+          })}
+        </span>
+      );
       break;
     case "progress": {
       percent = Math.round(state.progress.progress * 100);
@@ -1400,7 +1411,12 @@ function ExportPanel({
             {t("export.play", { defaultValue: "Play" })}
           </button>
         )}
-        {!inProgress && (
+        {state.kind === "preparing" && (
+          <button onClick={state.onCancel}>
+            {t("export.preparing_cancel")}
+          </button>
+        )}
+        {!inProgress && state.kind !== "preparing" && (
           <button onClick={onClose}>{t("export.dismiss")}</button>
         )}
       </header>

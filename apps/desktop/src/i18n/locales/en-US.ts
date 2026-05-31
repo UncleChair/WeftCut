@@ -228,6 +228,11 @@ const enUS = {
   },
   export: {
     starting: "Starting export…",
+    preparing:
+      "Preparing optimized media for {{labels}} — export will start automatically.",
+    preparing_cancel: "Cancel",
+    failed_prepare:
+      "Couldn't prepare {{labels}} for export — the file may be corrupt or unsupported. Re-import it and try again.",
     progress_label:
       "{{percent}}% · frame {{frame}} · {{fps}}fps · {{speed}}x",
     complete: "Exported to {{path}}",

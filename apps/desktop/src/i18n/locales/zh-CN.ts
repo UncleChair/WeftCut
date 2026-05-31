@@ -226,6 +226,10 @@ const zhCN: Resources = {
   },
   export: {
     starting: "正在启动导出…",
+    preparing: "正在为 {{labels}} 准备优化媒体 —— 准备好后将自动开始导出。",
+    preparing_cancel: "取消",
+    failed_prepare:
+      "无法为 {{labels}} 准备导出媒体 —— 文件可能损坏或不受支持。请重新导入后再试。",
     progress_label:
       "{{percent}}% · 第 {{frame}} 帧 · {{fps}}fps · {{speed}}x",
     complete: "已导出到 {{path}}",
