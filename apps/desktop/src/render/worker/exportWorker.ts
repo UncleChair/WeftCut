@@ -27,7 +27,8 @@
 
 import { Application, DOMAdapter, WebWorkerAdapter } from "pixi.js";
 
-import type { LayerSummary, MediaSummary, ProjectSummary } from "../../ipc";
+import type { MediaSummary, ProjectSummary } from "../../ipc";
+import { selectActiveVideoLayers } from "../activeVideoLayers";
 import { Compositor } from "../Compositor";
 import { ExportDecoderPool } from "../decoder/ExportDecoderPool";
 import { EncoderSink } from "./encoder";
@@ -395,40 +396,26 @@ function clipSrcPtsAt(c: StagedClip, tUs: number): number {
   return c.srcInUs + (tUs - c.tStartUs);
 }
 
-/// Walk the project's tracks/layers and collect every VideoClip whose
-/// timeline interval overlaps [chunkStartUs, chunkEndUs]. Translate the
-/// overlap into source-local PTS bounds.
+/// Collect every VideoClip live in [chunkStartUs, chunkEndUs] and translate
+/// the overlap into source-local PTS bounds. Selection is delegated to
+/// `selectActiveVideoLayers` (shared with the export-readiness gate); only the
+/// PTS math lives here.
 function activeVideoClips(
   summary: ProjectSummary,
   chunkStartUs: number,
   chunkEndUs: number,
 ): StagedClip[] {
-  const out: StagedClip[] = [];
-  for (const track of summary.tracks) {
-    if (!track.enabled) continue;
-    for (const layer of track.layers as LayerSummary[]) {
-      if (!layer.enabled) continue;
-      if (layer.params.kind !== "VideoClip") continue;
-      // Reject layers entirely outside the chunk.
-      if (layer.t_end_us <= chunkStartUs) continue;
-      if (layer.t_start_us > chunkEndUs) continue;
-
-      const overlapStartUs = Math.max(layer.t_start_us, chunkStartUs);
-      const overlapEndUs = Math.min(layer.t_end_us - 1, chunkEndUs);
-      const srcAUs =
-        layer.params.src_in_us + (overlapStartUs - layer.t_start_us);
-      const srcBUs =
-        layer.params.src_in_us + (overlapEndUs - layer.t_start_us);
-      out.push({
-        layerId: layer.id,
-        mediaId: layer.params.media_id,
-        srcAUs,
-        srcBUs,
-        tStartUs: layer.t_start_us,
-        tEndUs: layer.t_end_us,
-        srcInUs: layer.params.src_in_us,
-      });
-    }
-  }
-  return out;
+  return selectActiveVideoLayers(summary, chunkStartUs, chunkEndUs).map((l) => {
+    const overlapStartUs = Math.max(l.tStartUs, chunkStartUs);
+    const overlapEndUs = Math.min(l.tEndUs - 1, chunkEndUs);
+    return {
+      layerId: l.layerId,
+      mediaId: l.mediaId,
+      srcAUs: l.srcInUs + (overlapStartUs - l.tStartUs),
+      srcBUs: l.srcInUs + (overlapEndUs - l.tStartUs),
+      tStartUs: l.tStartUs,
+      tEndUs: l.tEndUs,
+      srcInUs: l.srcInUs,
+    };
+  });
 }
