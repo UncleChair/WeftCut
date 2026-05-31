@@ -15,7 +15,7 @@ covers the preview-side surface and transport.
        ├─ PlaybackEngine     — play / pause / seek / scrub
        │    ├─ clock         — synthetic clock + Web Audio drift correction
        │    └─ AudioGraph    — Web Audio mixer
-       ├─ SourceDecoderPool  — per-clip VideoDecoder + ring; shared Demuxer per source
+       ├─ SourceDecoderPool  — per-clip VideoDecoder + ring; shared mediabunny Input per source
        └─ LiveLayers         — per-layer Sprite instances mounted on the stage
             ├─ VideoClipSprite
             ├─ ImageOverlaySprite
@@ -62,10 +62,11 @@ and compute on-the-fly per-channel sample values via the shared
 ## Decode
 
 `SourceDecoderPool` keeps one `VideoDecoder` + one `FrameRing` per
-*clip* (per `layerId`). The `Demuxer` and parsed sample table live
-on a refcounted `SourceMedia` keyed by `mediaId` so multiple clips of
-the same source share one parse but each get their own decode
-pipeline. Each handle's `FrameRing` caches 1 s lookahead / 0.5 s
+*clip* (per `layerId`). The mediabunny `Input` + `EncodedPacketSink`
+live on a refcounted `SourceMedia` keyed by `mediaId` so multiple clips
+of the same source share one open/parse but each get their own decode
+pipeline (a per-clip `PacketPump` driving the `VideoDecoder`). Each
+handle's `FrameRing` caches 1 s lookahead / 0.5 s
 lookbehind of `ImageBitmap` snapshots around the current playhead.
 The ring is what the compositor reads.
 
@@ -85,12 +86,11 @@ target isn't in the ring and for forward seeks far enough past
 the pump frontier that decoding through the gap would burn
 seconds. See [ADR 0003](adr/0003-forward-gop-crossing-no-decoder-reset.md).
 
-The `Demuxer` itself never holds the full proxy in memory. Warmup
-issues a bounded `Range` request for the moov prefix only; per-sample
-NAL bytes are fetched on demand into a small LRU of GOP-aligned
-blocks. See [`render.md`](render.md#demuxer-byte-handling) for the
-byte-cache contract — relevant when adding a new caller of
-`Demuxer.sampleAt`.
+The source is never fully resident in memory. mediabunny reads through
+an `asset://` Range `CustomSource` (`AssetRangeSource`), pulling only
+the bytes a packet needs; the `PacketPump`'s `getKeyPacket` /
+`getNextPacket` calls await those uncached Range reads natively. See
+[`render.md`](render.md#byte-handling) for the byte contract.
 
 ## Scrub
 
@@ -113,17 +113,24 @@ Web Audio path is preview-only.
 
 ## Proxies
 
-Heavy video clips play through a 1080p H.264 proxy generated at
-import by `jobs/proxy.rs`. The proxy uses a short fixed GOP
-(`-g <PROXY_GOP_FRAMES>`) so that any scrub target decodes at most a
-few frames from its keyframe — bounding the seek-to-IDR-then-decode-
-forward tail to a handful of frames and enabling frame-accurate live
-scrubbing (ADR 0008). The proxy is what the
-decoder pool opens for that media id; the original is referenced only
-at export time when the user wants full-quality output.
+What preview decodes depends on the import decode routing (see
+[`data-model.md`](data-model.md) and ADRs 0009–0011):
 
-`MediaDerivativesPatch.proxy_path = Some(None)` invalidates a stale
-proxy and triggers a re-encode on next open.
+- **Bypassed** friendly H.264 → preview decodes the original directly.
+- Everything else → preview decodes a **720p short-GOP quick proxy**
+  (`quick_proxy_path`), generated at import by `jobs/quick_proxy.rs`.
+
+The short fixed GOP (`PROXY_GOP_FRAMES`) is what makes scrubbing
+frame-accurate: any scrub target decodes at most a few frames from its
+keyframe, bounding the seek-to-key-then-decode-forward tail (ADR 0008).
+So every preview source is short-GOP — preview never decodes a heavy /
+long-GOP original.
+
+The full `proxy_path` is a source-resolution **export master** (ADR 0011)
+used only at export time; preview ignores it in favor of the quick proxy.
+`MediaDerivativesPatch.proxy_path = Some(None)` (or a
+`proxy_format_version` bump) invalidates a stale proxy and triggers a
+re-encode on next open.
 
 ## Subtitles
 

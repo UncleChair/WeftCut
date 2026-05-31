@@ -71,8 +71,9 @@ the renderer architecture.
 
 The Rust side runs ffmpeg only at:
 
-- **Import** — proxy generation (1080p H.264, short scrub GOP),
-  thumbnails, waveform.
+- **Import** — proxy generation (a 720p short-GOP scrub proxy for
+  preview, plus a source-resolution H.264 export master for sources
+  WebCodecs can't decode directly), thumbnails, waveform.
 - **Audio export** — the `lower → emit_ffmpeg → ffmpeg` audio pipeline
   produces `audio.m4a` for the user's project.
 - **Final mux** — `ffmpeg -c copy` stitches the WebCodecs-produced
@@ -164,8 +165,9 @@ weftcut/
         Compositor.ts         ←   PixiJS Application owner
         clock.ts              ←   synthetic clock + Web Audio drift
         PlaybackEngine.ts     ←   transport
-        decoder/              ←   SourceDecoderPool, Demuxer, FrameRing,
-                              ←   ExportDecoderPool, scrub
+        decoder/              ←   SourceDecoderPool, PacketPump, mediaInput,
+                              ←   FrameRing, ExportDecoderPool,
+                              ←   probeSourceDecodable, scrub
         sprite/               ←   per-layer-kind Sprite implementations
         templates/            ←   foreignObject rasterizer + cache
         subtitles/            ←   JASSUB binding
@@ -201,8 +203,9 @@ weftcut/
   keys.
 - **reqwest** (rustls) — HTTP client for cloud-provider integrations.
 - **pixi.js** v8 — webview-side renderer.
-- **mp4box.js** — webview-side demuxer / muxer for the WebCodecs
-  pipeline.
+- **mediabunny** — webview-side demuxer / muxer for the WebCodecs
+  pipeline (MP4/MOV + Matroska/WebM), reading through an `asset://`
+  Range `CustomSource`.
 - **libass-wasm** (JASSUB) — ASS/SRT subtitle rendering.
 - **i18next** + **react-i18next** — frontend i18n; bundled resources
   for `en-US` and `zh-CN`.

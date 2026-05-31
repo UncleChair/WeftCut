@@ -66,7 +66,7 @@ VPNs), the download will fail with `Connection refused`. Workarounds:
 
 ## Webview-side dependencies
 
-The PixiJS renderer pulls `pixi.js`, `mp4box`, and `libass-wasm`
+The PixiJS renderer pulls `pixi.js`, `mediabunny`, and `libass-wasm`
 (JASSUB) from npm. These install automatically via `npm install`; no
 separate native step. WebCodecs APIs are available in the WebView2 /
 WKWebView / WebKitGTK runtimes that Tauri uses on each platform.

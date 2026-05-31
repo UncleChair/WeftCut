@@ -29,10 +29,12 @@ apps/desktop/src/render/
   clock.ts                   — synthetic clock + Web Audio drift correction
   PlaybackEngine.ts          — transport (play/pause/seek/scrub)
   decoder/
-    SourceDecoderPool.ts     — per-clip VideoDecoder + ring; refcounted shared Demuxer per source; idle-dispose
-    Demuxer.ts               — mp4box.js wrapper; produces EncodedVideoChunks
+    SourceDecoderPool.ts     — per-clip VideoDecoder + ring; refcounted shared mediabunny Input per source; idle-dispose
+    mediaInput.ts            — opens a mediabunny Input over an asset:// Range CustomSource (AssetRangeSource)
+    PacketPump.ts            — single-flight async packet→decoder loop (getKeyPacket/getNextPacket)
+    probeSourceDecodable.ts  — export pre-flight: can this machine's WebCodecs decode the original?
     FrameRing.ts             — 1 s lookahead / 0.5 s lookbehind per clip; stores ImageBitmap snapshots
-    scrub.ts                 — debounced flush + seek-to-IDR + decode-forward
+    scrub.ts                 — debounced scrub coalescer (decode-during-drag)
   sprite/
     VideoClipSprite.ts
     ImageOverlaySprite.ts
@@ -47,7 +49,7 @@ apps/desktop/src/render/
     Jassub.ts                — libass-wasm canvas-mode binding
   worker/
     exportWorker.ts          — Worker entry; imports Compositor against OffscreenCanvas
-    encoder.ts               — VideoEncoder config + mp4box.js mux into video.mp4
+    encoder.ts               — VideoEncoder config + mediabunny Output mux into video.mp4
     protocol.ts              — postMessage protocol (start/cancel/progress/done)
   audio/
     AudioGraph.ts            — Web Audio mixer
@@ -84,10 +86,11 @@ interpolation semantics exactly).
 
 `SourceDecoderPool` is two-tiered. Decoders + frame rings are keyed
 by `layerId` (one `SourceHandle` per clip), while the underlying
-`Demuxer` and parsed sample table live on a refcounted `SourceMedia`
-keyed by `mediaId`. Multiple clips of the same source — including
-overlapping copies on different tracks — each get their own
-`VideoDecoder` / `FrameRing` but share one parsed sample table.
+mediabunny `Input` + `EncodedPacketSink` (and the resolved
+`VideoDecoderConfig` from `getDecoderConfig()`) live on a refcounted
+`SourceMedia` keyed by `mediaId`. Multiple clips of the same source —
+including overlapping copies on different tracks — each get their own
+`VideoDecoder` / `FrameRing` / `PacketPump` but share one opened input.
 
 A decoder is created on first `requestFrameAt(tUs)` against its
 handle and reused for every subsequent request from that clip. The
@@ -122,67 +125,29 @@ refcount falls to 0 (the last referencing handle has disposed), at
 which point the sample table + any resident GOP-block byte cache are
 released.
 
-### Demuxer byte handling
+### Byte handling
 
-The `Demuxer` never holds the full proxy in memory. On open it
-issues a bounded HTTP `Range` request against the proxy URL for an
-8 MB prefix (growing up to 32 MB if needed), feeds those bytes to
-mp4box, and breaks out the moment `onReady` fires — `+faststart` in
-the proxy guarantees moov sits at the front. The sample table is
-then read directly from the parsed boxes via
-`getTrackSamplesInfo(trackId)`; the `ISOFile` reference is dropped
-in a deferred microtask so mp4box's internal buffer chain can GC.
+The source is never fully resident in memory. The mediabunny `Input`
+reads through an `asset://` Range `CustomSource` (`AssetRangeSource`):
+each read issues an HTTP `Range` request and returns exactly the
+requested bytes. Tauri's asset handler honors Range — the same path
+HTML5 `<video>` seeks through — whereas a plain `fetch(url)` buffers
+the whole body before exposing `body.getReader()`, defeating streaming.
 
-A bounded `fetch(url)` without Range would defeat the design: Tauri's
-asset handler buffers the whole response body into the WebView2
-network layer before exposing `body.getReader()`, so a chunked
-`getReader()` loop reads from an already-resident buffer. Range
-requests are the only way to get true streaming — Tauri's asset
-handler honors them (it's the same path HTML5 `<video>` seeks
-through).
+One Range caveat: the asset handler caps each `206` body at ~1 MB, so
+`AssetRangeSource.read` loops, re-issuing Range requests until it has
+the exact byte count mediabunny asked for — a single short read would
+hand the decoder truncated data and wedge it.
 
-After moov-only init the `Demuxer` keeps each sample's metadata
-(`{ ptsUs, dtsUs, durationUs, keyframe, byteOffset, byteSize }`)
-resident — ~80 B × nbSamples, a few MB even for hour-long sources.
-Per-sample NAL bytes are NOT kept; they're fetched on demand into a
-small LRU of GOP-aligned blocks (cap 4 blocks), each block one IDR
-to the next. Total resident proxy bytes: roughly four source-seconds.
-A 24-minute proxy uses ~2 MB of cache vs the file's ~500 MB.
-
-#### `sampleAt` vs `sampleMetaAt`
-
-- `sampleMetaAt(i)`: pure metadata lookup, never triggers a fetch,
-  never returns null for an in-range index. Use this when you only
-  need PTS / keyframe / offset — e.g. the pool's backward-seek reset
-  detection and diagnostic logging.
-- `sampleAt(i)`: returns an `IndexedSample` carrying a `data` view
-  into the currently-resident block bytes. Returns null transiently
-  when the containing block isn't cached, fires a `Range` fetch as
-  a side effect, and also prefetches the next block. The preview
-  pump's `if (!s) break;` retries on the next rAF; the bytes land
-  in ~25–50 ms via Tauri's asset handler.
-
-The export pump dispatches synchronously and so cannot tolerate
-transient nulls — it calls `await Demuxer.ensureBlocksLoaded(from, to)`
-before each batch's dispatch loop. Any future caller that consumes
-`sampleAt` outside an rAF retry loop must do the same; otherwise the
-worker deadlocks on `ring.waitForPts` with zero chunks dispatched.
-
-#### Failure backoff
-
-`fetchBlock` tracks consecutive failures per block. After 3 attempts
-the block is poisoned (one `console.error` fires; subsequent
-`sampleAt` calls for that block return null without re-triggering).
-Without this a stale URL / 404 / etc. turned into a 60 Hz refetch
-loop with a frozen preview and no visible signal. Poison clears on
-`dispose`.
-
-#### Promise rejection paths
-
-`demuxer.open()` and `demuxer.ensureSamplesLoaded()` reject on
-(a) the corrupt-file path (200 fallback where `onReady` never fires),
-(b) Range fetch failure, and (c) `dispose()` racing in mid-warmup.
-Callers awaiting those promises always settle.
+mediabunny owns the demux and byte cache; there is no resident sample
+table and no manual block LRU (the prior mp4box era's `sampleAt` /
+`ensureBlocksLoaded` / GOP-block cache are gone). The `PacketPump`
+pulls packets via `getKeyPacket(tsSeconds)` / `getNextPacket(packet)`,
+both of which `await` any uncached Range read natively — a cache miss
+awaits the bytes instead of returning a transient null. The reset
+decision (`decideReset`, ADR 0003) is synchronous and key-packet-free;
+only the reset *action* fetches a key packet. See ADR 0002 for the
+mediabunny demux/mux adoption.
 
 ### Why per-clip decoders
 
@@ -240,14 +205,14 @@ preview.
 
 ## Scrub
 
-`scrub.ts` debounces drag input. On commit:
-
-1. Issue `decoder.flush()` to drop pending output.
-2. Seek the demuxer to the prior IDR.
-3. Decode forward from the IDR to the requested frame.
-
-Continuous scrub uses the same path with a tighter debounce so the
-user sees a frame within ~1 frame-time per drag step.
+`scrub.ts`'s `ScrubCoalescer` debounces drag input — a quiet-period
+timer plus a max-wait ceiling, so an unbroken drag still re-targets the
+decoder a few times a second instead of freezing on the last frame
+until the user pauses. On a stable target the `PacketPump` resets to
+the prior key packet (via `getKeyPacket`) and decodes forward to the
+requested frame. The short proxy GOP (ADR 0008) bounds that to a few
+frames, so each re-target lands within ~1 frame-time and decode-during-
+drag works without churn.
 
 ## Sprite kinds
 
@@ -304,14 +269,29 @@ body is fed directly.
 
 The Worker mounts a `Compositor` against the OffscreenCanvas, walks
 the frame grid (project fps × duration), calls `render(tUs)` for
-each, transfers the rendered frame to a `VideoEncoder`, and mp4box-
-muxes the encoded chunks into an in-memory MP4. Progress events
-fire on every encoded frame; the final `done` event hands the MP4
-ArrayBuffer back to the main thread.
+each, transfers the rendered frame to a `VideoEncoder`, and muxes the
+encoded chunks into an in-memory MP4 via a mediabunny `Output`
+(`EncodedVideoPacketSource` + `BufferTarget`). Progress events fire on
+every encoded frame; the final `done` event hands the MP4 ArrayBuffer
+back to the main thread.
 
 The main thread then writes the bytes to a temp `video.mp4`, awaits
 the audio-only Rust export into a sibling `audio.m4a`, and asks the
 Rust side to `mux_to_file(video, audio, output)`.
+
+### Export source resolution
+
+Before launching the Worker, `runExport.ts` resolves each clip's
+**export** source (`exportPlaybackPathFor`): the original for a
+DirectExport or bypassed source, otherwise the source-resolution export
+master (`proxy_path`). Export never reads the quick preview proxy. For
+any clip whose export source is a non-H.264 **original**, a main-thread
+**pre-flight** (`probeSourceDecodable`) configures a decoder and decodes
+one key packet — racing success against the decoder's error callback and
+a timeout (WebCodecs can fail silently). If a source can't be decoded on
+this machine, the Worker is never launched: the export aborts with a
+retry message and `ensure_full_proxy` enqueues a proxy, so the retry
+succeeds from the master. See ADRs 0010–0011.
 
 ### Backpressure
 
