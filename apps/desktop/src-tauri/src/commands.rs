@@ -2240,9 +2240,11 @@ pub async fn get_media_thumbnail(
 }
 
 /// Ensure a full export proxy exists/queued for a media item. Idempotent: a
-/// no-op if a full proxy is already present. Invoked by the export pre-flight
-/// when a DirectExport original cannot be decoded on this machine, and shared
-/// with the future per-clip "Generate proxy" action.
+/// Enqueue the full export proxy for `media_id` and route-correct it: clears
+/// `export_uses_original` so the resolvers stop pointing export at the
+/// (undecodable) original while the proxy encodes. No-op if a full proxy is
+/// already present. Invoked by the import-time decodability sweep, the export
+/// pre-flight, and the future per-clip "Generate proxy" action.
 #[tauri::command]
 pub async fn ensure_full_proxy(
     app: tauri::AppHandle,
@@ -2255,10 +2257,30 @@ pub async fn ensure_full_proxy(
     let Some(item) = snap.media_pool.get(&id).cloned() else {
         return Err(format!("no media {media_id}"));
     };
-    // Already have a full proxy on disk → nothing to do.
+    // Already have a full proxy on disk → nothing to do (the proxy already
+    // shadows `export_uses_original` in the resolvers).
     if item.proxy_path.as_ref().map(|p| p.is_file()).unwrap_or(false) {
         return Ok(());
     }
+    // Route correction: this source was routed to DirectExport
+    // (export_uses_original) but cannot be decoded directly on this machine.
+    // Demote it to a normal full-proxy source BEFORE enqueuing, so the
+    // resolvers stop pointing export at the undecodable original and the gentle
+    // "preparing" path applies while the proxy encodes. See ADR 0010 + the
+    // import-time-decodability-probe design.
+    handle
+        .set_media_derivatives(
+            Actor::Agent {
+                client: "jobs".to_string(),
+            },
+            id,
+            state::MediaDerivativesPatch {
+                export_uses_original: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(|e| format!("route-correct {media_id}: {e}"))?;
     crate::jobs::enqueue_full_proxy(app, (*cache).clone(), (*handle).clone(), item);
     Ok(())
 }
