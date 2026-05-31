@@ -4,6 +4,16 @@ status: accepted
 
 # Two-phase preview proxy with smart bypass
 
+> **Superseded in part by [ADR 0009](0009-two-axis-proxy-decision.md),
+> [0010](0010-lazy-decodability.md), and
+> [0011](0011-export-master-vs-preview-proxy.md).** The two-phase
+> quick→full proxy + bypass machinery here still stands, but: the routing
+> is now two orthogonal axes (0009), codec decodability is confirmed
+> lazily by an export pre-flight rather than a persisted capability oracle
+> (0010), and the full proxy is a source-resolution *export master* with
+> the quick proxy as the *permanent preview* source (0011). Read the
+> strategy details below as the original design, not current behavior.
+
 Importing a video routes through one of three proxy strategies, decided by `jobs::proxy_decision::decide`:
 
 - **Bypass** — the workspace copy is used directly, no proxy generated. Reserved for sources already close to the editor's decode contract: H.264, ≤1080p, a browser-friendly pixel format (`yuv420p` / `nv12`), and moderate bitrate (≤25 Mbps). The `MediaItem` records `proxy_bypassed = true`.

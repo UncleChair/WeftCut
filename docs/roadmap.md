@@ -32,7 +32,7 @@ WebKitGTK both ship WebCodecs but neither has been exercised against
 the live app. The platform-specific work is:
 
 - Build + run the dev shell on each OS.
-- Confirm the WebCodecs / PixiJS / mp4box.js / JASSUB stack decodes
+- Confirm the WebCodecs / PixiJS / mediabunny / JASSUB stack decodes
   the proxy and produces frame-identical output across platforms.
 - Confirm `ffmpeg-sidecar`'s auto-download works on each platform
   (and that the proxy SOCKS fallback in [`setup.md`](setup.md) is the

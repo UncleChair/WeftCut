@@ -109,32 +109,27 @@ to the output path.
 
 ## Proxies
 
-Heavy video clips render through a 1080p-capped H.264 proxy
-generated at import by `jobs/proxy.rs`. The proxy is the master
-decode source for both preview and export — the original is touched
-only at audio-export time. The proxy job:
+Import generates the H.264 proxies the WebCodecs renderer decodes,
+cached under `<cache>/proxies/<file_hash>.mp4` (skip-if-cached). There
+are two, for two roles (full detail in [`preview.md`](preview.md) and
+[`data-model.md`](data-model.md); ADRs 0009–0011):
 
-1. Caches at `<cache>/proxies/<file_hash>.mp4`. Skips work when the
-   cached file is non-empty.
-2. Re-encodes with:
-   `ffmpeg -i <src> -vf "scale=-2:'min(ih,1080)'" -c:v libx264
-   -preset fast -crf 22 -profile:v high -level:v 4.2
-   -g <round(src_fps)> -keyint_min <round(src_fps)> -pix_fmt yuv420p
-   -c:a aac -b:a 128k -movflags +faststart -f mp4 <proxy_path>`.
-   Audio is kept (AAC 128 k) so the proxy is independently playable
-   for preview; high profile / Level 4.2 / yuv420p gives WebCodecs a
-   universally-decodable `avc1.640028` stream. A short fixed GOP
-   (`PROXY_GOP_FRAMES`) keeps a keyframe every few frames so any scrub
-   target decodes at most a handful of frames from its IDR — frame-
-   accurate live scrubbing (see ADR 0008; ADR 0003's no-reset-on-
-   forward-GOP-crossing still holds).
-3. Writes the resulting path back via
-   `MediaDerivativesPatch.proxy_path = Some(Some(proxy_path))`.
+- **Quick proxy** (`jobs/quick_proxy.rs`) — 720p, short fixed GOP
+  (`PROXY_GOP_FRAMES`), `libx264 -preset ultrafast`, yuv420p. The
+  **preview** scrub source. The short GOP bounds the
+  seek-to-key-then-decode-forward tail to a few frames — frame-accurate
+  live scrubbing (ADR 0008; ADR 0003's no-reset-on-forward-GOP-crossing
+  still holds).
+- **Export master** (`jobs/proxy.rs`) — source-resolution (≤4K) H.264,
+  `-preset fast -crf 18 -profile:v high` (auto level), short GOP,
+  `-bf 0`, yuv420p, `+faststart`. Generated only for sources WebCodecs
+  can't decode directly; export decodes it (never the quick proxy). A
+  `PROXY_FORMAT_VERSION` bump or `proxy_path = Some(None)` invalidates
+  it for re-encode on next open.
 
-The decoder pool on the webview side opens the proxy (when present)
-instead of the original. To force a re-encode (e.g., proxy spec
-changes), patch `proxy_path = Some(None)` — the next open re-runs
-the proxy job.
+Sources WebCodecs *can* decode are bypassed (no proxy) or DirectExport
+(export reads the original); see the decode-routing summary in
+[`data-model.md`](data-model.md).
 
 ## Background jobs
 
@@ -142,7 +137,7 @@ All ffmpeg-driven derivatives live under `jobs/`:
 
 | Job | Output | Trigger |
 |---|---|---|
-| `proxy.rs` | 1080p H.264, short scrub GOP per source | Auto on import |
+| `proxy.rs` / `quick_proxy.rs` | source-res (≤4K) export master + 720p scrub proxy | Auto on import |
 | `thumbnails.rs` | per-source thumb strip | Auto on import |
 | `waveform.rs` | `.peaks` binary file | Auto on import (audio-bearing sources) |
 | `frame.rs` | single PNG at a t_us | On-demand via `media://{id}/frame/{t}` |

@@ -114,10 +114,11 @@ struct MediaItem {
     path_rel: Option<PathBuf>,        // authoritative; relative to workspace root
     kind: MediaKind,                  // Video | Audio | Image | Subtitle
     metadata: MediaMetadata,
-    proxy_path: Option<PathBuf>,      // full proxy: ≤1080p H.264 in Cache/proxies/
+    proxy_path: Option<PathBuf>,      // export master: source-res (≤4K) H.264 in Cache/proxies/
     proxy_format_version: u32,        // a bump forces proxy regen on next load
-    quick_proxy_path: Option<PathBuf>,// preview-first ≤540p proxy; preview-only
-    proxy_bypassed: bool,             // source is WebCodecs-safe; no proxy made
+    quick_proxy_path: Option<PathBuf>,// 720p short-GOP scrub proxy; the preview source
+    proxy_bypassed: bool,             // source decodes directly for preview+export; no proxy
+    export_uses_original: bool,       // export decodes the original; preview uses the quick proxy
     waveform_path: Option<PathBuf>,
     thumbnails_dir: Option<PathBuf>,
     file_hash_blake3: String,         // for relink-by-content + cache key
@@ -129,7 +130,36 @@ struct MediaItem {
 
 `path_rel` is the on-disk anchor (workspace-relative, e.g. `Media/clip.mp4`). On load, `io::load_from_dir` rewrites `path_abs = workspace.join(path_rel)` so workspace moves between machines don't break references. `path_abs` is the in-memory convenience path consumed by the IR compiler + background jobs. If `path_rel` is missing (legacy v1 project before migration) or the resolved file doesn't exist, the pool item gets a "missing media" badge — the project still loads.
 
-The three proxy fields encode a video's decode-readiness for the WebCodecs preview. An import picks one of three routes (ADR 0006): a source already safe to decode directly sets `proxy_bypassed = true` and gets no generated file; everything else generates a full `proxy_path`, optionally preceded by a fast `quick_proxy_path` so the clip is editable within seconds while the full proxy renders. `quick_proxy_path` is **preview-only** — export refuses it and waits for `proxy_path` or a bypass. It is session-scoped: `io::load_from_dir` clears it (and deletes the file) on every open, and the open-time derivative enqueue regenerates it if the full proxy still hasn't landed. A completed full proxy clears `quick_proxy_path`. Preview readiness is therefore `proxy_path || quick_proxy_path || proxy_bypassed`; export readiness is `proxy_path || proxy_bypassed`. Background derivative jobs may start before `file_hash_blake3` is final and are keyed on a temporary `pending-{media_id}` hash that migrates to the content hash when the import copy finishes (ADR 0007).
+The proxy fields encode a video's decode routing, decided per source on
+two independent axes (ADR 0009): an **export source** axis (can WebCodecs
+decode this codec / bit-depth?) and a **preview source** axis (does the
+original scrub acceptably — friendly H.264, ≤1080p, short GOP?). The
+combinations:
+
+- **Bypass** (`proxy_bypassed = true`): a friendly short-GOP H.264 source;
+  no proxy generated — preview and export both read the original.
+- **DirectExport** (`export_uses_original = true`): export reads the
+  original at full quality, while a 720p short-GOP `quick_proxy_path` is
+  generated as the preview scrub source.
+- **Proxied** (neither flag; `proxy_path` set): a source WebCodecs can't
+  decode directly (non-H.264-family codec, or 10-bit/HDR) — a 720p
+  `quick_proxy_path` is the preview source and a source-resolution
+  `proxy_path` is the export master.
+
+`proxy_path` is a pure **export master** at source resolution (≤4K,
+ADR 0011) — never used for preview. `quick_proxy_path` is the **permanent
+preview source**: it is NOT cleared when the master lands, and preview
+prefers it over `proxy_path`. Preview readiness is therefore
+`quick_proxy_path || proxy_path || proxy_bypassed || export_uses_original`;
+export readiness is `proxy_path || proxy_bypassed || export_uses_original`.
+
+Codec decodability is not predicted from a stored capability profile — the
+export path tries to decode the original and falls back to generating a
+`proxy_path` if it can't (ADR 0010), so HEVC/AV1 export from the original
+on capable machines and get proxied on machines that can't decode them.
+Background derivative jobs may start before `file_hash_blake3` is final,
+keyed on a temporary `pending-{media_id}` hash that migrates to the content
+hash when the import copy finishes (ADR 0007).
 
 ## `Track`
 
@@ -449,7 +479,7 @@ The workspace folder *is* the project. Opening a workspace folder = opening the 
 │   ├── interview.mov
 │   └── b-roll-001.mp4
 ├── Cache/                    ← all derivatives; safe to delete
-│   ├── proxies/              ← 540p H.264 per source (used by preview render)
+│   ├── proxies/              ← per-source H.264: a 720p scrub proxy (preview) + a source-res export master
 │   ├── thumbnails/           ← per-source thumb strips
 │   ├── waveforms/            ← .peaks files for waveform display
 │   ├── frames/               ← on-demand video frames (media://{id}/frame/{t})
