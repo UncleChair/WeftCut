@@ -22,9 +22,11 @@ now.
 
 ## Scope
 
-A webview-only addition on top of the import-time decodability machinery. No Rust
-change, no change to the import decision, the export gate, the sweep's
-route-correction, or the resolvers. Adds one derived classifier, one dialog
+A mostly-webview addition on top of the import-time decodability machinery. One
+small Rust change: expose `codec` + `pix_fmt` (raw passthroughs from
+`metadata.video`) on `MediaSummary` so the dialog can name the codec. No change
+to the import decision, the export gate, the sweep's route-correction, or the
+resolvers. Adds the two summary fields, one derived classifier, one dialog
 component, an import-driven trigger, a small addition to the sweep (record
 route-corrected ids), and i18n strings.
 
@@ -42,6 +44,17 @@ update), implemented non-blocking so it doesn't contradict "still editable."
 
 ## Design
 
+### 0. Backend: two passthrough fields on `MediaSummary`
+
+Add `pub codec: Option<String>` and `pub pix_fmt: Option<String>` to the Rust
+`MediaSummary` struct (`commands.rs` ~line 240) and populate them from
+`m.metadata.video` in the build site (`...map(|v| v.codec.clone())` /
+`...map(|v| v.pix_fmt.clone())`), mirroring the existing `width`/`height` lines.
+Add `codec: string | null` and `pix_fmt: string | null` to the TS `MediaSummary`
+interface. **Both are raw passthroughs — no derivation in Rust**, so there is no
+drift with `proxy_decision`'s codec/pixfmt helpers. This is the only backend
+change.
+
 ### 1. Per-video classifier (pure, webview)
 
 `importOptimizeStatus(media, deps)` where `deps = { memo, proxyStateOf,
@@ -58,10 +71,19 @@ routeCorrected }` — all webview signals that already exist:
 The classifier is a pure function of `(MediaSummary, memo, proxyState, routeCorrected)`
 → one of those five — unit-testable with plain objects.
 
-**Reason label** (coarse, 2-way — `MediaSummary` carries no codec field and we
-don't touch Rust):
-- `id ∈ routeCorrected` → "本机无法直接解码 / Can't be decoded on this machine"
-- else (static FullProxy) → "格式需优化 / Format needs optimizing"
+**Reason label** (codec-name-specific — uses the new `codec`/`pix_fmt` fields +
+the `routeCorrected` set):
+- `codecDisplayName(codec)` → friendly name: h264→`H.264`, hevc/h265→`HEVC`,
+  av1/av01→`AV1`, vp9/vp09→`VP9`, prores→`ProRes`, mpeg2video→`MPEG-2`, else the
+  raw codec uppercased; `null`→`未知`.
+- `is10bit(pix_fmt)` = `pix_fmt` matches `/10|12/` (display heuristic; `null`→false).
+- `id ∈ routeCorrected` (machine can't decode it) →
+  `{codecDisplayName}{ 10-bit if so} · 本机无法直接解码`.
+- else (static FullProxy): `is10bit` → `{codecDisplayName} 10-bit/HDR · 需优化`;
+  else → `{codecDisplayName} · 需转码`.
+
+`codecDisplayName` + `is10bit` are pure helpers, unit-testable alongside the
+classifier.
 
 ### 2. Sweep records route-corrected ids (small addition)
 
@@ -100,18 +122,21 @@ the user dismisses it.
 
 ### 5. i18n
 
-New `import_proxy.*` keys in en-US + zh-CN: title ("部分素材需要优化"),
-`optimizing_heading`, `checking` ("正在检测 {{count}} 个素材…"),
-`reason_undecodable`, `reason_format`, `failed` ("准备失败,请重新导入"),
-`editable_note` ("仍可立即编辑;导出会自动等待。"), `dismiss` ("知道了").
+New `import_proxy.*` keys in en-US + zh-CN: `title` ("部分素材需要优化"),
+`optimizing_heading` ("导出优化中"), `checking` ("正在检测 {{count}} 个素材…"),
+the codec-interpolated reasons `reason_undecodable` ("{{codec}} · 本机无法直接解码"),
+`reason_transcode` ("{{codec}} · 需转码"), `reason_10bit` ("{{codec}} 10-bit/HDR · 需优化"),
+`failed` ("准备失败,请重新导入"), `editable_note` ("仍可立即编辑;导出会自动等待。"),
+`dismiss` ("知道了"). The `{{codec}}` value comes from `codecDisplayName`.
 
 ## Consequences / trade-offs
 
 - **Pure-H.264 imports flash the dialog** ("checking…" → auto-close). Accepted
   cost of immediate-pop (the user chose it over wait-then-show-once).
-- **Reasons are coarse** (machine-undecodable vs format) — no codec name, because
-  `MediaSummary` has no codec field and this is webview-only. Adding a codec field
-  is a future backend change if finer reasons are wanted.
+- **Codec display + 10-bit are derived frontend-side** from the raw `codec`/`pix_fmt`
+  strings. `is10bit` is a cosmetic `/10|12/` heuristic — NOT the authoritative
+  `pix_fmt_is_browser_friendly` — so an exotic pixfmt could be mislabeled in the
+  reason text. Display-only; no functional impact (routing already happened in Rust).
 - **No progress %** — the proxy job doesn't report it; items show "优化中"/queued.
 - **Pre-decision window** is lumped into "checking" — a just-imported clip before
   its Rust routing lands shows as checking for a moment, then resolves. Brief and
@@ -126,7 +151,8 @@ New `import_proxy.*` keys in en-US + zh-CN: title ("部分素材需要优化"),
 - Proxy progress bar / percentage.
 - In-dialog actions (cancel optimization / force direct export) — that's the
   deferred Plan 3 per-clip override.
-- Any Rust change (codec field, new events, new commands).
+- New Rust events or commands, or any change to the import decision / proxy logic
+  (the only backend change is the two read-only `codec`/`pix_fmt` summary fields).
 - Changing the media-pool card badges, the export gate, the sweep's correctness
   logic, or the resolvers.
 
@@ -135,19 +161,25 @@ New `import_proxy.*` keys in en-US + zh-CN: title ("部分素材需要优化"),
 - **Classifier (pure, unit):** truth table — `proxy_path` → ready; `proxy_bypassed`
   → direct; `export_uses_original` + memo ok → direct, else checking; no-routing +
   no proxyState → checking; pending proxy job → optimizing; failed proxyState →
-  failed. Reason: id in `routeCorrected` → undecodable, else format.
+  failed.
+- **Reason helpers (pure, unit):** `codecDisplayName` map (hevc→HEVC, av01→AV1,
+  prores→ProRes, null→未知, unknown→uppercased); `is10bit` (`yuv420p10le`→true,
+  `yuv420p`→false, null→false); reason text — `routeCorrected` id → "…本机无法直接解码",
+  static 10-bit → "…10-bit/HDR 需优化", static 8-bit non-family → "…需转码".
+- **Serialization (Rust):** `MediaSummary` carries `codec`/`pix_fmt` from
+  `metadata.video` (present for a video item, `None` for audio/image).
 - **Dialog (pure render helpers where possible):** given a batch + classified
   statuses, asserts the optimize list / checking count / auto-close-when-empty
   partitioning. Heavy UI wiring (importQueue trigger, live event updates) is
   covered by manual smoke (the fixture/browser test suite can't run headless;
   typecheck + prod build are also red at baseline — gate via per-file error diff
   + `tauri:dev`).
-- **Smoke (`tauri:dev`):** (a) import a ProRes/MPEG-2 clip → dialog pops, lists it
-  under "导出优化中 / 格式需优化", stays. (b) Force `probeSourceDecodable → false`,
-  import HEVC → dialog shows "checking" then moves the clip to the list with
-  "本机无法直接解码". (c) Import a plain H.264 clip → dialog flashes "checking" then
-  auto-closes (no lingering). (d) Dismiss mid-checking → closes cleanly, background
-  proxies continue.
+- **Smoke (`tauri:dev`):** (a) import a ProRes clip → dialog pops, lists it under
+  "导出优化中" as "ProRes · 需转码", stays. (b) Force `probeSourceDecodable → false`,
+  import HEVC → dialog shows "checking" then moves the clip to the list as
+  "HEVC · 本机无法直接解码". (c) Import a plain H.264 clip → dialog flashes "checking"
+  then auto-closes (no lingering). (d) Dismiss mid-checking → closes cleanly,
+  background proxies continue. (e) A 10-bit HEVC → "HEVC 10-bit/HDR · 需优化".
 
 ## Open questions
 
