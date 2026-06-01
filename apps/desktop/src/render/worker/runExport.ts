@@ -38,13 +38,18 @@ export interface RunExportInit {
   /// Optional progress callback. Fires with (framesEncoded,
   /// totalFrames) on every progress event.
   onProgress?: (encoded: number, total: number) => void;
+  /// Sink for each sequential output-file slice (fMP4, append-only). Called in
+  /// order; must resolve once the slice is durably written (the Worker awaits
+  /// the ack before releasing the next write → backpressure). Streaming to disk
+  /// avoids buffering the whole MP4 in one ArrayBuffer (V8's ~2GB cap OOM'd
+  /// long exports at finalize).
+  writeChunk: (data: ArrayBuffer) => Promise<void>;
   /// Optional cancel signal — the Worker checks at each frame
   /// boundary.
   signal?: AbortSignal;
 }
 
 export interface RunExportResult {
-  videoBytes: ArrayBuffer;
   /// (encoded, total). After a clean run, encoded === total.
   framesEncoded: number;
   totalFrames: number;
@@ -169,13 +174,22 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
         framesEncoded = ev.framesEncoded;
         totalFrames = ev.totalFrames;
         init.onProgress?.(framesEncoded, totalFrames);
+      } else if (ev.type === "chunk") {
+        // Append the slice to disk, then ack so the Worker releases the next
+        // write. Errors abort the export. Serialized by the Worker (one
+        // pending write at a time), so no ordering bookkeeping needed here.
+        init
+          .writeChunk(ev.data)
+          .then(() => {
+            worker.postMessage({ type: "chunk-ack" } satisfies ExportRequest);
+          })
+          .catch((err: unknown) => {
+            cleanup();
+            reject(err instanceof Error ? err : new Error(String(err)));
+          });
       } else if (ev.type === "done") {
         cleanup();
-        resolve({
-          videoBytes: ev.videoBytes,
-          framesEncoded,
-          totalFrames,
-        });
+        resolve({ framesEncoded, totalFrames });
       } else if (ev.type === "error") {
         cleanup();
         reject(new Error(ev.message));

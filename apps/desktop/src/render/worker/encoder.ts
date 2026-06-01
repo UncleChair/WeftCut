@@ -13,7 +13,7 @@
 // and rethrow it at `finalize()`.
 
 import {
-  BufferTarget,
+  AppendOnlyStreamTarget,
   EncodedPacket,
   EncodedVideoPacketSource,
   Mp4OutputFormat,
@@ -27,12 +27,17 @@ export interface EncoderInit {
   height: number;
   fpsNum: number;
   fpsDen: number;
+  /// Sink for each sequential slice of the output file. Returns a promise that
+  /// resolves once the slice is durably written (e.g. appended to disk on the
+  /// main thread); the mux applies backpressure on it, so the encoder throttles
+  /// to the write speed and the whole MP4 is never held in memory. Fragmented
+  /// MP4 + AppendOnlyStreamTarget guarantee these slices are sequential.
+  onChunk: (data: Uint8Array) => Promise<void>;
 }
 
 export class EncoderSink {
   private encoder: VideoEncoder;
-  private output: Output<Mp4OutputFormat, BufferTarget>;
-  private target: BufferTarget;
+  private output: Output<Mp4OutputFormat, AppendOnlyStreamTarget>;
   private videoSource: EncodedVideoPacketSource;
   /// Serializes the async `source.add` calls in encode/output order. Headed
   /// by `output.start()` so the first add waits for the output to be ready.
@@ -47,10 +52,19 @@ export class EncoderSink {
   private yieldWaiters: Array<() => void> = [];
 
   constructor(init: EncoderInit) {
-    this.target = new BufferTarget();
+    // Fragmented MP4 writes strictly sequentially (moof+mdat fragments, no
+    // back-patching), so an append-only stream works — each slice is posted to
+    // the main thread (which appends it to the temp file) and the WritableStream
+    // backpressure throttles the encoder. The Rust mux re-containers this fMP4
+    // into the user's chosen container, so it's an invisible intermediate.
+    const writable = new WritableStream<Uint8Array>({
+      write(chunk) {
+        return init.onChunk(chunk);
+      },
+    });
     this.output = new Output({
-      format: new Mp4OutputFormat({ fastStart: "in-memory" }),
-      target: this.target,
+      format: new Mp4OutputFormat({ fastStart: "fragmented" }),
+      target: new AppendOnlyStreamTarget(writable),
     });
     this.videoSource = new EncodedVideoPacketSource(
       webCodecsToMediabunnyVideoCodec(init.config.codec),
@@ -93,18 +107,17 @@ export class EncoderSink {
     }
   }
 
-  /// Drain the encoder, flush the mux add-chain, finalize the Output, and
-  /// return the MP4 byte buffer.
-  async finalize(): Promise<ArrayBuffer> {
+  /// Drain the encoder, flush the mux add-chain, and finalize the Output. The
+  /// bytes were already streamed to the main thread via `onChunk` (finalize
+  /// flushes the trailing fragments through the same path), so nothing is
+  /// returned.
+  async finalize(): Promise<void> {
     await this.encoder.flush();
     this.encoder.close();
     // Wait for every queued `source.add` to complete.
     await this.addChain;
     if (this.muxError) throw this.muxError;
     await this.output.finalize();
-    const buf = this.target.buffer;
-    if (!buf) throw new Error("[weftcut/export] mux produced no buffer");
-    return buf;
   }
 
   dispose(): void {

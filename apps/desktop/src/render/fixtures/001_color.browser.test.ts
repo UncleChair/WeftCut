@@ -22,6 +22,7 @@ import project from "../../../fixtures/001_color/project.json";
 import manifest from "../../../fixtures/001_color/manifest.json";
 import type { ProjectSummary } from "../../ipc";
 import { runExport } from "../worker/runExport";
+import { concatExportChunks } from "./runFixture";
 
 declare module "@vitest/browser/context" {
   interface BrowserCommands {
@@ -33,24 +34,30 @@ describe("001_color renders end-to-end through the export Worker", () => {
   test(
     "produces a non-empty MP4 + writes it to build/fixtures/",
     async () => {
-      // Empty media map — 001_color references no external assets.
+      // Empty media map — 001_color references no external assets. The export
+      // streams output chunks; buffer them (tiny fixture) into one MP4.
+      const chunks: Uint8Array[] = [];
       const result = await runExport({
         summary: project as unknown as ProjectSummary,
         mediaById: new Map(),
+        writeChunk: async (data) => {
+          chunks.push(new Uint8Array(data));
+        },
       });
+      const videoBytes = concatExportChunks(chunks);
 
-      expect(result.videoBytes.byteLength).toBeGreaterThan(0);
+      expect(videoBytes.byteLength).toBeGreaterThan(0);
       expect(result.framesEncoded).toBe(result.totalFrames);
       expect(result.framesEncoded).toBeGreaterThan(0);
 
       // Hand the MP4 off to Node for the Rust CLI to pick up. Browser
       // mode serializes typed arrays as plain arrays through the
       // commands bridge; convert explicitly so the shape is obvious.
-      const bytes = Array.from(new Uint8Array(result.videoBytes));
+      const bytes = Array.from(new Uint8Array(videoBytes));
       const writtenPath = await commands.writeFixtureMp4(manifest.name, bytes);
       // eslint-disable-next-line no-console
       console.log(
-        `[fixtures] wrote ${manifest.name} MP4 (${result.videoBytes.byteLength} bytes) → ${writtenPath}`,
+        `[fixtures] wrote ${manifest.name} MP4 (${videoBytes.byteLength} bytes) → ${writtenPath}`,
       );
     },
     // The export Worker spins up Chromium WebCodecs decoders + encoders;

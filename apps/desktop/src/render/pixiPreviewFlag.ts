@@ -6,12 +6,10 @@
 // preview surface after P12-e. Devtools hooks check
 // `window.__weftcut_*` directly and no longer need the flag.
 
-/// Result of a successful Pixi export. The handle just delivers
-/// the bytes — writing them to disk + showing UI is the caller's
-/// job so App.tsx can drive the save dialog + ExportPanel state
-/// without PixiPreview needing to know about either.
+/// Result of a successful Pixi export. The output bytes are streamed to disk
+/// via the caller's `writeChunk` during the run (not returned here) so the
+/// whole MP4 is never held in one ArrayBuffer.
 export interface PixiExportResult {
-  videoBytes: ArrayBuffer;
   framesEncoded: number;
   totalFrames: number;
   /// Output frame rate (fps_num / fps_den) — caller needs this to
@@ -43,12 +41,15 @@ export interface PixiPreviewHandle {
   /// The handle does not write the bytes anywhere — App.tsx owns
   /// the save dialog + file write so the existing ExportPanel
   /// progress UI can drive both pipelines.
-  runExport(opts?: {
+  runExport(opts: {
     onProgress?: (encoded: number, total: number) => void;
     /// Full encoder config (codec/dims/bitrate/bitrateMode/framerate). When
     /// omitted, the worker falls back to its 1080p H.264 default.
     encoderConfig?: VideoEncoderConfig;
     /// Output fps rational (overrides composition fps). Omit ⇒ comp fps.
     outputFps?: { num: number; den: number };
+    /// Sink for each sequential output-file slice (append-only). Must resolve
+    /// once durably written; the worker backpressures on it.
+    writeChunk: (data: ArrayBuffer) => Promise<void>;
   }): Promise<PixiExportResult>;
 }

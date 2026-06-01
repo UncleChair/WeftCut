@@ -4,7 +4,7 @@ import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialo
 import { join, tempDir } from "@tauri-apps/api/path";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { remove, writeFile } from "@tauri-apps/plugin-fs";
+import { open, remove } from "@tauri-apps/plugin-fs";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -940,6 +940,26 @@ export function App({ onCloseProject }: AppProps) {
       });
     };
 
+    // Open the temp video for streamed, append-only writes. The Worker emits
+    // the output in sequential slices (fMP4) and we append each here, so the
+    // whole MP4 is never held in one ArrayBuffer (V8's ~2GB cap OOM'd long
+    // exports). Closed before ffmpeg reads it.
+    const videoHandle = await open(tempVideoPath, {
+      write: true,
+      create: true,
+      truncate: true,
+    });
+    let handleClosed = false;
+    const closeVideoHandle = async () => {
+      if (handleClosed) return;
+      handleClosed = true;
+      try {
+        await videoHandle.close();
+      } catch {
+        // already closed / best-effort
+      }
+    };
+
     setExportState({ kind: "starting" });
     let result;
     try {
@@ -947,20 +967,27 @@ export function App({ onCloseProject }: AppProps) {
         onProgress,
         encoderConfig,
         outputFps: { num: fpsNum, den: fpsDen },
+        writeChunk: async (data) => {
+          await videoHandle.write(new Uint8Array(data));
+        },
       });
     } catch (e) {
+      await closeVideoHandle();
       const msg = e instanceof Error ? e.message : String(e);
       console.error("[weftcut/pixi] export failed:", e);
       setExportState({ kind: "error", detail: msg });
       return;
     }
     if (!result) {
+      await closeVideoHandle();
       setExportState({
         kind: "error",
         detail: "Preview not initialized.",
       });
       return;
     }
+    // Flush + close the streamed video file before ffmpeg reads it.
+    await closeVideoHandle();
 
     // Transcode-progress listener (ffmpeg path only). Maps 0..1 onto the
     // panel's progress phase; detached after the mux resolves. Awaited so the
@@ -982,11 +1009,8 @@ export function App({ onCloseProject }: AppProps) {
         : null;
 
     try {
-      // (1) Write Worker bytes to temp video (H.264 mezzanine on the ffmpeg
-      // path, the target codec on the WebCodecs path).
-      await writeFile(tempVideoPath, new Uint8Array(result.videoBytes));
-
-      // (2) Audio-only Rust export → temp audio.m4a (AAC).
+      // (1) Video is already written to tempVideoPath (streamed above).
+      // Audio-only Rust export → temp audio.m4a (AAC).
       await exportProjectAudioOnly(tempAudioPath);
 
       // (3) Mux → user-chosen path. WebCodecs path = stream-copy into the

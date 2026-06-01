@@ -44,10 +44,26 @@ export interface FixtureManifest {
 export interface RunFixtureResult {
   manifest: FixtureManifest;
   export: RunExportResult;
+  /// Full rendered MP4 bytes, reassembled from the streamed export chunks.
+  /// The production export streams to disk to avoid a whole-file ArrayBuffer;
+  /// fixtures are tiny, so buffering them in memory here is fine.
+  videoBytes: ArrayBuffer;
   /// Absolute path the runner used as the fixture root — propagated so
   /// the dev shell can write expected/ PNGs alongside the source files
   /// without re-asking for the path.
   fixtureRoot: string;
+}
+
+/// Concatenate streamed export chunks into one contiguous ArrayBuffer.
+export function concatExportChunks(chunks: Uint8Array[]): ArrayBuffer {
+  const total = chunks.reduce((n, c) => n + c.byteLength, 0);
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) {
+    out.set(c, off);
+    off += c.byteLength;
+  }
+  return out.buffer;
 }
 
 /// Load + run a fixture end-to-end through the export Worker. Caller
@@ -61,12 +77,21 @@ export async function runFixture(fixtureRoot: string): Promise<RunFixtureResult>
 
   const mediaById = buildMediaById(project, fixtureRoot);
 
+  const chunks: Uint8Array[] = [];
   const exp = await runExport({
     summary: project,
     mediaById,
+    writeChunk: async (data) => {
+      chunks.push(new Uint8Array(data));
+    },
   });
 
-  return { manifest, export: exp, fixtureRoot };
+  return {
+    manifest,
+    export: exp,
+    videoBytes: concatExportChunks(chunks),
+    fixtureRoot,
+  };
 }
 
 /// Extract a PNG frame from the MP4 at composition-time `tUs`. Round-
@@ -102,7 +127,7 @@ export async function generateBaselines(fixtureRoot: string): Promise<string[]> 
   const expectedDir = joinPath(fixtureRoot, "expected");
   await fs.mkdir(expectedDir, { recursive: true });
   for (const tUs of result.manifest.sample_times_us) {
-    const png = await extractFrame(result.export.videoBytes, tUs);
+    const png = await extractFrame(result.videoBytes, tUs);
     const dest = joinPath(expectedDir, `t_${tUs}.png`);
     await fs.writeFile(dest, png);
     written.push(dest);
@@ -148,7 +173,7 @@ export async function checkFixture(
     const expectedPath = joinPath(fixtureRoot, `expected/t_${tUs}.png`);
     let actualBytes: Uint8Array;
     try {
-      actualBytes = await extractFrame(ran.export.videoBytes, tUs);
+      actualBytes = await extractFrame(ran.videoBytes, tUs);
     } catch (e) {
       samples.push({
         tUs,

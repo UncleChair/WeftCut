@@ -46,6 +46,22 @@ function post(ev: ExportEvent, transfer: Transferable[] = []): void {
 }
 
 let cancelled = false;
+/// Resolver for the in-flight `chunk` write. WritableStream serializes writes,
+/// so at most one is pending at a time.
+let pendingChunkAck: (() => void) | null = null;
+
+/// Post one sequential output slice to the main thread and resolve once it
+/// acks (after appending to disk). mediabunny's WritableStream awaits this, so
+/// the encoder throttles to write speed and the whole MP4 is never resident.
+function postChunk(data: Uint8Array): Promise<void> {
+  return new Promise<void>((resolve) => {
+    pendingChunkAck = resolve;
+    // Copy into a fresh buffer and transfer it (mediabunny may reuse the
+    // source buffer once write() resolves).
+    const copy = data.slice();
+    post({ type: "chunk", data: copy.buffer }, [copy.buffer]);
+  });
+}
 
 self.onmessage = (e: MessageEvent<ExportRequest>) => {
   const req = e.data;
@@ -58,6 +74,10 @@ self.onmessage = (e: MessageEvent<ExportRequest>) => {
     });
   } else if (req.type === "cancel") {
     cancelled = true;
+  } else if (req.type === "chunk-ack") {
+    const resolve = pendingChunkAck;
+    pendingChunkAck = null;
+    resolve?.();
   }
 };
 
@@ -149,6 +169,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     height: outHeight,
     fpsNum: outFpsNum,
     fpsDen: outFpsDen,
+    onChunk: postChunk,
   });
 
   // 5. Frame grid — driven by OUTPUT fps. The grid is time-based, so a lower
@@ -372,10 +393,12 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
       `  evict       ${totals.evictMs.toFixed(0).padStart(7)}ms  (${pct(totals.evictMs)}%)`,
   );
 
-  // 7. Finalize.
-  const bytes = await encoder.finalize();
+  // 7. Finalize. The bytes were streamed to the main thread via `onChunk`
+  // (finalize flushes the trailing fragments through the same path); the temp
+  // file is fully written on the main side, so `done` carries no payload.
+  await encoder.finalize();
   post({ type: "progress", framesEncoded: totalFrames, totalFrames });
-  post({ type: "done", videoBytes: bytes }, [bytes]);
+  post({ type: "done" });
 
   // 8. Cleanup.
   cleanup(encoder, compositor, exportPool, app);
