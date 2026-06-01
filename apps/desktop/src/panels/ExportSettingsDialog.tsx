@@ -145,24 +145,6 @@ export function ExportSettingsDialog({ comp, onCancel, onConfirm }: Props) {
               <p className="settings-blurb">…</p>
             ) : (
               <>
-                <div className="export-row export-path-row">
-                  <span className="settings-toggle-label">
-                    {t("export_dialog.location")}
-                  </span>
-                  <span className="export-path">
-                    <input
-                      type="text"
-                      className="settings-input export-path-input"
-                      readOnly
-                      value={location}
-                      title={location}
-                    />
-                    <button onClick={() => void onBrowse()}>
-                      {t("export_dialog.browse")}
-                    </button>
-                  </span>
-                </div>
-
                 <div className="export-row">
                   <span className="settings-toggle-label">
                     {t("export_dialog.filename")}
@@ -178,6 +160,24 @@ export function ExportSettingsDialog({ comp, onCancel, onConfirm }: Props) {
                     <span className="settings-slider-unit">
                       .{containerExtension(settings.container)}
                     </span>
+                  </span>
+                </div>
+
+                <div className="export-row export-path-row">
+                  <span className="settings-toggle-label">
+                    {t("export_dialog.location")}
+                  </span>
+                  <span className="export-path">
+                    <input
+                      type="text"
+                      className="settings-input export-path-input"
+                      readOnly
+                      value={location}
+                      title={location}
+                    />
+                    <button onClick={() => void onBrowse()}>
+                      {t("export_dialog.browse")}
+                    </button>
                   </span>
                 </div>
 
