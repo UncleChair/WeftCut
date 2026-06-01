@@ -23,6 +23,7 @@ import { SubtitlesSprite } from "./sprite/SubtitlesSprite";
 import { TemplateSprite } from "./sprite/TemplateSprite";
 import { TextSprite } from "./sprite/TextSprite";
 import { VideoClipSprite } from "./sprite/VideoClipSprite";
+import { swapKeys } from "./swapKeys";
 
 /// Match the preview ring's default lookahead window. We only use
 /// this to warm the next clip boundary; the play() warm-up gate stays
@@ -105,11 +106,32 @@ interface ActiveClip {
   mediaId: string;
   source: DecoderHandle;
   sprite: VideoClipSprite;
+  /// The `proxyAssetUrl` the current `source` was built from. When the
+  /// resolver later returns a different URL for this media — the Plan-2
+  /// bridge's instant original being replaced by a freshly-built proxy —
+  /// `ensureClip` starts a no-flash overlap-swap to the new URL.
+  builtFromUrl: string;
   /// Diagnostic edge-trigger: true if the last `updateClip` call
   /// found `ring.frameAt(srcTUs)` returned null. Used so the
   /// `frameAt → null` log fires once per transition rather than
   /// every rAF tick during the null window.
   loggedNull: boolean;
+}
+
+/// An in-flight no-flash source-swap (preview only). Holds a SECOND decoder
+/// handle on the new URL until its ring has the current visible frame, then
+/// atomically repoints `ActiveClip.source` to it and releases the original.
+/// Keyed in `Compositor.swaps` by the clip's real layerId.
+interface SwapState {
+  handle: DecoderHandle;
+  /// Pool key of the synthetic swap handle (`${layerId}#swap`).
+  swapLayerId: string;
+  /// The URL the swap handle is decoding (the freshly-built proxy).
+  newUrl: string;
+  /// Bounded poll driving the swap to completion (cleared on done/abandon).
+  timer: ReturnType<typeof setInterval> | null;
+  /// Safety deadline: abandon the swap if it never produces the frame.
+  deadline: ReturnType<typeof setTimeout> | null;
 }
 
 interface ActiveImage {
@@ -156,6 +178,9 @@ export class Compositor {
   private templates = new Map<string, ActiveTemplate>();
   private subtitles = new Map<string, ActiveSubtitles>();
   private audios = new Map<string, ActiveAudio>();
+  /// In-flight no-flash source-swaps, keyed by the clip's real layerId.
+  /// Preview-only; empty in export mode (export URLs are fixed per run).
+  private swaps = new Map<string, SwapState>();
   /// Host element where AudioMixers append their hidden `<audio>`
   /// elements. Null in export mode (no DOM). The Compositor owns
   /// lifecycle; mixers append / remove themselves under this host.
@@ -300,6 +325,7 @@ export class Compositor {
       for (const a of this.audios.values()) a.mixer.dispose();
       this.audios.clear();
       this.stage.removeChildren();
+      this.cancelAllSwaps();
       this.pool.dispose();
     }
   }
@@ -333,6 +359,7 @@ export class Compositor {
     }
     for (const [layerId, c] of this.clips) {
       if (!livingLayerIds.has(layerId)) {
+        this.abandonSwap(layerId);
         c.sprite.dispose();
         this.clips.delete(layerId);
       }
@@ -702,6 +729,7 @@ export class Compositor {
     if (this.audioHost && this.audioHost.parentNode) {
       this.audioHost.parentNode.removeChild(this.audioHost);
     }
+    this.cancelAllSwaps();
     this.pool.dispose();
     try {
       this.app.stage.removeChild(this.stage);
@@ -785,7 +813,19 @@ export class Compositor {
     // points at a disposed handle whose ring is empty and whose
     // demuxer samples have been freed — a fresh `pool.acquire()` is
     // needed to revive the source.
-    if (existing && !existing.source.disposed) return existing;
+    if (existing && !existing.source.disposed) {
+      // No-flash bridge→proxy upgrade: once the resolver returns a different
+      // URL for this media (the Plan-2 instant original replaced by a freshly
+      // built proxy), begin an overlap-swap — but keep returning the existing
+      // clip so the original stays on screen until the proxy has the frame.
+      if (this.mode === "preview") {
+        const url = this.proxyAssetUrl(layer.params.media_id);
+        if (url && url !== existing.builtFromUrl) {
+          this.beginSwap(existing, layer, url);
+        }
+      }
+      return existing;
+    }
     const mediaId = layer.params.media_id;
     const proxyUrl = this.proxyAssetUrl(mediaId);
     if (!proxyUrl) {
@@ -818,15 +858,136 @@ export class Compositor {
       // a held frame rather than a flash to EMPTY while the new
       // decoder warms up), just swap in the fresh source.
       existing.source = source;
+      existing.builtFromUrl = proxyUrl;
       existing.loggedNull = false;
       return existing;
     }
     const sprite = new VideoClipSprite({ layerId: layer.id, mediaId });
-    const clip: ActiveClip = { layerId: layer.id, mediaId, source, sprite, loggedNull: false };
+    const clip: ActiveClip = {
+      layerId: layer.id,
+      mediaId,
+      source,
+      sprite,
+      builtFromUrl: proxyUrl,
+      loggedNull: false,
+    };
     this.clips.set(layer.id, clip);
     // eslint-disable-next-line no-console
     console.log(`[weftcut/pixi] clip ${layer.id} → media ${mediaId} attached`);
     return clip;
+  }
+
+  /// Begin a no-flash overlap-swap of `clip` to a second handle decoding
+  /// `newUrl`. The original stays referenced by `clip.source` (so the preview
+  /// never blanks) until `pollSwap` confirms the new handle's ring holds the
+  /// visible frame, at which point `completeSwap` repoints atomically.
+  private beginSwap(clip: ActiveClip, layer: LayerSummary, newUrl: string): void {
+    if (layer.params.kind !== "VideoClip") return;
+    const inflight = this.swaps.get(clip.layerId);
+    if (inflight) {
+      // Already swapping to this URL → leave it. Otherwise the target changed
+      // (or the handle died) → abandon and restart toward `newUrl`.
+      if (!inflight.handle.disposed && inflight.newUrl === newUrl) return;
+      this.abandonSwap(clip.layerId);
+    }
+    const { swapLayerId, swapMediaId } = swapKeys(clip.layerId, clip.mediaId);
+    const handle = this.pool.acquire({
+      layerId: swapLayerId,
+      mediaId: swapMediaId,
+      proxyAssetUrl: newUrl,
+    });
+    const state: SwapState = { handle, swapLayerId, newUrl, timer: null, deadline: null };
+    this.swaps.set(clip.layerId, state);
+    void handle.ensureReady().catch(() => {
+      this.abandonSwap(clip.layerId);
+    });
+    // `onFirstFrame` is one-shot and usually fires on the GOP key (before the
+    // target frame), so it can't carry the swap to completion alone. Drive it
+    // with a bounded poll that also keeps the swap handle warm against the
+    // idle sweeper; a deadline abandons a swap that never produces the frame.
+    const poll = () => this.pollSwap(clip.layerId);
+    handle.onFirstFrame(poll);
+    state.timer = setInterval(poll, 120);
+    state.deadline = setTimeout(() => this.abandonSwap(clip.layerId), 8000);
+    // eslint-disable-next-line no-console
+    console.log(`[weftcut/pixi] begin source-swap ${clip.layerId} → ${newUrl}`);
+  }
+
+  /// Poll an in-flight swap: nudge the new handle toward the current frame and
+  /// complete once that frame is decoded. No-op once the swap is gone.
+  private pollSwap(layerId: string): void {
+    const state = this.swaps.get(layerId);
+    if (!state) return;
+    const clip = this.clips.get(layerId);
+    const layer = this.layerById.get(layerId);
+    if (!clip || !layer || layer.params.kind !== "VideoClip" || state.handle.disposed) {
+      this.abandonSwap(layerId);
+      return;
+    }
+    const tUsSnapped = snapFrameFloor(this.lastTUs, this.fpsNum, this.fpsDen);
+    // Playhead off this clip → can't prove the proxy has the visible frame
+    // yet; keep the original and retry on a later tick.
+    if (tUsSnapped < layer.t_start_us || tUsSnapped >= layer.t_end_us) return;
+    const srcTUs = layer.params.src_in_us + (tUsSnapped - layer.t_start_us);
+    void state.handle.requestFrameAt(srcTUs);
+    if (state.handle.ring.frameAt(srcTUs) != null) {
+      this.completeSwap(layerId, srcTUs);
+    }
+  }
+
+  /// Atomically repoint `clip.source` to the swap handle (whose ring now holds
+  /// the frame at `srcTUs`) and release the original. Never swaps to an empty
+  /// ring — that black frame is exactly what this avoids.
+  private completeSwap(layerId: string, srcTUs: number): void {
+    const state = this.swaps.get(layerId);
+    const clip = this.clips.get(layerId);
+    if (!state) return;
+    if (!clip) {
+      this.abandonSwap(layerId);
+      return;
+    }
+    if (state.handle.ring.frameAt(srcTUs) == null) return; // lost the frame; wait
+    const old = clip.source;
+    clip.source = state.handle;
+    clip.builtFromUrl = state.newUrl;
+    this.clearSwapTimers(state);
+    this.swaps.delete(layerId);
+    // Release the ORIGINAL handle by its pool key (the clip's real layerId).
+    // The swap handle now lives under `${layerId}#swap`, referenced by
+    // `clip.source` and kept warm by `setAnchorTime`'s per-tick requests.
+    if (!old.disposed) this.pool.release(layerId);
+    this.scheduleRepaint();
+    // eslint-disable-next-line no-console
+    console.log(`[weftcut/pixi] completed source-swap ${layerId} → ${state.newUrl}`);
+  }
+
+  /// Tear down an in-flight swap without repointing: clear its timers and
+  /// release the synthetic swap handle. The clip keeps its original source.
+  private abandonSwap(layerId: string): void {
+    const state = this.swaps.get(layerId);
+    if (!state) return;
+    this.clearSwapTimers(state);
+    this.swaps.delete(layerId);
+    this.pool.release(state.swapLayerId);
+  }
+
+  private clearSwapTimers(state: SwapState): void {
+    if (state.timer !== null) {
+      clearInterval(state.timer);
+      state.timer = null;
+    }
+    if (state.deadline !== null) {
+      clearTimeout(state.deadline);
+      state.deadline = null;
+    }
+  }
+
+  /// Clear every in-flight swap's timers and forget them. Used by
+  /// suspend/dispose, where the pool is disposed wholesale so the synthetic
+  /// handles don't need a per-key release.
+  private cancelAllSwaps(): void {
+    for (const s of this.swaps.values()) this.clearSwapTimers(s);
+    this.swaps.clear();
   }
 
   private updateClip(clip: ActiveClip, layer: LayerSummary, tUs: number, z: number): void {
