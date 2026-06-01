@@ -237,6 +237,17 @@ const zhCN: Resources = {
     cancel: "取消",
     dismiss: "关闭",
   },
+  import_proxy: {
+    title: "部分素材需要优化",
+    optimizing_heading: "导出优化中",
+    checking: "正在检测 {{n}} 个素材…",
+    reason_undecodable: "{{codec}} · 本机无法直接解码",
+    reason_transcode: "{{codec}} · 需转码",
+    reason_10bit: "{{codec}} 10-bit/HDR · 需优化",
+    failed: "准备失败,请重新导入",
+    editable_note: "仍可立即编辑;导出会自动等待。",
+    dismiss: "知道了",
+  },
   connect: {
     heading: "连接代理",
     blurb: "把下面任一片段粘贴到代理的 MCP 配置中。令牌在重启后保持不变 —— 点击「刷新」可重新生成。",
