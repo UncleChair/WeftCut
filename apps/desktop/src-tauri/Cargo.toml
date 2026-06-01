@@ -25,6 +25,10 @@ tauri = { version = "2", features = ["webview-data-url", "protocol-asset"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-shell = "2"
+# Dev-only: drives the running webview from the tauri-mcp-server for in-app
+# testing. Registered behind `#[cfg(debug_assertions)]` in lib.rs so it never
+# activates in release builds.
+tauri-plugin-mcp-bridge = "0.11"
 
 # Async + serialization
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "fs", "io-util", "signal", "process"] }
