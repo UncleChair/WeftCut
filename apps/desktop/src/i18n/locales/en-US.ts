@@ -249,7 +249,7 @@ const enUS = {
     fps: "Frame rate",
     follow_comp: "Follow composition",
     codec: "Codec",
-    container: "Container",
+    container: "Container / Muxer",
     path_webcodecs: "Encoder: WebCodecs (hardware if available)",
     path_ffmpeg: "Encoder: ffmpeg transcode (slower)",
     checking_codec: "Checking codec support…",
