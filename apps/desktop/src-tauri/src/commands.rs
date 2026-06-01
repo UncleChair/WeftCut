@@ -2167,21 +2167,54 @@ pub async fn export_project_audio_only(
         .map_err(|e| format!("{e:#}"))
 }
 
-/// Stream-copy mux of `video_path` + `audio_path` into `output_path`.
-/// AWAITABLE. Runs `ffmpeg -y -i v -i a -c copy out`.
+/// Transcode spec for the ffmpeg export path. Absent ⇒ stream-copy mux.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscodeSpec {
+    pub video_codec: String, // "h264" | "hevc" | "av1" | "vp9"
+    pub bitrate: u64,
+    pub cbr: bool,
+    pub duration_us: i64,
+}
+
+/// Mux `video_path` + `audio_path` into `output_path`. With no `transcode`,
+/// stream-copies (`-c copy`). With a `transcode`, re-encodes the video to the
+/// target codec (HW encoder first, software fallback) and emits
+/// `export:transcode_progress` events. Container = the output extension.
 #[tauri::command]
 pub async fn mux_export(
+    app: tauri::AppHandle,
+    hw_cache: State<'_, crate::export::HwEncoderCache>,
     video_path: String,
     audio_path: String,
     output_path: String,
+    transcode: Option<TranscodeSpec>,
 ) -> Result<(), String> {
-    export::mux_to_file(
-        &PathBuf::from(video_path),
-        &PathBuf::from(audio_path),
-        &PathBuf::from(output_path),
-    )
-    .await
-    .map_err(|e| format!("{e:#}"))
+    let video = PathBuf::from(video_path);
+    let audio = PathBuf::from(audio_path);
+    let out = PathBuf::from(output_path);
+    match transcode {
+        None => export::mux_to_file(&video, &audio, &out)
+            .await
+            .map_err(|e| format!("{e:#}")),
+        Some(spec) => {
+            let codec = crate::export::TargetCodec::parse(&spec.video_codec)
+                .ok_or_else(|| format!("unknown codec {}", spec.video_codec))?;
+            let encoder = hw_cache.encoder_for(codec).await;
+            export::transcode_and_mux(
+                &app,
+                &encoder,
+                spec.bitrate,
+                spec.cbr,
+                spec.duration_us,
+                &video,
+                &audio,
+                &out,
+            )
+            .await
+            .map_err(|e| format!("{e:#}"))
+        }
+    }
 }
 
 /// Extract one PNG frame from an in-memory MP4 at composition-time `t_us`.
