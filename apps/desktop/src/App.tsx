@@ -903,7 +903,7 @@ export function App({ onCloseProject }: AppProps) {
     const workerCodec = encodePath === "ffmpeg" ? "h264" : settings.codec;
     const workerBitrate =
       encodePath === "ffmpeg"
-        ? mezzanineBitrate(dims.width, dims.height, outFps)
+        ? mezzanineBitrate(settings, dims.width, dims.height, outFps)
         : computeBitrate(settings, dims.width, dims.height, outFps);
     const encoderConfig: VideoEncoderConfig = {
       codec: codecString(workerCodec),

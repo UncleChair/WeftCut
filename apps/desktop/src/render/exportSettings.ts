@@ -164,13 +164,27 @@ export function containersForCodec(codec: CodecId): Container[] {
   return CONTAINERS.filter((c) => isCodecContainerValid(codec, c));
 }
 
-/// High, near-transparent H.264 bitrate for the ffmpeg-path mezzanine. The
-/// worker encodes this; ffmpeg then transcodes it to the target codec, so it
-/// must be visually lossless. ~0.2 bits/pixel/frame, floored at 20 Mbps.
+/// H.264 bitrate for the ffmpeg-path mezzanine. The worker WebCodecs-encodes
+/// this; ffmpeg then transcodes it to the target codec. It must be a clean
+/// transcode source, but NOT bigger than a normal H.264 export of the same
+/// quality — the worker buffers the whole mezzanine MP4 in one ArrayBuffer
+/// (mediabunny BufferTarget), and V8 caps a single ArrayBuffer at ~2 GB, so a
+/// too-high mezzanine OOMs long exports. The H.264-equivalent of the chosen
+/// quality already runs ~1.8x the (codec-discounted) final target — ample
+/// headroom — while matching an H.264 export's footprint. A ≥1.5x floor over
+/// the final target covers the custom-bitrate case.
 export function mezzanineBitrate(
+  settings: ExportSettings,
   width: number,
   height: number,
   fps: number,
 ): number {
-  return Math.max(20_000_000, Math.round(width * height * fps * 0.2));
+  const h264Equiv = computeBitrate(
+    { ...settings, codec: "h264" },
+    width,
+    height,
+    fps,
+  );
+  const finalTarget = computeBitrate(settings, width, height, fps);
+  return Math.max(h264Equiv, Math.round(finalTarget * 1.5));
 }
