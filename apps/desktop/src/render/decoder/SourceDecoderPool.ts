@@ -102,9 +102,14 @@ export interface DecoderHandle {
 
 /// Pool surface used by the Compositor. Concrete pools may expose extra
 /// surface (preview's idle sweeper, export's `handles` access for the
-/// worker) but the Compositor only needs these two methods.
+/// worker) but the Compositor only needs these methods.
 export interface DecoderPool {
   acquire(init: SourceHandleInit): DecoderHandle;
+  /// Release a handle by its pool key (preview keys by `layerId`, export by
+  /// `mediaId`). The no-flash source-swap uses it to drop the original handle
+  /// after repointing to the proxy, and to drop the synthetic swap handle when
+  /// a swap is abandoned.
+  release(key: string): void;
   dispose(): void;
 }
 
