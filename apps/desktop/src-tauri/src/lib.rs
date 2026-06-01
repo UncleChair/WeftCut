@@ -246,6 +246,10 @@ pub fn run() {
             let cache_for_mcp = cache_layout.clone();
             app.manage(cache_layout);
 
+            // Per-codec HW-encoder cache for the ffmpeg export-transcode path
+            // (lazily probed on first non-WebCodecs export).
+            app.manage(export::HwEncoderCache::new());
+
             // Import queue. Single-task FIFO. Pops a PendingImport, copies
             // source → `<workspace>/Media/...`, dispatches an actor command
             // to flip the MediaItem's `path_abs` + `path_rel`. Emits
