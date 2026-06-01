@@ -46,7 +46,7 @@ import { mediaReadiness, type ProxyState } from "./panels/mediaReadiness";
 import { probeSourceDecodable } from "./render/decoder/probeSourceDecodable";
 import { referencedVideoMediaIds } from "./render/activeVideoLayers";
 import {
-  sourcesNeedingPreflight,
+  sourcesNeedingPreviewProbe,
   prepareExportMedia,
   waitForProxies,
   ExportCancelled,
@@ -56,6 +56,7 @@ import {
 import {
   importOptimizeStatus,
   optimizeReason,
+  partitionImportItems,
   type OptimizeDeps,
   type ImportItem,
 } from "./panels/importOptimize";
@@ -522,7 +523,7 @@ export function App({ onCloseProject }: AppProps) {
     void (async () => {
       const memo = decodeProbeMemo.current;
       const pool = useProjectStore.getState().mediaById;
-      const candidates = sourcesNeedingPreflight(pool).filter(
+      const candidates = sourcesNeedingPreviewProbe(pool).filter(
         (m) =>
           m.available &&
           memo.get(m.id) !== "ok" &&
@@ -537,16 +538,34 @@ export function App({ onCloseProject }: AppProps) {
         } catch {
           ok = false;
         }
-        if (cancelled) return;
+        // Land the verdict even if the effect was cancelled mid-probe. A rapid
+        // project:changed during a fast import (quick proxy lands in ~seconds)
+        // re-runs this [summary] effect and flips `cancelled`; bailing here
+        // would strand memo at "pending" forever — the next run filters out
+        // "pending" (and a proxied source leaves `sourcesNeedingPreviewProbe`),
+        // so it's never re-probed and stays stuck on "checking", never bridged.
+        // `probeSourceDecodable` has no AbortSignal, so the await completes
+        // regardless; recording its result is safe + idempotent. (The loop-top
+        // `if (cancelled) return` still stops STARTING new probes after cancel.)
         if (ok) {
           memo.set(m.id, "ok");
+          // A paused clip already on the timeline won't re-run ensureClip on
+          // its own; nudge the compositor to re-resolve now that the bridge is
+          // live for this source.
+          previewRef.current?.refreshSources();
         } else {
           memo.delete(m.id);
-          routeCorrected.current.add(m.id);
-          try {
-            await ensureFullProxy(m.id);
-          } catch (e) {
-            console.error("[weftcut] route-correct failed for", m.id, e);
+          // Only DirectExport sources need route-correction (they were
+          // pointing export at an original this machine can't decode). A
+          // full-proxy source that fails the probe already routes correctly;
+          // it just gets no bridge — preview waits for its proxy as before.
+          if (m.export_uses_original) {
+            routeCorrected.current.add(m.id);
+            try {
+              await ensureFullProxy(m.id);
+            } catch (e) {
+              console.error("[weftcut] route-correct failed for", m.id, e);
+            }
           }
         }
         // Force the import dialog to reclassify: memo/routeCorrected are refs
@@ -596,9 +615,7 @@ export function App({ onCloseProject }: AppProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dialogBatch, summary, proxyState, sweepTick]);
 
-  const dialogHasAttention = dialogItems.some(
-    (i) => i.status === "optimizing" || i.status === "failed" || i.status === "checking",
-  );
+  const dialogHasAttention = partitionImportItems(dialogItems).hasAttention;
 
   // Auto-close ONLY once every batch member is loaded in the store AND resolved
   // to direct/ready. Never clears while a member is still absent (the import
@@ -1251,6 +1268,7 @@ export function App({ onCloseProject }: AppProps) {
               hasContent={(summary?.layer_count ?? 0) > 0}
               onTimeUpdate={setCurrentTimeUs}
               onPausedChange={setPaused}
+              previewDecodableOf={(id) => decodeProbeMemo.current.get(id) === "ok"}
             />
           </div>
           <div className="preview-transport" role="toolbar" aria-label="Preview transport">

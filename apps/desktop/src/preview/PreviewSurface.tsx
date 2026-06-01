@@ -25,6 +25,10 @@ interface Props {
   /// Mirror of `engine.isPlaying()` → inverted to match the legacy
   /// "paused" convention the parent's transport button expects.
   onPausedChange: (paused: boolean) => void;
+  /// Live accessor for the session decodability verdict (App's
+  /// decodeProbeMemo). When it returns true for a source, the preview
+  /// resolver shows the original immediately instead of waiting on a proxy.
+  previewDecodableOf?: (mediaId: string) => boolean;
 }
 
 export interface PreviewSurfaceHandle {
@@ -32,6 +36,9 @@ export interface PreviewSurfaceHandle {
   pause(): void;
   seekTo(tUs: number): void;
   paused(): boolean;
+  /// Re-resolve every clip's preview source against the live decodability
+  /// bridge and re-composite. Delegates to the underlying PixiPreview.
+  refreshSources(): void;
   /// Run the Pixi export pipeline. Resolves with the encoded MP4
   /// bytes; rejects on failure. App.tsx owns the save dialog + file
   /// write so the existing ExportPanel can drive the pipeline.
@@ -42,7 +49,7 @@ export interface PreviewSurfaceHandle {
 
 export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
   function PreviewSurface(
-    { hasContent, onTimeUpdate, onPausedChange },
+    { hasContent, onTimeUpdate, onPausedChange, previewDecodableOf },
     forwardedRef,
   ) {
     const { t } = useTranslation();
@@ -64,6 +71,9 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
         },
         paused() {
           return pixiRef.current?.paused() ?? true;
+        },
+        refreshSources() {
+          pixiRef.current?.refreshSources();
         },
         async runPixiExport(opts) {
           const handle = pixiRef.current;
@@ -104,6 +114,7 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
             ref={pixiRef}
             onTimeUpdate={onTimeUpdate}
             onPausedChange={onPausedChange}
+            previewDecodableOf={previewDecodableOf}
           />
         </PixiErrorBoundary>
       </div>

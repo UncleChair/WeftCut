@@ -143,17 +143,26 @@ export const useLayerById = (id: string | null | undefined): LayerSummary | unde
 
 /// Returns the effective preview path for a media item. Preview may use a
 /// quick proxy while the full proxy is still rendering; export must not.
-export function previewPlaybackPathFor(media: MediaSummary | undefined): string | null {
+/// `opts.previewDecodable` is the session bridge flag: when this machine's
+/// WebCodecs confirmed it can decode the original (import probe), preview reads
+/// the original directly until a proxy lands. Session-scoped, never persisted.
+export function previewPlaybackPathFor(
+  media: MediaSummary | undefined,
+  opts?: { previewDecodable?: boolean },
+): string | null {
   if (!media) return null;
   if (media.kind === "Video") {
-    // Prefer the light quick proxy for preview. The full proxy is now a
-    // source-resolution EXPORT master (heavy to scrub); it's a last-resort
-    // preview source only if no quick proxy exists (ADR 0011).
+    // Prefer the light quick proxy for preview. The full proxy is a
+    // source-resolution EXPORT master (heavy to scrub); last-resort preview
+    // source only if no quick proxy exists (ADR 0011).
     if (media.quick_proxy_path) return media.quick_proxy_path;
     if (media.proxy_path) return media.proxy_path;
-    // Preview from the original ONLY for DirectBoth (proxy_bypassed = H.264);
-    // a DirectExport source before its quick proxy lands stays null (blank).
-    return media.proxy_bypassed ? media.path : null;
+    // Preview from the original for DirectBoth (proxy_bypassed = H.264) OR,
+    // via the bridge, any source this machine probed as decodable (incl.
+    // HEVC/AV1/Hi10P) while its proxy is still building.
+    if (media.proxy_bypassed) return media.path;
+    if (opts?.previewDecodable) return media.path;
+    return null;
   }
   return media.path;
 }
