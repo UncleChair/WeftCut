@@ -1,0 +1,120 @@
+import { describe, expect, it } from "vitest";
+import {
+  DEFAULT_EXPORT_SETTINGS,
+  codecString,
+  computeBitrate,
+  downscaleFpsOptions,
+  downscaleHeightOptions,
+  estimateBytes,
+  formatBytes,
+  mergeSettings,
+  resolveOutputDims,
+  type ExportSettings,
+} from "./exportSettings";
+
+const comp = { width: 1920, height: 1080, fps_num: 30, fps_den: 1 };
+
+describe("resolveOutputDims", () => {
+  it("follows composition when resolutionHeight is null", () => {
+    expect(resolveOutputDims(comp, DEFAULT_EXPORT_SETTINGS)).toEqual({
+      width: 1920,
+      height: 1080,
+    });
+  });
+
+  it("downscales preserving aspect, rounding to even", () => {
+    const s = { ...DEFAULT_EXPORT_SETTINGS, resolutionHeight: 720 };
+    expect(resolveOutputDims(comp, s)).toEqual({ width: 1280, height: 720 });
+  });
+
+  it("never upscales beyond composition height", () => {
+    const s = { ...DEFAULT_EXPORT_SETTINGS, resolutionHeight: 2160 };
+    expect(resolveOutputDims(comp, s)).toEqual({ width: 1920, height: 1080 });
+  });
+
+  it("forces even dimensions for odd aspect ratios", () => {
+    const oddComp = { width: 1080, height: 1349, fps_num: 30, fps_den: 1 };
+    const s = { ...DEFAULT_EXPORT_SETTINGS, resolutionHeight: 720 };
+    const dims = resolveOutputDims(oddComp, s);
+    expect(dims.width % 2).toBe(0);
+    expect(dims.height % 2).toBe(0);
+  });
+});
+
+describe("downscale option lists", () => {
+  it("offers only standard heights below composition", () => {
+    expect(downscaleHeightOptions(1080)).toEqual([720, 480, 360]);
+  });
+  it("offers only standard fps below composition", () => {
+    expect(downscaleFpsOptions(60)).toEqual([50, 30, 25, 24]);
+  });
+});
+
+describe("computeBitrate", () => {
+  it("medium H.264 at 1080p30 is ~8 Mbps (matches today's default)", () => {
+    const s = { ...DEFAULT_EXPORT_SETTINGS, quality: "medium" as const };
+    const bps = computeBitrate(s, 1920, 1080, 30);
+    expect(bps).toBeGreaterThan(7_500_000);
+    expect(bps).toBeLessThan(8_700_000);
+  });
+
+  it("AV1 targets roughly half the H.264 bitrate at the same quality", () => {
+    const h264 = computeBitrate(
+      { ...DEFAULT_EXPORT_SETTINGS, codec: "h264", quality: "high" },
+      1920,
+      1080,
+      30,
+    );
+    const av1 = computeBitrate(
+      { ...DEFAULT_EXPORT_SETTINGS, codec: "av1", quality: "high" },
+      1920,
+      1080,
+      30,
+    );
+    expect(av1).toBeLessThan(h264 * 0.6);
+    expect(av1).toBeGreaterThan(h264 * 0.4);
+  });
+
+  it("uses the custom bitrate verbatim when quality is custom", () => {
+    const s: ExportSettings = {
+      ...DEFAULT_EXPORT_SETTINGS,
+      quality: "custom",
+      customBitrate: 12_000_000,
+    };
+    expect(computeBitrate(s, 1920, 1080, 30)).toBe(12_000_000);
+  });
+});
+
+describe("codecString", () => {
+  it("keeps H.264 at the existing baseline string", () => {
+    expect(codecString("h264")).toBe("avc1.640028");
+  });
+  it("returns valid AV1 and HEVC strings", () => {
+    expect(codecString("av1")).toMatch(/^av01\./);
+    expect(codecString("hevc")).toMatch(/^hev1\./);
+  });
+});
+
+describe("estimateBytes / formatBytes", () => {
+  it("adds audio bitrate when the project has audio", () => {
+    const withAudio = estimateBytes(8_000_000, 10_000_000, true);
+    const noAudio = estimateBytes(8_000_000, 10_000_000, false);
+    expect(withAudio).toBeGreaterThan(noAudio);
+  });
+  it("formats bytes into human units", () => {
+    expect(formatBytes(10_500_000)).toBe("10.5 MB");
+    expect(formatBytes(2_100_000_000)).toBe("2.10 GB");
+  });
+});
+
+describe("mergeSettings", () => {
+  it("fills missing fields from defaults", () => {
+    expect(mergeSettings({ codec: "av1" })).toEqual({
+      ...DEFAULT_EXPORT_SETTINGS,
+      codec: "av1",
+    });
+  });
+  it("returns defaults for null", () => {
+    expect(mergeSettings(null)).toEqual(DEFAULT_EXPORT_SETTINGS);
+  });
+});
