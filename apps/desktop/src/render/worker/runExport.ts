@@ -32,6 +32,9 @@ export interface RunExportInit {
   /// Encoder config. Defaults to 1080p H.264 High@4.2 / 8 Mbps /
   /// prefer-hardware. ExportPanel can override per preset.
   encoderConfig?: VideoEncoderConfig;
+  /// Output frame rate (rational). Overrides composition fps for the frame
+  /// grid + capture cadence. Absent ⇒ composition fps.
+  outputFps?: { num: number; den: number };
   /// Optional progress callback. Fires with (framesEncoded,
   /// totalFrames) on every progress event.
   onProgress?: (encoded: number, total: number) => void;
@@ -50,13 +53,19 @@ export interface RunExportResult {
 /// Default 1080p H.264 encoder config used when the caller doesn't
 /// supply one. Matches the proxy spec we already have: High profile,
 /// Level 4.2, yuv420p — universally hardware-decodable downstream.
-function defaultEncoderConfig(width: number, height: number): VideoEncoderConfig {
+/// Framerate follows the composition (the hardcoded 30 was a latent bug
+/// for non-30fps projects).
+function defaultEncoderConfig(
+  width: number,
+  height: number,
+  framerate: number,
+): VideoEncoderConfig {
   return {
     codec: "avc1.640028",
     width,
     height,
     bitrate: 8_000_000,
-    framerate: 30,
+    framerate,
     hardwareAcceleration: "prefer-hardware",
   };
 }
@@ -106,9 +115,13 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
   // 2. OffscreenCanvas to transfer to the Worker.
   const offscreen = new OffscreenCanvas(comp.width, comp.height);
 
-  // 3. Encoder config.
+  // 3. Encoder config. Output fps follows the caller's override, else
+  // composition fps. The default config's framerate must match.
+  const outFpsNum = init.outputFps?.num ?? fpsNum;
+  const outFpsDen = init.outputFps?.den ?? fpsDen;
   const encoderConfig =
-    init.encoderConfig ?? defaultEncoderConfig(comp.width, comp.height);
+    init.encoderConfig ??
+    defaultEncoderConfig(comp.width, comp.height, outFpsNum / outFpsDen);
 
   // 4. Spawn the Worker. Vite resolves the URL at bundle time via
   // `new URL(..., import.meta.url) + type: "module"`.
@@ -124,6 +137,8 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     startUs,
     endUs,
     encoderConfig,
+    outputFpsNum: outFpsNum,
+    outputFpsDen: outFpsDen,
     canvas: offscreen,
   };
 
