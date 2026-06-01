@@ -247,6 +247,7 @@ const enUS = {
     reason_undecodable: "{{codec}} · can't be decoded on this machine",
     reason_transcode: "{{codec}} · needs transcoding",
     reason_10bit: "{{codec}} 10-bit/HDR · needs optimizing",
+    reason_bridged: "{{codec}} · usable now, optimizing scroll in background",
     failed: "Preparation failed — re-import to retry",
     editable_note: "You can edit now; export will wait automatically.",
     dismiss: "Got it",
