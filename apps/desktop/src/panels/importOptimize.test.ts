@@ -42,6 +42,30 @@ describe("importOptimizeStatus", () => {
     ).toBe("bridged");
   });
 
+  it("settles a decodable DirectExport source to direct once its quick proxy lands", () => {
+    // Regression: a QuickOnly/DirectExport source only ever gets quick_proxy_path
+    // (never proxy_path). Without settling it would be terminally "bridged" and
+    // keep the import dialog open forever (a regression vs the old "direct").
+    expect(
+      importOptimizeStatus(
+        vid({ export_uses_original: true, quick_proxy_path: "/q.mp4" }) as any,
+        { memo: new Map([["m", "ok"]]), proxyStateOf: () => undefined, routeCorrected: new Set() },
+      ),
+    ).toBe("direct");
+  });
+
+  it("keeps a decodable full-proxy (10-bit) source bridged when only the quick proxy has landed", () => {
+    // QuickThenFull: the quick proxy lands first, but proxy_path (the export
+    // master) is the real terminal. export_uses_original is false, so the
+    // DirectExport early-settle must NOT fire — stays bridged until proxy_path.
+    expect(
+      importOptimizeStatus(
+        vid({ export_uses_original: false, quick_proxy_path: "/q.mp4", pix_fmt: "yuv420p10le" }) as any,
+        { memo: new Map([["m", "ok"]]), proxyStateOf: () => "pending", routeCorrected: new Set() },
+      ),
+    ).toBe("bridged");
+  });
+
   it("classifies a decodable 10-bit full-proxy source as bridged", () => {
     expect(
       importOptimizeStatus(vid({ pix_fmt: "yuv420p10le" }) as any, {
