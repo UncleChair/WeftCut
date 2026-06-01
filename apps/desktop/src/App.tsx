@@ -46,7 +46,6 @@ import { mediaReadiness, type ProxyState } from "./panels/mediaReadiness";
 import { probeSourceDecodable } from "./render/decoder/probeSourceDecodable";
 import { referencedVideoMediaIds } from "./render/activeVideoLayers";
 import {
-  sourcesNeedingPreflight,
   sourcesNeedingPreviewProbe,
   prepareExportMedia,
   waitForProxies,
