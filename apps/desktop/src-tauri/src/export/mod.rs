@@ -208,10 +208,76 @@ pub async fn mux_to_file(
     Ok(())
 }
 
+/// Build the ffmpeg `-c:v …` video-encode args for a transcode. `encoder` is
+/// the resolved ffmpeg encoder name (HW like `hevc_nvenc` or software like
+/// `libx265`). VBR uses `-b:v` as the average target; CBR additionally pins
+/// maxrate/minrate + a 2× bufsize. Software encoders get a speed preset so
+/// AV1/HEVC don't take minutes.
+fn video_encode_args(encoder: &str, bitrate: u64, cbr: bool) -> Vec<std::ffi::OsString> {
+    use std::ffi::OsString;
+    let mut a: Vec<OsString> = vec!["-c:v".into(), encoder.into()];
+    a.push("-b:v".into());
+    a.push(bitrate.to_string().into());
+    if cbr {
+        a.push("-maxrate".into());
+        a.push(bitrate.to_string().into());
+        a.push("-minrate".into());
+        a.push(bitrate.to_string().into());
+        a.push("-bufsize".into());
+        a.push((bitrate * 2).to_string().into());
+    }
+    // Speed presets for the slow software encoders only.
+    match encoder {
+        "libsvtav1" => {
+            a.push("-preset".into());
+            a.push("8".into());
+        }
+        "libx265" | "libx264" => {
+            a.push("-preset".into());
+            a.push("medium".into());
+        }
+        "libvpx-vp9" => {
+            a.push("-deadline".into());
+            a.push("good".into());
+            a.push("-cpu-used".into());
+            a.push("4".into());
+        }
+        _ => {} // HW encoders: no preset (their defaults are already fast)
+    }
+    a
+}
+
 #[cfg(test)]
 mod tests {
     use super::mux_args;
+    use super::video_encode_args;
     use tempfile::TempDir;
+
+    #[test]
+    fn video_encode_args_vbr_software() {
+        let argv = video_encode_args("libx265", 8_000_000, false);
+        let s: Vec<String> = argv.iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        assert!(s.windows(2).any(|w| w[0] == "-c:v" && w[1] == "libx265"));
+        assert!(s.windows(2).any(|w| w[0] == "-b:v" && w[1] == "8000000"));
+        assert!(!s.iter().any(|a| a == "-minrate"));
+    }
+
+    #[test]
+    fn video_encode_args_cbr_pins_rate() {
+        let argv = video_encode_args("hevc_nvenc", 8_000_000, true);
+        let s: Vec<String> = argv.iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        assert!(s.windows(2).any(|w| w[0] == "-c:v" && w[1] == "hevc_nvenc"));
+        assert!(s.windows(2).any(|w| w[0] == "-maxrate" && w[1] == "8000000"));
+        assert!(s.windows(2).any(|w| w[0] == "-minrate" && w[1] == "8000000"));
+        assert!(s.windows(2).any(|w| w[0] == "-bufsize" && w[1] == "16000000"));
+    }
+
+    #[test]
+    fn video_encode_args_sets_software_preset() {
+        let argv = video_encode_args("libsvtav1", 4_000_000, false);
+        let s: Vec<String> = argv.iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        assert!(s.windows(2).any(|w| w[0] == "-preset" && w[1] == "8"));
+    }
 
     /// Regression for the no-audio export path: `mux_to_file` must NOT
     /// pass `-i audio_path` to ffmpeg when the audio file doesn't
