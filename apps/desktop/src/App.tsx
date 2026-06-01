@@ -897,18 +897,22 @@ export function App({ onCloseProject }: AppProps) {
         d.height,
         fpsNum / fpsDen,
       );
-      return {
-        config: {
-          codec: codecString(codec),
-          width: d.width,
-          height: d.height,
-          bitrate,
-          framerate: fpsNum / fpsDen,
-          bitrateMode: settings.rateMode === "cbr" ? "constant" : "variable",
-          hardwareAcceleration: "prefer-hardware",
-        },
-        outputFps: { num: fpsNum, den: fpsDen },
+      const config: VideoEncoderConfig = {
+        codec: codecString(codec),
+        width: d.width,
+        height: d.height,
+        bitrate,
+        framerate: fpsNum / fpsDen,
+        bitrateMode: settings.rateMode === "cbr" ? "constant" : "variable",
+        // Only force HW for H.264 (its proven fast path). WebView2 treats
+        // "prefer-hardware" as mandatory, so forcing it on AV1 — which has no
+        // HW encoder here — fails outright; omitting it lets the browser fall
+        // back to the software AV1 encoder (verified working in WebView2).
+        ...(codec === "h264"
+          ? { hardwareAcceleration: "prefer-hardware" as const }
+          : {}),
       };
+      return { config, outputFps: { num: fpsNum, den: fpsDen } };
     };
 
     const startedAtMs = performance.now();

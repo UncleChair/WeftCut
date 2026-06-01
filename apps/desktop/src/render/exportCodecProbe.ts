@@ -75,7 +75,11 @@ export async function smokeEncode(
         height,
         bitrate: 2_000_000,
         framerate: fps,
-        hardwareAcceleration: "prefer-hardware",
+        // No hardwareAcceleration hint. WebView2/Edge treats "prefer-hardware"
+        // as MANDATORY (a documented Chromium-on-Windows quirk) and rejects
+        // codecs with no HW encoder — e.g. AV1, which then fails here even
+        // though the libaom SOFTWARE encoder works. Letting the browser pick
+        // exercises the same path the real export uses (see buildConfig).
       });
       // A blank frame at full size keeps the smoke representative without a
       // real composite; the export re-probes nothing, it just encodes.
