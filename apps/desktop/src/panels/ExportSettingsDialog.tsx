@@ -3,13 +3,19 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { exportSettingsGet, exportSettingsSet } from "../ipc";
-import { probeEncoderSupported, smokeEncode } from "../render/exportCodecProbe";
 import {
+  type EncodePath,
+  resolveEncodePath,
+} from "../render/exportCodecProbe";
+import {
+  CONTAINERS,
   type CodecId,
+  type Container,
   type ExportSettings,
   type QualityPreset,
   type RateMode,
   computeBitrate,
+  containerExtension,
   downscaleFpsOptions,
   downscaleHeightOptions,
   estimateBytes,
@@ -33,8 +39,6 @@ interface Props {
   onConfirm: (settings: ExportSettings, path: string) => void;
 }
 
-const ALL_CODECS: CodecId[] = ["h264", "av1", "hevc"];
-
 export function ExportSettingsDialog({
   comp,
   durationUs,
@@ -45,9 +49,7 @@ export function ExportSettingsDialog({
   const { t } = useTranslation();
   const [settings, setSettings] = useState<ExportSettings | null>(null);
   const [path, setPath] = useState<string>("");
-  const [supported, setSupported] = useState<Set<CodecId>>(new Set(["h264"]));
-  const [smokeFailed, setSmokeFailed] = useState<CodecId | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [encodePath, setEncodePath] = useState<EncodePath | null>(null);
 
   const compFps = comp.fps_num / comp.fps_den;
 
@@ -66,22 +68,23 @@ export function ExportSettingsDialog({
     };
   }, []);
 
-  // Probe codecs once (uses composition dims as the representative case).
+  // Resolve the encode path (webcodecs vs ffmpeg) whenever codec / output
+  // dims / fps change, so the dialog can show a path badge. Path depends only
+  // on codec + output dims + fps — not quality/container/rate.
   useEffect(() => {
+    if (!settings) return;
     let cancelled = false;
-    void Promise.all(
-      ALL_CODECS.map(async (c) => ({
-        c,
-        ok: await probeEncoderSupported(c, comp.width, comp.height, compFps),
-      })),
-    ).then((results) => {
-      if (cancelled) return;
-      setSupported(new Set(results.filter((r) => r.ok).map((r) => r.c)));
+    setEncodePath(null);
+    const d = resolveOutputDims(comp, settings);
+    const fps = settings.fps != null ? settings.fps : compFps;
+    void resolveEncodePath(settings.codec, d.width, d.height, fps).then((p) => {
+      if (!cancelled) setEncodePath(p);
     });
     return () => {
       cancelled = true;
     };
-  }, [comp.width, comp.height, compFps]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings?.codec, settings?.fps, settings?.resolutionHeight, comp, compFps]);
 
   const dims = useMemo(
     () => (settings ? resolveOutputDims(comp, settings) : null),
@@ -100,22 +103,12 @@ export function ExportSettingsDialog({
   const patch = (p: Partial<ExportSettings>) =>
     setSettings((s) => (s ? { ...s, ...p } : s));
 
-  async function onSelectCodec(codec: CodecId) {
-    patch({ codec });
-    setSmokeFailed(null);
-    if (codec !== "h264") {
-      setBusy(true);
-      const ok = await smokeEncode(codec, comp.width, comp.height, compFps);
-      setBusy(false);
-      if (!ok) setSmokeFailed(codec);
-    }
-  }
-
   async function onBrowse() {
+    const ext = containerExtension(settings!.container);
     const chosen = await saveDialog({
       title: t("export_dialog.choose_path"),
-      defaultPath: "weftcut-export.mp4",
-      filters: [{ name: t("dialogs.export_filter"), extensions: ["mp4"] }],
+      defaultPath: `weftcut-export.${ext}`,
+      filters: [{ name: ext.toUpperCase(), extensions: [ext] }],
     });
     if (typeof chosen === "string") setPath(chosen);
   }
@@ -126,7 +119,7 @@ export function ExportSettingsDialog({
     onConfirm(settings, path);
   }
 
-  const canExport = !!path && !busy && !smokeFailed;
+  const canExport = !!path && encodePath !== null;
 
   return (
     <div className="settings-overlay" role="dialog" aria-modal="true">
@@ -207,28 +200,49 @@ export function ExportSettingsDialog({
                     className="export-select"
                     value={settings.codec}
                     onChange={(e) =>
-                      void onSelectCodec(e.target.value as CodecId)
+                      patch({ codec: e.target.value as CodecId })
                     }
                   >
-                    {ALL_CODECS.filter((c) => supported.has(c)).map((c) => (
+                    <option value="h264">H.264</option>
+                    <option value="av1">AV1</option>
+                    <option value="hevc">HEVC</option>
+                  </select>
+                </div>
+                {encodePath === null ? (
+                  <p className="settings-blurb">
+                    {t("export_dialog.checking_codec")}
+                  </p>
+                ) : (
+                  <p className="settings-blurb">
+                    {encodePath === "ffmpeg"
+                      ? t("export_dialog.path_ffmpeg")
+                      : t("export_dialog.path_webcodecs")}
+                  </p>
+                )}
+
+                <div className="export-row">
+                  <span className="settings-toggle-label">
+                    {t("export_dialog.container")}
+                  </span>
+                  <select
+                    className="export-select"
+                    value={settings.container}
+                    onChange={(e) => {
+                      const c = e.target.value as Container;
+                      patch({ container: c });
+                      if (path) {
+                        const ext = containerExtension(c);
+                        setPath(path.replace(/\.[^.\\/]+$/, `.${ext}`));
+                      }
+                    }}
+                  >
+                    {CONTAINERS.map((c) => (
                       <option key={c} value={c}>
-                        {c === "h264" ? "H.264" : c === "av1" ? "AV1" : "HEVC"}
+                        {c.toUpperCase()}
                       </option>
                     ))}
                   </select>
                 </div>
-                {busy && (
-                  <p className="settings-blurb">
-                    {t("export_dialog.checking_codec")}
-                  </p>
-                )}
-                {smokeFailed && (
-                  <p className="settings-error">
-                    {t("export_dialog.codec_unsupported", {
-                      codec: smokeFailed.toUpperCase(),
-                    })}
-                  </p>
-                )}
 
                 <div className="export-row">
                   <span className="settings-toggle-label">
