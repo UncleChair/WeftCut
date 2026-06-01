@@ -54,6 +54,13 @@ import {
   type ProbeState,
 } from "./render/exportReadiness";
 import {
+  importOptimizeStatus,
+  optimizeReason,
+  type OptimizeDeps,
+  type ImportItem,
+} from "./panels/importOptimize";
+import { ImportProxyDialog } from "./panels/ImportProxyDialog";
+import {
   PreviewSurface,
   type PreviewSurfaceHandle,
 } from "./preview/PreviewSurface";
@@ -186,6 +193,16 @@ export function App({ onCloseProject }: AppProps) {
   useEffect(() => {
     proxyStateRef.current = proxyState;
   }, [proxyState]);
+  // Ids the sweep route-corrected (machine can't decode) — drives the import
+  // dialog's "本机无法直接解码" reason vs the static "格式/10-bit" reasons.
+  const routeCorrected = useRef<Set<string>>(new Set());
+  // Bumped whenever the sweep mutates decodeProbeMemo/routeCorrected (refs, so
+  // they don't re-render on their own) to force the dialog to reclassify.
+  const [sweepTick, setSweepTick] = useState(0);
+  // Completed import media_ids already routed into a dialog batch (session).
+  const notifiedImportIds = useRef<Set<string>>(new Set());
+  // The current import-proxy dialog batch (media_ids); empty = closed.
+  const [dialogBatch, setDialogBatch] = useState<string[]>([]);
   const timecodeInputRef = useRef<HTMLInputElement | null>(null);
 
   // Centralised playhead clamp — Q5 of the frame-anchor playhead spec.
@@ -525,18 +542,80 @@ export function App({ onCloseProject }: AppProps) {
           memo.set(m.id, "ok");
         } else {
           memo.delete(m.id);
+          routeCorrected.current.add(m.id);
           try {
             await ensureFullProxy(m.id);
           } catch (e) {
             console.error("[weftcut] route-correct failed for", m.id, e);
           }
         }
+        // Force the import dialog to reclassify: memo/routeCorrected are refs
+        // and the decodable ("ok") branch fires no store event, so without this
+        // a now-decodable clip would stay stuck on "checking" in the dialog.
+        setSweepTick((x) => x + 1);
       }
     })();
     return () => {
       cancelled = true;
     };
   }, [summary]);
+
+  // Open/extend the import-proxy dialog batch when an import batch completes.
+  // Add ALL completed ids (audio/direct included); the classifier filters them
+  // out, so non-attention imports never render the dialog.
+  useEffect(() => {
+    const completed = importQueue.filter((e) => e.status.kind === "Completed");
+    const fresh = completed
+      .map((e) => e.media_id)
+      .filter((id) => !notifiedImportIds.current.has(id));
+    if (fresh.length === 0) return;
+    for (const id of fresh) notifiedImportIds.current.add(id);
+    setDialogBatch((prev) => [...new Set([...prev, ...fresh])]);
+  }, [importQueue]);
+
+  // Deps recreated each render; they read `.current` refs so they're always
+  // live. `sweepTick` is what forces re-eval when only a ref changed.
+  const dialogDeps: OptimizeDeps = {
+    memo: decodeProbeMemo.current,
+    proxyStateOf: (id) => proxyStateRef.current.get(id),
+    routeCorrected: routeCorrected.current,
+  };
+
+  // Live classification of the dialog batch.
+  const dialogItems: ImportItem[] = useMemo(() => {
+    const store = useProjectStore.getState();
+    return dialogBatch
+      .map((id) => store.mediaById.get(id))
+      .filter((m): m is MediaSummary => !!m)
+      .map((m) => ({
+        id: m.id,
+        label: m.label,
+        status: importOptimizeStatus(m, dialogDeps),
+        reason: optimizeReason(m, dialogDeps),
+      }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dialogBatch, summary, proxyState, sweepTick]);
+
+  const dialogHasAttention = dialogItems.some(
+    (i) => i.status === "optimizing" || i.status === "failed" || i.status === "checking",
+  );
+
+  // Auto-close ONLY once every batch member is loaded in the store AND resolved
+  // to direct/ready. Never clears while a member is still absent (the import
+  // Completed event can beat the store update) or still needs attention — that
+  // would close the dialog before the clips even appear.
+  useEffect(() => {
+    if (dialogBatch.length === 0) return;
+    const store = useProjectStore.getState();
+    const allSettledDirect = dialogBatch.every((id) => {
+      const m = store.mediaById.get(id);
+      if (!m) return false;
+      const s = importOptimizeStatus(m, dialogDeps);
+      return s === "direct" || s === "ready";
+    });
+    if (allSettledDirect) setDialogBatch([]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dialogBatch, summary, proxyState, sweepTick]);
 
   // Project-change subscription — fired by the actor whenever a commit lands,
   // regardless of source (UI command, MCP tool call, undo/redo, checkpoint
@@ -1311,6 +1390,12 @@ export function App({ onCloseProject }: AppProps) {
           state={exportState}
           onClose={() => setExportState(null)}
           onPlay={openRenderPlayPopup}
+        />
+      )}
+      {dialogHasAttention && (
+        <ImportProxyDialog
+          items={dialogItems}
+          onDismiss={() => setDialogBatch([])}
         />
       )}
       {connectOpen && (
