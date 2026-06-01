@@ -208,6 +208,99 @@ pub async fn mux_to_file(
     Ok(())
 }
 
+/// Tauri event emitted while ffmpeg transcodes the video (ffmpeg-path codecs
+/// like HEVC). Payload: an `f64` percent in 0.0..=1.0.
+pub const EVENT_TRANSCODE_PROGRESS: &str = "export:transcode_progress";
+
+/// Transcode `video_path` (the WebCodecs H.264 mezzanine) to `encoder` and
+/// mux with `audio_path` into `output` (container = output extension). Parses
+/// `-progress pipe:1` and emits `EVENT_TRANSCODE_PROGRESS` against `duration_us`.
+pub async fn transcode_and_mux(
+    app: &AppHandle,
+    encoder: &str,
+    bitrate: u64,
+    cbr: bool,
+    duration_us: i64,
+    video_path: &Path,
+    audio_path: &Path,
+    output: &Path,
+) -> Result<()> {
+    use tauri::Emitter;
+    if !ffmpeg_is_installed() {
+        anyhow::bail!("ffmpeg is not installed");
+    }
+    let has_audio = audio_path.exists();
+    let mut cmd = Command::new(ffmpeg_path());
+    cmd.arg("-y").arg("-hide_banner").arg("-nostats");
+    cmd.arg("-i").arg(video_path);
+    if has_audio {
+        cmd.arg("-i").arg(audio_path);
+    }
+    for arg in video_encode_args(encoder, bitrate, cbr) {
+        cmd.arg(arg);
+    }
+    // Audio is already AAC from export_audio_only → stream-copy it.
+    if has_audio {
+        cmd.args(["-c:a", "copy"]);
+    }
+    // Machine-readable progress on stdout.
+    cmd.args(["-progress", "pipe:1"]);
+    cmd.arg(output);
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+
+    info!(
+        "ffmpeg transcode ({encoder}): {} -> {}",
+        video_path.display(),
+        output.display()
+    );
+    let mut child = cmd.spawn().context("spawn ffmpeg transcode")?;
+
+    // Parse `-progress` key=value lines from stdout; emit percent.
+    let stdout = child.stdout.take().context("take ffmpeg stdout")?;
+    let app_for_progress = app.clone();
+    let total_us = duration_us.max(1) as f64;
+    let progress_task = tokio::spawn(async move {
+        let mut reader = BufReader::new(stdout).lines();
+        while let Ok(Some(line)) = reader.next_line().await {
+            if let Some(v) = line.strip_prefix("out_time_us=") {
+                if let Ok(us) = v.trim().parse::<f64>() {
+                    let pct = (us / total_us).clamp(0.0, 1.0);
+                    let _ = app_for_progress.emit(EVENT_TRANSCODE_PROGRESS, pct);
+                }
+            }
+        }
+    });
+
+    let stderr = child.stderr.take().context("take ffmpeg stderr")?;
+    let stderr_task = tokio::spawn(async move {
+        let mut reader = BufReader::new(stderr).lines();
+        let mut tail: Vec<String> = Vec::new();
+        while let Ok(Some(line)) = reader.next_line().await {
+            tail.push(line);
+            if tail.len() > 50 {
+                tail.remove(0);
+            }
+        }
+        tail.join("\n")
+    });
+
+    let status = child.wait().await.context("await ffmpeg transcode")?;
+    let _ = progress_task.await;
+    let stderr_tail = stderr_task.await.unwrap_or_default();
+    if !status.success() {
+        anyhow::bail!(
+            "ffmpeg transcode exited {}. Tail:\n{}",
+            status,
+            stderr_tail.lines().rev().take(8).collect::<Vec<_>>().join("\n")
+        );
+    }
+    let _ = app.emit(EVENT_TRANSCODE_PROGRESS, 1.0_f64);
+    Ok(())
+}
+
 /// Build the ffmpeg `-c:v …` video-encode args for a transcode. `encoder` is
 /// the resolved ffmpeg encoder name (HW like `hevc_nvenc` or software like
 /// `libx265`). VBR uses `-b:v` as the average target; CBR additionally pins
