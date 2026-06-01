@@ -12,6 +12,7 @@
     "dialog:default",
     "fs:default",
     "fs:allow-temp-write-recursive",
-    "shell:default"
+    "shell:default",
+    "mcp-bridge:default"
   ]
 }

@@ -51,10 +51,21 @@ pub fn run() {
 
     tracing::info!("weftcut starting");
 
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_shell::init());
+    // Dev-only: expose the running webview to the tauri-mcp-server (localhost
+    // 9223) so it can be driven for in-app testing. Never active in release.
+    #[cfg(debug_assertions)]
+    {
+        builder = builder.plugin(
+            tauri_plugin_mcp_bridge::Builder::new()
+                .bind_address("127.0.0.1")
+                .build(),
+        );
+    }
+    builder
         .invoke_handler(tauri::generate_handler![
             commands::ping,
             commands::get_mcp_info,
