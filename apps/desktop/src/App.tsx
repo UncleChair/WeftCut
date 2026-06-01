@@ -931,6 +931,7 @@ export function App({ onCloseProject }: AppProps) {
       setExportState({
         kind: "progress",
         progress: {
+          phase: "encode",
           progress: encoded / total,
           currentTimeUs,
           frame: encoded,
@@ -982,6 +983,7 @@ export function App({ onCloseProject }: AppProps) {
             setExportState({
               kind: "progress",
               progress: {
+                phase: "transcode",
                 progress: ev.payload,
                 currentTimeUs: Math.round(ev.payload * summary.duration_us),
                 frame: 0,
@@ -1491,7 +1493,11 @@ export function App({ onCloseProject }: AppProps) {
         </section>
       </main>
 
-      {exportDialogOpen && summary && (
+      {/* One modal overlay: the settings form while idle, the progress panel
+          once an export is running (exportState set). Keeping the dialog open
+          through the export means progress shows in the same popup and blocks
+          UI interaction until the user dismisses on complete/error. */}
+      {exportDialogOpen && summary && exportState == null && (
         <ExportSettingsDialog
           comp={summary.composition}
           durationUs={summary.duration_us}
@@ -1501,7 +1507,7 @@ export function App({ onCloseProject }: AppProps) {
           hasAudio={true}
           onCancel={() => setExportDialogOpen(false)}
           onConfirm={(settings, path) => {
-            setExportDialogOpen(false);
+            // Don't close — the progress panel takes over the same overlay.
             void runExportWithSettings(settings, path);
           }}
         />
@@ -1509,7 +1515,10 @@ export function App({ onCloseProject }: AppProps) {
       {exportState && (
         <ExportPanel
           state={exportState}
-          onClose={() => setExportState(null)}
+          onClose={() => {
+            setExportState(null);
+            setExportDialogOpen(false);
+          }}
           onPlay={openRenderPlayPopup}
         />
       )}
@@ -1626,6 +1635,10 @@ function ViewMenu() {
 
 
 interface ExportProgress {
+  /// Which stage this progress is for. The ffmpeg path runs "encode" (the
+  /// WebCodecs mezzanine, 0→100) then "transcode" (ffmpeg → target codec,
+  /// 0→100); labeling the stage stops the bar's reset from reading as a stall.
+  phase: "encode" | "transcode";
   progress: number;
   currentTimeUs: number;
   frame: number;
@@ -1659,86 +1672,125 @@ function ExportPanel({
 }) {
   const { t } = useTranslation();
   const inProgress = state.kind === "starting" || state.kind === "progress";
+  // Modal during work: no dismiss/close affordance until complete/error (the
+  // "preparing" wait has its own Cancel). This also blocks UI interaction.
+  const dismissable = !inProgress && state.kind !== "preparing";
 
   let body: React.ReactNode;
   let percent = 0;
   switch (state.kind) {
     case "starting":
-      body = <span>{t("export.starting")}</span>;
+      body = <p className="export-progress-status">{t("export.starting")}</p>;
       break;
     case "preparing":
       body = (
-        <span>
+        <p className="export-progress-status">
           {t("export.preparing", {
             labels: state.labels.join(", "),
             count: state.labels.length,
           })}
-        </span>
+        </p>
       );
       break;
     case "progress": {
       percent = Math.round(state.progress.progress * 100);
+      const phaseLabel =
+        state.progress.phase === "transcode"
+          ? t("export.phase_transcode")
+          : t("export.phase_encode");
+      // The transcode stage has no per-frame fps/speed (ffmpeg `-progress`
+      // gives time only), so show just the stage + percent there.
+      const detail =
+        state.progress.phase === "transcode"
+          ? `${percent}%`
+          : t("export.progress_label", {
+              percent,
+              frame: state.progress.frame,
+              fps: state.progress.fps.toFixed(1),
+              speed: state.progress.speed.toFixed(2),
+            });
       body = (
-        <span>
-          {t("export.progress_label", {
-            percent,
-            frame: state.progress.frame,
-            fps: state.progress.fps.toFixed(1),
-            speed: state.progress.speed.toFixed(2),
-          })}
-        </span>
+        <p className="export-progress-status">
+          <strong>{phaseLabel}</strong>
+          <span className="export-progress-detail">{detail}</span>
+        </p>
       );
       break;
     }
     case "complete":
       percent = 100;
       body = (
-        <span>{t("export.complete", { path: state.payload.outputPath })}</span>
+        <p className="export-progress-status">
+          {t("export.complete", { path: state.payload.outputPath })}
+        </p>
       );
       break;
     case "error":
       body = (
-        <span className="error">
+        <p className="export-progress-status error">
           {t("export.failed", { detail: state.detail })}
-        </span>
+        </p>
       );
       break;
   }
 
   return (
-    <aside className="export-panel">
-      <header>
-        {body}
-        {state.kind === "complete" && onPlay && (
-          <button
-            onClick={() => onPlay(state.payload.outputPath)}
-            title={t("export.play_hint", {
-              defaultValue: "Open the exported MP4 in a Render & Play popup.",
-            })}
-          >
-            {t("export.play", { defaultValue: "Play" })}
-          </button>
-        )}
-        {state.kind === "preparing" && (
-          <button onClick={state.onCancel}>
-            {t("export.preparing_cancel")}
-          </button>
-        )}
-        {!inProgress && state.kind !== "preparing" && (
-          <button onClick={onClose}>{t("export.dismiss")}</button>
-        )}
-      </header>
-      <div
-        className={`progress-track ${state.kind === "error" ? "is-error" : ""}`}
-      >
-        <div
-          className="progress-fill"
-          style={{
-            width: `${state.kind === "error" ? 100 : percent}%`,
-          }}
-        />
+    <div className="settings-overlay" role="dialog" aria-modal="true">
+      <div className="settings-panel export-progress-panel">
+        <header>
+          <h2>{t("export.title")}</h2>
+          {dismissable && (
+            <button
+              className="settings-close"
+              onClick={onClose}
+              aria-label={t("export.dismiss")}
+            >
+              ✕
+            </button>
+          )}
+        </header>
+        <div className="settings-body">
+          <div className="settings-card">
+            {body}
+            <div
+              className={`progress-track ${
+                state.kind === "error" ? "is-error" : ""
+              }`}
+            >
+              <div
+                className="progress-fill"
+                style={{ width: `${state.kind === "error" ? 100 : percent}%` }}
+              />
+            </div>
+            {(state.kind === "preparing" || dismissable) && (
+              <div className="export-actions">
+                {state.kind === "preparing" && (
+                  <button onClick={state.onCancel}>
+                    {t("export.preparing_cancel")}
+                  </button>
+                )}
+                {state.kind === "complete" && onPlay && (
+                  <button
+                    onClick={() => onPlay(state.payload.outputPath)}
+                    title={t("export.play_hint", {
+                      defaultValue:
+                        "Open the exported MP4 in a Render & Play popup.",
+                    })}
+                  >
+                    {t("export.play", { defaultValue: "Play" })}
+                  </button>
+                )}
+                {dismissable && (
+                  <button className="export-primary" onClick={onClose}>
+                    {t("export.dismiss")}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
-    </aside>
+    </div>
   );
 }
 

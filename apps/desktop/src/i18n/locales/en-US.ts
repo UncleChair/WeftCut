@@ -227,6 +227,9 @@ const enUS = {
     timecode_edit_hint: "Click to edit · Enter to seek · Esc to cancel",
   },
   export: {
+    title: "Export",
+    phase_encode: "Encoding",
+    phase_transcode: "Transcoding",
     starting: "Starting export…",
     preparing:
       "Preparing optimized media for {{labels}} — export will start automatically.",
