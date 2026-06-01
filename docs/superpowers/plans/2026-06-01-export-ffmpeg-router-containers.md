@@ -1111,11 +1111,11 @@ No automated gate for the transcode/router integration. Run the app and walk the
 
 - [ ] **Step 2: WebCodecs path unchanged** — Export H.264 (MP4) and AV1 (MP4). Both: panel shows "WebCodecs" badge, exports complete, play with audio, correct dims/duration. (Regression check: behaves like before this plan.)
 
-- [ ] **Step 3: HEVC via ffmpeg** — Select HEVC. Badge shows "ffmpeg transcode". Export. Confirm: (a) the panel shows a **transcode progress** phase advancing (not a silent freeze); (b) the output is real HEVC (`ffprobe out.mp4` → `hevc`); (c) plays with audio. First run also triggers the one-time HW-encoder probe (a few seconds) — subsequent HEVC exports skip it.
+- [ ] **Step 3: HEVC via ffmpeg** — Select HEVC. Badge shows "ffmpeg transcode". Export. Confirm: (a) the panel's **transcode progress advances** (watch it climb 0→100; a frozen 0% that jumps straight to complete means the `out_time_us=` progress key is wrong — fall back to parsing `out_time=` HH:MM:SS); (b) the output is real HEVC **with the `hvc1` tag** — `ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,codec_tag_string out.mp4` must report `hevc` + **`hvc1`** (NOT `hev1`, which is silently unplayable on Apple/Premiere/WebView2 — judge by this, never by "it played in VLC"); (c) plays with audio. First run also triggers the one-time HW-encoder probe (a few seconds) — subsequent HEVC exports skip it.
 
 - [ ] **Step 4: Containers** — Export the same project to **MOV** and **MKV** (codec H.264 and AV1). Confirm output extension matches, file plays, `ffprobe` shows the right container + codec + AAC audio. Verify AV1-in-MOV and AV1-in-MKV specifically (newer combos): `ffprobe out.mov`/`out.mkv` report `av1` video.
 
-- [ ] **Step 5: HEVC into MOV/MKV** — Export HEVC to MOV and MKV (ffmpeg path + non-MP4 container together). Confirm both play and report `hevc` in the right container.
+- [ ] **Step 5: HEVC into MOV/MKV** — Export HEVC to MOV and MKV. Confirm both report `hevc`; the **MOV** must report `hvc1` (`ffprobe … codec_tag_string`), the **MKV** has no fourcc tag (that's correct — MKV doesn't use one).
 
 - [ ] **Step 6: Container ↔ path extension** — In the dialog, pick a path via Browse, then change the container dropdown; confirm the shown path's extension updates to match.
 
