@@ -9,9 +9,10 @@ import type { ProbeState, ProxyJobState } from "../render/exportReadiness";
 
 export type OptimizeStatus =
   | "ready" // export proxy already on disk
-  | "direct" // exports without a proxy (bypass or confirmed DirectExport); not shown
+  | "direct" // exports without a proxy (H.264 bypass); not shown
   | "checking" // probe in flight, or routing not yet decided
-  | "optimizing" // a full proxy is being generated
+  | "bridged" // decodable here → previewable NOW; a proxy builds in the background
+  | "transcoding" // NOT decodable here → blank until the proxy lands
   | "failed"; // the proxy job failed
 
 export interface OptimizeDeps {
@@ -27,13 +28,23 @@ export function importOptimizeStatus(m: MediaSummary, deps: OptimizeDeps): Optim
   if (m.kind !== "Video") return "direct";
   if (m.proxy_path) return "ready";
   if (m.proxy_bypassed) return "direct";
-  if (m.export_uses_original) {
-    return deps.memo.get(m.id) === "ok" ? "direct" : "checking";
-  }
-  // Not bypass, not DirectExport, no proxy yet.
+  // DirectExport whose preview proxy has landed: optimization is complete
+  // (export reads the original, preview reads the quick proxy), so settle to
+  // silent — otherwise a decodable DirectExport source would be terminally
+  // "bridged" and keep the import dialog open forever. The FULL-proxy path
+  // (QuickThenFull / 10-bit) still waits for `proxy_path` (handled above), so
+  // it correctly stays "bridged" until its export master lands.
+  if (m.export_uses_original && m.quick_proxy_path) return "direct";
+  const decodable = deps.memo.get(m.id) === "ok";
   const ps = deps.proxyStateOf(m.id);
   if (ps === "failed") return "failed";
-  if (ps === "pending") return "optimizing";
+  // This machine decoded it → the bridge previews the original now; whatever
+  // proxy is building is a background scroll/export upgrade.
+  if (decodable) return "bridged";
+  // DirectExport whose probe hasn't resolved yet.
+  if (m.export_uses_original) return "checking";
+  // Confirmed undecodable here (or route-corrected); blank until the proxy.
+  if (ps === "pending") return "transcoding";
   return "checking"; // pre-decision window — resolves shortly
 }
 
@@ -64,15 +75,15 @@ export function is10bit(pixFmt: string | null): boolean {
 }
 
 export interface OptimizeReason {
-  key: "reason_undecodable" | "reason_transcode" | "reason_10bit";
+  key: "reason_bridged" | "reason_undecodable" | "reason_transcode" | "reason_10bit";
   codec: string;
 }
 
-/// Why this clip is being optimized. Route-corrected ⇒ machine can't decode an
-/// 8-bit family codec (never 10-bit — 10-bit routes to a static proxy, not
-/// DirectExport). Static proxies are either 10-bit/HDR or a non-family codec.
+/// Why this clip appears, given its classification. A bridged clip is already
+/// previewable; everything else is waiting on a proxy.
 export function optimizeReason(m: MediaSummary, deps: OptimizeDeps): OptimizeReason {
   const codec = codecDisplayName(m.codec);
+  if (deps.memo.get(m.id) === "ok") return { key: "reason_bridged", codec };
   if (deps.routeCorrected.has(m.id)) return { key: "reason_undecodable", codec };
   if (is10bit(m.pix_fmt)) return { key: "reason_10bit", codec };
   return { key: "reason_transcode", codec };
@@ -87,13 +98,15 @@ export interface ImportItem {
 }
 
 export interface Partitioned {
-  listed: ImportItem[]; // optimizing + failed (shown in the list)
+  listed: ImportItem[]; // bridged + transcoding + failed (shown in the list)
   checkingCount: number; // shown as "checking N…"
   hasAttention: boolean; // gates dialog visibility + auto-close in App
 }
 
 export function partitionImportItems(items: ImportItem[]): Partitioned {
-  const listed = items.filter((i) => i.status === "optimizing" || i.status === "failed");
+  const listed = items.filter(
+    (i) => i.status === "bridged" || i.status === "transcoding" || i.status === "failed",
+  );
   const checkingCount = items.filter((i) => i.status === "checking").length;
   return { listed, checkingCount, hasAttention: listed.length > 0 || checkingCount > 0 };
 }
