@@ -246,7 +246,7 @@ const zhCN: Resources = {
     fps: "帧率",
     follow_comp: "跟随合成",
     codec: "编码",
-    container: "容器",
+    container: "容器 / 复用器",
     path_webcodecs: "编码器：WebCodecs(有硬件则用硬件)",
     path_ffmpeg: "编码器：ffmpeg 转码(较慢)",
     checking_codec: "正在检测编码支持…",
