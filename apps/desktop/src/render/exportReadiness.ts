@@ -39,6 +39,25 @@ export function sourcesNeedingPreflight(
   );
 }
 
+/// Video sources that would show a BLANK preview right now (no quick proxy, no
+/// full proxy, not bypassed) — candidates for the preview-from-original bridge.
+/// A SUPERSET of `sourcesNeedingPreflight`: it also includes full-proxy/10-bit
+/// sources, so a decodable Hi10P/HEVC gets a verdict in the shared memo and can
+/// bridge while its proxy builds. The import sweep probes these; the export gate
+/// keeps using the narrower `sourcesNeedingPreflight`.
+export function sourcesNeedingPreviewProbe(
+  mediaById: ReadonlyMap<string, MediaSummary>,
+): MediaSummary[] {
+  return [...mediaById.values()].filter(
+    (m) =>
+      m.kind === "Video" &&
+      m.available &&
+      !m.quick_proxy_path &&
+      !m.proxy_path &&
+      !m.proxy_bypassed,
+  );
+}
+
 export interface PrepareDeps {
   /// Decode one key frame; true = decodable on this machine.
   probe: (assetUrl: string) => Promise<boolean>;
