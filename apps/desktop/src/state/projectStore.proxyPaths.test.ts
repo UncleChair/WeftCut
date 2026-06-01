@@ -93,3 +93,39 @@ describe("direct-export source resolution", () => {
     expect(exportPlaybackPathFor(m)).toBe("/orig.mp4");
   });
 });
+
+describe("preview bridge", () => {
+  it("preview bridges to the original when probe-decodable and no proxy yet", () => {
+    expect(
+      previewPlaybackPathFor(video({ export_uses_original: true }), {
+        previewDecodable: true,
+      }),
+    ).toBe("/orig.mp4");
+  });
+
+  it("preview stays blank when not probe-decodable and no proxy", () => {
+    expect(
+      previewPlaybackPathFor(video({ export_uses_original: true }), {
+        previewDecodable: false,
+      }),
+    ).toBeNull();
+    expect(previewPlaybackPathFor(video({ export_uses_original: true }))).toBeNull();
+  });
+
+  it("preview prefers the quick proxy over the bridge once it lands", () => {
+    expect(
+      previewPlaybackPathFor(video({ quick_proxy_path: "/q.mp4" }), {
+        previewDecodable: true,
+      }),
+    ).toBe("/q.mp4");
+  });
+
+  it("preview bridges a 10-bit full-proxy source when probe-decodable", () => {
+    expect(
+      previewPlaybackPathFor(
+        video({ codec: "hevc", pix_fmt: "yuv420p10le" }),
+        { previewDecodable: true },
+      ),
+    ).toBe("/orig.mp4");
+  });
+});
