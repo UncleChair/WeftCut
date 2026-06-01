@@ -4,7 +4,7 @@ import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialo
 import { join, tempDir } from "@tauri-apps/api/path";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { open, remove } from "@tauri-apps/plugin-fs";
+import { remove, writeFile } from "@tauri-apps/plugin-fs";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -940,24 +940,14 @@ export function App({ onCloseProject }: AppProps) {
       });
     };
 
-    // Open the temp video for streamed, append-only writes. The Worker emits
-    // the output in sequential slices (fMP4) and we append each here, so the
-    // whole MP4 is never held in one ArrayBuffer (V8's ~2GB cap OOM'd long
-    // exports). Closed before ffmpeg reads it.
-    const videoHandle = await open(tempVideoPath, {
-      write: true,
-      create: true,
-      truncate: true,
-    });
-    let handleClosed = false;
-    const closeVideoHandle = async () => {
-      if (handleClosed) return;
-      handleClosed = true;
-      try {
-        await videoHandle.close();
-      } catch {
-        // already closed / best-effort
-      }
+    // Stream the worker's output to the temp file: it emits the MP4 in
+    // sequential slices (fMP4) which we append here, so the whole file is never
+    // held in one ArrayBuffer (V8's ~2GB cap OOM'd long exports). `writeFile`
+    // with `append` is used instead of an open FileHandle because `fs:allow-open`
+    // isn't in the app's capabilities (`fs:allow-write-file` is). The temp path
+    // is a fresh UUID, so the first append creates it (create defaults true).
+    const writeChunk = async (data: ArrayBuffer): Promise<void> => {
+      await writeFile(tempVideoPath, new Uint8Array(data), { append: true });
     };
 
     setExportState({ kind: "starting" });
@@ -967,27 +957,21 @@ export function App({ onCloseProject }: AppProps) {
         onProgress,
         encoderConfig,
         outputFps: { num: fpsNum, den: fpsDen },
-        writeChunk: async (data) => {
-          await videoHandle.write(new Uint8Array(data));
-        },
+        writeChunk,
       });
     } catch (e) {
-      await closeVideoHandle();
       const msg = e instanceof Error ? e.message : String(e);
       console.error("[weftcut/pixi] export failed:", e);
       setExportState({ kind: "error", detail: msg });
       return;
     }
     if (!result) {
-      await closeVideoHandle();
       setExportState({
         kind: "error",
         detail: "Preview not initialized.",
       });
       return;
     }
-    // Flush + close the streamed video file before ffmpeg reads it.
-    await closeVideoHandle();
 
     // Transcode-progress listener (ffmpeg path only). Maps 0..1 onto the
     // panel's progress phase; detached after the mux resolves. Awaited so the

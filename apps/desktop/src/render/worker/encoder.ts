@@ -57,9 +57,33 @@ export class EncoderSink {
     // the main thread (which appends it to the temp file) and the WritableStream
     // backpressure throttles the encoder. The Rust mux re-containers this fMP4
     // into the user's chosen container, so it's an invisible intermediate.
+    // Batch the muxer's many small box-level writes into ~8 MB slices before
+    // posting to the main thread — far fewer worker→main→disk round-trips on
+    // long exports (each `onChunk` is a postMessage + Tauri writeFile).
+    const FLUSH_BYTES = 8 * 1024 * 1024;
+    let batch: Uint8Array[] = [];
+    let batched = 0;
+    const flushBatch = async (): Promise<void> => {
+      if (batched === 0) return;
+      const merged = new Uint8Array(batched);
+      let off = 0;
+      for (const slice of batch) {
+        merged.set(slice, off);
+        off += slice.byteLength;
+      }
+      batch = [];
+      batched = 0;
+      await init.onChunk(merged);
+    };
     const writable = new WritableStream<Uint8Array>({
-      write(chunk) {
-        return init.onChunk(chunk);
+      async write(chunk) {
+        // Copy: mediabunny may reuse the chunk's buffer after write() resolves.
+        batch.push(chunk.slice());
+        batched += chunk.byteLength;
+        if (batched >= FLUSH_BYTES) await flushBatch();
+      },
+      async close() {
+        await flushBatch();
       },
     });
     this.output = new Output({
