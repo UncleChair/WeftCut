@@ -2204,6 +2204,7 @@ pub async fn mux_export(
             export::transcode_and_mux(
                 &app,
                 &encoder,
+                codec,
                 spec.bitrate,
                 spec.cbr,
                 spec.duration_us,
