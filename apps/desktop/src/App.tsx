@@ -1500,11 +1500,6 @@ export function App({ onCloseProject }: AppProps) {
       {exportDialogOpen && summary && exportState == null && (
         <ExportSettingsDialog
           comp={summary.composition}
-          durationUs={summary.duration_us}
-          // Real audio presence is decided Rust-side (IR plan.maps); the
-          // webview can't replicate it. This only nudges the size estimate,
-          // so default to true (overestimate is harmless).
-          hasAudio={true}
           onCancel={() => setExportDialogOpen(false)}
           onConfirm={(settings, path) => {
             // Don't close — the progress panel takes over the same overlay.
