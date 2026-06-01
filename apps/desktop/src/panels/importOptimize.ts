@@ -1,0 +1,99 @@
+// Per-clip "will this need optimizing before export?" classification + the
+// codec-named reason shown in the import notification dialog. Pure; the dialog
+// (ImportProxyDialog) is presentational and App does the classification.
+//
+// See docs/superpowers/specs/2026-06-01-import-proxy-notification-design.md
+
+import type { MediaSummary } from "../ipc";
+import type { ProbeState, ProxyJobState } from "../render/exportReadiness";
+
+export type OptimizeStatus =
+  | "ready" // export proxy already on disk
+  | "direct" // exports without a proxy (bypass or confirmed DirectExport); not shown
+  | "checking" // probe in flight, or routing not yet decided
+  | "optimizing" // a full proxy is being generated
+  | "failed"; // the proxy job failed
+
+export interface OptimizeDeps {
+  /// Session decodability memo (App `decodeProbeMemo`).
+  memo: ReadonlyMap<string, ProbeState>;
+  /// Session proxy-job state (App `proxyState`).
+  proxyStateOf: (id: string) => ProxyJobState | undefined;
+  /// Ids the import sweep route-corrected because this machine can't decode them.
+  routeCorrected: ReadonlySet<string>;
+}
+
+export function importOptimizeStatus(m: MediaSummary, deps: OptimizeDeps): OptimizeStatus {
+  if (m.kind !== "Video") return "direct";
+  if (m.proxy_path) return "ready";
+  if (m.proxy_bypassed) return "direct";
+  if (m.export_uses_original) {
+    return deps.memo.get(m.id) === "ok" ? "direct" : "checking";
+  }
+  // Not bypass, not DirectExport, no proxy yet.
+  const ps = deps.proxyStateOf(m.id);
+  if (ps === "failed") return "failed";
+  if (ps === "pending") return "optimizing";
+  return "checking"; // pre-decision window — resolves shortly
+}
+
+const CODEC_NAMES: Record<string, string> = {
+  h264: "H.264",
+  avc1: "H.264",
+  hevc: "HEVC",
+  h265: "HEVC",
+  hvc1: "HEVC",
+  av1: "AV1",
+  av01: "AV1",
+  vp9: "VP9",
+  vp09: "VP9",
+  vp8: "VP8",
+  prores: "ProRes",
+  mpeg2video: "MPEG-2",
+  dnxhd: "DNxHD",
+};
+
+export function codecDisplayName(codec: string | null): string {
+  if (!codec) return "未知";
+  const key = codec.toLowerCase();
+  return CODEC_NAMES[key] ?? codec.toUpperCase();
+}
+
+export function is10bit(pixFmt: string | null): boolean {
+  return pixFmt != null && /1[02]/.test(pixFmt);
+}
+
+export interface OptimizeReason {
+  key: "reason_undecodable" | "reason_transcode" | "reason_10bit";
+  codec: string;
+}
+
+/// Why this clip is being optimized. Route-corrected ⇒ machine can't decode an
+/// 8-bit family codec (never 10-bit — 10-bit routes to a static proxy, not
+/// DirectExport). Static proxies are either 10-bit/HDR or a non-family codec.
+export function optimizeReason(m: MediaSummary, deps: OptimizeDeps): OptimizeReason {
+  const codec = codecDisplayName(m.codec);
+  if (deps.routeCorrected.has(m.id)) return { key: "reason_undecodable", codec };
+  if (is10bit(m.pix_fmt)) return { key: "reason_10bit", codec };
+  return { key: "reason_transcode", codec };
+}
+
+/// A classified clip for the dialog. App builds these; the dialog renders them.
+export interface ImportItem {
+  id: string;
+  label: string;
+  status: OptimizeStatus;
+  reason: OptimizeReason;
+}
+
+export interface Partitioned {
+  listed: ImportItem[]; // optimizing + failed (shown in the list)
+  checkingCount: number; // shown as "checking N…"
+  hasAttention: boolean; // gates dialog visibility + auto-close in App
+}
+
+export function partitionImportItems(items: ImportItem[]): Partitioned {
+  const listed = items.filter((i) => i.status === "optimizing" || i.status === "failed");
+  const checkingCount = items.filter((i) => i.status === "checking").length;
+  return { listed, checkingCount, hasAttention: listed.length > 0 || checkingCount > 0 };
+}
