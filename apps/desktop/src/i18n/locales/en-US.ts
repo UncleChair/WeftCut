@@ -246,6 +246,9 @@ const enUS = {
     fps: "Frame rate",
     follow_comp: "Follow composition",
     codec: "Codec",
+    container: "Container",
+    path_webcodecs: "Encoder: WebCodecs (hardware if available)",
+    path_ffmpeg: "Encoder: ffmpeg transcode (slower)",
     checking_codec: "Checking codec support…",
     codec_unsupported:
       "{{codec}} can't be encoded on this machine — pick another codec.",
