@@ -250,13 +250,12 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
 });
 
 async function handlePixiExport(
-  opts:
-    | {
-        onProgress?: (encoded: number, total: number) => void;
-        encoderConfig?: VideoEncoderConfig;
-        outputFps?: { num: number; den: number };
-      }
-    | undefined,
+  opts: {
+    onProgress?: (encoded: number, total: number) => void;
+    encoderConfig?: VideoEncoderConfig;
+    outputFps?: { num: number; den: number };
+    writeChunk: (data: ArrayBuffer) => Promise<void>;
+  },
   compositor: Compositor | null,
   engine: PlaybackEngine | null,
 ): Promise<PixiExportResult> {
@@ -278,16 +277,16 @@ async function handlePixiExport(
     const result = await runExport({
       summary,
       mediaById: store.mediaById,
+      writeChunk: opts.writeChunk,
       // Conditional spreads: under exactOptionalPropertyTypes an optional
       // field may be absent but not explicitly `undefined`.
-      ...(opts?.onProgress ? { onProgress: opts.onProgress } : {}),
-      ...(opts?.encoderConfig ? { encoderConfig: opts.encoderConfig } : {}),
-      ...(opts?.outputFps ? { outputFps: opts.outputFps } : {}),
+      ...(opts.onProgress ? { onProgress: opts.onProgress } : {}),
+      ...(opts.encoderConfig ? { encoderConfig: opts.encoderConfig } : {}),
+      ...(opts.outputFps ? { outputFps: opts.outputFps } : {}),
     });
-    const outFpsNum = opts?.outputFps?.num ?? summary.composition.fps_num;
-    const outFpsDen = opts?.outputFps?.den ?? summary.composition.fps_den;
+    const outFpsNum = opts.outputFps?.num ?? summary.composition.fps_num;
+    const outFpsDen = opts.outputFps?.den ?? summary.composition.fps_den;
     return {
-      videoBytes: result.videoBytes,
       framesEncoded: result.framesEncoded,
       totalFrames: result.totalFrames,
       fpsNum: outFpsNum,

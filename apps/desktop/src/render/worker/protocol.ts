@@ -61,10 +61,19 @@ export type ExportRequest =
       /// hands it to the PixiJS Application as the render target.
       canvas: OffscreenCanvas;
     }
-  | { type: "cancel" };
+  | { type: "cancel" }
+  /// Backpressure ack: the main thread finished writing the most recent
+  /// `chunk` to disk; the worker's WritableStream may release the next write.
+  | { type: "chunk-ack" };
 
 export type ExportEvent =
   | { type: "ready" }
   | { type: "progress"; framesEncoded: number; totalFrames: number }
-  | { type: "done"; videoBytes: ArrayBuffer }
+  /// One sequential slice of the output file (fMP4, append-only). The main
+  /// thread appends it to the temp file and replies with `chunk-ack`. Streamed
+  /// instead of buffering the whole MP4 in one ArrayBuffer (V8 caps that at
+  /// ~2GB → long exports OOM'd at finalize).
+  | { type: "chunk"; data: ArrayBuffer }
+  /// Encode + mux complete; the temp file is fully written on the main side.
+  | { type: "done" }
   | { type: "error"; message: string };
