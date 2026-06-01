@@ -5,6 +5,10 @@
 export type CodecId = "h264" | "av1" | "hevc";
 export type QualityPreset = "low" | "medium" | "high" | "custom";
 export type RateMode = "vbr" | "cbr";
+/// Output container. All three hold H.264/AV1/HEVC + AAC, so any codec is
+/// valid in any of them. WebM is deferred (needs Opus audio + VP9/AV1).
+export type Container = "mp4" | "mov" | "mkv";
+export const CONTAINERS: Container[] = ["mp4", "mov", "mkv"];
 
 export interface ExportSettings {
   /// Target output height in pixels; null = follow composition. Width is
@@ -17,6 +21,8 @@ export interface ExportSettings {
   /// Bits per second, used only when quality === "custom".
   customBitrate: number | null;
   rateMode: RateMode;
+  /// Output container. Audio stays AAC for all three (WebM deferred).
+  container: Container;
 }
 
 export const DEFAULT_EXPORT_SETTINGS: ExportSettings = {
@@ -26,6 +32,7 @@ export const DEFAULT_EXPORT_SETTINGS: ExportSettings = {
   quality: "medium",
   customBitrate: null,
   rateMode: "vbr",
+  container: "mp4",
 };
 
 /// Standard heights offered as downscale presets (largest first).
@@ -137,4 +144,19 @@ export function mergeSettings(
   saved: Partial<ExportSettings> | null,
 ): ExportSettings {
   return { ...DEFAULT_EXPORT_SETTINGS, ...(saved ?? {}) };
+}
+
+export function containerExtension(c: Container): string {
+  return c;
+}
+
+/// High, near-transparent H.264 bitrate for the ffmpeg-path mezzanine. The
+/// worker encodes this; ffmpeg then transcodes it to the target codec, so it
+/// must be visually lossless. ~0.2 bits/pixel/frame, floored at 20 Mbps.
+export function mezzanineBitrate(
+  width: number,
+  height: number,
+  fps: number,
+): number {
+  return Math.max(20_000_000, Math.round(width * height * fps * 0.2));
 }

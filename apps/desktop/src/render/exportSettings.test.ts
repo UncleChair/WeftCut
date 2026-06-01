@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+  CONTAINERS,
+  type Container,
   DEFAULT_EXPORT_SETTINGS,
   codecString,
   computeBitrate,
+  containerExtension,
   downscaleFpsOptions,
   downscaleHeightOptions,
   estimateBytes,
   formatBytes,
   mergeSettings,
+  mezzanineBitrate,
   resolveOutputDims,
   type ExportSettings,
 } from "./exportSettings";
@@ -137,3 +141,33 @@ describe("default-export baseline", () => {
     expect(DEFAULT_EXPORT_SETTINGS.rateMode).toBe("vbr");
   });
 });
+
+describe("containers", () => {
+  it("lists mp4, mov, mkv (webm deferred)", () => {
+    expect(CONTAINERS).toEqual(["mp4", "mov", "mkv"]);
+  });
+  it("maps container to file extension", () => {
+    expect(containerExtension("mp4")).toBe("mp4");
+    expect(containerExtension("mov")).toBe("mov");
+    expect(containerExtension("mkv")).toBe("mkv");
+  });
+  it("defaults container to mp4", () => {
+    expect(DEFAULT_EXPORT_SETTINGS.container).toBe("mp4");
+  });
+});
+
+describe("mezzanineBitrate", () => {
+  it("is a high, near-transparent H.264 bitrate (>= 20 Mbps floor)", () => {
+    const bps = mezzanineBitrate(1920, 1080, 30);
+    expect(bps).toBeGreaterThanOrEqual(20_000_000);
+  });
+  it("scales with resolution", () => {
+    expect(mezzanineBitrate(3840, 2160, 30)).toBeGreaterThan(
+      mezzanineBitrate(1920, 1080, 30),
+    );
+  });
+});
+
+// `Container` type is exercised via the typed assignments above.
+const _containerTypeCheck: Container = "mp4";
+void _containerTypeCheck;
