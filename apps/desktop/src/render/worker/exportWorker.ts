@@ -130,27 +130,44 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   compositor.setProject(req.project.summary as ProjectSummary);
   compositor.setMasterPlayState(false);
 
-  // 4. Encoder pipeline.
+  // Output fps: caller override (resolution/fps dialog) or composition fps.
+  const outFpsNum = req.outputFpsNum ?? req.project.fpsNum;
+  const outFpsDen = req.outputFpsDen ?? req.project.fpsDen;
+
+  // Target output dimensions are the ENCODER's dimensions, which may be a
+  // downscale of the composition render size. The render target (canvas /
+  // compositor / app) stays at composition size; we blit down at capture.
+  const outWidth = req.encoderConfig.width;
+  const outHeight = req.encoderConfig.height;
+  const needsScale =
+    outWidth !== req.project.width || outHeight !== req.project.height;
+
+  // 4. Encoder pipeline. Dims/fps come from the encoder config + output fps.
   const encoder = new EncoderSink({
     config: req.encoderConfig,
-    width: req.project.width,
-    height: req.project.height,
-    fpsNum: req.project.fpsNum,
-    fpsDen: req.project.fpsDen,
+    width: outWidth,
+    height: outHeight,
+    fpsNum: outFpsNum,
+    fpsDen: outFpsDen,
   });
 
-  // 5. Frame grid.
-  const frameDurUs = Math.round(
-    (1_000_000 * req.project.fpsDen) / req.project.fpsNum,
-  );
+  // 5. Frame grid — driven by OUTPUT fps. The grid is time-based, so a lower
+  // output fps naturally samples fewer composition frames (drops); a higher
+  // one duplicates. No frame-resampling machinery needed.
+  const frameDurUs = Math.round((1_000_000 * outFpsDen) / outFpsNum);
   const startUs = Math.max(0, req.startUs);
   const endUs = Math.min(req.project.durationUs, req.endUs);
   const totalFrames = Math.max(0, Math.ceil((endUs - startUs) / frameDurUs));
-  // 1-second IDR cadence to match the master proxy's GOP density.
-  const gop = Math.max(
-    1,
-    Math.round(req.project.fpsNum / Math.max(1, req.project.fpsDen)),
-  );
+  // 1-second IDR cadence at the OUTPUT fps.
+  const gop = Math.max(1, Math.round(outFpsNum / Math.max(1, outFpsDen)));
+
+  // Reusable downscale target — allocated once, drawn into per frame.
+  const scaleCanvas = needsScale
+    ? new OffscreenCanvas(outWidth, outHeight)
+    : null;
+  const scaleCtx = scaleCanvas
+    ? scaleCanvas.getContext("2d", { alpha: false })
+    : null;
 
   const summary = req.project.summary as ProjectSummary;
 
@@ -247,13 +264,21 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
       compositeMs += performance.now() - compT0;
 
       const capT0 = performance.now();
-      const captured = new VideoFrame(
-        req.canvas as unknown as CanvasImageSource,
-        {
-          timestamp: tUs - startUs,
-          duration: frameDurUs,
-        },
-      );
+      let source: CanvasImageSource = req.canvas as unknown as CanvasImageSource;
+      if (scaleCtx && scaleCanvas) {
+        scaleCtx.drawImage(
+          req.canvas as unknown as CanvasImageSource,
+          0,
+          0,
+          outWidth,
+          outHeight,
+        );
+        source = scaleCanvas as unknown as CanvasImageSource;
+      }
+      const captured = new VideoFrame(source, {
+        timestamp: tUs - startUs,
+        duration: frameDurUs,
+      });
       captureMs += performance.now() - capT0;
 
       const isKey = i % gop === 0;
