@@ -44,6 +44,8 @@ export interface PreviewSurfaceHandle {
   /// write so the existing ExportPanel can drive the pipeline.
   runPixiExport(opts?: {
     onProgress?: (encoded: number, total: number) => void;
+    encoderConfig?: VideoEncoderConfig;
+    outputFps?: { num: number; den: number };
   }): Promise<PixiExportResult>;
 }
 

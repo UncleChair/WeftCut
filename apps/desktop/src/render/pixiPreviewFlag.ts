@@ -45,5 +45,10 @@ export interface PixiPreviewHandle {
   /// progress UI can drive both pipelines.
   runExport(opts?: {
     onProgress?: (encoded: number, total: number) => void;
+    /// Full encoder config (codec/dims/bitrate/bitrateMode/framerate). When
+    /// omitted, the worker falls back to its 1080p H.264 default.
+    encoderConfig?: VideoEncoderConfig;
+    /// Output fps rational (overrides composition fps). Omit ⇒ comp fps.
+    outputFps?: { num: number; den: number };
   }): Promise<PixiExportResult>;
 }
