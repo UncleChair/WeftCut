@@ -538,7 +538,15 @@ export function App({ onCloseProject }: AppProps) {
         } catch {
           ok = false;
         }
-        if (cancelled) return;
+        // Land the verdict even if the effect was cancelled mid-probe. A rapid
+        // project:changed during a fast import (quick proxy lands in ~seconds)
+        // re-runs this [summary] effect and flips `cancelled`; bailing here
+        // would strand memo at "pending" forever — the next run filters out
+        // "pending" (and a proxied source leaves `sourcesNeedingPreviewProbe`),
+        // so it's never re-probed and stays stuck on "checking", never bridged.
+        // `probeSourceDecodable` has no AbortSignal, so the await completes
+        // regardless; recording its result is safe + idempotent. (The loop-top
+        // `if (cancelled) return` still stops STARTING new probes after cancel.)
         if (ok) {
           memo.set(m.id, "ok");
           // A paused clip already on the timeline won't re-run ensureClip on

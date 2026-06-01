@@ -67,7 +67,16 @@ export async function probeSourceDecodable(
     opened = await openMediaInput(assetUrl);
     const config = await opened.videoTrack.getDecoderConfig();
     if (!config) return false;
-    const keyPacket = await opened.packetSink.getKeyPacket(0);
+    // First key packet. `getKeyPacket(0)` looks for the keyframe at-or-before
+    // t=0s, which is NULL when the first keyframe has a non-zero start timestamp
+    // (trimmed clips, edit-list mp4s) — that would wrongly judge an otherwise
+    // decodable source undecodable. Fall back to `getFirstPacket()` (the track's
+    // first packet — always a keyframe for video). Mirrors the decoder pool's
+    // own getKeyPacket→getFirstPacket fallback.
+    let keyPacket = await opened.packetSink.getKeyPacket(0);
+    if (!keyPacket) {
+      keyPacket = await opened.packetSink.getFirstPacket();
+    }
     const keyChunk = keyPacket ? keyPacket.toEncodedVideoChunk() : null;
     return await raceFirstDecode({
       config,
