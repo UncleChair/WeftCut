@@ -1504,6 +1504,28 @@ pub async fn view_state_set(
 }
 
 #[tauri::command]
+pub async fn export_settings_get(
+    workspace: State<'_, crate::workspace::WorkspaceSlot>,
+) -> Result<Option<serde_json::Value>, String> {
+    let Some(ws) = workspace.current() else {
+        return Ok(None);
+    };
+    Ok(crate::export_settings_store::load(&ws))
+}
+
+#[tauri::command]
+pub async fn export_settings_set(
+    workspace: State<'_, crate::workspace::WorkspaceSlot>,
+    settings: serde_json::Value,
+) -> Result<(), String> {
+    let Some(ws) = workspace.current() else {
+        // Pre-workspace (blank-on-boot): silently drop, like view_state_set.
+        return Ok(());
+    };
+    crate::export_settings_store::save(&ws, &settings).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
 pub async fn import_media(
     app: tauri::AppHandle,
     handle: State<'_, ProjectHandle>,

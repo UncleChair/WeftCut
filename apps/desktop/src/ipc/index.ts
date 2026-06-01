@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
+import type { ExportSettings } from "../render/exportSettings";
+
 export interface CompositionSummary {
   width: number;
   height: number;
@@ -529,6 +531,17 @@ export async function viewStateGet(): Promise<ViewState> {
 
 export async function viewStateSet(state: ViewState): Promise<void> {
   return invoke<void>("view_state_set", { state });
+}
+
+export async function exportSettingsGet(): Promise<ExportSettings | null> {
+  const v = await invoke<ExportSettings | null>("export_settings_get");
+  return v ?? null;
+}
+
+export async function exportSettingsSet(
+  settings: ExportSettings,
+): Promise<void> {
+  return invoke<void>("export_settings_set", { settings });
 }
 
 // ============================================================

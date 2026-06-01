@@ -13,6 +13,7 @@ mod cache;
 mod cloud;
 mod commands;
 mod export;
+mod export_settings_store;
 mod ffmpeg;
 pub mod fixtures;
 mod io;
@@ -112,6 +113,8 @@ pub fn run() {
             commands::app_settings_set,
             commands::view_state_get,
             commands::view_state_set,
+            commands::export_settings_get,
+            commands::export_settings_set,
             commands::agent_session_get,
             commands::agent_session_end,
             #[cfg(debug_assertions)]
