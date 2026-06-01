@@ -6,6 +6,9 @@
 //! debug view) was deleted with the IR visual half. Only the two paths
 //! the Pixi export orchestrator actually invokes survive.
 
+mod hwencoder;
+pub use hwencoder::{HwEncoderCache, TargetCodec};
+
 use std::path::Path;
 use std::process::Stdio;
 
