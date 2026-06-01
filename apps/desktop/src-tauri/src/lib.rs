@@ -115,6 +115,7 @@ pub fn run() {
             commands::view_state_set,
             commands::export_settings_get,
             commands::export_settings_set,
+            commands::workspace_dir,
             commands::agent_session_get,
             commands::agent_session_end,
             #[cfg(debug_assertions)]
