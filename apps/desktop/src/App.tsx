@@ -46,6 +46,12 @@ import { mediaReadiness, type ProxyState } from "./panels/mediaReadiness";
 import { probeSourceDecodable } from "./render/decoder/probeSourceDecodable";
 import { referencedVideoMediaIds } from "./render/activeVideoLayers";
 import {
+  type ExportSettings,
+  codecString,
+  computeBitrate,
+  resolveOutputDims,
+} from "./render/exportSettings";
+import {
   sourcesNeedingPreviewProbe,
   prepareExportMedia,
   waitForProxies,
@@ -61,6 +67,7 @@ import {
   type ImportItem,
 } from "./panels/importOptimize";
 import { ImportProxyDialog } from "./panels/ImportProxyDialog";
+import { ExportSettingsDialog } from "./panels/ExportSettingsDialog";
 import {
   PreviewSurface,
   type PreviewSurfaceHandle,
@@ -119,6 +126,7 @@ export function App({ onCloseProject }: AppProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [exportState, setExportState] = useState<ExportState | null>(null);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
   // Blade-tool mode: pressing `C` toggles it; clicks on layers in the
   // timeline split the layer at the click point instead of selecting it.
@@ -771,16 +779,8 @@ export function App({ onCloseProject }: AppProps) {
   // a finally block. If cleanup itself fails the user's output is
   // still good — we just leave the temps for the next reboot to
   // clear.
-  const runPixiExport = useCallback(async () => {
-    const path = await saveDialog({
-      title: t("dialogs.export_title"),
-      defaultPath: "weftcut-pixi-export.mp4",
-      filters: [
-        { name: t("dialogs.export_filter"), extensions: ["mp4"] },
-      ],
-    });
-    if (typeof path !== "string") return;
-
+  const runExportWithSettings = useCallback(
+    async (settings: ExportSettings, path: string) => {
     // ---- Export-readiness gate -------------------------------------------
     // Confirm every video source the export will decode is ready. Undecodable
     // DirectExport sources are route-corrected here; sources whose proxy is
@@ -878,38 +878,98 @@ export function App({ onCloseProject }: AppProps) {
     const tempVideoPath = await join(tempBase, `weftcut-pixi-${stamp}.mp4`);
     const tempAudioPath = await join(tempBase, `weftcut-pixi-${stamp}.m4a`);
 
-    setExportState({ kind: "starting" });
+    const comp = useProjectStore.getState().summary!.composition;
+
+    // Build the encoder config from the dialog settings. Parameterized by
+    // codec so the H.264 fallback can rebuild with the same dims/fps/quality.
+    const buildConfig = (
+      codec: ExportSettings["codec"],
+    ): {
+      config: VideoEncoderConfig;
+      outputFps: { num: number; den: number };
+    } => {
+      const d = resolveOutputDims(comp, { ...settings, codec });
+      const fpsNum = settings.fps != null ? settings.fps : comp.fps_num;
+      const fpsDen = settings.fps != null ? 1 : comp.fps_den;
+      const bitrate = computeBitrate(
+        { ...settings, codec },
+        d.width,
+        d.height,
+        fpsNum / fpsDen,
+      );
+      return {
+        config: {
+          codec: codecString(codec),
+          width: d.width,
+          height: d.height,
+          bitrate,
+          framerate: fpsNum / fpsDen,
+          bitrateMode: settings.rateMode === "cbr" ? "constant" : "variable",
+          hardwareAcceleration: "prefer-hardware",
+        },
+        outputFps: { num: fpsNum, den: fpsDen },
+      };
+    };
+
     const startedAtMs = performance.now();
-    let result;
-    try {
-      result = await previewRef.current?.runPixiExport({
-        onProgress: (encoded, total) => {
-          if (total <= 0) return;
-          const elapsedSec = (performance.now() - startedAtMs) / 1000;
-          const fps = elapsedSec > 0 ? encoded / elapsedSec : 0;
-          const summary = useProjectStore.getState().summary;
-          const fpsNum = summary?.composition.fps_num ?? 30;
-          const fpsDen = summary?.composition.fps_den ?? 1;
-          const frameDurUs = Math.round((1_000_000 * fpsDen) / fpsNum);
-          const currentTimeUs = encoded * frameDurUs;
-          const speed = elapsedSec > 0 ? currentTimeUs / 1e6 / elapsedSec : 0;
-          setExportState({
-            kind: "progress",
-            progress: {
-              progress: encoded / total,
-              currentTimeUs,
-              frame: encoded,
-              fps,
-              speed,
-            },
-          });
+    const onProgress = (encoded: number, total: number) => {
+      if (total <= 0) return;
+      const elapsedSec = (performance.now() - startedAtMs) / 1000;
+      const fps = elapsedSec > 0 ? encoded / elapsedSec : 0;
+      const sm = useProjectStore.getState().summary;
+      const fpsNum = sm?.composition.fps_num ?? 30;
+      const fpsDen = sm?.composition.fps_den ?? 1;
+      const fdUs = Math.round((1_000_000 * fpsDen) / fpsNum);
+      const currentTimeUs = encoded * fdUs;
+      const speed = elapsedSec > 0 ? currentTimeUs / 1e6 / elapsedSec : 0;
+      setExportState({
+        kind: "progress",
+        progress: {
+          progress: encoded / total,
+          currentTimeUs,
+          frame: encoded,
+          fps,
+          speed,
         },
       });
+    };
+
+    setExportState({ kind: "starting" });
+    let result;
+    try {
+      const { config, outputFps } = buildConfig(settings.codec);
+      result = await previewRef.current?.runPixiExport({
+        onProgress,
+        encoderConfig: config,
+        outputFps,
+      });
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error("[weftcut/pixi] export failed:", e);
-      setExportState({ kind: "error", detail: msg });
-      return;
+      // Runtime fallback: a thrown encode error on AV1/HEVC retries once with
+      // H.264 (the correctness net behind the up-front probe + smoke).
+      if (settings.codec !== "h264") {
+        console.warn(
+          "[weftcut/export] codec failed, falling back to H.264:",
+          e,
+        );
+        setExportState({ kind: "starting" });
+        try {
+          const { config, outputFps } = buildConfig("h264");
+          result = await previewRef.current?.runPixiExport({
+            onProgress,
+            encoderConfig: config,
+            outputFps,
+          });
+        } catch (e2) {
+          const msg = e2 instanceof Error ? e2.message : String(e2);
+          setExportState({ kind: "error", detail: msg });
+          return;
+        }
+      } else {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error("[weftcut/pixi] export failed:", e);
+        setExportState({ kind: "error", detail: msg });
+        return;
+      }
     }
     if (!result) {
       setExportState({
@@ -952,7 +1012,9 @@ export function App({ onCloseProject }: AppProps) {
       kind: "complete",
       payload: { outputPath: path, durationUs },
     });
-  }, [t]);
+    },
+    [t],
+  );
 
   // Render & Play: open a Tauri webview popup pointing at the
   // exported MP4 via the asset protocol. The popup HTML lives at
@@ -1039,7 +1101,7 @@ export function App({ onCloseProject }: AppProps) {
     togglePlay,
     deleteSelected,
     importMedia: importMediaFiles,
-    export: runPixiExport,
+    export: () => setExportDialogOpen(true),
     toggleBladeMode: () => setBladeMode((v) => !v),
     toggleLog: toggleLogConsole,
     focusLogSearch,
@@ -1215,7 +1277,7 @@ export function App({ onCloseProject }: AppProps) {
               <MenuItem
                 actionId="export"
                 label={t("actions.export")}
-                onSelect={runPixiExport}
+                onSelect={() => setExportDialogOpen(true)}
                 disabled={
                   busy ||
                   exportState?.kind === "starting" ||
@@ -1403,6 +1465,21 @@ export function App({ onCloseProject }: AppProps) {
         </section>
       </main>
 
+      {exportDialogOpen && summary && (
+        <ExportSettingsDialog
+          comp={summary.composition}
+          durationUs={summary.duration_us}
+          // Real audio presence is decided Rust-side (IR plan.maps); the
+          // webview can't replicate it. This only nudges the size estimate,
+          // so default to true (overestimate is harmless).
+          hasAudio={true}
+          onCancel={() => setExportDialogOpen(false)}
+          onConfirm={(settings, path) => {
+            setExportDialogOpen(false);
+            void runExportWithSettings(settings, path);
+          }}
+        />
+      )}
       {exportState && (
         <ExportPanel
           state={exportState}
