@@ -1,5 +1,5 @@
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { exportSettingsGet, exportSettingsSet } from "../ipc";
@@ -13,14 +13,11 @@ import {
   type ExportSettings,
   type QualityPreset,
   type RateMode,
-  computeBitrate,
   containerExtension,
   containersForCodec,
   isCodecContainerValid,
   downscaleFpsOptions,
   downscaleHeightOptions,
-  estimateBytes,
-  formatBytes,
   mergeSettings,
   resolveOutputDims,
 } from "../render/exportSettings";
@@ -34,19 +31,11 @@ interface Comp {
 
 interface Props {
   comp: Comp;
-  durationUs: number;
-  hasAudio: boolean;
   onCancel: () => void;
   onConfirm: (settings: ExportSettings, path: string) => void;
 }
 
-export function ExportSettingsDialog({
-  comp,
-  durationUs,
-  hasAudio,
-  onCancel,
-  onConfirm,
-}: Props) {
+export function ExportSettingsDialog({ comp, onCancel, onConfirm }: Props) {
   const { t } = useTranslation();
   const [settings, setSettings] = useState<ExportSettings | null>(null);
   const [path, setPath] = useState<string>("");
@@ -86,20 +75,6 @@ export function ExportSettingsDialog({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings?.codec, settings?.fps, settings?.resolutionHeight, comp, compFps]);
-
-  const dims = useMemo(
-    () => (settings ? resolveOutputDims(comp, settings) : null),
-    [comp, settings],
-  );
-  const outFps = useMemo(
-    () => (settings?.fps != null ? settings.fps : compFps),
-    [settings, compFps],
-  );
-  const estimate = useMemo(() => {
-    if (!settings || !dims) return 0;
-    const bitrate = computeBitrate(settings, dims.width, dims.height, outFps);
-    return estimateBytes(bitrate, durationUs, hasAudio);
-  }, [settings, dims, outFps, durationUs, hasAudio]);
 
   const patch = (p: Partial<ExportSettings>) =>
     setSettings((s) => (s ? { ...s, ...p } : s));
@@ -324,12 +299,6 @@ export function ExportSettingsDialog({
                     <option value="cbr">CBR</option>
                   </select>
                 </div>
-
-                <p className="export-estimate">
-                  {t("export_dialog.estimated_size", {
-                    size: formatBytes(estimate),
-                  })}
-                </p>
 
                 <div className="export-row export-path-row">
                   <span className="settings-toggle-label">
