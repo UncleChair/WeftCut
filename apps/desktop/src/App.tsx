@@ -18,6 +18,7 @@ import {
   type KeybindingsMap,
   exportProjectAudioOnly,
   muxExport,
+  EXPORT_TRANSCODE_PROGRESS,
   IMPORT_EVENTS,
   importCancel,
   importMedia,
@@ -49,8 +50,10 @@ import {
   type ExportSettings,
   codecString,
   computeBitrate,
+  mezzanineBitrate,
   resolveOutputDims,
 } from "./render/exportSettings";
+import { resolveEncodePath } from "./render/exportCodecProbe";
 import {
   sourcesNeedingPreviewProbe,
   prepareExportMedia,
@@ -878,41 +881,43 @@ export function App({ onCloseProject }: AppProps) {
     const tempVideoPath = await join(tempBase, `weftcut-pixi-${stamp}.mp4`);
     const tempAudioPath = await join(tempBase, `weftcut-pixi-${stamp}.m4a`);
 
-    const comp = useProjectStore.getState().summary!.composition;
+    const summary = useProjectStore.getState().summary!;
+    const comp = summary.composition;
+    const dims = resolveOutputDims(comp, settings);
+    const fpsNum = settings.fps != null ? settings.fps : comp.fps_num;
+    const fpsDen = settings.fps != null ? 1 : comp.fps_den;
+    const outFps = fpsNum / fpsDen;
+    // `path` already carries the chosen container extension (set by the dialog).
 
-    // Build the encoder config from the dialog settings. Parameterized by
-    // codec so the H.264 fallback can rebuild with the same dims/fps/quality.
-    const buildConfig = (
-      codec: ExportSettings["codec"],
-    ): {
-      config: VideoEncoderConfig;
-      outputFps: { num: number; den: number };
-    } => {
-      const d = resolveOutputDims(comp, { ...settings, codec });
-      const fpsNum = settings.fps != null ? settings.fps : comp.fps_num;
-      const fpsDen = settings.fps != null ? 1 : comp.fps_den;
-      const bitrate = computeBitrate(
-        { ...settings, codec },
-        d.width,
-        d.height,
-        fpsNum / fpsDen,
-      );
-      const config: VideoEncoderConfig = {
-        codec: codecString(codec),
-        width: d.width,
-        height: d.height,
-        bitrate,
-        framerate: fpsNum / fpsDen,
-        bitrateMode: settings.rateMode === "cbr" ? "constant" : "variable",
-        // Only force HW for H.264 (its proven fast path). WebView2 treats
-        // "prefer-hardware" as mandatory, so forcing it on AV1 — which has no
-        // HW encoder here — fails outright; omitting it lets the browser fall
-        // back to the software AV1 encoder (verified working in WebView2).
-        ...(codec === "h264"
-          ? { hardwareAcceleration: "prefer-hardware" as const }
-          : {}),
-      };
-      return { config, outputFps: { num: fpsNum, den: fpsDen } };
+    // Decide the path for the chosen codec: WebCodecs when the browser can
+    // encode it (hw/sw auto), else ffmpeg transcodes a mezzanine.
+    const encodePath = await resolveEncodePath(
+      settings.codec,
+      dims.width,
+      dims.height,
+      outFps,
+    );
+
+    // WebCodecs path → worker encodes the target codec directly. ffmpeg path →
+    // worker encodes a high-quality H.264 mezzanine; Rust transcodes it.
+    const workerCodec = encodePath === "ffmpeg" ? "h264" : settings.codec;
+    const workerBitrate =
+      encodePath === "ffmpeg"
+        ? mezzanineBitrate(dims.width, dims.height, outFps)
+        : computeBitrate(settings, dims.width, dims.height, outFps);
+    const encoderConfig: VideoEncoderConfig = {
+      codec: codecString(workerCodec),
+      width: dims.width,
+      height: dims.height,
+      bitrate: workerBitrate,
+      framerate: outFps,
+      bitrateMode: settings.rateMode === "cbr" ? "constant" : "variable",
+      // Force HW only for H.264 (its proven fast path). WebView2 treats
+      // "prefer-hardware" as mandatory, so forcing it on AV1 fails; omitting
+      // lets the browser fall back to software AV1.
+      ...(workerCodec === "h264"
+        ? { hardwareAcceleration: "prefer-hardware" as const }
+        : {}),
     };
 
     const startedAtMs = performance.now();
@@ -920,9 +925,6 @@ export function App({ onCloseProject }: AppProps) {
       if (total <= 0) return;
       const elapsedSec = (performance.now() - startedAtMs) / 1000;
       const fps = elapsedSec > 0 ? encoded / elapsedSec : 0;
-      const sm = useProjectStore.getState().summary;
-      const fpsNum = sm?.composition.fps_num ?? 30;
-      const fpsDen = sm?.composition.fps_den ?? 1;
       const fdUs = Math.round((1_000_000 * fpsDen) / fpsNum);
       const currentTimeUs = encoded * fdUs;
       const speed = elapsedSec > 0 ? currentTimeUs / 1e6 / elapsedSec : 0;
@@ -941,39 +943,16 @@ export function App({ onCloseProject }: AppProps) {
     setExportState({ kind: "starting" });
     let result;
     try {
-      const { config, outputFps } = buildConfig(settings.codec);
       result = await previewRef.current?.runPixiExport({
         onProgress,
-        encoderConfig: config,
-        outputFps,
+        encoderConfig,
+        outputFps: { num: fpsNum, den: fpsDen },
       });
     } catch (e) {
-      // Runtime fallback: a thrown encode error on AV1/HEVC retries once with
-      // H.264 (the correctness net behind the up-front probe + smoke).
-      if (settings.codec !== "h264") {
-        console.warn(
-          "[weftcut/export] codec failed, falling back to H.264:",
-          e,
-        );
-        setExportState({ kind: "starting" });
-        try {
-          const { config, outputFps } = buildConfig("h264");
-          result = await previewRef.current?.runPixiExport({
-            onProgress,
-            encoderConfig: config,
-            outputFps,
-          });
-        } catch (e2) {
-          const msg = e2 instanceof Error ? e2.message : String(e2);
-          setExportState({ kind: "error", detail: msg });
-          return;
-        }
-      } else {
-        const msg = e instanceof Error ? e.message : String(e);
-        console.error("[weftcut/pixi] export failed:", e);
-        setExportState({ kind: "error", detail: msg });
-        return;
-      }
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("[weftcut/pixi] export failed:", e);
+      setExportState({ kind: "error", detail: msg });
+      return;
     }
     if (!result) {
       setExportState({
@@ -983,17 +962,51 @@ export function App({ onCloseProject }: AppProps) {
       return;
     }
 
+    // Transcode-progress listener (ffmpeg path only). Maps 0..1 onto the
+    // panel's progress phase; detached after the mux resolves. Awaited so the
+    // listener is registered before the transcode starts.
+    const offTranscode =
+      encodePath === "ffmpeg"
+        ? await listen<number>(EXPORT_TRANSCODE_PROGRESS, (ev) => {
+            setExportState({
+              kind: "progress",
+              progress: {
+                progress: ev.payload,
+                currentTimeUs: Math.round(ev.payload * summary.duration_us),
+                frame: 0,
+                fps: 0,
+                speed: 0,
+              },
+            });
+          })
+        : null;
+
     try {
-      // (1) Write Worker bytes to temp video.mp4.
+      // (1) Write Worker bytes to temp video (H.264 mezzanine on the ffmpeg
+      // path, the target codec on the WebCodecs path).
       await writeFile(tempVideoPath, new Uint8Array(result.videoBytes));
 
-      // (2) Audio-only Rust export → temp audio.m4a. Awaitable;
-      // emits no `export:*` events so the panel state stays where
-      // the Worker progress left it.
+      // (2) Audio-only Rust export → temp audio.m4a (AAC).
       await exportProjectAudioOnly(tempAudioPath);
 
-      // (3) Stream-copy mux → user-chosen path. ~100 ms.
-      await muxExport(tempVideoPath, tempAudioPath, path);
+      // (3) Mux → user-chosen path. WebCodecs path = stream-copy into the
+      // chosen container; ffmpeg path = transcode the mezzanine to the target
+      // codec (HW-first) then mux.
+      const transcode =
+        encodePath === "ffmpeg"
+          ? {
+              videoCodec: settings.codec,
+              bitrate: computeBitrate(
+                settings,
+                dims.width,
+                dims.height,
+                outFps,
+              ),
+              cbr: settings.rateMode === "cbr",
+              durationUs: summary.duration_us,
+            }
+          : undefined;
+      await muxExport(tempVideoPath, tempAudioPath, path, transcode);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("[weftcut/pixi] finalize failed:", e);
@@ -1003,8 +1016,9 @@ export function App({ onCloseProject }: AppProps) {
       });
       return;
     } finally {
+      offTranscode?.();
       // Best-effort cleanup. Failures here are intentionally
-      // swallowed — the user's MP4 is already at `path`.
+      // swallowed — the user's output is already at `path`.
       void remove(tempVideoPath).catch(() => {});
       void remove(tempAudioPath).catch(() => {});
     }
