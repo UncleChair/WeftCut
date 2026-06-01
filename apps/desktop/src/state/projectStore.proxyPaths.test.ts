@@ -17,6 +17,8 @@ function video(over: Partial<MediaSummary> = {}): MediaSummary {
     quick_proxy_path: null,
     proxy_bypassed: false,
     export_uses_original: false,
+    codec: "hevc",
+    pix_fmt: "yuv420p",
     ...over,
   };
 }
