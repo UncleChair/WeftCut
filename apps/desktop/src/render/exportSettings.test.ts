@@ -6,6 +6,8 @@ import {
   codecString,
   computeBitrate,
   containerExtension,
+  containersForCodec,
+  isCodecContainerValid,
   downscaleFpsOptions,
   downscaleHeightOptions,
   estimateBytes,
@@ -153,6 +155,19 @@ describe("containers", () => {
   });
   it("defaults container to mp4", () => {
     expect(DEFAULT_EXPORT_SETTINGS.container).toBe("mp4");
+  });
+});
+
+describe("codec/container compatibility", () => {
+  it("rejects AV1 in MOV (ffmpeg MOV muxer limitation)", () => {
+    expect(isCodecContainerValid("av1", "mov")).toBe(false);
+    expect(containersForCodec("av1")).toEqual(["mp4", "mkv"]);
+  });
+  it("allows everything else across mp4/mov/mkv", () => {
+    expect(containersForCodec("h264")).toEqual(["mp4", "mov", "mkv"]);
+    expect(containersForCodec("hevc")).toEqual(["mp4", "mov", "mkv"]);
+    expect(isCodecContainerValid("av1", "mp4")).toBe(true);
+    expect(isCodecContainerValid("av1", "mkv")).toBe(true);
   });
 });
 

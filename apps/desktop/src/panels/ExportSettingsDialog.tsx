@@ -8,7 +8,6 @@ import {
   resolveEncodePath,
 } from "../render/exportCodecProbe";
 import {
-  CONTAINERS,
   type CodecId,
   type Container,
   type ExportSettings,
@@ -16,6 +15,8 @@ import {
   type RateMode,
   computeBitrate,
   containerExtension,
+  containersForCodec,
+  isCodecContainerValid,
   downscaleFpsOptions,
   downscaleHeightOptions,
   estimateBytes,
@@ -199,9 +200,19 @@ export function ExportSettingsDialog({
                   <select
                     className="export-select"
                     value={settings.codec}
-                    onChange={(e) =>
-                      patch({ codec: e.target.value as CodecId })
-                    }
+                    onChange={(e) => {
+                      const codec = e.target.value as CodecId;
+                      // If the current container can't hold the new codec
+                      // (AV1+MOV), fall back to MP4 and fix the path ext.
+                      if (!isCodecContainerValid(codec, settings.container)) {
+                        patch({ codec, container: "mp4" });
+                        if (path) {
+                          setPath(path.replace(/\.[^.\\/]+$/, ".mp4"));
+                        }
+                      } else {
+                        patch({ codec });
+                      }
+                    }}
                   >
                     <option value="h264">H.264</option>
                     <option value="av1">AV1</option>
@@ -236,7 +247,7 @@ export function ExportSettingsDialog({
                       }
                     }}
                   >
-                    {CONTAINERS.map((c) => (
+                    {containersForCodec(settings.codec).map((c) => (
                       <option key={c} value={c}>
                         {c.toUpperCase()}
                       </option>

@@ -150,6 +150,20 @@ export function containerExtension(c: Container): string {
   return c;
 }
 
+/// ffmpeg's MOV muxer rejects AV1 ("av1 only supported in MP4 and AVIF"), so
+/// AV1+MOV is invalid. Everything else is valid across mp4/mov/mkv.
+export function isCodecContainerValid(
+  codec: CodecId,
+  container: Container,
+): boolean {
+  return !(container === "mov" && codec === "av1");
+}
+
+/// Containers the given codec can actually be written into.
+export function containersForCodec(codec: CodecId): Container[] {
+  return CONTAINERS.filter((c) => isCodecContainerValid(codec, c));
+}
+
 /// High, near-transparent H.264 bitrate for the ffmpeg-path mezzanine. The
 /// worker encodes this; ffmpeg then transcodes it to the target codec, so it
 /// must be visually lossless. ~0.2 bits/pixel/frame, floored at 20 Mbps.
