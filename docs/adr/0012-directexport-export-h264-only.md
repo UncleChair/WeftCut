@@ -2,48 +2,57 @@
 status: accepted
 ---
 
-# DirectExport export-from-original is H.264-only (Worker decode limitation)
+# DirectExport export-from-original is gated to Worker-decodable codecs (H.264 + AV1)
 
-`export_decodable_statically` (`jobs::proxy_decision`) gates the **export** axis
-to `Original` only for **H.264** (8-bit, browser-friendly pixfmt). HEVC / AV1 /
-VP9 — previously admitted as a "WebCodecs family codec" — now route to a
-**full proxy** for export.
+`export_decodable_statically` (`jobs::proxy_decision`) admits a source's
+**original** onto the export axis (`ExportSource::Original`) only when it is an
+8-bit, browser-friendly pixel format AND its codec is one the export Worker is
+proven to hardware-decode: **H.264 or AV1**. HEVC, VP9, and everything else
+route to an **H.264 full proxy** for export.
 
 ## Why
 
-Export decodes the source's **original** inside a **Web Worker**
-(`ExportDecoderPool` in `render/worker/exportWorker.ts`). The decode-capability
-of a codec in a Worker is not the same as on the main thread:
+Export decodes the source's original inside a **Web Worker**
+(`ExportDecoderPool` in `render/worker/exportWorker.ts`), and a codec's decode
+capability there is not guaranteed to match the main thread:
 
-- The main-thread import probe (`probeSourceDecodable`) and the preview path
-  decode on the **main thread**, where this machine has hardware AV1 (and, with
-  the OS extension, HEVC) decode → they succeed.
-- The export **Worker** can silently fall back to **software** decode
-  (`isConfigSupported(prefer-hardware)` returns `true` optimistically, but the
-  Worker doesn't actually get the hardware path). On common Windows WebView2,
-  **software AV1 decode STALLS** (no output after the first frame) and
-  **software HEVC errors** ("Unsupported configuration"). Either wedges the
-  export at frame 0 (the encode loop awaits a source frame that never arrives).
+- H.264 and AV1 are verified to **hardware-decode in Worker scope** on Windows
+  WebView2 — by a real `VideoDecoder.decode()` test (30/30 frames, NV12) and by
+  a full in-app AV1 export that completes end to end.
+- HEVC needs the OS "HEVC Video Extensions", which are absent on the reference
+  machine (decode errors / stalls). VP9 Worker decode is unverified. Both route
+  to a proxy until verified.
 
-So `probeSourceDecodable` passing on the main thread does **not** guarantee the
-Worker can decode the original — the probe can't see the Worker's capability.
-Symptom: exporting an 8-bit AV1 (DirectExport) hung at 0% with the decoder
-emitting only `output #1`.
+`isConfigSupported` is **not** evidence — it returns `true` optimistically for
+codecs that then fail to decode. Admit a new codec only after a real Worker
+`decode()` confirms it.
 
-H.264 is the one codec with universal hardware decode that is proven to decode
-reliably in Worker scope, so export-from-original is restricted to it. HEVC /
-AV1 / VP9 export via an H.264 full proxy, which the Worker decodes fine.
+### Cross-machine safety net
+
+The static codec gate is a fast default, not a guarantee for every GPU. The
+frontend `probeSourceDecodable` gate (import sweep + the export-readiness gate
+in `runPixiExport`) is the backstop: on a machine that cannot decode an admitted
+codec (e.g. AV1 on a GPU without AV1 decode), the probe fails and the export is
+route-corrected to a proxy before it runs.
+
+### Note on the earlier "H.264-only" restriction
+
+A prior revision restricted this to H.264 alone, on the theory that the Worker
+could not decode AV1 — an AV1 export had wedged at frame 0. That theory was
+wrong. The Worker decodes AV1 fine; the wedge was a **PTS-grid deadlock in
+`ExportFrameStore.waitForPts`** (it gated on strict interval containment, which
+never matched when the decoder's PTS grid drifted off the integer
+`i × frameDurUs` output grid). With that fixed, AV1 export-from-original
+completes, so AV1 is admitted here.
 
 ## Scope / non-goals
 
-- **Preview is unaffected.** Preview (incl. the decodable-preview bridge) decodes
-  on the main thread; HEVC/AV1/VP9 still preview from their original where the
-  main thread can decode them.
-- Existing media imported before this change keep their persisted
-  `export_uses_original` flag; they must be re-imported (or have a proxy
-  generated) to pick up the new route. No migration is shipped.
+- **Preview is unaffected.** Preview (incl. the decodable-preview bridge)
+  decodes on the main thread; HEVC/AV1/VP9 still preview from their original
+  where the main thread can decode them.
+- Existing media imported before this routing change keep their persisted
+  `export_uses_original` flag; re-import (or proxy generation) picks up the new
+  route. The export-readiness probe still protects them at export time.
 - Widening export-from-original to another codec requires **verifying Worker
-  decode for it** (not just `isConfigSupported`, not just main-thread decode).
-- This supersedes the "8-bit WebCodecs family" export scope from
-  [0009](0009-two-axis-proxy-decision.md) / the DirectExport design for the
-  export axis only; the preview axis is unchanged.
+  decode for it** (a real `decode()`, not `isConfigSupported`, not just
+  main-thread decode).

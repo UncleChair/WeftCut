@@ -93,18 +93,21 @@ pub fn job_for(route: ProxyRoute) -> ProxyJob {
 }
 
 /// A source whose ORIGINAL the export Worker can decode: an 8-bit
-/// browser-friendly pixel format and **H.264**.
+/// browser-friendly pixel format and a codec the Worker hardware-decodes —
+/// **H.264 or AV1**.
 ///
-/// Restricted to H.264 deliberately. Export decodes the original inside a Web
-/// Worker, and only H.264 is proven to decode reliably there (universal
-/// hardware decode). HEVC/AV1/VP9 can decode on the MAIN thread (preview + the
-/// import probe), but the export Worker can silently fall back to software,
-/// which STALLS for AV1 and errors for HEVC on common Windows WebView2 —
-/// wedging the export at frame 0. The main-thread `probeSourceDecodable` can't
-/// catch that (it tests the main thread, not the Worker). So HEVC/AV1/VP9 route
-/// to a full proxy for export (H.264, which the Worker decodes fine); preview is
-/// unaffected (it decodes on the main thread). Widen per-codec only once Worker
-/// decode is verified for it. See ADR 0012.
+/// Export decodes the original inside a Web Worker. H.264 and AV1 are both
+/// verified to hardware-decode in Worker scope on Windows WebView2 (real
+/// `decode()` test + a full in-app AV1 export). HEVC and VP9 are NOT admitted:
+/// HEVC needs the OS "HEVC Video Extensions" (absent on the dev machine) and
+/// VP9 Worker decode is unverified — both route to an H.264 full proxy for
+/// export. The frontend `probeSourceDecodable` gate is the cross-machine safety
+/// net: on a machine that can't decode an admitted codec, the probe fails and
+/// the export is route-corrected to a proxy.
+///
+/// (An earlier revision restricted this to H.264 on the theory that the Worker
+/// couldn't decode AV1. That was wrong — the real AV1-export hang was a PTS-grid
+/// deadlock in `ExportFrameStore.waitForPts`, since fixed. See ADR 0012.)
 fn export_decodable_statically(media: &MediaItem) -> bool {
     let Some(video) = media.metadata.video.as_ref() else {
         return false;
@@ -112,7 +115,7 @@ fn export_decodable_statically(media: &MediaItem) -> bool {
     if !pix_fmt_is_browser_friendly(&video.pix_fmt) {
         return false;
     }
-    codec_is_h264(&video.codec)
+    codec_is_h264(&video.codec) || codec_is_av1(&video.codec)
 }
 
 fn source_is_safe_to_bypass(media: &MediaItem, source_gop_secs: Option<f64>) -> bool {
@@ -280,15 +283,18 @@ mod tests {
     }
 
     #[test]
-    fn av1_8bit_proxies_both() {
-        // Export-from-original is H.264-only — the export Worker's AV1 software
-        // fallback STALLS (wedges export at frame 0). 8-bit AV1 → full proxy.
+    fn av1_8bit_exports_original_previews_proxy() {
+        // 8-bit AV1: the export Worker hardware-decodes it (verified in-app), so
+        // export reads the original (DirectExport). Preview still uses a quick
+        // proxy (bypass is H.264-only). The earlier "AV1 → full proxy" routing
+        // was a workaround for a since-fixed waitForPts deadlock. Long GOP here
+        // (6 GB / 600 s) so it's not safe_to_bypass → preview proxy.
         let item = video(|m| {
             m.metadata.video.as_mut().unwrap().codec = "av01".into();
             m.metadata.duration_us = Some(600_000_000);
             m.file_size = 5 * 1024 * 1024 * 1024;
         });
-        assert_eq!(decide(&item, Some(0.2)), BOTH_PROXY);
+        assert_eq!(decide(&item, Some(0.2)), EXPORT_ORIGINAL_PREVIEW_PROXY);
     }
 
     #[test]
