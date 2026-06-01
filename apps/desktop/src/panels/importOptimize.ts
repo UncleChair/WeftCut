@@ -28,6 +28,13 @@ export function importOptimizeStatus(m: MediaSummary, deps: OptimizeDeps): Optim
   if (m.kind !== "Video") return "direct";
   if (m.proxy_path) return "ready";
   if (m.proxy_bypassed) return "direct";
+  // DirectExport whose preview proxy has landed: optimization is complete
+  // (export reads the original, preview reads the quick proxy), so settle to
+  // silent — otherwise a decodable DirectExport source would be terminally
+  // "bridged" and keep the import dialog open forever. The FULL-proxy path
+  // (QuickThenFull / 10-bit) still waits for `proxy_path` (handled above), so
+  // it correctly stays "bridged" until its export master lands.
+  if (m.export_uses_original && m.quick_proxy_path) return "direct";
   const decodable = deps.memo.get(m.id) === "ok";
   const ps = deps.proxyStateOf(m.id);
   if (ps === "failed") return "failed";
