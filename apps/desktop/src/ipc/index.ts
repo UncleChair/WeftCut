@@ -684,14 +684,32 @@ export async function exportProjectAudioOnly(
   return invoke<void>("export_project_audio_only", { outputPath });
 }
 
-/// Stream-copy mux: `ffmpeg -y -i video -i audio -c copy out`.
-/// Resolves when ffmpeg exits; rejects with the stderr tail on failure.
+/// Optional video transcode spec for the ffmpeg export path. Omit for a
+/// stream-copy mux.
+export interface TranscodeSpec {
+  videoCodec: "h264" | "av1" | "hevc" | "vp9";
+  bitrate: number;
+  cbr: boolean;
+  durationUs: number;
+}
+
+/// Tauri event emitted (0.0..=1.0) while ffmpeg transcodes the video.
+export const EXPORT_TRANSCODE_PROGRESS = "export:transcode_progress";
+
+/// Mux `video` + `audio` into `output`. With `transcode`, re-encodes the
+/// video to the target codec (HW-first) instead of stream-copying.
 export async function muxExport(
   videoPath: string,
   audioPath: string,
   outputPath: string,
+  transcode?: TranscodeSpec,
 ): Promise<void> {
-  return invoke<void>("mux_export", { videoPath, audioPath, outputPath });
+  return invoke<void>("mux_export", {
+    videoPath,
+    audioPath,
+    outputPath,
+    transcode: transcode ?? null,
+  });
 }
 
 export async function updateLayer(layerId: string, patch: LayerPatch): Promise<void> {
