@@ -118,3 +118,22 @@ describe("mergeSettings", () => {
     expect(mergeSettings(null)).toEqual(DEFAULT_EXPORT_SETTINGS);
   });
 });
+
+describe("default-export baseline", () => {
+  it("default settings at 1080p30 H.264 match today's hardcoded config", () => {
+    const comp1080 = { width: 1920, height: 1080 };
+    const dims = resolveOutputDims(comp1080, DEFAULT_EXPORT_SETTINGS);
+    expect(dims).toEqual({ width: 1920, height: 1080 });
+    expect(codecString(DEFAULT_EXPORT_SETTINGS.codec)).toBe("avc1.640028");
+    const bitrate = computeBitrate(
+      DEFAULT_EXPORT_SETTINGS,
+      dims.width,
+      dims.height,
+      30,
+    );
+    // Today's hardcoded default was a flat 8 Mbps.
+    expect(Math.abs(bitrate - 8_000_000)).toBeLessThan(500_000);
+    // VBR by default → bitrateMode "variable" (set in App; documented here).
+    expect(DEFAULT_EXPORT_SETTINGS.rateMode).toBe("vbr");
+  });
+});
