@@ -92,11 +92,19 @@ pub fn job_for(route: ProxyRoute) -> ProxyJob {
     }
 }
 
-/// A source WebCodecs can decode at export **in principle**, independent of
-/// this machine: an 8-bit browser-friendly pixel format and a codec in the
-/// WebCodecs family. The actual machine is confirmed by the export pre-flight
-/// (`probeSourceDecodable`), not here. VP8 is intentionally excluded (no
-/// `codec_is_vp8` helper; effectively extinct) — it routes to a full proxy.
+/// A source whose ORIGINAL the export Worker can decode: an 8-bit
+/// browser-friendly pixel format and **H.264**.
+///
+/// Restricted to H.264 deliberately. Export decodes the original inside a Web
+/// Worker, and only H.264 is proven to decode reliably there (universal
+/// hardware decode). HEVC/AV1/VP9 can decode on the MAIN thread (preview + the
+/// import probe), but the export Worker can silently fall back to software,
+/// which STALLS for AV1 and errors for HEVC on common Windows WebView2 —
+/// wedging the export at frame 0. The main-thread `probeSourceDecodable` can't
+/// catch that (it tests the main thread, not the Worker). So HEVC/AV1/VP9 route
+/// to a full proxy for export (H.264, which the Worker decodes fine); preview is
+/// unaffected (it decodes on the main thread). Widen per-codec only once Worker
+/// decode is verified for it. See ADR 0012.
 fn export_decodable_statically(media: &MediaItem) -> bool {
     let Some(video) = media.metadata.video.as_ref() else {
         return false;
@@ -104,11 +112,7 @@ fn export_decodable_statically(media: &MediaItem) -> bool {
     if !pix_fmt_is_browser_friendly(&video.pix_fmt) {
         return false;
     }
-    let codec = video.codec.to_ascii_lowercase();
-    codec_is_h264(&codec)
-        || codec_is_hevc(&codec)
-        || codec_is_av1(&codec)
-        || codec_is_vp9(&codec)
+    codec_is_h264(&video.codec)
 }
 
 fn source_is_safe_to_bypass(media: &MediaItem, source_gop_secs: Option<f64>) -> bool {
@@ -262,33 +266,38 @@ mod tests {
     }
 
     #[test]
-    fn hevc_8bit_exports_original_previews_proxy() {
-        // No caps needed any more: a family codec (HEVC) 8-bit is export-decodable
-        // *statically*; the export pre-flight confirms the actual machine.
+    fn hevc_8bit_proxies_both() {
+        // Export-from-original is H.264-only (the export Worker can't reliably
+        // decode HEVC — software fallback errors). 8-bit HEVC routes to a full
+        // proxy on BOTH axes. (Preview still decodes HEVC on the main thread
+        // where supported, but that's the frontend bridge, not this route.)
         let item = video(|m| {
             m.metadata.video.as_mut().unwrap().codec = "hevc".into();
             m.metadata.duration_us = Some(600_000_000);
             m.file_size = 5 * 1024 * 1024 * 1024;
         });
-        assert_eq!(decide(&item, Some(0.2)), EXPORT_ORIGINAL_PREVIEW_PROXY);
+        assert_eq!(decide(&item, Some(0.2)), BOTH_PROXY);
     }
 
     #[test]
-    fn av1_8bit_exports_original_previews_proxy() {
+    fn av1_8bit_proxies_both() {
+        // Export-from-original is H.264-only — the export Worker's AV1 software
+        // fallback STALLS (wedges export at frame 0). 8-bit AV1 → full proxy.
         let item = video(|m| {
             m.metadata.video.as_mut().unwrap().codec = "av01".into();
             m.metadata.duration_us = Some(600_000_000);
             m.file_size = 5 * 1024 * 1024 * 1024;
         });
-        assert_eq!(decide(&item, Some(0.2)), EXPORT_ORIGINAL_PREVIEW_PROXY);
+        assert_eq!(decide(&item, Some(0.2)), BOTH_PROXY);
     }
 
     #[test]
-    fn vp9_8bit_exports_original_previews_proxy() {
+    fn vp9_8bit_proxies_both() {
+        // Export-from-original is H.264-only; VP9 → full proxy.
         let item = video(|m| {
             m.metadata.video.as_mut().unwrap().codec = "vp09".into();
         });
-        assert_eq!(decide(&item, Some(0.2)), EXPORT_ORIGINAL_PREVIEW_PROXY);
+        assert_eq!(decide(&item, Some(0.2)), BOTH_PROXY);
     }
 
     #[test]
