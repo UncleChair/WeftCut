@@ -218,6 +218,7 @@ pub const EVENT_TRANSCODE_PROGRESS: &str = "export:transcode_progress";
 pub async fn transcode_and_mux(
     app: &AppHandle,
     encoder: &str,
+    codec: TargetCodec,
     bitrate: u64,
     cbr: bool,
     duration_us: i64,
@@ -237,6 +238,11 @@ pub async fn transcode_and_mux(
         cmd.arg("-i").arg(audio_path);
     }
     for arg in video_encode_args(encoder, bitrate, cbr) {
+        cmd.arg(arg);
+    }
+    // HEVC in MP4/MOV must carry the `hvc1` fourcc; ffmpeg defaults to `hev1`,
+    // which Apple/Premiere/WebView2 refuse to play.
+    for arg in hvc1_tag_args(codec, output) {
         cmd.arg(arg);
     }
     // Audio is already AAC from export_audio_only → stream-copy it.
@@ -299,6 +305,22 @@ pub async fn transcode_and_mux(
     }
     let _ = app.emit(EVENT_TRANSCODE_PROGRESS, 1.0_f64);
     Ok(())
+}
+
+/// HEVC in MP4/MOV needs the `hvc1` fourcc tag; ffmpeg defaults to `hev1`
+/// which Apple/Premiere/WebView2 won't play. MKV uses no such tag, and other
+/// codecs (H.264 `avc1`, AV1 `av01`) already get correct defaults.
+fn hvc1_tag_args(codec: TargetCodec, output: &Path) -> Vec<std::ffi::OsString> {
+    let ext = output
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if matches!(codec, TargetCodec::Hevc) && (ext == "mp4" || ext == "mov") {
+        vec!["-tag:v".into(), "hvc1".into()]
+    } else {
+        Vec::new()
+    }
 }
 
 /// Build the ffmpeg `-c:v …` video-encode args for a transcode. `encoder` is
@@ -370,6 +392,18 @@ mod tests {
         let argv = video_encode_args("libsvtav1", 4_000_000, false);
         let s: Vec<String> = argv.iter().map(|a| a.to_string_lossy().into_owned()).collect();
         assert!(s.windows(2).any(|w| w[0] == "-preset" && w[1] == "8"));
+    }
+
+    #[test]
+    fn hvc1_tag_only_for_hevc_in_mp4_mov() {
+        use super::hvc1_tag_args;
+        use super::TargetCodec;
+        use std::path::Path;
+        assert_eq!(hvc1_tag_args(TargetCodec::Hevc, Path::new("o.mp4")).len(), 2);
+        assert_eq!(hvc1_tag_args(TargetCodec::Hevc, Path::new("o.mov")).len(), 2);
+        assert!(hvc1_tag_args(TargetCodec::Hevc, Path::new("o.mkv")).is_empty());
+        assert!(hvc1_tag_args(TargetCodec::Av1, Path::new("o.mp4")).is_empty());
+        assert!(hvc1_tag_args(TargetCodec::H264, Path::new("o.mov")).is_empty());
     }
 
     /// Regression for the no-audio export path: `mux_to_file` must NOT
