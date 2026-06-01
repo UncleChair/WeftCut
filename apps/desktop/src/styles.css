@@ -278,6 +278,58 @@ html, body, #root { height: 100%; margin: 0; }
   cursor: pointer;
 }
 
+/* Import proxy notification — reuses .export-panel chrome but sits in the
+   opposite corner (top-right) so it never overlaps the export panel
+   (bottom-left) when both are open. */
+.import-proxy-dialog {
+  left: auto;
+  right: 16px;
+  bottom: auto;
+  top: 16px;
+  padding-bottom: 8px;
+}
+
+.import-proxy-heading {
+  margin: 0;
+  padding: 4px 12px 0;
+  font-size: 11px;
+  color: #9ca3af;
+}
+
+.import-proxy-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.import-proxy-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: #e5e7eb;
+}
+
+.import-proxy-list li.is-failed .import-proxy-reason {
+  color: #f87171;
+}
+
+.import-proxy-reason {
+  color: #9ca3af;
+  white-space: nowrap;
+}
+
+.import-proxy-checking,
+.import-proxy-note {
+  margin: 0;
+  padding: 2px 12px;
+  font-size: 11px;
+  color: #9ca3af;
+}
+
 .progress-track {
   height: 4px;
   background: #1f2937;
