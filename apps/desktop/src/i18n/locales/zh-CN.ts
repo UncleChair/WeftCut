@@ -225,6 +225,9 @@ const zhCN: Resources = {
     timecode_edit_hint: "点击编辑 · 回车跳转 · Esc 取消",
   },
   export: {
+    title: "导出",
+    phase_encode: "编码中",
+    phase_transcode: "转码中",
     starting: "正在启动导出…",
     preparing: "正在为 {{labels}} 准备优化媒体 —— 准备好后将自动开始导出。",
     preparing_cancel: "取消",

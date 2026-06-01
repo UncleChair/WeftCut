@@ -3704,6 +3704,42 @@ input.preview-timecode:focus {
   cursor: not-allowed;
 }
 
+/* Export progress modal — reuses the settings popup chrome; these style the
+ * status line and a taller, more prominent progress bar. */
+.export-progress-status {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 13px;
+  color: #e5e7eb;
+  word-break: break-word;
+}
+
+.export-progress-status strong {
+  font-weight: 600;
+}
+
+.export-progress-detail {
+  color: #9ca3af;
+  font-variant-numeric: tabular-nums;
+}
+
+.export-progress-status.error {
+  color: #f87171;
+}
+
+.export-progress-panel .progress-track {
+  height: 8px;
+  border-radius: 4px;
+  margin-top: 14px;
+  overflow: hidden;
+}
+
+.export-progress-panel .progress-fill {
+  border-radius: 4px;
+}
+
 .keybindings {
   margin: 0 0 16px;
   border: 1px solid #1f2937;
