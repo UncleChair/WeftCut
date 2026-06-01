@@ -52,6 +52,11 @@ export type ExportRequest =
       /// preference / etc). Main thread builds this from
       /// `defaultEncoderConfig(width, height)` in `runExport.ts`.
       encoderConfig: VideoEncoderConfig;
+      /// Output frame rate as a rational (overrides composition fps for the
+      /// export frame grid + capture cadence). Absent ⇒ use the project's
+      /// composition fps.
+      outputFpsNum?: number;
+      outputFpsDen?: number;
       /// OffscreenCanvas transferred from the main thread. Worker
       /// hands it to the PixiJS Application as the render target.
       canvas: OffscreenCanvas;
