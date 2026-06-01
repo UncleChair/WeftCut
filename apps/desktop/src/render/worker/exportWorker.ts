@@ -56,10 +56,10 @@ let pendingChunkAck: (() => void) | null = null;
 function postChunk(data: Uint8Array): Promise<void> {
   return new Promise<void>((resolve) => {
     pendingChunkAck = resolve;
-    // Copy into a fresh buffer and transfer it (mediabunny may reuse the
-    // source buffer once write() resolves).
-    const copy = data.slice();
-    post({ type: "chunk", data: copy.buffer }, [copy.buffer]);
+    // `data` is a fresh, exactly-sized buffer the EncoderSink batcher hands
+    // over and never reuses, so transfer it directly (zero-copy).
+    const buf = data.buffer as ArrayBuffer;
+    post({ type: "chunk", data: buf }, [buf]);
   });
 }
 
