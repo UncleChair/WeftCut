@@ -56,6 +56,7 @@ import {
 import {
   importOptimizeStatus,
   optimizeReason,
+  partitionImportItems,
   type OptimizeDeps,
   type ImportItem,
 } from "./panels/importOptimize";
@@ -606,9 +607,7 @@ export function App({ onCloseProject }: AppProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dialogBatch, summary, proxyState, sweepTick]);
 
-  const dialogHasAttention = dialogItems.some(
-    (i) => i.status === "optimizing" || i.status === "failed" || i.status === "checking",
-  );
+  const dialogHasAttention = partitionImportItems(dialogItems).hasAttention;
 
   // Auto-close ONLY once every batch member is loaded in the store AND resolved
   // to direct/ready. Never clears while a member is still absent (the import

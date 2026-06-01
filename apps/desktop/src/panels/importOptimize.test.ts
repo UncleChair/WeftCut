@@ -32,19 +32,53 @@ describe("importOptimizeStatus", () => {
   it("direct when proxy_bypassed", () => {
     expect(importOptimizeStatus(vid({ proxy_bypassed: true }) as any, deps())).toBe("direct");
   });
-  it("direct when DirectExport probed ok", () => {
-    const d = deps({ memo: new Map([["m", "ok"]]) });
-    expect(importOptimizeStatus(vid({ export_uses_original: true }) as any, d)).toBe("direct");
+  it("classifies a decodable source (memo ok) as bridged", () => {
+    expect(
+      importOptimizeStatus(vid({ export_uses_original: true }) as any, {
+        memo: new Map([["m", "ok"]]),
+        proxyStateOf: () => "pending",
+        routeCorrected: new Set(),
+      }),
+    ).toBe("bridged");
   });
-  it("checking when DirectExport not yet probed", () => {
-    expect(importOptimizeStatus(vid({ export_uses_original: true }) as any, deps())).toBe("checking");
+
+  it("classifies a decodable 10-bit full-proxy source as bridged", () => {
+    expect(
+      importOptimizeStatus(vid({ pix_fmt: "yuv420p10le" }) as any, {
+        memo: new Map([["m", "ok"]]),
+        proxyStateOf: () => "pending",
+        routeCorrected: new Set(),
+      }),
+    ).toBe("bridged");
+  });
+
+  it("classifies an undecodable, proxy-building source as transcoding", () => {
+    expect(
+      importOptimizeStatus(vid({ export_uses_original: false }) as any, {
+        memo: new Map(),
+        proxyStateOf: () => "pending",
+        routeCorrected: new Set(),
+      }),
+    ).toBe("transcoding");
+  });
+
+  it("keeps a DirectExport source checking while its probe is in flight", () => {
+    expect(
+      importOptimizeStatus(vid({ export_uses_original: true }) as any, {
+        memo: new Map([["m", "pending"]]),
+        proxyStateOf: () => undefined,
+        routeCorrected: new Set(),
+      }),
+    ).toBe("checking");
+  });
+
+  it("keeps bypass silent and a finished proxy ready", () => {
+    const d = { memo: new Map(), proxyStateOf: () => undefined, routeCorrected: new Set() };
+    expect(importOptimizeStatus(vid({ proxy_bypassed: true }) as any, d)).toBe("direct");
+    expect(importOptimizeStatus(vid({ proxy_path: "/p.mp4" }) as any, d)).toBe("ready");
   });
   it("checking in the pre-decision window (no routing, no proxyState)", () => {
     expect(importOptimizeStatus(vid({}) as any, deps())).toBe("checking");
-  });
-  it("optimizing when a proxy job is pending", () => {
-    const d = deps({ proxyStateOf: () => "pending" });
-    expect(importOptimizeStatus(vid({}) as any, d)).toBe("optimizing");
   });
   it("failed when the proxy job failed", () => {
     const d = deps({ proxyStateOf: () => "failed" });
@@ -80,6 +114,15 @@ describe("is10bit", () => {
 });
 
 describe("optimizeReason", () => {
+  it("gives a reassuring reason for a bridged clip", () => {
+    expect(
+      optimizeReason(vid({ export_uses_original: true }) as any, {
+        memo: new Map([["m", "ok"]]),
+        proxyStateOf: () => "pending",
+        routeCorrected: new Set(),
+      }).key,
+    ).toBe("reason_bridged");
+  });
   it("undecodable for route-corrected ids", () => {
     const d = deps({ routeCorrected: new Set(["m"]) });
     expect(optimizeReason(vid({ codec: "hevc" }) as any, d)).toEqual({ key: "reason_undecodable", codec: "HEVC" });
@@ -96,23 +139,24 @@ describe("optimizeReason", () => {
 
 describe("partitionImportItems", () => {
   const item = (over: Partial<ImportItem>): ImportItem => ({
-    id: "m", label: "clip", status: "optimizing",
+    id: "m", label: "clip", status: "transcoding",
     reason: { key: "reason_transcode", codec: "ProRes" }, ...over,
   });
-  it("lists optimizing + failed, counts checking, drops direct/ready", () => {
+  it("lists bridged + transcoding + failed, counts checking, drops direct/ready", () => {
     const r = partitionImportItems([
-      item({ id: "a", status: "optimizing" }),
-      item({ id: "b", status: "failed" }),
+      item({ id: "a", status: "bridged" }),
+      item({ id: "b", status: "transcoding" }),
+      item({ id: "g", status: "failed" }),
       item({ id: "c", status: "checking" }),
       item({ id: "d", status: "checking" }),
       item({ id: "e", status: "direct" }),
       item({ id: "f", status: "ready" }),
     ]);
-    expect(r.listed.map((i) => i.id)).toEqual(["a", "b"]);
+    expect(r.listed.map((i) => i.id)).toEqual(["a", "b", "g"]);
     expect(r.checkingCount).toBe(2);
     expect(r.hasAttention).toBe(true);
   });
-  it("hasAttention false when nothing optimizing/failed/checking", () => {
+  it("hasAttention false when nothing listed/checking", () => {
     const r = partitionImportItems([item({ id: "e", status: "direct" })]);
     expect(r.listed).toEqual([]);
     expect(r.checkingCount).toBe(0);
