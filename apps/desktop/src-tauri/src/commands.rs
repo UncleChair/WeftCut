@@ -1525,6 +1525,18 @@ pub async fn export_settings_set(
     crate::export_settings_store::save(&ws, &settings).map_err(|e| format!("{e:#}"))
 }
 
+/// Absolute path of the current workspace (= project) directory, or null when
+/// no project is open (blank-on-boot, pre-Save-As). The export dialog uses it
+/// to default the output location to `<workspace>/output`.
+#[tauri::command]
+pub async fn workspace_dir(
+    workspace: State<'_, crate::workspace::WorkspaceSlot>,
+) -> Result<Option<String>, String> {
+    Ok(workspace
+        .current()
+        .map(|p| p.to_string_lossy().into_owned()))
+}
+
 #[tauri::command]
 pub async fn import_media(
     app: tauri::AppHandle,
@@ -2193,6 +2205,12 @@ pub async fn mux_export(
     let video = PathBuf::from(video_path);
     let audio = PathBuf::from(audio_path);
     let out = PathBuf::from(output_path);
+    // Ensure the output directory exists (the export dialog defaults the
+    // location to `<workspace>/output`, which may not exist yet).
+    if let Some(parent) = out.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("create output dir {}: {e}", parent.display()))?;
+    }
     match transcode {
         None => export::mux_to_file(&video, &audio, &out)
             .await

@@ -1,8 +1,9 @@
-import { save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { documentDir, join } from "@tauri-apps/api/path";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { exportSettingsGet, exportSettingsSet } from "../ipc";
+import { exportSettingsGet, exportSettingsSet, workspaceDir } from "../ipc";
 import {
   type EncodePath,
   resolveEncodePath,
@@ -38,7 +39,8 @@ interface Props {
 export function ExportSettingsDialog({ comp, onCancel, onConfirm }: Props) {
   const { t } = useTranslation();
   const [settings, setSettings] = useState<ExportSettings | null>(null);
-  const [path, setPath] = useState<string>("");
+  const [location, setLocation] = useState<string>("");
+  const [filename, setFilename] = useState<string>("weftcut-export");
   const [encodePath, setEncodePath] = useState<EncodePath | null>(null);
 
   const compFps = comp.fps_num / comp.fps_den;
@@ -53,6 +55,29 @@ export function ExportSettingsDialog({ comp, onCancel, onConfirm }: Props) {
       .catch(() => {
         if (!cancelled) setSettings(mergeSettings(null));
       });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Default the output location to <project>/output (falls back to the
+  // Documents folder when no project is open). Created on export if missing.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      let dir = "";
+      try {
+        const ws = await workspaceDir();
+        dir = ws ? await join(ws, "output") : await documentDir();
+      } catch {
+        try {
+          dir = await documentDir();
+        } catch {
+          dir = "";
+        }
+      }
+      if (!cancelled) setLocation(dir);
+    })();
     return () => {
       cancelled = true;
     };
@@ -80,22 +105,25 @@ export function ExportSettingsDialog({ comp, onCancel, onConfirm }: Props) {
     setSettings((s) => (s ? { ...s, ...p } : s));
 
   async function onBrowse() {
-    const ext = containerExtension(settings!.container);
-    const chosen = await saveDialog({
-      title: t("export_dialog.choose_path"),
-      defaultPath: `weftcut-export.${ext}`,
-      filters: [{ name: ext.toUpperCase(), extensions: [ext] }],
+    const chosen = await openDialog({
+      title: t("export_dialog.choose_location"),
+      directory: true,
+      multiple: false,
+      ...(location ? { defaultPath: location } : {}),
     });
-    if (typeof chosen === "string") setPath(chosen);
+    if (typeof chosen === "string") setLocation(chosen);
   }
 
   async function onExport() {
-    if (!path || !settings) return;
+    if (!settings || !location || !filename.trim()) return;
+    const ext = containerExtension(settings.container);
+    const out = await join(location, `${filename.trim()}.${ext}`);
     await exportSettingsSet(settings).catch(() => {});
-    onConfirm(settings, path);
+    onConfirm(settings, out);
   }
 
-  const canExport = !!path && encodePath !== null;
+  const canExport =
+    !!location && filename.trim().length > 0 && encodePath !== null;
 
   return (
     <div className="settings-overlay" role="dialog" aria-modal="true">
@@ -117,6 +145,42 @@ export function ExportSettingsDialog({ comp, onCancel, onConfirm }: Props) {
               <p className="settings-blurb">…</p>
             ) : (
               <>
+                <div className="export-row export-path-row">
+                  <span className="settings-toggle-label">
+                    {t("export_dialog.location")}
+                  </span>
+                  <span className="export-path">
+                    <input
+                      type="text"
+                      className="settings-input export-path-input"
+                      readOnly
+                      value={location}
+                      title={location}
+                    />
+                    <button onClick={() => void onBrowse()}>
+                      {t("export_dialog.browse")}
+                    </button>
+                  </span>
+                </div>
+
+                <div className="export-row">
+                  <span className="settings-toggle-label">
+                    {t("export_dialog.filename")}
+                  </span>
+                  <span className="export-filename">
+                    <input
+                      type="text"
+                      className="settings-input export-filename-input"
+                      value={filename}
+                      spellCheck={false}
+                      onChange={(e) => setFilename(e.target.value)}
+                    />
+                    <span className="settings-slider-unit">
+                      .{containerExtension(settings.container)}
+                    </span>
+                  </span>
+                </div>
+
                 <div className="export-row">
                   <span className="settings-toggle-label">
                     {t("export_dialog.resolution")}
@@ -177,13 +241,9 @@ export function ExportSettingsDialog({ comp, onCancel, onConfirm }: Props) {
                     value={settings.codec}
                     onChange={(e) => {
                       const codec = e.target.value as CodecId;
-                      // If the current container can't hold the new codec
-                      // (AV1+MOV), fall back to MP4 and fix the path ext.
+                      // AV1+MOV is invalid → fall back to MP4 for the container.
                       if (!isCodecContainerValid(codec, settings.container)) {
                         patch({ codec, container: "mp4" });
-                        if (path) {
-                          setPath(path.replace(/\.[^.\\/]+$/, ".mp4"));
-                        }
                       } else {
                         patch({ codec });
                       }
@@ -213,14 +273,9 @@ export function ExportSettingsDialog({ comp, onCancel, onConfirm }: Props) {
                   <select
                     className="export-select"
                     value={settings.container}
-                    onChange={(e) => {
-                      const c = e.target.value as Container;
-                      patch({ container: c });
-                      if (path) {
-                        const ext = containerExtension(c);
-                        setPath(path.replace(/\.[^.\\/]+$/, `.${ext}`));
-                      }
-                    }}
+                    onChange={(e) =>
+                      patch({ container: e.target.value as Container })
+                    }
                   >
                     {containersForCodec(settings.codec).map((c) => (
                       <option key={c} value={c}>
@@ -298,23 +353,6 @@ export function ExportSettingsDialog({ comp, onCancel, onConfirm }: Props) {
                     <option value="vbr">VBR</option>
                     <option value="cbr">CBR</option>
                   </select>
-                </div>
-
-                <div className="export-row export-path-row">
-                  <span className="settings-toggle-label">
-                    {t("export_dialog.output_path")}
-                  </span>
-                  <span className="export-path">
-                    <input
-                      type="text"
-                      className="settings-input export-path-input"
-                      readOnly
-                      value={path}
-                    />
-                    <button onClick={() => void onBrowse()}>
-                      {t("export_dialog.browse")}
-                    </button>
-                  </span>
                 </div>
 
                 <div className="export-actions">

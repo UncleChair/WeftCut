@@ -544,6 +544,13 @@ export async function exportSettingsSet(
   return invoke<void>("export_settings_set", { settings });
 }
 
+/// Absolute path of the current workspace (project) directory, or null when no
+/// project is open. Used to default the export output location.
+export async function workspaceDir(): Promise<string | null> {
+  const v = await invoke<string | null>("workspace_dir");
+  return v ?? null;
+}
+
 // ============================================================
 // App-level settings (A/B-roll redesign, `docs/ab-roll-redesign`).
 // Strict app-level scope: same value across every project. The pill /

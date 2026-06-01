@@ -3664,6 +3664,17 @@ input.preview-timecode:focus {
   font-size: 11px;
 }
 
+.export-filename {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.export-filename-input {
+  width: 180px;
+  text-align: left;
+}
+
 .export-path button,
 .export-actions button {
   padding: 5px 12px;
