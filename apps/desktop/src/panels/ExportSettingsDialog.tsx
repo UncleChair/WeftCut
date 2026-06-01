@@ -97,8 +97,6 @@ export function ExportSettingsDialog({
     return estimateBytes(bitrate, durationUs, hasAudio);
   }, [settings, dims, outFps, durationUs, hasAudio]);
 
-  if (!settings) return null;
-
   const patch = (p: Partial<ExportSettings>) =>
     setSettings((s) => (s ? { ...s, ...p } : s));
 
@@ -131,134 +129,217 @@ export function ExportSettingsDialog({
   const canExport = !!path && !busy && !smokeFailed;
 
   return (
-    <aside className="export-settings-dialog" role="dialog" aria-modal="true">
-      <h2>{t("export_dialog.title")}</h2>
+    <div className="settings-overlay" role="dialog" aria-modal="true">
+      <div className="settings-panel">
+        <header>
+          <h2>{t("export_dialog.title")}</h2>
+          <button
+            className="settings-close"
+            onClick={onCancel}
+            aria-label={t("export_dialog.cancel")}
+          >
+            ✕
+          </button>
+        </header>
 
-      <label>
-        {t("export_dialog.resolution")}
-        <select
-          value={settings.resolutionHeight ?? ""}
-          onChange={(e) =>
-            patch({
-              resolutionHeight: e.target.value ? Number(e.target.value) : null,
-            })
-          }
-        >
-          <option value="">
-            {t("export_dialog.follow_comp")} ({comp.width}×{comp.height})
-          </option>
-          {downscaleHeightOptions(comp.height).map((h) => (
-            <option key={h} value={h}>
-              {h}p
-            </option>
-          ))}
-        </select>
-      </label>
+        <div className="settings-body">
+          <div className="settings-card">
+            {!settings ? (
+              <p className="settings-blurb">…</p>
+            ) : (
+              <>
+                <div className="export-row">
+                  <span className="settings-toggle-label">
+                    {t("export_dialog.resolution")}
+                  </span>
+                  <select
+                    className="export-select"
+                    value={settings.resolutionHeight ?? ""}
+                    onChange={(e) =>
+                      patch({
+                        resolutionHeight: e.target.value
+                          ? Number(e.target.value)
+                          : null,
+                      })
+                    }
+                  >
+                    <option value="">
+                      {t("export_dialog.follow_comp")} ({comp.width}×
+                      {comp.height})
+                    </option>
+                    {downscaleHeightOptions(comp.height).map((h) => (
+                      <option key={h} value={h}>
+                        {h}p
+                      </option>
+                    ))}
+                  </select>
+                </div>
 
-      <label>
-        {t("export_dialog.fps")}
-        <select
-          value={settings.fps ?? ""}
-          onChange={(e) =>
-            patch({ fps: e.target.value ? Number(e.target.value) : null })
-          }
-        >
-          <option value="">
-            {t("export_dialog.follow_comp")} ({compFps.toFixed(2)})
-          </option>
-          {downscaleFpsOptions(compFps).map((f) => (
-            <option key={f} value={f}>
-              {f} fps
-            </option>
-          ))}
-        </select>
-      </label>
+                <div className="export-row">
+                  <span className="settings-toggle-label">
+                    {t("export_dialog.fps")}
+                  </span>
+                  <select
+                    className="export-select"
+                    value={settings.fps ?? ""}
+                    onChange={(e) =>
+                      patch({
+                        fps: e.target.value ? Number(e.target.value) : null,
+                      })
+                    }
+                  >
+                    <option value="">
+                      {t("export_dialog.follow_comp")} ({compFps.toFixed(2)})
+                    </option>
+                    {downscaleFpsOptions(compFps).map((f) => (
+                      <option key={f} value={f}>
+                        {f} fps
+                      </option>
+                    ))}
+                  </select>
+                </div>
 
-      <label>
-        {t("export_dialog.codec")}
-        <select
-          value={settings.codec}
-          onChange={(e) => void onSelectCodec(e.target.value as CodecId)}
-        >
-          {ALL_CODECS.filter((c) => supported.has(c)).map((c) => (
-            <option key={c} value={c}>
-              {c === "h264" ? "H.264" : c === "av1" ? "AV1" : "HEVC"}
-            </option>
-          ))}
-        </select>
-      </label>
-      {busy && <p className="hint">{t("export_dialog.checking_codec")}</p>}
-      {smokeFailed && (
-        <p className="error">
-          {t("export_dialog.codec_unsupported", {
-            codec: smokeFailed.toUpperCase(),
-          })}
-        </p>
-      )}
+                <div className="export-row">
+                  <span className="settings-toggle-label">
+                    {t("export_dialog.codec")}
+                  </span>
+                  <select
+                    className="export-select"
+                    value={settings.codec}
+                    onChange={(e) =>
+                      void onSelectCodec(e.target.value as CodecId)
+                    }
+                  >
+                    {ALL_CODECS.filter((c) => supported.has(c)).map((c) => (
+                      <option key={c} value={c}>
+                        {c === "h264" ? "H.264" : c === "av1" ? "AV1" : "HEVC"}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {busy && (
+                  <p className="settings-blurb">
+                    {t("export_dialog.checking_codec")}
+                  </p>
+                )}
+                {smokeFailed && (
+                  <p className="settings-error">
+                    {t("export_dialog.codec_unsupported", {
+                      codec: smokeFailed.toUpperCase(),
+                    })}
+                  </p>
+                )}
 
-      <label>
-        {t("export_dialog.quality")}
-        <select
-          value={settings.quality}
-          onChange={(e) => patch({ quality: e.target.value as QualityPreset })}
-        >
-          <option value="low">{t("export_dialog.quality_low")}</option>
-          <option value="medium">{t("export_dialog.quality_medium")}</option>
-          <option value="high">{t("export_dialog.quality_high")}</option>
-          <option value="custom">{t("export_dialog.quality_custom")}</option>
-        </select>
-      </label>
-      {settings.quality === "custom" && (
-        <label>
-          {t("export_dialog.custom_bitrate")}
-          <input
-            type="number"
-            min={500}
-            step={500}
-            value={
-              settings.customBitrate ? settings.customBitrate / 1_000_000 : ""
-            }
-            onChange={(e) =>
-              patch({
-                customBitrate: e.target.value
-                  ? Math.round(Number(e.target.value) * 1_000_000)
-                  : null,
-              })
-            }
-          />
-          {t("export_dialog.mbps")}
-        </label>
-      )}
+                <div className="export-row">
+                  <span className="settings-toggle-label">
+                    {t("export_dialog.quality")}
+                  </span>
+                  <select
+                    className="export-select"
+                    value={settings.quality}
+                    onChange={(e) =>
+                      patch({ quality: e.target.value as QualityPreset })
+                    }
+                  >
+                    <option value="low">{t("export_dialog.quality_low")}</option>
+                    <option value="medium">
+                      {t("export_dialog.quality_medium")}
+                    </option>
+                    <option value="high">
+                      {t("export_dialog.quality_high")}
+                    </option>
+                    <option value="custom">
+                      {t("export_dialog.quality_custom")}
+                    </option>
+                  </select>
+                </div>
+                {settings.quality === "custom" && (
+                  <div className="export-row">
+                    <span className="settings-toggle-label">
+                      {t("export_dialog.custom_bitrate")}
+                    </span>
+                    <span className="export-bitrate">
+                      <input
+                        type="number"
+                        className="settings-input settings-input-narrow"
+                        min={500}
+                        step={500}
+                        value={
+                          settings.customBitrate
+                            ? settings.customBitrate / 1_000_000
+                            : ""
+                        }
+                        onChange={(e) =>
+                          patch({
+                            customBitrate: e.target.value
+                              ? Math.round(Number(e.target.value) * 1_000_000)
+                              : null,
+                          })
+                        }
+                      />
+                      <span className="settings-slider-unit">
+                        {t("export_dialog.mbps")}
+                      </span>
+                    </span>
+                  </div>
+                )}
 
-      <label>
-        {t("export_dialog.rate_mode")}
-        <select
-          value={settings.rateMode}
-          onChange={(e) => patch({ rateMode: e.target.value as RateMode })}
-        >
-          <option value="vbr">VBR</option>
-          <option value="cbr">CBR</option>
-        </select>
-      </label>
+                <div className="export-row">
+                  <span className="settings-toggle-label">
+                    {t("export_dialog.rate_mode")}
+                  </span>
+                  <select
+                    className="export-select"
+                    value={settings.rateMode}
+                    onChange={(e) =>
+                      patch({ rateMode: e.target.value as RateMode })
+                    }
+                  >
+                    <option value="vbr">VBR</option>
+                    <option value="cbr">CBR</option>
+                  </select>
+                </div>
 
-      <p className="estimate">
-        {t("export_dialog.estimated_size", { size: formatBytes(estimate) })}
-      </p>
+                <p className="export-estimate">
+                  {t("export_dialog.estimated_size", {
+                    size: formatBytes(estimate),
+                  })}
+                </p>
 
-      <label>
-        {t("export_dialog.output_path")}
-        <input type="text" readOnly value={path} />
-        <button onClick={() => void onBrowse()}>
-          {t("export_dialog.browse")}
-        </button>
-      </label>
+                <div className="export-row export-path-row">
+                  <span className="settings-toggle-label">
+                    {t("export_dialog.output_path")}
+                  </span>
+                  <span className="export-path">
+                    <input
+                      type="text"
+                      className="settings-input export-path-input"
+                      readOnly
+                      value={path}
+                    />
+                    <button onClick={() => void onBrowse()}>
+                      {t("export_dialog.browse")}
+                    </button>
+                  </span>
+                </div>
 
-      <div className="actions">
-        <button onClick={onCancel}>{t("export_dialog.cancel")}</button>
-        <button disabled={!canExport} onClick={() => void onExport()}>
-          {t("export_dialog.export")}
-        </button>
+                <div className="export-actions">
+                  <button onClick={onCancel}>
+                    {t("export_dialog.cancel")}
+                  </button>
+                  <button
+                    className="export-primary"
+                    disabled={!canExport}
+                    onClick={() => void onExport()}
+                  >
+                    {t("export_dialog.export")}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
       </div>
-    </aside>
+    </div>
   );
 }

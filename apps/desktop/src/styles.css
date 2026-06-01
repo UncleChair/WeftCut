@@ -3608,6 +3608,102 @@ input.preview-timecode:focus {
   margin-bottom: 0;
 }
 
+/* Export settings dialog — reuses the settings popup chrome
+ * (.settings-overlay / .settings-panel / .settings-body / .settings-card);
+ * these rules style the per-field label/control rows + footer actions. */
+.export-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+}
+
+.export-select {
+  min-width: 180px;
+  padding: 5px 8px;
+  font-size: 12px;
+  color: #e5e7eb;
+  background: #11151b;
+  border: 1px solid #374151;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.export-select:focus {
+  outline: none;
+  border-color: #3b82f6;
+}
+
+.export-bitrate {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.export-estimate {
+  margin: 14px 0 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: #d1d5db;
+}
+
+.export-path-row {
+  align-items: flex-start;
+}
+
+.export-path {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.export-path-input {
+  width: 220px;
+  text-align: left;
+  font-size: 11px;
+}
+
+.export-path button,
+.export-actions button {
+  padding: 5px 12px;
+  font-size: 12px;
+  color: #e5e7eb;
+  background: #1f2937;
+  border: 1px solid #374151;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.export-path button:hover,
+.export-actions button:hover:not(:disabled) {
+  background: #374151;
+}
+
+.export-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid #1f2937;
+}
+
+.export-actions .export-primary {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
+}
+
+.export-actions .export-primary:hover:not(:disabled) {
+  background: #3b82f6;
+}
+
+.export-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .keybindings {
   margin: 0 0 16px;
   border: 1px solid #1f2937;
