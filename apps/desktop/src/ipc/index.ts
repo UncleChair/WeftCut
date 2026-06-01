@@ -47,6 +47,10 @@ export interface MediaSummary {
   /// True when export may decode the original directly (preview still uses a
   /// generated proxy). Export and preview resolvers treat it like a bypass.
   export_uses_original: boolean;
+  /// Source video codec ("h264"/"hevc"/"prores"/…), null for audio/image.
+  codec: string | null;
+  /// Source pixel format ("yuv420p"/"yuv420p10le"/…), null for audio/image.
+  pix_fmt: string | null;
 }
 
 export interface LayerSummary {

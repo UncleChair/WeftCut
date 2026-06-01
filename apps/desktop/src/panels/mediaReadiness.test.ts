@@ -16,6 +16,8 @@ const baseVideo = (over: Partial<MediaSummary> = {}): MediaSummary => ({
   quick_proxy_path: null,
   proxy_bypassed: false,
   export_uses_original: false,
+  codec: "h264",
+  pix_fmt: "yuv420p",
   ...over,
 });
 

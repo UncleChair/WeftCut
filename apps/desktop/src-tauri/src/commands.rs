@@ -238,6 +238,12 @@ pub struct MediaSummary {
     /// True when export may decode the original directly (preview still uses
     /// a generated proxy). See `MediaItem::export_uses_original`.
     pub export_uses_original: bool,
+    /// Source video codec (e.g. "h264", "hevc", "prores"), `None` for
+    /// audio/image. Raw passthrough from `metadata.video` — display-only.
+    pub codec: Option<String>,
+    /// Source pixel format (e.g. "yuv420p", "yuv420p10le"), `None` for
+    /// audio/image. Raw passthrough — display-only.
+    pub pix_fmt: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -401,6 +407,8 @@ pub async fn project_summary(handle: State<'_, ProjectHandle>) -> Result<Project
                 quick_proxy_path,
                 proxy_bypassed: m.proxy_bypassed,
                 export_uses_original: m.export_uses_original,
+                codec: m.metadata.video.as_ref().map(|v| v.codec.clone()),
+                pix_fmt: m.metadata.video.as_ref().map(|v| v.pix_fmt.clone()),
             }
         })
         .collect();
