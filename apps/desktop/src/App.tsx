@@ -540,6 +540,10 @@ export function App({ onCloseProject }: AppProps) {
         if (cancelled) return;
         if (ok) {
           memo.set(m.id, "ok");
+          // A paused clip already on the timeline won't re-run ensureClip on
+          // its own; nudge the compositor to re-resolve now that the bridge is
+          // live for this source.
+          previewRef.current?.refreshSources();
         } else {
           memo.delete(m.id);
           // Only DirectExport sources need route-correction (they were
@@ -1257,6 +1261,7 @@ export function App({ onCloseProject }: AppProps) {
               hasContent={(summary?.layer_count ?? 0) > 0}
               onTimeUpdate={setCurrentTimeUs}
               onPausedChange={setPaused}
+              previewDecodableOf={(id) => decodeProbeMemo.current.get(id) === "ok"}
             />
           </div>
           <div className="preview-transport" role="toolbar" aria-label="Preview transport">

@@ -39,12 +39,13 @@ import "./fixtures/devHooks";
 interface Props {
   onTimeUpdate?: (tUs: number) => void;
   onPausedChange?: (paused: boolean) => void;
+  previewDecodableOf?: (mediaId: string) => boolean;
 }
 
 const LOG = "[weftcut/pixi]";
 
 export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPreview(
-  { onTimeUpdate, onPausedChange },
+  { onTimeUpdate, onPausedChange, previewDecodableOf },
   ref,
 ) {
   const compositorRef = useRef<Compositor | null>(null);
@@ -65,6 +66,15 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       },
       paused() {
         return !(engineRef.current?.isPlaying() ?? false);
+      },
+      refreshSources() {
+        const compositor = compositorRef.current;
+        const engine = engineRef.current;
+        if (!compositor) return;
+        const t = engine?.positionUs() ?? 0;
+        compositor.setProject(useProjectStore.getState().summary);
+        compositor.setAnchorTime(t);
+        compositor.compositeFrame(t);
       },
       runExport(opts) {
         return handlePixiExport(
@@ -106,7 +116,11 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
 
       const proxyAssetUrl = (mediaId: string): string | null => {
         const m = useProjectStore.getState().mediaById.get(mediaId);
-        const path = previewPlaybackPathFor(m);
+        // Bridge flag is session-scoped (App's decodeProbeMemo via the prop);
+        // read live each call so a mid-session probe flip takes effect on the
+        // next ensureClip.
+        const previewDecodable = previewDecodableOf?.(mediaId) ?? false;
+        const path = previewPlaybackPathFor(m, { previewDecodable });
         return path ? convertFileSrc(path) : null;
       };
       const originalAssetUrl = (mediaId: string): string | null => {
