@@ -47,6 +47,7 @@ import { probeSourceDecodable } from "./render/decoder/probeSourceDecodable";
 import { referencedVideoMediaIds } from "./render/activeVideoLayers";
 import {
   sourcesNeedingPreflight,
+  sourcesNeedingPreviewProbe,
   prepareExportMedia,
   waitForProxies,
   ExportCancelled,
@@ -522,7 +523,7 @@ export function App({ onCloseProject }: AppProps) {
     void (async () => {
       const memo = decodeProbeMemo.current;
       const pool = useProjectStore.getState().mediaById;
-      const candidates = sourcesNeedingPreflight(pool).filter(
+      const candidates = sourcesNeedingPreviewProbe(pool).filter(
         (m) =>
           m.available &&
           memo.get(m.id) !== "ok" &&
@@ -542,11 +543,17 @@ export function App({ onCloseProject }: AppProps) {
           memo.set(m.id, "ok");
         } else {
           memo.delete(m.id);
-          routeCorrected.current.add(m.id);
-          try {
-            await ensureFullProxy(m.id);
-          } catch (e) {
-            console.error("[weftcut] route-correct failed for", m.id, e);
+          // Only DirectExport sources need route-correction (they were
+          // pointing export at an original this machine can't decode). A
+          // full-proxy source that fails the probe already routes correctly;
+          // it just gets no bridge — preview waits for its proxy as before.
+          if (m.export_uses_original) {
+            routeCorrected.current.add(m.id);
+            try {
+              await ensureFullProxy(m.id);
+            } catch (e) {
+              console.error("[weftcut] route-correct failed for", m.id, e);
+            }
           }
         }
         // Force the import dialog to reclassify: memo/routeCorrected are refs

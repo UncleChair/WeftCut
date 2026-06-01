@@ -1,12 +1,14 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   sourcesNeedingPreflight,
+  sourcesNeedingPreviewProbe,
   prepareExportMedia,
   waitForProxies,
   ExportCancelled,
   ExportProxyFailed,
   type ProbeState,
 } from "./exportReadiness";
+import type { MediaSummary } from "../ipc";
 
 const vid = (over: Record<string, unknown>) => ({
   id: "m", label: "clip", kind: "Video", path: "/o.mov",
@@ -25,6 +27,49 @@ describe("sourcesNeedingPreflight", () => {
       ["m4", vid({ id: "m4", kind: "Audio" })],
     ]);
     expect(sourcesNeedingPreflight(pool as any).map((m) => m.id)).toEqual(["m1"]);
+  });
+});
+
+describe("sourcesNeedingPreviewProbe", () => {
+  const v = (over: Partial<MediaSummary>): MediaSummary =>
+    ({
+      id: over.id ?? "m",
+      kind: "Video",
+      label: "",
+      path: "/o.mp4",
+      available: true,
+      proxy_path: null,
+      quick_proxy_path: null,
+      proxy_bypassed: false,
+      export_uses_original: false,
+      codec: "hevc",
+      pix_fmt: "yuv420p",
+      ...over,
+    }) as MediaSummary;
+
+  const map = (...items: MediaSummary[]) =>
+    new Map(items.map((m) => [m.id, m]));
+
+  it("includes a would-be-blank DirectExport source", () => {
+    const out = sourcesNeedingPreviewProbe(map(v({ id: "a", export_uses_original: true })));
+    expect(out.map((m) => m.id)).toEqual(["a"]);
+  });
+
+  it("includes a would-be-blank full-proxy/10-bit source (not just DirectExport)", () => {
+    const out = sourcesNeedingPreviewProbe(map(v({ id: "b", pix_fmt: "yuv420p10le" })));
+    expect(out.map((m) => m.id)).toEqual(["b"]);
+  });
+
+  it("excludes sources that already have a preview path or are bypassed", () => {
+    const out = sourcesNeedingPreviewProbe(
+      map(
+        v({ id: "q", quick_proxy_path: "/q.mp4" }),
+        v({ id: "p", proxy_path: "/p.mp4" }),
+        v({ id: "byp", proxy_bypassed: true }),
+        v({ id: "gone", available: false }),
+      ),
+    );
+    expect(out).toEqual([]);
   });
 });
 
