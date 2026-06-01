@@ -30,6 +30,11 @@ export interface PixiPreviewHandle {
   pause(): void;
   seek(tUs: number): void;
   paused(): boolean;
+  /// Re-resolve every clip's preview source against the current project +
+  /// the live decodability bridge, then re-composite the current frame.
+  /// Used to nudge a paused clip to pick up its original the moment a
+  /// mid-session probe verdict flips to "ok".
+  refreshSources(): void;
   /// Run the PixiJS-backed export. The compositor + engine are
   /// suspended for the duration so the preview decoder doesn't fight
   /// the export decoder for the hardware decode slot. Resolves with
