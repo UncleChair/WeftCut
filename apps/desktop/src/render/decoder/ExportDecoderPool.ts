@@ -55,7 +55,7 @@ export class ExportFrameStore implements FrameStore {
     if (this.waiters.length > 0) {
       const stillWaiting: typeof this.waiters = [];
       for (const w of this.waiters) {
-        if (this.containsPts(w.tUs)) {
+        if (this.isReadyFor(w.tUs)) {
           w.resolve();
         } else {
           stillWaiting.push(w);
@@ -70,10 +70,29 @@ export class ExportFrameStore implements FrameStore {
   /// resolves the next time `push()` delivers a covering frame.
   /// Producer→consumer sync point for the export Worker.
   waitForPts(tUs: number): Promise<void> {
-    if (this.containsPts(tUs)) return Promise.resolve();
+    if (this.isReadyFor(tUs)) return Promise.resolve();
     return new Promise<void>((resolve) => {
       this.waiters.push({ tUs, resolve });
     });
+  }
+
+  /// Readiness gate for `waitForPts`. The source frame to display at `tUs`
+  /// is FINAL — and `frameAt(tUs)` will return it, clamping to the nearest
+  /// held frame — once either its interval is held, or a frame with a
+  /// strictly later PTS has been decoded. Decoder output is PTS-ordered, so
+  /// once any frame past `tUs` exists, no future frame can be a better match.
+  ///
+  /// Gating on strict interval containment alone WEDGES the export: the
+  /// decoder's PTS grid (e.g. 0, 33333, 66666, 100000 … — irregular 33333/
+  /// 33334 steps) drifts off the integer `i × frameDurUs` output grid (0,
+  /// 33333, 66666, 99999 …). At a drift point the target (99999) lands in a
+  /// 1µs gap between two frames' [pts, pts+dur) intervals, and `evictBefore`
+  /// has already dropped the lower neighbour — so `containsPts` is false even
+  /// though later frames are present, and the wait never resolves.
+  private isReadyFor(tUs: number): boolean {
+    if (this.containsPts(tUs)) return true;
+    const last = this.lastPtsUs();
+    return last !== null && last > tUs;
   }
 
   frameAt(tUs: number): VideoFrame | null {
@@ -326,6 +345,15 @@ export class ExportSourceHandle implements DecoderHandle {
       pkt = await packetSink.getNextPacket(this.cursor);
     } else {
       pkt = await packetSink.getKeyPacket(aUs / 1e6);
+      // `getKeyPacket` is null when `aUs` precedes the first key packet — a
+      // trimmed / edit-list source whose first frame PTS is past the requested
+      // time (e.g. ffmpeg `-ss` clips). Fall back to the track's first packet
+      // (always the opening keyframe) so the decode starts from the GOP head
+      // instead of feeding from nothing and wedging the export. Mirrors the
+      // same fallback in `probeSourceDecodable`.
+      if (!pkt) {
+        pkt = await packetSink.getFirstPacket();
+      }
     }
     if (this._disposed) return;
 
