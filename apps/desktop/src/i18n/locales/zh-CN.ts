@@ -244,6 +244,7 @@ const zhCN: Resources = {
     reason_undecodable: "{{codec}} · 本机无法直接解码",
     reason_transcode: "{{codec}} · 需转码",
     reason_10bit: "{{codec}} 10-bit/HDR · 需优化",
+    reason_bridged: "{{codec}} · 可即时预览,后台优化滚动",
     failed: "准备失败,请重新导入",
     editable_note: "仍可立即编辑;导出会自动等待。",
     dismiss: "知道了",
