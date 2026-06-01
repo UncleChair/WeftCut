@@ -22,7 +22,7 @@ describe("probeEncoderSupported", () => {
     vi.stubGlobal("VideoEncoder", { isConfigSupported });
     expect(await probeEncoderSupported("av1", 3840, 2160, 30)).toBe(true);
     expect(isConfigSupported).toHaveBeenCalledOnce();
-    const cfg = isConfigSupported.mock.calls[0][0];
+    const cfg = isConfigSupported.mock.calls[0]![0];
     expect(cfg.codec).toMatch(/^av01\./);
     expect(cfg.width).toBe(3840);
   });

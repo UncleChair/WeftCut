@@ -78,7 +78,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       },
       runExport(opts) {
         return handlePixiExport(
-          opts?.onProgress,
+          opts,
           compositorRef.current,
           engineRef.current,
         );
@@ -250,7 +250,13 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
 });
 
 async function handlePixiExport(
-  onProgress: ((encoded: number, total: number) => void) | undefined,
+  opts:
+    | {
+        onProgress?: (encoded: number, total: number) => void;
+        encoderConfig?: VideoEncoderConfig;
+        outputFps?: { num: number; den: number };
+      }
+    | undefined,
   compositor: Compositor | null,
   engine: PlaybackEngine | null,
 ): Promise<PixiExportResult> {
@@ -272,14 +278,20 @@ async function handlePixiExport(
     const result = await runExport({
       summary,
       mediaById: store.mediaById,
-      onProgress,
+      // Conditional spreads: under exactOptionalPropertyTypes an optional
+      // field may be absent but not explicitly `undefined`.
+      ...(opts?.onProgress ? { onProgress: opts.onProgress } : {}),
+      ...(opts?.encoderConfig ? { encoderConfig: opts.encoderConfig } : {}),
+      ...(opts?.outputFps ? { outputFps: opts.outputFps } : {}),
     });
+    const outFpsNum = opts?.outputFps?.num ?? summary.composition.fps_num;
+    const outFpsDen = opts?.outputFps?.den ?? summary.composition.fps_den;
     return {
       videoBytes: result.videoBytes,
       framesEncoded: result.framesEncoded,
       totalFrames: result.totalFrames,
-      fpsNum: summary.composition.fps_num,
-      fpsDen: summary.composition.fps_den,
+      fpsNum: outFpsNum,
+      fpsDen: outFpsDen,
     };
   } finally {
     compositor?.setSuspended(false);
