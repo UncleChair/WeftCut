@@ -31,10 +31,6 @@ import { PerfHUD } from "./PerfHUD";
 import { PlaybackEngine } from "./PlaybackEngine";
 import type { PixiExportResult, PixiPreviewHandle } from "./pixiPreviewFlag";
 import { runExport } from "./worker/runExport";
-// Side-effect import: installs `window.__weftcut_generate_baselines` so
-// fixture authors can call into the runner from devtools. Stays out of
-// production reach unless `?pixi=1` boots the preview.
-import "./fixtures/devHooks";
 
 interface Props {
   onTimeUpdate?: (tUs: number) => void;
