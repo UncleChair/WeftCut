@@ -75,26 +75,41 @@ describe("audio conformance matrix (real WebView2)", function () {
       );
 
       let lastFrame = -1;
+      let lastKind = null;
+      let lastDetail = null;
       let settled = null;
       try {
         await browser.waitUntil(
           async () => {
             const snap = await browser.execute(() => {
               const st = window.__weftcutExportState;
-              return { done: window.__e2eExportDone, kind: st?.kind ?? null, frame: st?.progress?.frame ?? null };
+              return {
+                done: window.__e2eExportDone,
+                kind: st?.kind ?? null,
+                detail: st?.detail ?? null,
+                frame: st?.progress?.frame ?? null,
+              };
             });
             if (snap.frame != null && snap.frame !== lastFrame) {
               lastFrame = snap.frame;
             }
+            if (snap.kind != null) lastKind = snap.kind;
+            if (snap.detail != null) lastDetail = snap.detail;
             if (snap.done) { settled = snap.done; return true; }
             return false;
           },
           { timeout: 170000, interval: 1000 },
         );
       } catch (e) {
-        throw new Error(`export never settled (last frame=${lastFrame}): ${e.message}`);
+        throw new Error(`export never settled (last frame=${lastFrame}, kind=${lastKind}, detail=${lastDetail}): ${e.message}`);
       }
-      if (!settled.ok) throw new Error("exportClip failed: " + settled.error);
+      // Surface the REAL export error (exportState.detail) — the hook masks an
+      // internal failure as the generic "no output file" check.
+      if (!settled.ok) {
+        throw new Error(
+          `exportClip failed: ${settled.error} | exportState kind=${lastKind} detail=${lastDetail} (last frame=${lastFrame})`,
+        );
+      }
 
       const report = analyze({ output, source, samples: [0], audio: true });
       console.log(`[e2e] audio report ${c.fps}fps/${c.container}:`, JSON.stringify(report));
