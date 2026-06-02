@@ -23,6 +23,7 @@
 
 import type { EncodedPacket } from "mediabunny";
 import type { DecoderHandle, DecoderPool, FrameStore, SourceHandleInit } from "./SourceDecoderPool";
+import { withDefaultColorSpace } from "./colorSpaceDefault";
 import { handleDecodeError } from "./decoderFallback";
 import { openMediaInput, type OpenedMedia } from "./mediaInput";
 
@@ -253,7 +254,9 @@ export class ExportSourceHandle implements DecoderHandle {
     if (!config) {
       throw new Error(`[weftcut/export] ${this.mediaId}: no decoder config`);
     }
-    this.config = config;
+    // Untagged sources get a resolution-keyed default matrix so WebView2's
+    // decode matches the rest of the toolchain (see colorSpaceDefault).
+    this.config = withDefaultColorSpace(config);
     // eslint-disable-next-line no-console
     console.log(
       `[weftcut/export] source ${this.mediaId} ready: codec=${config.codec} ` +
