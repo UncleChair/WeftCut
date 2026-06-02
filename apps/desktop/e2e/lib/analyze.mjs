@@ -3,7 +3,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const REPO = path.resolve(HERE, "..", "..", "..");
+// HERE is apps/desktop/e2e/lib — four levels below the repo root. (wdio.conf is
+// one level up at apps/desktop/e2e, hence its three `..`; this file needs four.)
+const REPO = path.resolve(HERE, "..", "..", "..", "..");
 
 // Runs the media_conformance bin and returns the parsed JSON report. The bin
 // prints the report on stdout for exit 0 (pass) AND 1 (regression); exit 2/3
