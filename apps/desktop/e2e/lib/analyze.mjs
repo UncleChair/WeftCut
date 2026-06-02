@@ -11,16 +11,14 @@ const REPO = path.resolve(HERE, "..", "..", "..", "..");
 // prints the report on stdout for exit 0 (pass) AND 1 (regression); exit 2/3
 // (bad args / hard error) print only to stderr. So we parse stdout first and
 // only throw when there's no parseable report.
-export function analyze({ output, source, samples }) {
-  const r = spawnSync(
-    "cargo",
-    [
-      "run", "--manifest-path", "apps/desktop/src-tauri/Cargo.toml",
-      "--bin", "media_conformance", "--quiet", "--",
-      "--output", output, "--source", source, "--samples", samples.join(","),
-    ],
-    { cwd: REPO, encoding: "utf8" },
-  );
+export function analyze({ output, source, samples, ssimMin }) {
+  const args = [
+    "run", "--manifest-path", "apps/desktop/src-tauri/Cargo.toml",
+    "--bin", "media_conformance", "--quiet", "--",
+    "--output", output, "--source", source, "--samples", samples.join(","),
+  ];
+  if (ssimMin != null) args.push("--ssim-min", String(ssimMin));
+  const r = spawnSync("cargo", args, { cwd: REPO, encoding: "utf8" });
   try {
     return JSON.parse(r.stdout);
   } catch {
