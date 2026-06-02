@@ -1,19 +1,131 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
+	"image"
+	"image/color"
+	"image/draw"
+	"image/png"
 	"log"
 	"os"
 	"os/exec"
 	"strings"
 )
 
+type patch struct {
+	ID  string `json:"id"`
+	X   int    `json:"x"`
+	Y   int    `json:"y"`
+	W   int    `json:"w"`
+	H   int    `json:"h"`
+	RGB [3]int `json:"rgb"`
+}
+
+type manifest struct {
+	Width   int     `json:"width"`
+	Height  int     `json:"height"`
+	Patches []patch `json:"patches"`
+}
+
+// 5x4 grid of large flat patches with deliberate diagnostic values.
+func colorPatches(width, height int) []patch {
+	cols, rows := 5, 4
+	cw, ch := width/cols, height/rows
+	vals := [][3]int{
+		{255, 0, 0}, {0, 255, 0}, {0, 0, 255}, {0, 255, 255}, {255, 0, 255},
+		{255, 255, 0}, {255, 255, 255}, {0, 0, 0}, {16, 16, 16}, {235, 235, 235},
+		{128, 128, 128}, {64, 64, 64}, {192, 192, 192}, {255, 128, 0}, {128, 0, 255},
+		{200, 150, 120}, {30, 60, 90}, {120, 200, 60}, {245, 245, 245}, {10, 10, 10},
+	}
+	ids := []string{
+		"red", "green", "blue", "cyan", "magenta",
+		"yellow", "white", "black", "near_black_16", "near_white_235",
+		"gray_128", "gray_64", "gray_192", "orange", "violet",
+		"skin", "navy", "lime", "near_white_245", "near_black_10",
+	}
+	out := make([]patch, 0, cols*rows)
+	for i := 0; i < cols*rows; i++ {
+		r, c := i/cols, i%cols
+		out = append(out, patch{
+			ID: ids[i], X: c * cw, Y: r * ch, W: cw, H: ch, RGB: vals[i],
+		})
+	}
+	return out
+}
+
+func writeColorChart(width, height int) (string, error) {
+	patches := colorPatches(width, height)
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	for _, p := range patches {
+		col := color.RGBA{uint8(p.RGB[0]), uint8(p.RGB[1]), uint8(p.RGB[2]), 255}
+		draw.Draw(img, image.Rect(p.X, p.Y, p.X+p.W, p.Y+p.H), &image.Uniform{col}, image.Point{}, draw.Src)
+	}
+	pf, err := os.Create("color_chart.png")
+	if err != nil {
+		return "", err
+	}
+	defer pf.Close()
+	if err := png.Encode(pf, img); err != nil {
+		return "", err
+	}
+	mf, err := os.Create("color_manifest.json")
+	if err != nil {
+		return "", err
+	}
+	defer mf.Close()
+	enc := json.NewEncoder(mf)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(manifest{Width: width, Height: height, Patches: patches}); err != nil {
+		return "", err
+	}
+	return "color_chart.png", nil
+}
+
 func main() {
 	fps := flag.Int("fps", 0, "frame rate (required, positive integer)")
 	format := flag.String("format", "mp4", "output format: mp4, mkv, mov, webm, gif, prores")
 	audio := flag.Bool("audio", false, "add a per-second frequency-stepped tone track (test marker) + name output *_audio.mp4")
+	colorEnc := flag.String("color", "", "color chart encoding: 709ltd|601ltd|709full|601full (draws chart + manifest, ignores --fps content)")
 	flag.Parse()
+
+	if *colorEnc != "" {
+		const width, height, duration = 1920, 1080, 1
+		var matrix, prim, trc, rng, outRange string
+		switch *colorEnc {
+		case "709ltd":
+			matrix, prim, trc, rng, outRange = "bt709", "bt709", "bt709", "tv", "tv"
+		case "601ltd":
+			matrix, prim, trc, rng, outRange = "smpte170m", "smpte170m", "smpte170m", "tv", "tv"
+		case "709full":
+			matrix, prim, trc, rng, outRange = "bt709", "bt709", "bt709", "pc", "pc"
+		case "601full":
+			matrix, prim, trc, rng, outRange = "smpte170m", "smpte170m", "smpte170m", "pc", "pc"
+		default:
+			log.Fatalf("unknown --color %q (709ltd|601ltd|709full|601full)", *colorEnc)
+		}
+		chart, err := writeColorChart(width, height)
+		if err != nil {
+			log.Fatalf("chart: %v", err)
+		}
+		out := fmt.Sprintf("test_%dp_color_%s.mp4", height, *colorEnc)
+		vf := fmt.Sprintf("format=rgb24,scale=out_color_matrix=%s:out_range=%s,format=yuv420p", matrix, outRange)
+		args := []string{
+			"-y", "-loop", "1", "-i", chart, "-t", fmt.Sprintf("%d", duration), "-r", "30",
+			"-vf", vf, "-c:v", "libx264", "-crf", "18", "-preset", "medium",
+			"-colorspace", matrix, "-color_primaries", prim, "-color_trc", trc, "-color_range", rng,
+			"-an", out,
+		}
+		fmt.Printf("Generating %s (%s)\n", out, *colorEnc)
+		cmd := exec.Command("ffmpeg", args...)
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		if err := cmd.Run(); err != nil {
+			log.Fatalf("ffmpeg failed: %v", err)
+		}
+		fmt.Printf("Done: %s\n", out)
+		return
+	}
 
 	if *fps <= 0 {
 		log.Fatal("--fps must be a positive integer")
