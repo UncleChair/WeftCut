@@ -15,7 +15,6 @@ mod commands;
 mod export;
 mod export_settings_store;
 mod ffmpeg;
-pub mod fixtures;
 mod io;
 mod ir;
 mod jobs;
@@ -129,8 +128,6 @@ pub fn run() {
             commands::import_queue_list,
             commands::export_project_audio_only,
             commands::mux_export,
-            commands::extract_video_frame,
-            commands::compare_fixture_frame,
             commands::settings_get_api_key_status,
             commands::settings_set_api_key,
             commands::settings_clear_api_key,
