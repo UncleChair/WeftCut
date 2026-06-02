@@ -14,7 +14,7 @@ const PROJECT_PARENT = path.resolve(os.tmpdir(), "weftcut-e2e-audio-proj");
 // audio=Rust ffmpeg->AAC, then mux), and verify per-second alignment + A/V sync
 // drift + tone fidelity via `media_conformance --audio`. Independent of the
 // video axis (its own fixture + spec). describe.skip until first-run validated.
-describe.skip("audio import -> export conformance (real WebView2)", function () {
+describe("audio import -> export conformance (real WebView2)", function () {
   before(function () {
     if (!existsSync(SOURCE)) {
       console.warn(`[e2e] SKIP: audio source not found at ${SOURCE}`);
