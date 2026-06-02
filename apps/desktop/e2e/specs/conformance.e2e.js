@@ -9,19 +9,25 @@ const SOURCE = path.resolve(MEDIA_DIR, "test_1080p_30fps.mp4");
 const OUTPUT = path.resolve(os.tmpdir(), "weftcut-e2e-out.mp4");
 const PROJECT_PARENT = path.resolve(os.tmpdir(), "weftcut-e2e-proj");
 
-// SKIPPED — blocked on a REAL EXPORT BUG the harness found (2026-06-02), not a
-// test problem. Localized via a fire-and-forget phase-poll diagnostic: the
-// export encodes the first 250 frames fast (~124fps) then STALLS DETERMIN-
-// ISTICALLY at frame 250 — confirmed to be the source clip's SECOND GOP
-// keyframe (ffprobe: keyframes at pts 0.0 and 8.333s = frame 250; generate.go
-// sets no -g, so x264's default keyint=250). The source-frame decode pull
-// deadlocks crossing the GOP boundary (same class as the documented
-// `waitForPts` PTS-grid deadlock). So ANY direct-from-original export of a clip
-// longer than one GOP (~250 frames) hangs. exportState stays
-// {kind:"progress",frame:250,phase:"encode"} forever; no error, no completion.
-// Un-skip once the export GOP-boundary decode deadlock is fixed (decode path:
-// PacketPump / decodeRange / waitForPts). The phase is observable at
-// window.__weftcutExportState (mirrored by App under VITE_WEFTCUT_E2E).
+// Drives the REAL app (real WebView2) to create a project, import + 1:1-place
+// ONE H.264 clip, and export it; then the `media_conformance` bin verifies
+// frame alignment + app-only conversion loss at interior frames.
+//
+// STILL SKIPPED — but a layer deeper than before. This test surfaced the
+// long-GOP DirectExport hang. ROUND 1 (FIXED + verified): a chunk needing
+// frames far past a GOP key re-decoded from the key, exhausting the WebCodecs
+// VideoFrame pool while the encode loop was parked in `waitForPts` → deadlock
+// frozen at frame 250. Fixed by `ExportFrameStore.freeBehindWaiters` + the
+// `waitForPts` kick (unit-covered in ExportFrameStore.test.ts) — the export now
+// advances 250 → ~299 (verified via the worker-diag run).
+// ROUND 2 (STILL OPEN): the export then hangs at the LAST frame — the source's
+// trailing B-frames sit in the decoder's reorder buffer, which the chunked
+// `decodeRange` never `flush()`es ("no flush between ranges"), so frames
+// ~286..299 are never emitted. Needs an end-of-stream flush that (a) only runs
+// with a pending waiter so `freeBehindWaiters` keeps the pool bounded, and
+// (b) accounts for WebCodecs flush-then-continue semantics. Separately, the
+// re-seek-every-chunk dispatch redundantly re-decodes the whole GOP (queue grew
+// to ~1052) — a perf follow-up. Un-skip once the trailing-frame flush lands.
 describe.skip("H.264 import -> export conformance (real WebView2)", function () {
   before(function () {
     if (!existsSync(SOURCE)) {
