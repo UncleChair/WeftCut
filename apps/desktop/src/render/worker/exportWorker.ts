@@ -32,6 +32,7 @@ import { selectActiveVideoLayers } from "../activeVideoLayers";
 import { Compositor } from "../Compositor";
 import { ExportDecoderPool } from "../decoder/ExportDecoderPool";
 import { EncoderSink } from "./encoder";
+import { exportFrameCount, frameTimeUs as gridFrameTimeUs } from "./frameGrid";
 import type { ExportEvent, ExportRequest } from "./protocol";
 
 // PixiJS defaults to `BrowserAdapter`, which calls `document.*`
@@ -175,10 +176,21 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   // 5. Frame grid — driven by OUTPUT fps. The grid is time-based, so a lower
   // output fps naturally samples fewer composition frames (drops); a higher
   // one duplicates. No frame-resampling machinery needed.
-  const frameDurUs = Math.round((1_000_000 * outFpsDen) / outFpsNum);
+  //
+  // Frame TIMES + COUNT come from the exact rational fps (see frameGrid.ts): a
+  // floored per-frame duration (`i * round(1e6/fps)`, `ceil(span/33333)`)
+  // compounds the rounding floor, drifts behind the source PTS grid, and makes
+  // `frameAt` duplicate a frame (301 frames for a 300-frame clip, output[N] =
+  // source[N-1]). `frameTimeUs`/`exportFrameCount` derive from one shared
+  // predicate so the grid and the count never disagree.
   const startUs = Math.max(0, req.startUs);
   const endUs = Math.min(req.project.durationUs, req.endUs);
-  const totalFrames = Math.max(0, Math.ceil((endUs - startUs) / frameDurUs));
+  const frameTimeUs = (i: number): number =>
+    gridFrameTimeUs(startUs, i, outFpsNum, outFpsDen);
+  // Per-frame duration for the captured VideoFrame / encoder cadence only — an
+  // approximation is fine here; it never feeds the source-time grid above.
+  const frameDurUs = Math.round((1_000_000 * outFpsDen) / outFpsNum);
+  const totalFrames = exportFrameCount(startUs, endUs, outFpsNum, outFpsDen);
   // 1-second IDR cadence at the OUTPUT fps.
   const gop = Math.max(1, Math.round(outFpsNum / Math.max(1, outFpsDen)));
 
@@ -214,11 +226,11 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
       return;
     }
     const chunkEnd = Math.min(chunkStart + CHUNK_FRAMES, totalFrames);
-    const chunkStartUs = startUs + chunkStart * frameDurUs;
+    const chunkStartUs = frameTimeUs(chunkStart);
     // End is exclusive in frame-index terms; convert to inclusive PTS by
-    // subtracting one µs so `sampleIndexForPtsUs` lands inside the last
-    // frame's interval rather than the next one.
-    const chunkEndUs = startUs + chunkEnd * frameDurUs - 1;
+    // subtracting one µs so the last frame's interval is covered rather than
+    // the next one.
+    const chunkEndUs = frameTimeUs(chunkEnd) - 1;
 
     // 6a. Dispatch decode for every active VideoClip in this chunk.
     // After the P8 wedge fix this is non-blocking: decodeRange feeds
@@ -261,7 +273,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
         cleanup(encoder, compositor, exportPool, app);
         return;
       }
-      const tUs = startUs + i * frameDurUs;
+      const tUs = frameTimeUs(i);
       const activeNow = stagedClips.filter(
         (c) => c.tStartUs <= tUs && tUs < c.tEndUs,
       );
@@ -312,8 +324,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
       // output frame in the chunk, drop everything through srcBUs.
       // This is what keeps the WebCodecs decoder pool from
       // saturating.
-      const nextTUs =
-        i + 1 < chunkEnd ? startUs + (i + 1) * frameDurUs : null;
+      const nextTUs = i + 1 < chunkEnd ? frameTimeUs(i + 1) : null;
       for (const c of activeNow) {
         const handle = exportPool.handles.get(c.mediaId);
         if (!handle) continue;
