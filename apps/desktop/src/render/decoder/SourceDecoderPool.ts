@@ -24,6 +24,7 @@
 
 import type { EncodedPacketSink } from "mediabunny";
 import { logEmit } from "../../ipc";
+import { withDefaultColorSpace } from "./colorSpaceDefault";
 import { FrameRing } from "./FrameRing";
 import { handleDecodeError } from "./decoderFallback";
 import { openMediaInput, type OpenedMedia } from "./mediaInput";
@@ -165,14 +166,17 @@ export class SourceMedia {
         throw new Error(`SourceMedia ${this.mediaId}: no decoder config`);
       }
       this.opened = opened;
-      this.config = config;
+      // Untagged sources get a resolution-keyed default matrix so preview decode
+      // matches the rest of the toolchain (see colorSpaceDefault) — and stays
+      // consistent with the export pool, which applies the same default.
+      this.config = withDefaultColorSpace(config);
       // eslint-disable-next-line no-console
       console.log(
         `[weftcut/pixi] source ${this.mediaId} ready: codec=${config.codec} ` +
           `${config.codedWidth ?? "?"}x${config.codedHeight ?? "?"} ` +
           `desc=${config.description ? `${(config.description as { byteLength: number }).byteLength}B` : "none"}`,
       );
-      return config;
+      return this.config;
     })();
     return this.readyP;
   }

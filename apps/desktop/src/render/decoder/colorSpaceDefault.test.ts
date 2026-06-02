@@ -1,0 +1,42 @@
+import { describe, expect, it } from "vitest";
+import { withDefaultColorSpace } from "./colorSpaceDefault";
+
+const base = (over: Partial<VideoDecoderConfig> = {}): VideoDecoderConfig =>
+  ({ codec: "avc1.640028", codedWidth: 1920, codedHeight: 1080, ...over }) as VideoDecoderConfig;
+
+describe("withDefaultColorSpace", () => {
+  it("fills BT.709 for untagged HD (>=720 lines)", () => {
+    const out = withDefaultColorSpace(base({ codedHeight: 1080 }));
+    expect(out.colorSpace?.matrix).toBe("bt709");
+    expect(out.colorSpace?.primaries).toBe("bt709");
+    expect(out.colorSpace?.fullRange).toBe(false);
+  });
+
+  it("fills BT.601 (smpte170m) for untagged SD (<720 lines)", () => {
+    const out = withDefaultColorSpace(base({ codedHeight: 480 }));
+    expect(out.colorSpace?.matrix).toBe("smpte170m");
+    expect(out.colorSpace?.primaries).toBe("smpte170m");
+  });
+
+  it("uses 720 as the HD threshold", () => {
+    expect(withDefaultColorSpace(base({ codedHeight: 720 })).colorSpace?.matrix).toBe("bt709");
+    expect(withDefaultColorSpace(base({ codedHeight: 719 })).colorSpace?.matrix).toBe("smpte170m");
+  });
+
+  it("leaves a source with an explicit matrix untouched", () => {
+    const tagged = base({ colorSpace: { matrix: "smpte170m", primaries: "bt709", transfer: "bt709", fullRange: false } });
+    const out = withDefaultColorSpace(tagged);
+    expect(out).toBe(tagged); // same reference — unchanged
+    expect(out.colorSpace?.matrix).toBe("smpte170m");
+  });
+
+  it("fills only the missing fields of a partial tag (matrix absent)", () => {
+    // primaries present but matrix omitted — fill matrix from resolution,
+    // preserve the declared primaries.
+    const partial = base({ codedHeight: 1080, colorSpace: { primaries: "bt470bg", fullRange: true } });
+    const out = withDefaultColorSpace(partial);
+    expect(out.colorSpace?.matrix).toBe("bt709"); // filled (HD)
+    expect(out.colorSpace?.primaries).toBe("bt470bg"); // preserved
+    expect(out.colorSpace?.fullRange).toBe(true); // preserved
+  });
+});
