@@ -74,6 +74,51 @@ fn extract_frame_png(mp4: &Path, n: u64) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+/// Decode frame `n` of `mp4` to a PNG, optionally forcing the input YUV->RGB
+/// matrix/range (ignoring stream tags) and choosing 8- or 16-bit RGB. Pinning
+/// the matrix at decode is what makes color comparison valid.
+fn extract_frame_png_ex(
+    mp4: &Path,
+    n: u64,
+    in_matrix: Option<&str>,
+    in_range: Option<&str>,
+    depth16: bool,
+) -> Result<Vec<u8>> {
+    if !mp4.exists() {
+        anyhow::bail!("mp4 not found: {}", mp4.display());
+    }
+    let tmp = tempfile_path("png");
+    let mut vf = format!("select=eq(n\\,{n})");
+    if let (Some(m), Some(r)) = (in_matrix, in_range) {
+        vf.push_str(&format!(",scale=in_color_matrix={m}:in_range={r}"));
+    }
+    let pix = if depth16 { "rgb48be" } else { "rgb24" };
+    let status = Command::new(ffmpeg_path())
+        .args(["-y", "-hide_banner", "-nostats", "-loglevel", "error", "-i"])
+        .arg(mp4)
+        .args(["-vf", &vf, "-frames:v", "1", "-vsync", "0", "-pix_fmt", pix, "-f", "image2", "-c:v", "png"])
+        .arg(&tmp)
+        .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped())
+        .output()
+        .context("spawn ffmpeg")?;
+    if !status.status.success() {
+        anyhow::bail!("ffmpeg failed for frame {n}: {}", String::from_utf8_lossy(&status.stderr).trim());
+    }
+    let bytes = std::fs::read(&tmp).context("read png")?;
+    let _ = std::fs::remove_file(&tmp);
+    if bytes.is_empty() {
+        anyhow::bail!("ffmpeg wrote 0 bytes for frame {n}");
+    }
+    Ok(bytes)
+}
+
+fn decode_rgb16(png: &[u8]) -> Result<image::ImageBuffer<image::Rgb<u16>, Vec<u16>>> {
+    Ok(ImageReader::new(Cursor::new(png))
+        .with_guessed_format().context("guess png")?
+        .decode().context("decode png")?
+        .to_rgb16())
+}
+
 /// A unique temp path with the given extension under the OS temp dir.
 fn tempfile_path(ext: &str) -> PathBuf {
     let mut p = std::env::temp_dir();
@@ -85,7 +130,6 @@ fn tempfile_path(ext: &str) -> PathBuf {
 }
 
 use image::ImageReader;
-use serde::Deserialize;
 use std::io::Cursor;
 
 /// Newtype for a 16-bit RGB pixel. `image` 0.25 does not export an `Rgb16`
@@ -93,7 +137,7 @@ use std::io::Cursor;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Rgb16(pub [u16; 3]);
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 #[allow(dead_code)]
 struct Patch {
     id: String,
@@ -101,10 +145,12 @@ struct Patch {
     y: u32,
     w: u32,
     h: u32,
+    /// Expected color in 8-bit units (0..255), NOT left-justified. Upscale with
+    /// `* 257` to match image::to_rgb16 before comparing via `channel_error`.
     rgb: [u16; 3],
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 #[allow(dead_code)]
 struct Manifest {
     width: u32,
@@ -460,6 +506,73 @@ fn analyze(
     })
 }
 
+#[derive(Debug, serde::Serialize)]
+struct PatchResult {
+    id: String,
+    authored: [u16; 3],
+    output: [u16; 3],
+    source: [u16; 3],
+    app_error: ChannelError,   // output vs decoded-source (the gate)
+    total_error: ChannelError, // output vs authored RGB (diagnostic)
+}
+
+#[derive(Debug, serde::Serialize)]
+struct ColorReport {
+    output: String,
+    source: String,
+    in_matrix: String,
+    in_range: String,
+    sample: u64,
+    patches: Vec<PatchResult>,
+    worst_app_max: u16, // worst app_error.max across all patches/channels
+}
+
+/// Decode one frame of output and source under a FORCED matrix/range, sample
+/// each manifest patch, and report per-channel app-only error (output vs
+/// decoded-source = the gate) plus total error (output vs authored RGB =
+/// diagnostic).
+fn analyze_color(
+    output: &Path,
+    source: &Path,
+    manifest: &Manifest,
+    sample: u64,
+    in_matrix: &str,
+    in_range: &str,
+) -> Result<ColorReport> {
+    let out_img = decode_rgb16(&extract_frame_png_ex(output, sample, Some(in_matrix), Some(in_range), false)?)?;
+    let src_img = decode_rgb16(&extract_frame_png_ex(source, sample, Some(in_matrix), Some(in_range), false)?)?;
+    let mut patches = Vec::with_capacity(manifest.patches.len());
+    let mut worst = 0u16;
+    for p in &manifest.patches {
+        let o = sample_patch(&out_img, p);
+        let s = sample_patch(&src_img, p);
+        // *257 matches image::to_rgb16's 8->16 byte-replication so authored
+        // aligns with how output/source were upscaled (gate uses app_error,
+        // which compares output vs source — both via to_rgb16 — so it is exact).
+        let authored = Rgb16([p.rgb[0] * 257, p.rgb[1] * 257, p.rgb[2] * 257]);
+        let app = channel_error(&[o], &[s]);
+        let total = channel_error(&[o], &[authored]);
+        worst = worst.max(*app.max.iter().max().unwrap());
+        patches.push(PatchResult {
+            id: p.id.clone(),
+            authored: p.rgb,
+            output: [o.0[0] / 256, o.0[1] / 256, o.0[2] / 256],
+            source: [s.0[0] / 256, s.0[1] / 256, s.0[2] / 256],
+            app_error: app,
+            total_error: total,
+        });
+    }
+    Ok(ColorReport {
+        output: output.display().to_string(),
+        source: source.display().to_string(),
+        in_matrix: in_matrix.into(),
+        in_range: in_range.into(),
+        sample,
+        patches,
+        worst_app_max: worst,
+    })
+}
+
 fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().collect();
     let mut output: Option<String> = None;
@@ -468,6 +581,11 @@ fn main() -> std::process::ExitCode {
     let mut window: u64 = 2;
     let mut ssim_min: f64 = 0.95;
     let mut audio = false;
+    let mut color = false;
+    let mut manifest_path: Option<String> = None;
+    let mut in_matrix: Option<String> = None;
+    let mut in_range: Option<String> = None;
+    let mut sample: u64 = 10;
     let mut it = args.iter().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -482,6 +600,11 @@ fn main() -> std::process::ExitCode {
             }
             "--window" => window = it.next().and_then(|s| s.parse().ok()).unwrap_or(2),
             "--ssim-min" => ssim_min = it.next().and_then(|s| s.parse().ok()).unwrap_or(0.95),
+            "--color" => color = true,
+            "--manifest" => manifest_path = it.next().cloned(),
+            "--in-matrix" => in_matrix = it.next().cloned(),
+            "--in-range" => in_range = it.next().cloned(),
+            "--sample" => sample = it.next().and_then(|s| s.parse().ok()).unwrap_or(10),
             other => {
                 eprintln!("media_conformance: unknown arg `{other}`");
                 return std::process::ExitCode::from(2);
@@ -492,6 +615,23 @@ fn main() -> std::process::ExitCode {
         eprintln!("media_conformance: --output and --source are required");
         return std::process::ExitCode::from(2);
     };
+    if color {
+        let (Some(mp), Some(im), Some(ir)) = (manifest_path, in_matrix, in_range) else {
+            eprintln!("media_conformance --color requires --manifest, --in-matrix, --in-range");
+            return std::process::ExitCode::from(2);
+        };
+        let manifest: Manifest = match std::fs::read_to_string(&mp) {
+            Ok(s) => match serde_json::from_str(&s) {
+                Ok(m) => m,
+                Err(e) => { eprintln!("media_conformance: manifest parse: {e:#}"); return std::process::ExitCode::from(3); }
+            },
+            Err(e) => { eprintln!("media_conformance: manifest read: {e:#}"); return std::process::ExitCode::from(3); }
+        };
+        return match analyze_color(Path::new(&output), Path::new(&source), &manifest, sample, &im, &ir) {
+            Ok(r) => { println!("{}", serde_json::to_string_pretty(&r).unwrap()); std::process::ExitCode::SUCCESS }
+            Err(e) => { eprintln!("media_conformance: {e:#}"); std::process::ExitCode::from(3) }
+        };
+    }
     if audio {
         let pcm = match extract_audio_pcm(Path::new(&output)) {
             Ok(p) => p,
