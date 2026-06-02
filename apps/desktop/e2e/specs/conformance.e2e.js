@@ -9,16 +9,19 @@ const SOURCE = path.resolve(MEDIA_DIR, "test_1080p_30fps.mp4");
 const OUTPUT = path.resolve(os.tmpdir(), "weftcut-e2e-out.mp4");
 const PROJECT_PARENT = path.resolve(os.tmpdir(), "weftcut-e2e-proj");
 
-// SKIPPED — KNOWN BLOCKER (2026-06-02): the harness reaches the export step
-// (project-create + import + place all succeed via the hook), but the export
-// never completes within a 180s WebDriver script timeout in the tauri-driver-
-// controlled window. The launch smoke passes; this is specifically the export.
-// Leading hypotheses to localize next: (1) the export-readiness gate waiting on
-// a proxy that never readies (importMedia kicks one off); (2) a background/
-// automated WebView2 throttling WebGL/WebCodecs GPU work when the window isn't
-// foregrounded; (3) an export-Worker stall. Diagnose by logging export progress
-// + capturing the WebView2 console (or splitting import/place from export).
-// Un-skip once the export completes under automation.
+// SKIPPED — blocked on a REAL EXPORT BUG the harness found (2026-06-02), not a
+// test problem. Localized via a fire-and-forget phase-poll diagnostic: the
+// export encodes the first 250 frames fast (~124fps) then STALLS DETERMIN-
+// ISTICALLY at frame 250 — confirmed to be the source clip's SECOND GOP
+// keyframe (ffprobe: keyframes at pts 0.0 and 8.333s = frame 250; generate.go
+// sets no -g, so x264's default keyint=250). The source-frame decode pull
+// deadlocks crossing the GOP boundary (same class as the documented
+// `waitForPts` PTS-grid deadlock). So ANY direct-from-original export of a clip
+// longer than one GOP (~250 frames) hangs. exportState stays
+// {kind:"progress",frame:250,phase:"encode"} forever; no error, no completion.
+// Un-skip once the export GOP-boundary decode deadlock is fixed (decode path:
+// PacketPump / decodeRange / waitForPts). The phase is observable at
+// window.__weftcutExportState (mirrored by App under VITE_WEFTCUT_E2E).
 describe.skip("H.264 import -> export conformance (real WebView2)", function () {
   before(function () {
     if (!existsSync(SOURCE)) {
