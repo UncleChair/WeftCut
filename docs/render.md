@@ -291,7 +291,11 @@ one key packet — racing success against the decoder's error callback and
 a timeout (WebCodecs can fail silently). If a source can't be decoded on
 this machine, the Worker is never launched: the export aborts with a
 retry message and `ensure_full_proxy` enqueues a proxy, so the retry
-succeeds from the master. See ADRs 0010–0011.
+succeeds from the master. When the import sweep is already probing the
+same source, the gate **defers to that in-flight probe** rather than
+opening a second decoder — concurrent probes contend for the WebCodecs
+buffer pool and false-negative a decodable source (ADR 0013). See ADRs
+0010–0011, 0013.
 
 ### Backpressure
 
