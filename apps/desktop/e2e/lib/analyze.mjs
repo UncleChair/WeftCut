@@ -28,3 +28,19 @@ export function analyze({ output, source, samples, ssimMin, audio }) {
     );
   }
 }
+
+export function analyzeColor({ output, source, manifest, inMatrix, inRange, sample }) {
+  const args = [
+    "run", "--manifest-path", "apps/desktop/src-tauri/Cargo.toml",
+    "--bin", "media_conformance", "--quiet", "--",
+    "--color", "--output", output, "--source", source,
+    "--manifest", manifest, "--in-matrix", inMatrix, "--in-range", inRange,
+    "--sample", String(sample ?? 10),
+  ];
+  const r = spawnSync("cargo", args, { cwd: REPO, encoding: "utf8" });
+  try {
+    return JSON.parse(r.stdout);
+  } catch {
+    throw new Error(`media_conformance --color exit ${r.status}: ${r.stdout}\n${r.stderr}`);
+  }
+}
