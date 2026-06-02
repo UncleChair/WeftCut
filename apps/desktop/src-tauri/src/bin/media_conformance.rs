@@ -140,10 +140,111 @@ fn best_match_index(
     Ok(best)
 }
 
-fn main() {
-    // Real arg parsing + report land in Task 3; a stub keeps `cargo build` happy.
-    eprintln!("media_conformance: run with --output/--source/--samples (see Task 3)");
-    std::process::exit(2);
+#[derive(Debug, serde::Serialize)]
+struct SampleResult {
+    index: u64,
+    best_match_index: u64,
+    aligned: bool,
+    ssim: f64,
+    psnr_db: f64,
+    pass: bool,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct Report {
+    output: String,
+    source: String,
+    ssim_min: f64,
+    samples: Vec<SampleResult>,
+    pass: bool,
+}
+
+fn analyze(
+    output: &Path,
+    source: &Path,
+    samples: &[u64],
+    window: u64,
+    ssim_min: f64,
+) -> Result<Report> {
+    let mut out_samples = Vec::with_capacity(samples.len());
+    let mut all_pass = true;
+    for &n in samples {
+        let out_png = extract_frame_png(output, n)?;
+        let (best, _best_score) = best_match_index(&out_png, source, n, window)?;
+        let src_png = extract_frame_png(source, n)?;
+        let ssim = ssim_pngs(&out_png, &src_png)?;
+        let psnr_db = psnr_pngs(&out_png, &src_png)?;
+        let aligned = best == n;
+        let pass = aligned && ssim >= ssim_min;
+        if !pass {
+            all_pass = false;
+        }
+        out_samples.push(SampleResult {
+            index: n,
+            best_match_index: best,
+            aligned,
+            ssim,
+            psnr_db,
+            pass,
+        });
+    }
+    Ok(Report {
+        output: output.display().to_string(),
+        source: source.display().to_string(),
+        ssim_min,
+        samples: out_samples,
+        pass: all_pass,
+    })
+}
+
+fn main() -> std::process::ExitCode {
+    let args: Vec<String> = std::env::args().collect();
+    let mut output: Option<String> = None;
+    let mut source: Option<String> = None;
+    let mut samples: Vec<u64> = Vec::new();
+    let mut window: u64 = 2;
+    let mut ssim_min: f64 = 0.95;
+    let mut it = args.iter().skip(1);
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--output" => output = it.next().cloned(),
+            "--source" => source = it.next().cloned(),
+            "--samples" => {
+                samples = it
+                    .next()
+                    .map(|s| s.split(',').filter_map(|x| x.trim().parse().ok()).collect())
+                    .unwrap_or_default();
+            }
+            "--window" => window = it.next().and_then(|s| s.parse().ok()).unwrap_or(2),
+            "--ssim-min" => ssim_min = it.next().and_then(|s| s.parse().ok()).unwrap_or(0.95),
+            other => {
+                eprintln!("media_conformance: unknown arg `{other}`");
+                return std::process::ExitCode::from(2);
+            }
+        }
+    }
+    let (Some(output), Some(source)) = (output, source) else {
+        eprintln!("media_conformance: --output and --source are required");
+        return std::process::ExitCode::from(2);
+    };
+    if samples.is_empty() {
+        eprintln!("media_conformance: --samples N1,N2,... is required");
+        return std::process::ExitCode::from(2);
+    }
+    match analyze(Path::new(&output), Path::new(&source), &samples, window, ssim_min) {
+        Ok(report) => {
+            println!("{}", serde_json::to_string_pretty(&report).unwrap());
+            if report.pass {
+                std::process::ExitCode::SUCCESS
+            } else {
+                std::process::ExitCode::from(1)
+            }
+        }
+        Err(e) => {
+            eprintln!("media_conformance: {e:#}");
+            std::process::ExitCode::from(3)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -181,5 +282,21 @@ mod tests {
         let (best, score) = best_match_index(&out10, clip, 10, 2).unwrap();
         assert_eq!(best, 10, "self best-match must be the same index");
         assert!(score > 0.999);
+    }
+
+    #[test]
+    fn analyze_self_compare_passes_and_aligns() {
+        // output == source == tiny clip -> every sample aligns to itself with
+        // SSIM ~1.0 and the report is all-pass.
+        let clip = std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../fixtures/media/tiny.mp4"
+        ));
+        let report = analyze(clip, clip, &[5, 10, 20], 2, 0.95).unwrap();
+        assert!(report.pass, "self-compare must pass: {report:?}");
+        for s in &report.samples {
+            assert_eq!(s.index, s.best_match_index);
+            assert!(s.ssim > 0.999);
+        }
     }
 }
