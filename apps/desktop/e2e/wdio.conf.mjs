@@ -2,6 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { ensureFixtures } from "./fixtures/generate-fixtures.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, "..", "..", ".."); // apps/desktop/e2e -> repo root
@@ -25,7 +26,9 @@ export const config = {
 
   // Build the app with the e2e test hook compiled in (VITE_WEFTCUT_E2E=1
   // mounts window.__weftcutTest; absent in normal prod builds).
-  onPrepare: () => {
+  onPrepare: async () => {
+    const mediaDir = process.env.WEFTCUT_TEST_MEDIA || path.resolve(HERE, "fixtures", "media");
+    await ensureFixtures(mediaDir);
     const r = spawnSync(
       "npm",
       ["--prefix", "apps/desktop", "run", "tauri", "--", "build", "--debug", "--no-bundle"],

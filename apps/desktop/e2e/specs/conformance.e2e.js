@@ -1,10 +1,12 @@
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { analyze } from "../lib/analyze.mjs";
 
 const MEDIA_DIR =
-  process.env.WEFTCUT_TEST_MEDIA || "C:/Users/jonny/Desktop/learning/testfile";
+  process.env.WEFTCUT_TEST_MEDIA ||
+  path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "media");
 const SOURCE = path.resolve(MEDIA_DIR, "test_1080p_30fps.mp4");
 const OUTPUT = path.resolve(os.tmpdir(), "weftcut-e2e-out.mp4");
 const PROJECT_PARENT = path.resolve(os.tmpdir(), "weftcut-e2e-proj");
