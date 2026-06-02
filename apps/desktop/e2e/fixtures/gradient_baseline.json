@@ -1,0 +1,6 @@
+{
+  "note": "Axis-B proxy fidelity baseline. Measured 2026-06-03 via scripts/color-probe-proxy.mjs on test_1080p_gradient10.mp4 (source distinct_levels ~881). The proxy (libx264 -crf 18, no dither) reduces 10->8 to distinct_levels=220, max_plateau=152. A fidelity regression (worse banding, an accidental downscale, or a codec-param change) drops distinct below the floor or widens plateaus past the ceiling.",
+  "measured": { "source_distinct": 881, "proxy_distinct": 220, "proxy_max_plateau": 152 },
+  "proxy_distinct_floor": 180,
+  "proxy_max_plateau_ceiling": 250
+}
