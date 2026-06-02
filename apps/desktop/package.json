@@ -12,10 +12,7 @@
     "tauri:build": "tauri build",
     "typecheck": "tsc -b",
     "test": "vitest run --exclude '**/*.browser.test.ts'",
-    "test:watch": "vitest --exclude '**/*.browser.test.ts'",
-    "fixtures:render": "vitest run --config vitest.browser.config.ts",
-    "fixtures:compare": "cargo run --manifest-path src-tauri/Cargo.toml --bin fixture_compare --quiet --",
-    "fixtures:check": "node tools/check-fixtures.mjs"
+    "test:watch": "vitest --exclude '**/*.browser.test.ts'"
   },
   "dependencies": {
     "@pixi/react": "^8.0.5",
@@ -39,10 +36,7 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
-    "@vitest/browser": "^4.1.7",
-    "@vitest/browser-playwright": "^4.1.7",
     "esbuild": "^0.28.0",
-    "playwright": "^1.49.0",
     "typescript": "^6.0.3",
     "vite": "^8.0.13",
     "vitest": "^4.1.7"
