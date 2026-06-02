@@ -1,7 +1,0 @@
-{
-  "name": "001_color",
-  "description": "Single solid red Color layer for two seconds. Smoke test that the Pixi compositor + export Worker round-trips a static frame end-to-end without depending on decoders, fonts, or external media.",
-  "width": 1920,
-  "height": 1080,
-  "sample_times_us": [0, 1000000]
-}
