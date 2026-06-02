@@ -225,6 +225,10 @@ export class ExportSourceHandle implements DecoderHandle {
   private outputFrameCount = 0;
   private downgraded = false;
   private _disposed = false;
+  /// In-flight end-of-stream `decoder.flush()` (floated, never awaited inline —
+  /// see `issueEosFlush`). A subsequent `decodeRange` on this handle awaits it
+  /// before feeding new packets, so a re-decode never races a pending flush.
+  private flushP: Promise<void> | null = null;
 
   get disposed(): boolean {
     return this._disposed;
@@ -349,6 +353,9 @@ export class ExportSourceHandle implements DecoderHandle {
     this.decoder.configure(this.buildConfig());
     this.cursor = null;
     this.lastDispatchedPtsUs = Number.NEGATIVE_INFINITY;
+    // The fresh decoder supersedes any in-flight EOS flush on the old one (its
+    // .then/.catch are identity-guarded and settle harmlessly).
+    this.flushP = null;
   }
 
   /// Compositor's `setAnchorTime` reaches us here; export drives decoding via
@@ -376,6 +383,16 @@ export class ExportSourceHandle implements DecoderHandle {
     if (!this.config || !this.decoder) return;
     const packetSink = this.opened?.packetSink;
     if (!packetSink) return;
+
+    // A prior range hit end-of-stream and floated a decoder flush, leaving the
+    // decoder drained + reset (cursor cleared). Await the drain before feeding
+    // new packets so this re-decode never races a pending flush. By now the
+    // encode loop has freed the pool, so this resolves promptly.
+    if (this.flushP) {
+      await this.flushP;
+      this.flushP = null;
+      if (this._disposed) return;
+    }
 
     // Position: continue from the cursor when aUs is at/ahead of the frontier
     // (the normal forward-export case); otherwise seek to aUs's GOP key.
@@ -422,6 +439,61 @@ export class ExportSourceHandle implements DecoderHandle {
       `[weftcut/export] ${this.mediaId} decodeRange dispatched ${dispatched} ` +
         `(queue=${this.decoder.decodeQueueSize})`,
     );
+
+    // End-of-stream discriminator: the loop exited because `getNextPacket`
+    // returned null (`pkt === null`) after dispatching at least one packet —
+    // NOT via the key-past-bUs `break` (which leaves `pkt` holding that key).
+    // At EOS we fed every remaining packet, so a mid-stream chunk's drain
+    // mechanism (the next GOP key flushing the prior GOP's reorder buffer) can
+    // never fire — the final GOP's trailing B-frames stay parked in the
+    // decoder's reorder buffer until an explicit flush.
+    if (dispatched > 0 && pkt === null) {
+      this.issueEosFlush();
+    }
+  }
+
+  /// Drain the decoder's reorder buffer at true end-of-stream. The chunked
+  /// `decodeRange` is otherwise flush-free by design (flushing mid-export would
+  /// deadlock against the VideoFrame pool slots the worker holds). But the final
+  /// GOP has no "next key" to drain it, so its trailing B-frames never emit —
+  /// the export's `waitForPts` for the last output frames hangs forever (the
+  /// observed "stuck at the last frame" wedge).
+  ///
+  /// Crucially we do NOT await the flush here. The worker's encode loop is the
+  /// only thing that frees pool slots (`waitForPts` → `freeBehindWaiters`), and
+  /// a full pool stalls the decoder mid-flush; awaiting would block that loop →
+  /// the exact circular deadlock the "no flush between ranges" rule avoids.
+  /// Floating it lets the encode loop run concurrently: it parks on each trailing
+  /// frame, frees the pool behind the waiter, the flush makes progress, the
+  /// trailing frames emit, and the waiters resolve. A flushed decoder must resume
+  /// from a keyframe, so reset the cursor → the next `decodeRange` (e.g. a final
+  /// GOP spanning multiple chunks) re-seeks instead of continuing from a stale
+  /// cursor into a reset decoder.
+  private issueEosFlush(): void {
+    const dec = this.decoder;
+    if (!dec) return;
+    // eslint-disable-next-line no-console
+    console.log(
+      `[weftcut/export] ${this.mediaId} EOS — flushing decoder reorder buffer ` +
+        `(queue=${dec.decodeQueueSize}, ring=${this.ring.size()})`,
+    );
+    this.flushP = dec
+      .flush()
+      .then(() => {
+        if (this.decoder !== dec) return; // superseded by rebuild/dispose
+        // eslint-disable-next-line no-console
+        console.log(
+          `[weftcut/export] ${this.mediaId} EOS flush drained ` +
+            `(output #${this.outputFrameCount}, ring=${this.ring.size()})`,
+        );
+      })
+      .catch((e: unknown) => {
+        if (this.decoder !== dec) return; // superseded by rebuild/dispose
+        // eslint-disable-next-line no-console
+        console.warn(`[weftcut/export] ${this.mediaId} EOS flush errored:`, e);
+      });
+    this.cursor = null;
+    this.lastDispatchedPtsUs = Number.NEGATIVE_INFINITY;
   }
 
   evictBefore(cutoffUs: number): void {
@@ -446,6 +518,7 @@ export class ExportSourceHandle implements DecoderHandle {
     this.lastDispatchedPtsUs = Number.NEGATIVE_INFINITY;
     this.outputFrameCount = 0;
     this.downgraded = false;
+    this.flushP = null;
     this._disposed = true;
   }
 }
