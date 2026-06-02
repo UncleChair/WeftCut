@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "drivers": "node scripts/fetch-msedgedriver.mjs",
+    "fixtures": "node fixtures/generate-fixtures.mjs",
     "test": "node scripts/fetch-msedgedriver.mjs && wdio run wdio.conf.mjs"
   },
   "devDependencies": {
