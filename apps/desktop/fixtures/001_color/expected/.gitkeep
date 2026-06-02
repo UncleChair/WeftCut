@@ -1,4 +1,0 @@
-# Baseline PNGs land here once the runner has been driven manually (see
-# apps/desktop/fixtures/README.md). The directory is committed empty in
-# P10a so future fixture additions can model after this structure; the
-# actual `t_<us>.png` files are committed once the runner generates them.

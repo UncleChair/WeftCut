@@ -1,7 +1,0 @@
-{
-  "name": "002_color_stack",
-  "description": "Two overlapping Color layers exercising z-order and opacity. The lower layer is opaque red filling the canvas; the upper layer is half-opacity blue covering the right half. The blend region (top-right quadrant) should read as a purple-ish mix; the bottom-left half stays solid red.",
-  "width": 1920,
-  "height": 1080,
-  "sample_times_us": [0, 500000]
-}
