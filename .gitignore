@@ -64,3 +64,6 @@ yarn-error.log*
 
 # ffmpeg-sidecar download cache
 **/.ffmpeg-sidecar/
+
+# E2E (WebDriver): msedgedriver is downloaded + version-matched at runtime
+apps/desktop/e2e/.drivers/
