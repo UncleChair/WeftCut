@@ -94,7 +94,12 @@ PixiJS migration.
    - **UI event bridge** emits `project:changed` so React panels
      re-fetch `projectSummary()`. The `<PreviewSurface>` compositor
      receives the updated project and updates its sprite tree in
-     place (no recompile).
+     place (no recompile). The re-fetch is **ordering-guarded**:
+     `project_summary` responses can resolve out of order (the actor
+     services queries on a threadpool), so a response older than the
+     newest already applied is dropped — last-write-wins by dispatch
+     order, preventing a slow stale summary from clobbering fresher
+     state (e.g. resetting a just-decided export route).
    - **Autosave subscriber** debounces 500 ms, writes
      `<workspace>/project.json` (atomic `.tmp` + rename). Every 50
      commits or 5 min, copies to `Backups/<ISO>.json`.
