@@ -1,0 +1,68 @@
+// Idempotent fixture generator: defines the matrix (single source of truth) and
+// generates any missing clips into `mediaDir` by shelling `go run generate.go`.
+// Media is gitignored; the generator + this script are committed, so fixtures
+// are reproducible from a checkout. Requires `go` + `ffmpeg` on PATH.
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const GENERATOR = path.join(HERE, "generate.go");
+const WIDTH_HEIGHT = "1080"; // generate.go is hard-coded 1920x1080
+
+// The fixture matrix. Output filenames MUST match what generate.go writes.
+export const MATRIX = [
+  // video-only (true BT.709, -an) — the video conformance axis
+  { fps: 30, format: "mp4" },
+  { fps: 60, format: "mp4" },
+  { fps: 120, format: "mp4" },
+  { fps: 30, format: "mkv" },
+  { fps: 30, format: "prores" }, // emits test_1080p_30fps_prores.mov
+  // audio (per-second tone markers) — sources for the audio axis (3 frame rates)
+  { fps: 30, format: "mp4", audio: true },
+  { fps: 60, format: "mp4", audio: true },
+  { fps: 120, format: "mp4", audio: true },
+];
+
+export function outputName({ fps, format, audio }) {
+  if (format === "prores") return `test_${WIDTH_HEIGHT}p_${fps}fps_prores.mov`;
+  if (audio) return `test_${WIDTH_HEIGHT}p_${fps}fps_audio.${format}`;
+  return `test_${WIDTH_HEIGHT}p_${fps}fps.${format}`;
+}
+
+/// Generate any missing matrix clip into `mediaDir`. Existing files are skipped
+/// (fast no-op). Throws if a generation fails or produces no file.
+export async function ensureFixtures(mediaDir) {
+  for (const entry of MATRIX) {
+    const name = outputName(entry);
+    const dest = path.join(mediaDir, name);
+    if (existsSync(dest)) {
+      console.log(`[fixtures] skip (exists): ${name}`);
+      continue;
+    }
+    const args = ["run", GENERATOR, "--fps", String(entry.fps), "--format", entry.format];
+    if (entry.audio) args.push("--audio");
+    console.log(`[fixtures] generating ${name} ...`);
+    const r = spawnSync("go", args, { cwd: mediaDir, stdio: "inherit", shell: true });
+    if (r.status !== 0) {
+      throw new Error(`generate.go failed for ${name} (exit ${r.status})`);
+    }
+    if (!existsSync(dest)) {
+      throw new Error(`generate.go ran but did not produce ${dest}`);
+    }
+  }
+}
+
+// Standalone: `node generate-fixtures.mjs [mediaDir]`
+const invokedDirectly =
+  process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (invokedDirectly) {
+  const mediaDir = process.argv[2] ? path.resolve(process.argv[2]) : path.join(HERE, "media");
+  ensureFixtures(mediaDir)
+    .then(() => console.log("[fixtures] done"))
+    .catch((e) => {
+      console.error("[fixtures]", e.message);
+      process.exit(1);
+    });
+}
