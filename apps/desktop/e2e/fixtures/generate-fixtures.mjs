@@ -23,9 +23,15 @@ export const MATRIX = [
   { fps: 30, format: "mp4", audio: true },
   { fps: 60, format: "mp4", audio: true },
   { fps: 120, format: "mp4", audio: true },
+  // color charts (flat patches, tagged) — axis A fixtures
+  { color: "709ltd" },
+  { color: "601ltd" },
+  { color: "709full" },
+  { color: "601full" },
 ];
 
-export function outputName({ fps, format, audio }) {
+export function outputName({ fps, format, audio, color }) {
+  if (color) return `test_${WIDTH_HEIGHT}p_color_${color}.mp4`;
   if (format === "prores") return `test_${WIDTH_HEIGHT}p_${fps}fps_prores.mov`;
   if (audio) return `test_${WIDTH_HEIGHT}p_${fps}fps_audio.${format}`;
   return `test_${WIDTH_HEIGHT}p_${fps}fps.${format}`;
@@ -41,7 +47,9 @@ export async function ensureFixtures(mediaDir) {
       console.log(`[fixtures] skip (exists): ${name}`);
       continue;
     }
-    const args = ["run", GENERATOR, "--fps", String(entry.fps), "--format", entry.format];
+    const args = entry.color
+      ? ["run", GENERATOR, "--color", entry.color]
+      : ["run", GENERATOR, "--fps", String(entry.fps), "--format", entry.format];
     if (entry.audio) args.push("--audio");
     console.log(`[fixtures] generating ${name} ...`);
     const r = spawnSync("go", args, { cwd: mediaDir, stdio: "inherit", shell: true });
