@@ -97,7 +97,7 @@ describe("importOptimizeStatus", () => {
   });
 
   it("keeps bypass silent and a finished proxy ready", () => {
-    const d = { memo: new Map(), proxyStateOf: () => undefined, routeCorrected: new Set() };
+    const d = { memo: new Map(), proxyStateOf: () => undefined, routeCorrected: new Set<string>() };
     expect(importOptimizeStatus(vid({ proxy_bypassed: true }) as any, d)).toBe("direct");
     expect(importOptimizeStatus(vid({ proxy_path: "/p.mp4" }) as any, d)).toBe("ready");
   });

@@ -333,7 +333,10 @@ function validateManifest(raw: unknown): FixtureManifest {
   }
   return {
     name,
-    description: typeof r.description === "string" ? r.description : undefined,
+    // Only include `description` when present — under
+    // `exactOptionalPropertyTypes` an explicit `undefined` is not assignable
+    // to the optional `description?: string` field.
+    ...(typeof r.description === "string" ? { description: r.description } : {}),
     width,
     height,
     sample_times_us: samples as number[],

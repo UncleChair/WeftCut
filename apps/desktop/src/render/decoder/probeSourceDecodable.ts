@@ -24,7 +24,11 @@ export interface RaceFirstDecodeArgs {
 /// `error` callback, or the timeout all resolve false. Pure of mediabunny —
 /// the testable core.
 export async function raceFirstDecode(args: RaceFirstDecodeArgs): Promise<boolean> {
-  if (!args.keyChunk) return false;
+  // Capture into a const so the non-null narrowing survives into the Promise
+  // executor below — TS resets property-access narrowing (`args.keyChunk`)
+  // across the closure boundary, but a const local holds.
+  const keyChunk = args.keyChunk;
+  if (!keyChunk) return false;
   return await new Promise<boolean>((resolve) => {
     let settled = false;
     let decoder: DecoderLike | null = null;
@@ -49,7 +53,7 @@ export async function raceFirstDecode(args: RaceFirstDecodeArgs): Promise<boolea
         error: () => finish(false),
       });
       decoder.configure(args.config);
-      decoder.decode(args.keyChunk);
+      decoder.decode(keyChunk);
     } catch {
       finish(false);
     }

@@ -10,7 +10,7 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "typecheck": "tsc -b --noEmit",
+    "typecheck": "tsc -b",
     "test": "vitest run --exclude '**/*.browser.test.ts'",
     "test:watch": "vitest --exclude '**/*.browser.test.ts'",
     "fixtures:render": "vitest run --config vitest.browser.config.ts",

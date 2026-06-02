@@ -36,13 +36,14 @@ const isMac: boolean = (() => {
 export function parseBinding(spec: string): ParsedBinding {
   const parts = spec.split("+").map((p) => p.trim()).filter(Boolean);
   if (parts.length === 0) throw new Error(`shortcuts: empty binding "${spec}"`);
-  const last = parts[parts.length - 1];
+  // Non-empty (guarded above), so the last element is defined.
+  const last = parts[parts.length - 1]!;
   let ctrl = false;
   let meta = false;
   let shift = false;
   let alt = false;
-  for (let i = 0; i < parts.length - 1; i++) {
-    const m = parts[i].toLowerCase();
+  for (const raw of parts.slice(0, -1)) {
+    const m = raw.toLowerCase();
     if (m === "mod") {
       if (isMac) meta = true;
       else ctrl = true;
@@ -55,7 +56,7 @@ export function parseBinding(spec: string): ParsedBinding {
     } else if (m === "alt" || m === "option" || m === "opt") {
       alt = true;
     } else {
-      throw new Error(`shortcuts: unknown modifier "${parts[i]}" in "${spec}"`);
+      throw new Error(`shortcuts: unknown modifier "${raw}" in "${spec}"`);
     }
   }
   return { ctrl, meta, shift, alt, key: normaliseKey(last) };
@@ -91,17 +92,18 @@ export function resolveAccelerator(spec: string): string {
   const parts = spec.split("+").map((p) => p.trim()).filter(Boolean);
   if (parts.length === 0) return "";
   const out: string[] = [];
-  for (let i = 0; i < parts.length - 1; i++) {
-    const m = parts[i].toLowerCase();
+  for (const raw of parts.slice(0, -1)) {
+    const m = raw.toLowerCase();
     if (m === "mod") out.push(isMac ? "Cmd" : "Ctrl");
     else if (m === "ctrl" || m === "control") out.push("Ctrl");
     else if (m === "cmd" || m === "meta" || m === "command") out.push("Cmd");
     else if (m === "shift") out.push("Shift");
     else if (m === "alt" || m === "option" || m === "opt")
       out.push(isMac ? "Option" : "Alt");
-    else out.push(parts[i]);
+    else out.push(raw);
   }
-  const last = parts[parts.length - 1];
+  // Non-empty (guarded above), so the last element is defined.
+  const last = parts[parts.length - 1]!;
   if (last === " " || last === "Space") out.push("Space");
   else if (last.length === 1) out.push(last.toUpperCase());
   else out.push(last);

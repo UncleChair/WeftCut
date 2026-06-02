@@ -4,13 +4,14 @@ import { raceFirstDecode } from "./probeSourceDecodable";
 // Minimal fake matching the Pick<VideoDecoder, "configure"|"decode"|"close"> shape
 // that raceFirstDecode drives. `behavior` decides what the fake does on decode().
 function makeFake(behavior: "output" | "error" | "silent" | "throw-configure" | "throw-decode") {
-  return (h: { output: (f: unknown) => void; error: (e: unknown) => void }) => ({
+  return (h: { output: (frame: VideoFrame) => void; error: (e: unknown) => void }) => ({
     configure() {
       if (behavior === "throw-configure") throw new Error("unsupported config");
     },
     decode() {
       if (behavior === "throw-decode") throw new Error("malformed chunk");
-      else if (behavior === "output") h.output({ close() {} });
+      // Only `.close()` is exercised by raceFirstDecode; a stub frame is enough.
+      else if (behavior === "output") h.output({ close() {} } as unknown as VideoFrame);
       else if (behavior === "error") h.error(new Error("decode failed"));
       // "silent": do nothing → timeout wins
     },

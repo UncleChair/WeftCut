@@ -15,7 +15,6 @@ import {
   separateAudioToNewTrack,
   splitLayerGrouped,
   trimLayer,
-  updateLayer,
   viewStateGet,
   viewStateSet,
   type GroupSummary,
@@ -1277,7 +1276,9 @@ function TimelineRuler({
       // major-tick spacing meets the target px. Fall back to the
       // largest if none meet the target (very low zoom for a
       // high-fps comp — rare).
-      let stride = NICE_STEPS_FRAMES[0]!;
+      // Annotated `number` (not the `as const` literal `1`) so the loop can
+      // assign any element of NICE_STEPS_FRAMES below.
+      let stride: number = NICE_STEPS_FRAMES[0]!;
       for (let i = NICE_STEPS_FRAMES.length - 1; i >= 0; i--) {
         if (NICE_STEPS_FRAMES[i]! * pxPerFrame >= TARGET_MAJOR_PX_FRAME_MODE) {
           stride = NICE_STEPS_FRAMES[i]!;
@@ -1609,7 +1610,6 @@ function LayerBlock({
   pendingPlacement,
   bladeMode,
   onBladeSplit,
-  onSelect,
   onSelectFromClick,
   onDragStart,
   onContextMenu,

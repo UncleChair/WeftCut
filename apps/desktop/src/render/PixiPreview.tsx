@@ -39,7 +39,11 @@ import "./fixtures/devHooks";
 interface Props {
   onTimeUpdate?: (tUs: number) => void;
   onPausedChange?: (paused: boolean) => void;
-  previewDecodableOf?: (mediaId: string) => boolean;
+  // Explicit `| undefined` (not just `?`) so PreviewSurface can pass its own
+  // optional prop straight through under `exactOptionalPropertyTypes`, where a
+  // bare `?:` would reject an explicitly-`undefined` value. Handled internally
+  // via `previewDecodableOf?.(…) ?? false`.
+  previewDecodableOf?: ((mediaId: string) => boolean) | undefined;
 }
 
 const LOG = "[weftcut/pixi]";

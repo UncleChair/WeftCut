@@ -63,7 +63,13 @@ describe("buildMediaById", () => {
     return {
       project_id: "p",
       name: "p",
-      composition: { width: 1920, height: 1080, fps_num: 30, fps_den: 1 },
+      composition: {
+        width: 1920,
+        height: 1080,
+        fps_num: 30,
+        fps_den: 1,
+        duration_pinned: false,
+      },
       track_count: 0,
       layer_count: 0,
       duration_us: 0,
