@@ -104,10 +104,14 @@ in isolation (run it on an existing export) and lets the producer evolve.
 
 ### Layer 2 — Analyzer (Rust + ffmpeg-sidecar)
 
-Extends the existing `src-tauri/src/fixtures.rs` (ffmpeg frame extract +
-`image-compare` SSIM) — same crates, new capabilities. Delivered as a CLI bin
-(extend `fixture_compare` or a sibling `media_conformance`) taking
-`--output <mp4> --source <mp4> --samples <frame indices>`:
+A **new, self-contained CLI bin** `media_conformance` (DECISION — not an
+extension of the old `fixture_compare`, which is removed with the rest of the
+Playwright-era system; see Cleanup). It salvages the two proven, non-Playwright
+primitives from the old `fixtures.rs` — `extract_frame_from_file`
+(ffmpeg-sidecar) and `compare_ssim_pngs` (`image` + `image-compare`) — copied
+into the new bin's own module rather than depended upon, so the old files can be
+deleted cleanly. Invoked as `media_conformance --output <mp4> --source <mp4>
+--samples <frame indices>`:
 
 1. **Frame-ID reader (no OCR dependency).** The `FRAME NNNNN` text is rendered
    with `consola.ttf` (monospace) at a fixed position (x=20, y=20, fontsize=42)
@@ -145,19 +149,29 @@ First-slice clip: `test_1080p_30fps.mp4` (H.264 High, yuv420p, 1920×1080, 30fps
 sync-marker extension and for emitting the HEVC/AV1/VP9 clips the codec-matrix
 slice will need.
 
-## Cleanup — retire the Playwright render layer
+## Cleanup — remove the entire Playwright-era fixture system (DECISION)
 
-Per the "tests run in the app, not via Playwright" decision:
+"Tests run in the app, not via Playwright" — the old system is fully removed,
+not kept alongside:
 
-- **Remove:** `vitest.browser.config.ts`, `src/**/*.browser.test.ts`
-  (`001_color`), the `@vitest/browser` + `@vitest/browser-playwright` +
-  `playwright` dev-deps, and the `fixtures:render` script. (This retires the
+- **Remove (Playwright render layer):** `vitest.browser.config.ts`,
+  `src/**/*.browser.test.ts` (`001_color`), the `@vitest/browser` +
+  `@vitest/browser-playwright` + `playwright` dev-deps. (This retires the
   `fixtures:render` gate greened in commit `86abfe9`.)
-- **Keep:** all of `86abfe9`'s non-Playwright fixes (typecheck, vite target, the
-  Compositor Color-layer product-bug fix, type fixes) and the **Rust analysis
-  infra** (`fixtures.rs`, `fixture_compare`, frame-extract + SSIM) — the new
-  analyzer builds on it. The `001_color` fixture data may stay as a sample or be
-  retired; it has no producer once Playwright is gone.
+- **Remove (old fixture-suite scaffolding):** the `fixture_compare` Rust bin,
+  the fixture-suite logic in `fixtures.rs` (`check_fixture`, manifest loading,
+  `SuiteReport`, …), the `extract_video_frame` / `compare_fixture_frame` Tauri
+  devtools commands **if not used elsewhere** (verify in the plan), the
+  `fixtures:render` / `fixtures:compare` / `fixtures:check` npm scripts, and the
+  old `apps/desktop/fixtures/` sample fixtures (`001_color`, `002_color_stack`).
+- **Salvage, don't depend on:** the two pure primitives
+  (`extract_frame_from_file`, `compare_ssim_pngs`) are copied into the new
+  `media_conformance` bin, then the old files are deleted — no half-gutted
+  `fixtures.rs` left behind.
+- **Keep:** all of `86abfe9`'s **non-Playwright** fixes — typecheck (`tsc -b`
+  + the type-error fixes), the `vite.config` `chrome105` target, and the
+  **Compositor Color-layer product-bug fix** (that one was a real product bug;
+  it stays regardless of how it was found).
 
 ## Failure modes & handling
 
@@ -185,9 +199,19 @@ asset-skip, deterministic exit codes).
 2. Import-routing assertions (Rust): decodability/proxy decision per codec.
 3. Audio alignment: `generate.go` sync-marker extension → A/V sync measurement.
 
+## Resolved (user, 2026-06-02)
+
+- **Test-control surface:** programmatic dev/test-only JS hook
+  (`window.__weftcutTest`, mounted only under a test flag), driven via
+  `browser.execute(...)` — NOT UI clicking, NOT the MCP bridge.
+- **Analyzer:** a NEW bin (`media_conformance`); the old Playwright-era system
+  is removed entirely (see Cleanup).
+- **Harness location:** `apps/desktop/e2e/`.
+
 ## Open questions for the plan
 
-- Exact shape of the test-control surface (programmatic JS hook vs MCP bridge vs
-  UI driving) and how the export output path is specified.
-- Whether the analyzer extends `fixture_compare` or is a new bin.
-- Sample-frame selection (which indices: first/mid/last + a few interior).
+- Exact API of the `window.__weftcutTest` hook (open-project + export-to-path
+  signature) and how the test flag is set so it's absent in production builds.
+- Sample-frame selection (which indices: first / mid / last + a few interior).
+- Confirm `extract_video_frame` / `compare_fixture_frame` Tauri commands have no
+  other consumers before removing them.
