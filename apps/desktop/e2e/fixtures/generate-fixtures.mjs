@@ -28,10 +28,13 @@ export const MATRIX = [
   { color: "601ltd" },
   { color: "709full" },
   { color: "601full" },
+  // 10-bit BT.709 grayscale ramp (HEVC Main10) — axis B "proxy fidelity on gradients"
+  { gradient: true },
 ];
 
-export function outputName({ fps, format, audio, color }) {
+export function outputName({ fps, format, audio, color, gradient }) {
   if (color) return `test_${WIDTH_HEIGHT}p_color_${color}.mp4`;
+  if (gradient) return `test_${WIDTH_HEIGHT}p_gradient10.mp4`;
   if (format === "prores") return `test_${WIDTH_HEIGHT}p_${fps}fps_prores.mov`;
   if (audio) return `test_${WIDTH_HEIGHT}p_${fps}fps_audio.${format}`;
   return `test_${WIDTH_HEIGHT}p_${fps}fps.${format}`;
@@ -49,7 +52,9 @@ export async function ensureFixtures(mediaDir) {
     }
     const args = entry.color
       ? ["run", GENERATOR, "--color", entry.color]
-      : ["run", GENERATOR, "--fps", String(entry.fps), "--format", entry.format];
+      : entry.gradient
+        ? ["run", GENERATOR, "--gradient"]
+        : ["run", GENERATOR, "--fps", String(entry.fps), "--format", entry.format];
     if (entry.audio) args.push("--audio");
     console.log(`[fixtures] generating ${name} ...`);
     const r = spawnSync("go", args, { cwd: mediaDir, stdio: "inherit", shell: true });
