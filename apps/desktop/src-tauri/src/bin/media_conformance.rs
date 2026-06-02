@@ -34,44 +34,7 @@ fn goertzel(samples: &[f32], freq: f64, sample_rate: f64) -> f64 {
 /// `select=eq(n,N)` + `-frames:v 1` decodes from the start (fine for the
 /// short conformance clips) and is frame-accurate, unlike a `-ss` time seek.
 fn extract_frame_png(mp4: &Path, n: u64) -> Result<Vec<u8>> {
-    if !mp4.exists() {
-        anyhow::bail!("mp4 not found: {}", mp4.display());
-    }
-    let tmp = tempfile_path("png");
-    let status = Command::new(ffmpeg_path())
-        .args(["-y", "-hide_banner", "-nostats", "-loglevel", "error", "-i"])
-        .arg(mp4)
-        .args([
-            "-vf",
-            &format!("select=eq(n\\,{n})"),
-            "-frames:v",
-            "1",
-            "-vsync",
-            "0",
-            "-f",
-            "image2",
-            "-c:v",
-            "png",
-        ])
-        .arg(&tmp)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .output()
-        .context("spawn ffmpeg")?;
-    if !status.status.success() {
-        anyhow::bail!(
-            "ffmpeg failed for frame {n} of {}: {}",
-            mp4.display(),
-            String::from_utf8_lossy(&status.stderr).trim()
-        );
-    }
-    let bytes = std::fs::read(&tmp).context("read extracted png")?;
-    let _ = std::fs::remove_file(&tmp);
-    if bytes.is_empty() {
-        anyhow::bail!("ffmpeg wrote 0 bytes for frame {n}");
-    }
-    Ok(bytes)
+    extract_frame_png_ex(mp4, n, None, None, false)
 }
 
 /// Decode frame `n` of `mp4` to a PNG, optionally forcing the input YUV->RGB
@@ -102,7 +65,11 @@ fn extract_frame_png_ex(
         .output()
         .context("spawn ffmpeg")?;
     if !status.status.success() {
-        anyhow::bail!("ffmpeg failed for frame {n}: {}", String::from_utf8_lossy(&status.stderr).trim());
+        anyhow::bail!(
+            "ffmpeg failed for frame {n} of {}: {}",
+            mp4.display(),
+            String::from_utf8_lossy(&status.stderr).trim()
+        );
     }
     let bytes = std::fs::read(&tmp).context("read png")?;
     let _ = std::fs::remove_file(&tmp);
@@ -549,6 +516,7 @@ fn analyze_color(
         // *257 matches image::to_rgb16's 8->16 byte-replication so authored
         // aligns with how output/source were upscaled (gate uses app_error,
         // which compares output vs source — both via to_rgb16 — so it is exact).
+        debug_assert!(p.rgb.iter().all(|&v| v <= 255), "manifest rgb must be 8-bit (0..=255), got {:?}", p.rgb);
         let authored = Rgb16([p.rgb[0] * 257, p.rgb[1] * 257, p.rgb[2] * 257]);
         let app = channel_error(&[o], &[s]);
         let total = channel_error(&[o], &[authored]);
