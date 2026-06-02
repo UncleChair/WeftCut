@@ -58,7 +58,8 @@ function isAtDefault(
   const def = ACTION_DEFS[id].defaultKeys;
   const cur = effective[id];
   if (def.length !== cur.length) return false;
-  return def.every((k, i) => bindingsEqual(k, cur[i]));
+  // Equal lengths (guarded above) ⇒ every `def` index is in-bounds for `cur`.
+  return def.every((k, i) => bindingsEqual(k, cur[i]!));
 }
 
 /// Find which other action currently owns the given chord, if any.

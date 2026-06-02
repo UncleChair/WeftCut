@@ -24,6 +24,13 @@ const REPO_ROOT = resolve(__dirname);
 
 export default defineConfig({
   plugins: [react()],
+  // Pre-bundle the heavy renderer deps up front. Otherwise Vite discovers and
+  // optimizes them lazily on first import DURING the run, then reloads the test
+  // ("Vite unexpectedly reloaded a test") — flaky and noisy. Vitest itself
+  // surfaces this list in the reload warning.
+  optimizeDeps: {
+    include: ["jassub", "mediabunny", "pixi.js"],
+  },
   test: {
     name: "fixtures-browser",
     include: ["src/**/*.browser.test.ts"],

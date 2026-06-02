@@ -48,7 +48,8 @@ export function TemplatePicker({
       (list) => {
         if (cancelled) return;
         setTemplates(list);
-        if (list.length > 0) setSelectedId(list[0].id);
+        const first = list[0];
+        if (first) setSelectedId(first.id);
       },
       (e) => setError(String(e)),
     );
@@ -179,7 +180,9 @@ function TemplateForm({
   onSubmit: (args: {
     tStartUs: number;
     props: Record<string, unknown>;
-    trackId?: string;
+    // Explicit `| undefined` so the "auto track" sentinel (→ undefined) passes
+    // straight through under `exactOptionalPropertyTypes`.
+    trackId?: string | undefined;
   }) => Promise<void>;
 }) {
   const { t } = useTranslation();
@@ -235,7 +238,7 @@ function TemplateForm({
           <PropField
             key={key}
             propKey={key}
-            spec={template.props_schema[key]}
+            spec={template.props_schema[key]!}
             value={propValues[key]}
             onChange={(v) => setProp(key, v)}
           />

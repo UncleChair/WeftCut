@@ -19,10 +19,15 @@ export default defineConfig({
   },
   envPrefix: ["VITE_", "TAURI_ENV_*"],
   build: {
-    target:
-      process.env["TAURI_ENV_PLATFORM"] === "windows"
-        ? "chrome105"
-        : "safari13",
+    // WeftCut ships only on Windows/WebView2 (evergreen Chromium), so we target
+    // a modern Chromium baseline unconditionally. The original Tauri-scaffold
+    // ternary fell back to "safari13" whenever TAURI_ENV_PLATFORM was unset —
+    // i.e. on a bare `vite build` (how CI runs the frontend-bundle gate, since
+    // it doesn't go through `tauri build`). esbuild cannot lower jassub's worker
+    // destructuring to Safari 13, so that path broke the build. `tauri build`
+    // on Windows already used chrome105, so this is a no-op for the shipping
+    // path while making the standalone build use the same target it ships with.
+    target: "chrome105",
     minify: !process.env["TAURI_ENV_DEBUG"] ? "esbuild" : false,
     sourcemap: !!process.env["TAURI_ENV_DEBUG"],
   },

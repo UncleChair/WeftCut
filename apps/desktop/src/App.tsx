@@ -127,7 +127,9 @@ export function App({ onCloseProject }: AppProps) {
   const [pong, setPong] = useState<string>("…");
   const [summary, setSummary] = useState<ProjectSummary | null>(null);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Write-only: error text is surfaced through the status bar / log (see the
+  // setError call sites), not rendered here, so we keep only the setter.
+  const [, setError] = useState<string | null>(null);
   const [exportState, setExportState] = useState<ExportState | null>(null);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);

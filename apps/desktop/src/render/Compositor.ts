@@ -223,22 +223,18 @@ export class Compositor {
   /// `compositeFrame` lazily re-acquires fresh handles via
   /// `ensureClip`.
   private suspended = false;
-  /// Composition frame duration in microseconds, derived from the
-  /// project's fps_num/fps_den. Used to snap `tUs` to project-frame
-  /// boundaries before frame lookup so that on a 60 Hz display with
-  /// a 60fps source in a 30fps project we don't show ~30 source
-  /// frames per second + ~30 duplicate-or-skip frames due to rAF
-  /// jitter; instead we show one consistent project-frame's worth
-  /// of source every two rAFs (matching what export produces).
-  private frameDurUs = 33333;
-  /// Raw fps rational, kept alongside `frameDurUs` so `setAnchorTime` /
-  /// `compositeFrame` can snap with exact rational arithmetic via
-  /// `snapFrameFloor`. The pre-rounded `frameDurUs` accumulates ~1 µs
-  /// of drift per frame; by frame 299 (last frame of a 10 s 30 fps
-  /// comp) the cumulative error is large enough to drop the lookup
-  /// into the previous frame's source-PTS interval and paint the
-  /// wrong frame. Use `snapFrameFloor(tUs, this.fpsNum, this.fpsDen)`
-  /// instead of `Math.floor(tUs / this.frameDurUs) * this.frameDurUs`.
+  /// Raw fps rational so `setAnchorTime` / `compositeFrame` can snap `tUs`
+  /// to project-frame boundaries with exact rational arithmetic via
+  /// `snapFrameFloor`. This matters on a 60 Hz display with a 60fps source
+  /// in a 30fps project: snapping gives one consistent project-frame's
+  /// worth of source every two rAFs (matching export) instead of rAF
+  /// jitter. A pre-rounded frame duration (33_333 µs for 30 fps, vs
+  /// 33_333.333… exact) accumulates ~1 µs of drift per frame; by frame 299
+  /// (last frame of a 10 s 30 fps comp) the cumulative error is large
+  /// enough to drop the lookup into the previous frame's source-PTS
+  /// interval and paint the wrong frame. Always use
+  /// `snapFrameFloor(tUs, this.fpsNum, this.fpsDen)`, never a pre-rounded
+  /// `Math.floor(tUs / frameDur) * frameDur`.
   private fpsNum = 30;
   private fpsDen = 1;
   /// Diagnostic counters for the dev `PerfHUD`. `compositeMsLast` is
@@ -339,14 +335,12 @@ export class Compositor {
     if (!summary) {
       for (const c of this.clips.values()) c.sprite.dispose();
       this.clips.clear();
-      this.frameDurUs = 33333;
       return;
     }
-    // Recompute frame-snap duration whenever the project changes
+    // Recompute the frame-snap fps state whenever the project changes
     // (composition fps could differ between projects).
     const c = summary.composition;
     if (c.fps_num > 0 && c.fps_den > 0) {
-      this.frameDurUs = Math.round((1_000_000 * c.fps_den) / c.fps_num);
       this.fpsNum = c.fps_num;
       this.fpsDen = c.fps_den;
     }
@@ -531,7 +525,10 @@ export class Compositor {
         y: number;
         scale: { x: number; y: number };
         alpha: number;
-        texture: { orig: { width: number; height: number } };
+        // Optional: a Color layer's first sprite is a Graphics-backed fill
+        // with no `texture.orig`. Reading it unguarded crashed the composite
+        // path for any color-first composition (export AND preview).
+        texture?: { orig?: { width: number; height: number } };
         visible: boolean;
       };
       // eslint-disable-next-line no-console
@@ -539,7 +536,7 @@ export class Compositor {
         `[weftcut/pixi] first sprite added to stage: ` +
           `pos=(${s.x},${s.y}) scale=(${s.scale.x},${s.scale.y}) ` +
           `alpha=${s.alpha} visible=${s.visible} ` +
-          `tex=${s.texture.orig.width}×${s.texture.orig.height} ` +
+          `tex=${s.texture?.orig?.width ?? "?"}×${s.texture?.orig?.height ?? "?"} ` +
           `compStage.children=${this.stage.children.length} ` +
           `appStage.children=${this.app.stage.children.length}`,
       );
@@ -769,6 +766,10 @@ export class Compositor {
 
     const clips: UpcomingClipPrewarmSnapshot["clips"] = [];
     for (const layer of candidates) {
+      // `candidates` is pre-filtered to VideoClip layers above, but the
+      // narrowing is lost through the `LayerSummary[]` array type — re-narrow
+      // so `layer.params` exposes the VideoClip fields (media_id, src_in_us).
+      if (layer.params.kind !== "VideoClip") continue;
       const clip = this.ensureClip(layer);
       if (!clip || clip.source.disposed) {
         clips.push({

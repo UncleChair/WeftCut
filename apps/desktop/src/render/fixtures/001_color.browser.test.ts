@@ -24,7 +24,11 @@ import type { ProjectSummary } from "../../ipc";
 import { runExport } from "../worker/runExport";
 import { concatExportChunks } from "./runFixture";
 
-declare module "@vitest/browser/context" {
+// Augment the module where `BrowserCommands` is actually DECLARED. Vitest 4's
+// `@vitest/browser/context` only re-exports the interface from
+// `vitest/internal/browser`, so augmenting the re-exporting module declares an
+// unrelated interface and `commands.writeFixtureMp4` stays untyped.
+declare module "vitest/internal/browser" {
   interface BrowserCommands {
     writeFixtureMp4: (name: string, bytes: number[]) => Promise<string>;
   }
@@ -37,9 +41,24 @@ describe("001_color renders end-to-end through the export Worker", () => {
       // Empty media map — 001_color references no external assets. The export
       // streams output chunks; buffer them (tiny fixture) into one MP4.
       const chunks: Uint8Array[] = [];
+      const comp = project.composition;
       const result = await runExport({
         summary: project as unknown as ProjectSummary,
         mediaById: new Map(),
+        // Production defaults to `hardwareAcceleration: "prefer-hardware"`, but
+        // headless Chromium (Playwright) has no hardware H.264 encoder and
+        // treats prefer-hardware as mandatory → "Cannot call 'encode' on a
+        // closed codec". Omit it here so the bundled software H.264 (openh264)
+        // path runs — also more deterministic for the downstream SSIM compare
+        // than a per-GPU hardware encoder. Mirrors the production default
+        // otherwise (avc1.640028 / 8 Mbps), derived from the fixture itself.
+        encoderConfig: {
+          codec: "avc1.640028",
+          width: comp.width,
+          height: comp.height,
+          bitrate: 8_000_000,
+          framerate: comp.fps_num / comp.fps_den,
+        },
         writeChunk: async (data) => {
           chunks.push(new Uint8Array(data));
         },

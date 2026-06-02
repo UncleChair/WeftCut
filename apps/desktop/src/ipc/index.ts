@@ -986,7 +986,9 @@ export async function addTemplate(args: {
   templateId: string;
   tStartUs: number;
   tEndUs?: number;
-  trackId?: string;
+  // Explicit `| undefined` so callers can pass an "auto track" undefined
+  // through under `exactOptionalPropertyTypes`.
+  trackId?: string | undefined;
   props?: Record<string, unknown>;
 }): Promise<string> {
   return invoke<string>("add_template", {
