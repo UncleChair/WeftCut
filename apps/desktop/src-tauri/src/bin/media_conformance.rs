@@ -436,7 +436,6 @@ struct Report {
 }
 
 #[derive(Debug, serde::Serialize)]
-#[allow(dead_code)]
 struct BandingStats {
     distinct_levels: usize,
     max_plateau: usize,
@@ -446,7 +445,6 @@ struct BandingStats {
 /// run of identical consecutive values (the plateau width). A clean 10-bit ramp
 /// has many levels and plateau ~1; an 8-bit-quantized ramp has ~4x-wide
 /// plateaus. Dither breaks plateaus up (distinct recovers, but with noise).
-#[allow(dead_code)]
 fn banding_stats(row: &[u16]) -> BandingStats {
     if row.is_empty() {
         return BandingStats { distinct_levels: 0, max_plateau: 0 };
@@ -465,6 +463,42 @@ fn banding_stats(row: &[u16]) -> BandingStats {
         }
     }
     BandingStats { distinct_levels: distinct.len(), max_plateau }
+}
+
+#[derive(Debug, serde::Serialize)]
+struct GradientReport {
+    sample: u64,
+    row_y: u32,
+    /// per-channel banding over the sampled mid-row (R, G, B)
+    banding: [BandingStats; 3],
+    /// 16-bit RGB at x=0 and x=mid — to confirm 10->16 scaling externally
+    probe_x0: [u16; 3],
+    probe_mid: [u16; 3],
+}
+
+/// Decode one frame as 16-bit RGB under a forced matrix, sample the mid-row, and
+/// report per-channel banding (distinct levels + max plateau). Used by the axis-B
+/// proxy probe to compare a 10-bit source ramp against its 8-bit proxy.
+fn analyze_gradient(file: &Path, sample: u64, in_matrix: &str, in_range: &str) -> Result<GradientReport> {
+    let img = decode_rgb16(&extract_frame_png_ex(file, sample, Some(in_matrix), Some(in_range), true)?)?;
+    let y = img.height() / 2;
+    let mut rows: [Vec<u16>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+    for x in 0..img.width() {
+        let px = img.get_pixel(x, y);
+        for c in 0..3 {
+            rows[c].push(px.0[c]);
+        }
+    }
+    let banding = [banding_stats(&rows[0]), banding_stats(&rows[1]), banding_stats(&rows[2])];
+    let x0 = img.get_pixel(0, y);
+    let mid = img.get_pixel(img.width() / 2, y);
+    Ok(GradientReport {
+        sample,
+        row_y: y,
+        banding,
+        probe_x0: [x0.0[0], x0.0[1], x0.0[2]],
+        probe_mid: [mid.0[0], mid.0[1], mid.0[2]],
+    })
 }
 
 fn analyze(
@@ -586,6 +620,7 @@ fn main() -> std::process::ExitCode {
     let mut in_matrix: Option<String> = None;
     let mut in_range: Option<String> = None;
     let mut sample: u64 = 10;
+    let mut gradient_row = false;
     let mut it = args.iter().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -605,6 +640,7 @@ fn main() -> std::process::ExitCode {
             "--in-matrix" => in_matrix = it.next().cloned(),
             "--in-range" => in_range = it.next().cloned(),
             "--sample" => sample = it.next().and_then(|s| s.parse().ok()).unwrap_or(10),
+            "--gradient-row" => gradient_row = true,
             other => {
                 eprintln!("media_conformance: unknown arg `{other}`");
                 return std::process::ExitCode::from(2);
@@ -615,6 +651,16 @@ fn main() -> std::process::ExitCode {
         eprintln!("media_conformance: --output and --source are required");
         return std::process::ExitCode::from(2);
     };
+    if gradient_row {
+        let (Some(im), Some(ir)) = (in_matrix.clone(), in_range.clone()) else {
+            eprintln!("media_conformance --gradient-row requires --in-matrix and --in-range");
+            return std::process::ExitCode::from(2);
+        };
+        return match analyze_gradient(Path::new(&output), sample, &im, &ir) {
+            Ok(r) => { println!("{}", serde_json::to_string_pretty(&r).unwrap()); std::process::ExitCode::SUCCESS }
+            Err(e) => { eprintln!("media_conformance: {e:#}"); std::process::ExitCode::from(3) }
+        };
+    }
     if color {
         let (Some(mp), Some(im), Some(ir)) = (manifest_path, in_matrix, in_range) else {
             eprintln!("media_conformance --color requires --manifest, --in-matrix, --in-range");
