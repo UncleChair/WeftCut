@@ -238,7 +238,7 @@ fn analyze_audio(pcm: &[f32]) -> AudioReport {
         let (best_i, &best) = mags
             .iter()
             .enumerate()
-            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
             .unwrap_or((s, &0.0));
         let second_best = mags
             .iter()
@@ -289,7 +289,7 @@ fn fit_boundaries(pcm: &[f32], cands: &[f64], sr: f64) -> (f64, f64) {
             .iter()
             .enumerate()
             .map(|(j, &f)| (j, goertzel(w, f, sr)))
-            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(j, _)| j)
             .unwrap_or(0);
         if let Some(p) = prev_dom {
@@ -497,6 +497,45 @@ mod tests {
         let r = analyze_audio(&pcm);
         assert!(!r.samples[5].aligned, "second 5 should be flagged misaligned");
         assert!(!r.pass);
+    }
+
+    /// Like `synth_pcm` but time-stretched: tone `k` occupies the sample interval
+    /// `[stretch*k*sr, stretch*(k+1)*sr)`, so the per-second tone boundaries land
+    /// at `stretch*k` seconds instead of `k`. Phase is continuous (t = i/sr) and
+    /// amplitude matches `synth_pcm`. A `stretch > 1` simulates A/V drift where
+    /// audio runs slow relative to its nominal one-tone-per-second grid.
+    fn synth_pcm_stretched(secs: usize, stretch: f64) -> Vec<f32> {
+        let sr = AUDIO_SAMPLE_RATE;
+        let total = (stretch * secs as f64 * sr) as usize;
+        let mut pcm = vec![0.0f32; total];
+        for i in 0..total {
+            let t = i as f64 / sr;
+            let seg = (i as f64 / (sr * stretch)).floor() as usize;
+            if seg >= secs { continue; }
+            let f = audio_expected_freq(seg);
+            pcm[i] = (2.0 * std::f64::consts::PI * f * t).sin() as f32 * 0.8;
+        }
+        pcm
+    }
+
+    // Locks the drift-detection path: a time-stretched signal must make
+    // `fit_boundaries` return a non-unity slope (the headline feature of the
+    // audio axis). Every prior test has slope == 1.0, so the slope computation
+    // is otherwise unexercised. stretch=1.02 puts the 9 tone boundaries at
+    // ~1.02*k seconds; the least-squares fit recovers slope ~1.02, which
+    // exceeds AUDIO_DRIFT_SLOPE_TOL (0.01) and fails the report.
+    #[test]
+    fn analyze_audio_detects_drift() {
+        let r = analyze_audio(&synth_pcm_stretched(10, 1.02));
+        // Proves the fit actually ran (>=2 boundaries; otherwise it falls back
+        // to the 1.0 sentinel) AND that the slope is non-unity.
+        eprintln!("drift_slope = {}", r.drift_slope);
+        assert!(
+            (r.drift_slope - 1.02).abs() < 0.01,
+            "expected slope ~1.02 from a 2% time-stretch, got {} (1.0 would mean the synthesis didn't stretch the boundaries)",
+            r.drift_slope
+        );
+        assert!(!r.pass, "2% drift exceeds AUDIO_DRIFT_SLOPE_TOL, report must fail");
     }
 
     // Uses the committed tiny clip; extracting the same index from the same
