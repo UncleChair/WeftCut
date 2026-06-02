@@ -435,6 +435,38 @@ struct Report {
     pass: bool,
 }
 
+#[derive(Debug, serde::Serialize)]
+#[allow(dead_code)]
+struct BandingStats {
+    distinct_levels: usize,
+    max_plateau: usize,
+}
+
+/// Over a single ramp row (one channel), count distinct values and the longest
+/// run of identical consecutive values (the plateau width). A clean 10-bit ramp
+/// has many levels and plateau ~1; an 8-bit-quantized ramp has ~4x-wide
+/// plateaus. Dither breaks plateaus up (distinct recovers, but with noise).
+#[allow(dead_code)]
+fn banding_stats(row: &[u16]) -> BandingStats {
+    if row.is_empty() {
+        return BandingStats { distinct_levels: 0, max_plateau: 0 };
+    }
+    let mut distinct = std::collections::BTreeSet::new();
+    let mut max_plateau = 1usize;
+    let mut run = 1usize;
+    distinct.insert(row[0]);
+    for w in row.windows(2) {
+        distinct.insert(w[1]);
+        if w[1] == w[0] {
+            run += 1;
+            max_plateau = max_plateau.max(run);
+        } else {
+            run = 1;
+        }
+    }
+    BandingStats { distinct_levels: distinct.len(), max_plateau }
+}
+
 fn analyze(
     output: &Path,
     source: &Path,
@@ -804,5 +836,24 @@ mod tests {
         let m: Manifest = serde_json::from_str(json).unwrap();
         assert_eq!(m.patches[0].id, "red");
         assert_eq!(m.patches[0].rgb, [255, 0, 0]);
+    }
+
+    #[test]
+    fn banding_full_ramp_has_many_levels() {
+        // 256 strictly increasing values -> 256 distinct levels, max plateau 1
+        let row: Vec<u16> = (0..256u16).map(|v| v << 8).collect();
+        let b = banding_stats(&row);
+        assert_eq!(b.distinct_levels, 256);
+        assert_eq!(b.max_plateau, 1);
+    }
+
+    #[test]
+    fn banding_quantized_ramp_has_wide_plateaus() {
+        // simulate 8-bit content stretched over 1024 samples: 256 levels, each
+        // repeated 4x -> distinct 256, max plateau 4
+        let row: Vec<u16> = (0..1024u16).map(|i| ((i / 4) << 8) as u16).collect();
+        let b = banding_stats(&row);
+        assert_eq!(b.distinct_levels, 256);
+        assert_eq!(b.max_plateau, 4);
     }
 }
