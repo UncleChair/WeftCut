@@ -95,13 +95,29 @@ export const useProjectStore = create<
 /// and the listener catches the eventual `project:changed` that arrives
 /// once a workspace opens.
 export async function wireProjectStore(): Promise<UnlistenFn> {
+  // `project:changed` fires a re-fetch, and `project_summary` is an async IPC
+  // whose responses can resolve out of order (the actor services calls on a
+  // threadpool). Without a guard, a slow response that captured OLDER actor
+  // state can land AFTER a fresher one and clobber it — e.g. an import sets
+  // `export_uses_original = true`, then a stale in-flight summary applies the
+  // pre-decision `false`, leaving the media transiently export-routeless. The
+  // export-readiness gate then reads that regressed state and fails with
+  // "no export-ready source". Drop any response older than the newest already
+  // applied (last-write-wins by dispatch order).
+  let lastApplied = 0;
+  let dispatched = 0;
   const refresh = async () => {
+    const reqId = ++dispatched;
     try {
       const s = await projectSummary();
+      if (reqId <= lastApplied) return;
+      lastApplied = reqId;
       useProjectStore.getState().apply(s);
     } catch {
       // No project loaded — leave summary null but mark ready so
       // consumers can distinguish from the pre-fetch state.
+      if (reqId <= lastApplied) return;
+      lastApplied = reqId;
       useProjectStore.getState().apply(null);
     }
   };
