@@ -235,3 +235,55 @@ Thresholds are **not** set before the probe, on either axis.
   isolated bit-depth); axis B primary metric = banding/plateau; axis B probe via
   direct ffmpeg args (no e2e hook yet); axis A gates on app-only (output vs
   decoded-source) with authored-RGB diagnostic.
+
+## Implementation status (2026-06-03)
+
+Branch `test/color-conformance-axis`. All analyzer/generator/script code is
+implemented, committed, and unit/smoke-verified. Each pure function is TDD'd;
+the `media_conformance` bin suite is 13/13 green.
+
+- **Axis A (8-bit round-trip): code complete, real-run pending.** `generate.go
+  --color` chart + `color_manifest.json`; `media_conformance --color` (forced
+  `--in-matrix`/`--in-range` decode, per-channel code-value error, app-only gate
+  + authored diagnostic; self-compare `worst_app_max=0` verified); `analyzeColor`
+  wrapper; `scripts/color-probe-export.mjs` (Stage 0); `specs/color_conformance.e2e.js`
+  (skips until a baseline is recorded). **Stage 0 + baseline are NOT yet run** —
+  they need a real WeftCut export (tauri build + WebView2), so the export's actual
+  color tags/matrix are still UNKNOWN, and `color_baseline.json` is unwritten. This
+  is the "probe first, then decide" gate the user chose.
+
+## Stage 0 findings — Axis B (measured 2026-06-03)
+
+Measured by `scripts/color-probe-proxy.mjs` running the proxy's exact ffmpeg args
+(`proxy.rs`: `libx264 -preset fast -crf 18 -profile:v high -g 6 -bf 0 -pix_fmt
+yuv420p`) on `test_1080p_gradient10.mp4` (true 10-bit, mid-row distinct ≈ 881):
+
+- **The proxy PRESERVES color tags** — output `yuv420p` (8-bit) but keeps
+  `bt709 / tv / bt709 / bt709`. Tag-faithful (unlike the export, TBD on axis A).
+- **10→8 reduction: distinct levels 881 → 220** (~4×, the expected ~2-bit loss).
+- **No dither:** 220 < 256 ⇒ pure quantization, not error-diffusion (dither would
+  push distinct back ≥256 with noise). This is the signature to watch.
+- **ffmpeg 10→16 decode is full-scale** (`probe_mid 33312 / 520 ≈ 65535/1023`),
+  **not** `<<6` (which would give 65472). Matters only for the deferred
+  per-channel-10bit metric — the banding gate counts raw distinct values
+  (scale-invariant), so it is unaffected.
+- **Locked axis-B baseline** (`fixtures/gradient_baseline.json`): gate on the
+  proxy luma row — `distinct_levels ≥ 180` (floor below measured 220) and
+  `max_plateau ≤ 250` (ceiling above measured 152; the 147→152 plateau is
+  dominated by limited-range black-clamp, a weaker signal than distinct levels).
+  `scripts/color-axisB-check.mjs` passes today (220/152) and its regression path
+  is verified (tampering the floor to 500 → exit 1).
+
+## Remaining work (the real-app axis-A run — handed off)
+
+1. Build the e2e app (`tauri build --debug --no-bundle` with `VITE_WEFTCUT_E2E=1`)
+   and drive a one-off export of the 709ltd chart.
+2. Run `node apps/desktop/e2e/scripts/color-probe-export.mjs <export.mp4>` →
+   record the export's real tags + which decode matrix matches (the Stage-0
+   finding: is the export color-tagged, and with what matrix?).
+3. If the export is untagged / mis-tagged, **decide** (the user's fork): gate on
+   the measured numbers as-is, or add export color-tagging (a product fix) first.
+4. Export all 4 encodings, record per-encoding `worst_app_max` + a top-level
+   `tolerance` into `fixtures/color_baseline.json`, then `color_conformance.e2e.js`
+   gates. **NOTE:** the baseline MUST include a top-level `tolerance` key — a
+   missing one yields a `NaN` limit that silently passes every patch.
