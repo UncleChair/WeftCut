@@ -13,21 +13,44 @@ const PROJECT_PARENT = path.resolve(os.tmpdir(), "weftcut-e2e-proj");
 // ONE H.264 clip, and export it; then the `media_conformance` bin verifies
 // frame alignment + app-only conversion loss at interior frames.
 //
-// STILL SKIPPED — but a layer deeper than before. This test surfaced the
-// long-GOP DirectExport hang. ROUND 1 (FIXED + verified): a chunk needing
-// frames far past a GOP key re-decoded from the key, exhausting the WebCodecs
-// VideoFrame pool while the encode loop was parked in `waitForPts` → deadlock
-// frozen at frame 250. Fixed by `ExportFrameStore.freeBehindWaiters` + the
-// `waitForPts` kick (unit-covered in ExportFrameStore.test.ts) — the export now
-// advances 250 → ~299 (verified via the worker-diag run).
-// ROUND 2 (STILL OPEN): the export then hangs at the LAST frame — the source's
-// trailing B-frames sit in the decoder's reorder buffer, which the chunked
-// `decodeRange` never `flush()`es ("no flush between ranges"), so frames
-// ~286..299 are never emitted. Needs an end-of-stream flush that (a) only runs
-// with a pending waiter so `freeBehindWaiters` keeps the pool bounded, and
-// (b) accounts for WebCodecs flush-then-continue semantics. Separately, the
-// re-seek-every-chunk dispatch redundantly re-decodes the whole GOP (queue grew
-// to ~1052) — a perf follow-up. Un-skip once the trailing-frame flush lands.
+// This is the harness's first end-to-end gate. It surfaced the long-GOP
+// DirectExport hang in two rounds, both now fixed:
+//   ROUND 1 — a chunk needing frames far past a GOP key re-decoded from the key,
+//     exhausting the WebCodecs VideoFrame pool while the encode loop was parked
+//     in `waitForPts` → deadlock frozen at frame 250. Fixed by
+//     `ExportFrameStore.freeBehindWaiters` + the `waitForPts` kick.
+//   ROUND 2 — the export then hung at the LAST frame: the source's final-GOP
+//     trailing B-frames sit in the decoder's reorder buffer, which the chunked
+//     `decodeRange` never flushed. Fixed by `ExportSourceHandle.issueEosFlush` —
+//     a floated (non-awaited) `decoder.flush()` at true end-of-stream, drained
+//     by the encode loop's `freeBehindWaiters` so the pool stays bounded.
+//
+// The export is driven fire-and-forget and the per-frame counter
+// (`window.__weftcutExportState.progress.frame`) is polled node-side, so a
+// regression hang reports the exact stall frame instead of an opaque timeout.
+//
+// STILL `describe.skip`, but only ONE blocker remains. Three issues this gate
+// surfaced are now fixed: the two flush deadlocks above, PLUS a frame-grid
+// off-by-one — the export sampled output times as `i * round(1e6/fps)`, whose
+// compounded rounding floor drifted behind the source PTS grid and made
+// `frameAt` repeat a frame (301 output frames for a 300-frame source, output[N]
+// aligning to source[N-1]). Fixed in `exportWorker.ts` by driving the grid from
+// the exact rational fps (`frameTimeUs`/`totalFrames`); the analyzer now reports
+// every sample `aligned: true` with `best_match_index == index`, output is 300
+// frames. (A latent `analyze.mjs` repo-root path bug — `cargo` manifest not
+// found — was also fixed; it was only ever reached once the export stopped
+// hanging.)
+//
+// REMAINING blocker — color-fidelity gap. Even the correctly-aligned same-index
+// pair scores SSIM well below the 0.95 gate (analyzer MSSIM ~0.47; ffmpeg's
+// per-channel SSIM ~0.75 with green ~0.50 vs R/B ~0.88, PSNR ~19 dB). The
+// lopsided green is the signature of a YUV matrix/range mismatch — the source is
+// UNTAGGED (`color_space=unknown`), the output tagged `bt709/tv`. Whether the
+// fault is the export pipeline (WebCodecs decode→Pixi→encode) or the analyzer's
+// ffmpeg decode assumptions for an untagged source is undiagnosed; the large
+// MSSIM-vs-ffmpeg gap suggests the gate's metric/threshold also needs review.
+// Un-skip once this lands. The body below is the working harness — it drives a
+// real export to completion and runs the analyzer; only the SSIM assert fails.
 describe.skip("H.264 import -> export conformance (real WebView2)", function () {
   before(function () {
     if (!existsSync(SOURCE)) {
@@ -41,10 +64,6 @@ describe.skip("H.264 import -> export conformance (real WebView2)", function () 
   });
 
   it("exports a 1:1 H.264 clip that stays frame-aligned with low loss", async () => {
-    // The export executeAsync runs well past the 30s default WebDriver script
-    // timeout (encoding a 10s clip). Raise it so the export isn't killed.
-    await browser.setTimeout({ script: 180000 });
-
     // The hooks install via an async dynamic import — wait for each before use.
     await browser.waitUntil(
       async () =>
@@ -76,21 +95,72 @@ describe.skip("H.264 import -> export conformance (real WebView2)", function () 
       { timeout: 30000, timeoutMsg: "exportClip never mounted (editor didn't load?)" },
     );
 
-    // 3) Import -> place -> export through the real app (real WebView2 decode +
-    //    WebCodecs encode + Rust mux).
-    const r2 = await browser.executeAsync(
-      (media, output, done) => {
+    // 3) Kick off import -> place -> export through the real app, FIRE-AND-FORGET:
+    //    `exportClip` runs the full real-WebView2 decode + WebCodecs encode + Rust
+    //    mux to completion and parks its settlement on `window`. We return from
+    //    `execute` immediately so we can poll the live frame counter below.
+    await browser.execute(
+      (media, output) => {
+        window.__e2eExportDone = null;
         window.__weftcutTest
           .exportClip({ mediaAbsPath: media, outputAbsPath: output })
-          .then(() => done({ ok: true }))
-          .catch((e) => done({ ok: false, error: String(e) }));
+          .then(() => {
+            window.__e2eExportDone = { ok: true };
+          })
+          .catch((e) => {
+            window.__e2eExportDone = { ok: false, error: String(e) };
+          });
       },
       SOURCE,
       OUTPUT,
     );
-    if (!r2.ok) throw new Error("exportClip failed: " + r2.error);
 
-    // 4) Analyze (Rust): frame alignment + app-only loss at interior frames.
+    // 4) Poll the export's mirrored phase/frame counter until it settles. The
+    //    encode loop posts `progress.frame` every 5 frames; a hang therefore
+    //    pins the counter at the last multiple of 5 it reached (the ROUND-1/2
+    //    deadlocks pinned it at 250 / ~285). Logging each advance turns a
+    //    regression into "stalled at frame N" instead of a blind timeout.
+    let lastFrame = -1;
+    let lastKind = null;
+    let settled = null;
+    try {
+      await browser.waitUntil(
+        async () => {
+          const snap = await browser.execute(() => {
+            const st = window.__weftcutExportState;
+            return {
+              done: window.__e2eExportDone,
+              kind: st?.kind ?? null,
+              phase: st?.progress?.phase ?? null,
+              frame: st?.progress?.frame ?? null,
+            };
+          });
+          if (snap.frame != null && snap.frame !== lastFrame) {
+            lastFrame = snap.frame;
+            console.log(
+              `[e2e] export ${snap.kind}/${snap.phase ?? "-"} frame=${snap.frame}`,
+            );
+          }
+          if (snap.kind && snap.kind !== lastKind) {
+            lastKind = snap.kind;
+            console.log(`[e2e] export phase -> ${snap.kind}`);
+          }
+          if (snap.done) {
+            settled = snap.done;
+            return true;
+          }
+          return false;
+        },
+        { timeout: 170000, interval: 1000 },
+      );
+    } catch (e) {
+      throw new Error(
+        `export never settled (last kind=${lastKind}, last frame=${lastFrame}): ${e.message}`,
+      );
+    }
+    if (!settled.ok) throw new Error("exportClip failed: " + settled.error);
+
+    // 5) Analyze (Rust): frame alignment + app-only loss at interior frames.
     const report = analyze({ output: OUTPUT, source: SOURCE, samples: [30, 150, 270] });
     for (const s of report.samples) {
       expect(
