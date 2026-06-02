@@ -2236,48 +2236,6 @@ pub async fn mux_export(
     }
 }
 
-/// Extract one PNG frame from an in-memory MP4 at composition-time `t_us`.
-///
-/// P10a fixture-runner support. The JS-side `runFixture` produces an MP4
-/// in memory via the export Worker, then asks Rust to fish out specific
-/// frames for baseline generation / SSIM compare. The JS side can't
-/// shell out to ffmpeg, so the bytes round-trip here. Delegates to
-/// `crate::fixtures::extract_frame_from_bytes` so the `fixture_compare`
-/// CLI (P10c) and this command share one ffmpeg invocation.
-#[tauri::command]
-pub async fn extract_video_frame(
-    mp4_bytes: Vec<u8>,
-    t_us: i64,
-) -> Result<Vec<u8>, String> {
-    tokio::task::spawn_blocking(move || {
-        crate::fixtures::extract_frame_from_bytes(&mp4_bytes, t_us)
-            .map_err(|e| format!("{e:#}"))
-    })
-    .await
-    .map_err(|e| format!("extract join: {e}"))?
-}
-
-/// SSIM-compare an actual PNG (in-memory, fresh from `extract_video_frame`)
-/// against a committed baseline PNG on disk. Returns a similarity score
-/// in [0, 1] where 1.0 means pixel-identical. Delegates to
-/// `crate::fixtures::compare_ssim_pngs` so the algorithm + threshold
-/// match what `fixture_compare` (P10c) uses.
-#[tauri::command]
-pub async fn compare_fixture_frame(
-    actual_png_bytes: Vec<u8>,
-    expected_png_path: String,
-) -> Result<f64, String> {
-    let expected_bytes = tokio::fs::read(&expected_png_path)
-        .await
-        .map_err(|e| format!("read expected png {expected_png_path}: {e}"))?;
-    tokio::task::spawn_blocking(move || {
-        crate::fixtures::compare_ssim_pngs(&actual_png_bytes, &expected_bytes)
-            .map_err(|e| format!("{e:#}"))
-    })
-    .await
-    .map_err(|e| format!("ssim join: {e}"))?
-}
-
 #[tauri::command]
 pub async fn project_redo(handle: State<'_, ProjectHandle>) -> Result<(), String> {
     handle
