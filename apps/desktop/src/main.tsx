@@ -59,6 +59,16 @@ function Root() {
     };
   }, []);
 
+  // E2E-only: expose `window.__weftcutTest.newProjectAndEnter` so the WebDriver
+  // suite can create a project + enter the editor headlessly. The dynamic
+  // import behind the static `VITE_WEFTCUT_E2E` check is stripped from prod.
+  useEffect(() => {
+    if (import.meta.env.VITE_WEFTCUT_E2E !== "1") return;
+    void import("./testhook/e2eHook").then(({ installBootstrapHook }) =>
+      installBootstrapHook(() => setStage("editor")),
+    );
+  }, []);
+
   const onWorkspaceReady = useCallback(() => setStage("editor"), []);
   const onCloseProject = useCallback(() => setStage("startup"), []);
 

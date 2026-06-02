@@ -1046,6 +1046,15 @@ export function App({ onCloseProject }: AppProps) {
     [t],
   );
 
+  // E2E-only: expose `window.__weftcutTest.exportClip`, wired to the real
+  // export path. Stripped from prod (static `VITE_WEFTCUT_E2E` check).
+  useEffect(() => {
+    if (import.meta.env.VITE_WEFTCUT_E2E !== "1") return;
+    void import("./testhook/e2eHook").then(({ installExportHook }) =>
+      installExportHook(runExportWithSettings),
+    );
+  }, [runExportWithSettings]);
+
   // Render & Play: open a Tauri webview popup pointing at the
   // exported MP4 via the asset protocol. The popup HTML lives at
   // /render-play.html (vite copies from public/); URL hash carries
