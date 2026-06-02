@@ -65,6 +65,81 @@ fn tempfile_path(ext: &str) -> PathBuf {
     p
 }
 
+use image::ImageReader;
+use std::io::Cursor;
+
+fn decode_rgb8(png: &[u8]) -> Result<image::RgbImage> {
+    Ok(ImageReader::new(Cursor::new(png))
+        .with_guessed_format()
+        .context("guess png")?
+        .decode()
+        .context("decode png")?
+        .to_rgb8())
+}
+
+/// MSSIM in [0,1]; 1.0 == identical. Errors if dimensions disagree (a fixture
+/// mismatch, not a regression).
+fn ssim_pngs(a_png: &[u8], b_png: &[u8]) -> Result<f64> {
+    let a = decode_rgb8(a_png)?;
+    let b = decode_rgb8(b_png)?;
+    if a.dimensions() != b.dimensions() {
+        anyhow::bail!(
+            "dims disagree: {}x{} vs {}x{}",
+            a.width(), a.height(), b.width(), b.height()
+        );
+    }
+    let r = image_compare::rgb_similarity_structure(
+        &image_compare::Algorithm::MSSIMSimple, &a, &b,
+    )
+    .context("ssim")?;
+    Ok(r.score)
+}
+
+/// Peak SNR in dB over RGB. Higher is better; identical frames clamp to 100.0.
+fn psnr_pngs(a_png: &[u8], b_png: &[u8]) -> Result<f64> {
+    let a = decode_rgb8(a_png)?;
+    let b = decode_rgb8(b_png)?;
+    if a.dimensions() != b.dimensions() {
+        anyhow::bail!("dims disagree for psnr");
+    }
+    let mut sse: f64 = 0.0;
+    for (pa, pb) in a.pixels().zip(b.pixels()) {
+        for c in 0..3 {
+            let d = pa.0[c] as f64 - pb.0[c] as f64;
+            sse += d * d;
+        }
+    }
+    let n = (a.width() as f64) * (a.height() as f64) * 3.0;
+    let mse = sse / n;
+    if mse <= f64::EPSILON {
+        return Ok(100.0);
+    }
+    Ok(10.0 * (255.0_f64 * 255.0 / mse).log10())
+}
+
+/// Over source indices `[center-window, center+window]`, return the index whose
+/// frame best-matches `out_png` (highest SSIM) and that score. This is the
+/// alignment primitive: a correctly-aligned output frame best-matches its OWN
+/// source index, because the burned-in counter makes neighbors distinct.
+fn best_match_index(
+    out_png: &[u8],
+    source: &Path,
+    center: u64,
+    window: u64,
+) -> Result<(u64, f64)> {
+    let lo = center.saturating_sub(window);
+    let hi = center + window;
+    let mut best = (center, f64::MIN);
+    for m in lo..=hi {
+        let src = extract_frame_png(source, m)?;
+        let s = ssim_pngs(out_png, &src)?;
+        if s > best.1 {
+            best = (m, s);
+        }
+    }
+    Ok(best)
+}
+
 fn main() {
     // Real arg parsing + report land in Task 3; a stub keeps `cargo build` happy.
     eprintln!("media_conformance: run with --output/--source/--samples (see Task 3)");
@@ -84,5 +159,27 @@ mod tests {
         let b = extract_frame_png(std::path::Path::new(clip), 5).expect("extract b");
         assert!(!a.is_empty());
         assert_eq!(a, b, "same index from same file must be identical");
+    }
+
+    #[test]
+    fn ssim_identity_is_one() {
+        let clip = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/media/tiny.mp4");
+        let png = extract_frame_png(std::path::Path::new(clip), 10).unwrap();
+        let s = ssim_pngs(&png, &png).unwrap();
+        assert!(s > 0.999, "identical frames should score ~1.0, got {s}");
+    }
+
+    #[test]
+    fn best_match_of_self_is_same_index() {
+        // Using the same clip as both "output" and "source", frame 10's best
+        // match within a +/-2 window must be index 10 (identity alignment).
+        let clip = std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../fixtures/media/tiny.mp4"
+        ));
+        let out10 = extract_frame_png(clip, 10).unwrap();
+        let (best, score) = best_match_index(&out10, clip, 10, 2).unwrap();
+        assert_eq!(best, 10, "self best-match must be the same index");
+        assert!(score > 0.999);
     }
 }
