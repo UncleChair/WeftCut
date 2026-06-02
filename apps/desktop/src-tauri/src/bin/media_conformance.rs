@@ -85,7 +85,92 @@ fn tempfile_path(ext: &str) -> PathBuf {
 }
 
 use image::ImageReader;
+use serde::Deserialize;
 use std::io::Cursor;
+
+/// Newtype for a 16-bit RGB pixel. `image` 0.25 does not export an `Rgb16`
+/// alias, so we define a thin wrapper whose `.0` is `[u16; 3]`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Rgb16(pub [u16; 3]);
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct Patch {
+    id: String,
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+    rgb: [u16; 3],
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct Manifest {
+    width: u32,
+    height: u32,
+    patches: Vec<Patch>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct ChannelError {
+    /// mean abs error per channel in 8-bit code units (0..255)
+    mean: [f64; 3],
+    /// max abs error per channel in 8-bit code units
+    max: [u16; 3],
+}
+
+/// Per-channel absolute error over paired pixels, reported in 8-bit code units
+/// (values are stored left-justified in u16, so /256 maps back to 8-bit).
+/// Panics if lengths differ — a sampling bug, not a regression.
+fn channel_error(a: &[Rgb16], b: &[Rgb16]) -> ChannelError {
+    assert_eq!(a.len(), b.len());
+    let n = a.len().max(1) as f64;
+    let mut sum = [0f64; 3];
+    let mut max = [0u16; 3];
+    for (pa, pb) in a.iter().zip(b) {
+        for c in 0..3 {
+            let da = (pa.0[c] / 256) as i32;
+            let db = (pb.0[c] / 256) as i32;
+            let d = (da - db).unsigned_abs() as u16;
+            sum[c] += d as f64;
+            if d > max[c] {
+                max[c] = d;
+            }
+        }
+    }
+    ChannelError { mean: [sum[0] / n, sum[1] / n, sum[2] / n], max }
+}
+
+/// Average the center inset of a patch rect from a 16-bit image, returning one
+/// representative Rgb16. Center sampling avoids 4:2:0 edge bleed. (Wired into
+/// the CLI in a later task.)
+#[allow(dead_code)]
+fn sample_patch(img: &image::ImageBuffer<image::Rgb<u16>, Vec<u16>>, p: &Patch) -> Rgb16 {
+    let inset_w = p.w / 5;
+    let inset_h = p.h / 5;
+    let x0 = p.x + inset_w;
+    let y0 = p.y + inset_h;
+    let x1 = (p.x + p.w).saturating_sub(inset_w).min(img.width());
+    let y1 = (p.y + p.h).saturating_sub(inset_h).min(img.height());
+    let mut acc = [0u64; 3];
+    let mut count = 0u64;
+    for yy in y0..y1 {
+        for xx in x0..x1 {
+            let px = img.get_pixel(xx, yy);
+            for c in 0..3 {
+                acc[c] += px.0[c] as u64;
+            }
+            count += 1;
+        }
+    }
+    let count = count.max(1);
+    Rgb16([
+        (acc[0] / count) as u16,
+        (acc[1] / count) as u16,
+        (acc[2] / count) as u16,
+    ])
+}
 
 fn decode_rgb8(png: &[u8]) -> Result<image::RgbImage> {
     Ok(ImageReader::new(Cursor::new(png))
@@ -585,5 +670,31 @@ mod tests {
             assert_eq!(s.index, s.best_match_index);
             assert!(s.ssim > 0.999);
         }
+    }
+
+    #[test]
+    fn channel_error_zero_for_identical() {
+        let a = [Rgb16([100 << 8, 200 << 8, 50 << 8])];
+        let e = channel_error(&a, &a);
+        assert_eq!(e.max, [0, 0, 0]);
+        assert!(e.mean.iter().all(|&m| m == 0.0));
+    }
+
+    #[test]
+    fn channel_error_reports_per_channel_delta() {
+        // two pixels; red off by 4 and 6 -> mean 5, max 6 (in 8-bit code units)
+        let a = [Rgb16([10 << 8, 0, 0]), Rgb16([10 << 8, 0, 0])];
+        let b = [Rgb16([14 << 8, 0, 0]), Rgb16([16 << 8, 0, 0])];
+        let e = channel_error(&a, &b);
+        assert_eq!(e.max[0], 6);
+        assert!((e.mean[0] - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn manifest_parses_patches() {
+        let json = r#"{"width":1920,"height":1080,"patches":[{"id":"red","x":0,"y":0,"w":10,"h":10,"rgb":[255,0,0]}]}"#;
+        let m: Manifest = serde_json::from_str(json).unwrap();
+        assert_eq!(m.patches[0].id, "red");
+        assert_eq!(m.patches[0].rgb, [255, 0, 0]);
     }
 }
