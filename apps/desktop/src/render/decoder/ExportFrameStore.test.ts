@@ -67,4 +67,70 @@ describe("ExportFrameStore.waitForPts", () => {
     store.push(fakeFrame(0, 33333));
     await expect(store.waitForPts(0)).resolves.toBeUndefined();
   });
+
+  // Regression: long-GOP DirectExport DEADLOCK. When a chunk needs frames far
+  // ahead of a keyframe, the decoder re-decodes a long run from the GOP key.
+  // Those decoded-but-unconsumed frames pile into the ring while the consumer
+  // is parked in `waitForPts(targetAhead)`, exhausting the WebCodecs VideoFrame
+  // pool (~13 HW slots) so the decoder stalls — and the per-frame `evictBefore`
+  // that frees the pool only runs AFTER the await resolves → circular deadlock
+  // (observed: export frozen at frame 250 = the 2nd x264 GOP key).
+  //
+  // Fix: `push()` frees slots behind the lowest pending waiter (keeping the
+  // immediate lower neighbour for the PTS-drift case above), so the producer
+  // can always make forward progress while a consumer waits.
+  it("frees pool slots behind a pending waiter during a long re-decode", async () => {
+    const store = new ExportFrameStore();
+    const closed: number[] = [];
+    const frame = (pts: number) =>
+      ({ timestamp: pts, duration: 33333, close: () => closed.push(pts) }) as unknown as VideoFrame;
+
+    // Consumer parks waiting for a far-ahead source frame (≈ frame 250).
+    let resolved = false;
+    const target = 250 * 33333; // 8333250
+    const waited = store.waitForPts(target).then(() => {
+      resolved = true;
+    });
+
+    // Decoder re-decodes from the GOP key: push frames 0..200, all far below
+    // the target. Without freeing-behind-the-waiter these all pile up (the real
+    // decoder's pool then exhausts and stalls).
+    for (let i = 0; i <= 200; i++) store.push(frame(i * 33333));
+    await Promise.resolve();
+
+    expect(resolved).toBe(false); // target not yet covered → still waiting
+    // Ring stayed bounded: the passed frames behind the waiter were freed,
+    // leaving only the immediate lower neighbour (+ at most one).
+    expect(store.size()).toBeLessThanOrEqual(2);
+    expect(closed.length).toBeGreaterThanOrEqual(199);
+
+    // Decoder reaches a frame covering the target → the parked waiter resolves.
+    store.push(frame(target));
+    await waited;
+    expect(resolved).toBe(true);
+  });
+
+  // The deadlock's real shape: frames pile up DURING a chunk's decodeRange
+  // dispatch — BEFORE the encode loop parks on any waiter — so the pool is
+  // already full (decoder stalled, no more `push` callbacks) by the time the
+  // consumer calls `waitForPts`. Freeing only in `push` can't help then (push
+  // isn't being called). `waitForPts` must free behind the new waiter itself to
+  // KICK the stalled decoder; `push` then sustains the flow.
+  it("frees already-piled frames when a consumer starts waiting (kick a stalled decoder)", async () => {
+    const store = new ExportFrameStore();
+    const closed: number[] = [];
+    const frame = (pts: number) =>
+      ({ timestamp: pts, duration: 33333, close: () => closed.push(pts) }) as unknown as VideoFrame;
+
+    // Decoder piled frames 0..15 with NO waiter yet (mid-dispatch). Nothing is
+    // freed because there's no pending waiter to free behind.
+    for (let i = 0; i <= 15; i++) store.push(frame(i * 33333));
+    expect(store.size()).toBe(16);
+
+    // Consumer now parks waiting for a far-ahead frame. The piled frames are
+    // behind it and the (real) decoder is stalled — they MUST be freed now.
+    store.waitForPts(250 * 33333);
+    expect(store.size()).toBeLessThanOrEqual(2);
+    expect(closed.length).toBeGreaterThanOrEqual(14);
+  });
 });

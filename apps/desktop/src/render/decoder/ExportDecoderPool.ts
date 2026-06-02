@@ -63,6 +63,37 @@ export class ExportFrameStore implements FrameStore {
       }
       this.waiters = stillWaiting;
     }
+    this.freeBehindWaiters();
+  }
+
+  /// Free WebCodecs VideoFrame-pool slots while a consumer is PARKED: drop
+  /// frames strictly below the lowest still-pending waiter's target, keeping
+  /// the immediate lower neighbour (the frame `frameAt` / `isReadyFor` may
+  /// still need to satisfy that waiter under PTS-grid drift — see `isReadyFor`).
+  ///
+  /// Without this, a long re-decode from a GOP key (e.g. a long-GOP DirectExport
+  /// source: x264 default keyint=250) piles decoded-but-unconsumed frames into
+  /// the ring while the export's encode loop is awaiting a far-ahead frame. The
+  /// decoder's hardware pool (~13 slots) exhausts, the decoder stalls, and the
+  /// per-frame `evictBefore` that would free the pool only runs AFTER the await
+  /// resolves → circular wait → permanent deadlock (observed: export frozen at
+  /// frame 250, the 2nd GOP key). Freeing on `push` breaks the cycle: the
+  /// producer can always make forward progress toward the awaited frame.
+  private freeBehindWaiters(): void {
+    if (this.waiters.length === 0 || this.entries.length === 0) return;
+    let minTus = Number.POSITIVE_INFINITY;
+    for (const w of this.waiters) if (w.tUs < minTus) minTus = w.tUs;
+    // Highest entry index whose pts is at/below the lowest waiter — the
+    // immediate lower neighbour. Keep it + everything above; drop below it.
+    let keepFrom = 0;
+    for (let i = 0; i < this.entries.length; i++) {
+      if (this.entries[i]!.ptsUs <= minTus) keepFrom = i;
+      else break;
+    }
+    if (keepFrom > 0) {
+      for (let i = 0; i < keepFrom; i++) this.entries[i]!.frame.close();
+      this.entries.splice(0, keepFrom);
+    }
   }
 
   /// Await a frame whose presentation interval contains `tUs`. If
@@ -71,9 +102,17 @@ export class ExportFrameStore implements FrameStore {
   /// Producer→consumer sync point for the export Worker.
   waitForPts(tUs: number): Promise<void> {
     if (this.isReadyFor(tUs)) return Promise.resolve();
-    return new Promise<void>((resolve) => {
+    const p = new Promise<void>((resolve) => {
       this.waiters.push({ tUs, resolve });
     });
+    // KICK a possibly-stalled decoder: free pool slots behind this newly-parked
+    // waiter NOW. Frames can pile up during a chunk's `decodeRange` dispatch
+    // (before any waiter exists), filling the WebCodecs pool so the decoder
+    // stalls and stops firing `push` — at which point `push`-side freeing can
+    // never run. Freeing here, when the consumer parks, gives the stalled
+    // decoder slots to resume toward the awaited frame.
+    this.freeBehindWaiters();
+    return p;
   }
 
   /// Readiness gate for `waitForPts`. The source frame to display at `tUs`
