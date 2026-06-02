@@ -88,6 +88,7 @@ func main() {
 	format := flag.String("format", "mp4", "output format: mp4, mkv, mov, webm, gif, prores")
 	audio := flag.Bool("audio", false, "add a per-second frequency-stepped tone track (test marker) + name output *_audio.mp4")
 	colorEnc := flag.String("color", "", "color chart encoding: 709ltd|601ltd|709full|601full (draws chart + manifest, ignores --fps content)")
+	gradient := flag.Bool("gradient", false, "emit a 10-bit BT.709 grayscale gradient ramp (HEVC Main10) for axis B")
 	flag.Parse()
 
 	if *colorEnc != "" {
@@ -118,6 +119,36 @@ func main() {
 			"-an", out,
 		}
 		fmt.Printf("Generating %s (%s)\n", out, *colorEnc)
+		cmd := exec.Command("ffmpeg", args...)
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		if err := cmd.Run(); err != nil {
+			log.Fatalf("ffmpeg failed: %v", err)
+		}
+		fmt.Printf("Done: %s\n", out)
+		return
+	}
+
+	if *gradient {
+		const width, height, duration = 1920, 1080, 1
+		out := fmt.Sprintf("test_%dp_gradient10.mp4", height)
+		// True 10-bit BT.709 luma ramp. `format=yuv420p10le` BEFORE `geq` is the
+		// crux: geq then evaluates and writes at 10-bit depth, so `(X/(W-1))*1023`
+		// maps the 1920 columns onto ~1024 distinct luma levels (verified ~877
+		// distinct after HEVC). Authoring on an 8-bit source first would collapse
+		// the ramp to 256 levels — a fake 10-bit clip that merely ffprobes as
+		// yuv420p10le. cb=cr=512 is neutral chroma at 10-bit.
+		vf := "format=yuv420p10le,geq=lum='(X/(W-1))*1023':cb=512:cr=512,scale=out_color_matrix=bt709:out_range=tv"
+		args := []string{
+			"-y", "-f", "lavfi", "-i",
+			fmt.Sprintf("nullsrc=size=%dx%d:rate=30:duration=%d", width, height, duration),
+			"-vf", vf,
+			"-c:v", "libx265",
+			"-x265-params", "profile=main10:colorprim=bt709:transfer=bt709:colormatrix=bt709:range=limited",
+			"-pix_fmt", "yuv420p10le",
+			"-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv",
+			"-tag:v", "hvc1", "-an", out,
+		}
+		fmt.Printf("Generating %s (10-bit BT.709 gradient, HEVC Main10)\n", out)
 		cmd := exec.Command("ffmpeg", args...)
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 		if err := cmd.Run(); err != nil {
