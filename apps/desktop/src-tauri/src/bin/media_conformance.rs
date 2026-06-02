@@ -11,6 +11,25 @@ use std::process::{Command, Stdio};
 use anyhow::{Context, Result};
 use ffmpeg_sidecar::paths::ffmpeg_path;
 
+/// Generalized Goertzel: DFT magnitude (amplitude estimate) at an arbitrary
+/// `freq` over `samples`. `freq` need not land on a bin. ~O(n), no FFT.
+fn goertzel(samples: &[f32], freq: f64, sample_rate: f64) -> f64 {
+    let n = samples.len();
+    if n == 0 {
+        return 0.0;
+    }
+    let w = 2.0 * std::f64::consts::PI * freq / sample_rate;
+    let coeff = 2.0 * w.cos();
+    let (mut s_prev, mut s_prev2) = (0.0_f64, 0.0_f64);
+    for &x in samples {
+        let s = x as f64 + coeff * s_prev - s_prev2;
+        s_prev2 = s_prev;
+        s_prev = s;
+    }
+    let power = s_prev2 * s_prev2 + s_prev * s_prev - coeff * s_prev * s_prev2;
+    power.max(0.0).sqrt() * 2.0 / (n as f64)
+}
+
 /// Decode `mp4` and return frame at 0-based decode index `n` as PNG bytes.
 /// `select=eq(n,N)` + `-frames:v 1` decodes from the start (fine for the
 /// short conformance clips) and is frame-accurate, unlike a `-ss` time seek.
@@ -140,6 +159,165 @@ fn best_match_index(
     Ok(best)
 }
 
+const AUDIO_SAMPLE_RATE: f64 = 48000.0;
+
+/// Decode `mp4`'s audio to mono f32 PCM at 48 kHz via ffmpeg (edit list
+/// applied, so AAC priming is compensated at the decoder). Returns samples in [-1,1].
+fn extract_audio_pcm(mp4: &Path) -> Result<Vec<f32>> {
+    if !mp4.exists() {
+        anyhow::bail!("mp4 not found: {}", mp4.display());
+    }
+    let out = Command::new(ffmpeg_path())
+        .args(["-hide_banner", "-nostats", "-loglevel", "error", "-i"])
+        .arg(mp4)
+        .args(["-vn", "-ac", "1", "-ar", "48000", "-f", "f32le", "-"])
+        .stdin(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .context("spawn ffmpeg (audio)")?;
+    if !out.status.success() {
+        anyhow::bail!(
+            "ffmpeg audio decode failed for {}: {}",
+            mp4.display(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    let mut pcm = Vec::with_capacity(out.stdout.len() / 4);
+    for chunk in out.stdout.chunks_exact(4) {
+        pcm.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+    }
+    if pcm.is_empty() {
+        anyhow::bail!("no audio samples decoded from {}", mp4.display());
+    }
+    Ok(pcm)
+}
+
+const AUDIO_BASE_HZ: f64 = 400.0;
+const AUDIO_STEP_HZ: f64 = 120.0;
+const AUDIO_DRIFT_SLOPE_TOL: f64 = 0.01;
+const AUDIO_OFFSET_TOL_MS: f64 = 66.0;
+const AUDIO_SNR_FLOOR_DB: f64 = 15.0;
+
+fn audio_expected_freq(second: usize) -> f64 {
+    AUDIO_BASE_HZ + AUDIO_STEP_HZ * second as f64
+}
+
+#[derive(Debug, serde::Serialize)]
+struct AudioSample {
+    second: usize,
+    expected_freq: f64,
+    detected_freq: f64,
+    aligned: bool,
+    snr_db: f64,
+    pass: bool,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct AudioReport {
+    duration_s: f64,
+    seconds: usize,
+    drift_slope: f64,
+    offset_ms: f64,
+    samples: Vec<AudioSample>,
+    pass: bool,
+}
+
+/// Per-second alignment + boundary drift + tone SNR over mono PCM.
+fn analyze_audio(pcm: &[f32]) -> AudioReport {
+    let sr = AUDIO_SAMPLE_RATE;
+    let duration_s = pcm.len() as f64 / sr;
+    let secs = duration_s.floor() as usize;
+    let cands: Vec<f64> = (0..secs).map(audio_expected_freq).collect();
+
+    let mut samples = Vec::with_capacity(secs);
+    for s in 0..secs {
+        let lo = ((s as f64 + 0.4) * sr) as usize;
+        let hi = (((s as f64 + 0.6) * sr) as usize).min(pcm.len());
+        let win = if lo < hi { &pcm[lo..hi] } else { &pcm[0..0] };
+        let mags: Vec<f64> = cands.iter().map(|&f| goertzel(win, f, sr)).collect();
+        let (best_i, &best) = mags
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+            .unwrap_or((s, &0.0));
+        let second_best = mags
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != best_i)
+            .map(|(_, &m)| m)
+            .fold(0.0_f64, f64::max);
+        let snr_db = 20.0 * (best / (second_best + 1e-9)).log10();
+        let aligned = best_i == s;
+        samples.push(AudioSample {
+            second: s,
+            expected_freq: audio_expected_freq(s),
+            detected_freq: if secs > 0 { cands[best_i] } else { 0.0 },
+            aligned,
+            snr_db,
+            pass: aligned && snr_db >= AUDIO_SNR_FLOOR_DB,
+        });
+    }
+
+    let (slope, offset_s) = fit_boundaries(pcm, &cands, sr);
+    let drift_slope = slope;
+    let offset_ms = offset_s * 1000.0;
+
+    let pass = !samples.is_empty()
+        && samples.iter().all(|x| x.pass)
+        && (drift_slope - 1.0).abs() <= AUDIO_DRIFT_SLOPE_TOL
+        && offset_ms.abs() <= AUDIO_OFFSET_TOL_MS;
+
+    AudioReport { duration_s, seconds: secs, drift_slope, offset_ms, samples, pass }
+}
+
+/// Scan windows (100 ms, 25 ms hop); dominant candidate per window gives a step
+/// function. Boundary k = first window where dominant becomes k. Fit time vs k
+/// → (slope, offset_seconds). Returns (1.0, 0.0) if too few transitions.
+fn fit_boundaries(pcm: &[f32], cands: &[f64], sr: f64) -> (f64, f64) {
+    let win = (0.1 * sr) as usize;
+    let hop = (0.025 * sr) as usize;
+    if cands.len() < 2 || pcm.len() < win {
+        return (1.0, 0.0);
+    }
+    let mut prev_dom: Option<usize> = None;
+    let mut xs: Vec<f64> = Vec::new();
+    let mut ys: Vec<f64> = Vec::new();
+    let mut i = 0;
+    while i + win <= pcm.len() {
+        let w = &pcm[i..i + win];
+        let dom = cands
+            .iter()
+            .enumerate()
+            .map(|(j, &f)| (j, goertzel(w, f, sr)))
+            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+            .map(|(j, _)| j)
+            .unwrap_or(0);
+        if let Some(p) = prev_dom {
+            if dom == p + 1 {
+                xs.push(dom as f64);
+                ys.push((i as f64 + win as f64 / 2.0) / sr);
+            }
+        }
+        prev_dom = Some(dom);
+        i += hop;
+    }
+    if xs.len() < 2 {
+        return (1.0, 0.0);
+    }
+    let n = xs.len() as f64;
+    let sx: f64 = xs.iter().sum();
+    let sy: f64 = ys.iter().sum();
+    let sxx: f64 = xs.iter().map(|x| x * x).sum();
+    let sxy: f64 = xs.iter().zip(&ys).map(|(x, y)| x * y).sum();
+    let denom = n * sxx - sx * sx;
+    if denom.abs() < 1e-9 {
+        return (1.0, 0.0);
+    }
+    let slope = (n * sxy - sx * sy) / denom;
+    let offset = (sy - slope * sx) / n;
+    (slope, offset)
+}
+
 #[derive(Debug, serde::Serialize)]
 struct SampleResult {
     index: u64,
@@ -204,11 +382,13 @@ fn main() -> std::process::ExitCode {
     let mut samples: Vec<u64> = Vec::new();
     let mut window: u64 = 2;
     let mut ssim_min: f64 = 0.95;
+    let mut audio = false;
     let mut it = args.iter().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
             "--output" => output = it.next().cloned(),
             "--source" => source = it.next().cloned(),
+            "--audio" => audio = true,
             "--samples" => {
                 samples = it
                     .next()
@@ -227,6 +407,22 @@ fn main() -> std::process::ExitCode {
         eprintln!("media_conformance: --output and --source are required");
         return std::process::ExitCode::from(2);
     };
+    if audio {
+        let pcm = match extract_audio_pcm(Path::new(&output)) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("media_conformance: {e:#}");
+                return std::process::ExitCode::from(3);
+            }
+        };
+        let report = analyze_audio(&pcm);
+        println!("{}", serde_json::to_string_pretty(&report).unwrap());
+        return if report.pass {
+            std::process::ExitCode::SUCCESS
+        } else {
+            std::process::ExitCode::from(1)
+        };
+    }
     if samples.is_empty() {
         eprintln!("media_conformance: --samples N1,N2,... is required");
         return std::process::ExitCode::from(2);
@@ -250,6 +446,58 @@ fn main() -> std::process::ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn goertzel_picks_the_present_tone() {
+        let sr = 48000.0;
+        let n = 4800; // 100 ms
+        let f = 760.0;
+        let samples: Vec<f32> = (0..n)
+            .map(|i| (2.0 * std::f64::consts::PI * f * (i as f64) / sr).sin() as f32)
+            .collect();
+        let on = goertzel(&samples, 760.0, sr);
+        let off = goertzel(&samples, 1240.0, sr);
+        assert!(on > 0.4, "on-frequency magnitude too low: {on}");
+        assert!(on > off * 5.0, "on={on} should dominate off={off}");
+    }
+
+    fn synth_pcm(secs: usize, offset_samples: usize) -> Vec<f32> {
+        let sr = AUDIO_SAMPLE_RATE;
+        let total = (secs as f64 * sr) as usize + offset_samples;
+        let mut pcm = vec![0.0f32; total];
+        for i in 0..total {
+            let t = i as f64 / sr;
+            let seg = ((i.saturating_sub(offset_samples)) as f64 / sr).floor() as usize;
+            if seg >= secs { continue; }
+            let f = audio_expected_freq(seg);
+            pcm[i] = (2.0 * std::f64::consts::PI * f * t).sin() as f32 * 0.8;
+        }
+        pcm
+    }
+
+    #[test]
+    fn analyze_audio_clean_signal_passes() {
+        let r = analyze_audio(&synth_pcm(10, 0));
+        assert_eq!(r.samples.len(), 10);
+        assert!(r.samples.iter().all(|s| s.aligned), "all seconds must align: {r:?}");
+        assert!((r.drift_slope - 1.0).abs() < 0.01, "slope {} not ~1", r.drift_slope);
+        assert!(r.offset_ms.abs() < 30.0, "offset {}ms too large", r.offset_ms);
+        assert!(r.samples.iter().all(|s| s.snr_db > 15.0), "snr floor");
+        assert!(r.pass);
+    }
+
+    #[test]
+    fn analyze_audio_flags_a_dropped_second() {
+        let mut pcm = synth_pcm(10, 0);
+        let sr = AUDIO_SAMPLE_RATE;
+        for i in (5.0 * sr) as usize..(6.0 * sr) as usize {
+            let t = i as f64 / sr;
+            pcm[i] = (2.0 * std::f64::consts::PI * audio_expected_freq(6) * t).sin() as f32 * 0.8;
+        }
+        let r = analyze_audio(&pcm);
+        assert!(!r.samples[5].aligned, "second 5 should be flagged misaligned");
+        assert!(!r.pass);
+    }
 
     // Uses the committed tiny clip; extracting the same index from the same
     // file twice must yield byte-identical PNGs (deterministic decode).
