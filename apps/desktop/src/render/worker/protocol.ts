@@ -66,6 +66,21 @@ export type ExportRequest =
   /// `chunk` to disk; the worker's WritableStream may release the next write.
   | { type: "chunk-ack" };
 
+/// Aggregate export-perf counters, posted with `done`. Used by the E2E
+/// harness to measure decode efficiency (e.g. the long-GOP re-seek redundancy:
+/// `totalDispatched` ≫ `totalFrames` means the decoder re-decoded packets).
+export interface ExportPerf {
+  totalFrames: number;
+  /// Sum of packets fed to the source decoder(s) across all chunks. With a
+  /// 1:1 export this should be ~`totalFrames`; a large excess is re-decode waste.
+  totalDispatched: number;
+  /// Wall-clock spent in `decodeRange` dispatch, awaiting decoder output, and
+  /// the whole export, in ms.
+  decodeMs: number;
+  waitMs: number;
+  totalMs: number;
+}
+
 export type ExportEvent =
   | { type: "ready" }
   | { type: "progress"; framesEncoded: number; totalFrames: number }
@@ -75,5 +90,6 @@ export type ExportEvent =
   /// ~2GB → long exports OOM'd at finalize).
   | { type: "chunk"; data: ArrayBuffer }
   /// Encode + mux complete; the temp file is fully written on the main side.
-  | { type: "done" }
+  /// `perf` carries aggregate decode/timing counters for the E2E harness.
+  | { type: "done"; perf?: ExportPerf }
   | { type: "error"; message: string };

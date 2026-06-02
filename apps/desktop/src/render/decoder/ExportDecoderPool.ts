@@ -224,6 +224,11 @@ export class ExportSourceHandle implements DecoderHandle {
   /// until the first dispatch; used to decide seek-vs-continue per range.
   private lastDispatchedPtsUs = Number.NEGATIVE_INFINITY;
   private outputFrameCount = 0;
+  /// Cumulative packets fed to the decoder across all `decodeRange` calls.
+  /// With a 1:1 export this should track the frame count; a large excess means
+  /// re-decode waste (the long-GOP re-seek redundancy). Read by the export
+  /// worker for the E2E perf diagnostic.
+  dispatchedTotal = 0;
   private downgraded = false;
   private _disposed = false;
   /// In-flight end-of-stream `decoder.flush()` (floated, never awaited inline —
@@ -430,6 +435,7 @@ export class ExportSourceHandle implements DecoderHandle {
       this.cursor = pkt;
       this.lastDispatchedPtsUs = ptsUs;
       dispatched++;
+      this.dispatchedTotal++;
       // Stop AFTER dispatching the first key strictly past bUs — that key
       // begins the GOP after bUs, so everything with PTS ≤ bUs (incl.
       // open-GOP B-refs) has now been fed.

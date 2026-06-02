@@ -156,6 +156,17 @@ describe("H.264 import -> export conformance (real WebView2)", function () {
     }
     if (!settled.ok) throw new Error("exportClip failed: " + settled.error);
 
+    // Perf diagnostic (re-seek redundancy): totalDispatched ≫ totalFrames means
+    // the source decoder re-decoded packets (the long-GOP re-seek issue).
+    const perf = await browser.execute(() => window.__weftcutExportPerf ?? null);
+    if (perf) {
+      const ratio = (perf.totalDispatched / Math.max(1, perf.totalFrames)).toFixed(2);
+      console.log(
+        `[e2e] export perf: dispatched=${perf.totalDispatched} for ${perf.totalFrames} frames ` +
+          `(${ratio}x) | decode=${perf.decodeMs}ms wait=${perf.waitMs}ms total=${perf.totalMs}ms`,
+      );
+    }
+
     // 5) Analyze (Rust): frame alignment + app-only loss at interior frames.
     // Gate STRICTLY on alignment (best == index) — that is the harness's core
     // value: it catches the frame drop/dup/misalignment class this whole effort

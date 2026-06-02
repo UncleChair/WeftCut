@@ -409,7 +409,20 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   // file is fully written on the main side, so `done` carries no payload.
   await encoder.finalize();
   post({ type: "progress", framesEncoded: totalFrames, totalFrames });
-  post({ type: "done" });
+
+  // Perf counters for the E2E harness (decode efficiency / re-seek redundancy).
+  let totalDispatched = 0;
+  for (const h of exportPool.handles.values()) totalDispatched += h.dispatchedTotal;
+  post({
+    type: "done",
+    perf: {
+      totalFrames,
+      totalDispatched,
+      decodeMs: Math.round(totals.decodeMs),
+      waitMs: Math.round(totals.waitMs),
+      totalMs: Math.round(totalMs),
+    },
+  });
 
   // 8. Cleanup.
   cleanup(encoder, compositor, exportPool, app);
