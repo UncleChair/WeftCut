@@ -97,6 +97,21 @@ export async function prepareExportMedia(
       // DirectExport: exportPlaybackPathFor returns the original — confirm it
       // actually decodes before committing.
       if (deps.memo.get(m.id) === "ok") continue; // cached decodable
+      if (deps.memo.get(m.id) === "pending") {
+        // The import sweep is already probing this source. Opening a SECOND
+        // decoder here would collide with that probe AND with the preview
+        // decoder on the WebCodecs buffer pool (ADR 0004): all three contend
+        // for the ~13 slots, the probe never gets a frame before its deadline,
+        // and a decodable source gets a false-negative → needless route-
+        // correction → "no export-ready source". Defer to the sweep's verdict
+        // instead of re-probing. `export_uses_original` is still true here, so
+        // `exportPlaybackPathFor` returns the original and `waitForProxies`
+        // resolves on its first check; the export's own decoder is the real
+        // backstop. If the sweep later route-corrects this source, a subsequent
+        // export sees the proxy.
+        waiting.push(m.id);
+        continue;
+      }
       deps.memo.set(m.id, "pending");
       const ok = await deps.probe(deps.urlForOriginal(m));
       if (ok) {
