@@ -188,6 +188,12 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
             reject(err instanceof Error ? err : new Error(String(err)));
           });
       } else if (ev.type === "done") {
+        // E2E-only: surface the worker's perf counters for the harness to read
+        // (stripped from prod by the static env check).
+        if (import.meta.env.VITE_WEFTCUT_E2E === "1" && ev.perf) {
+          (window as unknown as { __weftcutExportPerf?: unknown }).__weftcutExportPerf =
+            ev.perf;
+        }
         cleanup();
         resolve({ framesEncoded, totalFrames });
       } else if (ev.type === "error") {
