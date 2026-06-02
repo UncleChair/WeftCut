@@ -1055,6 +1055,15 @@ export function App({ onCloseProject }: AppProps) {
     );
   }, [runExportWithSettings]);
 
+  // E2E-only: mirror the export phase onto window so a WebDriver diagnostic can
+  // see where a hung export is stuck (null → starting → preparing → progress →
+  // complete/error). Stripped from prod (static VITE_WEFTCUT_E2E check).
+  useEffect(() => {
+    if (import.meta.env.VITE_WEFTCUT_E2E !== "1") return;
+    (window as unknown as { __weftcutExportState?: unknown }).__weftcutExportState =
+      exportState;
+  }, [exportState]);
+
   // Render & Play: open a Tauri webview popup pointing at the
   // exported MP4 via the asset protocol. The popup HTML lives at
   // /render-play.html (vite copies from public/); URL hash carries
