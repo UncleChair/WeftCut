@@ -11,26 +11,31 @@
 // ffmpeg/libavcodec use): BT.709 for HD (>=720 lines), BT.601 (smpte170m) for
 // SD, limited range.
 //
-// Tagged sources are left untouched — an explicit matrix always wins. Only the
-// fields the source omits are filled, so a partial tag (e.g. primaries present,
-// matrix absent) keeps what it has.
+// Three-layer priority per field (highest to lowest):
+//   1. mediabunny's tag from the bitstream VUI — always authoritative.
+//   2. An explicit `sourceColor` from ffprobe — the container colr box that
+//      the VUI often omits, supplied by `ffprobeColorSpace()`. This beats the
+//      resolution default but loses to a live mediabunny tag.
+//   3. The resolution-keyed default (HD→bt709, SD→smpte170m, limited range).
+// Only the fields each layer omits fall through to the next, so a partial tag
+// keeps what it has and only fills what is missing.
 
-/// Return `config` with a default `colorSpace.matrix` (and the primaries /
-/// transfer / range fields it omits) filled in when the source provides no
-/// matrix. A source that already declares a matrix is returned unchanged.
+/// Return `config` with `colorSpace` fields filled from `sourceColor` (ffprobe)
+/// and/or the resolution-keyed default, in that priority order. mediabunny's
+/// own tag wins over both; the ffprobe `sourceColor` wins over the resolution
+/// default; untagged sources fall back to the resolution default.
 export function withDefaultColorSpace(
   config: VideoDecoderConfig,
+  sourceColor?: VideoColorSpaceInit,
 ): VideoDecoderConfig {
   const cs = config.colorSpace;
-  // An explicit matrix is authoritative — respect the source's tag.
-  if (cs && cs.matrix != null) return config;
-
   const hd = (config.codedHeight ?? 0) >= 720;
-  const filled: VideoColorSpaceInit = {
-    primaries: cs?.primaries ?? (hd ? "bt709" : "smpte170m"),
-    transfer: cs?.transfer ?? (hd ? "bt709" : "smpte170m"),
-    matrix: hd ? "bt709" : "smpte170m",
-    fullRange: cs?.fullRange ?? false,
-  };
-  return { ...config, colorSpace: filled };
+  // Per field: mediabunny's tag wins, then the source's ffprobe tag, then the
+  // resolution default. (mediabunny only provides what the bitstream VUI
+  // declares; ffprobe adds the container colr box the VUI often omits.)
+  const matrix = cs?.matrix ?? sourceColor?.matrix ?? (hd ? "bt709" : "smpte170m");
+  const primaries = cs?.primaries ?? sourceColor?.primaries ?? (hd ? "bt709" : "smpte170m");
+  const transfer = cs?.transfer ?? sourceColor?.transfer ?? (hd ? "bt709" : "smpte170m");
+  const fullRange = cs?.fullRange ?? sourceColor?.fullRange ?? false;
+  return { ...config, colorSpace: { primaries, transfer, matrix, fullRange } };
 }
