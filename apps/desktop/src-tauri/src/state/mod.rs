@@ -90,6 +90,10 @@ mod tests {
                     fps_den: 1,
                     codec: "h264".into(),
                     pix_fmt: "yuv420p".into(),
+                    color_matrix: None,
+                    color_range: None,
+                    color_primaries: None,
+                    color_transfer: None,
                 }),
                 audio: Some(AudioStreamMeta {
                     sample_rate: 48_000,

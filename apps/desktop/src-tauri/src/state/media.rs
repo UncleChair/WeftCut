@@ -70,6 +70,16 @@ pub struct VideoStreamMeta {
     pub fps_den: u32,
     pub codec: String,
     pub pix_fmt: String,
+    /// Color tags from the container/bitstream (ffprobe names, e.g. matrix
+    /// "bt709"/"smpte170m", range "tv"/"pc"). None when the source declares none.
+    #[serde(default)]
+    pub color_matrix: Option<String>,
+    #[serde(default)]
+    pub color_range: Option<String>,
+    #[serde(default)]
+    pub color_primaries: Option<String>,
+    #[serde(default)]
+    pub color_transfer: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
