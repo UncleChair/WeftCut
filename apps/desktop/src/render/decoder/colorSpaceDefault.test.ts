@@ -26,7 +26,7 @@ describe("withDefaultColorSpace", () => {
   it("leaves a source with an explicit matrix untouched", () => {
     const tagged = base({ colorSpace: { matrix: "smpte170m", primaries: "bt709", transfer: "bt709", fullRange: false } });
     const out = withDefaultColorSpace(tagged);
-    expect(out).toBe(tagged); // same reference — unchanged
+    expect(out).toEqual(tagged); // same field values — the per-field rebuild always returns a fresh object
     expect(out.colorSpace?.matrix).toBe("smpte170m");
   });
 
@@ -38,5 +38,23 @@ describe("withDefaultColorSpace", () => {
     expect(out.colorSpace?.matrix).toBe("bt709"); // filled (HD)
     expect(out.colorSpace?.primaries).toBe("bt470bg"); // preserved
     expect(out.colorSpace?.fullRange).toBe(true); // preserved
+  });
+
+  it("uses sourceColor when mediabunny gives no matrix", () => {
+    const out = withDefaultColorSpace(base({ codedHeight: 1080 }), { matrix: "smpte170m", fullRange: false });
+    expect(out.colorSpace?.matrix).toBe("smpte170m"); // NOT the 709 HD default
+    expect(out.colorSpace?.fullRange).toBe(false);
+  });
+  it("mediabunny tag still wins over sourceColor", () => {
+    const cfg = base({ codedHeight: 1080, colorSpace: { matrix: "bt709" } });
+    const out = withDefaultColorSpace(cfg, { matrix: "smpte170m" });
+    expect(out.colorSpace?.matrix).toBe("bt709");
+  });
+  it("falls back to resolution default when both empty", () => {
+    expect(withDefaultColorSpace(base({ codedHeight: 1080 })).colorSpace?.matrix).toBe("bt709");
+  });
+  it("sourceColor fullRange:true applies for a full-range source", () => {
+    const out = withDefaultColorSpace(base({ codedHeight: 1080 }), { matrix: "bt709", fullRange: true });
+    expect(out.colorSpace?.fullRange).toBe(true);
   });
 });
