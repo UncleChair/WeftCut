@@ -45,16 +45,29 @@ describe("withDefaultColorSpace", () => {
     expect(out.colorSpace?.matrix).toBe("smpte170m"); // NOT the 709 HD default
     expect(out.colorSpace?.fullRange).toBe(false);
   });
+
   it("mediabunny tag still wins over sourceColor", () => {
     const cfg = base({ codedHeight: 1080, colorSpace: { matrix: "bt709" } });
     const out = withDefaultColorSpace(cfg, { matrix: "smpte170m" });
     expect(out.colorSpace?.matrix).toBe("bt709");
   });
+
   it("falls back to resolution default when both empty", () => {
     expect(withDefaultColorSpace(base({ codedHeight: 1080 })).colorSpace?.matrix).toBe("bt709");
   });
+
   it("sourceColor fullRange:true applies for a full-range source", () => {
     const out = withDefaultColorSpace(base({ codedHeight: 1080 }), { matrix: "bt709", fullRange: true });
     expect(out.colorSpace?.fullRange).toBe(true);
+  });
+
+  it("layers each field independently: mediabunny matrix + sourceColor primaries + resolution transfer", () => {
+    // mediabunny: matrix only. sourceColor: primaries only. transfer: neither -> HD default.
+    const cfg = base({ codedHeight: 1080, colorSpace: { matrix: "bt709" } });
+    const out = withDefaultColorSpace(cfg, { primaries: "bt470bg" });
+    expect(out.colorSpace?.matrix).toBe("bt709"); // mediabunny wins
+    expect(out.colorSpace?.primaries).toBe("bt470bg"); // sourceColor fills
+    expect(out.colorSpace?.transfer).toBe("bt709"); // resolution default
+    expect(out.colorSpace?.fullRange).toBe(false); // resolution default
   });
 });
