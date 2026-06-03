@@ -1,8 +1,8 @@
 {
-  "_note": "Axis-A color round-trip baseline (measured 2026-06-03, real WebView2). 709-limited round-trips faithfully (app-only worst_app_max=0). BT.601 and full-range sources are a KNOWN BUG: getDecoderConfig() yields no colorSpace for these files, so withDefaultColorSpace defaults every HD source to bt709/limited and the decoder is fed the wrong matrix/range. For known-bad encodings expectFaithful=false; the gate asserts the bug is STILL present (worst_app_max > faithfulMax) and turns RED when the color-management fix lands -> flip expectFaithful:true then. measured_worst_app_max is documentation, NOT a gate threshold.",
+  "_note": "Axis-A color round-trip baseline (re-measured 2026-06-03 after the decode-tagging fix attempt). 709-limited is faithful (DirectExport; the resolution default already = bt709/tv). The other three remain KNOWN-FAIL for two distinct reasons the e2e revealed: (1) 601ltd is DirectExport with the source color correctly extracted+threaded to the decoder (decodesOriginal=true, sourceColor={smpte170m}), but the export is unchanged (~22) -> WebView2's VideoDecoder IGNORES VideoDecoderConfig.colorSpace, so feeding it the right matrix has no effect (the spec's Approach A is necessary-but-insufficient; a per-frame colorSpace relabel is needed). (2) 709full/601full route through a PROXY (export_uses_original=false, proxy_path set) -> the original-decode-only fix doesn't touch them; proxy color is a separate slice. For known-bad encodings expectFaithful=false asserts the bug is still present; flip to true when the deeper fix lands.",
   "faithfulMax": 5,
-  "709ltd": { "expectFaithful": true, "measured_worst_app_max": 0 },
-  "601ltd": { "expectFaithful": false, "measured_worst_app_max": 20 },
-  "709full": { "expectFaithful": false, "measured_worst_app_max": 20 },
-  "601full": { "expectFaithful": false, "measured_worst_app_max": 34 }
+  "709ltd": { "expectFaithful": true },
+  "601ltd": { "expectFaithful": false, "measured_worst_app_max": 22, "known_cause": "WebView2 VideoDecoder ignores VideoDecoderConfig.colorSpace" },
+  "709full": { "expectFaithful": false, "measured_worst_app_max": 20, "known_cause": "routes to proxy (full-range); proxy color out of scope" },
+  "601full": { "expectFaithful": false, "measured_worst_app_max": 34, "known_cause": "routes to proxy (full-range); proxy color out of scope" }
 }
