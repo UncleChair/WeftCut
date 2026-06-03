@@ -16,8 +16,8 @@ describe("ffprobeColorToWebCodecs", () => {
     expect(ffprobeColorToWebCodecs({ color_matrix: null, color_range: null })).toBeUndefined();
     expect(ffprobeColorToWebCodecs({ color_matrix: "fcc" })).toBeUndefined();
   });
-  it("maps bt2020nc + pq/hlg transfers", () => {
+  it("does not map HDR/wide-gamut values (SDR-only, out of scope)", () => {
     expect(ffprobeColorToWebCodecs({ color_matrix: "bt2020nc", color_transfer: "smpte2084" }))
-      .toEqual({ matrix: "bt2020-ncl", transfer: "pq" });
+      .toBeUndefined();
   });
 });
