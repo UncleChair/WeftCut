@@ -13,22 +13,31 @@ const BASELINE_PATH = path.resolve(
 );
 const PROJ = path.resolve(os.tmpdir(), "weftcut-e2e-color-proj");
 
-// Axis-A color round-trip gate. Per encoding, export 1:1 and measure app-only
-// color error (output vs decoded-source, both forced to the source's matrix).
+// Axis-A color conformance gate. Per encoding, export 1:1 and measure app-only
+// color loss under a PERCEPTUAL metric: the analyzer decodes the OUTPUT by its
+// own embedded color tag and the SOURCE forced to its matrix/range (the DECODE
+// map below), then asks "does the export SHOW the same colors as the source?".
 //
-// Landed 2026-06-03 as a "709-green / 601·full-expected-fail" gate: 709-limited
-// round-trips faithfully today, but BT.601 and full-range sources mis-convert
-// (ROOT CAUSE: getDecoderConfig() yields no colorSpace for these files, so
-// withDefaultColorSpace defaults every HD source to bt709/limited — the decoder
-// is fed the wrong matrix/range before the encoder ever runs). Rather than
-// enshrine the broken error magnitudes as "acceptable", the known-bad encodings
-// ASSERT THE BUG IS STILL PRESENT (worst_app_max > faithfulMax); the moment the
-// color-management fix lands, their error drops and those assertions go RED —
-// the signal to flip expectFaithful:true in color_baseline.json. See the design
-// doc (docs/superpowers/specs/2026-06-03-color-conformance-axis-design.md).
+// Why perceptual (not matrix-roundtrip): WebView2's WebCodecs H.264 encoder
+// (HW and SW, verified) ignores the input frame's colorSpace and tags every HD
+// output bt709 — it CANNOT emit a 601-tagged HD file. So a faithful 601 export
+// is legitimately bt709-tagged (normalized to 709). A matrix-roundtrip check
+// (force-decode the output as the source matrix) measured the relabel, not the
+// colors, and reported the same error whether the pixels were right or wrong.
+//
+// 709ltd + 601ltd are FAITHFUL: the decode side honors the source matrix
+// (decoder config tagged via withDefaultColorSpace + ffprobe color, then a
+// colorSpace-honoring 2D drawImage in VideoClipSprite — Pixi's
+// copyExternalImageToTexture upload ignored VideoFrame.colorSpace). 601→709
+// normalization costs only codec round-trip (601ltd=2). 709full/601full stay
+// KNOWN-BAD: their output is limited-range while the source is full-range — a
+// real pc→tv squash (verified via ffprobe; suspected proxy re-encode, not
+// confirmed here) outside the original-decode path (deferred proxy-color slice)
+// — they assert worst_app_max > faithfulMax and flip RED when that lands. ADR
+// docs/adr/0014-export-color-perceptual-conformance.md.
 
-// source matrix/range each encoding must be DECODED with (the gate asks: is the
-// output, interpreted as the source's encoding, the same color as the source?).
+// Reference matrix/range each encoding's SOURCE is decoded with (its tags are
+// incomplete — only a matrix is present). The OUTPUT is decoded by its own tag.
 const DECODE = {
   "709ltd": ["bt709", "tv"],
   "601ltd": ["smpte170m", "tv"],
