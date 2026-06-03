@@ -244,6 +244,14 @@ pub struct MediaSummary {
     /// Source pixel format (e.g. "yuv420p", "yuv420p10le"), `None` for
     /// audio/image. Raw passthrough — display-only.
     pub pix_fmt: Option<String>,
+    /// Source color matrix (e.g. "bt709", "bt601"), `None` when unknown.
+    pub color_matrix: Option<String>,
+    /// Source color range ("tv" / "pc"), `None` when unknown.
+    pub color_range: Option<String>,
+    /// Source color primaries (e.g. "bt709"), `None` when unknown.
+    pub color_primaries: Option<String>,
+    /// Source color transfer characteristics (e.g. "bt709"), `None` when unknown.
+    pub color_transfer: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -409,6 +417,10 @@ pub async fn project_summary(handle: State<'_, ProjectHandle>) -> Result<Project
                 export_uses_original: m.export_uses_original,
                 codec: m.metadata.video.as_ref().map(|v| v.codec.clone()),
                 pix_fmt: m.metadata.video.as_ref().map(|v| v.pix_fmt.clone()),
+                color_matrix: m.metadata.video.as_ref().and_then(|v| v.color_matrix.clone()),
+                color_range: m.metadata.video.as_ref().and_then(|v| v.color_range.clone()),
+                color_primaries: m.metadata.video.as_ref().and_then(|v| v.color_primaries.clone()),
+                color_transfer: m.metadata.video.as_ref().and_then(|v| v.color_transfer.clone()),
             }
         })
         .collect();
