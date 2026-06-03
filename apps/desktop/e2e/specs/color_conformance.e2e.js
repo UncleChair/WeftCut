@@ -13,6 +13,20 @@ const BASELINE_PATH = path.resolve(
 );
 const PROJ = path.resolve(os.tmpdir(), "weftcut-e2e-color-proj");
 
+// Axis-A color round-trip gate. Per encoding, export 1:1 and measure app-only
+// color error (output vs decoded-source, both forced to the source's matrix).
+//
+// Landed 2026-06-03 as a "709-green / 601·full-expected-fail" gate: 709-limited
+// round-trips faithfully today, but BT.601 and full-range sources mis-convert
+// (ROOT CAUSE: getDecoderConfig() yields no colorSpace for these files, so
+// withDefaultColorSpace defaults every HD source to bt709/limited — the decoder
+// is fed the wrong matrix/range before the encoder ever runs). Rather than
+// enshrine the broken error magnitudes as "acceptable", the known-bad encodings
+// ASSERT THE BUG IS STILL PRESENT (worst_app_max > faithfulMax); the moment the
+// color-management fix lands, their error drops and those assertions go RED —
+// the signal to flip expectFaithful:true in color_baseline.json. See the design
+// doc (docs/superpowers/specs/2026-06-03-color-conformance-axis-design.md).
+
 // source matrix/range each encoding must be DECODED with (the gate asks: is the
 // output, interpreted as the source's encoding, the same color as the source?).
 const DECODE = {
@@ -36,15 +50,15 @@ describe("color round-trip conformance (real WebView2)", function () {
     const source = path.resolve(MEDIA, `test_1080p_color_${enc}.mp4`);
     const output = path.resolve(os.tmpdir(), `weftcut-e2e-color-${enc}.mp4`);
 
-    it(`${enc} round-trips within baseline`, async function () {
+    it(`${enc} color round-trip`, async function () {
       if (!existsSync(source)) {
         console.warn(`[e2e] SKIP ${enc}: source fixture not found at ${source}`);
         this.skip();
       }
       if (!BASELINE || !BASELINE[enc]) {
         console.warn(
-          `[e2e] SKIP ${enc}: baseline not recorded — run scripts/color-probe-export.mjs on a real ` +
-            `export and record ${BASELINE_PATH} (per-encoding worst_app_max + a tolerance) first.`,
+          `[e2e] SKIP ${enc}: baseline not recorded — record ${BASELINE_PATH} ` +
+            `(faithfulMax + per-encoding expectFaithful); see record_color_exports.tool.mjs.`,
         );
         this.skip();
       }
@@ -122,17 +136,27 @@ describe("color round-trip conformance (real WebView2)", function () {
 
       const [im, ir] = DECODE[enc];
       const report = analyzeColor({ output, source, manifest: MANIFEST, inMatrix: im, inRange: ir, sample: 10 });
-      console.log(`[e2e] color ${enc}: worst_app_max=${report.worst_app_max}`);
+      const expectFaithful = BASELINE[enc].expectFaithful;
+      console.log(`[e2e] color ${enc}: worst_app_max=${report.worst_app_max} (expectFaithful=${expectFaithful}, faithfulMax=${BASELINE.faithfulMax})`);
 
-      const limit = BASELINE[enc].worst_app_max + BASELINE.tolerance;
-      const offenders = report.patches.filter((p) => Math.max(...p.app_error.max) > limit);
-      if (offenders.length) {
-        throw new Error(
-          `${enc} patches exceed ${limit}: ` +
-            JSON.stringify(offenders.map((p) => ({ id: p.id, max: p.app_error.max }))),
-        );
+      if (expectFaithful) {
+        // Faithful round-trip: app-only color error must be ~0 across all patches
+        // (flat patches, matching matrix). 709-limited is the app's native space.
+        const offenders = report.patches.filter((p) => Math.max(...p.app_error.max) > BASELINE.faithfulMax);
+        if (offenders.length) {
+          throw new Error(
+            `${enc} patches exceed faithfulMax=${BASELINE.faithfulMax}: ` +
+              JSON.stringify(offenders.map((p) => ({ id: p.id, max: p.app_error.max }))),
+          );
+        }
+        expect(report.worst_app_max).toBeLessThanOrEqual(BASELINE.faithfulMax);
+      } else {
+        // KNOWN BUG: this encoding mis-converts (see header). Assert the bug is
+        // STILL present so the suite stays green until the fix lands; when the
+        // color-management fix lands, worst_app_max drops <= faithfulMax and THIS
+        // ASSERTION FAILS (red) — flip expectFaithful:true for ${enc} then.
+        expect(report.worst_app_max).toBeGreaterThan(BASELINE.faithfulMax);
       }
-      expect(report.worst_app_max).toBeLessThanOrEqual(limit);
     });
   }
 });

@@ -1,0 +1,8 @@
+{
+  "_note": "Axis-A color round-trip baseline (measured 2026-06-03, real WebView2). 709-limited round-trips faithfully (app-only worst_app_max=0). BT.601 and full-range sources are a KNOWN BUG: getDecoderConfig() yields no colorSpace for these files, so withDefaultColorSpace defaults every HD source to bt709/limited and the decoder is fed the wrong matrix/range. For known-bad encodings expectFaithful=false; the gate asserts the bug is STILL present (worst_app_max > faithfulMax) and turns RED when the color-management fix lands -> flip expectFaithful:true then. measured_worst_app_max is documentation, NOT a gate threshold.",
+  "faithfulMax": 5,
+  "709ltd": { "expectFaithful": true, "measured_worst_app_max": 0 },
+  "601ltd": { "expectFaithful": false, "measured_worst_app_max": 20 },
+  "709full": { "expectFaithful": false, "measured_worst_app_max": 20 },
+  "601full": { "expectFaithful": false, "measured_worst_app_max": 34 }
+}
