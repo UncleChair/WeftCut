@@ -208,6 +208,10 @@ enum RawStream {
         codec_name: Option<String>,
         pix_fmt: Option<String>,
         duration: Option<String>,
+        color_space: Option<String>,
+        color_range: Option<String>,
+        color_primaries: Option<String>,
+        color_transfer: Option<String>,
     },
     Audio {
         sample_rate: Option<String>,
@@ -259,6 +263,10 @@ impl RawProbe {
                     codec_name,
                     pix_fmt,
                     duration,
+                    color_space,
+                    color_range,
+                    color_primaries,
+                    color_transfer,
                 } if video.is_none() => {
                     consider(duration.as_deref());
                     let (num, den) = parse_rational(r_frame_rate.as_deref().unwrap_or("0/1"));
@@ -269,6 +277,10 @@ impl RawProbe {
                         fps_den: den,
                         codec: codec_name.unwrap_or_default(),
                         pix_fmt: pix_fmt.unwrap_or_default(),
+                        color_matrix: clean_color(color_space),
+                        color_range: clean_color(color_range),
+                        color_primaries: clean_color(color_primaries),
+                        color_transfer: clean_color(color_transfer),
                     });
                 }
                 RawStream::Audio {
@@ -299,6 +311,10 @@ impl RawProbe {
             audio,
         }
     }
+}
+
+fn clean_color(s: Option<String>) -> Option<String> {
+    s.filter(|v| !v.is_empty() && v != "unknown")
 }
 
 fn parse_rational(s: &str) -> (u32, u32) {
@@ -443,6 +459,10 @@ mod tests {
                 fps_den: 1,
                 codec: "h264".into(),
                 pix_fmt: "yuv420p".into(),
+                color_matrix: None,
+                color_range: None,
+                color_primaries: None,
+                color_transfer: None,
             }),
             audio: None,
         };
@@ -451,6 +471,28 @@ mod tests {
             detect_kind(Path::new("/x/blob.bin"), &with_video),
             MediaKind::Video
         );
+    }
+
+    #[test]
+    fn parses_color_tags_from_streams() {
+        let json = r#"{"streams":[{"codec_type":"video","width":1920,"height":1080,
+          "r_frame_rate":"30/1","codec_name":"h264","pix_fmt":"yuv420p",
+          "color_space":"smpte170m","color_range":"tv"}]}"#;
+        let meta = serde_json::from_slice::<RawProbe>(json.as_bytes()).unwrap().into_metadata();
+        let v = meta.video.unwrap();
+        assert_eq!(v.color_matrix.as_deref(), Some("smpte170m"));
+        assert_eq!(v.color_range.as_deref(), Some("tv"));
+        assert_eq!(v.color_primaries, None);
+    }
+
+    #[test]
+    fn drops_unknown_color_tags() {
+        let json = r#"{"streams":[{"codec_type":"video","width":1920,"height":1080,
+          "r_frame_rate":"30/1","codec_name":"h264","pix_fmt":"yuv420p",
+          "color_space":"unknown","color_range":"unknown"}]}"#;
+        let v = serde_json::from_slice::<RawProbe>(json.as_bytes()).unwrap().into_metadata().video.unwrap();
+        assert_eq!(v.color_matrix, None);
+        assert_eq!(v.color_range, None);
     }
 
     #[test]
