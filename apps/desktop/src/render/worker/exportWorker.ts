@@ -126,6 +126,11 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
       req.project.proxyAssetUrls[mediaId] ?? null,
     originalAssetUrl: (mediaId: string) =>
       req.project.originalAssetUrls[mediaId] ?? null,
+    // Export drives `exportPool.acquire` directly (threading `mediaColor`
+    // there itself), so the Compositor's own `ensureClip` acquire path is
+    // unused in export mode; this resolver exists to satisfy the required
+    // init field and stays consistent with that wiring if it ever fires.
+    sourceColor: (mediaId: string) => req.project.mediaColor[mediaId],
     mediaById: (mediaId: string): MediaSummary | undefined => {
       const d = req.project.mediaDims[mediaId];
       if (!d) return undefined;

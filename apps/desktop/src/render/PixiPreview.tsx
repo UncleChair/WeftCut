@@ -27,6 +27,7 @@ import type { Application } from "pixi.js";
 import { previewPlaybackPathFor, useProjectStore } from "../state/projectStore";
 import type { MediaSummary } from "../ipc";
 import { Compositor } from "./Compositor";
+import { ffprobeColorToWebCodecs } from "./decoder/ffprobeColorSpace";
 import { PerfHUD } from "./PerfHUD";
 import { PlaybackEngine } from "./PlaybackEngine";
 import type { PixiExportResult, PixiPreviewHandle } from "./pixiPreviewFlag";
@@ -128,6 +129,10 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         if (!m) return null;
         return convertFileSrc(m.path);
       };
+      const sourceColor = (mediaId: string): VideoColorSpaceInit | undefined => {
+        const m = useProjectStore.getState().mediaById.get(mediaId);
+        return m ? ffprobeColorToWebCodecs(m) : undefined;
+      };
       const lookupMedia = (mediaId: string): MediaSummary | undefined =>
         useProjectStore.getState().mediaById.get(mediaId);
 
@@ -138,6 +143,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         mode: "preview",
         proxyAssetUrl,
         originalAssetUrl,
+        sourceColor,
         mediaById: lookupMedia,
       });
       const initialSummary = useProjectStore.getState().summary;
