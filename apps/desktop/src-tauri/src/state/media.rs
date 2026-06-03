@@ -70,8 +70,12 @@ pub struct VideoStreamMeta {
     pub fps_den: u32,
     pub codec: String,
     pub pix_fmt: String,
-    /// Color tags from the container/bitstream (ffprobe names, e.g. matrix
-    /// "bt709"/"smpte170m", range "tv"/"pc"). None when the source declares none.
+    /// Color tags from the container/bitstream (ffprobe names). `color_matrix`
+    /// corresponds to ffprobe's `color_space` key (YCbCr matrix coefficients,
+    /// e.g. "bt709", "smpte170m") — named `matrix` here to avoid conflation with
+    /// the broader "color space" concept; `color_range` is "tv"/"pc";
+    /// `color_primaries`/`color_transfer` follow ffprobe naming directly. `None`
+    /// when the source declares no value (or declares "unknown").
     #[serde(default)]
     pub color_matrix: Option<String>,
     #[serde(default)]
