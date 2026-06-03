@@ -4,8 +4,7 @@ What records into the editing undo stack and what doesn't. Tightens the
 boundary so non-editing operations (project load, media library, canvas
 setup) stop polluting the history that Ctrl-Z walks.
 
-This document is the canonical design. Settled in a grilling session on
-2026-05-14.
+This document is implemented in the actor/history layer.
 
 ---
 
@@ -25,16 +24,17 @@ through `broadcast_unrecorded`.
 | `add_layer`, `update_layer`, `update_layer_params`, `move_layer`, `duplicate_layer`, `split_layer`, `delete_layer` | yes |
 | `add_marker`, `update_marker`, `remove_marker` | yes |
 | `add_transition`, `remove_transition` | yes |
-| `add_media_item` | no (already excluded) |
-| `set_media_workspace_paths`, `set_media_derivatives` | no (already excluded) |
-| `remove_media`, no references / `force=false` | **no** (new) — mirror import |
+| `add_media_item` | no |
+| `set_media_workspace_paths`, `set_media_derivatives` | no |
+| `remove_media`, no references / `force=false` | no — mirror import |
 | `remove_media`, `force=true` cascade-delete | yes (layers actually got deleted) |
-| `set_composition` canvas-only fields (`width`/`height`/`fps`/`sample_rate`/`channels`/`color_space`/`background`) | **no** (new) — setup, not editing |
+| `set_composition` canvas-only fields (`width`/`height`/`sample_rate`/`channels`/`color_space`/`background`) | no — setup, not editing |
 | `set_composition` patch containing `duration_us` | yes (also sets `duration_pinned = true`) |
-| `set_composition` mixed patch | **split internally**: canvas part patched everywhere; duration delta recorded as one entry |
+| `set_composition` patch changing `fps` | yes — re-snaps every layer's `t_start_us`/`t_end_us` to the new grid |
+| `set_composition` mixed patch (canvas + duration, no fps change) | **split internally**: canvas part patched everywhere; duration delta recorded as one entry |
 | `fit_composition_to_layers` | yes (clears `duration_pinned`; the duration shrink rides the same entry) |
 | Passive duration shrink on layer delete / inward trim (unpinned) | **no separate entry** — rides the layer-edit commit that triggered it |
-| `replace_state` (open / new project) | **no** (new) — resets `History` to a fresh one-entry stack and clears checkpoints |
+| `replace_state` (open / new project) | **no** — resets `History` to a fresh one-entry stack and clears checkpoints |
 | `undo`, `redo` | cursor-only, no new entry |
 | `restore_checkpoint` | yes (deliberate user/agent action) |
 
@@ -53,7 +53,8 @@ recorded because deleting layers is a real edit.
 into every snapshot without invalidating layer references. A
 `duration_us` shrink can put older snapshots in an inconsistent state
 (layers extending past the new duration), so duration changes stay
-recorded.
+recorded. An `fps` change is treated as editing because it re-snaps
+layer geometry across the timeline.
 
 `replace_state` is a wholesale swap. The previous project's history is
 incoherent against the new project's `project_id`, so the stack and
@@ -62,51 +63,36 @@ checkpoints are reset rather than carried forward.
 ## MCP vs user
 
 Both surfaces continue to write into the same `History`. Entries carry
-an `Actor::User` / `Actor::Agent { client }` tag (state/actor.rs:35) so
-the history panel can distinguish them, but Ctrl-Z walks back across
-both because state coherence requires it: selective undo on a shared
-mutable state graph is the "history as DAG" problem and out of scope.
+an `Actor::User` / `Actor::Agent { client }` tag so the history panel
+can distinguish them, but Ctrl-Z walks back across both because state
+coherence requires it: selective undo on a shared mutable state graph
+is the "history as DAG" problem and out of scope.
+
+While the agent holds `lock_history(reason)`, every revert path
+(`undo`, `redo`, `restore_checkpoint`) rejects with
+`HistoryLocked`. The lock is ephemeral — released on workspace swap
+(`History::reset`) and via `unlock_history`. It does not affect what
+gets recorded; it only blocks the user from reverting mid-batch.
 
 Deferred: transaction bracketing — MCP tools `begin_transaction(label)`
 / `commit_transaction()` to collapse a batch of agent calls into a
 single undoable entry. Non-breaking addition; revisit when agent
 automation becomes heavy enough that stack-flooding hurts UX.
 
-## Code touch points
+## Implementation
 
-- `state/history.rs`
-  - Add `History::reset(initial: Arc<Project>, actor: Actor)` — replace
-    the deque with a single seed entry, clear `checkpoints`.
-  - Add `History::replace_composition_everywhere(c: Composition)` —
-    mirror `replace_media_pool_everywhere` for the canvas-only fields.
+| Concern | Location |
+|---|---|
+| History stack, `reset`, out-of-band pool/canvas patching | `apps/desktop/src-tauri/src/state/history.rs` |
+| Per-op record vs `broadcast_unrecorded` routing | `apps/desktop/src-tauri/src/state/actor.rs` — `do_*` handlers |
+| `replace_state` → `history.reset` + unrecorded broadcast | `do_replace_state` |
+| No-ref `remove_media` → `replace_media_pool_everywhere` | `do_remove_media` |
+| Canvas/duration/fps split on `set_composition` | `do_set_composition` |
+| MCP `undo` tool description (out-of-stack exclusions) | `apps/desktop/src-tauri/src/mcp/mod.rs` |
+| Open / new project call paths | `apps/desktop/src-tauri/src/commands.rs` |
 
-- `state/actor.rs`
-  - `do_replace_state` (line ~1959) — call `history.reset(...)` +
-    `broadcast_unrecorded`; drop the `modified_at = Utc::now()` line.
-    Callers that need `modified_at` bumped do it themselves.
-  - `do_remove_media` (line ~1837) — when `referencing.is_empty()`, go
-    through the media-pool-everywhere path (no commit). Cascade branch
-    unchanged.
-  - `do_set_composition` (line ~1556) — split the patch:
-    canvas-only fields applied via `replace_composition_everywhere`;
-    if `duration_us` is set, a separate `commit` records just the
-    duration change. Mixed patches do both, in that order.
-
-- `commands.rs`
-  - `project_new_workspace` (line ~849) — verify the call path sets
-    `modified_at` via `Project::new_blank` (or wherever appropriate)
-    now that `replace_state` no longer does.
-  - `open_project` (line ~836) — no change beyond verifying it still
-    works without the `modified_at` bump.
-
-- `mcp/mod.rs`
-  - Tool description for `undo` (line ~1000) — extend the
-    "media imports sit OUTSIDE the undo stack" note to cover the new
-    exclusions: project switch, no-ref media removal, canvas-setup
-    composition fields.
-
-- Tests
-  - `replace_state_swaps_project_in_one_commit` (actor.rs:3120) — flip
-    to assert that `replace_state` resets history to a single entry.
-  - Add coverage for `remove_media` no-ref skip, `set_composition`
-    canvas-only skip, `set_composition` mixed-patch split.
+Tests in `actor.rs`: `replace_state_resets_history_to_fresh_stack`,
+`replace_state_does_not_touch_modified_at`,
+`remove_media_with_no_references_does_not_record`,
+`set_composition_canvas_only_does_not_record`,
+`set_composition_mixed_patch_splits`.

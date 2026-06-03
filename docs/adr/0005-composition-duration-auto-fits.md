@@ -49,7 +49,7 @@ A boolean pin separates the two semantics cleanly. The pin flips on only when `s
 - **One extra serialized field.** `#[serde(default)]` keeps old projects readable; the first layer edit re-syncs duration to `max_end`, which matches what the user already sees. No migration step.
 - **A pinned project still grows.** Setting the pin doesn't freeze the value — `max_end > duration_us` always wins, otherwise `add_layer` would silently push a layer past the composition end. The invariant `duration_us >= max(layer.t_end_us)` is preserved.
 - **Passive shrinks ride existing history entries.** The layer-edit commit that triggered the shrink owns the duration delta; no separate history entry. Older snapshots stay coherent because `duration_us >= max_end` already held in each one and continues to hold.
-- **Existing `set_composition` undo semantics survive.** A `set_composition { duration_us }` patch already records as one entry (`docs/undo-stack-scope.md` line 33); the pin flip rides on the same commit.
+- **Existing `set_composition` undo semantics survive.** A `set_composition { duration_us }` patch records as one entry (see `docs/undo-stack-scope.md`); the pin flip rides on the same commit.
 - **`duration_pinned` is editing state, not canvas setup.** It must not go through `replace_composition_canvas_everywhere` — it lives per-snapshot like `duration_us` itself. `set_composition`'s existing canvas-vs-duration split already does this correctly because the pin is written together with the duration delta.
 
 ## Code touch points
@@ -66,7 +66,7 @@ A boolean pin separates the two semantics cleanly. The pin flips on only when `s
   - New `do_fit_composition_to_layers(actor)` — clear pin, run `apply_duration_autofit`, commit with `DiffHint::Composition`.
 - `mcp/mod.rs` — register the new `fit_composition_to_layers` tool (no args, returns void). Update `set_composition`'s docstring to mention the pin side effect.
 - `docs/data-model.md` (line 364) — replace `composition.duration_us ≥ max(layer.t_end_us) | auto-extend` with the two-state rule.
-- `docs/undo-stack-scope.md` (lines 33–34) — note that passive duration shrinks ride on the layer-edit entry; the row for `set_composition`-with-duration is unchanged.
+- `docs/undo-stack-scope.md` — passive duration shrinks ride on the layer-edit entry; the row for `set_composition`-with-duration is unchanged.
 - `render/Compositor.ts` — keep `playableEndUs()` for now (it's a thin convenience over the same data), but the doc-comment that motivates its existence should be retired: the model no longer has the gap that prompted it.
 - Tests
   - `add_layer` on an unpinned project extends *and* shrinks duration to fit
