@@ -92,6 +92,13 @@ export interface CompositorInit {
   /// May return the same URL as `proxyAssetUrl` for media kinds
   /// that don't get proxied (images, audio).
   originalAssetUrl: (mediaId: string) => string | null;
+  /// Resolver for a media item's ffprobe-derived source color tags
+  /// (matrix/range/primaries/transfer), mapped to WebCodecs. Applied to the
+  /// preview decode ONLY when the decoded URL is the ORIGINAL file (see the
+  /// `=== originalAssetUrl` gate at each handle site) so 601/full-range
+  /// originals preview with their real color; a proxy is a re-encode and
+  /// gets the resolution default instead. Returns undefined when nothing maps.
+  sourceColor: (mediaId: string) => VideoColorSpaceInit | undefined;
   /// Lookup for media-side codec dimensions.
   mediaById: (mediaId: string) => MediaSummary | undefined;
   /// Optional decoder pool override. Defaults to a preview-tuned
@@ -196,6 +203,7 @@ export class Compositor {
   private layerById = new Map<string, LayerSummary>();
   private proxyAssetUrl: (mediaId: string) => string | null;
   private originalAssetUrl: (mediaId: string) => string | null;
+  private sourceColor: (mediaId: string) => VideoColorSpaceInit | undefined;
   private mediaById: (mediaId: string) => MediaSummary | undefined;
   private compositionWidth = 1920;
   private compositionHeight = 1080;
@@ -251,6 +259,7 @@ export class Compositor {
     this.pool = init.pool ?? new SourceDecoderPool();
     this.proxyAssetUrl = init.proxyAssetUrl;
     this.originalAssetUrl = init.originalAssetUrl;
+    this.sourceColor = init.sourceColor;
     this.mediaById = init.mediaById;
     this.compositionWidth = init.width;
     this.compositionHeight = init.height;
@@ -834,10 +843,16 @@ export class Compositor {
       console.warn(`[weftcut/pixi] no proxy URL for media ${mediaId} (clip ${layer.id})`);
       return null;
     }
+    // Source color tags apply ONLY when the decoded URL is the ORIGINAL file —
+    // a proxy/quick-proxy is a re-encode whose color may differ, so it takes
+    // the resolution default instead (undefined here).
+    const sourceColor =
+      proxyUrl === this.originalAssetUrl(mediaId) ? this.sourceColor(mediaId) : undefined;
     const source = this.pool.acquire({
       layerId: layer.id,
       mediaId,
       proxyAssetUrl: proxyUrl,
+      sourceColor,
     });
     // Subscribe to the first-frame notification BEFORE kicking off
     // ensureReady so we don't miss the synchronous-fire case if the
@@ -892,10 +907,17 @@ export class Compositor {
       this.abandonSwap(clip.layerId);
     }
     const { swapLayerId, swapMediaId } = swapKeys(clip.layerId, clip.mediaId);
+    // `newUrl` may be the original or a freshly-built proxy; the gate resolves
+    // against the REAL media (`clip.mediaId`) even though we acquire under the
+    // synthetic `swapMediaId`, so color applies only while the original is the
+    // decoded URL.
+    const sourceColor =
+      newUrl === this.originalAssetUrl(clip.mediaId) ? this.sourceColor(clip.mediaId) : undefined;
     const handle = this.pool.acquire({
       layerId: swapLayerId,
       mediaId: swapMediaId,
       proxyAssetUrl: newUrl,
+      sourceColor,
     });
     const state: SwapState = { handle, swapLayerId, newUrl, timer: null, deadline: null };
     this.swaps.set(clip.layerId, state);

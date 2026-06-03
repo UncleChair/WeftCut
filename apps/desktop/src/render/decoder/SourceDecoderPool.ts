@@ -43,11 +43,13 @@ export interface SourceHandleInit {
   /// `asset://` URL of the source's 1080p master proxy.
   proxyAssetUrl: string;
   /// Source color tags mapped from ffprobe (matrix/range/primaries/transfer),
-  /// applied ONLY when the decode target is the ORIGINAL file (DirectExport) —
-  /// a proxy is a re-encode whose color may not match. Threaded into
-  /// `withDefaultColorSpace` as the middle-priority layer (below a live
-  /// mediabunny VUI tag, above the resolution default). Undefined ⇒ untagged
-  /// or proxy decode ⇒ resolution default applies. The preview pool ignores it.
+  /// applied ONLY when the decode target is the ORIGINAL file (DirectExport /
+  /// direct preview) — a proxy is a re-encode whose color may not match.
+  /// Threaded into `withDefaultColorSpace` as the middle-priority layer (below a
+  /// live mediabunny VUI tag, above the resolution default). Undefined ⇒
+  /// untagged or proxy decode ⇒ resolution default applies. The preview pool
+  /// carries it onto the shared `SourceMedia` (per-mediaId) so the once-per-
+  /// source config build at `SourceMedia.ensureReady` tags the decode.
   sourceColor?: VideoColorSpaceInit | undefined;
 }
 
@@ -131,6 +133,11 @@ export interface DecoderPool {
 export class SourceMedia {
   readonly mediaId: string;
   private readonly proxyAssetUrl: string;
+  /// Source color tags (ffprobe-mapped), present only when this media is
+  /// decoded from its ORIGINAL file (direct-decodable preview). Threaded into
+  /// `withDefaultColorSpace` so 601/full-range originals preview with their
+  /// real matrix/range. Undefined for proxy decode ⇒ resolution default only.
+  private readonly sourceColor: VideoColorSpaceInit | undefined;
   private opened: OpenedMedia | null = null;
   private config: VideoDecoderConfig | null = null;
   /// Cached in-flight `ensureReady` promise so concurrent handles share
@@ -153,9 +160,14 @@ export class SourceMedia {
     return this.opened.packetSink;
   }
 
-  constructor(mediaId: string, proxyAssetUrl: string) {
+  constructor(
+    mediaId: string,
+    proxyAssetUrl: string,
+    sourceColor?: VideoColorSpaceInit | undefined,
+  ) {
     this.mediaId = mediaId;
     this.proxyAssetUrl = proxyAssetUrl;
+    this.sourceColor = sourceColor;
   }
 
   /// Open the proxy through mediabunny and resolve the WebCodecs decoder
@@ -175,8 +187,11 @@ export class SourceMedia {
       this.opened = opened;
       // Untagged sources get a resolution-keyed default matrix so preview decode
       // matches the rest of the toolchain (see colorSpaceDefault) — and stays
-      // consistent with the export pool, which applies the same default.
-      this.config = withDefaultColorSpace(config);
+      // consistent with the export pool, which applies the same default. When
+      // this media is decoded from its ORIGINAL file, `sourceColor` carries the
+      // ffprobe tags as the middle-priority layer (below a live mediabunny VUI
+      // tag, above the resolution default); proxy decode leaves it undefined.
+      this.config = withDefaultColorSpace(config, this.sourceColor);
       // eslint-disable-next-line no-console
       console.log(
         `[weftcut/pixi] source ${this.mediaId} ready: codec=${config.codec} ` +
@@ -575,7 +590,7 @@ export class SourceDecoderPool {
   acquire(init: SourceHandleInit): SourceHandle {
     const existing = this.handles.get(init.layerId);
     if (existing) return existing;
-    const media = this.acquireMedia(init.mediaId, init.proxyAssetUrl);
+    const media = this.acquireMedia(init.mediaId, init.proxyAssetUrl, init.sourceColor);
     const h = new SourceHandle(init.layerId, media);
     this.handles.set(init.layerId, h);
     this.startSweeperIfNeeded();
@@ -601,10 +616,20 @@ export class SourceDecoderPool {
 
   /// Get-or-create a shared `SourceMedia` for `mediaId` and bump its
   /// refcount. The pool owns lifetime; callers (handles) hold a borrow.
-  private acquireMedia(mediaId: string, proxyAssetUrl: string): SourceMedia {
+  private acquireMedia(
+    mediaId: string,
+    proxyAssetUrl: string,
+    sourceColor?: VideoColorSpaceInit | undefined,
+  ): SourceMedia {
     let entry = this.medias.get(mediaId);
     if (!entry) {
-      entry = { media: new SourceMedia(mediaId, proxyAssetUrl), refCount: 0 };
+      // `sourceColor` is honored only on create; reuse keeps the first
+      // entry's color. Per real mediaId the color is deterministic (URL
+      // resolution doesn't vary by layer), so handles sharing a media
+      // resolve the same color — no stale-color hazard. The swap path
+      // acquires under a synthetic mediaId, so a decodability flip over
+      // time gets a fresh SourceMedia rather than reusing a stale one.
+      entry = { media: new SourceMedia(mediaId, proxyAssetUrl, sourceColor), refCount: 0 };
       this.medias.set(mediaId, entry);
     }
     entry.refCount += 1;
