@@ -242,15 +242,14 @@ Branch `test/color-conformance-axis`. All analyzer/generator/script code is
 implemented, committed, and unit/smoke-verified. Each pure function is TDD'd;
 the `media_conformance` bin suite is 13/13 green.
 
-- **Axis A (8-bit round-trip): code complete, real-run pending.** `generate.go
-  --color` chart + `color_manifest.json`; `media_conformance --color` (forced
-  `--in-matrix`/`--in-range` decode, per-channel code-value error, app-only gate
-  + authored diagnostic; self-compare `worst_app_max=0` verified); `analyzeColor`
-  wrapper; `scripts/color-probe-export.mjs` (Stage 0); `specs/color_conformance.e2e.js`
-  (skips until a baseline is recorded). **Stage 0 + baseline are NOT yet run** —
-  they need a real WeftCut export (tauri build + WebView2), so the export's actual
-  color tags/matrix are still UNKNOWN, and `color_baseline.json` is unwritten. This
-  is the "probe first, then decide" gate the user chose.
+- **Axis A (8-bit round-trip): run + gated 2026-06-03 — caught a real product bug.**
+  `generate.go --color` chart + `color_manifest.json`; `media_conformance --color`
+  (forced `--in-matrix`/`--in-range` decode, per-channel code-value error, app-only
+  gate + authored diagnostic); `analyzeColor` wrapper; `specs/color_conformance.e2e.js`
+  gate. Real WebView2 exports of all four charts: **709-limited round-trips perfectly
+  (worst_app_max=0), but BT.601=~20, 709-full=~20, 601-full=~34** off — see the Axis-A
+  findings below. Gate landed as "709-green / 601·full-expected-fail"; the product fix
+  is a deferred follow-up.
 
 ## Stage 0 findings — Axis B (measured 2026-06-03)
 
@@ -274,16 +273,52 @@ yuv420p`) on `test_1080p_gradient10.mp4` (true 10-bit, mid-row distinct ≈ 881)
   `scripts/color-axisB-check.mjs` passes today (220/152) and its regression path
   is verified (tampering the floor to 500 → exit 1).
 
-## Remaining work (the real-app axis-A run — handed off)
+## Stage 0 findings — Axis A (measured 2026-06-03, real WebView2)
 
-1. Build the e2e app (`tauri build --debug --no-bundle` with `VITE_WEFTCUT_E2E=1`)
-   and drive a one-off export of the 709ltd chart.
-2. Run `node apps/desktop/e2e/scripts/color-probe-export.mjs <export.mp4>` →
-   record the export's real tags + which decode matrix matches (the Stage-0
-   finding: is the export color-tagged, and with what matrix?).
-3. If the export is untagged / mis-tagged, **decide** (the user's fork): gate on
-   the measured numbers as-is, or add export color-tagging (a product fix) first.
-4. Export all 4 encodings, record per-encoding `worst_app_max` + a top-level
-   `tolerance` into `fixtures/color_baseline.json`, then `color_conformance.e2e.js`
-   gates. **NOTE:** the baseline MUST include a top-level `tolerance` key — a
-   missing one yields a `NaN` limit that silently passes every patch.
+Exported all four charts through the real app (4 passing, `webview2 148.0.3967.96`),
+then probed. **app-only worst_app_max: 709ltd=0, 601ltd=20, 709full=20, 601full=34.**
+Every output is tagged identically `bt709/tv`.
+
+**Root cause (isolated + confirmed):** the bug is upstream of the export tag — the
+canvas RGB is already wrong for non-709/non-limited sources before the encoder runs.
+Three evidence pieces:
+
+1. **WebView2 honors explicit `VideoFrame.colorSpace`** (matrix + range): a synthetic
+   I420 frame tagged `smpte170m` vs `bt709` converts to different RGB (G 39 vs 71), and
+   `tv` vs `pc` differs (255 vs 235) — proven on both a 2D canvas and a WebGL2
+   `texImage2D` readback (`tools/color_isolation_*.e2e.js`).
+2. **Pixi's upload preserves it** — `GlTextureSystem` only sets `UNPACK_PREMULTIPLY_ALPHA`,
+   never `UNPACK_COLORSPACE_CONVERSION` (stays browser-default, which honors).
+3. **`getDecoderConfig().colorSpace` is `undefined`** for all four fixtures (node probe):
+   the H.264 bitstream VUI lacks the matrix and mediabunny doesn't surface the container
+   `colr` box. So `withDefaultColorSpace` hits its `matrix == null` branch and **defaults
+   every HD source to `bt709`/limited** → the decoder is fed the wrong matrix/range. 709-
+   limited works by luck (default matches); 601/full are mis-converted.
+
+**This is NOT a `runExport` output-tag fix** — the output is already tagged `bt709/tv`,
+matching its (wrongly-converted) pixels; re-tagging fixes nothing.
+
+## Gate landed: "709-green / 601·full-expected-fail"
+
+`specs/color_conformance.e2e.js` + `fixtures/color_baseline.json` (`faithfulMax=5`):
+faithful encodings (`expectFaithful:true`, 709ltd) assert `worst_app_max ≤ 5`; known-bad
+encodings (`expectFaithful:false`, 601/709full/601full) assert `worst_app_max > 5` — i.e.
+they assert the bug is STILL present, so the suite stays green (4 passing) until the fix
+lands. When the color-management fix lands, their error drops ≤ 5, those assertions go
+RED, and that's the signal to flip `expectFaithful:true`. No broken error magnitudes are
+enshrined as "acceptable" (`measured_worst_app_max` in the baseline is documentation only).
+
+## Deferred follow-up — the color-management product fix (own design)
+
+Read the source's REAL color tags (they exist in the container `colr` box — ffprobe sees
+`smpte170m`/`tv`) and feed them to the decoder, instead of defaulting to 709. Likely
+either: (a) find where mediabunny exposes container color metadata beyond
+`getDecoderConfig`, or (b) extract it Rust-side at import (`io/probe.rs` already ffprobes)
+and pass it to the frontend to override `withDefaultColorSpace`. Same class as the
+original `colorSpaceDefault` fix, extended: default-by-resolution is right for truly-
+untagged sources but wrong for sources tagged in-container only. Verify the fix flips
+601/full to green via this harness (the gate will go RED, then flip `expectFaithful`).
+
+Diagnostics retained under `e2e/tools/` (excluded from the `specs/**` auto-run):
+`record_color_exports.e2e.js` (re-record/verify exports), `color_isolation_canvas.e2e.js`
+and `color_isolation_webgl.e2e.js` (the colorSpace-honoring probes).
