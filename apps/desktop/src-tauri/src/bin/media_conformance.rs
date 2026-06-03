@@ -560,10 +560,26 @@ struct ColorReport {
     worst_app_max: u16, // worst app_error.max across all patches/channels
 }
 
-/// Decode one frame of output and source under a FORCED matrix/range, sample
-/// each manifest patch, and report per-channel app-only error (output vs
-/// decoded-source = the gate) plus total error (output vs authored RGB =
-/// diagnostic).
+/// Decode one frame of output + source and report per-channel app-only error
+/// (output vs source = the gate) plus total error (output vs authored RGB =
+/// diagnostic). This is a PERCEPTUAL color-loss metric (displayed-color
+/// fidelity), NOT a matrix-roundtrip check:
+///
+///   - The OUTPUT is decoded by its OWN embedded color tags — the WebCodecs HD
+///     encoder normalizes every export to bt709 (it ignores the input frame's
+///     colorSpace and writes a resolution default), so a faithful export of a
+///     non-709 source is legitimately bt709-tagged. Decoding it by its own tag
+///     measures what a player actually shows.
+///   - The SOURCE is decoded under the FORCED `in_matrix`/`in_range`: the test
+///     fixtures carry only a matrix tag (primaries/transfer are `unknown`), so
+///     letting ffmpeg guess would be unstable — we pin the source's intended
+///     interpretation as the reference.
+///
+/// So `app_error` answers "does the export show the same colors as the source?"
+/// A 601-source export normalized to 709 with intact colors scores near-zero
+/// (its small residual is the documented normalization standard line); a
+/// decode-side matrix bug (e.g. the source decoded as the wrong matrix before
+/// compositing) scores large; a full→limited RANGE squash scores large too.
 fn analyze_color(
     output: &Path,
     source: &Path,
@@ -572,7 +588,9 @@ fn analyze_color(
     in_matrix: &str,
     in_range: &str,
 ) -> Result<ColorReport> {
-    let out_img = decode_rgb16(&extract_frame_png_ex(output, sample, Some(in_matrix), Some(in_range), false)?)?;
+    // Output: decode by its own embedded tag (None ⇒ no forced scale).
+    let out_img = decode_rgb16(&extract_frame_png_ex(output, sample, None, None, false)?)?;
+    // Source: decode under the forced reference matrix/range (incomplete tags).
     let src_img = decode_rgb16(&extract_frame_png_ex(source, sample, Some(in_matrix), Some(in_range), false)?)?;
     let mut patches = Vec::with_capacity(manifest.patches.len());
     let mut worst = 0u16;

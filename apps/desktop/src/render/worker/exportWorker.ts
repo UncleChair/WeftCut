@@ -420,7 +420,11 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
 
   // Perf counters for the E2E harness (decode efficiency / re-seek redundancy).
   let totalDispatched = 0;
-  for (const h of exportPool.handles.values()) totalDispatched += h.dispatchedTotal;
+  let colorDiag: unknown = null;
+  for (const h of exportPool.handles.values()) {
+    totalDispatched += h.dispatchedTotal;
+    if (!colorDiag && h.firstFrameDiag) colorDiag = h.firstFrameDiag;
+  }
   post({
     type: "done",
     perf: {
@@ -429,6 +433,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
       decodeMs: Math.round(totals.decodeMs),
       waitMs: Math.round(totals.waitMs),
       totalMs: Math.round(totalMs),
+      colorDiag,
     },
   });
 

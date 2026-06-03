@@ -25,6 +25,54 @@ the corresponding MCP tools. Same redesign unblocks per-frame
 `update_keyframe` / `remove_keyframe` MCP tools — see
 [`data-model.md`](data-model.md).
 
+### Zero-copy color-correct GPU frame upload
+
+Export composites a decoded `VideoFrame` by snapshotting it into a 2D
+`OffscreenCanvas` (`VideoClipSprite`) before Pixi uploads the canvas.
+The snapshot exists because Pixi's WebGPU upload of a raw `VideoFrame`
+(`copyExternalImageToTexture`) ignores the frame's `colorSpace` and
+converts every frame as BT.709, so non-709 sources mis-convert; a 2D
+`drawImage` performs the YUV→RGB conversion honoring the frame's
+matrix/range. Correct, but it costs a per-frame GPU blit that scales
+with resolution.
+
+The zero-copy alternative is WebGPU `importExternalTexture` sampled via
+`textureSampleBaseClampToEdge` in a custom shader. A standalone POC
+(`apps/desktop/e2e/tools/iso_importexternaltexture.e2e.js`) confirms
+WebView2 HONORS the matrix through this path (601 and 709 sample to
+distinct RGB), so it can replace the snapshot without losing color
+correctness. The design work this defers:
+
+- **Custom Pixi pass.** Pixi's `TextureSource` model only does
+  `copyExternalImageToTexture`; it never imports an external texture.
+  The export composite needs a bespoke `GpuProgram` + bind group that
+  re-imports the per-frame `GPUExternalTexture` (it expires each frame)
+  and samples it.
+- **WebGL fallback.** `importExternalTexture` is WebGPU-only. The
+  export's WebGL path (no `navigator.gpu`) still needs the 2D-canvas
+  snapshot, so both coexist.
+- **Color-management exactness.** `importExternalTexture` does a full
+  matrix + primaries/transfer → sRGB conversion whose exact output
+  differs from `drawImage` on chromatic values; the snapshot path's
+  `drawImage` has no `colorSpaceConversion` knob, whereas the external
+  texture's `GPUExternalTextureDescriptor.colorSpace` is the lever.
+  Whichever path ships must be validated against the color-conformance
+  gate (the analyzer is the arbiter), watching the non-primary patches
+  where any primaries residual surfaces.
+
+### Full-range source color fidelity through the proxy
+
+Full-range (`pc`) sources lose their range on export: the output is
+limited-range (`tv`) while the source is full-range, a real `pc`→`tv` squash
+(confirmed by ffprobe). The suspected cause is the proxy re-encode dropping full
+range — full-range sources are expected to route through a proxy — though that
+routing hasn't been directly confirmed. The color-conformance gate keeps these
+encodings (`709full`, `601full`) marked known-bad against a perceptual metric
+(see ADR 0014). First step is to confirm the path (DirectExport vs proxy for a
+full-range source); the fix is then either preserving the source range through
+the proxy re-encode, or routing full-range sources through DirectExport so they
+decode from the original like the limited-range cases already do.
+
 ### macOS and Linux verification
 
 The PixiJS + WebCodecs path runs in WebView2 today; WKWebView and

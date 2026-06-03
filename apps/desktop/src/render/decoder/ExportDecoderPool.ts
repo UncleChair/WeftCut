@@ -33,6 +33,23 @@ interface RingEntry {
   frame: VideoFrame;
 }
 
+/// E2E color diagnostic captured off the FIRST decoded frame of a handle.
+/// Surfaced through the export `done` perf message (`window.__weftcutExportPerf`)
+/// so a test can see, without Worker console access, what colorSpace we asked
+/// the decoder for vs what the decoder actually stamped on its output frames —
+/// the crux of whether WebView2's VideoDecoder propagates config.colorSpace.
+export interface ExportColorDiag {
+  mediaId: string;
+  /// `config.colorSpace` handed to `decoder.configure` (post-withDefaultColorSpace).
+  configColor: VideoColorSpaceInit | null;
+  /// `frame.colorSpace` the decoder stamped on its output (the real tag the
+  /// downstream YUV→RGB conversion honors).
+  frameColor: VideoColorSpaceInit | null;
+  /// `frame.format` (NV12 / I420 / RGBA / …) — RGBA would mean the conversion
+  /// already happened in the decoder.
+  frameFormat: string | null;
+}
+
 export class ExportFrameStore implements FrameStore {
   private entries: RingEntry[] = [];
   /// Pending `waitForPts` resolvers. On every `push` we resolve and
@@ -217,6 +234,9 @@ export class ExportSourceHandle implements DecoderHandle {
   /// the ORIGINAL file (DirectExport). Threaded into `withDefaultColorSpace`.
   private readonly sourceColor: VideoColorSpaceInit | undefined;
   readonly ring: ExportFrameStore;
+  /// E2E-only: colorSpace of the first decoded frame vs the config we passed.
+  /// Read by the export worker and forwarded in the `done` perf payload.
+  firstFrameDiag: ExportColorDiag | null = null;
   private opened: OpenedMedia | null = null;
   private config: VideoDecoderConfig | null = null;
   private decoder: VideoDecoder | null = null;
@@ -309,6 +329,22 @@ export class ExportSourceHandle implements DecoderHandle {
           return;
         }
         this.outputFrameCount += 1;
+        if (!this.firstFrameDiag) {
+          const cs = frame.colorSpace;
+          this.firstFrameDiag = {
+            mediaId: this.mediaId,
+            configColor: this.config?.colorSpace ?? null,
+            frameColor: cs
+              ? {
+                  matrix: cs.matrix ?? null,
+                  primaries: cs.primaries ?? null,
+                  transfer: cs.transfer ?? null,
+                  fullRange: cs.fullRange ?? null,
+                }
+              : null,
+            frameFormat: frame.format ?? null,
+          };
+        }
         if (this.outputFrameCount === 1 || this.outputFrameCount % 30 === 0) {
           // eslint-disable-next-line no-console
           console.log(

@@ -85,6 +85,10 @@ export interface ExportPerf {
   decodeMs: number;
   waitMs: number;
   totalMs: number;
+  /// E2E color diagnostic off the first decoded frame (config vs stamped
+  /// colorSpace + format). `ExportColorDiag` from ExportDecoderPool; typed
+  /// `unknown` here to avoid coupling the message contract to the decoder.
+  colorDiag?: unknown;
 }
 
 export type ExportEvent =
