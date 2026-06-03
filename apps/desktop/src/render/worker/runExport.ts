@@ -14,6 +14,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import type { MediaSummary, ProjectSummary } from "../../ipc";
 import { exportPlaybackPathFor } from "../../state/projectStore";
 import { referencedVideoMediaIds } from "../activeVideoLayers";
+import { ffprobeColorToWebCodecs } from "../decoder/ffprobeColorSpace";
 import type {
   ExportEvent,
   ExportProjectSnapshot,
@@ -93,16 +94,25 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
   const proxyAssetUrls: Record<string, string> = {};
   const originalAssetUrls: Record<string, string> = {};
   const mediaDims: Record<string, { width: number | null; height: number | null }> = {};
+  // Per-media source color, applied ONLY when the export decodes the ORIGINAL
+  // file (DirectExport). `exportPlaybackPathFor(m)` returns the RAW path the
+  // export will decode (proxy_path, or m.path on bypass / export_uses_original);
+  // when it equals `m.path` the decode target is the original, so its ffprobe
+  // tags are correct. For a proxy (a re-encode) we leave it undefined — the
+  // proxy's color may differ, so only the resolution default applies there.
+  const mediaColor: Record<string, VideoColorSpaceInit | undefined> = {};
   for (const m of init.mediaById.values()) {
-    const proxyPath = exportPlaybackPathFor(m);
-    if (m.kind === "Video" && referenced.has(m.id) && !proxyPath) {
+    const exportPath = exportPlaybackPathFor(m);
+    if (m.kind === "Video" && referenced.has(m.id) && !exportPath) {
       throw new Error(
         `Internal: "${m.label}" has no export-ready source (the readiness gate should have prevented this).`,
       );
     }
-    if (proxyPath) proxyAssetUrls[m.id] = convertFileSrc(proxyPath);
+    if (exportPath) proxyAssetUrls[m.id] = convertFileSrc(exportPath);
     originalAssetUrls[m.id] = convertFileSrc(m.path);
     mediaDims[m.id] = { width: m.width, height: m.height };
+    const decodesOriginal = !!exportPath && exportPath === m.path; // original, not a proxy
+    mediaColor[m.id] = decodesOriginal ? ffprobeColorToWebCodecs(m) : undefined;
   }
 
   const snapshot: ExportProjectSnapshot = {
@@ -115,6 +125,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     proxyAssetUrls,
     originalAssetUrls,
     mediaDims,
+    mediaColor,
   };
 
   // 2. OffscreenCanvas to transfer to the Worker.

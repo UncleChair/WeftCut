@@ -42,6 +42,13 @@ export interface SourceHandleInit {
   mediaId: string;
   /// `asset://` URL of the source's 1080p master proxy.
   proxyAssetUrl: string;
+  /// Source color tags mapped from ffprobe (matrix/range/primaries/transfer),
+  /// applied ONLY when the decode target is the ORIGINAL file (DirectExport) —
+  /// a proxy is a re-encode whose color may not match. Threaded into
+  /// `withDefaultColorSpace` as the middle-priority layer (below a live
+  /// mediabunny VUI tag, above the resolution default). Undefined ⇒ untagged
+  /// or proxy decode ⇒ resolution default applies. The preview pool ignores it.
+  sourceColor?: VideoColorSpaceInit | undefined;
 }
 
 /// Decoded-frame surface as exposed to the Compositor / VideoClipSprite.

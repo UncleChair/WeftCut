@@ -247,6 +247,9 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
           layerId: c.layerId,
           mediaId: c.mediaId,
           proxyAssetUrl: proxyUrl,
+          // Defined only for original-file (DirectExport) decodes; undefined for
+          // proxies. Threads the source's real color tags into the decoder.
+          sourceColor: req.project.mediaColor[c.mediaId],
         });
         await handle.decodeRange(c.srcAUs, c.srcBUs);
       }),
