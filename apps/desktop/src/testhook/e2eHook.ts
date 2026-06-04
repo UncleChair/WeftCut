@@ -19,7 +19,11 @@ import { mergeSettings, type ExportSettings } from "../render/exportSettings";
 import { useProjectStore, exportPlaybackPathFor } from "../state/projectStore";
 import { exists } from "@tauri-apps/plugin-fs";
 
-type RunExport = (settings: ExportSettings, outputPath: string) => Promise<void>;
+type RunExport = (
+  settings: ExportSettings,
+  outputPath: string,
+  range?: { startUs: number; endUs: number },
+) => Promise<void>;
 
 export interface E2EHook {
   /// Create a blank workspace with `canvas` dims at `<parentFolder>/<name>/`,
@@ -33,11 +37,14 @@ export interface E2EHook {
   }): Promise<void>;
   /// Import `mediaAbsPath`, place it 1:1 at t=0 on a fresh video track, and
   /// export to `outputAbsPath`. `settings` overlays DEFAULT_EXPORT_SETTINGS
-  /// (H.264/mp4, follow-composition res+fps). Rejects if no output is written.
+  /// (H.264/mp4, follow-composition res+fps). `range` trims the export to
+  /// `[startUs, endUs)` (audio + video); omit for the whole composition.
+  /// Rejects if no output is written.
   exportClip(args: {
     mediaAbsPath: string;
     outputAbsPath: string;
     settings?: Partial<ExportSettings>;
+    range?: { startUs: number; endUs: number };
   }): Promise<void>;
 }
 
@@ -102,14 +109,14 @@ function waitForMediaExportReady(mediaId: string, timeoutMs: number): Promise<vo
 /// App-side: the real export. `runExport` is App's `runExportWithSettings`,
 /// which awaits the full encode + audio + mux to completion.
 export function installExportHook(runExport: RunExport): void {
-  hookSlot().exportClip = async ({ mediaAbsPath, outputAbsPath, settings }) => {
+  hookSlot().exportClip = async ({ mediaAbsPath, outputAbsPath, settings, range }) => {
     const mediaId = await importMedia(mediaAbsPath);
     const trackId = await addVideoTrack();
     await addMediaLayer(trackId, mediaId, 0);
     // Mirror a real user: don't export until the clip is export-ready in the
     // store the gate reads (see waitForMediaExportReady).
     await waitForMediaExportReady(mediaId, 60000);
-    await runExport(mergeSettings(settings ?? null), outputAbsPath);
+    await runExport(mergeSettings(settings ?? null), outputAbsPath, range);
     if (!(await exists(outputAbsPath))) {
       throw new Error(`export produced no output file at ${outputAbsPath}`);
     }
