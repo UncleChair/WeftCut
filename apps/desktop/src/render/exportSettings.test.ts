@@ -108,9 +108,10 @@ describe("codecString", () => {
 
 describe("estimateBytes / formatBytes", () => {
   it("adds the given audio bitrate on top of the video bitrate", () => {
-    const withAudio = estimateBytes(8_000_000, 10_000_000, 192_000);
-    const noAudio = estimateBytes(8_000_000, 10_000_000, 0);
-    expect(withAudio).toBeGreaterThan(noAudio);
+    // 8 Mbps × 10 s / 8 bits-per-byte = 10_000_000 bytes
+    expect(estimateBytes(8_000_000, 10_000_000, 0)).toBe(10_000_000);
+    // + 192 kbps audio → +240_000 bytes
+    expect(estimateBytes(8_000_000, 10_000_000, 192_000)).toBe(10_240_000);
   });
   it("formats bytes into human units", () => {
     expect(formatBytes(10_500_000)).toBe("10.5 MB");
@@ -264,6 +265,12 @@ describe("clampExportRange", () => {
   });
   it("falls back to the whole span when start >= end", () => {
     expect(clampExportRange(8_000_000, 2_000_000, 10_000_000)).toEqual({
+      startUs: 0,
+      endUs: 10_000_000,
+    });
+  });
+  it("returns the whole span when an input is NaN", () => {
+    expect(clampExportRange(NaN, 5_000_000, 10_000_000)).toEqual({
       startUs: 0,
       endUs: 10_000_000,
     });

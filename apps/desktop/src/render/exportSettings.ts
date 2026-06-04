@@ -47,7 +47,7 @@ export interface ExportSettings {
   /// Bits per second, used only when quality === "custom".
   customBitrate: number | null;
   rateMode: RateMode;
-  /// Output container. Audio stays AAC for all three (WebM deferred).
+  /// Output container. Audio is AAC (any container) or Opus (MKV only).
   container: Container;
   /// Audio track settings. Persisted; null/missing back-fills to defaults.
   audio: AudioSettings;
@@ -219,6 +219,13 @@ export function clampExportRange(
   endUs: number,
   durationUs: number,
 ): { startUs: number; endUs: number } {
+  if (
+    !Number.isFinite(startUs) ||
+    !Number.isFinite(endUs) ||
+    !Number.isFinite(durationUs)
+  ) {
+    return { startUs: 0, endUs: Math.max(0, durationUs) };
+  }
   const lo = Math.max(0, Math.min(startUs, durationUs));
   const hi = Math.max(0, Math.min(endUs, durationUs));
   if (hi <= lo) return { startUs: 0, endUs: durationUs };
