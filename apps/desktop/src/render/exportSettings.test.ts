@@ -4,7 +4,6 @@ import {
   type Container,
   DEFAULT_EXPORT_SETTINGS,
   DEFAULT_AUDIO_SETTINGS,
-  type AudioSettings,
   codecString,
   computeBitrate,
   containerExtension,
