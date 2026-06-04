@@ -21,7 +21,15 @@ import {
   downscaleHeightOptions,
   mergeSettings,
   resolveOutputDims,
+  clampExportRange,
+  type AudioCodecId,
+  AUDIO_BITRATES,
+  AUDIO_SAMPLE_RATES,
+  AUDIO_CHANNELS,
+  audioCodecsForContainer,
+  isAudioCodecContainerValid,
 } from "../render/exportSettings";
+import { formatTimecode, parseTimecode } from "../frames";
 
 interface Comp {
   width: number;
@@ -32,16 +40,29 @@ interface Comp {
 
 interface Props {
   comp: Comp;
+  currentTimeUs: number;
+  durationUs: number;
   onCancel: () => void;
-  onConfirm: (settings: ExportSettings, path: string) => void;
+  onConfirm: (
+    settings: ExportSettings,
+    path: string,
+    range: { startUs: number; endUs: number },
+  ) => void;
 }
 
-export function ExportSettingsDialog({ comp, onCancel, onConfirm }: Props) {
+export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, onCancel, onConfirm }: Props) {
   const { t } = useTranslation();
   const [settings, setSettings] = useState<ExportSettings | null>(null);
   const [location, setLocation] = useState<string>("");
   const [filename, setFilename] = useState<string>("weftcut-export");
   const [encodePath, setEncodePath] = useState<EncodePath | null>(null);
+  const [rangeMode, setRangeMode] = useState<"full" | "custom">("full");
+  const [rangeStartUs, setRangeStartUs] = useState<number>(0);
+  const [rangeEndUs, setRangeEndUs] = useState<number>(durationUs);
+  // Keep the default "custom" end in sync if the project duration arrives late.
+  useEffect(() => {
+    setRangeEndUs((e) => (e === 0 ? durationUs : e));
+  }, [durationUs]);
 
   const compFps = comp.fps_num / comp.fps_den;
 
@@ -119,11 +140,18 @@ export function ExportSettingsDialog({ comp, onCancel, onConfirm }: Props) {
     const ext = containerExtension(settings.container);
     const out = await join(location, `${filename.trim()}.${ext}`);
     await exportSettingsSet(settings).catch(() => {});
-    onConfirm(settings, out);
+    const range =
+      rangeMode === "full"
+        ? { startUs: 0, endUs: durationUs }
+        : clampExportRange(rangeStartUs, rangeEndUs, durationUs);
+    onConfirm(settings, out, range);
   }
 
   const canExport =
-    !!location && filename.trim().length > 0 && encodePath !== null;
+    !!location &&
+    filename.trim().length > 0 &&
+    encodePath !== null &&
+    (rangeMode === "full" || rangeStartUs < rangeEndUs);
 
   return (
     <div className="settings-overlay" role="dialog" aria-modal="true">
@@ -234,6 +262,74 @@ export function ExportSettingsDialog({ comp, onCancel, onConfirm }: Props) {
 
                 <div className="export-row">
                   <span className="settings-toggle-label">
+                    {t("export_dialog.range")}
+                  </span>
+                  <select
+                    className="export-select"
+                    value={rangeMode}
+                    onChange={(e) =>
+                      setRangeMode(e.target.value as "full" | "custom")
+                    }
+                  >
+                    <option value="full">{t("export_dialog.range_full")}</option>
+                    <option value="custom">{t("export_dialog.range_custom")}</option>
+                  </select>
+                </div>
+                {rangeMode === "custom" && (
+                  <>
+                    <div className="export-row">
+                      <span className="settings-toggle-label">
+                        {t("export_dialog.range_in")}
+                      </span>
+                      <span className="export-range-field">
+                        <input
+                          type="text"
+                          className="settings-input"
+                          spellCheck={false}
+                          value={formatTimecode(rangeStartUs, comp.fps_num, comp.fps_den)}
+                          onChange={(e) => {
+                            const us = parseTimecode(e.target.value, comp.fps_num, comp.fps_den);
+                            if (us !== null) setRangeStartUs(us);
+                          }}
+                        />
+                        <button
+                          onClick={() =>
+                            setRangeStartUs(Math.min(currentTimeUs, rangeEndUs))
+                          }
+                        >
+                          {t("export_dialog.set_to_playhead")}
+                        </button>
+                      </span>
+                    </div>
+                    <div className="export-row">
+                      <span className="settings-toggle-label">
+                        {t("export_dialog.range_out")}
+                      </span>
+                      <span className="export-range-field">
+                        <input
+                          type="text"
+                          className="settings-input"
+                          spellCheck={false}
+                          value={formatTimecode(rangeEndUs, comp.fps_num, comp.fps_den)}
+                          onChange={(e) => {
+                            const us = parseTimecode(e.target.value, comp.fps_num, comp.fps_den);
+                            if (us !== null) setRangeEndUs(us);
+                          }}
+                        />
+                        <button
+                          onClick={() =>
+                            setRangeEndUs(Math.max(currentTimeUs, rangeStartUs))
+                          }
+                        >
+                          {t("export_dialog.set_to_playhead")}
+                        </button>
+                      </span>
+                    </div>
+                  </>
+                )}
+
+                <div className="export-row">
+                  <span className="settings-toggle-label">
                     {t("export_dialog.codec")}
                   </span>
                   <select
@@ -241,9 +337,10 @@ export function ExportSettingsDialog({ comp, onCancel, onConfirm }: Props) {
                     value={settings.codec}
                     onChange={(e) => {
                       const codec = e.target.value as CodecId;
-                      // AV1+MOV is invalid → fall back to MP4 for the container.
                       if (!isCodecContainerValid(codec, settings.container)) {
-                        patch({ codec, container: "mp4" });
+                        // Falls back to MP4 → Opus (MKV-only) must also reset.
+                        const audio = { ...settings.audio, codec: "aac" as AudioCodecId };
+                        patch({ codec, container: "mp4", audio });
                       } else {
                         patch({ codec });
                       }
@@ -273,9 +370,16 @@ export function ExportSettingsDialog({ comp, onCancel, onConfirm }: Props) {
                   <select
                     className="export-select"
                     value={settings.container}
-                    onChange={(e) =>
-                      patch({ container: e.target.value as Container })
-                    }
+                    onChange={(e) => {
+                      const container = e.target.value as Container;
+                      const audio = isAudioCodecContainerValid(
+                        settings.audio.codec,
+                        container,
+                      )
+                        ? settings.audio
+                        : { ...settings.audio, codec: "aac" as AudioCodecId };
+                      patch({ container, audio });
+                    }}
                   >
                     {containersForCodec(settings.codec).map((c) => (
                       <option key={c} value={c}>
@@ -354,6 +458,116 @@ export function ExportSettingsDialog({ comp, onCancel, onConfirm }: Props) {
                     <option value="cbr">CBR</option>
                   </select>
                 </div>
+
+                <div className="export-row">
+                  <span className="settings-toggle-label">
+                    {t("export_dialog.audio_include")}
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={settings.audio.include}
+                    onChange={(e) =>
+                      patch({ audio: { ...settings.audio, include: e.target.checked } })
+                    }
+                  />
+                </div>
+                {settings.audio.include && (
+                  <>
+                    <div className="export-row">
+                      <span className="settings-toggle-label">
+                        {t("export_dialog.audio_codec")}
+                      </span>
+                      <select
+                        className="export-select"
+                        value={settings.audio.codec}
+                        onChange={(e) =>
+                          patch({
+                            audio: {
+                              ...settings.audio,
+                              codec: e.target.value as AudioCodecId,
+                            },
+                          })
+                        }
+                      >
+                        {audioCodecsForContainer(settings.container).map((c) => (
+                          <option key={c} value={c}>
+                            {c.toUpperCase()}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="export-row">
+                      <span className="settings-toggle-label">
+                        {t("export_dialog.audio_bitrate")}
+                      </span>
+                      <select
+                        className="export-select"
+                        value={settings.audio.bitrate}
+                        onChange={(e) =>
+                          patch({
+                            audio: { ...settings.audio, bitrate: Number(e.target.value) },
+                          })
+                        }
+                      >
+                        {AUDIO_BITRATES.map((b) => (
+                          <option key={b} value={b}>
+                            {b / 1000} kbps
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="export-row">
+                      <span className="settings-toggle-label">
+                        {t("export_dialog.audio_channels")}
+                      </span>
+                      <select
+                        className="export-select"
+                        value={settings.audio.channels ?? ""}
+                        onChange={(e) =>
+                          patch({
+                            audio: {
+                              ...settings.audio,
+                              channels: e.target.value ? Number(e.target.value) : null,
+                            },
+                          })
+                        }
+                      >
+                        <option value="">{t("export_dialog.follow_comp")}</option>
+                        {AUDIO_CHANNELS.map((c) => (
+                          <option key={c} value={c}>
+                            {c === 1
+                              ? t("export_dialog.channels_mono")
+                              : t("export_dialog.channels_stereo")}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="export-row">
+                      <span className="settings-toggle-label">
+                        {t("export_dialog.audio_sample_rate")}
+                      </span>
+                      <select
+                        className="export-select"
+                        value={settings.audio.sampleRate ?? ""}
+                        onChange={(e) =>
+                          patch({
+                            audio: {
+                              ...settings.audio,
+                              sampleRate: e.target.value ? Number(e.target.value) : null,
+                            },
+                          })
+                        }
+                      >
+                        <option value="">{t("export_dialog.follow_comp")}</option>
+                        {AUDIO_SAMPLE_RATES.map((r) => (
+                          <option key={r} value={r}>
+                            {(r / 1000).toFixed(1)} kHz
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </>
+                )}
 
                 <div className="export-actions">
                   <button onClick={onCancel}>
