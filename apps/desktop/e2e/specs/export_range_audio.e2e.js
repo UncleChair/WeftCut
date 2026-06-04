@@ -159,6 +159,28 @@ function dominantTone(pcm, second, candidates, sr = 48000) {
   return bestF;
 }
 
+/// ffprobe a file's video keyframe timestamps (seconds, sorted). Returns null
+/// when ffprobe isn't on PATH (soft-skip). `-skip_frame nokey` decodes only
+/// keyframes, so `frame=pts_time` lists their presentation times.
+function keyframeTimestamps(file) {
+  const r = spawnSync(
+    "ffprobe",
+    [
+      "-v", "error", "-select_streams", "v", "-skip_frame", "nokey",
+      "-show_entries", "frame=pts_time", "-of", "csv=p=0", file,
+    ],
+    { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 },
+  );
+  if (r.error) return null; // ffprobe not found
+  if (r.status !== 0) throw new Error(`ffprobe keyframes failed: ${r.stderr ?? ""}`);
+  return r.stdout
+    .trim()
+    .split(/\s+/)
+    .map(Number)
+    .filter((t) => !Number.isNaN(t))
+    .sort((a, b) => a - b);
+}
+
 /// ffprobe a file for audio streams. Returns true/false, or null when ffprobe
 /// isn't on PATH (so the caller can soft-skip rather than fail on tooling).
 function hasAudioStream(file) {
@@ -243,5 +265,29 @@ describe("export range + audio settings (real WebView2)", function () {
       return;
     }
     expect(audio).toBe(false);
+  });
+
+  it("keyframe interval setting controls the GOP cadence", async function () {
+    // Whole-clip export with a 2 s keyframe interval. The WebCodecs path forces
+    // a keyframe every round(fps×2) frames, so ffprobe should see keyframes
+    // ~2 s apart — clearly not the 1 s default. Proves the setting reaches the
+    // real encoder, not just the unit-level gopFrames math.
+    const output = path.resolve(os.tmpdir(), "weftcut-e2e-gop.mp4");
+    rmSync(output, { force: true });
+
+    await bootAndExport({ output, settings: { keyframeIntervalSec: 2 } });
+
+    const kf = keyframeTimestamps(output);
+    if (kf === null) {
+      console.warn("[e2e] ffprobe not on PATH — skipping the keyframe-spacing assertion");
+      return;
+    }
+    console.log("[e2e] keyframe timestamps (s):", JSON.stringify(kf));
+    expect(kf.length).toBeGreaterThanOrEqual(3); // enough gaps to measure
+    const gaps = kf.slice(1).map((t, i) => t - kf[i]).sort((a, b) => a - b);
+    const medianGap = gaps[Math.floor(gaps.length / 2)];
+    // ~2 s cadence, clearly not the 1 s default (~1 s) or 5 s.
+    expect(medianGap).toBeGreaterThan(1.5);
+    expect(medianGap).toBeLessThan(2.5);
   });
 });
