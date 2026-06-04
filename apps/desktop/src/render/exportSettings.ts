@@ -51,6 +51,11 @@ export interface ExportSettings {
   /// their GOP from this via gopFrames, so WebCodecs and the ffmpeg transcode
   /// agree.
   keyframeIntervalSec: number;
+  /// Encoder acceleration. "auto" prefers hardware (the default, today's
+  /// behavior); "software" forces a CPU encoder — slower, but higher quality
+  /// per bitrate and bit-reproducible across machines. Not a color setting:
+  /// color is governed by the colorspace tags + the conformance gate either way.
+  hwAccel: "auto" | "software";
   /// Output container. Audio is AAC (any container) or Opus (MKV only).
   container: Container;
   /// Audio track settings. Persisted; null/missing back-fills to defaults.
@@ -65,6 +70,7 @@ export const DEFAULT_EXPORT_SETTINGS: ExportSettings = {
   customBitrate: null,
   rateMode: "vbr",
   keyframeIntervalSec: 1,
+  hwAccel: "auto",
   container: "mp4",
   audio: DEFAULT_AUDIO_SETTINGS,
 };

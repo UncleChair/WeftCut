@@ -481,6 +481,24 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, onCancel
 
                 <div className="export-row">
                   <span className="settings-toggle-label">
+                    {t("export_dialog.encoder_accel")}
+                  </span>
+                  <select
+                    className="export-select"
+                    value={settings.hwAccel}
+                    onChange={(e) =>
+                      patch({ hwAccel: e.target.value as "auto" | "software" })
+                    }
+                  >
+                    <option value="auto">{t("export_dialog.encoder_auto")}</option>
+                    <option value="software">
+                      {t("export_dialog.encoder_software")}
+                    </option>
+                  </select>
+                </div>
+
+                <div className="export-row">
+                  <span className="settings-toggle-label">
                     {t("export_dialog.audio_include")}
                   </span>
                   <input

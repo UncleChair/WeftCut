@@ -723,6 +723,8 @@ export interface TranscodeSpec {
   durationUs: number;
   /// Frames between keyframes for the ffmpeg `-g` (matches the WebCodecs GOP).
   gop: number;
+  /// Force a software ffmpeg encoder (libx265/libsvtav1/…) instead of HW-first.
+  software: boolean;
 }
 
 /// Tauri event emitted (0.0..=1.0) while ffmpeg transcodes the video.

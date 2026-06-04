@@ -2207,6 +2207,8 @@ pub struct TranscodeSpec {
     pub cbr: bool,
     pub duration_us: i64,
     pub gop: u64, // frames between keyframes (ffmpeg -g)
+    #[serde(default)]
+    pub software: bool, // force a software encoder instead of HW-first
 }
 
 /// Mux `video_path` + `audio_path` into `output_path`. With no `transcode`,
@@ -2238,7 +2240,12 @@ pub async fn mux_export(
         Some(spec) => {
             let codec = crate::export::TargetCodec::parse(&spec.video_codec)
                 .ok_or_else(|| format!("unknown codec {}", spec.video_codec))?;
-            let encoder = hw_cache.encoder_for(codec).await;
+            // "software" forces the CPU encoder; otherwise HW-first (cached probe).
+            let encoder: String = if spec.software {
+                codec.software_encoder().to_string()
+            } else {
+                (*hw_cache.encoder_for(codec).await).clone()
+            };
             export::transcode_and_mux(
                 &app,
                 &encoder,
