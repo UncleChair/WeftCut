@@ -162,3 +162,17 @@ validator. Additional types (wipe, slide, push) land as new
 - Remote-server MCP variant (Tailscale-friendly) with proper auth.
 - Plugin system for third-party effects via WebAssembly.
 - Collaboration (CRDT-based shared editing).
+- **Native Rust export backend (wgpu compositing + ffmpeg 10-bit encode).**
+  The escape hatch from the WebCodecs *output* ceiling: WebView2's encoder
+  emits 8-bit only and ignores the input `colorSpace` (resolution-default
+  BT.709 tagging — see ADR 0014 / [`render.md`](render.md)), so true 10-bit /
+  HDR output and exact color-tag control are unreachable in-webview. A native
+  render/export path — decode → wgpu composite → ffmpeg encode (x265 Main10 /
+  libaom 10-bit) with no webview round-trip — lifts both ceilings and drops the
+  asset-scheme per-frame transfer cost. Scope it to the *export* path only; the
+  React/Pixi editor stays for editing (no native-GUI / gpui rewrite — gpui has
+  no custom-GPU-render hook today anyway). Revisit only if 10-bit/HDR output
+  becomes a real deliverable requirement; today the practical loss is a single
+  transcode generation, since output is 8-bit either way. Distinct from the
+  "WebGPU compositor backend" item above (that's in-webview real-time effects;
+  this is the native output pipeline).
