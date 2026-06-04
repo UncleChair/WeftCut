@@ -1,0 +1,237 @@
+# Templates
+
+A template is a parameterized, time-varying SVG overlay — a lower-third, a
+countdown, an animated title card. The user picks one from the catalog, fills in
+its props, and drops it on the timeline as a `Template` layer; from then on it
+must produce correct pixels at every composition frame, in both the live preview
+and the export.
+
+This doc covers how a template instance becomes pixels. For the data model
+(`TemplateParams`, validation, the `add_template` surface) see
+[`data-model.md`](data-model.md); for the catalog embedding and the generic
+compositor see [`render.md`](render.md). The decision to author templates as SVG
+rather than HTML/CSS — and why — is [ADR 0015](adr/0015-templates-rasterize-from-svg-not-foreignobject.md).
+
+## The principle, and the obstacle
+
+The renderer's load-bearing principle is *preview pixels equal export pixels by
+construction* — one compositor feeds both. Templates have to honor it across two
+surfaces with different capabilities, and under one hard platform limit:
+
+- The **preview** runs in the webview and has a DOM.
+- The **export** runs in a Web Worker against an `OffscreenCanvas`, with **no
+  DOM** — no `document`, no `<iframe>`, no `Image`. It cannot run a template.
+- The only DOM-to-bitmap path the web platform offers that yields a *usable*
+  bitmap is **plain SVG**. An HTML/CSS overlay rasterized through an SVG
+  `<foreignObject>` is cross-origin-tainted in WebView2 — unreadable and
+  un-uploadable to the GPU compositor (ADR 0015). So templates are SVG.
+
+Two facts about SVG settle the architecture:
+
+- A template's pixels can only be *produced* where there is a DOM — the main
+  thread runs `render(t)` and rasterizes via `<img>` → `createImageBitmap`.
+- A Web Worker cannot even *decode* SVG (`createImageBitmap` on an SVG blob fails
+  off the main thread). So the export Worker can't rasterize a template either.
+
+The resolution: **`render(t)` and rasterization both happen on the main thread**,
+for preview and for export. The export Worker receives already-rasterized
+bitmaps from the main thread rather than producing them. Because a single
+main-thread rasterizer feeds both surfaces, preview equals export by
+construction — faithfully, at each surface's resolution.
+
+## Boundaries
+
+- **In scope:** the authoring contract a template must satisfy, the capture
+  harness that turns it into bitmaps, the raster cache and its escalation levers,
+  and how the compositor and export read template frames.
+- **Out of scope:** adding/validating template layers (data-model.md), the
+  generic per-frame composite (render.md), and audio/mux (rendering.md). A
+  template carries no audio.
+
+## Authoring contract
+
+A template is a directory of `manifest.json` + `template.svg` + `render.js`,
+embedded in the binary via `include_str!` (`src-tauri/src/templates/`) and
+mirrored to the webview catalog. `template.svg` is the markup; `render.js` is the
+pure render function (kept separate so the serialized frame never carries logic).
+
+The manifest declares identity, natural size, default duration, and a typed
+`props_schema` (string / color / number, each with a default):
+
+```json
+{
+  "id": "countdown",
+  "name": "Countdown",
+  "version": 1,
+  "size": [480, 480],
+  "default_duration_s": 5.0,
+  "props_schema": { "seconds": { "type": "number", "default": 5 }, … }
+}
+```
+
+The SVG obeys one rule that makes a template *capturable*:
+
+> **A template renders as a pure function of time.** It exposes a synchronous
+> `render(tSec, durationSec, props)` that fully produces the SVG DOM state for
+> time `t` in a single call, and nothing else drives it.
+
+Concretely:
+
+- **`render` is synchronous and total.** Calling it with a timestamp leaves the
+  SVG in exactly the state that timestamp should display. There is no
+  `requestAnimationFrame`, no `setTimeout`, no SMIL or CSS animation, no
+  self-advancing clock. A template animates by *mutating its own SVG* —
+  `element.textContent`, `setAttribute("transform", …)`, `stroke-dashoffset`,
+  attribute and class toggles — in response to `tSec`.
+- **Absolute vs normalized pacing is the template's choice.** A countdown reads
+  `tSec` (it ticks real seconds; trimming the layer shorter truncates it). A
+  progress bar reads `tSec / durationSec` (it fills across whatever length the
+  layer has). Passing both leaves the decision with the author.
+- **SVG only.** Shapes, paths, `<text>`, gradients, masks, clips, transforms,
+  opacity — anything SVG renders. **No `<foreignObject>`** (it taints the raster;
+  ADR 0015), no HTML/CSS layout, no `<canvas>`. SVG has no automatic text
+  wrapping, so multi-line text is explicit `<tspan>` line-breaking; the harness
+  can measure runs via `getComputedTextLength` to compute where to break.
+- **Fonts are embedded and injected at raster time.** An SVG rasterized through
+  `<img>` is an isolated document — it cannot see the host's installed or app
+  fonts. A non-system font must appear as a data-URL `@font-face` inside the SVG.
+  Templates are authored and stored *font-free* (referencing the family by name);
+  the harness concatenates the `@font-face` block in just before rasterizing, so
+  the font is carried once per template rather than duplicated into every stored
+  frame.
+- **Readiness handshake.** Before any frame is captured the template resolves a
+  one-time readiness promise once its assets are present — fonts
+  (`document.fonts.ready`, after the `@font-face` is applied) and any embedded
+  images. Per-frame `render` stays synchronous; readiness is awaited once, up
+  front.
+
+The harness defensively stubs `performance.now`, `Date.now`, and
+`requestAnimationFrame` inside the template's context, so a stray wall-clock read
+can't introduce nondeterminism between two captures of the same `t`.
+
+Props are validated against `props_schema` before they reach the template
+(unknown keys reject, missing keys fall back to defaults) and canonicalized into
+a stable key order, so two instances with the same inputs produce the same bytes.
+
+## Capture harness
+
+Turning a running template into a bitmap is a two-step path the harness owns:
+
+1. The template is hosted in a **sandboxed iframe** — `allow-scripts`,
+   deliberately **without** `allow-same-origin`, so template code runs in an
+   opaque origin that cannot reach the app's DOM or Tauri APIs. This isolation is
+   uniform for built-in and (eventually) community templates.
+2. A generic harness script in the iframe holds the template, receives
+   `{ t, props }` from the host, calls `render(tSec, durationSec, props)`, forces
+   a synchronous reflow, and **serializes the post-render SVG element to a
+   string** — the SVG subtree only, never the `render` logic, so the output stays
+   well-formed XML — with the `@font-face` injected and any images embedded as
+   `data:` URLs. It `postMessage`s that string to the host.
+3. The host (the rasterizer) wraps the string in a `Blob`, loads it through an
+   `<img>` element, and calls `createImageBitmap(img)`. (`createImageBitmap`
+   applied directly to an SVG `Blob` fails — the `<img>` indirection is required.)
+   No scripts run during rasterization; the SVG is already in its final state.
+
+A single harness iframe is reused across templates via a job queue rather than
+mounting one per layer. The picker, the preview, and the export's raster pass are
+all thin drivers of this one harness.
+
+## Raster cache and escalation
+
+`render(t)` is a pure function, and a single SVG frame rasterizes in low
+single-digit milliseconds — comfortably within a frame budget for typical
+playback. So the default is to **rasterize on demand**, with no persisted
+artifact at all: the source of truth is the template plus its props, which the
+project already holds. Three escalation levers — measured on the user's own
+hardware — handle progressively heavier cases. They are one mechanism over one
+shared raster function, so a heavier lever is a small add, not a separate path:
+
+- **L0 — on demand (default).** The playhead's frame is rasterized when needed
+  and bound as a texture. Zero disk, zero pre-work, instant after an edit.
+  Resolution-independent: the frame is rastered at the resolution the composite
+  needs, so a template scaled up never blurs.
+- **L1 — in-RAM lookahead.** When a template — or the number of templates on one
+  frame — is heavy enough that on-demand raster can't stay ahead of playback,
+  frames are pre-rastered ahead of the playhead into a bounded in-memory ring,
+  the same lookahead pattern the video `FrameRing` uses (render.md). Buys smooth
+  playback; costs bounded RAM; no disk.
+- **L2 — persisted PNG (opt-in / auto-escalated).** The frame sequence is written
+  to disk under the workspace `Cache/raster/`, one **PNG** per frame (PNG because
+  the Canvas API's WebP encode is lossy and crisp text edges matter; ADR 0015),
+  keyed by a hash of `(templateId, version, canonicalProps, renderWidth,
+  renderHeight, fps, durationFrames)`. Buys **persistence** — the sequence
+  survives reload, caps the in-RAM working set, and lets the export read frames
+  straight off disk — rather than additional smoothness (L1 already gives that).
+  The on-disk sequence is safe to delete; it regenerates.
+
+Escalation is **measurement-driven, not a setting the user must predict.** On add
+or edit, the harness times one raster on the actual hardware; a template, or a
+per-frame template count, that exceeds the frame budget auto-escalates to L1, and
+heavy or persistence-worthy cases to L2. A manual per-layer override is the
+escape hatch, not the primary control. Render and bake resolution follow the
+composition (display) size — never below it — so persisted frames don't blur on
+scale-up.
+
+### What is and isn't part of the cache key
+
+The layer's **transform and opacity are not** rastered or keyed — they're applied
+by the Pixi sprite at composite time, so moving, scaling, or fading a template
+never re-rasterizes it.
+
+| Change | Effect |
+|---|---|
+| props | re-raster (new key) |
+| duration | re-raster |
+| composition fps | re-raster (the frame grid changed) |
+| layer transform / opacity | no re-raster (sprite-applied) |
+| composition width / height | no persisted-key change (L0/L1 raster at composite res) |
+
+Identical inputs hash to the same L2 key and share one sequence. Patch
+`TemplateParams.props` field-wise rather than replacing the whole `params`, or
+the cache thrashes on every prop tweak (data-model.md pitfall).
+
+Persisted (L2) baking never runs as one synchronous burst: a single reused
+harness drains a job queue **time-sliced** — a frame budget per idle tick,
+yielding between — in **playhead-first** order (the visible frame first, then
+fanning outward). Rapid edits **debounce** and **cancel the in-flight bake**.
+Orphaned sequences (superseded prop values) are swept when the project loads.
+
+## Compositor integration
+
+`compositeFrame(tUs)` passes each template sprite its layer-relative time
+`tInLayerUs = tUsSnapped − layer.t_start_us` (the same relative convention
+`SubtitlesSprite` uses). The time resets to 0 at the layer's start — a template
+has no source-in offset, so trimming the front restarts it. The sprite maps that
+to a frame index on the **exact-rational frame grid** (the shared `frames.ts`
+helpers — never a lossy `round(µs · fps)`, which drifts into off-by-one frame
+duplication), clamps it to `[0, durationFrames − 1]`, obtains the frame (L0
+raster, L1 ring, or L2 file), and binds the bitmap as its texture. Transform and
+opacity from the layer summary apply to the sprite itself.
+
+## Export
+
+The export Worker has no DOM and cannot decode SVG, so it cannot rasterize a
+template. Before the encode loop, the **main thread** rasterizes every template
+layer's frames — through the same harness, at export resolution — and hands the
+bitmaps to the Worker (transferred); this is surfaced through the export
+"preparing" wait. When a template is already persisted at L2, the Worker reads
+its PNG files directly (`createImageBitmap` on a `Blob` works in Worker scope for
+raster formats), skipping the round-trip. Either way the bytes come from the same
+rasterizer the preview used, so the exported template matches the preview.
+
+## Picker
+
+The catalog picker drives `render(t)` through the same harness as a scrubbable
+preview, rather than mounting a free-running iframe. What the picker shows is the
+same SVG at the same timestamps the timeline and export rasterize — picker,
+timeline, and export agree pixel-for-pixel. Prop edits re-render the current
+frame only (debounced), so editing stays responsive.
+
+## Agent surface
+
+`add_template` stays props-only — agents reason about *what* a template says,
+never about rasterization or frame timing. Raster state is exposed read-only for
+automation that needs to sequence around it: each template layer reports
+`idle | rastering{progress} | ready | error`, both as a query and on the
+`/events` change feed, and the export "preparing" wait blocks until pending L2
+bakes finish. Agents observe; they do not drive.

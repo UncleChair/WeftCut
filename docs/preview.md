@@ -141,13 +141,16 @@ its own animation state internally.
 
 ## Templates
 
-`TemplateSprite` owns a `foreignObject` SVG raster. The template's HTML
-+ CSS is composed into an SVG `<foreignObject>`, fonts are embedded as
-base64 `@font-face` declarations, and the SVG is converted to an
-`ImageBitmap` via `createImageBitmap`. The resulting bitmap becomes a
-Pixi texture. The raster cache is keyed on content hash
-(template id + props + composition canvas size), shared across sprite
-instances of the same template.
+`TemplateSprite` binds a rastered SVG frame as a Pixi texture. The
+template's `render(t)` (run in a sandboxed iframe harness) produces an
+SVG for the playhead's layer-relative time; that SVG — with its
+`@font-face` injected — is rasterized to an `ImageBitmap` via an `<img>`
+→ `createImageBitmap`, and the bitmap becomes the texture. HTML/CSS via
+`<foreignObject>` is not used (its raster taints in WebView2; ADR 0015).
+In preview the frame is rastered on demand, with a RAM lookahead ring
+for heavy templates; the raster cache is keyed on content hash
+(template id + version + props + fps + duration), shared across sprite
+instances of the same template. See [`templates.md`](templates.md).
 
 ## Diagnostics
 

@@ -140,8 +140,8 @@ weftcut/
         cache/                ← workspace-scoped derivative cache
                               ←   (workspace/Cache/{proxies, thumbnails,
                               ←    waveforms, frames, voiceover, …})
-        templates/            ← built-in HTML template catalog
-                              ←   (manifests + HTML + CSS, embedded)
+        templates/            ← built-in SVG template catalog
+                              ←   (manifests + SVG + render.js, embedded)
         mcp/                  ← rmcp server, tool definitions, resources,
                               ←   prompts, /events change-feed
         cloud/                ← provider-agnostic cloud APIs:
@@ -174,7 +174,7 @@ weftcut/
                               ←   FrameRing, ExportDecoderPool,
                               ←   probeSourceDecodable, scrub
         sprite/               ←   per-layer-kind Sprite implementations
-        templates/            ←   foreignObject rasterizer + cache
+        templates/            ←   SVG rasterizer + raster cache
         subtitles/            ←   JASSUB binding
         worker/               ←   exportWorker + encoder (OffscreenCanvas)
         audio/                ←   AudioGraph + AudioMixer (Web Audio)
@@ -228,13 +228,14 @@ Adding more locales is a strict addition — drop a resource file under
 | Rust logs / `tracing` output | Stay English. Operator-facing. |
 | Tauri command errors | Tagged structured form (`{kind, detail}`) returned to the UI; the UI maps recognized kinds to localized messages. |
 | MCP tool errors | English machine-readable strings. Agents do their own translation. |
-| Built-in HTML templates | Each template carries text in its props; localization is per-project content. |
+| Built-in templates | Each template carries text in its props; localization is per-project content. |
 | Date / time / number formatting | `Intl.DateTimeFormat` and `Intl.NumberFormat` with the active locale. |
 
 ## See also
 
 - [Data model](data-model.md) — what the actor stores and emits.
 - [Render](render.md) — PixiJS + WebCodecs renderer architecture.
+- [Templates](templates.md) — parameterized SVG overlays: authoring contract, capture harness, raster cache.
 - [Preview](preview.md) — interactive preview surface.
 - [Rendering](rendering.md) — audio IR + export + final mux.
 - [Groups](groups.md) — group model.
