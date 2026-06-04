@@ -785,7 +785,7 @@ export function App({ onCloseProject }: AppProps) {
   // still good — we just leave the temps for the next reboot to
   // clear.
   const runExportWithSettings = useCallback(
-    async (settings: ExportSettings, path: string) => {
+    async (settings: ExportSettings, path: string, range?: { startUs: number; endUs: number }) => {
     // ---- Export-readiness gate -------------------------------------------
     // Confirm every video source the export will decode is ready. Undecodable
     // DirectExport sources are route-corrected here; sources whose proxy is
@@ -797,8 +797,8 @@ export function App({ onCloseProject }: AppProps) {
         setExportState({ kind: "error", detail: "No project loaded." });
         return;
       }
-      const startUs = 0;
-      const endUs = proj.duration_us;
+      const startUs = range?.startUs ?? 0;
+      const endUs = range?.endUs ?? proj.duration_us;
       const referencedIds = referencedVideoMediaIds(proj, startUs, endUs);
       const referencedMedia = [...referencedIds]
         .map((id) => store.mediaById.get(id))
@@ -881,10 +881,16 @@ export function App({ onCloseProject }: AppProps) {
     const tempBase = await tempDir();
     const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const tempVideoPath = await join(tempBase, `weftcut-pixi-${stamp}.mp4`);
-    const tempAudioPath = await join(tempBase, `weftcut-pixi-${stamp}.m4a`);
+    const audioExt = settings.audio.codec === "opus" ? "mka" : "m4a";
+    const tempAudioPath = await join(tempBase, `weftcut-pixi-${stamp}.${audioExt}`);
 
     const summary = useProjectStore.getState().summary!;
     const comp = summary.composition;
+    const exportRange = {
+      startUs: range?.startUs ?? 0,
+      endUs: range?.endUs ?? summary.duration_us,
+    };
+    const exportSpanUs = exportRange.endUs - exportRange.startUs;
     const dims = resolveOutputDims(comp, settings);
     const fpsNum = settings.fps != null ? settings.fps : comp.fps_num;
     const fpsDen = settings.fps != null ? 1 : comp.fps_den;
@@ -960,6 +966,8 @@ export function App({ onCloseProject }: AppProps) {
         onProgress,
         encoderConfig,
         outputFps: { num: fpsNum, den: fpsDen },
+        startUs: exportRange.startUs,
+        endUs: exportRange.endUs,
         writeChunk,
       });
     } catch (e) {
@@ -987,7 +995,7 @@ export function App({ onCloseProject }: AppProps) {
               progress: {
                 phase: "transcode",
                 progress: ev.payload,
-                currentTimeUs: Math.round(ev.payload * summary.duration_us),
+                currentTimeUs: Math.round(ev.payload * exportSpanUs),
                 frame: 0,
                 fps: 0,
                 speed: 0,
@@ -999,7 +1007,18 @@ export function App({ onCloseProject }: AppProps) {
     try {
       // (1) Video is already written to tempVideoPath (streamed above).
       // Audio-only Rust export → temp audio.m4a (AAC).
-      await exportProjectAudioOnly(tempAudioPath);
+      if (settings.audio.include) {
+        await exportProjectAudioOnly(
+          tempAudioPath,
+          {
+            codec: settings.audio.codec,
+            bitrate: settings.audio.bitrate,
+            sampleRate: settings.audio.sampleRate,
+            channels: settings.audio.channels,
+          },
+          { startUs: exportRange.startUs, endUs: exportRange.endUs },
+        );
+      }
 
       // (3) Mux → user-chosen path. WebCodecs path = stream-copy into the
       // chosen container; ffmpeg path = transcode the mezzanine to the target
@@ -1015,7 +1034,7 @@ export function App({ onCloseProject }: AppProps) {
                 outFps,
               ),
               cbr: settings.rateMode === "cbr",
-              durationUs: summary.duration_us,
+              durationUs: exportSpanUs,
             }
           : undefined;
       await muxExport(tempVideoPath, tempAudioPath, path, transcode);
