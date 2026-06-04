@@ -10,6 +10,32 @@ export type RateMode = "vbr" | "cbr";
 export type Container = "mp4" | "mov" | "mkv";
 export const CONTAINERS: Container[] = ["mp4", "mov", "mkv"];
 
+export type AudioCodecId = "aac" | "opus";
+export const AUDIO_CODECS: AudioCodecId[] = ["aac", "opus"];
+export const AUDIO_BITRATES = [96_000, 128_000, 192_000, 256_000, 320_000] as const;
+export const AUDIO_SAMPLE_RATES = [48_000, 44_100] as const;
+export const AUDIO_CHANNELS = [2, 1] as const;
+
+export interface AudioSettings {
+  /// Include an audio track in the export. false ⇒ video-only.
+  include: boolean;
+  codec: AudioCodecId;
+  /// Audio bitrate in bits per second.
+  bitrate: number;
+  /// Output sample rate; null = follow composition.
+  sampleRate: number | null;
+  /// Output channel count (2 = stereo, 1 = mono); null = follow composition.
+  channels: number | null;
+}
+
+export const DEFAULT_AUDIO_SETTINGS: AudioSettings = {
+  include: true,
+  codec: "aac",
+  bitrate: 192_000,
+  sampleRate: null,
+  channels: null,
+};
+
 export interface ExportSettings {
   /// Target output height in pixels; null = follow composition. Width is
   /// derived from the composition aspect ratio. Downscale-only.
@@ -23,6 +49,8 @@ export interface ExportSettings {
   rateMode: RateMode;
   /// Output container. Audio stays AAC for all three (WebM deferred).
   container: Container;
+  /// Audio track settings. Persisted; null/missing back-fills to defaults.
+  audio: AudioSettings;
 }
 
 export const DEFAULT_EXPORT_SETTINGS: ExportSettings = {
@@ -33,6 +61,7 @@ export const DEFAULT_EXPORT_SETTINGS: ExportSettings = {
   customBitrate: null,
   rateMode: "vbr",
   container: "mp4",
+  audio: DEFAULT_AUDIO_SETTINGS,
 };
 
 /// Standard heights offered as downscale presets (largest first).
@@ -125,9 +154,8 @@ export function codecString(codec: CodecId): string {
 export function estimateBytes(
   bitrate: number,
   durationUs: number,
-  hasAudio: boolean,
+  audioBitrate: number,
 ): number {
-  const audioBitrate = hasAudio ? 192_000 : 0;
   const durationSec = durationUs / 1_000_000;
   return Math.round(((bitrate + audioBitrate) * durationSec) / 8);
 }
@@ -143,7 +171,11 @@ export function formatBytes(n: number): string {
 export function mergeSettings(
   saved: Partial<ExportSettings> | null,
 ): ExportSettings {
-  return { ...DEFAULT_EXPORT_SETTINGS, ...(saved ?? {}) };
+  return {
+    ...DEFAULT_EXPORT_SETTINGS,
+    ...(saved ?? {}),
+    audio: { ...DEFAULT_AUDIO_SETTINGS, ...(saved?.audio ?? {}) },
+  };
 }
 
 export function containerExtension(c: Container): string {
@@ -162,6 +194,35 @@ export function isCodecContainerValid(
 /// Containers the given codec can actually be written into.
 export function containersForCodec(codec: CodecId): Container[] {
   return CONTAINERS.filter((c) => isCodecContainerValid(codec, c));
+}
+
+/// AAC muxes into mp4/mov/mkv. Opus is restricted to MKV — WebView2's Opus-in-
+/// MP4/MOV playback is unreliable and WebM is deferred.
+export function isAudioCodecContainerValid(
+  codec: AudioCodecId,
+  container: Container,
+): boolean {
+  return codec === "opus" ? container === "mkv" : true;
+}
+
+/// Audio codecs that can be written into the given container.
+export function audioCodecsForContainer(container: Container): AudioCodecId[] {
+  return AUDIO_CODECS.filter((c) => isAudioCodecContainerValid(c, container));
+}
+
+/// Clamp an export range to be ordered and within [0, durationUs]. Inputs are
+/// already frame-aligned (parseTimecode and the snapped playhead both produce
+/// frame-grid values), so this only enforces ordering + bounds; a degenerate
+/// range falls back to the whole span.
+export function clampExportRange(
+  startUs: number,
+  endUs: number,
+  durationUs: number,
+): { startUs: number; endUs: number } {
+  const lo = Math.max(0, Math.min(startUs, durationUs));
+  const hi = Math.max(0, Math.min(endUs, durationUs));
+  if (hi <= lo) return { startUs: 0, endUs: durationUs };
+  return { startUs: lo, endUs: hi };
 }
 
 /// H.264 bitrate for the ffmpeg-path mezzanine. The worker WebCodecs-encodes
