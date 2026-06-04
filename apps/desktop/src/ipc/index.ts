@@ -721,6 +721,8 @@ export interface TranscodeSpec {
   bitrate: number;
   cbr: boolean;
   durationUs: number;
+  /// Frames between keyframes for the ffmpeg `-g` (matches the WebCodecs GOP).
+  gop: number;
 }
 
 /// Tauri event emitted (0.0..=1.0) while ffmpeg transcodes the video.

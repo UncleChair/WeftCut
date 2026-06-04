@@ -36,6 +36,8 @@ export interface RunExportInit {
   /// Output frame rate (rational). Overrides composition fps for the frame
   /// grid + capture cadence. Absent ⇒ composition fps.
   outputFps?: { num: number; den: number };
+  /// Seconds between forced keyframes. Absent ⇒ 1 second.
+  keyframeIntervalSec?: number;
   /// Optional progress callback. Fires with (framesEncoded,
   /// totalFrames) on every progress event.
   onProgress?: (encoded: number, total: number) => void;
@@ -155,6 +157,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     encoderConfig,
     outputFpsNum: outFpsNum,
     outputFpsDen: outFpsDen,
+    keyframeIntervalSec: init.keyframeIntervalSec ?? 1,
     canvas: offscreen,
   };
 

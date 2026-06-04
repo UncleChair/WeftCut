@@ -250,6 +250,7 @@ pub async fn transcode_and_mux(
     codec: TargetCodec,
     bitrate: u64,
     cbr: bool,
+    gop: u64,
     duration_us: i64,
     video_path: &Path,
     audio_path: &Path,
@@ -266,7 +267,7 @@ pub async fn transcode_and_mux(
     if has_audio {
         cmd.arg("-i").arg(audio_path);
     }
-    for arg in video_encode_args(encoder, bitrate, cbr) {
+    for arg in video_encode_args(encoder, bitrate, cbr, gop) {
         cmd.arg(arg);
     }
     // HEVC in MP4/MOV must carry the `hvc1` fourcc; ffmpeg defaults to `hev1`,
@@ -355,9 +356,10 @@ fn hvc1_tag_args(codec: TargetCodec, output: &Path) -> Vec<std::ffi::OsString> {
 /// Build the ffmpeg `-c:v …` video-encode args for a transcode. `encoder` is
 /// the resolved ffmpeg encoder name (HW like `hevc_nvenc` or software like
 /// `libx265`). VBR uses `-b:v` as the average target; CBR additionally pins
-/// maxrate/minrate + a 2× bufsize. Software encoders get a speed preset so
-/// AV1/HEVC don't take minutes.
-fn video_encode_args(encoder: &str, bitrate: u64, cbr: bool) -> Vec<std::ffi::OsString> {
+/// maxrate/minrate + a 2× bufsize. `gop` pins the keyframe interval (frames) so
+/// the ffmpeg output matches the WebCodecs path's cadence. Software encoders
+/// get a speed preset so AV1/HEVC don't take minutes.
+fn video_encode_args(encoder: &str, bitrate: u64, cbr: bool, gop: u64) -> Vec<std::ffi::OsString> {
     use std::ffi::OsString;
     let mut a: Vec<OsString> = vec!["-c:v".into(), encoder.into()];
     a.push("-b:v".into());
@@ -370,6 +372,14 @@ fn video_encode_args(encoder: &str, bitrate: u64, cbr: bool) -> Vec<std::ffi::Os
         a.push("-bufsize".into());
         a.push((bitrate * 2).to_string().into());
     }
+    // Pin the keyframe interval. `-g` (max GOP) + `-keyint_min` (min GOP) force
+    // a fixed cadence across encoders; `-sc_threshold 0` (added below for x264/
+    // x265) stops scene-cut detection from inserting extra keyframes.
+    let g = gop.max(1).to_string();
+    a.push("-g".into());
+    a.push(g.clone().into());
+    a.push("-keyint_min".into());
+    a.push(g.into());
     // Speed presets for the slow software encoders only.
     match encoder {
         "libsvtav1" => {
@@ -379,6 +389,8 @@ fn video_encode_args(encoder: &str, bitrate: u64, cbr: bool) -> Vec<std::ffi::Os
         "libx265" | "libx264" => {
             a.push("-preset".into());
             a.push("medium".into());
+            a.push("-sc_threshold".into());
+            a.push("0".into());
         }
         "libvpx-vp9" => {
             a.push("-deadline".into());
@@ -410,28 +422,36 @@ mod tests {
 
     #[test]
     fn video_encode_args_vbr_software() {
-        let argv = video_encode_args("libx265", 8_000_000, false);
+        let argv = video_encode_args("libx265", 8_000_000, false, 60);
         let s: Vec<String> = argv.iter().map(|a| a.to_string_lossy().into_owned()).collect();
         assert!(s.windows(2).any(|w| w[0] == "-c:v" && w[1] == "libx265"));
         assert!(s.windows(2).any(|w| w[0] == "-b:v" && w[1] == "8000000"));
         assert!(!s.iter().any(|a| a == "-minrate"));
+        // GOP pinned: -g/-keyint_min at the requested frame count, scene-cut off.
+        assert!(s.windows(2).any(|w| w[0] == "-g" && w[1] == "60"));
+        assert!(s.windows(2).any(|w| w[0] == "-keyint_min" && w[1] == "60"));
+        assert!(s.windows(2).any(|w| w[0] == "-sc_threshold" && w[1] == "0"));
     }
 
     #[test]
     fn video_encode_args_cbr_pins_rate() {
-        let argv = video_encode_args("hevc_nvenc", 8_000_000, true);
+        let argv = video_encode_args("hevc_nvenc", 8_000_000, true, 48);
         let s: Vec<String> = argv.iter().map(|a| a.to_string_lossy().into_owned()).collect();
         assert!(s.windows(2).any(|w| w[0] == "-c:v" && w[1] == "hevc_nvenc"));
         assert!(s.windows(2).any(|w| w[0] == "-maxrate" && w[1] == "8000000"));
         assert!(s.windows(2).any(|w| w[0] == "-minrate" && w[1] == "8000000"));
         assert!(s.windows(2).any(|w| w[0] == "-bufsize" && w[1] == "16000000"));
+        assert!(s.windows(2).any(|w| w[0] == "-g" && w[1] == "48"));
+        // HW encoder: no -sc_threshold (that's an x264/x265 option only).
+        assert!(!s.iter().any(|a| a == "-sc_threshold"));
     }
 
     #[test]
     fn video_encode_args_sets_software_preset() {
-        let argv = video_encode_args("libsvtav1", 4_000_000, false);
+        let argv = video_encode_args("libsvtav1", 4_000_000, false, 120);
         let s: Vec<String> = argv.iter().map(|a| a.to_string_lossy().into_owned()).collect();
         assert!(s.windows(2).any(|w| w[0] == "-preset" && w[1] == "8"));
+        assert!(s.windows(2).any(|w| w[0] == "-g" && w[1] == "120"));
     }
 
     #[test]

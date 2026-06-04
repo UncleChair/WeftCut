@@ -50,6 +50,7 @@ import {
   type ExportSettings,
   codecString,
   computeBitrate,
+  gopFrames,
   mezzanineBitrate,
   resolveOutputDims,
 } from "./render/exportSettings";
@@ -968,6 +969,7 @@ export function App({ onCloseProject }: AppProps) {
         outputFps: { num: fpsNum, den: fpsDen },
         startUs: exportRange.startUs,
         endUs: exportRange.endUs,
+        keyframeIntervalSec: settings.keyframeIntervalSec,
         writeChunk,
       });
     } catch (e) {
@@ -1035,6 +1037,7 @@ export function App({ onCloseProject }: AppProps) {
               ),
               cbr: settings.rateMode === "cbr",
               durationUs: exportSpanUs,
+              gop: gopFrames(settings.keyframeIntervalSec, outFps),
             }
           : undefined;
       await muxExport(tempVideoPath, tempAudioPath, path, transcode);

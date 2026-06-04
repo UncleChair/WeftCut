@@ -48,6 +48,7 @@ export interface PreviewSurfaceHandle {
     outputFps?: { num: number; den: number };
     startUs?: number;
     endUs?: number;
+    keyframeIntervalSec?: number;
     writeChunk: (data: ArrayBuffer) => Promise<void>;
   }): Promise<PixiExportResult>;
 }

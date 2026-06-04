@@ -259,6 +259,7 @@ const zhCN: Resources = {
     custom_bitrate: "码率",
     mbps: "Mbps",
     rate_mode: "码率控制",
+    keyframe_interval: "关键帧间隔",
     location: "位置",
     filename: "文件名",
     choose_location: "选择输出文件夹",
