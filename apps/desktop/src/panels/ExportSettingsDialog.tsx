@@ -22,6 +22,7 @@ import {
   mergeSettings,
   resolveOutputDims,
   clampExportRange,
+  KEYFRAME_INTERVALS,
   type AudioCodecId,
   AUDIO_BITRATES,
   AUDIO_SAMPLE_RATES,
@@ -456,6 +457,25 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, onCancel
                   >
                     <option value="vbr">VBR</option>
                     <option value="cbr">CBR</option>
+                  </select>
+                </div>
+
+                <div className="export-row">
+                  <span className="settings-toggle-label">
+                    {t("export_dialog.keyframe_interval")}
+                  </span>
+                  <select
+                    className="export-select"
+                    value={settings.keyframeIntervalSec}
+                    onChange={(e) =>
+                      patch({ keyframeIntervalSec: Number(e.target.value) })
+                    }
+                  >
+                    {KEYFRAME_INTERVALS.map((s) => (
+                      <option key={s} value={s}>
+                        {s}s
+                      </option>
+                    ))}
                   </select>
                 </div>
 

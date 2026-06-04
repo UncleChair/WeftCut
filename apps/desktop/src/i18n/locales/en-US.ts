@@ -263,6 +263,7 @@ const enUS = {
     custom_bitrate: "Bitrate",
     mbps: "Mbps",
     rate_mode: "Rate control",
+    keyframe_interval: "Keyframe interval",
     location: "Location",
     filename: "File name",
     choose_location: "Choose output folder",

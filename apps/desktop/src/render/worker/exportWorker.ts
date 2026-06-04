@@ -29,6 +29,7 @@ import { Application, DOMAdapter, WebWorkerAdapter } from "pixi.js";
 
 import type { MediaSummary, ProjectSummary } from "../../ipc";
 import { selectActiveVideoLayers } from "../activeVideoLayers";
+import { gopFrames } from "../exportSettings";
 import { Compositor } from "../Compositor";
 import { ExportDecoderPool } from "../decoder/ExportDecoderPool";
 import { EncoderSink } from "./encoder";
@@ -196,8 +197,11 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   // approximation is fine here; it never feeds the source-time grid above.
   const frameDurUs = Math.round((1_000_000 * outFpsDen) / outFpsNum);
   const totalFrames = exportFrameCount(startUs, endUs, outFpsNum, outFpsDen);
-  // 1-second IDR cadence at the OUTPUT fps.
-  const gop = Math.max(1, Math.round(outFpsNum / Math.max(1, outFpsDen)));
+  // Forced-keyframe cadence at the OUTPUT fps, from the caller's keyframe
+  // interval (seconds); defaults to 1 second. Shared formula with the ffmpeg
+  // path so both encode routes agree.
+  const outFps = outFpsNum / Math.max(1, outFpsDen);
+  const gop = gopFrames(req.keyframeIntervalSec ?? 1, outFps);
 
   // Reusable downscale target — allocated once, drawn into per frame.
   const scaleCanvas = needsScale

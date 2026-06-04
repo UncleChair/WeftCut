@@ -19,6 +19,7 @@ import {
   mezzanineBitrate,
   resolveOutputDims,
   clampExportRange,
+  gopFrames,
   type ExportSettings,
 } from "./exportSettings";
 
@@ -260,6 +261,21 @@ describe("mergeSettings audio back-fill", () => {
       audio: { codec: "opus" } as unknown as ExportSettings["audio"],
     });
     expect(merged.audio.codec).toBe("opus");
+  });
+});
+
+describe("gopFrames", () => {
+  it("derives the GOP from interval x fps", () => {
+    expect(gopFrames(1, 30)).toBe(30);
+    expect(gopFrames(2, 30)).toBe(60);
+    expect(gopFrames(0.5, 30)).toBe(15);
+    expect(gopFrames(1, 29.97)).toBe(30);
+  });
+  it("floors at 1 frame", () => {
+    expect(gopFrames(1, 0)).toBe(1);
+  });
+  it("defaults to a 1-second interval", () => {
+    expect(DEFAULT_EXPORT_SETTINGS.keyframeIntervalSec).toBe(1);
   });
 });
 

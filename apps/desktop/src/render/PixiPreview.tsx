@@ -262,6 +262,7 @@ async function handlePixiExport(
     outputFps?: { num: number; den: number };
     startUs?: number;
     endUs?: number;
+    keyframeIntervalSec?: number;
     writeChunk: (data: ArrayBuffer) => Promise<void>;
   },
   compositor: Compositor | null,
@@ -293,6 +294,9 @@ async function handlePixiExport(
       ...(opts.outputFps ? { outputFps: opts.outputFps } : {}),
       ...(opts.startUs != null ? { startUs: opts.startUs } : {}),
       ...(opts.endUs != null ? { endUs: opts.endUs } : {}),
+      ...(opts.keyframeIntervalSec != null
+        ? { keyframeIntervalSec: opts.keyframeIntervalSec }
+        : {}),
     });
     const outFpsNum = opts.outputFps?.num ?? summary.composition.fps_num;
     const outFpsDen = opts.outputFps?.den ?? summary.composition.fps_den;

@@ -2206,6 +2206,7 @@ pub struct TranscodeSpec {
     pub bitrate: u64,
     pub cbr: bool,
     pub duration_us: i64,
+    pub gop: u64, // frames between keyframes (ffmpeg -g)
 }
 
 /// Mux `video_path` + `audio_path` into `output_path`. With no `transcode`,
@@ -2244,6 +2245,7 @@ pub async fn mux_export(
                 codec,
                 spec.bitrate,
                 spec.cbr,
+                spec.gop,
                 spec.duration_us,
                 &video,
                 &audio,

@@ -63,6 +63,9 @@ export type ExportRequest =
       /// composition fps.
       outputFpsNum?: number;
       outputFpsDen?: number;
+      /// Seconds between forced keyframes. The Worker derives the GOP (frames)
+      /// from this at the output fps. Absent ⇒ 1 second.
+      keyframeIntervalSec?: number;
       /// OffscreenCanvas transferred from the main thread. Worker
       /// hands it to the PixiJS Application as the render target.
       canvas: OffscreenCanvas;

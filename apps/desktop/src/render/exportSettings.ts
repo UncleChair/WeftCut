@@ -47,6 +47,10 @@ export interface ExportSettings {
   /// Bits per second, used only when quality === "custom".
   customBitrate: number | null;
   rateMode: RateMode;
+  /// Seconds between forced keyframes (IDR cadence). Both encode paths derive
+  /// their GOP from this via gopFrames, so WebCodecs and the ffmpeg transcode
+  /// agree.
+  keyframeIntervalSec: number;
   /// Output container. Audio is AAC (any container) or Opus (MKV only).
   container: Container;
   /// Audio track settings. Persisted; null/missing back-fills to defaults.
@@ -60,9 +64,20 @@ export const DEFAULT_EXPORT_SETTINGS: ExportSettings = {
   quality: "medium",
   customBitrate: null,
   rateMode: "vbr",
+  keyframeIntervalSec: 1,
   container: "mp4",
   audio: DEFAULT_AUDIO_SETTINGS,
 };
+
+/// Keyframe-interval presets offered in the dialog (seconds).
+export const KEYFRAME_INTERVALS = [0.5, 1, 2, 5] as const;
+
+/// Frames between forced keyframes for a keyframe interval in seconds at the
+/// given fps. Shared by both encode paths (WebCodecs `keyFrame` cadence + the
+/// ffmpeg `-g`) so they agree. Floored at 1.
+export function gopFrames(keyframeIntervalSec: number, fps: number): number {
+  return Math.max(1, Math.round(fps * keyframeIntervalSec));
+}
 
 /// Standard heights offered as downscale presets (largest first).
 export const STANDARD_HEIGHTS = [2160, 1440, 1080, 720, 480, 360] as const;
