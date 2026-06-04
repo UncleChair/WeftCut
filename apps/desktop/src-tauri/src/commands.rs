@@ -2182,11 +2182,18 @@ pub async fn export_project_audio_only(
     app: tauri::AppHandle,
     handle: State<'_, ProjectHandle>,
     output_path: String,
+    audio: crate::export::AudioEncodeSpec,
+    start_us: Option<i64>,
+    end_us: Option<i64>,
 ) -> Result<(), String> {
     let snap = handle.snapshot().await;
     let project = (*snap).clone();
     let path = PathBuf::from(output_path);
-    export::export_audio_only(app, &project, &path)
+    let window = match (start_us, end_us) {
+        (Some(s), Some(e)) => Some((s, e)),
+        _ => None,
+    };
+    export::export_audio_only(app, &project, &path, &audio, window)
         .await
         .map_err(|e| format!("{e:#}"))
 }
