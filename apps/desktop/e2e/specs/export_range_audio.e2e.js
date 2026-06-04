@@ -110,6 +110,55 @@ async function bootAndExport({ output, settings, range }) {
   return { settled, perf, lastKind, lastDetail };
 }
 
+/// Decode a file's audio to mono s16le PCM and return it as a Float32Array in
+/// [-1, 1]. Used to verify trimmed-export tones directly — `media_conformance
+/// --audio` can't: its candidate tone set is `400 + 120*outputSecondIndex`, so
+/// a range export (whose tones are shifted by the In point) falls outside the
+/// candidates and mis-detects. A direct Goertzel against the true shifted tones
+/// is the right tool here.
+function extractPcm(file, sr = 48000) {
+  const r = spawnSync(
+    "ffmpeg",
+    ["-v", "error", "-i", file, "-ac", "1", "-ar", String(sr), "-f", "s16le", "-"],
+    { encoding: "buffer", maxBuffer: 64 * 1024 * 1024 },
+  );
+  if (r.status !== 0 || !r.stdout || r.stdout.length === 0) {
+    throw new Error(`ffmpeg PCM extract failed (${r.status}): ${r.stderr ?? ""}`);
+  }
+  const n = r.stdout.length >> 1;
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++) out[i] = r.stdout.readInt16LE(i * 2) / 32768;
+  return out;
+}
+
+/// Goertzel power at `freq` over `samples`.
+function goertzelPower(samples, freq, sr) {
+  const coeff = 2 * Math.cos((2 * Math.PI * freq) / sr);
+  let s1 = 0;
+  let s2 = 0;
+  for (let i = 0; i < samples.length; i++) {
+    const s = samples[i] + coeff * s1 - s2;
+    s2 = s1;
+    s1 = s;
+  }
+  return s1 * s1 + s2 * s2 - coeff * s1 * s2;
+}
+
+/// Dominant candidate tone in the 1-second window at `second`.
+function dominantTone(pcm, second, candidates, sr = 48000) {
+  const seg = pcm.subarray(second * sr, (second + 1) * sr);
+  let bestF = null;
+  let bestP = -Infinity;
+  for (const f of candidates) {
+    const p = goertzelPower(seg, f, sr);
+    if (p > bestP) {
+      bestP = p;
+      bestF = f;
+    }
+  }
+  return bestF;
+}
+
 /// ffprobe a file for audio streams. Returns true/false, or null when ffprobe
 /// isn't on PATH (so the caller can soft-skip rather than fail on tooling).
 function hasAudioStream(file) {
@@ -148,15 +197,14 @@ describe("export range + audio settings (real WebView2)", function () {
     expect(perf).not.toBe(null);
     expect(perf.totalFrames).toBe(60);
 
-    // Audio: each output second carries the In-shifted source tone.
-    const report = analyze({ output, source: SOURCE, samples: [0], audio: true });
-    console.log("[e2e] range audio report:", JSON.stringify(report));
-    const s0 = report.samples.find((s) => s.second === 0);
-    const s1 = report.samples.find((s) => s.second === 1);
-    expect(s0).toBeDefined();
-    expect(s1).toBeDefined();
-    expect(Math.abs(s0.detected_freq - toneHz(1))).toBeLessThanOrEqual(40);
-    expect(Math.abs(s1.detected_freq - toneHz(2))).toBeLessThanOrEqual(40);
+    // Audio: each output second carries the In-shifted source tone, proving the
+    // audio was trimmed to the In point AND rebased to 0 (not exported from the
+    // start, not truncated). Direct Goertzel against the candidate tones — the
+    // In-second tone (520) must dominate second 0 and the next (640) second 1.
+    const pcm = extractPcm(output);
+    const cands = [toneHz(0), toneHz(1), toneHz(2), toneHz(3)]; // 400/520/640/760
+    expect(dominantTone(pcm, 0, cands)).toBe(toneHz(1)); // source 1 s -> 520 Hz
+    expect(dominantTone(pcm, 1, cands)).toBe(toneHz(2)); // source 2 s -> 640 Hz
   });
 
   it("Opus-in-MKV export is produced and stays audio-faithful", async function () {
