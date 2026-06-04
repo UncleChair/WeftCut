@@ -68,6 +68,62 @@ mod tests {
     }
 
     #[test]
+    fn window_trims_the_audio_output() {
+        let media_id = Uuid::parse_str("01900000-0000-7000-8000-0000000000ba").unwrap();
+        let track_id = Uuid::parse_str("01900000-0000-7000-8000-0000000000bb").unwrap();
+        let layer_id = Uuid::parse_str("01900000-0000-7000-8000-0000000000bc").unwrap();
+        let media = fixture_media(media_id, "/m/voice.wav", MediaKind::Audio, 10_000_000);
+        let layer = Layer {
+            id: layer_id,
+            label: None,
+            t_start_us: 0,
+            t_end_us: 10_000_000,
+            enabled: true,
+            locked: false,
+            metadata: imbl::HashMap::new(),
+            params: LayerParams::Audio(AudioParams {
+                media: media_id,
+                src_in_us: 0,
+                src_out_us: 10_000_000,
+                gain_db: Animated::Static(0.0),
+                pan: Animated::Static(0.0),
+                fade_in_us: 0,
+                fade_out_us: 0,
+                mute: false,
+            }),
+        };
+        let track = Track {
+            id: track_id,
+            label: None,
+            enabled: true,
+            locked: false,
+            removable: true,
+            role: None,
+            transient: false,
+            height_px: 48,
+            layers: imbl::vector![layer],
+        };
+        let mut p = Project::new_blank("audio-window");
+        p.composition.duration_us = 10_000_000;
+        p.media_pool.insert(media_id, media);
+        p.tracks.push_back(track);
+
+        let g = lower(&p, fixture_target()).expect("lower");
+
+        // No window -> map the OutA label directly, no atrim on the final node.
+        let plain = emit_ffmpeg(&g, None);
+        assert!(plain.maps.contains(&"[aout]".to_string()));
+        assert!(!plain.filter_graph.contains("[awin]"));
+
+        // Windowed -> final clause trims [2s, 5s) and resets PTS; map [awin].
+        let windowed = emit_ffmpeg(&g, Some((2_000_000, 5_000_000)));
+        assert!(windowed.maps.contains(&"[awin]".to_string()));
+        assert!(windowed.filter_graph.contains(
+            "[aout] atrim=start=2:end=5,asetpts=PTS-STARTPTS [awin]"
+        ));
+    }
+
+    #[test]
     fn audio_layer_emits_amix_with_one_input() {
         let media_id = Uuid::parse_str("01900000-0000-7000-8000-0000000000aa").unwrap();
         let track_id = Uuid::parse_str("01900000-0000-7000-8000-0000000000ab").unwrap();
@@ -111,7 +167,7 @@ mod tests {
         p.tracks.push_back(track);
 
         let g = lower(&p, fixture_target()).expect("lower");
-        let plan = emit_ffmpeg(&g);
+        let plan = emit_ffmpeg(&g, None);
         assert!(plan.maps.contains(&"[aout]".to_string()));
         // Single audio source: no amix node, OutA wraps the Adelay directly.
         assert!(plan.filter_graph.contains("atrim=0:3"));
