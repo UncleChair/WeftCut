@@ -260,6 +260,8 @@ async function handlePixiExport(
     onProgress?: (encoded: number, total: number) => void;
     encoderConfig?: VideoEncoderConfig;
     outputFps?: { num: number; den: number };
+    startUs?: number;
+    endUs?: number;
     writeChunk: (data: ArrayBuffer) => Promise<void>;
   },
   compositor: Compositor | null,
@@ -289,6 +291,8 @@ async function handlePixiExport(
       ...(opts.onProgress ? { onProgress: opts.onProgress } : {}),
       ...(opts.encoderConfig ? { encoderConfig: opts.encoderConfig } : {}),
       ...(opts.outputFps ? { outputFps: opts.outputFps } : {}),
+      ...(opts.startUs != null ? { startUs: opts.startUs } : {}),
+      ...(opts.endUs != null ? { endUs: opts.endUs } : {}),
     });
     const outFpsNum = opts.outputFps?.num ?? summary.composition.fps_num;
     const outFpsDen = opts.outputFps?.den ?? summary.composition.fps_den;
