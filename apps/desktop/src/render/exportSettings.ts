@@ -171,11 +171,18 @@ export function formatBytes(n: number): string {
 export function mergeSettings(
   saved: Partial<ExportSettings> | null,
 ): ExportSettings {
-  return {
+  const merged: ExportSettings = {
     ...DEFAULT_EXPORT_SETTINGS,
     ...(saved ?? {}),
     audio: { ...DEFAULT_AUDIO_SETTINGS, ...(saved?.audio ?? {}) },
   };
+  // Defend against a stale/hand-edited blob whose audio codec the container
+  // can't hold (e.g. Opus in MP4) — the live dialog can't produce this, but a
+  // corrupted export.json would otherwise break the ffmpeg mux. Snap to AAC.
+  if (!isAudioCodecContainerValid(merged.audio.codec, merged.container)) {
+    merged.audio = { ...merged.audio, codec: "aac" };
+  }
+  return merged;
 }
 
 export function containerExtension(c: Container): string {
