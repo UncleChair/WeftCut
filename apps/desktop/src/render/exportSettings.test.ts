@@ -3,11 +3,15 @@ import {
   CONTAINERS,
   type Container,
   DEFAULT_EXPORT_SETTINGS,
+  DEFAULT_AUDIO_SETTINGS,
+  type AudioSettings,
   codecString,
   computeBitrate,
   containerExtension,
   containersForCodec,
   isCodecContainerValid,
+  isAudioCodecContainerValid,
+  audioCodecsForContainer,
   downscaleFpsOptions,
   downscaleHeightOptions,
   estimateBytes,
@@ -15,6 +19,7 @@ import {
   mergeSettings,
   mezzanineBitrate,
   resolveOutputDims,
+  clampExportRange,
   type ExportSettings,
 } from "./exportSettings";
 
@@ -102,9 +107,9 @@ describe("codecString", () => {
 });
 
 describe("estimateBytes / formatBytes", () => {
-  it("adds audio bitrate when the project has audio", () => {
-    const withAudio = estimateBytes(8_000_000, 10_000_000, true);
-    const noAudio = estimateBytes(8_000_000, 10_000_000, false);
+  it("adds the given audio bitrate on top of the video bitrate", () => {
+    const withAudio = estimateBytes(8_000_000, 10_000_000, 192_000);
+    const noAudio = estimateBytes(8_000_000, 10_000_000, 0);
     expect(withAudio).toBeGreaterThan(noAudio);
   });
   it("formats bytes into human units", () => {
@@ -204,3 +209,63 @@ describe("mezzanineBitrate", () => {
 // `Container` type is exercised via the typed assignments above.
 const _containerTypeCheck: Container = "mp4";
 void _containerTypeCheck;
+
+describe("audio settings schema", () => {
+  it("defaults audio to AAC / 192k / follow-composition", () => {
+    expect(DEFAULT_EXPORT_SETTINGS.audio).toEqual({
+      include: true,
+      codec: "aac",
+      bitrate: 192_000,
+      sampleRate: null,
+      channels: null,
+    });
+  });
+
+  it("Opus is MKV-only; AAC is valid in every container", () => {
+    expect(isAudioCodecContainerValid("opus", "mkv")).toBe(true);
+    expect(isAudioCodecContainerValid("opus", "mp4")).toBe(false);
+    expect(isAudioCodecContainerValid("opus", "mov")).toBe(false);
+    expect(isAudioCodecContainerValid("aac", "mp4")).toBe(true);
+    expect(isAudioCodecContainerValid("aac", "mov")).toBe(true);
+    expect(isAudioCodecContainerValid("aac", "mkv")).toBe(true);
+  });
+
+  it("lists the audio codecs valid for a container", () => {
+    expect(audioCodecsForContainer("mkv")).toEqual(["aac", "opus"]);
+    expect(audioCodecsForContainer("mp4")).toEqual(["aac"]);
+    expect(audioCodecsForContainer("mov")).toEqual(["aac"]);
+  });
+});
+
+describe("mergeSettings audio back-fill", () => {
+  it("back-fills audio from an old blob with no audio key", () => {
+    expect(mergeSettings({ codec: "av1" }).audio).toEqual(DEFAULT_AUDIO_SETTINGS);
+  });
+  it("merges a partial audio object onto the audio defaults", () => {
+    const merged = mergeSettings({
+      audio: { bitrate: 256_000 } as unknown as ExportSettings["audio"],
+    });
+    expect(merged.audio).toEqual({ ...DEFAULT_AUDIO_SETTINGS, bitrate: 256_000 });
+  });
+});
+
+describe("clampExportRange", () => {
+  it("passes through an ordered, in-bounds range", () => {
+    expect(clampExportRange(1_000_000, 5_000_000, 10_000_000)).toEqual({
+      startUs: 1_000_000,
+      endUs: 5_000_000,
+    });
+  });
+  it("clamps to [0, duration]", () => {
+    expect(clampExportRange(-1, 99_000_000, 10_000_000)).toEqual({
+      startUs: 0,
+      endUs: 10_000_000,
+    });
+  });
+  it("falls back to the whole span when start >= end", () => {
+    expect(clampExportRange(8_000_000, 2_000_000, 10_000_000)).toEqual({
+      startUs: 0,
+      endUs: 10_000_000,
+    });
+  });
+});
