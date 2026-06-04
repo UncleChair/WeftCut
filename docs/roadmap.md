@@ -3,8 +3,8 @@
 The foundation is in place: project state actor + history, workspace
 on-disk format, media import with proxy / thumbnail / waveform jobs,
 audio IR + ffmpeg export + final mux, PixiJS + WebCodecs renderer
-(preview and export share one compositor), built-in HTML template
-catalog with foreignObject rasterizer, cloud transcription + TTS
+(preview and export share one compositor), built-in template
+catalog, cloud transcription + TTS
 behind a provider-agnostic trait surface, the MCP server with its
 edit / workflow / cloud tools and the `/events` change feed, the
 status-bar `LogBus` console, the i18n stack (en-US + zh-CN).
@@ -156,7 +156,7 @@ validator. Additional types (wipe, slide, push) land as new
 
 - Tree-of-edits history (branch, merge).
 - WebGPU compositor backend tuned for real-time effects.
-- Marketplace / sharing for HTML overlay templates.
+- Marketplace / sharing for SVG overlay templates.
 - Multi-window timelines.
 - Mobile companion (Tauri mobile or React Native).
 - Remote-server MCP variant (Tailscale-friendly) with proper auth.

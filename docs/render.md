@@ -39,12 +39,12 @@ apps/desktop/src/render/
     VideoClipSprite.ts
     ImageOverlaySprite.ts
     TextSprite.ts
-    TemplateSprite.ts        — owns the foreignObject raster cache for its template
+    TemplateSprite.ts        — binds the template's rastered SVG frame as a texture
     SubtitlesSprite.ts       — owns JASSUB binding
     ColorSprite.ts
   templates/
-    Rasterizer.ts            — foreignObject SVG → ImageBitmap; embeds @font-face base64
-    Cache.ts                 — content-hash keyed
+    Rasterizer.ts            — serialized SVG → ImageBitmap (via <img>); injects @font-face
+    Cache.ts                 — content-hash keyed raster cache (on-demand / RAM ring / persisted PNG)
   subtitles/
     Jassub.ts                — libass-wasm canvas-mode binding
   worker/
@@ -221,27 +221,34 @@ drag works without churn.
 | `VideoClipSprite` | `FrameRing` snapshot → `Texture` | Consumes the `DecodedFrame` returned by `FrameStore.frameAt` — `ImageBitmap` from preview's `FrameRing`, `VideoFrame` from export's `ExportFrameStore`. PixiJS v8 `ImageSource` accepts both. |
 | `ImageOverlaySprite` | `createImageBitmap` → `Texture` | One-shot bitmap creation at sprite spawn; cached for the layer's lifetime. |
 | `TextSprite` | PixiJS `Text` (native canvas) | Shadow via drop-shadow filter; outline via stroke option; intro / outro presets are sprite-side animation. |
-| `TemplateSprite` | `Rasterizer` (foreignObject SVG → `ImageBitmap`) | Fonts embedded as base64 `@font-face`; raster cache keyed on content hash. |
+| `TemplateSprite` | Rastered SVG frame → `Texture` | Rasterizes the template's `render(t)` SVG for the playhead's layer-relative time (on demand, RAM lookahead, or persisted PNG) and binds it; see [`templates.md`](templates.md). |
 | `SubtitlesSprite` | JASSUB canvas → `Texture` | libass-wasm renders into its own canvas; we copy as a texture each frame. |
 | `ColorSprite` | PixiJS `Graphics` rect | Animated fill color. |
 
 ## Templates
 
-The `Rasterizer` composes a template's HTML + CSS into an SVG
-`<foreignObject>`, embeds every referenced font as base64
-`@font-face`, and feeds the SVG to `createImageBitmap`. The
-resulting bitmap becomes a Pixi texture.
+A template is a parameterized, time-varying SVG overlay. Because the
+export Worker has no DOM — and cannot even decode SVG — a template is
+rasterized on the **main thread** for both surfaces: the export Worker
+receives the rastered bitmaps rather than producing them, so one
+rasterizer feeds preview and export and preview-equals-export holds.
 
-The cache key is the template id + canonical-JSON props + the
-composition canvas dimensions. The cache is shared across all
-sprite instances of the same template — common templates render
-once and reuse the bitmap.
+`TemplateSprite` obtains the frame for the playhead's layer-relative
+time (rastered on demand, from a RAM lookahead ring, or from a persisted
+PNG sequence) and binds it as a texture; the layer transform and opacity
+are applied to the sprite. Capture runs a template's synchronous
+`render(t)` inside a sandboxed iframe harness, serializes the post-render
+SVG, and rasterizes it via an `<img>` → `createImageBitmap`. HTML/CSS via
+`<foreignObject>` is not used — its raster is cross-origin-tainted in
+WebView2 (ADR 0015).
 
-Templates' HTML + CSS + manifests are embedded in the Rust binary
+Templates' SVG + render logic + manifests are embedded in the Rust binary
 via `include_str!`; see `crate::templates` (`src-tauri/src/templates/`).
 The catalog is surfaced to the webview via the `list_templates`
-Tauri command and the MCP `list_templates` tool. Custom templates
-land outside the built-in catalog (extension point not wired yet).
+Tauri command and the MCP `list_templates` tool.
+
+See [`templates.md`](templates.md) for the authoring contract, the
+capture harness, and the raster cache.
 
 ## Subtitles
 
