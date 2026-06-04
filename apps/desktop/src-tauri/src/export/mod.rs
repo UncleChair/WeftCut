@@ -22,6 +22,31 @@ use tracing::{info, warn};
 use crate::ir::{RenderTarget, emit_ffmpeg, lower};
 use crate::state::Project;
 
+/// Audio encode parameters passed from the webview. `sample_rate`/`channels`
+/// are `None` to follow the composition. A serde struct so the Tauri command
+/// can take it directly.
+#[derive(serde::Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioEncodeSpec {
+    pub codec: String, // "aac" | "opus"
+    pub bitrate: u64,  // bits per second
+    pub sample_rate: Option<u32>,
+    pub channels: Option<u8>,
+}
+
+/// Build the `-c:a ... -b:a ...` audio-encode args. AAC is the default; "opus"
+/// maps to libopus (MKV-only, enforced webview-side).
+fn audio_encode_args(codec: &str, bitrate_bps: u64) -> Vec<std::ffi::OsString> {
+    use std::ffi::OsString;
+    let enc = if codec == "opus" { "libopus" } else { "aac" };
+    vec![
+        "-c:a".into(),
+        OsString::from(enc),
+        "-b:a".into(),
+        bitrate_bps.to_string().into(),
+    ]
+}
+
 /// Audio-only export. Produces an `.m4a` (AAC) at `output` containing
 /// just the project's audio chain. The PixiJS export Worker emits
 /// `video.mp4` via WebCodecs; this fills in `audio.m4a`; `mux_to_file`
@@ -34,6 +59,8 @@ pub async fn export_audio_only(
     _app: AppHandle,
     project: &Project,
     output: &Path,
+    audio: &AudioEncodeSpec,
+    window_us: Option<(i64, i64)>,
 ) -> Result<()> {
     if !ffmpeg_is_installed() {
         anyhow::bail!(
@@ -46,11 +73,11 @@ pub async fn export_audio_only(
         project.composition.width,
         project.composition.height,
         project.composition.fps,
-        project.composition.sample_rate,
-        project.composition.channels,
+        audio.sample_rate.unwrap_or(project.composition.sample_rate),
+        audio.channels.unwrap_or(project.composition.channels),
     );
     let graph = lower(project, target).context("lower IR")?;
-    let plan = emit_ffmpeg(&graph, None); // window wired in the next task
+    let plan = emit_ffmpeg(&graph, window_us);
 
     if plan.maps.is_empty() {
         // No audio layers — produce nothing. The Pixi mux step
@@ -80,7 +107,9 @@ pub async fn export_audio_only(
     for map in &plan.maps {
         cmd.arg("-map").arg(map);
     }
-    cmd.args(["-c:a", "aac", "-b:a", "192k"]);
+    for arg in audio_encode_args(&audio.codec, audio.bitrate) {
+        cmd.arg(arg);
+    }
 
     cmd.arg(output);
 
@@ -366,6 +395,17 @@ fn video_encode_args(encoder: &str, bitrate: u64, cbr: bool) -> Vec<std::ffi::Os
 mod tests {
     use super::mux_args;
     use super::video_encode_args;
+
+    #[test]
+    fn audio_encode_args_aac_and_opus() {
+        let aac = super::audio_encode_args("aac", 192_000);
+        let a: Vec<String> = aac.iter().map(|x| x.to_string_lossy().into_owned()).collect();
+        assert_eq!(a, vec!["-c:a", "aac", "-b:a", "192000"]);
+
+        let opus = super::audio_encode_args("opus", 128_000);
+        let o: Vec<String> = opus.iter().map(|x| x.to_string_lossy().into_owned()).collect();
+        assert_eq!(o, vec!["-c:a", "libopus", "-b:a", "128000"]);
+    }
     use tempfile::TempDir;
 
     #[test]
