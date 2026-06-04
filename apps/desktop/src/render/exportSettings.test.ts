@@ -247,6 +247,20 @@ describe("mergeSettings audio back-fill", () => {
     });
     expect(merged.audio).toEqual({ ...DEFAULT_AUDIO_SETTINGS, bitrate: 256_000 });
   });
+  it("snaps a saved audio codec the container can't hold back to AAC", () => {
+    const merged = mergeSettings({
+      container: "mp4",
+      audio: { codec: "opus" } as unknown as ExportSettings["audio"],
+    });
+    expect(merged.audio.codec).toBe("aac");
+  });
+  it("keeps a valid Opus + MKV saved audio codec", () => {
+    const merged = mergeSettings({
+      container: "mkv",
+      audio: { codec: "opus" } as unknown as ExportSettings["audio"],
+    });
+    expect(merged.audio.codec).toBe("opus");
+  });
 });
 
 describe("clampExportRange", () => {
