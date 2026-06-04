@@ -46,13 +46,28 @@ pub struct FfmpegPlan {
     pub maps: Vec<String>,
 }
 
-pub fn emit(graph: &IRGraph) -> FfmpegPlan {
+pub fn emit(graph: &IRGraph, window_us: Option<(i64, i64)>) -> FfmpegPlan {
     let mut emitter = Emitter::new(graph);
     emitter.emit();
     let mut maps = Vec::new();
     if let Some(out) = graph.audio_out {
-        if let IRNode::OutA { label, .. } = graph.node(out) {
-            maps.push(format!("[{label}]"));
+        // Compute the final audio label under an immutable borrow of `graph`,
+        // then release it before the mutable `emitter.write_clause` below.
+        let base_label = match graph.node(out) {
+            IRNode::OutA { label, .. } => Some(format!("[{label}]")),
+            _ => None,
+        };
+        if let Some(mut final_label) = base_label {
+            if let Some((start_us, end_us)) = window_us {
+                let win = "[awin]".to_string();
+                emitter.write_clause(&format!(
+                    "{final_label} atrim=start={s}:end={e},asetpts=PTS-STARTPTS {win}",
+                    s = us_to_secs(start_us),
+                    e = us_to_secs(end_us),
+                ));
+                final_label = win;
+            }
+            maps.push(final_label);
         }
     }
     FfmpegPlan {

@@ -50,7 +50,7 @@ pub async fn export_audio_only(
         project.composition.channels,
     );
     let graph = lower(project, target).context("lower IR")?;
-    let plan = emit_ffmpeg(&graph);
+    let plan = emit_ffmpeg(&graph, None); // window wired in the next task
 
     if plan.maps.is_empty() {
         // No audio layers — produce nothing. The Pixi mux step
