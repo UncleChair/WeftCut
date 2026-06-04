@@ -689,14 +689,29 @@ export async function importMedia(path: string): Promise<string> {
   return invoke<string>("import_media", { path });
 }
 
-/// Audio-only export — AAC .m4a at `outputPath`. Awaitable: resolves
-/// when ffmpeg's audio-only pass is done. Used by the Pixi export
-/// path between the Worker video render and the final stream-copy
-/// mux. Emits no events; the JS orchestrator drives ExportPanel state.
+/// Audio encode parameters. `sampleRate`/`channels` are null to follow the
+/// composition. Mirrors Rust `AudioEncodeSpec` (serde camelCase).
+export interface AudioExportSpec {
+  codec: "aac" | "opus";
+  bitrate: number;
+  sampleRate: number | null;
+  channels: number | null;
+}
+
+/// Audio-only export at `outputPath` (extension picks the muxer: .m4a for AAC,
+/// .mka for Opus). `range` trims the audio to the export window (null = whole
+/// project). Awaitable; emits no events.
 export async function exportProjectAudioOnly(
   outputPath: string,
+  audio: AudioExportSpec,
+  range: { startUs: number; endUs: number } | null,
 ): Promise<void> {
-  return invoke<void>("export_project_audio_only", { outputPath });
+  return invoke<void>("export_project_audio_only", {
+    outputPath,
+    audio,
+    startUs: range?.startUs ?? null,
+    endUs: range?.endUs ?? null,
+  });
 }
 
 /// Optional video transcode spec for the ffmpeg export path. Omit for a
