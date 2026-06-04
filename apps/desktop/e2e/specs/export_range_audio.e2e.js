@@ -18,6 +18,10 @@ const PROJECT_PARENT = path.resolve(os.tmpdir(), "weftcut-e2e-range-audio-proj")
 // The 30fps tone-marker fixture (shared with audio_conformance). Output fps
 // follows the 30fps composition, so source second k -> tone F_k = 400 + 120k.
 const SOURCE = path.resolve(MEDIA_DIR, "test_1080p_30fps_audio.mp4");
+// Burned-in-counter video fixture (no audio) — used for the software-encode
+// case, where the check is video frame-alignment + SSIM (hwAccel only affects
+// the video encoder; audio is Rust-side and unaffected).
+const VIDEO_SOURCE = path.resolve(MEDIA_DIR, "test_1080p_30fps.mp4");
 
 function toneHz(second) {
   return 400 + 120 * second;
@@ -26,7 +30,7 @@ function toneHz(second) {
 /// Boot a fresh 30fps project, then drive `exportClip` and wait for it to
 /// settle. Returns { settled, perf, lastKind, lastDetail }. `perf` is the
 /// worker's `window.__weftcutExportPerf` (E2E-only), carrying `totalFrames`.
-async function bootAndExport({ output, settings, range }) {
+async function bootAndExport({ output, settings, range, source = SOURCE }) {
   await browser.waitUntil(
     async () =>
       (await browser.execute(
@@ -66,7 +70,7 @@ async function bootAndExport({ output, settings, range }) {
         .then(() => { window.__e2eExportDone = { ok: true }; })
         .catch((e) => { window.__e2eExportDone = { ok: false, error: String(e) }; });
     },
-    SOURCE,
+    source,
     output,
     settings ?? null,
     range ?? null,
@@ -289,5 +293,35 @@ describe("export range + audio settings (real WebView2)", function () {
     // ~2 s cadence, clearly not the 1 s default (~1 s) or 5 s.
     expect(medianGap).toBeGreaterThan(1.5);
     expect(medianGap).toBeLessThan(2.5);
+  });
+
+  it("software encoder export stays frame-aligned with low loss", async function () {
+    // hwAccel:"software" forces the WebCodecs prefer-software H.264 path (the
+    // default codec). Assert it actually works in real WebView2 and the output
+    // stays frame-aligned + faithful (video SSIM) — i.e. the software path is
+    // wired and doesn't break frames/color. Uses the burned-in-counter video
+    // fixture so the conformance analyzer can align frames.
+    if (!existsSync(VIDEO_SOURCE)) {
+      console.warn(`[e2e] SKIP: video source not found at ${VIDEO_SOURCE}`);
+      this.skip();
+    }
+    const output = path.resolve(os.tmpdir(), "weftcut-e2e-sw.mp4");
+    rmSync(output, { force: true });
+
+    await bootAndExport({ output, source: VIDEO_SOURCE, settings: { hwAccel: "software" } });
+
+    const SSIM_FLOOR = 0.8;
+    const report = analyze({
+      output,
+      source: VIDEO_SOURCE,
+      samples: [30, 150, 270],
+      ssimMin: SSIM_FLOOR,
+    });
+    console.log("[e2e] software-encode report:", JSON.stringify(report));
+    const misaligned = report.samples.filter((s) => !s.aligned);
+    expect(misaligned).toHaveLength(0);
+    const lowSsim = report.samples.filter((s) => s.ssim < SSIM_FLOOR);
+    expect(lowSsim).toHaveLength(0);
+    expect(report.pass).toBe(true);
   });
 });
