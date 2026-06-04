@@ -7,7 +7,7 @@
 
 import { openMediaInput, type OpenedMedia } from "./mediaInput";
 
-type DecoderLike = Pick<VideoDecoder, "configure" | "decode" | "close">;
+type DecoderLike = Pick<VideoDecoder, "configure" | "decode" | "close" | "flush">;
 
 export interface RaceFirstDecodeArgs {
   config: VideoDecoderConfig;
@@ -54,6 +54,20 @@ export async function raceFirstDecode(args: RaceFirstDecodeArgs): Promise<boolea
       });
       decoder.configure(args.config);
       decoder.decode(keyChunk);
+      // Drain the reorder buffer. A lone keyframe from a B-frame stream (almost
+      // every real-world H.264 — phones, OBS, x264 defaults) stays parked in
+      // the decoder's reorder buffer: with no following packet to bump it out
+      // and no flush, the output callback never fires, so the race below loses
+      // to the deadline and falsely judges a decodable source undecodable.
+      // Floated, never awaited — output()/error()/the deadline still settle the
+      // race, and a flush rejection is irrelevant. Mirrors the export decoder's
+      // own end-of-stream drain (ExportDecoderPool.issueEosFlush).
+      try {
+        void Promise.resolve(decoder.flush()).catch(() => {});
+      } catch {
+        // flush() threw synchronously (bad decoder state); the race still
+        // settles via the error callback or the deadline.
+      }
     } catch {
       finish(false);
     }
