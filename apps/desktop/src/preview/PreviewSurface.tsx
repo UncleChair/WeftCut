@@ -46,6 +46,8 @@ export interface PreviewSurfaceHandle {
     onProgress?: (encoded: number, total: number) => void;
     encoderConfig?: VideoEncoderConfig;
     outputFps?: { num: number; den: number };
+    startUs?: number;
+    endUs?: number;
     writeChunk: (data: ArrayBuffer) => Promise<void>;
   }): Promise<PixiExportResult>;
 }
