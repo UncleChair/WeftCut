@@ -914,6 +914,21 @@ export function App({ onCloseProject }: AppProps) {
       encodePath === "ffmpeg"
         ? mezzanineBitrate(settings, dims.width, dims.height, outFps)
         : computeBitrate(settings, dims.width, dims.height, outFps);
+    // Encoder-acceleration hint. On the WebCodecs path the worker IS the final
+    // encode, so honor the user's HW/SW choice ("software" → prefer-software).
+    // On the ffmpeg path the worker only makes a throwaway H.264 mezzanine —
+    // keep that hardware-fast; the HW/SW choice flows to ffmpeg via the
+    // transcode spec instead. Auto keeps today's behavior: H.264 forces
+    // prefer-hardware (WebView2 treats it as mandatory, so AV1/HEVC omit it and
+    // let the browser fall back to software).
+    let hwHint: VideoEncoderConfig["hardwareAcceleration"] | undefined;
+    if (encodePath !== "ffmpeg" && settings.hwAccel === "software") {
+      hwHint = "prefer-software";
+    } else if (workerCodec === "h264") {
+      hwHint = "prefer-hardware";
+    } else {
+      hwHint = undefined;
+    }
     const encoderConfig: VideoEncoderConfig = {
       codec: codecString(workerCodec),
       width: dims.width,
@@ -921,12 +936,7 @@ export function App({ onCloseProject }: AppProps) {
       bitrate: workerBitrate,
       framerate: outFps,
       bitrateMode: settings.rateMode === "cbr" ? "constant" : "variable",
-      // Force HW only for H.264 (its proven fast path). WebView2 treats
-      // "prefer-hardware" as mandatory, so forcing it on AV1 fails; omitting
-      // lets the browser fall back to software AV1.
-      ...(workerCodec === "h264"
-        ? { hardwareAcceleration: "prefer-hardware" as const }
-        : {}),
+      ...(hwHint ? { hardwareAcceleration: hwHint } : {}),
     };
 
     const startedAtMs = performance.now();
@@ -1038,6 +1048,7 @@ export function App({ onCloseProject }: AppProps) {
               cbr: settings.rateMode === "cbr",
               durationUs: exportSpanUs,
               gop: gopFrames(settings.keyframeIntervalSec, outFps),
+              software: settings.hwAccel === "software",
             }
           : undefined;
       await muxExport(tempVideoPath, tempAudioPath, path, transcode);

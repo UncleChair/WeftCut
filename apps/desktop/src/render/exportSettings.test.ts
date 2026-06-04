@@ -264,6 +264,16 @@ describe("mergeSettings audio back-fill", () => {
   });
 });
 
+describe("hwAccel", () => {
+  it("defaults to auto (prefer hardware)", () => {
+    expect(DEFAULT_EXPORT_SETTINGS.hwAccel).toBe("auto");
+  });
+  it("back-fills auto for an old blob and preserves a saved choice", () => {
+    expect(mergeSettings({ codec: "av1" }).hwAccel).toBe("auto");
+    expect(mergeSettings({ hwAccel: "software" }).hwAccel).toBe("software");
+  });
+});
+
 describe("gopFrames", () => {
   it("derives the GOP from interval x fps", () => {
     expect(gopFrames(1, 30)).toBe(30);
