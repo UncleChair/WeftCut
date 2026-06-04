@@ -1539,10 +1539,12 @@ export function App({ onCloseProject }: AppProps) {
       {exportDialogOpen && summary && exportState == null && (
         <ExportSettingsDialog
           comp={summary.composition}
+          currentTimeUs={currentTimeUs}
+          durationUs={summary.duration_us}
           onCancel={() => setExportDialogOpen(false)}
-          onConfirm={(settings, path) => {
+          onConfirm={(settings, path, range) => {
             // Don't close — the progress panel takes over the same overlay.
-            void runExportWithSettings(settings, path);
+            void runExportWithSettings(settings, path, range);
           }}
         />
       )}
