@@ -25,7 +25,7 @@
 
 import { frameIndexInLayer, snapFrameFloor } from "../frames";
 import type { ProjectSummary, TemplateView } from "../ipc";
-import { getTemplate, type Template } from "./templates/catalog";
+import { getTemplate, resolveTemplateContentDurationUs, type Template } from "./templates/catalog";
 import { TemplateHarness } from "./templates/harness";
 import { canonicalizeProps } from "./templates/Rasterizer";
 import { rasterizeSvg } from "./templates/svgRaster";
@@ -177,14 +177,22 @@ export async function exportBakeTemplates(
       // layer's frames (only `tSec` varies), matching `TemplateSprite.update`
       // which canonicalizes per tick against the same manifest.
       const canonical = canonicalizeProps(spec.view.props, spec.template.manifest);
-      const durationSec = spec.durationUs / US_PER_SEC;
+      // Content-window model: bake the INTRINSIC content. Uncapped templates
+      // fall back to layer-width content with src_in=0 (legacy).
+      const cap = resolveTemplateContentDurationUs(spec.template.manifest, spec.view.props);
+      const contentDurationUs = cap ?? spec.durationUs;
+      const srcInUs = cap == null ? 0 : spec.view.src_in_us;
+      const durationSec = contentDurationUs / US_PER_SEC;
+      // Layer-local frame `f` maps to content frame (srcInFrame + f); srcInUs is
+      // frame-snapped (storage invariant) so srcInFrame is exact.
+      const srcInFrame = frameIndexInLayer(srcInUs, fpsNum, fpsDen);
 
       // Allocate the full array up to `lastFrame`; leave `[0, firstFrame)`
       // holes for a mid-layer export start. Bitmaps land at their comp-frame
       // index so the Worker's `frames[frameIndexInLayer(...)]` is a direct hit.
       const frames: ImageBitmap[] = new Array(spec.lastFrame + 1);
       for (let frame = spec.firstFrame; frame <= spec.lastFrame; frame++) {
-        const tSec = frameTimeSec(frame, fpsNum, fpsDen);
+        const tSec = frameTimeSec(srcInFrame + frame, fpsNum, fpsDen);
         // eslint-disable-next-line no-await-in-loop
         const svg = await harness.renderFrameSvg(tSec, durationSec, canonical);
         // eslint-disable-next-line no-await-in-loop
