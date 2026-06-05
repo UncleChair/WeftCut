@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { formatTimecode, parseTimecode } from "../frames";
 import {
@@ -8,6 +8,8 @@ import {
   type TemplateSummary,
   type TrackSummary,
 } from "../ipc";
+import { getTemplate } from "../render/templates/catalog";
+import { TemplateHarness } from "../render/templates/harness";
 
 interface Props {
   onClose: () => void;
@@ -304,32 +306,21 @@ function useDebounced<T>(value: T, delay: number): T {
   return debounced;
 }
 
-function buildPreviewSrcDoc(
-  template: TemplateSummary,
-  props: Record<string, unknown>,
-): string {
-  // Templates are now self-contained HTML documents (styling lives inside),
-  // so the picker can render the document directly.
-  const styled = template.html;
-  const propsJson = JSON.stringify(props ?? {});
-  // This window.__props__ injection is a vestige of the old preview — nothing
-  // in the new self-contained templates reads it, so it is inert. It stays
-  // pending the SVG capture harness (later task) that rewires this whole
-  // preview path. Inject before </head> when present; the <body> fallback is
-  // defensive in case a future template omits a <head>.
-  const inject = `<script>window.__props__ = ${propsJson};</script>`;
-  if (styled.includes("</head>")) {
-    return styled.replace("</head>", `${inject}</head>`);
-  }
-  return styled.replace("<body", `${inject}<body`);
-}
+/// Representative scrub time (seconds) for the static preview frame. t=0 would
+/// show the template's first frame; a small offset reads better for previews
+/// whose intro animates in (e.g. countdown shows the full numeral by then).
+const PREVIEW_T_SEC = 0;
 
-/// Live preview of a template, rendered at its manifest-declared natural
-/// size and CSS-scaled to `width`. Natural-size + transform-scale beats
-/// shrinking the iframe directly because viewport units (vw/vh) are
-/// relative to the iframe's logical size — shrinking would break layouts
-/// designed at 1920×1080. Sandboxed to `allow-scripts` only so template
-/// JS can animate without reaching Tauri APIs or this app's DOM.
+/// Live preview of a template's CURRENT frame, captured through the SAME
+/// `TemplateHarness` the timeline/export use — so picker, timeline, and export
+/// agree pixel-for-pixel. The harness runs the template's `render(t)` inside a
+/// sandboxed offscreen iframe and serializes the post-render `<svg>`; we then
+/// display that SVG string in an `<img>` (the same plain-SVG path the
+/// rasterizer relies on; foreignObject would taint).
+///
+/// One harness per preview instance. v1 ships a single built-in (countdown) so
+/// the card grid has one card — a per-preview harness is fine. FOLLOW-UP: pool
+/// or share a harness if the grid grows to many templates.
 function TemplatePreview({
   template,
   props,
@@ -344,10 +335,76 @@ function TemplatePreview({
   const [w, h] = template.size;
   const scale = width / w;
   const scaledHeight = h * scale;
-  const html = useMemo(
-    () => buildPreviewSrcDoc(template, props),
-    [template.id, template.html, JSON.stringify(props)],
+
+  const harnessRef = useRef<TemplateHarness | null>(null);
+  const loadedRef = useRef<Promise<void> | null>(null);
+  const urlRef = useRef<string | null>(null);
+  const [svgUrl, setSvgUrl] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // (Re)load the harness whenever the template identity changes. The catalog's
+  // `getTemplate` is a synchronous in-memory lookup returning the full
+  // `Template` (with real font BYTES — the IPC summary only carries font
+  // declarations, which the harness can't embed).
+  useEffect(() => {
+    const full = getTemplate(template.id);
+    if (!full) {
+      setError(`template not found in catalog: ${template.id}`);
+      return;
+    }
+    const harness = new TemplateHarness();
+    harnessRef.current = harness;
+    setError(null);
+    loadedRef.current = harness.load(full).catch((e) => {
+      setError(String(e));
+      throw e;
+    });
+    return () => {
+      harness.dispose();
+      harnessRef.current = null;
+      loadedRef.current = null;
+    };
+  }, [template.id]);
+
+  // Render the current frame whenever props change (already debounced upstream
+  // for the form preview). Awaits the in-flight load so the first render after
+  // a template switch doesn't race the iframe mount.
+  useEffect(() => {
+    let cancelled = false;
+    const harness = harnessRef.current;
+    const loaded = loadedRef.current;
+    if (!harness || !loaded) return;
+    const durSec = template.default_duration_s;
+    loaded
+      .then(() => harness.renderFrameSvg(PREVIEW_T_SEC, durSec, props))
+      .then((svg) => {
+        if (cancelled) return;
+        const url = URL.createObjectURL(
+          new Blob([svg], { type: "image/svg+xml" }),
+        );
+        if (urlRef.current) URL.revokeObjectURL(urlRef.current);
+        urlRef.current = url;
+        setSvgUrl(url);
+        setError(null);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(String(e));
+      });
+    return () => {
+      cancelled = true;
+    };
+    // `props` identity changes on each edit; the parent debounces it.
+  }, [template.id, template.default_duration_s, props]);
+
+  // Revoke the last blob URL on unmount.
+  useEffect(
+    () => () => {
+      if (urlRef.current) URL.revokeObjectURL(urlRef.current);
+      urlRef.current = null;
+    },
+    [],
   );
+
   return (
     <div
       className={
@@ -357,32 +414,29 @@ function TemplatePreview({
       }
       style={{ width, height: scaledHeight }}
     >
-      <iframe
-        srcDoc={html}
-        sandbox="allow-scripts"
-        title={`preview-${template.id}`}
-        style={{
-          width: w,
-          height: h,
-          transformOrigin: "top left",
-          transform: `scale(${scale})`,
-        }}
-      />
+      {svgUrl && (
+        <img
+          src={svgUrl}
+          alt={`preview-${template.id}`}
+          width={w}
+          height={h}
+          style={{
+            transformOrigin: "top left",
+            transform: `scale(${scale})`,
+          }}
+        />
+      )}
+      {error && <span className="settings-error">{error}</span>}
     </div>
   );
 }
 
-/// Card-grid thumbnail. Renders the live iframe preview at default props —
-/// same component the form's large preview uses, so card and form stay
-/// visually consistent.
+/// Card-grid thumbnail. Renders the live preview at default props — same
+/// component the form's large preview uses, so card and form stay visually
+/// consistent.
 function TemplateCardThumbnail({ template }: { template: TemplateSummary }) {
-  return (
-    <TemplatePreview
-      template={template}
-      props={defaultPropsFor(template)}
-      width={240}
-    />
-  );
+  const defaults = useMemo(() => defaultPropsFor(template), [template.id]);
+  return <TemplatePreview template={template} props={defaults} width={240} />;
 }
 
 function PropField({

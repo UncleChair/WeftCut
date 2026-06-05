@@ -109,3 +109,71 @@ describe("SVG-template rasterizer (real WebView2)", () => {
     expect(result.interiorAlpha).toBeGreaterThan(0);
   });
 });
+
+// Drives the REAL capture harness (src/render/templates/harness.ts +
+// harnessFrame.ts) through the e2e hook `window.__weftcutTest.renderTemplateFrameSvg`.
+// `browser.execute` can't import bundled modules, so the harness is constructed
+// app-side (Root effect, gated on VITE_WEFTCUT_E2E) and exposed on the hook; the
+// spec just calls it. The hook loads the `countdown` built-in (via getTemplate)
+// and returns the serialized post-render <svg> for a given time.
+//
+// countdown shows ceil(dur - t) with dur=5: t=0.5 -> ceil(4.5)=5 (">5<"),
+// t=2.5 -> ceil(2.5)=3 (">3<"). Two renders at the same t must be byte-identical
+// (Date.now/performance.now/rAF stubbed in the harness => deterministic).
+describe("template capture harness (real WebView2)", () => {
+  async function renderFrame(tSec) {
+    const out = await browser.executeAsync((t, done) => {
+      const hook = window.__weftcutTest;
+      if (!hook || typeof hook.renderTemplateFrameSvg !== "function") {
+        done({ ok: false, error: "renderTemplateFrameSvg hook absent" });
+        return;
+      }
+      hook
+        .renderTemplateFrameSvg({ templateId: "countdown", tSec: t, durSec: 5, props: {} })
+        .then((svg) => done({ ok: true, svg }))
+        .catch((e) => done({ ok: false, error: String(e) }));
+    }, tSec);
+    if (!out.ok) throw new Error("renderTemplateFrameSvg failed: " + out.error);
+    return out.svg;
+  }
+
+  before(async () => {
+    await browser.waitUntil(
+      async () => (await browser.execute(() => document.readyState)) === "complete",
+      { timeout: 30000, timeoutMsg: "never reached readyState=complete" },
+    );
+    // The hook is installed in an async useEffect (after a dynamic import), so
+    // it lands AFTER readyState=complete. Wait for it explicitly.
+    await browser.waitUntil(
+      async () =>
+        await browser.execute(
+          () =>
+            !!(
+              window.__weftcutTest &&
+              typeof window.__weftcutTest.renderTemplateFrameSvg === "function"
+            ),
+        ),
+      { timeout: 30000, timeoutMsg: "renderTemplateFrameSvg hook never installed" },
+    );
+  });
+
+  it("render(t) animates: different t => different <svg> with the right numeral", async () => {
+    const early = await renderFrame(0.5);
+    const late = await renderFrame(2.5);
+
+    // Script ran + mutated the DOM differently per t.
+    expect(early).not.toBe(late);
+    // Serialized post-render <svg> (scripts stripped from the clone).
+    expect(early).toContain("<svg");
+    expect(early).not.toContain("<script");
+    // ceil(5 - 0.5) = 5; ceil(5 - 2.5) = 3.
+    expect(early).toContain(">5<");
+    expect(late).toContain(">3<");
+  });
+
+  it("is deterministic: two renders at the same t are byte-identical", async () => {
+    const a = await renderFrame(0.5);
+    const b = await renderFrame(0.5);
+    expect(a).toBe(b);
+  });
+});

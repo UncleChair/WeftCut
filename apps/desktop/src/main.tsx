@@ -64,8 +64,11 @@ function Root() {
   // import behind the static `VITE_WEFTCUT_E2E` check is stripped from prod.
   useEffect(() => {
     if (import.meta.env.VITE_WEFTCUT_E2E !== "1") return;
-    void import("./testhook/e2eHook").then(({ installBootstrapHook }) =>
-      installBootstrapHook(() => setStage("editor")),
+    void import("./testhook/e2eHook").then(
+      ({ installBootstrapHook, installTemplateHarnessHook }) => {
+        installBootstrapHook(() => setStage("editor"));
+        installTemplateHarnessHook();
+      },
     );
   }, []);
 
