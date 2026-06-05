@@ -4,7 +4,7 @@
 /// must match byte-for-byte so the actor's commit-side snap and the
 /// UI's drag-preview snap produce identical results.
 
-const US_PER_SEC = 1_000_000;
+export const US_PER_SEC = 1_000_000;
 const DEFAULT_FRAME_DUR_US = 33_333; // 30 fps fallback
 
 /// Microseconds per composition frame, rounded to nearest. Defaults to
@@ -130,6 +130,21 @@ export function formatTimecode(
   const h = Math.floor(totalSec / 3600);
   const pad = (n: number, w: number) => n.toString().padStart(w, "0");
   return `${pad(h, 2)}:${pad(m, 2)}:${pad(s, 2)}:${pad(f, 2)}`;
+}
+
+/// Given an in-layer playhead position `tInLayerUs` (µs from the layer's
+/// own origin, i.e. after subtracting `t_start_us` from the comp position
+/// and adding `src_in_us`), return the zero-based index of the source
+/// frame that should be displayed.
+///
+/// Uses exact rational arithmetic — no pre-rounded `frameDurUs` integer —
+/// so the result matches the source's own PTS-derived frame index without
+/// accumulating drift over long layers. Clamped to 0 for non-positive
+/// inputs and degenerate fps parameters.
+export function frameIndexInLayer(tInLayerUs: number, fpsNum: number, fpsDen: number): number {
+  if (fpsNum <= 0 || fpsDen <= 0) return 0;
+  if (tInLayerUs <= 0) return 0;
+  return Math.floor((tInLayerUs * fpsNum) / (US_PER_SEC * fpsDen));
 }
 
 /// Parse a SMPTE timecode string into microseconds, or null when invalid.
