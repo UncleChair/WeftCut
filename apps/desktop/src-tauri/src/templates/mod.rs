@@ -394,40 +394,42 @@ mod tests {
 
     #[test]
     fn builtin_template_parses() {
-        let t = builtin_lower_third_simple();
-        assert_eq!(t.id(), "lower-third-simple");
-        assert_eq!(t.size(), (800, 200));
-        assert!(t.manifest.props_schema.contains_key("title"));
-        assert!(t.manifest.props_schema.contains_key("subtitle"));
+        let t = builtin_countdown();
+        assert_eq!(t.id(), "countdown");
+        assert_eq!(t.size(), (480, 480));
+        assert!(t.manifest.props_schema.contains_key("seconds"));
         assert!(t.manifest.props_schema.contains_key("color"));
         // Content hash is stable across calls.
         let h1 = t.content_hash();
-        let h2 = builtin_lower_third_simple().content_hash();
+        let h2 = builtin_countdown().content_hash();
         assert_eq!(h1, h2);
     }
 
     #[test]
     fn canonicalize_fills_defaults() {
-        let t = builtin_lower_third_simple();
+        let t = builtin_countdown();
         let canonical = t.canonicalize_props(&json!({})).expect("ok");
         // Order-stable canonical form: BTreeMap keys sorted alphabetically.
-        // Color comes first, then subtitle, then title.
+        // Every schema prop is present with its default filled in.
         assert!(canonical.contains("\"color\""));
-        assert!(canonical.contains("\"title\""));
+        assert!(canonical.contains("\"seconds\""));
     }
 
     #[test]
     fn canonicalize_rejects_unknown_key() {
-        let t = builtin_lower_third_simple();
+        let t = builtin_countdown();
+        // Pair the unknown key with a *valid* one so `bogus` is the only
+        // unknown — the validator returns on the first unknown it hits and
+        // serde_json map order isn't guaranteed, so don't rely on which one.
         let err = t
-            .canonicalize_props(&json!({ "title": "x", "bogus": 1 }))
+            .canonicalize_props(&json!({ "color": "#ffffff", "bogus": 1 }))
             .expect_err("should fail");
         assert!(matches!(err, TemplateError::UnknownProp(k) if k == "bogus"));
     }
 
     #[test]
     fn canonicalize_validates_color() {
-        let t = builtin_lower_third_simple();
+        let t = builtin_countdown();
         let err = t
             .canonicalize_props(&json!({ "color": "blue" }))
             .expect_err("should fail");
@@ -435,25 +437,25 @@ mod tests {
     }
 
     #[test]
-    fn canonicalize_enforces_max_length() {
-        let t = builtin_lower_third_simple();
-        let long = "x".repeat(200);
+    fn canonicalize_enforces_number_range() {
+        // `seconds` is bounded [1, 60]; out-of-range values must be rejected.
+        let t = builtin_countdown();
         let err = t
-            .canonicalize_props(&json!({ "title": long }))
+            .canonicalize_props(&json!({ "seconds": 999.0 }))
             .expect_err("should fail");
-        assert!(matches!(err, TemplateError::TooLong(_, _)));
+        assert!(matches!(err, TemplateError::OutOfRange(_, _, _)));
     }
 
     #[test]
     fn same_props_same_canonical_form() {
         // Cache-key stability: re-canonicalising with the same logical
         // inputs in different key order must produce the same string.
-        let t = builtin_lower_third_simple();
+        let t = builtin_countdown();
         let a = t
-            .canonicalize_props(&json!({ "title": "A", "color": "#ffaa00" }))
+            .canonicalize_props(&json!({ "seconds": 5, "color": "#ffaa00" }))
             .unwrap();
         let b = t
-            .canonicalize_props(&json!({ "color": "#ffaa00", "title": "A" }))
+            .canonicalize_props(&json!({ "color": "#ffaa00", "seconds": 5 }))
             .unwrap();
         assert_eq!(a, b);
     }
@@ -468,7 +470,7 @@ mod tests {
         assert!(!is_hex_color("#"));
     }
 
-    // -- Stage F starter set ------------------------------------------------
+    // -- Built-in starter set -----------------------------------------------
 
     /// Every builtin's manifest must parse, every prop default must satisfy
     /// its own validator, and `content_hash` must be stable across two
@@ -521,38 +523,31 @@ mod tests {
         }
     }
 
-    /// The Stage F bullet list calls for exactly these 10 templates. If
-    /// `builtins()` is ever pruned or reordered, this guard surfaces it so
-    /// the picker-UI / docs side stays in sync.
+    /// The render-path redesign (ADR 0015) trimmed the starter set to the
+    /// single `countdown` exemplar. If `builtins()` is ever expanded or the
+    /// id renamed, this guard surfaces it so the picker-UI / docs side stays
+    /// in sync.
     #[test]
     fn builtins_cover_starter_set() {
-        let expected: &[&str] = &[
-            "lower-third-simple",
-            "lower-third-glow",
-            "lower-third-bar",
-            "title-card",
-            "captions-strip",
-            "callout",
-            "progress-bar",
-            "countdown",
-            "logo-bug",
-            "slate",
-        ];
         let actual: Vec<String> = builtins().iter().map(|t| t.id().to_string()).collect();
-        let expected: Vec<String> = expected.iter().map(|s| s.to_string()).collect();
-        assert_eq!(actual, expected);
+        assert_eq!(actual, vec!["countdown".to_string()]);
+        // `catalog()` exposes the same single template to the picker / MCP.
+        let catalog_ids: Vec<String> = catalog().iter().map(|m| m.id.clone()).collect();
+        assert_eq!(catalog_ids, vec!["countdown".to_string()]);
     }
 
-    /// Every template's HTML must contain the `__STYLE__` placeholder —
-    /// `navigate_to_template` does a plain `replace("__STYLE__", &style)`,
-    /// so a missing placeholder ships the unstyled DOM and looks broken in
-    /// the captured PNG. Cheap to enforce here rather than at first render.
+    /// Built-in HTML is now a self-contained SVG document: an `<svg>` plus an
+    /// inline `<script>` defining `render(...)`. The old `__STYLE__`
+    /// placeholder / separate-CSS mechanism is gone, so assert the new shape
+    /// instead — a missing `render` or `<svg>` ships a blank frame.
     #[test]
-    fn every_builtin_html_has_style_placeholder() {
+    fn every_builtin_html_is_svg_with_render() {
         for t in builtins() {
+            assert_eq!(t.manifest.engine, "svg", "{}: engine must be svg", t.id());
+            assert!(t.html.contains("<svg"), "{}: HTML missing <svg>", t.id());
             assert!(
-                t.html.contains("__STYLE__"),
-                "{}: HTML missing __STYLE__ placeholder",
+                t.html.contains("function render"),
+                "{}: HTML missing render() entry",
                 t.id()
             );
         }
@@ -561,28 +556,38 @@ mod tests {
     /// `parse_composed_template` is load-bearing for the html-render-groups
     /// path: the composition engine reads `style` / `scripts` / `body`
     /// from the embedded state JSON. A regression that swallows the
-    /// `<script>` body means templates render styled-but-static (no
-    /// animation) inside compositions. Cover the round-trip against every
-    /// built-in so a new template with a different structure (e.g. two
-    /// `<script>` blocks) trips an actionable failure here, not at the
-    /// first preview/export.
+    /// `<script>` body means templates render static (no animation) inside
+    /// compositions. Cover the round-trip against every built-in so a new
+    /// template with a different structure (e.g. two `<script>` blocks)
+    /// trips an actionable failure here, not at the first preview/export.
+    ///
+    /// SVG-engine built-ins (`countdown`) style via inline attributes and
+    /// carry no `<style>` block, so style-extraction is exercised by the
+    /// synthetic `parse_composed_handles_multiple_style_blocks` test below
+    /// rather than asserted here.
     #[test]
     fn parse_composed_extracts_each_builtin() {
         for t in builtins() {
-            let composed = t.html.replace("__STYLE__", &t.style);
-            let parsed = parse_composed_template(&composed);
-            assert!(
-                !parsed.style.is_empty(),
-                "{}: parsed style empty",
-                t.id()
-            );
+            // No `__STYLE__` substitution anymore — the HTML is self-contained.
+            let parsed = parse_composed_template(&t.html);
+            // The inline `render()` script must land in the scripts bucket.
             assert!(
                 !parsed.scripts.is_empty(),
                 "{}: parsed scripts empty",
                 t.id()
             );
-            // Body keeps the visible markup (e.g. the title div).
+            assert!(
+                parsed.scripts.contains("function render"),
+                "{}: render() not extracted into scripts",
+                t.id()
+            );
+            // Body keeps the visible markup (e.g. the <svg>).
             assert!(!parsed.body.is_empty(), "{}: parsed body empty", t.id());
+            assert!(
+                parsed.body.to_ascii_lowercase().contains("<svg"),
+                "{}: parsed body lost the <svg> markup",
+                t.id()
+            );
             // No `<style>` / `<script>` tags should remain in the body —
             // those went to the dedicated buckets.
             assert!(
