@@ -38,13 +38,18 @@ describe("template renders + animates in export (real WebView2)", function () {
       { timeout: 30000, timeoutMsg: "newProjectAndEnter never mounted" },
     );
 
-    // 1) Create a 1920x1080 @ 30fps project and enter the editor.
+    // 1) Create a 480x480 @ 30fps project and enter the editor. Matching the
+    //    countdown's native size (480x480) makes the template FILL the frame,
+    //    so a differing pair scores far below the 0.99 threshold (~0.6-0.8) and
+    //    the differ/static gate has a wide margin. A larger canvas would let a
+    //    big static-black border dilute the global MSSIM toward 1.0, making the
+    //    test flaky against encoder/GPU noise.
     const r1 = await browser.executeAsync((parent, done) => {
       window.__weftcutTest
         .newProjectAndEnter({
           parentFolder: parent,
           name: "e2e-tmpl-" + Date.now(),
-          canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
+          canvas: { width: 480, height: 480, fpsNum: 30, fpsDen: 1 },
         })
         .then(() => done({ ok: true }))
         .catch((e) => done({ ok: false, error: String(e) }));
