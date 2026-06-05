@@ -185,10 +185,13 @@ export class TemplateSprite {
     this.sprite.scale.set(view.scale_x, view.scale_y);
     this.sprite.alpha = view.opacity;
 
-    // Injected-frames path (export). Bind synchronously by comp-frame index —
-    // the SAME `templateDurationFrames` + `frameIndexInLayer` math the preview/
-    // harness path uses below, so the selected frame is identical. No
-    // canonicalize, no harness, no cache: the bitmaps are already baked.
+    // Injected-frames path (export). Bind synchronously by layer-local
+    // comp-frame index into the pre-baked array. The bake (`exportBake.ts`) is
+    // responsible for content-window alignment: it renders each layer-local
+    // frame at its CONTENT time (src_in offset + content duration), so this
+    // branch only needs the layer-local index — it must NOT re-apply src_in or
+    // the content cap (the preview path below does that for live rendering).
+    // No canonicalize, no harness, no cache: the bitmaps are already baked.
     if (injectedFrames) {
       const durationFrames = templateDurationFrames(
         durationUs,
