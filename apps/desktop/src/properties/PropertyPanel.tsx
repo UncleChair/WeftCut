@@ -608,11 +608,12 @@ function TemplateFields({
     ? Object.entries(template.manifest.props_schema)
     : [];
 
-  // Field-wise props patch: spread the current props and override one key, so
-  // the backend merge (which already only touches present keys) round-trips
-  // exactly what the UI shows.
+  // Partial props patch: send ONLY the changed key so the backend's field-wise
+  // merge (imbl::HashMap insert — keeps all other keys untouched) applies it
+  // correctly. Sending the full spread risks a stale v.props racing against a
+  // concurrent field edit and silently dropping the earlier write.
   const commitProp = (key: string, next: unknown) =>
-    debouncedCommit({ kind: "Template", props: { ...v.props, [key]: next } });
+    commit({ kind: "Template", props: { [key]: next } });
 
   return (
     <section className="prop-section">
@@ -797,10 +798,9 @@ function NumberPropField({
           spec.max !== undefined && spec.max - (spec.min ?? 0) <= 10 ? 0.1 : 1
         }
         onChange={(e) => {
-          const next = Number(e.target.value);
-          setNum(next);
-          onCommit(next);
+          setNum(Number(e.target.value));
         }}
+        onBlur={() => onCommit(num)}
       />
     </Field>
   );
