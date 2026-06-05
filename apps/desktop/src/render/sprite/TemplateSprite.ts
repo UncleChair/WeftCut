@@ -236,11 +236,16 @@ export class TemplateSprite {
   }
 
   private bindBitmap(bitmap: ImageBitmap): void {
-    // Free the previous Texture wrapper but NOT the underlying bitmap —
-    // the cache owns the bitmap's lifetime.
+    // destroy(true) frees this sprite's own ImageSource/GPU texture on every
+    // rebind, preventing a per-tick GPU-memory leak. The shared cache's
+    // ImageBitmap is NOT closed by destroy(true) — ImageSource inherits
+    // TextureSource.destroy(), which calls unload() (GPU texture freed) and
+    // nulls `resource` but never calls ImageBitmap.close(). Each sprite wraps
+    // the cache bitmap in its OWN independent ImageSource, so destroy(true)
+    // only affects this sprite's wrapper + source, not the cache-owned bitmap.
     if (this.texture && this.texture !== Texture.EMPTY) {
       try {
-        this.texture.destroy(false);
+        this.texture.destroy(true);
       } catch {
         // ignore
       }
@@ -259,10 +264,12 @@ export class TemplateSprite {
     this.disposed = true;
     if (this.texture && this.texture !== Texture.EMPTY) {
       try {
-        // destroy(false) frees the Pixi Texture wrapper but leaves the
-        // underlying ImageBitmap alone — the shared frame cache may still
-        // hand it to another sprite. The cache owns the bitmap's close().
-        this.texture.destroy(false);
+        // destroy(true) frees this sprite's own ImageSource/GPU texture.
+        // The shared cache's ImageBitmap is NOT closed by destroy(true) —
+        // ImageSource.destroy() calls unload() (GPU texture) and nulls
+        // `resource` but never calls ImageBitmap.close(). The cache owns
+        // bitmap lifetime; destroy(true) only frees this sprite's wrapper.
+        this.texture.destroy(true);
       } catch {
         // ignore
       }
