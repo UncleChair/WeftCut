@@ -1977,6 +1977,14 @@ pub async fn add_template(
             t_start_us.saturating_add(duration_us)
         }
     };
+    // Enforce the template's `max_duration_s` cap: an explicit over-long
+    // `t_end_us` can't place the layer longer than the manifest allows.
+    // (The default duration is normally <= the cap, so this only bites
+    // explicit over-long adds.) Mirrors the trim-time clamp in the actor.
+    let resolved_end = match template.manifest.max_duration_us() {
+        Some(cap) if resolved_end - t_start_us > cap => t_start_us.saturating_add(cap),
+        _ => resolved_end,
+    };
     if resolved_end <= t_start_us {
         return Err(format!(
             "t_end_us {resolved_end} must be greater than t_start_us {t_start_us}",

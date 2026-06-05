@@ -1009,6 +1009,10 @@ export interface TemplateSummary {
   /// `[width, height]` in pixels — the document size the capture engine uses.
   size: [number, number];
   default_duration_s: number;
+  /// Optional hard cap on a placed layer's total length, in seconds. When
+  /// present, the timeline forbids trimming/adding the template longer than
+  /// this; when absent the template is freely extendable (holdable overlays).
+  max_duration_s?: number;
   /// Keyed by prop name. Map order is BTreeMap-stable (alphabetical) so the
   /// picker can render fields in a deterministic order without sorting.
   props_schema: Record<string, PropSpec>;
