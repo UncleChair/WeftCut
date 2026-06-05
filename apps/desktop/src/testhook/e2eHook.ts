@@ -18,8 +18,14 @@ import {
 import { mergeSettings, type ExportSettings } from "../render/exportSettings";
 import { useProjectStore, exportPlaybackPathFor } from "../state/projectStore";
 import { exists } from "@tauri-apps/plugin-fs";
-import { getTemplate } from "../render/templates/catalog";
+import { getTemplate, type Template, type TemplateManifest } from "../render/templates/catalog";
 import { TemplateHarness } from "../render/templates/harness";
+import { rasterizeSvg } from "../render/templates/svgRaster";
+// Build-time embed of a real woff2 so the synthetic test fixture can declare a
+// bundled font WITHOUT shipping an asset under builtin/. `jassub` is a direct
+// dependency of this package; its bundled woff2 is stable repo state (unlike a
+// build-output font). Vite's `?arraybuffer` query yields the bytes inline.
+import testFixtureFontBytes from "jassub/dist/default.woff2?arraybuffer";
 
 type RunExport = (
   settings: ExportSettings,
@@ -59,6 +65,24 @@ export interface E2EHook {
     durSec: number;
     props?: Record<string, unknown>;
   }): Promise<string>;
+  /// Capture one frame of a SYNTHETIC, test-only template through a fresh
+  /// `TemplateHarness`, then rasterize the captured `<svg>`. The fixture is
+  /// built inline here (NOT in the shipping catalog) and exercises three
+  /// present-but-untested harness features the only built-in (`countdown`)
+  /// can't reach:
+  ///   1. clock stub — `render()` writes `String(Date.now())` into `#clock`;
+  ///      the harness stubs `Date.now`→0, so the capture must contain `>0<`.
+  ///   2. in-`<svg>` `<script>` strip — a `<script>` child of the `<svg>`
+  ///      (not a sibling) must be removed from the serialized clone.
+  ///   3. bundled font — a declared `@font-face` (with embedded woff2 bytes)
+  ///      must be injected into the captured markup.
+  /// Returns the serialized `<svg>` plus whether `rasterizeSvg(svg)` resolved
+  /// (a clean rasterize proves the stripped output is well-formed XML).
+  renderTestFixtureSvg(args: {
+    tSec: number;
+    durSec: number;
+    props?: Record<string, unknown>;
+  }): Promise<{ svg: string; rasterizeOk: boolean }>;
 }
 
 function hookSlot(): Partial<E2EHook> {
@@ -96,6 +120,84 @@ export function installTemplateHarnessHook(): void {
     }
     await entry.ready;
     return entry.harness.renderFrameSvg(tSec, durSec, props ?? {});
+  };
+
+  // Synthetic test-only fixture (built inline; NOT in the shipping catalog).
+  let fixture: { harness: TemplateHarness; ready: Promise<void> } | null = null;
+  hookSlot().renderTestFixtureSvg = async ({ tSec, durSec, props }) => {
+    if (!fixture) {
+      const harness = new TemplateHarness();
+      fixture = { harness, ready: harness.load(buildTestFixtureTemplate()) };
+    }
+    await fixture.ready;
+    const svg = await fixture.harness.renderFrameSvg(tSec, durSec, props ?? {});
+    // A clean rasterize proves the script-stripped markup is well-formed XML
+    // (a stray `<script>` left in the clone would make `<img>` parsing fail).
+    let rasterizeOk = false;
+    try {
+      const bitmap = await rasterizeSvg(svg);
+      rasterizeOk = true;
+      bitmap.close?.();
+    } catch {
+      rasterizeOk = false;
+    }
+    return { svg, rasterizeOk };
+  };
+}
+
+/// Build the synthetic, test-only `Template` exercising all three otherwise
+/// untested harness features in ONE document (see `renderTestFixtureSvg`).
+///
+/// The HTML carries:
+///   - a SIBLING `<script>` defining `render()` (kept functional). `render()`
+///     reads `Date.now()` INSIDE the call — the harness stubs `Date.now`→0
+///     only after the template script evaluates, so a top-level read would
+///     capture the real epoch; the in-`render` read gets the stubbed `0`.
+///   - a `<script>` that is a CHILD of the `<svg>` (inert; only there to be
+///     stripped by the harness clone). Distinct from the sibling so the
+///     clock-stub and script-strip proofs don't entangle.
+///   - a declared `@font-face` family the harness injects from `Template.fonts`
+///     (keyed `.../assets/test.woff2`, matched by `collectFonts`'s `endsWith`).
+function buildTestFixtureTemplate(): Template {
+  const html = [
+    "<!doctype html>",
+    '<html><head><meta charset="utf-8"></head>',
+    '<body style="margin:0">',
+    '  <svg xmlns="http://www.w3.org/2000/svg" width="320" height="120">',
+    // Text node whose content render() overwrites with String(Date.now()).
+    '    <text id="clock" x="20" y="50" font-family="HarnessTestFont" ' +
+      'font-size="32" fill="#ffffff">pending</text>',
+    // <script> INSIDE the <svg>: a strip target, not a sibling. Inert.
+    '    <script type="application/ecmascript">/* in-svg inert script */</script>',
+    "  </svg>",
+    // SIBLING <script>: defines the functional render().
+    "  <script>",
+    "    function render(tSec, durationSec, props) {",
+    // Read Date.now() HERE (after the harness stub is installed) so the
+    // capture shows the stubbed 0, not a real 13-digit epoch.
+    "      document.getElementById('clock').textContent = String(Date.now());",
+    "    }",
+    "    function ready() { return Promise.resolve(); }",
+    "  </script>",
+    "</body></html>",
+  ].join("\n");
+
+  const manifest: TemplateManifest = {
+    id: "__test_fixture__",
+    name: "Harness Test Fixture",
+    version: 1,
+    size: [320, 120],
+    default_duration_s: 3,
+    engine: "svg",
+    props_schema: {},
+    fonts: [{ family: "HarnessTestFont", file: "test.woff2" }],
+  };
+
+  return {
+    manifest,
+    html,
+    // Key ends with `/assets/test.woff2` so collectFonts() matches it.
+    fonts: { "test-fixture/assets/test.woff2": new Uint8Array(testFixtureFontBytes) },
   };
 }
 

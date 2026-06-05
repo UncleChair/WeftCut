@@ -14,3 +14,12 @@ declare module "*?url" {
   const src: string;
   export default src;
 }
+
+// Vite's `?arraybuffer` import suffix yields the asset's bytes as an
+// ArrayBuffer. vite/client types the suffix for known asset extensions but not
+// for arbitrary `*?arraybuffer` imports from node_modules (the E2E test hook
+// embeds a woff2 this way), so declare the wildcard here.
+declare module "*?arraybuffer" {
+  const bytes: ArrayBuffer;
+  export default bytes;
+}
