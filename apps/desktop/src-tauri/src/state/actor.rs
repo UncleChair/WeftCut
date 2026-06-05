@@ -3286,9 +3286,17 @@ pub(crate) fn apply_update_layer_params(
                         return None; // grow / within content → no geometry change
                     }
                     // Clamp the window start into content (keep >= 0, < content_dur).
+                    // Floor (not round) so new_src_in can never round UP toward
+                    // content_dur on off-grid fractional-`seconds` caps. src_in is
+                    // already grid-aligned; min() keeps it < content_dur.
                     let max_src_in = (content_dur - 1).max(0);
                     let new_src_in =
-                        crate::state::time::snap_frame_round(src_in.min(max_src_in), fps);
+                        crate::state::time::snap_frame_floor(src_in.min(max_src_in), fps);
+                    // Double-snap (floor then round) mirrors the OUT-cap math in
+                    // trim_delta_bounds: snap_frame_floor's µs output isn't
+                    // round-idempotent on /1001 rates and can land 1µs below a
+                    // grid point, so the outer round canonicalises it back onto
+                    // the grid while staying <= content end. NOT redundant.
                     // Largest grid t_end whose derived src_out stays <= content_dur.
                     let capped_end = crate::state::time::snap_frame_round(
                         crate::state::time::snap_frame_floor(
@@ -8240,5 +8248,10 @@ mod tests {
             .find(|l| l.id == layer_id)
             .expect("layer");
         assert_eq!(layer.t_end_us, 3_000_000, "shrink below window must clamp t_end to content");
+        if let LayerParams::Template(p) = &layer.params {
+            assert_eq!(p.src_in_us, 0, "src_in unchanged when window starts at 0");
+        } else {
+            panic!("not a template");
+        }
     }
 }
