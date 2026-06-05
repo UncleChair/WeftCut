@@ -3238,19 +3238,88 @@ pub(crate) fn apply_update_layer(
 /// Mutation half of `do_update_layer_params` — kind-specific patch.
 /// `apply_params_patch` (below) is already a pure helper; this is a thin
 /// locate-then-patch wrapper.
+///
+/// For Template layers, after applying the patch, the content-window invariant
+/// (`src_in + width <= content_dur`) is enforced. Growing the content cap never
+/// resizes the layer; shrinking it below the current window clamps `src_in` and
+/// `t_end` into the new content.
 pub(crate) fn apply_update_layer_params(
     project: &mut Project,
     id: LayerId,
     patch: &LayerParamsPatch,
 ) -> Result<(), CommandError> {
-    for track in project.tracks.iter_mut() {
-        if let Some(idx) = track.layers.iter().position(|l| l.id == id) {
-            let layer = track.layers.get_mut(idx).expect("index just verified");
-            apply_params_patch(layer, patch, id)?;
-            return Ok(());
+    let fps = project.composition.fps;
+
+    // Locate by index so the &mut borrow is released before apply_duration_autofit.
+    let (ti, li) = project
+        .tracks
+        .iter()
+        .enumerate()
+        .find_map(|(ti, t)| t.layers.iter().position(|l| l.id == id).map(|li| (ti, li)))
+        .ok_or(CommandError::LayerNotFound { layer: id })?;
+
+    apply_params_patch(&mut project.tracks[ti].layers[li], patch, id)?;
+
+    // Content-window model: editing the cap-driving prop (`seconds`) changes the
+    // intrinsic content, NOT the layer geometry — EXCEPT when the content shrinks
+    // below the current window, where we clamp src_in + t_end into the new
+    // content (the longer content no longer exists). Growing never resizes.
+    let mut geom_changed = false;
+    {
+        let layer = &mut project.tracks[ti].layers[li];
+        let t_start = layer.t_start_us;
+        let t_end = layer.t_end_us;
+
+        let clamp: Option<(i64, i64)> = if let LayerParams::Template(ref tp) = layer.params {
+            let catalog = crate::templates::builtins();
+            catalog
+                .iter()
+                .find(|t| t.id() == tp.template_id)
+                .and_then(|t| {
+                    crate::templates::resolve_template_max_dur_us(&t.manifest, &tp.props)
+                })
+                .and_then(|content_dur| {
+                    let src_in = tp.src_in_us;
+                    let width = t_end - t_start;
+                    // src_out (derived) must fit in [0, content_dur].
+                    if src_in + width <= content_dur {
+                        return None; // grow / within content → no geometry change
+                    }
+                    // Clamp the window start into content (keep >= 0, < content_dur).
+                    let max_src_in = (content_dur - 1).max(0);
+                    let new_src_in =
+                        crate::state::time::snap_frame_round(src_in.min(max_src_in), fps);
+                    // Largest grid t_end whose derived src_out stays <= content_dur.
+                    let capped_end = crate::state::time::snap_frame_round(
+                        crate::state::time::snap_frame_floor(
+                            t_start.saturating_add(content_dur.saturating_sub(new_src_in)),
+                            fps,
+                        ),
+                        fps,
+                    );
+                    // Never collapse below a single µs (no frame_dur_us helper exists;
+                    // snap_frame_round already guarantees grid alignment, and this floor
+                    // only guards the degenerate content_dur <= 0 case).
+                    let new_t_end = capped_end.max(t_start.saturating_add(1));
+                    Some((new_src_in, new_t_end))
+                })
+        } else {
+            None
+        };
+
+        if let Some((new_src_in, new_t_end)) = clamp {
+            if let LayerParams::Template(ref mut tp) = layer.params {
+                tp.src_in_us = new_src_in;
+            }
+            layer.t_end_us = new_t_end;
+            geom_changed = true;
         }
     }
-    Err(CommandError::LayerNotFound { layer: id })
+
+    if geom_changed {
+        apply_duration_autofit(project);
+    }
+    Ok(())
 }
 
 /// Mutation half of `do_move_layer`. Removes layer from its current track,
@@ -8086,5 +8155,90 @@ mod tests {
         let snap = handle.snapshot().await;
         assert_eq!(snap.composition.duration_us, 4_000_000);
         assert!(!snap.composition.duration_pinned);
+    }
+
+    /// Patching `seconds` to a LARGER value (grow) must NOT resize the layer.
+    /// countdown seconds=5 → content 5s; layer [0, 5_000_000], src_in=0.
+    /// Patch seconds=6 → content grows to 6s. EXPECT: t_end_us stays 5_000_000,
+    /// src_in_us stays 0.
+    #[tokio::test]
+    async fn update_layer_params_seconds_grow_does_not_resize_layer() {
+        let mut props: imbl::HashMap<String, serde_json::Value> = imbl::HashMap::new();
+        props.insert("seconds".into(), serde_json::json!(5));
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        let layer_id = handle
+            .add_layer(Actor::User, track_id, template_layer(props), 0, 5_000_000)
+            .await
+            .expect("add_layer");
+
+        let mut patch_props: std::collections::HashMap<String, serde_json::Value> =
+            std::collections::HashMap::new();
+        patch_props.insert("seconds".into(), serde_json::json!(6));
+        handle
+            .update_layer_params(
+                Actor::User,
+                layer_id,
+                LayerParamsPatch::Template(TemplatePatch {
+                    props: Some(patch_props),
+                    ..Default::default()
+                }),
+            )
+            .await
+            .expect("update_layer_params");
+
+        let snap = handle.snapshot().await;
+        let layer = snap
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .find(|l| l.id == layer_id)
+            .expect("layer");
+        assert_eq!(layer.t_end_us, 5_000_000, "grow must not resize the layer");
+        if let LayerParams::Template(p) = &layer.params {
+            assert_eq!(p.src_in_us, 0, "grow must not change src_in_us");
+        } else {
+            panic!("not a template");
+        }
+    }
+
+    /// Patching `seconds` to a SMALLER value that falls inside the current window
+    /// (shrink-below-window) must clamp t_end into the new content.
+    /// countdown seconds=6 → content 6s; layer [0, 6_000_000], src_in=0.
+    /// Patch seconds=3 → content shrinks to 3s. EXPECT: t_end_us == 3_000_000.
+    #[tokio::test]
+    async fn update_layer_params_seconds_shrink_clamps_layer_to_content() {
+        let mut props: imbl::HashMap<String, serde_json::Value> = imbl::HashMap::new();
+        props.insert("seconds".into(), serde_json::json!(6));
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        let layer_id = handle
+            .add_layer(Actor::User, track_id, template_layer(props), 0, 6_000_000)
+            .await
+            .expect("add_layer");
+
+        let mut patch_props: std::collections::HashMap<String, serde_json::Value> =
+            std::collections::HashMap::new();
+        patch_props.insert("seconds".into(), serde_json::json!(3));
+        handle
+            .update_layer_params(
+                Actor::User,
+                layer_id,
+                LayerParamsPatch::Template(TemplatePatch {
+                    props: Some(patch_props),
+                    ..Default::default()
+                }),
+            )
+            .await
+            .expect("update_layer_params");
+
+        let snap = handle.snapshot().await;
+        let layer = snap
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .find(|l| l.id == layer_id)
+            .expect("layer");
+        assert_eq!(layer.t_end_us, 3_000_000, "shrink below window must clamp t_end to content");
     }
 }
