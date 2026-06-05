@@ -111,6 +111,9 @@ export interface TemplateView {
   scale_x: number;
   scale_y: number;
   opacity: number;
+  /// Window offset (µs) into the template's intrinsic content. Width = layer
+  /// width; src_out is derived. 0 = content frame 0.
+  src_in_us: number;
   /// User-set props for this template instance, validated against the
   /// template manifest's `props_schema`. Passed verbatim to the template's
   /// `render(t, dur, props)` entry inside the sandboxed capture iframe (via
@@ -343,6 +346,7 @@ export interface TemplatePatch {
   scale_x?: number;
   scale_y?: number;
   opacity?: number;
+  src_in_us?: number;
   /// Props to merge FIELD-WISE into the layer's existing `props` map — each
   /// key present here overwrites that key; absent keys are left intact. The
   /// backend merges (never replaces the whole map) so a stale debounced commit

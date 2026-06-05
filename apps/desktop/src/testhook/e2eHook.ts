@@ -230,6 +230,7 @@ export function installTemplateHarnessHook(): void {
         scale_x: 1,
         scale_y: 1,
         opacity: 1,
+        src_in_us: 0,
         props: props ?? {},
       };
       const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
