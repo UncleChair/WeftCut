@@ -3639,6 +3639,9 @@ fn split_single_layer(
         LayerParams::Audio(p) => {
             p.src_in_us = p.src_in_us + split_offset;
         }
+        LayerParams::Template(p) => {
+            p.src_in_us = p.src_in_us + split_offset;
+        }
         _ => {}
     }
     let mut left = original.clone();
@@ -3650,6 +3653,7 @@ fn split_single_layer(
         LayerParams::Audio(p) => {
             p.src_out_us = p.src_in_us + split_offset;
         }
+        // Template has no stored src_out (derived from layer width); left half needs no change.
         _ => {}
     }
     let track = &mut project.tracks[ti];
@@ -5445,6 +5449,39 @@ mod tests {
         assert_eq!(track.layers[0].t_end_us, 1_500_000);
         assert_eq!(track.layers[1].t_start_us, 1_500_000);
         assert_eq!(track.layers[1].t_end_us, 4_000_000);
+    }
+
+    #[tokio::test]
+    async fn split_template_layer_advances_right_src_in() {
+        // countdown seconds=6, layer [0, 6_000_000], src_in=0. Split at 2s.
+        // EXPECT: right half src_in_us == 2_000_000; left half src_in_us == 0.
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        let mut props: imbl::HashMap<String, serde_json::Value> = imbl::HashMap::new();
+        props.insert("seconds".into(), serde_json::json!(6.0));
+        let layer_id = handle
+            .add_layer(Actor::User, track_id, template_layer(props), 0, 6_000_000)
+            .await
+            .expect("add_layer");
+        let (left_id, right_id) = handle
+            .split_layer(Actor::User, layer_id, 2_000_000, false)
+            .await
+            .expect("split");
+        let snap = handle.snapshot().await;
+        let find_layer = |id| {
+            snap.tracks
+                .iter()
+                .flat_map(|t| t.layers.iter())
+                .find(|l| l.id == id)
+                .expect("layer")
+                .clone()
+        };
+        let left = find_layer(left_id);
+        let right = find_layer(right_id);
+        let LayerParams::Template(lp) = &left.params else { panic!("left: expected Template") };
+        let LayerParams::Template(rp) = &right.params else { panic!("right: expected Template") };
+        assert_eq!(lp.src_in_us, 0, "left src_in unchanged");
+        assert_eq!(rp.src_in_us, 2_000_000, "right src_in advanced by split offset");
     }
 
     #[tokio::test]
