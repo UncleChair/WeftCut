@@ -144,4 +144,7 @@ test("frameIndexInLayer is exact-rational and clamped", () => {
   expect(frameIndexInLayer(33_367, 30000, 1001)).toBe(1); // exact start of frame 1 at 29.97
   expect(frameIndexInLayer(33_366, 30000, 1001)).toBe(0); // 1µs before → still frame 0
   expect(frameIndexInLayer(-50, 30000, 1001)).toBe(0);    // clamp low
+  // degenerate fps clamps to 0
+  expect(frameIndexInLayer(1000, 0, 1)).toBe(0);
+  expect(frameIndexInLayer(1000, 30000, 0)).toBe(0);
 });

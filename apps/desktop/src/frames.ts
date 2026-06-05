@@ -4,7 +4,7 @@
 /// must match byte-for-byte so the actor's commit-side snap and the
 /// UI's drag-preview snap produce identical results.
 
-export const US_PER_SEC = 1_000_000;
+const US_PER_SEC = 1_000_000;
 const DEFAULT_FRAME_DUR_US = 33_333; // 30 fps fallback
 
 /// Microseconds per composition frame, rounded to nearest. Defaults to
