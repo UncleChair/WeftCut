@@ -183,6 +183,12 @@ export class Compositor {
   private colors = new Map<string, ActiveColor>();
   private texts = new Map<string, ActiveText>();
   private templates = new Map<string, ActiveTemplate>();
+  /// Export-only: pre-rasterized Template-layer frames injected by the export
+  /// Worker (`layerId → ImageBitmap[]`, indexed by comp-frame). When present
+  /// for a layer, `updateTemplate` hands the array to `TemplateSprite.update`,
+  /// which binds by index synchronously (no DOM harness — the Worker has none).
+  /// Empty in preview mode; the sprite's harness/cache path runs instead.
+  private templateFrames = new Map<string, readonly ImageBitmap[]>();
   private subtitles = new Map<string, ActiveSubtitles>();
   private audios = new Map<string, ActiveAudio>();
   /// In-flight no-flash source-swaps, keyed by the clip's real layerId.
@@ -308,6 +314,19 @@ export class Compositor {
   /// .pause() on their `<audio>` elements.
   setMasterPlayState(playing: boolean): void {
     this.playing = playing;
+  }
+
+  /// Export-only: install the pre-rasterized Template-layer frames the export
+  /// Worker baked on the main thread (`layerId → ImageBitmap[]`, comp-frame
+  /// indexed). `updateTemplate` forwards a layer's array to its
+  /// `TemplateSprite.update`, which binds by index synchronously instead of
+  /// running the DOM capture harness (absent in the Worker). Passing an empty
+  /// map (or never calling this) leaves preview's harness/cache path untouched.
+  setTemplateFrames(map: Record<string, readonly ImageBitmap[]>): void {
+    this.templateFrames.clear();
+    for (const [layerId, frames] of Object.entries(map)) {
+      this.templateFrames.set(layerId, frames);
+    }
   }
 
   /// Suspend / resume the compositor. While suspended, every
@@ -1194,7 +1213,11 @@ export class Compositor {
     // semantic (a template animates over its own placed duration).
     const tInLayerUs = tUs - layer.t_start_us;
     const durationUs = layer.t_end_us - layer.t_start_us;
-    tmpl.sprite.update(layer.params, tInLayerUs, durationUs);
+    // Export mode: pass the baked frames for this layer so the sprite binds by
+    // index synchronously (the Worker has no DOM harness). Undefined in preview
+    // (or if this layer wasn't baked) → the sprite's harness/cache path runs.
+    const injected = this.templateFrames.get(layer.id);
+    tmpl.sprite.update(layer.params, tInLayerUs, durationUs, injected);
     tmpl.sprite.sprite.zIndex = z;
   }
 

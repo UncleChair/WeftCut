@@ -106,6 +106,10 @@ export class TemplateSprite {
   /// (a newer `update` supersedes an in-flight rasterize by moving these).
   private targetCacheKey: string | null = null;
   private targetFrame = -1;
+  /// Last comp-frame index bound from `injectedFrames` (export mode). Lets a
+  /// repeated index (output fps < comp fps, or a held frame) skip the rebind +
+  /// per-tick GPU texture churn. -1 = nothing bound yet.
+  private injectedFrame = -1;
   private source: ImageSource | null = null;
   private texture: Texture | null = null;
   private onLoaded: (() => void) | null;
@@ -132,7 +136,21 @@ export class TemplateSprite {
   /// source-in offset, so this resets to 0 at `t_start`). On a cache hit the
   /// frame binds synchronously; on a miss it's captured + rasterized async and
   /// bound once ready (if still wanted).
-  update(view: TemplateView, tInLayerUs: number, durationUs: number): void {
+  ///
+  /// `injectedFrames` (export mode) is a pre-rasterized `ImageBitmap[]` for
+  /// THIS layer, indexed by composition-frame, baked on the main thread by
+  /// `exportBake.ts`. When present it is consulted FIRST: the frame is bound
+  /// SYNCHRONOUSLY by `frameIndexInLayer(...)` (clamped), bypassing the DOM
+  /// capture harness entirely (the export Worker has no `document`). The frame
+  /// index is computed with the SAME comp-fps math as the preview path, so
+  /// export == preview frame selection. Absent (preview) ⇒ the harness/cache
+  /// path below runs unchanged.
+  update(
+    view: TemplateView,
+    tInLayerUs: number,
+    durationUs: number,
+    injectedFrames?: readonly ImageBitmap[],
+  ): void {
     if (this.disposed || !this.template) return;
 
     // Transforms first, every tick, BEFORE the frame no-op below: a
@@ -140,6 +158,36 @@ export class TemplateSprite {
     this.sprite.position.set(view.x, view.y);
     this.sprite.scale.set(view.scale_x, view.scale_y);
     this.sprite.alpha = view.opacity;
+
+    // Injected-frames path (export). Bind synchronously by comp-frame index —
+    // the SAME `templateDurationFrames` + `frameIndexInLayer` math the preview/
+    // harness path uses below, so the selected frame is identical. No
+    // canonicalize, no harness, no cache: the bitmaps are already baked.
+    if (injectedFrames) {
+      const durationFrames = templateDurationFrames(
+        durationUs,
+        this.fpsNum,
+        this.fpsDen,
+      );
+      const frame = Math.min(
+        durationFrames - 1,
+        frameIndexInLayer(tInLayerUs, this.fpsNum, this.fpsDen),
+      );
+      // Clamp into the baked array — a mid-layer export start leaves head
+      // holes, and the array's length is `lastFrame + 1`, so an in-range
+      // request always lands on a real bitmap. Guard against a hole / OOB
+      // defensively (would otherwise bind `undefined`).
+      const idx = Math.max(0, Math.min(injectedFrames.length - 1, frame));
+      // Same index already bound → skip the rebind (avoids per-tick GPU
+      // texture churn when output fps < comp fps or the frame is held).
+      if (idx === this.injectedFrame) return;
+      const bitmap = injectedFrames[idx];
+      if (bitmap) {
+        this.bindBitmap(bitmap);
+        this.injectedFrame = idx;
+      }
+      return;
+    }
 
     let canonical: Record<string, unknown>;
     try {

@@ -22,7 +22,13 @@
 //   - Audio is OUT. The Worker has no DOM and audio export rides
 //     the existing Rust ffmpeg compositor. P9 final mux combines
 //     video.mp4 (this output) with audio.m4a.
-//   - Templates / Subtitles render paths are absent here (P5 / P6).
+//   - Subtitles render path is absent here (no DOM for JASSUB); the
+//     legacy ffmpeg export path owns subtitles export for now.
+//   - Templates DO render: the SVG capture harness can't run in the
+//     Worker (no `document`), so the main thread pre-rasterizes each
+//     Template layer's frames (`exportBake.ts`) and transfers them in
+//     via `ExportRequest.start.templateFrames`; `compositor.setTemplateFrames`
+//     installs them and `TemplateSprite` binds by comp-frame index.
 //     VideoClip / ImageOverlay / Color / Text render fine.
 
 import { Application, DOMAdapter, WebWorkerAdapter } from "pixi.js";
@@ -155,6 +161,11 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     },
   });
   compositor.setProject(req.project.summary as ProjectSummary);
+  // Inject the main-thread-baked Template frames (layerId → comp-frame-indexed
+  // ImageBitmap[]). With these, a Template layer composites in export by binding
+  // the baked bitmap synchronously — the Worker has no DOM, so the live SVG
+  // capture harness can't run here. Empty for a video-only export (no-op).
+  compositor.setTemplateFrames(req.templateFrames);
   compositor.setMasterPlayState(false);
 
   // Output fps: caller override (resolution/fps dialog) or composition fps.
