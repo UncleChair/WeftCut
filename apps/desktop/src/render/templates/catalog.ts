@@ -161,3 +161,25 @@ export function getTemplate(id: string): Template | null {
 export function listTemplates(): TemplateManifest[] {
   return [...catalog.values()].map((t) => t.manifest);
 }
+
+/// Resolve a template's intrinsic content duration (µs) from its manifest +
+/// the instance props. Mirrors Rust `resolve_template_max_dur_us`: prefer the
+/// `max_duration_prop` value (seconds, when finite & > 0), else `max_duration_s`,
+/// else `null` (unbounded — no windowing, legacy "animate over layer width").
+export function resolveTemplateContentDurationUs(
+  manifest: TemplateManifest,
+  props: Record<string, unknown>,
+): number | null {
+  const propName = manifest.max_duration_prop;
+  if (propName) {
+    const raw = props[propName];
+    const n = typeof raw === "number" ? raw : Number(raw);
+    if (Number.isFinite(n) && n > 0) {
+      return Math.round(n * 1_000_000);
+    }
+  }
+  if (typeof manifest.max_duration_s === "number" && manifest.max_duration_s > 0) {
+    return Math.round(manifest.max_duration_s * 1_000_000);
+  }
+  return null;
+}
