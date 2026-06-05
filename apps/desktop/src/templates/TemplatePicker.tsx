@@ -306,9 +306,9 @@ function useDebounced<T>(value: T, delay: number): T {
   return debounced;
 }
 
-/// Representative scrub time (seconds) for the static preview frame. t=0 would
-/// show the template's first frame; a small offset reads better for previews
-/// whose intro animates in (e.g. countdown shows the full numeral by then).
+/// Time (seconds) of the static preview frame. t=0 shows the template's first
+/// frame — adequate for the picker, which only needs a representative still.
+/// FOLLOW-UP: a scrub slider could let the user preview any t.
 const PREVIEW_T_SEC = 0;
 
 /// Live preview of a template's CURRENT frame, captured through the SAME
