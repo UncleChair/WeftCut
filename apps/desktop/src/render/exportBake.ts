@@ -23,7 +23,7 @@
 // source ImageBitmap — pulling from the preview's shared cache would neuter
 // preview's cached frames and break the live preview after any export.
 
-import { frameIndexInLayer } from "../frames";
+import { frameIndexInLayer, snapFrameFloor } from "../frames";
 import type { ProjectSummary, TemplateView } from "../ipc";
 import { getTemplate, type Template } from "./templates/catalog";
 import { TemplateHarness } from "./templates/harness";
@@ -104,13 +104,21 @@ export function templateLayersToBake(
       // of the layer's last displayable µs and the range's. `endUs` is
       // exclusive, so subtract 1 µs before mapping to a frame index.
       const overlapEndUs = Math.min(layer.t_end_us, endUs) - 1;
+      // Snap both bounds to the composition-frame grid BEFORE computing the
+      // frame index. The export Worker's Compositor snaps `tUs` via
+      // `snapFrameFloor` in `compositeFrame` before passing `tUsSnapped -
+      // t_start_us` to `TemplateSprite.update` → `frameIndexInLayer`. When
+      // `startUs` is not on the grid (e.g. the playhead was set to a raw time
+      // via "set range to playhead"), the raw `overlapStartUs` maps to a
+      // higher frame index than the snapped value, so `injectedFrames[0]`
+      // would be `undefined` and the leading exported frame would show a blank.
       const firstFrame = Math.min(
         durationFrames - 1,
-        frameIndexInLayer(overlapStartUs - layer.t_start_us, fpsNum, fpsDen),
+        frameIndexInLayer(snapFrameFloor(overlapStartUs, fpsNum, fpsDen) - layer.t_start_us, fpsNum, fpsDen),
       );
       const lastFrame = Math.min(
         durationFrames - 1,
-        frameIndexInLayer(overlapEndUs - layer.t_start_us, fpsNum, fpsDen),
+        frameIndexInLayer(snapFrameFloor(overlapEndUs, fpsNum, fpsDen) - layer.t_start_us, fpsNum, fpsDen),
       );
 
       out.push({
