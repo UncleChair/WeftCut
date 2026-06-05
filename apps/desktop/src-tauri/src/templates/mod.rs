@@ -72,8 +72,13 @@ fn default_engine() -> String {
 
 impl Manifest {
     /// The `max_duration_s` cap expressed in integer microseconds, or `None`
-    /// when the template is unbounded. Rounds to the nearest µs so a cap like
-    /// `5.0` lands on an exact frame boundary rather than truncating.
+    /// when the template is unbounded. This is a plain seconds→µs conversion
+    /// (rounded to the nearest µs to avoid float-truncation noise); the
+    /// result is an absolute µs value and is NOT frame-aligned — e.g. `5.0`s
+    /// = 5_000_000µs is off the frame grid at 29.97 fps. Frame-snapping of the
+    /// cap-bounded edge happens at the trim / add-layer call sites
+    /// (`apply_trim_layer` / `add_layer`), which round it onto the
+    /// composition grid.
     pub fn max_duration_us(&self) -> Option<i64> {
         self.max_duration_s
             .map(|s| (s * 1_000_000.0).round() as i64)

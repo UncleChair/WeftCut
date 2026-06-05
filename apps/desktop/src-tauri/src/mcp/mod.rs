@@ -2206,7 +2206,7 @@ fn parse_canonical_props(
 /// `None` when unbounded. When present, the resolved length is clamped to
 /// the cap so an explicit over-long `t_end_us` can't place the layer longer
 /// than the manifest allows — mirrors the trim-time clamp in the actor.
-fn resolve_template_t_end_us(
+pub(crate) fn resolve_template_t_end_us(
     t_start_us: i64,
     t_end_us: Option<i64>,
     default_duration_s: f64,

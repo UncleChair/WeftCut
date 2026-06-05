@@ -1969,22 +1969,16 @@ pub async fn add_template(
     let props_map: imbl::HashMap<String, serde_json::Value> =
         obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
 
-    let resolved_end = match t_end_us {
-        Some(end) => end,
-        None => {
-            let duration_us =
-                (template.manifest.default_duration_s * 1_000_000.0) as i64;
-            t_start_us.saturating_add(duration_us)
-        }
-    };
-    // Enforce the template's `max_duration_s` cap: an explicit over-long
-    // `t_end_us` can't place the layer longer than the manifest allows.
-    // (The default duration is normally <= the cap, so this only bites
-    // explicit over-long adds.) Mirrors the trim-time clamp in the actor.
-    let resolved_end = match template.manifest.max_duration_us() {
-        Some(cap) if resolved_end - t_start_us > cap => t_start_us.saturating_add(cap),
-        _ => resolved_end,
-    };
+    // Resolve the end time (default-duration fallback + `max_duration_s` cap
+    // clamp) via the shared helper so this command and the MCP `add_template`
+    // tool can't drift. The cap clamp here only bites explicit over-long
+    // `t_end_us`; `add_layer` re-snaps both edges to the frame grid on entry.
+    let resolved_end = crate::mcp::resolve_template_t_end_us(
+        t_start_us,
+        t_end_us,
+        template.manifest.default_duration_s,
+        template.manifest.max_duration_us(),
+    );
     if resolved_end <= t_start_us {
         return Err(format!(
             "t_end_us {resolved_end} must be greater than t_start_us {t_start_us}",

@@ -3650,6 +3650,9 @@ pub(crate) fn apply_trim_layer(
     // unbounded). Built once outside the loop so a group of templates pays
     // the catalog cost a single time.
     let catalog = crate::templates::builtins();
+    // The template cap bound is re-snapped to the composition frame grid, so
+    // grab the fps before the immutable-borrow loop below.
+    let fps = project.composition.fps;
     let clamped_delta = {
         let mut d = requested_delta;
         for &mid in aligned.iter() {
@@ -3666,7 +3669,7 @@ pub(crate) fn apply_trim_layer(
                     .and_then(|t| t.manifest.max_duration_us()),
                 _ => None,
             };
-            let bounds = trim_delta_bounds(m, edge, template_max_dur_us);
+            let bounds = trim_delta_bounds(m, edge, template_max_dur_us, fps);
             d = clamp_signed(d, bounds.min, bounds.max);
         }
         d
@@ -3748,23 +3751,38 @@ struct DeltaBounds {
 ///
 /// `template_max_dur_us` is the per-template length cap (from the manifest's
 /// `max_duration_s`), applied *only* when `layer` is a `Template`. It binds
-/// both edges so the total length `dur` can't grow past the cap:
-///   - OUT: extending `t_end` grows `dur`, so `delta <= cap - dur`.
-///   - IN:  dragging `t_start` earlier also grows `dur`, so `delta >= -(cap - dur)`.
-/// `None` (no cap, or a non-template layer) keeps the historical unbounded
-/// behavior so holdable overlays (lower-thirds) stay freely extendable.
+/// both edges so the total length `dur` can't grow past the cap, AND so the
+/// capped edge lands on the composition frame grid (the hard storage
+/// invariant — every persisted `t_start_us`/`t_end_us` must be frame-snapped):
+///   - OUT: the capped `t_end` is `round∘floor(t_start + cap)` — the largest
+///     grid point whose length stays `<= cap` (floor → never rounds up past
+///     the cap), so `delta <= that - t_end`.
+///   - IN:  the capped `t_start` is `round∘ceil(t_end - cap)` — the smallest
+///     grid point whose length stays `<= cap`, so `delta >= that - t_start`.
+///
+/// The raw cap (`max_duration_s * 1e6`) is absolute µs and need not sit on the
+/// grid (e.g. `countdown`'s 5.0s = 5_000_000µs is off-grid at 29.97 fps), so
+/// the bound must be re-snapped here. `floor`/`ceil` pick the cap-respecting
+/// frame; the outer `round` canonicalises to the round-grid (`snap_frame_floor`
+/// truncates its µs output and isn't round-idempotent on /1001 rates, so the
+/// raw floor value can land 1µs below a grid point — re-rounding fixes that
+/// while staying `<= target`, since `round_output(n) <= n_exact <= target`).
+///
+/// `fps` is the composition frame rate used for the snap. `None`
+/// (no cap, or a non-template layer) keeps the historical unbounded behavior
+/// so holdable overlays (lower-thirds) stay freely extendable.
 fn trim_delta_bounds(
     layer: &Layer,
     edge: LayerEdge,
     template_max_dur_us: Option<i64>,
+    fps: Rational,
 ) -> DeltaBounds {
     let dur = layer.t_end_us - layer.t_start_us;
     let inf = i64::MAX / 4; // large enough to feel infinite, small enough to clamp safely
-    // Slack the layer may still grow before hitting its template cap. Only
-    // applies to Template layers with a declared cap; everything else is
-    // unbounded. Clamped at 0 so a layer already at/over the cap can't extend.
-    let template_grow_slack = match (&layer.params, template_max_dur_us) {
-        (LayerParams::Template(_), Some(cap)) => Some((cap - dur).max(0)),
+    // The cap applies only to Template layers with a declared cap; everything
+    // else is unbounded.
+    let template_cap = match (&layer.params, template_max_dur_us) {
+        (LayerParams::Template(_), Some(cap)) => Some(cap),
         _ => None,
     };
     match edge {
@@ -3781,8 +3799,19 @@ fn trim_delta_bounds(
                 _ => (-inf, inf),
             };
             // Template cap: dragging the IN edge earlier (negative delta)
-            // grows dur, so floor the delta at -(slack).
-            let cap_min = template_grow_slack.map(|slack| -slack).unwrap_or(-inf);
+            // grows dur. The earliest grid-aligned t_start that keeps
+            // length <= cap is `round∘ceil(t_end - cap)`; floor the resulting
+            // delta at 0 so a layer already at/over the cap can't be forced to
+            // shrink (the historical slack-at-0 behavior).
+            let cap_min = match template_cap {
+                Some(cap) => {
+                    use crate::state::time::{snap_frame_ceil, snap_frame_round};
+                    let capped_start =
+                        snap_frame_round(snap_frame_ceil(layer.t_end_us - cap, fps), fps);
+                    (capped_start - layer.t_start_us).min(0)
+                }
+                None => -inf,
+            };
             DeltaBounds {
                 min: timeline_min.max(src_min).max(cap_min),
                 max: timeline_max.min(src_max),
@@ -3799,9 +3828,19 @@ fn trim_delta_bounds(
                 LayerParams::Audio(p) => (-(p.src_out_us - p.src_in_us - 1), inf),
                 _ => (-inf, inf),
             };
-            // Template cap: extending the OUT edge (positive delta) grows dur,
-            // so ceil the delta at +(slack).
-            let cap_max = template_grow_slack.unwrap_or(inf);
+            // Template cap: extending the OUT edge (positive delta) grows dur.
+            // The latest grid-aligned t_end that keeps length <= cap is
+            // `round∘floor(t_start + cap)`; ceil the resulting delta at 0 so a
+            // layer already at/over the cap can't extend (slack-at-0).
+            let cap_max = match template_cap {
+                Some(cap) => {
+                    use crate::state::time::{snap_frame_floor, snap_frame_round};
+                    let capped_end =
+                        snap_frame_round(snap_frame_floor(layer.t_start_us + cap, fps), fps);
+                    (capped_end - layer.t_end_us).max(0)
+                }
+                None => inf,
+            };
             DeltaBounds {
                 min: timeline_min.max(src_min),
                 max: src_max.min(cap_max),
@@ -4328,6 +4367,69 @@ mod tests {
         assert_eq!(layer.t_end_us - layer.t_start_us, 5_000_000);
     }
 
+    /// The cap-clamped trim edge must land on the composition frame grid
+    /// (the hard storage invariant), not on the raw `max_duration_s*1e6` µs
+    /// value. At 29.97 fps (30000/1001) the `countdown` cap of 5.0s =
+    /// 5_000_000µs is OFF the frame grid — `snap_frame_round(5_000_000)` is
+    /// 5_005_000 (frame 150). The capped OUT edge must be FLOORED to the
+    /// largest grid point whose length stays ≤ cap (frame 149 = 4_971_633),
+    /// so the result is BOTH on-grid AND ≤ the cap. Before the fix the trim
+    /// clamps `t_end` straight to 5_000_000 (off-grid) → assertion (a) fails.
+    #[tokio::test]
+    async fn trim_out_cap_clamped_edge_is_frame_snapped_at_29_97() {
+        let (mut project, track_id) = project_with_video_track();
+        project.composition.fps = Rational::FPS_29_97;
+        let handle = spawn(project);
+        // Start at 0; a 3s-aligned layer below the 5s cap so the OUT
+        // extension has a non-zero clamped delta. 3s = 3_000_000µs is itself
+        // off-grid at 29.97, so add the layer at a grid-aligned start (0) and
+        // a length below the cap.
+        let layer_id = handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                template_layer(imbl::HashMap::new()),
+                0,
+                3_000_000,
+            )
+            .await
+            .expect("add_layer");
+        // Request an OUT trim well past the 5s cap.
+        handle
+            .trim_layer(Actor::User, layer_id, LayerEdge::Out, 9_000_000, false)
+            .await
+            .expect("trim");
+        let snap = handle.snapshot().await;
+        let layer = snap
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .find(|l| l.id == layer_id)
+            .expect("layer");
+        let fps = Rational::FPS_29_97;
+        // (a) On the composition frame grid (round-idempotent — the invariant
+        //     every entry-snap enforces).
+        assert_eq!(
+            crate::state::time::snap_frame_round(layer.t_end_us, fps),
+            layer.t_end_us,
+            "capped t_end must be on the frame grid"
+        );
+        assert_eq!(
+            crate::state::time::snap_frame_round(layer.t_start_us, fps),
+            layer.t_start_us,
+            "t_start must stay on the frame grid"
+        );
+        // (b) Length stays at or below the 5.0s cap (floor → never rounds UP
+        //     past the cap).
+        assert!(
+            layer.t_end_us - layer.t_start_us <= 5_000_000,
+            "capped length {} must be <= 5_000_000",
+            layer.t_end_us - layer.t_start_us
+        );
+        // Concretely: t_start 0, capped OUT edge = frame 149 = 4_971_633.
+        assert_eq!(layer.t_end_us, 4_971_633);
+    }
+
     /// A template with no `max_duration_s` cap (e.g. a holdable lower-third
     /// overlay) stays freely extendable — `trim_delta_bounds` returns an
     /// unbounded OUT max. Tested directly on the bound fn (no `builtins()`
@@ -4347,24 +4449,29 @@ mod tests {
             params: template_layer(imbl::HashMap::new()),
         };
         // No cap supplied → OUT max stays effectively infinite.
-        let bounds = trim_delta_bounds(&layer, LayerEdge::Out, None);
+        // 30 fps is on-grid for whole-second caps/durations, so the snap is a
+        // no-op here and the bounds match the pre-snap math exactly.
+        let fps = Rational::FPS_30;
+        let bounds = trim_delta_bounds(&layer, LayerEdge::Out, None, fps);
         assert_eq!(bounds.max, inf);
-        // A cap supplied → OUT max = cap_us - dur (5s - 3s = 2s).
-        let capped = trim_delta_bounds(&layer, LayerEdge::Out, Some(5_000_000));
+        // A cap supplied → OUT max = round∘floor(t_start + cap) - t_end
+        // = 5s - 3s = 2s (on-grid at 30 fps).
+        let capped = trim_delta_bounds(&layer, LayerEdge::Out, Some(5_000_000), fps);
         assert_eq!(capped.max, 2_000_000);
 
         // The cap binds the IN edge too: dragging t_start earlier grows dur.
         // Use a layer starting > slack (4s..7s, dur 3s, cap 5s) so the cap
-        // floor -(5-3)s = -2s dominates timeline_min (-t_start = -4s).
+        // floor round∘ceil(t_end - cap) - t_start = -2s dominates
+        // timeline_min (-t_start = -4s).
         let layer_4_to_7 = Layer {
             t_start_us: 4_000_000,
             t_end_us: 7_000_000,
             ..layer.clone()
         };
-        let in_capped = trim_delta_bounds(&layer_4_to_7, LayerEdge::In, Some(5_000_000));
+        let in_capped = trim_delta_bounds(&layer_4_to_7, LayerEdge::In, Some(5_000_000), fps);
         assert_eq!(in_capped.min, -2_000_000);
         // No cap → IN min falls back to the timeline floor (-t_start = -4s).
-        let in_uncapped = trim_delta_bounds(&layer_4_to_7, LayerEdge::In, None);
+        let in_uncapped = trim_delta_bounds(&layer_4_to_7, LayerEdge::In, None, fps);
         assert_eq!(in_uncapped.min, -4_000_000);
     }
 
