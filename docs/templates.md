@@ -58,9 +58,9 @@ a normal HTML document — the markup plus an inline `<script>` that defines
 the document is captured, so a future HTML+JS template is the **same shape** with
 no SVG file.
 
-The manifest declares identity, natural size, default duration, a typed
-`props_schema` (string / color / number, each with a default), an optional
-`fonts` list, and an `engine`:
+The manifest declares identity, natural size, default duration, an optional
+content-duration cap, a typed `props_schema` (string / color / number, each with
+a default), an optional `fonts` list, and an `engine`:
 
 ```json
 {
@@ -69,15 +69,49 @@ The manifest declares identity, natural size, default duration, a typed
   "version": 1,
   "size": [480, 480],
   "default_duration_s": 5.0,
+  "max_duration_s": 5.0,
+  "max_duration_prop": "seconds",
   "engine": "svg",
   "props_schema": { "seconds": { "type": "number", "default": 5 }, … }
 }
 ```
 
+`max_duration_s` is the template's **intrinsic content duration** — the full
+length of the animation it knows how to render (a 5-count). `max_duration_prop`
+names a NUMBER prop that drives that length *live*: when present, the current
+value of that prop (here `seconds`, in seconds) is the content duration, so
+editing the prop relengthens the content. A template with neither is unbounded
+(a holdable overlay — see "Content duration and the timeline window" below).
+
 `engine` selects the capture pipeline: **`"svg"`** (today) serializes the `<svg>`
 and rasters it via `<img>`; **`"webview"`** (reserved) renders `index.html` in a
 hidden webview and screenshots it (full HTML/CSS/JS — the Tier-3 path);
 **`"satori"`** (reserved) lays out an HTML/CSS subtree to SVG. v1 ships `"svg"`.
+
+### Content duration and the timeline window
+
+A template's **content** has its own intrinsic length (the resolved cap above);
+the **layer** on the timeline is a *window* into that content — the same
+source/window relationship a video clip has with its media. `TemplateParams`
+stores `src_in_us`, the window's offset into the content; the window's width is
+the layer width (`t_end_us − t_start_us`), and the window end is derived, never
+stored. The invariant is `0 ≤ src_in_us` and `src_in_us + width ≤ content_dur`.
+
+This decouples two edits that used to be the same thing:
+
+- **Editing the cap-driving prop** (`seconds`) relengthens the *content* and
+  re-renders, but does **not** move or resize the layer — content frame 0 stays
+  pinned at the layer's start. (The one exception: shrinking the content below
+  the current window clamps `src_in_us` and `t_end_us` into the new content, so
+  the layer shrinks — the longer content no longer exists.)
+- **Trimming the layer** windows the content without changing its length: the IN
+  edge moves `t_start_us` *and* `src_in_us` together (scrubbing into the content,
+  floored so it can't go before content frame 0); the OUT edge moves `t_end_us`
+  only, capped so the derived window end can't pass the content's end.
+
+A template with no cap (no `max_duration_prop` and no `max_duration_s`) keeps the
+holdable-overlay behavior: it animates over the layer width itself, `src_in_us`
+is inert, and both edges trim freely.
 
 The SVG obeys one rule that makes a template *capturable*:
 
@@ -93,10 +127,13 @@ Concretely:
   self-advancing clock. A template animates by *mutating its own SVG* —
   `element.textContent`, `setAttribute("transform", …)`, `stroke-dashoffset`,
   attribute and class toggles — in response to `tSec`.
-- **Absolute vs normalized pacing is the template's choice.** A countdown reads
-  `tSec` (it ticks real seconds; trimming the layer shorter truncates it). A
-  progress bar reads `tSec / durationSec` (it fills across whatever length the
-  layer has). Passing both leaves the decision with the author.
+- **Absolute vs normalized pacing is the template's choice.** `render` receives
+  `tSec` as the **content** time (the window offset plus the in-layer time) and
+  `durationSec` as the **content** duration (the resolved cap, not the layer
+  width). A countdown reads `tSec` against `durationSec` (`ceil(durationSec −
+  tSec)`), so the same 6-count shows "6" at content 0 regardless of how much of
+  it the window exposes. A progress bar reads `tSec / durationSec`. Passing both
+  leaves the decision with the author.
 - **SVG only.** Shapes, paths, `<text>`, gradients, masks, clips, transforms,
   opacity — anything SVG renders. **No `<foreignObject>`** (it taints the raster;
   ADR 0015), no HTML/CSS layout, no `<canvas>`. SVG has no automatic text
@@ -192,12 +229,16 @@ never re-rasterizes it.
 | Change | Effect |
 |---|---|
 | props | re-raster (new key) |
-| duration | re-raster |
+| content duration (the cap / `seconds`) | re-raster (the frame count changed) |
 | composition fps | re-raster (the frame grid changed) |
+| window (`src_in_us` / layer width) | no re-raster — frames are keyed by **absolute content frame**, so two windows into the same content share cached frames |
 | layer transform / opacity | no re-raster (sprite-applied) |
 | composition width / height | no persisted-key change (L0/L1 raster at composite res) |
 
-Identical inputs hash to the same L2 key and share one sequence. Patch
+The key carries the **content** frame count (from the resolved cap), and each
+frame is the absolute content-frame index — so trimming the window never
+re-rasters and overlapping windows reuse the same bitmaps. Identical inputs hash
+to the same L2 key and share one sequence. Patch
 `TemplateParams.props` field-wise rather than replacing the whole `params`, or
 the cache thrashes on every prop tweak (data-model.md pitfall).
 
@@ -211,13 +252,14 @@ Orphaned sequences (superseded prop values) are swept when the project loads.
 
 `compositeFrame(tUs)` passes each template sprite its layer-relative time
 `tInLayerUs = tUsSnapped − layer.t_start_us` (the same relative convention
-`SubtitlesSprite` uses). The time resets to 0 at the layer's start — a template
-has no source-in offset, so trimming the front restarts it. The sprite maps that
-to a frame index on the **exact-rational frame grid** (the shared `frames.ts`
-helpers — never a lossy `round(µs · fps)`, which drifts into off-by-one frame
-duplication), clamps it to `[0, durationFrames − 1]`, obtains the frame (L0
-raster, L1 ring, or L2 file), and binds the bitmap as its texture. Transform and
-opacity from the layer summary apply to the sprite itself.
+`SubtitlesSprite` uses). The sprite resolves the **content** time `src_in_us +
+tInLayerUs` and maps it to a frame index on the **exact-rational frame grid** (the
+shared `frames.ts` helpers — never a lossy `round(µs · fps)`, which drifts into
+off-by-one frame duplication), clamps it to `[0, contentDurationFrames − 1]`,
+obtains the frame (L0 raster, L1 ring, or L2 file), and binds the bitmap as its
+texture. (An uncapped template has `src_in_us = 0` and uses the layer width as its
+content duration — the original "animate over the placed duration" behavior.)
+Transform and opacity from the layer summary apply to the sprite itself.
 
 ## Export
 
