@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, test } from "vitest";
 import {
   formatTimecode,
   frameDurUs,
+  frameIndexInLayer,
   lastFrameAnchorUs,
   snapFrameFloor,
   snapFrameRound,
@@ -136,4 +137,11 @@ describe("formatTimecode", () => {
   it("handles 29.97 NDF: rolls past frame :29 the same as integer 30fps", () => {
     expect(formatTimecode(30 * 33_367, 30_000, 1001)).toBe("00:00:01:00");
   });
+});
+
+test("frameIndexInLayer is exact-rational and clamped", () => {
+  expect(frameIndexInLayer(0, 30000, 1001)).toBe(0);
+  expect(frameIndexInLayer(33_367, 30000, 1001)).toBe(1); // exact start of frame 1 at 29.97
+  expect(frameIndexInLayer(33_366, 30000, 1001)).toBe(0); // 1µs before → still frame 0
+  expect(frameIndexInLayer(-50, 30000, 1001)).toBe(0);    // clamp low
 });
