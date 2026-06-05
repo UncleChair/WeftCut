@@ -3707,6 +3707,9 @@ pub(crate) fn apply_trim_layer(
                     LayerParams::Audio(p) => {
                         p.src_in_us += clamped_delta;
                     }
+                    LayerParams::Template(p) => {
+                        p.src_in_us += clamped_delta;
+                    }
                     _ => {}
                 }
             }
@@ -3791,6 +3794,11 @@ fn trim_delta_bounds(
         (LayerParams::Template(_), Some(cap)) => Some(cap),
         _ => None,
     };
+    // The window start for a capped template (0 for non-template / uncapped).
+    let template_src_in = match (&layer.params, template_cap) {
+        (LayerParams::Template(p), Some(_)) => p.src_in_us,
+        _ => 0,
+    };
     match edge {
         LayerEdge::In => {
             // delta > -t_start (keep timeline start >= 0)
@@ -3802,6 +3810,7 @@ fn trim_delta_bounds(
             let (src_min, src_max) = match &layer.params {
                 LayerParams::VideoClip(p) => (-p.src_in_us, p.src_out_us - p.src_in_us - 1),
                 LayerParams::Audio(p) => (-p.src_in_us, p.src_out_us - p.src_in_us - 1),
+                LayerParams::Template(_) if template_cap.is_some() => (-template_src_in, inf),
                 _ => (-inf, inf),
             };
             // Template cap: dragging the IN edge earlier (negative delta)
@@ -3854,7 +3863,12 @@ fn trim_delta_bounds(
                     // on absurd prop-driven cap values (mirror of the IN-edge
                     // fix above). The snap functions handle any i64 via i128.
                     let capped_end = snap_frame_round(
-                        snap_frame_floor(layer.t_start_us.saturating_add(cap), fps),
+                        snap_frame_floor(
+                            layer
+                                .t_start_us
+                                .saturating_add(cap.saturating_sub(template_src_in)),
+                            fps,
+                        ),
                         fps,
                     );
                     capped_end.saturating_sub(layer.t_end_us).max(0)
@@ -4577,16 +4591,21 @@ mod tests {
 
         // The cap binds the IN edge too: dragging t_start earlier grows dur.
         // Use a layer starting > slack (4s..7s, dur 3s, cap 5s) so the cap
-        // floor round∘ceil(t_end - cap) - t_start = -2s dominates
-        // timeline_min (-t_start = -4s).
+        // floor round∘ceil(t_end - cap) - t_start = -2s would dominate
+        // timeline_min (-t_start = -4s) — but source-windowing adds a tighter
+        // constraint: src_in_us = 0 means no content before frame 0, so the
+        // IN edge can't move earlier (src_min = -src_in_us = 0 binds harder).
+        // This changed when Task 5 added per-template src_in floor enforcement.
         let layer_4_to_7 = Layer {
             t_start_us: 4_000_000,
             t_end_us: 7_000_000,
             ..layer.clone()
         };
         let in_capped = trim_delta_bounds(&layer_4_to_7, LayerEdge::In, Some(5_000_000), fps);
-        assert_eq!(in_capped.min, -2_000_000);
-        // No cap → IN min falls back to the timeline floor (-t_start = -4s).
+        // src_min (0, from src_in=0) is tighter than cap_min (-2s); IN is blocked.
+        assert_eq!(in_capped.min, 0);
+        // No cap → template is NOT source-windowed; IN min falls back to
+        // the timeline floor (-t_start = -4s).
         let in_uncapped = trim_delta_bounds(&layer_4_to_7, LayerEdge::In, None, fps);
         assert_eq!(in_uncapped.min, -4_000_000);
     }
@@ -4654,29 +4673,39 @@ mod tests {
 
     /// Mirror of the OUT-edge test above: dragging the IN edge on a countdown
     /// layer with an absurd `seconds` prop (cap saturates to i64::MAX) must not
-    /// panic and must yield a sane result. Uses t_start_us = 1_000_000 so that
-    /// `capped_start.saturating_sub(t_start_us)` actually exercises the second
-    /// guard (capped_start is near i64::MIN, subtraction would underflow bare).
+    /// panic. The cap_min computation (`round∘ceil(t_end - i64::MAX)`) uses
+    /// saturating arithmetic to avoid overflow; the src-windowing floor
+    /// (src_min = -src_in_us = -2_000_000) is tighter when src_in > 0, so the
+    /// trim is clamped cleanly. The layer is placed with a scrubbed window
+    /// (src_in = 2s via the IN trim of a 0-start layer) so there is room to
+    /// drag the IN edge backward without hitting the content-zero floor.
     #[tokio::test]
     async fn trim_in_absurd_prop_cap_does_not_overflow() {
         let (project, track_id) = project_with_video_track();
         let handle = spawn(project);
         let mut props: imbl::HashMap<String, serde_json::Value> = imbl::HashMap::new();
         props.insert("seconds".into(), serde_json::json!(1e13_f64));
+        // Lay down a large window (0..6s) and then IN-trim it forward to 2s so
+        // src_in_us becomes 2_000_000 — giving the subsequent backward drag room.
         let layer_id = handle
             .add_layer(
                 Actor::User,
                 track_id,
                 template_layer(props),
-                1_000_000,
-                4_000_000,
+                0,
+                6_000_000,
             )
             .await
             .expect("add_layer");
-        // Request an IN trim dragging t_start toward 0 — cap this large should
-        // allow it freely (no clamping from the cap side).
+        // Scrub the IN edge forward 2s: src_in_us → 2_000_000, t_start → 2_000_000.
+        handle
+            .trim_layer(Actor::User, layer_id, LayerEdge::In, 2_000_000, false)
+            .await
+            .expect("scrub IN to 2s");
+        // Now drag the IN edge back toward 1s — cap this large should
+        // allow it freely (no clamping from the cap side); src_in floor (2s) allows 1s back.
         let result = handle
-            .trim_layer(Actor::User, layer_id, LayerEdge::In, 0, false)
+            .trim_layer(Actor::User, layer_id, LayerEdge::In, 1_000_000, false)
             .await;
         assert!(result.is_ok(), "trim_layer must not return Err: {:?}", result);
         let snap = handle.snapshot().await;
@@ -4703,6 +4732,82 @@ mod tests {
             layer.t_end_us,
             "t_end must be on the frame grid"
         );
+    }
+
+    /// A capped template layer (countdown seconds=5 → content 5s) already at
+    /// the full content width cannot be OUT-extended further — the capped
+    /// `t_end` equals the current `t_end`, so delta clamps to 0 and the trim
+    /// returns `TrimEdgeOutOfRange`.
+    #[tokio::test]
+    async fn template_out_trim_cannot_extend_past_content() {
+        // countdown seconds=5 -> content cap 5s. A 5s layer cannot OUT-extend.
+        let mut props = imbl::HashMap::new();
+        props.insert("seconds".to_string(), serde_json::json!(5));
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        let layer_id = handle
+            .add_layer(Actor::User, track_id, template_layer(props), 0, 5_000_000)
+            .await
+            .expect("add_layer");
+        let err = handle
+            .trim_layer(Actor::User, layer_id, LayerEdge::Out, 8_000_000, false)
+            .await;
+        assert!(err.is_err(), "OUT past content cap must be rejected");
+    }
+
+    /// Dragging the IN edge of a capped template forward (positive delta) must
+    /// advance `src_in_us` by the same amount — the window scrubs into the
+    /// content. countdown seconds=6 → 6s content; full-window layer; drag IN +1s.
+    #[tokio::test]
+    async fn template_in_trim_scrubs_src_in() {
+        // countdown seconds=6 -> content cap 6s. Full 6s window, drag IN +1s.
+        let mut props = imbl::HashMap::new();
+        props.insert("seconds".to_string(), serde_json::json!(6));
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        let layer_id = handle
+            .add_layer(Actor::User, track_id, template_layer(props), 0, 6_000_000)
+            .await
+            .expect("add_layer");
+        handle
+            .trim_layer(Actor::User, layer_id, LayerEdge::In, 1_000_000, false)
+            .await
+            .expect("trim");
+        let snap = handle.snapshot().await;
+        let layer = snap
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .find(|l| l.id == layer_id)
+            .expect("layer");
+        assert_eq!(layer.t_start_us, 1_000_000);
+        if let LayerParams::Template(p) = &layer.params {
+            assert_eq!(p.src_in_us, 1_000_000, "IN trim must advance src_in");
+        } else {
+            panic!("not a template");
+        }
+    }
+
+    /// A capped template window already at `src_in_us = 0` cannot be
+    /// IN-extended earlier — there is no content before frame 0. Even though
+    /// there is timeline room to the left (layer starts at 2s), the trim must
+    /// be rejected.
+    #[tokio::test]
+    async fn template_in_trim_cannot_scrub_before_content_zero() {
+        // Window at src_in=0 cannot IN-extend earlier (no content before 0).
+        let mut props = imbl::HashMap::new();
+        props.insert("seconds".to_string(), serde_json::json!(6));
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        // Place at t_start=2s so there is timeline room to the left.
+        let layer_id = handle
+            .add_layer(Actor::User, track_id, template_layer(props), 2_000_000, 5_000_000)
+            .await
+            .expect("add_layer");
+        let err = handle
+            .trim_layer(Actor::User, layer_id, LayerEdge::In, 1_000_000, false)
+            .await;
+        assert!(err.is_err(), "IN earlier than content 0 must be rejected");
     }
 
     #[tokio::test]
