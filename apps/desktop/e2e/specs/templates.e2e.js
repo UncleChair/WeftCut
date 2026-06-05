@@ -6,13 +6,14 @@
 // (an interior pixel inside the gradient rect is opaque).
 //
 // foreignObject taints the canvas in WebView2 — this test guards the plain-SVG
-// path that the production template render relies on instead. The rasterizer
-// body is inlined here (verbatim mirror of src/render/templates/svgRaster.ts)
-// because browser.execute stringifies the function and injects it into the
-// page: it has no closure over node-side bundled modules, so the only way to
-// run the real code in-webview is to either put it on `window` or inline it.
-// Inlining keeps the spec self-contained (no project/editor setup needed) and
-// the commit to the two task files. KEEP IN SYNC with svgRaster.ts.
+// path that the production template render relies on instead. What's being
+// pinned here is the WebView2 PLATFORM behavior (a plain SVG → ImageBitmap →
+// canvas stays untainted and keeps its transparent background), not the
+// identity of any particular module. So the rasterizer body is inlined as a
+// verbatim mirror of src/render/templates/svgRaster.ts: browser.execute
+// stringifies the function and runs it in the page with no closure over
+// node-side bundled modules, and inlining keeps the spec self-contained (no
+// project/editor setup). KEEP IN SYNC with svgRaster.ts.
 describe("SVG-template rasterizer (real WebView2)", () => {
   it("rasterizes plain SVG to an UNTAINTED ImageBitmap with a transparent bg", async () => {
     await browser.waitUntil(
@@ -100,9 +101,11 @@ describe("SVG-template rasterizer (real WebView2)", () => {
     // Bitmap decoded at the SVG's declared size.
     expect(result.width).toBe(480);
     expect(result.height).toBe(160);
-    // Clean (not tainted): getImageData succeeded.
-    expect(result.didNotThrow).toBe(true);
+    // Clean (not tainted): getImageData succeeded. Guard-throw first so a taint
+    // failure reports WHY (the SecurityError text) instead of a bare
+    // `expected false to be true` (jest's expect has no message argument).
     if (!result.didNotThrow) throw new Error("canvas tainted: " + result.error);
+    expect(result.didNotThrow).toBe(true);
     // Transparent background preserved at the corner.
     expect(result.cornerAlpha).toBe(0);
     // Content actually painted: interior pixel is opaque.
@@ -236,10 +239,12 @@ describe("template harness coverage gaps (real WebView2, synthetic fixture)", ()
   });
 
   it("script-strip: in-<svg> <script> removed + markup rasterizes clean", () => {
-    // The fixture has a <script> CHILD of the <svg>; the captured clone must
-    // contain no <script (proves the strip removed an actually-present one).
+    // The binding guard for the strip is THIS assertion: the fixture has a
+    // <script> CHILD of the <svg>, so the captured clone containing no <script
+    // proves the strip removed an actually-present one.
     expect(result.svg).not.toContain("<script");
-    // Stripped markup is well-formed XML: rasterizeSvg(svg) resolved.
+    // rasterizeOk is a SEPARATE check — it proves the stripped markup is still
+    // well-formed XML (rasterizeSvg resolved), NOT that the script was stripped.
     expect(result.rasterizeOk).toBe(true);
   });
 

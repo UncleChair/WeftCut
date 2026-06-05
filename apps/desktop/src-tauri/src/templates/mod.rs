@@ -1,15 +1,15 @@
 //! Template loader + manifest validator.
 //!
-//! Stage D ships one built-in template (`lower-third-simple`) embedded as
-//! Rust string constants. Stage F will add the on-disk loader for
-//! `packages/templates/<id>/` and the full starter set. The types here are
-//! shaped for both — `Template::from_inline` and a future
-//! `Template::from_dir` both produce the same `Template` value, and the
-//! rasterizer's render path doesn't know the difference.
+//! One built-in template (`countdown`) is embedded as a Rust string constant
+//! via `include_str!` (manifest JSON + SVG `index.html`), so the desktop
+//! binary ships it without runtime file access. The types here are also
+//! shaped for a future on-disk loader for `packages/templates/<id>/`: a
+//! `Template::from_dir` would produce the same `Template` value, and the SVG
+//! render path doesn't know the difference.
 //!
 //! Cache integration: `Template::content_hash()` is what feeds the raster
-//! cache key, so any change to a template's HTML/CSS/manifest invalidates
-//! cached renders automatically (no manual cache wipe).
+//! cache key, so any change to a template's manifest or `index.html`
+//! invalidates cached renders automatically (no manual cache wipe).
 
 use std::collections::BTreeMap;
 
@@ -213,9 +213,11 @@ pub struct ParsedComposed {
     pub body: String,
 }
 
-/// Parse a composed template HTML (i.e. after `__STYLE__` substitution)
-/// into its three composition-relevant pieces. Mirrors
-/// `TemplateHandle.parseTemplate` on the TS side.
+/// Parse a composed template HTML document into its three
+/// composition-relevant pieces. Mirrors `TemplateHandle.parseTemplate` on
+/// the TS side. The HTML is self-contained (an `<svg>` plus an inline
+/// `<script>` defining `render(...)`); there is no `__STYLE__` placeholder
+/// or separate-CSS substitution step.
 ///
 /// The parser is intentionally simple: scan for `<style>...</style>` and
 /// `<script>...</script>` runs, harvest their content into the
@@ -309,9 +311,14 @@ pub fn parse_composed_template(composed: &str) -> ParsedComposed {
     // left over. Same for `<!doctype>` / `<html>` / `<body>` tags.
     body = body.replace("<!doctype html>", "");
     body = body.replace("<!DOCTYPE html>", "");
-    // Strip simple html/head/body opening + closing tags (no attrs).
-    for tag in ["<html>", "</html>", "<head>", "</head>", "<body>", "</body>"] {
+    // Strip the html/head/body wrapper tags. Closing tags carry no attributes
+    // (literal replace); opening tags MAY (e.g. `<body style="margin:0">`), so
+    // strip those attribute-tolerantly via `strip_open_tag`.
+    for tag in ["</html>", "</head>", "</body>"] {
         body = body.replace(tag, "");
+    }
+    for tag in ["html", "head", "body"] {
+        body = strip_open_tag(&body, tag);
     }
 
     ParsedComposed {
@@ -319,6 +326,48 @@ pub fn parse_composed_template(composed: &str) -> ParsedComposed {
         scripts: scripts.trim().to_string(),
         body: body.trim().to_string(),
     }
+}
+
+/// Remove every `<tag …>` opening tag from `s`, tolerating attributes on the
+/// tag (e.g. `<body style="margin:0">`). Case-insensitive on the tag name; the
+/// char right after the name must be whitespace, `>` or `/` so `<tag>` matches
+/// but `<tagx>` (e.g. `<bodybuilder>`) does not. Dependency-free string scan.
+fn strip_open_tag(s: &str, tag: &str) -> String {
+    let lower = s.to_ascii_lowercase();
+    let needle = format!("<{}", tag); // e.g. "<body"
+    let mut out = String::with_capacity(s.len());
+    let mut cursor = 0;
+    while let Some(rel) = lower[cursor..].find(&needle) {
+        let start = cursor + rel;
+        let after_name = start + needle.len();
+        // The byte right after the tag name decides whether this is the tag or
+        // a longer name sharing the prefix (`<body` vs `<bodybuilder`).
+        let is_tag = match lower.as_bytes().get(after_name) {
+            Some(b) => b.is_ascii_whitespace() || *b == b'>' || *b == b'/',
+            None => false, // truncated: leave it as-is
+        };
+        if !is_tag {
+            // Emit through the end of the prefix and keep scanning past it.
+            out.push_str(&s[cursor..after_name]);
+            cursor = after_name;
+            continue;
+        }
+        // Find the closing `>` of this opening tag.
+        match lower[after_name..].find('>') {
+            Some(gt) => {
+                let tag_end = after_name + gt + 1;
+                out.push_str(&s[cursor..start]); // text before the tag
+                cursor = tag_end; // skip the whole `<tag …>`
+            }
+            None => {
+                // Unterminated tag — emit the rest verbatim and stop.
+                out.push_str(&s[cursor..]);
+                return out;
+            }
+        }
+    }
+    out.push_str(&s[cursor..]);
+    out
 }
 
 fn is_hex_color(s: &str) -> bool {
@@ -643,6 +692,36 @@ mod tests {
                 t.id()
             );
         }
+    }
+
+    #[test]
+    fn parse_composed_strips_wrapper_tags_with_attributes() {
+        // The body-strip must tolerate attributes on the opening html/head/body
+        // tags (e.g. `<body style="margin:0">`), not only attribute-less ones.
+        let composed = "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
+            </head><body style=\"margin:0\"><div>hi</div>\
+            <script>function render() {}</script></body></html>";
+        let parsed = parse_composed_template(composed);
+        // No wrapper tags survive in the body — neither the attribute-bearing
+        // opener nor its closer.
+        let lower = parsed.body.to_ascii_lowercase();
+        assert!(!lower.contains("<body"), "body opener not stripped: {}", parsed.body);
+        assert!(!lower.contains("</body>"), "body closer not stripped");
+        assert!(!lower.contains("<html"), "html opener not stripped");
+        assert!(!lower.contains("<head"), "head opener not stripped");
+        // The visible markup is preserved.
+        assert!(parsed.body.contains("<div>hi</div>"));
+        assert!(parsed.scripts.contains("function render"));
+    }
+
+    #[test]
+    fn strip_open_tag_leaves_longer_names_alone() {
+        // `<bodybuilder>` shares the `<body` prefix but is NOT a body tag.
+        let s = "<body class=\"x\"><bodybuilder>keep</bodybuilder>";
+        let out = strip_open_tag(s, "body");
+        assert!(!out.contains("<body "), "real <body …> not stripped: {out}");
+        assert!(out.contains("<bodybuilder>"), "prefix-sharing tag clobbered: {out}");
+        assert!(out.contains("keep"));
     }
 
     #[test]

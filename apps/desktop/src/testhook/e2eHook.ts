@@ -176,8 +176,10 @@ export function installTemplateHarnessHook(): void {
     }
     await fixture.ready;
     const svg = await fixture.harness.renderFrameSvg(tSec, durSec, props ?? {});
-    // A clean rasterize proves the script-stripped markup is well-formed XML
-    // (a stray `<script>` left in the clone would make `<img>` parsing fail).
+    // `rasterizeOk` reports only that the captured markup is well-formed XML
+    // (rasterizeSvg resolved). It does NOT prove the `<script>` was stripped —
+    // the spec asserts that separately via `not.toContain("<script")`. (A
+    // malformed clone would make `<img>` SVG parsing fail and flip this false.)
     let rasterizeOk = false;
     try {
       const bitmap = await rasterizeSvg(svg);

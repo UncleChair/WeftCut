@@ -919,7 +919,9 @@ export function App({ onCloseProject }: AppProps) {
         const labels = [...templateIds].map(
           (id) => getTemplate(id)?.manifest.name ?? id,
         );
-        setExportState({ kind: "preparing", labels, onCancel: () => {} });
+        // No cancellable step in the bake loop, so omit onCancel — the panel
+        // hides the Cancel button rather than offering a dead one.
+        setExportState({ kind: "preparing", labels });
       }
       templateFrames = await exportBakeTemplates(
         summary,
@@ -1747,8 +1749,12 @@ interface ExportComplete {
 }
 
 type ExportState =
+  // `onCancel` is optional: the proxy-wait phase can abort its in-flight
+  // wait, but the template-bake phase has no cancellable step today, so it
+  // omits the handler and the panel hides the Cancel button (rather than
+  // showing one wired to a no-op).
   | { kind: "starting" }
-  | { kind: "preparing"; labels: string[]; onCancel: () => void }
+  | { kind: "preparing"; labels: string[]; onCancel?: () => void }
   | { kind: "progress"; progress: ExportProgress }
   | { kind: "complete"; payload: ExportComplete }
   | { kind: "error"; detail: string };
@@ -1857,9 +1863,9 @@ function ExportPanel({
                 style={{ width: `${state.kind === "error" ? 100 : percent}%` }}
               />
             </div>
-            {(state.kind === "preparing" || dismissable) && (
+            {((state.kind === "preparing" && state.onCancel) || dismissable) && (
               <div className="export-actions">
-                {state.kind === "preparing" && (
+                {state.kind === "preparing" && state.onCancel && (
                   <button onClick={state.onCancel}>
                     {t("export.preparing_cancel")}
                   </button>

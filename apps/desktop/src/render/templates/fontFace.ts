@@ -24,6 +24,10 @@ export function buildFontFaceStyle(fonts: FontFaceInput[]): string {
   if (fonts.length === 0) return "";
   return fonts.map((font) => {
     const b64 = bytesToBase64(font.bytes);
+    // MIME + format are hard-coded to woff2 — the only format the catalog's
+    // built-in templates ship today. If a non-woff2 font is ever bundled
+    // (the catalog glob already loads woff/ttf/otf bytes), derive the MIME +
+    // `format(...)` from the font file's extension here.
     const src = `url(data:font/woff2;base64,${b64}) format('woff2')`;
     const weightPart = font.weight !== undefined ? `font-weight:${font.weight};` : "";
     const stylePart = font.style !== undefined ? `font-style:${font.style};` : "";
