@@ -99,12 +99,6 @@ export class TemplateSprite {
     height: number,
   ): Promise<void> {
     if (!this.template) return;
-    // Scripts don't execute inside foreignObject when rendered through
-    // createImageBitmap (browser security sandbox), so we substitute
-    // CSS + prop values into the markup at build time. Templates that
-    // still rely on `window.__props__` need conversion to {{key}}
-    // placeholders before they'll render correctly in this path —
-    // chunk 2 handles the bulk conversion.
     // Templates are now self-contained HTML documents — styling lives inside
     // the document, so there's no separate CSS to inject. The SVG capture
     // harness that replaces this foreignObject path is a later phase.

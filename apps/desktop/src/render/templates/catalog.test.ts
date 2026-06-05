@@ -7,6 +7,6 @@ describe("catalog index.html format", () => {
     expect(t!.manifest.engine).toBe("svg");
     expect(t!.html).toContain("<svg");
     expect(t!.html).toContain("function render");
-    expect((t as unknown as { css?: string }).css).toBeUndefined();
+    expect(t!.fonts).toEqual({});
   });
 });

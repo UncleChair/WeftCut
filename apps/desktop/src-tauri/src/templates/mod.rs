@@ -446,6 +446,48 @@ mod tests {
         assert!(matches!(err, TemplateError::OutOfRange(_, _, _)));
     }
 
+    /// `String` props with a `max_length` cap exercise the `TooLong` and
+    /// `WrongType("string")` validator arms (mod.rs `validate_prop`). No
+    /// built-in declares a capped string today, so build a synthetic
+    /// `Template` (like the other synthetic-input tests) rather than adding a
+    /// built-in just to keep those arms covered.
+    #[test]
+    fn canonicalize_validates_string_max_length_and_type() {
+        let mut props_schema: BTreeMap<String, PropSpec> = BTreeMap::new();
+        props_schema.insert(
+            "label".to_string(),
+            PropSpec::String {
+                default: "hi".to_string(),
+                max_length: Some(3),
+            },
+        );
+        let t = Template {
+            manifest: Manifest {
+                id: "synthetic-string".to_string(),
+                name: "Synthetic".to_string(),
+                version: 1,
+                size: [100, 100],
+                default_duration_s: 1.0,
+                engine: "svg".to_string(),
+                fonts: vec![],
+                props_schema,
+            },
+            html: String::new(),
+        };
+
+        // (a) A string longer than `max_length` → TooLong.
+        let too_long = t
+            .canonicalize_props(&json!({ "label": "toolong" }))
+            .expect_err("over-cap string should fail");
+        assert!(matches!(too_long, TemplateError::TooLong(k, cap) if k == "label" && cap == 3));
+
+        // (b) A non-string value for the String prop → WrongType("string").
+        let wrong_type = t
+            .canonicalize_props(&json!({ "label": 42 }))
+            .expect_err("non-string value should fail");
+        assert!(matches!(wrong_type, TemplateError::WrongType(k, ty) if k == "label" && ty == "string"));
+    }
+
     #[test]
     fn same_props_same_canonical_form() {
         // Cache-key stability: re-canonicalising with the same logical

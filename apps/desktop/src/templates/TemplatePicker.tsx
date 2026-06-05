@@ -312,9 +312,11 @@ function buildPreviewSrcDoc(
   // so the picker can render the document directly.
   const styled = template.html;
   const propsJson = JSON.stringify(props ?? {});
-  // Inject before </head> so window.__props__ is set before the body's
-  // start() loop polls for it. Every shipped template has a <head>; the
-  // <body> fallback is defensive in case a future template omits it.
+  // This window.__props__ injection is a vestige of the old preview — nothing
+  // in the new self-contained templates reads it, so it is inert. It stays
+  // pending the SVG capture harness (later task) that rewires this whole
+  // preview path. Inject before </head> when present; the <body> fallback is
+  // defensive in case a future template omits a <head>.
   const inject = `<script>window.__props__ = ${propsJson};</script>`;
   if (styled.includes("</head>")) {
     return styled.replace("</head>", `${inject}</head>`);
