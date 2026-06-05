@@ -177,3 +177,75 @@ describe("template capture harness (real WebView2)", () => {
     expect(a).toBe(b);
   });
 });
+
+// Drives the REAL harness through a SYNTHETIC, test-only fixture (built inline
+// in the e2e hook, NOT in the shipping catalog) that closes three coverage gaps
+// the only built-in (`countdown`) can't reach — it has no font, no clock read,
+// and its `<script>` is a SIBLING of the `<svg>`:
+//   1. clock stub — the fixture's render() writes String(Date.now()) into a
+//      <text id="clock">. The harness stubs Date.now()->0, so the capture must
+//      show the stubbed `>0<`, NOT a real 13-digit epoch.
+//   2. in-<svg> <script> strip — the fixture puts a <script> as a CHILD of the
+//      <svg>; the captured clone must contain no `<script`, and the stripped
+//      markup must rasterize cleanly (well-formed XML).
+//   3. bundled font — the fixture declares a @font-face family with embedded
+//      woff2 bytes; the harness must inject it into the captured markup.
+// The hook returns { svg, rasterizeOk } (it owns the bundled rasterizeSvg,
+// which browser.execute can't import).
+describe("template harness coverage gaps (real WebView2, synthetic fixture)", () => {
+  let result;
+
+  before(async () => {
+    await browser.waitUntil(
+      async () => (await browser.execute(() => document.readyState)) === "complete",
+      { timeout: 30000, timeoutMsg: "never reached readyState=complete" },
+    );
+    // Installed in the same async useEffect as renderTemplateFrameSvg; wait for
+    // it explicitly (it lands after readyState=complete).
+    await browser.waitUntil(
+      async () =>
+        await browser.execute(
+          () =>
+            !!(
+              window.__weftcutTest &&
+              typeof window.__weftcutTest.renderTestFixtureSvg === "function"
+            ),
+        ),
+      { timeout: 30000, timeoutMsg: "renderTestFixtureSvg hook never installed" },
+    );
+
+    const out = await browser.executeAsync((done) => {
+      const hook = window.__weftcutTest;
+      hook
+        .renderTestFixtureSvg({ tSec: 0.5, durSec: 3, props: {} })
+        .then((r) => done({ ok: true, svg: r.svg, rasterizeOk: r.rasterizeOk }))
+        .catch((e) => done({ ok: false, error: String(e) }));
+    });
+    if (!out.ok) throw new Error("renderTestFixtureSvg failed: " + out.error);
+    result = out;
+  });
+
+  it("clock-stub: stubbed Date.now()->0 lands in #clock (no real epoch)", () => {
+    // render() wrote String(Date.now()); the harness stubs Date.now()->0, so
+    // the #clock text node must be `0`. >0< is the serialized text node.
+    expect(result.svg).toContain(">0<");
+    // And NOT a real 13-digit epoch ms in a text node. The `>`-anchored form
+    // avoids false-positives from long digit runs in the embedded base64 woff2
+    // (base64 contains no `>`/`<`, so only actual text nodes can match).
+    expect(result.svg).not.toMatch(/>\d{13}</);
+  });
+
+  it("script-strip: in-<svg> <script> removed + markup rasterizes clean", () => {
+    // The fixture has a <script> CHILD of the <svg>; the captured clone must
+    // contain no <script (proves the strip removed an actually-present one).
+    expect(result.svg).not.toContain("<script");
+    // Stripped markup is well-formed XML: rasterizeSvg(svg) resolved.
+    expect(result.rasterizeOk).toBe(true);
+  });
+
+  it("font: declared @font-face injected with embedded woff2 data URL", () => {
+    expect(result.svg).toContain("@font-face");
+    expect(result.svg).toContain("HarnessTestFont");
+    expect(result.svg).toContain("data:font/woff2;base64,");
+  });
+});
