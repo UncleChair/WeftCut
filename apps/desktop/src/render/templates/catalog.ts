@@ -63,7 +63,12 @@ const manifestModules = import.meta.glob("./builtin/*/manifest.json", {
   import: "default",
 }) as Record<string, TemplateManifest>;
 
-const fontModules = import.meta.glob("./builtin/*/assets/*.woff2", {
+// Match every font format a template may declare in `manifest.fonts[].file`
+// (not just woff2) so a non-woff2 declaration actually loads its bytes. NOTE:
+// `fontFace.ts` currently emits a `font/woff2` MIME for the embedded data-URL
+// regardless of extension; woff2 is the only format the built-ins ship, so
+// that's correct today. Broaden the MIME there if a non-woff2 font is added.
+const fontModules = import.meta.glob("./builtin/*/assets/*.{woff2,woff,ttf,otf}", {
   eager: true,
   query: "?arraybuffer",
   import: "default",

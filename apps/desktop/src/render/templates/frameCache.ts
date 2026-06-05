@@ -1,10 +1,10 @@
 // Per-frame raster cache for animated SVG templates.
 //
 // A template animates over its duration: each composition frame is a
-// distinct `render(t)` rasterized to an `ImageBitmap`. Unlike the
-// content-hash, one-bitmap-per-template `sharedTemplateRasterCache`
-// (Cache.ts), this cache holds a SEQUENCE of frames per template
-// instance, keyed by `(cacheKey, frameIndex)`.
+// distinct `render(t)` rasterized to an `ImageBitmap`. This cache holds a
+// SEQUENCE of frames per template instance, keyed by `(cacheKey, frameIndex)`
+// — distinct from a single-bitmap-per-template cache, which the old
+// foreignObject path used before the SVG render redesign.
 //
 // Two layers:
 //
@@ -38,7 +38,17 @@ const DEFAULT_MAX_FRAMES = 240;
 /// cacheKeys are JSON and may themselves contain `#`, so any code that
 /// splits a key back into `(cacheKey, frameIndex)` must anchor on the
 /// LAST `#` and require an all-digit suffix — see `keyMatchesCacheKey`.
+///
+/// `frameIndex` MUST be a non-negative integer: a negative or fractional
+/// index would stringify to a non-digit suffix (`#-1`, `#1.5`) that
+/// `keyMatchesCacheKey` rejects, so the entry would be unreachable by
+/// `hasKey`/`clearKey` — a silent leak. Reject it at the boundary instead.
 function frameMapKey(cacheKey: string, frameIndex: number): string {
+  if (!Number.isInteger(frameIndex) || frameIndex < 0) {
+    throw new Error(
+      `TemplateFrameCache: frameIndex must be a non-negative integer, got ${frameIndex}`,
+    );
+  }
   return `${cacheKey}#${frameIndex}`;
 }
 
@@ -64,8 +74,14 @@ export class TemplateFrameCache {
   private readonly maxFrames: number;
 
   constructor(maxFrames: number = DEFAULT_MAX_FRAMES) {
-    // Guard against a zero/negative cap silently disabling the cache.
-    this.maxFrames = Math.max(1, Math.floor(maxFrames));
+    // Guard against a zero/negative cap silently disabling the cache. A NaN
+    // cap is especially dangerous: `store.size > NaN` is always false, so
+    // eviction would never fire and the cache would grow unbounded — fall back
+    // to the default in that case rather than clamping NaN (Math.max(1, NaN) is
+    // NaN). Non-integer caps floor to a sane bound.
+    this.maxFrames = Number.isFinite(maxFrames)
+      ? Math.max(1, Math.floor(maxFrames))
+      : DEFAULT_MAX_FRAMES;
   }
 
   // ----------------------------------------------------------------
@@ -245,10 +261,13 @@ async function rasterDirFor(cacheKey: string): Promise<string | null> {
 /// Chosen for being tiny, dependency-free, and deterministic — the
 /// dir name is JS-owned (`Cache/raster/` is not created by the Rust
 /// `CacheLayout`), so it does NOT need to match Rust's blake3 scheme. A
-/// 32-bit space is ample: collisions only matter across the handful of
-/// distinct template-instance keys live in one workspace, and a
-/// collision merely shares a dir (the per-frame `<i>.png` names still
-/// disambiguate within it).
+/// 32-bit space is ample BECAUSE the number of live keys is tiny: only a
+/// handful of distinct template-instance keys exist in one workspace, so
+/// the birthday-bound collision probability against a 2^32 space is
+/// negligible. (A collision would NOT be self-healing — two colliding keys
+/// share the `<hash>` dir and their frame `<i>.png` files would CLOBBER each
+/// other, since `0.png` means frame 0 of WHICHEVER key wrote last. The
+/// safety here is the low key count, not the per-frame filenames.)
 export function hashCacheKey(cacheKey: string): string {
   let h = 0x811c9dc5; // FNV offset basis
   for (let i = 0; i < cacheKey.length; i++) {

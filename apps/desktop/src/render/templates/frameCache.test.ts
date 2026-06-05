@@ -90,6 +90,44 @@ describe("TemplateFrameCache — L0 LRU", () => {
     expect(c.getFrame("k", 2)).toBe(d);
   });
 
+  test("setFrame refreshes recency so a re-set frame survives eviction", () => {
+    // Re-`setFrame` of an existing entry must move it to the MRU tail (same as
+    // a get-hit), so the OTHER frame becomes the LRU eviction victim.
+    const c = new TemplateFrameCache(2);
+    const a = fakeBitmap();
+    const a2 = fakeBitmap();
+    const b = fakeBitmap();
+    const d = fakeBitmap();
+    c.setFrame("k", 0, a); // [k#0]
+    c.setFrame("k", 1, b); // [k#0, k#1]
+    // Re-set k#0 with a new bitmap → k#0 becomes MRU; k#1 is now LRU.
+    c.setFrame("k", 0, a2); // [k#1, k#0]; closes the prior k#0 bitmap (a)
+    expect(a.close).toHaveBeenCalledTimes(1);
+    c.setFrame("k", 2, d); // overflow → evict LRU (k#1) → [k#0, k#2]
+    expect(b.close).toHaveBeenCalledTimes(1); // k#1 evicted
+    expect(a2.close).not.toHaveBeenCalled(); // re-set k#0 survived
+    expect(d.close).not.toHaveBeenCalled();
+    expect(c.getFrame("k", 0)).toBe(a2);
+    expect(c.getFrame("k", 1)).toBeNull();
+    expect(c.getFrame("k", 2)).toBe(d);
+  });
+
+  test("rejects a negative or fractional frameIndex at the boundary", () => {
+    const c = new TemplateFrameCache();
+    const a = fakeBitmap();
+    expect(() => c.setFrame("k", -1, a)).toThrow(/non-negative integer/);
+    expect(() => c.setFrame("k", 1.5, a)).toThrow(/non-negative integer/);
+    expect(() => c.getFrame("k", -1)).toThrow(/non-negative integer/);
+  });
+
+  test("a NaN cap falls back to the default bound (eviction still fires)", () => {
+    // A NaN cap previously disabled eviction entirely (`size > NaN` is always
+    // false). It must clamp to the default (240) instead of growing unbounded.
+    const c = new TemplateFrameCache(Number.NaN);
+    for (let i = 0; i < 241; i++) c.setFrame("k", i, fakeBitmap());
+    expect(c.size()).toBe(240);
+  });
+
   test("hasKey reflects presence of any frame for a key", () => {
     const c = new TemplateFrameCache();
     expect(c.hasKey("k")).toBe(false);

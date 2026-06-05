@@ -118,6 +118,11 @@ export class TemplateSprite {
   constructor(init: TemplateSpriteInit) {
     this.layerId = init.layerId;
     this.templateId = init.templateId;
+    // The composition fps is captured ONCE at construction. If the project's
+    // fps changes while this sprite is alive (a project swap that keeps the
+    // sprite), the cached frame grid uses the stale rate until the sprite is
+    // recreated. Accepted for v1 — the Compositor recreates sprites on a
+    // composition reload, so this is only a transient edge, not re-architected.
     this.fpsNum = init.fpsNum;
     this.fpsDen = init.fpsDen;
     this.onLoaded = init.onLoaded ?? null;

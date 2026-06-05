@@ -22,8 +22,6 @@ export { TemplateSprite } from "./sprite/TemplateSprite";
 export { SubtitlesSprite } from "./sprite/SubtitlesSprite";
 export { ColorSprite } from "./sprite/ColorSprite";
 
-export { rasterizeForeignObject } from "./templates/Rasterizer";
-export { TemplateRasterCache } from "./templates/Cache";
 export { JassubBinding } from "./subtitles/Jassub";
 
 export type { ExportRequest, ExportEvent } from "./worker/protocol";

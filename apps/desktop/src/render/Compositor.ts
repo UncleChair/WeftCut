@@ -747,6 +747,11 @@ export class Compositor {
     this.texts.clear();
     for (const t of this.templates.values()) t.sprite.dispose();
     this.templates.clear();
+    // Drop the injected export-bake frame references. Bitmaps here are OWNED by
+    // the export caller (`exportBakeTemplates`), not the Compositor — same as
+    // `setTemplateFrames`, which clears without closing — so we clear (no
+    // `.close()`) to avoid double-freeing the caller's bitmaps.
+    this.templateFrames.clear();
     for (const s of this.subtitles.values()) s.sprite.dispose();
     this.subtitles.clear();
     for (const a of this.audios.values()) a.mixer.dispose();
