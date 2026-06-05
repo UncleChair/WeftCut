@@ -173,9 +173,8 @@ export function resolveTemplateContentDurationUs(
   const propName = manifest.max_duration_prop;
   if (propName) {
     const raw = props[propName];
-    const n = typeof raw === "number" ? raw : Number(raw);
-    if (Number.isFinite(n) && n > 0) {
-      return Math.round(n * 1_000_000);
+    if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) {
+      return Math.round(raw * 1_000_000);
     }
   }
   if (typeof manifest.max_duration_s === "number" && manifest.max_duration_s > 0) {
