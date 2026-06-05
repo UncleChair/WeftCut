@@ -10,12 +10,12 @@
 // here = export binds the wrong (or an out-of-range) frame. The first test
 // pins exactly that: the full-range bake covers `[0, templateDurationFrames-1]`.
 
-import { describe, expect, test } from "vitest";
+import { describe, expect, it, test } from "vitest";
 
 import type { LayerParamsView, ProjectSummary, TemplateView } from "../ipc";
 import { frameIndexInLayer, snapFrameFloor } from "../frames";
-import { templateLayersToBake } from "./exportBake";
-import { templateDurationFrames } from "./sprite/TemplateSprite";
+import { bakeContentFrameFor, templateLayersToBake } from "./exportBake";
+import { templateContentFrame, templateDurationFrames } from "./sprite/TemplateSprite";
 
 const COUNTDOWN = "countdown"; // built-in, 480x480
 
@@ -194,5 +194,131 @@ describe("templateLayersToBake", () => {
     expect(rawFirstFrame).toBe(1); // confirms the old code would have been wrong
     // And the fixed code does NOT return the stale raw value.
     expect(s.firstFrame).not.toBe(rawFirstFrame);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Export bake / preview PARITY tests
+//
+// The core invariant: for every layer-local frame `f` that the export Worker
+// will request, `bakeContentFrameFor(f, ...)` must return the SAME content
+// frame as the live preview's `templateContentFrame(tInLayerUs, ...)`. The
+// compositor derives `tInLayerUs = snapFrameFloor(compFrameUs) - t_start_us`;
+// this helper reconstructs that exactly so that floor(a+b) ≠ floor(a)+floor(b)
+// divergences at /1001 fps boundaries are eliminated.
+// ---------------------------------------------------------------------------
+
+const US = 1_000_000;
+
+/// Reproduce the compositor's content-frame selection for an absolute comp
+/// frame index, mirroring TemplateSprite.update's preview path.
+function previewContentFrameAt(
+  compFrameIdx: number,
+  tStartUs: number,
+  srcInUs: number,
+  contentDurUs: number,
+  n: number,
+  d: number,
+): number {
+  const compFrameUs = snapFrameFloor(Math.round((compFrameIdx * US * d) / n), n, d);
+  const tInLayerUs = compFrameUs - tStartUs;
+  return templateContentFrame(tInLayerUs, srcInUs, contentDurUs, n, d).frame;
+}
+
+describe("export bake matches preview content frame (windowed template)", () => {
+  it("agrees for every layer-local frame at 29.97fps with src_in>0 and t_start>0", () => {
+    const n = 30000, d = 1001;
+    // Layer starts at comp frame 30, src_in scrubbed in by ~1s, content 6s.
+    const tStartFrame = 30;
+    const tStartUs = snapFrameFloor(Math.round((tStartFrame * US * d) / n), n, d);
+    const srcInUs = snapFrameFloor(Math.round((30 * US * d) / n), n, d); // ~1s, grid-aligned
+    const contentDurUs = 6 * US;
+    const layerWidthFrames = 90; // 3s window
+    const mismatches: number[] = [];
+    for (let f = 0; f < layerWidthFrames; f++) {
+      const preview = previewContentFrameAt(tStartFrame + f, tStartUs, srcInUs, contentDurUs, n, d);
+      const bake = bakeContentFrameFor(f, tStartUs, srcInUs, contentDurUs, n, d);
+      if (preview !== bake) mismatches.push(f);
+    }
+    expect(mismatches).toEqual([]);
+  });
+
+  it("agrees with src_in==0 and t_start==0 (legacy/common path)", () => {
+    const n = 30000, d = 1001;
+    const tStartUs = 0;
+    const srcInUs = 0;
+    const contentDurUs = 6 * US;
+    const layerWidthFrames = 90;
+    const mismatches: number[] = [];
+    for (let f = 0; f < layerWidthFrames; f++) {
+      const preview = previewContentFrameAt(f, tStartUs, srcInUs, contentDurUs, n, d);
+      const bake = bakeContentFrameFor(f, tStartUs, srcInUs, contentDurUs, n, d);
+      if (preview !== bake) mismatches.push(f);
+    }
+    expect(mismatches).toEqual([]);
+  });
+
+  it("agrees for every layer-local frame at 30fps (integer rate) with src_in>0", () => {
+    const n = 30, d = 1;
+    const tStartFrame = 15;
+    const tStartUs = snapFrameFloor(Math.round((tStartFrame * US * d) / n), n, d);
+    const srcInUs = snapFrameFloor(Math.round((10 * US * d) / n), n, d);
+    const contentDurUs = 5 * US;
+    const layerWidthFrames = 60;
+    const mismatches: number[] = [];
+    for (let f = 0; f < layerWidthFrames; f++) {
+      const preview = previewContentFrameAt(tStartFrame + f, tStartUs, srcInUs, contentDurUs, n, d);
+      const bake = bakeContentFrameFor(f, tStartUs, srcInUs, contentDurUs, n, d);
+      if (preview !== bake) mismatches.push(f);
+    }
+    expect(mismatches).toEqual([]);
+  });
+
+  it("agrees for every layer-local frame at 24fps with src_in>0", () => {
+    const n = 24, d = 1;
+    const tStartFrame = 24; // 1s in
+    const tStartUs = snapFrameFloor(Math.round((tStartFrame * US * d) / n), n, d);
+    const srcInUs = snapFrameFloor(Math.round((12 * US * d) / n), n, d); // 0.5s in
+    const contentDurUs = 4 * US;
+    const layerWidthFrames = 48;
+    const mismatches: number[] = [];
+    for (let f = 0; f < layerWidthFrames; f++) {
+      const preview = previewContentFrameAt(tStartFrame + f, tStartUs, srcInUs, contentDurUs, n, d);
+      const bake = bakeContentFrameFor(f, tStartUs, srcInUs, contentDurUs, n, d);
+      if (preview !== bake) mismatches.push(f);
+    }
+    expect(mismatches).toEqual([]);
+  });
+
+  it("agrees for every layer-local frame at 23.976fps with src_in>0 and t_start>0", () => {
+    const n = 24000, d = 1001;
+    const tStartFrame = 24;
+    const tStartUs = snapFrameFloor(Math.round((tStartFrame * US * d) / n), n, d);
+    const srcInUs = snapFrameFloor(Math.round((24 * US * d) / n), n, d);
+    const contentDurUs = 5 * US;
+    const layerWidthFrames = 72;
+    const mismatches: number[] = [];
+    for (let f = 0; f < layerWidthFrames; f++) {
+      const preview = previewContentFrameAt(tStartFrame + f, tStartUs, srcInUs, contentDurUs, n, d);
+      const bake = bakeContentFrameFor(f, tStartUs, srcInUs, contentDurUs, n, d);
+      if (preview !== bake) mismatches.push(f);
+    }
+    expect(mismatches).toEqual([]);
+  });
+
+  it("agrees for every layer-local frame at 59.94fps with src_in>0 and t_start>0", () => {
+    const n = 60000, d = 1001;
+    const tStartFrame = 60;
+    const tStartUs = snapFrameFloor(Math.round((tStartFrame * US * d) / n), n, d);
+    const srcInUs = snapFrameFloor(Math.round((60 * US * d) / n), n, d);
+    const contentDurUs = 6 * US;
+    const layerWidthFrames = 180;
+    const mismatches: number[] = [];
+    for (let f = 0; f < layerWidthFrames; f++) {
+      const preview = previewContentFrameAt(tStartFrame + f, tStartUs, srcInUs, contentDurUs, n, d);
+      const bake = bakeContentFrameFor(f, tStartUs, srcInUs, contentDurUs, n, d);
+      if (preview !== bake) mismatches.push(f);
+    }
+    expect(mismatches).toEqual([]);
   });
 });
