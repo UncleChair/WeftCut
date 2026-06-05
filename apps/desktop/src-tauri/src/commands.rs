@@ -134,6 +134,7 @@ pub struct TemplateView {
     pub scale_x: f64,
     pub scale_y: f64,
     pub opacity: f64,
+    pub src_in_us: i64,
     /// Validated props the user set on this template instance.
     /// Keys match the template manifest's `props_schema`; values
     /// are whatever JSON shape that schema permits (string / number /
@@ -620,6 +621,7 @@ fn layer_params_view(
                 scale_x: static_or(&p.transform.scale_x, 1.0),
                 scale_y: static_or(&p.transform.scale_y, 1.0),
                 opacity: static_or(&p.opacity, 1.0),
+                src_in_us: p.src_in_us,
                 props,
             })
         }
@@ -2003,6 +2005,7 @@ pub async fn add_template(
         template_id: template.id().to_string(),
         template_version: template.manifest.version,
         props: props_map,
+        src_in_us: 0,
         transform: Transform::default(),
         opacity: Animated::Static(1.0),
     });

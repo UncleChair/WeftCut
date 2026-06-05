@@ -33,6 +33,7 @@ function templateLayer(
     scale_x: 1,
     scale_y: 1,
     opacity: 1,
+    src_in_us: 0,
     props: {},
     ...overrides,
   };

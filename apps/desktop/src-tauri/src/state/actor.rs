@@ -174,6 +174,8 @@ pub struct TemplatePatch {
     pub scale_y: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opacity: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub src_in_us: Option<TimeUs>,
     /// Props to merge into the layer's existing `props` map, FIELD-WISE — each
     /// key present here overwrites that key, all other keys are left intact.
     /// (Replacing the whole map would let a stale debounced commit clobber a
@@ -3986,6 +3988,9 @@ fn apply_params_patch(
             if let Some(o) = tp.opacity {
                 p.opacity = Animated::Static(o);
             }
+            if let Some(v) = tp.src_in_us {
+                p.src_in_us = v;
+            }
             // Merge props field-wise — don't replace the whole map (see the
             // doc comment on `TemplatePatch::props`).
             if let Some(props) = &tp.props {
@@ -4112,6 +4117,7 @@ mod tests {
             template_id: "countdown".into(),
             template_version: 1,
             props,
+            src_in_us: 0,
             transform: crate::state::Transform::default(),
             opacity: Animated::Static(1.0),
         })
@@ -4147,6 +4153,7 @@ mod tests {
                     scale_x: Some(2.0),
                     scale_y: Some(0.5),
                     opacity: Some(0.25),
+                    src_in_us: None,
                     props: Some(patch_props),
                 }),
             )
@@ -4197,6 +4204,29 @@ mod tests {
             .await
             .expect_err("kind mismatch must error");
         assert!(matches!(err, CommandError::LayerParamsKindMismatch { .. }));
+    }
+
+    #[test]
+    fn template_params_legacy_json_defaults_src_in_us_to_zero() {
+        // A project JSON authored before src_in_us existed must deserialize
+        // with src_in_us = 0 (window at content start).
+        let json = r#"{
+            "template_id": "countdown",
+            "template_version": 1,
+            "props": {},
+            "transform": {
+                "x": {"mode":"Static","value":0.0},
+                "y": {"mode":"Static","value":0.0},
+                "scale_x": {"mode":"Static","value":1.0},
+                "scale_y": {"mode":"Static","value":1.0},
+                "rotation_deg": {"mode":"Static","value":0.0},
+                "anchor": [0.5, 0.5]
+            },
+            "opacity": {"mode":"Static","value":1.0}
+        }"#;
+        let p: crate::state::TemplateParams =
+            serde_json::from_str(json).expect("legacy template params deserialize");
+        assert_eq!(p.src_in_us, 0);
     }
 
     #[tokio::test]

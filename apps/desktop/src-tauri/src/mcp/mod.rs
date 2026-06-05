@@ -1224,6 +1224,7 @@ impl WeftCutServer {
             template_id: template.id().to_string(),
             template_version: template.manifest.version,
             props: props_map,
+            src_in_us: 0,
             transform: Transform::default(),
             opacity: Animated::Static(1.0),
         });
