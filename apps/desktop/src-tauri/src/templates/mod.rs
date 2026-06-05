@@ -330,12 +330,10 @@ pub enum TemplateError {
 
 // -- Built-in starter templates ------------------------------------------
 //
-// Stage F: 9 templates total. Each lives in `templates/<id>/` as the trio
-// `{manifest.json, index.html, style.css}` and is embedded via `include_str!`
-// so the desktop binary ships them without runtime file access. The set
-// covers the spec's 8 categories (lower thirds × 3 — counting the existing
-// `lower-third-simple` — intro/outro title card, captions strip, callout,
-// progress bar, countdown, logo bug, slate).
+// One built-in (`countdown`) is retained as the validation exemplar for the
+// SVG render-path redesign (ADR 0015); the other starters were removed. It
+// lives in `templates/countdown/` and is embedded via `include_str!` so the
+// desktop binary ships it without runtime file access.
 
 macro_rules! builtin_template {
     ($fn_name:ident, $dir:literal) => {
@@ -354,16 +352,7 @@ macro_rules! builtin_template {
     };
 }
 
-builtin_template!(builtin_lower_third_simple, "lower_third_simple");
-builtin_template!(builtin_lower_third_glow, "lower_third_glow");
-builtin_template!(builtin_lower_third_bar, "lower_third_bar");
-builtin_template!(builtin_title_card, "title_card");
-builtin_template!(builtin_captions_strip, "captions_strip");
-builtin_template!(builtin_callout, "callout");
-builtin_template!(builtin_progress_bar, "progress_bar");
 builtin_template!(builtin_countdown, "countdown");
-builtin_template!(builtin_logo_bug, "logo_bug");
-builtin_template!(builtin_slate, "slate");
 
 /// Catalog entry — the JSON-serializable shape that the picker UI + the
 /// `list_templates` MCP tool + the `templates://current` resource all
@@ -378,18 +367,7 @@ pub fn catalog() -> Vec<Manifest> {
 /// All built-in templates, in display order. The picker UI iterates this
 /// list; agents see the same set via `list_templates` (Stage H).
 pub fn builtins() -> Vec<Template> {
-    vec![
-        builtin_lower_third_simple(),
-        builtin_lower_third_glow(),
-        builtin_lower_third_bar(),
-        builtin_title_card(),
-        builtin_captions_strip(),
-        builtin_callout(),
-        builtin_progress_bar(),
-        builtin_countdown(),
-        builtin_logo_bug(),
-        builtin_slate(),
-    ]
+    vec![builtin_countdown()]
 }
 
 #[cfg(test)]

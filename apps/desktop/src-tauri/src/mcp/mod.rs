@@ -3654,7 +3654,7 @@ mod tests {
     /// keyed by name.
     #[test]
     fn parse_canonical_props_roundtrips_defaults() {
-        let template = templates::builtin_lower_third_simple();
+        let template = templates::builtin_countdown();
         let canonical = template
             .canonicalize_props(&serde_json::json!({}))
             .expect("canonicalize defaults");

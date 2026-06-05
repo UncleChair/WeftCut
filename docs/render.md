@@ -242,7 +242,7 @@ SVG, and rasterizes it via an `<img>` → `createImageBitmap`. HTML/CSS via
 `<foreignObject>` is not used — its raster is cross-origin-tainted in
 WebView2 (ADR 0015).
 
-Templates' SVG + render logic + manifests are embedded in the Rust binary
+Templates' `index.html` (SVG markup + inline render script) + manifests are embedded in the Rust binary
 via `include_str!`; see `crate::templates` (`src-tauri/src/templates/`).
 The catalog is surfaced to the webview via the `list_templates`
 Tauri command and the MCP `list_templates` tool.
