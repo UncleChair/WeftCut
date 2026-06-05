@@ -1012,7 +1012,13 @@ export interface TemplateSummary {
   /// Optional hard cap on a placed layer's total length, in seconds. When
   /// present, the timeline forbids trimming/adding the template longer than
   /// this; when absent the template is freely extendable (holdable overlays).
+  /// Static fallback — overridden live by `max_duration_prop` when that names
+  /// a prop carrying a valid value.
   max_duration_s?: number;
+  /// Optional name of a NUMBER prop whose current value (in seconds) is the
+  /// layer's length cap. When set, editing that prop changes the cap live;
+  /// falls back to `max_duration_s` when the prop is missing/invalid.
+  max_duration_prop?: string;
   /// Keyed by prop name. Map order is BTreeMap-stable (alphabetical) so the
   /// picker can render fields in a deterministic order without sorting.
   props_schema: Record<string, PropSpec>;

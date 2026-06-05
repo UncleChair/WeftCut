@@ -1201,7 +1201,9 @@ impl WeftCutServer {
             args.t_start_us,
             args.t_end_us,
             template.manifest.default_duration_s,
-            template.manifest.max_duration_us(),
+            // Cap is driven by the props being added (canonicalized above), so
+            // a `max_duration_prop`-mapped template clamps to its prop value.
+            templates::resolve_template_max_dur_us(&template.manifest, &props_map),
         );
         if t_end_us <= args.t_start_us {
             return Err(McpError::invalid_params(
@@ -3713,6 +3715,31 @@ mod tests {
         assert_eq!(
             resolve_template_t_end_us(0, Some(3_000_000), 5.0, Some(5_000_000)),
             3_000_000,
+        );
+    }
+
+    /// `add_template` resolves its cap from the props being added via
+    /// `resolve_template_max_dur_us`, so a prop-mapped template (countdown's
+    /// `seconds`) clamps an explicit over-long `t_end_us` to the PROP value,
+    /// not the static `max_duration_s`. With `seconds = 8` + a requested 20s
+    /// end, the resolved end is ~8s. (The actor's `add_layer` then frame-snaps
+    /// both edges; this checks the cap-resolution + clamp step in isolation.)
+    #[test]
+    fn add_template_cap_resolves_from_seconds_prop() {
+        let manifest = &crate::templates::builtin_countdown().manifest;
+        let mut props: imbl::HashMap<String, serde_json::Value> = imbl::HashMap::new();
+        props.insert("seconds".into(), serde_json::json!(8.0));
+        let cap = crate::templates::resolve_template_max_dur_us(manifest, &props);
+        assert_eq!(cap, Some(8_000_000));
+        // Explicit over-long t_end (20s) clamps to the 8s prop cap.
+        assert_eq!(
+            resolve_template_t_end_us(0, Some(20_000_000), manifest.default_duration_s, cap),
+            8_000_000,
+        );
+        // Within-cap explicit value (6s) passes through unchanged.
+        assert_eq!(
+            resolve_template_t_end_us(0, Some(6_000_000), manifest.default_duration_s, cap),
+            6_000_000,
         );
     }
 

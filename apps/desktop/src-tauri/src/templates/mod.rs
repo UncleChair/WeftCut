@@ -51,8 +51,21 @@ pub struct Manifest {
     /// than this (content-bounded templates like `countdown`). When absent
     /// (`None`), the template is freely extendable — holdable overlays such
     /// as lower-thirds rely on this.
+    ///
+    /// This is the STATIC fallback cap. When `max_duration_prop` is set and
+    /// the layer's props carry a valid value for that prop, the cap is driven
+    /// by the prop instead (see `resolve_template_max_dur_us`); this field is
+    /// then used only if the prop is missing/invalid.
     #[serde(default)]
     pub max_duration_s: Option<f64>,
+    /// Optional name of a NUMBER prop whose current value (in seconds) is the
+    /// layer's length cap. When set and the layer's props carry a finite,
+    /// positive value under this key, that value (not `max_duration_s`) bounds
+    /// the layer length — so editing the prop changes the cap live. Falls back
+    /// to `max_duration_s` when the prop is absent or invalid. `None` keeps the
+    /// purely-static cap behavior.
+    #[serde(default)]
+    pub max_duration_prop: Option<String>,
     /// How the template's frames are captured. Defaults to `"svg"` when the
     /// manifest omits it.
     #[serde(default = "default_engine")]
@@ -83,6 +96,33 @@ impl Manifest {
         self.max_duration_s
             .map(|s| (s * 1_000_000.0).round() as i64)
     }
+}
+
+/// Resolve a Template layer's length cap (in integer microseconds) from its
+/// manifest + the layer's current props.
+///
+/// When the manifest names a `max_duration_prop` AND the layer's props carry a
+/// finite, positive numeric value for that prop, the cap is that prop value (in
+/// seconds → µs) — so editing the prop changes the cap live. Otherwise (no
+/// prop named, prop missing, non-numeric, or non-finite/non-positive) the cap
+/// falls back to the static `max_duration_s`. Returns `None` when the template
+/// is unbounded (no prop value and no `max_duration_s`).
+///
+/// Like `max_duration_us`, the returned µs value is absolute and NOT
+/// frame-aligned — the trim / add-layer call sites snap the cap-bounded edge
+/// onto the composition grid.
+pub fn resolve_template_max_dur_us(
+    manifest: &Manifest,
+    props: &imbl::HashMap<String, serde_json::Value>,
+) -> Option<i64> {
+    if let Some(name) = &manifest.max_duration_prop {
+        if let Some(n) = props.get(name).and_then(|v| v.as_f64()) {
+            if n.is_finite() && n > 0.0 {
+                return Some((n * 1_000_000.0).round() as i64);
+            }
+        }
+    }
+    manifest.max_duration_us()
 }
 
 /// A bundled font declared by a template manifest. `file` is the asset
@@ -343,6 +383,49 @@ mod tests {
         assert!(matches!(err, TemplateError::OutOfRange(_, _, _)));
     }
 
+    /// `resolve_template_max_dur_us` maps `countdown`'s cap onto the `seconds`
+    /// prop (manifest `max_duration_prop: "seconds"`). The prop value (in
+    /// seconds) becomes the cap when present + valid; otherwise it falls back
+    /// to the static `max_duration_s` (5s). Covers: prop present (drives cap),
+    /// prop missing (static fallback), prop non-finite/non-positive (fallback),
+    /// and a manifest without `max_duration_prop` (pure static).
+    #[test]
+    fn resolve_max_dur_us_prefers_prop_then_falls_back() {
+        let m = &builtin_countdown().manifest;
+        assert_eq!(m.max_duration_prop.as_deref(), Some("seconds"));
+
+        // Prop present + valid → prop value drives the cap (10s, not static 5s).
+        let mut p10: imbl::HashMap<String, serde_json::Value> = imbl::HashMap::new();
+        p10.insert("seconds".into(), json!(10.0));
+        assert_eq!(resolve_template_max_dur_us(m, &p10), Some(10_000_000));
+
+        // Integer JSON value resolves the same (as_f64 handles ints).
+        let mut p3: imbl::HashMap<String, serde_json::Value> = imbl::HashMap::new();
+        p3.insert("seconds".into(), json!(3));
+        assert_eq!(resolve_template_max_dur_us(m, &p3), Some(3_000_000));
+
+        // Prop missing → static fallback (max_duration_s = 5s).
+        let empty: imbl::HashMap<String, serde_json::Value> = imbl::HashMap::new();
+        assert_eq!(resolve_template_max_dur_us(m, &empty), Some(5_000_000));
+
+        // Prop present but non-numeric / non-positive → static fallback.
+        let mut bad: imbl::HashMap<String, serde_json::Value> = imbl::HashMap::new();
+        bad.insert("seconds".into(), json!("nope"));
+        assert_eq!(resolve_template_max_dur_us(m, &bad), Some(5_000_000));
+        let mut zero: imbl::HashMap<String, serde_json::Value> = imbl::HashMap::new();
+        zero.insert("seconds".into(), json!(0.0));
+        assert_eq!(resolve_template_max_dur_us(m, &zero), Some(5_000_000));
+
+        // A manifest with NO max_duration_prop uses the static cap only.
+        let mut static_only = m.clone();
+        static_only.max_duration_prop = None;
+        // Even with a `seconds` value present, the prop is ignored.
+        assert_eq!(resolve_template_max_dur_us(&static_only, &p10), Some(5_000_000));
+        // And a wholly-unbounded manifest stays None.
+        static_only.max_duration_s = None;
+        assert_eq!(resolve_template_max_dur_us(&static_only, &p10), None);
+    }
+
     /// `String` props with a `max_length` cap exercise the `TooLong` and
     /// `WrongType("string")` validator arms (mod.rs `validate_prop`). No
     /// built-in declares a capped string today, so build a synthetic
@@ -366,6 +449,7 @@ mod tests {
                 size: [100, 100],
                 default_duration_s: 1.0,
                 max_duration_s: None,
+                max_duration_prop: None,
                 engine: "svg".to_string(),
                 fonts: vec![],
                 props_schema,
