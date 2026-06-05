@@ -36,6 +36,51 @@ import {
 
 const US_PER_SEC = 1_000_000;
 
+/// Compute the content frame to bake into layer-local slot `layerLocalFrame`,
+/// mirroring the preview path (`templateContentFrame` in `TemplateSprite.ts`)
+/// EXACTLY. The key invariant: a composition frame at index `layerStartFrame +
+/// layerLocalFrame` arrives at the compositor as
+/// `tInLayerUs = snapFrameFloor(compFrameUs) - tStartUs`, and the preview
+/// selects `frameIndexInLayer(srcInUs + tInLayerUs)`. This function reconstructs
+/// that same `tInLayerUs` from the layer-local frame index so both paths always
+/// agree, including when fractional parts of `srcInUs` and `tInLayerUs` would
+/// cause floor(a) + floor(b) ≠ floor(a+b).
+///
+/// `layerStartFrame` = frameIndexInLayer(tStartUs, fpsNum, fpsDen) — the caller
+/// computes it ONCE and passes it rather than recomputing per frame.
+///
+/// Exported so the parity unit-test can import and validate it directly.
+export function bakeContentFrameFor(
+  layerLocalFrame: number,
+  tStartUs: number,
+  srcInUs: number,
+  contentDurationUs: number,
+  fpsNum: number,
+  fpsDen: number,
+): number {
+  const contentDurationFrames = Math.max(
+    1,
+    Math.round((contentDurationUs * fpsNum) / (US_PER_SEC * fpsDen)),
+  );
+  // Reconstruct the absolute comp-frame index for this layer-local slot.
+  const layerStartFrame = frameIndexInLayer(tStartUs, fpsNum, fpsDen);
+  const absFrame = layerStartFrame + layerLocalFrame;
+  // Reconstruct the comp-grid µs for that absolute frame — same as the
+  // compositor's `snapFrameFloor(playheadUs)` for a playhead sitting exactly
+  // on a frame boundary.  absFrame is always an integer, so
+  //   Math.round(absFrame * US_PER_SEC * fpsDen / fpsNum)
+  // is the exact half-up grid value (matches snapFrameFloor on-grid).
+  const compFrameUs = Math.round((absFrame * US_PER_SEC * fpsDen) / fpsNum);
+  const tInLayerUs = compFrameUs - tStartUs;
+  // Single summed floor — mirrors templateContentFrame exactly.
+  const contentTimeUs = srcInUs + Math.max(0, tInLayerUs);
+  const contentFrame = Math.min(
+    contentDurationFrames - 1,
+    frameIndexInLayer(contentTimeUs, fpsNum, fpsDen),
+  );
+  return contentFrame;
+}
+
 /// One Template layer to bake: its id, the resolved `Template`, the layer's
 /// `TemplateView`, and the comp-fps frame range to raster. `durationFrames` is
 /// the layer's full animated length on the comp grid (NOT clamped to the export
@@ -53,6 +98,11 @@ export interface TemplateBakeSpec {
   /// Clamped to `[0, durationFrames - 1]`.
   firstFrame: number;
   lastFrame: number;
+  /// Layer start time in microseconds on the composition timeline (`t_start_us`).
+  /// Required to reconstruct `tInLayerUs` the same way the compositor does for
+  /// each layer-local frame, so the bake's content-frame selection mirrors the
+  /// preview path exactly (see `bakeContentFrameFor`).
+  tStartUs: number;
 }
 
 /// Collect the Template layers (enabled, on an enabled track) whose interval
@@ -129,6 +179,7 @@ export function templateLayersToBake(
         durationFrames,
         firstFrame,
         lastFrame,
+        tStartUs: layer.t_start_us,
       });
     }
   }
@@ -185,18 +236,22 @@ export async function exportBakeTemplates(
       const contentDurationUs = cap ?? spec.durationUs;
       const srcInUs = cap == null ? 0 : spec.view.src_in_us;
       const durationSec = contentDurationUs / US_PER_SEC;
-      // Layer-local frame `f` maps to content frame (srcInFrame + f), clamped to
-      // the last content frame (mirrors the preview path). srcInUs is
-      // frame-snapped (storage invariant) so srcInFrame is exact.
-      const srcInFrame = frameIndexInLayer(srcInUs, fpsNum, fpsDen);
-      const contentDurationFrames = templateDurationFrames(contentDurationUs, fpsNum, fpsDen);
 
       // Allocate the full array up to `lastFrame`; leave `[0, firstFrame)`
       // holes for a mid-layer export start. Bitmaps land at their comp-frame
       // index so the Worker's `frames[frameIndexInLayer(...)]` is a direct hit.
       const frames: ImageBitmap[] = new Array(spec.lastFrame + 1);
       for (let frame = spec.firstFrame; frame <= spec.lastFrame; frame++) {
-        const contentFrame = Math.min(contentDurationFrames - 1, srcInFrame + frame);
+        // mirrors the preview path: reconstruct tInLayerUs for this
+        // layer-local slot on the comp grid, then single-floor with srcInUs.
+        const contentFrame = bakeContentFrameFor(
+          frame,
+          spec.tStartUs,
+          srcInUs,
+          contentDurationUs,
+          fpsNum,
+          fpsDen,
+        );
         const tSec = frameTimeSec(contentFrame, fpsNum, fpsDen);
         // eslint-disable-next-line no-await-in-loop
         const svg = await harness.renderFrameSvg(tSec, durationSec, canonical);
