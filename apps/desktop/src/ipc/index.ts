@@ -112,10 +112,9 @@ export interface TemplateView {
   scale_y: number;
   opacity: number;
   /// User-set props for this template instance, validated against the
-  /// template manifest's `props_schema`. Injected verbatim as
-  /// `__props__` on the per-instance shadowed window-proxy inside the
-  /// DOM-preview template host (`<div>` + Shadow DOM; see
-  /// `TemplateHandle.ts`).
+  /// template manifest's `props_schema`. Passed verbatim to the template's
+  /// `render(t, dur, props)` entry inside the sandboxed capture iframe (via
+  /// postMessage; see `render/templates/harness.ts`).
   props: Record<string, unknown>;
 }
 

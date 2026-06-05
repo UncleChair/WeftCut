@@ -6,6 +6,13 @@
 // testable without a canvas or DOM. In production the caller provides
 // a canvas 2D context's `measureText` or a comparable metric; in tests
 // a simple `s.length * px` stub is sufficient.
+//
+// Intentionally kept without a built-in consumer: this is the authoring-time
+// line-break helper for multi-line SVG templates (`<tspan>` wrapping, per
+// `docs/templates.md`). v1 ships only the single-line `countdown` template,
+// which needs no wrapping — so nothing calls this yet, but it's the supported
+// primitive any future multi-line template authors against. Covered by tests
+// so the contract stays stable until that first consumer lands.
 
 /// Greedily wrap `text` into lines whose measured width does not exceed
 /// `maxWidth`. Words are split on whitespace (consecutive whitespace

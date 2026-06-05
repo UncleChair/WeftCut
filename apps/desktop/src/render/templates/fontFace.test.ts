@@ -3,7 +3,9 @@ import { buildFontFaceStyle, injectFontFace } from "./fontFace";
 
 describe("fontFace", () => {
   test("injects a data-URL @font-face into the svg defs", () => {
-    const style = buildFontFaceStyle([{ family: "Inter", bytes: new Uint8Array([1, 2, 3]) }]);
+    const style = buildFontFaceStyle([
+      { family: "Inter", file: "Inter.woff2", bytes: new Uint8Array([1, 2, 3]) },
+    ]);
     expect(style).toContain("@font-face");
     expect(style).toContain("font-family:'Inter'");
     expect(style).toContain("data:font/woff2;base64,");
@@ -21,19 +23,23 @@ describe("fontFace", () => {
   });
 
   test("includes font-weight when provided", () => {
-    const style = buildFontFaceStyle([{ family: "Inter", weight: 700, bytes: new Uint8Array([1]) }]);
+    const style = buildFontFaceStyle([
+      { family: "Inter", weight: 700, file: "Inter.woff2", bytes: new Uint8Array([1]) },
+    ]);
     expect(style).toContain("font-weight:700");
   });
 
   test("includes font-style when provided", () => {
-    const style = buildFontFaceStyle([{ family: "Inter", style: "italic", bytes: new Uint8Array([1]) }]);
+    const style = buildFontFaceStyle([
+      { family: "Inter", style: "italic", file: "Inter.woff2", bytes: new Uint8Array([1]) },
+    ]);
     expect(style).toContain("font-style:italic");
   });
 
   test("multiple fonts are concatenated", () => {
     const style = buildFontFaceStyle([
-      { family: "Inter", bytes: new Uint8Array([1]) },
-      { family: "Mono", bytes: new Uint8Array([2]) },
+      { family: "Inter", file: "Inter.woff2", bytes: new Uint8Array([1]) },
+      { family: "Mono", file: "Mono.woff2", bytes: new Uint8Array([2]) },
     ]);
     expect(style).toContain("font-family:'Inter'");
     expect(style).toContain("font-family:'Mono'");
@@ -41,15 +47,59 @@ describe("fontFace", () => {
 
   test("base64-encodes bytes correctly", () => {
     // [1,2,3] → base64 "AQID"
-    const style = buildFontFaceStyle([{ family: "X", bytes: new Uint8Array([1, 2, 3]) }]);
+    const style = buildFontFaceStyle([
+      { family: "X", file: "X.woff2", bytes: new Uint8Array([1, 2, 3]) },
+    ]);
     expect(style).toContain("AQID");
+  });
+
+  test("woff2 file yields font/woff2 MIME + format('woff2')", () => {
+    const style = buildFontFaceStyle([
+      { family: "X", file: "MyFont.woff2", bytes: new Uint8Array([1]) },
+    ]);
+    expect(style).toContain("data:font/woff2;base64,");
+    expect(style).toContain("format('woff2')");
+  });
+
+  test("ttf file yields font/ttf MIME + format('truetype')", () => {
+    const style = buildFontFaceStyle([
+      { family: "X", file: "MyFont.ttf", bytes: new Uint8Array([1]) },
+    ]);
+    expect(style).toContain("data:font/ttf;base64,");
+    expect(style).toContain("format('truetype')");
+    // And NOT the woff2 default.
+    expect(style).not.toContain("data:font/woff2;base64,");
+  });
+
+  test("woff file yields font/woff MIME + format('woff')", () => {
+    const style = buildFontFaceStyle([
+      { family: "X", file: "MyFont.woff", bytes: new Uint8Array([1]) },
+    ]);
+    expect(style).toContain("data:font/woff;base64,");
+    expect(style).toContain("format('woff')");
+  });
+
+  test("otf file yields font/otf MIME + format('opentype')", () => {
+    const style = buildFontFaceStyle([
+      { family: "X", file: "MyFont.otf", bytes: new Uint8Array([1]) },
+    ]);
+    expect(style).toContain("data:font/otf;base64,");
+    expect(style).toContain("format('opentype')");
+  });
+
+  test("unknown/extension-less file falls back to woff2", () => {
+    const style = buildFontFaceStyle([
+      { family: "X", file: "MyFont", bytes: new Uint8Array([1]) },
+    ]);
+    expect(style).toContain("data:font/woff2;base64,");
+    expect(style).toContain("format('woff2')");
   });
 
   test("multi-chunk base64 round-trips correctly (guards chunking logic)", () => {
     // 65_541 bytes > 0x8000 (32_768) — forces at least two chunks in bytesToBase64.
     const bytes = new Uint8Array(65_541);
     for (let i = 0; i < bytes.length; i++) bytes[i] = i % 251;
-    const style = buildFontFaceStyle([{ family: "X", bytes }]);
+    const style = buildFontFaceStyle([{ family: "X", file: "X.woff2", bytes }]);
     // Extract the base64 payload from the data URL.
     const match = style.match(/data:font\/woff2;base64,([A-Za-z0-9+/=]+)/);
     expect(match).not.toBeNull();
