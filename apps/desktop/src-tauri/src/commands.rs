@@ -1911,10 +1911,11 @@ pub async fn add_subtitles_layer(
 }
 
 /// Stage F-Picker: the UI catalog. A superset of the MCP `list_templates`
-/// payload — every manifest field plus the raw `html` / `style` strings so
-/// the picker can render live iframe previews client-side. The MCP surface
-/// stays manifest-only (see `mcp::templates_payload`); the extra fields are
-/// UI-only and would just bloat agent context.
+/// payload — every manifest field (which now includes `engine` + `fonts`)
+/// plus the raw `html` document so the picker can render live previews
+/// client-side. The MCP surface stays manifest-only (see
+/// `mcp::templates_payload`); the extra `html` field is UI-only and would
+/// just bloat agent context.
 #[tauri::command]
 pub async fn list_templates() -> Result<Vec<serde_json::Value>, String> {
     templates::builtins()
@@ -1926,7 +1927,6 @@ pub async fn list_templates() -> Result<Vec<serde_json::Value>, String> {
                 .as_object_mut()
                 .ok_or_else(|| "manifest is not a JSON object".to_string())?;
             obj.insert("html".to_string(), serde_json::Value::String(tpl.html));
-            obj.insert("style".to_string(), serde_json::Value::String(tpl.style));
             Ok(v)
         })
         .collect()

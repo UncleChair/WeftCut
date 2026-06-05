@@ -105,15 +105,18 @@ export class TemplateSprite {
     // still rely on `window.__props__` need conversion to {{key}}
     // placeholders before they'll render correctly in this path —
     // chunk 2 handles the bulk conversion.
+    // Templates are now self-contained HTML documents — styling lives inside
+    // the document, so there's no separate CSS to inject. The SVG capture
+    // harness that replaces this foreignObject path is a later phase.
     const html = substituteTemplate({
       html: this.template.html,
-      css: this.template.css,
+      css: "",
       props: canonicalProps,
     });
     try {
       const bitmap = await rasterizeForeignObject({
         html,
-        css: this.template.css,
+        css: "",
         width,
         height,
       });

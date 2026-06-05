@@ -46,16 +46,40 @@ pub struct Manifest {
     pub version: u32,
     pub size: [u32; 2],
     pub default_duration_s: f64,
+    /// How the template's frames are captured. Defaults to `"svg"` when the
+    /// manifest omits it.
+    #[serde(default = "default_engine")]
+    pub engine: String,
+    /// Fonts the template bundles under `assets/`. Empty for built-ins that
+    /// use system fonts (e.g. `countdown`).
+    #[serde(default)]
+    pub fonts: Vec<FontDecl>,
     /// Use a BTreeMap so canonical JSON serialization is key-order-stable —
     /// the cache key derived from props depends on this.
     pub props_schema: BTreeMap<String, PropSpec>,
+}
+
+fn default_engine() -> String {
+    "svg".into()
+}
+
+/// A bundled font declared by a template manifest. `file` is the asset
+/// filename (under the template's `assets/` dir); the bytes are loaded
+/// separately by the capture harness.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FontDecl {
+    pub family: String,
+    #[serde(default)]
+    pub weight: Option<u32>,
+    #[serde(default)]
+    pub style: Option<String>,
+    pub file: String,
 }
 
 #[derive(Clone, Debug)]
 pub struct Template {
     pub manifest: Manifest,
     pub html: String,
-    pub style: String,
 }
 
 impl Template {
@@ -68,18 +92,13 @@ impl Template {
     }
 
     /// blake3 of every input that affects the rendered output — manifest +
-    /// HTML + CSS, concatenated with `\0` so a string boundary can't be
-    /// hidden by content. Stable across runs as long as the inputs are
-    /// stable.
+    /// HTML, concatenated with `\0` so a string boundary can't be hidden by
+    /// content. Stable across runs as long as the inputs are stable.
     pub fn content_hash(&self) -> String {
         let mut hasher = blake3::Hasher::new();
         let manifest_canonical = serde_json::to_vec(&self.manifest)
             .expect("manifest serialize cannot fail");
-        for part in [
-            manifest_canonical.as_slice(),
-            self.html.as_bytes(),
-            self.style.as_bytes(),
-        ] {
+        for part in [manifest_canonical.as_slice(), self.html.as_bytes()] {
             hasher.update(part);
             hasher.update(&[0]);
         }
@@ -340,13 +359,11 @@ macro_rules! builtin_template {
         pub fn $fn_name() -> Template {
             const MANIFEST: &str = include_str!(concat!($dir, "/manifest.json"));
             const HTML: &str = include_str!(concat!($dir, "/index.html"));
-            const STYLE: &str = include_str!(concat!($dir, "/style.css"));
             let manifest: Manifest =
                 serde_json::from_str(MANIFEST).expect("built-in manifest must parse");
             Template {
                 manifest,
                 html: HTML.to_string(),
-                style: STYLE.to_string(),
             }
         }
     };

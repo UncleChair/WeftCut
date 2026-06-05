@@ -1,6 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import type { ExportSettings } from "../render/exportSettings";
+import type {
+  TemplateEngine,
+  TemplateFont,
+} from "../render/templates/catalog";
 
 export interface CompositionSummary {
   width: number;
@@ -980,23 +984,26 @@ export type PropSpec =
   | { type: "number"; default: number; min?: number; max?: number };
 
 /// One catalog entry from `list_templates()`. Superset of the MCP `list_templates`
-/// payload — `Manifest` plus the raw `html` / `style` strings so the picker
-/// can render live iframe previews without a second round-trip.
+/// payload — `Manifest` plus the raw `html` document + capture `engine` + font
+/// declarations so the picker can render live previews without a second
+/// round-trip.
 export interface TemplateSummary {
   id: string;
   name: string;
   version: number;
-  /// `[width, height]` in pixels — the webview size the rasterizer uses.
+  /// `[width, height]` in pixels — the document size the capture engine uses.
   size: [number, number];
   default_duration_s: number;
   /// Keyed by prop name. Map order is BTreeMap-stable (alphabetical) so the
   /// picker can render fields in a deterministic order without sorting.
   props_schema: Record<string, PropSpec>;
-  /// Raw template HTML with the `__STYLE__` placeholder still present —
-  /// substitute the `style` field in to render a preview iframe.
+  /// How the template's frames are captured (defaults to `"svg"`).
+  engine: TemplateEngine;
+  /// Raw, self-contained template HTML document (SVG markup + inline
+  /// `render()` script for the `"svg"` engine).
   html: string;
-  /// Raw template CSS substituted into the `__STYLE__` placeholder in `html`.
-  style: string;
+  /// Fonts the template bundles. Empty for built-ins using system fonts.
+  fonts: TemplateFont[];
 }
 
 export async function listTemplates(): Promise<TemplateSummary[]> {
