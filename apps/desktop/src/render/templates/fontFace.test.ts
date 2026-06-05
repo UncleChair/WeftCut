@@ -44,4 +44,28 @@ describe("fontFace", () => {
     const style = buildFontFaceStyle([{ family: "X", bytes: new Uint8Array([1, 2, 3]) }]);
     expect(style).toContain("AQID");
   });
+
+  test("multi-chunk base64 round-trips correctly (guards chunking logic)", () => {
+    // 65_541 bytes > 0x8000 (32_768) — forces at least two chunks in bytesToBase64.
+    const bytes = new Uint8Array(65_541);
+    for (let i = 0; i < bytes.length; i++) bytes[i] = i % 251;
+    const style = buildFontFaceStyle([{ family: "X", bytes }]);
+    // Extract the base64 payload from the data URL.
+    const match = style.match(/data:font\/woff2;base64,([A-Za-z0-9+/=]+)/);
+    expect(match).not.toBeNull();
+    const b64 = match?.[1] ?? "";
+    expect(b64.length).toBeGreaterThan(0);
+    // Decode back to bytes via atob.
+    const binary = atob(b64);
+    expect(binary.length).toBe(bytes.length);
+    // Spot-check first, last, and a mid-array index.
+    expect(binary.charCodeAt(0)).toBe(bytes[0]);
+    expect(binary.charCodeAt(32_767)).toBe(bytes[32_767]);
+    expect(binary.charCodeAt(65_540)).toBe(bytes[65_540]);
+  });
+
+  test("injectFontFace returns input unchanged when no <svg> tag is present", () => {
+    const input = "<div>no svg here</div>";
+    expect(injectFontFace(input, "@font-face{}")).toBe(input);
+  });
 });
