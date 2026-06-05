@@ -46,6 +46,13 @@ pub struct Manifest {
     pub version: u32,
     pub size: [u32; 2],
     pub default_duration_s: f64,
+    /// Optional hard cap on a placed layer's total length, in seconds. When
+    /// present, the timeline forbids trimming or adding the template longer
+    /// than this (content-bounded templates like `countdown`). When absent
+    /// (`None`), the template is freely extendable — holdable overlays such
+    /// as lower-thirds rely on this.
+    #[serde(default)]
+    pub max_duration_s: Option<f64>,
     /// How the template's frames are captured. Defaults to `"svg"` when the
     /// manifest omits it.
     #[serde(default = "default_engine")]
@@ -61,6 +68,16 @@ pub struct Manifest {
 
 fn default_engine() -> String {
     "svg".into()
+}
+
+impl Manifest {
+    /// The `max_duration_s` cap expressed in integer microseconds, or `None`
+    /// when the template is unbounded. Rounds to the nearest µs so a cap like
+    /// `5.0` lands on an exact frame boundary rather than truncating.
+    pub fn max_duration_us(&self) -> Option<i64> {
+        self.max_duration_s
+            .map(|s| (s * 1_000_000.0).round() as i64)
+    }
 }
 
 /// A bundled font declared by a template manifest. `file` is the asset
@@ -343,6 +360,7 @@ mod tests {
                 version: 1,
                 size: [100, 100],
                 default_duration_s: 1.0,
+                max_duration_s: None,
                 engine: "svg".to_string(),
                 fonts: vec![],
                 props_schema,

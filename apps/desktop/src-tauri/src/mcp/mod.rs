@@ -1201,6 +1201,7 @@ impl WeftCutServer {
             args.t_start_us,
             args.t_end_us,
             template.manifest.default_duration_s,
+            template.manifest.max_duration_us(),
         );
         if t_end_us <= args.t_start_us {
             return Err(McpError::invalid_params(
@@ -2200,17 +2201,27 @@ fn parse_canonical_props(
 /// pass the value through unchanged so the caller controls duration.
 /// `saturating_add` guards the i64 overflow on absurd inputs (e.g. agent
 /// passes `i64::MAX` as start time + a default duration).
+///
+/// `max_duration_us` is the template's `max_duration_s` cap (in µs) or
+/// `None` when unbounded. When present, the resolved length is clamped to
+/// the cap so an explicit over-long `t_end_us` can't place the layer longer
+/// than the manifest allows — mirrors the trim-time clamp in the actor.
 fn resolve_template_t_end_us(
     t_start_us: i64,
     t_end_us: Option<i64>,
     default_duration_s: f64,
+    max_duration_us: Option<i64>,
 ) -> i64 {
-    match t_end_us {
+    let end = match t_end_us {
         Some(end) => end,
         None => {
             let duration_us = (default_duration_s * 1_000_000.0) as i64;
             t_start_us.saturating_add(duration_us)
         }
+    };
+    match max_duration_us {
+        Some(cap) if end - t_start_us > cap => t_start_us.saturating_add(cap),
+        _ => end,
     }
 }
 
@@ -3679,18 +3690,29 @@ mod tests {
     /// regressions (e.g. someone swaps `as i64` for `as u64`).
     #[test]
     fn resolve_t_end_us_uses_template_default_when_omitted() {
-        // 5.0s default + 0us start → 5_000_000us end.
-        assert_eq!(resolve_template_t_end_us(0, None, 5.0), 5_000_000);
+        // 5.0s default + 0us start → 5_000_000us end (no cap).
+        assert_eq!(resolve_template_t_end_us(0, None, 5.0, None), 5_000_000);
         // Caller's value wins when set, even if it would normally be invalid
         // (validation happens at the actor layer, not here).
         assert_eq!(
-            resolve_template_t_end_us(1_000_000, Some(2_000_000), 99.0),
+            resolve_template_t_end_us(1_000_000, Some(2_000_000), 99.0, None),
             2_000_000,
         );
         // saturating_add survives i64::MAX start time without panicking.
         assert_eq!(
-            resolve_template_t_end_us(i64::MAX, None, 5.0),
+            resolve_template_t_end_us(i64::MAX, None, 5.0, None),
             i64::MAX,
+        );
+        // A capped template clamps an explicit over-long t_end_us to the cap.
+        // 5.0s cap + 0us start + requested 8s end → clamped to 5_000_000.
+        assert_eq!(
+            resolve_template_t_end_us(0, Some(8_000_000), 5.0, Some(5_000_000)),
+            5_000_000,
+        );
+        // Within-cap explicit value passes through unchanged.
+        assert_eq!(
+            resolve_template_t_end_us(0, Some(3_000_000), 5.0, Some(5_000_000)),
+            3_000_000,
         );
     }
 

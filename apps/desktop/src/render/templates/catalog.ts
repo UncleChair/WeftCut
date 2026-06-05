@@ -36,6 +36,10 @@ export interface TemplateManifest {
   version: number;
   size: [number, number];
   default_duration_s: number;
+  /// Optional hard cap on a placed layer's total length, in seconds. When
+  /// present, the timeline forbids trimming/adding the template longer than
+  /// this; when absent the template is freely extendable (holdable overlays).
+  max_duration_s?: number;
   props_schema: Record<string, PropSpec>;
   /// Capture engine. Defaults to `"svg"` when omitted from the manifest.
   engine?: TemplateEngine;

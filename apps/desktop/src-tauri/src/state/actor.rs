@@ -3645,12 +3645,28 @@ pub(crate) fn apply_trim_layer(
     //     (src_in, media_duration] (we don't know media_duration here, so
     //     we cap at src_out monotonicity vs src_in only; over-trim past
     //     media tail will be caught by `validate_src_range`).
+    // Resolve the template catalog once; the per-member cap lookup below is
+    // a cheap find over this (Template layers only — everything else stays
+    // unbounded). Built once outside the loop so a group of templates pays
+    // the catalog cost a single time.
+    let catalog = crate::templates::builtins();
     let clamped_delta = {
         let mut d = requested_delta;
         for &mid in aligned.iter() {
             let (mti, mli) = locate_layer(project, mid).expect("aligned member exists");
             let m = &project.tracks[mti].layers[mli];
-            let bounds = trim_delta_bounds(m, edge);
+            // A Template member's length cap comes from its manifest's
+            // `max_duration_s`; resolve per-member so a group mixing a capped
+            // template with an uncapped one (or non-template) clamps each by
+            // its own bound. Unknown id / absent cap → None → unbounded.
+            let template_max_dur_us = match &m.params {
+                LayerParams::Template(tp) => catalog
+                    .iter()
+                    .find(|t| t.id() == tp.template_id)
+                    .and_then(|t| t.manifest.max_duration_us()),
+                _ => None,
+            };
+            let bounds = trim_delta_bounds(m, edge, template_max_dur_us);
             d = clamp_signed(d, bounds.min, bounds.max);
         }
         d
@@ -3729,9 +3745,28 @@ struct DeltaBounds {
 /// Allowable signed `delta` such that applying it to `edge` of `layer`
 /// keeps the layer geometrically valid (`t_start < t_end`, src window
 /// non-negative).
-fn trim_delta_bounds(layer: &Layer, edge: LayerEdge) -> DeltaBounds {
+///
+/// `template_max_dur_us` is the per-template length cap (from the manifest's
+/// `max_duration_s`), applied *only* when `layer` is a `Template`. It binds
+/// both edges so the total length `dur` can't grow past the cap:
+///   - OUT: extending `t_end` grows `dur`, so `delta <= cap - dur`.
+///   - IN:  dragging `t_start` earlier also grows `dur`, so `delta >= -(cap - dur)`.
+/// `None` (no cap, or a non-template layer) keeps the historical unbounded
+/// behavior so holdable overlays (lower-thirds) stay freely extendable.
+fn trim_delta_bounds(
+    layer: &Layer,
+    edge: LayerEdge,
+    template_max_dur_us: Option<i64>,
+) -> DeltaBounds {
     let dur = layer.t_end_us - layer.t_start_us;
     let inf = i64::MAX / 4; // large enough to feel infinite, small enough to clamp safely
+    // Slack the layer may still grow before hitting its template cap. Only
+    // applies to Template layers with a declared cap; everything else is
+    // unbounded. Clamped at 0 so a layer already at/over the cap can't extend.
+    let template_grow_slack = match (&layer.params, template_max_dur_us) {
+        (LayerParams::Template(_), Some(cap)) => Some((cap - dur).max(0)),
+        _ => None,
+    };
     match edge {
         LayerEdge::In => {
             // delta > -t_start (keep timeline start >= 0)
@@ -3745,8 +3780,11 @@ fn trim_delta_bounds(layer: &Layer, edge: LayerEdge) -> DeltaBounds {
                 LayerParams::Audio(p) => (-p.src_in_us, p.src_out_us - p.src_in_us - 1),
                 _ => (-inf, inf),
             };
+            // Template cap: dragging the IN edge earlier (negative delta)
+            // grows dur, so floor the delta at -(slack).
+            let cap_min = template_grow_slack.map(|slack| -slack).unwrap_or(-inf);
             DeltaBounds {
-                min: timeline_min.max(src_min),
+                min: timeline_min.max(src_min).max(cap_min),
                 max: timeline_max.min(src_max),
             }
         }
@@ -3761,9 +3799,12 @@ fn trim_delta_bounds(layer: &Layer, edge: LayerEdge) -> DeltaBounds {
                 LayerParams::Audio(p) => (-(p.src_out_us - p.src_in_us - 1), inf),
                 _ => (-inf, inf),
             };
+            // Template cap: extending the OUT edge (positive delta) grows dur,
+            // so ceil the delta at +(slack).
+            let cap_max = template_grow_slack.unwrap_or(inf);
             DeltaBounds {
                 min: timeline_min.max(src_min),
-                max: src_max,
+                max: src_max.min(cap_max),
             }
         }
     }
@@ -4247,6 +4288,84 @@ mod tests {
             .find(|l| l.id == layer_id)
             .expect("layer");
         assert_eq!(layer.t_start_us, 33_333);
+    }
+
+    /// A template whose manifest declares `max_duration_s` cannot be
+    /// trimmed/extended longer than that cap. The `countdown` builtin caps
+    /// at 5.0s; a layer below the cap (3s) that's OUT-extended to 8s must
+    /// clamp to a total length of exactly the cap (5s), not the requested 8s.
+    #[tokio::test]
+    async fn trim_out_clamps_template_to_manifest_max_duration() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        // countdown caps at 5.0s. Start at 3s (below the cap) so the OUT
+        // extension has a non-zero clamped delta (extending a layer already
+        // *at* the cap would hit the `clamped_delta == 0` rejection path
+        // instead of exercising the clamp).
+        let layer_id = handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                template_layer(imbl::HashMap::new()),
+                0,
+                3_000_000,
+            )
+            .await
+            .expect("add_layer");
+        // Request an OUT trim extending t_end to 8s (total length would be 8s).
+        handle
+            .trim_layer(Actor::User, layer_id, LayerEdge::Out, 8_000_000, false)
+            .await
+            .expect("trim");
+        let snap = handle.snapshot().await;
+        let layer = snap
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .find(|l| l.id == layer_id)
+            .expect("layer");
+        // Clamped to the 5.0s cap, NOT 8s.
+        assert_eq!(layer.t_end_us - layer.t_start_us, 5_000_000);
+    }
+
+    /// A template with no `max_duration_s` cap (e.g. a holdable lower-third
+    /// overlay) stays freely extendable — `trim_delta_bounds` returns an
+    /// unbounded OUT max. Tested directly on the bound fn (no `builtins()`
+    /// entry is uncapped, so a synthetic layer + `None` cap exercises the
+    /// "absent cap = unbounded" arm without routing through validation/snap).
+    #[test]
+    fn trim_delta_bounds_template_without_cap_is_unbounded() {
+        let inf = i64::MAX / 4;
+        let layer = Layer {
+            id: new_id(),
+            label: None,
+            t_start_us: 0,
+            t_end_us: 3_000_000,
+            enabled: true,
+            locked: false,
+            metadata: imbl::HashMap::new(),
+            params: template_layer(imbl::HashMap::new()),
+        };
+        // No cap supplied → OUT max stays effectively infinite.
+        let bounds = trim_delta_bounds(&layer, LayerEdge::Out, None);
+        assert_eq!(bounds.max, inf);
+        // A cap supplied → OUT max = cap_us - dur (5s - 3s = 2s).
+        let capped = trim_delta_bounds(&layer, LayerEdge::Out, Some(5_000_000));
+        assert_eq!(capped.max, 2_000_000);
+
+        // The cap binds the IN edge too: dragging t_start earlier grows dur.
+        // Use a layer starting > slack (4s..7s, dur 3s, cap 5s) so the cap
+        // floor -(5-3)s = -2s dominates timeline_min (-t_start = -4s).
+        let layer_4_to_7 = Layer {
+            t_start_us: 4_000_000,
+            t_end_us: 7_000_000,
+            ..layer.clone()
+        };
+        let in_capped = trim_delta_bounds(&layer_4_to_7, LayerEdge::In, Some(5_000_000));
+        assert_eq!(in_capped.min, -2_000_000);
+        // No cap → IN min falls back to the timeline floor (-t_start = -4s).
+        let in_uncapped = trim_delta_bounds(&layer_4_to_7, LayerEdge::In, None);
+        assert_eq!(in_uncapped.min, -4_000_000);
     }
 
     #[tokio::test]
