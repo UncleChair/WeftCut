@@ -3722,6 +3722,9 @@ pub(crate) fn apply_trim_layer(
                     LayerParams::Audio(p) => {
                         p.src_out_us += clamped_delta;
                     }
+                    // Template: no stored `src_out` — the content window's end is
+                    // derived from the layer width (t_end_us - t_start_us). The
+                    // OUT-edge cap in trim_delta_bounds keeps it within content.
                     _ => {}
                 }
             }
@@ -3776,6 +3779,12 @@ struct DeltaBounds {
 /// truncates its µs output and isn't round-idempotent on /1001 rates, so the
 /// raw floor value can land 1µs below a grid point — re-rounding fixes that
 /// while staying `<= target`, since `round_output(n) <= n_exact <= target`).
+///
+/// For a capped template, `src_in_us` (the window offset into content) shifts
+/// the bounds: the IN edge is floored at `-src_in_us` (can't scrub before
+/// content frame 0), and the OUT cap uses `cap - src_in_us` (the derived
+/// `src_out` can't pass content end). For `src_in_us == 0` both are identical
+/// to the original cap math.
 ///
 /// `fps` is the composition frame rate used for the snap. `None`
 /// (no cap, or a non-template layer) keeps the historical unbounded behavior
@@ -4753,6 +4762,16 @@ mod tests {
             .trim_layer(Actor::User, layer_id, LayerEdge::Out, 8_000_000, false)
             .await;
         assert!(err.is_err(), "OUT past content cap must be rejected");
+        // Also verify the layer was not partially extended — t_end_us must be
+        // unchanged at the original 5s.
+        let snap = handle.snapshot().await;
+        let layer = snap
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .find(|l| l.id == layer_id)
+            .expect("layer");
+        assert_eq!(layer.t_end_us, 5_000_000, "t_end_us must not change on rejected OUT trim");
     }
 
     /// Dragging the IN edge of a capped template forward (positive delta) must
