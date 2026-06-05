@@ -1977,7 +1977,9 @@ pub async fn add_template(
         t_start_us,
         t_end_us,
         template.manifest.default_duration_s,
-        template.manifest.max_duration_us(),
+        // Cap is driven by the props being added (canonicalized above), so a
+        // `max_duration_prop`-mapped template clamps to its prop value.
+        crate::templates::resolve_template_max_dur_us(&template.manifest, &props_map),
     );
     if resolved_end <= t_start_us {
         return Err(format!(

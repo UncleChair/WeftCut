@@ -3658,15 +3658,19 @@ pub(crate) fn apply_trim_layer(
         for &mid in aligned.iter() {
             let (mti, mli) = locate_layer(project, mid).expect("aligned member exists");
             let m = &project.tracks[mti].layers[mli];
-            // A Template member's length cap comes from its manifest's
-            // `max_duration_s`; resolve per-member so a group mixing a capped
-            // template with an uncapped one (or non-template) clamps each by
-            // its own bound. Unknown id / absent cap → None → unbounded.
+            // A Template member's length cap comes from its manifest —
+            // either the static `max_duration_s` or, when the manifest names a
+            // `max_duration_prop`, THIS member's own prop value (so editing the
+            // prop changes the cap live). Resolve per-member so a group mixing a
+            // capped template with an uncapped one (or non-template) clamps each
+            // by its own bound. Unknown id / absent cap → None → unbounded.
             let template_max_dur_us = match &m.params {
                 LayerParams::Template(tp) => catalog
                     .iter()
                     .find(|t| t.id() == tp.template_id)
-                    .and_then(|t| t.manifest.max_duration_us()),
+                    .and_then(|t| {
+                        crate::templates::resolve_template_max_dur_us(&t.manifest, &tp.props)
+                    }),
                 _ => None,
             };
             let bounds = trim_delta_bounds(m, edge, template_max_dur_us, fps);
@@ -4428,6 +4432,74 @@ mod tests {
         );
         // Concretely: t_start 0, capped OUT edge = frame 149 = 4_971_633.
         assert_eq!(layer.t_end_us, 4_971_633);
+    }
+
+    /// The cap is now driven by the `seconds` PROP (manifest
+    /// `max_duration_prop: "seconds"`), not the static `max_duration_s`. A
+    /// `countdown` layer carrying `seconds = 10` must cap at 10s, NOT the
+    /// static 5s. OUT-extended well past 10s, the length must land EXACTLY on
+    /// the 10s cap at 30 fps (on-grid: 10_000_000µs = frame 300). Asserting
+    /// exact equality (not merely `<= 10s`) is what makes this a valid RED:
+    /// the old static code clamps to ~5s, which trivially satisfies `<= 10s`
+    /// but fails the exact-10s equality.
+    #[tokio::test]
+    async fn trim_out_caps_template_at_seconds_prop_not_static_max() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        // 30 fps: 10s is on-grid so the cap snaps to itself (no floor slack).
+        let mut props: imbl::HashMap<String, serde_json::Value> = imbl::HashMap::new();
+        props.insert("seconds".into(), serde_json::json!(10.0));
+        // Start at 3s (on-grid at 30fps) below the 10s cap so the OUT
+        // extension has a non-zero clamped delta.
+        let layer_id = handle
+            .add_layer(Actor::User, track_id, template_layer(props), 0, 3_000_000)
+            .await
+            .expect("add_layer");
+        // Request an OUT trim well past the 10s cap.
+        handle
+            .trim_layer(Actor::User, layer_id, LayerEdge::Out, 30_000_000, false)
+            .await
+            .expect("trim");
+        let snap = handle.snapshot().await;
+        let layer = snap
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .find(|l| l.id == layer_id)
+            .expect("layer");
+        // Capped at the 10s prop value (exactly, on-grid at 30fps), NOT the
+        // static 5s. The lower bound is the discriminating assertion.
+        assert_eq!(layer.t_end_us - layer.t_start_us, 10_000_000);
+    }
+
+    /// Lowering the `seconds` prop tightens the cap below the static 5s. A
+    /// `countdown` layer with `seconds = 3` caps at 3s — OUT-extended past it
+    /// clamps to exactly 3s (on-grid at 30 fps). Self-RED on the upper bound:
+    /// the old static cap (5s) lets the length exceed 3s.
+    #[tokio::test]
+    async fn trim_out_caps_template_at_lowered_seconds_prop() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        let mut props: imbl::HashMap<String, serde_json::Value> = imbl::HashMap::new();
+        props.insert("seconds".into(), serde_json::json!(3.0));
+        // Start below the 3s cap (1s, on-grid at 30fps).
+        let layer_id = handle
+            .add_layer(Actor::User, track_id, template_layer(props), 0, 1_000_000)
+            .await
+            .expect("add_layer");
+        handle
+            .trim_layer(Actor::User, layer_id, LayerEdge::Out, 30_000_000, false)
+            .await
+            .expect("trim");
+        let snap = handle.snapshot().await;
+        let layer = snap
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .find(|l| l.id == layer_id)
+            .expect("layer");
+        // Capped at the lowered 3s prop value, NOT the static 5s.
+        assert_eq!(layer.t_end_us - layer.t_start_us, 3_000_000);
     }
 
     /// A template with no `max_duration_s` cap (e.g. a holdable lower-third
