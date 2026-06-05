@@ -50,13 +50,17 @@ construction — faithfully, at each surface's resolution.
 
 ## Authoring contract
 
-A template is a directory of `manifest.json` + `template.svg` + `render.js`,
-embedded in the binary via `include_str!` (`src-tauri/src/templates/`) and
-mirrored to the webview catalog. `template.svg` is the markup; `render.js` is the
-pure render function (kept separate so the serialized frame never carries logic).
+A template is a directory of `manifest.json` + `index.html` (plus an optional
+`assets/` for fonts and images), embedded in the binary via `include_str!`
+(`src-tauri/src/templates/`) and mirrored to the webview catalog. `index.html` is
+a normal HTML document — the markup plus an inline `<script>` that defines
+`render`. The filename encodes no rendering tier: `manifest.engine` declares how
+the document is captured, so a future HTML+JS template is the **same shape** with
+no SVG file.
 
-The manifest declares identity, natural size, default duration, and a typed
-`props_schema` (string / color / number, each with a default):
+The manifest declares identity, natural size, default duration, a typed
+`props_schema` (string / color / number, each with a default), an optional
+`fonts` list, and an `engine`:
 
 ```json
 {
@@ -65,9 +69,15 @@ The manifest declares identity, natural size, default duration, and a typed
   "version": 1,
   "size": [480, 480],
   "default_duration_s": 5.0,
+  "engine": "svg",
   "props_schema": { "seconds": { "type": "number", "default": 5 }, … }
 }
 ```
+
+`engine` selects the capture pipeline: **`"svg"`** (today) serializes the `<svg>`
+and rasters it via `<img>`; **`"webview"`** (reserved) renders `index.html` in a
+hidden webview and screenshots it (full HTML/CSS/JS — the Tier-3 path);
+**`"satori"`** (reserved) lays out an HTML/CSS subtree to SVG. v1 ships `"svg"`.
 
 The SVG obeys one rule that makes a template *capturable*:
 
@@ -121,12 +131,13 @@ Turning a running template into a bitmap is a two-step path the harness owns:
    deliberately **without** `allow-same-origin`, so template code runs in an
    opaque origin that cannot reach the app's DOM or Tauri APIs. This isolation is
    uniform for built-in and (eventually) community templates.
-2. A generic harness script in the iframe holds the template, receives
-   `{ t, props }` from the host, calls `render(tSec, durationSec, props)`, forces
-   a synchronous reflow, and **serializes the post-render SVG element to a
-   string** — the SVG subtree only, never the `render` logic, so the output stays
-   well-formed XML — with the `@font-face` injected and any images embedded as
-   `data:` URLs. It `postMessage`s that string to the host.
+2. The iframe loads the template's `index.html` (markup + its inline `render`
+   script); the harness injects its own message loop and clock stubs alongside.
+   On `{ t, props }` it calls `render(tSec, durationSec, props)`, forces a
+   synchronous reflow, and **serializes the post-render `<svg>` element to a
+   string** — with any `<script>` descendants stripped, so the output stays
+   well-formed XML, and the `@font-face` injected, images embedded as `data:`
+   URLs. It `postMessage`s that string to the host.
 3. The host (the rasterizer) wraps the string in a `Blob`, loads it through an
    `<img>` element, and calls `createImageBitmap(img)`. (`createImageBitmap`
    applied directly to an SVG `Blob` fails — the `<img>` indirection is required.)

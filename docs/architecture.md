@@ -141,7 +141,7 @@ weftcut/
                               ←   (workspace/Cache/{proxies, thumbnails,
                               ←    waveforms, frames, voiceover, …})
         templates/            ← built-in SVG template catalog
-                              ←   (manifests + SVG + render.js, embedded)
+                              ←   (manifests + index.html, embedded)
         mcp/                  ← rmcp server, tool definitions, resources,
                               ←   prompts, /events change-feed
         cloud/                ← provider-agnostic cloud APIs:
