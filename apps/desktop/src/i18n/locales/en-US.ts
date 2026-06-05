@@ -444,6 +444,10 @@ const enUS = {
     mute: "Mute",
     subtitles: "Subtitles",
     subtitles_source: "Source",
+    template: "Template",
+    transform: "Transform",
+    props: "Props",
+    unknown_template: "Unknown template — its props can't be edited here.",
   },
   template_picker: {
     heading: "Templates",

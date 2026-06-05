@@ -435,6 +435,10 @@ const zhCN: Resources = {
     mute: "静音",
     subtitles: "字幕",
     subtitles_source: "来源",
+    template: "模板",
+    transform: "变换",
+    props: "参数",
+    unknown_template: "未知模板——无法在此编辑其参数。",
   },
   template_picker: {
     heading: "模板",

@@ -93,6 +93,7 @@ pub enum LayerParamsPatch {
     Text(TextPatch),
     VideoClip(VideoClipPatch),
     ImageOverlay(ImageOverlayPatch),
+    Template(TemplatePatch),
     Color(ColorPatch),
     Audio(AudioPatch),
 }
@@ -159,6 +160,29 @@ pub struct ImageOverlayPatch {
     pub fade_in_us: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fade_out_us: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct TemplatePatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub x: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale_x: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale_y: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opacity: Option<f64>,
+    /// Props to merge into the layer's existing `props` map, FIELD-WISE — each
+    /// key present here overwrites that key, all other keys are left intact.
+    /// (Replacing the whole map would let a stale debounced commit clobber a
+    /// concurrent edit; merge can't delete keys, which is fine — the schema
+    /// keys are fixed at insert time.) No schema validation here: the actor has
+    /// no template-registry access, and props were already validated against
+    /// the manifest's `props_schema` at `add_template`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub props: Option<std::collections::HashMap<String, serde_json::Value>>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -3848,6 +3872,31 @@ fn apply_params_patch(
             }
             Ok(())
         }
+        (LayerParams::Template(p), LayerParamsPatch::Template(tp)) => {
+            if let Some(x) = tp.x {
+                p.transform.x = Animated::Static(x);
+            }
+            if let Some(y) = tp.y {
+                p.transform.y = Animated::Static(y);
+            }
+            if let Some(s) = tp.scale_x {
+                p.transform.scale_x = Animated::Static(s);
+            }
+            if let Some(s) = tp.scale_y {
+                p.transform.scale_y = Animated::Static(s);
+            }
+            if let Some(o) = tp.opacity {
+                p.opacity = Animated::Static(o);
+            }
+            // Merge props field-wise — don't replace the whole map (see the
+            // doc comment on `TemplatePatch::props`).
+            if let Some(props) = &tp.props {
+                for (k, v) in props {
+                    p.props.insert(k.clone(), v.clone());
+                }
+            }
+            Ok(())
+        }
         (LayerParams::Color(p), LayerParamsPatch::Color(cp)) => {
             if let Some(c) = cp.color {
                 p.color = Animated::Static(c);
@@ -3928,6 +3977,7 @@ fn layer_params_patch_kind(patch: &LayerParamsPatch) -> &'static str {
         LayerParamsPatch::Text(_) => "Text",
         LayerParamsPatch::VideoClip(_) => "VideoClip",
         LayerParamsPatch::ImageOverlay(_) => "ImageOverlay",
+        LayerParamsPatch::Template(_) => "Template",
         LayerParamsPatch::Color(_) => "Color",
         LayerParamsPatch::Audio(_) => "Audio",
     }
@@ -3957,6 +4007,98 @@ mod tests {
             width: 1920,
             height: 1080,
         })
+    }
+
+    fn template_layer(props: imbl::HashMap<String, serde_json::Value>) -> LayerParams {
+        LayerParams::Template(crate::state::TemplateParams {
+            template_id: "countdown".into(),
+            template_version: 1,
+            props,
+            transform: crate::state::Transform::default(),
+            opacity: Animated::Static(1.0),
+        })
+    }
+
+    #[tokio::test]
+    async fn template_params_patch_applies_transform_opacity_and_merges_props() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+
+        let mut props: imbl::HashMap<String, serde_json::Value> = imbl::HashMap::new();
+        props.insert("seconds".into(), serde_json::json!(5.0));
+        props.insert("color".into(), serde_json::json!("#ff3366"));
+
+        let layer_id = handle
+            .add_layer(Actor::User, track_id, template_layer(props), 0, 5_000_000)
+            .await
+            .expect("add_layer");
+
+        // Patch transform + opacity, and merge a SINGLE prop (`color`). The
+        // other prop (`seconds`) must survive untouched — field-wise merge,
+        // not whole-map replace.
+        let mut patch_props: std::collections::HashMap<String, serde_json::Value> =
+            std::collections::HashMap::new();
+        patch_props.insert("color".into(), serde_json::json!("#00ff00"));
+        handle
+            .update_layer_params(
+                Actor::User,
+                layer_id,
+                LayerParamsPatch::Template(TemplatePatch {
+                    x: Some(12.0),
+                    y: Some(34.0),
+                    scale_x: Some(2.0),
+                    scale_y: Some(0.5),
+                    opacity: Some(0.25),
+                    props: Some(patch_props),
+                }),
+            )
+            .await
+            .expect("update_layer_params");
+
+        let snap = handle.snapshot().await;
+        let layer = snap
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .find(|l| l.id == layer_id)
+            .expect("layer");
+        let LayerParams::Template(p) = &layer.params else {
+            panic!("expected Template params");
+        };
+        let static_val = |a: &Animated<f64>| match a {
+            Animated::Static(v) => *v,
+            Animated::Keyframed(_) => panic!("expected Static"),
+        };
+        assert_eq!(static_val(&p.transform.x), 12.0);
+        assert_eq!(static_val(&p.transform.y), 34.0);
+        assert_eq!(static_val(&p.transform.scale_x), 2.0);
+        assert_eq!(static_val(&p.transform.scale_y), 0.5);
+        assert_eq!(static_val(&p.opacity), 0.25);
+        // `color` overwritten, `seconds` preserved.
+        assert_eq!(p.props.get("color"), Some(&serde_json::json!("#00ff00")));
+        assert_eq!(p.props.get("seconds"), Some(&serde_json::json!(5.0)));
+    }
+
+    #[tokio::test]
+    async fn template_params_patch_rejects_kind_mismatch() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        let layer_id = handle
+            .add_layer(Actor::User, track_id, color_layer(Rgba::WHITE), 0, 5_000_000)
+            .await
+            .expect("add_layer");
+        let err = handle
+            .update_layer_params(
+                Actor::User,
+                layer_id,
+                LayerParamsPatch::Template(TemplatePatch {
+                    opacity: Some(0.5),
+                    ..Default::default()
+                }),
+            )
+            .await
+            .expect_err("kind mismatch must error");
+        assert!(matches!(err, CommandError::LayerParamsKindMismatch { .. }));
     }
 
     #[tokio::test]
