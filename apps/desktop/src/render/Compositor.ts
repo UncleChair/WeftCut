@@ -511,7 +511,7 @@ export class Compositor {
         } else if (kind === "Template") {
           const tmpl = this.ensureTemplate(layer);
           if (!tmpl) continue;
-          this.updateTemplate(tmpl, layer, z++);
+          this.updateTemplate(tmpl, layer, z++, tUsSnapped);
           if (tmpl.sprite.sprite.texture !== Texture.EMPTY) {
             this.stage.addChild(tmpl.sprite.sprite);
           }
@@ -1169,6 +1169,8 @@ export class Compositor {
     const sprite = new TemplateSprite({
       layerId: layer.id,
       templateId,
+      fpsNum: this.fpsNum,
+      fpsDen: this.fpsDen,
       onLoaded: () => this.scheduleRepaint(),
     });
     const tmpl: ActiveTemplate = { layerId: layer.id, templateId, sprite };
@@ -1184,9 +1186,15 @@ export class Compositor {
     tmpl: ActiveTemplate,
     layer: LayerSummary,
     z: number,
+    tUs: number,
   ): void {
     if (layer.params.kind !== "Template") return;
-    tmpl.sprite.update(layer.params);
+    // Layer-relative time, mirroring `updateImage`. Templates have no
+    // source-in offset, so this resets to 0 at `t_start` — the intended v1
+    // semantic (a template animates over its own placed duration).
+    const tInLayerUs = tUs - layer.t_start_us;
+    const durationUs = layer.t_end_us - layer.t_start_us;
+    tmpl.sprite.update(layer.params, tInLayerUs, durationUs);
     tmpl.sprite.sprite.zIndex = z;
   }
 

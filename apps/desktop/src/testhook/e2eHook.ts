@@ -21,6 +21,8 @@ import { exists } from "@tauri-apps/plugin-fs";
 import { getTemplate, type Template, type TemplateManifest } from "../render/templates/catalog";
 import { TemplateHarness } from "../render/templates/harness";
 import { rasterizeSvg } from "../render/templates/svgRaster";
+import { TemplateSprite } from "../render/sprite/TemplateSprite";
+import type { TemplateView } from "../ipc";
 // Build-time embed of a real woff2 so the synthetic test fixture can declare a
 // bundled font WITHOUT shipping an asset under builtin/. `jassub` is a direct
 // dependency of this package; its bundled woff2 is stable repo state (unlike a
@@ -83,6 +85,35 @@ export interface E2EHook {
     durSec: number;
     props?: Record<string, unknown>;
   }): Promise<{ svg: string; rasterizeOk: boolean }>;
+  /// Drive the REAL `TemplateSprite` (Task A) over a built-in template at two
+  /// layer-relative times and read back the interior pixel of each bound
+  /// raster. Exercises the full sprite chain in real WebView2:
+  /// `update(view, tInLayerUs, durationUs)` → frame index → `frameTimeSec` →
+  /// harness `render(tSec)` → `rasterizeSvg` → bound `Texture`. The spec
+  /// asserts the two frames differ (the template animated across the
+  /// timeline). `browser.execute` can't import the bundled `TemplateSprite`,
+  /// so it's constructed here and the result reduced to plain numbers.
+  ///
+  /// Returns, per requested time: the bound bitmap dims + a content checksum
+  /// (sum of every RGBA byte, read via OffscreenCanvas + getImageData). The
+  /// checksum differs whenever the rendered frame differs — the countdown's
+  /// numeral + sweeping progress arc both change per frame, so two distinct
+  /// times produce distinct checksums.
+  renderTemplateSpriteFrames(args: {
+    templateId: string;
+    fpsNum: number;
+    fpsDen: number;
+    durationUs: number;
+    times: Array<{ tInLayerUs: number }>;
+    props?: Record<string, unknown>;
+  }): Promise<
+    Array<{
+      tInLayerUs: number;
+      width: number;
+      height: number;
+      checksum: number;
+    }>
+  >;
 }
 
 function hookSlot(): Partial<E2EHook> {
@@ -142,6 +173,95 @@ export function installTemplateHarnessHook(): void {
       rasterizeOk = false;
     }
     return { svg, rasterizeOk };
+  };
+
+  // Drive the REAL TemplateSprite (Task A) and read back each bound frame's
+  // content checksum so the spec can prove the template animates across the
+  // timeline through the sprite's own frame-selection + bind path.
+  hookSlot().renderTemplateSpriteFrames = async ({
+    templateId,
+    fpsNum,
+    fpsDen,
+    durationUs,
+    times,
+    props,
+  }) => {
+    const out: Array<{
+      tInLayerUs: number;
+      width: number;
+      height: number;
+      checksum: number;
+    }> = [];
+    // One sprite reused across the requested times — exactly how the
+    // Compositor reuses an ActiveTemplate sprite while the playhead moves.
+    // `onLoaded` fires on the async bind path (cache miss); a flag flips so the
+    // per-time waiter below (and the sync-hit detection) can settle.
+    let bindSignalled = false;
+    const sprite = new TemplateSprite({
+      layerId: "e2e-template-sprite",
+      templateId,
+      fpsNum,
+      fpsDen,
+      onLoaded: () => {
+        bindSignalled = true;
+      },
+    });
+    try {
+      const view: TemplateView = {
+        template_id: templateId,
+        x: 0,
+        y: 0,
+        scale_x: 1,
+        scale_y: 1,
+        opacity: 1,
+        props: props ?? {},
+      };
+      const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+      for (const { tInLayerUs } of times) {
+        const prevResource = sprite.sprite.texture.source?.resource ?? null;
+        bindSignalled = false;
+        sprite.update(view, tInLayerUs, durationUs);
+        // The async bind path (cache MISS) leaves the texture unchanged during
+        // this synchronous update() — the previous frame stays bound until the
+        // capture resolves and fires onLoaded (flipping `bindSignalled`). A
+        // SYNC cache hit, by contrast, swaps the resource in-place HERE without
+        // firing onLoaded. Wait until EITHER the async signal fired OR the
+        // bound resource changed (sync hit), with a hard deadline.
+        const deadline = Date.now() + 10000;
+        // eslint-disable-next-line no-await-in-loop
+        while (
+          !bindSignalled &&
+          (sprite.sprite.texture.source?.resource ?? null) === prevResource
+        ) {
+          if (Date.now() > deadline) {
+            throw new Error("template sprite bind timed out");
+          }
+          // eslint-disable-next-line no-await-in-loop
+          await sleep(20);
+        }
+        const tex = sprite.sprite.texture;
+        const bitmap = tex.source?.resource as ImageBitmap | undefined;
+        if (!bitmap) throw new Error("sprite bound no bitmap resource");
+        // Checksum the whole frame via a 2D canvas (createImageBitmap output
+        // is clean — getImageData won't taint; see templates.e2e.js).
+        const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+        const ctx = canvas.getContext("2d");
+        if (!ctx) throw new Error("no 2d context");
+        ctx.drawImage(bitmap, 0, 0);
+        const data = ctx.getImageData(0, 0, bitmap.width, bitmap.height).data;
+        let checksum = 0;
+        for (let i = 0; i < data.length; i++) checksum = (checksum + data[i]!) >>> 0;
+        out.push({
+          tInLayerUs,
+          width: bitmap.width,
+          height: bitmap.height,
+          checksum,
+        });
+      }
+    } finally {
+      sprite.dispose();
+    }
+    return out;
   };
 }
 

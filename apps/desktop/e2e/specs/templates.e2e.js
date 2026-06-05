@@ -249,3 +249,69 @@ describe("template harness coverage gaps (real WebView2, synthetic fixture)", ()
     expect(result.svg).toContain("data:font/woff2;base64,");
   });
 });
+
+// Drives the REAL TemplateSprite (Task A: SVG-render path wired into the live
+// compositor) through `window.__weftcutTest.renderTemplateSpriteFrames`. The
+// hook constructs the actual `TemplateSprite`, calls `update(view, tInLayerUs,
+// durationUs)` at two layer-relative times, awaits each async bind, and reads
+// back a checksum of the bound raster. This exercises the sprite's full chain
+// in real WebView2: tInLayerUs → frame index → frameTimeSec → harness
+// render(tSec) → rasterizeSvg → bound Texture.
+//
+// countdown is 480x480, dur shown = ceil(durationSec - tSec). With
+// durationUs = 5_000_000 (5 s) @ 30 fps (150 frames):
+//   tInLayerUs=0        -> frame 0  -> tSec 0   -> ceil(5)   = numeral 5
+//   tInLayerUs=2_500_000-> frame 75 -> tSec 2.5 -> ceil(2.5) = numeral 3
+// The numeral AND the sweeping progress arc both change, so the two frames'
+// pixel checksums must differ. (The exact numerals are asserted by the harness
+// spec above; here we prove the SPRITE selects + binds a DIFFERENT frame as
+// the layer-relative playhead advances.)
+describe("template sprite frame selection (real WebView2)", () => {
+  before(async () => {
+    await browser.waitUntil(
+      async () => (await browser.execute(() => document.readyState)) === "complete",
+      { timeout: 30000, timeoutMsg: "never reached readyState=complete" },
+    );
+    await browser.waitUntil(
+      async () =>
+        await browser.execute(
+          () =>
+            !!(
+              window.__weftcutTest &&
+              typeof window.__weftcutTest.renderTemplateSpriteFrames === "function"
+            ),
+        ),
+      { timeout: 30000, timeoutMsg: "renderTemplateSpriteFrames hook never installed" },
+    );
+  });
+
+  it("binds a different raster as the layer-relative playhead advances", async () => {
+    const out = await browser.executeAsync((done) => {
+      window.__weftcutTest
+        .renderTemplateSpriteFrames({
+          templateId: "countdown",
+          fpsNum: 30,
+          fpsDen: 1,
+          durationUs: 5_000_000,
+          times: [{ tInLayerUs: 0 }, { tInLayerUs: 2_500_000 }],
+          props: {},
+        })
+        .then((frames) => done({ ok: true, frames }))
+        .catch((e) => done({ ok: false, error: String(e) }));
+    });
+    if (!out.ok) throw new Error("renderTemplateSpriteFrames failed: " + out.error);
+
+    const [early, late] = out.frames;
+    // Both rasters captured at the template's natural size.
+    expect(early.width).toBe(480);
+    expect(early.height).toBe(480);
+    expect(late.width).toBe(480);
+    expect(late.height).toBe(480);
+    // Each frame actually painted content (a blank/transparent 480x480 would
+    // checksum to 0).
+    expect(early.checksum).toBeGreaterThan(0);
+    expect(late.checksum).toBeGreaterThan(0);
+    // The sprite selected + bound a DIFFERENT frame for the two times.
+    expect(early.checksum).not.toBe(late.checksum);
+  });
+});
