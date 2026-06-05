@@ -3810,9 +3810,18 @@ fn trim_delta_bounds(
             let cap_min = match template_cap {
                 Some(cap) => {
                     use crate::state::time::{snap_frame_ceil, snap_frame_round};
-                    let capped_start =
-                        snap_frame_round(snap_frame_ceil(layer.t_end_us - cap, fps), fps);
-                    (capped_start - layer.t_start_us).min(0)
+                    // saturating_sub/saturating_sub guard against i64 overflow
+                    // when an MCP caller passes an absurd `seconds` prop (e.g.
+                    // 1e13 → cap saturates to i64::MAX via the f64→i64 cast in
+                    // resolve_template_max_dur_us). The snap functions widen to
+                    // i128 internally and are safe for any i64 input; the
+                    // second saturating_sub prevents the rare case where
+                    // capped_start lands near i64::MIN and t_start_us > 0.
+                    let capped_start = snap_frame_round(
+                        snap_frame_ceil(layer.t_end_us.saturating_sub(cap), fps),
+                        fps,
+                    );
+                    capped_start.saturating_sub(layer.t_start_us).min(0)
                 }
                 None => -inf,
             };
@@ -3839,9 +3848,14 @@ fn trim_delta_bounds(
             let cap_max = match template_cap {
                 Some(cap) => {
                     use crate::state::time::{snap_frame_floor, snap_frame_round};
-                    let capped_end =
-                        snap_frame_round(snap_frame_floor(layer.t_start_us + cap, fps), fps);
-                    (capped_end - layer.t_end_us).max(0)
+                    // saturating_add/saturating_sub guard against i64 overflow
+                    // on absurd prop-driven cap values (mirror of the IN-edge
+                    // fix above). The snap functions handle any i64 via i128.
+                    let capped_end = snap_frame_round(
+                        snap_frame_floor(layer.t_start_us.saturating_add(cap), fps),
+                        fps,
+                    );
+                    capped_end.saturating_sub(layer.t_end_us).max(0)
                 }
                 None => inf,
             };
@@ -4545,6 +4559,120 @@ mod tests {
         // No cap → IN min falls back to the timeline floor (-t_start = -4s).
         let in_uncapped = trim_delta_bounds(&layer_4_to_7, LayerEdge::In, None, fps);
         assert_eq!(in_uncapped.min, -4_000_000);
+    }
+
+    /// A `countdown` Template layer whose `seconds` prop is an absurd value
+    /// (e.g. 1e13) resolves a cap of i64::MAX via the saturating f64→i64 cast
+    /// in `resolve_template_max_dur_us`. The bare `t_start_us + cap` (OUT) and
+    /// `t_end_us - cap` (IN) used to overflow in debug builds (panic) or wrap
+    /// in release (silent bad bound). With saturating arithmetic the trim path
+    /// must not panic AND must yield a sane bound: OUT trim returns Ok with
+    /// t_end > t_start and both values on the composition grid.
+    ///
+    /// The test uses t_start_us = 1_000_000 (> 0) so that `t_start + i64::MAX`
+    /// actually overflows; a start-at-0 layer would produce 0 + i64::MAX
+    /// (no overflow) and pass even without the fix.
+    #[tokio::test]
+    async fn trim_out_absurd_prop_cap_does_not_overflow() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        // Layer starts at 1s (frame 30, on-grid at 30fps) so the OUT saturating_add
+        // path actually exercises the overflow guard (1_000_000 + i64::MAX overflows).
+        let mut props: imbl::HashMap<String, serde_json::Value> = imbl::HashMap::new();
+        props.insert("seconds".into(), serde_json::json!(1e13_f64));
+        let layer_id = handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                template_layer(props),
+                1_000_000,
+                4_000_000,
+            )
+            .await
+            .expect("add_layer");
+        // Request an OUT trim far past any sane cap. Must not panic.
+        let result = handle
+            .trim_layer(Actor::User, layer_id, LayerEdge::Out, 999_999_999_999_000, false)
+            .await;
+        assert!(result.is_ok(), "trim_layer must not return Err: {:?}", result);
+        let snap = handle.snapshot().await;
+        let layer = snap
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .find(|l| l.id == layer_id)
+            .expect("layer");
+        // Basic sanity: layer grew (or stayed same), t_end > t_start, on-grid.
+        let fps = Rational::FPS_30;
+        assert!(
+            layer.t_end_us > layer.t_start_us,
+            "t_end ({}) must be > t_start ({})",
+            layer.t_end_us,
+            layer.t_start_us
+        );
+        assert_eq!(
+            crate::state::time::snap_frame_round(layer.t_start_us, fps),
+            layer.t_start_us,
+            "t_start must be on the frame grid"
+        );
+        assert_eq!(
+            crate::state::time::snap_frame_round(layer.t_end_us, fps),
+            layer.t_end_us,
+            "t_end must be on the frame grid"
+        );
+    }
+
+    /// Mirror of the OUT-edge test above: dragging the IN edge on a countdown
+    /// layer with an absurd `seconds` prop (cap saturates to i64::MAX) must not
+    /// panic and must yield a sane result. Uses t_start_us = 1_000_000 so that
+    /// `capped_start.saturating_sub(t_start_us)` actually exercises the second
+    /// guard (capped_start is near i64::MIN, subtraction would underflow bare).
+    #[tokio::test]
+    async fn trim_in_absurd_prop_cap_does_not_overflow() {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        let mut props: imbl::HashMap<String, serde_json::Value> = imbl::HashMap::new();
+        props.insert("seconds".into(), serde_json::json!(1e13_f64));
+        let layer_id = handle
+            .add_layer(
+                Actor::User,
+                track_id,
+                template_layer(props),
+                1_000_000,
+                4_000_000,
+            )
+            .await
+            .expect("add_layer");
+        // Request an IN trim dragging t_start toward 0 — cap this large should
+        // allow it freely (no clamping from the cap side).
+        let result = handle
+            .trim_layer(Actor::User, layer_id, LayerEdge::In, 0, false)
+            .await;
+        assert!(result.is_ok(), "trim_layer must not return Err: {:?}", result);
+        let snap = handle.snapshot().await;
+        let layer = snap
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .find(|l| l.id == layer_id)
+            .expect("layer");
+        let fps = Rational::FPS_30;
+        assert!(
+            layer.t_end_us > layer.t_start_us,
+            "t_end ({}) must be > t_start ({})",
+            layer.t_end_us,
+            layer.t_start_us
+        );
+        assert_eq!(
+            crate::state::time::snap_frame_round(layer.t_start_us, fps),
+            layer.t_start_us,
+            "t_start must be on the frame grid"
+        );
+        assert_eq!(
+            crate::state::time::snap_frame_round(layer.t_end_us, fps),
+            layer.t_end_us,
+            "t_end must be on the frame grid"
+        );
     }
 
     #[tokio::test]
