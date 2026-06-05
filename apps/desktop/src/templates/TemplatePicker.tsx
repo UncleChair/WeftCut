@@ -308,9 +308,9 @@ function buildPreviewSrcDoc(
   template: TemplateSummary,
   props: Record<string, unknown>,
 ): string {
-  // Mirrors the production raster path's __STYLE__ substitution so what the
-  // picker shows matches what render-time emits.
-  const styled = template.html.replace("__STYLE__", template.style);
+  // Templates are now self-contained HTML documents (styling lives inside),
+  // so the picker can render the document directly.
+  const styled = template.html;
   const propsJson = JSON.stringify(props ?? {});
   // Inject before </head> so window.__props__ is set before the body's
   // start() loop polls for it. Every shipped template has a <head>; the
@@ -344,7 +344,7 @@ function TemplatePreview({
   const scaledHeight = h * scale;
   const html = useMemo(
     () => buildPreviewSrcDoc(template, props),
-    [template.id, template.html, template.style, JSON.stringify(props)],
+    [template.id, template.html, JSON.stringify(props)],
   );
   return (
     <div
