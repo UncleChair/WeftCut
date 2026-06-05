@@ -10,6 +10,7 @@ import {
   type Rgba,
   type TrackSummary,
 } from "../ipc";
+import { getTemplate, type PropSpec } from "../render/templates/catalog";
 // EffectsSection + effects-related ipc calls removed in P12-a.
 
 interface Props {
@@ -210,7 +211,7 @@ function KindFields({
     case "Subtitles":
       return <SubtitlesFields v={layer.params} />;
     case "Template":
-      return null;
+      return <TemplateFields layer={layer} v={layer.params} commit={commit} />;
   }
 }
 
@@ -570,6 +571,238 @@ function ImageOverlayFields({
         />
       </Field>
     </section>
+  );
+}
+
+function TemplateFields({
+  layer,
+  v,
+  commit,
+}: {
+  layer: LayerSummary;
+  v: Extract<LayerSummary["params"], { kind: "Template" }>;
+  commit: Commit;
+}) {
+  const { t } = useTranslation();
+  const [x, setX] = useState(v.x);
+  const [y, setY] = useState(v.y);
+  const [scaleX, setScaleX] = useState(v.scale_x);
+  const [scaleY, setScaleY] = useState(v.scale_y);
+  const [opacity, setOpacity] = useState(v.opacity);
+  useEffect(() => {
+    setX(v.x);
+    setY(v.y);
+    setScaleX(v.scale_x);
+    setScaleY(v.scale_y);
+    setOpacity(v.opacity);
+  }, [layer.id, v]);
+
+  const debouncedCommit = useDebouncedCommit<LayerParamsPatch>(commit);
+
+  // The template's prop schema drives the props section. A null lookup means
+  // the placed template_id isn't in the catalog (e.g. a removed built-in) — we
+  // can still edit transform/opacity, but render a note instead of guessing
+  // prop inputs.
+  const template = getTemplate(v.template_id);
+  const propEntries = template
+    ? Object.entries(template.manifest.props_schema)
+    : [];
+
+  // Field-wise props patch: spread the current props and override one key, so
+  // the backend merge (which already only touches present keys) round-trips
+  // exactly what the UI shows.
+  const commitProp = (key: string, next: unknown) =>
+    debouncedCommit({ kind: "Template", props: { ...v.props, [key]: next } });
+
+  return (
+    <section className="prop-section">
+      <h3>{t("property_panel.template")}</h3>
+      <h4>{t("property_panel.transform")}</h4>
+      <Field label={t("property_panel.x")}>
+        <input
+          type="number"
+          value={x}
+          onChange={(e) => setX(parseFloat(e.target.value) || 0)}
+          onBlur={() => commit({ kind: "Template", x })}
+        />
+      </Field>
+      <Field label={t("property_panel.y")}>
+        <input
+          type="number"
+          value={y}
+          onChange={(e) => setY(parseFloat(e.target.value) || 0)}
+          onBlur={() => commit({ kind: "Template", y })}
+        />
+      </Field>
+      <Field label={t("property_panel.scale_x")}>
+        <input
+          type="number"
+          step={0.05}
+          value={scaleX}
+          onChange={(e) => setScaleX(parseFloat(e.target.value) || 1)}
+          onBlur={() => commit({ kind: "Template", scale_x: scaleX })}
+        />
+      </Field>
+      <Field label={t("property_panel.scale_y")}>
+        <input
+          type="number"
+          step={0.05}
+          value={scaleY}
+          onChange={(e) => setScaleY(parseFloat(e.target.value) || 1)}
+          onBlur={() => commit({ kind: "Template", scale_y: scaleY })}
+        />
+      </Field>
+      <Field label={t("property_panel.opacity")}>
+        <input
+          type="range"
+          min={0}
+          max={1}
+          step={0.01}
+          value={opacity}
+          onChange={(e) => {
+            const next = parseFloat(e.target.value);
+            setOpacity(next);
+            debouncedCommit({ kind: "Template", opacity: next });
+          }}
+        />
+        <span className="prop-range-value">{opacity.toFixed(2)}</span>
+      </Field>
+      {template === null ? (
+        <p className="meta">{t("property_panel.unknown_template")}</p>
+      ) : propEntries.length > 0 ? (
+        <>
+          <h4>{t("property_panel.props")}</h4>
+          {propEntries.map(([key, spec]) => (
+            <TemplatePropField
+              key={key}
+              propKey={key}
+              spec={spec}
+              value={v.props[key]}
+              onCommit={(next) => commitProp(key, next)}
+            />
+          ))}
+        </>
+      ) : null}
+    </section>
+  );
+}
+
+/// One editable template prop, switched on `PropSpec.type`. Mirrors the
+/// template picker's `PropField` (string / color / number), but commits each
+/// change field-wise via `onCommit`. The string/number variants delegate to
+/// dedicated sub-components so each can hold the local-state hooks at the top
+/// of its body (rules-of-hooks; the color variant needs no local state).
+/// Props colors are plain hex strings (e.g. `#ff3366`), NOT `Rgba` — handled
+/// as strings, not via the `rgbaToHex` / `hexToRgba` helpers.
+function TemplatePropField({
+  propKey,
+  spec,
+  value,
+  onCommit,
+}: {
+  propKey: string;
+  spec: PropSpec;
+  value: unknown;
+  onCommit: (next: unknown) => void;
+}) {
+  const { t } = useTranslation();
+  const label = t(`property_panel.props.${propKey}`, { defaultValue: propKey });
+
+  switch (spec.type) {
+    case "string":
+      return (
+        <StringPropField label={label} spec={spec} value={value} onCommit={onCommit} />
+      );
+    case "color": {
+      const current = typeof value === "string" ? value : spec.default;
+      // `<input type="color">` only edits the 6-char RGB triplet; show the
+      // leading 7 chars but commit the raw 6-char hex it returns. (Any
+      // trailing alpha bits in a default like `#000000cc` are dropped once the
+      // user picks a color — same tradeoff as the template picker.)
+      const rgb = current.length >= 7 ? current.slice(0, 7) : current;
+      return (
+        <Field label={label}>
+          <input
+            type="color"
+            value={rgb}
+            onChange={(e) => onCommit(e.target.value)}
+          />
+        </Field>
+      );
+    }
+    case "number":
+      return (
+        <NumberPropField label={label} spec={spec} value={value} onCommit={onCommit} />
+      );
+  }
+}
+
+function StringPropField({
+  label,
+  spec,
+  value,
+  onCommit,
+}: {
+  label: string;
+  spec: Extract<PropSpec, { type: "string" }>;
+  value: unknown;
+  onCommit: (next: unknown) => void;
+}) {
+  const [text, setText] = useState(
+    typeof value === "string" ? value : spec.default,
+  );
+  useEffect(() => {
+    setText(typeof value === "string" ? value : spec.default);
+  }, [value, spec.default]);
+  return (
+    <Field label={label}>
+      <input
+        type="text"
+        value={text}
+        maxLength={spec.max_length}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={() => onCommit(text)}
+      />
+    </Field>
+  );
+}
+
+function NumberPropField({
+  label,
+  spec,
+  value,
+  onCommit,
+}: {
+  label: string;
+  spec: Extract<PropSpec, { type: "number" }>;
+  value: unknown;
+  onCommit: (next: unknown) => void;
+}) {
+  const [num, setNum] = useState<number>(
+    typeof value === "number" ? value : spec.default,
+  );
+  useEffect(() => {
+    setNum(typeof value === "number" ? value : spec.default);
+  }, [value, spec.default]);
+  return (
+    <Field label={label}>
+      <input
+        type="number"
+        value={num}
+        min={spec.min}
+        max={spec.max}
+        // Step heuristic copied from the template picker: small ranges
+        // (≤10 wide) get a 0.1 step, everything else 1.
+        step={
+          spec.max !== undefined && spec.max - (spec.min ?? 0) <= 10 ? 0.1 : 1
+        }
+        onChange={(e) => {
+          const next = Number(e.target.value);
+          setNum(next);
+          onCommit(next);
+        }}
+      />
+    </Field>
   );
 }
 

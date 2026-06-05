@@ -37,8 +37,8 @@ pub mod validate;
 pub use actor::{
     Actor, AudioPatch, ChangeEvent, ColorPatch, CommandError, CompositionPatch, DiffHint,
     DryRunOp, DryRunOutput, EntityRef, HistoryStatus, ImageOverlayPatch, LayerParamsPatch,
-    LayerPatch, MarkerPatch, MediaDerivativesPatch, ProjectActor, ProjectHandle, TextPatch,
-    VideoClipPatch, spawn,
+    LayerPatch, MarkerPatch, MediaDerivativesPatch, ProjectActor, ProjectHandle, TemplatePatch,
+    TextPatch, VideoClipPatch, spawn,
 };
 pub use history::{HistoryEntry, HistoryEntrySummary, HistoryView, NamedCheckpoint, NamedCheckpointSummary};
 pub use validate::{ValidationError, validate as validate_project};

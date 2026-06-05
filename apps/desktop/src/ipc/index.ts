@@ -337,6 +337,21 @@ export interface ImageOverlayPatch {
   fade_out_us?: number;
 }
 
+export interface TemplatePatch {
+  x?: number;
+  y?: number;
+  scale_x?: number;
+  scale_y?: number;
+  opacity?: number;
+  /// Props to merge FIELD-WISE into the layer's existing `props` map — each
+  /// key present here overwrites that key; absent keys are left intact. The
+  /// backend merges (never replaces the whole map) so a stale debounced commit
+  /// can't clobber a concurrent edit. Values are passed verbatim; the property
+  /// panel types them per the template's `props_schema` (`number` / hex
+  /// `string` / `string`), so no further validation happens on this path.
+  props?: Record<string, unknown>;
+}
+
 export interface ColorPatch {
   color?: Rgba;
   width?: number;
@@ -358,6 +373,7 @@ export type LayerParamsPatch =
   | ({ kind: "Text" } & TextPatch)
   | ({ kind: "VideoClip" } & VideoClipPatch)
   | ({ kind: "ImageOverlay" } & ImageOverlayPatch)
+  | ({ kind: "Template" } & TemplatePatch)
   | ({ kind: "Color" } & ColorPatch)
   | ({ kind: "Audio" } & AudioPatch);
 
