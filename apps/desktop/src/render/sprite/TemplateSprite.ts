@@ -20,7 +20,7 @@ import { ImageSource, Sprite, Texture } from "pixi.js";
 
 import { frameIndexInLayer } from "../../frames";
 import type { TemplateView } from "../../ipc";
-import { getTemplate, type Template } from "../templates/catalog";
+import { getTemplate, resolveTemplateContentDurationUs, type Template } from "../templates/catalog";
 import { TemplateFrameCache } from "../templates/frameCache";
 import { TemplateHarness } from "../templates/harness";
 // Rasterizer.ts still owns the prop canonicalizer (validates + fills defaults
@@ -49,6 +49,27 @@ export function templateDurationFrames(
 export function frameTimeSec(frame: number, fpsNum: number, fpsDen: number): number {
   if (fpsNum <= 0) return 0;
   return (frame * fpsDen) / fpsNum;
+}
+
+/// Compute the content-frame selection for the preview path. `contentDurationUs`
+/// is the resolved intrinsic content duration (or the layer width for uncapped
+/// templates); `srcInUs` is the window offset (0 for uncapped). Returns the
+/// absolute content frame to render and the total content-duration frame count
+/// (for the cache key). Exported for unit testing.
+export function templateContentFrame(
+  tInLayerUs: number,
+  srcInUs: number,
+  contentDurationUs: number,
+  fpsNum: number,
+  fpsDen: number,
+): { frame: number; contentDurationFrames: number } {
+  const contentDurationFrames = templateDurationFrames(contentDurationUs, fpsNum, fpsDen);
+  const contentTimeUs = srcInUs + Math.max(0, tInLayerUs);
+  const frame = Math.min(
+    contentDurationFrames - 1,
+    frameIndexInLayer(contentTimeUs, fpsNum, fpsDen),
+  );
+  return { frame, contentDurationFrames };
 }
 
 /// Process-wide per-frame cache shared by every TemplateSprite, so identical
@@ -206,16 +227,25 @@ export class TemplateSprite {
       return;
     }
 
-    const durationFrames = templateDurationFrames(durationUs, this.fpsNum, this.fpsDen);
-    const frame = Math.min(
-      durationFrames - 1,
-      frameIndexInLayer(tInLayerUs, this.fpsNum, this.fpsDen),
+    // Content-window model: a capped template (e.g. countdown) renders its
+    // INTRINSIC content (driven by the cap/`seconds` prop), and the layer is a
+    // window into it. Uncapped templates fall back to "animate over layer
+    // width" (contentDuration = layer width, srcIn = 0) — legacy behavior.
+    const cap = resolveTemplateContentDurationUs(this.template.manifest, view.props);
+    const contentDurationUs = cap ?? durationUs;
+    const srcInUs = cap == null ? 0 : view.src_in_us;
+    const { frame, contentDurationFrames } = templateContentFrame(
+      tInLayerUs,
+      srcInUs,
+      contentDurationUs,
+      this.fpsNum,
+      this.fpsDen,
     );
 
-    // v1: raster at the template's natural size. The Pixi sprite's scale
-    // handles display sizing — accept upscale softness (matches prior
-    // behavior). `durationFrames` is in the key so a trim changes the key
-    // (the numeral sequence depends on duration).
+    // v1: raster at the template's natural size. The frame is the ABSOLUTE
+    // content frame, and the key carries contentDurationFrames — so two windows
+    // into the same template+props reuse overlapping cached frames and never
+    // collide on (key, frame).
     const [renderW, renderH] = this.template.manifest.size;
     const cacheKey = templateFrameCacheKey({
       templateId: this.template.manifest.id,
@@ -225,7 +255,7 @@ export class TemplateSprite {
       renderH,
       fpsNum: this.fpsNum,
       fpsDen: this.fpsDen,
-      durationFrames,
+      durationFrames: contentDurationFrames,
     });
 
     // Same (key, frame) already bound/in-flight → nothing to do.
@@ -241,7 +271,7 @@ export class TemplateSprite {
     }
 
     const tSec = frameTimeSec(frame, this.fpsNum, this.fpsDen);
-    const durationSec = durationUs / US_PER_SEC;
+    const durationSec = contentDurationUs / US_PER_SEC;
     void this.captureAndBind(cacheKey, frame, tSec, durationSec, canonical);
   }
 

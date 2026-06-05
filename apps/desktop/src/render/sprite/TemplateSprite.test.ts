@@ -5,10 +5,11 @@
 // testable without the browser surface. The async capture/bind chain is
 // exercised end-to-end by the real-WebView2 e2e (`templates.e2e.js`).
 
-import { describe, expect, test } from "vitest";
+import { describe, expect, it, test } from "vitest";
 
 import {
   frameTimeSec,
+  templateContentFrame,
   templateDurationFrames,
   templateFrameCacheKey,
 } from "./TemplateSprite";
@@ -83,5 +84,24 @@ describe("templateFrameCacheKey", () => {
     expect(templateFrameCacheKey({ ...base, fpsNum: 60 })).not.toBe(k);
     expect(templateFrameCacheKey({ ...base, renderW: 1280 })).not.toBe(k);
     expect(templateFrameCacheKey({ ...base, canonicalProps: { from: 9 } })).not.toBe(k);
+  });
+});
+
+describe("templateContentFrame", () => {
+  // 6s content @30fps = 180 frames (0..179).
+  it("window [0,5s] into 6s content shows content frames 0..149 (6 down to 2)", () => {
+    const at0 = templateContentFrame(0, 0, 6_000_000, 30, 1);
+    expect(at0.contentDurationFrames).toBe(180);
+    expect(at0.frame).toBe(0); // content t=0 -> "6"
+    const atEnd = templateContentFrame(5_000_000 - 1, 0, 6_000_000, 30, 1);
+    expect(atEnd.frame).toBe(149); // ~content t=5s -> "2"
+  });
+  it("src_in scrubs into content: window [1s,..] starts at content frame 30 (=5)", () => {
+    const at0 = templateContentFrame(0, 1_000_000, 6_000_000, 30, 1);
+    expect(at0.frame).toBe(30);
+  });
+  it("clamps to the last content frame", () => {
+    const past = templateContentFrame(10_000_000, 0, 6_000_000, 30, 1);
+    expect(past.frame).toBe(179);
   });
 });
