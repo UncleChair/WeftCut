@@ -55,6 +55,8 @@ import {
   resolveOutputDims,
 } from "./render/exportSettings";
 import { resolveEncodePath } from "./render/exportCodecProbe";
+import { exportBakeTemplates } from "./render/exportBake";
+import { getTemplate } from "./render/templates/catalog";
 import {
   sourcesNeedingPreviewProbe,
   prepareExportMedia,
@@ -892,6 +894,48 @@ export function App({ onCloseProject }: AppProps) {
       endUs: range?.endUs ?? summary.duration_us,
     };
     const exportSpanUs = exportRange.endUs - exportRange.startUs;
+
+    // ---- Bake Template layers --------------------------------------------
+    // The export Worker has no DOM, so it can't run the SVG capture harness.
+    // Pre-rasterize every Template layer's frames here (main thread) and pass
+    // them into the export request; the Worker binds them by comp-frame index.
+    // CRITICAL: bake on the COMPOSITION fps (comp.fps_num/den), NOT the export
+    // output fps — the Worker's TemplateSprite indexes injected frames with the
+    // Compositor's comp fps, so a different output fps must not change the bake
+    // grid (it would shift the index → out-of-range / duplicated frames). The
+    // output fps only resamples WHICH comp-frame each output frame maps to,
+    // which the Worker handles via the time grid.
+    let templateFrames: Record<string, ImageBitmap[]> = {};
+    try {
+      const templateIds = new Set<string>();
+      for (const tr of summary.tracks) {
+        for (const l of tr.layers) {
+          if (l.enabled && l.params.kind === "Template") {
+            templateIds.add(l.params.template_id);
+          }
+        }
+      }
+      if (templateIds.size > 0) {
+        const labels = [...templateIds].map(
+          (id) => getTemplate(id)?.manifest.name ?? id,
+        );
+        setExportState({ kind: "preparing", labels, onCancel: () => {} });
+      }
+      templateFrames = await exportBakeTemplates(
+        summary,
+        exportRange.startUs,
+        exportRange.endUs,
+        comp.fps_num,
+        comp.fps_den,
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("[weftcut/pixi] template bake failed:", e);
+      setExportState({ kind: "error", detail: `Template render failed: ${msg}` });
+      return;
+    }
+    // ---- end bake --------------------------------------------------------
+
     const dims = resolveOutputDims(comp, settings);
     const fpsNum = settings.fps != null ? settings.fps : comp.fps_num;
     const fpsDen = settings.fps != null ? 1 : comp.fps_den;
@@ -981,6 +1025,7 @@ export function App({ onCloseProject }: AppProps) {
         endUs: exportRange.endUs,
         keyframeIntervalSec: settings.keyframeIntervalSec,
         writeChunk,
+        templateFrames,
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

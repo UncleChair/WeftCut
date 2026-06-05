@@ -29,6 +29,28 @@ export function analyze({ output, source, samples, ssimMin, audio }) {
   }
 }
 
+// Self-SSIM: compare pairs of indices WITHIN one output video (no source).
+// `samples` is read as consecutive pairs [a0,b0,a1,b1,...]. Returns the parsed
+// `{ output, ssim_max, pairs:[{a,b,ssim,differ}], pass }`. Used by the template-
+// export e2e to prove an animated template makes two output frames DIFFER (a
+// skipped template would render static black → near-identical → fail).
+export function analyzeSelf({ output, samples, ssimMax }) {
+  const args = [
+    "run", "--manifest-path", "apps/desktop/src-tauri/Cargo.toml",
+    "--bin", "media_conformance", "--quiet", "--",
+    "--self-ssim", "--output", output, "--samples", samples.join(","),
+  ];
+  if (ssimMax != null) args.push("--ssim-max", String(ssimMax));
+  const r = spawnSync("cargo", args, { cwd: REPO, encoding: "utf8" });
+  try {
+    return JSON.parse(r.stdout);
+  } catch {
+    throw new Error(
+      `media_conformance --self-ssim exit ${r.status}: ${r.stdout}\n${r.stderr}`,
+    );
+  }
+}
+
 export function analyzeColor({ output, source, manifest, inMatrix, inRange, sample }) {
   const args = [
     "run", "--manifest-path", "apps/desktop/src-tauri/Cargo.toml",

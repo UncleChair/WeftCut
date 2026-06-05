@@ -50,6 +50,10 @@ export interface PreviewSurfaceHandle {
     endUs?: number;
     keyframeIntervalSec?: number;
     writeChunk: (data: ArrayBuffer) => Promise<void>;
+    /// Pre-rasterized Template-layer frames baked on the main thread before
+    /// launching the export Worker (which has no DOM). Threaded through to
+    /// `runExport` and transferred into the Worker.
+    templateFrames?: Record<string, ImageBitmap[]>;
   }): Promise<PixiExportResult>;
 }
 

@@ -12,6 +12,7 @@ import {
   importMedia,
   addVideoTrack,
   addMediaLayer,
+  addTemplate,
   projectNewWorkspace,
   type CanvasPreset,
 } from "../ipc";
@@ -55,6 +56,19 @@ export interface E2EHook {
     outputAbsPath: string;
     settings?: Partial<ExportSettings>;
     range?: { startUs: number; endUs: number };
+  }): Promise<void>;
+  /// Add a built-in Template layer at t=0 (default duration) and export to
+  /// `outputAbsPath`. No video clip is needed — the export composites the
+  /// template-only timeline, driving the FULL real export path: main-thread
+  /// `exportBakeTemplates` → transfer → Worker `TemplateSprite` bind-by-index.
+  /// Proves templates render in export (they were silently absent before). The
+  /// caller (project + editor) must already be set up via `newProjectAndEnter`.
+  exportTemplateClip(args: {
+    templateId: string;
+    outputAbsPath: string;
+    durationUs?: number;
+    props?: Record<string, unknown>;
+    settings?: Partial<ExportSettings>;
   }): Promise<void>;
   /// Capture one frame of a built-in template through a `TemplateHarness`
   /// (sandboxed-iframe `render(t)` → serialized post-render `<svg>` string).
@@ -375,6 +389,30 @@ export function installExportHook(runExport: RunExport): void {
     // store the gate reads (see waitForMediaExportReady).
     await waitForMediaExportReady(mediaId, 60000);
     await runExport(mergeSettings(settings ?? null), outputAbsPath, range);
+    if (!(await exists(outputAbsPath))) {
+      throw new Error(`export produced no output file at ${outputAbsPath}`);
+    }
+  };
+
+  hookSlot().exportTemplateClip = async ({
+    templateId,
+    outputAbsPath,
+    durationUs,
+    props,
+    settings,
+  }) => {
+    // Add a Template layer at t=0. `add_template` auto-creates / reuses a track
+    // and defaults t_end to the template's default duration unless overridden.
+    await addTemplate({
+      templateId,
+      tStartUs: 0,
+      ...(durationUs != null ? { tEndUs: durationUs } : {}),
+      ...(props ? { props } : {}),
+    });
+    // No video source, so the readiness gate has nothing to wait on — the
+    // export proceeds straight to bake + composite. runExport bakes the
+    // template frames on the main thread and transfers them into the Worker.
+    await runExport(mergeSettings(settings ?? null), outputAbsPath, undefined);
     if (!(await exists(outputAbsPath))) {
       throw new Error(`export produced no output file at ${outputAbsPath}`);
     }

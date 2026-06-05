@@ -501,6 +501,58 @@ fn analyze_gradient(file: &Path, sample: u64, in_matrix: &str, in_range: &str) -
     })
 }
 
+#[derive(Debug, serde::Serialize)]
+struct SelfPair {
+    a: u64,
+    b: u64,
+    /// MSSIM of output frame `a` vs output frame `b`. ~1.0 when identical (a
+    /// static / black region), well below 1.0 when they differ.
+    ssim: f64,
+    /// True when the two frames differ enough to prove animation (ssim < the
+    /// `ssim_max` threshold).
+    differ: bool,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct SelfReport {
+    output: String,
+    ssim_max: f64,
+    pairs: Vec<SelfPair>,
+    /// True when EVERY pair differs — i.e. the content animates across all the
+    /// sampled index gaps.
+    pass: bool,
+}
+
+/// Compare pairs of indices WITHIN one video (no source). Used by the template-
+/// export e2e: a baked, animating template makes two output frames differ
+/// (ssim < ssim_max); a skipped template renders a static black frame, so the
+/// pair would be near-identical (ssim ~1.0) and fail. `samples` is read in
+/// consecutive pairs: [a0,b0, a1,b1, ...]; an odd trailing index is ignored.
+fn analyze_self(output: &Path, samples: &[u64], ssim_max: f64) -> Result<SelfReport> {
+    let mut pairs = Vec::new();
+    let mut all_pass = !samples.is_empty();
+    for chunk in samples.chunks_exact(2) {
+        let (a, b) = (chunk[0], chunk[1]);
+        let a_png = extract_frame_png(output, a)?;
+        let b_png = extract_frame_png(output, b)?;
+        let ssim = ssim_pngs(&a_png, &b_png)?;
+        let differ = ssim < ssim_max;
+        if !differ {
+            all_pass = false;
+        }
+        pairs.push(SelfPair { a, b, ssim, differ });
+    }
+    if pairs.is_empty() {
+        all_pass = false;
+    }
+    Ok(SelfReport {
+        output: output.display().to_string(),
+        ssim_max,
+        pairs,
+        pass: all_pass,
+    })
+}
+
 fn analyze(
     output: &Path,
     source: &Path,
@@ -639,12 +691,16 @@ fn main() -> std::process::ExitCode {
     let mut in_range: Option<String> = None;
     let mut sample: u64 = 10;
     let mut gradient_row = false;
+    let mut self_ssim = false;
+    let mut ssim_max: f64 = 0.99;
     let mut it = args.iter().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
             "--output" => output = it.next().cloned(),
             "--source" => source = it.next().cloned(),
             "--audio" => audio = true,
+            "--self-ssim" => self_ssim = true,
+            "--ssim-max" => ssim_max = it.next().and_then(|s| s.parse().ok()).unwrap_or(0.99),
             "--samples" => {
                 samples = it
                     .next()
@@ -664,6 +720,25 @@ fn main() -> std::process::ExitCode {
                 return std::process::ExitCode::from(2);
             }
         }
+    }
+    // Self-SSIM compares two indices of the OUTPUT only — no `--source`. Handle
+    // it before the source-required guard below.
+    if self_ssim {
+        let Some(output) = output else {
+            eprintln!("media_conformance --self-ssim requires --output");
+            return std::process::ExitCode::from(2);
+        };
+        if samples.len() < 2 {
+            eprintln!("media_conformance --self-ssim requires --samples a,b (pairs)");
+            return std::process::ExitCode::from(2);
+        }
+        return match analyze_self(Path::new(&output), &samples, ssim_max) {
+            Ok(r) => {
+                println!("{}", serde_json::to_string_pretty(&r).unwrap());
+                if r.pass { std::process::ExitCode::SUCCESS } else { std::process::ExitCode::from(1) }
+            }
+            Err(e) => { eprintln!("media_conformance: {e:#}"); std::process::ExitCode::from(3) }
+        };
     }
     let (Some(output), Some(source)) = (output, source) else {
         eprintln!("media_conformance: --output and --source are required");
@@ -874,6 +949,39 @@ mod tests {
             assert_eq!(s.index, s.best_match_index);
             assert!(s.ssim > 0.999);
         }
+    }
+
+    #[test]
+    fn self_ssim_identical_index_does_not_differ() {
+        // Comparing an index to ITSELF must score ~1.0 → differ=false → fail
+        // (this is the "static / skipped template" case the e2e guards against).
+        let clip = std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../fixtures/media/tiny.mp4"
+        ));
+        let r = analyze_self(clip, &[10, 10], 0.99).unwrap();
+        assert_eq!(r.pairs.len(), 1);
+        assert!(r.pairs[0].ssim > 0.999, "self vs self ~1.0: {r:?}");
+        assert!(!r.pairs[0].differ, "identical frames must not 'differ'");
+        assert!(!r.pass, "an identical pair must fail the differ gate");
+    }
+
+    #[test]
+    fn self_ssim_distinct_indices_differ_on_animated_content() {
+        // The committed tiny clip is a burned-in-counter testsrc, so distinct
+        // indices differ. Two far-apart indices must score below 0.99 → differ.
+        let clip = std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../fixtures/media/tiny.mp4"
+        ));
+        let r = analyze_self(clip, &[2, 20], 0.99).unwrap();
+        assert_eq!(r.pairs.len(), 1);
+        assert!(
+            r.pairs[0].differ,
+            "distinct counter frames must differ (ssim {} < 0.99)",
+            r.pairs[0].ssim
+        );
+        assert!(r.pass);
     }
 
     #[test]
