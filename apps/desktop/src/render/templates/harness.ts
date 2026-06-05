@@ -199,6 +199,7 @@ function collectFonts(template: Template): FontFaceInput[] {
     out.push({
       family: decl.family,
       bytes,
+      file: decl.file,
       ...(decl.weight !== undefined ? { weight: decl.weight } : {}),
       ...(decl.style !== undefined ? { style: decl.style } : {}),
     });
