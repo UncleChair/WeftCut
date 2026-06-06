@@ -21,40 +21,9 @@ import { ImageSource, Sprite, Texture } from "pixi.js";
 import { frameIndexInLayer } from "../../frames";
 import type { TemplateView } from "../../ipc";
 import { getTemplate, type Template } from "../templates/catalog";
-import { TemplateFrameCache } from "../templates/frameCache";
-import { TemplateHarness } from "../templates/harness";
-import { rasterizeSvg } from "../templates/svgRaster";
+import { rasterTemplateFrame, sharedTemplateFrameCache } from "../templates/templateRaster";
 import { templateFrameDescriptor } from "../templates/templateFrameDescriptor";
 import { templateDurationFrames } from "../templates/templateFrames";
-
-/// Process-wide per-frame cache shared by every TemplateSprite, so identical
-/// (template, props, dims, fps, frame) rasters resolve from one bitmap.
-const sharedTemplateFrameCache = new TemplateFrameCache();
-
-/// One harness per templateId, mounted lazily on first use and reused after.
-/// Only `countdown` ships today, so this map never thrashes. NOTE: many
-/// DISTINCT templates on screen at once would each hold their own iframe; a
-/// real fix would be a bounded harness pool keyed by recency. v1 doesn't need
-/// it (the built-in catalog is one entry).
-interface HarnessEntry {
-  harness: TemplateHarness;
-  ready: Promise<void>;
-}
-const harnessByTemplateId = new Map<string, HarnessEntry>();
-
-/// Get (or lazily mount) the shared harness for `template`. Touches the DOM
-/// (`new TemplateHarness().load()` adds an iframe + a window listener), so it
-/// MUST only be called from the async render path — never synchronously from
-/// `update()`, which also runs in the document-less export Worker.
-function harnessFor(template: Template): HarnessEntry {
-  let entry = harnessByTemplateId.get(template.manifest.id);
-  if (!entry) {
-    const harness = new TemplateHarness();
-    entry = { harness, ready: harness.load(template) };
-    harnessByTemplateId.set(template.manifest.id, entry);
-  }
-  return entry;
-}
 
 export interface TemplateSpriteInit {
   layerId: string;
@@ -209,14 +178,7 @@ export class TemplateSprite {
   ): Promise<void> {
     if (!this.template) return;
     try {
-      const entry = harnessFor(this.template);
-      await entry.ready;
-      const svg = await entry.harness.renderFrameSvg(
-        tSec,
-        durationSec,
-        canonicalProps,
-      );
-      const bitmap = await rasterizeSvg(svg);
+      const bitmap = await rasterTemplateFrame(this.template, tSec, durationSec, canonicalProps);
       // Hand the bitmap to the cache. `setFrame` is idempotent: if a sibling
       // sprite already cached this (cacheKey, frame), it keeps that bitmap and
       // closes ours, returning the CANONICAL cache-owned bitmap. Bind THAT, so

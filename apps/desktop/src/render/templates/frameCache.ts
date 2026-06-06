@@ -144,6 +144,18 @@ export class TemplateFrameCache {
     }
   }
 
+  /// True when (cacheKey, frameIndex) is held, WITHOUT touching recency (unlike
+  /// getFrame). The prewarmer uses this to skip already-cached targets so a peek
+  /// can't reorder the LRU.
+  hasFrame(cacheKey: string, frameIndex: number): boolean {
+    return this.store.has(frameMapKey(cacheKey, frameIndex));
+  }
+
+  /// The max-frames cap (the prewarmer uses it as its warm budget).
+  capacity(): number {
+    return this.maxFrames;
+  }
+
   /// True when at least one frame of `cacheKey` is currently held.
   hasKey(cacheKey: string): boolean {
     for (const k of this.store.keys()) {
