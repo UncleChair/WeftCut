@@ -14,10 +14,10 @@
 //   backing is freed promptly rather than waiting on GC.
 //
 //   L2 (opt-in, lighter) — a PNG frame sequence persisted to disk
-//   under `<workspace>/Cache/raster/<hash>/<i>.png`. Manual per-layer
-//   enable only in v1, so this is an interface the later sprite /
-//   export code calls — NOT on the default preview path. See the
-//   "L2 disk persistence" section for the fs-capability caveat.
+//   under `<workspace>/Cache/raster/<hash>/<i>.png`. Driven by a global
+//   "Pre-bake" setting and a per-layer "Pre-bake now" action; read on the
+//   default preview path via `resolveTemplateFrame` (disk-first, gated by
+//   an in-RAM baked-key index). The `TemplateBaker` is the sole writer.
 //
 // `cacheKey` is an opaque STRING the caller builds from
 // `(templateId, version, canonicalPropsJSON, renderW, renderH,
