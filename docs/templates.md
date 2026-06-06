@@ -190,9 +190,9 @@ all thin drivers of this one harness.
 single-digit milliseconds — comfortably within a frame budget for typical
 playback. So the default is to **rasterize on demand**, with no persisted
 artifact at all: the source of truth is the template plus its props, which the
-project already holds. Three escalation levers — measured on the user's own
-hardware — handle progressively heavier cases. They are one mechanism over one
-shared raster function, so a heavier lever is a small add, not a separate path:
+project already holds. Three escalation levers handle progressively heavier
+cases. They are one mechanism over one shared raster function, so a heavier
+lever is a small add, not a separate path:
 
 - **L0 — on demand (default).** The playhead's frame is rasterized when needed
   and bound as a texture. Zero disk, zero pre-work, instant after an edit.
@@ -219,23 +219,34 @@ shared raster function, so a heavier lever is a small add, not a separate path:
   simultaneous templates. The L0 on-demand path remains the fall-back for any
   not-yet-warmed frame (e.g. immediately after a seek). Buys smooth playback;
   costs bounded RAM; no disk.
-- **L2 — persisted PNG (opt-in / auto-escalated).** The frame sequence is written
-  to disk under the workspace `Cache/raster/`, one **PNG** per frame (PNG because
-  the Canvas API's WebP encode is lossy and crisp text edges matter; ADR 0015),
-  keyed by a hash of `(templateId, version, canonicalProps, renderWidth,
-  renderHeight, fps, durationFrames)`. Buys **persistence** — the sequence
-  survives reload, caps the in-RAM working set, and lets the export read frames
-  straight off disk — rather than additional smoothness (L1 already gives that).
-  The on-disk sequence is safe to delete; it regenerates.
+- **L2 — persisted PNG (pre-bake).** The frame sequence is written to disk under
+  the workspace `Cache/raster/`, one **PNG** per frame (PNG because the Canvas
+  API's WebP encode is lossy and crisp text edges matter; ADR 0015), keyed by a
+  hash of `(templateId, version, canonicalProps, renderWidth, renderHeight, fps,
+  durationFrames)`. Buys **persistence** — the sequence survives reload, caps the
+  in-RAM working set, and lets the export read frames straight off disk — rather
+  than additional smoothness (L1 already gives that). The on-disk sequence is safe
+  to delete; it regenerates.
 
 L1 is **always on** — the prewarmer runs continuously and costs nothing but
 bounded RAM, so there is no threshold to cross and nothing for the user to
-predict. Escalation to **L2** is **measurement-driven**: on add or edit the
-harness times one raster on the actual hardware, and heavy or persistence-worthy
-cases auto-escalate to the persisted sequence (a manual per-layer override is the
-escape hatch, not the primary control). Render and bake resolution follow the
-composition (display) size — never below it — so persisted frames don't blur on
-scale-up.
+predict. **L2 is driven by two explicit triggers:**
+
+- **Global "Pre-bake" setting** (off by default): when enabled, every active
+  template content's full frame sequence is baked to disk in the background.
+- **Per-layer "Pre-bake now"** right-click action: bakes one layer on demand,
+  regardless of the global setting.
+
+There is no measurement-driven auto-escalation. Reads are **disk-first**: a
+single `resolveTemplateFrame` — shared by the sprite's on-demand path and the
+prewarmer — prefers a pre-baked PNG over a live raster, gated by an in-RAM
+baked-key index (hydrated from disk on project load) so un-baked templates pay
+no fs cost; any fs error falls through to a live raster so preview never blanks.
+Writes are centralized in a single background **baker** (the sole writer),
+idle-paced and playhead-first, skipping frames already on disk. On project load,
+orphaned raster dirs (from superseded props or dims) are swept. Render and bake
+resolution follow the composition (display) size — never below it — so persisted
+frames don't blur on scale-up.
 
 ### What is and isn't part of the cache key
 
@@ -250,7 +261,7 @@ never re-rasterizes it.
 | composition fps | re-raster (the frame grid changed) |
 | window (`src_in_us` / layer width) | no re-raster — frames are keyed by **absolute content frame**, so two windows into the same content share cached frames |
 | layer transform / opacity | no re-raster (sprite-applied) |
-| composition width / height | no persisted-key change (L0/L1 raster at composite res) |
+| composition width / height | re-key — bake/render resolution tracks display size (never below), so a resize re-bakes and GC reclaims the orphan dir |
 
 The key carries the **content** frame count (from the resolved cap), and each
 frame is the absolute content-frame index — so trimming the window never
