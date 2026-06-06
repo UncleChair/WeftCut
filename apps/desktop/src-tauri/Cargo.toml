@@ -108,6 +108,12 @@ tempfile = "3"
 # decodes the PNG bytes; both libs together add ~150 KB to the binary.
 image = { version = "0.25", default-features = false, features = ["png"] }
 image-compare = "0.5"
+# Dev-only system-resource sampler (`sysmon.rs`) for the PerfHUD: per-process
+# CPU% + RSS of the app's WebView2 process tree. Only the `system` feature is
+# needed (cpu/memory/process); disk/network/component/user are off. Used solely
+# behind `#[cfg(debug_assertions)]`, so it never runs in release (the crate
+# still compiles into the binary — a small, accepted cost for a dev tool).
+sysinfo = { version = "0.33", default-features = false, features = ["system"] }
 
 [dev-dependencies]
 insta = { version = "1", features = ["json", "yaml"] }

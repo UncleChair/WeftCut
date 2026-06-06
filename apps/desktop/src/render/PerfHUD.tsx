@@ -13,6 +13,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { getSystemStats, type SystemStats } from "../ipc";
 import type { Compositor, CompositorPerfSnapshot } from "./Compositor";
 import type { PlaybackEngine, WarmupStats } from "./PlaybackEngine";
 import { throughputFps, type ThroughputSample } from "./perfHudStats";
@@ -107,6 +108,10 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
   // dropped automatically (the ref map is rebuilt from the live clips).
   const [fpsByLayer, setFpsByLayer] = useState<Map<string, number>>(new Map());
   const prevSamplesRef = useRef<Map<string, ThroughputSample>>(new Map());
+  // System-resource snapshot from the Rust sysmon sampler (process-tree
+  // CPU%/RSS). Null until its first tick, or in a release build where the
+  // command doesn't exist.
+  const [sys, setSys] = useState<SystemStats | null>(null);
 
   // rAF interval tracking. We keep the ring + last-tick time on refs
   // so the rAF callback doesn't re-render on every frame; the HUD only
@@ -181,6 +186,25 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
     }, 500);
     return () => clearInterval(id);
   }, [compositorRef, engineRef]);
+
+  // System-resource poll (Rust sysmon), on a slower 1 s cadence: CPU/RSS
+  // move slowly and the sampler itself only updates once a second.
+  // `get_system_stats` is dev-only — swallow rejection so a release build
+  // (no such command) doesn't spam the console.
+  useEffect(() => {
+    let cancelled = false;
+    const id = setInterval(() => {
+      getSystemStats()
+        .then((s) => {
+          if (!cancelled) setSys(s);
+        })
+        .catch(() => {});
+    }, 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
 
   // Ctrl+Shift+P toggle. Captured at the window level so the user
   // doesn't need to focus the HUD to dismiss it.
@@ -338,6 +362,15 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
               ({((memory.usedJSHeapSize / memory.jsHeapSizeLimit) * 100).toFixed(0)}% cap)
             </span>
           )}
+        </div>
+      )}
+      {sys && (
+        <div title={`${sys.process_count} processes · ${sys.logical_cores} logical cores`}>
+          cpu:{" "}
+          <span style={{ color: sys.cpu_percent > 80 ? "#f59e0b" : undefined }}>
+            {sys.cpu_percent.toFixed(0)}%
+          </span>{" "}
+          · rss: {formatMb(sys.rss_bytes)} · {sys.process_count}p
         </div>
       )}
 
