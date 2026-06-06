@@ -3278,14 +3278,9 @@ pub(crate) fn apply_update_layer_params(
         let t_start = layer.t_start_us;
         let t_end = layer.t_end_us;
 
+        let catalog = crate::templates::builtins();
         let clamp: Option<(i64, i64)> = if let LayerParams::Template(ref tp) = layer.params {
-            let catalog = crate::templates::builtins();
-            catalog
-                .iter()
-                .find(|t| t.id() == tp.template_id)
-                .and_then(|t| {
-                    crate::templates::resolve_template_max_dur_us(&t.manifest, &tp.props)
-                })
+            template_cap_us(&catalog, &layer.params)
                 .and_then(|content_dur| {
                     let src_in = tp.src_in_us;
                     let width = t_end - t_start;
@@ -3637,10 +3632,13 @@ fn split_single_layer(
         return Err(CommandError::SplitOutsideLayer { layer: id, at_t: at_t_us });
     }
     let split_offset = at_t_us - original.t_start_us;
+    let catalog = crate::templates::builtins();
     let mut right = original.clone();
     right.id = new_id();
     right.t_start_us = at_t_us;
     right.t_end_us = original.t_end_us;
+    // Resolve the cap flag from an immutable borrow BEFORE match &mut right.params.
+    let right_capped = template_cap_us(&catalog, &right.params).is_some();
     match &mut right.params {
         LayerParams::VideoClip(p) => {
             p.src_in_us = p.src_in_us + split_offset;
@@ -3651,14 +3649,7 @@ fn split_single_layer(
         LayerParams::Template(p) => {
             // Only capped templates window content (see apply_trim_layer). An
             // uncapped template keeps src_in_us = 0 across a split.
-            let capped = crate::templates::builtins()
-                .iter()
-                .find(|t| t.id() == p.template_id)
-                .and_then(|t| {
-                    crate::templates::resolve_template_max_dur_us(&t.manifest, &p.props)
-                })
-                .is_some();
-            if capped {
+            if right_capped {
                 p.src_in_us = p.src_in_us + split_offset;
             }
         }
@@ -3767,15 +3758,7 @@ pub(crate) fn apply_trim_layer(
             // prop changes the cap live). Resolve per-member so a group mixing a
             // capped template with an uncapped one (or non-template) clamps each
             // by its own bound. Unknown id / absent cap → None → unbounded.
-            let template_max_dur_us = match &m.params {
-                LayerParams::Template(tp) => catalog
-                    .iter()
-                    .find(|t| t.id() == tp.template_id)
-                    .and_then(|t| {
-                        crate::templates::resolve_template_max_dur_us(&t.manifest, &tp.props)
-                    }),
-                _ => None,
-            };
+            let template_max_dur_us = template_cap_us(&catalog, &m.params);
             let bounds = trim_delta_bounds(m, edge, template_max_dur_us, fps);
             d = clamp_signed(d, bounds.min, bounds.max);
         }
@@ -3797,6 +3780,9 @@ pub(crate) fn apply_trim_layer(
     // updating src_* for media-bearing kinds.
     for &mid in aligned.iter() {
         let (mti, mli) = locate_layer(project, mid).expect("aligned member exists");
+        // Resolve the cap flag with an immutable borrow BEFORE taking &mut below;
+        // the borrow checker requires the immutable borrow to end first.
+        let capped = template_cap_us(&catalog, &project.tracks[mti].layers[mli].params).is_some();
         let m = &mut project.tracks[mti].layers[mli];
         match edge {
             LayerEdge::In => {
@@ -3814,13 +3800,6 @@ pub(crate) fn apply_trim_layer(
                         // content animates over the layer width from frame 0.
                         // (No uncapped builtin exists today, so this guard is
                         // forward-looking; capped templates still scrub.)
-                        let capped = catalog
-                            .iter()
-                            .find(|t| t.id() == p.template_id)
-                            .and_then(|t| {
-                                crate::templates::resolve_template_max_dur_us(&t.manifest, &p.props)
-                            })
-                            .is_some();
                         if capped {
                             p.src_in_us += clamped_delta;
                         }
@@ -3864,6 +3843,25 @@ pub(crate) fn apply_trim_layer(
 
     apply_duration_autofit(project);
     Ok(())
+}
+
+/// Resolve a Template layer's content-duration cap (µs) from a pre-built
+/// template `catalog` + the layer's params. `None` for non-template params,
+/// unknown template ids, or uncapped templates. Single source of truth for
+/// "what is this template's window/content cap" across trim, split, and the
+/// seconds-edit clamp — keep all cap lookups going through here so they can't
+/// drift (cf. the snap-math / engine-source drift hazards in this codebase).
+fn template_cap_us(
+    catalog: &[crate::templates::Template],
+    params: &LayerParams,
+) -> Option<i64> {
+    match params {
+        LayerParams::Template(tp) => catalog
+            .iter()
+            .find(|t| t.id() == tp.template_id)
+            .and_then(|t| crate::templates::resolve_template_max_dur_us(&t.manifest, &tp.props)),
+        _ => None,
+    }
 }
 
 #[derive(Clone, Copy)]
