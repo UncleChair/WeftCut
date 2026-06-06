@@ -302,15 +302,17 @@ export class TemplateSprite {
         canonicalProps,
       );
       const bitmap = await rasterizeSvg(svg);
-      // Hand the bitmap to the cache regardless of whether we still want it —
-      // it's correct work and another sprite / a later seek may reuse it.
-      // `setFrame` owns the bitmap's lifetime from here (LRU close-on-evict).
-      sharedTemplateFrameCache.setFrame(cacheKey, frame, bitmap);
+      // Hand the bitmap to the cache. `setFrame` is idempotent: if a sibling
+      // sprite already cached this (cacheKey, frame), it keeps that bitmap and
+      // closes ours, returning the CANONICAL cache-owned bitmap. Bind THAT, so
+      // no sprite ever binds a bitmap a sibling could close (the cause of the
+      // "External Image has been detached" WebGPU error on project reopen).
+      const canonical = sharedTemplateFrameCache.setFrame(cacheKey, frame, bitmap);
       // A later `update` may have superseded this request while we awaited;
       // only bind if we still want exactly this (cacheKey, frame).
       if (this.disposed) return;
       if (this.targetCacheKey !== cacheKey || this.targetFrame !== frame) return;
-      this.bindBitmap(bitmap);
+      this.bindBitmap(canonical);
       this.onLoaded?.();
     } catch (e) {
       // eslint-disable-next-line no-console
