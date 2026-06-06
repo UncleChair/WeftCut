@@ -53,6 +53,13 @@ export async function rasterTemplateFrame(
   durationSec: number,
   canonicalProps: Record<string, unknown>,
 ): Promise<ImageBitmap> {
+  // Test instrument: count real rasters so e2e can assert disk hits skip them.
+  // Inert unless a test has opted in by setting window.__weftcutTemplatePerf.
+  if (typeof window !== "undefined") {
+    const perf = (window as unknown as { __weftcutTemplatePerf?: { renders: number } })
+      .__weftcutTemplatePerf;
+    if (perf) perf.renders++;
+  }
   const entry = harnessFor(template);
   await entry.ready;
   const svg = await entry.harness.renderFrameSvg(tSec, durationSec, canonicalProps);

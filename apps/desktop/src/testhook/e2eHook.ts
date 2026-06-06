@@ -14,12 +14,20 @@ import {
   addMediaLayer,
   addTemplate,
   projectNewWorkspace,
+  projectSummary,
+  updateLayerParams,
+  workspaceDir,
   type CanvasPreset,
 } from "../ipc";
+import { hashCacheKey } from "../render/templates/frameCache";
+import { sharedTemplateFrameCache } from "../render/templates/templateRaster";
+import { templateFrameDescriptor } from "../render/templates/templateFrameDescriptor";
+import { getTemplate, type Template, type TemplateManifest } from "../render/templates/catalog";
+import { requestPrebake } from "../render/templates/prebakeBus";
 import { mergeSettings, type ExportSettings } from "../render/exportSettings";
 import { useProjectStore, exportPlaybackPathFor } from "../state/projectStore";
-import { exists } from "@tauri-apps/plugin-fs";
-import { getTemplate, type Template, type TemplateManifest } from "../render/templates/catalog";
+import { exists, readDir } from "@tauri-apps/plugin-fs";
+import { join as pathJoin } from "@tauri-apps/api/path";
 import { TemplateHarness } from "../render/templates/harness";
 import { rasterizeSvg } from "../render/templates/svgRaster";
 import { TemplateSprite } from "../render/sprite/TemplateSprite";
@@ -128,6 +136,40 @@ export interface E2EHook {
       checksum: number;
     }>
   >;
+  /// Trigger a persisted pre-bake of a template layer (via the prebakeBus) and
+  /// wait until at least `expectedFrames` PNG files appear under
+  /// `<workspace>/Cache/raster/<hash>/`. Returns the absolute path to the hash
+  /// dir and the number of PNGs found. Rejects on timeout (default 60 s). The
+  /// cacheKey is computed internally from the current project summary so the
+  /// e2e spec doesn't need to import bundled modules.
+  prebakeLayerAndWait(args: {
+    layerId: string;
+    expectedFrames: number;
+    timeoutMs?: number;
+  }): Promise<{ hashDir: string; hashName: string; pngCount: number }>;
+  /// List the hash dir names currently present under `<workspace>/Cache/raster/`.
+  /// Returns an empty array when no project is open or the dir doesn't exist.
+  listBakedHashDirs(): Promise<string[]>;
+  /// Run the GC against `activeCacheKeys`: removes every `Cache/raster/<hash>` dir
+  /// whose hash isn't in the active set. Mirrors `TemplateFrameCache.gcUnreferenced`.
+  gcRasterDirs(activeCacheKeys: string[]): Promise<void>;
+  /// Compute the cacheKey for a template layer by looking up its current state in
+  /// the project summary. Returns null if the layer doesn't exist or isn't a Template.
+  cacheKeyForLayer(layerId: string): Promise<string | null>;
+  /// Add a template layer at t=0 with the given duration and return its layerId.
+  /// Thin wrapper over the `add_template` IPC so e2e specs don't need raw
+  /// Tauri invoke access. Only available after the editor mounts.
+  addTemplateLayer(args: {
+    templateId: string;
+    durationUs: number;
+    props?: Record<string, unknown>;
+  }): Promise<string>;
+  /// Patch a template layer's props (merges field-wise). Used by the pre-bake
+  /// e2e to change the `color` prop and observe a new cacheKey / new hash dir.
+  patchTemplateLayerProps(args: {
+    layerId: string;
+    props: Record<string, unknown>;
+  }): Promise<void>;
 }
 
 function hookSlot(): Partial<E2EHook> {
@@ -279,6 +321,89 @@ export function installTemplateHarnessHook(): void {
       sprite.dispose();
     }
     return out;
+  };
+
+  // Trigger a full L2 pre-bake of a template layer (via the prebakeBus) and
+  // wait until `expectedFrames` PNG files appear on disk. The cacheKey is
+  // computed from the live project summary so the spec needs only the layerId.
+  hookSlot().prebakeLayerAndWait = async ({ layerId, expectedFrames, timeoutMs = 60_000 }) => {
+    // Derive the cacheKey from the current project summary.
+    const summary = await projectSummary();
+    let cacheKey: string | null = null;
+    outer: for (const track of summary.tracks) {
+      for (const layer of track.layers) {
+        if (layer.id !== layerId || layer.params.kind !== "Template") continue;
+        const template = getTemplate(layer.params.template_id);
+        if (!template) break outer;
+        const durationUs = layer.t_end_us - layer.t_start_us;
+        const desc = templateFrameDescriptor(layer.params, 0, durationUs, summary.composition.fps_num, summary.composition.fps_den, template);
+        if (desc) cacheKey = desc.cacheKey;
+        break outer;
+      }
+    }
+    if (cacheKey === null) {
+      throw new Error(`prebakeLayerAndWait: layer ${layerId} not found or has no template`);
+    }
+
+    requestPrebake(layerId);
+
+    const ws = await workspaceDir();
+    if (!ws) throw new Error("prebakeLayerAndWait: no workspace open");
+    const hashName = hashCacheKey(cacheKey);
+    const hashDir = await pathJoin(ws, "Cache", "raster", hashName);
+
+    const deadline = Date.now() + timeoutMs;
+    let pngCount = 0;
+    while (Date.now() < deadline) {
+      if (await exists(hashDir)) {
+        const entries = await readDir(hashDir);
+        pngCount = entries.filter((e) => !e.isDirectory && e.name?.endsWith(".png")).length;
+        if (pngCount >= expectedFrames) break;
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    if (pngCount < expectedFrames) {
+      throw new Error(
+        `prebakeLayerAndWait: timed out — found ${pngCount}/${expectedFrames} PNGs in ${hashDir}`,
+      );
+    }
+    return { hashDir, hashName, pngCount };
+  };
+
+  hookSlot().listBakedHashDirs = async () => {
+    const ws = await workspaceDir();
+    if (!ws) return [];
+    const root = await pathJoin(ws, "Cache", "raster");
+    if (!(await exists(root))) return [];
+    const entries = await readDir(root);
+    return entries.filter((e) => e.isDirectory).map((e) => e.name ?? "");
+  };
+
+  hookSlot().gcRasterDirs = async (activeCacheKeys) => {
+    await sharedTemplateFrameCache.gcUnreferenced(activeCacheKeys);
+  };
+
+  hookSlot().cacheKeyForLayer = async (layerId) => {
+    const summary = await projectSummary();
+    for (const track of summary.tracks) {
+      for (const layer of track.layers) {
+        if (layer.id !== layerId || layer.params.kind !== "Template") continue;
+        const template = getTemplate(layer.params.template_id);
+        if (!template) return null;
+        const durationUs = layer.t_end_us - layer.t_start_us;
+        const desc = templateFrameDescriptor(layer.params, 0, durationUs, summary.composition.fps_num, summary.composition.fps_den, template);
+        return desc?.cacheKey ?? null;
+      }
+    }
+    return null;
+  };
+
+  hookSlot().addTemplateLayer = async ({ templateId, durationUs, props }) => {
+    return addTemplate({ templateId, tStartUs: 0, tEndUs: durationUs, ...(props !== undefined ? { props } : {}) });
+  };
+
+  hookSlot().patchTemplateLayerProps = async ({ layerId, props }) => {
+    await updateLayerParams(layerId, { kind: "Template", props });
   };
 }
 
