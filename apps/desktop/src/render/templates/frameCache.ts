@@ -101,20 +101,31 @@ export class TemplateFrameCache {
     return bmp as ImageBitmap;
   }
 
-  /// Insert/replace a frame. Re-`set` of an existing entry closes the
-  /// old bitmap (unless it's the same reference) and refreshes recency.
-  /// When the store exceeds `maxFrames`, the least-recently-used frame
-  /// is evicted and `.close()`d.
-  setFrame(cacheKey: string, frameIndex: number, bmp: ImageBitmap): void {
+  /// Insert a frame, or keep the bitmap already cached for this (key, frame).
+  /// A given (cacheKey, frameIndex) is deterministic — same template, props,
+  /// size, fps, content-duration and absolute content frame — so a concurrent
+  /// re-raster (e.g. several same-config template layers cold-missing on
+  /// project reopen) produces an IDENTICAL image. Keep the existing bitmap (a
+  /// live sprite may have already bound it) and close the redundant incoming
+  /// one; return the CANONICAL cache-owned bitmap the caller should bind. This
+  /// makes the write idempotent so a sibling sprite never has its bound bitmap
+  /// closed out from under it (which caused "External Image has been detached"
+  /// on WebGPU upload). When the store exceeds `maxFrames`, the LRU frame is
+  /// evicted and `.close()`d.
+  setFrame(cacheKey: string, frameIndex: number, bmp: ImageBitmap): ImageBitmap {
     const k = frameMapKey(cacheKey, frameIndex);
     const prev = this.store.get(k);
     if (prev !== undefined) {
-      // Delete first so the re-insert below lands at the MRU tail.
+      // Keep the existing (possibly already-bound) bitmap; drop the redundant
+      // incoming one. Refresh recency by re-inserting at the MRU tail.
+      if (prev !== (bmp as unknown as Closeable)) bmp.close();
       this.store.delete(k);
-      if (prev !== (bmp as unknown as Closeable)) prev.close();
+      this.store.set(k, prev);
+      return prev as unknown as ImageBitmap;
     }
     this.store.set(k, bmp as unknown as Closeable);
     this.evictToCapacity();
+    return bmp;
   }
 
   /// Evict LRU entries until at most `maxFrames` remain, closing each.

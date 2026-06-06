@@ -36,14 +36,22 @@ describe("TemplateFrameCache — L0 LRU", () => {
     expect(c.size()).toBe(2);
   });
 
-  test("re-set of an existing entry closes the prior bitmap + refreshes recency", () => {
+  test("re-set of an existing entry keeps the existing bitmap, closes the incoming, and refreshes recency", () => {
+    // CHANGED from old behavior: setFrame is now IDEMPOTENT — the existing
+    // (possibly already-bound) bitmap is kept; the redundant incoming one is
+    // closed; the canonical (existing) bitmap is returned. This prevents
+    // "External Image has been detached" on WebGPU upload when concurrent
+    // cold-miss rasterizers race to setFrame the same (key, frame).
     const c = new TemplateFrameCache(3);
     const a = fakeBitmap();
     const a2 = fakeBitmap();
-    c.setFrame("k", 0, a);
-    c.setFrame("k", 0, a2);
-    expect(a.close).toHaveBeenCalledTimes(1);
-    expect(c.getFrame("k", 0)).toBe(a2);
+    const returned = c.setFrame("k", 0, a);
+    expect(returned).toBe(a);
+    const returned2 = c.setFrame("k", 0, a2);
+    expect(returned2).toBe(a);    // returns the EXISTING canonical, not the incoming
+    expect(a2.close).toHaveBeenCalledTimes(1); // incoming redundant one closed
+    expect(a.close).not.toHaveBeenCalled();    // existing (maybe-bound) one NOT closed
+    expect(c.getFrame("k", 0)).toBe(a);        // canonical still in cache
     expect(c.size()).toBe(1);
   });
 
@@ -54,6 +62,25 @@ describe("TemplateFrameCache — L0 LRU", () => {
     c.setFrame("k", 0, a);
     expect(a.close).not.toHaveBeenCalled();
     expect(c.getFrame("k", 0)).toBe(a);
+  });
+
+  test("setFrame keeps the existing bitmap and closes a redundant re-set (same key+frame), returning the canonical", () => {
+    const cache = new TemplateFrameCache();
+    const a = fakeBitmap();
+    const b = fakeBitmap();
+    expect(cache.setFrame("k", 0, a)).toBe(a);   // first writer: stored + returned
+    expect(cache.setFrame("k", 0, b)).toBe(a);   // redundant: returns the EXISTING bitmap
+    expect(b.close).toHaveBeenCalledTimes(1);    // incoming redundant one closed
+    expect(a.close).not.toHaveBeenCalled();       // existing (maybe-bound) one NOT closed
+    expect(cache.getFrame("k", 0)).toBe(a);       // canonical still cached
+  });
+
+  test("re-setting the identical bitmap reference is a no-op (no close)", () => {
+    const cache = new TemplateFrameCache();
+    const a = fakeBitmap();
+    cache.setFrame("k", 0, a);
+    expect(cache.setFrame("k", 0, a)).toBe(a);
+    expect(a.close).not.toHaveBeenCalled();
   });
 
   test("capacity eviction closes the least-recently-used frame", () => {
@@ -93,6 +120,11 @@ describe("TemplateFrameCache — L0 LRU", () => {
   test("setFrame refreshes recency so a re-set frame survives eviction", () => {
     // Re-`setFrame` of an existing entry must move it to the MRU tail (same as
     // a get-hit), so the OTHER frame becomes the LRU eviction victim.
+    //
+    // CHANGED from old behavior: setFrame is now IDEMPOTENT — on a re-set the
+    // existing bitmap (a) is KEPT and refreshed to MRU; the incoming bitmap
+    // (a2) is CLOSED as redundant. The key recency update (k#0 → MRU tail)
+    // is preserved, so k#1 remains the LRU victim as before.
     const c = new TemplateFrameCache(2);
     const a = fakeBitmap();
     const a2 = fakeBitmap();
@@ -101,13 +133,15 @@ describe("TemplateFrameCache — L0 LRU", () => {
     c.setFrame("k", 0, a); // [k#0]
     c.setFrame("k", 1, b); // [k#0, k#1]
     // Re-set k#0 with a new bitmap → k#0 becomes MRU; k#1 is now LRU.
-    c.setFrame("k", 0, a2); // [k#1, k#0]; closes the prior k#0 bitmap (a)
-    expect(a.close).toHaveBeenCalledTimes(1);
+    // Idempotent: a is kept (canonical), a2 is closed (redundant incoming).
+    c.setFrame("k", 0, a2); // [k#1, k#0]; closes the INCOMING a2 (not a)
+    expect(a2.close).toHaveBeenCalledTimes(1); // incoming redundant one closed
+    expect(a.close).not.toHaveBeenCalled();    // existing canonical NOT closed
     c.setFrame("k", 2, d); // overflow → evict LRU (k#1) → [k#0, k#2]
     expect(b.close).toHaveBeenCalledTimes(1); // k#1 evicted
-    expect(a2.close).not.toHaveBeenCalled(); // re-set k#0 survived
+    expect(a.close).not.toHaveBeenCalled();   // re-set k#0 (canonical a) survived
     expect(d.close).not.toHaveBeenCalled();
-    expect(c.getFrame("k", 0)).toBe(a2);
+    expect(c.getFrame("k", 0)).toBe(a);        // canonical is still a (not a2)
     expect(c.getFrame("k", 1)).toBeNull();
     expect(c.getFrame("k", 2)).toBe(d);
   });
