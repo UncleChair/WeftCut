@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { formatTimecode, parseTimecode } from "../frames";
 import {
@@ -375,13 +375,15 @@ function TemplatePreview({
 
   // Bind one frame's SVG (string) to the <img> as an object URL, revoking the
   // previous URL. Shared by the static and animated paths.
-  const bindSvg = (svg: string) => {
+  // Stable (deps: []) — only touches the ref + React setters, all stable. Kept
+  // stable so the render effect's async callbacks never capture a stale variant.
+  const bindSvg = useCallback((svg: string) => {
     const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
     if (urlRef.current) URL.revokeObjectURL(urlRef.current);
     urlRef.current = url;
     setSvgUrl(url);
     setError(null);
-  };
+  }, []);
 
   // Render the current frame. When `animate` is true (the selected large
   // preview) and the user hasn't asked for reduced motion, run a real-time
