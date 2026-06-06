@@ -35,6 +35,10 @@ import {
 import { TemplateBaker, type BakeContentSpec } from "./templates/TemplateBaker";
 import { encodeBitmapToPng } from "./templates/pngEncode";
 import { onPrebakeRequest } from "./templates/prebakeBus";
+import {
+  setLayerBakeStatuses,
+  type LayerBakeStatus,
+} from "../timeline/templateBakeStatusStore";
 import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { swapKeys } from "./swapKeys";
 
@@ -296,8 +300,15 @@ export class Compositor {
           warm: (k, f, bmp) => {
             sharedTemplateFrameCache.setFrame(k, f, bmp);
           },
+          onStatus: (cacheKey, status) => {
+            this.bakeStatusByCacheKey.set(cacheKey, status);
+            this.recomputeBakeStatuses();
+          },
         })
       : null;
+  /// Latest per-cacheKey bake status from the baker. Fanned out to per-layer
+  /// entries in `recomputeBakeStatuses`.
+  private bakeStatusByCacheKey = new Map<string, LayerBakeStatus>();
   /// LayerIds the user manually "Pre-bake now"'d this session — baked even
   /// when the global setting is off.
   private manualPrebakeLayers = new Set<string>();
@@ -454,6 +465,8 @@ export class Compositor {
       this.baker?.setTargets([]);
       this.manualPrebakeLayers.clear();
       sharedBakedKeyIndex.clear();
+      this.bakeStatusByCacheKey.clear();
+      setLayerBakeStatuses({});
       return;
     }
     // Recompute the frame-snap fps state whenever the project changes
@@ -527,6 +540,7 @@ export class Compositor {
     // above); `this.lastTUs` is the last composited composition time.
     this.updatePrewarmTargets(this.lastTUs);
     this.updateBakeTargets(this.lastTUs);
+    this.recomputeBakeStatuses();
     // Hydrate the on-disk baked-key index + GC orphaned hash dirs against the
     // new project's live keys. Fire-and-forget — never blocks load.
     void this.hydrateBakedIndexAndGc();
@@ -879,6 +893,8 @@ export class Compositor {
     this.prebakeUnsub = null;
     this.manualPrebakeLayers.clear();
     sharedBakedKeyIndex.clear();
+    this.bakeStatusByCacheKey.clear();
+    setLayerBakeStatuses({});
     // Drop the injected export-bake frame references. Bitmaps here are OWNED by
     // the export caller (`exportBakeTemplates`), not the Compositor — same as
     // `setTemplateFrames`, which clears without closing — so we clear (no
@@ -1054,6 +1070,7 @@ export class Compositor {
       }
     }
     this.baker.setTargets(specs);
+    this.recomputeBakeStatuses();
   }
 
   /// On project load: rebuild the in-RAM baked-key index from what's on disk
@@ -1088,10 +1105,48 @@ export class Compositor {
     try {
       const hashes = await sharedTemplateFrameCache.listBakedHashes();
       sharedBakedKeyIndex.hydrateFromHashes(hashes);
+      // The index now reflects on-disk frames; recompute so last-session-baked
+      // layers (no live baker status) surface as "ready".
+      this.recomputeBakeStatuses();
       await sharedTemplateFrameCache.gcUnreferenced(activeKeys);
     } catch (e) {
       console.warn("[weftcut/templates] baked-index hydrate/gc failed", e);
     }
+  }
+
+  /// Build the per-layer bake-status map and publish it to the store. A layer
+  /// shows: its baker status if live; else "ready" if its frames are already on
+  /// disk (sharedBakedKeyIndex — e.g. baked last session, toggle off); else it
+  /// is omitted (idle → no dot). O(template layers); called on every onStatus,
+  /// updateBakeTargets, and setProject.
+  private recomputeBakeStatuses(): void {
+    if (!this.projectSummary) {
+      setLayerBakeStatuses({});
+      return;
+    }
+    const byLayer: Record<string, LayerBakeStatus> = {};
+    for (const track of this.projectSummary.tracks) {
+      for (const layer of track.layers) {
+        if (layer.params.kind !== "Template") continue;
+        const template = getTemplate(layer.params.template_id);
+        if (!template) continue;
+        const durationUs = layer.t_end_us - layer.t_start_us;
+        const view = layer.params;
+        const desc = templateFrameDescriptor(view, 0, durationUs, this.fpsNum, this.fpsDen, template);
+        if (!desc) continue;
+        const live = this.bakeStatusByCacheKey.get(desc.cacheKey);
+        if (live) {
+          byLayer[layer.id] = live;
+        } else if (sharedBakedKeyIndex.has(desc.cacheKey)) {
+          byLayer[layer.id] = {
+            phase: "ready",
+            done: desc.contentDurationFrames,
+            total: desc.contentDurationFrames,
+          };
+        }
+      }
+    }
+    setLayerBakeStatuses(byLayer);
   }
 
   private ensureClip(layer: LayerSummary): ActiveClip | null {
