@@ -10,6 +10,7 @@ import {
 } from "../ipc";
 import { getTemplate } from "../render/templates/catalog";
 import { TemplateHarness } from "../render/templates/harness";
+import { previewLoopTimeSec } from "./previewLoop";
 
 interface Props {
   onClose: () => void;
@@ -230,7 +231,7 @@ function TemplateForm({
       }}
     >
       <h3>{t("template_picker.preview_heading")}</h3>
-      <TemplatePreview template={template} props={debouncedProps} width={480} large />
+      <TemplatePreview template={template} props={debouncedProps} width={480} large animate />
 
       <h3>{t("template_picker.props_heading")}</h3>
       {propKeys.length === 0 ? (
@@ -310,6 +311,10 @@ function useDebounced<T>(value: T, delay: number): T {
 /// frame — adequate for the picker, which only needs a representative still.
 /// FOLLOW-UP: a scrub slider could let the user preview any t.
 const PREVIEW_T_SEC = 0;
+/// Frame rate for the looping picker preview (the selected template's large
+/// preview). ~20 fps is smooth enough for the arc sweep while keeping the live
+/// re-render loop cheap (one preview animates at a time).
+const PREVIEW_FPS = 20;
 
 /// Live preview of a template's CURRENT frame, captured through the SAME
 /// `TemplateHarness` the timeline/export use — so picker, timeline, and export
@@ -326,11 +331,13 @@ function TemplatePreview({
   props,
   width,
   large,
+  animate,
 }: {
   template: TemplateSummary;
   props: Record<string, unknown>;
   width: number;
   large?: boolean;
+  animate?: boolean;
 }) {
   const [w, h] = template.size;
   const scale = width / w;
@@ -366,35 +373,87 @@ function TemplatePreview({
     };
   }, [template.id]);
 
-  // Render the current frame whenever props change (already debounced upstream
-  // for the form preview). Awaits the in-flight load so the first render after
-  // a template switch doesn't race the iframe mount.
+  // Bind one frame's SVG (string) to the <img> as an object URL, revoking the
+  // previous URL. Shared by the static and animated paths.
+  const bindSvg = (svg: string) => {
+    const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+    if (urlRef.current) URL.revokeObjectURL(urlRef.current);
+    urlRef.current = url;
+    setSvgUrl(url);
+    setError(null);
+  };
+
+  // Render the current frame. When `animate` is true (the selected large
+  // preview) and the user hasn't asked for reduced motion, run a real-time
+  // loop: advance t over [0, duration) at ~PREVIEW_FPS via rAF, re-rendering
+  // each frame through the same harness. Otherwise render a single static frame
+  // at t=0 (cards, reduced-motion). Awaits the in-flight load so the first
+  // render after a template switch doesn't race the iframe mount.
   useEffect(() => {
-    let cancelled = false;
     const harness = harnessRef.current;
     const loaded = loadedRef.current;
     if (!harness || !loaded) return;
     const durSec = template.default_duration_s;
-    loaded
-      .then(() => harness.renderFrameSvg(PREVIEW_T_SEC, durSec, props))
-      .then((svg) => {
-        if (cancelled) return;
-        const url = URL.createObjectURL(
-          new Blob([svg], { type: "image/svg+xml" }),
-        );
-        if (urlRef.current) URL.revokeObjectURL(urlRef.current);
-        urlRef.current = url;
-        setSvgUrl(url);
-        setError(null);
-      })
-      .catch((e) => {
-        if (!cancelled) setError(String(e));
-      });
+
+    const prefersReducedMotion =
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    // Static path: one frame at t=0 (existing behavior).
+    if (!animate || prefersReducedMotion) {
+      let cancelled = false;
+      loaded
+        .then(() => harness.renderFrameSvg(PREVIEW_T_SEC, durSec, props))
+        .then((svg) => {
+          if (!cancelled) bindSvg(svg);
+        })
+        .catch((e) => {
+          if (!cancelled) setError(String(e));
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    // Animated path: real-time loop.
+    let cancelled = false;
+    let rafId = 0;
+    let rendering = false;
+    let lastRenderMs = Number.NEGATIVE_INFINITY;
+    const startMs = performance.now();
+    const durMs = Math.max(1, durSec * 1000);
+    const frameInterval = 1000 / PREVIEW_FPS;
+
+    const tick = (now: number) => {
+      if (cancelled) return;
+      if (!rendering && now - lastRenderMs >= frameInterval) {
+        lastRenderMs = now;
+        rendering = true;
+        const tSec = previewLoopTimeSec(now - startMs, durMs);
+        loaded
+          .then(() => harness.renderFrameSvg(tSec, durSec, props))
+          .then((svg) => {
+            rendering = false;
+            if (!cancelled) bindSvg(svg);
+          })
+          .catch((e) => {
+            rendering = false;
+            if (!cancelled) setError(String(e));
+          });
+      }
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+
     return () => {
       cancelled = true;
+      cancelAnimationFrame(rafId);
     };
-    // `props` identity changes on each edit; the parent debounces it.
-  }, [template.id, template.default_duration_s, props]);
+    // `props` identity changes on each edit; the parent debounces it. Including
+    // it here restarts the loop (from t=0) with the new props on each debounced
+    // edit — acceptable and keeps the preview truthful to the current props.
+  }, [template.id, template.default_duration_s, props, animate]);
 
   // Revoke the last blob URL on unmount.
   useEffect(
