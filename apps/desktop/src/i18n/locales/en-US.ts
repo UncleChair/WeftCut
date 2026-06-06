@@ -185,6 +185,7 @@ const enUS = {
     // V.7 context-menu entries for the right-click menu on layers.
     separate_audio: "Separate audio to new track",
     no_actions_here: "(no actions for this layer)",
+    prebake_now: "Pre-bake now",
   },
   peek: {
     heading: "Near playhead ({{count}})",
@@ -394,6 +395,10 @@ const enUS = {
     testing: "Testing…",
     test_hint:
       "Run a cheap API call to confirm the saved key works. Surfaces InvalidKey / rate-limit errors before your first cloud-backed agent call.",
+    templates_heading: "Templates",
+    prebake_templates: "Pre-bake templates",
+    prebake_templates_hint:
+      "Render template animation frames to disk in the background so playback stays smooth and reopening the project is instant. Uses disk space under the project's Cache folder.",
   },
   keybindings: {
     add: "+ Add",

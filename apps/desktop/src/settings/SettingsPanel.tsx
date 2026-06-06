@@ -16,6 +16,7 @@ import { formatTimecode, parseTimecode } from "../frames";
 import { KeybindingPanel } from "./KeybindingPanel";
 import {
   setAppSettings,
+  usePrebakeTemplatesEnabled,
   useTailSnapEnabled,
   useTailSnapStrengthPx,
 } from "./appSettingsStore";
@@ -131,6 +132,9 @@ export function SettingsPanel({
         <h3>{t("settings.timeline_heading")}</h3>
         <p className="settings-blurb">{t("settings.timeline_blurb")}</p>
         <TimelineSnapSection onError={setError} />
+
+        <h3>{t("settings.templates_heading")}</h3>
+        <PrebakeSection onError={setError} />
 
         <h3>{t("settings.keybindings_heading")}</h3>
         <p className="settings-blurb">{t("settings.keybindings_blurb")}</p>
@@ -272,6 +276,32 @@ function TimelineSnapSection({
         {t("settings.tail_snap_strength_hint")}
       </p>
     </>
+  );
+}
+
+function PrebakeSection({ onError }: { onError: (msg: string) => void }) {
+  const { t } = useTranslation();
+  const enabled = usePrebakeTemplatesEnabled();
+  return (
+    <label className="settings-toggle-row">
+      <input
+        type="checkbox"
+        checked={enabled}
+        onChange={async (e) => {
+          const next = e.target.checked;
+          onError("");
+          try {
+            await setAppSettings({ prebake_templates: next });
+          } catch (err) {
+            onError(String(err));
+          }
+        }}
+      />
+      <span>
+        <span className="settings-toggle-label">{t("settings.prebake_templates")}</span>
+        <span className="settings-toggle-hint">{t("settings.prebake_templates_hint")}</span>
+      </span>
+    </label>
   );
 }
 

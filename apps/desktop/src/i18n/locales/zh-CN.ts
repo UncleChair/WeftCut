@@ -183,6 +183,7 @@ const zhCN: Resources = {
     no_actions_here: "（此图层无可用操作）",
     track_label: "轨道 {{n}}",
     resize_track_hint: "拖动以调整该轨道高度",
+    prebake_now: "立即预烘焙",
   },
   peek: {
     heading: "播放头附近（{{count}}）",
@@ -386,6 +387,10 @@ const zhCN: Resources = {
     testing: "测试中…",
     test_hint:
       "运行一次廉价的 API 调用，确认所保存的密钥可用。可在首次调用云端工具前提前暴露密钥无效或速率限制错误。",
+    templates_heading: "模板",
+    prebake_templates: "预烘焙模板",
+    prebake_templates_hint:
+      "在后台将模板动画帧渲染到磁盘，使播放更流畅、重新打开项目时即时加载。会在项目的 Cache 文件夹下占用磁盘空间。",
   },
   keybindings: {
     add: "+ 添加",
