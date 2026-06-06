@@ -29,6 +29,13 @@ mod templates;
 mod view_state;
 mod workspace;
 
+/// Dev-only system-resource sampler (CPU%/RSS of the app process tree),
+/// surfaced to the dev `PerfHUD`. Behind `debug_assertions` so release
+/// builds neither spawn the sampler nor expose the `get_system_stats`
+/// command.
+#[cfg(debug_assertions)]
+mod sysmon;
+
 use tauri::Manager;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
@@ -141,6 +148,8 @@ pub fn run() {
             commands::log_clear,
             commands::log_emit,
             commands::log_dir_path,
+            #[cfg(debug_assertions)]
+            sysmon::get_system_stats,
         ])
         .setup(move |app| {
             // Project actor — single writer for all state mutations, shared by
@@ -262,6 +271,16 @@ pub fn run() {
                     Err(e) => tracing::error!("ffmpeg bootstrap join failed: {e:?}"),
                 }
             });
+
+            // Dev-only system-resource sampler feeding the PerfHUD
+            // (CPU%/RSS of the app's WebView2 process tree, 1 s tick).
+            // Release builds skip both the managed slot and the sampler.
+            #[cfg(debug_assertions)]
+            {
+                let stats_slot = sysmon::new_slot();
+                app.manage(stats_slot.clone());
+                sysmon::spawn_sampler(stats_slot);
+            }
             // Bridge actor ChangeEvents to a Tauri event the React UI listens
             // for. Without this, MCP-driven mutations land in state but the
             // UI panels (project bar, timeline, property panel, media pool)
