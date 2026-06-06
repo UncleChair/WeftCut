@@ -11,6 +11,7 @@ import {
   type TrackSummary,
 } from "../ipc";
 import { getTemplate, type PropSpec } from "../render/templates/catalog";
+import { useLayerBakeStatus } from "../timeline/templateBakeStatusStore";
 // EffectsSection + effects-related ipc calls removed in P12-a.
 
 interface Props {
@@ -574,6 +575,20 @@ function ImageOverlayFields({
   );
 }
 
+function BakeStatusLine({ layerId }: { layerId: string }) {
+  const { t } = useTranslation();
+  const status = useLayerBakeStatus(layerId);
+  const text = !status
+    ? t("property_panel.bake_idle")
+    : status.phase === "baking"
+      ? t("property_panel.bake_baking", { done: status.done, total: status.total })
+      : status.phase === "ready"
+        ? t("property_panel.bake_ready", { total: status.total })
+        : t("property_panel.bake_error");
+  const cls = `prop-bake-status is-${status?.phase ?? "idle"}`;
+  return <p className={cls}>{text}</p>;
+}
+
 function TemplateFields({
   layer,
   v,
@@ -618,6 +633,7 @@ function TemplateFields({
   return (
     <section className="prop-section">
       <h3>{t("property_panel.template")}</h3>
+      <BakeStatusLine layerId={layer.id} />
       <h4>{t("property_panel.transform")}</h4>
       <Field label={t("property_panel.x")}>
         <input

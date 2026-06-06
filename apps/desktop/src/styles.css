@@ -5080,3 +5080,7 @@ input.preview-timecode:focus {
   animation: template-bake-spin 0.8s linear infinite;
 }
 @keyframes template-bake-spin { to { transform: rotate(360deg); } }
+
+.prop-bake-status { margin: 0 0 8px; font-size: 12px; opacity: 0.8; }
+.prop-bake-status.is-error { color: #e5534b; }
+.prop-bake-status.is-ready { color: #46c46a; }
