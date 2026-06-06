@@ -112,6 +112,10 @@ export class TemplateFrameCache {
   /// closed out from under it (which caused "External Image has been detached"
   /// on WebGPU upload). When the store exceeds `maxFrames`, the LRU frame is
   /// evicted and `.close()`d.
+  ///
+  /// @returns The canonical cache-owned bitmap for this (cacheKey, frameIndex):
+  ///   `bmp` itself on first insert, or the EXISTING (possibly already-bound)
+  ///   bitmap on a same-(key,frame) re-set (in which case `bmp` has been closed).
   setFrame(cacheKey: string, frameIndex: number, bmp: ImageBitmap): ImageBitmap {
     const k = frameMapKey(cacheKey, frameIndex);
     const prev = this.store.get(k);
