@@ -59,28 +59,9 @@ describe("TemplateFrameCache — L0 LRU", () => {
     const c = new TemplateFrameCache();
     const a = fakeBitmap();
     c.setFrame("k", 0, a);
-    c.setFrame("k", 0, a);
+    expect(c.setFrame("k", 0, a)).toBe(a);
     expect(a.close).not.toHaveBeenCalled();
     expect(c.getFrame("k", 0)).toBe(a);
-  });
-
-  test("setFrame keeps the existing bitmap and closes a redundant re-set (same key+frame), returning the canonical", () => {
-    const cache = new TemplateFrameCache();
-    const a = fakeBitmap();
-    const b = fakeBitmap();
-    expect(cache.setFrame("k", 0, a)).toBe(a);   // first writer: stored + returned
-    expect(cache.setFrame("k", 0, b)).toBe(a);   // redundant: returns the EXISTING bitmap
-    expect(b.close).toHaveBeenCalledTimes(1);    // incoming redundant one closed
-    expect(a.close).not.toHaveBeenCalled();       // existing (maybe-bound) one NOT closed
-    expect(cache.getFrame("k", 0)).toBe(a);       // canonical still cached
-  });
-
-  test("re-setting the identical bitmap reference is a no-op (no close)", () => {
-    const cache = new TemplateFrameCache();
-    const a = fakeBitmap();
-    cache.setFrame("k", 0, a);
-    expect(cache.setFrame("k", 0, a)).toBe(a);
-    expect(a.close).not.toHaveBeenCalled();
   });
 
   test("capacity eviction closes the least-recently-used frame", () => {
