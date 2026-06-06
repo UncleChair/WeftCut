@@ -226,6 +226,18 @@ export class TemplateFrameCache {
     return new Blob([bytes], { type: "image/png" });
   }
 
+  /// True if the PNG for (cacheKey, frameIndex) exists on disk. Cheaper than
+  /// `readPng` (no byte read) — the baker uses it to skip already-baked frames.
+  /// Null project / not-found → false; permission errors propagate.
+  async hasPng(cacheKey: string, frameIndex: number): Promise<boolean> {
+    const dir = await rasterDirFor(cacheKey);
+    if (dir === null) return false;
+    const { join } = await import("@tauri-apps/api/path");
+    const { exists } = await import("@tauri-apps/plugin-fs");
+    const path = await join(dir, `${frameIndex}.png`);
+    return exists(path);
+  }
+
   /// Persist a PNG frame, creating the `<hash>` dir as needed. No-op when
   /// no project is open (nowhere to anchor `<workspace>/Cache/`).
   async writePng(cacheKey: string, frameIndex: number, png: Blob): Promise<void> {
