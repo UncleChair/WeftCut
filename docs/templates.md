@@ -211,11 +211,14 @@ shared raster function, so a heavier lever is a small add, not a separate path:
   distinct-content-count` so the union of warm targets never exceeds the cache cap
   and the LRU can't evict a still-targeted frame. Rastering is time-sliced into
   small batches scheduled on idle callbacks, so it never blocks the UI or the play
-  tick. It **fills ahead of time rather than speeding the harness** (one harness
-  per `templateId`, serialized), so sustained load with many distinct heavy
-  contents at once still falls back to the L0 on-demand path for the tail — which
-  remains the fallback for any not-yet-warmed frame (e.g. immediately after a
-  seek). Buys smooth playback; costs bounded RAM; no disk.
+  tick. Rasterization itself runs **off the main thread**: a small pool of
+  sandboxed rasterizer iframes turns each frame's SVG into a transferred bitmap
+  in parallel (the per-`templateId` render harness stays serial, but it is only
+  the cheap render stage), with an automatic fall-back to a main-thread raster if
+  the pool is unavailable. This keeps the cache filling ahead even under many
+  simultaneous templates. The L0 on-demand path remains the fall-back for any
+  not-yet-warmed frame (e.g. immediately after a seek). Buys smooth playback;
+  costs bounded RAM; no disk.
 - **L2 — persisted PNG (opt-in / auto-escalated).** The frame sequence is written
   to disk under the workspace `Cache/raster/`, one **PNG** per frame (PNG because
   the Canvas API's WebP encode is lossy and crisp text edges matter; ADR 0015),
