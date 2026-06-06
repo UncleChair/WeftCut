@@ -94,6 +94,7 @@ impl Manifest {
     /// composition grid.
     pub fn max_duration_us(&self) -> Option<i64> {
         self.max_duration_s
+            .filter(|&s| s > 0.0)
             .map(|s| (s * 1_000_000.0).round() as i64)
     }
 }
@@ -551,6 +552,31 @@ mod tests {
     /// single `countdown` exemplar. If `builtins()` is ever expanded or the
     /// id renamed, this guard surfaces it so the picker-UI / docs side stays
     /// in sync.
+    /// `max_duration_us` must return `None` for non-positive values (zero or
+    /// negative), matching the TS `resolveTemplateContentDurationUs` guard
+    /// (`max_duration_s > 0`). A positive value converts normally.
+    #[test]
+    fn max_duration_us_rejects_non_positive() {
+        let base = builtin_countdown().manifest;
+
+        // Positive → converts normally (5s = 5_000_000µs).
+        let mut m = base.clone();
+        m.max_duration_s = Some(5.0);
+        assert_eq!(m.max_duration_us(), Some(5_000_000));
+
+        // Zero → treated as uncapped (returns None).
+        m.max_duration_s = Some(0.0);
+        assert_eq!(m.max_duration_us(), None);
+
+        // Negative → also treated as uncapped.
+        m.max_duration_s = Some(-1.0);
+        assert_eq!(m.max_duration_us(), None);
+
+        // None → None (no change from before).
+        m.max_duration_s = None;
+        assert_eq!(m.max_duration_us(), None);
+    }
+
     #[test]
     fn builtins_cover_starter_set() {
         let actual: Vec<String> = builtins().iter().map(|t| t.id().to_string()).collect();

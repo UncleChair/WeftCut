@@ -2226,6 +2226,14 @@ impl ProjectActor {
                         crate::state::time::snap_frame_round(layer.t_start_us, new_fps);
                     layer.t_end_us =
                         crate::state::time::snap_frame_round(layer.t_end_us, new_fps);
+                    // Template src_in_us lives on the COMPOSITION grid (a window
+                    // offset into comp-frame content), unlike VideoClip/Audio
+                    // src_in_us which are on the source-PTS grid (intentionally
+                    // left untouched). Re-snap it to the new comp grid too.
+                    if let LayerParams::Template(p) = &mut layer.params {
+                        p.src_in_us =
+                            crate::state::time::snap_frame_round(p.src_in_us, new_fps);
+                    }
                 }
             }
             probe.composition.duration_us =
@@ -3290,13 +3298,14 @@ pub(crate) fn apply_update_layer_params(
                     // content_dur on off-grid fractional-`seconds` caps. src_in is
                     // already grid-aligned; min() keeps it < content_dur.
                     let max_src_in = (content_dur - 1).max(0);
-                    let new_src_in =
-                        crate::state::time::snap_frame_floor(src_in.min(max_src_in), fps);
-                    // Double-snap (floor then round) mirrors the OUT-cap math in
-                    // trim_delta_bounds: snap_frame_floor's µs output isn't
-                    // round-idempotent on /1001 rates and can land 1µs below a
-                    // grid point, so the outer round canonicalises it back onto
-                    // the grid while staying <= content end. NOT redundant.
+                    // Double-snap (floor then round) so new_src_in lands on the
+                    // canonical round grid (Rust snap_frame_floor truncates its
+                    // µs output and can sit 1µs below grid on /1001 rates). Floor
+                    // first keeps it < content_dur; round canonicalises the µs.
+                    let new_src_in = crate::state::time::snap_frame_round(
+                        crate::state::time::snap_frame_floor(src_in.min(max_src_in), fps),
+                        fps,
+                    );
                     // Largest grid t_end whose derived src_out stays <= content_dur.
                     let capped_end = crate::state::time::snap_frame_round(
                         crate::state::time::snap_frame_floor(
@@ -3640,7 +3649,18 @@ fn split_single_layer(
             p.src_in_us = p.src_in_us + split_offset;
         }
         LayerParams::Template(p) => {
-            p.src_in_us = p.src_in_us + split_offset;
+            // Only capped templates window content (see apply_trim_layer). An
+            // uncapped template keeps src_in_us = 0 across a split.
+            let capped = crate::templates::builtins()
+                .iter()
+                .find(|t| t.id() == p.template_id)
+                .and_then(|t| {
+                    crate::templates::resolve_template_max_dur_us(&t.manifest, &p.props)
+                })
+                .is_some();
+            if capped {
+                p.src_in_us = p.src_in_us + split_offset;
+            }
         }
         _ => {}
     }
@@ -3789,7 +3809,21 @@ pub(crate) fn apply_trim_layer(
                         p.src_in_us += clamped_delta;
                     }
                     LayerParams::Template(p) => {
-                        p.src_in_us += clamped_delta;
+                        // Only capped templates window their content; an uncapped
+                        // template (holdable overlay) keeps src_in_us = 0 — its
+                        // content animates over the layer width from frame 0.
+                        // (No uncapped builtin exists today, so this guard is
+                        // forward-looking; capped templates still scrub.)
+                        let capped = catalog
+                            .iter()
+                            .find(|t| t.id() == p.template_id)
+                            .and_then(|t| {
+                                crate::templates::resolve_template_max_dur_us(&t.manifest, &p.props)
+                            })
+                            .is_some();
+                        if capped {
+                            p.src_in_us += clamped_delta;
+                        }
                     }
                     _ => {}
                 }
@@ -4943,6 +4977,60 @@ mod tests {
             .expect("layer");
         assert_eq!(layer.t_start_us, 33_367);
         assert_eq!(layer.t_end_us, 1_001_000);
+    }
+
+    /// When the composition fps changes, a template layer's `src_in_us` (which
+    /// lives on the COMPOSITION grid, not the source-PTS grid) must also be
+    /// re-snapped to the new grid — just like `t_start_us` / `t_end_us`.
+    #[tokio::test]
+    async fn fps_change_re_snaps_template_src_in() {
+        // Add countdown seconds=6 at 30fps. IN-trim it to push src_in_us > 0.
+        // 30fps grid: trim IN edge to frame 30 = 1_000_000us.
+        // After trim: t_start=1_000_000, t_end=6_000_000, src_in=1_000_000.
+        let mut props: imbl::HashMap<String, serde_json::Value> = imbl::HashMap::new();
+        props.insert("seconds".into(), serde_json::json!(6));
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        let layer_id = handle
+            .add_layer(Actor::User, track_id, template_layer(props), 0, 6_000_000)
+            .await
+            .expect("add_layer");
+        handle
+            .trim_layer(Actor::User, layer_id, LayerEdge::In, 1_000_000, false)
+            .await
+            .expect("trim IN");
+
+        // Switch to 29.97fps (30000/1001).
+        handle
+            .set_composition(
+                Actor::User,
+                CompositionPatch {
+                    fps: Some(Rational::FPS_29_97),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("set_composition");
+
+        let snap = handle.snapshot().await;
+        let layer = snap
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .find(|l| l.id == layer_id)
+            .expect("layer");
+        let LayerParams::Template(p) = &layer.params else {
+            panic!("expected Template");
+        };
+        // src_in_us must be on the 29.97 grid: snap_frame_round(src_in_us, 29.97) == src_in_us.
+        let fps = Rational::FPS_29_97;
+        assert_eq!(
+            p.src_in_us,
+            crate::state::time::snap_frame_round(p.src_in_us, fps),
+            "src_in_us must be on the new 29.97fps grid after fps change"
+        );
+        // Sanity: src_in must still be > 0 (we trimmed it).
+        assert!(p.src_in_us > 0, "src_in_us must remain > 0 after fps change");
     }
 
     #[tokio::test]
@@ -8290,5 +8378,102 @@ mod tests {
         } else {
             panic!("not a template");
         }
+    }
+
+    /// When `seconds` shrinks below the current `src_in_us`, the clamp forces
+    /// `new_src_in = snap_frame_floor(src_in.min(max_src_in), fps)`. At 29.97fps
+    /// (30000/1001) `snap_frame_floor`'s µs output can land 1µs below the
+    /// canonical round-grid point; the double-snap (floor + round) must
+    /// canonicalise it so the resulting `src_in_us` is round-grid-idempotent.
+    #[tokio::test]
+    async fn seconds_shrink_clamp_src_in_lands_on_round_grid() {
+        // Use 29.97fps so the /1001 rate exercises the truncation edge case.
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+
+        // Switch to 29.97fps first so layers land on that grid from the start.
+        handle
+            .set_composition(
+                Actor::User,
+                CompositionPatch {
+                    fps: Some(Rational::FPS_29_97),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("set_composition to 29.97fps");
+
+        // Add countdown seconds=6. Layer [0, 6_000_000] snaps to the 29.97 grid.
+        let mut props: imbl::HashMap<String, serde_json::Value> = imbl::HashMap::new();
+        props.insert("seconds".into(), serde_json::json!(6));
+        let layer_id = handle
+            .add_layer(Actor::User, track_id, template_layer(props), 0, 6_000_000)
+            .await
+            .expect("add_layer");
+
+        // IN-trim to ~3s (3_003_033us on the 29.97 grid = frame 90).
+        // After trim: t_start ≈ 3_003_033, src_in ≈ 3_003_033.
+        handle
+            .trim_layer(Actor::User, layer_id, LayerEdge::In, 3_000_000, false)
+            .await
+            .expect("trim IN to ~3s");
+
+        // Verify src_in is nonzero before the shrink.
+        {
+            let snap = handle.snapshot().await;
+            let l = snap
+                .tracks
+                .iter()
+                .flat_map(|t| t.layers.iter())
+                .find(|l| l.id == layer_id)
+                .expect("layer");
+            let LayerParams::Template(p) = &l.params else { panic!("expected Template") };
+            assert!(p.src_in_us > 0, "src_in must be > 0 before shrink");
+        }
+
+        // Shrink seconds to 2 → content_dur = 2_000_000µs. src_in (≈3s) > max_src_in
+        // (1_999_999µs) → clamp branch fires.
+        let mut patch_props: std::collections::HashMap<String, serde_json::Value> =
+            std::collections::HashMap::new();
+        patch_props.insert("seconds".into(), serde_json::json!(2));
+        handle
+            .update_layer_params(
+                Actor::User,
+                layer_id,
+                LayerParamsPatch::Template(TemplatePatch {
+                    props: Some(patch_props),
+                    ..Default::default()
+                }),
+            )
+            .await
+            .expect("update_layer_params seconds=2");
+
+        let snap = handle.snapshot().await;
+        let layer = snap
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .find(|l| l.id == layer_id)
+            .expect("layer");
+        let LayerParams::Template(p) = &layer.params else { panic!("expected Template") };
+
+        let fps = Rational::FPS_29_97;
+        // The clamped src_in_us must be round-grid-idempotent (the double-snap fix).
+        assert_eq!(
+            p.src_in_us,
+            crate::state::time::snap_frame_round(p.src_in_us, fps),
+            "src_in_us must land on the canonical round grid after seconds-shrink clamp"
+        );
+        // Must be within the new content (< 2_000_000µs).
+        assert!(
+            p.src_in_us < 2_000_000,
+            "clamped src_in_us must be within new content (< 2s), got {}",
+            p.src_in_us
+        );
+        // t_end must also be clamped (within new content).
+        assert!(
+            layer.t_end_us <= layer.t_start_us + 2_000_000,
+            "t_end_us must be within new content window"
+        );
     }
 }
