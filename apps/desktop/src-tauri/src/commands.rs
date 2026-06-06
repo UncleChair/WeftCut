@@ -1090,6 +1090,7 @@ pub async fn project_save_as(
         .set_workspace(&path)
         .map_err(|e| format!("cache set_workspace: {e:#}"))?;
     workspace.set(path.clone());
+    crate::workspace::allow_workspace_fs(&app, &path);
     // Workspace change resets any in-flight agent session — view mode
     // doesn't survive across project switches.
     let _ = crate::agent_session::end_and_emit(&app, &agent_session);
@@ -1133,6 +1134,7 @@ pub async fn project_open(
         .set_workspace(&path)
         .map_err(|e| format!("cache set_workspace: {e:#}"))?;
     workspace.set(path.clone());
+    crate::workspace::allow_workspace_fs(&app, &path);
     let _ = crate::agent_session::end_and_emit(&app, &agent_session);
     // Install (or rotate) the LogBus rooted at this workspace's Logs/.
     log_slot.install(crate::logs::LogBus::spawn(&path, app.clone()));
@@ -1215,6 +1217,7 @@ pub async fn project_new_workspace(
         .set_workspace(&target)
         .map_err(|e| format!("cache set_workspace: {e:#}"))?;
     workspace.set(target.clone());
+    crate::workspace::allow_workspace_fs(&app, &target);
     let _ = crate::agent_session::end_and_emit(&app, &agent_session);
     log_slot.install(crate::logs::LogBus::spawn(&target, app.clone()));
 

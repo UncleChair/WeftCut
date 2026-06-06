@@ -15,7 +15,21 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
+use tauri::AppHandle;
+use tauri_plugin_fs::FsExt;
+
 use crate::state::media::MediaItem;
+
+/// Allow the fs plugin to read/write under the open workspace folder.
+/// L2 template raster frames live at `<workspace>/Cache/raster/...`, a
+/// user-chosen path the static `default.json` scope can't express. Grant it
+/// at every workspace-activation site. Best-effort: a scope error is logged,
+/// not fatal — the editor still runs, L2 just degrades to live rastering.
+pub fn allow_workspace_fs<R: tauri::Runtime>(app: &AppHandle<R>, workspace: &Path) {
+    if let Err(e) = app.fs_scope().allow_directory(workspace, true) {
+        tracing::warn!("fs_scope allow {}: {e:#}", workspace.display());
+    }
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct WorkspaceSlot {
