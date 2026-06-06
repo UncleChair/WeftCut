@@ -108,8 +108,8 @@ describe("L2 template pre-bake disk round-trip (real WebView2)", function () {
 
     firstHashName = r.hashName;
 
-    // All content frames baked.
-    expect(r.pngCount).toBeGreaterThanOrEqual(CONTENT_FRAMES);
+    // Exactly the content-frame count — the baker writes one PNG per frame.
+    expect(r.pngCount).toBe(CONTENT_FRAMES);
 
     // The hash dir name is an 8-char lowercase hex string (FNV-1a 32-bit).
     expect(r.hashName).toMatch(/^[0-9a-f]{8}$/);
@@ -119,25 +119,76 @@ describe("L2 template pre-bake disk round-trip (real WebView2)", function () {
 
   // ── TEST 2: disk hit skips re-raster ─────────────────────────────────────
 
-  it("re-resolving baked frames reads from disk/L0 without fresh rasters", async () => {
+  it("reload reads from disk without re-rastering", async () => {
     if (!projectLayerId) throw new Error("setup: no layer id");
     if (!firstHashName) throw new Error("test 1 must pass first (bake not confirmed on disk)");
 
-    // The raster-count instrument (`window.__weftcutTemplatePerf`) counts every
-    // call to the real `rasterTemplateFrame` (harness render + SVG rasterize).
-    // After a bake the frames are in L0 (baker calls `warm`) OR on disk (baker
-    // calls `persist`). Either path — L0 hit or disk PNG → `createImageBitmap`
-    // — must NOT call `rasterTemplateFrame`. We set the counter to 0, resolve
-    // several frames via the sprite path, and assert the counter stays at 0.
+    // Step A: resolve the cacheKey for this layer (needed for the L0 eviction
+    // and baked-index assertion below).
+    const keyR = await browser.executeAsync((layerId, done) => {
+      window.__weftcutTest
+        .cacheKeyForLayer(layerId)
+        .then((ck) => done({ ok: true, cacheKey: ck }))
+        .catch((e) => done({ ok: false, error: String(e) }));
+    }, projectLayerId);
 
+    if (!keyR.ok) throw new Error("cacheKeyForLayer failed: " + keyR.error);
+    if (!keyR.cacheKey) throw new Error("cacheKeyForLayer returned null — layer not found");
+
+    const cacheKey = keyR.cacheKey;
+    console.log(`[e2e] disk-hit check: cacheKey resolved (len=${cacheKey.length})`);
+
+    // Step B: evict every L0 (in-RAM) frame for this cacheKey. Without this,
+    // the baker's `warm` pass already filled L0 with all 150 frames (cap 240),
+    // so the renders===0 assertion would be satisfied by L0 hits — never
+    // exercising the actual disk read path. After this call, a resolve MUST
+    // either read from disk (L2) or trigger a fresh raster.
+    const evictR = await browser.execute((ck) => {
+      try {
+        window.__weftcutTest.clearTemplateCacheKey(ck);
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: String(e) };
+      }
+    }, cacheKey);
+
+    if (!evictR.ok) throw new Error("clearTemplateCacheKey failed: " + evictR.error);
+    console.log("[e2e] L0 evicted for cacheKey");
+
+    // Step C: assert the baked-key index marks this cacheKey as baked. If it
+    // doesn't, the `resolveTemplateFrame` disk branch is never entered and the
+    // test would rely on fallback rasters — a loud fail here is correct.
+    const indexR = await browser.execute((ck) => {
+      return window.__weftcutTest.bakedIndexHas(ck);
+    }, cacheKey);
+
+    if (!indexR) {
+      throw new Error(
+        "bakedIndexHas returned false — sharedBakedKeyIndex was not populated by the baker. " +
+          "The disk-read branch in resolveTemplateFrame cannot be entered. " +
+          "This is a real product bug: the baked-key index is not being updated after writePng."
+      );
+    }
+    console.log("[e2e] baked-key index confirms cacheKey is marked baked");
+
+    // Step D: arm the raster counter, then resolve frames. With L0 cleared and
+    // the baked-key index populated, resolveTemplateFrame MUST take the disk
+    // path (readPng → createImageBitmap). Any fresh raster (renders > 0) means
+    // the disk read path is broken.
+    //
+    // The async settle: renderTemplateSpriteFrames already awaits each
+    // captureAndBind to completion before resolving its promise (it polls until
+    // the sprite's texture resource changes or onLoaded fires, with a 10 s
+    // deadline). With L0 cleared the bind is always async (disk read), so the
+    // per-time waiter inside that hook guarantees all disk reads finish before
+    // the promise resolves — reads the counter only after all frames settle.
     const r = await browser.executeAsync((done) => {
       // Arm the raster counter BEFORE resolving.
       window.__weftcutTemplatePerf = { renders: 0 };
 
       // Drive the REAL TemplateSprite update path (same function the compositor
       // calls) across 5 distinct layer-relative times. Each call internally
-      // reaches resolveTemplateFrame → disk-first or L0; neither calls
-      // rasterTemplateFrame for a frame that's already baked/cached.
+      // reaches resolveTemplateFrame → disk PNG → createImageBitmap.
       window.__weftcutTest
         .renderTemplateSpriteFrames({
           templateId: "countdown",
@@ -167,11 +218,11 @@ describe("L2 template pre-bake disk round-trip (real WebView2)", function () {
     if (!r.ok) throw new Error("renderTemplateSpriteFrames (disk-hit check) failed: " + r.error);
 
     expect(r.frameCount).toBe(5);
-    // Any fresh raster is a regression: it means a frame was neither in L0
-    // nor read from the baked PNGs on disk.
+    // Any fresh raster is a regression: L0 was cleared and the baked-key index
+    // confirmed the frames are on disk — renders > 0 means disk reads are broken.
     expect(r.renders).toBe(0);
 
-    console.log(`[e2e] disk-hit check: ${r.renders} fresh rasters for ${r.frameCount} frames (expected 0)`);
+    console.log(`[e2e] disk-hit check: ${r.renders} fresh rasters for ${r.frameCount} frames (expected 0, L0 was cleared)`);
   });
 
   // ── TEST 3: GC removes orphan hash dir after a prop change ────────────────

@@ -20,7 +20,7 @@ import {
   type CanvasPreset,
 } from "../ipc";
 import { hashCacheKey } from "../render/templates/frameCache";
-import { sharedTemplateFrameCache } from "../render/templates/templateRaster";
+import { sharedTemplateFrameCache, sharedBakedKeyIndex } from "../render/templates/templateRaster";
 import { templateFrameDescriptor } from "../render/templates/templateFrameDescriptor";
 import { getTemplate, type Template, type TemplateManifest } from "../render/templates/catalog";
 import { requestPrebake } from "../render/templates/prebakeBus";
@@ -170,6 +170,11 @@ export interface E2EHook {
     layerId: string;
     props: Record<string, unknown>;
   }): Promise<void>;
+  /// Evict every L0 (in-RAM) frame for a cacheKey, so a subsequent resolve must
+  /// come from disk (L2) or a fresh raster. Used to prove the disk read path.
+  clearTemplateCacheKey(cacheKey: string): void;
+  /// Whether the in-RAM baked-key index currently marks this cacheKey baked.
+  bakedIndexHas(cacheKey: string): boolean;
 }
 
 function hookSlot(): Partial<E2EHook> {
@@ -404,6 +409,14 @@ export function installTemplateHarnessHook(): void {
 
   hookSlot().patchTemplateLayerProps = async ({ layerId, props }) => {
     await updateLayerParams(layerId, { kind: "Template", props });
+  };
+
+  hookSlot().clearTemplateCacheKey = (cacheKey: string): void => {
+    sharedTemplateFrameCache.clearKey(cacheKey);
+  };
+
+  hookSlot().bakedIndexHas = (cacheKey: string): boolean => {
+    return sharedBakedKeyIndex.has(cacheKey);
   };
 }
 
