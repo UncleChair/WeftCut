@@ -277,12 +277,14 @@ rasterizer the preview used, so the exported template matches the preview.
 The catalog picker drives `render(t)` through the same harness the timeline and
 export use, rather than mounting a free-running iframe — so what the picker shows
 is the same SVG at the same timestamps those paths rasterize. The **selected
-template's large preview animates**: a `requestAnimationFrame` loop advances `t`
-over `[0, duration)` in real time (sampled at a preview frame rate), re-rendering
-each frame through the harness and binding it as an object URL (the previous
-URL is revoked on each swap, so the working set stays bounded). The loop reads
-the current props, so prop edits reflect live; `prefers-reduced-motion` falls
-back to the static first frame. Card thumbnails stay static single frames (one
+template's large preview animates on hover**: while the pointer is over the
+preview, a `requestAnimationFrame` loop advances `t` over `[0, duration)` in real
+time (sampled at a preview frame rate), re-rendering each frame through the
+harness and binding it as an object URL (the previous URL is revoked on each
+swap, so the working set stays bounded); moving the pointer away reverts to the
+static first frame (`t=0`). Hovering plays from the start. The loop reads the
+current props, so prop edits reflect live; `prefers-reduced-motion` skips the
+loop and keeps the static frame. Card thumbnails stay static single frames (one
 representative still). Prop edits are debounced so editing stays responsive.
 
 ## Agent surface

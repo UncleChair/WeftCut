@@ -348,6 +348,10 @@ function TemplatePreview({
   const urlRef = useRef<string | null>(null);
   const [svgUrl, setSvgUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Hover gates the animated preview: it plays only while the pointer is over
+  // the preview (from t=0), and reverts to the static first frame on leave.
+  // Only meaningful when `animate` (the large preview); cards never set it.
+  const [hovered, setHovered] = useState(false);
 
   // (Re)load the harness whenever the template identity changes. The catalog's
   // `getTemplate` is a synchronous in-memory lookup returning the full
@@ -386,11 +390,12 @@ function TemplatePreview({
   }, []);
 
   // Render the current frame. When `animate` is true (the selected large
-  // preview) and the user hasn't asked for reduced motion, run a real-time
-  // loop: advance t over [0, duration) at ~PREVIEW_FPS via rAF, re-rendering
-  // each frame through the same harness. Otherwise render a single static frame
-  // at t=0 (cards, reduced-motion). Awaits the in-flight load so the first
-  // render after a template switch doesn't race the iframe mount.
+  // preview), the user is HOVERING the preview, and reduced motion isn't
+  // requested, run a real-time loop: advance t over [0, duration) at
+  // ~PREVIEW_FPS via rAF, re-rendering each frame through the same harness.
+  // Otherwise render a single static frame at t=0 (cards, not-hovered,
+  // reduced-motion). Awaits the in-flight load so the first render after a
+  // template switch doesn't race the iframe mount.
   useEffect(() => {
     const harness = harnessRef.current;
     const loaded = loadedRef.current;
@@ -402,8 +407,8 @@ function TemplatePreview({
       typeof window.matchMedia === "function" &&
       window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-    // Static path: one frame at t=0 (existing behavior).
-    if (!animate || prefersReducedMotion) {
+    // Static path: one frame at t=0 (cards, not hovered, or reduced-motion).
+    if (!animate || !hovered || prefersReducedMotion) {
       let cancelled = false;
       loaded
         .then(() => harness.renderFrameSvg(PREVIEW_T_SEC, durSec, props))
@@ -455,7 +460,9 @@ function TemplatePreview({
     // `props` identity changes on each edit; the parent debounces it. Including
     // it here restarts the loop (from t=0) with the new props on each debounced
     // edit — acceptable and keeps the preview truthful to the current props.
-  }, [template.id, template.default_duration_s, props, animate]);
+    // `hovered` starts/stops the loop: entering plays from t=0, leaving falls
+    // back to the static branch above (resets to the first frame).
+  }, [template.id, template.default_duration_s, props, animate, hovered]);
 
   // Revoke the last blob URL on unmount.
   useEffect(
@@ -473,7 +480,16 @@ function TemplatePreview({
           ? "template-preview-host template-preview-large"
           : "template-preview-host"
       }
-      style={{ width, height: scaledHeight }}
+      // `.template-preview-host` is `pointer-events: none` (so card clicks pass
+      // through to the card button). The animated large preview needs to RECEIVE
+      // hover, so re-enable pointer events on it; cards keep the default.
+      style={{
+        width,
+        height: scaledHeight,
+        ...(animate ? { pointerEvents: "auto" as const } : null),
+      }}
+      onMouseEnter={animate ? () => setHovered(true) : undefined}
+      onMouseLeave={animate ? () => setHovered(false) : undefined}
     >
       {svgUrl && (
         <img

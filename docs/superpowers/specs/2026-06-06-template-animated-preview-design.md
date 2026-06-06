@@ -10,18 +10,21 @@ countdown looks like a frozen "5".
 
 ## Goal
 
-The **right-column large preview of the currently-selected template** plays its
-animation on a **continuous real-time loop** while that template is selected.
-Card thumbnails stay static. Switching the selection (or closing the picker)
+The **right-column large preview of the selected template** plays its animation
+on a **real-time loop while the pointer is hovering the preview** — hovering
+plays from the start; the static first frame shows otherwise. Card thumbnails
+stay static. Leaving the preview (or switching selection / closing the picker)
 resets/stops the loop.
 
-- **Scope:** only the large (selected) preview animates. Cards remain static
-  single-frame thumbnails (unchanged).
-- **Loop:** continuous — `t` runs `[0, duration)` then wraps to 0, repeating.
+- **Scope:** only the large preview animates, and only on hover. Cards remain
+  static single-frame thumbnails (unchanged).
+- **Trigger:** pointer hover over the large preview. Enter → play from `t=0`;
+  leave → revert to the static first frame.
+- **Loop:** while hovered, `t` runs `[0, duration)` then wraps to 0, repeating.
 - **Timing:** real-time — the loop maps wall-clock 1:1 to template time (a 5 s
   countdown takes 5 s per loop), sampled at a preview frame rate (~20 fps).
-- **Reset:** changing the selected template restarts the new preview from `t=0`;
-  closing the picker / unmounting stops the loop.
+- **Reset:** hover-leave (or selection change / picker close) returns to the
+  static first frame and stops the loop.
 
 ## Approach
 
@@ -65,12 +68,17 @@ object URL → `<img>` scaled to fit).
   (compatible with the existing debounced prop state).
 
 ### Lifecycle
-- Start the loop in the effect that already loads the harness, once `harness`
-  is ready and `animate` is true.
-- Restart from `t=0` when the selected template (`template.id`) changes — the
-  component already keys/re-runs its effect on template change; reset `startMs`.
-- Stop (cancel `rAF`, revoke URL) on unmount / picker close / when `animate`
-  flips false.
+- **Hover gates the loop.** A `hovered` state (set by `onMouseEnter`/
+  `onMouseLeave` on the large preview host) is in the render effect's deps. Enter
+  → the effect runs the loop with a fresh `startMs` (plays from `t=0`). Leave →
+  the effect re-runs into the static branch (renders `t=0`, resetting). The host
+  has CSS `pointer-events: none` (so card clicks pass through to the card
+  button); the animated large preview re-enables `pointer-events: auto` so it
+  receives hover. Cards never set `hovered`.
+- Restart from `t=0` when the selected template (`template.id`) changes (the
+  effect re-runs; `startMs` resets) or on each debounced prop edit.
+- Stop (cancel `rAF`, revoke URL) on unmount / picker close / hover-leave / when
+  `animate` flips false.
 - **Reduced motion:** if `window.matchMedia("(prefers-reduced-motion: reduce)")`
   matches, skip the loop and render the static `t=0` frame (accessibility).
 
