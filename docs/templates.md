@@ -280,7 +280,8 @@ is the same SVG at the same timestamps those paths rasterize. The **selected
 template's large preview animates on hover**: while the pointer is over the
 preview, a `requestAnimationFrame` loop advances `t` over `[0, duration)` in real
 time (sampled at a user-adjustable preview frame rate — a number input under the
-preview, default ~20 fps), re-rendering each frame through the
+preview, defaulting to the composition frame rate), re-rendering each frame
+through the
 harness and binding it as an object URL (the previous URL is revoked on each
 swap, so the working set stays bounded); moving the pointer away reverts to the
 static first frame (`t=0`). Hovering plays from the start. The loop reads the

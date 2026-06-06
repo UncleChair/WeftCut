@@ -231,7 +231,14 @@ function TemplateForm({
       }}
     >
       <h3>{t("template_picker.preview_heading")}</h3>
-      <TemplatePreview template={template} props={debouncedProps} width={480} large animate />
+      <TemplatePreview
+        template={template}
+        props={debouncedProps}
+        width={480}
+        large
+        animate
+        canvasFps={fpsNum / fpsDen}
+      />
 
       <h3>{t("template_picker.props_heading")}</h3>
       {propKeys.length === 0 ? (
@@ -335,12 +342,17 @@ function TemplatePreview({
   width,
   large,
   animate,
+  canvasFps,
 }: {
   template: TemplateSummary;
   props: Record<string, unknown>;
   width: number;
   large?: boolean;
   animate?: boolean;
+  /// Composition frame rate (rounded). When provided, it's the DEFAULT preview
+  /// playback fps (clamped to the input bounds); otherwise falls back to
+  /// `PREVIEW_FPS`. The user can still override via the fps input.
+  canvasFps?: number;
 }) {
   const [w, h] = template.size;
   // Fixed 16:9 preview box of the given `width`, so a large or oddly-shaped
@@ -363,7 +375,18 @@ function TemplatePreview({
   const [hovered, setHovered] = useState(false);
   // User-adjustable playback frame rate for the hover loop (frames per second);
   // higher = smoother but more renders. Only surfaced on the animated preview.
-  const [previewFps, setPreviewFps] = useState(PREVIEW_FPS);
+  // Defaults to the composition fps (so the preview plays at the rate the
+  // template will actually be sampled), clamped to the input bounds; falls back
+  // to PREVIEW_FPS when no canvas fps is supplied.
+  const [previewFps, setPreviewFps] = useState(() =>
+    Math.min(
+      PREVIEW_FPS_MAX,
+      Math.max(
+        PREVIEW_FPS_MIN,
+        canvasFps && Number.isFinite(canvasFps) ? Math.round(canvasFps) : PREVIEW_FPS,
+      ),
+    ),
+  );
 
   // (Re)load the harness whenever the template identity changes. The catalog's
   // `getTemplate` is a synchronous in-memory lookup returning the full
