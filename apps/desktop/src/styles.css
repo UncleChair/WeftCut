@@ -5061,3 +5061,22 @@ input.preview-timecode:focus {
 .button-secondary:hover {
   background: #2d3748;
 }
+
+.template-bake-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  pointer-events: none;
+}
+.template-bake-dot.is-ready { background: #46c46a; }
+.template-bake-dot.is-error { background: #e5534b; }
+.template-bake-dot.is-baking {
+  background: transparent;
+  border: 1.5px solid rgba(255, 255, 255, 0.85);
+  border-top-color: transparent;
+  animation: template-bake-spin 0.8s linear infinite;
+}
+@keyframes template-bake-spin { to { transform: rotate(360deg); } }

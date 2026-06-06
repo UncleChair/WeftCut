@@ -184,6 +184,9 @@ const zhCN: Resources = {
     track_label: "轨道 {{n}}",
     resize_track_hint: "拖动以调整该轨道高度",
     prebake_now: "立即预烘焙",
+    bake_dot_baking: "预烘焙中…",
+    bake_dot_ready: "已预烘焙",
+    bake_dot_error: "预烘焙失败",
   },
   peek: {
     heading: "播放头附近（{{count}}）",

@@ -33,6 +33,7 @@ import {
 } from "../settings/appSettingsStore";
 import { useShortcuts, type OverrideMap } from "../shortcuts";
 import { requestPrebake } from "../render/templates/prebakeBus";
+import { useLayerBakePhase } from "./templateBakeStatusStore";
 
 // Zoom + height bounds. The default matches the pre-refactor constant so
 // projects that have never written `view.json` look identical to before.
@@ -1207,6 +1208,21 @@ function LayerContextMenu({
   );
 }
 
+/// Small status dot on a Template layer block. Phase-only (no count) so it
+/// re-renders only on phase change. Hidden when idle (selector returns null).
+function TemplateBakeDot({ layerId }: { layerId: string }) {
+  const { t } = useTranslation();
+  const phase = useLayerBakePhase(layerId);
+  if (!phase) return null;
+  const label =
+    phase === "baking"
+      ? t("timeline.bake_dot_baking", { defaultValue: "Pre-baking…" })
+      : phase === "ready"
+        ? t("timeline.bake_dot_ready", { defaultValue: "Pre-baked" })
+        : t("timeline.bake_dot_error", { defaultValue: "Pre-bake failed" });
+  return <span className={`template-bake-dot is-${phase}`} title={label} aria-label={label} />;
+}
+
 /// `docs/ab-roll-redesign` R.5b. The pill IS the setting: a click
 /// flips the app-level `display_mode` (`appSettingsSet` round-trips
 /// through Rust which emits `app_settings:changed` so every
@@ -1872,6 +1888,7 @@ function LayerBlock({
       title={`${layer.kind}: ${formatTimecode(liveStart, fpsNum, fpsDen)} → ${formatTimecode(liveEnd, fpsNum, fpsDen)}`}
     >
       <span className="layer-label">{label}</span>
+      {layer.kind === "Template" && <TemplateBakeDot layerId={layer.id} />}
     </div>
   );
 }

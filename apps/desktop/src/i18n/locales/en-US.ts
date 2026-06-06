@@ -186,6 +186,9 @@ const enUS = {
     separate_audio: "Separate audio to new track",
     no_actions_here: "(no actions for this layer)",
     prebake_now: "Pre-bake now",
+    bake_dot_baking: "Pre-baking…",
+    bake_dot_ready: "Pre-baked",
+    bake_dot_error: "Pre-bake failed",
   },
   peek: {
     heading: "Near playhead ({{count}})",
