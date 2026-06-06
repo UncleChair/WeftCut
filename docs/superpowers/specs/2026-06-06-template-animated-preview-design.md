@@ -23,8 +23,9 @@ resets/stops the loop.
 - **Loop:** while hovered, `t` runs `[0, duration)` then wraps to 0, repeating.
 - **Timing:** real-time — the loop maps wall-clock 1:1 to template time (a 5 s
   countdown takes 5 s per loop), sampled at a **user-adjustable** preview frame
-  rate (defaulting to the composition frame rate, clamped 1–60) — a number input
-  under the preview drives the loop's playback fps.
+  rate (defaulting to the composition frame rate, floored at 1, no upper cap so
+  it follows canvases above 60) — a number input under the preview drives the
+  loop's playback fps; the loop is naturally bounded by rAF + harness throughput.
 - **Reset:** hover-leave (or selection change / picker close) returns to the
   static first frame and stops the loop.
 
