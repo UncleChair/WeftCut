@@ -111,6 +111,9 @@ export function createIframeRasterSlot(): RasterSlot {
           reject(new Error("rasterSlot: raster timed out"));
         }, RASTER_TIMEOUT_MS);
         pending.set(id, { resolve, reject, timer });
+        // targetOrigin MUST stay "*": the sandbox (no allow-same-origin) gives
+        // the iframe an opaque null origin, so any specific origin would be
+        // rejected and silently break every raster. Do not "tighten" this.
         win.postMessage({ type: "raster", id, svg }, "*");
       });
     },
