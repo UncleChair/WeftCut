@@ -318,13 +318,15 @@ function useDebounced<T>(value: T, delay: number): T {
 /// frame — adequate for the picker, which only needs a representative still.
 /// FOLLOW-UP: a scrub slider could let the user preview any t.
 const PREVIEW_T_SEC = 0;
-/// DEFAULT frame rate for the looping picker preview (the selected template's
-/// large preview); the user can change it via the preview's fps input. ~20 fps
-/// is smooth enough for the arc sweep while keeping the live re-render loop cheap
-/// (one preview animates at a time). Bounds clamp absurd input.
+/// Fallback frame rate for the looping picker preview when no canvas fps is
+/// available; normally the preview defaults to the composition frame rate. The
+/// user can change it via the preview's fps input. There's no upper clamp (it
+/// follows the canvas, which may exceed 60); the live re-render loop is
+/// naturally bounded by rAF + harness throughput, so a high value just renders
+/// as fast as the harness allows. Only the lower bound matters: fps must be >= 1
+/// (a 0/negative value would make the frame interval infinite/negative).
 const PREVIEW_FPS = 20;
 const PREVIEW_FPS_MIN = 1;
-const PREVIEW_FPS_MAX = 60;
 
 /// Live preview of a template's CURRENT frame, captured through the SAME
 /// `TemplateHarness` the timeline/export use — so picker, timeline, and export
@@ -376,15 +378,13 @@ function TemplatePreview({
   // User-adjustable playback frame rate for the hover loop (frames per second);
   // higher = smoother but more renders. Only surfaced on the animated preview.
   // Defaults to the composition fps (so the preview plays at the rate the
-  // template will actually be sampled), clamped to the input bounds; falls back
-  // to PREVIEW_FPS when no canvas fps is supplied.
+  // template will actually be sampled) with no upper clamp — it follows the
+  // canvas even above 60. Only the >= 1 floor applies. Falls back to PREVIEW_FPS
+  // when no canvas fps is supplied.
   const [previewFps, setPreviewFps] = useState(() =>
-    Math.min(
-      PREVIEW_FPS_MAX,
-      Math.max(
-        PREVIEW_FPS_MIN,
-        canvasFps && Number.isFinite(canvasFps) ? Math.round(canvasFps) : PREVIEW_FPS,
-      ),
+    Math.max(
+      PREVIEW_FPS_MIN,
+      canvasFps && Number.isFinite(canvasFps) ? Math.round(canvasFps) : PREVIEW_FPS,
     ),
   );
 
@@ -554,15 +554,12 @@ function TemplatePreview({
           <input
             type="number"
             min={PREVIEW_FPS_MIN}
-            max={PREVIEW_FPS_MAX}
             step={1}
             value={previewFps}
             onChange={(e) => {
               const n = Math.round(Number(e.target.value));
               if (Number.isFinite(n)) {
-                setPreviewFps(
-                  Math.min(PREVIEW_FPS_MAX, Math.max(PREVIEW_FPS_MIN, n)),
-                );
+                setPreviewFps(Math.max(PREVIEW_FPS_MIN, n));
               }
             }}
           />
