@@ -70,4 +70,60 @@ describe("TemplateBaker", () => {
     await drain(pending);
     expect(persist).not.toHaveBeenCalled();
   });
+
+  it("emits baking on setTargets then ready when all frames complete", async () => {
+    const pending: (() => void)[] = [];
+    const emits: { k: string; phase: string; done: number; total: number }[] = [];
+    const baker = new TemplateBaker({
+      schedule: (cb) => { pending.push(cb); return pending.length; },
+      cancel: vi.fn(),
+      isOnDisk: async () => false,
+      persist: async () => {},
+      warm: vi.fn(),
+      onStatus: (k, s) => emits.push({ k, ...s }),
+      batchSize: 2,
+    });
+    baker.setTargets([{ cacheKey: "a", contentFrame: 0, contentDurationFrames: 3, render: async () => makeFakeBitmap() }]);
+    expect(emits[0]).toEqual({ k: "a", phase: "baking", done: 0, total: 3 });
+    await drain(pending);
+    expect(emits[emits.length - 1]).toEqual({ k: "a", phase: "ready", done: 3, total: 3 });
+  });
+
+  it("reaches ready via skips when every frame is already on disk (no render)", async () => {
+    const pending: (() => void)[] = [];
+    const emits: { phase: string; done: number; total: number }[] = [];
+    const render = vi.fn(async () => makeFakeBitmap());
+    const baker = new TemplateBaker({
+      schedule: (cb) => { pending.push(cb); return pending.length; },
+      cancel: vi.fn(),
+      isOnDisk: async () => true,
+      persist: async () => {},
+      warm: vi.fn(),
+      onStatus: (_k, s) => emits.push(s),
+      batchSize: 2,
+    });
+    baker.setTargets([{ cacheKey: "a", contentFrame: 0, contentDurationFrames: 3, render }]);
+    await drain(pending);
+    expect(render).not.toHaveBeenCalled();
+    expect(emits[emits.length - 1]).toEqual({ phase: "ready", done: 3, total: 3 });
+  });
+
+  it("emits error when a frame's persist throws, with counts frozen", async () => {
+    const pending: (() => void)[] = [];
+    const emits: { phase: string; done: number; total: number }[] = [];
+    const baker = new TemplateBaker({
+      schedule: (cb) => { pending.push(cb); return pending.length; },
+      cancel: vi.fn(),
+      isOnDisk: async () => false,
+      persist: async () => { throw new Error("disk full"); },
+      warm: vi.fn(),
+      onStatus: (_k, s) => emits.push(s),
+      batchSize: 2,
+    });
+    baker.setTargets([{ cacheKey: "a", contentFrame: 0, contentDurationFrames: 3, render: async () => makeFakeBitmap() }]);
+    await drain(pending);
+    const last = emits[emits.length - 1]!;
+    expect(last.phase).toBe("error");
+    expect(last.done).toBe(0);
+  });
 });
