@@ -41,6 +41,10 @@ export interface CompositorPerfSnapshot {
   /// Last preview-only upcoming-clip prewarm attempt. Null before
   /// the first `setAnchorTime()` tick or in export mode.
   upcomingPrewarm: UpcomingClipPrewarmSnapshot | null;
+  /// Number of in-flight no-flash source swaps (bridge→proxy). Non-zero
+  /// during the overlap window when a clip is being repointed to a
+  /// freshly-built proxy; explains transient extra decode cost.
+  swapsInFlight: number;
   clips: Array<{
     layerId: string;
     mediaId: string;
@@ -48,8 +52,17 @@ export interface CompositorPerfSnapshot {
     decodeQueueSize: number;
     /// Number of frames currently cached in the per-clip ring.
     ringSize: number;
+    /// PTS of the ring's earliest cached frame; null if the ring is empty.
+    ringFirstPtsUs: number | null;
     /// PTS of the ring's latest frame; null if the ring is empty.
     ringLastPtsUs: number | null;
+    /// Cumulative frames decoded for this clip; the HUD diffs it into fps.
+    decodedFrameCount: number;
+    /// True if this handle has downgraded to software decode.
+    downgraded: boolean;
+    /// True when the ring's lookahead window is satisfied (decoder not
+    /// running behind the playhead).
+    lookaheadFull: boolean;
   }>;
 }
 
@@ -714,13 +727,18 @@ export class Compositor {
         mediaId: c.mediaId,
         decodeQueueSize: c.source.decodeQueueSize?.() ?? 0,
         ringSize: ring.size(),
+        ringFirstPtsUs: ring.firstPtsUs(),
         ringLastPtsUs: ring.lastPtsUs(),
+        decodedFrameCount: c.source.decodedFrameCount?.() ?? 0,
+        downgraded: c.source.isDowngraded?.() ?? false,
+        lookaheadFull: c.source.isLookaheadFull?.() ?? false,
       });
     }
     return {
       compositeMsLast: this.compositeMsLast,
       compositeMsMax: this.compositeMsMax,
       upcomingPrewarm: this.upcomingPrewarm,
+      swapsInFlight: this.swaps.size,
       clips,
     };
   }

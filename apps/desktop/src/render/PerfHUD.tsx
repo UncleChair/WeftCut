@@ -15,6 +15,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { Compositor, CompositorPerfSnapshot } from "./Compositor";
 import type { PlaybackEngine, WarmupStats } from "./PlaybackEngine";
+import { throughputFps, type ThroughputSample } from "./perfHudStats";
 
 interface Props {
   /// Live Compositor ref. The HUD calls `getPerfSnapshot()` on it.
@@ -100,6 +101,12 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
     maxMs: 0,
     lastReason: null,
   });
+  // Live decode fps per clip, derived each poll tick by diffing each
+  // clip's cumulative `decodedFrameCount` against the previous sample.
+  // Keyed by layerId; entries for clips no longer in the snapshot are
+  // dropped automatically (the ref map is rebuilt from the live clips).
+  const [fpsByLayer, setFpsByLayer] = useState<Map<string, number>>(new Map());
+  const prevSamplesRef = useRef<Map<string, ThroughputSample>>(new Map());
 
   // rAF interval tracking. We keep the ring + last-tick time on refs
   // so the rAF callback doesn't re-render on every frame; the HUD only
@@ -147,7 +154,23 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
   useEffect(() => {
     const id = setInterval(() => {
       const c = compositorRef.current;
-      if (c) setSnap(c.getPerfSnapshot());
+      if (c) {
+        const s = c.getPerfSnapshot();
+        // Diff each clip's cumulative decode count against last tick to
+        // get a live fps. Rebuild the sample map from the current clips
+        // so handles that have gone away stop being tracked.
+        const nowMs = performance.now();
+        const nextFps = new Map<string, number>();
+        const nextSamples = new Map<string, ThroughputSample>();
+        for (const clip of s.clips) {
+          const cur: ThroughputSample = { count: clip.decodedFrameCount, atMs: nowMs };
+          nextFps.set(clip.layerId, throughputFps(prevSamplesRef.current.get(clip.layerId), cur));
+          nextSamples.set(clip.layerId, cur);
+        }
+        prevSamplesRef.current = nextSamples;
+        setFpsByLayer(nextFps);
+        setSnap(s);
+      }
       const { p50, p99 } = p50p99FromRing(intervalsRef.current);
       setRafP50(p50);
       setRafP99(p99);
@@ -292,28 +315,67 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
           })}
         </div>
       ) : null}
+      {snap && snap.swapsInFlight > 0 && (
+        <div style={{ color: "#f59e0b" }} title="In-flight no-flash source swaps (bridge→proxy)">
+          swaps in flight: {snap.swapsInFlight}
+        </div>
+      )}
       {memory && (
         <div>
           heap: {formatMb(memory.usedJSHeapSize)} /{" "}
           {formatMb(memory.totalJSHeapSize)}
+          {memory.jsHeapSizeLimit > 0 && (
+            <span
+              // % of the hard heap ceiling — the actual pressure signal.
+              // used/total only shows fill of the current arena, which
+              // grows on demand; used/limit is how close we are to OOM.
+              style={{
+                marginLeft: 4,
+                color:
+                  memory.usedJSHeapSize / memory.jsHeapSizeLimit > 0.85 ? "#f59e0b" : "#6b7280",
+              }}
+            >
+              ({((memory.usedJSHeapSize / memory.jsHeapSizeLimit) * 100).toFixed(0)}% cap)
+            </span>
+          )}
         </div>
       )}
 
       {snap && snap.clips.length > 0 && (
         <div style={{ marginTop: 4, borderTop: "1px solid #374151", paddingTop: 4 }}>
           {snap.clips.map((clip) => {
-            // The HUD doesn't know each clip's t_start_us / src_in_us
-            // mapping, so we display the ring head against the playhead
-            // composition time directly. Negative means the ring is
-            // behind the playhead (decoder catching up); positive is
-            // healthy lookahead. Useful as a rough trend rather than
-            // an exact source-time comparison.
+            // Ring span shown as [first–last] composition-ms. The HUD
+            // doesn't know each clip's t_start_us / src_in_us mapping, so
+            // this is a rough lookahead trend, not an exact source-time
+            // comparison. `HW`/`SW` flags a software-decode downgrade;
+            // the trailing mark is green when the lookahead window is
+            // satisfied, amber when the decoder is running behind.
+            const firstMs =
+              clip.ringFirstPtsUs !== null ? (clip.ringFirstPtsUs / 1000).toFixed(0) : "—";
             const lastMs =
               clip.ringLastPtsUs !== null ? (clip.ringLastPtsUs / 1000).toFixed(0) : "—";
+            const fps = fpsByLayer.get(clip.layerId) ?? 0;
             return (
               <div key={clip.layerId}>
-                {clip.layerId.slice(0, 6)}: q={clip.decodeQueueSize} ring=
-                {clip.ringSize}@{lastMs}ms
+                {clip.layerId.slice(0, 6)}{" "}
+                <span
+                  style={{ color: clip.downgraded ? "#f59e0b" : "#6b7280" }}
+                  title={clip.downgraded ? "Software decode (downgraded)" : "Hardware decode"}
+                >
+                  {clip.downgraded ? "SW" : "HW"}
+                </span>{" "}
+                {fps.toFixed(0)}fps q={clip.decodeQueueSize} · ring={clip.ringSize} [{firstMs}–
+                {lastMs}]{" "}
+                <span
+                  style={{ color: clip.lookaheadFull ? "#34d399" : "#f59e0b" }}
+                  title={
+                    clip.lookaheadFull
+                      ? "Lookahead window satisfied"
+                      : "Decoder running behind the lookahead window"
+                  }
+                >
+                  {clip.lookaheadFull ? "✓" : "…"}
+                </span>
               </div>
             );
           })}
