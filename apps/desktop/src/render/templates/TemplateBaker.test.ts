@@ -5,83 +5,69 @@ function makeFakeBitmap(): ImageBitmap {
   return { close: vi.fn(), width: 1, height: 1 } as unknown as ImageBitmap;
 }
 
-/// Manual scheduler: capture callbacks, run them on demand so the test drives
-/// the idle loop deterministically (mirrors TemplatePrewarmer.test.ts).
-function manualScheduler() {
-  const cbs: (() => void)[] = [];
-  return {
-    schedule: (cb: () => void) => {
-      cbs.push(cb);
-      return cbs.length;
-    },
-    cancel: vi.fn(),
-    flush: async () => {
-      while (cbs.length) {
-        const cb = cbs.shift()!;
-        cb();
-        await Promise.resolve();
-        await Promise.resolve();
-      }
-    },
-  };
+/// Drive the idle loop deterministically: run each scheduled callback, then let
+/// the async drainBatch fully settle (a macrotask flush via setTimeout(0))
+/// before checking for the next re-armed callback. Mirrors
+/// TemplatePrewarmer.test.ts. `guard` bounds a runaway loop.
+async function drain(pending: (() => void)[]): Promise<void> {
+  let guard = 0;
+  while (pending.length > 0 && guard++ < 50) {
+    const cb = pending.shift()!;
+    cb();
+    await new Promise((r) => setTimeout(r, 0));
+  }
 }
 
 describe("TemplateBaker", () => {
   it("renders + persists every frame of the active content, skipping on-disk", async () => {
-    const sched = manualScheduler();
+    const pending: (() => void)[] = [];
     const persisted: string[] = [];
     const render = vi.fn(async (_f: number) => makeFakeBitmap());
     const baker = new TemplateBaker({
-      schedule: sched.schedule,
-      cancel: sched.cancel,
+      schedule: (cb) => { pending.push(cb); return pending.length; },
+      cancel: vi.fn(),
       isOnDisk: async (k, f) => k === "a" && f === 0, // frame 0 already baked
-      persist: async (k, f, _bmp) => {
-        persisted.push(`${k}#${f}`);
-      },
+      persist: async (k, f, _bmp) => { persisted.push(`${k}#${f}`); },
       warm: vi.fn(),
       batchSize: 2,
     });
     const spec: BakeContentSpec = {
-      cacheKey: "a",
-      contentFrame: 0,
-      contentDurationFrames: 3,
-      render,
+      cacheKey: "a", contentFrame: 0, contentDurationFrames: 3, render,
     };
     baker.setTargets([spec]);
-    await sched.flush();
-    // frame 0 skipped (on disk); 1 and 2 baked.
-    expect(persisted.sort()).toEqual(["a#1", "a#2"]);
+    await drain(pending);
+    expect(persisted.sort()).toEqual(["a#1", "a#2"]); // frame 0 skipped (on disk)
     expect(render).toHaveBeenCalledTimes(2);
   });
 
   it("does nothing when targets is empty", async () => {
-    const sched = manualScheduler();
+    const pending: (() => void)[] = [];
     const persist = vi.fn();
     const baker = new TemplateBaker({
-      schedule: sched.schedule,
-      cancel: sched.cancel,
+      schedule: (cb) => { pending.push(cb); return pending.length; },
+      cancel: vi.fn(),
       isOnDisk: async () => false,
       persist,
       warm: vi.fn(),
     });
     baker.setTargets([]);
-    await sched.flush();
+    await drain(pending);
     expect(persist).not.toHaveBeenCalled();
   });
 
   it("dispose stops further work", async () => {
-    const sched = manualScheduler();
+    const pending: (() => void)[] = [];
     const persist = vi.fn(async () => {});
     const baker = new TemplateBaker({
-      schedule: sched.schedule,
-      cancel: sched.cancel,
+      schedule: (cb) => { pending.push(cb); return pending.length; },
+      cancel: vi.fn(),
       isOnDisk: async () => false,
       persist,
       warm: vi.fn(),
     });
     baker.setTargets([{ cacheKey: "a", contentFrame: 0, contentDurationFrames: 4, render: async () => makeFakeBitmap() }]);
     baker.dispose();
-    await sched.flush();
+    await drain(pending);
     expect(persist).not.toHaveBeenCalled();
   });
 });

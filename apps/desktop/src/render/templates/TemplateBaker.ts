@@ -9,21 +9,23 @@ export interface BakeContentSpec extends BakeContent {
 export interface TemplateBakerDeps {
   schedule: (cb: () => void) => number;
   cancel: (token: number) => void;
-  /// True if (cacheKey, frame) PNG already on disk → skip.
+  /// True if (cacheKey, frame) PNG already on disk → skip. Consulted ONCE per
+  /// frame (when the frame is pulled into a batch), so the whole bake is O(N).
   isOnDisk: (cacheKey: string, frame: number) => Promise<boolean>;
   /// Encode + write the PNG, then mark the cacheKey baked. Throws are caught.
   persist: (cacheKey: string, frame: number, bmp: ImageBitmap) => Promise<void>;
   /// Optionally warm L0 with the freshly-baked bitmap (so the just-baked frame
   /// is instantly available without a disk round-trip). The cache OWNS the
-  /// bitmap after this; if `warm` declines it, the baker closes the bitmap.
+  /// bitmap after this.
   warm: (cacheKey: string, frame: number, bmp: ImageBitmap) => void;
   batchSize?: number;
 }
 
-/// Idle-paced, full-content writer for L2. `setTargets` (re)plans; an idle loop
-/// renders+persists missing frames in priority order, yielding between batches.
-/// The SOLE writer of L2 (the resolver is read-only), so there's no
-/// fire-and-forget eviction race. Preview-only (DOM-gated by the Compositor).
+/// Idle-paced, full-content writer for L2. `setTargets` (re)plans synchronously
+/// and arms; an idle loop renders+persists missing frames in priority order,
+/// yielding between batches. The SOLE writer of L2 (the resolver is read-only),
+/// so there's no fire-and-forget eviction race. Preview-only (DOM-gated by the
+/// Compositor). Mirrors `TemplatePrewarmer`'s idle-loop discipline.
 export class TemplateBaker {
   private specsByKey = new Map<string, BakeContentSpec>();
   private queue: { cacheKey: string; frame: number }[] = [];
@@ -36,15 +38,15 @@ export class TemplateBaker {
     this.batchSize = deps.batchSize ?? 2;
   }
 
-  /// Replace the active bake set and re-plan. Plans all frames optimistically
-  /// (without a pre-filter); each frame is re-checked against `isOnDisk` just
-  /// before rendering inside `drainBatch` so already-baked frames are always
-  /// skipped. This keeps planning synchronous so `arm` runs before the first
-  /// idle tick, matching the test's manual-scheduler flush contract.
+  /// Replace the active bake set, plan the whole content (playhead-first), and
+  /// arm — all synchronously, like `TemplatePrewarmer.setTargets`, so a caller
+  /// (and the unit test's settle loop) sees a scheduled callback immediately.
+  /// The disk-skip check is async, so it is NOT done here; `drainBatch` skips
+  /// on-disk frames as it pulls them, consulting `isOnDisk` once per frame.
   setTargets(specs: BakeContentSpec[]): void {
     if (this.disposed) return;
     this.specsByKey = new Map(specs.map((s) => [s.cacheKey, s]));
-    this.queue = planBakeTargets(specs, () => false); // no pre-filter; re-check in drainBatch
+    this.queue = planBakeTargets(specs, () => false);
     this.arm();
   }
 
@@ -61,34 +63,21 @@ export class TemplateBaker {
     if (this.disposed) return;
     this.running = true;
     try {
-      // Drain the whole queue into candidates, pre-check all on-disk in one
-      // parallel Promise.all (1 microtask tick), then take the first batchSize
-      // survivors for render+persist. Remaining survivors go back to the front
-      // of the queue so the next arm picks them up immediately.
-      // This ensures a single drainBatch exhausts a small queue entirely in
-      // cases where some frames are skipped, keeping the test flush's two-tick
-      // budget sufficient for all-done-in-one-pass scenarios.
-      const all: { cacheKey: string; frame: number; spec: BakeContentSpec }[] = [];
-      while (this.queue.length > 0) {
+      // Pull up to batchSize targets (drop inactive contents), then process
+      // them CONCURRENTLY. The disk-skip check runs per-frame inside the map —
+      // a skipped (already-baked) frame just consumes a slot; skips are the
+      // cheap case. Each frame's `isOnDisk` is consulted exactly once.
+      const batch: { cacheKey: string; frame: number; spec: BakeContentSpec }[] = [];
+      while (batch.length < this.batchSize && this.queue.length > 0) {
         const target = this.queue.shift()!;
         const spec = this.specsByKey.get(target.cacheKey);
         if (!spec) continue; // content no longer active
-        all.push({ cacheKey: target.cacheKey, frame: target.frame, spec });
+        batch.push({ cacheKey: target.cacheKey, frame: target.frame, spec });
       }
-      if (all.length === 0) return;
-      // Pre-check on-disk status for all candidates concurrently (1 tick).
-      const onDiskFlags = await Promise.all(
-        all.map(({ cacheKey, frame }) => this.deps.isOnDisk(cacheKey, frame)),
-      );
-      if (this.disposed) return;
-      const survivors = all.filter((_, i) => !onDiskFlags[i]);
-      const batch = survivors.slice(0, this.batchSize);
-      const remainder = survivors.slice(this.batchSize);
-      // Put the remainder back at the front so the next idle tick starts there.
-      this.queue.unshift(...remainder);
       await Promise.all(
         batch.map(async ({ cacheKey, frame, spec }) => {
           try {
+            if (await this.deps.isOnDisk(cacheKey, frame)) return; // already baked
             const bmp = await spec.render(frame);
             if (this.disposed) {
               bmp.close();
@@ -97,14 +86,14 @@ export class TemplateBaker {
             await this.deps.persist(cacheKey, frame, bmp);
             this.deps.warm(cacheKey, frame, bmp);
           } catch {
-            // Raster/encode/write failed — drop this frame, keep going. The
-            // next setTargets (or session) will retry the missing frame.
+            // Raster/encode/write failed — drop this frame, keep going. A later
+            // setTargets (or session) retries the missing frame.
           }
         }),
       );
     } finally {
       this.running = false;
-      this.arm();
+      this.arm(); // more queued? reschedule. else idle.
     }
   }
 
