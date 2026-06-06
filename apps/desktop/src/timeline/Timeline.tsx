@@ -32,6 +32,7 @@ import {
   useTailSnapStrengthPx,
 } from "../settings/appSettingsStore";
 import { useShortcuts, type OverrideMap } from "../shortcuts";
+import { requestPrebake } from "../render/templates/prebakeBus";
 
 // Zoom + height bounds. The default matches the pre-refactor constant so
 // projects that have never written `view.json` look identical to before.
@@ -987,6 +988,11 @@ export function Timeline({
     [onMutated],
   );
 
+  const onPrebakeNow = useCallback((layerId: string) => {
+    setContextMenu(null);
+    requestPrebake(layerId);
+  }, []);
+
   const playheadX = (currentTimeUs / 1_000_000) * pxPerSec;
 
   const seekFromClientX = useCallback(
@@ -1135,6 +1141,7 @@ export function Timeline({
         layerId={contextMenu.layerId}
         layerKind={contextMenu.layerKind}
         onSeparateAudio={onSeparateAudio}
+        onPrebakeNow={onPrebakeNow}
       />
     )}
     </>
@@ -1155,12 +1162,14 @@ function LayerContextMenu({
   layerId,
   layerKind,
   onSeparateAudio,
+  onPrebakeNow,
 }: {
   x: number;
   y: number;
   layerId: string;
   layerKind: string;
   onSeparateAudio: (id: string) => void;
+  onPrebakeNow: (id: string) => void;
 }) {
   const { t } = useTranslation();
   return (
@@ -1178,6 +1187,14 @@ function LayerContextMenu({
           {t("timeline.separate_audio", {
             defaultValue: "Separate audio to new track",
           })}
+        </button>
+      ) : layerKind === "Template" ? (
+        <button
+          type="button"
+          className="layer-context-menu-item"
+          onClick={() => onPrebakeNow(layerId)}
+        >
+          {t("timeline.prebake_now", { defaultValue: "Pre-bake now" })}
         </button>
       ) : (
         <span className="layer-context-menu-disabled">
