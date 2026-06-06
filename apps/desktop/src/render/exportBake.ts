@@ -37,7 +37,7 @@ import {
 const US_PER_SEC = 1_000_000;
 
 /// Compute the content frame to bake into layer-local slot `layerLocalFrame`,
-/// mirroring the preview path (`templateContentFrame` in `TemplateSprite.ts`)
+/// mirroring the preview path (`templateContentFrame` in `templateFrames.ts`)
 /// EXACTLY. The key invariant: a composition frame at index `layerStartFrame +
 /// layerLocalFrame` arrives at the compositor as
 /// `tInLayerUs = snapFrameFloor(compFrameUs) - tStartUs`, and the preview

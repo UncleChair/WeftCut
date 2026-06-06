@@ -66,7 +66,13 @@ export class TemplatePrewarmer {
         if (!spec) continue; // content no longer active
         try {
           const bmp = await spec.render(target.frame);
-          if (this.disposed) return;
+          if (this.disposed) {
+            // Disposed mid-raster: this bitmap will never be cached, so close it
+            // to avoid leaking the decoded image (the cache owns lifetimes for
+            // bitmaps it accepts; this one it never sees).
+            bmp.close();
+            return;
+          }
           this.deps.setFrame(target.cacheKey, target.frame, bmp);
         } catch {
           // Raster failed (e.g. harness disposed) — drop this target, keep going.
