@@ -107,6 +107,17 @@ export interface DecoderHandle {
   /// queue concept) doesn't have to fake a value. Preview's
   /// `SourceHandle` returns the wrapped `VideoDecoder.decodeQueueSize`.
   decodeQueueSize?(): number;
+  /// Cumulative frames the decoder has emitted since the last reset, for
+  /// the dev `PerfHUD` (which diffs it into a live decode fps). Optional —
+  /// preview-only, like the rest of this diagnostic surface.
+  decodedFrameCount?(): number;
+  /// True once this handle downgraded to `prefer-software` after a
+  /// hardware-decode error. Surfaced by the HUD so a sudden composite/
+  /// decode cost jump is attributable to a HW→SW fallback.
+  isDowngraded?(): boolean;
+  /// True when the ring has decoded past `anchor + lookahead` — i.e. the
+  /// lookahead window is satisfied rather than the decoder running behind.
+  isLookaheadFull?(): boolean;
   dispose(): void;
 }
 
@@ -524,6 +535,22 @@ export class SourceHandle {
   /// dev `PerfHUD`; not on the playback hot path.
   decodeQueueSize(): number {
     return this.decoder?.decodeQueueSize ?? 0;
+  }
+
+  /// Cumulative decoded-frame count for the dev `PerfHUD`. The HUD diffs
+  /// this across its poll interval to show a live decode fps.
+  decodedFrameCount(): number {
+    return this.outputFrameCount;
+  }
+
+  /// Whether this handle has fallen back to software decode. Dev `PerfHUD`.
+  isDowngraded(): boolean {
+    return this.downgraded;
+  }
+
+  /// Whether the ring's lookahead window is satisfied. Dev `PerfHUD`.
+  isLookaheadFull(): boolean {
+    return this.ring.isLookaheadFull();
   }
 
   /// Drop the decode pipeline + cached frames. Safe to re-init via
