@@ -88,6 +88,13 @@ export class RasterPool {
             job.resolve(bmp);
           },
           (err) => {
+            // If we're tearing down, dispose() already disposed this slot and
+            // dropped the pool's references — just reject. Building a replacement
+            // here would orphan it (never disposed → a leaked iframe).
+            if (this.disposed) {
+              job.reject(err);
+              return;
+            }
             // The slot may be wedged — tear it down and replace it so the next
             // job gets a fresh iframe. The call still rejects → caller falls back.
             this.consecutiveFailures++;
