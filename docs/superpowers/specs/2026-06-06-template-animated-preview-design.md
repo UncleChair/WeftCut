@@ -93,6 +93,13 @@ card thumbnails.
   `animate` flips false.
 - **Reduced motion:** if `window.matchMedia("(prefers-reduced-motion: reduce)")`
   matches, skip the loop and render the static `t=0` frame (accessibility).
+- **Loading state + teardown-race suppression:** until the first frame is bound,
+  the box shows a loading spinner (`!svgUrl && !error`). The harness-load effect
+  guards its `.catch` with an `active` flag set false in cleanup BEFORE
+  `dispose()`, so the effect never surfaces its own teardown — React StrictMode's
+  dev double-mount rejects the first harness's in-flight `load()` with "harness:
+  disposed", which previously flashed a raw error box on first open. Genuine load
+  failures (component still active) still surface.
 
 ### Call sites
 - The right-column form preview (today `large={true}`) also passes

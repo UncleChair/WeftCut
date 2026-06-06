@@ -291,7 +291,11 @@ representative still). Both the large preview and the card thumbnails are
 **fixed 16:9 boxes** of a set width; the template (whatever its intrinsic
 aspect) is scaled to *contain* and centered, with the checkerboard showing
 through the letterbox margins — so an oversized or oddly-shaped template can't
-blow up the display area. Prop edits are debounced so editing stays responsive.
+blow up the display area. Until the harness has mounted and rastered the first
+frame, the box shows a loading spinner (not a blank or a transient error — the
+harness-teardown race that rejects an in-flight `load()` with "harness: disposed"
+is swallowed rather than surfaced). Prop edits are debounced so editing stays
+responsive.
 
 ## Agent surface
 
