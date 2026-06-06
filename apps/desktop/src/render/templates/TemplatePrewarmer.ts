@@ -58,27 +58,34 @@ export class TemplatePrewarmer {
     if (this.disposed) return;
     this.running = true;
     try {
-      let done = 0;
-      while (done < this.batchSize && this.queue.length > 0) {
+      // Pull up to batchSize FRESH targets (skip already-cached / inactive),
+      // then raster them CONCURRENTLY. Renders serialize through the per-
+      // templateId harness (microtask-serialized — safe), but rasters parallelize
+      // across the RasterPool, so the prewarmer fills at pool speed instead of 1x.
+      const batch: { cacheKey: string; frame: number; spec: PrewarmContentSpec }[] = [];
+      while (batch.length < this.batchSize && this.queue.length > 0) {
         const target = this.queue.shift()!;
         if (this.deps.hasFrame(target.cacheKey, target.frame)) continue; // already cached
         const spec = this.specsByKey.get(target.cacheKey);
         if (!spec) continue; // content no longer active
-        try {
-          const bmp = await spec.render(target.frame);
-          if (this.disposed) {
-            // Disposed mid-raster: this bitmap will never be cached, so close it
-            // to avoid leaking the decoded image (the cache owns lifetimes for
-            // bitmaps it accepts; this one it never sees).
-            bmp.close();
-            return;
-          }
-          this.deps.setFrame(target.cacheKey, target.frame, bmp);
-        } catch {
-          // Raster failed (e.g. harness disposed) — drop this target, keep going.
-        }
-        done++;
+        batch.push({ cacheKey: target.cacheKey, frame: target.frame, spec });
       }
+      await Promise.all(
+        batch.map(async ({ cacheKey, frame, spec }) => {
+          try {
+            const bmp = await spec.render(frame);
+            if (this.disposed) {
+              // Disposed mid-raster: this bitmap will never be cached, so close
+              // it to avoid leaking the decoded image.
+              bmp.close();
+              return;
+            }
+            this.deps.setFrame(cacheKey, frame, bmp);
+          } catch {
+            // Raster failed (e.g. harness/pool disposed) — drop, keep going.
+          }
+        }),
+      );
     } finally {
       this.running = false;
       this.arm(); // more to do? reschedule. else idle.
