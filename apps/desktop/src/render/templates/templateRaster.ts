@@ -8,6 +8,7 @@
 // reach the same objects without coupling them to each other's class.
 
 import { TemplateFrameCache } from "./frameCache";
+import { BakedKeyIndex } from "./bakedKeyIndex";
 import { TemplateHarness } from "./harness";
 import { rasterizeSvg } from "./svgRaster";
 import type { Template } from "./catalog";
@@ -16,6 +17,10 @@ import type { Template } from "./catalog";
 /// prewarmer, so identical (template, props, dims, fps, frame) rasters resolve
 /// from one bitmap. Single instance — import this, never `new`.
 export const sharedTemplateFrameCache = new TemplateFrameCache();
+
+/// Process-wide index of which cacheKeys have frames baked on disk. The
+/// Compositor hydrates it on project load; the baker `add`s on each write.
+export const sharedBakedKeyIndex = new BakedKeyIndex();
 
 interface HarnessEntry {
   harness: TemplateHarness;
@@ -52,4 +57,31 @@ export async function rasterTemplateFrame(
   await entry.ready;
   const svg = await entry.harness.renderFrameSvg(tSec, durationSec, canonicalProps);
   return rasterizeSvg(svg);
+}
+
+/// Obtain one template frame, preferring a pre-baked PNG on disk over a live
+/// raster. Read-only: writing is the TemplateBaker's job (single writer →
+/// no LRU-eviction race on a fire-and-forget encode). Shared by the on-demand
+/// sprite path and the prewarmer, so disk-first is uniform.
+///
+/// Disk read is attempted only when `sharedBakedKeyIndex.has(cacheKey)` — so an
+/// un-baked template never pays an IPC. Any read/permission error is swallowed
+/// and falls through to a live raster, so an fs hiccup can never blank preview.
+export async function resolveTemplateFrame(
+  template: Template,
+  cacheKey: string,
+  frame: number,
+  tSec: number,
+  durationSec: number,
+  canonicalProps: Record<string, unknown>,
+): Promise<ImageBitmap> {
+  if (sharedBakedKeyIndex.has(cacheKey)) {
+    try {
+      const png = await sharedTemplateFrameCache.readPng(cacheKey, frame);
+      if (png) return await createImageBitmap(png);
+    } catch {
+      // permission/io hiccup — fall through to live raster.
+    }
+  }
+  return rasterTemplateFrame(template, tSec, durationSec, canonicalProps);
 }
