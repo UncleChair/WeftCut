@@ -20,14 +20,11 @@ import { ImageSource, Sprite, Texture } from "pixi.js";
 
 import { frameIndexInLayer } from "../../frames";
 import type { TemplateView } from "../../ipc";
-import { getTemplate, resolveTemplateContentDurationUs, type Template } from "../templates/catalog";
+import { getTemplate, type Template } from "../templates/catalog";
 import { TemplateFrameCache } from "../templates/frameCache";
 import { TemplateHarness } from "../templates/harness";
-// Rasterizer.ts still owns the prop canonicalizer (validates + fills defaults
-// + stable key order). Its old foreignObject fns are dead and removed by a
-// later sweep; only `canonicalizeProps` is imported here.
-import { canonicalizeProps } from "../templates/Rasterizer";
 import { rasterizeSvg } from "../templates/svgRaster";
+import { templateFrameDescriptor } from "../templates/templateFrameDescriptor";
 
 const US_PER_SEC = 1_000_000;
 
@@ -218,63 +215,23 @@ export class TemplateSprite {
       return;
     }
 
-    let canonical: Record<string, unknown>;
-    try {
-      canonical = canonicalizeProps(view.props, this.template.manifest);
-    } catch (e) {
+    const desc = templateFrameDescriptor(
+      view, tInLayerUs, durationUs, this.fpsNum, this.fpsDen, this.template,
+    );
+    if (!desc) {
       // eslint-disable-next-line no-console
-      console.warn(
-        `[weftcut/pixi] TemplateSprite ${this.layerId}: canonicalize failed`,
-        e,
-      );
+      console.warn(`[weftcut/pixi] TemplateSprite ${this.layerId}: canonicalize failed`);
       return;
     }
-
-    // Content-window model: a capped template (e.g. countdown) renders its
-    // INTRINSIC content (driven by the cap/`seconds` prop), and the layer is a
-    // window into it. Uncapped templates fall back to "animate over layer
-    // width" (contentDuration = layer width, srcIn = 0) — legacy behavior.
-    const cap = resolveTemplateContentDurationUs(this.template.manifest, view.props);
-    const contentDurationUs = cap ?? durationUs;
-    const srcInUs = cap == null ? 0 : view.src_in_us;
-    const { frame, contentDurationFrames } = templateContentFrame(
-      tInLayerUs,
-      srcInUs,
-      contentDurationUs,
-      this.fpsNum,
-      this.fpsDen,
-    );
-
-    // v1: raster at the template's natural size. The frame is the ABSOLUTE
-    // content frame, and the key carries contentDurationFrames — so two windows
-    // into the same template+props reuse overlapping cached frames and never
-    // collide on (key, frame).
-    const [renderW, renderH] = this.template.manifest.size;
-    const cacheKey = templateFrameCacheKey({
-      templateId: this.template.manifest.id,
-      version: this.template.manifest.version,
-      canonicalProps: canonical,
-      renderW,
-      renderH,
-      fpsNum: this.fpsNum,
-      fpsDen: this.fpsDen,
-      durationFrames: contentDurationFrames,
-    });
-
-    // Same (key, frame) already bound/in-flight → nothing to do.
+    const { cacheKey, contentFrame: frame, tSec, durationSec, canonicalProps: canonical } = desc;
     if (cacheKey === this.targetCacheKey && frame === this.targetFrame) return;
     this.targetCacheKey = cacheKey;
     this.targetFrame = frame;
-
     const cached = sharedTemplateFrameCache.getFrame(cacheKey, frame);
     if (cached) {
-      // Synchronous hit: bind in this paint, no onLoaded (would be churn).
       this.bindBitmap(cached);
       return;
     }
-
-    const tSec = frameTimeSec(frame, this.fpsNum, this.fpsDen);
-    const durationSec = contentDurationUs / US_PER_SEC;
     void this.captureAndBind(cacheKey, frame, tSec, durationSec, canonical);
   }
 
