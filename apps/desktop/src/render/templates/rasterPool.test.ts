@@ -118,4 +118,19 @@ describe("RasterPool", () => {
     await expect(p2).rejects.toThrow(/disposed/);
     expect(f.disposed).toContain(0);
   });
+
+  it("does not build a replacement slot when a raster fails after dispose", async () => {
+    const f = fakeSlots();
+    const pool = new RasterPool({ size: 1, createSlot: f.createSlot });
+    const p = pool.rasterize("a"); // slot 0 in flight
+    await tick();
+    pool.dispose(); // disposes slot 0, drops references
+    f.calls[0]!.d.reject(new Error("late")); // in-flight raster fails AFTER dispose
+    await expect(p).rejects.toThrow("late");
+    await tick();
+    // No orphan: slot 0 disposed exactly once (by dispose, not re-disposed by the
+    // late reject), and no replacement slot was created.
+    expect(f.disposed).toEqual([0]);
+    expect(f.calls.length).toBe(1); // no new slot rastered anything
+  });
 });
