@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { formatTimecode, parseTimecode } from "../frames";
 import {
@@ -10,6 +10,7 @@ import {
 } from "../ipc";
 import { getTemplate } from "../render/templates/catalog";
 import { TemplateHarness } from "../render/templates/harness";
+import { previewLoopTimeSec } from "./previewLoop";
 
 interface Props {
   onClose: () => void;
@@ -230,7 +231,14 @@ function TemplateForm({
       }}
     >
       <h3>{t("template_picker.preview_heading")}</h3>
-      <TemplatePreview template={template} props={debouncedProps} width={480} large />
+      <TemplatePreview
+        template={template}
+        props={debouncedProps}
+        width={480}
+        large
+        animate
+        canvasFps={fpsNum / fpsDen}
+      />
 
       <h3>{t("template_picker.props_heading")}</h3>
       {propKeys.length === 0 ? (
@@ -310,6 +318,15 @@ function useDebounced<T>(value: T, delay: number): T {
 /// frame — adequate for the picker, which only needs a representative still.
 /// FOLLOW-UP: a scrub slider could let the user preview any t.
 const PREVIEW_T_SEC = 0;
+/// Fallback frame rate for the looping picker preview when no canvas fps is
+/// available; normally the preview defaults to the composition frame rate. The
+/// user can change it via the preview's fps input. There's no upper clamp (it
+/// follows the canvas, which may exceed 60); the live re-render loop is
+/// naturally bounded by rAF + harness throughput, so a high value just renders
+/// as fast as the harness allows. Only the lower bound matters: fps must be >= 1
+/// (a 0/negative value would make the frame interval infinite/negative).
+const PREVIEW_FPS = 20;
+const PREVIEW_FPS_MIN = 1;
 
 /// Live preview of a template's CURRENT frame, captured through the SAME
 /// `TemplateHarness` the timeline/export use — so picker, timeline, and export
@@ -326,21 +343,50 @@ function TemplatePreview({
   props,
   width,
   large,
+  animate,
+  canvasFps,
 }: {
   template: TemplateSummary;
   props: Record<string, unknown>;
   width: number;
   large?: boolean;
+  animate?: boolean;
+  /// Composition frame rate (rounded). When provided, it's the DEFAULT preview
+  /// playback fps (clamped to the input bounds); otherwise falls back to
+  /// `PREVIEW_FPS`. The user can still override via the fps input.
+  canvasFps?: number;
 }) {
   const [w, h] = template.size;
-  const scale = width / w;
-  const scaledHeight = h * scale;
+  // Fixed 16:9 preview box of the given `width`, so a large or oddly-shaped
+  // template can't blow up the display area. The template is scaled to CONTAIN
+  // (whole thing visible, never cropped) and centered; the host's checkerboard
+  // shows through the letterbox margins.
+  const boxW = width;
+  const boxH = Math.round((width * 9) / 16);
+  const scale = Math.min(boxW / w, boxH / h);
+  const { t } = useTranslation();
 
   const harnessRef = useRef<TemplateHarness | null>(null);
   const loadedRef = useRef<Promise<void> | null>(null);
   const urlRef = useRef<string | null>(null);
   const [svgUrl, setSvgUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Hover gates the animated preview: it plays only while the pointer is over
+  // the preview (from t=0), and reverts to the static first frame on leave.
+  // Only meaningful when `animate` (the large preview); cards never set it.
+  const [hovered, setHovered] = useState(false);
+  // User-adjustable playback frame rate for the hover loop (frames per second);
+  // higher = smoother but more renders. Only surfaced on the animated preview.
+  // Defaults to the composition fps (so the preview plays at the rate the
+  // template will actually be sampled) with no upper clamp — it follows the
+  // canvas even above 60. Only the >= 1 floor applies. Falls back to PREVIEW_FPS
+  // when no canvas fps is supplied.
+  const [previewFps, setPreviewFps] = useState(() =>
+    Math.max(
+      PREVIEW_FPS_MIN,
+      canvasFps && Number.isFinite(canvasFps) ? Math.round(canvasFps) : PREVIEW_FPS,
+    ),
+  );
 
   // (Re)load the harness whenever the template identity changes. The catalog's
   // `getTemplate` is a synchronous in-memory lookup returning the full
@@ -352,49 +398,117 @@ function TemplatePreview({
       setError(`template not found in catalog: ${template.id}`);
       return;
     }
+    // `active` guards against this effect surfacing its OWN teardown as an
+    // error. On unmount/remount (notably React StrictMode's dev double-mount),
+    // the cleanup disposes the harness, which rejects the in-flight `load()`
+    // with "harness: disposed". Without the guard that rejection flashed a raw
+    // error box on first open until the next mount's frame cleared it. The
+    // cleanup sets `active = false` BEFORE dispose, so the self-inflicted
+    // rejection is swallowed; a genuine load failure (component still active)
+    // still surfaces.
+    let active = true;
     const harness = new TemplateHarness();
     harnessRef.current = harness;
     setError(null);
     loadedRef.current = harness.load(full).catch((e) => {
-      setError(String(e));
+      if (active) setError(String(e));
       throw e;
     });
     return () => {
+      active = false;
       harness.dispose();
       harnessRef.current = null;
       loadedRef.current = null;
     };
   }, [template.id]);
 
-  // Render the current frame whenever props change (already debounced upstream
-  // for the form preview). Awaits the in-flight load so the first render after
-  // a template switch doesn't race the iframe mount.
+  // Bind one frame's SVG (string) to the <img> as an object URL, revoking the
+  // previous URL. Shared by the static and animated paths.
+  // Stable (deps: []) — only touches the ref + React setters, all stable. Kept
+  // stable so the render effect's async callbacks never capture a stale variant.
+  const bindSvg = useCallback((svg: string) => {
+    const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+    if (urlRef.current) URL.revokeObjectURL(urlRef.current);
+    urlRef.current = url;
+    setSvgUrl(url);
+    setError(null);
+  }, []);
+
+  // Render the current frame. When `animate` is true (the selected large
+  // preview), the user is HOVERING the preview, and reduced motion isn't
+  // requested, run a real-time loop: advance t over [0, duration) at
+  // ~PREVIEW_FPS via rAF, re-rendering each frame through the same harness.
+  // Otherwise render a single static frame at t=0 (cards, not-hovered,
+  // reduced-motion). Awaits the in-flight load so the first render after a
+  // template switch doesn't race the iframe mount.
   useEffect(() => {
-    let cancelled = false;
     const harness = harnessRef.current;
     const loaded = loadedRef.current;
     if (!harness || !loaded) return;
     const durSec = template.default_duration_s;
-    loaded
-      .then(() => harness.renderFrameSvg(PREVIEW_T_SEC, durSec, props))
-      .then((svg) => {
-        if (cancelled) return;
-        const url = URL.createObjectURL(
-          new Blob([svg], { type: "image/svg+xml" }),
-        );
-        if (urlRef.current) URL.revokeObjectURL(urlRef.current);
-        urlRef.current = url;
-        setSvgUrl(url);
-        setError(null);
-      })
-      .catch((e) => {
-        if (!cancelled) setError(String(e));
-      });
+
+    const prefersReducedMotion =
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    // Static path: one frame at t=0 (cards, not hovered, or reduced-motion).
+    if (!animate || !hovered || prefersReducedMotion) {
+      let cancelled = false;
+      loaded
+        .then(() => harness.renderFrameSvg(PREVIEW_T_SEC, durSec, props))
+        .then((svg) => {
+          if (!cancelled) bindSvg(svg);
+        })
+        .catch((e) => {
+          if (!cancelled) setError(String(e));
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    // Animated path: real-time loop.
+    let cancelled = false;
+    let rafId = 0;
+    let rendering = false;
+    let lastRenderMs = Number.NEGATIVE_INFINITY;
+    const startMs = performance.now();
+    const durMs = Math.max(1, durSec * 1000);
+    const frameInterval = 1000 / previewFps;
+
+    const tick = (now: number) => {
+      if (cancelled) return;
+      if (!rendering && now - lastRenderMs >= frameInterval) {
+        lastRenderMs = now;
+        rendering = true;
+        const tSec = previewLoopTimeSec(now - startMs, durMs);
+        loaded
+          .then(() => harness.renderFrameSvg(tSec, durSec, props))
+          .then((svg) => {
+            rendering = false;
+            if (!cancelled) bindSvg(svg);
+          })
+          .catch((e) => {
+            rendering = false;
+            if (!cancelled) setError(String(e));
+          });
+      }
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+
     return () => {
       cancelled = true;
+      cancelAnimationFrame(rafId);
     };
-    // `props` identity changes on each edit; the parent debounces it.
-  }, [template.id, template.default_duration_s, props]);
+    // `props` identity changes on each edit; the parent debounces it. Including
+    // it here restarts the loop (from t=0) with the new props on each debounced
+    // edit — acceptable and keeps the preview truthful to the current props.
+    // `hovered` starts/stops the loop: entering plays from t=0, leaving falls
+    // back to the static branch above (resets to the first frame).
+    // `previewFps` re-arms the loop with the new frame interval when changed.
+  }, [template.id, template.default_duration_s, props, animate, hovered, previewFps]);
 
   // Revoke the last blob URL on unmount.
   useEffect(
@@ -406,28 +520,69 @@ function TemplatePreview({
   );
 
   return (
-    <div
-      className={
-        large
-          ? "template-preview-host template-preview-large"
-          : "template-preview-host"
-      }
-      style={{ width, height: scaledHeight }}
-    >
-      {svgUrl && (
-        <img
-          src={svgUrl}
-          alt={`preview-${template.id}`}
-          width={w}
-          height={h}
-          style={{
-            transformOrigin: "top left",
-            transform: `scale(${scale})`,
-          }}
-        />
+    <>
+      <div
+        className={
+          large
+            ? "template-preview-host template-preview-large"
+            : "template-preview-host"
+        }
+        // `.template-preview-host` is `pointer-events: none` (so card clicks pass
+        // through to the card button). The animated large preview needs to RECEIVE
+        // hover, so re-enable pointer events on it; cards keep the default.
+        style={{
+          width: boxW,
+          height: boxH,
+          ...(animate ? { pointerEvents: "auto" as const } : null),
+        }}
+        onMouseEnter={animate ? () => setHovered(true) : undefined}
+        onMouseLeave={animate ? () => setHovered(false) : undefined}
+      >
+        {svgUrl && (
+          <img
+            src={svgUrl}
+            alt={`preview-${template.id}`}
+            width={w}
+            height={h}
+            // Centered + contain-scaled inside the fixed 16:9 box. The host is
+            // position:relative + overflow:hidden, so absolute centering with a
+            // center transform-origin keeps the scaled template middle-anchored.
+            style={{
+              position: "absolute",
+              left: "50%",
+              top: "50%",
+              transformOrigin: "center",
+              transform: `translate(-50%, -50%) scale(${scale})`,
+            }}
+          />
+        )}
+        {!svgUrl && !error && (
+          <span
+            className="template-preview-loading"
+            role="status"
+            aria-label={t("template_picker.preview_loading")}
+          />
+        )}
+        {error && <span className="settings-error">{error}</span>}
+      </div>
+      {animate && (
+        <label className="template-preview-fps">
+          <span>{t("template_picker.preview_fps")}</span>
+          <input
+            type="number"
+            min={PREVIEW_FPS_MIN}
+            step={1}
+            value={previewFps}
+            onChange={(e) => {
+              const n = Math.round(Number(e.target.value));
+              if (Number.isFinite(n)) {
+                setPreviewFps(Math.max(PREVIEW_FPS_MIN, n));
+              }
+            }}
+          />
+        </label>
       )}
-      {error && <span className="settings-error">{error}</span>}
-    </div>
+    </>
   );
 }
 

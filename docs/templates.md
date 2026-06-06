@@ -274,11 +274,28 @@ rasterizer the preview used, so the exported template matches the preview.
 
 ## Picker
 
-The catalog picker drives `render(t)` through the same harness as a scrubbable
-preview, rather than mounting a free-running iframe. What the picker shows is the
-same SVG at the same timestamps the timeline and export rasterize — picker,
-timeline, and export agree pixel-for-pixel. Prop edits re-render the current
-frame only (debounced), so editing stays responsive.
+The catalog picker drives `render(t)` through the same harness the timeline and
+export use, rather than mounting a free-running iframe — so what the picker shows
+is the same SVG at the same timestamps those paths rasterize. The **selected
+template's large preview animates on hover**: while the pointer is over the
+preview, a `requestAnimationFrame` loop advances `t` over `[0, duration)` in real
+time (sampled at a user-adjustable preview frame rate — a number input under the
+preview, defaulting to the composition frame rate), re-rendering each frame
+through the
+harness and binding it as an object URL (the previous URL is revoked on each
+swap, so the working set stays bounded); moving the pointer away reverts to the
+static first frame (`t=0`). Hovering plays from the start. The loop reads the
+current props, so prop edits reflect live; `prefers-reduced-motion` skips the
+loop and keeps the static frame. Card thumbnails stay static single frames (one
+representative still). Both the large preview and the card thumbnails are
+**fixed 16:9 boxes** of a set width; the template (whatever its intrinsic
+aspect) is scaled to *contain* and centered, with the checkerboard showing
+through the letterbox margins — so an oversized or oddly-shaped template can't
+blow up the display area. Until the harness has mounted and rastered the first
+frame, the box shows a loading spinner (not a blank or a transient error — the
+harness-teardown race that rejects an in-flight `load()` with "harness: disposed"
+is swallowed rather than surfaced). Prop edits are debounced so editing stays
+responsive.
 
 ## Agent surface
 

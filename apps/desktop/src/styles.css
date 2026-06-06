@@ -2778,6 +2778,49 @@ input.preview-timecode:focus {
   margin: 4px 0 8px;
 }
 
+/* Loading spinner shown in the preview box until the first frame is bound
+   (the harness mounts + rasters async). Replaces the brief blank/error flash
+   on first open. Centered over the host's checkerboard. */
+.template-preview-loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 24px;
+  height: 24px;
+  margin: -12px 0 0 -12px;
+  border: 3px solid rgba(148, 163, 184, 0.25);
+  border-top-color: #94a3b8;
+  border-radius: 50%;
+  animation: template-preview-spin 0.8s linear infinite;
+}
+
+@keyframes template-preview-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Preview FPS control — sits under the large animated preview. Compact row;
+   the number input is narrow since the value is 1–60. */
+.template-preview-fps {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.template-preview-fps input[type='number'] {
+  width: 64px;
+  background: #0b1220;
+  border: 1px solid #1f2937;
+  border-radius: 4px;
+  color: #e5e7eb;
+  padding: 4px 6px;
+  font-size: 12px;
+}
+
 .template-picker-list {
   border-right: 1px solid #1f2937;
   /* `max-height` here (instead of relying on the parent body's clip) makes
