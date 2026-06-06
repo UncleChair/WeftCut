@@ -218,6 +218,21 @@ describe("TemplateFrameCache — L0 LRU", () => {
     expect(a.close).toHaveBeenCalledTimes(1);
     expect(c.size()).toBe(1);
   });
+
+  test("hasFrame peeks without changing recency", () => {
+    const cache = new TemplateFrameCache(2);
+    const a = fakeBitmap(); const b = fakeBitmap(); const c = fakeBitmap();
+    cache.setFrame("k", 0, a);
+    cache.setFrame("k", 1, b);
+    expect(cache.hasFrame("k", 0)).toBe(true);
+    expect(cache.hasFrame("k", 2)).toBe(false);
+    cache.setFrame("k", 2, c); // cap 2 → evicts LRU (k#0), since hasFrame didn't refresh it
+    expect(cache.hasFrame("k", 0)).toBe(false);
+    expect(cache.hasFrame("k", 1)).toBe(true);
+    expect(cache.hasFrame("k", 2)).toBe(true);
+  });
+
+  test("capacity returns the cap", () => { expect(new TemplateFrameCache(7).capacity()).toBe(7); });
 });
 
 describe("hashCacheKey", () => {
