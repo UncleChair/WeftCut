@@ -25,49 +25,7 @@ import { TemplateFrameCache } from "../templates/frameCache";
 import { TemplateHarness } from "../templates/harness";
 import { rasterizeSvg } from "../templates/svgRaster";
 import { templateFrameDescriptor } from "../templates/templateFrameDescriptor";
-
-const US_PER_SEC = 1_000_000;
-
-/// Total animated frames a template spans over `durationUs` on the comp-fps
-/// grid, clamped to at least 1 (a zero/sub-frame placement still shows frame
-/// 0). Exact-rational (no pre-rounded frame duration) to match the rest of
-/// the renderer's frame math. Exported for unit testing.
-export function templateDurationFrames(
-  durationUs: number,
-  fpsNum: number,
-  fpsDen: number,
-): number {
-  if (fpsNum <= 0 || fpsDen <= 0) return 1;
-  return Math.max(1, Math.round((durationUs * fpsNum) / (US_PER_SEC * fpsDen)));
-}
-
-/// Exact-rational seconds at the start of comp frame `frame`. The harness
-/// renders `render(tSec)` at this time. Exported for unit testing.
-export function frameTimeSec(frame: number, fpsNum: number, fpsDen: number): number {
-  if (fpsNum <= 0) return 0;
-  return (frame * fpsDen) / fpsNum;
-}
-
-/// Compute the content-frame selection for the preview path. `contentDurationUs`
-/// is the resolved intrinsic content duration (or the layer width for uncapped
-/// templates); `srcInUs` is the window offset (0 for uncapped). Returns the
-/// absolute content frame to render and the total content-duration frame count
-/// (for the cache key). Exported for unit testing.
-export function templateContentFrame(
-  tInLayerUs: number,
-  srcInUs: number,
-  contentDurationUs: number,
-  fpsNum: number,
-  fpsDen: number,
-): { frame: number; contentDurationFrames: number } {
-  const contentDurationFrames = templateDurationFrames(contentDurationUs, fpsNum, fpsDen);
-  const contentTimeUs = srcInUs + Math.max(0, tInLayerUs);
-  const frame = Math.min(
-    contentDurationFrames - 1,
-    frameIndexInLayer(contentTimeUs, fpsNum, fpsDen),
-  );
-  return { frame, contentDurationFrames };
-}
+import { templateDurationFrames } from "../templates/templateFrames";
 
 /// Process-wide per-frame cache shared by every TemplateSprite, so identical
 /// (template, props, dims, fps, frame) rasters resolve from one bitmap.
@@ -325,30 +283,3 @@ export class TemplateSprite {
   }
 }
 
-export interface TemplateFrameCacheKeyInput {
-  templateId: string;
-  version: number;
-  canonicalProps: Record<string, unknown>;
-  renderW: number;
-  renderH: number;
-  fpsNum: number;
-  fpsDen: number;
-  durationFrames: number;
-}
-
-/// Stable opaque key for `TemplateFrameCache`. The cache appends `#<frame>`;
-/// callers must not. `canonicalProps` is already in stable key order
-/// (`canonicalizeProps`), so its JSON is deterministic. Exported for unit
-/// testing.
-export function templateFrameCacheKey(input: TemplateFrameCacheKeyInput): string {
-  return [
-    input.templateId,
-    String(input.version),
-    String(input.renderW),
-    String(input.renderH),
-    String(input.fpsNum),
-    String(input.fpsDen),
-    String(input.durationFrames),
-    JSON.stringify(input.canonicalProps),
-  ].join("|");
-}

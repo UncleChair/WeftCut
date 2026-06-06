@@ -32,7 +32,7 @@ import { rasterizeSvg } from "./templates/svgRaster";
 import {
   frameTimeSec,
   templateDurationFrames,
-} from "./sprite/TemplateSprite";
+} from "./templates/templateFrames";
 
 const US_PER_SEC = 1_000_000;
 
