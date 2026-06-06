@@ -456,6 +456,10 @@ const enUS = {
     transform: "Transform",
     props: "Props",
     unknown_template: "Unknown template — its props can't be edited here.",
+    bake_idle: "Not pre-baked — enable Pre-bake in Settings, or right-click → Pre-bake now",
+    bake_baking: "Pre-baking… {{done}}/{{total}}",
+    bake_ready: "Pre-baked ({{total}} frames)",
+    bake_error: "Pre-bake failed",
   },
   template_picker: {
     heading: "Templates",

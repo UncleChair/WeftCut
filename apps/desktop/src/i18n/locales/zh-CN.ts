@@ -447,6 +447,10 @@ const zhCN: Resources = {
     transform: "变换",
     props: "参数",
     unknown_template: "未知模板——无法在此编辑其参数。",
+    bake_idle: "未烘焙 — 在设置中开启预烘焙，或右键『立即预烘焙』",
+    bake_baking: "预烘焙中 {{done}}/{{total}}",
+    bake_ready: "已预烘焙（{{total}} 帧）",
+    bake_error: "预烘焙失败",
   },
   template_picker: {
     heading: "模板",
