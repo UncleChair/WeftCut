@@ -398,14 +398,24 @@ function TemplatePreview({
       setError(`template not found in catalog: ${template.id}`);
       return;
     }
+    // `active` guards against this effect surfacing its OWN teardown as an
+    // error. On unmount/remount (notably React StrictMode's dev double-mount),
+    // the cleanup disposes the harness, which rejects the in-flight `load()`
+    // with "harness: disposed". Without the guard that rejection flashed a raw
+    // error box on first open until the next mount's frame cleared it. The
+    // cleanup sets `active = false` BEFORE dispose, so the self-inflicted
+    // rejection is swallowed; a genuine load failure (component still active)
+    // still surfaces.
+    let active = true;
     const harness = new TemplateHarness();
     harnessRef.current = harness;
     setError(null);
     loadedRef.current = harness.load(full).catch((e) => {
-      setError(String(e));
+      if (active) setError(String(e));
       throw e;
     });
     return () => {
+      active = false;
       harness.dispose();
       harnessRef.current = null;
       loadedRef.current = null;
@@ -544,6 +554,13 @@ function TemplatePreview({
               transformOrigin: "center",
               transform: `translate(-50%, -50%) scale(${scale})`,
             }}
+          />
+        )}
+        {!svgUrl && !error && (
+          <span
+            className="template-preview-loading"
+            role="status"
+            aria-label={t("template_picker.preview_loading")}
           />
         )}
         {error && <span className="settings-error">{error}</span>}
