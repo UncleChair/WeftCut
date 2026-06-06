@@ -12,6 +12,12 @@
     "dialog:default",
     "fs:default",
     "fs:allow-temp-write-recursive",
+    "fs:allow-mkdir",
+    "fs:allow-write-file",
+    "fs:allow-read-file",
+    "fs:allow-read-dir",
+    "fs:allow-remove",
+    "fs:allow-exists",
     "shell:default",
     "mcp-bridge:default"
   ]
