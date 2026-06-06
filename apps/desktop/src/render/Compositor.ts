@@ -23,6 +23,10 @@ import { SubtitlesSprite } from "./sprite/SubtitlesSprite";
 import { TemplateSprite } from "./sprite/TemplateSprite";
 import { TextSprite } from "./sprite/TextSprite";
 import { VideoClipSprite } from "./sprite/VideoClipSprite";
+import { getTemplate } from "./templates/catalog";
+import { TemplatePrewarmer, type PrewarmContentSpec } from "./templates/TemplatePrewarmer";
+import { templateFrameDescriptor } from "./templates/templateFrameDescriptor";
+import { rasterTemplateFrame, sharedTemplateFrameCache } from "./templates/templateRaster";
 import { swapKeys } from "./swapKeys";
 
 /// Match the preview ring's default lookahead window. We only use
@@ -174,6 +178,27 @@ interface ActiveAudio {
   mixer: AudioMixer;
 }
 
+/// Schedule `cb` for an idle slice: `requestIdleCallback` when available
+/// (with a 200ms timeout floor so the prewarm can't starve indefinitely),
+/// else a short `setTimeout`. Returns a cancel token for `cancelIdle`.
+function scheduleIdle(cb: () => void): number {
+  const g = globalThis as unknown as {
+    requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+    setTimeout: (cb: () => void, ms: number) => number;
+  };
+  if (typeof g.requestIdleCallback === "function") return g.requestIdleCallback(cb, { timeout: 200 });
+  return g.setTimeout(cb, 16);
+}
+
+function cancelIdle(token: number): void {
+  const g = globalThis as unknown as {
+    cancelIdleCallback?: (t: number) => void;
+    clearTimeout: (t: number) => void;
+  };
+  if (typeof g.cancelIdleCallback === "function") g.cancelIdleCallback(token);
+  else g.clearTimeout(token);
+}
+
 export class Compositor {
   readonly app: Application;
   readonly stage: Container;
@@ -218,6 +243,25 @@ export class Compositor {
   /// `scheduleRepaint()` for async-arrived frames when the playhead
   /// is paused (no rAF tick incoming).
   private lastTUs = 0;
+  /// Background filler that warms the shared template-frame cache ahead of the
+  /// playhead. DOM-gated: only the main-thread preview Compositor creates one;
+  /// the export Worker (no `document`, frames injected via `setTemplateFrames`)
+  /// leaves it null.
+  private prewarmer: TemplatePrewarmer | null =
+    typeof document !== "undefined"
+      ? new TemplatePrewarmer({
+          cap: sharedTemplateFrameCache.capacity(),
+          hasFrame: (k, f) => sharedTemplateFrameCache.hasFrame(k, f),
+          setFrame: (k, f, b) => {
+            sharedTemplateFrameCache.setFrame(k, f, b);
+          },
+          schedule: (cb) => scheduleIdle(cb),
+          cancel: (t) => cancelIdle(t),
+        })
+      : null;
+  /// Last composition frame index we re-planned the prewarm targets at, so the
+  /// per-tick refresh in `compositeFrame` only fires on a frame change.
+  private lastPrewarmFrame = -1;
   private repaintScheduled = false;
   /// Engine's playing state — written by PlaybackEngine on play /
   /// pause / seek. AudioMixers consult this to decide whether to
@@ -422,6 +466,10 @@ export class Compositor {
         this.audios.delete(layerId);
       }
     }
+    // Re-plan the prewarm window against the new project at the current
+    // playhead. Reached only for a non-null summary (the null branch returns
+    // above); `this.lastTUs` is the last composited composition time.
+    this.updatePrewarmTargets(this.lastTUs);
   }
 
   /// Composite one frame at composition-time `tUs`.
@@ -568,6 +616,16 @@ export class Compositor {
           `compStage.children=${this.stage.children.length} ` +
           `appStage.children=${this.app.stage.children.length}`,
       );
+    }
+    // Refresh the prewarm window when the playhead crosses a frame boundary.
+    // Throttled to once per composition frame so scrub/play ticks within the
+    // same frame don't re-plan. Runs whether playing or paused.
+    if (this.prewarmer) {
+      const frameIdx = Math.round((tUsSnapped * this.fpsNum) / (1_000_000 * this.fpsDen));
+      if (frameIdx !== this.lastPrewarmFrame) {
+        this.lastPrewarmFrame = frameIdx;
+        this.updatePrewarmTargets(tUsSnapped);
+      }
     }
     // Stamp the duration last — anything that early-returns above
     // (disposed, suspended, no project) is correctly excluded from
@@ -747,6 +805,8 @@ export class Compositor {
     this.texts.clear();
     for (const t of this.templates.values()) t.sprite.dispose();
     this.templates.clear();
+    this.prewarmer?.dispose();
+    this.prewarmer = null;
     // Drop the injected export-bake frame references. Bitmaps here are OWNED by
     // the export caller (`exportBakeTemplates`), not the Compositor — same as
     // `setTemplateFrames`, which clears without closing — so we clear (no
@@ -832,6 +892,44 @@ export class Compositor {
       nextStartUs,
       clips,
     };
+  }
+
+  /// Map the active template layers at composition-time `tUs` to prewarm specs
+  /// (deduped by cacheKey inside the planner) and hand them to the prewarmer.
+  /// Runs whether playing or paused (compositeFrame fires on seek/scrub too), so
+  /// the cache warms ahead of the playhead in both states.
+  private updatePrewarmTargets(tUs: number): void {
+    if (!this.prewarmer || !this.projectSummary) return;
+    const specs: PrewarmContentSpec[] = [];
+    for (const track of this.projectSummary.tracks) {
+      if (!track.enabled) continue;
+      for (const layer of track.layers) {
+        if (!layer.enabled || layer.params.kind !== "Template") continue;
+        const template = getTemplate(layer.params.template_id);
+        if (!template) continue;
+        const tInLayerUs = tUs - layer.t_start_us;
+        const durationUs = layer.t_end_us - layer.t_start_us;
+        const view = layer.params;
+        const desc = templateFrameDescriptor(view, tInLayerUs, durationUs, this.fpsNum, this.fpsDen, template);
+        if (!desc) continue;
+        // Capture the plan-time inputs in locals so the async render closure
+        // binds the values that produced THIS cacheKey, not whatever `this.fps*`
+        // is at raster time (which could drift if the project fps changes).
+        const fpsNum = this.fpsNum;
+        const fpsDen = this.fpsDen;
+        const canonicalProps = desc.canonicalProps;
+        const durationSec = desc.durationSec;
+        specs.push({
+          cacheKey: desc.cacheKey,
+          contentFrame: desc.contentFrame,
+          contentDurationFrames: desc.contentDurationFrames,
+          // tSec for an arbitrary content frame = frame * fpsDen / fpsNum.
+          render: (frame: number) =>
+            rasterTemplateFrame(template, (frame * fpsDen) / fpsNum, durationSec, canonicalProps),
+        });
+      }
+    }
+    this.prewarmer.setTargets(specs);
   }
 
   private ensureClip(layer: LayerSummary): ActiveClip | null {
