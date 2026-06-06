@@ -255,7 +255,7 @@ Per-template-layer bake status is surfaced in two places. A **status dot** on th
 template's timeline layer block shows a spinner while a bake is in progress, a
 subtle dot when the sequence is ready, red on error, and nothing when idle. The
 template's **property panel** shows a corresponding status line — idle,
-预烘焙中 with a frame count, ready, or failed. Both derive from the baker's
+baking with a frame count, ready, or failed. Both derive from the baker's
 per-content status combined with the in-RAM baked-key index, so a template whose
 sequence was persisted in a prior session reads as ready even with the global
 Pre-bake setting off.
