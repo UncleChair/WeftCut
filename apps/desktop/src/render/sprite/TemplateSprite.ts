@@ -21,7 +21,7 @@ import { ImageSource, Sprite, Texture } from "pixi.js";
 import { frameIndexInLayer } from "../../frames";
 import type { TemplateView } from "../../ipc";
 import { getTemplate, type Template } from "../templates/catalog";
-import { rasterTemplateFrame, sharedTemplateFrameCache } from "../templates/templateRaster";
+import { resolveTemplateFrame, sharedTemplateFrameCache } from "../templates/templateRaster";
 import { templateFrameDescriptor } from "../templates/templateFrameDescriptor";
 import { templateDurationFrames } from "../templates/templateFrames";
 
@@ -178,7 +178,9 @@ export class TemplateSprite {
   ): Promise<void> {
     if (!this.template) return;
     try {
-      const bitmap = await rasterTemplateFrame(this.template, tSec, durationSec, canonicalProps);
+      const bitmap = await resolveTemplateFrame(
+           this.template, cacheKey, frame, tSec, durationSec, canonicalProps,
+         );
       // Hand the bitmap to the cache. `setFrame` is idempotent: if a sibling
       // sprite already cached this (cacheKey, frame), it keeps that bitmap and
       // closes ours, returning the CANONICAL cache-owned bitmap. Bind THAT, so
