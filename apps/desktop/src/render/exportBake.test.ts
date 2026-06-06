@@ -15,7 +15,7 @@ import { describe, expect, it, test } from "vitest";
 import type { LayerParamsView, ProjectSummary, TemplateView } from "../ipc";
 import { frameIndexInLayer, snapFrameFloor } from "../frames";
 import { bakeContentFrameFor, templateLayersToBake } from "./exportBake";
-import { templateContentFrame, templateDurationFrames } from "./sprite/TemplateSprite";
+import { templateContentFrame, templateDurationFrames } from "./templates/templateFrames";
 
 const COUNTDOWN = "countdown"; // built-in, 480x480
 

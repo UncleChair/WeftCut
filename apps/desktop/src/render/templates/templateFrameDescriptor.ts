@@ -1,10 +1,15 @@
 import type { TemplateView } from "../../ipc";
 import { canonicalizeProps } from "./Rasterizer";
 import { resolveTemplateContentDurationUs, type Template } from "./catalog";
-import { frameTimeSec, templateContentFrame, templateFrameCacheKey } from "../sprite/TemplateSprite";
+import {
+  US_PER_SEC,
+  frameTimeSec,
+  templateContentFrame,
+  templateFrameCacheKey,
+} from "./templateFrames";
 
-const US_PER_SEC = 1_000_000;
-
+/// `renderW/renderH/contentDurationUs/srcInUs/contentDurationFrames` are carried
+/// for the prewarmer path; the sprite only uses cacheKey/contentFrame/tSec/durationSec/canonicalProps.
 export interface TemplateFrameDescriptor {
   cacheKey: string;
   contentFrame: number;

@@ -12,7 +12,7 @@ import {
   templateContentFrame,
   templateDurationFrames,
   templateFrameCacheKey,
-} from "./TemplateSprite";
+} from "../templates/templateFrames";
 
 describe("templateDurationFrames", () => {
   test("exact-rational frame count over the duration (30fps)", () => {
