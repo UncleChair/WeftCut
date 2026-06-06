@@ -41,6 +41,15 @@ Single touch point: **`apps/desktop/src/templates/TemplatePicker.tsx`**, the
 `harness.renderFrameSvg(PREVIEW_T_SEC, durSec, props)` → SVG string → Blob →
 object URL → `<img>` scaled to fit).
 
+### Fixed 16:9 preview box (both large preview and cards)
+The preview host is a **fixed 16:9 box** of the given `width` (`boxH = round(width
+* 9/16)`), so a large or oddly-shaped template can't blow up the display area.
+The template (its intrinsic `w×h`) is scaled to **contain** — `scale = min(boxW/w,
+boxH/h)` — and centered (the `<img>` is absolutely positioned with a center
+transform-origin and `translate(-50%,-50%) scale(...)`); the host's checkerboard
+shows through the letterbox margins. Applies to both the large preview and the
+card thumbnails.
+
 ### New `animate` prop on `TemplatePreview`
 - `animate=false` (default; card thumbnails): unchanged — render one frame at
   `t=0`.
