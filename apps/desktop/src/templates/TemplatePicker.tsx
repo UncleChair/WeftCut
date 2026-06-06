@@ -340,8 +340,13 @@ function TemplatePreview({
   animate?: boolean;
 }) {
   const [w, h] = template.size;
-  const scale = width / w;
-  const scaledHeight = h * scale;
+  // Fixed 16:9 preview box of the given `width`, so a large or oddly-shaped
+  // template can't blow up the display area. The template is scaled to CONTAIN
+  // (whole thing visible, never cropped) and centered; the host's checkerboard
+  // shows through the letterbox margins.
+  const boxW = width;
+  const boxH = Math.round((width * 9) / 16);
+  const scale = Math.min(boxW / w, boxH / h);
 
   const harnessRef = useRef<TemplateHarness | null>(null);
   const loadedRef = useRef<Promise<void> | null>(null);
@@ -484,8 +489,8 @@ function TemplatePreview({
       // through to the card button). The animated large preview needs to RECEIVE
       // hover, so re-enable pointer events on it; cards keep the default.
       style={{
-        width,
-        height: scaledHeight,
+        width: boxW,
+        height: boxH,
         ...(animate ? { pointerEvents: "auto" as const } : null),
       }}
       onMouseEnter={animate ? () => setHovered(true) : undefined}
@@ -497,9 +502,15 @@ function TemplatePreview({
           alt={`preview-${template.id}`}
           width={w}
           height={h}
+          // Centered + contain-scaled inside the fixed 16:9 box. The host is
+          // position:relative + overflow:hidden, so absolute centering with a
+          // center transform-origin keeps the scaled template middle-anchored.
           style={{
-            transformOrigin: "top left",
-            transform: `scale(${scale})`,
+            position: "absolute",
+            left: "50%",
+            top: "50%",
+            transformOrigin: "center",
+            transform: `translate(-50%, -50%) scale(${scale})`,
           }}
         />
       )}
