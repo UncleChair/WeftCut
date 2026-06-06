@@ -309,6 +309,9 @@ export class Compositor {
   /// Latest per-cacheKey bake status from the baker. Fanned out to per-layer
   /// entries in `recomputeBakeStatuses`.
   private bakeStatusByCacheKey = new Map<string, LayerBakeStatus>();
+  /// Signature of the last published bake-status map, so recompute is a no-op
+  /// when nothing changed (it runs every frame via updateBakeTargets).
+  private lastBakeStatusSig = "";
   /// LayerIds the user manually "Pre-bake now"'d this session — baked even
   /// when the global setting is off.
   private manualPrebakeLayers = new Set<string>();
@@ -466,6 +469,7 @@ export class Compositor {
       this.manualPrebakeLayers.clear();
       sharedBakedKeyIndex.clear();
       this.bakeStatusByCacheKey.clear();
+      this.lastBakeStatusSig = "";
       setLayerBakeStatuses({});
       return;
     }
@@ -894,6 +898,7 @@ export class Compositor {
     this.manualPrebakeLayers.clear();
     sharedBakedKeyIndex.clear();
     this.bakeStatusByCacheKey.clear();
+    this.lastBakeStatusSig = "";
     setLayerBakeStatuses({});
     // Drop the injected export-bake frame references. Bitmaps here are OWNED by
     // the export caller (`exportBakeTemplates`), not the Compositor — same as
@@ -1121,7 +1126,7 @@ export class Compositor {
   /// updateBakeTargets, and setProject.
   private recomputeBakeStatuses(): void {
     if (!this.projectSummary) {
-      setLayerBakeStatuses({});
+      if (this.lastBakeStatusSig !== "") { this.lastBakeStatusSig = ""; setLayerBakeStatuses({}); }
       return;
     }
     const byLayer: Record<string, LayerBakeStatus> = {};
@@ -1146,6 +1151,9 @@ export class Compositor {
         }
       }
     }
+    const sig = JSON.stringify(byLayer);
+    if (sig === this.lastBakeStatusSig) return;
+    this.lastBakeStatusSig = sig;
     setLayerBakeStatuses(byLayer);
   }
 

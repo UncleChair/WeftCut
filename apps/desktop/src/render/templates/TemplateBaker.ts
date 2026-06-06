@@ -57,10 +57,22 @@ export class TemplateBaker {
     if (this.disposed) return;
     this.specsByKey = new Map(specs.map((s) => [s.cacheKey, s]));
     this.queue = planBakeTargets(specs, () => false);
-    this.status = new Map(
-      specs.map((s) => [s.cacheKey, { phase: "baking" as BakePhase, done: 0, total: s.contentDurationFrames }]),
-    );
-    for (const [k, st] of this.status) this.deps.onStatus?.(k, { ...st });
+    // Preserve status across re-plans: re-calling setTargets with an unchanged
+    // active set (every frame, as the playhead moves) must NOT reset a ready
+    // content back to baking — that flickers the UI dot. Keep the prior status
+    // object for keys still present; announce "baking" only for NEW keys.
+    const prev = this.status;
+    this.status = new Map();
+    for (const s of specs) {
+      const old = prev.get(s.cacheKey);
+      if (old) {
+        this.status.set(s.cacheKey, old);
+      } else {
+        const st: BakeStatus = { phase: "baking", done: 0, total: s.contentDurationFrames };
+        this.status.set(s.cacheKey, st);
+        this.deps.onStatus?.(s.cacheKey, { ...st });
+      }
+    }
     this.arm();
   }
 
@@ -117,11 +129,13 @@ export class TemplateBaker {
   }
 
   /// A frame completed (persisted or already-on-disk). Advance done; flip to
-  /// ready when complete. No-op if the content already errored.
+  /// ready when complete. No-op if the content is not in the "baking" phase —
+  /// a re-planned queue can re-process already-counted frames; a ready content
+  /// must stay put and must not overshoot.
   private bump(cacheKey: string, touched: Set<string>): void {
     const st = this.status.get(cacheKey);
-    if (!st || st.phase === "error") return;
-    st.done++;
+    if (!st || st.phase !== "baking") return;
+    st.done = Math.min(st.total, st.done + 1);
     if (st.done >= st.total) st.phase = "ready";
     touched.add(cacheKey);
   }

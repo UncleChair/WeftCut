@@ -126,4 +126,30 @@ describe("TemplateBaker", () => {
     expect(last.phase).toBe("error");
     expect(last.done).toBe(0);
   });
+
+  it("does not re-announce baking when setTargets repeats an already-ready content", async () => {
+    const pending: (() => void)[] = [];
+    const emits: { phase: string; done: number; total: number }[] = [];
+    const spec = { cacheKey: "a", contentFrame: 0, contentDurationFrames: 3, render: async () => makeFakeBitmap() };
+    const baker = new TemplateBaker({
+      schedule: (cb) => { pending.push(cb); return pending.length; },
+      cancel: vi.fn(),
+      isOnDisk: async () => false,
+      persist: async () => {},
+      warm: vi.fn(),
+      onStatus: (_k, s) => emits.push(s),
+      batchSize: 2,
+    });
+    baker.setTargets([spec]);
+    await drain(pending);
+    expect(emits[emits.length - 1]!.phase).toBe("ready");
+    const countAfterFirstBake = emits.length;
+    // Repeat setTargets with the SAME content (as happens every playback frame).
+    baker.setTargets([spec]);
+    await drain(pending);
+    const newEmits = emits.slice(countAfterFirstBake);
+    // No "baking" re-announcement, and it stays ready.
+    expect(newEmits.some((e) => e.phase === "baking")).toBe(false);
+    expect(emits[emits.length - 1]!.phase).toBe("ready");
+  });
 });
