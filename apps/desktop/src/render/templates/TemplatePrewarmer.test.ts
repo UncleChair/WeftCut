@@ -43,4 +43,83 @@ describe("TemplatePrewarmer", () => {
     while (pending.length) { pending.shift()!(); await new Promise((r) => setTimeout(r, 0)); }
     expect(renderSpy).not.toHaveBeenCalled();
   });
+
+  it("dispatches up to batchSize rasters concurrently", async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const release: (() => void)[] = [];
+    const render = vi.fn(
+      (_f: number) =>
+        new Promise<ImageBitmap>((resolve) => {
+          inFlight++;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          release.push(() => {
+            inFlight--;
+            resolve(makeBmp());
+          });
+        }),
+    );
+    const pending: (() => void)[] = [];
+    const prewarmer = new TemplatePrewarmer({
+      cap: 240,
+      hasFrame: () => false,
+      setFrame: () => {},
+      schedule: (cb) => {
+        pending.push(cb);
+        return pending.length;
+      },
+      cancel: () => {},
+      batchSize: 3,
+    });
+    prewarmer.setTargets([
+      { cacheKey: "a", contentFrame: 0, contentDurationFrames: 10, render },
+    ]);
+    pending.shift()!(); // run the first scheduled batch
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(maxInFlight).toBe(3); // batchSize rasters in flight at once
+    release.forEach((r) => r());
+  });
+
+  it("closes bitmaps that resolve after dispose (mid-batch)", async () => {
+    const closed: number[] = [];
+    let n = 0;
+    const release: (() => void)[] = [];
+    const render = vi.fn(
+      () =>
+        new Promise<ImageBitmap>((resolve) => {
+          const id = n++;
+          release.push(() =>
+            resolve({
+              close() {
+                closed.push(id);
+              },
+            } as unknown as ImageBitmap),
+          );
+        }),
+    );
+    const setFrame = vi.fn();
+    const pending: (() => void)[] = [];
+    const prewarmer = new TemplatePrewarmer({
+      cap: 240,
+      hasFrame: () => false,
+      setFrame,
+      schedule: (cb) => {
+        pending.push(cb);
+        return pending.length;
+      },
+      cancel: () => {},
+      batchSize: 2,
+    });
+    prewarmer.setTargets([
+      { cacheKey: "a", contentFrame: 0, contentDurationFrames: 5, render },
+    ]);
+    pending.shift()!(); // start the batch (2 renders in flight, gated)
+    await Promise.resolve();
+    prewarmer.dispose();
+    release.forEach((r) => r()); // resolve after dispose
+    await new Promise((r) => setTimeout(r, 0));
+    expect(setFrame).not.toHaveBeenCalled();
+    expect(closed.length).toBe(2); // both late bitmaps closed, not leaked
+  });
 });
