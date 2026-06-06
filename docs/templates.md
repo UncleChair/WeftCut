@@ -198,11 +198,24 @@ shared raster function, so a heavier lever is a small add, not a separate path:
   and bound as a texture. Zero disk, zero pre-work, instant after an edit.
   Resolution-independent: the frame is rastered at the resolution the composite
   needs, so a template scaled up never blurs.
-- **L1 — in-RAM lookahead.** When a template — or the number of templates on one
-  frame — is heavy enough that on-demand raster can't stay ahead of playback,
-  frames are pre-rastered ahead of the playhead into a bounded in-memory ring,
-  the same lookahead pattern the video `FrameRing` uses (render.md). Buys smooth
-  playback; costs bounded RAM; no disk.
+- **L1 — in-RAM lookahead (prewarm).** A budget-paced background prewarmer fills
+  the **same shared L0 cache** ahead of the playhead, off the play loop, so
+  playback and scrubbing hit the cache instead of racing on-demand rasters. It
+  runs continuously — during playback **and** while paused or on project load.
+  Each composite frame, the active template layers map to their content identities
+  (deduped by cache key, so N identical templates warm **one** content set); a
+  pure planner picks which `(cacheKey, content frame)` to ensure cached and in
+  what order: the playhead frame first, then forward, then earlier frames for
+  small backward scrubs. It warms the **whole content when it fits** the budget,
+  otherwise a forward **sliding window**; the per-content budget is `cap ÷
+  distinct-content-count` so the union of warm targets never exceeds the cache cap
+  and the LRU can't evict a still-targeted frame. Rastering is time-sliced into
+  small batches scheduled on idle callbacks, so it never blocks the UI or the play
+  tick. It **fills ahead of time rather than speeding the harness** (one harness
+  per `templateId`, serialized), so sustained load with many distinct heavy
+  contents at once still falls back to the L0 on-demand path for the tail — which
+  remains the fallback for any not-yet-warmed frame (e.g. immediately after a
+  seek). Buys smooth playback; costs bounded RAM; no disk.
 - **L2 — persisted PNG (opt-in / auto-escalated).** The frame sequence is written
   to disk under the workspace `Cache/raster/`, one **PNG** per frame (PNG because
   the Canvas API's WebP encode is lossy and crisp text edges matter; ADR 0015),
@@ -212,11 +225,12 @@ shared raster function, so a heavier lever is a small add, not a separate path:
   straight off disk — rather than additional smoothness (L1 already gives that).
   The on-disk sequence is safe to delete; it regenerates.
 
-Escalation is **measurement-driven, not a setting the user must predict.** On add
-or edit, the harness times one raster on the actual hardware; a template, or a
-per-frame template count, that exceeds the frame budget auto-escalates to L1, and
-heavy or persistence-worthy cases to L2. A manual per-layer override is the
-escape hatch, not the primary control. Render and bake resolution follow the
+L1 is **always on** — the prewarmer runs continuously and costs nothing but
+bounded RAM, so there is no threshold to cross and nothing for the user to
+predict. Escalation to **L2** is **measurement-driven**: on add or edit the
+harness times one raster on the actual hardware, and heavy or persistence-worthy
+cases auto-escalate to the persisted sequence (a manual per-layer override is the
+escape hatch, not the primary control). Render and bake resolution follow the
 composition (display) size — never below it — so persisted frames don't blur on
 scale-up.
 
