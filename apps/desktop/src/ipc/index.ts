@@ -623,6 +623,9 @@ export interface AppSettings {
   tail_snap_enabled: boolean;
   /// Pixel threshold for boundary snapping. Clamped server-side.
   tail_snap_strength_px: number;
+  /// When true, every template layer's full frame sequence is pre-baked
+  /// to disk in the background (L2). Default false. See docs/templates.md.
+  prebake_templates: boolean;
 }
 
 /// Patch shape — every field optional. The backend merges into the
@@ -635,6 +638,7 @@ export interface AppSettingsPatch {
   media_pool_drawer_open?: boolean;
   tail_snap_enabled?: boolean;
   tail_snap_strength_px?: number;
+  prebake_templates?: boolean;
 }
 
 export async function appSettingsGet(): Promise<AppSettings> {
