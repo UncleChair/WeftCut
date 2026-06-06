@@ -193,23 +193,21 @@ export class TemplateFrameCache {
   // Layout: `<workspace>/Cache/raster/<hash>/<i>.png`, where `<hash>` is
   // a stable hash of `cacheKey` (FNV-1a 32-bit, hex — see `hashCacheKey`).
   //
-  // CAPABILITY CAVEAT: under the app's current Tauri capabilities the JS
-  // fs plugin can only touch the temp dir + app-specific dirs (`fs:default`
-  // = create/read-app-specific-dirs + deny-default, plus
-  // `fs:allow-temp-write-recursive`). The workspace is a USER-CHOSEN
-  // folder, so `mkdir`/`writeFile`/`readDir`/`remove`/`exists` against
-  // `<workspace>/Cache/raster/...` are DENIED at runtime today. These
-  // methods are implemented against the real fs plugin (no faking): a
-  // genuine not-found yields null/no-op, but a permission denial is left
-  // to surface as a thrown error rather than masked. To actually enable
-  // L2, the app must grant `fs:allow-mkdir`, `fs:allow-write-file`,
-  // `fs:allow-read-file`, `fs:allow-read-dir`, `fs:allow-remove`,
-  // `fs:allow-exists` AND extend the runtime fs scope to cover the open
-  // workspace path (e.g. Rust `app.fs_scope().allow_directory(ws, true)`
-  // on project open — `default.json` alone can't express the dynamic
-  // workspace path the way `allow-temp-write-recursive` ships a `$TEMP/**`
-  // scope). The Tauri imports are loaded lazily so the L0 path never
-  // pulls Tauri (keeps `frameCache.ts` Node-loadable for the unit test).
+  // RUNTIME-ENABLED. The six fs perms L2 needs — `fs:allow-mkdir`,
+  // `fs:allow-write-file`, `fs:allow-read-file`, `fs:allow-read-dir`,
+  // `fs:allow-remove`, `fs:allow-exists` — are granted in
+  // `capabilities/default.json`, and the dynamic workspace scope is opened at
+  // runtime via Rust `app.fs_scope().allow_directory(ws, true)` at each of the
+  // three workspace-activation sites (the workspace is a USER-CHOSEN folder, so
+  // `default.json` alone can't express its path the way
+  // `allow-temp-write-recursive` ships a static `$TEMP/**` scope). So
+  // `mkdir`/`writeFile`/`readDir`/`remove`/`exists` against
+  // `<workspace>/Cache/raster/...` succeed once a project is open. These methods
+  // are implemented against the real fs plugin (no faking): a genuine not-found
+  // yields null/no-op; an unexpected IO/permission error surfaces as a thrown
+  // error rather than being masked. The Tauri imports are loaded lazily so the
+  // L0 path never pulls Tauri (keeps `frameCache.ts` Node-loadable for the unit
+  // test).
   // ----------------------------------------------------------------
 
   /// Read a persisted PNG frame, or null if it isn't on disk (or no
@@ -270,6 +268,20 @@ export class TemplateFrameCache {
       const dir = await join(root, entry.name);
       await remove(dir, { recursive: true });
     }
+  }
+
+  /// The set of `<hash>` dir names currently under `Cache/raster`. Empty when
+  /// no project is open or the dir doesn't exist. Used to hydrate the
+  /// in-RAM baked-key index on project load.
+  async listBakedHashes(): Promise<Set<string>> {
+    const root = await rasterRootDir();
+    if (root === null) return new Set();
+    const { readDir, exists } = await import("@tauri-apps/plugin-fs");
+    if (!(await exists(root))) return new Set();
+    const entries = await readDir(root);
+    const out = new Set<string>();
+    for (const e of entries) if (e.isDirectory) out.add(e.name);
+    return out;
   }
 }
 

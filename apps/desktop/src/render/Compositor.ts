@@ -26,7 +26,16 @@ import { VideoClipSprite } from "./sprite/VideoClipSprite";
 import { getTemplate } from "./templates/catalog";
 import { TemplatePrewarmer, type PrewarmContentSpec } from "./templates/TemplatePrewarmer";
 import { templateFrameDescriptor } from "./templates/templateFrameDescriptor";
-import { rasterTemplateFrame, sharedTemplateFrameCache } from "./templates/templateRaster";
+import {
+  rasterTemplateFrame,
+  resolveTemplateFrame,
+  sharedBakedKeyIndex,
+  sharedTemplateFrameCache,
+} from "./templates/templateRaster";
+import { TemplateBaker, type BakeContentSpec } from "./templates/TemplateBaker";
+import { encodeBitmapToPng } from "./templates/pngEncode";
+import { onPrebakeRequest } from "./templates/prebakeBus";
+import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { swapKeys } from "./swapKeys";
 
 /// Match the preview ring's default lookahead window. We only use
@@ -272,6 +281,28 @@ export class Compositor {
           cancel: (t) => cancelIdle(t),
         })
       : null;
+  /// L2 writer. DOM-gated like the prewarmer (never in the export Worker).
+  private baker: TemplateBaker | null =
+    typeof document !== "undefined"
+      ? new TemplateBaker({
+          schedule: (cb) => scheduleIdle(cb),
+          cancel: (t) => cancelIdle(t),
+          isOnDisk: (k, f) => sharedTemplateFrameCache.hasPng(k, f),
+          persist: async (k, f, bmp) => {
+            const png = await encodeBitmapToPng(bmp);
+            await sharedTemplateFrameCache.writePng(k, f, png);
+            sharedBakedKeyIndex.add(k);
+          },
+          warm: (k, f, bmp) => {
+            sharedTemplateFrameCache.setFrame(k, f, bmp);
+          },
+        })
+      : null;
+  /// LayerIds the user manually "Pre-bake now"'d this session — baked even
+  /// when the global setting is off.
+  private manualPrebakeLayers = new Set<string>();
+  /// Unsubscribe handle for the prebake bus.
+  private prebakeUnsub: (() => void) | null = null;
   /// Last composition frame index we re-planned the prewarm targets at, so the
   /// per-tick refresh in `compositeFrame` only fires on a frame change.
   private lastPrewarmFrame = -1;
@@ -479,10 +510,23 @@ export class Compositor {
         this.audios.delete(layerId);
       }
     }
+    // Subscribe to the timeline's "Pre-bake now" bus exactly once (DOM-gated
+    // by `this.baker`). A request records the layer and refreshes bake targets
+    // so it bakes even when the global setting is off.
+    if (this.baker && !this.prebakeUnsub) {
+      this.prebakeUnsub = onPrebakeRequest((layerId) => {
+        this.manualPrebakeLayers.add(layerId);
+        this.updateBakeTargets(this.lastTUs);
+      });
+    }
     // Re-plan the prewarm window against the new project at the current
     // playhead. Reached only for a non-null summary (the null branch returns
     // above); `this.lastTUs` is the last composited composition time.
     this.updatePrewarmTargets(this.lastTUs);
+    this.updateBakeTargets(this.lastTUs);
+    // Hydrate the on-disk baked-key index + GC orphaned hash dirs against the
+    // new project's live keys. Fire-and-forget — never blocks load.
+    void this.hydrateBakedIndexAndGc();
   }
 
   /// Composite one frame at composition-time `tUs`.
@@ -638,6 +682,7 @@ export class Compositor {
       if (frameIdx !== this.lastPrewarmFrame) {
         this.lastPrewarmFrame = frameIdx;
         this.updatePrewarmTargets(tUsSnapped);
+        this.updateBakeTargets(tUsSnapped);
       }
     }
     // Stamp the duration last — anything that early-returns above
@@ -825,6 +870,12 @@ export class Compositor {
     this.templates.clear();
     this.prewarmer?.dispose();
     this.prewarmer = null;
+    this.baker?.dispose();
+    this.baker = null;
+    this.prebakeUnsub?.();
+    this.prebakeUnsub = null;
+    this.manualPrebakeLayers.clear();
+    sharedBakedKeyIndex.clear();
     // Drop the injected export-bake frame references. Bitmaps here are OWNED by
     // the export caller (`exportBakeTemplates`), not the Compositor — same as
     // `setTemplateFrames`, which clears without closing — so we clear (no
@@ -942,12 +993,102 @@ export class Compositor {
           contentFrame: desc.contentFrame,
           contentDurationFrames: desc.contentDurationFrames,
           // tSec for an arbitrary content frame = frame * fpsDen / fpsNum.
+          // Disk-first: prefer a baked PNG over a live raster, falling through
+          // to `rasterTemplateFrame` inside the resolver on miss / fs hiccup.
+          render: (frame: number) =>
+            resolveTemplateFrame(
+              template,
+              desc.cacheKey,
+              frame,
+              (frame * fpsDen) / fpsNum,
+              durationSec,
+              canonicalProps,
+            ),
+        });
+      }
+    }
+    this.prewarmer.setTargets(specs);
+  }
+
+  /// Feed the L2 baker (the SOLE disk writer). Persists the FULL content of:
+  /// every active template content when the global `prebake_templates` setting
+  /// is on, PLUS any layer the user manually "Pre-bake now"'d this session
+  /// (regardless of the setting). Mirrors `updatePrewarmTargets`' descriptor
+  /// shape; the baker's `render` closure uses `rasterTemplateFrame` directly
+  /// (reading disk-first would be pointless — the baker is the writer).
+  private updateBakeTargets(tUs: number): void {
+    if (!this.baker || !this.projectSummary) return;
+    const globalOn = useAppSettingsStore.getState().settings.prebake_templates;
+    const specs: BakeContentSpec[] = [];
+    for (const track of this.projectSummary.tracks) {
+      if (!track.enabled) continue;
+      for (const layer of track.layers) {
+        if (!layer.enabled || layer.params.kind !== "Template") continue;
+        const wanted = globalOn || this.manualPrebakeLayers.has(layer.id);
+        if (!wanted) continue;
+        const template = getTemplate(layer.params.template_id);
+        if (!template) continue;
+        const tInLayerUs = tUs - layer.t_start_us;
+        const durationUs = layer.t_end_us - layer.t_start_us;
+        const view = layer.params;
+        const desc = templateFrameDescriptor(view, tInLayerUs, durationUs, this.fpsNum, this.fpsDen, template);
+        if (!desc) continue;
+        // Capture the plan-time inputs in locals so the async render closure
+        // binds the values that produced THIS cacheKey, not whatever `this.fps*`
+        // is at raster time (which could drift if the project fps changes).
+        const fpsNum = this.fpsNum;
+        const fpsDen = this.fpsDen;
+        const canonicalProps = desc.canonicalProps;
+        const durationSec = desc.durationSec;
+        specs.push({
+          cacheKey: desc.cacheKey,
+          contentFrame: desc.contentFrame,
+          contentDurationFrames: desc.contentDurationFrames,
+          // tSec for an arbitrary content frame = frame * fpsDen / fpsNum.
           render: (frame: number) =>
             rasterTemplateFrame(template, (frame * fpsDen) / fpsNum, durationSec, canonicalProps),
         });
       }
     }
-    this.prewarmer.setTargets(specs);
+    this.baker.setTargets(specs);
+  }
+
+  /// On project load: rebuild the in-RAM baked-key index from what's on disk
+  /// (so the resolver's disk-first read fires only for keys that actually have
+  /// PNGs) and reclaim disk for hash dirs no live key references anymore.
+  /// Fire-and-forget; any fs error is swallowed so it can never block load.
+  private async hydrateBakedIndexAndGc(): Promise<void> {
+    if (!this.projectSummary) return;
+    const activeKeys: string[] = [];
+    for (const track of this.projectSummary.tracks) {
+      for (const layer of track.layers) {
+        if (layer.params.kind !== "Template") continue;
+        const template = getTemplate(layer.params.template_id);
+        if (!template) continue;
+        // The cacheKey is window/time-independent (it folds props, dims, fps and
+        // content-duration, not the playhead), so tInLayerUs = 0 is fine here:
+        // we only read `desc.cacheKey`. durationUs is the layer width, mirroring
+        // `updatePrewarmTargets`.
+        const durationUs = layer.t_end_us - layer.t_start_us;
+        const desc = templateFrameDescriptor(
+          layer.params,
+          0,
+          durationUs,
+          this.fpsNum,
+          this.fpsDen,
+          template,
+        );
+        if (desc) activeKeys.push(desc.cacheKey);
+      }
+    }
+    sharedBakedKeyIndex.setLiveCandidates(activeKeys);
+    try {
+      const hashes = await sharedTemplateFrameCache.listBakedHashes();
+      sharedBakedKeyIndex.hydrateFromHashes(hashes);
+      await sharedTemplateFrameCache.gcUnreferenced(activeKeys);
+    } catch (e) {
+      console.warn("[weftcut/templates] baked-index hydrate/gc failed", e);
+    }
   }
 
   private ensureClip(layer: LayerSummary): ActiveClip | null {
