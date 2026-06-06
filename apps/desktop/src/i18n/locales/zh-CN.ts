@@ -446,6 +446,7 @@ const zhCN: Resources = {
     loading: "正在加载模板…",
     empty: "无可用模板。",
     preview_heading: "预览",
+    preview_fps: "预览帧率",
     props_heading: "参数",
     no_props: "（无可编辑参数）",
     timing_heading: "时间",

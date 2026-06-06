@@ -2778,6 +2778,27 @@ input.preview-timecode:focus {
   margin: 4px 0 8px;
 }
 
+/* Preview FPS control — sits under the large animated preview. Compact row;
+   the number input is narrow since the value is 1–60. */
+.template-preview-fps {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.template-preview-fps input[type='number'] {
+  width: 64px;
+  background: #0b1220;
+  border: 1px solid #1f2937;
+  border-radius: 4px;
+  color: #e5e7eb;
+  padding: 4px 6px;
+  font-size: 12px;
+}
+
 .template-picker-list {
   border-right: 1px solid #1f2937;
   /* `max-height` here (instead of relying on the parent body's clip) makes

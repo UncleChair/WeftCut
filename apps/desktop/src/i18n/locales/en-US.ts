@@ -455,6 +455,7 @@ const enUS = {
     loading: "Loading templates…",
     empty: "No templates available.",
     preview_heading: "Preview",
+    preview_fps: "Preview FPS",
     props_heading: "Props",
     no_props: "(no editable props)",
     timing_heading: "Timing",

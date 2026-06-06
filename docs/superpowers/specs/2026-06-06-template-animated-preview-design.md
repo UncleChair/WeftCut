@@ -22,7 +22,9 @@ resets/stops the loop.
   leave → revert to the static first frame.
 - **Loop:** while hovered, `t` runs `[0, duration)` then wraps to 0, repeating.
 - **Timing:** real-time — the loop maps wall-clock 1:1 to template time (a 5 s
-  countdown takes 5 s per loop), sampled at a preview frame rate (~20 fps).
+  countdown takes 5 s per loop), sampled at a **user-adjustable** preview frame
+  rate (default ~20 fps) — a number input under the preview drives the loop's
+  playback fps (clamped 1–60).
 - **Reset:** hover-leave (or selection change / picker close) returns to the
   static first frame and stops the loop.
 

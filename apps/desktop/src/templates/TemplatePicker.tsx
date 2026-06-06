@@ -311,10 +311,13 @@ function useDebounced<T>(value: T, delay: number): T {
 /// frame — adequate for the picker, which only needs a representative still.
 /// FOLLOW-UP: a scrub slider could let the user preview any t.
 const PREVIEW_T_SEC = 0;
-/// Frame rate for the looping picker preview (the selected template's large
-/// preview). ~20 fps is smooth enough for the arc sweep while keeping the live
-/// re-render loop cheap (one preview animates at a time).
+/// DEFAULT frame rate for the looping picker preview (the selected template's
+/// large preview); the user can change it via the preview's fps input. ~20 fps
+/// is smooth enough for the arc sweep while keeping the live re-render loop cheap
+/// (one preview animates at a time). Bounds clamp absurd input.
 const PREVIEW_FPS = 20;
+const PREVIEW_FPS_MIN = 1;
+const PREVIEW_FPS_MAX = 60;
 
 /// Live preview of a template's CURRENT frame, captured through the SAME
 /// `TemplateHarness` the timeline/export use — so picker, timeline, and export
@@ -347,6 +350,7 @@ function TemplatePreview({
   const boxW = width;
   const boxH = Math.round((width * 9) / 16);
   const scale = Math.min(boxW / w, boxH / h);
+  const { t } = useTranslation();
 
   const harnessRef = useRef<TemplateHarness | null>(null);
   const loadedRef = useRef<Promise<void> | null>(null);
@@ -357,6 +361,9 @@ function TemplatePreview({
   // the preview (from t=0), and reverts to the static first frame on leave.
   // Only meaningful when `animate` (the large preview); cards never set it.
   const [hovered, setHovered] = useState(false);
+  // User-adjustable playback frame rate for the hover loop (frames per second);
+  // higher = smoother but more renders. Only surfaced on the animated preview.
+  const [previewFps, setPreviewFps] = useState(PREVIEW_FPS);
 
   // (Re)load the harness whenever the template identity changes. The catalog's
   // `getTemplate` is a synchronous in-memory lookup returning the full
@@ -435,7 +442,7 @@ function TemplatePreview({
     let lastRenderMs = Number.NEGATIVE_INFINITY;
     const startMs = performance.now();
     const durMs = Math.max(1, durSec * 1000);
-    const frameInterval = 1000 / PREVIEW_FPS;
+    const frameInterval = 1000 / previewFps;
 
     const tick = (now: number) => {
       if (cancelled) return;
@@ -467,7 +474,8 @@ function TemplatePreview({
     // edit — acceptable and keeps the preview truthful to the current props.
     // `hovered` starts/stops the loop: entering plays from t=0, leaving falls
     // back to the static branch above (resets to the first frame).
-  }, [template.id, template.default_duration_s, props, animate, hovered]);
+    // `previewFps` re-arms the loop with the new frame interval when changed.
+  }, [template.id, template.default_duration_s, props, animate, hovered, previewFps]);
 
   // Revoke the last blob URL on unmount.
   useEffect(
@@ -479,43 +487,65 @@ function TemplatePreview({
   );
 
   return (
-    <div
-      className={
-        large
-          ? "template-preview-host template-preview-large"
-          : "template-preview-host"
-      }
-      // `.template-preview-host` is `pointer-events: none` (so card clicks pass
-      // through to the card button). The animated large preview needs to RECEIVE
-      // hover, so re-enable pointer events on it; cards keep the default.
-      style={{
-        width: boxW,
-        height: boxH,
-        ...(animate ? { pointerEvents: "auto" as const } : null),
-      }}
-      onMouseEnter={animate ? () => setHovered(true) : undefined}
-      onMouseLeave={animate ? () => setHovered(false) : undefined}
-    >
-      {svgUrl && (
-        <img
-          src={svgUrl}
-          alt={`preview-${template.id}`}
-          width={w}
-          height={h}
-          // Centered + contain-scaled inside the fixed 16:9 box. The host is
-          // position:relative + overflow:hidden, so absolute centering with a
-          // center transform-origin keeps the scaled template middle-anchored.
-          style={{
-            position: "absolute",
-            left: "50%",
-            top: "50%",
-            transformOrigin: "center",
-            transform: `translate(-50%, -50%) scale(${scale})`,
-          }}
-        />
+    <>
+      <div
+        className={
+          large
+            ? "template-preview-host template-preview-large"
+            : "template-preview-host"
+        }
+        // `.template-preview-host` is `pointer-events: none` (so card clicks pass
+        // through to the card button). The animated large preview needs to RECEIVE
+        // hover, so re-enable pointer events on it; cards keep the default.
+        style={{
+          width: boxW,
+          height: boxH,
+          ...(animate ? { pointerEvents: "auto" as const } : null),
+        }}
+        onMouseEnter={animate ? () => setHovered(true) : undefined}
+        onMouseLeave={animate ? () => setHovered(false) : undefined}
+      >
+        {svgUrl && (
+          <img
+            src={svgUrl}
+            alt={`preview-${template.id}`}
+            width={w}
+            height={h}
+            // Centered + contain-scaled inside the fixed 16:9 box. The host is
+            // position:relative + overflow:hidden, so absolute centering with a
+            // center transform-origin keeps the scaled template middle-anchored.
+            style={{
+              position: "absolute",
+              left: "50%",
+              top: "50%",
+              transformOrigin: "center",
+              transform: `translate(-50%, -50%) scale(${scale})`,
+            }}
+          />
+        )}
+        {error && <span className="settings-error">{error}</span>}
+      </div>
+      {animate && (
+        <label className="template-preview-fps">
+          <span>{t("template_picker.preview_fps")}</span>
+          <input
+            type="number"
+            min={PREVIEW_FPS_MIN}
+            max={PREVIEW_FPS_MAX}
+            step={1}
+            value={previewFps}
+            onChange={(e) => {
+              const n = Math.round(Number(e.target.value));
+              if (Number.isFinite(n)) {
+                setPreviewFps(
+                  Math.min(PREVIEW_FPS_MAX, Math.max(PREVIEW_FPS_MIN, n)),
+                );
+              }
+            }}
+          />
+        </label>
       )}
-      {error && <span className="settings-error">{error}</span>}
-    </div>
+    </>
   );
 }
 
