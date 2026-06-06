@@ -36,8 +36,8 @@ Two facts about SVG settle the architecture:
 The resolution: **`render(t)` and rasterization both happen on the main thread**,
 for preview and for export. The export Worker receives already-rasterized
 bitmaps from the main thread rather than producing them. Because a single
-main-thread rasterizer feeds both surfaces, preview equals export by
-construction — faithfully, at each surface's resolution.
+main-thread rasterizer feeds both surfaces using the same harness and the same
+authored size, preview equals export by construction — faithfully.
 
 ## Boundaries
 
@@ -196,8 +196,9 @@ lever is a small add, not a separate path:
 
 - **L0 — on demand (default).** The playhead's frame is rasterized when needed
   and bound as a texture. Zero disk, zero pre-work, instant after an edit.
-  Resolution-independent: the frame is rastered at the resolution the composite
-  needs, so a template scaled up never blurs.
+  Frames raster at the template's authored size (`manifest.size`); the layer's
+  scale is applied at composite time by the sprite, so scaling a template far
+  above its authored size can soften it.
 - **L1 — in-RAM lookahead (prewarm).** A budget-paced background prewarmer fills
   the **same shared L0 cache** ahead of the playhead, off the play loop, so
   playback and scrubbing hit the cache instead of racing on-demand rasters. It
@@ -244,9 +245,9 @@ baked-key index (hydrated from disk on project load) so un-baked templates pay
 no fs cost; any fs error falls through to a live raster so preview never blanks.
 Writes are centralized in a single background **baker** (the sole writer),
 idle-paced and playhead-first, skipping frames already on disk. On project load,
-orphaned raster dirs (from superseded props or dims) are swept. Render and bake
-resolution follow the composition (display) size — never below it — so persisted
-frames don't blur on scale-up.
+orphaned raster dirs (from superseded props or dims) are swept. Render and bake resolution follow the template's authored size (`manifest.size`);
+the layer's transform and opacity are applied at composite time and are out of
+the cache key.
 
 ### What is and isn't part of the cache key
 
@@ -261,7 +262,7 @@ never re-rasterizes it.
 | composition fps | re-raster (the frame grid changed) |
 | window (`src_in_us` / layer width) | no re-raster — frames are keyed by **absolute content frame**, so two windows into the same content share cached frames |
 | layer transform / opacity | no re-raster (sprite-applied) |
-| composition width / height | re-key — bake/render resolution tracks display size (never below), so a resize re-bakes and GC reclaims the orphan dir |
+| composition width / height | no persisted-key change — frames raster at the template's authored size; the layer's scale is applied at composite time |
 
 The key carries the **content** frame count (from the resolved cap), and each
 frame is the absolute content-frame index — so trimming the window never
@@ -293,9 +294,9 @@ Transform and opacity from the layer summary apply to the sprite itself.
 
 The export Worker has no DOM and cannot decode SVG, so it cannot rasterize a
 template. Before the encode loop, the **main thread** rasterizes every template
-layer's frames — through the same harness, at export resolution — and hands the
-bitmaps to the Worker (transferred); this is surfaced through the export
-"preparing" wait. When a template is already persisted at L2, the Worker reads
+layer's frames — through the same harness, at the template's authored size
+(`manifest.size`) — and hands the bitmaps to the Worker (transferred); this is
+surfaced through the export "preparing" wait. When a template is already persisted at L2, the Worker reads
 its PNG files directly (`createImageBitmap` on a `Blob` works in Worker scope for
 raster formats), skipping the round-trip. Either way the bytes come from the same
 rasterizer the preview used, so the exported template matches the preview.

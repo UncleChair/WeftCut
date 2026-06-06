@@ -451,6 +451,9 @@ export class Compositor {
     if (!summary) {
       for (const c of this.clips.values()) c.sprite.dispose();
       this.clips.clear();
+      this.baker?.setTargets([]);
+      this.manualPrebakeLayers.clear();
+      sharedBakedKeyIndex.clear();
       return;
     }
     // Recompute the frame-snap fps state whenever the project changes

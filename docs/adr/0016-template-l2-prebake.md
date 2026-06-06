@@ -21,7 +21,7 @@ unwired and runtime-blocked (the fs scope excluded the user-chosen workspace).
 - Two explicit triggers: a global "Pre-bake" setting (default off) and a
   per-layer "Pre-bake now". No measurement-driven auto-escalation (rejected:
   a single-raster timing mispredicts the stacked-template case).
-- PNG, not WebP (Canvas WebP is lossy; see ADR 0015). Bake at display resolution.
+- PNG, not WebP (Canvas WebP is lossy; see ADR 0015). Bake at the template's authored size (`manifest.size`); the layer's scale is applied at composite time, so it is out of the cache key.
 - A baked-key index (readDir on load) gates disk reads so un-baked templates
   pay no fs cost.
 
