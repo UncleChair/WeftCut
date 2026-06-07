@@ -41,6 +41,7 @@ pub async fn motif_capture_frame(
     props_json: String,
     width: u32,
     height: u32,
+    settle_rafs: Option<u32>,
 ) -> Result<String, String> {
     let runtime = state
         .get()
@@ -106,6 +107,7 @@ pub async fn motif_capture_frame(
         "width": width,
         "height": height,
         "fps": 30,
+        "settleRafs": settle_rafs,
     });
 
     // Serialize `t_sec` via serde_json so non-finite values (NaN, ±Inf)

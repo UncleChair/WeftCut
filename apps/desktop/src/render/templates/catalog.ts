@@ -49,6 +49,10 @@ export interface TemplateManifest {
   props_schema: Record<string, PropSpec>;
   /// Capture engine. Defaults to `"svg"` when omitted from the manifest.
   engine?: TemplateEngine;
+  /// How many real browser frames `__motifRender` waits before capture.
+  /// 2 (default, omitted) is safe for canvas/WebGL Motifs; CSS-only Motifs can
+  /// set 1 to shave ~16 ms/frame. Clamped to {0,1,2} by the runtime.
+  settle_rafs?: number;
   /// Bundled fonts declared by the template. Each maps to bytes in
   /// `Template.fonts` keyed by the asset path.
   fonts?: TemplateFont[];
