@@ -1583,7 +1583,7 @@ impl WeftCutServer {
                           | error? }, ...] }`. \
                           Supports add_color_layer, add_video_layer, update_layer, \
                           update_layer_params, move_layer, split_layer, delete_layer. Other tools \
-                          (templates, subtitles, media import, undo/redo) are not dry-runnable in v1.")]
+                          (motifs, subtitles, media import, undo/redo) are not dry-runnable in v1.")]
     async fn dry_run(
         &self,
         #[tool(aggr)] args: DryRunArgs,
@@ -2945,7 +2945,7 @@ const STATIC_RESOURCES: &[ResourceDescriptor] = &[
     },
     ResourceDescriptor {
         uri: URI_TEMPLATES,
-        name: "Templates catalog",
+        name: "Motifs catalog",
         description: "Built-in motif catalog as JSON. Same shape as the `list_motifs` tool result. \
                       Read this once at session start to know what `add_motif` accepts.",
     },
