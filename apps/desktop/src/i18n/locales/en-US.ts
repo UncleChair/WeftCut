@@ -105,9 +105,9 @@ const enUS = {
     settings: "Settings…",
     settings_hint:
       "Manage cloud-provider API keys (transcription, future TTS). Keys live in the OS keyring.",
-    templates: "Templates…",
+    templates: "Motifs…",
     templates_hint:
-      "Pick a template overlay (lower third, title card, callout, …) and drop it on the timeline.",
+      "Pick a motif overlay (lower third, title card, callout, …) and drop it on the timeline.",
     // Not menu items — these labels show up in the Settings → Keyboard
     // panel for shortcuts that don't have a menu home (transport,
     // timeline edits).
@@ -173,7 +173,7 @@ const enUS = {
     },
   },
   timeline: {
-    empty_placeholder: "timeline (import a clip or pick a template to populate)",
+    empty_placeholder: "timeline (import a clip or pick a motif to populate)",
     empty_ab_mode:
       "No A/B-roll content here. Drop a clip on A roll or B roll, or click the A/B pill above to switch to Show All.",
     track_label: "track {{n}}",
@@ -398,10 +398,10 @@ const enUS = {
     testing: "Testing…",
     test_hint:
       "Run a cheap API call to confirm the saved key works. Surfaces InvalidKey / rate-limit errors before your first cloud-backed agent call.",
-    templates_heading: "Templates",
-    prebake_templates: "Pre-bake templates",
+    templates_heading: "Motifs",
+    prebake_templates: "Pre-bake motifs",
     prebake_templates_hint:
-      "Render template animation frames to disk in the background so playback stays smooth and reopening the project is instant. Uses disk space under the project's Cache folder.",
+      "Render motif animation frames to disk in the background so playback stays smooth and reopening the project is instant. Uses disk space under the project's Cache folder.",
   },
   keybindings: {
     add: "+ Add",
@@ -452,20 +452,20 @@ const enUS = {
     mute: "Mute",
     subtitles: "Subtitles",
     subtitles_source: "Source",
-    template: "Template",
+    template: "Motif",
     transform: "Transform",
     props: "Props",
-    unknown_template: "Unknown template — its props can't be edited here.",
+    unknown_template: "Unknown motif — its props can't be edited here.",
     bake_idle: "Not pre-baked — enable Pre-bake in Settings, or right-click → Pre-bake now",
     bake_baking: "Pre-baking… {{done}}/{{total}}",
     bake_ready: "Pre-baked ({{total}} frames)",
     bake_error: "Pre-bake failed",
   },
   template_picker: {
-    heading: "Templates",
+    heading: "Motifs",
     close: "Close",
-    loading: "Loading templates…",
-    empty: "No templates available.",
+    loading: "Loading motifs…",
+    empty: "No motifs available.",
     preview_heading: "Preview",
     preview_fps: "Preview FPS",
     preview_loading: "Loading preview…",
@@ -476,7 +476,7 @@ const enUS = {
     track_label: "Track",
     track_overlay_auto: "Overlay (auto-create)",
     duration_hint:
-      "Layer length defaults to {{value}} (the template's default duration). Trim later in the timeline if you need a different length.",
+      "Layer length defaults to {{value}} (the motif's default duration). Trim later in the timeline if you need a different length.",
     add: "Add to timeline",
     adding: "Adding…",
   },
@@ -540,7 +540,7 @@ const enUS = {
     videoclip: "Video clip",
     imageoverlay: "Image overlay",
     text: "Text",
-    template: "Template",
+    template: "Motif",
     subtitles: "Subtitles",
     color: "Color",
   },
