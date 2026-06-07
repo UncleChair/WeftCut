@@ -580,11 +580,13 @@ function BakeStatusLine({ layerId }: { layerId: string }) {
   const status = useLayerBakeStatus(layerId);
   const text = !status
     ? t("property_panel.bake_idle")
-    : status.phase === "baking"
-      ? t("property_panel.bake_baking", { done: status.done, total: status.total })
-      : status.phase === "ready"
-        ? t("property_panel.bake_ready", { total: status.total })
-        : t("property_panel.bake_error");
+    : status.phase === "warming"
+      ? t("property_panel.bake_warming", { done: status.done, total: status.total })
+      : status.phase === "baking"
+        ? t("property_panel.bake_baking", { done: status.done, total: status.total })
+        : status.phase === "ready"
+          ? t("property_panel.bake_ready", { total: status.total })
+          : t("property_panel.bake_error");
   const cls = `prop-bake-status is-${status?.phase ?? "idle"}`;
   return <p className={cls}>{text}</p>;
 }

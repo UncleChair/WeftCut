@@ -19,6 +19,10 @@ export interface TemplatePrewarmerDeps {
   /// Max frames to raster per scheduled batch before yielding. Keeps the loop
   /// off the play tick's back.
   batchSize?: number;
+  /// Fired after each drained batch so a watcher can recompute cache coverage
+  /// (the prewarmer doesn't own status — the Compositor reads L0 coverage).
+  /// Never throws. Optional so existing callers/tests don't need it.
+  onProgress?: () => void;
 }
 
 /// Budget-paced background filler. `setTargets` (re)plans; an idle loop rasters
@@ -88,6 +92,7 @@ export class TemplatePrewarmer {
       );
     } finally {
       this.running = false;
+      this.deps.onProgress?.();
       this.arm(); // more to do? reschedule. else idle.
     }
   }

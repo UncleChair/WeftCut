@@ -37,6 +37,7 @@ import { onPrebakeRequest } from "./templates/prebakeBus";
 import { bakeMotifFrame } from "./motifs/motifRaster";
 import {
   setLayerBakeStatuses,
+  motifWarmPhase,
   type LayerBakeStatus,
 } from "../timeline/templateBakeStatusStore";
 import { useAppSettingsStore } from "../settings/appSettingsStore";
@@ -287,6 +288,7 @@ export class Compositor {
           // adds head-of-line latency for an on-demand scrub. One in-flight
           // capture per loop keeps the shared host queue short.
           batchSize: 1,
+          onProgress: () => this.recomputeBakeStatuses(),
         })
       : null;
   /// L2 writer. DOM-gated like the prewarmer (never in the export Worker).
@@ -1148,15 +1150,20 @@ export class Compositor {
         const desc = templateFrameDescriptor(view, 0, durationUs, this.fpsNum, this.fpsDen, template);
         if (!desc) continue;
         const live = this.bakeStatusByCacheKey.get(desc.cacheKey);
-        if (live) {
-          byLayer[layer.id] = live;
-        } else if (sharedBakedKeyIndex.has(desc.cacheKey)) {
-          byLayer[layer.id] = {
-            phase: "ready",
-            done: desc.contentDurationFrames,
-            total: desc.contentDurationFrames,
-          };
+        // L0 coverage of this layer's content frames (cheap Map lookups; the
+        // cache `hasFrame` doesn't touch recency). This is the "is preview warm"
+        // signal that drives the green bar.
+        let covered = 0;
+        for (let f = 0; f < desc.contentDurationFrames; f++) {
+          if (sharedTemplateFrameCache.hasFrame(desc.cacheKey, f)) covered++;
         }
+        const status = motifWarmPhase(
+          live ?? null,
+          covered,
+          desc.contentDurationFrames,
+          sharedBakedKeyIndex.has(desc.cacheKey),
+        );
+        if (status) byLayer[layer.id] = status;
       }
     }
     const sig = JSON.stringify(byLayer);

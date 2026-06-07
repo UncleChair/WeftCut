@@ -4,10 +4,26 @@ import {
   selectLayerBakeStatus,
   setLayerBakeStatuses,
   useTemplateBakeStatusStore,
+  motifWarmPhase,
   type LayerBakeStatus,
 } from "./templateBakeStatusStore";
 
 const baking: LayerBakeStatus = { phase: "baking", done: 1, total: 3 };
+
+describe("motifWarmPhase", () => {
+  it("prefers a live bake status when present", () => {
+    expect(motifWarmPhase({ phase: "baking", done: 1, total: 3 }, 3, 3)).toEqual({ phase: "baking", done: 1, total: 3 });
+    expect(motifWarmPhase({ phase: "error", done: 0, total: 3 }, 2, 3)).toEqual({ phase: "error", done: 0, total: 3 });
+  });
+  it("falls back to L0 coverage when no bake status", () => {
+    expect(motifWarmPhase(null, 0, 5)).toBe(null);
+    expect(motifWarmPhase(null, 2, 5)).toEqual({ phase: "warming", done: 2, total: 5 });
+    expect(motifWarmPhase(null, 5, 5)).toEqual({ phase: "ready", done: 5, total: 5 });
+  });
+  it("treats a baked-on-disk key with cold L0 as ready", () => {
+    expect(motifWarmPhase(null, 0, 5, true)).toEqual({ phase: "ready", done: 5, total: 5 });
+  });
+});
 
 describe("templateBakeStatusStore", () => {
   beforeEach(() => setLayerBakeStatuses({}));

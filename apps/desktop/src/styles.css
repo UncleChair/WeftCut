@@ -5071,6 +5071,7 @@ input.preview-timecode:focus {
   border-radius: 50%;
   pointer-events: none;
 }
+.template-bake-dot.is-warming { background: #f0a020; }
 .template-bake-dot.is-ready { background: #46c46a; }
 .template-bake-dot.is-error { background: #e5534b; }
 .template-bake-dot.is-baking {
@@ -5083,4 +5084,5 @@ input.preview-timecode:focus {
 
 .prop-bake-status { margin: 0 0 8px; font-size: 12px; opacity: 0.8; }
 .prop-bake-status.is-error { color: #e5534b; }
+.prop-bake-status.is-warming { color: #f0a020; }
 .prop-bake-status.is-ready { color: #46c46a; }

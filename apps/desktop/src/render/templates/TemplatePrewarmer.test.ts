@@ -81,6 +81,26 @@ describe("TemplatePrewarmer", () => {
     release.forEach((r) => r());
   });
 
+  it("calls onProgress after draining a batch", async () => {
+    const onProgress = vi.fn();
+    let scheduled: (() => void) | null = null;
+    const prewarmer = new TemplatePrewarmer({
+      cap: 10,
+      hasFrame: () => false,
+      setFrame: () => {},
+      schedule: (cb) => { scheduled = cb; return 1; },
+      cancel: () => {},
+      onProgress,
+      batchSize: 1,
+    });
+    prewarmer.setTargets([
+      { cacheKey: "a", contentFrame: 0, contentDurationFrames: 2, render: async () => makeBmp() },
+    ]);
+    scheduled!();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(onProgress).toHaveBeenCalled();
+  });
+
   it("closes bitmaps that resolve after dispose (mid-batch)", async () => {
     const closed: number[] = [];
     let n = 0;
