@@ -178,6 +178,121 @@ unsafe fn issue_capture_calls(
     }
 }
 
+/// Evaluate a JavaScript expression in the WebView2 page and wait for any
+/// returned Promise to settle.
+///
+/// Issues CDP method **`Runtime.evaluate`** with `awaitPromise: true` so that
+/// a Promise-returning expression is fully awaited before the handler fires.
+/// The function returns `Ok(())` when the expression completes without
+/// throwing; if the expression throws (or its Promise rejects), it returns
+/// `Err` with the exception description extracted from `exceptionDetails`.
+///
+/// Uses the same non-blocking pattern as [`capture_png_base64`] — the UI
+/// thread is **never blocked** (see the module-level docs).
+pub async fn eval_await(window: &WebviewWindow, expression: &str) -> anyhow::Result<()> {
+    // Build the params JSON via serde_json so the expression string is
+    // correctly escaped regardless of what it contains.
+    let params = serde_json::json!({
+        "expression": expression,
+        "awaitPromise": true,
+        "returnByValue": true,
+        "userGesture": true,
+    })
+    .to_string();
+
+    let (tx, rx) = oneshot::channel::<Result<(), String>>();
+
+    window
+        .with_webview(move |pw| unsafe {
+            issue_eval_call(pw, params, tx);
+        })
+        .context("with_webview failed (could not reach the WebView2 UI thread)")?;
+
+    match tokio::time::timeout(CAPTURE_TIMEOUT, rx).await {
+        Ok(Ok(Ok(()))) => Ok(()),
+        Ok(Ok(Err(msg))) => Err(anyhow!("CDP Runtime.evaluate failed: {msg}")),
+        Ok(Err(_recv_err)) => Err(anyhow!(
+            "CDP Runtime.evaluate channel closed before a result was sent"
+        )),
+        Err(_elapsed) => Err(anyhow!(
+            "CDP Runtime.evaluate timed out after {:?} (completion handler never fired)",
+            CAPTURE_TIMEOUT
+        )),
+    }
+}
+
+/// Issue `Runtime.evaluate` on the WebView2.
+///
+/// MUST run on the WebView2 UI thread (i.e. only ever called from inside a
+/// `with_webview` closure). `unsafe` for the same reasons as
+/// [`issue_capture_calls`].
+unsafe fn issue_eval_call(
+    pw: tauri::webview::PlatformWebview,
+    params: String,
+    tx: oneshot::Sender<Result<(), String>>,
+) {
+    let core = match pw.controller().CoreWebView2() {
+        Ok(core) => core,
+        Err(e) => {
+            let _ = tx.send(Err(format!("CoreWebView2() failed: {e}")));
+            return;
+        }
+    };
+
+    let tx_slot = std::rc::Rc::new(std::cell::RefCell::new(Some(tx)));
+    let tx_for_handler = std::rc::Rc::clone(&tx_slot);
+
+    let handler = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(
+        move |hr: windows::core::Result<()>, json: String| {
+            let result = match hr {
+                Ok(()) => parse_eval_result(&json),
+                Err(e) => Err(format!("Runtime.evaluate HRESULT error: {e}")),
+            };
+            if let Some(tx) = tx_for_handler.borrow_mut().take() {
+                let _ = tx.send(result);
+            }
+            Ok(())
+        },
+    ));
+
+    if let Err(e) = core.CallDevToolsProtocolMethod(
+        &HSTRING::from("Runtime.evaluate"),
+        &HSTRING::from(params.as_str()),
+        &handler,
+    ) {
+        if let Some(tx) = tx_slot.borrow_mut().take() {
+            let _ = tx.send(Err(format!(
+                "CallDevToolsProtocolMethod(Runtime.evaluate) failed: {e}"
+            )));
+        }
+    }
+}
+
+/// Parse a `Runtime.evaluate` CDP response.
+///
+/// Returns `Ok(())` when the evaluation succeeded. Returns `Err` when the
+/// response contains a top-level `"exceptionDetails"` field, extracting the
+/// human-readable message from `exceptionDetails.exception.description` (the
+/// most informative field) with a fallback to `exceptionDetails.text`.
+fn parse_eval_result(json: &str) -> Result<(), String> {
+    let value: serde_json::Value = serde_json::from_str(json)
+        .map_err(|e| format!("Runtime.evaluate result was not JSON: {e} (body: {json})"))?;
+
+    if let Some(exc) = value.get("exceptionDetails") {
+        // Prefer the exception object's description (e.g. "ReferenceError: x
+        // is not defined") over the coarser `text` field.
+        let msg = exc
+            .get("exception")
+            .and_then(|o| o.get("description"))
+            .and_then(|d| d.as_str())
+            .or_else(|| exc.get("text").and_then(|t| t.as_str()))
+            .unwrap_or("unknown exception");
+        return Err(format!("Runtime.evaluate exception: {msg}"));
+    }
+
+    Ok(())
+}
+
 /// Parse `Page.captureScreenshot`'s JSON result (`{"data":"<base64 PNG>"}`)
 /// into the raw base64 string.
 fn parse_screenshot_data(json: &str) -> Result<String, String> {
@@ -192,7 +307,9 @@ fn parse_screenshot_data(json: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_screenshot_data;
+    use super::{parse_eval_result, parse_screenshot_data};
+
+    // --- parse_screenshot_data ---
 
     #[test]
     fn parses_data_field() {
@@ -208,5 +325,43 @@ mod tests {
     #[test]
     fn errors_on_non_json() {
         assert!(parse_screenshot_data("not json").is_err());
+    }
+
+    // --- parse_eval_result ---
+
+    #[test]
+    fn eval_ok_when_no_exception() {
+        // A typical successful Runtime.evaluate response.
+        assert!(parse_eval_result(r#"{"result":{"type":"undefined"}}"#).is_ok());
+    }
+
+    #[test]
+    fn eval_err_uses_exception_description() {
+        let json = r#"{
+            "result": {"type":"object","subtype":"error"},
+            "exceptionDetails": {
+                "text": "Uncaught",
+                "exception": {
+                    "description": "ReferenceError: __motifRender is not defined"
+                }
+            }
+        }"#;
+        let err = parse_eval_result(json).unwrap_err();
+        assert!(
+            err.contains("ReferenceError: __motifRender is not defined"),
+            "unexpected message: {err}"
+        );
+    }
+
+    #[test]
+    fn eval_err_falls_back_to_text_when_no_description() {
+        let json = r#"{"exceptionDetails":{"text":"Script threw an exception"}}"#;
+        let err = parse_eval_result(json).unwrap_err();
+        assert!(err.contains("Script threw an exception"), "unexpected: {err}");
+    }
+
+    #[test]
+    fn eval_err_on_non_json() {
+        assert!(parse_eval_result("not json").is_err());
     }
 }
