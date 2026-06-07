@@ -30,12 +30,12 @@ describe("bakeMotifFrame", () => {
     (captureMotifFrame as unknown as ReturnType<typeof vi.fn>).mockClear();
   });
 
-  it("captures an arbitrary content frame at the manifest size, no disk read", async () => {
-    const template = { manifest: { id: "countdown", size: [480, 480] } } as unknown as Parameters<
+  it("captures a content frame at manifest size and forwards manifest settle_rafs", async () => {
+    const template = { manifest: { id: "countdown", size: [480, 480], settle_rafs: 1 } } as unknown as Parameters<
       typeof bakeMotifFrame
     >[0];
-    // frame 9 at 30fps → tSec = 9 * 1/30 = 0.3
+    // frame 9 at 30fps → tSec = 9 * 1/30 = 0.3; settle_rafs:1 must reach the capture.
     await bakeMotifFrame(template, 9, 30, 1, { seconds: 5 });
-    expect(captureMotifFrame).toHaveBeenCalledWith("countdown", 0.3, { seconds: 5 }, 480, 480, undefined);
+    expect(captureMotifFrame).toHaveBeenCalledWith("countdown", 0.3, { seconds: 5 }, 480, 480, 1);
   });
 });
