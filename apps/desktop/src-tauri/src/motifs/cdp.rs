@@ -32,10 +32,12 @@
 //!   3. The async caller `.await`s the `Receiver` **off** the UI thread, under
 //!      a timeout.
 //!
-//! CDP processes commands in order on a session, so issuing
+//! CDP processes commands in order on a session, so when both are issued,
 //! `setDeviceMetricsOverride` then `captureScreenshot` back-to-back applies the
 //! metrics before the shot — no handler chaining required (which is good,
-//! because `ICoreWebView2` is `!Send` and cannot be moved into a handler).
+//! because `ICoreWebView2` is `!Send` and cannot be moved into a handler). The
+//! metrics call is gated by `set_metrics` (the size is constant per Motif, so
+//! the caller skips it after the first frame); the screenshot is unconditional.
 
 #![cfg(windows)]
 
@@ -64,6 +66,11 @@ const CAPTURE_TIMEOUT: Duration = Duration::from_secs(5);
 ///
 /// Returns the raw base64 string from `Page.captureScreenshot`'s
 /// `{"data":"<base64>"}` result (no `data:` URI prefix).
+///
+/// `set_metrics`: when true, issue `Emulation.setDeviceMetricsOverride` to
+/// `w`×`h` before the shot; when false, skip it and capture at whatever
+/// resolution was last applied. Callers pass false once the host's render size
+/// is known-unchanged (constant per Motif), saving a CDP round-trip per frame.
 pub async fn capture_png_base64(window: &WebviewWindow, w: u32, h: u32, set_metrics: bool) -> anyhow::Result<String> {
     let (tx, rx) = oneshot::channel::<Result<String, String>>();
 
