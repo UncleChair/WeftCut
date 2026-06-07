@@ -1,0 +1,14 @@
+{
+  "id": "countdown",
+  "name": "Countdown",
+  "formatVersion": 1,
+  "size": [480, 480],
+  "default_duration_s": 5,
+  "max_duration_s": 5,
+  "max_duration_prop": "seconds",
+  "props_schema": {
+    "seconds": { "type": "number", "default": 5, "min": 1, "max": 60 },
+    "label": { "type": "string", "default": "GO", "maxLength": 12 },
+    "accent": { "type": "color", "default": "#ff4d4d" }
+  }
+}
