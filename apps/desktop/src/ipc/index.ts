@@ -102,10 +102,10 @@ export type LayerParamsView =
   | ({ kind: "Color" } & ColorView)
   | ({ kind: "Audio" } & AudioView)
   | ({ kind: "Subtitles" } & SubtitlesView)
-  | ({ kind: "Template" } & TemplateView);
+  | ({ kind: "Motif" } & MotifView);
 
-export interface TemplateView {
-  template_id: string;
+export interface MotifView {
+  motif_id: string;
   x: number;
   y: number;
   scale_x: number;
@@ -340,7 +340,7 @@ export interface ImageOverlayPatch {
   fade_out_us?: number;
 }
 
-export interface TemplatePatch {
+export interface MotifPatch {
   x?: number;
   y?: number;
   scale_x?: number;
@@ -377,7 +377,7 @@ export type LayerParamsPatch =
   | ({ kind: "Text" } & TextPatch)
   | ({ kind: "VideoClip" } & VideoClipPatch)
   | ({ kind: "ImageOverlay" } & ImageOverlayPatch)
-  | ({ kind: "Template" } & TemplatePatch)
+  | ({ kind: "Motif" } & MotifPatch)
   | ({ kind: "Color" } & ColorPatch)
   | ({ kind: "Audio" } & AudioPatch);
 
@@ -1026,11 +1026,11 @@ export type PropSpec =
   | { type: "color"; default: string }
   | { type: "number"; default: number; min?: number; max?: number };
 
-/// One catalog entry from `list_templates()`. Superset of the MCP `list_templates`
+/// One catalog entry from `list_motifs()`. Superset of the MCP `list_motifs`
 /// payload — `Manifest` plus the raw `html` document + capture `engine` + font
 /// declarations so the picker can render live previews without a second
 /// round-trip.
-export interface TemplateSummary {
+export interface MotifSummary {
   id: string;
   name: string;
   version: number;
@@ -1059,18 +1059,18 @@ export interface TemplateSummary {
   fonts: TemplateFont[];
 }
 
-export async function listTemplates(): Promise<TemplateSummary[]> {
-  return invoke<TemplateSummary[]>("list_templates");
+export async function listMotifs(): Promise<MotifSummary[]> {
+  return invoke<MotifSummary[]>("list_motifs");
 }
 
-/// Add a template layer. Mirrors the MCP `add_template` tool's behavior:
+/// Add a motif layer. Mirrors the MCP `add_motif` tool's behavior:
 /// - `t_end_us` defaults to `t_start_us + default_duration_s * 1e6`.
 /// - `track_id` defaults to first existing Video track or auto-creates
 ///   one labeled "Templates".
-/// - `props` is validated against the template's `props_schema`; unknown
+/// - `props` is validated against the motif's `props_schema`; unknown
 ///   keys reject, missing keys fall back to defaults.
-export async function addTemplate(args: {
-  templateId: string;
+export async function addMotif(args: {
+  motifId: string;
   tStartUs: number;
   tEndUs?: number;
   // Explicit `| undefined` so callers can pass an "auto track" undefined
@@ -1078,8 +1078,8 @@ export async function addTemplate(args: {
   trackId?: string | undefined;
   props?: Record<string, unknown>;
 }): Promise<string> {
-  return invoke<string>("add_template", {
-    templateId: args.templateId,
+  return invoke<string>("add_motif", {
+    motifId: args.motifId,
     tStartUs: args.tStartUs,
     tEndUs: args.tEndUs,
     trackId: args.trackId,

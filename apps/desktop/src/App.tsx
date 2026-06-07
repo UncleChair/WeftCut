@@ -41,7 +41,7 @@ import { AgentMode } from "./agent/AgentMode";
 import { RightPanel } from "./panels/RightPanel";
 import { ConnectAgentPanel } from "./connect/ConnectAgentPanel";
 import { SettingsPanel } from "./settings/SettingsPanel";
-import { TemplatePicker } from "./templates/TemplatePicker";
+import { MotifPicker } from "./templates/MotifPicker";
 import { MediaThumbnail } from "./panels/MediaThumbnail";
 import { mediaReadiness, type ProxyState } from "./panels/mediaReadiness";
 import { probeSourceDecodable } from "./render/decoder/probeSourceDecodable";
@@ -152,7 +152,7 @@ export function App({ onCloseProject }: AppProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [logConsoleOpen, setLogConsoleOpen] = useState(false);
   const logConsoleRef = useRef<LogConsoleHandle | null>(null);
-  const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
+  const [motifPickerOpen, setMotifPickerOpen] = useState(false);
   const [editingTimecode, setEditingTimecode] = useState<string | null>(null);
   // User shortcut overrides. Loaded once on mount; refreshed when the
   // Settings → Keyboard panel writes (it calls back via the
@@ -910,8 +910,8 @@ export function App({ onCloseProject }: AppProps) {
       const templateIds = new Set<string>();
       for (const tr of summary.tracks) {
         for (const l of tr.layers) {
-          if (l.enabled && l.params.kind === "Template") {
-            templateIds.add(l.params.template_id);
+          if (l.enabled && l.params.kind === "Motif") {
+            templateIds.add(l.params.motif_id);
           }
         }
       }
@@ -1397,7 +1397,7 @@ export function App({ onCloseProject }: AppProps) {
               <MenuItem
                 label={t("actions.templates")}
                 hint={t("actions.templates_hint")}
-                onSelect={() => setTemplatePickerOpen(true)}
+                onSelect={() => setMotifPickerOpen(true)}
               />
             </Menu>
 
@@ -1653,9 +1653,9 @@ export function App({ onCloseProject }: AppProps) {
           onCompositionChanged={refresh}
         />
       )}
-      {templatePickerOpen && (
-        <TemplatePicker
-          onClose={() => setTemplatePickerOpen(false)}
+      {motifPickerOpen && (
+        <MotifPicker
+          onClose={() => setMotifPickerOpen(false)}
           onAdded={refresh}
           currentTimeUs={currentTimeUs}
           tracks={summary?.tracks ?? []}

@@ -211,7 +211,7 @@ function KindFields({
       return <AudioFields v={layer.params} commit={commit} />;
     case "Subtitles":
       return <SubtitlesFields v={layer.params} />;
-    case "Template":
+    case "Motif":
       return <TemplateFields layer={layer} v={layer.params} commit={commit} />;
   }
 }
@@ -595,7 +595,7 @@ function TemplateFields({
   commit,
 }: {
   layer: LayerSummary;
-  v: Extract<LayerSummary["params"], { kind: "Template" }>;
+  v: Extract<LayerSummary["params"], { kind: "Motif" }>;
   commit: Commit;
 }) {
   const { t } = useTranslation();
@@ -618,7 +618,7 @@ function TemplateFields({
   // the placed template_id isn't in the catalog (e.g. a removed built-in) — we
   // can still edit transform/opacity, but render a note instead of guessing
   // prop inputs.
-  const template = getTemplate(v.template_id);
+  const template = getTemplate(v.motif_id);
   const propEntries = template
     ? Object.entries(template.manifest.props_schema)
     : [];
@@ -628,7 +628,7 @@ function TemplateFields({
   // correctly. Sending the full spread risks a stale v.props racing against a
   // concurrent field edit and silently dropping the earlier write.
   const commitProp = (key: string, next: unknown) =>
-    commit({ kind: "Template", props: { [key]: next } });
+    commit({ kind: "Motif", props: { [key]: next } });
 
   return (
     <section className="prop-section">
@@ -640,7 +640,7 @@ function TemplateFields({
           type="number"
           value={x}
           onChange={(e) => setX(parseFloat(e.target.value) || 0)}
-          onBlur={() => commit({ kind: "Template", x })}
+          onBlur={() => commit({ kind: "Motif", x })}
         />
       </Field>
       <Field label={t("property_panel.y")}>
@@ -648,7 +648,7 @@ function TemplateFields({
           type="number"
           value={y}
           onChange={(e) => setY(parseFloat(e.target.value) || 0)}
-          onBlur={() => commit({ kind: "Template", y })}
+          onBlur={() => commit({ kind: "Motif", y })}
         />
       </Field>
       <Field label={t("property_panel.scale_x")}>
@@ -657,7 +657,7 @@ function TemplateFields({
           step={0.05}
           value={scaleX}
           onChange={(e) => setScaleX(parseFloat(e.target.value) || 1)}
-          onBlur={() => commit({ kind: "Template", scale_x: scaleX })}
+          onBlur={() => commit({ kind: "Motif", scale_x: scaleX })}
         />
       </Field>
       <Field label={t("property_panel.scale_y")}>
@@ -666,7 +666,7 @@ function TemplateFields({
           step={0.05}
           value={scaleY}
           onChange={(e) => setScaleY(parseFloat(e.target.value) || 1)}
-          onBlur={() => commit({ kind: "Template", scale_y: scaleY })}
+          onBlur={() => commit({ kind: "Motif", scale_y: scaleY })}
         />
       </Field>
       <Field label={t("property_panel.opacity")}>
@@ -679,7 +679,7 @@ function TemplateFields({
           onChange={(e) => {
             const next = parseFloat(e.target.value);
             setOpacity(next);
-            debouncedCommit({ kind: "Template", opacity: next });
+            debouncedCommit({ kind: "Motif", opacity: next });
           }}
         />
         <span className="prop-range-value">{opacity.toFixed(2)}</span>

@@ -19,15 +19,15 @@
 import { ImageSource, Sprite, Texture } from "pixi.js";
 
 import { frameIndexInLayer } from "../../frames";
-import type { TemplateView } from "../../ipc";
+import type { MotifView } from "../../ipc";
 import { getTemplate, type Template } from "../templates/catalog";
 import { resolveTemplateFrame, sharedTemplateFrameCache } from "../templates/templateRaster";
 import { templateFrameDescriptor } from "../templates/templateFrameDescriptor";
 import { templateDurationFrames } from "../templates/templateFrames";
 
-export interface TemplateSpriteInit {
+export interface MotifSpriteInit {
   layerId: string;
-  templateId: string;
+  motifId: string;
   /// Composition fps rational. The sprite maps `tInLayerUs` to a frame index
   /// with the same exact-rational math the rest of the renderer uses.
   fpsNum: number;
@@ -39,10 +39,10 @@ export interface TemplateSpriteInit {
   onLoaded?: () => void;
 }
 
-export class TemplateSprite {
+export class MotifSprite {
   readonly sprite: Sprite;
   readonly layerId: string;
-  readonly templateId: string;
+  readonly motifId: string;
   private readonly fpsNum: number;
   private readonly fpsDen: number;
   private template: Template | null;
@@ -60,9 +60,9 @@ export class TemplateSprite {
   private onLoaded: (() => void) | null;
   private disposed = false;
 
-  constructor(init: TemplateSpriteInit) {
+  constructor(init: MotifSpriteInit) {
     this.layerId = init.layerId;
-    this.templateId = init.templateId;
+    this.motifId = init.motifId;
     // The composition fps is captured ONCE at construction. If the project's
     // fps changes while this sprite is alive (a project swap that keeps the
     // sprite), the cached frame grid uses the stale rate until the sprite is
@@ -71,11 +71,11 @@ export class TemplateSprite {
     this.fpsNum = init.fpsNum;
     this.fpsDen = init.fpsDen;
     this.onLoaded = init.onLoaded ?? null;
-    this.template = getTemplate(this.templateId);
+    this.template = getTemplate(this.motifId);
     if (!this.template) {
       // eslint-disable-next-line no-console
       console.warn(
-        `[weftcut/pixi] TemplateSprite ${this.layerId}: unknown template "${this.templateId}"`,
+        `[weftcut/pixi] MotifSprite ${this.layerId}: unknown motif "${this.motifId}"`,
       );
     }
     this.sprite = new Sprite(Texture.EMPTY);
@@ -96,7 +96,7 @@ export class TemplateSprite {
   /// export == preview frame selection. Absent (preview) ⇒ the harness/cache
   /// path below runs unchanged.
   update(
-    view: TemplateView,
+    view: MotifView,
     tInLayerUs: number,
     durationUs: number,
     injectedFrames?: readonly ImageBitmap[],
@@ -147,7 +147,7 @@ export class TemplateSprite {
     );
     if (!desc) {
       // eslint-disable-next-line no-console
-      console.warn(`[weftcut/pixi] TemplateSprite ${this.layerId}: canonicalize failed`);
+      console.warn(`[weftcut/pixi] MotifSprite ${this.layerId}: canonicalize failed`);
       return;
     }
     const { cacheKey, contentFrame: frame, tSec, durationSec, canonicalProps: canonical } = desc;
@@ -196,7 +196,7 @@ export class TemplateSprite {
     } catch (e) {
       // eslint-disable-next-line no-console
       console.error(
-        `[weftcut/pixi] TemplateSprite ${this.layerId}: capture/rasterize failed`,
+        `[weftcut/pixi] MotifSprite ${this.layerId}: capture/rasterize failed`,
         e,
       );
     }

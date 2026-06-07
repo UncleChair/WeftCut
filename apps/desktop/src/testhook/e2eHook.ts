@@ -12,7 +12,7 @@ import {
   importMedia,
   addVideoTrack,
   addMediaLayer,
-  addTemplate,
+  addMotif,
   projectNewWorkspace,
   projectSummary,
   updateLayerParams,
@@ -31,8 +31,8 @@ import { exists, readDir } from "@tauri-apps/plugin-fs";
 import { join as pathJoin } from "@tauri-apps/api/path";
 import { TemplateHarness } from "../render/templates/harness";
 import { rasterizeSvg } from "../render/templates/svgRaster";
-import { TemplateSprite } from "../render/sprite/TemplateSprite";
-import type { TemplateView } from "../ipc";
+import { MotifSprite } from "../render/sprite/MotifSprite";
+import type { MotifView } from "../ipc";
 // Build-time embed of a real woff2 so the synthetic test fixture can declare a
 // bundled font WITHOUT shipping an asset under builtin/. `jassub` is a direct
 // dependency of this package; its bundled woff2 is stable repo state (unlike a
@@ -326,9 +326,9 @@ export function installTemplateHarnessHook(): void {
     // `onLoaded` fires on the async bind path (cache miss); a flag flips so the
     // per-time waiter below (and the sync-hit detection) can settle.
     let bindSignalled = false;
-    const sprite = new TemplateSprite({
-      layerId: "e2e-template-sprite",
-      templateId,
+    const sprite = new MotifSprite({
+      layerId: "e2e-motif-sprite",
+      motifId: templateId,
       fpsNum,
       fpsDen,
       onLoaded: () => {
@@ -336,8 +336,8 @@ export function installTemplateHarnessHook(): void {
       },
     });
     try {
-      const view: TemplateView = {
-        template_id: templateId,
+      const view: MotifView = {
+        motif_id: templateId,
         x: 0,
         y: 0,
         scale_x: 1,
@@ -403,8 +403,8 @@ export function installTemplateHarnessHook(): void {
     let cacheKey: string | null = null;
     outer: for (const track of summary.tracks) {
       for (const layer of track.layers) {
-        if (layer.id !== layerId || layer.params.kind !== "Template") continue;
-        const template = getTemplate(layer.params.template_id);
+        if (layer.id !== layerId || layer.params.kind !== "Motif") continue;
+        const template = getTemplate(layer.params.motif_id);
         if (!template) break outer;
         const durationUs = layer.t_end_us - layer.t_start_us;
         const desc = templateFrameDescriptor(layer.params, 0, durationUs, summary.composition.fps_num, summary.composition.fps_den, template);
@@ -458,8 +458,8 @@ export function installTemplateHarnessHook(): void {
     const summary = await projectSummary();
     for (const track of summary.tracks) {
       for (const layer of track.layers) {
-        if (layer.id !== layerId || layer.params.kind !== "Template") continue;
-        const template = getTemplate(layer.params.template_id);
+        if (layer.id !== layerId || layer.params.kind !== "Motif") continue;
+        const template = getTemplate(layer.params.motif_id);
         if (!template) return null;
         const durationUs = layer.t_end_us - layer.t_start_us;
         const desc = templateFrameDescriptor(layer.params, 0, durationUs, summary.composition.fps_num, summary.composition.fps_den, template);
@@ -470,11 +470,11 @@ export function installTemplateHarnessHook(): void {
   };
 
   hookSlot().addTemplateLayer = async ({ templateId, durationUs, props }) => {
-    return addTemplate({ templateId, tStartUs: 0, tEndUs: durationUs, ...(props !== undefined ? { props } : {}) });
+    return addMotif({ motifId: templateId, tStartUs: 0, tEndUs: durationUs, ...(props !== undefined ? { props } : {}) });
   };
 
   hookSlot().patchTemplateLayerProps = async ({ layerId, props }) => {
-    await updateLayerParams(layerId, { kind: "Template", props });
+    await updateLayerParams(layerId, { kind: "Motif", props });
   };
 
   hookSlot().clearTemplateCacheKey = (cacheKey: string): void => {
@@ -622,8 +622,8 @@ export function installMotifHook(): void {
   // (CDP) path renders it live. `weftcutSeekUs` / `weftcutSampleComposite`
   // delegate to the PreviewBridge registered by `PixiPreview`.
   hookSlot().motifAddCountdown = async () => {
-    return addTemplate({
-      templateId: "countdown",
+    return addMotif({
+      motifId: "countdown",
       tStartUs: 0,
       tEndUs: 5_000_000,
     });
@@ -683,10 +683,10 @@ export function installExportHook(runExport: RunExport): void {
     props,
     settings,
   }) => {
-    // Add a Template layer at t=0. `add_template` auto-creates / reuses a track
-    // and defaults t_end to the template's default duration unless overridden.
-    await addTemplate({
-      templateId,
+    // Add a Motif layer at t=0. `add_motif` auto-creates / reuses a track
+    // and defaults t_end to the motif's default duration unless overridden.
+    await addMotif({
+      motifId: templateId,
       tStartUs: 0,
       ...(durationUs != null ? { tEndUs: durationUs } : {}),
       ...(props ? { props } : {}),

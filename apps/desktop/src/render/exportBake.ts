@@ -24,7 +24,7 @@
 // preview's cached frames and break the live preview after any export.
 
 import { frameIndexInLayer, snapFrameFloor } from "../frames";
-import type { ProjectSummary, TemplateView } from "../ipc";
+import type { ProjectSummary, MotifView } from "../ipc";
 import { getTemplate, resolveTemplateContentDurationUs, type Template } from "./templates/catalog";
 import { TemplateHarness } from "./templates/harness";
 import { canonicalizeProps } from "./templates/Rasterizer";
@@ -82,14 +82,14 @@ export function bakeContentFrameFor(
 }
 
 /// One Template layer to bake: its id, the resolved `Template`, the layer's
-/// `TemplateView`, and the comp-fps frame range to raster. `durationFrames` is
+/// `MotifView`, and the comp-fps frame range to raster. `durationFrames` is
 /// the layer's full animated length on the comp grid (NOT clamped to the export
 /// range) so the per-frame index math matches `TemplateSprite.update` exactly —
 /// a partial export range only narrows WHICH of those frames we actually bake.
 export interface TemplateBakeSpec {
   layerId: string;
   template: Template;
-  view: TemplateView;
+  view: MotifView;
   /// Layer duration in microseconds (`t_end_us - t_start_us`).
   durationUs: number;
   /// Total animated frames on the comp grid (`templateDurationFrames`).
@@ -122,7 +122,7 @@ export function templateLayersToBake(
     if (!track.enabled) continue;
     for (const layer of track.layers) {
       if (!layer.enabled) continue;
-      if (layer.params.kind !== "Template") continue;
+      if (layer.params.kind !== "Motif") continue;
       // Overlap test against the half-open export range. `t_end_us` is the
       // exclusive boundary, so a layer ending exactly at `startUs` doesn't
       // overlap.
@@ -130,11 +130,11 @@ export function templateLayersToBake(
       if (layer.t_start_us >= endUs) continue;
 
       const view = layer.params;
-      const template = getTemplate(view.template_id);
+      const template = getTemplate(view.motif_id);
       if (!template) {
         // eslint-disable-next-line no-console
         console.warn(
-          `[weftcut/export] bake: unknown template "${view.template_id}" ` +
+          `[weftcut/export] bake: unknown template "${view.motif_id}" ` +
             `(layer ${layer.id}) — skipping`,
         );
         continue;

@@ -1,4 +1,4 @@
-import type { TemplateView } from "../../ipc";
+import type { MotifView } from "../../ipc";
 import { canonicalizeProps } from "./Rasterizer";
 import { resolveTemplateContentDurationUs, type Template } from "./catalog";
 import {
@@ -29,7 +29,7 @@ export interface TemplateFrameDescriptor {
 /// `durationUs` is the LAYER width (used only for uncapped templates).
 /// Returns null when props canonicalization fails.
 export function templateFrameDescriptor(
-  view: TemplateView,
+  view: MotifView,
   tInLayerUs: number,
   durationUs: number,
   fpsNum: number,
