@@ -389,14 +389,18 @@ pub fn run() {
                 }
             });
 
-            // Dev-only Motifs smoke trigger. Gated on Windows + debug + an env
-            // var so it never runs unless a human opts in
+            // Dev-only Motifs smoke + conformance trigger. Gated on Windows +
+            // debug + an env var so it never runs unless a human opts in
             // (`WEFTCUT_MOTIF_SMOKE=1`). A few seconds after boot — giving the
             // frontend time to call `motif_register_runtime` and the host
-            // window time to load — it captures one `countdown` frame and
-            // `eprintln!`s the result. Lets the controller run the full
-            // motif:scheme → host window → CDP capture path end-to-end without
-            // any UI. Throwaway: delete once a real Motifs UI exists.
+            // window time to load — it captures `countdown` frames and runs
+            // three conformance checks:
+            //   1. Determinism  — two captures at t=2.5 must be byte-identical.
+            //   2. Advance      — t=1.0 capture must differ from t=2.5.
+            //   3. Known-frame  — at t=2.5 with duration=5, ceil(5-2.5)=3, so
+            //                     the `#num` element must contain "3".
+            // Results are printed as `[MOTIF-CONF] <check> PASS/FAIL …`.
+            // Throwaway: delete once a real Motifs UI exists.
             #[cfg(all(windows, debug_assertions))]
             {
                 if std::env::var("WEFTCUT_MOTIF_SMOKE").as_deref() == Ok("1") {
@@ -414,19 +418,120 @@ pub fn run() {
                             return;
                         }
                         let props = r##"{"seconds":5,"label":"GO","accent":"#ff4d4d"}"##;
-                        match motifs::commands::motif_capture_frame(
-                            app_for_smoke.clone(),
-                            state,
-                            "countdown".to_string(),
-                            2.5,
-                            props.to_string(),
-                            480,
-                            480,
-                        )
-                        .await
-                        {
-                            Ok(b64) => eprintln!("[MOTIF-SMOKE] ok bytes={}", b64.len()),
-                            Err(e) => eprintln!("[MOTIF-SMOKE] err {e}"),
+
+                        // Helper: capture one frame and return the base64 PNG string.
+                        macro_rules! capture {
+                            ($t:expr) => {{
+                                let s2 = app_for_smoke.state::<motifs::MotifRuntime>();
+                                motifs::commands::motif_capture_frame(
+                                    app_for_smoke.clone(),
+                                    s2,
+                                    "countdown".to_string(),
+                                    $t,
+                                    props.to_string(),
+                                    480,
+                                    480,
+                                )
+                                .await
+                            }};
+                        }
+
+                        // Helper: base64-decode then blake3-hash a capture result.
+                        fn hash_b64(b64: &str) -> String {
+                            use base64::Engine;
+                            let bytes = base64::engine::general_purpose::STANDARD
+                                .decode(b64)
+                                .unwrap_or_default();
+                            blake3::hash(&bytes).to_hex().to_string()
+                        }
+
+                        // --- Capture A: t=2.5 (first time, also warms the host window) ---
+                        let b64_a = match capture!(2.5_f64) {
+                            Ok(b) => {
+                                eprintln!("[MOTIF-SMOKE] ok bytes={}", b.len());
+                                b
+                            }
+                            Err(e) => {
+                                eprintln!("[MOTIF-SMOKE] err first capture: {e}");
+                                eprintln!("[MOTIF-CONF] determinism FAIL (first capture failed)");
+                                eprintln!("[MOTIF-CONF] advance FAIL (first capture failed)");
+                                eprintln!("[MOTIF-CONF] known-frame FAIL (first capture failed)");
+                                return;
+                            }
+                        };
+                        let hash_a = hash_b64(&b64_a);
+
+                        // --- CHECK 1: Determinism — capture t=2.5 a second time ---
+                        match capture!(2.5_f64) {
+                            Ok(b64_b) => {
+                                let hash_b = hash_b64(&b64_b);
+                                if hash_a == hash_b {
+                                    eprintln!("[MOTIF-CONF] determinism PASS ({hash_a})");
+                                } else {
+                                    eprintln!(
+                                        "[MOTIF-CONF] determinism FAIL (a={hash_a} b={hash_b})"
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("[MOTIF-CONF] determinism FAIL (second capture failed: {e})");
+                            }
+                        }
+
+                        // --- CHECK 2: Advance — t=1.0 must differ from t=2.5 ---
+                        match capture!(1.0_f64) {
+                            Ok(b64_t1) => {
+                                let hash_t1 = hash_b64(&b64_t1);
+                                if hash_t1 != hash_a {
+                                    eprintln!("[MOTIF-CONF] advance PASS (t=1.0 differs from t=2.5)");
+                                } else {
+                                    eprintln!(
+                                        "[MOTIF-CONF] advance FAIL (t=1.0 hash equals t=2.5 hash: {hash_t1})"
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("[MOTIF-CONF] advance FAIL (t=1.0 capture failed: {e})");
+                            }
+                        }
+
+                        // --- CHECK 3: Known-frame — after t=2.5, #num must contain "3" ---
+                        // ceil(duration=5 - t=2.5) = ceil(2.5) = 3.
+                        // Re-render t=2.5 so the DOM is definitely at that time, then
+                        // read the element via a throwing CDP eval expression:
+                        // throws if wrong (so eval_await returns Err), passes if correct.
+                        //
+                        // We reach the host window directly by its fixed label so we can
+                        // call eval_await without going through the full capture command.
+                        let known_frame_result = (|| async {
+                            // Re-render t=2.5 to ensure the DOM is at the right frame.
+                            capture!(2.5_f64).map_err(|e| format!("re-render failed: {e}"))?;
+                            // Get the host window (created by ensure_host above).
+                            let host_win = app_for_smoke
+                                .get_webview_window(motifs::host::HOST_LABEL)
+                                .ok_or_else(|| "motif-host window not found".to_string())?;
+                            // Assert via a throwing expression: the CDP eval returns Err
+                            // (with the thrown message) if the text is wrong, Ok(()) if right.
+                            let check_expr = concat!(
+                                "(function(){",
+                                "var t=document.getElementById('num').textContent;",
+                                "if(t!=='3')throw new Error('expected 3 got '+t);",
+                                "return true;",
+                                "})()"
+                            );
+                            motifs::cdp::eval_await(&host_win, check_expr)
+                                .await
+                                .map_err(|e| format!("DOM check: {e}"))
+                        })()
+                        .await;
+
+                        match known_frame_result {
+                            Ok(()) => {
+                                eprintln!("[MOTIF-CONF] known-frame PASS (t=2.5 → #num='3')");
+                            }
+                            Err(msg) => {
+                                eprintln!("[MOTIF-CONF] known-frame FAIL ({msg})");
+                            }
                         }
                     });
                 }
