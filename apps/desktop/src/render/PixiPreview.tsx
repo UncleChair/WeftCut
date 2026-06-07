@@ -282,6 +282,13 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       compositorRef.current?.dispose();
       compositorRef.current = null;
       engineRef.current = null;
+      // E2E-only: clear the preview bridge so seek/readback hooks don't
+      // hold a stale closure over the disposed engine + compositor.
+      if (import.meta.env.VITE_WEFTCUT_E2E === "1") {
+        void import("../testhook/e2eHook").then(({ clearPreviewBridge }) => {
+          clearPreviewBridge();
+        });
+      }
     };
   }, []);
 
