@@ -20,13 +20,12 @@ describe("motifWarmPhase", () => {
     expect(motifWarmPhase(null, 2, 5)).toEqual({ phase: "warming", done: 2, total: 5 });
     expect(motifWarmPhase(null, 5, 5)).toEqual({ phase: "ready", done: 5, total: 5 });
   });
-  it("treats a baked-on-disk key with cold L0 as ready", () => {
+  it("treats a baked-on-disk key as ready regardless of L0 coverage", () => {
+    // Disk persistence is durable and read back without a re-capture, so a
+    // pre-baked layer is "done" even when L0 holds none (cold reopen) or only
+    // some (partial eviction) of its frames.
     expect(motifWarmPhase(null, 0, 5, true)).toEqual({ phase: "ready", done: 5, total: 5 });
-  });
-  it("shows live warming progress even when baked on disk (partial L0 wins over the disk flag)", () => {
-    // Intentional: with partial L0 coverage the bar tracks live warmth; the
-    // baked-on-disk flag only resolves to ready once L0 is cold (covered=0).
-    expect(motifWarmPhase(null, 2, 5, true)).toEqual({ phase: "warming", done: 2, total: 5 });
+    expect(motifWarmPhase(null, 2, 5, true)).toEqual({ phase: "ready", done: 5, total: 5 });
   });
 });
 
