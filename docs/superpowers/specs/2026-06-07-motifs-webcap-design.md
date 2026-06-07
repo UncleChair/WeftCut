@@ -241,10 +241,14 @@ this; anything that still escapes is explicitly out of contract.
   scheme (`motif://<id>/index.html` + `motif://<id>/<asset>`). Isolation comes from:
   the window is a separate WebView2 with **no Tauri API injected**, a CSP
   `default-src 'none'` (plus only what capture needs) so it is **fully offline**, and
-  it only ever loads `motif:` content. The **clock-takeover runtime** is injected by
-  the scheme handler as a served `<script src="motif://_rt/runtime.js">` (built from
-  `runtime.ts` — single source, no Rust duplication), so it installs before any Motif
-  code runs. `seek` is driven by `postMessage` to the window. Same-origin within the
+  it only ever loads `motif:` content. The **clock-takeover runtime** is injected via
+  the hidden window's **`initialization_script`** (wry runs it at document-start,
+  before any Motif code), sourced from `runtime.ts`'s `MOTIF_RUNTIME_SOURCE` handed to
+  Rust at boot via a `motif_register_runtime` command (single source, no Rust
+  duplication). Rendering/seek is driven from Rust over **CDP
+  `Runtime.evaluate(awaitPromise)`** calling `window.__motifRender(t, props, meta)`
+  (which returns a Promise that resolves when the frame is visually ready), then
+  `Page.captureScreenshot`. No `postMessage`. Same-origin within the
   `motif:` scheme means the Motif's relative `assets/` URLs resolve naturally.
   > Rejected for v1: an inner opaque-origin `sandbox="allow-scripts"` iframe (stronger
   > isolation for untrusted uploads, but awkward asset resolution + runtime injection).
