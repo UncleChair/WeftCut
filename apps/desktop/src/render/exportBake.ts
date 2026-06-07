@@ -1,38 +1,31 @@
-// Main-thread template pre-rasterization for export.
+// Main-thread Motif pre-capture for export.
 //
-// The export Worker has no DOM, so the SVG capture harness (`TemplateHarness`
-// → sandboxed iframe → serialized `<svg>`) can't run there. Instead, the MAIN
-// thread bakes EVERY frame of each Template layer in the export range to an
-// `ImageBitmap[]` (indexed by composition-frame), and the bitmaps are
-// TRANSFERRED into the Worker, where `TemplateSprite` binds them by index
-// synchronously (no harness).
+// The export Worker has no DOM and no Tauri `invoke`, so it can't capture
+// Motif frames itself. Instead the MAIN thread captures EVERY frame of each
+// Motif layer in the export range to an `ImageBitmap[]` (indexed by
+// composition-frame) via the SAME CDP path the preview uses (`bakeMotifFrame`
+// → `captureMotifFrame` → the hidden Motif host), and the bitmaps are
+// TRANSFERRED into the Worker, where `MotifSprite` binds them by index
+// synchronously. Export pixels are therefore identical to preview (one
+// producer) and carry the Motif's transparent backdrop.
 //
 // The bake runs on the COMPOSITION fps grid — the same grid the Worker's
-// Compositor uses when it constructs each `TemplateSprite` (from
-// `summary.composition.fps_num/den`). The export OUTPUT fps may differ
-// (resolution/fps dialog), but the Worker maps each output-frame time back to a
-// composition-frame index via `frameIndexInLayer(..., compFps)` inside
-// `TemplateSprite.update`, so the bake MUST be keyed on comp fps or the indices
-// diverge (out-of-range / duplicated frames). See `exportWorker.ts` →
-// `compositor.setProject` (which sets the Compositor's fps from the comp) and
-// `Compositor.ensureTemplate` (which passes that fps into `TemplateSprite`).
+// Compositor uses when it constructs each `MotifSprite`. The export OUTPUT fps
+// may differ; the Worker maps each output-frame time back to a composition
+// frame index via `frameIndexInLayer(..., compFps)`, so the bake MUST be keyed
+// on comp fps or the indices diverge.
 //
-// CACHE HYGIENE: this bake renders FRESH bitmaps via its own per-layer
-// `TemplateHarness` and never reads/writes `sharedTemplateFrameCache`. The
-// resulting bitmaps are transferred to the Worker, and transfer NEUTERS the
-// source ImageBitmap — pulling from the preview's shared cache would neuter
-// preview's cached frames and break the live preview after any export.
+// CACHE HYGIENE: this bake produces FRESH bitmaps (a CDP capture) and never
+// reads the in-RAM `sharedTemplateFrameCache` (L0). Transfer NEUTERS the source
+// ImageBitmap; pulling L0 bitmaps would neuter preview's cached frames and
+// break live preview after an export.
 
 import { frameIndexInLayer, snapFrameFloor } from "../frames";
 import type { ProjectSummary, MotifView } from "../ipc";
 import { getTemplate, resolveTemplateContentDurationUs, type Template } from "./templates/catalog";
-import { TemplateHarness } from "./templates/harness";
 import { canonicalizeProps } from "./templates/Rasterizer";
-import { rasterizeSvg } from "./templates/svgRaster";
-import {
-  frameTimeSec,
-  templateDurationFrames,
-} from "./templates/templateFrames";
+import { bakeMotifFrame } from "./motifs/motifRaster";
+import { templateDurationFrames } from "./templates/templateFrames";
 
 const US_PER_SEC = 1_000_000;
 
@@ -189,17 +182,16 @@ export function templateLayersToBake(
 /// Progress callback: `(baked, total)` cumulative frames across all layers.
 export type BakeProgress = (baked: number, total: number) => void;
 
-/// Bake every Template layer overlapping `[startUs, endUs)` to a per-layer
+/// Bake every Motif layer overlapping `[startUs, endUs)` to a per-layer
 /// `ImageBitmap[]` indexed by COMPOSITION-frame index. The array is sparse only
 /// at the head when the export range starts mid-layer: indices `[0, firstFrame)`
 /// are left `undefined` (the Worker never requests them — they're outside the
 /// range), so the array's `length` is `lastFrame + 1` and `frames[idx]` is the
-/// raster for comp-frame `idx`. The Worker binds `frames[clamp(idx)]`.
+/// capture for comp-frame `idx`. The Worker binds `frames[clamp(idx)]`.
 ///
-/// MUST run on the MAIN thread (needs `document` for the harness iframe +
-/// `createImageBitmap`). `fpsNum/fpsDen` are the COMPOSITION fps. Renders fresh
-/// bitmaps via per-layer harnesses (NOT the shared preview cache — see the
-/// module header), disposing each harness when done.
+/// MUST run on the MAIN thread (Tauri `invoke` / CDP is not available in the
+/// Worker). `fpsNum/fpsDen` are the COMPOSITION fps. Captures fresh bitmaps via
+/// the CDP path (NOT the shared preview cache — see the module header).
 export async function exportBakeTemplates(
   summary: ProjectSummary,
   startUs: number,
@@ -220,51 +212,41 @@ export async function exportBakeTemplates(
   onProgress?.(0, total);
 
   for (const spec of specs) {
-    const harness = new TemplateHarness();
-    try {
-      await harness.load(spec.template);
+    // Canonicalize props once per layer (identical across the layer's frames;
+    // only the content frame varies). Mirrors the preview path's per-tick
+    // canonicalize against the same manifest, so export pixels == preview.
+    const canonical = canonicalizeProps(spec.view.props, spec.template.manifest);
+    // Content-window model: src_in offset + intrinsic content duration. Uncapped
+    // templates fall back to layer-width content with src_in=0 (legacy).
+    const cap = resolveTemplateContentDurationUs(spec.template.manifest, spec.view.props);
+    const contentDurationUs = cap ?? spec.durationUs;
+    const srcInUs = cap == null ? 0 : spec.view.src_in_us;
 
-      // Canonicalize props once per layer — the value is identical across the
-      // layer's frames (only `tSec` varies), matching `TemplateSprite.update`
-      // which canonicalizes per tick against the same manifest.
-      const canonical = canonicalizeProps(spec.view.props, spec.template.manifest);
-      // Content-window model: bake the INTRINSIC content. `durationSec` is the
-      // content duration (the harness `dur` argument), NOT the layer width
-      // (`spec.durationUs`). Uncapped templates fall back to layer-width content
-      // with src_in=0 (legacy).
-      const cap = resolveTemplateContentDurationUs(spec.template.manifest, spec.view.props);
-      const contentDurationUs = cap ?? spec.durationUs;
-      const srcInUs = cap == null ? 0 : spec.view.src_in_us;
-      const durationSec = contentDurationUs / US_PER_SEC;
-
-      // Allocate the full array up to `lastFrame`; leave `[0, firstFrame)`
-      // holes for a mid-layer export start. Bitmaps land at their comp-frame
-      // index so the Worker's `frames[frameIndexInLayer(...)]` is a direct hit.
-      const frames: ImageBitmap[] = new Array(spec.lastFrame + 1);
-      for (let frame = spec.firstFrame; frame <= spec.lastFrame; frame++) {
-        // mirrors the preview path: reconstruct tInLayerUs for this
-        // layer-local slot on the comp grid, then single-floor with srcInUs.
-        const contentFrame = bakeContentFrameFor(
-          frame,
-          spec.tStartUs,
-          srcInUs,
-          contentDurationUs,
-          fpsNum,
-          fpsDen,
-        );
-        const tSec = frameTimeSec(contentFrame, fpsNum, fpsDen);
-        // eslint-disable-next-line no-await-in-loop
-        const svg = await harness.renderFrameSvg(tSec, durationSec, canonical);
-        // eslint-disable-next-line no-await-in-loop
-        const bitmap = await rasterizeSvg(svg);
-        frames[frame] = bitmap;
-        baked++;
-        onProgress?.(baked, total);
-      }
-      result[spec.layerId] = frames;
-    } finally {
-      harness.dispose();
+    // Allocate up to lastFrame; leave [0, firstFrame) holes for a mid-layer
+    // export start. Bitmaps land at their comp-frame index so the Worker's
+    // frames[frameIndexInLayer(...)] is a direct hit.
+    const frames: ImageBitmap[] = new Array(spec.lastFrame + 1);
+    for (let frame = spec.firstFrame; frame <= spec.lastFrame; frame++) {
+      const contentFrame = bakeContentFrameFor(
+        frame,
+        spec.tStartUs,
+        srcInUs,
+        contentDurationUs,
+        fpsNum,
+        fpsDen,
+      );
+      // CDP capture of the hidden Motif host — the SAME producer the preview
+      // prewarmer/baker use (manifest size + manifest settle_rafs), so the
+      // exported bitmap is pixel-identical to preview AND carries the Motif's
+      // transparent backdrop. tSec is derived inside bakeMotifFrame as
+      // contentFrame*fpsDen/fpsNum (== the old frameTimeSec(contentFrame)).
+      // eslint-disable-next-line no-await-in-loop
+      const bitmap = await bakeMotifFrame(spec.template, contentFrame, fpsNum, fpsDen, canonical);
+      frames[frame] = bitmap;
+      baked++;
+      onProgress?.(baked, total);
     }
+    result[spec.layerId] = frames;
   }
 
   return result;
