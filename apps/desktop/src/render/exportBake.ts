@@ -15,10 +15,12 @@
 // frame index via `frameIndexInLayer(..., compFps)`, so the bake MUST be keyed
 // on comp fps or the indices diverge.
 //
-// CACHE HYGIENE: this bake produces FRESH bitmaps (a CDP capture) and never
-// reads the in-RAM `sharedTemplateFrameCache` (L0). Transfer NEUTERS the source
-// ImageBitmap; pulling L0 bitmaps would neuter preview's cached frames and
-// break live preview after an export.
+// CACHE HYGIENE: this bake produces FRESH bitmaps (a CDP capture, or — Task 2 —
+// a `createImageBitmap` of an on-disk L2 PNG) and never reads the in-RAM
+// `sharedTemplateFrameCache` (L0). Transfer NEUTERS the source ImageBitmap;
+// pulling L0 bitmaps would neuter preview's cached frames and break live
+// preview after an export. (L2 *disk* reads are safe — they decode to a fresh
+// bitmap, not a shared one.)
 
 import { frameIndexInLayer, snapFrameFloor } from "../frames";
 import type { ProjectSummary, MotifView } from "../ipc";
@@ -77,7 +79,7 @@ export function bakeContentFrameFor(
 /// One Template layer to bake: its id, the resolved `Template`, the layer's
 /// `MotifView`, and the comp-fps frame range to raster. `durationFrames` is
 /// the layer's full animated length on the comp grid (NOT clamped to the export
-/// range) so the per-frame index math matches `TemplateSprite.update` exactly —
+/// range) so the per-frame index math matches `MotifSprite.update` exactly —
 /// a partial export range only narrows WHICH of those frames we actually bake.
 export interface TemplateBakeSpec {
   layerId: string;
@@ -138,7 +140,7 @@ export function templateLayersToBake(
 
       // Comp-frame indices of the export-range overlap, expressed layer-local
       // (templates have no source-in offset, so layer-local time = comp time −
-      // t_start_us). Mirrors `TemplateSprite.update`'s
+      // t_start_us). Mirrors `MotifSprite.update`'s
       // `frameIndexInLayer(tInLayerUs, ...)` + the `min(durationFrames - 1, …)`
       // clamp. We bake only the frames the export can reach; a frame the
       // playhead never visits would be wasted raster work.
@@ -150,7 +152,7 @@ export function templateLayersToBake(
       // Snap both bounds to the composition-frame grid BEFORE computing the
       // frame index. The export Worker's Compositor snaps `tUs` via
       // `snapFrameFloor` in `compositeFrame` before passing `tUsSnapped -
-      // t_start_us` to `TemplateSprite.update` → `frameIndexInLayer`. When
+      // t_start_us` to `MotifSprite.update` → `frameIndexInLayer`. When
       // `startUs` is not on the grid (e.g. the playhead was set to a raw time
       // via "set range to playhead"), the raw `overlapStartUs` maps to a
       // higher frame index than the snapped value, so `injectedFrames[0]`
