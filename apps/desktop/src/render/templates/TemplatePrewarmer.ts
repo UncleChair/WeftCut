@@ -92,7 +92,7 @@ export class TemplatePrewarmer {
       );
     } finally {
       this.running = false;
-      this.deps.onProgress?.();
+      if (!this.disposed) this.deps.onProgress?.();
       this.arm(); // more to do? reschedule. else idle.
     }
   }

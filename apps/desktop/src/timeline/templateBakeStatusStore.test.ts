@@ -23,6 +23,11 @@ describe("motifWarmPhase", () => {
   it("treats a baked-on-disk key with cold L0 as ready", () => {
     expect(motifWarmPhase(null, 0, 5, true)).toEqual({ phase: "ready", done: 5, total: 5 });
   });
+  it("shows live warming progress even when baked on disk (partial L0 wins over the disk flag)", () => {
+    // Intentional: with partial L0 coverage the bar tracks live warmth; the
+    // baked-on-disk flag only resolves to ready once L0 is cold (covered=0).
+    expect(motifWarmPhase(null, 2, 5, true)).toEqual({ phase: "warming", done: 2, total: 5 });
+  });
 });
 
 describe("templateBakeStatusStore", () => {
