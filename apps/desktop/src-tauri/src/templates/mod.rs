@@ -336,7 +336,7 @@ mod tests {
         assert_eq!(t.id(), "countdown");
         assert_eq!(t.size(), (480, 480));
         assert!(t.manifest.props_schema.contains_key("seconds"));
-        assert!(t.manifest.props_schema.contains_key("color"));
+        assert!(t.manifest.props_schema.contains_key("accent"));
         // Content hash is stable across calls.
         let h1 = t.content_hash();
         let h2 = builtin_countdown().content_hash();
@@ -349,7 +349,7 @@ mod tests {
         let canonical = t.canonicalize_props(&json!({})).expect("ok");
         // Order-stable canonical form: BTreeMap keys sorted alphabetically.
         // Every schema prop is present with its default filled in.
-        assert!(canonical.contains("\"color\""));
+        assert!(canonical.contains("\"accent\""));
         assert!(canonical.contains("\"seconds\""));
     }
 
@@ -360,7 +360,7 @@ mod tests {
         // unknown — the validator returns on the first unknown it hits and
         // serde_json map order isn't guaranteed, so don't rely on which one.
         let err = t
-            .canonicalize_props(&json!({ "color": "#ffffff", "bogus": 1 }))
+            .canonicalize_props(&json!({ "accent": "#ffffff", "bogus": 1 }))
             .expect_err("should fail");
         assert!(matches!(err, TemplateError::UnknownProp(k) if k == "bogus"));
     }
@@ -369,7 +369,7 @@ mod tests {
     fn canonicalize_validates_color() {
         let t = builtin_countdown();
         let err = t
-            .canonicalize_props(&json!({ "color": "blue" }))
+            .canonicalize_props(&json!({ "accent": "blue" }))
             .expect_err("should fail");
         assert!(matches!(err, TemplateError::BadColor(_, _)));
     }
@@ -477,10 +477,10 @@ mod tests {
         // inputs in different key order must produce the same string.
         let t = builtin_countdown();
         let a = t
-            .canonicalize_props(&json!({ "seconds": 5, "color": "#ffaa00" }))
+            .canonicalize_props(&json!({ "seconds": 5, "accent": "#ffaa00" }))
             .unwrap();
         let b = t
-            .canonicalize_props(&json!({ "color": "#ffaa00", "seconds": 5 }))
+            .canonicalize_props(&json!({ "accent": "#ffaa00", "seconds": 5 }))
             .unwrap();
         assert_eq!(a, b);
     }

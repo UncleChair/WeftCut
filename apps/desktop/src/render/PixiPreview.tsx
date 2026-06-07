@@ -22,7 +22,7 @@ import {
 } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { Application as PixiApplication } from "@pixi/react";
-import type { Application } from "pixi.js";
+import { Rectangle, type Application } from "pixi.js";
 
 import { previewPlaybackPathFor, useProjectStore } from "../state/projectStore";
 import type { MediaSummary } from "../ipc";
@@ -159,6 +159,99 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
 
       compositorRef.current = compositor;
       engineRef.current = engine;
+
+      // E2E-only: register a live bridge so the WebDriver hooks
+      // (window.__weftcutTest.weftcutSeekUs / weftcutSampleComposite) can drive
+      // a real seek and read pixels straight off the composited canvas. Dynamic
+      // import behind the static VITE_WEFTCUT_E2E check → stripped from prod.
+      if (import.meta.env.VITE_WEFTCUT_E2E === "1") {
+        void import("../testhook/e2eHook").then(({ installPreviewBridge }) => {
+          installPreviewBridge({
+            seekUs: (us: number) => {
+              engine.seek(us);
+            },
+            sampleComposite: async (x: number, y: number) => {
+              // Pull a full-composition RGBA buffer via renderer.extract.pixels
+              // (reliable on WebGPU/WebGL regardless of preserveDrawingBuffer,
+              // and avoids the OffscreenCanvas 2D-context quirks of the
+              // canvas()+drawImage route). Frame is pinned to the WHOLE
+              // composition (renderer size) so (x,y) are ABSOLUTE composition
+              // pixels — the countdown sits at (0,0) scale 1, so its center is
+              // (W/2, H/2).
+              const W = app.renderer.width;
+              const H = app.renderer.height;
+              // Force a render of the live tree before extracting so the
+              // freshly-bound template texture is on the framebuffer (the
+              // always-on ticker also renders, but extracting right after an
+              // explicit render removes any race with removeChildren()).
+              compositor.compositeFrame(engine.positionUs());
+              app.renderer.render(app.stage);
+              const readFrom = (
+                target: import("pixi.js").Container,
+              ): import("../testhook/e2eHook").CompositeSample => {
+                const out = app.renderer.extract.pixels({
+                  target,
+                  frame: new Rectangle(0, 0, W, H),
+                });
+                const buf = out.pixels;
+                const w = out.width;
+                const px = Math.max(0, Math.min(w - 1, Math.round(x)));
+                const py = Math.max(0, Math.min(out.height - 1, Math.round(y)));
+                const i = (py * w + px) * 4;
+                // Whole-frame scan: count opaque pixels AND accent-colored
+                // pixels (the countdown's accent #ff4d4d = rgb(255,77,77):
+                // high red, low green/blue, opaque). Reporting the accent
+                // count + a representative accent pixel lets the spec assert
+                // "renders accent-colored content" without depending on where
+                // a single glyph stroke lands (the numeral's exact center can
+                // fall in the "3"'s transparent hollow).
+                let nonTransparent = 0;
+                let maxA = 0;
+                let accentCount = 0;
+                let ar = 0;
+                let ag = 0;
+                let ab = 0;
+                for (let j = 0; j < buf.length; j += 4) {
+                  const r = buf[j]!;
+                  const g = buf[j + 1]!;
+                  const b = buf[j + 2]!;
+                  const a = buf[j + 3]!;
+                  if (a > 0) nonTransparent++;
+                  if (a > maxA) maxA = a;
+                  if (a === 255 && r > 180 && g < 150 && b < 150) {
+                    if (accentCount === 0) {
+                      ar = r;
+                      ag = g;
+                      ab = b;
+                    }
+                    accentCount++;
+                  }
+                }
+                return {
+                  r: buf[i] ?? 0,
+                  g: buf[i + 1] ?? 0,
+                  b: buf[i + 2] ?? 0,
+                  a: buf[i + 3] ?? 0,
+                  w,
+                  h: out.height,
+                  nonTransparent,
+                  maxA,
+                  accentCount,
+                  accentR: ar,
+                  accentG: ag,
+                  accentB: ab,
+                };
+              };
+              // Prefer the app root (the live presented tree). If it reads all-
+              // transparent, fall back to the compositor's own stage container —
+              // a divergence localises the bug (root-vs-container extract).
+              const root = readFrom(app.stage);
+              if (root.nonTransparent > 0) return root;
+              return readFrom(compositor.stage);
+            },
+          });
+        });
+      }
 
       compositor.setAnchorTime(0);
       compositor.compositeFrame(0);
