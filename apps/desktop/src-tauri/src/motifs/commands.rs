@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use tauri::{AppHandle, State};
 
-use super::{cdp, host, MotifRuntime};
+use super::{cdp, host, MotifCapture, MotifRuntime};
 
 /// How long to wait for the host page to load + the Motif to register
 /// `window.__motifRender`. Generous: a cold WebView2 window create + first
@@ -35,6 +35,7 @@ const READY_POLL: Duration = Duration::from_millis(100);
 pub async fn motif_capture_frame(
     app: AppHandle,
     state: State<'_, MotifRuntime>,
+    capture: State<'_, super::MotifCapture>,
     motif_id: String,
     t_sec: f64,
     props_json: String,
@@ -45,36 +46,44 @@ pub async fn motif_capture_frame(
         .get()
         .ok_or_else(|| "motif runtime not registered yet (call motif_register_runtime)".to_string())?;
 
-    let win = host::ensure_host(&app, &runtime, &motif_id, width, height)
-        .map_err(|e| format!("ensure_host failed: {e}"))?;
+    // Serialize the WHOLE render + capture. Held across every await so concurrent
+    // captures (on-demand sprite, prewarmer, baker) can't interleave on the one
+    // host and screenshot a stale vclock. Also guards the per-host CaptureState.
+    let mut cap = capture.0.lock().await;
 
-    // Wait until the page has loaded AND the Motif's `motif.define` has run, so
-    // `window.__motifRender` exists. We use an expression that THROWS until
-    // ready, because `eval_await` returns Ok for any non-rejecting expression —
-    // including one that resolves to `false`.
-    let ready_probe = "if(!(typeof window.__motifRender==='function'\
-        &&document.readyState==='complete'))throw new Error('motif-not-ready');true";
-    let mut last_err = None;
-    let mut ready = false;
-    for _ in 0..READY_ATTEMPTS {
-        match cdp::eval_await(&win, ready_probe).await {
-            Ok(()) => {
-                ready = true;
-                break;
-            }
-            Err(e) => {
-                last_err = Some(e);
-                tokio::time::sleep(READY_POLL).await;
+    let (win, created) = host::ensure_host(&app, &runtime, &motif_id, width, height)
+        .map_err(|e| format!("ensure_host failed: {e}"))?;
+    if created {
+        cap.reset();
+    }
+
+    // Ready-probe only when this host isn't already confirmed ready for this id.
+    if super::should_probe(cap.ready_for.as_deref(), &motif_id) {
+        let ready_probe = "if(!(typeof window.__motifRender==='function'\
+            &&document.readyState==='complete'))throw new Error('motif-not-ready');true";
+        let mut last_err = None;
+        let mut ready = false;
+        for _ in 0..READY_ATTEMPTS {
+            match cdp::eval_await(&win, ready_probe).await {
+                Ok(()) => {
+                    ready = true;
+                    break;
+                }
+                Err(e) => {
+                    last_err = Some(e);
+                    tokio::time::sleep(READY_POLL).await;
+                }
             }
         }
-    }
-    if !ready {
-        return Err(format!(
-            "motif '{motif_id}' never became ready (window.__motifRender undefined or page not loaded): {}",
-            last_err
-                .map(|e| e.to_string())
-                .unwrap_or_else(|| "no error captured".to_string())
-        ));
+        if !ready {
+            return Err(format!(
+                "motif '{motif_id}' never became ready (window.__motifRender undefined or page not loaded): {}",
+                last_err
+                    .map(|e| e.to_string())
+                    .unwrap_or_else(|| "no error captured".to_string())
+            ));
+        }
+        cap.ready_for = Some(motif_id.clone());
     }
 
     // Build the render expression. `props` is parsed then re-serialized so the
@@ -114,7 +123,12 @@ pub async fn motif_capture_frame(
         .await
         .map_err(|e| format!("__motifRender failed: {e}"))?;
 
-    cdp::capture_png_base64(&win, width, height)
+    let set_metrics = super::should_set_metrics(cap.last_size, width, height);
+    let b64 = cdp::capture_png_base64(&win, width, height, set_metrics)
         .await
-        .map_err(|e| format!("capture failed: {e}"))
+        .map_err(|e| format!("capture failed: {e}"))?;
+    if set_metrics {
+        cap.last_size = Some((width, height));
+    }
+    Ok(b64)
 }

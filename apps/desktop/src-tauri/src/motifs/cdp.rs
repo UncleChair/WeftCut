@@ -64,14 +64,14 @@ const CAPTURE_TIMEOUT: Duration = Duration::from_secs(5);
 ///
 /// Returns the raw base64 string from `Page.captureScreenshot`'s
 /// `{"data":"<base64>"}` result (no `data:` URI prefix).
-pub async fn capture_png_base64(window: &WebviewWindow, w: u32, h: u32) -> anyhow::Result<String> {
+pub async fn capture_png_base64(window: &WebviewWindow, w: u32, h: u32, set_metrics: bool) -> anyhow::Result<String> {
     let (tx, rx) = oneshot::channel::<Result<String, String>>();
 
     // Issue both CDP calls on the UI thread. The closure returns immediately;
     // the screenshot handler (which owns `tx`) sends the result once it fires.
     window
         .with_webview(move |pw| unsafe {
-            issue_capture_calls(pw, w, h, tx);
+            issue_capture_calls(pw, w, h, set_metrics, tx);
         })
         .context("with_webview failed (could not reach the WebView2 UI thread)")?;
 
@@ -107,6 +107,7 @@ unsafe fn issue_capture_calls(
     pw: tauri::webview::PlatformWebview,
     w: u32,
     h: u32,
+    set_metrics: bool,
     tx: oneshot::Sender<Result<String, String>>,
 ) {
     // `ICoreWebView2` is `!Send`, so it must stay on this thread and must not
@@ -119,23 +120,26 @@ unsafe fn issue_capture_calls(
         }
     };
 
-    // 1) Set the render resolution. No-op completion handler: CDP applies
-    //    commands in order on the session, so we don't need to wait for this to
-    //    complete before issuing the screenshot.
-    let metrics_params = format!(
-        r#"{{"width":{w},"height":{h},"deviceScaleFactor":1,"mobile":false}}"#
-    );
-    let metrics_handler =
-        CallDevToolsProtocolMethodCompletedHandler::create(Box::new(|_hr, _json| Ok(())));
-    if let Err(e) = core.CallDevToolsProtocolMethod(
-        &HSTRING::from("Emulation.setDeviceMetricsOverride"),
-        &HSTRING::from(metrics_params.as_str()),
-        &metrics_handler,
-    ) {
-        let _ = tx.send(Err(format!(
-            "CallDevToolsProtocolMethod(setDeviceMetricsOverride) failed: {e}"
-        )));
-        return;
+    // 1) Set the render resolution — fires only when the size changed (first
+    //    capture after a host (re)create, or a size change). No-op completion
+    //    handler: CDP applies commands in order on the session, so we don't
+    //    need to wait for this to complete before issuing the screenshot.
+    if set_metrics {
+        let metrics_params = format!(
+            r#"{{"width":{w},"height":{h},"deviceScaleFactor":1,"mobile":false}}"#
+        );
+        let metrics_handler =
+            CallDevToolsProtocolMethodCompletedHandler::create(Box::new(|_hr, _json| Ok(())));
+        if let Err(e) = core.CallDevToolsProtocolMethod(
+            &HSTRING::from("Emulation.setDeviceMetricsOverride"),
+            &HSTRING::from(metrics_params.as_str()),
+            &metrics_handler,
+        ) {
+            let _ = tx.send(Err(format!(
+                "CallDevToolsProtocolMethod(setDeviceMetricsOverride) failed: {e}"
+            )));
+            return;
+        }
     }
 
     // 2) Capture. The completion handler takes the single-use oneshot `Sender`
