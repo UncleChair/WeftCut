@@ -41,7 +41,7 @@ import { frameIndexInLayer, snapFrameFloor } from "../frames";
 import { bakeContentFrameFor, templateLayersToBake, exportBakeTemplates } from "./exportBake";
 import { templateContentFrame, templateDurationFrames } from "./templates/templateFrames";
 import { bakeMotifFrame } from "./motifs/motifRaster";
-import { sharedBakedKeyIndex } from "./templates/templateRaster";
+import { sharedBakedKeyIndex, sharedTemplateFrameCache } from "./templates/templateRaster";
 
 const COUNTDOWN = "countdown"; // built-in, 480x480
 
@@ -378,6 +378,10 @@ describe("exportBakeTemplates → L2 disk fast path", () => {
   beforeEach(() => {
     (bakeMotifFrame as unknown as ReturnType<typeof vi.fn>).mockClear();
     (sharedBakedKeyIndex.has as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    // Default the disk read to a HIT; the miss test below overrides it.
+    (sharedTemplateFrameCache.readPng as ReturnType<typeof vi.fn>).mockResolvedValue(
+      new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }),
+    );
   });
 
   it("reads L2 PNGs off disk and does NOT re-capture when the key is baked", async () => {
@@ -386,5 +390,16 @@ describe("exportBakeTemplates → L2 disk fast path", () => {
     expect(out["L1"]!.length).toBe(60);
     expect((out["L1"]![0] as unknown as { tag: string }).tag).toBe("from-disk");
     expect(bakeMotifFrame).toHaveBeenCalledTimes(0);
+  });
+
+  it("falls back to CDP capture when the key is baked but the PNG is missing on disk", async () => {
+    // Stale index (key marked baked) but readPng returns null — must NOT blank
+    // the export: fall through to a live capture for every such frame.
+    (sharedTemplateFrameCache.readPng as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    const summary = summaryWith([templateLayer("L1", 0, 2_000_000)]);
+    const out = await exportBakeTemplates(summary, 0, 2_000_000, 30, 1);
+    expect(out["L1"]!.length).toBe(60);
+    expect((out["L1"]![0] as unknown as { tag: string }).tag).toBe("countdown#0");
+    expect(bakeMotifFrame).toHaveBeenCalledTimes(60);
   });
 });
