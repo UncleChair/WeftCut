@@ -415,7 +415,7 @@ fn layer_overlap_class(params: &super::layer::LayerParams) -> OverlapClass {
         LayerParams::VideoClip(_)
         | LayerParams::ImageOverlay(_)
         | LayerParams::Color(_)
-        | LayerParams::Template(_)
+        | LayerParams::Motif(_)
         | LayerParams::Text(_)
         | LayerParams::Subtitles(_) => OverlapClass::Visual,
     }
@@ -448,10 +448,10 @@ fn validate_layer(project: &Project, layer: &Layer) -> Result<(), ValidationErro
             check_animated(layer.id, &p.color, duration)?;
             check_transform(layer.id, &p.transform, duration)?;
         }
-        LayerParams::Template(p) => {
+        LayerParams::Motif(p) => {
             check_animated(layer.id, &p.opacity, duration)?;
             check_transform(layer.id, &p.transform, duration)?;
-            // template_id / props_schema validation is Phase 5.
+            // motif_id / props_schema validation is Phase 5.
         }
         LayerParams::Audio(p) => {
             check_media_ref(project, layer.id, p.media)?;

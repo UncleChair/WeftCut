@@ -37,7 +37,7 @@ pub mod validate;
 pub use actor::{
     Actor, AudioPatch, ChangeEvent, ColorPatch, CommandError, CompositionPatch, DiffHint,
     DryRunOp, DryRunOutput, EntityRef, HistoryStatus, ImageOverlayPatch, LayerParamsPatch,
-    LayerPatch, MarkerPatch, MediaDerivativesPatch, ProjectActor, ProjectHandle, TemplatePatch,
+    LayerPatch, MarkerPatch, MediaDerivativesPatch, MotifPatch, ProjectActor, ProjectHandle,
     TextPatch, VideoClipPatch, spawn,
 };
 pub use history::{HistoryEntry, HistoryEntrySummary, HistoryView, NamedCheckpoint, NamedCheckpointSummary};
@@ -53,7 +53,7 @@ pub use ids::{
 };
 pub use layer::{
     AudioParams, ColorParams, FontSpec, ImageOverlayParams, Layer, LayerParams, Outline, Shadow,
-    SubtitlesParams, SubtitlesSource, TemplateParams, TextAlign, TextAnimPreset, TextBackend,
+    MotifParams, SubtitlesParams, SubtitlesSource, TextAlign, TextAnimPreset, TextBackend,
     TextParams, VideoClipParams,
 };
 pub use marker::Marker;

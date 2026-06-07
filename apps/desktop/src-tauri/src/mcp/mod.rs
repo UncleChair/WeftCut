@@ -43,8 +43,8 @@
 //!   microsecond timestamp, lazy-cached on disk. Multimodal-friendly.
 //! - `media://{id}/waveform` — peaks file (base64). See `jobs/waveform.rs`
 //!   for the binary format.
-//! - `templates://current` — built-in template catalog (id, name, size,
-//!   default_duration_s, props_schema). Same payload as `list_templates`.
+//! - `templates://current` — built-in motif catalog (id, name, size,
+//!   default_duration_s, props_schema). Same payload as `list_motifs`.
 //!
 //! Edit tools (Stage 3) and workflow tools (Stage 4) live alongside `ping`
 //! in the `WeftCutServer` impl block. The change feed (Stage 5) lives on its
@@ -92,7 +92,7 @@ use crate::state::{
     Actor, Animated, AudioParams, BlendMode, CheckpointId, ColorParams, CommandError,
     CompositionPatch, DryRunOp, DryRunOutput, LayerId, LayerParams, LayerParamsPatch, LayerPatch,
     MarkerPatch, MediaId, MediaItem, MediaKind, Project, ProjectHandle, Rational, Rgba,
-    SubtitlesParams, SubtitlesSource, TemplateParams, TrackId, Transform,
+    MotifParams, SubtitlesParams, SubtitlesSource, TrackId, Transform,
     ValidationError, VideoClipParams, new_id,
 };
 
@@ -1152,38 +1152,38 @@ impl WeftCutServer {
     }
 
     // ============================================================
-    // Template tools (Phase 5 Stage H)
+    // Motif tools (Phase 5 Stage H)
     // ============================================================
 
-    #[tool(description = "List every built-in template available to add via `add_template`. Returns an array \
+    #[tool(description = "List every built-in motif available to add via `add_motif`. Returns an array \
                           of `{ id, name, version, size: [w,h], default_duration_s, props_schema }`. \
-                          Inspect `props_schema` before calling `add_template` to know what keys + types each \
-                          template accepts; unknown keys reject. The catalog is fixed per build; once \
-                          Phase 5 Stage H (community + user templates) lands this becomes dynamic.")]
-    async fn list_templates(&self) -> Result<CallToolResult, McpError> {
+                          Inspect `props_schema` before calling `add_motif` to know what keys + types each \
+                          motif accepts; unknown keys reject. The catalog is fixed per build; once \
+                          Phase 5 Stage H (community + user motifs) lands this becomes dynamic.")]
+    async fn list_motifs(&self) -> Result<CallToolResult, McpError> {
         ok_json(&templates_payload())
     }
 
-    #[tool(description = "Add a template layer to a track. The template is rasterized to a PNG sequence on \
+    #[tool(description = "Add a motif layer to a track. The motif is rasterized to a PNG sequence on \
                           first render and cached content-addressably; subsequent renders are folder lookups. \
-                          Args: `template_id` (from `list_templates`), `t_start_us` (timeline microseconds), \
+                          Args: `motif_id` (from `list_motifs`), `t_start_us` (timeline microseconds), \
                           optional `t_end_us` (defaults to `t_start_us + default_duration_s * 1e6`), optional \
                           `track_id` (when omitted, always spawns a fresh track labeled 'Overlay' — never \
                           reuses an existing track, so consecutive auto-inserts can't collide), optional \
-                          `props` (JSON object matched against the template's `props_schema`; unknown keys \
+                          `props` (JSON object matched against the motif's `props_schema`; unknown keys \
                           reject, missing keys fall back to defaults). Returns the new layer id.")]
-    async fn add_template(
+    async fn add_motif(
         &self,
-        #[tool(aggr)] args: AddTemplateArgs,
+        #[tool(aggr)] args: AddMotifArgs,
     ) -> Result<CallToolResult, McpError> {
         let template = templates::builtins()
             .into_iter()
-            .find(|t| t.id() == args.template_id)
+            .find(|t| t.id() == args.motif_id)
             .ok_or_else(|| {
                 McpError::invalid_params(
                     format!(
-                        "unknown template_id '{}' — call list_templates for the catalog",
-                        args.template_id
+                        "unknown motif_id '{}' — call list_motifs for the catalog",
+                        args.motif_id
                     ),
                     None,
                 )
@@ -1197,12 +1197,12 @@ impl WeftCutServer {
             .map_err(|e| McpError::invalid_params(format!("invalid props: {e}"), None))?;
         let props_map = parse_canonical_props(&canonical)?;
 
-        let t_end_us = resolve_template_t_end_us(
+        let t_end_us = resolve_motif_t_end_us(
             args.t_start_us,
             args.t_end_us,
             template.manifest.default_duration_s,
             // Cap is driven by the props being added (canonicalized above), so
-            // a `max_duration_prop`-mapped template clamps to its prop value.
+            // a `max_duration_prop`-mapped motif clamps to its prop value.
             templates::resolve_template_max_dur_us(&template.manifest, &props_map),
         );
         if t_end_us <= args.t_start_us {
@@ -1220,9 +1220,9 @@ impl WeftCutServer {
             None => self.ensure_template_target_track().await?,
         };
 
-        let params = LayerParams::Template(TemplateParams {
-            template_id: template.id().to_string(),
-            template_version: template.manifest.version,
+        let params = LayerParams::Motif(MotifParams {
+            motif_id: template.id().to_string(),
+            motif_version: template.manifest.version,
             props: props_map,
             src_in_us: 0,
             transform: Transform::default(),
@@ -1859,18 +1859,18 @@ pub struct DuplicateLayerArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct AddTemplateArgs {
-    /// Template id from `list_templates` (e.g. "lower-third-simple", "title-card").
-    pub template_id: String,
+pub struct AddMotifArgs {
+    /// Motif id from `list_motifs` (e.g. "lower-third-simple", "title-card").
+    pub motif_id: String,
     /// Layer start in timeline microseconds.
     pub t_start_us: i64,
     /// Layer end in timeline microseconds. Defaults to
     /// `t_start_us + default_duration_s * 1_000_000` when omitted.
     pub t_end_us: Option<i64>,
     /// Target Video track id. If omitted, the first existing Video track is used,
-    /// or a new one labeled "Templates" is created.
+    /// or a new one labeled "Motifs" is created.
     pub track_id: Option<String>,
-    /// Template props as a JSON object. Keys must match the template's
+    /// Motif props as a JSON object. Keys must match the motif's
     /// `props_schema`; unknown keys reject; missing keys fill from defaults.
     pub props: Option<Value>,
 }
@@ -2172,9 +2172,9 @@ fn parse_uuid(s: &str, field: &str) -> Result<Uuid, McpError> {
         .map_err(|e| McpError::invalid_params(format!("{field} not a UUID: {e}"), None))
 }
 
-/// JSON payload shared by the `list_templates` tool and the
+/// JSON payload shared by the `list_motifs` tool and the
 /// `templates://current` resource. Wraps `crate::templates::catalog()` so
-/// the Tauri-side picker (`commands::list_templates`) and the MCP surfaces
+/// the Tauri-side picker (`commands::list_motifs`) and the MCP surfaces
 /// emit the same JSON shape from the same source.
 fn templates_payload() -> Vec<Value> {
     templates::catalog()
@@ -2184,7 +2184,7 @@ fn templates_payload() -> Vec<Value> {
 }
 
 /// Convert the canonical JSON string produced by `Template::canonicalize_props`
-/// back into the `imbl::HashMap<String, Value>` shape that `TemplateParams`
+/// back into the `imbl::HashMap<String, Value>` shape that `MotifParams`
 /// stores. Canonicalize already validated types + filled defaults; this is
 /// just the format crossover.
 fn parse_canonical_props(
@@ -2199,8 +2199,8 @@ fn parse_canonical_props(
     Ok(obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
 }
 
-/// Compute the layer's end time for `add_template`. When the agent omits
-/// `t_end_us` we extend by the template's `default_duration_s`; otherwise we
+/// Compute the layer's end time for `add_motif`. When the agent omits
+/// `t_end_us` we extend by the motif's `default_duration_s`; otherwise we
 /// pass the value through unchanged so the caller controls duration.
 /// `saturating_add` guards the i64 overflow on absurd inputs (e.g. agent
 /// passes `i64::MAX` as start time + a default duration).
@@ -2209,7 +2209,7 @@ fn parse_canonical_props(
 /// `None` when unbounded. When present, the resolved length is clamped to
 /// the cap so an explicit over-long `t_end_us` can't place the layer longer
 /// than the manifest allows — mirrors the trim-time clamp in the actor.
-pub(crate) fn resolve_template_t_end_us(
+pub(crate) fn resolve_motif_t_end_us(
     t_start_us: i64,
     t_end_us: Option<i64>,
     default_duration_s: f64,
@@ -2946,8 +2946,8 @@ const STATIC_RESOURCES: &[ResourceDescriptor] = &[
     ResourceDescriptor {
         uri: URI_TEMPLATES,
         name: "Templates catalog",
-        description: "Built-in template catalog as JSON. Same shape as the `list_templates` tool result. \
-                      Read this once at session start to know what `add_template` accepts.",
+        description: "Built-in motif catalog as JSON. Same shape as the `list_motifs` tool result. \
+                      Read this once at session start to know what `add_motif` accepts.",
     },
 ];
 
@@ -3639,10 +3639,10 @@ mod tests {
     }
 
     // ============================================================
-    // Stage H — template MCP helpers
+    // Stage H — motif MCP helpers
     // ============================================================
 
-    /// `list_templates` and `templates://current` share `templates_payload()`.
+    /// `list_motifs` and `templates://current` share `templates_payload()`.
     /// One entry per builtin, ordered to match the picker. If a future
     /// builtin lands but isn't surfaced through this payload, agents wouldn't
     /// see it.
@@ -3663,7 +3663,7 @@ mod tests {
 
     /// `parse_canonical_props` is the format crossover between
     /// `Template::canonicalize_props` (returns JSON string) and
-    /// `TemplateParams.props` (imbl::HashMap<String, Value>). Round-trip via
+    /// `MotifParams.props` (imbl::HashMap<String, Value>). Round-trip via
     /// canonicalize_props with empty input should yield every prop default
     /// keyed by name.
     #[test]
@@ -3688,45 +3688,45 @@ mod tests {
         );
     }
 
-    /// `add_template` derives `t_end_us` from the template's
+    /// `add_motif` derives `t_end_us` from the motif's
     /// `default_duration_s` when the agent omits it. Guard against future
     /// regressions (e.g. someone swaps `as i64` for `as u64`).
     #[test]
-    fn resolve_t_end_us_uses_template_default_when_omitted() {
+    fn resolve_t_end_us_uses_motif_default_when_omitted() {
         // 5.0s default + 0us start → 5_000_000us end (no cap).
-        assert_eq!(resolve_template_t_end_us(0, None, 5.0, None), 5_000_000);
+        assert_eq!(resolve_motif_t_end_us(0, None, 5.0, None), 5_000_000);
         // Caller's value wins when set, even if it would normally be invalid
         // (validation happens at the actor layer, not here).
         assert_eq!(
-            resolve_template_t_end_us(1_000_000, Some(2_000_000), 99.0, None),
+            resolve_motif_t_end_us(1_000_000, Some(2_000_000), 99.0, None),
             2_000_000,
         );
         // saturating_add survives i64::MAX start time without panicking.
         assert_eq!(
-            resolve_template_t_end_us(i64::MAX, None, 5.0, None),
+            resolve_motif_t_end_us(i64::MAX, None, 5.0, None),
             i64::MAX,
         );
-        // A capped template clamps an explicit over-long t_end_us to the cap.
+        // A capped motif clamps an explicit over-long t_end_us to the cap.
         // 5.0s cap + 0us start + requested 8s end → clamped to 5_000_000.
         assert_eq!(
-            resolve_template_t_end_us(0, Some(8_000_000), 5.0, Some(5_000_000)),
+            resolve_motif_t_end_us(0, Some(8_000_000), 5.0, Some(5_000_000)),
             5_000_000,
         );
         // Within-cap explicit value passes through unchanged.
         assert_eq!(
-            resolve_template_t_end_us(0, Some(3_000_000), 5.0, Some(5_000_000)),
+            resolve_motif_t_end_us(0, Some(3_000_000), 5.0, Some(5_000_000)),
             3_000_000,
         );
     }
 
-    /// `add_template` resolves its cap from the props being added via
-    /// `resolve_template_max_dur_us`, so a prop-mapped template (countdown's
+    /// `add_motif` resolves its cap from the props being added via
+    /// `resolve_template_max_dur_us`, so a prop-mapped motif (countdown's
     /// `seconds`) clamps an explicit over-long `t_end_us` to the PROP value,
     /// not the static `max_duration_s`. With `seconds = 8` + a requested 20s
     /// end, the resolved end is ~8s. (The actor's `add_layer` then frame-snaps
     /// both edges; this checks the cap-resolution + clamp step in isolation.)
     #[test]
-    fn add_template_cap_resolves_from_seconds_prop() {
+    fn add_motif_cap_resolves_from_seconds_prop() {
         let manifest = &crate::templates::builtin_countdown().manifest;
         let mut props: imbl::HashMap<String, serde_json::Value> = imbl::HashMap::new();
         props.insert("seconds".into(), serde_json::json!(8.0));
@@ -3734,12 +3734,12 @@ mod tests {
         assert_eq!(cap, Some(8_000_000));
         // Explicit over-long t_end (20s) clamps to the 8s prop cap.
         assert_eq!(
-            resolve_template_t_end_us(0, Some(20_000_000), manifest.default_duration_s, cap),
+            resolve_motif_t_end_us(0, Some(20_000_000), manifest.default_duration_s, cap),
             8_000_000,
         );
         // Within-cap explicit value (6s) passes through unchanged.
         assert_eq!(
-            resolve_template_t_end_us(0, Some(6_000_000), manifest.default_duration_s, cap),
+            resolve_motif_t_end_us(0, Some(6_000_000), manifest.default_duration_s, cap),
             6_000_000,
         );
     }
