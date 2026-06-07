@@ -4,8 +4,7 @@ vi.mock("../host", () => ({
   captureMotifFrame: vi.fn(async () => ({ width: 480, height: 480 }) as unknown as ImageBitmap),
 }));
 import { captureMotifFrame } from "../host";
-import { rasterMotifFrame } from "../motifRaster";
-import { bakeMotifFrame } from "../motifRaster";
+import { rasterMotifFrame, bakeMotifFrame } from "../motifRaster";
 
 describe("rasterMotifFrame", () => {
   beforeEach(() => {
@@ -27,6 +26,10 @@ describe("rasterMotifFrame", () => {
 });
 
 describe("bakeMotifFrame", () => {
+  beforeEach(() => {
+    (captureMotifFrame as unknown as ReturnType<typeof vi.fn>).mockClear();
+  });
+
   it("captures an arbitrary content frame at the manifest size, no disk read", async () => {
     const template = { manifest: { id: "countdown", size: [480, 480] } } as unknown as Parameters<
       typeof bakeMotifFrame
