@@ -333,6 +333,7 @@ struct History {
     snapshots: VecDeque<HistoryEntry>,        // bounded ring; default 200
     cursor: usize,
     checkpoints: imbl::HashMap<CheckpointId, NamedCheckpoint>,
+    lock: Option<String>,                     // when set, undo/redo/restore reject
 }
 
 struct HistoryEntry {
@@ -356,7 +357,7 @@ struct NamedCheckpoint {
 - **Undo/redo**: move `cursor`, broadcast snapshot at cursor.
 - **Checkpoint**: explicit named snapshot stored separately; survives undo-truncation; persists in save file.
 - v1 is linear undo; tree-of-edits is v2 (the snapshot model already supports it — just add parent pointers).
-- **Media pool sits outside the undo stack.** `add_media_item` writes the new pool into every snapshot in `History` (and every checkpoint), then broadcasts a non-recorded `ChangeEvent`. The history `cursor` doesn't move and no new entry is recorded. Rationale: importing a media file is a workflow event, not an editing decision — users expect imported clips to stay in the bin even after they undo their way past the import. Mirrors Premiere/DaVinci semantics. The `imbl` structural sharing keeps the cost of patching every snapshot's `media_pool` cheap (one `Project` clone per snapshot, but the `tracks`/`markers`/`composition` subtrees are reference-counted).
+- **Several mutation classes sit outside the undo stack** — see `docs/undo-stack-scope.md` for the full per-op table. The pattern: patch every snapshot (and checkpoint) in place via `replace_media_pool_everywhere` or `replace_composition_canvas_everywhere`, broadcast a non-recorded `ChangeEvent`, cursor unchanged. Covers media imports/removals of unreferenced media, derivative and workspace-path updates, canvas setup fields, and project open/new (`replace_state` resets history instead). Timeline edits, duration changes, and cascade media removals still record normally.
 
 ## Concurrency: single-writer actor
 
