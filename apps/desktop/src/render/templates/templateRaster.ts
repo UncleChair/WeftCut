@@ -12,6 +12,7 @@ import { BakedKeyIndex } from "./bakedKeyIndex";
 import { TemplateHarness } from "./harness";
 import { rasterizeSvg } from "./svgRaster";
 import type { Template } from "./catalog";
+import { rasterMotifFrame } from "../motifs/motifRaster";
 
 /// Process-wide per-frame cache shared by every TemplateSprite AND the
 /// prewarmer, so identical (template, props, dims, fps, frame) rasters resolve
@@ -90,5 +91,9 @@ export async function resolveTemplateFrame(
       // permission/io hiccup — fall through to live raster.
     }
   }
-  return rasterTemplateFrame(template, tSec, durationSec, canonicalProps);
+  const [w, h] = template.manifest.size;
+  // durationSec is unused by the CDP path (duration is derived Rust-side from
+  // props in v1); kept in the signature for parity with the SVG era.
+  void durationSec;
+  return rasterMotifFrame(template.manifest.id, tSec, canonicalProps, w!, h!);
 }
