@@ -10,12 +10,21 @@
 // here = export binds the wrong (or an out-of-range) frame. The first test
 // pins exactly that: the full-range bake covers `[0, templateDurationFrames-1]`.
 
-import { describe, expect, it, test } from "vitest";
+import { describe, expect, it, test, vi, beforeEach } from "vitest";
+
+// Mock the CDP producer so the bake loop is Node-testable (no host/DOM).
+vi.mock("./motifs/motifRaster", () => ({
+  bakeMotifFrame: vi.fn(
+    async (template, frame) =>
+      ({ tag: `${template.manifest.id}#${frame}` }) as unknown as ImageBitmap,
+  ),
+}));
 
 import type { LayerParamsView, ProjectSummary, MotifView } from "../ipc";
 import { frameIndexInLayer, snapFrameFloor } from "../frames";
-import { bakeContentFrameFor, templateLayersToBake } from "./exportBake";
+import { bakeContentFrameFor, templateLayersToBake, exportBakeTemplates } from "./exportBake";
 import { templateContentFrame, templateDurationFrames } from "./templates/templateFrames";
+import { bakeMotifFrame } from "./motifs/motifRaster";
 
 const COUNTDOWN = "countdown"; // built-in, 480x480
 
@@ -320,5 +329,27 @@ describe("export bake matches preview content frame (windowed template)", () => 
       if (preview !== bake) mismatches.push(f);
     }
     expect(mismatches).toEqual([]);
+  });
+});
+
+describe("exportBakeTemplates → CDP (bakeMotifFrame)", () => {
+  beforeEach(() => { (bakeMotifFrame as unknown as ReturnType<typeof vi.fn>).mockClear(); });
+
+  it("bakes a countdown layer's frames via bakeMotifFrame, indexed by comp frame", async () => {
+    const summary = summaryWith([templateLayer("L1", 0, 2_000_000)]);
+    const out = await exportBakeTemplates(summary, 0, 2_000_000, 30, 1);
+    const frames = out["L1"]!;
+    expect(frames).toBeDefined();
+    expect(frames.length).toBe(60);
+    expect((frames[0] as unknown as { tag: string }).tag).toBe("countdown#0");
+    expect((frames[59] as unknown as { tag: string }).tag).toBe("countdown#59");
+    expect(bakeMotifFrame).toHaveBeenCalledTimes(60);
+    expect(bakeMotifFrame).toHaveBeenCalledWith(
+      expect.objectContaining({ manifest: expect.objectContaining({ id: "countdown" }) }),
+      0,
+      30,
+      1,
+      expect.any(Object),
+    );
   });
 });
