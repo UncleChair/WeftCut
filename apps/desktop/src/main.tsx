@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
+import { invoke } from "@tauri-apps/api/core";
 import { App } from "./App";
 import { StartupScreen } from "./startup/StartupScreen";
 import {
@@ -7,8 +8,14 @@ import {
   recentsGetReopenOnLaunch,
   recentsMostRecent,
 } from "./ipc";
+import { MOTIF_RUNTIME_SOURCE } from "./render/motifs/runtime";
 import "./i18n";
 import "./styles.css";
+
+// Motifs: hand the clock-takeover runtime source to Rust once at boot so the
+// hidden Motif host window can inject it as its `initialization_script`.
+// Fire-and-forget — the capture command errors clearly if this hasn't landed.
+void invoke("motif_register_runtime", { source: MOTIF_RUNTIME_SOURCE });
 
 const root = document.getElementById("root");
 if (!root) throw new Error("#root missing from index.html");
