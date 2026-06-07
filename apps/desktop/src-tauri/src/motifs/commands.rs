@@ -86,6 +86,8 @@ pub async fn motif_capture_frame(
     // Duration: for v1 derive from the `seconds` prop if present (the countdown
     // Motif's max-duration prop), else fall back to 5s. fps is fixed at 30 for
     // the capture meta.
+    // TODO(motifs-plan-2): derive duration from manifest.max_duration_prop instead of
+    // hardcoding the "seconds" prop name (only correct for the countdown built-in today).
     let duration = props
         .get("seconds")
         .and_then(|v| v.as_f64())

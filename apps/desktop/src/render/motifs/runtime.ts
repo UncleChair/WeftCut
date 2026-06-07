@@ -31,10 +31,12 @@ export function createMotifRuntime(g: any = {}) {
 }
 
 /**
- * Browser-injection source. Prepended into every Motif document by the motif:
- * scheme handler (a later task). Installs the runtime on window, exposes
- * motif.define, and a window.__motifRender(t, props, meta) entry point that
- * Rust drives over CDP Runtime.evaluate(awaitPromise:true).
+ * Browser-injection source. Injected via the hidden host window's
+ * `initialization_script` (runs before the Motif's own scripts), sourced from
+ * this string handed to Rust at boot via `motif_register_runtime`. Installs
+ * the runtime on window, exposes motif.define, and a
+ * window.__motifRender(t, props, meta) entry point that Rust drives over CDP
+ * Runtime.evaluate(awaitPromise:true).
  *
  * String.raw template — the substitution below (createMotifRuntime.toString)
  * is resolved by TypeScript at module-evaluation time into a plain string.
