@@ -33,7 +33,8 @@ export function createMotifRuntime(g: any = {}) {
 /**
  * Browser-injection source. Prepended into every Motif document by the motif:
  * scheme handler (a later task). Installs the runtime on window, exposes
- * motif.define, and runs the postMessage seek/settle/ack loop the host drives.
+ * motif.define, and a window.__motifRender(t, props, meta) entry point that
+ * Rust drives over CDP Runtime.evaluate(awaitPromise:true).
  *
  * String.raw template — the substitution below (createMotifRuntime.toString)
  * is resolved by TypeScript at module-evaluation time into a plain string.
@@ -45,10 +46,9 @@ export const MOTIF_RUNTIME_SOURCE: string = String.raw`
 (function () {
   // Capture the NATIVE requestAnimationFrame BEFORE the factory overwrites it.
   // The factory installs a queued rAF (only fires on rt.seek) onto window.rAF.
-  // The settle await at the bottom of the message handler uses _nativeRaf so the
-  // Promise actually resolves after two real browser layout frames. Using the
-  // overwritten queued rAF would deadlock every render because seek() is never
-  // called during the settle step.
+  // The settle await inside __motifRender uses _nativeRaf so the Promise actually
+  // resolves after two real browser layout frames. Using the overwritten queued
+  // rAF would deadlock every render because seek() is never called during settle.
   var _nativeRaf = window.requestAnimationFrame.bind(window);
 
   var rt = (${createMotifRuntime.toString()})(window);
@@ -86,27 +86,23 @@ export const MOTIF_RUNTIME_SOURCE: string = String.raw`
     };
   }
 
-  window.addEventListener("message", async function (e) {
-    var msg = e.data || {};
-    if (msg.type !== "motif:render") return;
-    var meta = msg.meta, props = msg.props, propsKey = JSON.stringify(props);
-    try {
+  // Driven from Rust via CDP Runtime.evaluate(awaitPromise:true).
+  // Resolves once setup (once-per-props) + frame(t) + seek + a double-rAF settle
+  // have run, i.e. the frame for time t (seconds) is visually ready to capture.
+  window.__motifRender = function (t, props, meta) {
+    return (async function () {
       if (!def) throw new Error("motif: no motif.define() called");
+      var propsKey = JSON.stringify(props);
       if (!didSetup || propsKey !== lastPropsKey) {
         if (def.setup) await def.setup(props, ctxFor(0, props, meta));
         if (document.fonts && document.fonts.ready) await document.fonts.ready;
         didSetup = true; lastPropsKey = propsKey;
       }
-      if (def.frame) def.frame(msg.t, ctxFor(msg.t, props, meta));
-      rt.seek(msg.t * 1000);
-      // Use _nativeRaf (captured above) — NOT window.rAF which is the queued version.
+      if (def.frame) def.frame(t, ctxFor(t, props, meta));
+      rt.seek(t * 1000);
       await new Promise(function (r) { _nativeRaf(function () { _nativeRaf(r); }); });
-      parent.postMessage({ type: "motif:ready", id: msg.id }, "*");
-    } catch (err) {
-      parent.postMessage({ type: "motif:error", id: msg.id, error: String(err) }, "*");
-    }
-  });
-
-  parent.postMessage({ type: "motif:loaded" }, "*");
+      return true;
+    })();
+  };
 })();
 `;
