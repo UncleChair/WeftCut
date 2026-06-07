@@ -20,11 +20,28 @@ vi.mock("./motifs/motifRaster", () => ({
   ),
 }));
 
+// Mock the disk-path infra (L2 baked key index + frame cache).
+vi.mock("./templates/templateRaster", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./templates/templateRaster")>();
+  return {
+    ...actual,
+    sharedBakedKeyIndex: { has: vi.fn(() => false) },
+    sharedTemplateFrameCache: {
+      readPng: vi.fn(async () => new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" })),
+    },
+  };
+});
+
+// Node/jsdom has no createImageBitmap; stub it so the disk-path test works.
+(globalThis as unknown as { createImageBitmap: (b: Blob) => Promise<ImageBitmap> }).createImageBitmap =
+  vi.fn(async () => ({ tag: "from-disk" }) as unknown as ImageBitmap);
+
 import type { LayerParamsView, ProjectSummary, MotifView } from "../ipc";
 import { frameIndexInLayer, snapFrameFloor } from "../frames";
 import { bakeContentFrameFor, templateLayersToBake, exportBakeTemplates } from "./exportBake";
 import { templateContentFrame, templateDurationFrames } from "./templates/templateFrames";
 import { bakeMotifFrame } from "./motifs/motifRaster";
+import { sharedBakedKeyIndex } from "./templates/templateRaster";
 
 const COUNTDOWN = "countdown"; // built-in, 480x480
 
@@ -333,7 +350,10 @@ describe("export bake matches preview content frame (windowed template)", () => 
 });
 
 describe("exportBakeTemplates → CDP (bakeMotifFrame)", () => {
-  beforeEach(() => { (bakeMotifFrame as unknown as ReturnType<typeof vi.fn>).mockClear(); });
+  beforeEach(() => {
+    (bakeMotifFrame as unknown as ReturnType<typeof vi.fn>).mockClear();
+    (sharedBakedKeyIndex.has as ReturnType<typeof vi.fn>).mockReturnValue(false);
+  });
 
   it("bakes a countdown layer's frames via bakeMotifFrame, indexed by comp frame", async () => {
     const summary = summaryWith([templateLayer("L1", 0, 2_000_000)]);
@@ -351,5 +371,20 @@ describe("exportBakeTemplates → CDP (bakeMotifFrame)", () => {
       1,
       expect.any(Object),
     );
+  });
+});
+
+describe("exportBakeTemplates → L2 disk fast path", () => {
+  beforeEach(() => {
+    (bakeMotifFrame as unknown as ReturnType<typeof vi.fn>).mockClear();
+    (sharedBakedKeyIndex.has as ReturnType<typeof vi.fn>).mockReturnValue(true);
+  });
+
+  it("reads L2 PNGs off disk and does NOT re-capture when the key is baked", async () => {
+    const summary = summaryWith([templateLayer("L1", 0, 2_000_000)]);
+    const out = await exportBakeTemplates(summary, 0, 2_000_000, 30, 1);
+    expect(out["L1"]!.length).toBe(60);
+    expect((out["L1"]![0] as unknown as { tag: string }).tag).toBe("from-disk");
+    expect(bakeMotifFrame).toHaveBeenCalledTimes(0);
   });
 });

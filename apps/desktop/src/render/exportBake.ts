@@ -28,6 +28,8 @@ import { getTemplate, resolveTemplateContentDurationUs, type Template } from "./
 import { canonicalizeProps } from "./templates/Rasterizer";
 import { bakeMotifFrame } from "./motifs/motifRaster";
 import { templateDurationFrames } from "./templates/templateFrames";
+import { sharedBakedKeyIndex, sharedTemplateFrameCache } from "./templates/templateRaster";
+import { templateFrameDescriptor } from "./templates/templateFrameDescriptor";
 
 const US_PER_SEC = 1_000_000;
 
@@ -224,6 +226,13 @@ export async function exportBakeTemplates(
     const contentDurationUs = cap ?? spec.durationUs;
     const srcInUs = cap == null ? 0 : spec.view.src_in_us;
 
+    // L2 fast path: this layer's content cacheKey (playhead/time-independent →
+    // tInLayerUs=0; only desc.cacheKey is used, mirroring hydrateBakedIndexAndGc).
+    const desc = templateFrameDescriptor(
+      spec.view, 0, spec.durationUs, fpsNum, fpsDen, spec.template,
+    );
+    const cacheKey = desc?.cacheKey ?? null;
+
     // Allocate up to lastFrame; leave [0, firstFrame) holes for a mid-layer
     // export start. Bitmaps land at their comp-frame index so the Worker's
     // frames[frameIndexInLayer(...)] is a direct hit.
@@ -237,6 +246,26 @@ export async function exportBakeTemplates(
         fpsNum,
         fpsDen,
       );
+      // Disk-first: a pre-baked Motif's PNGs are keyed by (cacheKey, content
+      // frame); read + decode (a FRESH bitmap, safe to transfer) instead of a
+      // ~80 ms CDP re-capture. Gated by the in-RAM baked-key index so an
+      // un-baked Motif never pays a per-frame fs probe. Any read error falls
+      // through to a live capture, so a disk hiccup can't blank an export.
+      if (cacheKey && sharedBakedKeyIndex.has(cacheKey)) {
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          const png = await sharedTemplateFrameCache.readPng(cacheKey, contentFrame);
+          if (png) {
+            // eslint-disable-next-line no-await-in-loop
+            frames[frame] = await createImageBitmap(png);
+            baked++;
+            onProgress?.(baked, total);
+            continue;
+          }
+        } catch {
+          // fall through to a live CDP capture
+        }
+      }
       // CDP capture of the hidden Motif host — the SAME producer the preview
       // prewarmer/baker use (manifest size + manifest settle_rafs), so the
       // exported bitmap is pixel-identical to preview AND carries the Motif's
