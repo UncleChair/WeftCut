@@ -19,7 +19,7 @@ use crate::ir;
 use crate::templates;
 use crate::state::{
     self, Actor, ColorParams, CommandError, LayerParams, MediaItem, MediaKind, ProjectHandle,
-    Rgba, SubtitlesParams, SubtitlesSource, TemplateParams, Transform,
+    MotifParams, Rgba, SubtitlesParams, SubtitlesSource, Transform,
     actor::{CompositionPatch, LayerParamsPatch, LayerPatch},
     animated::Animated,
     ids::new_id,
@@ -122,12 +122,12 @@ pub enum LayerParamsView {
     Color(ColorView),
     Audio(AudioView),
     Subtitles(SubtitlesView),
-    Template(TemplateView),
+    Motif(MotifView),
 }
 
 #[derive(Serialize, Clone)]
-pub struct TemplateView {
-    pub template_id: String,
+pub struct MotifView {
+    pub motif_id: String,
     /// Canvas-space pixel offset.
     pub x: f64,
     pub y: f64,
@@ -135,13 +135,13 @@ pub struct TemplateView {
     pub scale_y: f64,
     pub opacity: f64,
     pub src_in_us: i64,
-    /// Validated props the user set on this template instance.
-    /// Keys match the template manifest's `props_schema`; values
+    /// Validated props the user set on this motif instance.
+    /// Keys match the motif manifest's `props_schema`; values
     /// are whatever JSON shape that schema permits (string / number /
     /// color-as-string). The DOM preview injects this verbatim as
     /// `__props__` on the per-instance shadowed window-proxy inside
-    /// the template host (`<div>` + Shadow DOM; see
-    /// `TemplateHandle.ts`).
+    /// the motif host (`<div>` + Shadow DOM; see
+    /// `MotifHandle.ts`).
     pub props: serde_json::Map<String, serde_json::Value>,
 }
 
@@ -606,7 +606,7 @@ fn layer_params_view(
                 source_value: value,
             })
         }
-        LayerParams::Template(p) => {
+        LayerParams::Motif(p) => {
             // imbl::HashMap<String, Value> → serde_json::Map. The values
             // are already serde_json::Value; we just need to materialize
             // the map into a serializable shape.
@@ -614,8 +614,8 @@ fn layer_params_view(
             for (k, v) in p.props.iter() {
                 props.insert(k.clone(), v.clone());
             }
-            LayerParamsView::Template(TemplateView {
-                template_id: p.template_id.clone(),
+            LayerParamsView::Motif(MotifView {
+                motif_id: p.motif_id.clone(),
                 x: static_or(&p.transform.x, 0.0),
                 y: static_or(&p.transform.y, 0.0),
                 scale_x: static_or(&p.transform.scale_x, 1.0),
@@ -633,7 +633,7 @@ fn layer_kind(params: &LayerParams) -> String {
         LayerParams::VideoClip(_) => "VideoClip",
         LayerParams::ImageOverlay(_) => "ImageOverlay",
         LayerParams::Text(_) => "Text",
-        LayerParams::Template(_) => "Template",
+        LayerParams::Motif(_) => "Motif",
         LayerParams::Audio(_) => "Audio",
         LayerParams::Subtitles(_) => "Subtitles",
         LayerParams::Color(_) => "Color",
@@ -659,7 +659,7 @@ fn derive_track_kind_label(track: &crate::state::Track) -> String {
             LayerParams::VideoClip(_)
             | LayerParams::ImageOverlay(_)
             | LayerParams::Color(_)
-            | LayerParams::Template(_)
+            | LayerParams::Motif(_)
             | LayerParams::Text(_) => has_visual = true,
             LayerParams::Subtitles(_) => {
                 // Subtitle-only tracks should style as Subtitle so the
@@ -1915,14 +1915,14 @@ pub async fn add_subtitles_layer(
         .map_err(|e: CommandError| e.to_string())
 }
 
-/// Stage F-Picker: the UI catalog. A superset of the MCP `list_templates`
+/// Stage F-Picker: the UI catalog. A superset of the MCP `list_motifs`
 /// payload — every manifest field (which now includes `engine` + `fonts`)
 /// plus the raw `html` document so the picker can render live previews
 /// client-side. The MCP surface stays manifest-only (see
 /// `mcp::templates_payload`); the extra `html` field is UI-only and would
 /// just bloat agent context.
 #[tauri::command]
-pub async fn list_templates() -> Result<Vec<serde_json::Value>, String> {
+pub async fn list_motifs() -> Result<Vec<serde_json::Value>, String> {
     templates::builtins()
         .into_iter()
         .map(|tpl| {
@@ -1937,17 +1937,17 @@ pub async fn list_templates() -> Result<Vec<serde_json::Value>, String> {
         .collect()
 }
 
-/// Stage F-Picker: UI counterpart to the MCP `add_template` tool. Mirrors
-/// the behavior 1:1 (canonicalize props through the Template module,
+/// Stage F-Picker: UI counterpart to the MCP `add_motif` tool. Mirrors
+/// the behavior 1:1 (canonicalize props through the templates module,
 /// default `t_end_us` from manifest duration; when `track_id` is
 /// omitted, always spawn a fresh "Overlay" track so consecutive
 /// inserts never collide with each other on the same track). Only
 /// the actor identity differs — `Actor::User` here vs.
 /// `Actor::Agent { client: "mcp" }` there.
 #[tauri::command]
-pub async fn add_template(
+pub async fn add_motif(
     handle: State<'_, ProjectHandle>,
-    template_id: String,
+    motif_id: String,
     t_start_us: TimeUs,
     t_end_us: Option<TimeUs>,
     track_id: Option<String>,
@@ -1955,10 +1955,10 @@ pub async fn add_template(
 ) -> Result<String, String> {
     let template = templates::builtins()
         .into_iter()
-        .find(|t| t.id() == template_id)
+        .find(|t| t.id() == motif_id)
         .ok_or_else(|| {
             format!(
-                "unknown template_id '{template_id}' — call list_templates for the catalog",
+                "unknown motif_id '{motif_id}' — call list_motifs for the catalog",
             )
         })?;
 
@@ -1975,15 +1975,15 @@ pub async fn add_template(
         obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
 
     // Resolve the end time (default-duration fallback + `max_duration_s` cap
-    // clamp) via the shared helper so this command and the MCP `add_template`
+    // clamp) via the shared helper so this command and the MCP `add_motif`
     // tool can't drift. The cap clamp here only bites explicit over-long
     // `t_end_us`; `add_layer` re-snaps both edges to the frame grid on entry.
-    let resolved_end = crate::mcp::resolve_template_t_end_us(
+    let resolved_end = crate::mcp::resolve_motif_t_end_us(
         t_start_us,
         t_end_us,
         template.manifest.default_duration_s,
         // Cap is driven by the props being added (canonicalized above), so a
-        // `max_duration_prop`-mapped template clamps to its prop value.
+        // `max_duration_prop`-mapped motif clamps to its prop value.
         crate::templates::resolve_template_max_dur_us(&template.manifest, &props_map),
     );
     if resolved_end <= t_start_us {
@@ -1995,18 +1995,18 @@ pub async fn add_template(
     let track = match track_id {
         Some(s) => Uuid::parse_str(&s).map_err(|e| format!("track_id: {e}"))?,
         None => handle
-            // Every auto-routed template insert gets its own track.
+            // Every auto-routed motif insert gets its own track.
             // Reusing an existing "Overlay" track would re-trip the
             // per-track no-overlap invariant the moment a second
-            // template is added at a colliding range.
+            // motif is added at a colliding range.
             .add_track(Actor::User, Some("Overlay".into()))
             .await
             .map_err(|e: CommandError| e.to_string())?,
     };
 
-    let params = LayerParams::Template(TemplateParams {
-        template_id: template.id().to_string(),
-        template_version: template.manifest.version,
+    let params = LayerParams::Motif(MotifParams {
+        motif_id: template.id().to_string(),
+        motif_version: template.manifest.version,
         props: props_map,
         src_in_us: 0,
         transform: Transform::default(),

@@ -93,7 +93,7 @@ pub enum LayerParamsPatch {
     Text(TextPatch),
     VideoClip(VideoClipPatch),
     ImageOverlay(ImageOverlayPatch),
-    Template(TemplatePatch),
+    Motif(MotifPatch),
     Color(ColorPatch),
     Audio(AudioPatch),
 }
@@ -163,7 +163,7 @@ pub struct ImageOverlayPatch {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-pub struct TemplatePatch {
+pub struct MotifPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub x: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -181,8 +181,8 @@ pub struct TemplatePatch {
     /// (Replacing the whole map would let a stale debounced commit clobber a
     /// concurrent edit; merge can't delete keys, which is fine — the schema
     /// keys are fixed at insert time.) No schema validation here: the actor has
-    /// no template-registry access, and props were already validated against
-    /// the manifest's `props_schema` at `add_template`.
+    /// no motif-registry access, and props were already validated against
+    /// the manifest's `props_schema` at `add_motif`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub props: Option<std::collections::HashMap<String, serde_json::Value>>,
 }
@@ -2230,7 +2230,7 @@ impl ProjectActor {
                     // offset into comp-frame content), unlike VideoClip/Audio
                     // src_in_us which are on the source-PTS grid (intentionally
                     // left untouched). Re-snap it to the new comp grid too.
-                    if let LayerParams::Template(p) = &mut layer.params {
+                    if let LayerParams::Motif(p) = &mut layer.params {
                         p.src_in_us =
                             crate::state::time::snap_frame_round(p.src_in_us, new_fps);
                     }
@@ -3279,7 +3279,7 @@ pub(crate) fn apply_update_layer_params(
         let t_end = layer.t_end_us;
 
         let catalog = crate::templates::builtins();
-        let clamp: Option<(i64, i64)> = if let LayerParams::Template(ref tp) = layer.params {
+        let clamp: Option<(i64, i64)> = if let LayerParams::Motif(ref tp) = layer.params {
             template_cap_us(&catalog, &layer.params)
                 .and_then(|content_dur| {
                     let src_in = tp.src_in_us;
@@ -3320,7 +3320,7 @@ pub(crate) fn apply_update_layer_params(
         };
 
         if let Some((new_src_in, new_t_end)) = clamp {
-            if let LayerParams::Template(ref mut tp) = layer.params {
+            if let LayerParams::Motif(ref mut tp) = layer.params {
                 tp.src_in_us = new_src_in;
             }
             layer.t_end_us = new_t_end;
@@ -3646,7 +3646,7 @@ fn split_single_layer(
         LayerParams::Audio(p) => {
             p.src_in_us = p.src_in_us + split_offset;
         }
-        LayerParams::Template(p) => {
+        LayerParams::Motif(p) => {
             // Only capped templates window content (see apply_trim_layer). An
             // uncapped template keeps src_in_us = 0 across a split.
             if right_capped {
@@ -3794,7 +3794,7 @@ pub(crate) fn apply_trim_layer(
                     LayerParams::Audio(p) => {
                         p.src_in_us += clamped_delta;
                     }
-                    LayerParams::Template(p) => {
+                    LayerParams::Motif(p) => {
                         // Only capped templates window their content; an uncapped
                         // template (holdable overlay) keeps src_in_us = 0 — its
                         // content animates over the layer width from frame 0.
@@ -3856,9 +3856,9 @@ fn template_cap_us(
     params: &LayerParams,
 ) -> Option<i64> {
     match params {
-        LayerParams::Template(tp) => catalog
+        LayerParams::Motif(tp) => catalog
             .iter()
-            .find(|t| t.id() == tp.template_id)
+            .find(|t| t.id() == tp.motif_id)
             .and_then(|t| crate::templates::resolve_template_max_dur_us(&t.manifest, &tp.props)),
         _ => None,
     }
@@ -3913,12 +3913,12 @@ fn trim_delta_bounds(
     // The cap applies only to Template layers with a declared cap; everything
     // else is unbounded.
     let template_cap = match (&layer.params, template_max_dur_us) {
-        (LayerParams::Template(_), Some(cap)) => Some(cap),
+        (LayerParams::Motif(_), Some(cap)) => Some(cap),
         _ => None,
     };
     // The window start for a capped template (0 for non-template / uncapped).
     let template_src_in = match (&layer.params, template_cap) {
-        (LayerParams::Template(p), Some(_)) => p.src_in_us,
+        (LayerParams::Motif(p), Some(_)) => p.src_in_us,
         _ => 0,
     };
     match edge {
@@ -3932,7 +3932,7 @@ fn trim_delta_bounds(
             let (src_min, src_max) = match &layer.params {
                 LayerParams::VideoClip(p) => (-p.src_in_us, p.src_out_us - p.src_in_us - 1),
                 LayerParams::Audio(p) => (-p.src_in_us, p.src_out_us - p.src_in_us - 1),
-                LayerParams::Template(_) if template_cap.is_some() => (-template_src_in, inf),
+                LayerParams::Motif(_) if template_cap.is_some() => (-template_src_in, inf),
                 _ => (-inf, inf),
             };
             // Template cap: dragging the IN edge earlier (negative delta)
@@ -4108,7 +4108,7 @@ fn apply_params_patch(
             }
             Ok(())
         }
-        (LayerParams::Template(p), LayerParamsPatch::Template(tp)) => {
+        (LayerParams::Motif(p), LayerParamsPatch::Motif(tp)) => {
             if let Some(x) = tp.x {
                 p.transform.x = Animated::Static(x);
             }
@@ -4128,7 +4128,7 @@ fn apply_params_patch(
                 p.src_in_us = v;
             }
             // Merge props field-wise — don't replace the whole map (see the
-            // doc comment on `TemplatePatch::props`).
+            // doc comment on `MotifPatch::props`).
             if let Some(props) = &tp.props {
                 for (k, v) in props {
                     p.props.insert(k.clone(), v.clone());
@@ -4204,7 +4204,7 @@ fn layer_params_kind(params: &LayerParams) -> &'static str {
         LayerParams::VideoClip(_) => "VideoClip",
         LayerParams::ImageOverlay(_) => "ImageOverlay",
         LayerParams::Text(_) => "Text",
-        LayerParams::Template(_) => "Template",
+        LayerParams::Motif(_) => "Motif",
         LayerParams::Audio(_) => "Audio",
         LayerParams::Subtitles(_) => "Subtitles",
         LayerParams::Color(_) => "Color",
@@ -4216,7 +4216,7 @@ fn layer_params_patch_kind(patch: &LayerParamsPatch) -> &'static str {
         LayerParamsPatch::Text(_) => "Text",
         LayerParamsPatch::VideoClip(_) => "VideoClip",
         LayerParamsPatch::ImageOverlay(_) => "ImageOverlay",
-        LayerParamsPatch::Template(_) => "Template",
+        LayerParamsPatch::Motif(_) => "Motif",
         LayerParamsPatch::Color(_) => "Color",
         LayerParamsPatch::Audio(_) => "Audio",
     }
@@ -4249,9 +4249,9 @@ mod tests {
     }
 
     fn template_layer(props: imbl::HashMap<String, serde_json::Value>) -> LayerParams {
-        LayerParams::Template(crate::state::TemplateParams {
-            template_id: "countdown".into(),
-            template_version: 1,
+        LayerParams::Motif(crate::state::MotifParams {
+            motif_id: "countdown".into(),
+            motif_version: 1,
             props,
             src_in_us: 0,
             transform: crate::state::Transform::default(),
@@ -4283,7 +4283,7 @@ mod tests {
             .update_layer_params(
                 Actor::User,
                 layer_id,
-                LayerParamsPatch::Template(TemplatePatch {
+                LayerParamsPatch::Motif(MotifPatch {
                     x: Some(12.0),
                     y: Some(34.0),
                     scale_x: Some(2.0),
@@ -4303,8 +4303,8 @@ mod tests {
             .flat_map(|t| t.layers.iter())
             .find(|l| l.id == layer_id)
             .expect("layer");
-        let LayerParams::Template(p) = &layer.params else {
-            panic!("expected Template params");
+        let LayerParams::Motif(p) = &layer.params else {
+            panic!("expected Motif params");
         };
         let static_val = |a: &Animated<f64>| match a {
             Animated::Static(v) => *v,
@@ -4332,7 +4332,7 @@ mod tests {
             .update_layer_params(
                 Actor::User,
                 layer_id,
-                LayerParamsPatch::Template(TemplatePatch {
+                LayerParamsPatch::Motif(MotifPatch {
                     opacity: Some(0.5),
                     ..Default::default()
                 }),
@@ -4343,12 +4343,12 @@ mod tests {
     }
 
     #[test]
-    fn template_params_legacy_json_defaults_src_in_us_to_zero() {
+    fn motif_params_legacy_json_defaults_src_in_us_to_zero() {
         // A project JSON authored before src_in_us existed must deserialize
         // with src_in_us = 0 (window at content start).
         let json = r#"{
-            "template_id": "countdown",
-            "template_version": 1,
+            "motif_id": "countdown",
+            "motif_version": 1,
             "props": {},
             "transform": {
                 "x": {"mode":"Static","value":0.0},
@@ -4360,8 +4360,8 @@ mod tests {
             },
             "opacity": {"mode":"Static","value":1.0}
         }"#;
-        let p: crate::state::TemplateParams =
-            serde_json::from_str(json).expect("legacy template params deserialize");
+        let p: crate::state::MotifParams =
+            serde_json::from_str(json).expect("motif params deserialize");
         assert_eq!(p.src_in_us, 0);
     }
 
@@ -4913,10 +4913,10 @@ mod tests {
             .find(|l| l.id == layer_id)
             .expect("layer");
         assert_eq!(layer.t_start_us, 1_000_000);
-        if let LayerParams::Template(p) = &layer.params {
+        if let LayerParams::Motif(p) = &layer.params {
             assert_eq!(p.src_in_us, 1_000_000, "IN trim must advance src_in");
         } else {
-            panic!("not a template");
+            panic!("not a motif");
         }
     }
 
@@ -5017,8 +5017,8 @@ mod tests {
             .flat_map(|t| t.layers.iter())
             .find(|l| l.id == layer_id)
             .expect("layer");
-        let LayerParams::Template(p) = &layer.params else {
-            panic!("expected Template");
+        let LayerParams::Motif(p) = &layer.params else {
+            panic!("expected Motif");
         };
         // src_in_us must be on the 29.97 grid: snap_frame_round(src_in_us, 29.97) == src_in_us.
         let fps = Rational::FPS_29_97;
@@ -5564,8 +5564,8 @@ mod tests {
         };
         let left = find_layer(left_id);
         let right = find_layer(right_id);
-        let LayerParams::Template(lp) = &left.params else { panic!("left: expected Template") };
-        let LayerParams::Template(rp) = &right.params else { panic!("right: expected Template") };
+        let LayerParams::Motif(lp) = &left.params else { panic!("left: expected Motif") };
+        let LayerParams::Motif(rp) = &right.params else { panic!("right: expected Motif") };
         assert_eq!(lp.src_in_us, 0, "left src_in unchanged");
         assert_eq!(rp.src_in_us, 2_000_000, "right src_in advanced by split offset");
     }
@@ -8310,7 +8310,7 @@ mod tests {
             .update_layer_params(
                 Actor::User,
                 layer_id,
-                LayerParamsPatch::Template(TemplatePatch {
+                LayerParamsPatch::Motif(MotifPatch {
                     props: Some(patch_props),
                     ..Default::default()
                 }),
@@ -8326,10 +8326,10 @@ mod tests {
             .find(|l| l.id == layer_id)
             .expect("layer");
         assert_eq!(layer.t_end_us, 5_000_000, "grow must not resize the layer");
-        if let LayerParams::Template(p) = &layer.params {
+        if let LayerParams::Motif(p) = &layer.params {
             assert_eq!(p.src_in_us, 0, "grow must not change src_in_us");
         } else {
-            panic!("not a template");
+            panic!("not a motif");
         }
     }
 
@@ -8355,7 +8355,7 @@ mod tests {
             .update_layer_params(
                 Actor::User,
                 layer_id,
-                LayerParamsPatch::Template(TemplatePatch {
+                LayerParamsPatch::Motif(MotifPatch {
                     props: Some(patch_props),
                     ..Default::default()
                 }),
@@ -8371,10 +8371,10 @@ mod tests {
             .find(|l| l.id == layer_id)
             .expect("layer");
         assert_eq!(layer.t_end_us, 3_000_000, "shrink below window must clamp t_end to content");
-        if let LayerParams::Template(p) = &layer.params {
+        if let LayerParams::Motif(p) = &layer.params {
             assert_eq!(p.src_in_us, 0, "src_in unchanged when window starts at 0");
         } else {
-            panic!("not a template");
+            panic!("not a motif");
         }
     }
 
@@ -8425,7 +8425,7 @@ mod tests {
                 .flat_map(|t| t.layers.iter())
                 .find(|l| l.id == layer_id)
                 .expect("layer");
-            let LayerParams::Template(p) = &l.params else { panic!("expected Template") };
+            let LayerParams::Motif(p) = &l.params else { panic!("expected Motif") };
             assert!(p.src_in_us > 0, "src_in must be > 0 before shrink");
         }
 
@@ -8438,7 +8438,7 @@ mod tests {
             .update_layer_params(
                 Actor::User,
                 layer_id,
-                LayerParamsPatch::Template(TemplatePatch {
+                LayerParamsPatch::Motif(MotifPatch {
                     props: Some(patch_props),
                     ..Default::default()
                 }),
@@ -8453,7 +8453,7 @@ mod tests {
             .flat_map(|t| t.layers.iter())
             .find(|l| l.id == layer_id)
             .expect("layer");
-        let LayerParams::Template(p) = &layer.params else { panic!("expected Template") };
+        let LayerParams::Motif(p) = &layer.params else { panic!("expected Motif") };
 
         let fps = Rational::FPS_29_97;
         // The clamped src_in_us must be round-grid-idempotent (the double-snap fix).

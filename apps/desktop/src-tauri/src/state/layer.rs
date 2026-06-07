@@ -58,7 +58,7 @@ pub enum LayerParams {
     VideoClip(VideoClipParams),
     ImageOverlay(ImageOverlayParams),
     Text(TextParams),
-    Template(TemplateParams),
+    Motif(MotifParams),
     Audio(AudioParams),
     Subtitles(SubtitlesParams),
     Color(ColorParams),
@@ -172,15 +172,15 @@ pub enum TextBackend {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct TemplateParams {
-    pub template_id: String,
-    pub template_version: u32,
-    /// Validated against the template manifest's `props_schema` at apply time.
+pub struct MotifParams {
+    pub motif_id: String,
+    pub motif_version: u32,
+    /// Validated against the motif manifest's `props_schema` at apply time.
     pub props: imbl::HashMap<String, Value>,
-    /// Window offset (µs) into the template's intrinsic content. The window
+    /// Window offset (µs) into the motif's intrinsic content. The window
     /// width equals the layer width (`t_end_us - t_start_us`); `src_out` is
     /// derived, never stored. Content duration is the resolved cap
-    /// (`resolve_template_max_dur_us`). `0` = window starts at content frame 0.
+    /// (`resolve_motif_max_dur_us`). `0` = window starts at content frame 0.
     /// Legacy projects (no field) deserialize to `0`.
     #[serde(default)]
     pub src_in_us: TimeUs,
