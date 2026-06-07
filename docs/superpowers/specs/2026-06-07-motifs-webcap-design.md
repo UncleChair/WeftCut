@@ -51,21 +51,101 @@ This is what makes Motifs a *video template system* rather than a screen
 recorder. Everything else (capture, cache, export) is mechanism around this
 contract.
 
+### Considered and rejected (2026-06-07)
+
+- **Real-time capture (screen-recording model).** Let the page free-run on its
+  real clock and capture frames as they paint (MediaRecorder / CDP screencast /
+  window capture). Zero authoring contract — but **no scrubbing** (the page only
+  knows "now"; seeking an arbitrary frame is impossible without replay), **export
+  bound to real time** (a 60 s Motif takes ≥ 60 s), and **preview ≠ export**
+  (capture jitters with machine load). Rejected: a timeline editor needs
+  frame-exact seek, faster-than-real-time export, and preview==export.
+- **Record-once-then-replay (real-time bake).** Play the page `0→duration` once,
+  record to a frame sequence, serve `frame[t]` from storage. Removes the contract,
+  but every Motif bakes in real time, any prop edit forces a full re-bake, bakes
+  vary run-to-run, resolution is fixed at bake time, and holdable/unbounded Motifs
+  don't fit. It also taxes the *common* declarative Motif (which seeks for free)
+  with a universal real-time bake. Rejected as default; not adopted as an escape
+  hatch either, to keep the single-path simplicity.
+
+Both confirm the conclusion the established tools reached — **Remotion** and
+**timesnap/timecut** all override time and seek, because frame-exact web→video has
+no other path. Decision: time-function (seek), burden minimized per §3.
+
 ## 3. The authoring contract
 
 A Motif is a directory of `manifest.json` + `index.html` (+ optional `assets/`
 for fonts/images). `index.html` is a normal web document. Built-in Motifs are
 embedded in the binary; user-uploaded Motifs load from disk (§9).
 
-The page must satisfy one rule:
+### The lifecycle: `motif.define`
 
-- **Be a pure function of `t`.** The page may animate using any normal web
-  mechanism — CSS animations/transitions, the Web Animations API (WAAPI),
-  `requestAnimationFrame` loops, GSAP, Lottie, canvas/WebGL render loops — but it
-  must derive its visual state **solely from time**, with no dependence on
-  wall-clock, network, or randomness that the harness cannot pin. The author does
-  **not** write a per-frame `render(t)` by hand (that was the SVG contract);
-  they write the animation declaratively and the harness seeks it (§4).
+The harness injects two things before any author code runs: the clock takeover
+(§4) and a global `motif`. The author declares a lifecycle with one call:
+
+```js
+motif.define({
+  // once per props value (re-runs on prop change); build scene + declare animations
+  async setup(props, ctx) {
+    ring.animate([{ strokeDashoffset: 0 }, { strokeDashoffset: ctx.circumference }],
+                 { duration: ctx.duration * 1000, easing: 'linear', fill: 'both' });
+    await document.fonts.ready;          // readiness: awaited once, here
+  },
+  // OPTIONAL: only when content must read the clock (e.g. a countdown number)
+  frame(t, ctx) { label.textContent = Math.ceil(ctx.duration - t); },
+});
+```
+
+- **`setup(props, ctx)`** — async, runs once per distinct props value. Builds the
+  DOM, declares WAAPI/CSS/GSAP animations, loads and `await`s assets.
+- **`frame(t, ctx)`** — optional, called at each seeked time for imperative
+  time-reading content. Pure-declarative Motifs omit it.
+- **`ctx`** = `{ duration, width, height, fps, frame, random() }`. `t` is content
+  time in seconds; `ctx.frame` the integer frame index. Both are provided so the
+  CSS/WAAPI (time-based) and Remotion-style (frame-based) idioms each work.
+
+Each capture: ensure `setup` done (once) → call optional `frame(t)` → seek all
+`document.getAnimations()` to `t` → flush controlled rAF → await frame-settled →
+capture.
+
+### The one law: state is a function of `t`, not an accumulation
+
+> Any visible state must be computable **from `t` alone** — via declared
+> animations or `frame(t)` — never via mutation that **accumulates over time**.
+
+```js
+setInterval(() => { n++; label.textContent = n; }, 1000);   // ✗ stubbed / not seekable
+frame(t) { label.textContent = Math.floor(t); }             // ✓ closed-form in t
+```
+
+The author may use any normal animation tool (CSS animations/transitions, WAAPI,
+GSAP, Lottie, canvas/WebGL) because the harness owns the clock and seeks them. The
+single learnable rule: don't accumulate state via timers; express it as `f(t)`.
+
+### Minimizing the authoring burden
+
+The contract is real but its cost is held low by three levers, so "just write a
+web page" holds for the common case:
+
+1. **Auto-seek declarative animations.** CSS/WAAPI/GSAP/Lottie are seeked by the
+   harness with **no special API** — authors use the animation tools they know.
+2. **A small time primitive** (`interpolate(t, [inRange], [outRange], opts)` plus
+   `ctx.frame`/`ctx.random()`) for the imperative time-reading case, so `frame(t)`
+   stays terse.
+3. **Import-time lint.** Static scan flags accumulation anti-patterns
+   (`setInterval`/`setTimeout`-driven state, self-advancing rAF that mutates) and
+   warns the author up front — critical for untrusted uploads (§9), so the footgun
+   surfaces at import, not as a silently wrong frame.
+
+#### Anti-patterns (will not work)
+
+| Pattern | Why | Use instead |
+|---|---|---|
+| `setInterval`/self-advancing rAF accumulating state | stubbed / not seekable | closed-form in `frame(t)` |
+| `fetch()` for data/fonts/images | sandbox-blocked, nondeterministic | bundle in `assets/` |
+| reading real `Date.now()` for motion | returns virtual time, not wall-clock | use `t` |
+| unseeded physics/particle integration | depends on prior frame, not reproducible | closed-form `f(t)` or seeded `ctx.random()` |
+| global state accreted across instances | leaks after a prop-change rebuild | keep `setup` self-contained |
 
 The manifest declares identity, natural size, durations, a typed `props_schema`,
 fonts, and a **format version** (no `engine` field):
@@ -90,6 +170,22 @@ migration hook for future contract changes.
 Props are validated against `props_schema` (unknown keys reject; missing keys
 fall back to defaults) and canonicalized into a stable key order, so identical
 inputs produce identical bytes and identical cache keys.
+
+### Fonts, assets, size
+
+- **Fonts:** declared in `manifest.fonts`, bytes in `assets/`; the page writes a
+  normal `@font-face` referencing the bundled file. Simpler than the old SVG path
+  (no data-URL injection). Readiness `await document.fonts.ready` in `setup`.
+- **Assets (images, JS libs):** bundled in `assets/`, referenced by relative URL,
+  served from a local scheme inside the sandbox — never the network (§9).
+- **Size & resolution:** author lays out within `manifest.size` (CSS px, top-left
+  origin) as if rendering at that size. Capture resolution is the harness's job
+  (`setDeviceMetricsOverride`/`deviceScaleFactor`) — no resolution code in the
+  Motif, no blur on scale-up. Layer transform/opacity are applied by the Pixi
+  sprite at composite time, never captured (§7).
+- **Prop change = rebuild:** editing a prop re-runs `setup` with the new value and
+  invalidates that content's cache; `setup` must be self-contained (no residual
+  cross-instance state).
 
 ### Content duration and the timeline window (carried over)
 
