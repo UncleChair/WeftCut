@@ -1026,7 +1026,7 @@ export class Compositor {
           contentDurationFrames: desc.contentDurationFrames,
           // tSec for an arbitrary content frame = frame * fpsDen / fpsNum.
           // Disk-first: prefer a baked PNG over a live raster, falling through
-          // to `rasterTemplateFrame` inside the resolver on miss / fs hiccup.
+          // to `rasterMotifFrame` (CDP) inside the resolver on miss / fs hiccup.
           render: (frame: number) =>
             resolveTemplateFrame(
               template,

@@ -4,7 +4,7 @@ export type BakePhase = "baking" | "ready" | "error";
 export interface BakeStatus { phase: BakePhase; done: number; total: number; }
 
 /// One content the baker should persist in full. `render(frame)` rasters an
-/// arbitrary content frame (the Compositor's closure → `rasterTemplateFrame`).
+/// arbitrary content frame (the Compositor's closure → `bakeMotifFrame`, CDP).
 export interface BakeContentSpec extends BakeContent {
   render: (frame: number) => Promise<ImageBitmap>;
 }
