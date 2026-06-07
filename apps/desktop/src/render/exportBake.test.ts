@@ -1,12 +1,12 @@
-// Unit tests for the PURE, Node-testable half of the export template bake:
-// `templateLayersToBake` (layer selection + comp-fps frame-range math). The
-// rasterize half (`exportBakeTemplates`) touches the DOM harness +
-// `createImageBitmap`, so it's exercised end-to-end by the real-WebView2 e2e
-// (`template_export.e2e.js`).
+// Unit tests for the export Motif bake. The PURE half (`templateLayersToBake`,
+// `bakeContentFrameFor`) is fully Node-testable. The bake LOOP
+// (`exportBakeTemplates`) is covered here too by mocking its CDP producer
+// (`bakeMotifFrame`); the real CDP capture + encode is exercised end-to-end by
+// the real-WebView2 e2e (`template_export.e2e.js`).
 //
 // The load-bearing invariant: a layer's baked frame range is computed on the
 // COMPOSITION fps with the SAME `templateDurationFrames` / `frameIndexInLayer`
-// math the Worker's `TemplateSprite.update` uses to look frames up. A drift
+// math the Worker's `MotifSprite.update` uses to look frames up. A drift
 // here = export binds the wrong (or an out-of-range) frame. The first test
 // pins exactly that: the full-range bake covers `[0, templateDurationFrames-1]`.
 
@@ -220,7 +220,7 @@ describe("templateLayersToBake", () => {
 const US = 1_000_000;
 
 /// Reproduce the compositor's content-frame selection for an absolute comp
-/// frame index, mirroring TemplateSprite.update's preview path.
+/// frame index, mirroring MotifSprite.update's preview path.
 function previewContentFrameAt(
   compFrameIdx: number,
   tStartUs: number,
