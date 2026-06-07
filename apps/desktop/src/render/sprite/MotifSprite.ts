@@ -18,6 +18,13 @@
 
 import { ImageSource, Sprite, Texture } from "pixi.js";
 
+import { frameIndexInLayer } from "../../frames";
+import type { MotifView } from "../../ipc";
+import { getTemplate, type Template } from "../templates/catalog";
+import { resolveTemplateFrame, sharedTemplateFrameCache } from "../templates/templateRaster";
+import { templateFrameDescriptor } from "../templates/templateFrameDescriptor";
+import { templateDurationFrames } from "../templates/templateFrames";
+
 // A faint neutral tile shown while a first-ever-cold Motif's frame 0 is still
 // in flight, so the layer reads as "warming" rather than vanishing. Built once
 // from a 2×2 canvas (preview only — the export Worker never hits this path).
@@ -33,13 +40,6 @@ function neutralPlaceholder(): HTMLCanvasElement {
   _placeholder = c;
   return _placeholder;
 }
-
-import { frameIndexInLayer } from "../../frames";
-import type { MotifView } from "../../ipc";
-import { getTemplate, type Template } from "../templates/catalog";
-import { resolveTemplateFrame, sharedTemplateFrameCache } from "../templates/templateRaster";
-import { templateFrameDescriptor } from "../templates/templateFrameDescriptor";
-import { templateDurationFrames } from "../templates/templateFrames";
 
 export interface MotifSpriteInit {
   layerId: string;
