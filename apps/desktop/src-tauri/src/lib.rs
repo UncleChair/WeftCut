@@ -73,6 +73,11 @@ pub fn run() {
                 .build(),
         );
     }
+    // Motifs: custom `motif:` URI scheme serving the embedded built-in Motif
+    // bundles. On Windows the scheme is reachable as
+    // `http://motif.localhost/<id>/<file>`; the hidden host window loads
+    // `http://motif.localhost/<id>/index.html`. See `motifs::builtin`.
+    builder = builder.register_uri_scheme_protocol("motif", motifs::builtin::handle_request);
     builder
         .invoke_handler(tauri::generate_handler![
             commands::ping,
@@ -149,10 +154,19 @@ pub fn run() {
             commands::log_clear,
             commands::log_emit,
             commands::log_dir_path,
+            motifs::motif_register_runtime,
+            #[cfg(windows)]
+            motifs::commands::motif_capture_frame,
             #[cfg(debug_assertions)]
             sysmon::get_system_stats,
         ])
         .setup(move |app| {
+            // Motifs runtime slot — holds the JS-side clock-takeover runtime
+            // source string. `None` until the frontend calls
+            // `motif_register_runtime` once at boot; the hidden host window
+            // injects it as its `initialization_script`.
+            app.manage(motifs::MotifRuntime::new());
+
             // Project actor — single writer for all state mutations, shared by
             // UI commands (now) and the MCP tool surface.
             let project_handle = state::spawn(state::Project::new_blank("untitled"));
@@ -374,6 +388,50 @@ pub fn run() {
                     Err(e) => tracing::error!("mcp serve failed: {e:?}"),
                 }
             });
+
+            // Dev-only Motifs smoke trigger. Gated on Windows + debug + an env
+            // var so it never runs unless a human opts in
+            // (`WEFTCUT_MOTIF_SMOKE=1`). A few seconds after boot — giving the
+            // frontend time to call `motif_register_runtime` and the host
+            // window time to load — it captures one `countdown` frame and
+            // `eprintln!`s the result. Lets the controller run the full
+            // motif:scheme → host window → CDP capture path end-to-end without
+            // any UI. Throwaway: delete once a real Motifs UI exists.
+            #[cfg(all(windows, debug_assertions))]
+            {
+                if std::env::var("WEFTCUT_MOTIF_SMOKE").as_deref() == Ok("1") {
+                    let app_for_smoke = app.handle().clone();
+                    tauri::async_runtime::spawn(async move {
+                        use tauri::Manager;
+                        // Give the frontend a beat to register the runtime and
+                        // the host window to build + load its first paint.
+                        tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+                        let state = app_for_smoke.state::<motifs::MotifRuntime>();
+                        if state.get().is_none() {
+                            eprintln!(
+                                "[MOTIF-SMOKE] err runtime-not-registered (frontend never called motif_register_runtime)"
+                            );
+                            return;
+                        }
+                        let props = r##"{"seconds":5,"label":"GO","accent":"#ff4d4d"}"##;
+                        match motifs::commands::motif_capture_frame(
+                            app_for_smoke.clone(),
+                            state,
+                            "countdown".to_string(),
+                            2.5,
+                            props.to_string(),
+                            480,
+                            480,
+                        )
+                        .await
+                        {
+                            Ok(b64) => eprintln!("[MOTIF-SMOKE] ok bytes={}", b64.len()),
+                            Err(e) => eprintln!("[MOTIF-SMOKE] err {e}"),
+                        }
+                    });
+                }
+            }
+
             Ok(())
         })
         .run(tauri::generate_context!())

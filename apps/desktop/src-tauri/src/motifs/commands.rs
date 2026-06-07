@@ -1,0 +1,113 @@
+//! The `motif_capture_frame` Tauri command: render a Motif to a frame and
+//! return it as a base64 PNG.
+//!
+//! Windows-only (CDP/WebView2). The flow:
+//!   1. Read the registered runtime source (errors if the frontend hasn't
+//!      called `motif_register_runtime` yet).
+//!   2. `ensure_host` — build/reuse the hidden host window with the Motif's
+//!      `index.html` as its top-level document and the runtime injected at
+//!      document-start.
+//!   3. Wait for the page to load AND the Motif's `motif.define` to have run
+//!      (so `window.__motifRender` exists), via a bounded retry of a CDP
+//!      expression that *throws until ready* (a `false` boolean would resolve
+//!      to `Ok(())` and falsely read as ready — so we throw instead).
+//!   4. `eval_await(window.__motifRender(t, props, meta))` — render + settle.
+//!   5. `capture_png_base64` — taint-free PNG via `Page.captureScreenshot`.
+
+use std::time::Duration;
+
+use tauri::{AppHandle, State};
+
+use super::{cdp, host, MotifRuntime};
+
+/// How long to wait for the host page to load + the Motif to register
+/// `window.__motifRender`. Generous: a cold WebView2 window create + first
+/// paint can take a beat. Bounded so a genuinely broken Motif surfaces an
+/// error rather than hanging.
+const READY_ATTEMPTS: u32 = 30;
+const READY_POLL: Duration = Duration::from_millis(100);
+
+/// Render Motif `motif_id` at content time `t_sec` with `props_json`, captured
+/// at `width` x `height`. Returns a base64-encoded PNG (no `data:` prefix).
+///
+/// All errors map to `String` for the IPC boundary.
+#[tauri::command]
+pub async fn motif_capture_frame(
+    app: AppHandle,
+    state: State<'_, MotifRuntime>,
+    motif_id: String,
+    t_sec: f64,
+    props_json: String,
+    width: u32,
+    height: u32,
+) -> Result<String, String> {
+    let runtime = state
+        .get()
+        .ok_or_else(|| "motif runtime not registered yet (call motif_register_runtime)".to_string())?;
+
+    let win = host::ensure_host(&app, &runtime, &motif_id, width, height)
+        .map_err(|e| format!("ensure_host failed: {e}"))?;
+
+    // Wait until the page has loaded AND the Motif's `motif.define` has run, so
+    // `window.__motifRender` exists. We use an expression that THROWS until
+    // ready, because `eval_await` returns Ok for any non-rejecting expression —
+    // including one that resolves to `false`.
+    let ready_probe = "if(!(typeof window.__motifRender==='function'\
+        &&document.readyState==='complete'))throw new Error('motif-not-ready');true";
+    let mut last_err = None;
+    let mut ready = false;
+    for _ in 0..READY_ATTEMPTS {
+        match cdp::eval_await(&win, ready_probe).await {
+            Ok(()) => {
+                ready = true;
+                break;
+            }
+            Err(e) => {
+                last_err = Some(e);
+                tokio::time::sleep(READY_POLL).await;
+            }
+        }
+    }
+    if !ready {
+        return Err(format!(
+            "motif '{motif_id}' never became ready (window.__motifRender undefined or page not loaded): {}",
+            last_err
+                .map(|e| e.to_string())
+                .unwrap_or_else(|| "no error captured".to_string())
+        ));
+    }
+
+    // Build the render expression. `props` is parsed then re-serialized so the
+    // canonical JSON (not the raw caller string) is embedded; `t` and `meta`
+    // are embedded via serde_json so escaping is correct.
+    let props: serde_json::Value = serde_json::from_str(&props_json)
+        .map_err(|e| format!("props_json is not valid JSON: {e}"))?;
+
+    // Duration: for v1 derive from the `seconds` prop if present (the countdown
+    // Motif's max-duration prop), else fall back to 5s. fps is fixed at 30 for
+    // the capture meta.
+    let duration = props
+        .get("seconds")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(5.0);
+    let meta = serde_json::json!({
+        "duration": duration,
+        "width": width,
+        "height": height,
+        "fps": 30,
+    });
+
+    let render_expr = format!(
+        "window.__motifRender({t}, {props}, {meta})",
+        t = t_sec,
+        props = props,
+        meta = meta,
+    );
+    cdp::eval_await(&win, &render_expr)
+        .await
+        .map_err(|e| format!("__motifRender failed: {e}"))?;
+
+    cdp::capture_png_base64(&win, width, height)
+        .await
+        .map_err(|e| format!("capture failed: {e}"))
+}
