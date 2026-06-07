@@ -166,6 +166,8 @@ pub fn run() {
             // `motif_register_runtime` once at boot; the hidden host window
             // injects it as its `initialization_script`.
             app.manage(motifs::MotifRuntime::new());
+            // Serializes Motif captures + caches per-host metrics/ready state.
+            app.manage(motifs::MotifCapture::new());
 
             // Project actor — single writer for all state mutations, shared by
             // UI commands (now) and the MCP tool surface.
@@ -423,9 +425,11 @@ pub fn run() {
                         macro_rules! capture {
                             ($t:expr) => {{
                                 let s2 = app_for_smoke.state::<motifs::MotifRuntime>();
+                                let c2 = app_for_smoke.state::<motifs::MotifCapture>();
                                 motifs::commands::motif_capture_frame(
                                     app_for_smoke.clone(),
                                     s2,
+                                    c2,
                                     "countdown".to_string(),
                                     $t,
                                     props.to_string(),

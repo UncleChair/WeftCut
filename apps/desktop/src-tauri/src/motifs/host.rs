@@ -43,7 +43,7 @@ pub fn ensure_host(
     motif_id: &str,
     width: u32,
     height: u32,
-) -> tauri::Result<WebviewWindow> {
+) -> tauri::Result<(WebviewWindow, bool)> {
     if let Some(win) = app.get_webview_window(HOST_LABEL) {
         // Guard: if the existing window is bound to a different Motif id,
         // reject the call rather than silently rendering the wrong page.
@@ -56,7 +56,7 @@ pub fn ensure_host(
                  requested '{motif_id}' cannot reuse this window"
             )));
         }
-        return Ok(win);
+        return Ok((win, false));
     }
 
     // `http://motif.localhost/<id>/index.html` on Windows — the remapped form
@@ -64,7 +64,7 @@ pub fn ensure_host(
     let url = format!("{SCHEME_ORIGIN}/{motif_id}/index.html");
     let parsed = url.parse().map_err(tauri::Error::InvalidUrl)?;
 
-    WebviewWindowBuilder::new(app, HOST_LABEL, WebviewUrl::CustomProtocol(parsed))
+    let win = WebviewWindowBuilder::new(app, HOST_LABEL, WebviewUrl::CustomProtocol(parsed))
         .title("motif-host")
         .inner_size(width as f64, height as f64)
         .visible(false)
@@ -79,5 +79,6 @@ pub fn ensure_host(
         // Approach A: inject the clock-takeover runtime at document-start, so
         // `window.motif` exists before the Motif's inline `motif.define(...)`.
         .initialization_script(runtime)
-        .build()
+        .build()?;
+    Ok((win, true))
 }
