@@ -27,7 +27,6 @@ import { getTemplate } from "./templates/catalog";
 import { TemplatePrewarmer, type PrewarmContentSpec } from "./templates/TemplatePrewarmer";
 import { templateFrameDescriptor } from "./templates/templateFrameDescriptor";
 import {
-  rasterTemplateFrame,
   resolveTemplateFrame,
   sharedBakedKeyIndex,
   sharedTemplateFrameCache,
@@ -35,6 +34,7 @@ import {
 import { TemplateBaker, type BakeContentSpec } from "./templates/TemplateBaker";
 import { encodeBitmapToPng } from "./templates/pngEncode";
 import { onPrebakeRequest } from "./templates/prebakeBus";
+import { bakeMotifFrame } from "./motifs/motifRaster";
 import {
   setLayerBakeStatuses,
   type LayerBakeStatus,
@@ -283,6 +283,10 @@ export class Compositor {
           },
           schedule: (cb) => scheduleIdle(cb),
           cancel: (t) => cancelIdle(t),
+          // batchSize 1: captures now serialize in Rust, so a larger batch only
+          // adds head-of-line latency for an on-demand scrub. One in-flight
+          // capture per loop keeps the shared host queue short.
+          batchSize: 1,
         })
       : null;
   /// L2 writer. DOM-gated like the prewarmer (never in the export Worker).
@@ -291,6 +295,10 @@ export class Compositor {
       ? new TemplateBaker({
           schedule: (cb) => scheduleIdle(cb),
           cancel: (t) => cancelIdle(t),
+          // batchSize 1: captures now serialize in Rust, so a larger batch only
+          // adds head-of-line latency for an on-demand scrub. One in-flight
+          // capture per loop keeps the shared host queue short.
+          batchSize: 1,
           isOnDisk: (k, f) => sharedTemplateFrameCache.hasPng(k, f),
           persist: async (k, f, bmp) => {
             const png = await encodeBitmapToPng(bmp);
@@ -1038,8 +1046,8 @@ export class Compositor {
   /// every active template content when the global `prebake_templates` setting
   /// is on, PLUS any layer the user manually "Pre-bake now"'d this session
   /// (regardless of the setting). Mirrors `updatePrewarmTargets`' descriptor
-  /// shape; the baker's `render` closure uses `rasterTemplateFrame` directly
-  /// (reading disk-first would be pointless — the baker is the writer).
+  /// shape; the baker's `render` closure uses `bakeMotifFrame` (CDP capture,
+  /// no disk read) directly (reading disk-first would be pointless — the baker is the writer).
   private updateBakeTargets(tUs: number): void {
     if (!this.baker || !this.projectSummary) return;
     const globalOn = useAppSettingsStore.getState().settings.prebake_templates;
@@ -1063,14 +1071,14 @@ export class Compositor {
         const fpsNum = this.fpsNum;
         const fpsDen = this.fpsDen;
         const canonicalProps = desc.canonicalProps;
-        const durationSec = desc.durationSec;
         specs.push({
           cacheKey: desc.cacheKey,
           contentFrame: desc.contentFrame,
           contentDurationFrames: desc.contentDurationFrames,
           // tSec for an arbitrary content frame = frame * fpsDen / fpsNum.
-          render: (frame: number) =>
-            rasterTemplateFrame(template, (frame * fpsDen) / fpsNum, durationSec, canonicalProps),
+          // `bakeMotifFrame` (CDP capture, no disk read): the baker is the sole
+          // L2 writer; reading disk-first here would be pointless.
+          render: (frame: number) => bakeMotifFrame(template, frame, fpsNum, fpsDen, canonicalProps),
         });
       }
     }
