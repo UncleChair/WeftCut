@@ -18,6 +18,22 @@
 
 import { ImageSource, Sprite, Texture } from "pixi.js";
 
+// A faint neutral tile shown while a first-ever-cold Motif's frame 0 is still
+// in flight, so the layer reads as "warming" rather than vanishing. Built once
+// from a 2×2 canvas (preview only — the export Worker never hits this path).
+let _placeholder: HTMLCanvasElement | null = null;
+function neutralPlaceholder(): HTMLCanvasElement {
+  if (_placeholder) return _placeholder;
+  const c = document.createElement("canvas");
+  c.width = 2;
+  c.height = 2;
+  const ctx = c.getContext("2d")!;
+  ctx.fillStyle = "rgba(128,128,128,0.18)";
+  ctx.fillRect(0, 0, 2, 2);
+  _placeholder = c;
+  return _placeholder;
+}
+
 import { frameIndexInLayer } from "../../frames";
 import type { MotifView } from "../../ipc";
 import { getTemplate, type Template } from "../templates/catalog";
@@ -59,6 +75,7 @@ export class MotifSprite {
   private texture: Texture | null = null;
   private onLoaded: (() => void) | null;
   private disposed = false;
+  private boundOnce = false;
 
   constructor(init: MotifSpriteInit) {
     this.layerId = init.layerId;
@@ -159,6 +176,11 @@ export class MotifSprite {
       this.bindBitmap(cached);
       return;
     }
+    // First-ever cold frame: show a neutral placeholder so the layer doesn't
+    // flash empty while frame 0 is captured. Later misses hold the last bitmap.
+    if (!this.boundOnce && this.texture === null && typeof document !== "undefined") {
+      this.bindBitmap(neutralPlaceholder());
+    }
     void this.captureAndBind(cacheKey, frame, tSec, durationSec, canonical);
   }
 
@@ -202,7 +224,7 @@ export class MotifSprite {
     }
   }
 
-  private bindBitmap(bitmap: ImageBitmap): void {
+  private bindBitmap(bitmap: ImageBitmap | HTMLCanvasElement): void {
     // destroy(true) frees this sprite's own ImageSource/GPU texture on every
     // rebind, preventing a per-tick GPU-memory leak. The shared cache's
     // ImageBitmap is NOT closed by destroy(true) — ImageSource inherits
@@ -224,6 +246,7 @@ export class MotifSprite {
     });
     this.texture = new Texture({ source: this.source });
     this.sprite.texture = this.texture;
+    this.boundOnce = true;
   }
 
   dispose(): void {

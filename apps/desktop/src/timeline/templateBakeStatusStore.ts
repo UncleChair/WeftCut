@@ -9,7 +9,7 @@
 import { create } from "zustand";
 
 export interface LayerBakeStatus {
-  phase: "baking" | "ready" | "error";
+  phase: "warming" | "baking" | "ready" | "error";
   done: number;
   total: number;
 }
@@ -49,3 +49,20 @@ export const useLayerBakePhase = (layerId: string): LayerBakeStatus["phase"] | n
 /// Panel: full status (object → re-renders the one selected panel on progress).
 export const useLayerBakeStatus = (layerId: string): LayerBakeStatus | null =>
   useTemplateBakeStatusStore((s) => selectLayerBakeStatus(s.byLayer, layerId));
+
+/// Reduce a layer's (optional live bake status, L0 coverage, baked-on-disk flag)
+/// to the single status the timeline/panel shows. Bake takes precedence (it is
+/// the stronger "persisted to disk" guarantee). Otherwise L0 coverage drives a
+/// `warming`→`ready` bar; zero coverage with nothing on disk is idle (null).
+export function motifWarmPhase(
+  bake: LayerBakeStatus | null,
+  covered: number,
+  total: number,
+  bakedOnDisk = false,
+): LayerBakeStatus | null {
+  if (bake) return bake;
+  if (covered >= total && total > 0) return { phase: "ready", done: total, total };
+  if (covered > 0) return { phase: "warming", done: covered, total };
+  if (bakedOnDisk) return { phase: "ready", done: total, total };
+  return null;
+}

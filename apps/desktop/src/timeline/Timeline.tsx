@@ -1215,11 +1215,13 @@ function TemplateBakeDot({ layerId }: { layerId: string }) {
   const phase = useLayerBakePhase(layerId);
   if (!phase) return null;
   const label =
-    phase === "baking"
-      ? t("timeline.bake_dot_baking", { defaultValue: "Pre-baking…" })
-      : phase === "ready"
-        ? t("timeline.bake_dot_ready", { defaultValue: "Pre-baked" })
-        : t("timeline.bake_dot_error", { defaultValue: "Pre-bake failed" });
+    phase === "warming"
+      ? t("timeline.bake_dot_warming", { defaultValue: "Warming…" })
+      : phase === "baking"
+        ? t("timeline.bake_dot_baking", { defaultValue: "Pre-baking…" })
+        : phase === "ready"
+          ? t("timeline.bake_dot_ready", { defaultValue: "Pre-baked" })
+          : t("timeline.bake_dot_error", { defaultValue: "Pre-bake failed" });
   return <span className={`template-bake-dot is-${phase}`} title={label} aria-label={label} />;
 }
 
