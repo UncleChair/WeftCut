@@ -2,10 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { formatTimecode, parseTimecode } from "../frames";
 import {
-  addTemplate,
-  listTemplates,
+  addMotif,
+  listMotifs,
   type PropSpec,
-  type TemplateSummary,
+  type MotifSummary,
   type TrackSummary,
 } from "../ipc";
 import { getTemplate } from "../render/templates/catalog";
@@ -32,7 +32,7 @@ interface Props {
 /// backend's `ensure_overlay_track` path runs.
 const AUTO_OVERLAY_SENTINEL = "__auto_overlay__";
 
-export function TemplatePicker({
+export function MotifPicker({
   onClose,
   onAdded,
   currentTimeUs,
@@ -41,13 +41,13 @@ export function TemplatePicker({
   fpsDen,
 }: Props) {
   const { t } = useTranslation();
-  const [templates, setTemplates] = useState<TemplateSummary[] | null>(null);
+  const [templates, setTemplates] = useState<MotifSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    listTemplates().then(
+    listMotifs().then(
       (list) => {
         if (cancelled) return;
         setTemplates(list);
@@ -125,8 +125,8 @@ export function TemplatePicker({
                   onSubmit={async ({ tStartUs, props, trackId }) => {
                     setError(null);
                     try {
-                      await addTemplate({
-                        templateId: selected.id,
+                      await addMotif({
+                        motifId: selected.id,
                         tStartUs,
                         props,
                         trackId,
@@ -159,7 +159,7 @@ function defaultPropValue(spec: PropSpec): unknown {
   }
 }
 
-function defaultPropsFor(template: TemplateSummary): Record<string, unknown> {
+function defaultPropsFor(template: MotifSummary): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, spec] of Object.entries(template.props_schema)) {
     out[key] = defaultPropValue(spec);
@@ -175,7 +175,7 @@ function TemplateForm({
   fpsDen,
   onSubmit,
 }: {
-  template: TemplateSummary;
+  template: MotifSummary;
   currentTimeUs: number;
   tracks: TrackSummary[];
   fpsNum: number;
@@ -346,7 +346,7 @@ function TemplatePreview({
   animate,
   canvasFps,
 }: {
-  template: TemplateSummary;
+  template: MotifSummary;
   props: Record<string, unknown>;
   width: number;
   large?: boolean;
@@ -589,7 +589,7 @@ function TemplatePreview({
 /// Card-grid thumbnail. Renders the live preview at default props — same
 /// component the form's large preview uses, so card and form stay visually
 /// consistent.
-function TemplateCardThumbnail({ template }: { template: TemplateSummary }) {
+function TemplateCardThumbnail({ template }: { template: MotifSummary }) {
   const defaults = useMemo(() => defaultPropsFor(template), [template.id]);
   return <TemplatePreview template={template} props={defaults} width={240} />;
 }

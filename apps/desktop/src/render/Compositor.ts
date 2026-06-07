@@ -20,7 +20,7 @@ import {
 import { ColorSprite } from "./sprite/ColorSprite";
 import { ImageOverlaySprite } from "./sprite/ImageOverlaySprite";
 import { SubtitlesSprite } from "./sprite/SubtitlesSprite";
-import { TemplateSprite } from "./sprite/TemplateSprite";
+import { MotifSprite } from "./sprite/MotifSprite";
 import { TextSprite } from "./sprite/TextSprite";
 import { VideoClipSprite } from "./sprite/VideoClipSprite";
 import { getTemplate } from "./templates/catalog";
@@ -187,10 +187,10 @@ interface ActiveText {
   sprite: TextSprite;
 }
 
-interface ActiveTemplate {
+interface ActiveMotif {
   layerId: string;
-  templateId: string;
-  sprite: TemplateSprite;
+  motifId: string;
+  sprite: MotifSprite;
 }
 
 interface ActiveSubtitles {
@@ -233,10 +233,10 @@ export class Compositor {
   private images = new Map<string, ActiveImage>();
   private colors = new Map<string, ActiveColor>();
   private texts = new Map<string, ActiveText>();
-  private templates = new Map<string, ActiveTemplate>();
-  /// Export-only: pre-rasterized Template-layer frames injected by the export
+  private activeMotifs = new Map<string, ActiveMotif>();
+  /// Export-only: pre-rasterized Motif-layer frames injected by the export
   /// Worker (`layerId → ImageBitmap[]`, indexed by comp-frame). When present
-  /// for a layer, `updateTemplate` hands the array to `TemplateSprite.update`,
+  /// for a layer, `updateMotif` hands the array to `MotifSprite.update`,
   /// which binds by index synchronously (no DOM harness — the Worker has none).
   /// Empty in preview mode; the sprite's harness/cache path runs instead.
   private templateFrames = new Map<string, readonly ImageBitmap[]>();
@@ -418,10 +418,10 @@ export class Compositor {
     this.playing = playing;
   }
 
-  /// Export-only: install the pre-rasterized Template-layer frames the export
+  /// Export-only: install the pre-rasterized Motif-layer frames the export
   /// Worker baked on the main thread (`layerId → ImageBitmap[]`, comp-frame
-  /// indexed). `updateTemplate` forwards a layer's array to its
-  /// `TemplateSprite.update`, which binds by index synchronously instead of
+  /// indexed). `updateMotif` forwards a layer's array to its
+  /// `MotifSprite.update`, which binds by index synchronously instead of
   /// running the DOM capture harness (absent in the Worker). Passing an empty
   /// map (or never calling this) leaves preview's harness/cache path untouched.
   setTemplateFrames(map: Record<string, readonly ImageBitmap[]>): void {
@@ -512,10 +512,10 @@ export class Compositor {
         this.texts.delete(layerId);
       }
     }
-    for (const [layerId, t] of this.templates) {
+    for (const [layerId, t] of this.activeMotifs) {
       if (!livingLayerIds.has(layerId)) {
         t.sprite.dispose();
-        this.templates.delete(layerId);
+        this.activeMotifs.delete(layerId);
       }
     }
     for (const [layerId, s] of this.subtitles) {
@@ -653,10 +653,10 @@ export class Compositor {
           if (!text) continue;
           this.updateText(text, layer, z++);
           this.stage.addChild(text.sprite.text);
-        } else if (kind === "Template") {
-          const tmpl = this.ensureTemplate(layer);
+        } else if (kind === "Motif") {
+          const tmpl = this.ensureMotif(layer);
           if (!tmpl) continue;
-          this.updateTemplate(tmpl, layer, z++, tUsSnapped);
+          this.updateMotif(tmpl, layer, z++, tUsSnapped);
           if (tmpl.sprite.sprite.texture !== Texture.EMPTY) {
             this.stage.addChild(tmpl.sprite.sprite);
           }
@@ -887,8 +887,8 @@ export class Compositor {
     this.colors.clear();
     for (const t of this.texts.values()) t.sprite.dispose();
     this.texts.clear();
-    for (const t of this.templates.values()) t.sprite.dispose();
-    this.templates.clear();
+    for (const t of this.activeMotifs.values()) t.sprite.dispose();
+    this.activeMotifs.clear();
     this.prewarmer?.dispose();
     this.prewarmer = null;
     this.baker?.dispose();
@@ -997,8 +997,8 @@ export class Compositor {
     for (const track of this.projectSummary.tracks) {
       if (!track.enabled) continue;
       for (const layer of track.layers) {
-        if (!layer.enabled || layer.params.kind !== "Template") continue;
-        const template = getTemplate(layer.params.template_id);
+        if (!layer.enabled || layer.params.kind !== "Motif") continue;
+        const template = getTemplate(layer.params.motif_id);
         if (!template) continue;
         const tInLayerUs = tUs - layer.t_start_us;
         const durationUs = layer.t_end_us - layer.t_start_us;
@@ -1047,10 +1047,10 @@ export class Compositor {
     for (const track of this.projectSummary.tracks) {
       if (!track.enabled) continue;
       for (const layer of track.layers) {
-        if (!layer.enabled || layer.params.kind !== "Template") continue;
+        if (!layer.enabled || layer.params.kind !== "Motif") continue;
         const wanted = globalOn || this.manualPrebakeLayers.has(layer.id);
         if (!wanted) continue;
-        const template = getTemplate(layer.params.template_id);
+        const template = getTemplate(layer.params.motif_id);
         if (!template) continue;
         const tInLayerUs = tUs - layer.t_start_us;
         const durationUs = layer.t_end_us - layer.t_start_us;
@@ -1087,8 +1087,8 @@ export class Compositor {
     const activeKeys: string[] = [];
     for (const track of this.projectSummary.tracks) {
       for (const layer of track.layers) {
-        if (layer.params.kind !== "Template") continue;
-        const template = getTemplate(layer.params.template_id);
+        if (layer.params.kind !== "Motif") continue;
+        const template = getTemplate(layer.params.motif_id);
         if (!template) continue;
         // The cacheKey is window/time-independent (it folds props, dims, fps and
         // content-duration, not the playhead), so tInLayerUs = 0 is fine here:
@@ -1132,8 +1132,8 @@ export class Compositor {
     const byLayer: Record<string, LayerBakeStatus> = {};
     for (const track of this.projectSummary.tracks) {
       for (const layer of track.layers) {
-        if (layer.params.kind !== "Template") continue;
-        const template = getTemplate(layer.params.template_id);
+        if (layer.params.kind !== "Motif") continue;
+        const template = getTemplate(layer.params.motif_id);
         if (!template) continue;
         const durationUs = layer.t_end_us - layer.t_start_us;
         const view = layer.params;
@@ -1505,37 +1505,37 @@ export class Compositor {
   }
 
   // ============================================================
-  // Template
+  // Motif
   // ============================================================
 
-  private ensureTemplate(layer: LayerSummary): ActiveTemplate | null {
-    if (layer.params.kind !== "Template") return null;
-    const existing = this.templates.get(layer.id);
+  private ensureMotif(layer: LayerSummary): ActiveMotif | null {
+    if (layer.params.kind !== "Motif") return null;
+    const existing = this.activeMotifs.get(layer.id);
     if (existing) return existing;
-    const templateId = layer.params.template_id;
-    const sprite = new TemplateSprite({
+    const motifId = layer.params.motif_id;
+    const sprite = new MotifSprite({
       layerId: layer.id,
-      templateId,
+      motifId,
       fpsNum: this.fpsNum,
       fpsDen: this.fpsDen,
       onLoaded: () => this.scheduleRepaint(),
     });
-    const tmpl: ActiveTemplate = { layerId: layer.id, templateId, sprite };
-    this.templates.set(layer.id, tmpl);
+    const tmpl: ActiveMotif = { layerId: layer.id, motifId, sprite };
+    this.activeMotifs.set(layer.id, tmpl);
     // eslint-disable-next-line no-console
     console.log(
-      `[weftcut/pixi] template ${layer.id} → ${templateId} attached`,
+      `[weftcut/pixi] motif ${layer.id} → ${motifId} attached`,
     );
     return tmpl;
   }
 
-  private updateTemplate(
-    tmpl: ActiveTemplate,
+  private updateMotif(
+    tmpl: ActiveMotif,
     layer: LayerSummary,
     z: number,
     tUs: number,
   ): void {
-    if (layer.params.kind !== "Template") return;
+    if (layer.params.kind !== "Motif") return;
     // Layer-relative time, mirroring `updateImage`. Templates have no
     // source-in offset, so this resets to 0 at `t_start` — the intended v1
     // semantic (a template animates over its own placed duration).

@@ -8,7 +8,7 @@ const PROJECT_PARENT = path.resolve(os.tmpdir(), "weftcut-e2e-motif-live-proj");
 // from the Motif webcap CDP path — NOT the old SVG harness.
 //
 // The chain under test (all production code paths):
-//   add_template(countdown)  →  Compositor.compositeFrame  →  TemplateSprite
+//   add_motif(countdown)  →  Compositor.compositeFrame  →  MotifSprite
 //   →  (cache miss)  →  resolveTemplateFrame  →  rasterMotifFrame("countdown")
 //   →  captureMotifFrame (Rust motif_capture_frame, CDP screenshot of the
 //      hidden Motif host)  →  ImageBitmap  →  bound texture on the live stage.
@@ -26,7 +26,7 @@ const PROJECT_PARENT = path.resolve(os.tmpdir(), "weftcut-e2e-motif-live-proj");
 //
 // Hooks used (apps/desktop/src/testhook/e2eHook.ts, all behind VITE_WEFTCUT_E2E):
 //   window.__weftcutTest.newProjectAndEnter  (reused — bootstrap)
-//   window.__weftcutTest.motifAddCountdown   (added — add_template wrapper)
+//   window.__weftcutTest.motifAddCountdown   (added — add_motif wrapper)
 //   window.__weftcutTest.weftcutSeekUs        (added — engine.seek bridge)
 //   window.__weftcutTest.weftcutSampleComposite (added — renderer.extract readback)
 
@@ -87,7 +87,7 @@ describe("motif live preview (CDP in compositor)", function () {
     expect(addRes.id.length).toBeGreaterThan(0);
 
     // 4) Seek the live preview to t=2.5 s (numeral "3"). The summary→compositor
-    //    propagation after add_template is async (project:changed bridge); give
+    //    propagation after add_motif is async (project:changed bridge); give
     //    it a beat, then seek.
     await browser.pause(500);
     await browser.execute(() => window.__weftcutTest.weftcutSeekUs(2_500_000));

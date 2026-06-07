@@ -1189,7 +1189,7 @@ function LayerContextMenu({
             defaultValue: "Separate audio to new track",
           })}
         </button>
-      ) : layerKind === "Template" ? (
+      ) : layerKind === "Motif" ? (
         <button
           type="button"
           className="layer-context-menu-item"
@@ -1888,7 +1888,7 @@ function LayerBlock({
       title={`${layer.kind}: ${formatTimecode(liveStart, fpsNum, fpsDen)} → ${formatTimecode(liveEnd, fpsNum, fpsDen)}`}
     >
       <span className="layer-label">{label}</span>
-      {layer.kind === "Template" && <TemplateBakeDot layerId={layer.id} />}
+      {layer.kind === "Motif" && <TemplateBakeDot layerId={layer.id} />}
     </div>
   );
 }

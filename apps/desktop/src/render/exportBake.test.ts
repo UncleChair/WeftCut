@@ -12,7 +12,7 @@
 
 import { describe, expect, it, test } from "vitest";
 
-import type { LayerParamsView, ProjectSummary, TemplateView } from "../ipc";
+import type { LayerParamsView, ProjectSummary, MotifView } from "../ipc";
 import { frameIndexInLayer, snapFrameFloor } from "../frames";
 import { bakeContentFrameFor, templateLayersToBake } from "./exportBake";
 import { templateContentFrame, templateDurationFrames } from "./templates/templateFrames";
@@ -23,11 +23,11 @@ function templateLayer(
   id: string,
   tStartUs: number,
   tEndUs: number,
-  overrides: Partial<TemplateView> = {},
+  overrides: Partial<MotifView> = {},
 ): { id: string; t_start_us: number; t_end_us: number; params: LayerParamsView } {
   const params: LayerParamsView = {
-    kind: "Template",
-    template_id: COUNTDOWN,
+    kind: "Motif",
+    motif_id: COUNTDOWN,
     x: 0,
     y: 0,
     scale_x: 1,
@@ -138,8 +138,8 @@ describe("templateLayersToBake", () => {
     const summary = summaryWith([
       templateLayer("known", 0, 5_000_000),
       templateLayer("unknown", 0, 5_000_000, {
-        template_id: "does-not-exist",
-      } as Partial<TemplateView>),
+        motif_id: "does-not-exist",
+      } as Partial<MotifView>),
     ]);
     const specs = templateLayersToBake(summary, 0, 5_000_000, 30, 1);
     expect(specs.map((s) => s.layerId)).toEqual(["known"]);

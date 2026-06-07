@@ -18,7 +18,7 @@ export { ScrubCoalescer } from "./decoder/scrub";
 export { VideoClipSprite } from "./sprite/VideoClipSprite";
 export { ImageOverlaySprite } from "./sprite/ImageOverlaySprite";
 export { TextSprite } from "./sprite/TextSprite";
-export { TemplateSprite } from "./sprite/TemplateSprite";
+export { MotifSprite } from "./sprite/MotifSprite";
 export { SubtitlesSprite } from "./sprite/SubtitlesSprite";
 export { ColorSprite } from "./sprite/ColorSprite";
 
