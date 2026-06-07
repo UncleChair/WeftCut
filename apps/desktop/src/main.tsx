@@ -72,9 +72,10 @@ function Root() {
   useEffect(() => {
     if (import.meta.env.VITE_WEFTCUT_E2E !== "1") return;
     void import("./testhook/e2eHook").then(
-      ({ installBootstrapHook, installTemplateHarnessHook }) => {
+      ({ installBootstrapHook, installTemplateHarnessHook, installMotifHook }) => {
         installBootstrapHook(() => setStage("editor"));
         installTemplateHarnessHook();
+        installMotifHook();
       },
     );
   }, []);

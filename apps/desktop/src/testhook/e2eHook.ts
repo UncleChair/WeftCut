@@ -19,6 +19,7 @@ import {
   workspaceDir,
   type CanvasPreset,
 } from "../ipc";
+import { captureMotifFrame } from "../render/motifs/host";
 import { hashCacheKey } from "../render/templates/frameCache";
 import { sharedTemplateFrameCache, sharedBakedKeyIndex } from "../render/templates/templateRaster";
 import { templateFrameDescriptor } from "../render/templates/templateFrameDescriptor";
@@ -175,6 +176,18 @@ export interface E2EHook {
   clearTemplateCacheKey(cacheKey: string): void;
   /// Whether the in-RAM baked-key index currently marks this cacheKey baked.
   bakedIndexHas(cacheKey: string): boolean;
+  /// Render a Motif frame via the Rust `motif_capture_frame` command and
+  /// return the raw base64 PNG string (no `data:` prefix). Dev/e2e only:
+  /// exposes the Motifs capture pipeline to WebDriver specs which cannot
+  /// import bundled modules. Requires the Motif runtime to have been
+  /// registered by the frontend (motif_register_runtime).
+  captureMotifFrame(args: {
+    motifId: string;
+    tSec: number;
+    props: Record<string, unknown>;
+    width: number;
+    height: number;
+  }): Promise<string>;
 }
 
 function hookSlot(): Partial<E2EHook> {
@@ -517,6 +530,36 @@ function waitForMediaExportReady(mediaId: string, timeoutMs: number): Promise<vo
     // Re-check in case readiness landed between the initial check and subscribe.
     settle();
   });
+}
+
+/// Root-side: expose the Motifs capture pipeline to WebDriver specs.
+/// Installs `window.__weftcutTest.captureMotifFrame(...)` which drives the
+/// Rust `motif_capture_frame` IPC command (Approach A: hidden WebView2 host
+/// window + `motif:` scheme + CDP `Page.captureScreenshot`). Returns the raw
+/// base64 PNG string so the spec can compare, hash, and decode without
+/// importing bundled modules (browser.execute is closed-world).
+///
+/// Dev/e2e only — called from main.tsx's e2e branch after `motif_register_runtime`
+/// has been called (the frontend calls that at startup, so by the time the spec
+/// runs it is already registered).
+export function installMotifHook(): void {
+  hookSlot().captureMotifFrame = async ({ motifId, tSec, props, width, height }) => {
+    const bitmap = await captureMotifFrame(motifId, tSec, props, width, height);
+    // Convert the ImageBitmap to a base64 PNG string so the WebDriver spec can
+    // compare raw bytes without importing any bundled codec. The spec receives
+    // a plain string from browser.execute — transferring an ImageBitmap would
+    // require structured-clone support which WebDriver doesn't expose.
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    const ctx = canvas.getContext("2d")!;
+    ctx.drawImage(bitmap, 0, 0);
+    bitmap.close?.();
+    const blob = await canvas.convertToBlob({ type: "image/png" });
+    const buf = await blob.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    let binary = "";
+    for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]!);
+    return btoa(binary);
+  };
 }
 
 /// App-side: the real export. `runExport` is App's `runExportWithSettings`,
