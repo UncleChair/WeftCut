@@ -236,13 +236,21 @@ this; anything that still escapes is explicitly out of contract.
   pool/queue/reuse pattern from `feat/template-raster-pool`, with CDP-on-a-hidden-
   webview slots replacing `<img>`-on-iframe slots). Footprint is bounded to one
   extra browser process tree, not one per layer.
-- **Untrusted Motif in a sandboxed iframe.** Inside the host, each Motif loads in
-  an iframe with `sandbox="allow-scripts"` and **no** `allow-same-origin`, so its
-  code runs in an opaque origin that cannot reach the app DOM or Tauri APIs. Our
-  **clock-takeover wrapper** is the iframe's entry document; it installs the time
-  stubs, then loads the Motif. Because the iframe is cross-origin, `seekTo` runs
-  **inside** the iframe and is driven by `postMessage` handshake from the host
-  (the proven harness message-loop pattern).
+- **Isolation = the hidden window itself (v1 decision, 2026-06-07).** The Motif is
+  loaded as the hidden window's **top-level document**, served by a `motif:` URI
+  scheme (`motif://<id>/index.html` + `motif://<id>/<asset>`). Isolation comes from:
+  the window is a separate WebView2 with **no Tauri API injected**, a CSP
+  `default-src 'none'` (plus only what capture needs) so it is **fully offline**, and
+  it only ever loads `motif:` content. The **clock-takeover runtime** is injected by
+  the scheme handler as a served `<script src="motif://_rt/runtime.js">` (built from
+  `runtime.ts` — single source, no Rust duplication), so it installs before any Motif
+  code runs. `seek` is driven by `postMessage` to the window. Same-origin within the
+  `motif:` scheme means the Motif's relative `assets/` URLs resolve naturally.
+  > Rejected for v1: an inner opaque-origin `sandbox="allow-scripts"` iframe (stronger
+  > isolation for untrusted uploads, but awkward asset resolution + runtime injection).
+  > The stronger isolation for untrusted/uploaded Motifs — opaque-origin iframe and/or
+  > a low-privilege process, network deny-listing, resource quotas — is **deferred to
+  > the security-hardening plan (§9)**, where it belongs. v1 ships built-in Motifs only.
 - **Capture via CDP.** The host drives `Emulation.setDeviceMetricsOverride` to
   render at an arbitrary resolution (independent of the physical screen), then
   `Page.captureScreenshot` (PNG) for the seeked frame. Reached from Rust via
