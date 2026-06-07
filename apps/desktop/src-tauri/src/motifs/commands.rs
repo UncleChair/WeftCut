@@ -97,9 +97,14 @@ pub async fn motif_capture_frame(
         "fps": 30,
     });
 
+    // Serialize `t_sec` via serde_json so non-finite values (NaN, ±Inf)
+    // become JSON `null` — visibly wrong — instead of the JS `NaN` global,
+    // which would silently render the wrong frame.
+    let t_json = serde_json::to_string(&t_sec)
+        .map_err(|e| format!("failed to serialize t_sec: {e}"))?;
     let render_expr = format!(
         "window.__motifRender({t}, {props}, {meta})",
-        t = t_sec,
+        t = t_json,
         props = props,
         meta = meta,
     );
