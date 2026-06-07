@@ -16,4 +16,12 @@ describe("interpolate", () => {
     const ease = (x: number) => x * x;
     expect(interpolate(0.5, [0, 1], [0, 100], { easing: ease })).toBe(25);
   });
+  it("extrapolates beyond the range when clamp:false", () => {
+    expect(interpolate(2, [0, 1], [0, 100], { clamp: false })).toBe(200);
+    expect(interpolate(-1, [0, 1], [0, 100], { clamp: false })).toBe(-100);
+  });
+  it("throws when ranges have length < 2 or mismatched lengths", () => {
+    expect(() => interpolate(0, [0], [0, 1])).toThrow();
+    expect(() => interpolate(0, [0, 1], [0, 1, 2])).toThrow();
+  });
 });
