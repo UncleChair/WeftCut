@@ -115,6 +115,17 @@ image-compare = "0.5"
 # still compiles into the binary — a small, accepted cost for a dev tool).
 sysinfo = { version = "0.33", default-features = false, features = ["system"] }
 
+# --- Motifs (web-page → video-frame capture) ---
+# Windows-only. The capture path drives the WebView2 DevTools Protocol
+# (`Emulation.setDeviceMetricsOverride` + `Page.captureScreenshot`) from Rust
+# via `CallDevToolsProtocolMethod`. `webview2-com` 0.38 / `windows` 0.61 are
+# already in Tauri's (wry's) dependency graph on Windows, so adding them as
+# direct deps reuses the already-compiled artifacts rather than pulling a new
+# version. See `apps/desktop/src-tauri/src/motifs/cdp.rs`.
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.38"
+windows = "0.61"
+
 [dev-dependencies]
 insta = { version = "1", features = ["json", "yaml"] }
 

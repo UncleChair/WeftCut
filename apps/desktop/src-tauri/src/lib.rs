@@ -21,6 +21,7 @@ mod jobs;
 mod keybindings;
 mod logs;
 mod mcp;
+mod motifs;
 mod preview;
 mod agent_session;
 mod recents;
