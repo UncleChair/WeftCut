@@ -51,9 +51,13 @@ export const useLayerBakeStatus = (layerId: string): LayerBakeStatus | null =>
   useTemplateBakeStatusStore((s) => selectLayerBakeStatus(s.byLayer, layerId));
 
 /// Reduce a layer's (optional live bake status, L0 coverage, baked-on-disk flag)
-/// to the single status the timeline/panel shows. Bake takes precedence (it is
-/// the stronger "persisted to disk" guarantee). Otherwise L0 coverage drives a
-/// `warming`→`ready` bar; zero coverage with nothing on disk is idle (null).
+/// to the single status the timeline/panel shows. Precedence:
+///   1. a live bake status (baking/ready/error) — the strongest signal;
+///   2. baked-on-disk ⇒ READY, unconditionally (a pre-baked layer is "done"
+///      even if L0 was partially evicted — disk persistence is durable and the
+///      resolver reads it back without a re-capture);
+///   3. otherwise L0 coverage drives a `warming`→`ready` bar;
+///   4. nothing on disk and zero coverage ⇒ idle (null).
 export function motifWarmPhase(
   bake: LayerBakeStatus | null,
   covered: number,
@@ -61,8 +65,8 @@ export function motifWarmPhase(
   bakedOnDisk = false,
 ): LayerBakeStatus | null {
   if (bake) return bake;
+  if (bakedOnDisk && total > 0) return { phase: "ready", done: total, total };
   if (covered >= total && total > 0) return { phase: "ready", done: total, total };
   if (covered > 0) return { phase: "warming", done: covered, total };
-  if (bakedOnDisk) return { phase: "ready", done: total, total };
   return null;
 }
