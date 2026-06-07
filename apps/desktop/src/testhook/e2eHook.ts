@@ -188,6 +188,59 @@ export interface E2EHook {
     width: number;
     height: number;
   }): Promise<string>;
+  /// Add a `countdown` Template layer at t=0 spanning [0, 5s) with default
+  /// props (480×480, seconds/label/accent), via the real `add_template` IPC.
+  /// Returns the new layer id. Used by the live-preview e2e to put a countdown
+  /// on the timeline so the compositor renders it through the Motif CDP path.
+  /// Requires an open project + the editor mounted (call newProjectAndEnter
+  /// first). Dev/e2e only.
+  motifAddCountdown(): Promise<string>;
+  /// Drive the live preview to composition-time `us`. Delegates to the active
+  /// PlaybackEngine's `seek`, which sets the clock + re-composites the frame
+  /// (the same path the transport/scrubber uses). No-op until the Pixi preview
+  /// has mounted (installPreviewBridge ran). Dev/e2e only.
+  weftcutSeekUs(us: number): void;
+  /// Read one pixel back from the LIVE composited Pixi canvas at (x, y) in
+  /// composition pixels. Uses the renderer's `extract` (reliable on
+  /// WebGPU/WebGL regardless of preserveDrawingBuffer) and reads the pixel via
+  /// a 2D canvas. Returns {r,g,b,a} in [0,255]. Rejects if the preview hasn't
+  /// mounted. Dev/e2e only — this is what proves the countdown's CDP pixels
+  /// reach the live compositor.
+  weftcutSampleComposite(x: number, y: number): Promise<CompositeSample>;
+}
+
+/// Pixel + whole-frame diagnostics from the live composite readback. `r/g/b/a`
+/// is the sampled pixel; `w/h` the extracted buffer dims; `nonTransparent` the
+/// count of pixels with alpha > 0 and `maxA` the peak alpha — both localise a
+/// "nothing composited" failure vs a "wrong spot" failure. `accentCount` is the
+/// number of accent-colored opaque pixels (the countdown's #ff4d4d numeral +
+/// arc) and `accentR/G/B` a representative such pixel — the spec asserts on
+/// these (robust to which exact glyph stroke a single sample point hits).
+export interface CompositeSample {
+  r: number;
+  g: number;
+  b: number;
+  a: number;
+  w: number;
+  h: number;
+  nonTransparent: number;
+  maxA: number;
+  accentCount: number;
+  accentR: number;
+  accentG: number;
+  accentB: number;
+}
+
+/// Live-preview bridge handle registered by `PixiPreview` (behind the e2e
+/// guard) so the readback/seek hooks can reach the active renderer + engine
+/// without the spec importing bundled modules. Re-registered on each
+/// `PixiPreview` mount (StrictMode / project swap); the most recent wins.
+interface PreviewBridge {
+  /// Seek the live preview to composition-time `us` (clock + re-composite).
+  seekUs(us: number): void;
+  /// Extract an (x,y) pixel from the live composited canvas as RGBA bytes,
+  /// plus whole-frame diagnostics (see CompositeSample).
+  sampleComposite(x: number, y: number): Promise<CompositeSample>;
 }
 
 function hookSlot(): Partial<E2EHook> {
@@ -560,6 +613,43 @@ export function installMotifHook(): void {
     for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]!);
     return btoa(binary);
   };
+
+  // Live-preview integration hooks. `motifAddCountdown` drops a 5 s countdown
+  // Template layer onto the timeline through the SAME `add_template` IPC the
+  // TemplatePicker uses — the legacy SVG catalog supplies the metadata (size
+  // 480×480 + props seconds/label/accent), which align with the Motif
+  // `countdown` so the compositor's resolveTemplateFrame → rasterMotifFrame
+  // (CDP) path renders it live. `weftcutSeekUs` / `weftcutSampleComposite`
+  // delegate to the PreviewBridge registered by `PixiPreview`.
+  hookSlot().motifAddCountdown = async () => {
+    return addTemplate({
+      templateId: "countdown",
+      tStartUs: 0,
+      tEndUs: 5_000_000,
+    });
+  };
+  hookSlot().weftcutSeekUs = (us: number) => {
+    if (!previewBridge) throw new Error("weftcutSeekUs: preview bridge not registered");
+    previewBridge.seekUs(us);
+  };
+  hookSlot().weftcutSampleComposite = async (x: number, y: number) => {
+    if (!previewBridge) throw new Error("weftcutSampleComposite: preview bridge not registered");
+    return previewBridge.sampleComposite(x, y);
+  };
+}
+
+/// Most-recently-mounted Pixi preview's bridge. Written by
+/// `installPreviewBridge` on each `PixiPreview` mount; the seek + composite
+/// readback hooks read it. Null until the first preview mounts.
+let previewBridge: PreviewBridge | null = null;
+
+/// Called by `PixiPreview` (behind the e2e guard) once its Compositor +
+/// PlaybackEngine are wired. Hands the readback/seek hooks a live bridge to the
+/// active renderer + engine so the WebDriver spec can drive a real seek and
+/// read pixels straight off the composited canvas. Re-registering replaces the
+/// prior bridge (StrictMode re-mount / project swap).
+export function installPreviewBridge(bridge: PreviewBridge): void {
+  previewBridge = bridge;
 }
 
 /// App-side: the real export. `runExport` is App's `runExportWithSettings`,

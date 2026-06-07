@@ -14,9 +14,14 @@
       "min": 1.0,
       "max": 60.0
     },
-    "color": {
+    "label": {
+      "type": "string",
+      "default": "GO",
+      "max_length": 12
+    },
+    "accent": {
       "type": "color",
-      "default": "#ff3366"
+      "default": "#ff4d4d"
     }
   }
 }
