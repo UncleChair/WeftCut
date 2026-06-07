@@ -20,6 +20,7 @@ export async function captureMotifFrame(
   props: Record<string, unknown>,
   width: number,
   height: number,
+  settleRafs?: number,
 ): Promise<ImageBitmap> {
   const b64: string = await invoke("motif_capture_frame", {
     motifId,
@@ -27,6 +28,7 @@ export async function captureMotifFrame(
     propsJson: JSON.stringify(props),
     width,
     height,
+    settleRafs: settleRafs ?? null,
   });
   const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
   return createImageBitmap(new Blob([bytes], { type: "image/png" }));

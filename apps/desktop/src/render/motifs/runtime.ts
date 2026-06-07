@@ -102,7 +102,16 @@ export const MOTIF_RUNTIME_SOURCE: string = String.raw`
       }
       if (def.frame) def.frame(t, ctxFor(t, props, meta));
       rt.seek(t * 1000);
-      await new Promise(function (r) { _nativeRaf(function () { _nativeRaf(r); }); });
+      // settleRafs: how many real browser frames to wait so the paint commits.
+      // 2 (default) is safe for canvas/WebGL; 1 suffices for CSS-only Motifs;
+      // 0 captures immediately after seek(). Clamp to {0,1,2}; default 2.
+      var sr = meta && typeof meta.settleRafs === 'number' ? meta.settleRafs : 2;
+      sr = sr === 2 ? 2 : (sr === 1 ? 1 : (sr === 0 ? 0 : 2));
+      if (sr === 2) {
+        await new Promise(function (r) { _nativeRaf(function () { _nativeRaf(r); }); });
+      } else if (sr === 1) {
+        await new Promise(function (r) { _nativeRaf(r); });
+      }
       return true;
     })();
   };

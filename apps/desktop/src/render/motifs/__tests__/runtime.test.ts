@@ -1,5 +1,13 @@
 import { describe, it, expect, vi } from "vitest";
 import { createMotifRuntime } from "../runtime";
+import { MOTIF_RUNTIME_SOURCE } from "../runtime";
+
+describe("MOTIF_RUNTIME_SOURCE settle", () => {
+  it("reads settleRafs from meta (default double-rAF)", () => {
+    // The render entry must consult meta.settleRafs to choose the settle depth.
+    expect(MOTIF_RUNTIME_SOURCE).toContain("meta.settleRafs");
+  });
+});
 
 describe("motif runtime seek", () => {
   it("freezes rAF until seek flushes it, at the virtual clock", () => {

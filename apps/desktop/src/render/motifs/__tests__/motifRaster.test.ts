@@ -14,7 +14,7 @@ describe("rasterMotifFrame", () => {
 
   it("delegates to captureMotifFrame with id, tSec, props, dims", async () => {
     const bmp = await rasterMotifFrame("countdown", 2.5, { seconds: 5 }, 480, 480);
-    expect(captureMotifFrame).toHaveBeenCalledWith("countdown", 2.5, { seconds: 5 }, 480, 480);
+    expect(captureMotifFrame).toHaveBeenCalledWith("countdown", 2.5, { seconds: 5 }, 480, 480, undefined);
     expect(bmp).toEqual({ width: 480, height: 480 });
   });
 
@@ -36,6 +36,6 @@ describe("bakeMotifFrame", () => {
     >[0];
     // frame 9 at 30fps → tSec = 9 * 1/30 = 0.3
     await bakeMotifFrame(template, 9, 30, 1, { seconds: 5 });
-    expect(captureMotifFrame).toHaveBeenCalledWith("countdown", 0.3, { seconds: 5 }, 480, 480);
+    expect(captureMotifFrame).toHaveBeenCalledWith("countdown", 0.3, { seconds: 5 }, 480, 480, undefined);
   });
 });
