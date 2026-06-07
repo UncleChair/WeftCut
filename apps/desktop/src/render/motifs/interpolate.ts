@@ -23,6 +23,8 @@ export function interpolate(
   while (i < inRange.length - 1 && t > inRange[i]) i++;
   const inA = inRange[i - 1], inB = inRange[i];
   const outA = outRange[i - 1], outB = outRange[i];
+  // Avoid 0/0 on a zero-width segment — return the segment's start output value.
+  if (inB === inA) return outA;
   let frac = (t - inA) / (inB - inA);
   if (opts.easing) frac = opts.easing(frac);
   return outA + frac * (outB - outA);
