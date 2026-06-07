@@ -44,7 +44,7 @@ export function canonicalizeProps(
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const key of Object.keys(m.propsSchema).sort()) {
-    const spec = m.propsSchema[key];
+    const spec = m.propsSchema[key]!;
     const raw = key in input ? input[key] : spec.default;
     if (spec.type === "number") {
       const n = typeof raw === "number" ? raw : Number(raw);

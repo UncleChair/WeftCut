@@ -16,7 +16,7 @@ describe("parseManifest", () => {
     const m = parseManifest(RAW);
     expect(m.id).toBe("countdown");
     expect(m.size).toEqual([480, 480]);
-    expect(m.propsSchema.seconds.type).toBe("number");
+    expect(m.propsSchema.seconds?.type).toBe("number");
   });
   it("rejects a manifest missing required fields", () => {
     expect(() => parseManifest(JSON.stringify({ id: "x" }))).toThrow();
