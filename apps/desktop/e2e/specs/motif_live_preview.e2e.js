@@ -18,7 +18,10 @@ const PROJECT_PARENT = path.resolve(os.tmpdir(), "weftcut-e2e-motif-live-proj");
 // composited canvas pixel at its center (240,240). At t=2.5 with duration 5 s
 // the countdown shows the large centered numeral "3" in the accent color
 // #ff4d4d = rgb(255,77,77). A high-red / low-green / low-blue opaque pixel
-// there means the Motif CDP frame reached the live compositor.
+// there means the Motif CDP frame reached the live compositor. We also assert
+// the backdrop is TRANSPARENT (only the numeral + arc opaque, not a solid white
+// box) — the regression guard for the CDP `setDefaultBackgroundColorOverride`
+// transparent-screenshot fix, without which overlay Motifs flatten onto white.
 //
 // The `__weftcutTemplatePerf.renders` counter is incremented inside
 // `rasterMotifFrame` (the CDP producer), so renders > 0 confirms frames came
@@ -31,7 +34,7 @@ const PROJECT_PARENT = path.resolve(os.tmpdir(), "weftcut-e2e-motif-live-proj");
 //   window.__weftcutTest.weftcutSampleComposite (added — renderer.extract readback)
 
 describe("motif live preview (CDP in compositor)", function () {
-  it("a countdown layer renders accent-colored content in the live preview", async () => {
+  it("a countdown layer renders accent content on a transparent backdrop in the live preview", async () => {
     // Hooks install via async dynamic import — wait for the bootstrap one.
     await browser.waitUntil(
       async () =>
@@ -147,6 +150,21 @@ describe("motif live preview (CDP in compositor)", function () {
     expect(s.accentR).toBeGreaterThan(180);
     expect(s.accentG).toBeLessThan(150);
     expect(s.accentB).toBeLessThan(150);
+
+    // Overlay compositing: the Motif authors `background:transparent`, so on a
+    // 480×480 countdown only the numeral + arc are opaque — the rest must be
+    // transparent so it composites over the video below. This is the regression
+    // guard for the CDP transparent-backdrop fix: `Page.captureScreenshot`
+    // defaults to an opaque WHITE base, and without
+    // `Emulation.setDefaultBackgroundColorOverride` (alpha 0) the whole frame
+    // comes back opaque (nonTransparent ≈ w*h — a solid white box). Assert the
+    // backdrop is transparent: content is present but well under half the frame.
+    const totalPx = s.w * s.h;
+    console.log(
+      `[e2e] overlay transparency: nonTransparent=${s.nonTransparent}/${totalPx}`,
+    );
+    expect(s.nonTransparent).toBeGreaterThan(0); // content actually composited
+    expect(s.nonTransparent).toBeLessThan(totalPx * 0.5); // backdrop transparent, not a white box
 
     // Frames came through the (CDP) producer, not a no-op / stale cache.
     console.log("[e2e] motif live preview final renders:", renders);
