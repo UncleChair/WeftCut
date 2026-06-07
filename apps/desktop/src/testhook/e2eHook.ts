@@ -166,7 +166,7 @@ export interface E2EHook {
     props?: Record<string, unknown>;
   }): Promise<string>;
   /// Patch a template layer's props (merges field-wise). Used by the pre-bake
-  /// e2e to change the `color` prop and observe a new cacheKey / new hash dir.
+  /// e2e to change the `accent` prop and observe a new cacheKey / new hash dir.
   patchTemplateLayerProps(args: {
     layerId: string;
     props: Record<string, unknown>;
@@ -649,7 +649,15 @@ let previewBridge: PreviewBridge | null = null;
 /// read pixels straight off the composited canvas. Re-registering replaces the
 /// prior bridge (StrictMode re-mount / project swap).
 export function installPreviewBridge(bridge: PreviewBridge): void {
+  if (import.meta.env.VITE_WEFTCUT_E2E !== "1") return;
   previewBridge = bridge;
+}
+
+/// Called by `PixiPreview` on unmount (behind the same e2e guard as
+/// `installPreviewBridge`) so the seek/readback hooks don't hold a stale
+/// closure over a disposed Compositor + PlaybackEngine.
+export function clearPreviewBridge(): void {
+  previewBridge = null;
 }
 
 /// App-side: the real export. `runExport` is App's `runExportWithSettings`,

@@ -231,11 +231,11 @@ describe("L2 template pre-bake disk round-trip (real WebView2)", function () {
     if (!projectLayerId) throw new Error("setup: no layer id");
     if (!firstHashName) throw new Error("test 1 must pass first (firstHashName not recorded)");
 
-    // Change the `color` prop — it's part of `canonicalProps` in the cacheKey
+    // Change the `accent` prop — it's part of `canonicalProps` in the cacheKey
     // input, so the FNV-1a hash of the new key will differ from `firstHashName`.
     const patchR = await browser.executeAsync((layerId, done) => {
       window.__weftcutTest
-        .patchTemplateLayerProps({ layerId, props: { color: "#00ff99" } })
+        .patchTemplateLayerProps({ layerId, props: { accent: "#00ff99" } })
         .then(() => done({ ok: true }))
         .catch((e) => done({ ok: false, error: String(e) }));
     }, projectLayerId);
