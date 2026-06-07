@@ -23,7 +23,7 @@ The existing SVG template feature already implements the whole editor integratio
 
 | Layer | Exists today (SVG) | This milestone |
 |---|---|---|
-| Data model | `LayerParams::Template(TemplateParams{ template_id, template_version, props, src_in_us, transform, opacity })` | rename → `Motif(MotifParams)` (shape/semantics unchanged; field names follow the rename, e.g. `template_id`→`motif_id`, with serde aliases — see §8) |
+| Data model | `LayerParams::Template(TemplateParams{ template_id, template_version, props, src_in_us, transform, opacity })` | rename → `Motif(MotifParams)` (shape/semantics unchanged; field names follow the rename, e.g. `template_id`→`motif_id`) |
 | Commands + MCP | `add_template`/`list_templates` (Tauri + MCP), `update_layer_params` w/ `TemplatePatch` | rename → `add_motif`/`list_motifs`/`MotifPatch` |
 | Compositor | `Compositor.compositeFrame` → `TemplateSprite.update(view, tInLayerUs, durationUs, injectedFrames?)` | rename → `MotifSprite`; **swap frame source** |
 | Cache | `frameCache.ts` (L0 in-RAM LRU + L2 on-disk PNG), prewarmer, export baker | **reuse**, redirect fill to CDP capture |
@@ -75,13 +75,13 @@ Rename in place (`Template*`→`Motif*`) across the cutover surface (Rust: `stat
 
 The single built-in `countdown` is already reauthored (Plan 1). No other built-ins to port.
 
-## 8. Migration
+## 8. Compatibility: none (clean break)
 
-Saved projects may contain `LayerParams::Template`. The rename breaks deserialization unless handled: add `#[serde(alias = "Template")]` on the renamed `Motif` variant (and field-level aliases on `MotifParams` if any field renames), or a one-time project-load migration that rewrites `Template`→`Motif`. v1 has minimal real saved-project exposure; the serde-alias path is the low-risk default. Confirm during planning whether any on-disk projects with template layers exist.
+Pre-release — **no backward compatibility is preserved.** The rename is a hard break: no serde aliases, no migration pass. Saved projects containing `LayerParams::Template` are simply unsupported and may fail to load; that is acceptable. This keeps the cutover purely a rename + redirect with zero migration machinery.
 
 ## 9. Boundaries / staging / risks
 
-- **In scope:** the rename/cutover, frame-source redirect, cache/prewarm/persist redirect + throughput opts, warming UX, export baker redirect, SVG deletion, migration.
+- **In scope:** the rename/cutover, frame-source redirect, cache/prewarm/persist redirect + throughput opts, warming UX, export baker redirect, SVG deletion.
 - **Out of scope:** user-uploaded Motifs and the untrusted-content security hardening (separate plan — built-ins only here); multi-Motif host navigation (the Plan-1 host errors on a 2nd id — this milestone wires the host to navigate/reuse across motif ids, OR keeps one host per id; decide in planning); a faster capture primitive (e.g. `Page.startScreencast`) — deferred, the RAM-preview model stands without it.
-- **Staging (for the plan):** (1) data-model + command/MCP rename (mechanical, green build); (2) thin vertical slice — `MotifSprite` + on-demand CDP capture + cache hit/miss, so `countdown` renders live in preview (choppy, no prewarm yet) and proves the integration + the JS round-trip cost; (3) prewarm/persist redirect + throughput opts + warming UX (smooth-after-warm); (4) export baker redirect; (5) delete SVG machinery + picker rename; (6) migration.
+- **Staging (for the plan):** (1) data-model + command/MCP rename (mechanical, green build); (2) thin vertical slice — `MotifSprite` + on-demand CDP capture + cache hit/miss, so `countdown` renders live in preview (choppy, no prewarm yet) and proves the integration + the JS round-trip cost; (3) prewarm/persist redirect + throughput opts + warming UX (smooth-after-warm); (4) export baker redirect; (5) delete SVG machinery + picker rename.
 - **Risks:** the prewarmer was tuned for ~hundreds-fps SVG raster; at ~11–17 fps its idle-slicing/budget assumptions need re-tuning (it must not block the UI while filling slowly). The host-navigation/lifecycle for multiple distinct Motifs on one timeline is unproven (Plan-1 host is single-Motif). Both surface in stage 3.
