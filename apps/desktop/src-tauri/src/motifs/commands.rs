@@ -35,7 +35,7 @@ const READY_POLL: Duration = Duration::from_millis(100);
 pub async fn motif_capture_frame(
     app: AppHandle,
     state: State<'_, MotifRuntime>,
-    capture: State<'_, super::MotifCapture>,
+    capture: State<'_, MotifCapture>,
     motif_id: String,
     t_sec: f64,
     props_json: String,
