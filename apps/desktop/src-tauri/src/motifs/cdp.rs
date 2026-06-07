@@ -4,7 +4,11 @@
 //! from Rust by driving the host `WebviewWindow`'s WebView2 via CDP:
 //!
 //! - `Emulation.setDeviceMetricsOverride` — render at an arbitrary resolution
-//!   (decoupled from the host window's physical size), and
+//!   (decoupled from the host window's physical size),
+//! - `Emulation.setDefaultBackgroundColorOverride` — a transparent (alpha 0)
+//!   screenshot backdrop, so a Motif's `background:transparent` is preserved as
+//!   real alpha instead of being flattened onto CDP's default opaque white
+//!   (otherwise overlay Motifs composite as solid white boxes), and
 //! - `Page.captureScreenshot` — a **taint-free** PNG (unlike a DOM/canvas
 //!   capture, the CDP screenshot is not subject to cross-origin canvas
 //!   tainting, which is the whole reason we capture this way).
@@ -127,11 +131,13 @@ unsafe fn issue_capture_calls(
         }
     };
 
-    // 1) Set the render resolution — fires only when the size changed (first
-    //    capture after a host (re)create, or a size change). No-op completion
-    //    handler: CDP applies commands in order on the session, so we don't
-    //    need to wait for this to complete before issuing the screenshot.
+    // 1) Session setup — fires only on the first capture after a host
+    //    (re)create or a size change (`set_metrics`). Both overrides persist on
+    //    the WebView2 session, so they ride the same once-per-host gate. No-op
+    //    completion handlers: CDP applies commands in order on the session, so
+    //    these land before the screenshot without handler chaining.
     if set_metrics {
+        // a) Render resolution (decoupled from the host window's physical size).
         let metrics_params = format!(
             r#"{{"width":{w},"height":{h},"deviceScaleFactor":1,"mobile":false}}"#
         );
@@ -144,6 +150,23 @@ unsafe fn issue_capture_calls(
         ) {
             let _ = tx.send(Err(format!(
                 "CallDevToolsProtocolMethod(setDeviceMetricsOverride) failed: {e}"
+            )));
+            return;
+        }
+
+        // b) Transparent screenshot backdrop. `Page.captureScreenshot` otherwise
+        //    composites the page onto an opaque WHITE base, flattening a Motif's
+        //    `background:transparent` to white and breaking overlay compositing.
+        //    Alpha 0 makes the captured PNG carry the page's real transparency.
+        let bg_handler =
+            CallDevToolsProtocolMethodCompletedHandler::create(Box::new(|_hr, _json| Ok(())));
+        if let Err(e) = core.CallDevToolsProtocolMethod(
+            &HSTRING::from("Emulation.setDefaultBackgroundColorOverride"),
+            &HSTRING::from(r#"{"color":{"r":0,"g":0,"b":0,"a":0}}"#),
+            &bg_handler,
+        ) {
+            let _ = tx.send(Err(format!(
+                "CallDevToolsProtocolMethod(setDefaultBackgroundColorOverride) failed: {e}"
             )));
             return;
         }
