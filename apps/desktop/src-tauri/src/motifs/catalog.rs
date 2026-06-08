@@ -1,15 +1,18 @@
-//! Template loader + manifest validator.
+//! Motif manifest schema + built-in catalog shared with the TypeScript side.
 //!
-//! One built-in template (`countdown`) is embedded as a Rust string constant
-//! via `include_str!` (manifest JSON + SVG `index.html`), so the desktop
-//! binary ships it without runtime file access. The types here are also
-//! shaped for a future on-disk loader for `packages/templates/<id>/`: a
-//! `Template::from_dir` would produce the same `Template` value, and the SVG
-//! render path doesn't know the difference.
+//! Defines the serde types (`Manifest`, `PropSpec`, `FontDecl`, `Template`)
+//! that describe a Motif's capabilities and the validation logic
+//! (`canonicalize_props`, `resolve_template_max_dur_us`) that commands and MCP
+//! tools use when placing or updating a Motif layer.
 //!
-//! Cache integration: `Template::content_hash()` is what feeds the raster
-//! cache key, so any change to a template's manifest or `index.html`
-//! invalidates cached renders automatically (no manual cache wipe).
+//! One built-in Motif (`countdown`) is embedded via `include_str!` (manifest
+//! JSON + `index.html`) so the desktop binary ships it without runtime file
+//! access. The catalog is exposed to the picker UI and to MCP agents via
+//! `catalog()` / `builtins()`.
+//!
+//! Cache integration: `Template::content_hash()` feeds the CDP raster cache
+//! key, so any change to a Motif's manifest or `index.html` invalidates cached
+//! frames automatically (no manual cache wipe).
 
 use std::collections::BTreeMap;
 
@@ -285,12 +288,11 @@ pub enum TemplateError {
     Serialize(String),
 }
 
-// -- Built-in starter templates ------------------------------------------
+// -- Built-in Motifs ---------------------------------------------------------
 //
-// One built-in (`countdown`) is retained as the validation exemplar for the
-// SVG render-path redesign (ADR 0015); the other starters were removed. It
-// lives in `templates/countdown/` and is embedded via `include_str!` so the
-// desktop binary ships it without runtime file access.
+// One built-in (`countdown`) is embedded via `include_str!` so the desktop
+// binary ships it without runtime file access. It lives in
+// `motifs/catalog/countdown/`.
 
 macro_rules! builtin_template {
     ($fn_name:ident, $dir:literal) => {
@@ -307,7 +309,7 @@ macro_rules! builtin_template {
     };
 }
 
-builtin_template!(builtin_countdown, "countdown");
+builtin_template!(builtin_countdown, "catalog/countdown");
 
 /// Catalog entry — the JSON-serializable shape that the picker UI + the
 /// `list_templates` MCP tool + the `templates://current` resource all

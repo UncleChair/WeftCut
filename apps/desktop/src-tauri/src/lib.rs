@@ -26,7 +26,6 @@ mod preview;
 mod agent_session;
 mod recents;
 mod state;
-mod templates;
 mod view_state;
 mod workspace;
 

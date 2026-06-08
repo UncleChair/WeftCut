@@ -3278,7 +3278,7 @@ pub(crate) fn apply_update_layer_params(
         let t_start = layer.t_start_us;
         let t_end = layer.t_end_us;
 
-        let catalog = crate::templates::builtins();
+        let catalog = crate::motifs::catalog::builtins();
         let clamp: Option<(i64, i64)> = if let LayerParams::Motif(ref tp) = layer.params {
             template_cap_us(&catalog, &layer.params)
                 .and_then(|content_dur| {
@@ -3632,7 +3632,7 @@ fn split_single_layer(
         return Err(CommandError::SplitOutsideLayer { layer: id, at_t: at_t_us });
     }
     let split_offset = at_t_us - original.t_start_us;
-    let catalog = crate::templates::builtins();
+    let catalog = crate::motifs::catalog::builtins();
     let mut right = original.clone();
     right.id = new_id();
     right.t_start_us = at_t_us;
@@ -3743,7 +3743,7 @@ pub(crate) fn apply_trim_layer(
     // a cheap find over this (Template layers only — everything else stays
     // unbounded). Built once outside the loop so a group of templates pays
     // the catalog cost a single time.
-    let catalog = crate::templates::builtins();
+    let catalog = crate::motifs::catalog::builtins();
     // The template cap bound is re-snapped to the composition frame grid, so
     // grab the fps before the immutable-borrow loop below.
     let fps = project.composition.fps;
@@ -3852,14 +3852,14 @@ pub(crate) fn apply_trim_layer(
 /// seconds-edit clamp — keep all cap lookups going through here so they can't
 /// drift (cf. the snap-math / engine-source drift hazards in this codebase).
 fn template_cap_us(
-    catalog: &[crate::templates::Template],
+    catalog: &[crate::motifs::catalog::Template],
     params: &LayerParams,
 ) -> Option<i64> {
     match params {
         LayerParams::Motif(tp) => catalog
             .iter()
             .find(|t| t.id() == tp.motif_id)
-            .and_then(|t| crate::templates::resolve_template_max_dur_us(&t.manifest, &tp.props)),
+            .and_then(|t| crate::motifs::catalog::resolve_template_max_dur_us(&t.manifest, &tp.props)),
         _ => None,
     }
 }
@@ -4321,7 +4321,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn template_params_patch_rejects_kind_mismatch() {
+    async fn motif_params_patch_rejects_kind_mismatch() {
         let (project, track_id) = project_with_video_track();
         let handle = spawn(project);
         let layer_id = handle

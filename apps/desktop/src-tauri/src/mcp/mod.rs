@@ -86,7 +86,7 @@ use crate::io::probe;
 use crate::ir::{self, RenderTarget};
 use crate::jobs;
 use crate::cloud;
-use crate::templates;
+use crate::motifs::catalog as templates;
 use crate::state::actor::LayerEdge;
 use crate::state::{
     Actor, Animated, AudioParams, BlendMode, CheckpointId, ColorParams, CommandError,
@@ -1217,7 +1217,7 @@ impl WeftCutServer {
 
         let track_id = match args.track_id.as_deref() {
             Some(s) => parse_uuid(s, "track_id")?,
-            None => self.ensure_template_target_track().await?,
+            None => self.ensure_motif_target_track().await?,
         };
 
         let params = LayerParams::Motif(MotifParams {
@@ -2173,7 +2173,7 @@ fn parse_uuid(s: &str, field: &str) -> Result<Uuid, McpError> {
 }
 
 /// JSON payload shared by the `list_motifs` tool and the
-/// `templates://current` resource. Wraps `crate::templates::catalog()` so
+/// `templates://current` resource. Wraps `crate::motifs::catalog::catalog()` so
 /// the Tauri-side picker (`commands::list_motifs`) and the MCP surfaces
 /// emit the same JSON shape from the same source.
 fn templates_payload() -> Vec<Value> {
@@ -2765,11 +2765,11 @@ impl WeftCutServer {
             .map_err(map_command_error)
     }
 
-    /// Every auto-routed template insert gets its own fresh "Overlay"
+    /// Every auto-routed Motif insert gets its own fresh "Overlay"
     /// track. Reusing one would re-trip the per-track no-overlap
-    /// invariant the moment two templates land on intersecting ranges.
+    /// invariant the moment two Motifs land on intersecting ranges.
     /// Agents that want stacking should pass an explicit `track_id`.
-    async fn ensure_template_target_track(&self) -> Result<TrackId, McpError> {
+    async fn ensure_motif_target_track(&self) -> Result<TrackId, McpError> {
         self.project
             .add_track(agent_actor(), Some("Overlay".into()))
             .await
@@ -3727,10 +3727,10 @@ mod tests {
     /// both edges; this checks the cap-resolution + clamp step in isolation.)
     #[test]
     fn add_motif_cap_resolves_from_seconds_prop() {
-        let manifest = &crate::templates::builtin_countdown().manifest;
+        let manifest = &crate::motifs::catalog::builtin_countdown().manifest;
         let mut props: imbl::HashMap<String, serde_json::Value> = imbl::HashMap::new();
         props.insert("seconds".into(), serde_json::json!(8.0));
-        let cap = crate::templates::resolve_template_max_dur_us(manifest, &props);
+        let cap = crate::motifs::catalog::resolve_template_max_dur_us(manifest, &props);
         assert_eq!(cap, Some(8_000_000));
         // Explicit over-long t_end (20s) clamps to the 8s prop cap.
         assert_eq!(
