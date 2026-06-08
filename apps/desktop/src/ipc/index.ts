@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import type { ExportSettings } from "../render/exportSettings";
+import type { MotifManifest } from "../render/motifs/catalog";
 
 export interface CompositionSummary {
   width: number;
@@ -1079,6 +1080,40 @@ export async function addMotif(args: {
     trackId: args.trackId,
     props: args.props,
   });
+}
+
+// ============================================================
+// Motif lifecycle IPC wrappers (Stage 3b)
+// ============================================================
+
+/// The Tauri event the backend emits after a user-Motif lifecycle mutation.
+/// Mirrors Rust `MOTIFS_CHANGED_EVENT`.
+export const MOTIFS_CHANGED_EVENT = "motifs:changed";
+
+export interface MotifSource {
+  manifest: MotifManifest;
+  html: string;
+}
+
+export async function getMotifSource(id: string): Promise<MotifSource> {
+  return invoke<MotifSource>("get_motif_source", { id });
+}
+
+/// Write a draft from authored `{ manifest, html }`. Returns the assigned draft id.
+export async function writeMotifDraft(manifest: MotifManifest, html: string): Promise<string> {
+  return invoke<string>("write_motif_draft", { args: { manifest, html } });
+}
+
+/// Install a draft. `mode` is `{ kind: "new" }` or `{ kind: "update", target_id }`.
+export async function installMotif(
+  draftId: string,
+  mode: { kind: "new" } | { kind: "update"; target_id: string },
+): Promise<string> {
+  return invoke<string>("install_motif", { args: { draft_id: draftId, mode } });
+}
+
+export async function deleteMotif(id: string): Promise<void> {
+  await invoke("delete_motif", { id });
 }
 
 // ============================================================

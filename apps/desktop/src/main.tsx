@@ -9,7 +9,7 @@ import {
   recentsMostRecent,
 } from "./ipc";
 import { MOTIF_RUNTIME_SOURCE } from "./render/motifs/runtime";
-import { syncUserMotifsFromBackend } from "./render/motifs/syncCatalog";
+import { syncUserMotifsFromBackend, installMotifsChangedListener } from "./render/motifs/syncCatalog";
 import "./i18n";
 import "./styles.css";
 
@@ -21,6 +21,8 @@ void invoke("motif_register_runtime", { source: MOTIF_RUNTIME_SOURCE });
 // frame-math and picker see user Motifs. Fire-and-forget; failures keep the
 // built-in-only catalog.
 void syncUserMotifsFromBackend();
+// Keep the runtime Motif catalog fresh as drafts are written/installed/deleted.
+void installMotifsChangedListener();
 
 const root = document.getElementById("root");
 if (!root) throw new Error("#root missing from index.html");
