@@ -9,6 +9,7 @@ import {
   recentsMostRecent,
 } from "./ipc";
 import { MOTIF_RUNTIME_SOURCE } from "./render/motifs/runtime";
+import { syncUserMotifsFromBackend } from "./render/motifs/syncCatalog";
 import "./i18n";
 import "./styles.css";
 
@@ -16,6 +17,10 @@ import "./styles.css";
 // hidden Motif host window can inject it as its `initialization_script`.
 // Fire-and-forget — the capture command errors clearly if this hasn't landed.
 void invoke("motif_register_runtime", { source: MOTIF_RUNTIME_SOURCE });
+// Populate the runtime Motif catalog (built-ins + on-disk user Motifs) so the
+// frame-math and picker see user Motifs. Fire-and-forget; failures keep the
+// built-in-only catalog.
+void syncUserMotifsFromBackend();
 
 const root = document.getElementById("root");
 if (!root) throw new Error("#root missing from index.html");
