@@ -31,6 +31,10 @@ pub async fn get_motif_source(
     Err(format!("unknown motif id '{id}'"))
 }
 
+/// NOTE: Tauri camelCases only the TOP-LEVEL command argument names; these
+/// nested struct fields are deserialized by serde directly, so the frontend
+/// sends them as-is (snake_case): `{ args: { draft_id, mode: { kind, target_id } } }`.
+/// (A camelCase rename can be added in Stage 3 alongside the UI if preferred.)
 #[derive(Deserialize)]
 pub struct WriteDraftArgs {
     pub manifest: Manifest,
@@ -44,6 +48,9 @@ pub async fn write_motif_draft(
     args: WriteDraftArgs,
 ) -> Result<String, String> {
     validate_manifest(&args.manifest).map_err(|e| e.to_string())?;
+    // TODO(stage 3): every call mints a NEW draft id; an iterative edit UI will
+    // want an amend path (reuse an existing draft_id) so refining a draft doesn't
+    // litter <root>/drafts/ with abandoned dirs.
     let draft_id = assign_unique_id(&args.manifest.name, &store.list_draft_ids());
     let mut manifest = args.manifest;
     manifest.id = draft_id.clone();
@@ -59,6 +66,10 @@ pub enum InstallMode {
     Update { target_id: String },
 }
 
+/// NOTE: Tauri camelCases only the TOP-LEVEL command argument names; these
+/// nested struct fields are deserialized by serde directly, so the frontend
+/// sends them as-is (snake_case): `{ args: { draft_id, mode: { kind, target_id } } }`.
+/// (A camelCase rename can be added in Stage 3 alongside the UI if preferred.)
 #[derive(Deserialize)]
 pub struct InstallArgs {
     pub draft_id: String,
@@ -100,6 +111,11 @@ pub async fn install_motif(
     manifest.id = final_id.clone();
     manifest.version = version;
     let html = compose_motif_html(&manifest, &draft.html);
+    // Rewrite the draft's island to the final id + bumped version, THEN move it
+    // into the published slot. Order matters: if install_draft fails, the only
+    // dirty state is the DRAFT (its island momentarily names final_id while its
+    // dir is still draft_id) — the published store is never left inconsistent,
+    // and a retry re-derives the same final_id and re-runs both steps safely.
     store.write_draft(&args.draft_id, &html).map_err(|e| e.to_string())?;
     store
         .install_draft(&args.draft_id, &final_id)
