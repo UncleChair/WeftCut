@@ -49,5 +49,5 @@ export async function resolveMotifFrame(
   // durationSec is unused by the CDP path (duration is derived Rust-side from
   // props in v1); kept in the signature for parity with the SVG era.
   void durationSec;
-  return rasterMotifFrame(motif.manifest.id, tSec, canonicalProps, w!, h!, motif.manifest.settle_rafs);
+  return rasterMotifFrame(motif.manifest.id, tSec, canonicalProps, w!, h!, motif.manifest.settle_rafs, motif.manifest.content_hash);
 }

@@ -18,6 +18,7 @@ describe("captureMotifFramePngBlob", () => {
       width: 480,
       height: 480,
       settleRafs: 1,
+      contentHash: "",
     });
     expect(blob.type).toBe("image/png");
     expect(await blob.arrayBuffer().then((b) => Array.from(new Uint8Array(b)))).toEqual([1, 2, 3]);
