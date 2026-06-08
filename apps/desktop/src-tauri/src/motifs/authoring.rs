@@ -57,6 +57,8 @@ pub fn validate_manifest(m: &Manifest) -> Result<(), MotifError> {
                     )));
                 }
             }
+            // Must precede validate_default_for below: spec_default_json calls
+            // serde_json::json!(default), which panics on a non-finite f64.
             if !default.is_finite() {
                 return Err(MotifError::InvalidManifest(format!(
                     "prop `{key}`: default must be finite"
@@ -167,6 +169,8 @@ mod tests {
         assert_eq!(assign_unique_id("My Motif", &taken), "my-motif-3");
         let none: [String; 0] = [];
         assert_eq!(assign_unique_id("countdown", &none), "countdown-2");
+        // The reserved `drafts` dir name is never handed out as a Motif id.
+        assert_eq!(assign_unique_id("Drafts", &none), "drafts-2");
         assert_eq!(assign_unique_id("Fresh", &taken), "fresh");
     }
 }
