@@ -16,7 +16,7 @@ use uuid::Uuid;
 use crate::export;
 use crate::io;
 use crate::ir;
-use crate::templates;
+use crate::motifs::catalog as templates;
 use crate::state::{
     self, Actor, ColorParams, CommandError, LayerParams, MediaItem, MediaKind, ProjectHandle,
     MotifParams, Rgba, SubtitlesParams, SubtitlesSource, Transform,
@@ -1984,7 +1984,7 @@ pub async fn add_motif(
         template.manifest.default_duration_s,
         // Cap is driven by the props being added (canonicalized above), so a
         // `max_duration_prop`-mapped motif clamps to its prop value.
-        crate::templates::resolve_template_max_dur_us(&template.manifest, &props_map),
+        crate::motifs::catalog::resolve_template_max_dur_us(&template.manifest, &props_map),
     );
     if resolved_end <= t_start_us {
         return Err(format!(

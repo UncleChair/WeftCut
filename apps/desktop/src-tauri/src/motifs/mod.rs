@@ -25,6 +25,7 @@
 pub mod cdp;
 
 pub mod builtin;
+pub mod catalog;
 
 #[cfg(windows)]
 pub mod commands;
