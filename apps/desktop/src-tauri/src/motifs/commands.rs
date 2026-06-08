@@ -28,19 +28,23 @@ const READY_ATTEMPTS: u32 = 30;
 const READY_POLL: Duration = Duration::from_millis(100);
 
 /// Resolve the capture `ctx.duration` (seconds) for `motif_id`: search the
-/// built-ins, then the user manifests, then fall back to 5.0. Pure so it's
-/// unit-testable away from the async command + Tauri state.
+/// built-ins, then (lazily — only if not a built-in) the user manifests, then
+/// fall back to 5.0. `get_user_manifests` is only invoked when `motif_id` is
+/// not a built-in, so built-in captures never touch the disk. Pure (modulo the
+/// caller's closure) so it stays unit-testable.
 fn resolve_capture_duration(
     motif_id: &str,
     builtins: &[super::catalog::Motif],
-    user_manifests: &[super::catalog::Manifest],
+    get_user_manifests: impl FnOnce() -> Vec<super::catalog::Manifest>,
     props: &serde_json::Value,
 ) -> f64 {
     if let Some(m) = builtins.iter().find(|m| m.id() == motif_id) {
         return super::catalog::motif_ctx_duration_s(&m.manifest, props);
     }
-    if let Some(m) = user_manifests.iter().find(|m| m.id == motif_id) {
-        return super::catalog::motif_ctx_duration_s(m, props);
+    for m in get_user_manifests() {
+        if m.id == motif_id {
+            return super::catalog::motif_ctx_duration_s(&m, props);
+        }
     }
     5.0
 }
@@ -129,7 +133,7 @@ pub async fn motif_capture_frame(
     let duration = resolve_capture_duration(
         &motif_id,
         &super::catalog::builtins(),
-        &store.list_manifests(),
+        || store.list_manifests(),
         &props,
     );
     let meta = serde_json::json!({
@@ -176,8 +180,17 @@ mod tests {
         let props = serde_json::json!({ "seconds": 7 });
 
         // Built-in countdown: max_duration_prop "seconds" → 7.0.
-        let d = resolve_capture_duration("countdown", &builtins, &[], &props);
+        let d = resolve_capture_duration("countdown", &builtins, Vec::new, &props);
         assert!((d - 7.0).abs() < 1e-9);
+
+        // The built-in path must NOT invoke the user-manifest provider (no disk walk).
+        let d_no_walk = resolve_capture_duration(
+            "countdown",
+            &builtins,
+            || panic!("built-in capture must not walk the user-motif store"),
+            &props,
+        );
+        assert!((d_no_walk - 7.0).abs() < 1e-9);
 
         // A user manifest (not in builtins) resolves from its own manifest.
         let mut user: Manifest = builtin_countdown().manifest;
@@ -185,11 +198,11 @@ mod tests {
         user.max_duration_prop = None;
         user.max_duration_s = None;
         user.content_duration_s = Some(2.5);
-        let d2 = resolve_capture_duration("user-x", &builtins, std::slice::from_ref(&user), &serde_json::json!({}));
+        let d2 = resolve_capture_duration("user-x", &builtins, move || vec![user], &serde_json::json!({}));
         assert!((d2 - 2.5).abs() < 1e-9);
 
-        // Unknown id → 5.0 fallback (matches the prior hardcoded default).
-        let d3 = resolve_capture_duration("ghost", &builtins, &[], &serde_json::json!({}));
+        // Unknown id → 5.0 fallback.
+        let d3 = resolve_capture_duration("ghost", &builtins, Vec::new, &serde_json::json!({}));
         assert!((d3 - 5.0).abs() < 1e-9);
     }
 }
