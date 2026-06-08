@@ -3,7 +3,7 @@
   @font-face{
     font-family:"Inter";
     src:url("assets/Inter.woff2") format("woff2");
-    font-weight:700; font-style:normal; font-display:block;
+    font-weight:700; font-style:normal; font-display:swap;
   }
   html,body{margin:0;width:1280px;height:320px;overflow:hidden;background:transparent}
   #bar{
@@ -51,6 +51,18 @@
           { duration: 650, delay: 150, easing: "ease-out", fill: "both" }
         );
 
+        // Force the bundled Inter face to actually load before resolving.
+        // `fonts.ready` alone can resolve early (before layout triggers the
+        // @font-face fetch), letting the FIRST capture paint with a fallback
+        // font and a later capture paint with Inter — non-deterministic PNGs at
+        // the same frozen time. Explicitly loading the exact faces we render
+        // guarantees every capture is byte-identical.
+        if (document.fonts && document.fonts.load) {
+          await Promise.all([
+            document.fonts.load('700 56px "Inter"'),
+            document.fonts.load('700 30px "Inter"'),
+          ]);
+        }
         if (document.fonts && document.fonts.ready) await document.fonts.ready;
       },
     });
