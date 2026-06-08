@@ -30,7 +30,7 @@ export const sharedBakedKeyIndex = new BakedKeyIndex();
 /// un-baked template never pays an IPC. Any read/permission error is swallowed
 /// and falls through to a live raster, so an fs hiccup can never blank preview.
 export async function resolveMotifFrame(
-  template: Motif,
+  motif: Motif,
   cacheKey: string,
   frame: number,
   tSec: number,
@@ -45,9 +45,9 @@ export async function resolveMotifFrame(
       // permission/io hiccup — fall through to live raster.
     }
   }
-  const [w, h] = template.manifest.size;
+  const [w, h] = motif.manifest.size;
   // durationSec is unused by the CDP path (duration is derived Rust-side from
   // props in v1); kept in the signature for parity with the SVG era.
   void durationSec;
-  return rasterMotifFrame(template.manifest.id, tSec, canonicalProps, w!, h!, template.manifest.settle_rafs);
+  return rasterMotifFrame(motif.manifest.id, tSec, canonicalProps, w!, h!, motif.manifest.settle_rafs);
 }

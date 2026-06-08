@@ -60,7 +60,7 @@ export class MotifSprite {
   readonly motifId: string;
   private readonly fpsNum: number;
   private readonly fpsDen: number;
-  private template: Motif | null;
+  private motif: Motif | null;
   /// The (cacheKey, frame) we currently want displayed — set eagerly in
   /// `update` and read for BOTH the no-op check and the async race-guard
   /// (a newer `update` supersedes an in-flight rasterize by moving these).
@@ -87,8 +87,8 @@ export class MotifSprite {
     this.fpsNum = init.fpsNum;
     this.fpsDen = init.fpsDen;
     this.onLoaded = init.onLoaded ?? null;
-    this.template = getMotif(this.motifId);
-    if (!this.template) {
+    this.motif = getMotif(this.motifId);
+    if (!this.motif) {
       // eslint-disable-next-line no-console
       console.warn(
         `[weftcut/pixi] MotifSprite ${this.layerId}: unknown motif "${this.motifId}"`,
@@ -117,7 +117,7 @@ export class MotifSprite {
     durationUs: number,
     injectedFrames?: readonly ImageBitmap[],
   ): void {
-    if (this.disposed || !this.template) return;
+    if (this.disposed || !this.motif) return;
 
     // Transforms first, every tick, BEFORE the frame no-op below: a
     // transform-only change with an unchanged frame must still take.
@@ -159,7 +159,7 @@ export class MotifSprite {
     }
 
     const desc = motifFrameDescriptor(
-      view, tInLayerUs, durationUs, this.fpsNum, this.fpsDen, this.template,
+      view, tInLayerUs, durationUs, this.fpsNum, this.fpsDen, this.motif,
     );
     if (!desc) {
       // eslint-disable-next-line no-console
@@ -197,10 +197,10 @@ export class MotifSprite {
     durationSec: number,
     canonicalProps: Record<string, unknown>,
   ): Promise<void> {
-    if (!this.template) return;
+    if (!this.motif) return;
     try {
       const bitmap = await resolveMotifFrame(
-           this.template, cacheKey, frame, tSec, durationSec, canonicalProps,
+           this.motif, cacheKey, frame, tSec, durationSec, canonicalProps,
          );
       // Hand the bitmap to the cache. `setFrame` is idempotent: if a sibling
       // sprite already cached this (cacheKey, frame), it keeps that bitmap and
