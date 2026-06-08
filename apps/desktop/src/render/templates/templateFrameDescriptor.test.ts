@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getTemplate, resolveTemplateContentDurationUs } from "./catalog";
+import { getMotif, resolveMotifContentDurationUs } from "./catalog";
 import { templateFrameDescriptor } from "./templateFrameDescriptor";
 import { templateContentFrame, templateFrameCacheKey } from "./templateFrames";
 import { canonicalizeProps } from "./Rasterizer";
@@ -9,13 +9,13 @@ function view(props: Record<string, unknown>, srcInUs = 0): any {
 }
 
 describe("templateFrameDescriptor", () => {
-  const tpl = getTemplate("countdown")!;
+  const tpl = getMotif("countdown")!;
   it("matches the inline cacheKey + contentFrame computation (capped countdown)", () => {
     const v = view({ seconds: 6, accent: "#ff3366" });
     const tInLayerUs = 2_000_000;
     const d = templateFrameDescriptor(v, tInLayerUs, 5_000_000, 30, 1, tpl)!;
     const canonical = canonicalizeProps(v.props, tpl.manifest);
-    const cap = resolveTemplateContentDurationUs(tpl.manifest, v.props)!;
+    const cap = resolveMotifContentDurationUs(tpl.manifest, v.props)!;
     const { frame, contentDurationFrames } = templateContentFrame(tInLayerUs, 0, cap, 30, 1);
     const expectedKey = templateFrameCacheKey({
       templateId: "countdown", version: tpl.manifest.version, canonicalProps: canonical,

@@ -19,7 +19,7 @@ import { ImageSource, Sprite, Texture } from "pixi.js";
 
 import { frameIndexInLayer } from "../../frames";
 import type { MotifView } from "../../ipc";
-import { getTemplate, type Template } from "../templates/catalog";
+import { getMotif, type Motif } from "../templates/catalog";
 import { resolveTemplateFrame, sharedTemplateFrameCache } from "../templates/templateRaster";
 import { templateFrameDescriptor } from "../templates/templateFrameDescriptor";
 import { templateDurationFrames } from "../templates/templateFrames";
@@ -60,7 +60,7 @@ export class MotifSprite {
   readonly motifId: string;
   private readonly fpsNum: number;
   private readonly fpsDen: number;
-  private template: Template | null;
+  private template: Motif | null;
   /// The (cacheKey, frame) we currently want displayed — set eagerly in
   /// `update` and read for BOTH the no-op check and the async race-guard
   /// (a newer `update` supersedes an in-flight rasterize by moving these).
@@ -87,7 +87,7 @@ export class MotifSprite {
     this.fpsNum = init.fpsNum;
     this.fpsDen = init.fpsDen;
     this.onLoaded = init.onLoaded ?? null;
-    this.template = getTemplate(this.motifId);
+    this.template = getMotif(this.motifId);
     if (!this.template) {
       // eslint-disable-next-line no-console
       console.warn(

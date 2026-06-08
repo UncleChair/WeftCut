@@ -23,7 +23,7 @@ import { captureMotifFrame } from "../render/motifs/host";
 import { hashCacheKey } from "../render/templates/frameCache";
 import { sharedTemplateFrameCache, sharedBakedKeyIndex } from "../render/templates/templateRaster";
 import { templateFrameDescriptor } from "../render/templates/templateFrameDescriptor";
-import { getTemplate } from "../render/templates/catalog";
+import { getMotif } from "../render/templates/catalog";
 import { requestPrebake } from "../render/templates/prebakeBus";
 import { mergeSettings, type ExportSettings } from "../render/exportSettings";
 import { useProjectStore, exportPlaybackPathFor } from "../state/projectStore";
@@ -325,7 +325,7 @@ export function installTemplateHarnessHook(): void {
     outer: for (const track of summary.tracks) {
       for (const layer of track.layers) {
         if (layer.id !== layerId || layer.params.kind !== "Motif") continue;
-        const template = getTemplate(layer.params.motif_id);
+        const template = getMotif(layer.params.motif_id);
         if (!template) break outer;
         const durationUs = layer.t_end_us - layer.t_start_us;
         const desc = templateFrameDescriptor(layer.params, 0, durationUs, summary.composition.fps_num, summary.composition.fps_den, template);
@@ -380,7 +380,7 @@ export function installTemplateHarnessHook(): void {
     for (const track of summary.tracks) {
       for (const layer of track.layers) {
         if (layer.id !== layerId || layer.params.kind !== "Motif") continue;
-        const template = getTemplate(layer.params.motif_id);
+        const template = getMotif(layer.params.motif_id);
         if (!template) return null;
         const durationUs = layer.t_end_us - layer.t_start_us;
         const desc = templateFrameDescriptor(layer.params, 0, durationUs, summary.composition.fps_num, summary.composition.fps_den, template);

@@ -9,7 +9,7 @@
 
 import { TemplateFrameCache } from "./frameCache";
 import { BakedKeyIndex } from "./bakedKeyIndex";
-import type { Template } from "./catalog";
+import type { Motif } from "./catalog";
 import { rasterMotifFrame } from "../motifs/motifRaster";
 
 /// Process-wide per-frame cache shared by every TemplateSprite AND the
@@ -30,7 +30,7 @@ export const sharedBakedKeyIndex = new BakedKeyIndex();
 /// un-baked template never pays an IPC. Any read/permission error is swallowed
 /// and falls through to a live raster, so an fs hiccup can never blank preview.
 export async function resolveTemplateFrame(
-  template: Template,
+  template: Motif,
   cacheKey: string,
   frame: number,
   tSec: number,

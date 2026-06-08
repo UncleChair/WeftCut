@@ -1,8 +1,8 @@
 import { describe, expect, test } from "vitest";
 import { canonicalizeProps } from "./Rasterizer";
-import type { TemplateManifest } from "./catalog";
+import type { MotifManifest } from "./catalog";
 
-const sampleManifest: TemplateManifest = {
+const sampleManifest: MotifManifest = {
   id: "lower-third-simple",
   name: "Simple Lower Third",
   version: 1,

@@ -1,10 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import type { ExportSettings } from "../render/exportSettings";
-import type {
-  TemplateEngine,
-  TemplateFont,
-} from "../render/templates/catalog";
 
 export interface CompositionSummary {
   width: number;
@@ -1026,10 +1022,8 @@ export type PropSpec =
   | { type: "color"; default: string }
   | { type: "number"; default: number; min?: number; max?: number };
 
-/// One catalog entry from `list_motifs()`. Superset of the MCP `list_motifs`
-/// payload — `Manifest` plus the raw `html` document + capture `engine` + font
-/// declarations so the picker can render live previews without a second
-/// round-trip.
+/// One catalog entry from `list_motifs()`. Mirrors the MCP `list_motifs`
+/// manifest payload.
 export interface MotifSummary {
   id: string;
   name: string;
@@ -1050,13 +1044,6 @@ export interface MotifSummary {
   /// Keyed by prop name. Map order is BTreeMap-stable (alphabetical) so the
   /// picker can render fields in a deterministic order without sorting.
   props_schema: Record<string, PropSpec>;
-  /// How the template's frames are captured (defaults to `"svg"`).
-  engine: TemplateEngine;
-  /// Raw, self-contained template HTML document (SVG markup + inline
-  /// `render()` script for the `"svg"` engine).
-  html: string;
-  /// Fonts the template bundles. Empty for built-ins using system fonts.
-  fonts: TemplateFont[];
 }
 
 export async function listMotifs(): Promise<MotifSummary[]> {

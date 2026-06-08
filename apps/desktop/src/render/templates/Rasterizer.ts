@@ -9,14 +9,14 @@
 // SVG render path (`harness.ts` + `svgRaster.ts` + `frameCache.ts`); only the
 // canonicalizer survives. Importers: `TemplateSprite.ts`, `exportBake.ts`.
 
-import type { TemplateManifest } from "./catalog";
+import type { MotifManifest } from "./catalog";
 
 /// Fill defaults for missing props, reject unknown keys. Returns a
 /// new object with keys in `props_schema` insertion order so the
 /// canonical JSON form is stable.
 export function canonicalizeProps(
   raw: Record<string, unknown>,
-  manifest: TemplateManifest,
+  manifest: MotifManifest,
 ): Record<string, unknown> {
   for (const key of Object.keys(raw)) {
     if (!(key in manifest.props_schema)) {
