@@ -76,7 +76,7 @@ export interface E2EHook {
   /// layer-relative times and read back the interior pixel of each bound
   /// raster. Exercises the full sprite chain in real WebView2:
   /// `update(view, tInLayerUs, durationUs)` → frame index → `frameTimeSec` →
-  /// harness `render(tSec)` → `rasterizeSvg` → bound `Texture`. The spec
+  /// `resolveTemplateFrame` → `rasterMotifFrame` (CDP) → bound `Texture`. The spec
   /// asserts the two frames differ (the template animated across the
   /// timeline). `browser.execute` can't import the bundled `TemplateSprite`,
   /// so it's constructed here and the result reduced to plain numbers.
