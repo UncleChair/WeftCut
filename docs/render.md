@@ -221,34 +221,33 @@ drag works without churn.
 | `VideoClipSprite` | `FrameRing` snapshot → `Texture` | Consumes the `DecodedFrame` returned by `FrameStore.frameAt` — `ImageBitmap` from preview's `FrameRing`, `VideoFrame` from export's `ExportFrameStore`. PixiJS v8 `ImageSource` accepts both. |
 | `ImageOverlaySprite` | `createImageBitmap` → `Texture` | One-shot bitmap creation at sprite spawn; cached for the layer's lifetime. |
 | `TextSprite` | PixiJS `Text` (native canvas) | Shadow via drop-shadow filter; outline via stroke option; intro / outro presets are sprite-side animation. |
-| `TemplateSprite` | Rastered SVG frame → `Texture` | Rasterizes the template's `render(t)` SVG for the playhead's layer-relative time (on demand, RAM lookahead, or persisted PNG) and binds it; see [`templates.md`](templates.md). |
+| `MotifSprite` | CDP-captured PNG frame → `Texture` | Binds the Motif's frame for the playhead's layer-relative time (on demand, RAM lookahead, or persisted PNG); frames come from the webcap CDP capture path, not an in-process raster; see [`motifs.md`](motifs.md). |
 | `SubtitlesSprite` | JASSUB canvas → `Texture` | libass-wasm renders into its own canvas; we copy as a texture each frame. |
 | `ColorSprite` | PixiJS `Graphics` rect | Animated fill color. |
 
-## Templates
+## Motifs
 
-A template is a parameterized, time-varying SVG overlay. Because the
-export Worker has no DOM — and cannot even decode SVG — a template is
-rasterized on the **main thread** for both surfaces: the export Worker
-receives the rastered bitmaps rather than producing them, so one
-rasterizer feeds preview and export and preview-equals-export holds.
+A Motif is a parameterized, time-varying web overlay (a lower-third, a
+countdown, a title card). Because the export Worker has no DOM, a Motif is
+captured to a bitmap on the **main process** for both surfaces: the export
+Worker receives the bitmaps rather than producing them, so one capture path
+feeds preview and export and preview-equals-export holds.
 
-`TemplateSprite` obtains the frame for the playhead's layer-relative
-time (rastered on demand, from a RAM lookahead ring, or from a persisted
-PNG sequence) and binds it as a texture; the layer transform and opacity
-are applied to the sprite. Capture runs a template's synchronous
-`render(t)` inside a sandboxed iframe harness, serializes the post-render
-SVG, and rasterizes it via an `<img>` → `createImageBitmap`. HTML/CSS via
-`<foreignObject>` is not used — its raster is cross-origin-tainted in
-WebView2 (ADR 0015).
+`MotifSprite` obtains the frame for the playhead's layer-relative time
+(captured on demand, from a RAM lookahead ring, or from a persisted PNG
+sequence) and binds it as a texture; the layer transform and opacity are
+applied to the sprite. Capture drives the Motif's page to time `t` in a hidden
+WebView2 host and grabs a taint-free PNG via the DevTools Protocol
+(`Page.captureScreenshot`) — a real browser raster, so unlike an SVG
+`<foreignObject>` it is not cross-origin-tainted.
 
-Templates' `index.html` (SVG markup + inline render script) + manifests are embedded in the Rust binary
-via `include_str!`; see `crate::templates` (`src-tauri/src/templates/`).
-The catalog is surfaced to the webview via the `list_templates`
-Tauri command and the MCP `list_templates` tool.
+A Motif's `index.html` + manifest (+ optional `assets/`) are embedded in the
+Rust binary and served to the host over the `motif:` URI scheme; see
+`crate::motifs` (`src-tauri/src/motifs/`). The catalog is surfaced to the
+webview via the `list_motifs` Tauri command and the MCP `list_motifs` tool.
 
-See [`templates.md`](templates.md) for the authoring contract, the
-capture harness, and the raster cache.
+See [`motifs.md`](motifs.md) for the authoring contract, the capture harness,
+and the raster cache.
 
 ## Subtitles
 

@@ -139,18 +139,17 @@ into its own canvas; the sprite sets that canvas as a Pixi texture each
 frame. The texture is regenerated every render because libass tracks
 its own animation state internally.
 
-## Templates
+## Motifs
 
-`TemplateSprite` binds a rastered SVG frame as a Pixi texture. The
-template's `render(t)` (run in a sandboxed iframe harness) produces an
-SVG for the playhead's layer-relative time; that SVG — with its
-`@font-face` injected — is rasterized to an `ImageBitmap` via an `<img>`
-→ `createImageBitmap`, and the bitmap becomes the texture. HTML/CSS via
-`<foreignObject>` is not used (its raster taints in WebView2; ADR 0015).
-In preview the frame is rastered on demand, with a RAM lookahead ring
-for heavy templates; the raster cache is keyed on content hash
-(template id + version + props + fps + duration), shared across sprite
-instances of the same template. See [`templates.md`](templates.md).
+`MotifSprite` binds a Motif's captured PNG frame as a Pixi texture. The Motif's
+page is driven to the playhead's layer-relative time in a hidden WebView2 host
+and grabbed as a taint-free PNG via the DevTools Protocol
+(`Page.captureScreenshot`) — unlike an SVG `<foreignObject>`, that real browser
+raster is not cross-origin-tainted (the wall that ruled out HTML/CSS rasterizing
+before). In preview the frame is captured on demand, with a RAM lookahead ring
+for heavy Motifs; the cache is keyed on content identity (motif id + version +
+props + render size + fps + content-duration frames), shared across sprite
+instances of the same Motif. See [`motifs.md`](motifs.md).
 
 ## Diagnostics
 

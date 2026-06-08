@@ -2,7 +2,7 @@
 // Motifs are keyed by their canonical `manifest.id` (kebab-case), not by their
 // directory name (snake_case).
 //
-// Plan: docs/templates.md
+// Plan: docs/motifs.md
 
 export type PropSpec =
   | { type: "string"; default: string; max_length?: number }
