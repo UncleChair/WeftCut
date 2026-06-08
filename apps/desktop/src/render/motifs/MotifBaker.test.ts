@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { MotifBaker, type BakeContentSpec } from "./TemplateBaker";
+import { MotifBaker, type BakeContentSpec } from "./MotifBaker";
 
 function makeFakeBitmap(): ImageBitmap {
   return { close: vi.fn(), width: 1, height: 1 } as unknown as ImageBitmap;

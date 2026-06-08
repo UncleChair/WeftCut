@@ -20,11 +20,11 @@ import {
   type CanvasPreset,
 } from "../ipc";
 import { captureMotifFrame } from "../render/motifs/host";
-import { hashCacheKey } from "../render/templates/frameCache";
-import { sharedMotifFrameCache, sharedBakedKeyIndex } from "../render/templates/templateRaster";
-import { motifFrameDescriptor } from "../render/templates/templateFrameDescriptor";
-import { getMotif } from "../render/templates/catalog";
-import { requestPrebake } from "../render/templates/prebakeBus";
+import { hashCacheKey } from "../render/motifs/frameCache";
+import { sharedMotifFrameCache, sharedBakedKeyIndex } from "../render/motifs/motifRasterCache";
+import { motifFrameDescriptor } from "../render/motifs/motifFrameDescriptor";
+import { getMotif } from "../render/motifs/catalog";
+import { requestPrebake } from "../render/motifs/prebakeBus";
 import { mergeSettings, type ExportSettings } from "../render/exportSettings";
 import { useProjectStore, exportPlaybackPathFor } from "../state/projectStore";
 import { exists, readDir } from "@tauri-apps/plugin-fs";

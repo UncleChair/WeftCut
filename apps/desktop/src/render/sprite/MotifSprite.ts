@@ -19,10 +19,10 @@ import { ImageSource, Sprite, Texture } from "pixi.js";
 
 import { frameIndexInLayer } from "../../frames";
 import type { MotifView } from "../../ipc";
-import { getMotif, type Motif } from "../templates/catalog";
-import { resolveMotifFrame, sharedMotifFrameCache } from "../templates/templateRaster";
-import { motifFrameDescriptor } from "../templates/templateFrameDescriptor";
-import { motifDurationFrames } from "../templates/templateFrames";
+import { getMotif, type Motif } from "../motifs/catalog";
+import { resolveMotifFrame, sharedMotifFrameCache } from "../motifs/motifRasterCache";
+import { motifFrameDescriptor } from "../motifs/motifFrameDescriptor";
+import { motifDurationFrames } from "../motifs/motifFrames";
 
 // A faint neutral tile shown while a first-ever-cold Motif's frame 0 is still
 // in flight, so the layer reads as "warming" rather than vanishing. Built once

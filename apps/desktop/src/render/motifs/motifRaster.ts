@@ -3,7 +3,7 @@
 // webcap CDP path, bumping the same perf instrument so existing e2e
 // render-count assertions keep working.
 import { captureMotifFrame } from "./host";
-import type { Motif } from "../templates/catalog";
+import type { Motif } from "./catalog";
 
 export async function rasterMotifFrame(
   motifId: string,

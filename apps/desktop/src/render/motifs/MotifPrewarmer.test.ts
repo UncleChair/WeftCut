@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { MotifPrewarmer, type PrewarmContentSpec } from "./TemplatePrewarmer";
+import { MotifPrewarmer, type PrewarmContentSpec } from "./MotifPrewarmer";
 
 function makeBmp(): ImageBitmap { return { close() {} } as unknown as ImageBitmap; }
 

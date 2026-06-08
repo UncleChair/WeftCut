@@ -32,8 +32,8 @@ import {
   useTailSnapStrengthPx,
 } from "../settings/appSettingsStore";
 import { useShortcuts, type OverrideMap } from "../shortcuts";
-import { requestPrebake } from "../render/templates/prebakeBus";
-import { useLayerBakePhase } from "./templateBakeStatusStore";
+import { requestPrebake } from "../render/motifs/prebakeBus";
+import { useLayerBakePhase } from "./motifBakeStatusStore";
 
 // Zoom + height bounds. The default matches the pre-refactor constant so
 // projects that have never written `view.json` look identical to before.

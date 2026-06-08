@@ -12,7 +12,7 @@ import {
   motifContentFrame,
   motifDurationFrames,
   templateFrameCacheKey,
-} from "../templates/templateFrames";
+} from "../motifs/motifFrames";
 
 describe("motifDurationFrames", () => {
   test("exact-rational frame count over the duration (30fps)", () => {

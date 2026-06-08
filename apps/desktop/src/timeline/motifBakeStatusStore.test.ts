@@ -6,7 +6,7 @@ import {
   useMotifBakeStatusStore,
   motifWarmPhase,
   type LayerBakeStatus,
-} from "./templateBakeStatusStore";
+} from "./motifBakeStatusStore";
 
 const baking: LayerBakeStatus = { phase: "baking", done: 1, total: 3 };
 

@@ -23,23 +23,23 @@ import { SubtitlesSprite } from "./sprite/SubtitlesSprite";
 import { MotifSprite } from "./sprite/MotifSprite";
 import { TextSprite } from "./sprite/TextSprite";
 import { VideoClipSprite } from "./sprite/VideoClipSprite";
-import { getMotif } from "./templates/catalog";
-import { MotifPrewarmer, type PrewarmContentSpec } from "./templates/TemplatePrewarmer";
-import { motifFrameDescriptor } from "./templates/templateFrameDescriptor";
+import { getMotif } from "./motifs/catalog";
+import { MotifPrewarmer, type PrewarmContentSpec } from "./motifs/MotifPrewarmer";
+import { motifFrameDescriptor } from "./motifs/motifFrameDescriptor";
 import {
   resolveMotifFrame,
   sharedBakedKeyIndex,
   sharedMotifFrameCache,
-} from "./templates/templateRaster";
-import { MotifBaker, type BakeContentSpec } from "./templates/TemplateBaker";
-import { encodeBitmapToPng } from "./templates/pngEncode";
-import { onPrebakeRequest } from "./templates/prebakeBus";
+} from "./motifs/motifRasterCache";
+import { MotifBaker, type BakeContentSpec } from "./motifs/MotifBaker";
+import { encodeBitmapToPng } from "./motifs/pngEncode";
+import { onPrebakeRequest } from "./motifs/prebakeBus";
 import { bakeMotifFrame } from "./motifs/motifRaster";
 import {
   setLayerBakeStatuses,
   motifWarmPhase,
   type LayerBakeStatus,
-} from "../timeline/templateBakeStatusStore";
+} from "../timeline/motifBakeStatusStore";
 import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { swapKeys } from "./swapKeys";
 

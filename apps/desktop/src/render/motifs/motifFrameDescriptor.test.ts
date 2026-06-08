@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { getMotif, resolveMotifContentDurationUs } from "./catalog";
-import { motifFrameDescriptor } from "./templateFrameDescriptor";
-import { motifContentFrame, templateFrameCacheKey } from "./templateFrames";
+import { motifFrameDescriptor } from "./motifFrameDescriptor";
+import { motifContentFrame, templateFrameCacheKey } from "./motifFrames";
 import { canonicalizeProps } from "./Rasterizer";
 
 function view(props: Record<string, unknown>, srcInUs = 0): any {
