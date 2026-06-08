@@ -18,7 +18,8 @@ use super::catalog::{parse_manifest_island, Manifest};
 /// Motif id.
 pub const DRAFTS_DIR: &str = "drafts";
 
-/// The global user-Motif store. Cheap to clone-by-reference via Tauri state.
+/// The global user-Motif store.
+/// Accessed by reference via `tauri::State<UserMotifStore>` — no `Clone`/`Arc` needed.
 pub struct UserMotifStore {
     root: PathBuf,
 }
@@ -59,6 +60,13 @@ impl UserMotifStore {
     /// Read a file from `<root>/<id>/<rel>`, path-safely. `None` if `id`/`rel`
     /// are unsafe or the file does not exist.
     pub fn read_file(&self, id: &str, rel: &str) -> Option<Vec<u8>> {
+        // The reserved drafts/ subtree is never an installed Motif id. The
+        // motif:// URI handler calls read_file with an id from the URL, so this
+        // guard (not just list_manifests skipping it) is what keeps WIP drafts
+        // unreachable.
+        if id == DRAFTS_DIR {
+            return None;
+        }
         let safe_id = safe_rel(id)?;
         let safe = safe_rel(rel)?;
         let path = self.root.join(safe_id).join(safe);
@@ -91,7 +99,11 @@ impl UserMotifStore {
                 continue;
             };
             match parse_manifest_island(&html) {
-                Ok(m) => out.push(m),
+                Ok(m) => {
+                    // TODO(stage 2): the install path must enforce manifest.id ==
+                    // <dir name>; here we trust the island's id matches the dir.
+                    out.push(m);
+                }
                 Err(e) => tracing::warn!(
                     "user motif {:?}: bad manifest island: {e}",
                     entry.file_name()
@@ -128,6 +140,11 @@ mod tests {
         assert!(store.read_file("..", "index.html").is_none());
         assert!(store.read_file("user-x", "/etc/hosts").is_none());
         assert!(store.read_file("user-x", "a\\b").is_none());
+        assert!(store.read_file("user-x", ".").is_none());
+        assert!(store.read_file("user-x", "").is_none());
+        assert!(store.read_file("user-x", "C:/foo").is_none());
+        // The reserved drafts subtree is unreachable via read_file.
+        assert!(store.read_file(DRAFTS_DIR, "index.html").is_none());
     }
 
     #[test]
