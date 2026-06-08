@@ -1,7 +1,7 @@
 // apps/desktop/src/render/motifs/motifRaster.ts
 // The live per-frame producer for Motifs: captures one frame through the
-// webcap CDP path. Drop-in replacement for the SVG `rasterTemplateFrame`,
-// same perf instrument so existing e2e render-count assertions keep working.
+// webcap CDP path, bumping the same perf instrument so existing e2e
+// render-count assertions keep working.
 import { captureMotifFrame } from "./host";
 import type { Template } from "../templates/catalog";
 

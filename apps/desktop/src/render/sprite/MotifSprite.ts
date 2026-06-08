@@ -1,20 +1,19 @@
-// Template layer rendered via the SVG capture harness → per-frame raster →
-// texture. A template animates over its layer duration: each composition
-// frame is a distinct `render(tSec)` rasterized to an `ImageBitmap` and
+// Motif layer rendered via the CDP capture path → per-frame raster → texture.
+// A Motif animates over its layer duration: each composition frame is a
+// distinct `resolveTemplateFrame` call rasterized to an `ImageBitmap` and
 // bound by frame index.
 //
 // Frames are stored in a process-wide `sharedTemplateFrameCache` (an in-RAM
 // LRU keyed by `(cacheKey, frameIndex)`) so two sprites referencing the same
-// template with the same canonical props / dims / fps share one bitmap per
+// Motif with the same canonical props / dims / fps share one bitmap per
 // frame. Sprite dispose tears down the sprite's Pixi Texture wrapper but does
 // NOT close the underlying bitmap — the cache owns its lifetime.
 //
-// Capture is async: on a cache miss the sprite asks a per-templateId
-// `TemplateHarness` for the frame's `<svg>`, rasterizes it, stores it, and
-// binds it if the playhead still wants that (cacheKey, frame). Everything
-// DOM-touching (the harness iframe, `rasterizeSvg`) is kept INSIDE the async
-// path so a Template layer in the export Worker (no `document`) logs an error
-// rather than throwing synchronously out of `update()`.
+// Capture is async: on a cache miss the sprite calls `resolveTemplateFrame`
+// (in-RAM cache → on-disk PNG → live `rasterMotifFrame` CDP screenshot of the
+// hidden Motif host), stores the result, and binds it if the playhead still
+// wants that (cacheKey, frame). The export Worker (no `document`) never takes
+// this path — it binds pre-baked `injectedFrames` by index instead.
 
 import { ImageSource, Sprite, Texture } from "pixi.js";
 
