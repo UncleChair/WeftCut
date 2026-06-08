@@ -252,6 +252,10 @@ impl Motif {
 /// take the text up to the next `</script>`, and `serde_json`-parse it into a
 /// `Manifest`. Whitespace and other attributes on the tag are tolerated; we
 /// control the writer side so the format is stable.
+///
+/// The authored island must keep the opening `<script>` tag free of `>` inside
+/// attribute values and must not contain a literal `</script>` inside the JSON
+/// (escape as `<\/script>`); we control the writer side, so this holds.
 pub fn parse_manifest_island(html: &str) -> Result<Manifest, MotifError> {
     let id_marker = html
         .find(r#"id="motif-manifest""#)
