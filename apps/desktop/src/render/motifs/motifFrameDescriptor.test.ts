@@ -81,4 +81,23 @@ describe("motifFrameDescriptor", () => {
     expect(desc!.canonicalProps.title).toBe("Yo");
     expect("stale" in desc!.canonicalProps).toBe(false);
   });
+
+  it("cacheKey changes when the motif's content_hash changes (draft hot-reload)", () => {
+    const v = view({});
+    const base = { manifest: { id: "d1", name: "X", version: 1, size: [100, 100] as [number, number],
+      default_duration_s: 5, props_schema: {}, content_hash: "hashA" } };
+    const edited = { manifest: { ...base.manifest, content_hash: "hashB" } };
+    const a = motifFrameDescriptor(v, 0, 5_000_000, 30, 1, base as never)!;
+    const b = motifFrameDescriptor(v, 0, 5_000_000, 30, 1, edited as never)!;
+    expect(a.cacheKey).not.toBe(b.cacheKey);
+  });
+
+  it("cacheKey is stable when content_hash is unchanged", () => {
+    const v = view({});
+    const m = { manifest: { id: "d1", name: "X", version: 1, size: [100, 100] as [number, number],
+      default_duration_s: 5, props_schema: {}, content_hash: "hashA" } };
+    const a = motifFrameDescriptor(v, 0, 5_000_000, 30, 1, m as never)!;
+    const b = motifFrameDescriptor(v, 0, 5_000_000, 30, 1, m as never)!;
+    expect(a.cacheKey).toBe(b.cacheKey);
+  });
 });

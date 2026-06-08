@@ -56,6 +56,7 @@ export function motifFrameDescriptor(
   const cacheKey = motifFrameCacheKey({
     motifId: motif.manifest.id,
     version: motif.manifest.version,
+    ...(motif.manifest.content_hash !== undefined && { contentHash: motif.manifest.content_hash }),
     canonicalProps, renderW, renderH, fpsNum, fpsDen,
     durationFrames: contentDurationFrames,
   });
