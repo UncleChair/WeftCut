@@ -17,10 +17,33 @@ export function createMotifRuntime(g: any = {}) {
   function seek(t: number) {
     vclock = t;
     if (g.document?.getAnimations) {
+      // Snapshot the animation list before the loop — cancel() inside mutates
+      // the live animation list; iterating the snapshot avoids skipping entries.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      for (const a of (g.document as any).getAnimations()) {
+      const anims: any[] = Array.from((g.document as any).getAnimations());
+      for (const a of anims) {
         a.pause();
         try { a.currentTime = t; } catch { /* read-only animation */ }
+        // After the seek, check whether this animation has run past its natural
+        // end (endTime).  If so, commit the final computed style as inline styles
+        // and cancel the animation.  Removing live WAAPI effects eliminates GPU
+        // compositor-layer promotion on "held" frames so that sequential CDP
+        // screenshots at the same frozen time produce byte-identical PNGs.
+        // Only applies to `fill:"both"` / `fill:"forwards"` — those have a
+        // well-defined after-phase value worth committing.
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const ct = (a.effect as any)?.getComputedTiming?.();
+          if (ct) {
+            const fill = ct.fill as string;
+            const endTime = typeof ct.endTime === 'number' ? ct.endTime : Infinity;
+            const curTime = typeof a.currentTime === 'number' ? a.currentTime : -1;
+            if ((fill === 'both' || fill === 'forwards') && curTime >= endTime) {
+              try { a.commitStyles(); } catch { /* not committable (pseudo-el, etc.) */ }
+              a.cancel();
+            }
+          }
+        } catch { /* getComputedTiming unavailable */ }
       }
     }
     // Flush the queued rAF callbacks up to 4 rounds to handle re-queued cbs.
