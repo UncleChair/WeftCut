@@ -392,8 +392,8 @@ const zhCN: Resources = {
     test_hint:
       "运行一次廉价的 API 调用，确认所保存的密钥可用。可在首次调用云端工具前提前暴露密钥无效或速率限制错误。",
     templates_heading: "Motifs",
-    prebake_templates: "预烘焙 Motifs",
-    prebake_templates_hint:
+    prebake_motifs: "预烘焙 Motifs",
+    prebake_motifs_hint:
       "在后台将 Motif 动画帧渲染到磁盘，使播放更流畅、重新打开项目时即时加载。会在项目的 Cache 文件夹下占用磁盘空间。",
   },
   keybindings: {

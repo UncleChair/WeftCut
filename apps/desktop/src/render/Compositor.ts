@@ -1045,14 +1045,14 @@ export class Compositor {
   }
 
   /// Feed the L2 baker (the SOLE disk writer). Persists the FULL content of:
-  /// every active template content when the global `prebake_templates` setting
+  /// every active motif content when the global `prebake_motifs` setting
   /// is on, PLUS any layer the user manually "Pre-bake now"'d this session
   /// (regardless of the setting). Mirrors `updatePrewarmTargets`' descriptor
   /// shape; the baker's `render` closure uses `bakeMotifFrame` (CDP capture,
   /// no disk read) directly (reading disk-first would be pointless — the baker is the writer).
   private updateBakeTargets(tUs: number): void {
     if (!this.baker || !this.projectSummary) return;
-    const globalOn = useAppSettingsStore.getState().settings.prebake_templates;
+    const globalOn = useAppSettingsStore.getState().settings.prebake_motifs;
     const specs: BakeContentSpec[] = [];
     for (const track of this.projectSummary.tracks) {
       if (!track.enabled) continue;

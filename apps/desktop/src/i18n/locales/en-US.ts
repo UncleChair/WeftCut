@@ -400,8 +400,8 @@ const enUS = {
     test_hint:
       "Run a cheap API call to confirm the saved key works. Surfaces InvalidKey / rate-limit errors before your first cloud-backed agent call.",
     templates_heading: "Motifs",
-    prebake_templates: "Pre-bake motifs",
-    prebake_templates_hint:
+    prebake_motifs: "Pre-bake motifs",
+    prebake_motifs_hint:
       "Render motif animation frames to disk in the background so playback stays smooth and reopening the project is instant. Uses disk space under the project's Cache folder.",
   },
   keybindings: {
