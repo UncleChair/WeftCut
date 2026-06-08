@@ -6,7 +6,7 @@ use serde::Deserialize;
 use tauri::{AppHandle, Emitter, State};
 
 use super::authoring::{assign_unique_id, compose_motif_html, validate_manifest};
-use super::catalog::{builtins, Manifest, BUILTIN_IDS};
+use super::catalog::{builtins, parse_manifest_island, Manifest, BUILTIN_IDS};
 use super::store::UserMotifStore;
 
 /// App-wide event emitted whenever the user-Motif catalog changes (a draft is
@@ -60,11 +60,11 @@ pub async fn write_motif_draft(
     args: WriteDraftArgs,
 ) -> Result<String, String> {
     validate_manifest(&args.manifest).map_err(|e| e.to_string())?;
-    // TODO(stage 3): every call mints a NEW draft id; an iterative edit UI will
-    // want an amend path (reuse an existing draft_id) so refining a draft doesn't
-    // litter <root>/drafts/ with abandoned dirs. The 3b-2 auto-save path should
-    // also debounce or drop the motifs:changed emit on intermediate writes (it
-    // fires a full list_motifs re-pull) — emit really only matters on install/delete.
+    // NOTE: every call mints a NEW draft id; the iterative edit UI reuses an
+    // existing draft_id via `amend_motif_draft` (below) so refining a draft
+    // doesn't litter <root>/drafts/ with abandoned dirs. The 3b-2 auto-save path
+    // should still debounce or drop the motifs:changed emit on intermediate writes
+    // (it fires a full list_motifs re-pull) — emit really only matters on install/delete.
     // Final-ready id: unique vs BOTH published and existing drafts, so the id
     // never changes on install (Model B → no layer rebind).
     let taken: Vec<String> = store
@@ -79,6 +79,47 @@ pub async fn write_motif_draft(
     store.write_draft(&draft_id, &html).map_err(|e| e.to_string())?;
     emit_motifs_changed(&app);
     Ok(draft_id)
+}
+
+/// Core of `amend_motif_draft`: parse the manifest island out of an edited
+/// full-source document, force the draft's stable identity (id + draft version 1
+/// — id/version are app-assigned, never author-controlled), re-validate, and
+/// overwrite the SAME draft on disk. No `AppHandle` here so it's unit-testable.
+pub fn amend_draft_html(
+    store: &UserMotifStore,
+    draft_id: &str,
+    source: &str,
+) -> Result<(), String> {
+    // Amend never CREATES — the draft must already exist (that's write_motif_draft's job).
+    if store.get_draft(draft_id).is_none() {
+        return Err(format!("unknown draft '{draft_id}'"));
+    }
+    let mut manifest = parse_manifest_island(source).map_err(|e| e.to_string())?;
+    // Identity is app-owned: ignore any id/version the edited island claims.
+    manifest.id = draft_id.to_string();
+    manifest.version = 1;
+    validate_manifest(&manifest).map_err(|e| e.to_string())?;
+    // compose strips the (edited) island + re-injects a canonical one from
+    // `manifest`; the body is preserved verbatim and round-trips.
+    let html = compose_motif_html(&manifest, source);
+    store.write_draft(draft_id, &html).map_err(|e| e.to_string())
+}
+
+/// Overwrite an existing draft from its full edited source (the in-app source
+/// panel calls this). Distinct from `write_motif_draft`, which MINTS a new id;
+/// amend keeps the id stable so a placed draft layer keeps resolving while you
+/// edit. Emits `motifs:changed` so the catalog resyncs (new content_hash) and
+/// the preview re-captures.
+#[tauri::command]
+pub async fn amend_motif_draft(
+    app: AppHandle,
+    store: State<'_, UserMotifStore>,
+    draft_id: String,
+    source: String,
+) -> Result<(), String> {
+    amend_draft_html(&store, &draft_id, &source)?;
+    emit_motifs_changed(&app);
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -211,5 +252,38 @@ mod tests {
         let upd: InstallMode =
             serde_json::from_str(r#"{"kind":"update","target_id":"foo"}"#).unwrap();
         assert!(matches!(upd, InstallMode::Update { target_id } if target_id == "foo"));
+    }
+
+    #[test]
+    fn amend_overwrites_same_draft_id_and_forces_id() {
+        use super::super::store::UserMotifStore;
+        use super::super::authoring::compose_motif_html;
+        let tmp = tempfile::tempdir().unwrap();
+        let store = UserMotifStore::new(tmp.path().to_path_buf());
+        let mut man = m("Draft One"); man.id = "d1".into();
+        store.write_draft("d1", &compose_motif_html(&man,
+            "<head></head><body>one<script>motif.define({setup(){}})</script></body>")).unwrap();
+        let edited = compose_motif_html(&{ let mut x = m("Renamed"); x.id = "hacker".into(); x },
+            "<head></head><body>TWO<script>motif.define({setup(){}})</script></body>");
+        super::amend_draft_html(&store, "d1", &edited).unwrap();
+        assert_eq!(store.list_draft_ids(), vec!["d1".to_string()]); // no new draft minted
+        let got = store.get_draft("d1").unwrap();
+        assert_eq!(got.manifest.id, "d1");   // id forced back to draft id
+        assert!(got.html.contains("TWO"));   // new body persisted
+    }
+
+    #[test]
+    fn amend_rejects_unknown_draft_and_invalid_manifest() {
+        use super::super::store::UserMotifStore;
+        use super::super::authoring::compose_motif_html;
+        let tmp = tempfile::tempdir().unwrap();
+        let store = UserMotifStore::new(tmp.path().to_path_buf());
+        let src = compose_motif_html(&m("X"), "<head></head><body>x</body>");
+        assert!(super::amend_draft_html(&store, "nope", &src).is_err());
+        let mut man = m("D"); man.id = "d1".into();
+        store.write_draft("d1", &compose_motif_html(&man, "<head></head><body>x</body>")).unwrap();
+        let mut bad = m("D"); bad.size = [0, 0];
+        let bad_src = compose_motif_html(&bad, "<head></head><body>x</body>");
+        assert!(super::amend_draft_html(&store, "d1", &bad_src).is_err());
     }
 }
