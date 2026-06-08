@@ -2881,6 +2881,7 @@ input.preview-timecode:focus {
 .template-card-status.status-installed { background: #2a6; color: #fff; }
 .template-card-status.status-builtin { background: #444; color: #ccc; }
 .template-picker-new { margin-left: auto; }
+.template-picker-new-form { margin-left: auto; display: flex; gap: 6px; align-items: center; }
 
 .template-picker-form {
   padding: 8px 16px 16px;
