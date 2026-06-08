@@ -6,6 +6,8 @@ import {
   updateLayerParams,
   installMotif,
   deleteMotif,
+  getMotifSource,
+  amendMotifDraft,
   type GroupSummary,
   type LayerParamsPatch,
   type LayerSummary,
@@ -644,6 +646,7 @@ function MotifFields({
       <h3>{t("property_panel.template")}</h3>
       <BakeStatusLine layerId={layer.id} />
       <MotifLifecycleRow motifId={v.motif_id} />
+      <MotifSourcePanel motifId={v.motif_id} />
       <h4>{t("property_panel.transform")}</h4>
       <Field label={t("property_panel.x")}>
         <input
@@ -763,6 +766,68 @@ function MotifLifecycleRow({ motifId }: { motifId: string }) {
         })}
       >
         {t("property_panel.motif_delete")}
+      </button>
+      {err && <p className="settings-error">{err}</p>}
+    </div>
+  );
+}
+
+/// In-app source editor for a selected DRAFT Motif layer (upload-design §6).
+/// Deliberately minimal: a plain textarea of the draft's full composed source
+/// (manifest island + body). "Apply" funnels through `amendMotifDraft`, which
+/// re-parses the island, forces the stable id, re-composes, and emits
+/// `motifs:changed` → the catalog resyncs (new content_hash) → the canvas
+/// preview re-captures. Only shown for drafts; editing an installed Motif (which
+/// seeds a fresh draft) is a later stage.
+function MotifSourcePanel({ motifId }: { motifId: string }) {
+  const { t } = useTranslation();
+  // Re-resolve status reactively (same notifier the lifecycle row uses) so this
+  // unmounts the instant the draft is installed/deleted.
+  useSyncExternalStore(subscribeMotifCatalog, motifCatalogRevision);
+  const status = getMotif(motifId)?.manifest.status;
+  const [source, setSource] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Seed the textarea from disk whenever the selected draft changes.
+  useEffect(() => {
+    let alive = true;
+    setErr(null);
+    setSource(null);
+    getMotifSource(motifId)
+      .then((s) => { if (alive) setSource(s.html); })
+      .catch((e) => { if (alive) setErr(String(e)); });
+    return () => { alive = false; };
+  }, [motifId]);
+
+  if (status !== "draft") return null;
+
+  const apply = async () => {
+    if (source == null) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await amendMotifDraft(motifId, source);
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="prop-motif-source">
+      <h4>{t("property_panel.motif_source")}</h4>
+      <p className="meta">{t("property_panel.motif_source_hint")}</p>
+      <textarea
+        className="prop-motif-source-text"
+        spellCheck={false}
+        value={source ?? ""}
+        disabled={source == null || busy}
+        onChange={(e) => setSource(e.target.value)}
+      />
+      <button disabled={busy || source == null} onClick={apply}>
+        {busy ? t("property_panel.motif_source_applying") : t("property_panel.motif_source_apply")}
       </button>
       {err && <p className="settings-error">{err}</p>}
     </div>

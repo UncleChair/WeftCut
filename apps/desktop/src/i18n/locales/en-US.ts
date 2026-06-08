@@ -466,6 +466,10 @@ const enUS = {
     motif_delete: "Delete",
     motif_delete_confirm: 'Delete Motif "{{id}}"? Placed layers will lose their content.',
     motif_status: { draft: "Draft", installed: "Installed" },
+    motif_source: "Source",
+    motif_source_apply: "Apply",
+    motif_source_applying: "Applying…",
+    motif_source_hint: "Edit the Motif's HTML + manifest island, then Apply to update the preview.",
   },
   template_picker: {
     heading: "Motifs",

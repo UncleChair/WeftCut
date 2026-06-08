@@ -5093,3 +5093,12 @@ input.preview-timecode:focus {
 .prop-bake-status.is-warming { color: #f0a020; }
 .prop-bake-status.is-ready { color: #46c46a; }
 .prop-motif-lifecycle { display: flex; align-items: center; gap: 8px; margin: 6px 0; flex-wrap: wrap; }
+.prop-motif-source { margin: 8px 0; }
+.prop-motif-source-text {
+  width: 100%;
+  min-height: 160px;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11px;
+  resize: vertical;
+  white-space: pre;
+}
