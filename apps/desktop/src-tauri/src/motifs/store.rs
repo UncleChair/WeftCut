@@ -227,8 +227,9 @@ impl UserMotifStore {
             };
             match parse_manifest_island(&html) {
                 Ok(m) => {
-                    // TODO(stage 2): the install path must enforce manifest.id ==
-                    // <dir name>; here we trust the island's id matches the dir.
+                    // The install path (authoring_commands::install_motif) rewrites a
+                    // published Motif's island id to equal its directory name, so
+                    // manifest.id == <dir name> holds for anything installed by the app.
                     out.push(m);
                 }
                 Err(e) => tracing::warn!(
