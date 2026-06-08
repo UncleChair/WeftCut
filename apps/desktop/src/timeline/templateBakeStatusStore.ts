@@ -19,7 +19,7 @@ interface State {
   replace: (next: Record<string, LayerBakeStatus>) => void;
 }
 
-export const useTemplateBakeStatusStore = create<State>((set) => ({
+export const useMotifBakeStatusStore = create<State>((set) => ({
   byLayer: {},
   replace: (next) => set({ byLayer: next }),
 }));
@@ -27,7 +27,7 @@ export const useTemplateBakeStatusStore = create<State>((set) => ({
 /// Replace the whole map. The Compositor recomputes the full (small) map each
 /// time, so per-key diffing isn't worth it.
 export function setLayerBakeStatuses(next: Record<string, LayerBakeStatus>): void {
-  useTemplateBakeStatusStore.getState().replace(next);
+  useMotifBakeStatusStore.getState().replace(next);
 }
 
 // Pure lookups (unit-tested); the hooks wrap them so the dot's selector returns
@@ -44,11 +44,11 @@ export const selectLayerBakeStatus = (
 
 /// Dot: phase only (primitive → re-renders only on phase change).
 export const useLayerBakePhase = (layerId: string): LayerBakeStatus["phase"] | null =>
-  useTemplateBakeStatusStore((s) => selectLayerBakePhase(s.byLayer, layerId));
+  useMotifBakeStatusStore((s) => selectLayerBakePhase(s.byLayer, layerId));
 
 /// Panel: full status (object → re-renders the one selected panel on progress).
 export const useLayerBakeStatus = (layerId: string): LayerBakeStatus | null =>
-  useTemplateBakeStatusStore((s) => selectLayerBakeStatus(s.byLayer, layerId));
+  useMotifBakeStatusStore((s) => selectLayerBakeStatus(s.byLayer, layerId));
 
 /// Reduce a layer's (optional live bake status, L0 coverage, baked-on-disk flag)
 /// to the single status the timeline/panel shows. Precedence:
