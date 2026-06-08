@@ -1959,8 +1959,17 @@ pub async fn list_motifs(
         let html = store.read_html(&manifest.id).unwrap_or_default();
         out.push(motif_to_payload(&manifest, html, "installed")?);
     }
+    // Drafts last, and only if their id isn't already published/built-in — so
+    // `id` is a unique key in the result even if an abnormal on-disk state has a
+    // draft shadowing a published id (published wins, matching read_file).
+    let seen: std::collections::HashSet<String> = out
+        .iter()
+        .filter_map(|v| v.get("id").and_then(|s| s.as_str()).map(str::to_string))
+        .collect();
     for draft in store.list_drafts() {
-        out.push(motif_to_payload(&draft.manifest, draft.html, "draft")?);
+        if !seen.contains(draft.id()) {
+            out.push(motif_to_payload(&draft.manifest, draft.html, "draft")?);
+        }
     }
     Ok(out)
 }
