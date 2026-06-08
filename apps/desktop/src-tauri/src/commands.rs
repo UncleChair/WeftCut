@@ -1932,11 +1932,10 @@ fn motif_to_payload(
 }
 
 /// Stage F-Picker: the UI catalog. A superset of the MCP `list_motifs`
-/// payload — every manifest field (which now includes `engine` + `fonts`)
-/// plus the raw `html` document so the picker can render live previews
-/// client-side. The MCP surface stays manifest-only (see
-/// `mcp::templates_payload`); the extra `html` field is UI-only and would
-/// just bloat agent context.
+/// payload — every manifest field (e.g. `fonts`) plus the raw `html`
+/// document so the picker can render live previews client-side. The MCP
+/// surface stays manifest-only (see `mcp::templates_payload`); the extra
+/// `html` field is UI-only and would just bloat agent context.
 ///
 /// Returns built-ins first (fixed display order), then on-disk user Motifs.
 #[tauri::command]
@@ -1949,6 +1948,11 @@ pub async fn list_motifs(
         out.push(motif_to_payload(&t.manifest, t.html)?);
     }
     for manifest in store.list_manifests() {
+        // list_manifests already confirmed index.html parsed; this re-reads it
+        // for the picker payload. unwrap_or_default guards a TOCTOU (file
+        // vanished / non-UTF-8 since the scan): the picker shows a blank card
+        // rather than failing the whole list. (Dedup the double-read via a
+        // list_manifests_with_html helper if it ever matters.)
         let html = store.read_html(&manifest.id).unwrap_or_default();
         out.push(motif_to_payload(&manifest, html)?);
     }
