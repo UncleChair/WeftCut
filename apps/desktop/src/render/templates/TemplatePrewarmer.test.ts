@@ -1,15 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
-import { TemplatePrewarmer, type PrewarmContentSpec } from "./TemplatePrewarmer";
+import { MotifPrewarmer, type PrewarmContentSpec } from "./TemplatePrewarmer";
 
 function makeBmp(): ImageBitmap { return { close() {} } as unknown as ImageBitmap; }
 
-describe("TemplatePrewarmer", () => {
+describe("MotifPrewarmer", () => {
   it("rasters missing targets in plan order, skips cached, stops when done", async () => {
     const cached = new Set<string>();
     const setSpy = vi.fn((k: string, f: number) => cached.add(`${k}#${f}`));
     const renderSpy = vi.fn(async (_f: number) => makeBmp());
     const pending: (() => void)[] = [];
-    const prewarmer = new TemplatePrewarmer({
+    const prewarmer = new MotifPrewarmer({
       cap: 240,
       hasFrame: (k, f) => cached.has(`${k}#${f}`),
       setFrame: setSpy,
@@ -34,7 +34,7 @@ describe("TemplatePrewarmer", () => {
   it("dispose cancels and stops rastering", async () => {
     const pending: (() => void)[] = [];
     const renderSpy = vi.fn(async () => makeBmp());
-    const prewarmer = new TemplatePrewarmer({
+    const prewarmer = new MotifPrewarmer({
       cap: 240, hasFrame: () => false, setFrame: () => {},
       schedule: (cb) => { pending.push(cb); return pending.length; }, cancel: () => {}, batchSize: 1,
     });
@@ -60,7 +60,7 @@ describe("TemplatePrewarmer", () => {
         }),
     );
     const pending: (() => void)[] = [];
-    const prewarmer = new TemplatePrewarmer({
+    const prewarmer = new MotifPrewarmer({
       cap: 240,
       hasFrame: () => false,
       setFrame: () => {},
@@ -84,7 +84,7 @@ describe("TemplatePrewarmer", () => {
   it("calls onProgress after draining a batch", async () => {
     const onProgress = vi.fn();
     let scheduled: (() => void) | null = null;
-    const prewarmer = new TemplatePrewarmer({
+    const prewarmer = new MotifPrewarmer({
       cap: 10,
       hasFrame: () => false,
       setFrame: () => {},
@@ -120,7 +120,7 @@ describe("TemplatePrewarmer", () => {
     );
     const setFrame = vi.fn();
     const pending: (() => void)[] = [];
-    const prewarmer = new TemplatePrewarmer({
+    const prewarmer = new MotifPrewarmer({
       cap: 240,
       hasFrame: () => false,
       setFrame,

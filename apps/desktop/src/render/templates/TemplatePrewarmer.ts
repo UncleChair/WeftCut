@@ -2,13 +2,13 @@ import { planPrewarmTargets, type PrewarmContent } from "./prewarmPlan";
 
 /// One active template content the prewarmer can rasterize. The planning fields
 /// (cacheKey, contentFrame, contentDurationFrames) come from
-/// `templateFrameDescriptor`; `render(frame)` rasters an arbitrary content frame
+/// `motifFrameDescriptor`; `render(frame)` rasters an arbitrary content frame
 /// of this content.
 export interface PrewarmContentSpec extends PrewarmContent {
   render: (frame: number) => Promise<ImageBitmap>;
 }
 
-export interface TemplatePrewarmerDeps {
+export interface MotifPrewarmerDeps {
   cap: number;
   hasFrame: (cacheKey: string, frame: number) => boolean;
   setFrame: (cacheKey: string, frame: number, bmp: ImageBitmap) => void;
@@ -28,7 +28,7 @@ export interface TemplatePrewarmerDeps {
 /// Budget-paced background filler. `setTargets` (re)plans; an idle loop rasters
 /// missing frames in priority order until the plan is fully cached, yielding
 /// between batches. Never owns bitmaps (the cache does). Preview-only.
-export class TemplatePrewarmer {
+export class MotifPrewarmer {
   private specsByKey = new Map<string, PrewarmContentSpec>();
   private queue: { cacheKey: string; frame: number }[] = [];
   private scheduled: number | null = null;
@@ -36,7 +36,7 @@ export class TemplatePrewarmer {
   private disposed = false;
   private readonly batchSize: number;
 
-  constructor(private readonly deps: TemplatePrewarmerDeps) {
+  constructor(private readonly deps: MotifPrewarmerDeps) {
     this.batchSize = deps.batchSize ?? 3;
   }
 

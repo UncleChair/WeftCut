@@ -17,7 +17,7 @@
 //
 // CACHE HYGIENE: this bake produces FRESH bitmaps (a CDP capture, or — Task 2 —
 // a `createImageBitmap` of an on-disk L2 PNG) and never reads the in-RAM
-// `sharedTemplateFrameCache` (L0). Transfer NEUTERS the source ImageBitmap;
+// `sharedMotifFrameCache` (L0). Transfer NEUTERS the source ImageBitmap;
 // pulling L0 bitmaps would neuter preview's cached frames and break live
 // preview after an export. (L2 *disk* reads are safe — they decode to a fresh
 // bitmap, not a shared one.)
@@ -27,14 +27,14 @@ import type { ProjectSummary, MotifView } from "../ipc";
 import { getMotif, resolveMotifContentDurationUs, type Motif } from "./templates/catalog";
 import { canonicalizeProps } from "./templates/Rasterizer";
 import { bakeMotifFrame } from "./motifs/motifRaster";
-import { templateDurationFrames } from "./templates/templateFrames";
-import { sharedBakedKeyIndex, sharedTemplateFrameCache } from "./templates/templateRaster";
-import { templateFrameDescriptor } from "./templates/templateFrameDescriptor";
+import { motifDurationFrames } from "./templates/templateFrames";
+import { sharedBakedKeyIndex, sharedMotifFrameCache } from "./templates/templateRaster";
+import { motifFrameDescriptor } from "./templates/templateFrameDescriptor";
 
 const US_PER_SEC = 1_000_000;
 
 /// Compute the content frame to bake into layer-local slot `layerLocalFrame`,
-/// mirroring the preview path (`templateContentFrame` in `templateFrames.ts`)
+/// mirroring the preview path (`motifContentFrame` in `templateFrames.ts`)
 /// EXACTLY. The key invariant: a composition frame at index `layerStartFrame +
 /// layerLocalFrame` arrives at the compositor as
 /// `tInLayerUs = snapFrameFloor(compFrameUs) - tStartUs`, and the preview
@@ -69,7 +69,7 @@ export function bakeContentFrameFor(
   // is the exact half-up grid value (matches snapFrameFloor on-grid).
   const compFrameUs = Math.round((absFrame * US_PER_SEC * fpsDen) / fpsNum);
   const tInLayerUs = compFrameUs - tStartUs;
-  // Single summed floor — mirrors templateContentFrame exactly.
+  // Single summed floor — mirrors motifContentFrame exactly.
   const contentTimeUs = srcInUs + Math.max(0, tInLayerUs);
   const contentFrame = Math.min(
     contentDurationFrames - 1,
@@ -83,13 +83,13 @@ export function bakeContentFrameFor(
 /// the layer's full animated length on the comp grid (NOT clamped to the export
 /// range) so the per-frame index math matches `MotifSprite.update` exactly —
 /// a partial export range only narrows WHICH of those frames we actually bake.
-export interface TemplateBakeSpec {
+export interface MotifBakeSpec {
   layerId: string;
   template: Motif;
   view: MotifView;
   /// Layer duration in microseconds (`t_end_us - t_start_us`).
   durationUs: number;
-  /// Total animated frames on the comp grid (`templateDurationFrames`).
+  /// Total animated frames on the comp grid (`motifDurationFrames`).
   durationFrames: number;
   /// First/last comp-frame index (inclusive) overlapping the export range.
   /// Clamped to `[0, durationFrames - 1]`.
@@ -103,18 +103,18 @@ export interface TemplateBakeSpec {
 }
 
 /// Collect the Motif layers (enabled, on an enabled track) whose interval
-/// overlaps `[startUs, endUs)`, resolving each to a `TemplateBakeSpec`. Pure +
+/// overlaps `[startUs, endUs)`, resolving each to a `MotifBakeSpec`. Pure +
 /// Node-testable: no DOM, no rasterize. Layers whose `template_id` isn't in the
 /// catalog are skipped (they can't render anywhere — the live compositor warns
 /// too). `fpsNum/fpsDen` are the COMPOSITION fps.
-export function templateLayersToBake(
+export function motifLayersToBake(
   summary: ProjectSummary,
   startUs: number,
   endUs: number,
   fpsNum: number,
   fpsDen: number,
-): TemplateBakeSpec[] {
-  const out: TemplateBakeSpec[] = [];
+): MotifBakeSpec[] {
+  const out: MotifBakeSpec[] = [];
   for (const track of summary.tracks) {
     if (!track.enabled) continue;
     for (const layer of track.layers) {
@@ -138,7 +138,7 @@ export function templateLayersToBake(
       }
 
       const durationUs = layer.t_end_us - layer.t_start_us;
-      const durationFrames = templateDurationFrames(durationUs, fpsNum, fpsDen);
+      const durationFrames = motifDurationFrames(durationUs, fpsNum, fpsDen);
 
       // Comp-frame indices of the export-range overlap, expressed layer-local
       // (templates have no source-in offset, so layer-local time = comp time −
@@ -196,7 +196,7 @@ export type BakeProgress = (baked: number, total: number) => void;
 /// MUST run on the MAIN thread (Tauri `invoke` / CDP is not available in the
 /// Worker). `fpsNum/fpsDen` are the COMPOSITION fps. Captures fresh bitmaps via
 /// the CDP path (NOT the shared preview cache — see the module header).
-export async function exportBakeTemplates(
+export async function exportBakeMotifs(
   summary: ProjectSummary,
   startUs: number,
   endUs: number,
@@ -204,7 +204,7 @@ export async function exportBakeTemplates(
   fpsDen: number,
   onProgress?: BakeProgress,
 ): Promise<Record<string, ImageBitmap[]>> {
-  const specs = templateLayersToBake(summary, startUs, endUs, fpsNum, fpsDen);
+  const specs = motifLayersToBake(summary, startUs, endUs, fpsNum, fpsDen);
   const result: Record<string, ImageBitmap[]> = {};
   if (specs.length === 0) return result;
 
@@ -228,7 +228,7 @@ export async function exportBakeTemplates(
 
     // L2 fast path: this layer's content cacheKey (playhead/time-independent →
     // tInLayerUs=0; only desc.cacheKey is used, mirroring hydrateBakedIndexAndGc).
-    const desc = templateFrameDescriptor(
+    const desc = motifFrameDescriptor(
       spec.view, 0, spec.durationUs, fpsNum, fpsDen, spec.template,
     );
     const cacheKey = desc?.cacheKey ?? null;
@@ -254,7 +254,7 @@ export async function exportBakeTemplates(
       if (cacheKey && sharedBakedKeyIndex.has(cacheKey)) {
         try {
           // eslint-disable-next-line no-await-in-loop
-          const png = await sharedTemplateFrameCache.readPng(cacheKey, contentFrame);
+          const png = await sharedMotifFrameCache.readPng(cacheKey, contentFrame);
           if (png) {
             // eslint-disable-next-line no-await-in-loop
             frames[frame] = await createImageBitmap(png);

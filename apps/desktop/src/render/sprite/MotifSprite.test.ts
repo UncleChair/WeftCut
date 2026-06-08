@@ -9,34 +9,34 @@ import { describe, expect, test } from "vitest";
 
 import {
   frameTimeSec,
-  templateContentFrame,
-  templateDurationFrames,
+  motifContentFrame,
+  motifDurationFrames,
   templateFrameCacheKey,
 } from "../templates/templateFrames";
 
-describe("templateDurationFrames", () => {
+describe("motifDurationFrames", () => {
   test("exact-rational frame count over the duration (30fps)", () => {
     // 5 s @ 30 fps = 150 frames.
-    expect(templateDurationFrames(5_000_000, 30, 1)).toBe(150);
+    expect(motifDurationFrames(5_000_000, 30, 1)).toBe(150);
     // 10 s @ 30 fps = 300 frames.
-    expect(templateDurationFrames(10_000_000, 30, 1)).toBe(300);
+    expect(motifDurationFrames(10_000_000, 30, 1)).toBe(300);
   });
 
   test("clamps to at least 1 frame for sub-frame / zero durations", () => {
-    expect(templateDurationFrames(0, 30, 1)).toBe(1);
-    expect(templateDurationFrames(1, 30, 1)).toBe(1);
+    expect(motifDurationFrames(0, 30, 1)).toBe(1);
+    expect(motifDurationFrames(1, 30, 1)).toBe(1);
     // ~16.6ms is under one 30fps frame → still 1.
-    expect(templateDurationFrames(16_000, 30, 1)).toBe(1);
+    expect(motifDurationFrames(16_000, 30, 1)).toBe(1);
   });
 
   test("degenerate fps falls back to 1", () => {
-    expect(templateDurationFrames(5_000_000, 0, 1)).toBe(1);
-    expect(templateDurationFrames(5_000_000, 30, 0)).toBe(1);
+    expect(motifDurationFrames(5_000_000, 0, 1)).toBe(1);
+    expect(motifDurationFrames(5_000_000, 30, 0)).toBe(1);
   });
 
   test("honors a non-1 fps denominator (29.97)", () => {
     // 1 s @ 30000/1001 ≈ 29.97 → round(1e6 * 30000 / (1e6 * 1001)) ≈ 30.
-    expect(templateDurationFrames(1_000_000, 30000, 1001)).toBe(30);
+    expect(motifDurationFrames(1_000_000, 30000, 1001)).toBe(30);
   });
 });
 
@@ -87,21 +87,21 @@ describe("templateFrameCacheKey", () => {
   });
 });
 
-describe("templateContentFrame", () => {
+describe("motifContentFrame", () => {
   // 6s content @30fps = 180 frames (0..179).
   test("window [0,5s] into 6s content shows content frames 0..149 (6 down to 2)", () => {
-    const at0 = templateContentFrame(0, 0, 6_000_000, 30, 1);
+    const at0 = motifContentFrame(0, 0, 6_000_000, 30, 1);
     expect(at0.contentDurationFrames).toBe(180);
     expect(at0.frame).toBe(0); // content t=0 -> "6"
-    const atEnd = templateContentFrame(5_000_000 - 1, 0, 6_000_000, 30, 1);
+    const atEnd = motifContentFrame(5_000_000 - 1, 0, 6_000_000, 30, 1);
     expect(atEnd.frame).toBe(149); // ~content t=5s -> "2"
   });
   test("src_in scrubs into content: window [1s,..] starts at content frame 30 (=5)", () => {
-    const at0 = templateContentFrame(0, 1_000_000, 6_000_000, 30, 1);
+    const at0 = motifContentFrame(0, 1_000_000, 6_000_000, 30, 1);
     expect(at0.frame).toBe(30);
   });
   test("clamps to the last content frame", () => {
-    const past = templateContentFrame(10_000_000, 0, 6_000_000, 30, 1);
+    const past = motifContentFrame(10_000_000, 0, 6_000_000, 30, 1);
     expect(past.frame).toBe(179);
   });
 });

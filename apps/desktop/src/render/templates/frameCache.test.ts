@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { TemplateFrameCache, hashCacheKey, type Closeable } from "./frameCache";
+import { MotifFrameCache, hashCacheKey, type Closeable } from "./frameCache";
 
 /// Stand-in for the browser `ImageBitmap`. The L0 store treats values
 /// opaquely except for the `close()` call on eviction / clear / dispose,
@@ -11,14 +11,14 @@ function fakeBitmap(): ImageBitmap & { close: ReturnType<typeof vi.fn> } {
   };
 }
 
-describe("TemplateFrameCache — L0 LRU", () => {
+describe("MotifFrameCache — L0 LRU", () => {
   test("getFrame returns null on miss", () => {
-    const c = new TemplateFrameCache();
+    const c = new MotifFrameCache();
     expect(c.getFrame("k", 0)).toBeNull();
   });
 
   test("setFrame + getFrame returns the stored bitmap", () => {
-    const c = new TemplateFrameCache();
+    const c = new MotifFrameCache();
     const bm = fakeBitmap();
     c.setFrame("k", 3, bm);
     expect(c.getFrame("k", 3)).toBe(bm);
@@ -26,7 +26,7 @@ describe("TemplateFrameCache — L0 LRU", () => {
   });
 
   test("frames are keyed by (cacheKey, frameIndex)", () => {
-    const c = new TemplateFrameCache();
+    const c = new MotifFrameCache();
     const a = fakeBitmap();
     const b = fakeBitmap();
     c.setFrame("k", 0, a);
@@ -42,7 +42,7 @@ describe("TemplateFrameCache — L0 LRU", () => {
     // closed; the canonical (existing) bitmap is returned. This prevents
     // "External Image has been detached" on WebGPU upload when concurrent
     // cold-miss rasterizers race to setFrame the same (key, frame).
-    const c = new TemplateFrameCache(3);
+    const c = new MotifFrameCache(3);
     const a = fakeBitmap();
     const a2 = fakeBitmap();
     const returned = c.setFrame("k", 0, a);
@@ -56,7 +56,7 @@ describe("TemplateFrameCache — L0 LRU", () => {
   });
 
   test("re-set with the same bitmap reference does not close it", () => {
-    const c = new TemplateFrameCache();
+    const c = new MotifFrameCache();
     const a = fakeBitmap();
     c.setFrame("k", 0, a);
     expect(c.setFrame("k", 0, a)).toBe(a);
@@ -65,7 +65,7 @@ describe("TemplateFrameCache — L0 LRU", () => {
   });
 
   test("capacity eviction closes the least-recently-used frame", () => {
-    const c = new TemplateFrameCache(2);
+    const c = new MotifFrameCache(2);
     const a = fakeBitmap();
     const b = fakeBitmap();
     const d = fakeBitmap();
@@ -82,7 +82,7 @@ describe("TemplateFrameCache — L0 LRU", () => {
   });
 
   test("getFrame refreshes recency so the touched frame survives eviction", () => {
-    const c = new TemplateFrameCache(2);
+    const c = new MotifFrameCache(2);
     const a = fakeBitmap();
     const b = fakeBitmap();
     const d = fakeBitmap();
@@ -106,7 +106,7 @@ describe("TemplateFrameCache — L0 LRU", () => {
     // existing bitmap (a) is KEPT and refreshed to MRU; the incoming bitmap
     // (a2) is CLOSED as redundant. The key recency update (k#0 → MRU tail)
     // is preserved, so k#1 remains the LRU victim as before.
-    const c = new TemplateFrameCache(2);
+    const c = new MotifFrameCache(2);
     const a = fakeBitmap();
     const a2 = fakeBitmap();
     const b = fakeBitmap();
@@ -128,7 +128,7 @@ describe("TemplateFrameCache — L0 LRU", () => {
   });
 
   test("rejects a negative or fractional frameIndex at the boundary", () => {
-    const c = new TemplateFrameCache();
+    const c = new MotifFrameCache();
     const a = fakeBitmap();
     expect(() => c.setFrame("k", -1, a)).toThrow(/non-negative integer/);
     expect(() => c.setFrame("k", 1.5, a)).toThrow(/non-negative integer/);
@@ -138,13 +138,13 @@ describe("TemplateFrameCache — L0 LRU", () => {
   test("a NaN cap falls back to the default bound (eviction still fires)", () => {
     // A NaN cap previously disabled eviction entirely (`size > NaN` is always
     // false). It must clamp to the default (240) instead of growing unbounded.
-    const c = new TemplateFrameCache(Number.NaN);
+    const c = new MotifFrameCache(Number.NaN);
     for (let i = 0; i < 241; i++) c.setFrame("k", i, fakeBitmap());
     expect(c.size()).toBe(240);
   });
 
   test("hasKey reflects presence of any frame for a key", () => {
-    const c = new TemplateFrameCache();
+    const c = new MotifFrameCache();
     expect(c.hasKey("k")).toBe(false);
     c.setFrame("k", 0, fakeBitmap());
     expect(c.hasKey("k")).toBe(true);
@@ -152,7 +152,7 @@ describe("TemplateFrameCache — L0 LRU", () => {
   });
 
   test("clearKey closes only that key's frames", () => {
-    const c = new TemplateFrameCache();
+    const c = new MotifFrameCache();
     const a0 = fakeBitmap();
     const a1 = fakeBitmap();
     const b0 = fakeBitmap();
@@ -172,7 +172,7 @@ describe("TemplateFrameCache — L0 LRU", () => {
     // cacheKeys are caller-built JSON and can contain '#'. Key "a" must
     // not match "a#b"'s frame "a#b#5" (the '#'-split must anchor on the
     // LAST '#' and require an all-digit frame-index suffix).
-    const c = new TemplateFrameCache();
+    const c = new MotifFrameCache();
     const shortKey = fakeBitmap();
     const longKey = fakeBitmap();
     c.setFrame("a", 5, shortKey); // map key "a#5"
@@ -189,7 +189,7 @@ describe("TemplateFrameCache — L0 LRU", () => {
   });
 
   test("dispose closes every frame across all keys", () => {
-    const c = new TemplateFrameCache();
+    const c = new MotifFrameCache();
     const a = fakeBitmap();
     const b = fakeBitmap();
     c.setFrame("k1", 0, a);
@@ -201,7 +201,7 @@ describe("TemplateFrameCache — L0 LRU", () => {
   });
 
   test("default cap is a sensible bound (240)", () => {
-    const c = new TemplateFrameCache();
+    const c = new MotifFrameCache();
     for (let i = 0; i < 240; i++) c.setFrame("k", i, fakeBitmap());
     expect(c.size()).toBe(240);
     c.setFrame("k", 240, fakeBitmap()); // overflow by one
@@ -210,7 +210,7 @@ describe("TemplateFrameCache — L0 LRU", () => {
   });
 
   test("constructor clamps a non-positive cap to at least 1", () => {
-    const c = new TemplateFrameCache(0);
+    const c = new MotifFrameCache(0);
     const a = fakeBitmap();
     const b = fakeBitmap();
     c.setFrame("k", 0, a);
@@ -220,7 +220,7 @@ describe("TemplateFrameCache — L0 LRU", () => {
   });
 
   test("hasFrame peeks without changing recency", () => {
-    const cache = new TemplateFrameCache(2);
+    const cache = new MotifFrameCache(2);
     const a = fakeBitmap(); const b = fakeBitmap(); const c = fakeBitmap();
     cache.setFrame("k", 0, a);
     cache.setFrame("k", 1, b);
@@ -232,7 +232,7 @@ describe("TemplateFrameCache — L0 LRU", () => {
     expect(cache.hasFrame("k", 2)).toBe(true);
   });
 
-  test("capacity returns the cap", () => { expect(new TemplateFrameCache(7).capacity()).toBe(7); });
+  test("capacity returns the cap", () => { expect(new MotifFrameCache(7).capacity()).toBe(7); });
 });
 
 describe("hashCacheKey", () => {

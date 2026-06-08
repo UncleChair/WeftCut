@@ -18,10 +18,10 @@ describe("rasterMotifFrame", () => {
     expect(bmp).toEqual({ width: 480, height: 480 });
   });
 
-  it("bumps window.__weftcutTemplatePerf.renders when present", async () => {
-    (globalThis as Record<string, unknown>).window = { __weftcutTemplatePerf: { renders: 0 } };
+  it("bumps window.__weftcutMotifPerf.renders when present", async () => {
+    (globalThis as Record<string, unknown>).window = { __weftcutMotifPerf: { renders: 0 } };
     await rasterMotifFrame("countdown", 0, {}, 480, 480);
-    expect(((globalThis as Record<string, unknown>).window as { __weftcutTemplatePerf: { renders: number } }).__weftcutTemplatePerf.renders).toBe(1);
+    expect(((globalThis as Record<string, unknown>).window as { __weftcutMotifPerf: { renders: number } }).__weftcutMotifPerf.renders).toBe(1);
   });
 });
 

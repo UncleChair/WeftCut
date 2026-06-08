@@ -16,8 +16,8 @@
 //   L2 (opt-in, lighter) — a PNG frame sequence persisted to disk
 //   under `<workspace>/Cache/raster/<hash>/<i>.png`. Driven by a global
 //   "Pre-bake" setting and a per-layer "Pre-bake now" action; read on the
-//   default preview path via `resolveTemplateFrame` (disk-first, gated by
-//   an in-RAM baked-key index). The `TemplateBaker` is the sole writer.
+//   default preview path via `resolveMotifFrame` (disk-first, gated by
+//   an in-RAM baked-key index). The `MotifBaker` is the sole writer.
 //
 // `cacheKey` is an opaque STRING the caller builds from
 // `(templateId, version, canonicalPropsJSON, renderW, renderH,
@@ -46,7 +46,7 @@ const DEFAULT_MAX_FRAMES = 240;
 function frameMapKey(cacheKey: string, frameIndex: number): string {
   if (!Number.isInteger(frameIndex) || frameIndex < 0) {
     throw new Error(
-      `TemplateFrameCache: frameIndex must be a non-negative integer, got ${frameIndex}`,
+      `MotifFrameCache: frameIndex must be a non-negative integer, got ${frameIndex}`,
     );
   }
   return `${cacheKey}#${frameIndex}`;
@@ -65,7 +65,7 @@ function keyMatchesCacheKey(mapKey: string, cacheKey: string): boolean {
   return suffix.length > 0 && /^\d+$/.test(suffix);
 }
 
-export class TemplateFrameCache {
+export class MotifFrameCache {
   /// Insertion-ordered store. JS `Map` preserves insertion order, which
   /// we exploit for LRU: the FIRST key is the least-recently-used, the
   /// LAST is the most-recent. `get` and `set` both move a touched entry

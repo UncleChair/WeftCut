@@ -9,7 +9,7 @@ const PROJECT_PARENT = path.resolve(os.tmpdir(), "weftcut-e2e-motif-live-proj");
 //
 // The chain under test (all production code paths):
 //   add_motif(countdown)  →  Compositor.compositeFrame  →  MotifSprite
-//   →  (cache miss)  →  resolveTemplateFrame  →  rasterMotifFrame("countdown")
+//   →  (cache miss)  →  resolveMotifFrame  →  rasterMotifFrame("countdown")
 //   →  captureMotifFrame (Rust motif_capture_frame, CDP screenshot of the
 //      hidden Motif host)  →  ImageBitmap  →  bound texture on the live stage.
 //
@@ -23,7 +23,7 @@ const PROJECT_PARENT = path.resolve(os.tmpdir(), "weftcut-e2e-motif-live-proj");
 // box) — the regression guard for the CDP `setDefaultBackgroundColorOverride`
 // transparent-screenshot fix, without which overlay Motifs flatten onto white.
 //
-// The `__weftcutTemplatePerf.renders` counter is incremented inside
+// The `__weftcutMotifPerf.renders` counter is incremented inside
 // `rasterMotifFrame` (the CDP producer), so renders > 0 confirms frames came
 // through the live producer rather than a stale cache or a no-op.
 //
@@ -74,7 +74,7 @@ describe("motif live preview (CDP in compositor)", function () {
 
     // Reset the live render counter (incremented by the CDP producer).
     await browser.execute(() => {
-      window.__weftcutTemplatePerf = { renders: 0 };
+      window.__weftcutMotifPerf = { renders: 0 };
     });
 
     // 3) Add the countdown Template layer (5 s span at t=0) and confirm a
@@ -96,7 +96,7 @@ describe("motif live preview (CDP in compositor)", function () {
     await browser.execute(() => window.__weftcutTest.weftcutSeekUs(2_500_000));
 
     // 5) Cold CDP capture (~11 fps single-Motif host) + the compositor's async
-    //    bind path (resolveTemplateFrame → captureMotifFrame → onLoaded →
+    //    bind path (resolveMotifFrame → captureMotifFrame → onLoaded →
     //    scheduleRepaint) need a real settle window — genuine latency, not a
     //    smell. Poll the live composite until accent-colored content appears
     //    (or a hard deadline). Re-seek each poll so a stale paused frame can't
@@ -124,7 +124,7 @@ describe("motif live preview (CDP in compositor)", function () {
             done({
               ok: true,
               p,
-              renders: window.__weftcutTemplatePerf?.renders ?? 0,
+              renders: window.__weftcutMotifPerf?.renders ?? 0,
             }),
           )
           .catch((e) => done({ ok: false, error: String(e) }));

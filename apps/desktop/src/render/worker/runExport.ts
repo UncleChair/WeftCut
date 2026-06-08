@@ -48,7 +48,7 @@ export interface RunExportInit {
   /// long exports at finalize).
   writeChunk: (data: ArrayBuffer) => Promise<void>;
   /// Pre-rasterized Template-layer frames (`layerId → ImageBitmap[]`, comp-frame
-  /// indexed), baked on the MAIN thread by `exportBakeTemplates` (the Worker has
+  /// indexed), baked on the MAIN thread by `exportBakeMotifs` (the Worker has
   /// no DOM to run the SVG capture harness). TRANSFERRED into the Worker's
   /// `start` message. Absent / empty ⇒ no Template layers in the export range.
   templateFrames?: Record<string, ImageBitmap[]>;

@@ -24,14 +24,14 @@ import { MotifSprite } from "./sprite/MotifSprite";
 import { TextSprite } from "./sprite/TextSprite";
 import { VideoClipSprite } from "./sprite/VideoClipSprite";
 import { getMotif } from "./templates/catalog";
-import { TemplatePrewarmer, type PrewarmContentSpec } from "./templates/TemplatePrewarmer";
-import { templateFrameDescriptor } from "./templates/templateFrameDescriptor";
+import { MotifPrewarmer, type PrewarmContentSpec } from "./templates/TemplatePrewarmer";
+import { motifFrameDescriptor } from "./templates/templateFrameDescriptor";
 import {
-  resolveTemplateFrame,
+  resolveMotifFrame,
   sharedBakedKeyIndex,
-  sharedTemplateFrameCache,
+  sharedMotifFrameCache,
 } from "./templates/templateRaster";
-import { TemplateBaker, type BakeContentSpec } from "./templates/TemplateBaker";
+import { MotifBaker, type BakeContentSpec } from "./templates/TemplateBaker";
 import { encodeBitmapToPng } from "./templates/pngEncode";
 import { onPrebakeRequest } from "./templates/prebakeBus";
 import { bakeMotifFrame } from "./motifs/motifRaster";
@@ -270,17 +270,17 @@ export class Compositor {
   /// `scheduleRepaint()` for async-arrived frames when the playhead
   /// is paused (no rAF tick incoming).
   private lastTUs = 0;
-  /// Background filler that warms the shared template-frame cache ahead of the
+  /// Background filler that warms the shared motif-frame cache ahead of the
   /// playhead. DOM-gated: only the main-thread preview Compositor creates one;
   /// the export Worker (no `document`, frames injected via `setTemplateFrames`)
   /// leaves it null.
-  private prewarmer: TemplatePrewarmer | null =
+  private prewarmer: MotifPrewarmer | null =
     typeof document !== "undefined"
-      ? new TemplatePrewarmer({
-          cap: sharedTemplateFrameCache.capacity(),
-          hasFrame: (k, f) => sharedTemplateFrameCache.hasFrame(k, f),
+      ? new MotifPrewarmer({
+          cap: sharedMotifFrameCache.capacity(),
+          hasFrame: (k, f) => sharedMotifFrameCache.hasFrame(k, f),
           setFrame: (k, f, b) => {
-            sharedTemplateFrameCache.setFrame(k, f, b);
+            sharedMotifFrameCache.setFrame(k, f, b);
           },
           schedule: (cb) => scheduleIdle(cb),
           cancel: (t) => cancelIdle(t),
@@ -292,23 +292,23 @@ export class Compositor {
         })
       : null;
   /// L2 writer. DOM-gated like the prewarmer (never in the export Worker).
-  private baker: TemplateBaker | null =
+  private baker: MotifBaker | null =
     typeof document !== "undefined"
-      ? new TemplateBaker({
+      ? new MotifBaker({
           schedule: (cb) => scheduleIdle(cb),
           cancel: (t) => cancelIdle(t),
           // batchSize 1: captures now serialize in Rust, so a larger batch only
           // adds head-of-line latency for an on-demand scrub. One in-flight
           // capture per loop keeps the shared host queue short.
           batchSize: 1,
-          isOnDisk: (k, f) => sharedTemplateFrameCache.hasPng(k, f),
+          isOnDisk: (k, f) => sharedMotifFrameCache.hasPng(k, f),
           persist: async (k, f, bmp) => {
             const png = await encodeBitmapToPng(bmp);
-            await sharedTemplateFrameCache.writePng(k, f, png);
+            await sharedMotifFrameCache.writePng(k, f, png);
             sharedBakedKeyIndex.add(k);
           },
           warm: (k, f, bmp) => {
-            sharedTemplateFrameCache.setFrame(k, f, bmp);
+            sharedMotifFrameCache.setFrame(k, f, bmp);
           },
           onStatus: (cacheKey, status) => {
             this.bakeStatusByCacheKey.set(cacheKey, status);
@@ -911,7 +911,7 @@ export class Compositor {
     this.lastBakeStatusSig = "";
     setLayerBakeStatuses({});
     // Drop the injected export-bake frame references. Bitmaps here are OWNED by
-    // the export caller (`exportBakeTemplates`), not the Compositor — same as
+    // the export caller (`exportBakeMotifs`), not the Compositor — same as
     // `setTemplateFrames`, which clears without closing — so we clear (no
     // `.close()`) to avoid double-freeing the caller's bitmaps.
     this.templateFrames.clear();
@@ -1013,7 +1013,7 @@ export class Compositor {
         const tInLayerUs = tUs - layer.t_start_us;
         const durationUs = layer.t_end_us - layer.t_start_us;
         const view = layer.params;
-        const desc = templateFrameDescriptor(view, tInLayerUs, durationUs, this.fpsNum, this.fpsDen, template);
+        const desc = motifFrameDescriptor(view, tInLayerUs, durationUs, this.fpsNum, this.fpsDen, template);
         if (!desc) continue;
         // Capture the plan-time inputs in locals so the async render closure
         // binds the values that produced THIS cacheKey, not whatever `this.fps*`
@@ -1030,7 +1030,7 @@ export class Compositor {
           // Disk-first: prefer a baked PNG over a live raster, falling through
           // to `rasterMotifFrame` (CDP) inside the resolver on miss / fs hiccup.
           render: (frame: number) =>
-            resolveTemplateFrame(
+            resolveMotifFrame(
               template,
               desc.cacheKey,
               frame,
@@ -1065,7 +1065,7 @@ export class Compositor {
         const tInLayerUs = tUs - layer.t_start_us;
         const durationUs = layer.t_end_us - layer.t_start_us;
         const view = layer.params;
-        const desc = templateFrameDescriptor(view, tInLayerUs, durationUs, this.fpsNum, this.fpsDen, template);
+        const desc = motifFrameDescriptor(view, tInLayerUs, durationUs, this.fpsNum, this.fpsDen, template);
         if (!desc) continue;
         // Capture the plan-time inputs in locals so the async render closure
         // binds the values that produced THIS cacheKey, not whatever `this.fps*`
@@ -1105,7 +1105,7 @@ export class Compositor {
         // we only read `desc.cacheKey`. durationUs is the layer width, mirroring
         // `updatePrewarmTargets`.
         const durationUs = layer.t_end_us - layer.t_start_us;
-        const desc = templateFrameDescriptor(
+        const desc = motifFrameDescriptor(
           layer.params,
           0,
           durationUs,
@@ -1118,12 +1118,12 @@ export class Compositor {
     }
     sharedBakedKeyIndex.setLiveCandidates(activeKeys);
     try {
-      const hashes = await sharedTemplateFrameCache.listBakedHashes();
+      const hashes = await sharedMotifFrameCache.listBakedHashes();
       sharedBakedKeyIndex.hydrateFromHashes(hashes);
       // The index now reflects on-disk frames; recompute so last-session-baked
       // layers (no live baker status) surface as "ready".
       this.recomputeBakeStatuses();
-      await sharedTemplateFrameCache.gcUnreferenced(activeKeys);
+      await sharedMotifFrameCache.gcUnreferenced(activeKeys);
     } catch (e) {
       console.warn("[weftcut/templates] baked-index hydrate/gc failed", e);
     }
@@ -1147,7 +1147,7 @@ export class Compositor {
         if (!template) continue;
         const durationUs = layer.t_end_us - layer.t_start_us;
         const view = layer.params;
-        const desc = templateFrameDescriptor(view, 0, durationUs, this.fpsNum, this.fpsDen, template);
+        const desc = motifFrameDescriptor(view, 0, durationUs, this.fpsNum, this.fpsDen, template);
         if (!desc) continue;
         const live = this.bakeStatusByCacheKey.get(desc.cacheKey);
         // L0 coverage of this layer's content frames (cheap Map lookups; the
@@ -1155,7 +1155,7 @@ export class Compositor {
         // signal that drives the green bar.
         let covered = 0;
         for (let f = 0; f < desc.contentDurationFrames; f++) {
-          if (sharedTemplateFrameCache.hasFrame(desc.cacheKey, f)) covered++;
+          if (sharedMotifFrameCache.hasFrame(desc.cacheKey, f)) covered++;
         }
         const status = motifWarmPhase(
           live ?? null,

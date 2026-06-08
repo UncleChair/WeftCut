@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { TemplateBaker, type BakeContentSpec } from "./TemplateBaker";
+import { MotifBaker, type BakeContentSpec } from "./TemplateBaker";
 
 function makeFakeBitmap(): ImageBitmap {
   return { close: vi.fn(), width: 1, height: 1 } as unknown as ImageBitmap;
@@ -8,7 +8,7 @@ function makeFakeBitmap(): ImageBitmap {
 /// Drive the idle loop deterministically: run each scheduled callback, then let
 /// the async drainBatch fully settle (a macrotask flush via setTimeout(0))
 /// before checking for the next re-armed callback. Mirrors
-/// TemplatePrewarmer.test.ts. `guard` bounds a runaway loop.
+/// MotifPrewarmer.test.ts. `guard` bounds a runaway loop.
 async function drain(pending: (() => void)[]): Promise<void> {
   let guard = 0;
   while (pending.length > 0 && guard++ < 50) {
@@ -18,12 +18,12 @@ async function drain(pending: (() => void)[]): Promise<void> {
   }
 }
 
-describe("TemplateBaker", () => {
+describe("MotifBaker", () => {
   it("renders + persists every frame of the active content, skipping on-disk", async () => {
     const pending: (() => void)[] = [];
     const persisted: string[] = [];
     const render = vi.fn(async (_f: number) => makeFakeBitmap());
-    const baker = new TemplateBaker({
+    const baker = new MotifBaker({
       schedule: (cb) => { pending.push(cb); return pending.length; },
       cancel: vi.fn(),
       isOnDisk: async (k, f) => k === "a" && f === 0, // frame 0 already baked
@@ -43,7 +43,7 @@ describe("TemplateBaker", () => {
   it("does nothing when targets is empty", async () => {
     const pending: (() => void)[] = [];
     const persist = vi.fn();
-    const baker = new TemplateBaker({
+    const baker = new MotifBaker({
       schedule: (cb) => { pending.push(cb); return pending.length; },
       cancel: vi.fn(),
       isOnDisk: async () => false,
@@ -58,7 +58,7 @@ describe("TemplateBaker", () => {
   it("dispose stops further work", async () => {
     const pending: (() => void)[] = [];
     const persist = vi.fn(async () => {});
-    const baker = new TemplateBaker({
+    const baker = new MotifBaker({
       schedule: (cb) => { pending.push(cb); return pending.length; },
       cancel: vi.fn(),
       isOnDisk: async () => false,
@@ -74,7 +74,7 @@ describe("TemplateBaker", () => {
   it("emits baking on setTargets then ready when all frames complete", async () => {
     const pending: (() => void)[] = [];
     const emits: { k: string; phase: string; done: number; total: number }[] = [];
-    const baker = new TemplateBaker({
+    const baker = new MotifBaker({
       schedule: (cb) => { pending.push(cb); return pending.length; },
       cancel: vi.fn(),
       isOnDisk: async () => false,
@@ -93,7 +93,7 @@ describe("TemplateBaker", () => {
     const pending: (() => void)[] = [];
     const emits: { phase: string; done: number; total: number }[] = [];
     const render = vi.fn(async () => makeFakeBitmap());
-    const baker = new TemplateBaker({
+    const baker = new MotifBaker({
       schedule: (cb) => { pending.push(cb); return pending.length; },
       cancel: vi.fn(),
       isOnDisk: async () => true,
@@ -111,7 +111,7 @@ describe("TemplateBaker", () => {
   it("emits error when a frame's persist throws, with counts frozen", async () => {
     const pending: (() => void)[] = [];
     const emits: { phase: string; done: number; total: number }[] = [];
-    const baker = new TemplateBaker({
+    const baker = new MotifBaker({
       schedule: (cb) => { pending.push(cb); return pending.length; },
       cancel: vi.fn(),
       isOnDisk: async () => false,
@@ -131,7 +131,7 @@ describe("TemplateBaker", () => {
     const pending: (() => void)[] = [];
     const emits: { phase: string; done: number; total: number }[] = [];
     const spec = { cacheKey: "a", contentFrame: 0, contentDurationFrames: 3, render: async () => makeFakeBitmap() };
-    const baker = new TemplateBaker({
+    const baker = new MotifBaker({
       schedule: (cb) => { pending.push(cb); return pending.length; },
       cancel: vi.fn(),
       isOnDisk: async () => false,

@@ -55,7 +55,7 @@ import {
   resolveOutputDims,
 } from "./render/exportSettings";
 import { resolveEncodePath } from "./render/exportCodecProbe";
-import { exportBakeTemplates } from "./render/exportBake";
+import { exportBakeMotifs } from "./render/exportBake";
 import { getMotif } from "./render/templates/catalog";
 import {
   sourcesNeedingPreviewProbe,
@@ -923,7 +923,7 @@ export function App({ onCloseProject }: AppProps) {
         // hides the Cancel button rather than offering a dead one.
         setExportState({ kind: "preparing", labels });
       }
-      templateFrames = await exportBakeTemplates(
+      templateFrames = await exportBakeMotifs(
         summary,
         exportRange.startUs,
         exportRange.endUs,

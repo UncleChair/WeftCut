@@ -1,15 +1,15 @@
 // Motif layer rendered via the CDP capture path → per-frame raster → texture.
 // A Motif animates over its layer duration: each composition frame is a
-// distinct `resolveTemplateFrame` call rasterized to an `ImageBitmap` and
+// distinct `resolveMotifFrame` call rasterized to an `ImageBitmap` and
 // bound by frame index.
 //
-// Frames are stored in a process-wide `sharedTemplateFrameCache` (an in-RAM
+// Frames are stored in a process-wide `sharedMotifFrameCache` (an in-RAM
 // LRU keyed by `(cacheKey, frameIndex)`) so two sprites referencing the same
 // Motif with the same canonical props / dims / fps share one bitmap per
 // frame. Sprite dispose tears down the sprite's Pixi Texture wrapper but does
 // NOT close the underlying bitmap — the cache owns its lifetime.
 //
-// Capture is async: on a cache miss the sprite calls `resolveTemplateFrame`
+// Capture is async: on a cache miss the sprite calls `resolveMotifFrame`
 // (in-RAM cache → on-disk PNG → live `rasterMotifFrame` CDP screenshot of the
 // hidden Motif host), stores the result, and binds it if the playhead still
 // wants that (cacheKey, frame). The export Worker (no `document`) never takes
@@ -20,9 +20,9 @@ import { ImageSource, Sprite, Texture } from "pixi.js";
 import { frameIndexInLayer } from "../../frames";
 import type { MotifView } from "../../ipc";
 import { getMotif, type Motif } from "../templates/catalog";
-import { resolveTemplateFrame, sharedTemplateFrameCache } from "../templates/templateRaster";
-import { templateFrameDescriptor } from "../templates/templateFrameDescriptor";
-import { templateDurationFrames } from "../templates/templateFrames";
+import { resolveMotifFrame, sharedMotifFrameCache } from "../templates/templateRaster";
+import { motifFrameDescriptor } from "../templates/templateFrameDescriptor";
+import { motifDurationFrames } from "../templates/templateFrames";
 
 // A faint neutral tile shown while a first-ever-cold Motif's frame 0 is still
 // in flight, so the layer reads as "warming" rather than vanishing. Built once
@@ -133,7 +133,7 @@ export class MotifSprite {
     // the content cap (the preview path below does that for live rendering).
     // No canonicalize, no harness, no cache: the bitmaps are already baked.
     if (injectedFrames) {
-      const durationFrames = templateDurationFrames(
+      const durationFrames = motifDurationFrames(
         durationUs,
         this.fpsNum,
         this.fpsDen,
@@ -158,7 +158,7 @@ export class MotifSprite {
       return;
     }
 
-    const desc = templateFrameDescriptor(
+    const desc = motifFrameDescriptor(
       view, tInLayerUs, durationUs, this.fpsNum, this.fpsDen, this.template,
     );
     if (!desc) {
@@ -170,7 +170,7 @@ export class MotifSprite {
     if (cacheKey === this.targetCacheKey && frame === this.targetFrame) return;
     this.targetCacheKey = cacheKey;
     this.targetFrame = frame;
-    const cached = sharedTemplateFrameCache.getFrame(cacheKey, frame);
+    const cached = sharedMotifFrameCache.getFrame(cacheKey, frame);
     if (cached) {
       this.bindBitmap(cached);
       return;
@@ -199,7 +199,7 @@ export class MotifSprite {
   ): Promise<void> {
     if (!this.template) return;
     try {
-      const bitmap = await resolveTemplateFrame(
+      const bitmap = await resolveMotifFrame(
            this.template, cacheKey, frame, tSec, durationSec, canonicalProps,
          );
       // Hand the bitmap to the cache. `setFrame` is idempotent: if a sibling
@@ -207,7 +207,7 @@ export class MotifSprite {
       // closes ours, returning the CANONICAL cache-owned bitmap. Bind THAT, so
       // no sprite ever binds a bitmap a sibling could close (the cause of the
       // "External Image has been detached" WebGPU error on project reopen).
-      const canonical = sharedTemplateFrameCache.setFrame(cacheKey, frame, bitmap);
+      const canonical = sharedMotifFrameCache.setFrame(cacheKey, frame, bitmap);
       // A later `update` may have superseded this request while we awaited;
       // only bind if we still want exactly this (cacheKey, frame).
       if (this.disposed) return;
