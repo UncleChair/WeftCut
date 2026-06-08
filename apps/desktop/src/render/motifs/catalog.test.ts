@@ -16,6 +16,28 @@ const base: MotifManifest = {
   props_schema: { seconds: { type: "number", default: 5, min: 1, max: 60 } },
 };
 
+describe("resolveMotifContentDurationUs — content_duration_s decoupling", () => {
+  it("prefers content_duration_s over a max_duration cap", () => {
+    const m: any = {
+      content_duration_s: 0.8,
+      max_duration_s: 5,
+      max_duration_prop: "seconds",
+      props_schema: {},
+    };
+    expect(resolveMotifContentDurationUs(m, { seconds: 5 })).toBe(800_000);
+  });
+
+  it("falls back to the cap when content_duration_s is absent", () => {
+    const m: any = { max_duration_s: 3, props_schema: {} };
+    expect(resolveMotifContentDurationUs(m, {})).toBe(3_000_000);
+  });
+
+  it("returns null when nothing is set", () => {
+    const m: any = { props_schema: {} };
+    expect(resolveMotifContentDurationUs(m, {})).toBe(null);
+  });
+});
+
 describe("resolveMotifContentDurationUs", () => {
   it("uses the live prop value when present", () => {
     expect(resolveMotifContentDurationUs(base, { seconds: 6 })).toBe(6_000_000);

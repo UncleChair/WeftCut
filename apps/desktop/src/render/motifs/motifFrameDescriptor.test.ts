@@ -32,6 +32,26 @@ describe("motifFrameDescriptor", () => {
     expect(d.contentFrame).toBe(30);
     expect(d.contentDurationFrames).toBeGreaterThan(0);
   });
+  it("content_duration_s: holds + dedups the tail, never windows", () => {
+    const holdable: typeof tpl = {
+      manifest: {
+        id: "holdable",
+        name: "Holdable",
+        version: 1,
+        size: [1280, 320],
+        default_duration_s: 5,
+        content_duration_s: 0.8,
+        props_schema: {},
+      },
+    };
+    // Layer 5 s wide; sample tInLayer = 3 s — well past the 0.8 s content.
+    const d = motifFrameDescriptor(view({}, 1_000_000), 3_000_000, 5_000_000, 30, 1, holdable)!;
+    expect(d.contentDurationUs).toBe(800_000);
+    expect(d.contentDurationFrames).toBe(24); // round(0.8 * 30)
+    expect(d.srcInUs).toBe(0); // holdable never windows, even with src_in set
+    expect(d.contentFrame).toBe(d.contentDurationFrames - 1); // clamped to last → deduped hold
+  });
+
   it("uncapped template uses layer width as content duration and ignores src_in", () => {
     const uncapped: typeof tpl = {
       ...tpl,

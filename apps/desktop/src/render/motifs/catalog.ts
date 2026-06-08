@@ -25,6 +25,12 @@ export interface MotifManifest {
   /// layer's length cap. When set, editing that prop changes the cap live;
   /// falls back to `max_duration_s` when the prop is missing/invalid.
   max_duration_prop?: string;
+  /// Fixed content/animation duration (seconds) that does NOT cap the layer.
+  /// When set, the seekable content spans this many seconds; the layer stays
+  /// freely extendable and frames past it clamp to the last content frame (a
+  /// held, deduped tail). Distinct from `max_duration_s`, which caps the layer.
+  /// Holdable overlays (e.g. the lower third) use this.
+  content_duration_s?: number;
   props_schema: Record<string, PropSpec>;
   /// How many real browser frames `__motifRender` waits before capture.
   /// 2 (default, omitted) is safe for canvas/WebGL Motifs; CSS-only Motifs can
@@ -80,6 +86,12 @@ export function resolveMotifContentDurationUs(
   manifest: MotifManifest,
   props: Record<string, unknown>,
 ): number | null {
+  // A fixed content/animation duration decoupled from the layer cap takes
+  // precedence: it defines the seekable content span for holdable overlays.
+  const cds = manifest.content_duration_s;
+  if (typeof cds === "number" && Number.isFinite(cds) && cds > 0) {
+    return Math.round(cds * 1_000_000);
+  }
   const propName = manifest.max_duration_prop;
   if (propName) {
     const raw = props[propName];
