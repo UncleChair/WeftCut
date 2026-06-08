@@ -237,6 +237,28 @@ impl Motif {
         serde_json::to_string(&canonical)
             .map_err(|e| MotifError::Serialize(e.to_string()))
     }
+
+    /// Like `canonicalize_props`, but NEVER errors — for migrating a placed
+    /// layer's props after a Motif's `props_schema` changed under it (in-place
+    /// update). Unknown keys are dropped; missing keys are filled from defaults;
+    /// a value that fails its spec falls back to the default. Result is canonical
+    /// (BTreeMap-ordered) like the strict path.
+    pub fn canonicalize_props_lenient(
+        &self,
+        provided: &serde_json::Value,
+    ) -> Result<String, MotifError> {
+        let provided_map = provided.as_object();
+        let mut canonical: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+        for (key, spec) in &self.manifest.props_schema {
+            let candidate = provided_map.and_then(|m| m.get(key)).cloned();
+            let value = match candidate {
+                Some(v) if validate_prop(key, spec, &v).is_ok() => v,
+                _ => spec_default_json(spec),
+            };
+            canonical.insert(key.clone(), value);
+        }
+        serde_json::to_string(&canonical).map_err(|e| MotifError::Serialize(e.to_string()))
+    }
 }
 
 /// Extract and parse the Motif's metadata island from its HTML, WITHOUT
@@ -813,5 +835,25 @@ mod tests {
         let actual: Vec<String> = builtins().iter().map(|t| t.id().to_string()).collect();
         let expected: Vec<String> = BUILTIN_IDS.iter().map(|s| s.to_string()).collect();
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn lenient_canonicalize_drops_unknown_and_fills_defaults() {
+        let t = builtin_countdown();
+        let out = t
+            .canonicalize_props_lenient(&json!({ "seconds": 7, "bogus": 1 }))
+            .expect("lenient never rejects on unknown keys");
+        assert!(out.contains("\"seconds\":7"));
+        assert!(!out.contains("bogus"));
+        assert!(out.contains("\"accent\""));
+    }
+
+    #[test]
+    fn lenient_canonicalize_falls_back_on_invalid_value() {
+        let t = builtin_countdown();
+        let out = t
+            .canonicalize_props_lenient(&json!({ "seconds": 9999 }))
+            .expect("lenient tolerates invalid values");
+        assert!(out.contains("\"seconds\":5"));
     }
 }
