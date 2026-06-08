@@ -238,11 +238,12 @@ impl Motif {
             .map_err(|e| MotifError::Serialize(e.to_string()))
     }
 
-    /// Like `canonicalize_props`, but NEVER errors — for migrating a placed
-    /// layer's props after a Motif's `props_schema` changed under it (in-place
-    /// update). Unknown keys are dropped; missing keys are filled from defaults;
-    /// a value that fails its spec falls back to the default. Result is canonical
-    /// (BTreeMap-ordered) like the strict path.
+    /// Like `canonicalize_props`, but effectively never errors (the only failure
+    /// mode is the final serialize, which can't fail for default-filled values) —
+    /// for migrating a placed layer's props after a Motif's `props_schema` changed
+    /// under it (in-place update). Unknown keys are dropped; missing keys are
+    /// filled from defaults; a value that fails its spec falls back to the
+    /// default. Result is canonical (BTreeMap-ordered) like the strict path.
     pub fn canonicalize_props_lenient(
         &self,
         provided: &serde_json::Value,
