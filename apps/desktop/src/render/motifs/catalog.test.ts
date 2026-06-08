@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   resolveMotifContentDurationUs,
+  getMotif,
+  listMotifs,
   type MotifManifest,
 } from "./catalog";
 
@@ -47,4 +49,14 @@ describe("resolveMotifContentDurationUs", () => {
     };
     expect(resolveMotifContentDurationUs(unbounded, {})).toBeNull();
   });
+});
+
+it("registers the lower-third built-in (content_duration_s, non-square)", () => {
+  const lt = getMotif("lower-third");
+  expect(lt).not.toBeNull();
+  expect(lt!.manifest.content_duration_s).toBe(0.8);
+  expect(lt!.manifest.size).toEqual([1280, 320]);
+  const ids = listMotifs().map((m) => m.id);
+  expect(ids).toContain("countdown");
+  expect(ids).toContain("lower-third");
 });

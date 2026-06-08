@@ -318,6 +318,7 @@ macro_rules! builtin_motif {
 }
 
 builtin_motif!(builtin_countdown, "catalog/countdown");
+builtin_motif!(builtin_lower_third, "catalog/lower-third");
 
 /// Catalog entry — the JSON-serializable shape that the picker UI + the
 /// `list_motifs` MCP tool + the `motifs://current` resource all
@@ -332,7 +333,7 @@ pub fn catalog() -> Vec<Manifest> {
 /// All built-in motifs, in display order. The picker UI iterates this
 /// list; agents see the same set via `list_motifs` (Stage H).
 pub fn builtins() -> Vec<Motif> {
-    vec![builtin_countdown()]
+    vec![builtin_countdown(), builtin_lower_third()]
 }
 
 #[cfg(test)]
@@ -620,10 +621,9 @@ mod tests {
     #[test]
     fn builtins_cover_starter_set() {
         let actual: Vec<String> = builtins().iter().map(|t| t.id().to_string()).collect();
-        assert_eq!(actual, vec!["countdown".to_string()]);
-        // `catalog()` exposes the same single motif to the picker / MCP.
+        assert_eq!(actual, vec!["countdown".to_string(), "lower-third".to_string()]);
         let catalog_ids: Vec<String> = catalog().iter().map(|m| m.id.clone()).collect();
-        assert_eq!(catalog_ids, vec!["countdown".to_string()]);
+        assert_eq!(catalog_ids, vec!["countdown".to_string(), "lower-third".to_string()]);
     }
 
     /// Every built-in's served HTML declares its lifecycle via `motif.define`

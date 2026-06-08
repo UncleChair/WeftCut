@@ -1,0 +1,58 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  @font-face{
+    font-family:"Inter";
+    src:url("assets/Inter.woff2") format("woff2");
+    font-weight:700; font-style:normal; font-display:block;
+  }
+  html,body{margin:0;width:1280px;height:320px;overflow:hidden;background:transparent}
+  #bar{
+    position:absolute; bottom:48px; height:160px; width:760px;
+    display:flex; flex-direction:column; justify-content:center;
+    padding:0 36px; box-sizing:border-box;
+    background:rgba(15,17,23,0.82);
+    font-family:"Inter", system-ui, -apple-system, "Segoe UI", sans-serif; color:#fff;
+  }
+  #bar.left{ left:64px;  border-left:10px solid var(--accent); text-align:left; }
+  #bar.right{ right:64px; border-right:10px solid var(--accent); text-align:right; }
+  #title{ font-size:56px; font-weight:700; line-height:1.05; letter-spacing:0.2px;
+          white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #subtitle{ font-size:30px; font-weight:700; opacity:0.82; margin-top:10px;
+             white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+</style></head><body>
+  <div id="bar" class="left">
+    <div id="title"></div>
+    <div id="subtitle"></div>
+  </div>
+  <script>
+    var bar = document.getElementById("bar");
+    var titleEl = document.getElementById("title");
+    var subEl = document.getElementById("subtitle");
+
+    motif.define({
+      setup: async function(props, ctx) {
+        var align = props.align === "right" ? "right" : "left";
+        bar.className = align;
+        bar.style.setProperty("--accent", props.accent || "#ff4d4d");
+        titleEl.textContent = props.title != null ? String(props.title) : "";
+        subEl.textContent = props.subtitle != null ? String(props.subtitle) : "";
+
+        // Slide + fade IN over 700 ms; `fill:both` pins the end state so every
+        // frame past content_duration_s (0.8 s) is the settled, held look.
+        var dx = align === "right" ? 48 : -48;
+        bar.animate(
+          [{ opacity: 0, transform: "translateX(" + dx + "px)" },
+           { opacity: 1, transform: "translateX(0)" }],
+          { duration: 700, easing: "cubic-bezier(0.16,1,0.3,1)", fill: "both" }
+        );
+        // Subtitle fades in slightly later (a second concurrent WAAPI anim).
+        subEl.animate(
+          [{ opacity: 0 }, { opacity: 0.82 }],
+          { duration: 650, delay: 150, easing: "ease-out", fill: "both" }
+        );
+
+        if (document.fonts && document.fonts.ready) await document.fonts.ready;
+      },
+    });
+  </script>
+</body></html>
