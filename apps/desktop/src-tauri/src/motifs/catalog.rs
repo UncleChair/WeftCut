@@ -69,6 +69,14 @@ pub struct Manifest {
     /// purely-static cap behavior.
     #[serde(default)]
     pub max_duration_prop: Option<String>,
+    /// Fixed content/animation duration (seconds) that does NOT cap the layer.
+    /// When set, the seekable content spans this many seconds; the layer stays
+    /// freely extendable (`resolve_motif_max_dur_us` ignores this field), and
+    /// the TS frame math clamps frames past it to the last content frame (a
+    /// held, deduped tail). Used by holdable overlays (e.g. the lower third);
+    /// distinct from `max_duration_s`, which caps the layer.
+    #[serde(default)]
+    pub content_duration_s: Option<f64>,
     /// How the motif's frames are captured. Defaults to `"svg"` when the
     /// manifest omits it.
     #[serde(default = "default_engine")]
@@ -453,6 +461,7 @@ mod tests {
                 default_duration_s: 1.0,
                 max_duration_s: None,
                 max_duration_prop: None,
+                content_duration_s: None,
                 engine: "svg".to_string(),
                 fonts: vec![],
                 props_schema,
@@ -577,6 +586,35 @@ mod tests {
         // None → None (no change from before).
         m.max_duration_s = None;
         assert_eq!(m.max_duration_us(), None);
+    }
+
+    /// `content_duration_s` defines the seekable content span but must NOT cap
+    /// the layer — `resolve_motif_max_dur_us` (the layer cap) ignores it, so a
+    /// holdable overlay stays freely extendable.
+    #[test]
+    fn content_duration_s_does_not_cap_the_layer() {
+        let mut m = builtin_countdown().manifest;
+        m.max_duration_s = None;
+        m.max_duration_prop = None;
+        m.content_duration_s = Some(0.8);
+        let props: imbl::HashMap<String, serde_json::Value> = imbl::HashMap::new();
+        assert_eq!(resolve_motif_max_dur_us(&m, &props), None);
+    }
+
+    /// The field round-trips through serde and defaults to `None` when absent
+    /// (so existing manifests without it keep parsing).
+    #[test]
+    fn manifest_roundtrips_content_duration_s() {
+        let json = r#"{"id":"x","name":"X","version":1,"size":[10,10],
+            "default_duration_s":1.0,"content_duration_s":0.8,"props_schema":{}}"#;
+        let m: Manifest = serde_json::from_str(json).unwrap();
+        assert_eq!(m.content_duration_s, Some(0.8));
+        assert_eq!(m.max_duration_s, None);
+
+        let without = r#"{"id":"y","name":"Y","version":1,"size":[10,10],
+            "default_duration_s":1.0,"props_schema":{}}"#;
+        let m2: Manifest = serde_json::from_str(without).unwrap();
+        assert_eq!(m2.content_duration_s, None);
     }
 
     #[test]
