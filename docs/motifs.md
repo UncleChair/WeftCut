@@ -265,11 +265,17 @@ over the one capture function:
   backward scrubs; the per-content budget keeps the warm set within the cache cap so the
   LRU can't evict a still-targeted frame.
 - **L2 — persisted PNG.** One PNG per frame under `<workspace>/Cache/raster/`, keyed by a
-  hash of `(motifId, version, canonicalProps, renderW, renderH, fps, contentDurationFrames)`.
+  hash of `(motifId, version, contentHash, canonicalProps, renderW, renderH, fps, contentDurationFrames)`.
   Survives reload, caps the in-RAM working set, and lets export read frames off disk;
   safe to delete (regenerates). Driven by a global **Pre-bake** setting (off by default)
   and a per-layer **Pre-bake now** action; reads are disk-first, gated by an in-RAM
   baked-key index so un-baked Motifs pay no fs cost.
+
+The key is **source-derived**: `contentHash` is a hash of the Motif's manifest + HTML, so
+editing a Motif's source (or updating an installed one) yields a fresh key and re-captures —
+the cache tracks *current* content rather than relying on a layer's stored version. A Motif
+with no `contentHash` (a built-in seeded from the build-time bundle, whose content is fixed)
+keys stably without it.
 
 **Not in the cache key:** the layer transform and opacity (applied by the Pixi sprite at
 composite time — moving/scaling/fading never re-captures) and the window position
