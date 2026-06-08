@@ -618,6 +618,11 @@ function MotifFields({
 
   const debouncedCommit = useDebouncedCommit<LayerParamsPatch>(commit);
 
+  // Re-resolve the motif when the runtime catalog changes (e.g. deleting this
+  // motif from the lifecycle row below) so the props schema / unknown-note stay
+  // in sync with `merged`, not a stale snapshot from mount. Same notifier the
+  // lifecycle row rides.
+  useSyncExternalStore(subscribeMotifCatalog, motifCatalogRevision);
   // The template's prop schema drives the props section. A null lookup means
   // the placed template_id isn't in the catalog (e.g. a removed built-in) — we
   // can still edit transform/opacity, but render a note instead of guessing
