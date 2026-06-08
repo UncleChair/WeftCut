@@ -22,10 +22,11 @@ use super::{cdp, host, MotifCapture, MotifRuntime};
 
 /// A capture/eval error string indicates the host's WebView2 thread is wedged
 /// (a Motif whose JS hung past the timeout) — distinct from a normal CDP
-/// failure. Such a host must be torn down + rebuilt, not reused. Matches the
-/// "timed out after" phrasing `cdp.rs` uses for both eval + screenshot timeouts.
+/// failure. Such a host must be torn down + rebuilt, not reused. Keys off the
+/// shared `cdp::TIMEOUT_MARKER` that both CDP timeout messages embed, so the two
+/// can't silently drift apart.
 fn is_timeout_error(msg: &str) -> bool {
-    msg.contains("timed out after")
+    msg.contains(cdp::TIMEOUT_MARKER)
 }
 
 /// How long to wait for the host page to load + the Motif to register

@@ -60,6 +60,12 @@ use windows::core::HSTRING;
 /// rather than hanging the calling future forever.
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Substring present in BOTH timeout error messages this module produces.
+/// `motifs::commands::is_timeout_error` matches on it to detect a wedged host;
+/// keeping it a shared const (used by the messages below) stops the detector
+/// from silently drifting if the messages are ever reworded.
+pub const TIMEOUT_MARKER: &str = "timed out after";
+
 /// Capture the current page of `window`'s WebView2 as a base64-encoded PNG,
 /// rendered at `w` x `h` logical pixels.
 ///
@@ -98,7 +104,8 @@ pub async fn capture_png_base64(window: &WebviewWindow, w: u32, h: u32, set_metr
             "CDP capture channel closed before a result was sent"
         )),
         Err(_elapsed) => Err(anyhow!(
-            "CDP capture timed out after {:?} (screenshot completion handler never fired)",
+            "CDP capture {} {:?} (screenshot completion handler never fired)",
+            TIMEOUT_MARKER,
             CAPTURE_TIMEOUT
         )),
     }
@@ -249,7 +256,8 @@ pub async fn eval_await(window: &WebviewWindow, expression: &str) -> anyhow::Res
             "CDP Runtime.evaluate channel closed before a result was sent"
         )),
         Err(_elapsed) => Err(anyhow!(
-            "CDP Runtime.evaluate timed out after {:?} (completion handler never fired)",
+            "CDP Runtime.evaluate {} {:?} (completion handler never fired)",
+            TIMEOUT_MARKER,
             CAPTURE_TIMEOUT
         )),
     }
