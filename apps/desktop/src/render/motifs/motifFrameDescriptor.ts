@@ -26,7 +26,9 @@ export interface MotifFrameDescriptor {
 /// Single source of truth shared by the on-demand sprite path and the
 /// prewarmer, so they can never disagree on (cacheKey, contentFrame).
 /// `durationUs` is the LAYER width (used only for uncapped templates).
-/// Returns null when props canonicalization fails.
+/// Always returns a descriptor — the lenient canonicalize never fails. The
+/// `| null` return type is kept for defensive typing; callers' null guards are
+/// safe no-ops.
 export function motifFrameDescriptor(
   view: MotifView,
   tInLayerUs: number,

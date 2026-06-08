@@ -131,6 +131,12 @@ function propValueValid(v: unknown, spec: PropSpec): boolean {
     case "number":
       return typeof v === "number" && Number.isFinite(v)
         && (spec.min == null || v >= spec.min) && (spec.max == null || v <= spec.max);
+    default: {
+      // Exhaustiveness guard: a new PropSpec variant makes this a compile error
+      // until propValueValid handles it (rather than silently failing validation).
+      const _exhaustive: never = spec;
+      return Boolean(_exhaustive);
+    }
   }
 }
 

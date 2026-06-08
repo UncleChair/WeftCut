@@ -8,6 +8,7 @@ import {
   setUserMotifs,
   type MotifManifest,
 } from "./catalog";
+import { canonicalizeProps } from "./Rasterizer";
 
 afterEach(() => setUserMotifs([]));
 
@@ -108,4 +109,18 @@ it("canonicalizePropsLenient drops unknown, fills defaults, falls back on invali
   const out2 = canonicalizePropsLenient({}, manifest as never);
   expect(out2.title).toBe("Hi");
   expect(out2.n).toBe(5);
+});
+
+it("lenient output for valid props matches strict output (cacheKey stability)", () => {
+  const manifest = {
+    id: "u", name: "U", version: 1, size: [10, 10] as [number, number], default_duration_s: 1,
+    props_schema: {
+      n: { type: "number", default: 5, min: 1, max: 10 },
+      title: { type: "string", default: "Hi" },
+    },
+  };
+  const props = { n: 3, title: "OK" };
+  const strict = canonicalizeProps(props, manifest as never);
+  const lenient = canonicalizePropsLenient(props, manifest as never);
+  expect(JSON.stringify(lenient)).toBe(JSON.stringify(strict));
 });
