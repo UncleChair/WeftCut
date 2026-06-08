@@ -457,6 +457,10 @@ const zhCN: Resources = {
     motif_delete: "删除",
     motif_delete_confirm: '删除 Motif "{{id}}"？时间轴上引用它的图层将失去内容。',
     motif_status: { draft: "草稿", installed: "已安装" },
+    motif_source: "源代码",
+    motif_source_apply: "应用",
+    motif_source_applying: "应用中…",
+    motif_source_hint: "编辑 Motif 的 HTML 与清单岛，然后点击「应用」更新预览。",
   },
   template_picker: {
     heading: "Motifs",
