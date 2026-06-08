@@ -1924,12 +1924,21 @@ fn motif_to_payload(
     html: String,
     status: &str,
 ) -> Result<serde_json::Value, String> {
+    // Source-derived cache identity (upload-design §8.1): blake3 of manifest+html.
+    // Surfaced so the TS frame cache re-captures when a draft's source changes
+    // (its `version` stays 1, so version alone can't bust the key).
+    let content_hash = crate::motifs::catalog::Motif {
+        manifest: manifest.clone(),
+        html: html.clone(),
+    }
+    .content_hash();
     let mut v = serde_json::to_value(manifest).map_err(|e| format!("manifest serialize: {e}"))?;
     let obj = v
         .as_object_mut()
         .ok_or_else(|| "manifest is not a JSON object".to_string())?;
     obj.insert("html".to_string(), serde_json::Value::String(html));
     obj.insert("status".to_string(), serde_json::Value::String(status.to_string()));
+    obj.insert("content_hash".to_string(), serde_json::Value::String(content_hash));
     Ok(v)
 }
 
@@ -2510,5 +2519,49 @@ mod tests {
         let m = crate::motifs::catalog::builtin_countdown();
         let v = motif_to_payload(&m.manifest, m.html.clone(), "builtin").unwrap();
         assert_eq!(v.as_object().unwrap().get("status").unwrap(), "builtin");
+    }
+
+    #[test]
+    fn payload_carries_content_hash_matching_motif_content_hash() {
+        use crate::motifs::catalog::{Manifest, Motif};
+        use std::collections::BTreeMap;
+        let m = Manifest {
+            id: "foo".into(),
+            name: "X".into(),
+            version: 1,
+            size: [100, 100],
+            default_duration_s: 1.0,
+            max_duration_s: None,
+            max_duration_prop: None,
+            content_duration_s: None,
+            fonts: vec![],
+            props_schema: BTreeMap::new(),
+        };
+        let html = "<head></head><body>one</body>".to_string();
+        let payload = motif_to_payload(&m, html.clone(), "draft").unwrap();
+        let got = payload.get("content_hash").and_then(|v| v.as_str()).unwrap();
+        let expect = Motif { manifest: m, html }.content_hash();
+        assert_eq!(got, expect);
+    }
+
+    #[test]
+    fn payload_content_hash_changes_with_html() {
+        use crate::motifs::catalog::{Manifest, Motif};
+        use std::collections::BTreeMap;
+        let make_manifest = || Manifest {
+            id: "foo".into(),
+            name: "X".into(),
+            version: 1,
+            size: [100, 100],
+            default_duration_s: 1.0,
+            max_duration_s: None,
+            max_duration_prop: None,
+            content_duration_s: None,
+            fonts: vec![],
+            props_schema: BTreeMap::new(),
+        };
+        let a = motif_to_payload(&make_manifest(), "<body>one</body>".into(), "draft").unwrap();
+        let b = motif_to_payload(&make_manifest(), "<body>two</body>".into(), "draft").unwrap();
+        assert_ne!(a.get("content_hash").unwrap(), b.get("content_hash").unwrap());
     }
 }
