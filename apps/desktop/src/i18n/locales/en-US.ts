@@ -464,6 +464,7 @@ const enUS = {
     bake_error: "Pre-bake failed",
     motif_install: "Install",
     motif_delete: "Delete",
+    motif_delete_confirm: 'Delete Motif "{{id}}"? Placed layers will lose their content.',
     motif_status: { draft: "Draft", installed: "Installed" },
   },
   template_picker: {

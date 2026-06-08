@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { listen } from "@tauri-apps/api/event";
 import { formatTimecode, parseTimecode } from "../frames";
 import {
   updateLayer,
   updateLayerParams,
   installMotif,
   deleteMotif,
+  MOTIFS_CHANGED_EVENT,
   type GroupSummary,
   type LayerParamsPatch,
   type LayerSummary,
@@ -638,7 +640,7 @@ function MotifFields({
     <section className="prop-section">
       <h3>{t("property_panel.template")}</h3>
       <BakeStatusLine layerId={layer.id} />
-      <MotifLifecycleRow motifId={v.motif_id} status={template?.manifest.status} />
+      <MotifLifecycleRow motifId={v.motif_id} />
       <h4>{t("property_panel.transform")}</h4>
       <Field label={t("property_panel.x")}>
         <input
@@ -716,16 +718,21 @@ function MotifFields({
 /// Motifs show nothing. Install-update + Edit are Stage 3b-2; this is Install-new
 /// + Delete. The backend emits `motifs:changed`, which resyncs the catalog so the
 /// layer keeps rendering (the id is stable across install — Model B).
-function MotifLifecycleRow({
-  motifId,
-  status,
-}: {
-  motifId: string;
-  status: "builtin" | "installed" | "draft" | undefined;
-}) {
+function MotifLifecycleRow({ motifId }: { motifId: string }) {
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [, setCatalogRev] = useState(0);
+  useEffect(() => {
+    let un: (() => void) | undefined;
+    let cleaned = false;
+    void listen(MOTIFS_CHANGED_EVENT, () => setCatalogRev((r) => r + 1)).then((u) => {
+      if (cleaned) u();
+      else un = u;
+    });
+    return () => { cleaned = true; un?.(); };
+  }, []);
+  const status = getMotif(motifId)?.manifest.status;
   if (!status || status === "builtin") return null;
 
   const run = (fn: () => Promise<unknown>) => async () => {
@@ -743,14 +750,22 @@ function MotifLifecycleRow({
   return (
     <div className="prop-motif-lifecycle">
       <span className={`template-card-status status-${status}`}>
-        {t(`property_panel.motif_status.${status}`)}
+        {t(`property_panel.motif_status.${status}`, { defaultValue: status })}
       </span>
       {status === "draft" && (
         <button disabled={busy} onClick={run(() => installMotif(motifId, { kind: "new" }))}>
           {t("property_panel.motif_install")}
         </button>
       )}
-      <button disabled={busy} onClick={run(() => deleteMotif(motifId))}>
+      <button
+        disabled={busy}
+        onClick={run(async () => {
+          if (status === "installed" && !window.confirm(t("property_panel.motif_delete_confirm", { id: motifId }))) {
+            return;
+          }
+          await deleteMotif(motifId);
+        })}
+      >
         {t("property_panel.motif_delete")}
       </button>
       {err && <p className="settings-error">{err}</p>}
