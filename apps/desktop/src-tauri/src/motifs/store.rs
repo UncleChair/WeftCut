@@ -143,7 +143,7 @@ impl UserMotifStore {
         let mut out = Vec::new();
         if let Ok(entries) = std::fs::read_dir(self.drafts_root()) {
             for e in entries.flatten() {
-                if e.path().is_dir() {
+                if e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
                     if let Some(name) = e.file_name().to_str() {
                         out.push(name.to_string());
                     }
@@ -168,16 +168,25 @@ impl UserMotifStore {
     /// The caller has already rewritten the draft's island so `id == final_id`
     /// (the dir==id invariant). Overwrites any existing `<final_id>/` (update path).
     pub fn install_draft(&self, draft_id: &str, final_id: &str) -> std::io::Result<()> {
+        // Ensure the store root exists. (write_draft already created it via
+        // drafts_root(), so this is belt-and-suspenders.)
+        std::fs::create_dir_all(self.root.as_path())?;
         let from = self.drafts_root().join(safe_seg(draft_id)?);
         let to = self.root.join(safe_seg(final_id)?);
         if to.exists() {
             std::fs::remove_dir_all(&to)?;
         }
-        std::fs::create_dir_all(self.root.as_path())?;
         match std::fs::rename(&from, &to) {
             Ok(()) => Ok(()),
             Err(_) => {
-                copy_dir_all(&from, &to)?;
+                // Cross-device fallback: copy then remove the source. If the
+                // copy fails mid-tree, the old target was already removed above,
+                // so clean up the partial copy (don't leave a corrupt published
+                // slot) and return the error — the draft stays intact for a retry.
+                if let Err(copy_err) = copy_dir_all(&from, &to) {
+                    let _ = std::fs::remove_dir_all(&to);
+                    return Err(copy_err);
+                }
                 std::fs::remove_dir_all(&from)
             }
         }
@@ -371,5 +380,36 @@ mod tests {
         // Absent id and the reserved drafts id resolve to None.
         assert!(store.get_motif("nope").is_none());
         assert!(store.get_motif(DRAFTS_DIR).is_none());
+    }
+
+    #[test]
+    fn write_install_delete_reject_unsafe_ids() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = UserMotifStore::new(tmp.path().to_path_buf());
+        // safe_seg guards the write surface against id traversal/separators.
+        assert!(store.write_draft("..", "html").is_err());
+        assert!(store.write_draft("a/b", "html").is_err());
+        assert!(store.write_draft("", "html").is_err());
+        assert!(store.delete_user_motif("..").is_err());
+        assert!(store.install_draft("ok", "../escape").is_err());
+    }
+
+    #[test]
+    fn install_draft_overwrites_existing_published_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = UserMotifStore::new(tmp.path().to_path_buf());
+        let h1 = compose_motif_html(&manifest("foo", "Foo v1", 1),
+            "<head></head><body>v1<script>motif.define({setup(){}})</script></body>");
+        store.write_draft("foo", &h1).unwrap();
+        store.install_draft("foo", "foo").unwrap();
+        // Same id, new content → install over it (the update path).
+        let h2 = compose_motif_html(&manifest("foo", "Foo v2", 2),
+            "<head></head><body>v2<script>motif.define({setup(){}})</script></body>");
+        store.write_draft("foo", &h2).unwrap();
+        store.install_draft("foo", "foo").unwrap();
+        let parsed = parse_manifest_island(&store.read_html("foo").unwrap()).unwrap();
+        assert_eq!(parsed.version, 2);
+        assert_eq!(parsed.name, "Foo v2");
+        assert_eq!(store.published_ids(), vec!["foo".to_string()]);
     }
 }
