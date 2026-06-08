@@ -64,7 +64,7 @@ export interface MotifFrameCacheKeyInput {
 
 /// Stable opaque key for `MotifFrameCache`. The cache appends `#<frame>`;
 /// callers must not. `canonicalProps` is already in stable key order
-/// (`canonicalizeProps`), so its JSON is deterministic. Exported for unit
+/// (`canonicalizeProps` or `canonicalizePropsLenient`), so its JSON is deterministic. Exported for unit
 /// testing.
 export function motifFrameCacheKey(input: MotifFrameCacheKeyInput): string {
   return [
