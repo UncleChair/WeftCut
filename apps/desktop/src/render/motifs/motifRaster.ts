@@ -12,13 +12,14 @@ export async function rasterMotifFrame(
   width: number,
   height: number,
   settleRafs?: number,
+  contentHash?: string,
 ): Promise<ImageBitmap> {
   if (typeof window !== "undefined") {
     const perf = (window as unknown as { __weftcutMotifPerf?: { renders: number } })
       .__weftcutMotifPerf;
     if (perf) perf.renders++;
   }
-  return captureMotifFrame(motifId, tSec, props, width, height, settleRafs);
+  return captureMotifFrame(motifId, tSec, props, width, height, settleRafs, contentHash);
 }
 
 /// Capture one ARBITRARY content frame of a Motif directly via CDP, at the
@@ -33,5 +34,5 @@ export function bakeMotifFrame(
   canonicalProps: Record<string, unknown>,
 ): Promise<ImageBitmap> {
   const [w, h] = motif.manifest.size;
-  return rasterMotifFrame(motif.manifest.id, (frame * fpsDen) / fpsNum, canonicalProps, w!, h!, motif.manifest.settle_rafs);
+  return rasterMotifFrame(motif.manifest.id, (frame * fpsDen) / fpsNum, canonicalProps, w!, h!, motif.manifest.settle_rafs, motif.manifest.content_hash);
 }

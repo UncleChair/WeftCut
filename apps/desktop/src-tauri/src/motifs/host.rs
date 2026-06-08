@@ -34,40 +34,54 @@ fn motif_id_from_url(url: &tauri::Url) -> Option<String> {
 /// dimensions.
 ///
 /// Returns `(window, needs_reset)`. `needs_reset` is `true` when the host was
-/// freshly created **or** navigated to a different Motif id; the caller should
-/// reset `CaptureState` in both cases so the ready-probe re-confirms
-/// `window.__motifRender` on the new page and `setDeviceMetricsOverride`
-/// re-applies for the new Motif's size. WebView2 re-runs the
-/// `initialization_script` (the clock-takeover runtime) automatically on
-/// every navigation, so no manual re-injection is needed.
+/// freshly created **or** navigated to a different Motif id **or** a changed
+/// content version (`content_hash`); the caller should reset `CaptureState` in
+/// all cases so the ready-probe re-confirms `window.__motifRender` on the new
+/// page and `setDeviceMetricsOverride` re-applies for the new Motif's size.
+/// WebView2 re-runs the `initialization_script` (the clock-takeover runtime)
+/// automatically on every navigation, so no manual re-injection is needed.
 ///
-/// When the host is already bound to the requested `motif_id`, the window is
-/// returned as-is with `needs_reset = false`.
+/// The host URL carries a `?v=<content_hash>` cache-buster: an in-place draft
+/// edit (same id, new content) yields a new URL, so the host navigates (reload)
+/// and WebView2 re-fetches the edited disk file. The `motif:` scheme handler
+/// ignores the query (it resolves `/<id>/index.html`), so the cache-buster is
+/// harmless to serving.
+///
+/// When the host is already bound to the requested `motif_id` AND the same
+/// content version, the window is returned as-is with `needs_reset = false`.
 pub fn ensure_host(
     app: &AppHandle,
     runtime: &str,
     motif_id: &str,
+    content_hash: &str,
     width: u32,
     height: u32,
 ) -> tauri::Result<(WebviewWindow, bool)> {
-    // `http://motif.localhost/<id>/index.html` on Windows — the remapped form
-    // of the `motif:` custom scheme (see the `builtin` module docs).
-    let url = format!("{SCHEME_ORIGIN}/{motif_id}/index.html");
+    // `?v=<content_hash>` is a cache-buster: a content change yields a new URL so
+    // WebView2 re-fetches the (edited) disk file. The `motif:` scheme handler
+    // ignores the query (resolves `/<id>/index.html`), so it's harmless to serving.
+    let url = format!("{SCHEME_ORIGIN}/{motif_id}/index.html?v={content_hash}");
     let parsed: tauri::Url = url.parse().map_err(tauri::Error::InvalidUrl)?;
 
     if let Some(win) = app.get_webview_window(HOST_LABEL) {
-        let bound_id = win.url().ok().and_then(|u| motif_id_from_url(&u));
-        if bound_id.as_deref() == Some(motif_id) {
-            // Already on the right Motif — reuse as-is, no reset.
-            return Ok((win, false));
+        if let Ok(bound) = win.url() {
+            let same_id = motif_id_from_url(&bound).as_deref() == Some(motif_id);
+            let bound_v = bound
+                .query_pairs()
+                .find(|(k, _)| k == "v")
+                .map(|(_, v)| v.into_owned())
+                .unwrap_or_default();
+            // Reuse only when BOTH the id and the content version match — so an
+            // in-place draft edit (same id, new content_hash) forces a reload.
+            if same_id && bound_v == content_hash {
+                return Ok((win, false));
+            }
         }
-        // Bound to a DIFFERENT Motif: navigate the existing hidden host to the
-        // new id, reusing the window + CDP session. WebView2 re-runs the
-        // `initialization_script` on navigation, so the clock-takeover runtime
-        // re-injects before the new page's `motif.define(...)`. The caller
-        // resets `CaptureState` (returned `true`) so the ready-probe re-confirms
-        // `__motifRender` on the new page and `setDeviceMetricsOverride` re-applies
-        // for the new Motif's size.
+        // Different id OR changed content: navigate (reload). WebView2 re-runs the
+        // `initialization_script`, so the clock-takeover runtime re-injects before
+        // the new page's `motif.define(...)`. The caller resets `CaptureState`
+        // (returned `true`) so the ready-probe re-confirms `__motifRender` on the
+        // new page and `setDeviceMetricsOverride` re-applies for the new size.
         win.navigate(parsed)?;
         return Ok((win, true));
     }
@@ -116,5 +130,13 @@ mod tests {
     fn none_for_root_url() {
         let u: tauri::Url = "http://motif.localhost/".parse().unwrap();
         assert_eq!(motif_id_from_url(&u), None);
+    }
+
+    #[test]
+    fn extracts_id_from_host_url_with_version_query() {
+        let u: tauri::Url = "http://motif.localhost/lower-third/index.html?v=abc123"
+            .parse()
+            .unwrap();
+        assert_eq!(super::motif_id_from_url(&u).as_deref(), Some("lower-third"));
     }
 }

@@ -451,6 +451,10 @@ pub fn run() {
                                     480,
                                     480,
                                     None,
+                                    // Built-in is served by the scheme handler regardless of
+                                    // the `?v=` query; a stable "" keeps host reuse across the
+                                    // two capture! calls (different t, same id+version).
+                                    String::new(),
                                 )
                                 .await
                             }};

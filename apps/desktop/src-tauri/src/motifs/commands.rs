@@ -74,6 +74,7 @@ pub async fn motif_capture_frame(
     width: u32,
     height: u32,
     settle_rafs: Option<u32>,
+    content_hash: String,
 ) -> Result<String, String> {
     let runtime = state
         .get()
@@ -84,7 +85,7 @@ pub async fn motif_capture_frame(
     // host and screenshot a stale vclock. Also guards the per-host CaptureState.
     let mut cap = capture.0.lock().await;
 
-    let (win, needs_reset) = host::ensure_host(&app, &runtime, &motif_id, width, height)
+    let (win, needs_reset) = host::ensure_host(&app, &runtime, &motif_id, &content_hash, width, height)
         .map_err(|e| format!("ensure_host failed: {e}"))?;
     if needs_reset {
         cap.reset();

@@ -432,7 +432,7 @@ function MotifPreview({
   useEffect(() => {
     let cancelled = false;
     setError(null);
-    captureMotifFramePngBlob(template.id, tSec, props, w, h)
+    captureMotifFramePngBlob(template.id, tSec, props, w, h, undefined, template.content_hash)
       .then((blob) => {
         if (cancelled) return;
         const url = URL.createObjectURL(blob);
@@ -448,7 +448,9 @@ function MotifPreview({
     };
     // `props` identity: MotifForm debounces it (300ms) and MotifCardThumbnail
     // memoizes it, so a re-capture fires per settled edit — not per render. No storm.
-  }, [template.id, tSec, props, w, h]);
+    // `content_hash` is in the deps so a same-id draft edit (new content, same id)
+    // re-captures — the host reloads off the `?v=` cache-buster threaded above.
+  }, [template.id, template.content_hash, tSec, props, w, h]);
 
   // Revoke the last blob URL on unmount.
   useEffect(
