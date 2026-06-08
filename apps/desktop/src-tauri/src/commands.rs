@@ -1969,6 +1969,7 @@ pub async fn list_motifs(
 #[tauri::command]
 pub async fn add_motif(
     handle: State<'_, ProjectHandle>,
+    store: State<'_, crate::motifs::store::UserMotifStore>,
     motif_id: String,
     t_start_us: TimeUs,
     t_end_us: Option<TimeUs>,
@@ -1978,10 +1979,9 @@ pub async fn add_motif(
     let motif = catalog::builtins()
         .into_iter()
         .find(|t| t.id() == motif_id)
+        .or_else(|| store.get_motif(&motif_id))
         .ok_or_else(|| {
-            format!(
-                "unknown motif_id '{motif_id}' — call list_motifs for the catalog",
-            )
+            format!("unknown motif_id '{motif_id}' — call list_motifs for the catalog")
         })?;
 
     let provided = props.unwrap_or_else(|| serde_json::Value::Object(Default::default()));
