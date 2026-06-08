@@ -88,12 +88,32 @@ function mergeCatalogs(): Map<string, Motif> {
   return out;
 }
 
+// --- catalog change notification (so React consumers re-render after `merged`
+// actually updates — setUserMotifs is a plain mutation otherwise). ---
+let catalogRevision = 0;
+const catalogSubscribers = new Set<() => void>();
+
+/// Subscribe to catalog changes (a `setUserMotifs` call). Returns an unsubscribe fn.
+/// Pair with `motifCatalogRevision` for React's `useSyncExternalStore`.
+export function subscribeMotifCatalog(cb: () => void): () => void {
+  catalogSubscribers.add(cb);
+  return () => catalogSubscribers.delete(cb);
+}
+
+/// A monotonically increasing revision, bumped on every `setUserMotifs`. The
+/// `getSnapshot` for `useSyncExternalStore`.
+export function motifCatalogRevision(): number {
+  return catalogRevision;
+}
+
 /// Replace the runtime user-Motif layer (from the backend `list_motifs` IPC).
 /// Built-ins are always present and authoritative; this only adds/removes the
 /// user entries. Idempotent — call it whenever the backend catalog changes.
 export function setUserMotifs(manifests: MotifManifest[]): void {
   userCatalog = new Map(manifests.map((manifest) => [manifest.id, { manifest }]));
   merged = mergeCatalogs();
+  catalogRevision += 1;
+  for (const cb of catalogSubscribers) cb();
 }
 
 export function getMotif(id: string): Motif | null {

@@ -6,6 +6,8 @@ import {
   getMotif,
   listMotifs,
   setUserMotifs,
+  subscribeMotifCatalog,
+  motifCatalogRevision,
   type MotifManifest,
 } from "./catalog";
 import { canonicalizeProps } from "./Rasterizer";
@@ -123,4 +125,16 @@ it("lenient output for valid props matches strict output (cacheKey stability)", 
   const strict = canonicalizeProps(props, manifest as never);
   const lenient = canonicalizePropsLenient(props, manifest as never);
   expect(JSON.stringify(lenient)).toBe(JSON.stringify(strict));
+});
+
+it("setUserMotifs bumps the revision and notifies subscribers", () => {
+  const before = motifCatalogRevision();
+  let calls = 0;
+  const un = subscribeMotifCatalog(() => { calls += 1; });
+  setUserMotifs([]);
+  expect(motifCatalogRevision()).toBeGreaterThan(before);
+  expect(calls).toBe(1);
+  un();
+  setUserMotifs([]);
+  expect(calls).toBe(1); // unsubscribed → no further calls
 });
