@@ -2876,6 +2876,12 @@ input.preview-timecode:focus {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+.template-card-status { font-size: 11px; padding: 1px 6px; border-radius: 6px; }
+.template-card-status.status-draft { background: #b8860b; color: #fff; }
+.template-card-status.status-installed { background: #2a6; color: #fff; }
+.template-card-status.status-builtin { background: #444; color: #ccc; }
+.template-picker-new { margin-left: auto; }
+
 .template-picker-form {
   padding: 8px 16px 16px;
   /* Same reason as `.template-picker-list` above — needs its own height cap

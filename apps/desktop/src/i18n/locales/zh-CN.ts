@@ -472,6 +472,13 @@ const zhCN: Resources = {
       "图层长度默认为 {{value}}（Motif 的默认时长）。如需不同长度，可在时间轴上裁剪。",
     add: "添加到时间轴",
     adding: "添加中…",
+    new_button: "新建 Motif",
+    new_prompt: "给 Motif 命名",
+    status: {
+      draft: "草稿",
+      installed: "已安装",
+      builtin: "内置",
+    },
   },
   status_bar: {
     label: "活动日志",

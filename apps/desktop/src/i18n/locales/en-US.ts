@@ -481,6 +481,13 @@ const enUS = {
       "Layer length defaults to {{value}} (the motif's default duration). Trim later in the timeline if you need a different length.",
     add: "Add to timeline",
     adding: "Adding…",
+    new_button: "New Motif",
+    new_prompt: "Name your Motif",
+    status: {
+      draft: "Draft",
+      installed: "Installed",
+      builtin: "Built-in",
+    },
   },
   status_bar: {
     label: "Activity log",
