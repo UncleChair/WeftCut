@@ -101,6 +101,9 @@ impl UserMotifStore {
         }
         let safe_id = safe_rel(id)?;
         let safe = safe_rel(rel)?;
+        // Published first, then fall back to the draft of the same id. NOTE: a
+        // permission error on the published path also falls through to the draft
+        // — benign here, since the app owns these files (it wrote them).
         let published = self.root.join(&safe_id).join(&safe);
         if let Ok(bytes) = std::fs::read(&published) {
             return Some(bytes);
@@ -159,13 +162,12 @@ impl UserMotifStore {
     /// Every draft as a full `Motif` (manifest + html), id-sorted. Skips a draft
     /// dir whose `index.html` is missing or whose island fails to parse.
     pub fn list_drafts(&self) -> Vec<Motif> {
-        let mut out: Vec<Motif> = self
-            .list_draft_ids()
+        // `list_draft_ids` is already id-sorted and `filter_map` preserves order,
+        // so the result is id-sorted without a re-sort.
+        self.list_draft_ids()
             .into_iter()
             .filter_map(|id| self.get_draft(&id))
-            .collect();
-        out.sort_by(|a, b| a.id().cmp(b.id()));
-        out
+            .collect()
     }
 
     /// Build a `Motif` from a draft's `index.html`.
@@ -420,6 +422,9 @@ mod tests {
         assert!(got.contains("draft"));
         assert!(store.get_motif("foo").is_some());
         store.install_draft("foo", "foo").unwrap();
+        // Install MOVES the draft out, so the published copy is now what serves
+        // (there's no stale draft left to fall back to).
+        assert!(store.list_draft_ids().is_empty());
         let pub_html = String::from_utf8(store.read_file("foo", "index.html").unwrap()).unwrap();
         assert!(pub_html.contains("draft"));
         assert!(store.list_manifests().iter().any(|m| m.id == "foo"));
