@@ -26,12 +26,12 @@ export async function rasterMotifFrame(
 /// `isOnDisk`, so it must NOT read disk-first (that's `resolveMotifFrame`'s
 /// job for the read paths) — it always captures. `tSec = frame * fpsDen/fpsNum`.
 export function bakeMotifFrame(
-  template: Motif,
+  motif: Motif,
   frame: number,
   fpsNum: number,
   fpsDen: number,
   canonicalProps: Record<string, unknown>,
 ): Promise<ImageBitmap> {
-  const [w, h] = template.manifest.size;
-  return rasterMotifFrame(template.manifest.id, (frame * fpsDen) / fpsNum, canonicalProps, w!, h!, template.manifest.settle_rafs);
+  const [w, h] = motif.manifest.size;
+  return rasterMotifFrame(motif.manifest.id, (frame * fpsDen) / fpsNum, canonicalProps, w!, h!, motif.manifest.settle_rafs);
 }

@@ -85,7 +85,7 @@ export function bakeContentFrameFor(
 /// a partial export range only narrows WHICH of those frames we actually bake.
 export interface MotifBakeSpec {
   layerId: string;
-  template: Motif;
+  motif: Motif;
   view: MotifView;
   /// Layer duration in microseconds (`t_end_us - t_start_us`).
   durationUs: number;
@@ -127,8 +127,8 @@ export function motifLayersToBake(
       if (layer.t_start_us >= endUs) continue;
 
       const view = layer.params;
-      const template = getMotif(view.motif_id);
-      if (!template) {
+      const motif = getMotif(view.motif_id);
+      if (!motif) {
         // eslint-disable-next-line no-console
         console.warn(
           `[weftcut/export] bake: unknown template "${view.motif_id}" ` +
@@ -170,7 +170,7 @@ export function motifLayersToBake(
 
       out.push({
         layerId: layer.id,
-        template,
+        motif,
         view,
         durationUs,
         durationFrames,
@@ -219,21 +219,21 @@ export async function exportBakeMotifs(
     // Canonicalize props once per layer (identical across the layer's frames;
     // only the content frame varies). Mirrors the preview path's per-tick
     // canonicalize against the same manifest, so export pixels == preview.
-    const canonical = canonicalizeProps(spec.view.props, spec.template.manifest);
+    const canonical = canonicalizeProps(spec.view.props, spec.motif.manifest);
     // Content-window model: src_in offset + intrinsic content duration. Uncapped
     // templates fall back to layer-width content with src_in=0 (legacy).
-    const cap = resolveMotifContentDurationUs(spec.template.manifest, spec.view.props);
+    const cap = resolveMotifContentDurationUs(spec.motif.manifest, spec.view.props);
     const contentDurationUs = cap ?? spec.durationUs;
     // Windowing (`src_in`) applies ONLY to layer-capped Motifs (`max_duration*`),
     // matching motifFrameDescriptor.ts — a `content_duration_s` holdable always
     // plays from content frame 0 so preview pixels equal export pixels.
-    const windowed = spec.template.manifest.content_duration_s == null && cap != null;
+    const windowed = spec.motif.manifest.content_duration_s == null && cap != null;
     const srcInUs = windowed ? spec.view.src_in_us : 0;
 
     // L2 fast path: this layer's content cacheKey (playhead/time-independent →
     // tInLayerUs=0; only desc.cacheKey is used, mirroring hydrateBakedIndexAndGc).
     const desc = motifFrameDescriptor(
-      spec.view, 0, spec.durationUs, fpsNum, fpsDen, spec.template,
+      spec.view, 0, spec.durationUs, fpsNum, fpsDen, spec.motif,
     );
     const cacheKey = desc?.cacheKey ?? null;
 
@@ -276,7 +276,7 @@ export async function exportBakeMotifs(
       // transparent backdrop. tSec is derived inside bakeMotifFrame as
       // contentFrame*fpsDen/fpsNum (== the old frameTimeSec(contentFrame)).
       // eslint-disable-next-line no-await-in-loop
-      const bitmap = await bakeMotifFrame(spec.template, contentFrame, fpsNum, fpsDen, canonical);
+      const bitmap = await bakeMotifFrame(spec.motif, contentFrame, fpsNum, fpsDen, canonical);
       frames[frame] = bitmap;
       baked++;
       onProgress?.(baked, total);
