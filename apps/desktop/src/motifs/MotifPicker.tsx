@@ -47,6 +47,8 @@ export function MotifPicker({
   const [templates, setTemplates] = useState<MotifSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [newOpen, setNewOpen] = useState(false);
+  const [newName, setNewName] = useState("");
 
   const aliveRef = useRef(true);
   const reload = () => {
@@ -99,27 +101,51 @@ export function MotifPicker({
     [tracks],
   );
 
+  const createDraft = async () => {
+    const name = newName.trim();
+    if (name === "") return;
+    try {
+      const { manifest, html } = newDraftSource(name);
+      const draftId = await writeMotifDraft(manifest, html);
+      setSelectedId(draftId); // motifs:changed → reload() surfaces the card
+      setNewOpen(false);
+      setNewName("");
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
   return (
     <div className="settings-overlay" role="dialog" aria-modal="true">
       <div className="template-picker">
         <header>
           <h2>{t("template_picker.heading")}</h2>
-          <button
-            className="template-picker-new"
-            onClick={async () => {
-              const name = window.prompt(t("template_picker.new_prompt"), "My Motif");
-              if (name == null || name.trim() === "") return;
-              try {
-                const { manifest, html } = newDraftSource(name.trim());
-                const draftId = await writeMotifDraft(manifest, html);
-                setSelectedId(draftId); // motifs:changed → reload() surfaces the card
-              } catch (e) {
-                setError(String(e));
-              }
-            }}
-          >
-            {t("template_picker.new_button")}
-          </button>
+          {newOpen ? (
+            <form
+              className="template-picker-new-form"
+              onSubmit={(e) => { e.preventDefault(); void createDraft(); }}
+            >
+              <input
+                type="text"
+                autoFocus
+                value={newName}
+                placeholder={t("template_picker.new_name_placeholder")}
+                aria-label={t("template_picker.new_prompt")}
+                onChange={(e) => setNewName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Escape") { setNewOpen(false); setNewName(""); } }}
+              />
+              <button type="submit" disabled={newName.trim() === ""}>
+                {t("template_picker.new_create")}
+              </button>
+              <button type="button" onClick={() => { setNewOpen(false); setNewName(""); }}>
+                {t("template_picker.new_cancel")}
+              </button>
+            </form>
+          ) : (
+            <button className="template-picker-new" onClick={() => setNewOpen(true)}>
+              {t("template_picker.new_button")}
+            </button>
+          )}
           <button
             className="settings-close"
             onClick={onClose}
