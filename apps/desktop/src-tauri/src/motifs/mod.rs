@@ -25,6 +25,7 @@
 pub mod cdp;
 
 pub mod authoring;
+pub mod authoring_commands;
 pub mod builtin;
 pub mod catalog;
 pub mod store;
