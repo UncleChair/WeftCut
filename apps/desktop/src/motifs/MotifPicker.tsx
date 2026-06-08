@@ -1,15 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { listen } from "@tauri-apps/api/event";
 import { formatTimecode, parseTimecode } from "../frames";
 import {
   addMotif,
   listMotifs,
+  MOTIFS_CHANGED_EVENT,
+  writeMotifDraft,
   type PropSpec,
   type MotifSummary,
   type TrackSummary,
 } from "../ipc";
 import { captureMotifFramePngBlob } from "../render/motifs/host";
 import { setUserMotifs, type MotifManifest } from "../render/motifs/catalog";
+import { newDraftSource } from "../render/motifs/starterTemplate";
 
 interface Props {
   onClose: () => void;
@@ -44,11 +48,9 @@ export function MotifPicker({
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
+  const reload = () => {
     listMotifs().then(
       (list) => {
-        if (cancelled) return;
         setTemplates(list);
         // Refresh the runtime frame-math catalog from the SAME fetch the picker
         // shows. The boot-time sync (main.tsx) is one-shot; without this, a Motif
@@ -57,14 +59,17 @@ export function MotifPicker({
         // null in the compositor/export and render blank until restart. Opening
         // the picker is a prerequisite for adding, so this keeps the two in sync.
         setUserMotifs(list as MotifManifest[]);
-        const first = list[0];
-        if (first) setSelectedId(first.id);
+        setSelectedId((prev) => prev ?? list[0]?.id ?? null);
       },
       (e) => setError(String(e)),
     );
-    return () => {
-      cancelled = true;
-    };
+  };
+  useEffect(() => {
+    reload();
+    let un: (() => void) | undefined;
+    void listen(MOTIFS_CHANGED_EVENT, reload).then((u) => { un = u; });
+    return () => { un?.(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const selected = useMemo(
@@ -82,6 +87,22 @@ export function MotifPicker({
       <div className="template-picker">
         <header>
           <h2>{t("template_picker.heading")}</h2>
+          <button
+            className="template-picker-new"
+            onClick={async () => {
+              const name = window.prompt(t("template_picker.new_prompt"), "My Motif");
+              if (name == null || name.trim() === "") return;
+              try {
+                const { manifest, html } = newDraftSource(name.trim());
+                const draftId = await writeMotifDraft(manifest, html);
+                setSelectedId(draftId); // motifs:changed → reload() surfaces the card
+              } catch (e) {
+                setError(String(e));
+              }
+            }}
+          >
+            {t("template_picker.new_button")}
+          </button>
           <button
             className="settings-close"
             onClick={onClose}
@@ -115,6 +136,9 @@ export function MotifPicker({
                     {tpl.size[0]}×{tpl.size[1]} · {formatTimecode(Math.round(tpl.default_duration_s * 1_000_000), fpsNum, fpsDen)}
                   </span>
                   <span className="template-card-id">{tpl.id}</span>
+                  <span className={`template-card-status status-${tpl.status ?? "builtin"}`}>
+                    {t(`template_picker.status.${tpl.status ?? "builtin"}`)}
+                  </span>
                 </button>
               ))}
             </div>
