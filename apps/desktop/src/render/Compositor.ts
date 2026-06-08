@@ -240,7 +240,7 @@ export class Compositor {
   /// for a layer, `updateMotif` hands the array to `MotifSprite.update`,
   /// which binds by index synchronously (no DOM harness — the Worker has none).
   /// Empty in preview mode; the sprite's harness/cache path runs instead.
-  private templateFrames = new Map<string, readonly ImageBitmap[]>();
+  private motifFrames = new Map<string, readonly ImageBitmap[]>();
   private subtitles = new Map<string, ActiveSubtitles>();
   private audios = new Map<string, ActiveAudio>();
   /// In-flight no-flash source-swaps, keyed by the clip's real layerId.
@@ -272,7 +272,7 @@ export class Compositor {
   private lastTUs = 0;
   /// Background filler that warms the shared motif-frame cache ahead of the
   /// playhead. DOM-gated: only the main-thread preview Compositor creates one;
-  /// the export Worker (no `document`, frames injected via `setTemplateFrames`)
+  /// the export Worker (no `document`, frames injected via `setMotifFrames`)
   /// leaves it null.
   private prewarmer: MotifPrewarmer | null =
     typeof document !== "undefined"
@@ -434,10 +434,10 @@ export class Compositor {
   /// `MotifSprite.update`, which binds by index synchronously instead of
   /// running the DOM capture harness (absent in the Worker). Passing an empty
   /// map (or never calling this) leaves preview's harness/cache path untouched.
-  setTemplateFrames(map: Record<string, readonly ImageBitmap[]>): void {
-    this.templateFrames.clear();
+  setMotifFrames(map: Record<string, readonly ImageBitmap[]>): void {
+    this.motifFrames.clear();
     for (const [layerId, frames] of Object.entries(map)) {
-      this.templateFrames.set(layerId, frames);
+      this.motifFrames.set(layerId, frames);
     }
   }
 
@@ -912,9 +912,9 @@ export class Compositor {
     setLayerBakeStatuses({});
     // Drop the injected export-bake frame references. Bitmaps here are OWNED by
     // the export caller (`exportBakeMotifs`), not the Compositor — same as
-    // `setTemplateFrames`, which clears without closing — so we clear (no
+    // `setMotifFrames`, which clears without closing — so we clear (no
     // `.close()`) to avoid double-freeing the caller's bitmaps.
-    this.templateFrames.clear();
+    this.motifFrames.clear();
     for (const s of this.subtitles.values()) s.sprite.dispose();
     this.subtitles.clear();
     for (const a of this.audios.values()) a.mixer.dispose();
@@ -1559,7 +1559,7 @@ export class Compositor {
     // Export mode: pass the baked frames for this layer so the sprite binds by
     // index synchronously (the Worker has no DOM harness). Undefined in preview
     // (or if this layer wasn't baked) → the sprite's harness/cache path runs.
-    const injected = this.templateFrames.get(layer.id);
+    const injected = this.motifFrames.get(layer.id);
     tmpl.sprite.update(layer.params, tInLayerUs, durationUs, injected);
     tmpl.sprite.sprite.zIndex = z;
   }

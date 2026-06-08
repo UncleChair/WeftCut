@@ -1,7 +1,7 @@
 //! Project invariants. Runs after every successful mutation; rejects the
 //! commit when violated.
 //!
-//! Design: `docs/data-model.md` "Validation invariants". Template-prop schema
+//! Design: `docs/data-model.md` "Validation invariants". Motif-prop schema
 //! validation lives elsewhere (Phase 5, alongside the rasterizer manifest
 //! loader) and is intentionally not covered here.
 
@@ -399,7 +399,7 @@ fn validate_track(
 
 /// Class used for the within-track overlap rule (V.2). Visual covers
 /// every layer kind that contributes to the video output frame
-/// (VideoClip, ImageOverlay, Color, Template, Text, Subtitles). Audio
+/// (VideoClip, ImageOverlay, Color, Motif, Text, Subtitles). Audio
 /// is the only audio-class. New layer kinds added later default to
 /// Visual unless they're audio-only.
 #[derive(Copy, Clone, PartialEq, Eq)]

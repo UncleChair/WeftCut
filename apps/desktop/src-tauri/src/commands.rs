@@ -16,7 +16,7 @@ use uuid::Uuid;
 use crate::export;
 use crate::io;
 use crate::ir;
-use crate::motifs::catalog as templates;
+use crate::motifs::catalog;
 use crate::state::{
     self, Actor, ColorParams, CommandError, LayerParams, MediaItem, MediaKind, ProjectHandle,
     MotifParams, Rgba, SubtitlesParams, SubtitlesSource, Transform,
@@ -1923,7 +1923,7 @@ pub async fn add_subtitles_layer(
 /// just bloat agent context.
 #[tauri::command]
 pub async fn list_motifs() -> Result<Vec<serde_json::Value>, String> {
-    templates::builtins()
+    catalog::builtins()
         .into_iter()
         .map(|tpl| {
             let mut v = serde_json::to_value(&tpl.manifest)
@@ -1938,7 +1938,7 @@ pub async fn list_motifs() -> Result<Vec<serde_json::Value>, String> {
 }
 
 /// Stage F-Picker: UI counterpart to the MCP `add_motif` tool. Mirrors
-/// the behavior 1:1 (canonicalize props through the templates module,
+/// the behavior 1:1 (canonicalize props through the catalog module,
 /// default `t_end_us` from manifest duration; when `track_id` is
 /// omitted, always spawn a fresh "Overlay" track so consecutive
 /// inserts never collide with each other on the same track). Only
@@ -1953,7 +1953,7 @@ pub async fn add_motif(
     track_id: Option<String>,
     props: Option<serde_json::Value>,
 ) -> Result<String, String> {
-    let template = templates::builtins()
+    let motif = catalog::builtins()
         .into_iter()
         .find(|t| t.id() == motif_id)
         .ok_or_else(|| {
@@ -1963,7 +1963,7 @@ pub async fn add_motif(
         })?;
 
     let provided = props.unwrap_or_else(|| serde_json::Value::Object(Default::default()));
-    let canonical = template
+    let canonical = motif
         .canonicalize_props(&provided)
         .map_err(|e| format!("invalid props: {e}"))?;
     let parsed: serde_json::Value =
@@ -1981,10 +1981,10 @@ pub async fn add_motif(
     let resolved_end = crate::mcp::resolve_motif_t_end_us(
         t_start_us,
         t_end_us,
-        template.manifest.default_duration_s,
+        motif.manifest.default_duration_s,
         // Cap is driven by the props being added (canonicalized above), so a
         // `max_duration_prop`-mapped motif clamps to its prop value.
-        crate::motifs::catalog::resolve_template_max_dur_us(&template.manifest, &props_map),
+        crate::motifs::catalog::resolve_motif_max_dur_us(&motif.manifest, &props_map),
     );
     if resolved_end <= t_start_us {
         return Err(format!(
@@ -2005,8 +2005,8 @@ pub async fn add_motif(
     };
 
     let params = LayerParams::Motif(MotifParams {
-        motif_id: template.id().to_string(),
-        motif_version: template.manifest.version,
+        motif_id: motif.id().to_string(),
+        motif_version: motif.manifest.version,
         props: props_map,
         src_in_us: 0,
         transform: Transform::default(),

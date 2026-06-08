@@ -7,7 +7,7 @@
 //
 // The old foreignObject SVG rasterizer that lived here was removed with the
 // SVG render path (`harness.ts` + `svgRaster.ts` + `frameCache.ts`); only the
-// canonicalizer survives. Importers: `TemplateSprite.ts`, `exportBake.ts`.
+// canonicalizer survives. Importers: `MotifSprite.ts`, `exportBake.ts`.
 
 import type { MotifManifest } from "./catalog";
 

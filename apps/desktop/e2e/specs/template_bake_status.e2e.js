@@ -15,7 +15,7 @@ import path from "node:path";
 // Drive: browser.execute / browser.executeAsync via window.__weftcutTest hooks.
 //
 // "before = 0" robustness: PROJECT_PARENT embeds Date.now() so each run lands
-// in a fresh OS-tmp sub-dir. The cacheKey is derived from (templateId,
+// in a fresh OS-tmp sub-dir. The cacheKey is derived from (motifId,
 // canonicalProps, dims) — a fresh parent folder means no PNGs exist on disk
 // from prior runs, so the dot is genuinely absent at the start.
 
@@ -24,7 +24,7 @@ const PROJECT_PARENT = path.resolve(
   `weftcut-e2e-bakestatus-proj-${Date.now()}`,
 );
 
-const TEMPLATE_ID = "countdown";
+const MOTIF_ID = "countdown";
 const DURATION_US = 5_000_000; // 5 s
 const CONTENT_FRAMES = 150;    // Math.round(5 * 30)
 
@@ -73,16 +73,16 @@ describe("template bake-status dot (real WebView2)", function () {
     if (!r1.ok) throw new Error("newProjectAndEnter failed: " + r1.error);
 
     // Wait for the editor-mounted hooks before adding a layer.
-    await waitForHook("addTemplateLayer");
+    await waitForHook("addMotifLayer");
     await waitForHook("prebakeLayerAndWait");
 
-    const r2 = await browser.executeAsync((templateId, durationUs, done) => {
+    const r2 = await browser.executeAsync((motifId, durationUs, done) => {
       window.__weftcutTest
-        .addTemplateLayer({ templateId, durationUs })
+        .addMotifLayer({ motifId, durationUs })
         .then((id) => done({ ok: true, id }))
         .catch((e) => done({ ok: false, error: String(e) }));
-    }, TEMPLATE_ID, DURATION_US);
-    if (!r2.ok) throw new Error("addTemplateLayer failed: " + r2.error);
+    }, MOTIF_ID, DURATION_US);
+    if (!r2.ok) throw new Error("addMotifLayer failed: " + r2.error);
 
     layerId = r2.id;
     console.log(`[e2e] added countdown template layer: ${layerId}`);

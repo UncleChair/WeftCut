@@ -29,7 +29,7 @@ describe("motifWarmPhase", () => {
   });
 });
 
-describe("templateBakeStatusStore", () => {
+describe("motifBakeStatusStore", () => {
   beforeEach(() => setLayerBakeStatuses({}));
 
   it("pure phase selector: present → phase, absent → null", () => {

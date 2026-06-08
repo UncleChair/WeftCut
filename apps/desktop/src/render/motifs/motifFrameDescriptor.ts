@@ -5,7 +5,7 @@ import {
   US_PER_SEC,
   frameTimeSec,
   motifContentFrame,
-  templateFrameCacheKey,
+  motifFrameCacheKey,
 } from "./motifFrames";
 
 /// `renderW/renderH/contentDurationUs/srcInUs/contentDurationFrames` are carried
@@ -49,8 +49,8 @@ export function motifFrameDescriptor(
     tInLayerUs, srcInUs, contentDurationUs, fpsNum, fpsDen,
   );
   const [renderW, renderH] = template.manifest.size;
-  const cacheKey = templateFrameCacheKey({
-    templateId: template.manifest.id,
+  const cacheKey = motifFrameCacheKey({
+    motifId: template.manifest.id,
     version: template.manifest.version,
     canonicalProps, renderW, renderH, fpsNum, fpsDen,
     durationFrames: contentDurationFrames,

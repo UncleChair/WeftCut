@@ -51,8 +51,8 @@ export function motifContentFrame(
   return { frame, contentDurationFrames };
 }
 
-export interface TemplateFrameCacheKeyInput {
-  templateId: string;
+export interface MotifFrameCacheKeyInput {
+  motifId: string;
   version: number;
   canonicalProps: Record<string, unknown>;
   renderW: number;
@@ -66,9 +66,9 @@ export interface TemplateFrameCacheKeyInput {
 /// callers must not. `canonicalProps` is already in stable key order
 /// (`canonicalizeProps`), so its JSON is deterministic. Exported for unit
 /// testing.
-export function templateFrameCacheKey(input: TemplateFrameCacheKeyInput): string {
+export function motifFrameCacheKey(input: MotifFrameCacheKeyInput): string {
   return [
-    input.templateId,
+    input.motifId,
     String(input.version),
     String(input.renderW),
     String(input.renderH),

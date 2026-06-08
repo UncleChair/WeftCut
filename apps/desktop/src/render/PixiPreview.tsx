@@ -364,9 +364,9 @@ async function handlePixiExport(
     endUs?: number;
     keyframeIntervalSec?: number;
     writeChunk: (data: ArrayBuffer) => Promise<void>;
-    /// Pre-rasterized Template-layer frames (baked by App before launching the
+    /// Pre-rasterized Motif-layer frames (baked by App before launching the
     /// export). Threaded straight into `runExport`; the Worker binds them.
-    templateFrames?: Record<string, ImageBitmap[]>;
+    motifFrames?: Record<string, ImageBitmap[]>;
   },
   compositor: Compositor | null,
   engine: PlaybackEngine | null,
@@ -400,7 +400,7 @@ async function handlePixiExport(
       ...(opts.keyframeIntervalSec != null
         ? { keyframeIntervalSec: opts.keyframeIntervalSec }
         : {}),
-      ...(opts.templateFrames ? { templateFrames: opts.templateFrames } : {}),
+      ...(opts.motifFrames ? { motifFrames: opts.motifFrames } : {}),
     });
     const outFpsNum = opts.outputFps?.num ?? summary.composition.fps_num;
     const outFpsDen = opts.outputFps?.den ?? summary.composition.fps_den;

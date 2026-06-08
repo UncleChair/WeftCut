@@ -73,7 +73,7 @@ export function listMotifs(): MotifManifest[] {
 }
 
 /// Resolve a motif's intrinsic content duration (µs) from its manifest +
-/// the instance props. Mirrors Rust `resolve_template_max_dur_us`: prefer the
+/// the instance props. Mirrors Rust `resolve_motif_max_dur_us`: prefer the
 /// `max_duration_prop` value (seconds, when finite & > 0), else `max_duration_s`,
 /// else `null` (unbounded — no windowing, legacy "animate over layer width").
 export function resolveMotifContentDurationUs(

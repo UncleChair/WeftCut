@@ -51,9 +51,9 @@ export interface PixiPreviewHandle {
     /// Sink for each sequential output-file slice (append-only). Must resolve
     /// once durably written; the worker backpressures on it.
     writeChunk: (data: ArrayBuffer) => Promise<void>;
-    /// Pre-rasterized Template-layer frames (`layerId → ImageBitmap[]`),
+    /// Pre-rasterized Motif-layer frames (`layerId → ImageBitmap[]`),
     /// baked on the main thread (the export Worker has no DOM). Transferred
-    /// into the Worker and bound by comp-frame index. Omit ⇒ no templates.
-    templateFrames?: Record<string, ImageBitmap[]>;
+    /// into the Worker and bound by comp-frame index. Omit ⇒ no motifs.
+    motifFrames?: Record<string, ImageBitmap[]>;
   }): Promise<PixiExportResult>;
 }
