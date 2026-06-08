@@ -15,7 +15,7 @@ describe("syncUserMotifsFromBackend", () => {
     (ipcListMotifs as ReturnType<typeof vi.fn>).mockResolvedValue([
       // The IPC payload carries manifest fields + an extra `html` field.
       { id: "from-backend", name: "BE", version: 1, size: [320, 240], default_duration_s: 2, props_schema: {}, html: "<html></html>" },
-      { id: "countdown", name: "Countdown", version: 1, size: [480, 480], default_duration_s: 5, props_schema: {}, html: "x" },
+      { id: "countdown", name: "Countdown", version: 1, size: [99, 99], default_duration_s: 5, props_schema: {}, html: "x" },
     ]);
     await syncUserMotifsFromBackend();
     expect(getMotif("from-backend")?.manifest.size).toEqual([320, 240]);

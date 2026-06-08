@@ -10,11 +10,15 @@ import { setUserMotifs, type MotifManifest } from "./catalog";
 export async function syncUserMotifsFromBackend(): Promise<void> {
   try {
     const payload = await ipcListMotifs();
-    // The IPC payload is a manifest superset (adds `html`); MotifManifest is a
-    // structural subset, so the extra field is harmless. Strip nothing.
-    setUserMotifs(payload as unknown as MotifManifest[]);
-  } catch {
+    // The IPC payload is a manifest superset (adds `html`); MotifSummary now
+    // declares content_duration_s + settle_rafs so it structurally satisfies
+    // MotifManifest. The extra `html` field on live wire values is harmless —
+    // setUserMotifs only reads manifest fields. Strip nothing.
+    setUserMotifs(payload as MotifManifest[]);
+  } catch (e) {
     // Leave the built-in-only catalog in place; a transient IPC failure must
     // not blank the picker or the frame-math.
+    // eslint-disable-next-line no-console
+    console.warn("[weftcut/motifs] syncUserMotifsFromBackend failed; keeping built-in-only catalog", e);
   }
 }
