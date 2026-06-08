@@ -21,11 +21,12 @@ import {
   useState,
 } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { Application as PixiApplication } from "@pixi/react";
 import { Rectangle, type Application } from "pixi.js";
 
 import { previewPlaybackPathFor, useProjectStore } from "../state/projectStore";
-import type { MediaSummary } from "../ipc";
+import { MOTIFS_CHANGED_EVENT, type MediaSummary } from "../ipc";
 import { Compositor } from "./Compositor";
 import { ffprobeColorToWebCodecs } from "./decoder/ffprobeColorSpace";
 import { PerfHUD } from "./PerfHUD";
@@ -273,6 +274,28 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
     compositorRef.current.setAnchorTime(t);
     compositorRef.current.compositeFrame(t);
   }, [summary, mediaById]);
+
+  // A draft edit / install / delete (motifs:changed) changes a Motif's source
+  // but NOT the project summary, so the [summary] effect won't fire. Tell the
+  // compositor to refresh its live Motif sprites against the new catalog and
+  // recapture at the current playhead.
+  useEffect(() => {
+    let un: (() => void) | undefined;
+    let cleaned = false;
+    void listen(MOTIFS_CHANGED_EVENT, () => {
+      const c = compositorRef.current;
+      if (!c) return;
+      c.refreshMotifs();
+      c.compositeFrame(engineRef.current?.positionUs() ?? 0);
+    }).then((u) => {
+      if (cleaned) u();
+      else un = u;
+    });
+    return () => {
+      cleaned = true;
+      un?.();
+    };
+  }, []);
 
   // Dispose Compositor + PlaybackEngine on unmount. The library
   // disposes the Application itself.

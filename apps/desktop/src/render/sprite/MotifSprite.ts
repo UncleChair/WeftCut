@@ -183,6 +183,18 @@ export class MotifSprite {
     void this.captureAndBind(cacheKey, frame, tSec, durationSec, canonical);
   }
 
+  /// Re-fetch this layer's Motif from the runtime catalog and reset the render
+  /// target so the next `update()` re-evaluates the cache key and re-captures.
+  /// Called by `Compositor.refreshMotifs()` on a catalog change (draft edit /
+  /// install / delete). Does NOT dispose — the last bound bitmap stays on screen
+  /// until the fresh frame lands, so there's no flash. No-op once disposed.
+  refreshMotif(): void {
+    if (this.disposed) return;
+    this.motif = getMotif(this.motifId);
+    this.targetCacheKey = null;
+    this.targetFrame = -1;
+  }
+
   /// Render + rasterize one frame, store it, and bind it iff the playhead
   /// still wants this exact (cacheKey, frame) and the sprite is alive. The
   /// rasterized bitmap is handed to the shared cache even when superseded /

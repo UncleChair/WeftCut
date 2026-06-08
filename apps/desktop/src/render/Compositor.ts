@@ -1564,6 +1564,18 @@ export class Compositor {
     tmpl.sprite.sprite.zIndex = z;
   }
 
+  /// Refresh every live Motif sprite against the current runtime catalog and
+  /// schedule a repaint. Called when `motifs:changed` fires (a draft edit /
+  /// install / delete) so an edited draft's preview re-captures. Cheap +
+  /// user-paced; no sprite is recreated (refreshMotif keeps the last bitmap
+  /// until the fresh capture lands).
+  refreshMotifs(): void {
+    for (const { sprite } of this.activeMotifs.values()) {
+      sprite.refreshMotif();
+    }
+    this.scheduleRepaint();
+  }
+
   // ============================================================
   // Subtitles
   // ============================================================

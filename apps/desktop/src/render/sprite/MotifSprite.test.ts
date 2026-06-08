@@ -4,8 +4,68 @@
 // can't run in Node — these helpers are extracted so the arithmetic is
 // testable without the browser surface. The async capture/bind chain is
 // exercised end-to-end by the real-WebView2 e2e (`templates.e2e.js`).
+//
+// `refreshMotif` is exercised against a mocked Pixi surface + a controllable
+// `getMotif` / `sharedMotifFrameCache` (see `vi.mock` blocks below): the live
+// refresh only needs the no-op-guard + re-fetch behavior verified, which is
+// pure enough to assert in Node by observing the cache key the sprite requests.
 
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, it, vi } from "vitest";
+
+// Pixi touches WebGL/DOM at module load; the sprite only needs `Sprite`,
+// `Texture`, and `ImageSource` to exist as constructible stubs for the
+// refresh-path tests (which never bind a real bitmap in Node).
+vi.mock("pixi.js", () => {
+  class FakeTexture {
+    static EMPTY = {};
+    source: unknown;
+    constructor(opts?: { source?: unknown }) {
+      this.source = opts?.source ?? null;
+    }
+    destroy() {}
+  }
+  class FakeSprite {
+    texture: unknown = FakeTexture.EMPTY;
+    position = { set: vi.fn() };
+    scale = { set: vi.fn() };
+    alpha = 1;
+    zIndex = 0;
+    constructor(tex?: unknown) {
+      this.texture = tex ?? FakeTexture.EMPTY;
+    }
+    destroy() {}
+  }
+  class FakeImageSource {
+    constructor(public opts: unknown) {}
+  }
+  return { Sprite: FakeSprite, Texture: FakeTexture, ImageSource: FakeImageSource };
+});
+
+// `getMotif` is controlled per-test so a "draft edit" (content_hash change) can
+// be simulated between `update()` calls.
+const getMotifMock = vi.fn();
+vi.mock("../motifs/catalog", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../motifs/catalog")>();
+  return { ...actual, getMotif: (id: string) => getMotifMock(id) };
+});
+
+// Observe the (cacheKey, frame) the sprite requests, and never resolve a real
+// raster (the async path is irrelevant to the refresh-guard assertion).
+const getFrameMock = vi.fn(
+  (_cacheKey: string, _frame: number): ImageBitmap | null => null,
+);
+vi.mock("../motifs/motifRasterCache", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../motifs/motifRasterCache")>();
+  return {
+    ...actual,
+    sharedMotifFrameCache: {
+      getFrame: (cacheKey: string, frame: number) => getFrameMock(cacheKey, frame),
+      setFrame: vi.fn((_k: string, _f: number, b: unknown) => b),
+      readPng: vi.fn(async () => null),
+    },
+    resolveMotifFrame: vi.fn(async () => ({}) as unknown as ImageBitmap),
+  };
+});
 
 import {
   frameTimeSec,
@@ -13,6 +73,9 @@ import {
   motifDurationFrames,
   motifFrameCacheKey,
 } from "../motifs/motifFrames";
+import type { MotifManifest, Motif } from "../motifs/catalog";
+import type { MotifView } from "../../ipc";
+import { MotifSprite } from "./MotifSprite";
 
 describe("motifDurationFrames", () => {
   test("exact-rational frame count over the duration (30fps)", () => {
@@ -103,5 +166,74 @@ describe("motifContentFrame", () => {
   test("clamps to the last content frame", () => {
     const past = motifContentFrame(10_000_000, 0, 6_000_000, 30, 1);
     expect(past.frame).toBe(179);
+  });
+});
+
+describe("MotifSprite.refreshMotif", () => {
+  // A minimal Motif whose only varying field is `content_hash` — which the
+  // descriptor folds into the frame cache key (motifFrameDescriptor), so a
+  // draft edit (new content_hash) MUST produce a different requested key.
+  function motifWith(contentHash: string): Motif {
+    const manifest: MotifManifest = {
+      id: "d1",
+      name: "Draft 1",
+      version: 1,
+      size: [480, 480],
+      default_duration_s: 5,
+      props_schema: {},
+      content_hash: contentHash,
+      status: "draft",
+    };
+    return { manifest };
+  }
+
+  const view: MotifView = {
+    motif_id: "d1",
+    x: 0,
+    y: 0,
+    scale_x: 1,
+    scale_y: 1,
+    opacity: 1,
+    src_in_us: 0,
+    props: {},
+  };
+
+  function lastRequestedCacheKey(): string {
+    const calls = getFrameMock.mock.calls;
+    return calls[calls.length - 1]![0];
+  }
+
+  it("refreshMotif re-fetches the motif so the next update re-evaluates the key", () => {
+    getFrameMock.mockClear();
+    // getMotif: construction (#1) sees "A"; refreshMotif() re-fetch (#2) sees "B".
+    getMotifMock.mockReset();
+    getMotifMock.mockReturnValueOnce(motifWith("A")).mockReturnValueOnce(motifWith("B"));
+
+    const sprite = new MotifSprite({ layerId: "L1", motifId: "d1", fpsNum: 30, fpsDen: 1 });
+    sprite.update(view, 0, 5_000_000);
+    expect(getFrameMock).toHaveBeenCalledTimes(1);
+    const firstKey = lastRequestedCacheKey();
+
+    // Same-time update WITHOUT refresh no-ops (cacheKey+frame unchanged).
+    sprite.update(view, 0, 5_000_000);
+    expect(getFrameMock).toHaveBeenCalledTimes(1);
+
+    // After refreshMotif the next same-time update must NOT no-op: it
+    // re-evaluates the key against the freshly-fetched motif ("B").
+    sprite.refreshMotif();
+    sprite.update(view, 0, 5_000_000);
+    expect(getFrameMock).toHaveBeenCalledTimes(2);
+    const secondKey = lastRequestedCacheKey();
+
+    // content_hash A→B is part of the cache key → the key changed.
+    expect(secondKey).not.toBe(firstKey);
+  });
+
+  it("refreshMotif is a no-op once the sprite is disposed", () => {
+    getMotifMock.mockReset();
+    getMotifMock.mockReturnValue(motifWith("A"));
+    const sprite = new MotifSprite({ layerId: "L1", motifId: "d1", fpsNum: 30, fpsDen: 1 });
+    sprite.dispose();
+    expect(() => sprite.refreshMotif()).not.toThrow();
   });
 });
