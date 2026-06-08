@@ -68,14 +68,37 @@ function buildCatalog(): Map<string, Motif> {
   return byId;
 }
 
-const catalog = buildCatalog();
+const builtinCatalog = buildCatalog();
+let userCatalog = new Map<string, Motif>();
+let merged = mergeCatalogs();
+
+/// Built-ins win on id collision so an uploaded Motif can never shadow one.
+function mergeCatalogs(): Map<string, Motif> {
+  const out = new Map<string, Motif>(userCatalog);
+  for (const [id, motif] of builtinCatalog) {
+    if (userCatalog.has(id)) {
+      // eslint-disable-next-line no-console
+      console.warn(`[weftcut/motifs] user motif id "${id}" shadows a built-in; built-in kept`);
+    }
+    out.set(id, motif);
+  }
+  return out;
+}
+
+/// Replace the runtime user-Motif layer (from the backend `list_motifs` IPC).
+/// Built-ins are always present and authoritative; this only adds/removes the
+/// user entries. Idempotent — call it whenever the backend catalog changes.
+export function setUserMotifs(manifests: MotifManifest[]): void {
+  userCatalog = new Map(manifests.map((manifest) => [manifest.id, { manifest }]));
+  merged = mergeCatalogs();
+}
 
 export function getMotif(id: string): Motif | null {
-  return catalog.get(id) ?? null;
+  return merged.get(id) ?? null;
 }
 
 export function listMotifs(): MotifManifest[] {
-  return [...catalog.values()].map((t) => t.manifest);
+  return [...merged.values()].map((t) => t.manifest);
 }
 
 /// Resolve a motif's seekable content/animation duration (µs) from its manifest
