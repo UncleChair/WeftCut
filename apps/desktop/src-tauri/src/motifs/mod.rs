@@ -24,6 +24,7 @@
 #[cfg(windows)]
 pub mod cdp;
 
+pub mod authoring;
 pub mod builtin;
 pub mod catalog;
 pub mod store;
