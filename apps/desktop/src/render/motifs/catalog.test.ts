@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   resolveMotifContentDurationUs,
@@ -7,6 +7,8 @@ import {
   setUserMotifs,
   type MotifManifest,
 } from "./catalog";
+
+afterEach(() => setUserMotifs([]));
 
 const base: MotifManifest = {
   id: "countdown",
@@ -88,5 +90,4 @@ it("never lets a user motif shadow a built-in id", () => {
   setUserMotifs([{ ...userManifest, id: "countdown", size: [1, 1] }]);
   // Built-in countdown (480x480) must remain authoritative.
   expect(getMotif("countdown")?.manifest.size).toEqual([480, 480]);
-  setUserMotifs([]);
 });

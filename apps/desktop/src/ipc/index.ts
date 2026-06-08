@@ -1040,6 +1040,13 @@ export interface MotifSummary {
   /// layer's length cap. When set, editing that prop changes the cap live;
   /// falls back to `max_duration_s` when the prop is missing/invalid.
   max_duration_prop?: string;
+  /// Fixed bake duration of the animation sequence in seconds (does not
+  /// include the holdable tail). When present, `syncCatalog` can forward it
+  /// to `MotifManifest` without a double-cast.
+  content_duration_s?: number;
+  /// Number of rAF ticks the capture engine waits for settle before
+  /// snapshotting. Forwarded verbatim from the Rust manifest.
+  settle_rafs?: number;
   /// Keyed by prop name. Map order is BTreeMap-stable (alphabetical) so the
   /// picker can render fields in a deterministic order without sorting.
   props_schema: Record<string, PropSpec>;
