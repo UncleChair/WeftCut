@@ -4,7 +4,8 @@
 // sees user Motifs. Built-ins are seeded statically in catalog.ts and stay
 // authoritative; this only adds the user layer. Called once at boot (main.tsx)
 // and re-callable whenever the catalog changes (later stages).
-import { listMotifs as ipcListMotifs } from "../../ipc";
+import { listen } from "@tauri-apps/api/event";
+import { listMotifs as ipcListMotifs, MOTIFS_CHANGED_EVENT } from "../../ipc";
 import { setUserMotifs, type MotifManifest } from "./catalog";
 
 export async function syncUserMotifsFromBackend(): Promise<void> {
@@ -21,4 +22,13 @@ export async function syncUserMotifsFromBackend(): Promise<void> {
     // eslint-disable-next-line no-console
     console.warn("[weftcut/motifs] syncUserMotifsFromBackend failed; keeping built-in-only catalog", e);
   }
+}
+
+/// Subscribe to backend `motifs:changed` events and re-pull the catalog so a
+/// just-created/installed/deleted Motif is immediately resolvable by the
+/// frame-math. Returns the unlisten fn.
+export async function installMotifsChangedListener(): Promise<() => void> {
+  return listen(MOTIFS_CHANGED_EVENT, () => {
+    void syncUserMotifsFromBackend();
+  });
 }
