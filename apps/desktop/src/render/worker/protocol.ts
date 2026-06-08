@@ -69,17 +69,17 @@ export type ExportRequest =
       /// OffscreenCanvas transferred from the main thread. Worker
       /// hands it to the PixiJS Application as the render target.
       canvas: OffscreenCanvas;
-      /// `layerId → ImageBitmap[]` — pre-rasterized Template-layer frames,
+      /// `layerId → ImageBitmap[]` — pre-rasterized Motif-layer frames,
       /// indexed by COMPOSITION-frame. The Worker has no DOM so it can't run
       /// the SVG capture harness; the main thread bakes these (`exportBake.ts`)
       /// and TRANSFERS them (the flattened bitmaps are added to the
-      /// `postMessage` transfer list). The Worker's `Compositor`/`TemplateSprite`
-      /// binds `templateFrames[layerId][frameIndex]` synchronously. Absent /
-      /// empty ⇒ no Template layers in range (e.g. a video-only export), and the
+      /// `postMessage` transfer list). The Worker's `Compositor`/`MotifSprite`
+      /// binds `motifFrames[layerId][frameIndex]` synchronously. Absent /
+      /// empty ⇒ no Motif layers in range (e.g. a video-only export), and the
       /// injected-frames path is a clean no-op. The array may have head holes
       /// (`undefined` before the export-range's first comp-frame) for a
       /// mid-layer export start — the Worker never requests those indices.
-      templateFrames: Record<string, ImageBitmap[]>;
+      motifFrames: Record<string, ImageBitmap[]>;
     }
   | { type: "cancel" }
   /// Backpressure ack: the main thread finished writing the most recent

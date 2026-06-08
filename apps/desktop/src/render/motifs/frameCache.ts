@@ -20,7 +20,7 @@
 //   an in-RAM baked-key index). The `MotifBaker` is the sole writer.
 //
 // `cacheKey` is an opaque STRING the caller builds from
-// `(templateId, version, canonicalPropsJSON, renderW, renderH,
+// `(motifId, version, canonicalPropsJSON, renderW, renderH,
 // fpsNum, fpsDen, durationFrames)`. The cache never parses it; it only
 // hashes it (for the L2 dir name) and uses it as the L0 key prefix.
 

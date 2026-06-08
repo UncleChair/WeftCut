@@ -24,7 +24,7 @@ const PROJECT_PARENT = path.resolve(os.tmpdir(), "weftcut-e2e-prebake-proj");
 
 // Countdown template: 480×480, 5 s at 30 fps → 150 content frames.
 // A full bake writes exactly `contentDurationFrames` PNGs.
-const TEMPLATE_ID = "countdown";
+const MOTIF_ID = "countdown";
 const DURATION_US = 5_000_000; // 5 s
 const CONTENT_FRAMES = 150; // Math.round(5 * 30)
 
@@ -73,18 +73,18 @@ describe("L2 template pre-bake disk round-trip (real WebView2)", function () {
     if (!r1.ok) throw new Error("newProjectAndEnter failed: " + r1.error);
 
     // 2) Wait for the App-side hooks (installed after the editor mounts).
-    await waitForHook("addTemplateLayer");
+    await waitForHook("addMotifLayer");
     await waitForHook("prebakeLayerAndWait");
 
     // 3) Add a countdown template layer and record its layerId.
-    const r2 = await browser.executeAsync((templateId, durationUs, done) => {
+    const r2 = await browser.executeAsync((motifId, durationUs, done) => {
       window.__weftcutTest
-        .addTemplateLayer({ templateId, durationUs })
+        .addMotifLayer({ motifId, durationUs })
         .then((layerId) => done({ ok: true, layerId }))
         .catch((e) => done({ ok: false, error: String(e) }));
-    }, TEMPLATE_ID, DURATION_US);
+    }, MOTIF_ID, DURATION_US);
 
-    if (!r2.ok) throw new Error("addTemplateLayer failed: " + r2.error);
+    if (!r2.ok) throw new Error("addMotifLayer failed: " + r2.error);
     projectLayerId = r2.layerId;
     console.log(`[e2e] added countdown template layer: ${projectLayerId}`);
   });
@@ -145,14 +145,14 @@ describe("L2 template pre-bake disk round-trip (real WebView2)", function () {
     // either read from disk (L2) or trigger a fresh raster.
     const evictR = await browser.execute((ck) => {
       try {
-        window.__weftcutTest.clearTemplateCacheKey(ck);
+        window.__weftcutTest.clearMotifCacheKey(ck);
         return { ok: true };
       } catch (e) {
         return { ok: false, error: String(e) };
       }
     }, cacheKey);
 
-    if (!evictR.ok) throw new Error("clearTemplateCacheKey failed: " + evictR.error);
+    if (!evictR.ok) throw new Error("clearMotifCacheKey failed: " + evictR.error);
     console.log("[e2e] L0 evicted for cacheKey");
 
     // Step C: assert the baked-key index marks this cacheKey as baked. If it
@@ -176,7 +176,7 @@ describe("L2 template pre-bake disk round-trip (real WebView2)", function () {
     // path (readPng → createImageBitmap). Any fresh raster (renders > 0) means
     // the disk read path is broken.
     //
-    // The async settle: renderTemplateSpriteFrames already awaits each
+    // The async settle: renderMotifSpriteFrames already awaits each
     // captureAndBind to completion before resolving its promise (it polls until
     // the sprite's texture resource changes or onLoaded fires, with a 10 s
     // deadline). With L0 cleared the bind is always async (disk read), so the
@@ -190,8 +190,8 @@ describe("L2 template pre-bake disk round-trip (real WebView2)", function () {
       // calls) across 5 distinct layer-relative times. Each call internally
       // reaches resolveMotifFrame → disk PNG → createImageBitmap.
       window.__weftcutTest
-        .renderTemplateSpriteFrames({
-          templateId: "countdown",
+        .renderMotifSpriteFrames({
+          motifId: "countdown",
           fpsNum: 30,
           fpsDen: 1,
           durationUs: 5_000_000,
@@ -215,7 +215,7 @@ describe("L2 template pre-bake disk round-trip (real WebView2)", function () {
         });
     });
 
-    if (!r.ok) throw new Error("renderTemplateSpriteFrames (disk-hit check) failed: " + r.error);
+    if (!r.ok) throw new Error("renderMotifSpriteFrames (disk-hit check) failed: " + r.error);
 
     expect(r.frameCount).toBe(5);
     // Any fresh raster is a regression: L0 was cleared and the baked-key index
@@ -235,12 +235,12 @@ describe("L2 template pre-bake disk round-trip (real WebView2)", function () {
     // input, so the FNV-1a hash of the new key will differ from `firstHashName`.
     const patchR = await browser.executeAsync((layerId, done) => {
       window.__weftcutTest
-        .patchTemplateLayerProps({ layerId, props: { accent: "#00ff99" } })
+        .patchMotifLayerProps({ layerId, props: { accent: "#00ff99" } })
         .then(() => done({ ok: true }))
         .catch((e) => done({ ok: false, error: String(e) }));
     }, projectLayerId);
 
-    if (!patchR.ok) throw new Error("patchTemplateLayerProps failed: " + patchR.error);
+    if (!patchR.ok) throw new Error("patchMotifLayerProps failed: " + patchR.error);
 
     // Compute the new cacheKey (after the prop change).
     const newKeyR = await browser.executeAsync((layerId, done) => {

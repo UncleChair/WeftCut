@@ -212,7 +212,7 @@ function KindFields({
     case "Subtitles":
       return <SubtitlesFields v={layer.params} />;
     case "Motif":
-      return <TemplateFields layer={layer} v={layer.params} commit={commit} />;
+      return <MotifFields layer={layer} v={layer.params} commit={commit} />;
   }
 }
 
@@ -591,7 +591,7 @@ function BakeStatusLine({ layerId }: { layerId: string }) {
   return <p className={cls}>{text}</p>;
 }
 
-function TemplateFields({
+function MotifFields({
   layer,
   v,
   commit,
@@ -692,7 +692,7 @@ function TemplateFields({
         <>
           <h4>{t("property_panel.props")}</h4>
           {propEntries.map(([key, spec]) => (
-            <TemplatePropField
+            <MotifPropField
               key={key}
               propKey={key}
               spec={spec}
@@ -713,7 +713,7 @@ function TemplateFields({
 /// of its body (rules-of-hooks; the color variant needs no local state).
 /// Props colors are plain hex strings (e.g. `#ff3366`), NOT `Rgba` — handled
 /// as strings, not via the `rgbaToHex` / `hexToRgba` helpers.
-function TemplatePropField({
+function MotifPropField({
   propKey,
   spec,
   value,

@@ -56,13 +56,13 @@ describe("template renders + animates in export (real WebView2)", function () {
     }, PROJECT_PARENT);
     if (!r1.ok) throw new Error("newProjectAndEnter failed: " + r1.error);
 
-    // 2) Wait for the App-mounted exportTemplateClip (editor loaded).
+    // 2) Wait for the App-mounted exportMotifClip (editor loaded).
     await browser.waitUntil(
       async () =>
         (await browser.execute(
-          () => typeof window.__weftcutTest?.exportTemplateClip === "function",
+          () => typeof window.__weftcutTest?.exportMotifClip === "function",
         )) === true,
-      { timeout: 30000, timeoutMsg: "exportTemplateClip never mounted (editor didn't load?)" },
+      { timeout: 30000, timeoutMsg: "exportMotifClip never mounted (editor didn't load?)" },
     );
 
     // 3) Add a 2s countdown template (60 frames @ 30fps) and export it, FIRE-
@@ -71,8 +71,8 @@ describe("template renders + animates in export (real WebView2)", function () {
     await browser.execute((output) => {
       window.__e2eTemplateDone = null;
       window.__weftcutTest
-        .exportTemplateClip({
-          templateId: "countdown",
+        .exportMotifClip({
+          motifId: "countdown",
           outputAbsPath: output,
           durationUs: 2_000_000,
         })
@@ -125,7 +125,7 @@ describe("template renders + animates in export (real WebView2)", function () {
         `template export never settled (last kind=${lastKind}, last frame=${lastFrame}): ${e.message}`,
       );
     }
-    if (!settled.ok) throw new Error("exportTemplateClip failed: " + settled.error);
+    if (!settled.ok) throw new Error("exportMotifClip failed: " + settled.error);
 
     if (!existsSync(OUTPUT)) throw new Error(`no output written at ${OUTPUT}`);
 

@@ -47,11 +47,11 @@ export interface RunExportInit {
   /// avoids buffering the whole MP4 in one ArrayBuffer (V8's ~2GB cap OOM'd
   /// long exports at finalize).
   writeChunk: (data: ArrayBuffer) => Promise<void>;
-  /// Pre-rasterized Template-layer frames (`layerId → ImageBitmap[]`, comp-frame
+  /// Pre-rasterized Motif-layer frames (`layerId → ImageBitmap[]`, comp-frame
   /// indexed), baked on the MAIN thread by `exportBakeMotifs` (the Worker has
   /// no DOM to run the SVG capture harness). TRANSFERRED into the Worker's
-  /// `start` message. Absent / empty ⇒ no Template layers in the export range.
-  templateFrames?: Record<string, ImageBitmap[]>;
+  /// `start` message. Absent / empty ⇒ no Motif layers in the export range.
+  motifFrames?: Record<string, ImageBitmap[]>;
   /// Optional cancel signal — the Worker checks at each frame
   /// boundary.
   signal?: AbortSignal;
@@ -154,7 +154,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
   );
 
   // 5. Wait for ready, then post start.
-  const templateFrames = init.templateFrames ?? {};
+  const motifFrames = init.motifFrames ?? {};
   const startReq: Extract<ExportRequest, { type: "start" }> = {
     type: "start",
     project: snapshot,
@@ -165,7 +165,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     outputFpsDen: outFpsDen,
     keyframeIntervalSec: init.keyframeIntervalSec ?? 1,
     canvas: offscreen,
-    templateFrames,
+    motifFrames,
   };
 
   // ImageBitmaps are transferable; transferring them avoids a structured-clone
@@ -174,7 +174,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
   // Flattened across every layer's array; head holes (undefined, for a
   // mid-layer export start) are skipped.
   const bitmapTransfers: Transferable[] = [];
-  for (const frames of Object.values(templateFrames)) {
+  for (const frames of Object.values(motifFrames)) {
     for (const bmp of frames) {
       if (bmp) bitmapTransfers.push(bmp);
     }

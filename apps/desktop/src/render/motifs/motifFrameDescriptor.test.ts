@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { getMotif, resolveMotifContentDurationUs } from "./catalog";
 import { motifFrameDescriptor } from "./motifFrameDescriptor";
-import { motifContentFrame, templateFrameCacheKey } from "./motifFrames";
+import { motifContentFrame, motifFrameCacheKey } from "./motifFrames";
 import { canonicalizeProps } from "./Rasterizer";
 
 function view(props: Record<string, unknown>, srcInUs = 0): any {
@@ -17,8 +17,8 @@ describe("motifFrameDescriptor", () => {
     const canonical = canonicalizeProps(v.props, tpl.manifest);
     const cap = resolveMotifContentDurationUs(tpl.manifest, v.props)!;
     const { frame, contentDurationFrames } = motifContentFrame(tInLayerUs, 0, cap, 30, 1);
-    const expectedKey = templateFrameCacheKey({
-      templateId: "countdown", version: tpl.manifest.version, canonicalProps: canonical,
+    const expectedKey = motifFrameCacheKey({
+      motifId: "countdown", version: tpl.manifest.version, canonicalProps: canonical,
       renderW: tpl.manifest.size[0], renderH: tpl.manifest.size[1], fpsNum: 30, fpsDen: 1,
       durationFrames: contentDurationFrames,
     });

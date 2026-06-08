@@ -2226,7 +2226,7 @@ impl ProjectActor {
                         crate::state::time::snap_frame_round(layer.t_start_us, new_fps);
                     layer.t_end_us =
                         crate::state::time::snap_frame_round(layer.t_end_us, new_fps);
-                    // Template src_in_us lives on the COMPOSITION grid (a window
+                    // Motif src_in_us lives on the COMPOSITION grid (a window
                     // offset into comp-frame content), unlike VideoClip/Audio
                     // src_in_us which are on the source-PTS grid (intentionally
                     // left untouched). Re-snap it to the new comp grid too.
@@ -3247,7 +3247,7 @@ pub(crate) fn apply_update_layer(
 /// `apply_params_patch` (below) is already a pure helper; this is a thin
 /// locate-then-patch wrapper.
 ///
-/// For Template layers, after applying the patch, the content-window invariant
+/// For Motif layers, after applying the patch, the content-window invariant
 /// (`src_in + width <= content_dur`) is enforced. Growing the content cap never
 /// resizes the layer; shrinking it below the current window clamps `src_in` and
 /// `t_end` into the new content.
@@ -3664,7 +3664,7 @@ fn split_single_layer(
         LayerParams::Audio(p) => {
             p.src_out_us = p.src_in_us + split_offset;
         }
-        // Template has no stored src_out (derived from layer width); left half needs no change.
+        // Motif has no stored src_out (derived from layer width); left half needs no change.
         _ => {}
     }
     let track = &mut project.tracks[ti];
@@ -3739,12 +3739,12 @@ pub(crate) fn apply_trim_layer(
     //     (src_in, media_duration] (we don't know media_duration here, so
     //     we cap at src_out monotonicity vs src_in only; over-trim past
     //     media tail will be caught by `validate_src_range`).
-    // Resolve the template catalog once; the per-member cap lookup below is
-    // a cheap find over this (Template layers only — everything else stays
-    // unbounded). Built once outside the loop so a group of templates pays
+    // Resolve the motif catalog once; the per-member cap lookup below is
+    // a cheap find over this (Motif layers only — everything else stays
+    // unbounded). Built once outside the loop so a group of motifs pays
     // the catalog cost a single time.
     let catalog = crate::motifs::catalog::builtins();
-    // The template cap bound is re-snapped to the composition frame grid, so
+    // The motif cap bound is re-snapped to the composition frame grid, so
     // grab the fps before the immutable-borrow loop below.
     let fps = project.composition.fps;
     let clamped_delta = {
@@ -3752,11 +3752,11 @@ pub(crate) fn apply_trim_layer(
         for &mid in aligned.iter() {
             let (mti, mli) = locate_layer(project, mid).expect("aligned member exists");
             let m = &project.tracks[mti].layers[mli];
-            // A Template member's length cap comes from its manifest —
+            // A Motif member's length cap comes from its manifest —
             // either the static `max_duration_s` or, when the manifest names a
             // `max_duration_prop`, THIS member's own prop value (so editing the
             // prop changes the cap live). Resolve per-member so a group mixing a
-            // capped template with an uncapped one (or non-template) clamps each
+            // capped motif with an uncapped one (or non-motif) clamps each
             // by its own bound. Unknown id / absent cap → None → unbounded.
             let template_max_dur_us = template_cap_us(&catalog, &m.params);
             let bounds = trim_delta_bounds(m, edge, template_max_dur_us, fps);
@@ -3816,7 +3816,7 @@ pub(crate) fn apply_trim_layer(
                     LayerParams::Audio(p) => {
                         p.src_out_us += clamped_delta;
                     }
-                    // Template: no stored `src_out` — the content window's end is
+                    // Motif: no stored `src_out` — the content window's end is
                     // derived from the layer width (t_end_us - t_start_us). The
                     // OUT-edge cap in trim_delta_bounds keeps it within content.
                     _ => {}
@@ -3845,21 +3845,21 @@ pub(crate) fn apply_trim_layer(
     Ok(())
 }
 
-/// Resolve a Template layer's content-duration cap (µs) from a pre-built
-/// template `catalog` + the layer's params. `None` for non-template params,
-/// unknown template ids, or uncapped templates. Single source of truth for
-/// "what is this template's window/content cap" across trim, split, and the
+/// Resolve a Motif layer's content-duration cap (µs) from a pre-built
+/// motif `catalog` + the layer's params. `None` for non-motif params,
+/// unknown motif ids, or uncapped motifs. Single source of truth for
+/// "what is this motif's window/content cap" across trim, split, and the
 /// seconds-edit clamp — keep all cap lookups going through here so they can't
 /// drift (cf. the snap-math / engine-source drift hazards in this codebase).
 fn template_cap_us(
-    catalog: &[crate::motifs::catalog::Template],
+    catalog: &[crate::motifs::catalog::Motif],
     params: &LayerParams,
 ) -> Option<i64> {
     match params {
         LayerParams::Motif(tp) => catalog
             .iter()
             .find(|t| t.id() == tp.motif_id)
-            .and_then(|t| crate::motifs::catalog::resolve_template_max_dur_us(&t.manifest, &tp.props)),
+            .and_then(|t| crate::motifs::catalog::resolve_motif_max_dur_us(&t.manifest, &tp.props)),
         _ => None,
     }
 }
@@ -3874,8 +3874,8 @@ struct DeltaBounds {
 /// keeps the layer geometrically valid (`t_start < t_end`, src window
 /// non-negative).
 ///
-/// `template_max_dur_us` is the per-template length cap (from the manifest's
-/// `max_duration_s`), applied *only* when `layer` is a `Template`. It binds
+/// `template_max_dur_us` is the per-motif length cap (from the manifest's
+/// `max_duration_s`), applied *only* when `layer` is a `Motif`. It binds
 /// both edges so the total length `dur` can't grow past the cap, AND so the
 /// capped edge lands on the composition frame grid (the hard storage
 /// invariant — every persisted `t_start_us`/`t_end_us` must be frame-snapped):
@@ -3910,13 +3910,13 @@ fn trim_delta_bounds(
 ) -> DeltaBounds {
     let dur = layer.t_end_us - layer.t_start_us;
     let inf = i64::MAX / 4; // large enough to feel infinite, small enough to clamp safely
-    // The cap applies only to Template layers with a declared cap; everything
+    // The cap applies only to Motif layers with a declared cap; everything
     // else is unbounded.
     let template_cap = match (&layer.params, template_max_dur_us) {
         (LayerParams::Motif(_), Some(cap)) => Some(cap),
         _ => None,
     };
-    // The window start for a capped template (0 for non-template / uncapped).
+    // The window start for a capped motif (0 for non-motif / uncapped).
     let template_src_in = match (&layer.params, template_cap) {
         (LayerParams::Motif(p), Some(_)) => p.src_in_us,
         _ => 0,
@@ -3935,7 +3935,7 @@ fn trim_delta_bounds(
                 LayerParams::Motif(_) if template_cap.is_some() => (-template_src_in, inf),
                 _ => (-inf, inf),
             };
-            // Template cap: dragging the IN edge earlier (negative delta)
+            // Motif cap: dragging the IN edge earlier (negative delta)
             // grows dur. The earliest grid-aligned t_start that keeps
             // length <= cap is `round∘ceil(t_end - cap)`; floor the resulting
             // delta at 0 so a layer already at/over the cap can't be forced to
@@ -3946,7 +3946,7 @@ fn trim_delta_bounds(
                     // saturating_sub/saturating_sub guard against i64 overflow
                     // when an MCP caller passes an absurd `seconds` prop (e.g.
                     // 1e13 → cap saturates to i64::MAX via the f64→i64 cast in
-                    // resolve_template_max_dur_us). The snap functions widen to
+                    // resolve_motif_max_dur_us). The snap functions widen to
                     // i128 internally and are safe for any i64 input; the
                     // second saturating_sub prevents the rare case where
                     // capped_start lands near i64::MIN and t_start_us > 0.
@@ -3974,7 +3974,7 @@ fn trim_delta_bounds(
                 LayerParams::Audio(p) => (-(p.src_out_us - p.src_in_us - 1), inf),
                 _ => (-inf, inf),
             };
-            // Template cap: extending the OUT edge (positive delta) grows dur.
+            // Motif cap: extending the OUT edge (positive delta) grows dur.
             // The latest grid-aligned t_end that keeps length <= cap is
             // `round∘floor(t_start + cap)`; ceil the resulting delta at 0 so a
             // layer already at/over the cap can't extend (slack-at-0).
@@ -4732,9 +4732,9 @@ mod tests {
         assert_eq!(in_uncapped.min, -4_000_000);
     }
 
-    /// A `countdown` Template layer whose `seconds` prop is an absurd value
+    /// A `countdown` Motif layer whose `seconds` prop is an absurd value
     /// (e.g. 1e13) resolves a cap of i64::MAX via the saturating f64→i64 cast
-    /// in `resolve_template_max_dur_us`. The bare `t_start_us + cap` (OUT) and
+    /// in `resolve_motif_max_dur_us`. The bare `t_start_us + cap` (OUT) and
     /// `t_end_us - cap` (IN) used to overflow in debug builds (panic) or wrap
     /// in release (silent bad bound). With saturating arithmetic the trim path
     /// must not panic AND must yield a sane bound: OUT trim returns Ok with

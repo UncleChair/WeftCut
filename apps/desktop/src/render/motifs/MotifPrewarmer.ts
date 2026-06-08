@@ -64,7 +64,7 @@ export class MotifPrewarmer {
     try {
       // Pull up to batchSize FRESH targets (skip already-cached / inactive),
       // then raster them CONCURRENTLY. Renders serialize through the per-
-      // templateId harness (microtask-serialized — safe), but rasters parallelize
+      // motifId harness (microtask-serialized — safe), but rasters parallelize
       // across the RasterPool, so the prewarmer fills at pool speed instead of 1x.
       const batch: { cacheKey: string; frame: number; spec: PrewarmContentSpec }[] = [];
       while (batch.length < this.batchSize && this.queue.length > 0) {

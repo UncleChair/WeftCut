@@ -59,26 +59,26 @@ export interface E2EHook {
     settings?: Partial<ExportSettings>;
     range?: { startUs: number; endUs: number };
   }): Promise<void>;
-  /// Add a built-in Template layer at t=0 (default duration) and export to
+  /// Add a built-in Motif layer at t=0 (default duration) and export to
   /// `outputAbsPath`. No video clip is needed — the export composites the
-  /// template-only timeline, driving the FULL real export path: main-thread
-  /// `exportBakeMotifs` → transfer → Worker `TemplateSprite` bind-by-index.
-  /// Proves templates render in export (they were silently absent before). The
+  /// motif-only timeline, driving the FULL real export path: main-thread
+  /// `exportBakeMotifs` → transfer → Worker `MotifSprite` bind-by-index.
+  /// Proves motifs render in export (they were silently absent before). The
   /// caller (project + editor) must already be set up via `newProjectAndEnter`.
-  exportTemplateClip(args: {
-    templateId: string;
+  exportMotifClip(args: {
+    motifId: string;
     outputAbsPath: string;
     durationUs?: number;
     props?: Record<string, unknown>;
     settings?: Partial<ExportSettings>;
   }): Promise<void>;
-  /// Drive the REAL `TemplateSprite` (Task A) over a built-in template at two
+  /// Drive the REAL `MotifSprite` (Task A) over a built-in motif at two
   /// layer-relative times and read back the interior pixel of each bound
   /// raster. Exercises the full sprite chain in real WebView2:
   /// `update(view, tInLayerUs, durationUs)` → frame index → `frameTimeSec` →
   /// `resolveMotifFrame` → `rasterMotifFrame` (CDP) → bound `Texture`. The spec
-  /// asserts the two frames differ (the template animated across the
-  /// timeline). `browser.execute` can't import the bundled `TemplateSprite`,
+  /// asserts the two frames differ (the motif animated across the
+  /// timeline). `browser.execute` can't import the bundled `MotifSprite`,
   /// so it's constructed here and the result reduced to plain numbers.
   ///
   /// Returns, per requested time: the bound bitmap dims + a content checksum
@@ -86,8 +86,8 @@ export interface E2EHook {
   /// checksum differs whenever the rendered frame differs — the countdown's
   /// numeral + sweeping progress arc both change per frame, so two distinct
   /// times produce distinct checksums.
-  renderTemplateSpriteFrames(args: {
-    templateId: string;
+  renderMotifSpriteFrames(args: {
+    motifId: string;
     fpsNum: number;
     fpsDen: number;
     durationUs: number;
@@ -101,7 +101,7 @@ export interface E2EHook {
       checksum: number;
     }>
   >;
-  /// Trigger a persisted pre-bake of a template layer (via the prebakeBus) and
+  /// Trigger a persisted pre-bake of a motif layer (via the prebakeBus) and
   /// wait until at least `expectedFrames` PNG files appear under
   /// `<workspace>/Cache/raster/<hash>/`. Returns the absolute path to the hash
   /// dir and the number of PNGs found. Rejects on timeout (default 60 s). The
@@ -118,26 +118,26 @@ export interface E2EHook {
   /// Run the GC against `activeCacheKeys`: removes every `Cache/raster/<hash>` dir
   /// whose hash isn't in the active set. Mirrors `MotifFrameCache.gcUnreferenced`.
   gcRasterDirs(activeCacheKeys: string[]): Promise<void>;
-  /// Compute the cacheKey for a template layer by looking up its current state in
-  /// the project summary. Returns null if the layer doesn't exist or isn't a Template.
+  /// Compute the cacheKey for a motif layer by looking up its current state in
+  /// the project summary. Returns null if the layer doesn't exist or isn't a Motif.
   cacheKeyForLayer(layerId: string): Promise<string | null>;
-  /// Add a template layer at t=0 with the given duration and return its layerId.
-  /// Thin wrapper over the `add_template` IPC so e2e specs don't need raw
+  /// Add a motif layer at t=0 with the given duration and return its layerId.
+  /// Thin wrapper over the `add_motif` IPC so e2e specs don't need raw
   /// Tauri invoke access. Only available after the editor mounts.
-  addTemplateLayer(args: {
-    templateId: string;
+  addMotifLayer(args: {
+    motifId: string;
     durationUs: number;
     props?: Record<string, unknown>;
   }): Promise<string>;
-  /// Patch a template layer's props (merges field-wise). Used by the pre-bake
+  /// Patch a motif layer's props (merges field-wise). Used by the pre-bake
   /// e2e to change the `accent` prop and observe a new cacheKey / new hash dir.
-  patchTemplateLayerProps(args: {
+  patchMotifLayerProps(args: {
     layerId: string;
     props: Record<string, unknown>;
   }): Promise<void>;
   /// Evict every L0 (in-RAM) frame for a cacheKey, so a subsequent resolve must
   /// come from disk (L2) or a fresh raster. Used to prove the disk read path.
-  clearTemplateCacheKey(cacheKey: string): void;
+  clearMotifCacheKey(cacheKey: string): void;
   /// Whether the in-RAM baked-key index currently marks this cacheKey baked.
   bakedIndexHas(cacheKey: string): boolean;
   /// Render a Motif frame via the Rust `motif_capture_frame` command and
@@ -225,11 +225,11 @@ export function installBootstrapHook(enterEditor: () => void): void {
 /// Root-side: install Motif test hooks (prebake, cache ops, sprite frames,
 /// add/patch/clear/baked-index). Lives at Root level; called once on boot.
 export function installMotifTestHooks(): void {
-  // Drive the REAL TemplateSprite (Task A) and read back each bound frame's
-  // content checksum so the spec can prove the template animates across the
+  // Drive the REAL MotifSprite (Task A) and read back each bound frame's
+  // content checksum so the spec can prove the motif animates across the
   // timeline through the sprite's own frame-selection + bind path.
-  hookSlot().renderTemplateSpriteFrames = async ({
-    templateId,
+  hookSlot().renderMotifSpriteFrames = async ({
+    motifId,
     fpsNum,
     fpsDen,
     durationUs,
@@ -243,13 +243,13 @@ export function installMotifTestHooks(): void {
       checksum: number;
     }> = [];
     // One sprite reused across the requested times — exactly how the
-    // Compositor reuses an ActiveTemplate sprite while the playhead moves.
+    // Compositor reuses an ActiveMotif sprite while the playhead moves.
     // `onLoaded` fires on the async bind path (cache miss); a flag flips so the
     // per-time waiter below (and the sync-hit detection) can settle.
     let bindSignalled = false;
     const sprite = new MotifSprite({
       layerId: "e2e-motif-sprite",
-      motifId: templateId,
+      motifId: motifId,
       fpsNum,
       fpsDen,
       onLoaded: () => {
@@ -258,7 +258,7 @@ export function installMotifTestHooks(): void {
     });
     try {
       const view: MotifView = {
-        motif_id: templateId,
+        motif_id: motifId,
         x: 0,
         y: 0,
         scale_x: 1,
@@ -390,15 +390,15 @@ export function installMotifTestHooks(): void {
     return null;
   };
 
-  hookSlot().addTemplateLayer = async ({ templateId, durationUs, props }) => {
-    return addMotif({ motifId: templateId, tStartUs: 0, tEndUs: durationUs, ...(props !== undefined ? { props } : {}) });
+  hookSlot().addMotifLayer = async ({ motifId, durationUs, props }) => {
+    return addMotif({ motifId, tStartUs: 0, tEndUs: durationUs, ...(props !== undefined ? { props } : {}) });
   };
 
-  hookSlot().patchTemplateLayerProps = async ({ layerId, props }) => {
+  hookSlot().patchMotifLayerProps = async ({ layerId, props }) => {
     await updateLayerParams(layerId, { kind: "Motif", props });
   };
 
-  hookSlot().clearTemplateCacheKey = (cacheKey: string): void => {
+  hookSlot().clearMotifCacheKey = (cacheKey: string): void => {
     sharedMotifFrameCache.clearKey(cacheKey);
   };
 
@@ -480,8 +480,8 @@ export function installMotifHook(): void {
   };
 
   // Live-preview integration hooks. `motifAddCountdown` drops a 5 s countdown
-  // Template layer onto the timeline through the SAME `add_template` IPC the
-  // TemplatePicker uses — the legacy SVG catalog supplies the metadata (size
+  // Motif layer onto the timeline through the SAME `add_motif` IPC the
+  // MotifPicker uses — the legacy SVG catalog supplies the metadata (size
   // 480×480 + props seconds/label/accent), which align with the Motif
   // `countdown` so the compositor's resolveMotifFrame → rasterMotifFrame
   // (CDP) path renders it live. `weftcutSeekUs` / `weftcutSampleComposite`
@@ -541,8 +541,8 @@ export function installExportHook(runExport: RunExport): void {
     }
   };
 
-  hookSlot().exportTemplateClip = async ({
-    templateId,
+  hookSlot().exportMotifClip = async ({
+    motifId,
     outputAbsPath,
     durationUs,
     props,
@@ -551,14 +551,14 @@ export function installExportHook(runExport: RunExport): void {
     // Add a Motif layer at t=0. `add_motif` auto-creates / reuses a track
     // and defaults t_end to the motif's default duration unless overridden.
     await addMotif({
-      motifId: templateId,
+      motifId,
       tStartUs: 0,
       ...(durationUs != null ? { tEndUs: durationUs } : {}),
       ...(props ? { props } : {}),
     });
     // No video source, so the readiness gate has nothing to wait on — the
     // export proceeds straight to bake + composite. runExport bakes the
-    // template frames on the main thread and transfers them into the Worker.
+    // motif frames on the main thread and transfers them into the Worker.
     await runExport(mergeSettings(settings ?? null), outputAbsPath, undefined);
     if (!(await exists(outputAbsPath))) {
       throw new Error(`export produced no output file at ${outputAbsPath}`);

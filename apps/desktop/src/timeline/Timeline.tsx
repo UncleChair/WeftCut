@@ -1208,9 +1208,9 @@ function LayerContextMenu({
   );
 }
 
-/// Small status dot on a Template layer block. Phase-only (no count) so it
+/// Small status dot on a Motif layer block. Phase-only (no count) so it
 /// re-renders only on phase change. Hidden when idle (selector returns null).
-function TemplateBakeDot({ layerId }: { layerId: string }) {
+function MotifBakeDot({ layerId }: { layerId: string }) {
   const { t } = useTranslation();
   const phase = useLayerBakePhase(layerId);
   if (!phase) return null;
@@ -1890,7 +1890,7 @@ function LayerBlock({
       title={`${layer.kind}: ${formatTimecode(liveStart, fpsNum, fpsDen)} → ${formatTimecode(liveEnd, fpsNum, fpsDen)}`}
     >
       <span className="layer-label">{label}</span>
-      {layer.kind === "Motif" && <TemplateBakeDot layerId={layer.id} />}
+      {layer.kind === "Motif" && <MotifBakeDot layerId={layer.id} />}
     </div>
   );
 }

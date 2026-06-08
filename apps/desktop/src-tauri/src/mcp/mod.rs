@@ -43,7 +43,7 @@
 //!   microsecond timestamp, lazy-cached on disk. Multimodal-friendly.
 //! - `media://{id}/waveform` — peaks file (base64). See `jobs/waveform.rs`
 //!   for the binary format.
-//! - `templates://current` — built-in motif catalog (id, name, size,
+//! - `motifs://current` — built-in motif catalog (id, name, size,
 //!   default_duration_s, props_schema). Same payload as `list_motifs`.
 //!
 //! Edit tools (Stage 3) and workflow tools (Stage 4) live alongside `ping`
@@ -86,7 +86,7 @@ use crate::io::probe;
 use crate::ir::{self, RenderTarget};
 use crate::jobs;
 use crate::cloud;
-use crate::motifs::catalog as templates;
+use crate::motifs::catalog;
 use crate::state::actor::LayerEdge;
 use crate::state::{
     Actor, Animated, AudioParams, BlendMode, CheckpointId, ColorParams, CommandError,
@@ -103,7 +103,7 @@ const URI_TRACKS: &str = "project://tracks";
 const URI_MARKERS: &str = "project://markers";
 const URI_HISTORY: &str = "project://history";
 const URI_COMPILED: &str = "project://compiled";
-const URI_TEMPLATES: &str = "templates://current";
+const URI_MOTIFS: &str = "motifs://current";
 const PREFIX_LAYERS: &str = "project://layers/";
 const PREFIX_MEDIA: &str = "media://";
 
@@ -1176,7 +1176,7 @@ impl WeftCutServer {
         &self,
         #[tool(aggr)] args: AddMotifArgs,
     ) -> Result<CallToolResult, McpError> {
-        let template = templates::builtins()
+        let motif = catalog::builtins()
             .into_iter()
             .find(|t| t.id() == args.motif_id)
             .ok_or_else(|| {
@@ -1192,7 +1192,7 @@ impl WeftCutServer {
         let provided = args
             .props
             .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
-        let canonical = template
+        let canonical = motif
             .canonicalize_props(&provided)
             .map_err(|e| McpError::invalid_params(format!("invalid props: {e}"), None))?;
         let props_map = parse_canonical_props(&canonical)?;
@@ -1200,10 +1200,10 @@ impl WeftCutServer {
         let t_end_us = resolve_motif_t_end_us(
             args.t_start_us,
             args.t_end_us,
-            template.manifest.default_duration_s,
+            motif.manifest.default_duration_s,
             // Cap is driven by the props being added (canonicalized above), so
             // a `max_duration_prop`-mapped motif clamps to its prop value.
-            templates::resolve_template_max_dur_us(&template.manifest, &props_map),
+            catalog::resolve_motif_max_dur_us(&motif.manifest, &props_map),
         );
         if t_end_us <= args.t_start_us {
             return Err(McpError::invalid_params(
@@ -1221,8 +1221,8 @@ impl WeftCutServer {
         };
 
         let params = LayerParams::Motif(MotifParams {
-            motif_id: template.id().to_string(),
-            motif_version: template.manifest.version,
+            motif_id: motif.id().to_string(),
+            motif_version: motif.manifest.version,
             props: props_map,
             src_in_us: 0,
             transform: Transform::default(),
@@ -2173,17 +2173,17 @@ fn parse_uuid(s: &str, field: &str) -> Result<Uuid, McpError> {
 }
 
 /// JSON payload shared by the `list_motifs` tool and the
-/// `templates://current` resource. Wraps `crate::motifs::catalog::catalog()` so
+/// `motifs://current` resource. Wraps `crate::motifs::catalog::catalog()` so
 /// the Tauri-side picker (`commands::list_motifs`) and the MCP surfaces
 /// emit the same JSON shape from the same source.
 fn templates_payload() -> Vec<Value> {
-    templates::catalog()
+    catalog::catalog()
         .into_iter()
         .map(|m| serde_json::to_value(m).expect("Manifest is unconditionally Serialize"))
         .collect()
 }
 
-/// Convert the canonical JSON string produced by `Template::canonicalize_props`
+/// Convert the canonical JSON string produced by `Motif::canonicalize_props`
 /// back into the `imbl::HashMap<String, Value>` shape that `MotifParams`
 /// stores. Canonicalize already validated types + filled defaults; this is
 /// just the format crossover.
@@ -2659,7 +2659,7 @@ impl ServerHandler for WeftCutServer {
             URI_MEDIA => serde_json::to_value(&snap.media_pool).map_err(serialize_err)?,
             URI_TRACKS => serde_json::to_value(&snap.tracks).map_err(serialize_err)?,
             URI_MARKERS => serde_json::to_value(&snap.markers).map_err(serialize_err)?,
-            URI_TEMPLATES => {
+            URI_MOTIFS => {
                 serde_json::to_value(templates_payload()).map_err(serialize_err)?
             }
             URI_HISTORY => {
@@ -2944,7 +2944,7 @@ const STATIC_RESOURCES: &[ResourceDescriptor] = &[
         description: "Compiled IR graph for the current project — for agents that want structural reasoning.",
     },
     ResourceDescriptor {
-        uri: URI_TEMPLATES,
+        uri: URI_MOTIFS,
         name: "Motifs catalog",
         description: "Built-in motif catalog as JSON. Same shape as the `list_motifs` tool result. \
                       Read this once at session start to know what `add_motif` accepts.",
@@ -3642,14 +3642,14 @@ mod tests {
     // Stage H — motif MCP helpers
     // ============================================================
 
-    /// `list_motifs` and `templates://current` share `templates_payload()`.
+    /// `list_motifs` and `motifs://current` share `templates_payload()`.
     /// One entry per builtin, ordered to match the picker. If a future
     /// builtin lands but isn't surfaced through this payload, agents wouldn't
     /// see it.
     #[test]
     fn templates_payload_lists_every_builtin() {
         let payload = templates_payload();
-        let builtins = templates::builtins();
+        let builtins = catalog::builtins();
         assert_eq!(payload.len(), builtins.len());
         for (entry, t) in payload.iter().zip(builtins.iter()) {
             let obj = entry.as_object().expect("entry is JSON object");
@@ -3662,19 +3662,19 @@ mod tests {
     }
 
     /// `parse_canonical_props` is the format crossover between
-    /// `Template::canonicalize_props` (returns JSON string) and
+    /// `Motif::canonicalize_props` (returns JSON string) and
     /// `MotifParams.props` (imbl::HashMap<String, Value>). Round-trip via
     /// canonicalize_props with empty input should yield every prop default
     /// keyed by name.
     #[test]
     fn parse_canonical_props_roundtrips_defaults() {
-        let template = templates::builtin_countdown();
-        let canonical = template
+        let motif = catalog::builtin_countdown();
+        let canonical = motif
             .canonicalize_props(&serde_json::json!({}))
             .expect("canonicalize defaults");
         let map = parse_canonical_props(&canonical).expect("parse");
-        assert_eq!(map.len(), template.manifest.props_schema.len());
-        for key in template.manifest.props_schema.keys() {
+        assert_eq!(map.len(), motif.manifest.props_schema.len());
+        for key in motif.manifest.props_schema.keys() {
             assert!(map.contains_key(key), "missing prop {key}");
         }
     }
@@ -3720,7 +3720,7 @@ mod tests {
     }
 
     /// `add_motif` resolves its cap from the props being added via
-    /// `resolve_template_max_dur_us`, so a prop-mapped motif (countdown's
+    /// `resolve_motif_max_dur_us`, so a prop-mapped motif (countdown's
     /// `seconds`) clamps an explicit over-long `t_end_us` to the PROP value,
     /// not the static `max_duration_s`. With `seconds = 8` + a requested 20s
     /// end, the resolved end is ~8s. (The actor's `add_layer` then frame-snaps
@@ -3730,7 +3730,7 @@ mod tests {
         let manifest = &crate::motifs::catalog::builtin_countdown().manifest;
         let mut props: imbl::HashMap<String, serde_json::Value> = imbl::HashMap::new();
         props.insert("seconds".into(), serde_json::json!(8.0));
-        let cap = crate::motifs::catalog::resolve_template_max_dur_us(manifest, &props);
+        let cap = crate::motifs::catalog::resolve_motif_max_dur_us(manifest, &props);
         assert_eq!(cap, Some(8_000_000));
         // Explicit over-long t_end (20s) clamps to the 8s prop cap.
         assert_eq!(

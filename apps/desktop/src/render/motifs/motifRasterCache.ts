@@ -1,5 +1,5 @@
 // Shared raster primitive: process-wide cache singleton and the one-frame
-// render helper used by both the on-demand TemplateSprite path and the
+// render helper used by both the on-demand MotifSprite path and the
 // background prewarmer.
 //
 // Why a separate module: the prewarmer and the sprite MUST share one
@@ -12,8 +12,8 @@ import { BakedKeyIndex } from "./bakedKeyIndex";
 import type { Motif } from "./catalog";
 import { rasterMotifFrame } from "./motifRaster";
 
-/// Process-wide per-frame cache shared by every TemplateSprite AND the
-/// prewarmer, so identical (template, props, dims, fps, frame) rasters resolve
+/// Process-wide per-frame cache shared by every MotifSprite AND the
+/// prewarmer, so identical (motif, props, dims, fps, frame) rasters resolve
 /// from one bitmap. Single instance — import this, never `new`.
 export const sharedMotifFrameCache = new MotifFrameCache();
 

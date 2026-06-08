@@ -1,4 +1,4 @@
-// Unit tests for the net-new, pure frame-selection math the TemplateSprite
+// Unit tests for the net-new, pure frame-selection math the MotifSprite
 // uses to map a layer-relative time to (frame, frameTimeSec, cacheKey). The
 // sprite itself constructs a Pixi Sprite + touches `createImageBitmap`, so it
 // can't run in Node — these helpers are extracted so the arithmetic is
@@ -11,7 +11,7 @@ import {
   frameTimeSec,
   motifContentFrame,
   motifDurationFrames,
-  templateFrameCacheKey,
+  motifFrameCacheKey,
 } from "../motifs/motifFrames";
 
 describe("motifDurationFrames", () => {
@@ -57,9 +57,9 @@ describe("frameTimeSec", () => {
   });
 });
 
-describe("templateFrameCacheKey", () => {
+describe("motifFrameCacheKey", () => {
   const base = {
-    templateId: "countdown",
+    motifId: "countdown",
     version: 1,
     canonicalProps: { from: 5 },
     renderW: 1920,
@@ -70,20 +70,20 @@ describe("templateFrameCacheKey", () => {
   };
 
   test("is deterministic for identical input", () => {
-    expect(templateFrameCacheKey(base)).toBe(templateFrameCacheKey({ ...base }));
+    expect(motifFrameCacheKey(base)).toBe(motifFrameCacheKey({ ...base }));
   });
 
   test("does NOT embed the frame index (cache appends #<frame>)", () => {
-    expect(templateFrameCacheKey(base)).not.toMatch(/#\d+$/);
+    expect(motifFrameCacheKey(base)).not.toMatch(/#\d+$/);
   });
 
   test("changes with each keyed dimension", () => {
-    const k = templateFrameCacheKey(base);
-    expect(templateFrameCacheKey({ ...base, version: 2 })).not.toBe(k);
-    expect(templateFrameCacheKey({ ...base, durationFrames: 300 })).not.toBe(k);
-    expect(templateFrameCacheKey({ ...base, fpsNum: 60 })).not.toBe(k);
-    expect(templateFrameCacheKey({ ...base, renderW: 1280 })).not.toBe(k);
-    expect(templateFrameCacheKey({ ...base, canonicalProps: { from: 9 } })).not.toBe(k);
+    const k = motifFrameCacheKey(base);
+    expect(motifFrameCacheKey({ ...base, version: 2 })).not.toBe(k);
+    expect(motifFrameCacheKey({ ...base, durationFrames: 300 })).not.toBe(k);
+    expect(motifFrameCacheKey({ ...base, fpsNum: 60 })).not.toBe(k);
+    expect(motifFrameCacheKey({ ...base, renderW: 1280 })).not.toBe(k);
+    expect(motifFrameCacheKey({ ...base, canonicalProps: { from: 9 } })).not.toBe(k);
   });
 });
 
