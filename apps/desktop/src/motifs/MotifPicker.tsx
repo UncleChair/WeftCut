@@ -9,6 +9,7 @@ import {
   type TrackSummary,
 } from "../ipc";
 import { captureMotifFramePngBlob } from "../render/motifs/host";
+import { setUserMotifs, type MotifManifest } from "../render/motifs/catalog";
 
 interface Props {
   onClose: () => void;
@@ -49,6 +50,13 @@ export function MotifPicker({
       (list) => {
         if (cancelled) return;
         setTemplates(list);
+        // Refresh the runtime frame-math catalog from the SAME fetch the picker
+        // shows. The boot-time sync (main.tsx) is one-shot; without this, a Motif
+        // the picker can add (it lists via this IPC) but the runtime catalog
+        // doesn't know (stale since boot / boot-sync failed) would resolve to
+        // null in the compositor/export and render blank until restart. Opening
+        // the picker is a prerequisite for adding, so this keeps the two in sync.
+        setUserMotifs(list as MotifManifest[]);
         const first = list[0];
         if (first) setSelectedId(first.id);
       },
