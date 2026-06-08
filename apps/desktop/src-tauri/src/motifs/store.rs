@@ -12,7 +12,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::catalog::{parse_manifest_island, Manifest};
+use super::catalog::{parse_manifest_island, Manifest, Motif};
 
 /// Directory name reserved for Stage-2 drafts; never treated as an installed
 /// Motif id.
@@ -77,6 +77,19 @@ impl UserMotifStore {
     pub fn read_html(&self, id: &str) -> Option<String> {
         self.read_file(id, "index.html")
             .and_then(|b| String::from_utf8(b).ok())
+    }
+
+    /// Build a full `Motif` (manifest + html) for an installed user Motif by id,
+    /// or `None` if absent / unreadable / not a valid island. Mirrors a built-in
+    /// `Motif` so callers (e.g. `add_motif`) can resolve user Motifs the same way.
+    /// The reserved `drafts/` id is never a Motif.
+    pub fn get_motif(&self, id: &str) -> Option<Motif> {
+        if id == DRAFTS_DIR {
+            return None;
+        }
+        let html = self.read_html(id)?;
+        let manifest = parse_manifest_island(&html).ok()?;
+        Some(Motif { manifest, html })
     }
 
     /// Every installed user Motif's manifest, id-sorted. Subdirectories whose
@@ -184,5 +197,22 @@ mod tests {
         let store = UserMotifStore::new(PathBuf::from("/no/such/dir/at/all"));
         assert!(store.list_manifests().is_empty());
         assert!(store.read_html("anything").is_none());
+    }
+
+    #[test]
+    fn get_motif_builds_full_motif_or_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_motif(
+            tmp.path(),
+            "user-a",
+            r#"{"id":"user-a","name":"A","version":1,"size":[10,10],"default_duration_s":1.0,"props_schema":{}}"#,
+        );
+        let store = UserMotifStore::new(tmp.path().to_path_buf());
+        let m = store.get_motif("user-a").expect("user-a resolves");
+        assert_eq!(m.id(), "user-a");
+        assert!(m.html.contains("motif.define"));
+        // Absent id and the reserved drafts id resolve to None.
+        assert!(store.get_motif("nope").is_none());
+        assert!(store.get_motif(DRAFTS_DIR).is_none());
     }
 }
