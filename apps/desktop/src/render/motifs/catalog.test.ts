@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  canonicalizePropsLenient,
   resolveMotifContentDurationUs,
   getMotif,
   listMotifs,
@@ -90,4 +91,21 @@ it("never lets a user motif shadow a built-in id", () => {
   setUserMotifs([{ ...userManifest, id: "countdown", size: [1, 1] }]);
   // Built-in countdown (480x480) must remain authoritative.
   expect(getMotif("countdown")?.manifest.size).toEqual([480, 480]);
+});
+
+it("canonicalizePropsLenient drops unknown, fills defaults, falls back on invalid", () => {
+  const manifest = {
+    id: "u", name: "U", version: 1, size: [10, 10] as [number, number], default_duration_s: 1,
+    props_schema: {
+      title: { type: "string", default: "Hi" },
+      n: { type: "number", default: 5, min: 1, max: 10 },
+    },
+  };
+  const out = canonicalizePropsLenient({ title: "Yo", n: 999, bogus: 1 }, manifest as never);
+  expect(out.title).toBe("Yo");
+  expect(out.n).toBe(5);
+  expect("bogus" in out).toBe(false);
+  const out2 = canonicalizePropsLenient({}, manifest as never);
+  expect(out2.title).toBe("Hi");
+  expect(out2.n).toBe(5);
 });
