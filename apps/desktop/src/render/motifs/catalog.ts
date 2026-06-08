@@ -36,6 +36,9 @@ export interface MotifManifest {
   /// 2 (default, omitted) is safe for canvas/WebGL Motifs; CSS-only Motifs can
   /// set 1 to shave ~16 ms/frame. Clamped to {0,1,2} by the runtime.
   settle_rafs?: number;
+  /// "builtin" | "installed" | "draft" — set by the backend `list_motifs`
+  /// payload; absent for the statically-globbed built-ins (treated as builtin).
+  status?: "builtin" | "installed" | "draft";
 }
 
 export interface Motif {
@@ -99,6 +102,36 @@ export function getMotif(id: string): Motif | null {
 
 export function listMotifs(): MotifManifest[] {
   return [...merged.values()].map((t) => t.manifest);
+}
+
+/// Render-path prop canonicalizer that NEVER throws — drops unknown keys, fills
+/// missing keys from defaults, and falls back to the default when a value fails
+/// its spec. Mirrors Rust `Motif::canonicalize_props_lenient`. The strict
+/// `canonicalizeProps` (Rasterizer) stays on the ADD/validation path; the render
+/// path uses this so a layer whose Motif's `props_schema` changed under it (an
+/// in-place update) degrades gracefully instead of rendering blank.
+export function canonicalizePropsLenient(
+  props: Record<string, unknown>,
+  manifest: MotifManifest,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, spec] of Object.entries(manifest.props_schema)) {
+    const v = props[key];
+    out[key] = propValueValid(v, spec) ? v : spec.default;
+  }
+  return out;
+}
+
+function propValueValid(v: unknown, spec: PropSpec): boolean {
+  switch (spec.type) {
+    case "string":
+      return typeof v === "string" && (spec.max_length == null || v.length <= spec.max_length);
+    case "color":
+      return typeof v === "string" && /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(v);
+    case "number":
+      return typeof v === "number" && Number.isFinite(v)
+        && (spec.min == null || v >= spec.min) && (spec.max == null || v <= spec.max);
+  }
 }
 
 /// Resolve a motif's seekable content/animation duration (µs) from its manifest

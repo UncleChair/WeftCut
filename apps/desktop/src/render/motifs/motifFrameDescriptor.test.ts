@@ -70,4 +70,15 @@ describe("motifFrameDescriptor", () => {
     expect(d.srcInUs).toBe(0);               // src_in ignored when uncapped
     expect(d.durationSec).toBeCloseTo(4, 6);
   });
+
+  it("yields a descriptor even when a layer carries an unknown prop (lenient render)", () => {
+    const motif = { manifest: { id: "u", name: "U", version: 1, size: [100, 100] as [number, number],
+      default_duration_s: 5, props_schema: { title: { type: "string", default: "Hi" } } } };
+    const view = { kind: "Motif", motif_id: "u", props: { title: "Yo", stale: 1 }, x: 0, y: 0,
+      scale_x: 1, scale_y: 1, opacity: 1, src_in_us: 0 } as never;
+    const desc = motifFrameDescriptor(view, 0, 5_000_000, 30, 1, motif as never);
+    expect(desc).not.toBeNull();
+    expect(desc!.canonicalProps.title).toBe("Yo");
+    expect("stale" in desc!.canonicalProps).toBe(false);
+  });
 });

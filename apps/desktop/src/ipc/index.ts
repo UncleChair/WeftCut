@@ -1047,6 +1047,7 @@ export interface MotifSummary {
   /// Number of rAF ticks the capture engine waits for settle before
   /// snapshotting. Forwarded verbatim from the Rust manifest.
   settle_rafs?: number;
+  status?: "builtin" | "installed" | "draft";
   /// Keyed by prop name. Map order is BTreeMap-stable (alphabetical) so the
   /// picker can render fields in a deterministic order without sorting.
   props_schema: Record<string, PropSpec>;

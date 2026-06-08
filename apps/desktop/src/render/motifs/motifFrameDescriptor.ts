@@ -1,6 +1,5 @@
 import type { MotifView } from "../../ipc";
-import { canonicalizeProps } from "./Rasterizer";
-import { resolveMotifContentDurationUs, type Motif } from "./catalog";
+import { canonicalizePropsLenient, resolveMotifContentDurationUs, type Motif } from "./catalog";
 import {
   US_PER_SEC,
   frameTimeSec,
@@ -36,12 +35,10 @@ export function motifFrameDescriptor(
   fpsDen: number,
   motif: Motif,
 ): MotifFrameDescriptor | null {
-  let canonicalProps: Record<string, unknown>;
-  try {
-    canonicalProps = canonicalizeProps(view.props, motif.manifest);
-  } catch {
-    return null;
-  }
+  // Render path is resilient: lenient canonicalize (drop unknown / fill defaults
+  // / fall back on invalid) so a layer whose Motif schema changed under it (an
+  // in-place update) still renders rather than blanking.
+  const canonicalProps = canonicalizePropsLenient(view.props, motif.manifest);
   const cap = resolveMotifContentDurationUs(motif.manifest, view.props);
   const contentDurationUs = cap ?? durationUs;
   // Windowing (`src_in`) applies ONLY to layer-capped Motifs (`max_duration*`).
