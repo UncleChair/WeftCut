@@ -455,6 +455,7 @@ const zhCN: Resources = {
     bake_error: "预烘焙失败",
     motif_install: "安装",
     motif_delete: "删除",
+    motif_delete_confirm: '删除 Motif "{{id}}"？时间轴上引用它的图层将失去内容。',
     motif_status: { draft: "草稿", installed: "已安装" },
   },
   template_picker: {

@@ -208,11 +208,18 @@ impl UserMotifStore {
         }
     }
 
-    /// Delete a published user Motif directory. The caller rejects built-in ids.
+    /// Delete a user Motif by id: removes the published dir `<root>/<id>/` AND
+    /// the draft dir `<root>/drafts/<id>/` if either exists (Model B → at most
+    /// one exists for a given id). Idempotent. The caller rejects built-in ids.
     pub fn delete_user_motif(&self, id: &str) -> std::io::Result<()> {
-        let dir = self.root.join(safe_seg(id)?);
-        if dir.exists() {
-            std::fs::remove_dir_all(dir)?;
+        let safe_id = safe_seg(id)?;
+        let published = self.root.join(&safe_id);
+        if published.exists() {
+            std::fs::remove_dir_all(&published)?;
+        }
+        let draft = self.drafts_root().join(&safe_id);
+        if draft.exists() {
+            std::fs::remove_dir_all(&draft)?;
         }
         Ok(())
     }
@@ -439,6 +446,17 @@ mod tests {
         let drafts = store.list_drafts();
         assert_eq!(drafts.len(), 1);
         assert_eq!(drafts[0].id(), "d1");
+    }
+
+    #[test]
+    fn delete_user_motif_removes_a_draft_too() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = UserMotifStore::new(tmp.path().to_path_buf());
+        store.write_draft("d1", &compose_motif_html(&manifest("d1", "D1", 1),
+            "<head></head><body><script>motif.define({setup(){}})</script></body>")).unwrap();
+        assert_eq!(store.list_draft_ids(), vec!["d1".to_string()]);
+        store.delete_user_motif("d1").unwrap();
+        assert!(store.list_draft_ids().is_empty());
     }
 
     #[test]
