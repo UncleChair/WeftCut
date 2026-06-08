@@ -68,6 +68,44 @@ pub fn validate_manifest(m: &Manifest) -> Result<(), MotifError> {
     Ok(())
 }
 
+use super::catalog::BUILTIN_IDS;
+use super::store::DRAFTS_DIR;
+
+/// Slugify a display name into a safe single path-segment id: lowercase ASCII
+/// alphanumerics, every other run collapsed to a single `-`, trimmed. Falls
+/// back to `"motif"` if nothing survives.
+pub fn sanitize_id(name: &str) -> String {
+    let mut out = String::new();
+    let mut prev_dash = false;
+    for c in name.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_lowercase());
+            prev_dash = false;
+        } else if !prev_dash {
+            out.push('-');
+            prev_dash = true;
+        }
+    }
+    let trimmed = out.trim_matches('-');
+    if trimmed.is_empty() { "motif".to_string() } else { trimmed.to_string() }
+}
+
+/// Assign a unique id derived from `name`, avoiding `taken`, the built-in ids,
+/// and the reserved `drafts` segment. Appends `-2`, `-3`, ... on collision.
+pub fn assign_unique_id(name: &str, taken: &[String]) -> String {
+    let base = sanitize_id(name);
+    let reserved = |id: &str| {
+        BUILTIN_IDS.contains(&id) || id == DRAFTS_DIR || taken.iter().any(|t| t == id)
+    };
+    if !reserved(&base) { return base; }
+    let mut n = 2;
+    loop {
+        let candidate = format!("{base}-{n}");
+        if !reserved(&candidate) { return candidate; }
+        n += 1;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,5 +151,22 @@ mod tests {
         let mut m = base();
         m.props_schema.insert("c".into(), PropSpec::Color { default: "not-a-hex".into() });
         assert!(validate_manifest(&m).is_err());
+    }
+
+    #[test]
+    fn sanitize_id_slugifies() {
+        assert_eq!(sanitize_id("My Cool Motif!"), "my-cool-motif");
+        assert_eq!(sanitize_id("  Trailing--dashes  "), "trailing-dashes");
+        assert_eq!(sanitize_id("___"), "motif");
+        assert_eq!(sanitize_id("Lower/Third"), "lower-third");
+    }
+
+    #[test]
+    fn assign_unique_id_avoids_collisions_and_builtins() {
+        let taken = ["my-motif".to_string(), "my-motif-2".to_string()];
+        assert_eq!(assign_unique_id("My Motif", &taken), "my-motif-3");
+        let none: [String; 0] = [];
+        assert_eq!(assign_unique_id("countdown", &none), "countdown-2");
+        assert_eq!(assign_unique_id("Fresh", &taken), "fresh");
     }
 }

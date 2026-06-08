@@ -398,6 +398,10 @@ pub fn catalog() -> Vec<Manifest> {
     builtins().into_iter().map(|t| t.manifest).collect()
 }
 
+/// The reserved built-in ids. A user/uploaded Motif may never take one of
+/// these. Kept in sync with `builtins()` by `builtin_ids_const_matches_builtins`.
+pub const BUILTIN_IDS: &[&str] = &["countdown", "lower-third"];
+
 /// All built-in motifs, in display order. The picker UI iterates this
 /// list; agents see the same set via `list_motifs` (Stage H).
 pub fn builtins() -> Vec<Motif> {
@@ -802,5 +806,12 @@ mod tests {
             parse_manifest_island(html),
             Err(MotifError::ManifestParse(_))
         ));
+    }
+
+    #[test]
+    fn builtin_ids_const_matches_builtins() {
+        let actual: Vec<String> = builtins().iter().map(|t| t.id().to_string()).collect();
+        let expected: Vec<String> = BUILTIN_IDS.iter().map(|s| s.to_string()).collect();
+        assert_eq!(actual, expected);
     }
 }
