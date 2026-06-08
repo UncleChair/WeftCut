@@ -363,6 +363,8 @@ function TemplatePreview({
     return () => {
       cancelled = true;
     };
+    // `props` identity: TemplateForm debounces it (300ms) and TemplateCardThumbnail
+    // memoizes it, so a re-capture fires per settled edit — not per render. No storm.
   }, [template.id, props, w, h]);
 
   // Revoke the last blob URL on unmount.
