@@ -1918,16 +1918,18 @@ pub async fn add_subtitles_layer(
 /// Serialize a manifest + its raw `html` into the picker payload shape (a
 /// superset of the MCP `list_motifs`: every manifest field plus `html` for the
 /// client-side preview). One helper so built-in and user Motifs emit the same
-/// shape.
+/// shape. `status` is `"builtin"`, `"installed"`, or `"draft"`.
 fn motif_to_payload(
     manifest: &crate::motifs::catalog::Manifest,
     html: String,
+    status: &str,
 ) -> Result<serde_json::Value, String> {
     let mut v = serde_json::to_value(manifest).map_err(|e| format!("manifest serialize: {e}"))?;
     let obj = v
         .as_object_mut()
         .ok_or_else(|| "manifest is not a JSON object".to_string())?;
     obj.insert("html".to_string(), serde_json::Value::String(html));
+    obj.insert("status".to_string(), serde_json::Value::String(status.to_string()));
     Ok(v)
 }
 
@@ -1937,15 +1939,16 @@ fn motif_to_payload(
 /// surface stays manifest-only (see `mcp::templates_payload`); the extra
 /// `html` field is UI-only and would just bloat agent context.
 ///
-/// Returns built-ins first (fixed display order), then on-disk user Motifs.
+/// Returns built-ins first (fixed display order), then installed user Motifs,
+/// then drafts. Each entry carries a `status` field (`"builtin"` |
+/// `"installed"` | `"draft"`) so the picker can label unpublished uploads.
 #[tauri::command]
 pub async fn list_motifs(
     store: tauri::State<'_, crate::motifs::store::UserMotifStore>,
 ) -> Result<Vec<serde_json::Value>, String> {
     let mut out: Vec<serde_json::Value> = Vec::new();
-    // Built-ins first (fixed display order), then on-disk user Motifs.
     for t in catalog::builtins() {
-        out.push(motif_to_payload(&t.manifest, t.html)?);
+        out.push(motif_to_payload(&t.manifest, t.html, "builtin")?);
     }
     for manifest in store.list_manifests() {
         // list_manifests already confirmed index.html parsed; this re-reads it
@@ -1954,7 +1957,10 @@ pub async fn list_motifs(
         // rather than failing the whole list. (Dedup the double-read via a
         // list_manifests_with_html helper if it ever matters.)
         let html = store.read_html(&manifest.id).unwrap_or_default();
-        out.push(motif_to_payload(&manifest, html)?);
+        out.push(motif_to_payload(&manifest, html, "installed")?);
+    }
+    for draft in store.list_drafts() {
+        out.push(motif_to_payload(&draft.manifest, draft.html, "draft")?);
     }
     Ok(out)
 }
@@ -2482,11 +2488,18 @@ mod tests {
     #[test]
     fn motif_payload_includes_manifest_fields_and_html() {
         let m = crate::motifs::catalog::builtin_countdown();
-        let v = motif_to_payload(&m.manifest, m.html.clone()).unwrap();
+        let v = motif_to_payload(&m.manifest, m.html.clone(), "builtin").unwrap();
         let obj = v.as_object().unwrap();
         assert_eq!(obj.get("id").unwrap(), "countdown");
         assert!(obj.get("html").unwrap().as_str().unwrap().contains("motif.define"));
         assert!(obj.contains_key("size"));
         assert!(obj.contains_key("props_schema"));
+    }
+
+    #[test]
+    fn motif_payload_carries_status() {
+        let m = crate::motifs::catalog::builtin_countdown();
+        let v = motif_to_payload(&m.manifest, m.html.clone(), "builtin").unwrap();
+        assert_eq!(v.as_object().unwrap().get("status").unwrap(), "builtin");
     }
 }
