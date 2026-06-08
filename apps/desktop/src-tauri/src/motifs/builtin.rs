@@ -2,7 +2,7 @@
 //! URI-scheme handler that serves them.
 //!
 //! A built-in Motif is an `index.html` (+ optional sibling assets) shipped in
-//! `motifs/builtin/<id>/`. The files are embedded with `include_str!` /
+//! `motifs/catalog/<id>/`. The files are embedded with `include_str!` /
 //! `include_bytes!` (mirroring the old `templates` module) so they travel with
 //! the binary and need no on-disk install.
 //!
@@ -62,7 +62,21 @@ const COUNTDOWN: BuiltinMotif = BuiltinMotif {
     }],
 };
 
-const BUILTINS: &[BuiltinMotif] = &[COUNTDOWN];
+const LOWER_THIRD: BuiltinMotif = BuiltinMotif {
+    id: "lower-third",
+    files: &[
+        BuiltinFile {
+            rel: "index.html",
+            bytes: include_bytes!("catalog/lower-third/index.html"),
+        },
+        BuiltinFile {
+            rel: "assets/Inter.woff2",
+            bytes: include_bytes!("catalog/lower-third/assets/Inter.woff2"),
+        },
+    ],
+};
+
+const BUILTINS: &[BuiltinMotif] = &[COUNTDOWN, LOWER_THIRD];
 
 /// Look up an embedded file by `(id, rel)`.
 fn lookup(id: &str, rel: &str) -> Option<&'static [u8]> {
@@ -210,6 +224,21 @@ mod tests {
         let bytes = lookup("countdown", "index.html").expect("countdown index embedded");
         assert!(!bytes.is_empty());
         // sanity: it's the countdown HTML
+        let s = std::str::from_utf8(bytes).unwrap();
+        assert!(s.contains("motif.define"));
+    }
+
+    #[test]
+    fn serves_lower_third_font_asset() {
+        let bytes = lookup("lower-third", "assets/Inter.woff2")
+            .expect("lower-third font embedded");
+        assert!(!bytes.is_empty());
+        assert_eq!(content_type_for("assets/Inter.woff2"), "font/woff2");
+    }
+
+    #[test]
+    fn looks_up_embedded_lower_third_index() {
+        let bytes = lookup("lower-third", "index.html").expect("lower-third index embedded");
         let s = std::str::from_utf8(bytes).unwrap();
         assert!(s.contains("motif.define"));
     }
