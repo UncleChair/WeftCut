@@ -3,7 +3,8 @@
 //! `UserMotifStore` does the disk work and calls these. (Upload design spec
 //! §4, §10.)
 
-use super::catalog::{Manifest, MotifError, PropSpec};
+use super::catalog::{BUILTIN_IDS, Manifest, MotifError, PropSpec};
+use super::store::DRAFTS_DIR;
 
 /// Hard ceiling on a Motif's authored render size (CSS px). Generous for any
 /// real overlay; rejects absurd values that would blow up `setDeviceMetricsOverride`.
@@ -70,9 +71,6 @@ pub fn validate_manifest(m: &Manifest) -> Result<(), MotifError> {
     Ok(())
 }
 
-use super::catalog::BUILTIN_IDS;
-use super::store::DRAFTS_DIR;
-
 /// Slugify a display name into a safe single path-segment id: lowercase ASCII
 /// alphanumerics, every other run collapsed to a single `-`, trimmed. Falls
 /// back to `"motif"` if nothing survives.
@@ -110,13 +108,20 @@ pub fn assign_unique_id(name: &str, taken: &[String]) -> String {
 
 /// Compose the canonical single-file Motif HTML: strip any existing
 /// `<script type="application/json" id="motif-manifest">…</script>` island,
-/// then inject a fresh one (pretty JSON of `manifest`) right after the opening
-/// `<head>` (or at the very top if there is no head). The author's body is
-/// otherwise preserved verbatim, and the result round-trips through
+/// then inject a fresh one (pretty JSON of `manifest`, with `<` escaped as
+/// `<` so no manifest string field can close the island early) right after
+/// the opening `<head>` (or at the very top if there is no head). The author's
+/// body is otherwise preserved verbatim, and the result round-trips through
 /// `parse_manifest_island`.
 pub fn compose_motif_html(manifest: &Manifest, html: &str) -> String {
     let stripped = strip_manifest_island(html);
-    let json = serde_json::to_string_pretty(manifest).unwrap_or_else(|_| "{}".to_string());
+    // serde_json does not HTML-escape; escape `<` as < so a manifest string
+    // field containing `</script>` (any case) can't truncate the island when the
+    // reader slices up to `</script>`. The reader (and any JSON parser) decodes
+    // < back to `<`, so the manifest round-trips exactly.
+    let json = serde_json::to_string_pretty(manifest)
+        .unwrap_or_else(|_| "{}".to_string())
+        .replace('<', "\\u003c");
     let island = format!(
         "<script type=\"application/json\" id=\"motif-manifest\">\n{json}\n</script>\n"
     );
@@ -233,6 +238,40 @@ mod tests {
         assert_eq!(parsed.id, "demo");
         assert_eq!(parsed.name, "Demo");
         assert!(composed.contains("motif.define"));
+    }
+
+    #[test]
+    fn compose_survives_script_close_in_a_string_field() {
+        let mut m = base();
+        m.id = "evil".into();
+        m.name = "Evil</script><script>x".into();
+        let composed = compose_motif_html(&m,
+            "<head></head><body><script>motif.define({setup(){}})</script></body>");
+        // The reader must round-trip the name verbatim (no truncation), and the
+        // body's real </script> must still be the island's closing tag.
+        let parsed = super::super::catalog::parse_manifest_island(&composed).expect("parses");
+        assert_eq!(parsed.name, "Evil</script><script>x");
+        assert_eq!(parsed.id, "evil");
+    }
+
+    #[test]
+    fn compose_with_no_head_prepends_and_round_trips() {
+        let mut m = base();
+        m.id = "nohead".into();
+        let composed = compose_motif_html(&m, "<body><script>motif.define({setup(){}})</script></body>");
+        let parsed = super::super::catalog::parse_manifest_island(&composed).expect("parses");
+        assert_eq!(parsed.id, "nohead");
+        // Island injected at the very top (no <head> to anchor to).
+        assert!(composed.trim_start().starts_with("<script"));
+    }
+
+    #[test]
+    fn compose_on_html_with_no_existing_island_injects_one() {
+        let mut m = base();
+        m.id = "fresh".into();
+        let composed = compose_motif_html(&m, "<head></head><body>hi</body>");
+        assert_eq!(composed.matches(r#"id="motif-manifest""#).count(), 1);
+        assert_eq!(super::super::catalog::parse_manifest_island(&composed).unwrap().id, "fresh");
     }
 
     #[test]
