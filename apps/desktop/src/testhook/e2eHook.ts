@@ -222,9 +222,9 @@ export function installBootstrapHook(enterEditor: () => void): void {
   };
 }
 
-/// Root-side: install template-layer hooks (prebake, cache ops, sprite frames,
+/// Root-side: install Motif test hooks (prebake, cache ops, sprite frames,
 /// add/patch/clear/baked-index). Lives at Root level; called once on boot.
-export function installTemplateHarnessHook(): void {
+export function installMotifTestHooks(): void {
   // Drive the REAL TemplateSprite (Task A) and read back each bound frame's
   // content checksum so the spec can prove the template animates across the
   // timeline through the sprite's own frame-selection + bind path.

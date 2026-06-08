@@ -101,7 +101,7 @@ export function MotifPicker({
                   }
                   onClick={() => setSelectedId(tpl.id)}
                 >
-                  <TemplateCardThumbnail template={tpl} />
+                  <MotifCardThumbnail template={tpl} />
                   <span className="template-card-name">{tpl.name}</span>
                   <span className="template-card-meta">
                     {tpl.size[0]}×{tpl.size[1]} · {formatTimecode(Math.round(tpl.default_duration_s * 1_000_000), fpsNum, fpsDen)}
@@ -113,7 +113,7 @@ export function MotifPicker({
 
             <div className="template-picker-form">
               {selected ? (
-                <TemplateForm
+                <MotifForm
                   key={selected.id}
                   template={selected}
                   currentTimeUs={currentTimeUs}
@@ -165,7 +165,7 @@ function defaultPropsFor(template: MotifSummary): Record<string, unknown> {
   return out;
 }
 
-function TemplateForm({
+function MotifForm({
   template,
   currentTimeUs,
   tracks,
@@ -229,7 +229,7 @@ function TemplateForm({
       }}
     >
       <h3>{t("template_picker.preview_heading")}</h3>
-      <TemplatePreview
+      <MotifPreview
         template={template}
         props={debouncedProps}
         width={480}
@@ -319,7 +319,7 @@ const PREVIEW_T_SEC = 0;
 /// (`captureMotifFramePngBlob`). Replaces the old SVG-harness + rAF loop —
 /// CDP cost (~80ms) makes continuous animation impractical here, and the
 /// picker's job is "show what this Motif looks like", not animate it.
-function TemplatePreview({
+function MotifPreview({
   template,
   props,
   width,
@@ -363,7 +363,7 @@ function TemplatePreview({
     return () => {
       cancelled = true;
     };
-    // `props` identity: TemplateForm debounces it (300ms) and TemplateCardThumbnail
+    // `props` identity: MotifForm debounces it (300ms) and MotifCardThumbnail
     // memoizes it, so a re-capture fires per settled edit — not per render. No storm.
   }, [template.id, props, w, h]);
 
@@ -418,9 +418,9 @@ function TemplatePreview({
 /// Card-grid thumbnail. Renders the live preview at default props — same
 /// component the form's large preview uses, so card and form stay visually
 /// consistent.
-function TemplateCardThumbnail({ template }: { template: MotifSummary }) {
+function MotifCardThumbnail({ template }: { template: MotifSummary }) {
   const defaults = useMemo(() => defaultPropsFor(template), [template.id]);
-  return <TemplatePreview template={template} props={defaults} width={240} />;
+  return <MotifPreview template={template} props={defaults} width={240} />;
 }
 
 function PropField({

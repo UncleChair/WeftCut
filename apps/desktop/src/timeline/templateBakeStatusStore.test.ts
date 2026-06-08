@@ -3,7 +3,7 @@ import {
   selectLayerBakePhase,
   selectLayerBakeStatus,
   setLayerBakeStatuses,
-  useTemplateBakeStatusStore,
+  useMotifBakeStatusStore,
   motifWarmPhase,
   type LayerBakeStatus,
 } from "./templateBakeStatusStore";
@@ -46,9 +46,9 @@ describe("templateBakeStatusStore", () => {
 
   it("setLayerBakeStatuses replaces the whole map", () => {
     setLayerBakeStatuses({ a: baking });
-    expect(useTemplateBakeStatusStore.getState().byLayer.a).toEqual(baking);
+    expect(useMotifBakeStatusStore.getState().byLayer.a).toEqual(baking);
     setLayerBakeStatuses({ b: { phase: "ready", done: 3, total: 3 } });
-    expect(useTemplateBakeStatusStore.getState().byLayer.a).toBeUndefined();
-    expect(useTemplateBakeStatusStore.getState().byLayer.b?.phase).toBe("ready");
+    expect(useMotifBakeStatusStore.getState().byLayer.a).toBeUndefined();
+    expect(useMotifBakeStatusStore.getState().byLayer.b?.phase).toBe("ready");
   });
 });
