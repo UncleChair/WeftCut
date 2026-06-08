@@ -453,6 +453,9 @@ const zhCN: Resources = {
     bake_baking: "预烘焙中 {{done}}/{{total}}",
     bake_ready: "已预烘焙（{{total}} 帧）",
     bake_error: "预烘焙失败",
+    motif_install: "安装",
+    motif_delete: "删除",
+    motif_status: { draft: "草稿", installed: "已安装" },
   },
   template_picker: {
     heading: "Motifs",
