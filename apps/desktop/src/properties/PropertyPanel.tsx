@@ -4,6 +4,8 @@ import { formatTimecode, parseTimecode } from "../frames";
 import {
   updateLayer,
   updateLayerParams,
+  installMotif,
+  deleteMotif,
   type GroupSummary,
   type LayerParamsPatch,
   type LayerSummary,
@@ -636,6 +638,7 @@ function MotifFields({
     <section className="prop-section">
       <h3>{t("property_panel.template")}</h3>
       <BakeStatusLine layerId={layer.id} />
+      <MotifLifecycleRow motifId={v.motif_id} status={template?.manifest.status} />
       <h4>{t("property_panel.transform")}</h4>
       <Field label={t("property_panel.x")}>
         <input
@@ -706,6 +709,52 @@ function MotifFields({
         </>
       ) : null}
     </section>
+  );
+}
+
+/// Install (publish a draft) / Delete a user Motif from the placed layer. Built-in
+/// Motifs show nothing. Install-update + Edit are Stage 3b-2; this is Install-new
+/// + Delete. The backend emits `motifs:changed`, which resyncs the catalog so the
+/// layer keeps rendering (the id is stable across install — Model B).
+function MotifLifecycleRow({
+  motifId,
+  status,
+}: {
+  motifId: string;
+  status: "builtin" | "installed" | "draft" | undefined;
+}) {
+  const { t } = useTranslation();
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  if (!status || status === "builtin") return null;
+
+  const run = (fn: () => Promise<unknown>) => async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await fn();
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="prop-motif-lifecycle">
+      <span className={`template-card-status status-${status}`}>
+        {t(`property_panel.motif_status.${status}`)}
+      </span>
+      {status === "draft" && (
+        <button disabled={busy} onClick={run(() => installMotif(motifId, { kind: "new" }))}>
+          {t("property_panel.motif_install")}
+        </button>
+      )}
+      <button disabled={busy} onClick={run(() => deleteMotif(motifId))}>
+        {t("property_panel.motif_delete")}
+      </button>
+      {err && <p className="settings-error">{err}</p>}
+    </div>
   );
 }
 

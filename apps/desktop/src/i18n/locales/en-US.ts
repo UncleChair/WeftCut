@@ -462,6 +462,9 @@ const enUS = {
     bake_baking: "Pre-baking… {{done}}/{{total}}",
     bake_ready: "Pre-baked ({{total}} frames)",
     bake_error: "Pre-bake failed",
+    motif_install: "Install",
+    motif_delete: "Delete",
+    motif_status: { draft: "Draft", installed: "Installed" },
   },
   template_picker: {
     heading: "Motifs",

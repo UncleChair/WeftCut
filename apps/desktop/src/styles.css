@@ -5092,3 +5092,4 @@ input.preview-timecode:focus {
 .prop-bake-status.is-error { color: #e5534b; }
 .prop-bake-status.is-warming { color: #f0a020; }
 .prop-bake-status.is-ready { color: #46c46a; }
+.prop-motif-lifecycle { display: flex; align-items: center; gap: 8px; margin: 6px 0; flex-wrap: wrap; }
