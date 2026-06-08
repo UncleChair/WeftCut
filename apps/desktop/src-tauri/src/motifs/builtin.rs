@@ -58,7 +58,7 @@ const COUNTDOWN: BuiltinMotif = BuiltinMotif {
     id: "countdown",
     files: &[BuiltinFile {
         rel: "index.html",
-        bytes: include_bytes!("builtin/countdown/index.html"),
+        bytes: include_bytes!("catalog/countdown/index.html"),
     }],
 };
 
