@@ -10,5 +10,6 @@ describe("newDraftSource", () => {
     expect(typeof manifest.props_schema).toBe("object");
     expect(html).toContain("motif.define");
     expect(html).not.toContain('id="motif-manifest"');
+    expect((manifest.props_schema.title as { default: string }).default).toBe("My Overlay");
   });
 });

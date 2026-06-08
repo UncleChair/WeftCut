@@ -48,9 +48,11 @@ export function MotifPicker({
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
+  const aliveRef = useRef(true);
   const reload = () => {
     listMotifs().then(
       (list) => {
+        if (!aliveRef.current) return;
         setTemplates(list);
         // Refresh the runtime frame-math catalog from the SAME fetch the picker
         // shows. The boot-time sync (main.tsx) is one-shot; without this, a Motif
@@ -61,14 +63,29 @@ export function MotifPicker({
         setUserMotifs(list as MotifManifest[]);
         setSelectedId((prev) => prev ?? list[0]?.id ?? null);
       },
-      (e) => setError(String(e)),
+      (e) => {
+        if (aliveRef.current) setError(String(e));
+      },
     );
   };
   useEffect(() => {
+    aliveRef.current = true;
     reload();
     let un: (() => void) | undefined;
-    void listen(MOTIFS_CHANGED_EVENT, reload).then((u) => { un = u; });
-    return () => { un?.(); };
+    let cleaned = false;
+    void listen(MOTIFS_CHANGED_EVENT, reload).then((u) => {
+      // If the effect already cleaned up before listen() resolved, unlisten now
+      // (otherwise the listener leaks for the webview's lifetime).
+      if (cleaned) u();
+      else un = u;
+    });
+    return () => {
+      aliveRef.current = false;
+      cleaned = true;
+      un?.();
+    };
+    // reload is stable: it only closes over useState setters (referentially
+    // stable) + aliveRef, so omitting it from deps is intentional and safe.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
