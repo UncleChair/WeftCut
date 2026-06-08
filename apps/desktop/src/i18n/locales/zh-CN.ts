@@ -482,6 +482,9 @@ const zhCN: Resources = {
     adding: "添加中…",
     new_button: "新建 Motif",
     new_prompt: "给 Motif 命名",
+    new_create: "创建",
+    new_cancel: "取消",
+    new_name_placeholder: "Motif 名称",
     status: {
       draft: "草稿",
       installed: "已安装",

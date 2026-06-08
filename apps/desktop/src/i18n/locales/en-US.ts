@@ -491,6 +491,9 @@ const enUS = {
     adding: "Adding…",
     new_button: "New Motif",
     new_prompt: "Name your Motif",
+    new_create: "Create",
+    new_cancel: "Cancel",
+    new_name_placeholder: "Motif name",
     status: {
       draft: "Draft",
       installed: "Installed",
