@@ -78,10 +78,6 @@ pub struct Manifest {
     /// distinct from `max_duration_s`, which caps the layer.
     #[serde(default)]
     pub content_duration_s: Option<f64>,
-    /// How the motif's frames are captured. Defaults to `"svg"` when the
-    /// manifest omits it.
-    #[serde(default = "default_engine")]
-    pub engine: String,
     /// Fonts the motif bundles under `assets/`. Empty for built-ins that
     /// use system fonts (e.g. `countdown`).
     #[serde(default)]
@@ -89,10 +85,6 @@ pub struct Manifest {
     /// Use a BTreeMap so canonical JSON serialization is key-order-stable —
     /// the cache key derived from props depends on this.
     pub props_schema: BTreeMap<String, PropSpec>,
-}
-
-fn default_engine() -> String {
-    "svg".into()
 }
 
 impl Manifest {
@@ -136,6 +128,33 @@ pub fn resolve_motif_max_dur_us(
         }
     }
     manifest.max_duration_us()
+}
+
+/// The Motif's content/animation duration in SECONDS, for the capture
+/// `ctx.duration`. Derived from the manifest + instance props:
+/// `content_duration_s` → the `max_duration_prop` value → `max_duration_s` →
+/// `default_duration_s`. Replaces the old hardcoded "seconds" prop name so it's
+/// correct for any Motif, not just countdown. (Mirrors the TS content-duration
+/// resolution; distinct from `resolve_motif_max_dur_us`, the layer cap.)
+pub fn motif_ctx_duration_s(manifest: &Manifest, props: &serde_json::Value) -> f64 {
+    if let Some(s) = manifest.content_duration_s {
+        if s.is_finite() && s > 0.0 {
+            return s;
+        }
+    }
+    if let Some(name) = &manifest.max_duration_prop {
+        if let Some(v) = props.get(name).and_then(|v| v.as_f64()) {
+            if v.is_finite() && v > 0.0 {
+                return v;
+            }
+        }
+    }
+    if let Some(s) = manifest.max_duration_s {
+        if s > 0.0 {
+            return s;
+        }
+    }
+    manifest.default_duration_s
 }
 
 /// A bundled font declared by a motif manifest. `file` is the asset
@@ -464,7 +483,6 @@ mod tests {
                 max_duration_s: None,
                 max_duration_prop: None,
                 content_duration_s: None,
-                engine: "svg".to_string(),
                 fonts: vec![],
                 props_schema,
             },
@@ -625,6 +643,73 @@ mod tests {
         assert_eq!(actual, vec!["countdown".to_string(), "lower-third".to_string()]);
         let catalog_ids: Vec<String> = catalog().iter().map(|m| m.id.clone()).collect();
         assert_eq!(catalog_ids, vec!["countdown".to_string(), "lower-third".to_string()]);
+    }
+
+    /// `motif_ctx_duration_s` resolution order: `content_duration_s` →
+    /// `max_duration_prop` value → `max_duration_s` → `default_duration_s`.
+    /// Covers: countdown (max_duration_prop="seconds" → props value),
+    /// content_duration_s overrides everything, and the fallback chain.
+    #[test]
+    fn motif_ctx_duration_s_resolution() {
+        // --- countdown: max_duration_prop="seconds" → props.seconds -----------
+        let m = builtin_countdown().manifest;
+        // Props carry seconds=7 → should return 7.0.
+        let p7 = json!({ "seconds": 7 });
+        assert!(
+            (motif_ctx_duration_s(&m, &p7) - 7.0).abs() < 1e-9,
+            "expected 7.0 from seconds prop"
+        );
+        // Props carry seconds=30.0 (float) → 30.0.
+        let p30 = json!({ "seconds": 30.0 });
+        assert!(
+            (motif_ctx_duration_s(&m, &p30) - 30.0).abs() < 1e-9,
+            "expected 30.0 from seconds prop"
+        );
+        // Props missing → falls back through max_duration_s (5.0) since no
+        // prop value is present but max_duration_s=5.0 is set.
+        let empty = json!({});
+        assert!(
+            (motif_ctx_duration_s(&m, &empty) - 5.0).abs() < 1e-9,
+            "expected 5.0 (max_duration_s fallback)"
+        );
+
+        // --- content_duration_s overrides max_duration_prop + seconds prop ---
+        let mut m_content = m.clone();
+        m_content.content_duration_s = Some(0.8);
+        // Even with seconds=7, content_duration_s wins.
+        assert!(
+            (motif_ctx_duration_s(&m_content, &p7) - 0.8).abs() < 1e-9,
+            "expected 0.8 from content_duration_s"
+        );
+        // Also wins over empty props.
+        assert!(
+            (motif_ctx_duration_s(&m_content, &empty) - 0.8).abs() < 1e-9,
+            "expected 0.8 from content_duration_s with empty props"
+        );
+
+        // --- fallback to default_duration_s when nothing else applies --------
+        let mut m_bare = m.clone();
+        m_bare.content_duration_s = None;
+        m_bare.max_duration_prop = None;
+        m_bare.max_duration_s = None;
+        m_bare.default_duration_s = 3.5;
+        assert!(
+            (motif_ctx_duration_s(&m_bare, &empty) - 3.5).abs() < 1e-9,
+            "expected 3.5 from default_duration_s"
+        );
+        // Even with seconds prop present, ignored because max_duration_prop=None.
+        assert!(
+            (motif_ctx_duration_s(&m_bare, &p7) - 3.5).abs() < 1e-9,
+            "expected 3.5 (max_duration_prop=None ignores seconds)"
+        );
+
+        // --- lower-third: content_duration_s=0.8, no max_duration_prop ------
+        let m_lt = builtin_lower_third().manifest;
+        assert_eq!(m_lt.content_duration_s, Some(0.8));
+        assert!(
+            (motif_ctx_duration_s(&m_lt, &empty) - 0.8).abs() < 1e-9,
+            "expected 0.8 for lower-third (content_duration_s)"
+        );
     }
 
     /// Every built-in's served HTML declares its lifecycle via `motif.define`

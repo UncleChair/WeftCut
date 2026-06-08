@@ -6,7 +6,6 @@
   "default_duration_s": 5.0,
   "max_duration_s": 5.0,
   "max_duration_prop": "seconds",
-  "engine": "svg",
   "props_schema": {
     "seconds": {
       "type": "number",

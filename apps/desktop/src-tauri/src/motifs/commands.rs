@@ -103,14 +103,14 @@ pub async fn motif_capture_frame(
     let props: serde_json::Value = serde_json::from_str(&props_json)
         .map_err(|e| format!("props_json is not valid JSON: {e}"))?;
 
-    // Duration: for v1 derive from the `seconds` prop if present (the countdown
-    // Motif's max-duration prop), else fall back to 5s. fps is fixed at 30 for
-    // the capture meta.
-    // TODO(motifs-plan-2): derive duration from manifest.max_duration_prop instead of
-    // hardcoding the "seconds" prop name (only correct for the countdown built-in today).
-    let duration = props
-        .get("seconds")
-        .and_then(|v| v.as_f64())
+    // Duration for the capture meta: derived from the motif's manifest +
+    // instance props via `motif_ctx_duration_s` (content_duration_s →
+    // max_duration_prop value → max_duration_s → default_duration_s). This
+    // is correct for every motif, not just countdown. fps is fixed at 30.
+    let duration = super::catalog::builtins()
+        .into_iter()
+        .find(|m| m.id() == motif_id)
+        .map(|m| super::catalog::motif_ctx_duration_s(&m.manifest, &props))
         .unwrap_or(5.0);
     let meta = serde_json::json!({
         "duration": duration,
