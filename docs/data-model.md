@@ -209,7 +209,7 @@ enum LayerParams {
     VideoClip(VideoClipParams),
     ImageOverlay(ImageOverlayParams),
     Text(TextParams),
-    Template(TemplateParams),
+    Motif(MotifParams),
     Audio(AudioParams),
     Subtitles(SubtitlesParams),
     Color(ColorParams),
@@ -251,15 +251,16 @@ struct TextParams {
 }
 ```
 
-The compiler picks `DrawText` (ffmpeg-native) for simple styles and `Rasterized` (template-baked) for animated/styled text. Agents don't need to know which.
+The compiler picks `DrawText` (ffmpeg-native) for simple styles and `Rasterized` (bitmap-baked) for animated/styled text. Agents don't need to know which.
 
-### `TemplateParams`
+### `MotifParams`
 
 ```rust
-struct TemplateParams {
-    template_id: String,
-    template_version: u32,
-    props: imbl::HashMap<String, Value>,   // validated against template manifest's props_schema
+struct MotifParams {
+    motif_id: String,
+    motif_version: u32,
+    props: imbl::HashMap<String, Value>,   // validated against the Motif manifest's props_schema
+    src_in_us: TimeUs,                      // window offset into the Motif's intrinsic content (0 = content frame 0)
     transform: Transform,
     opacity: Animated<f64>,
 }
@@ -419,7 +420,7 @@ struct ChangeEvent {
 | `composition.fps.den > 0`, `width/height > 0` | reject |
 | All references (`MediaId`/`LayerId`/`GroupId`/`TransitionId`) resolve | reject |
 | Keyframe times in `[0, layer.duration]` | reject |
-| Template props match template manifest's `props_schema` | reject |
+| Motif props match the Motif manifest's `props_schema` | reject |
 | `Animated` with empty keyframes ⇔ `Static` | normalize |
 
 A failed invariant returns a structured error to the caller (UI shows toast; MCP returns tool error with a reason and, where useful, suggested alternative actions).
@@ -440,7 +441,7 @@ the UI uses the same actor via Tauri commands.
 | `move_track(id, new_position)` | |
 | `add_color_layer(track_id, t_start_us, t_end_us, color, width?, height?)` → `LayerId` | rejects on overlap |
 | `add_video_layer(track_id, media_id, t_start_us, t_end_us, src_in_us, src_out_us)` → `LayerId` | rejects on overlap |
-| `add_template(template_id, t_start_us, t_end_us?, track_id?, props?)` → `LayerId` | `t_end_us` defaults to `default_duration_s`; `track_id` auto-creates an "Overlay" track when absent |
+| `add_motif(motif_id, t_start_us, t_end_us?, track_id?, props?)` → `LayerId` | `t_end_us` defaults to `default_duration_s`; `track_id` auto-creates an "Overlay" track when absent |
 | `apply_subtitles(body, format?, track_id?, t_start_us?, t_end_us)` | body inline; format sniffed from `[Script Info]` |
 | `duplicate_layer(layer_id, t_offset_us)` → `LayerId` | |
 | `update_layer(layer_id, patch)` | envelope-only patch (label, time range, enabled, locked) |
@@ -484,7 +485,7 @@ The workspace folder *is* the project. Opening a workspace folder = opening the 
 │   ├── thumbnails/           ← per-source thumb strips
 │   ├── waveforms/            ← .peaks files for waveform display
 │   ├── frames/               ← on-demand video frames (media://{id}/frame/{t})
-│   ├── raster/               ← rasterized template renders
+│   ├── raster/               ← persisted Motif frame captures (L2)
 │   ├── preview/              ← state-hashed preview MP4s (see `rendering.md`)
 │   └── voiceover/            ← TTS output
 ├── Backups/                  ← periodic project.json snapshots (rolling 20)
@@ -525,6 +526,6 @@ without crashing — the unknown fields drop on next save.
 4. **`enabled: false` ≠ deleted.** Disabled layers still serialize, still occupy their time range for layout. Agents will toggle these for A/B variations.
 5. **Keyframes are relative.** Document this prominently — it's the kind of bug that bites once and forever.
 6. **Schema migrations under MCP.** Including `schema_version` in every resource response is the simplest defense; agents holding `project://` reads then adapt.
-7. **Template raster invalidation.** Patch `TemplateParams.props`
+7. **Motif raster invalidation.** Patch `MotifParams.props`
    field-wise rather than replacing whole `params` — otherwise the
    raster cache thrashes on every prop tweak.
