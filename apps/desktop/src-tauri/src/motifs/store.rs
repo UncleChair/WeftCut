@@ -90,20 +90,23 @@ impl UserMotifStore {
         &self.root
     }
 
-    /// Read a file from `<root>/<id>/<rel>`, path-safely. `None` if `id`/`rel`
-    /// are unsafe or the file does not exist.
+    /// Read a file for Motif `id`, path-safely. Resolves the PUBLISHED copy
+    /// (`<root>/<id>/<rel>`) first, then falls back to the DRAFT of the same id
+    /// (`<root>/drafts/<id>/<rel>`) — so a final-ready draft id serves its draft
+    /// until it's installed, after which the published copy takes over (Model B).
+    /// The reserved `drafts` literal id is never served.
     pub fn read_file(&self, id: &str, rel: &str) -> Option<Vec<u8>> {
-        // The reserved drafts/ subtree is never an installed Motif id. The
-        // motif:// URI handler calls read_file with an id from the URL, so this
-        // guard (not just list_manifests skipping it) is what keeps WIP drafts
-        // unreachable.
         if id == DRAFTS_DIR {
             return None;
         }
         let safe_id = safe_rel(id)?;
         let safe = safe_rel(rel)?;
-        let path = self.root.join(safe_id).join(safe);
-        std::fs::read(path).ok()
+        let published = self.root.join(&safe_id).join(&safe);
+        if let Ok(bytes) = std::fs::read(&published) {
+            return Some(bytes);
+        }
+        let draft = self.root.join(DRAFTS_DIR).join(&safe_id).join(&safe);
+        std::fs::read(draft).ok()
     }
 
     /// Read a user Motif's `index.html` as a string.
@@ -112,10 +115,9 @@ impl UserMotifStore {
             .and_then(|b| String::from_utf8(b).ok())
     }
 
-    /// Build a full `Motif` (manifest + html) for an installed user Motif by id,
-    /// or `None` if absent / unreadable / not a valid island. Mirrors a built-in
-    /// `Motif` so callers (e.g. `add_motif`) can resolve user Motifs the same way.
-    /// The reserved `drafts/` id is never a Motif.
+    /// Build a full `Motif` (manifest + html) for Motif `id`, resolving the
+    /// published copy then falling back to its draft (Model B). `None` if
+    /// absent / unreadable / not a valid island, or for the reserved `drafts` id.
     pub fn get_motif(&self, id: &str) -> Option<Motif> {
         if id == DRAFTS_DIR {
             return None;
@@ -151,6 +153,18 @@ impl UserMotifStore {
             }
         }
         out.sort();
+        out
+    }
+
+    /// Every draft as a full `Motif` (manifest + html), id-sorted. Skips a draft
+    /// dir whose `index.html` is missing or whose island fails to parse.
+    pub fn list_drafts(&self) -> Vec<Motif> {
+        let mut out: Vec<Motif> = self
+            .list_draft_ids()
+            .into_iter()
+            .filter_map(|id| self.get_draft(&id))
+            .collect();
+        out.sort_by(|a, b| a.id().cmp(b.id()));
         out
     }
 
@@ -393,6 +407,41 @@ mod tests {
         assert!(store.write_draft("", "html").is_err());
         assert!(store.delete_user_motif("..").is_err());
         assert!(store.install_draft("ok", "../escape").is_err());
+    }
+
+    #[test]
+    fn read_file_falls_back_to_draft_then_prefers_published() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = UserMotifStore::new(tmp.path().to_path_buf());
+        let draft_html = compose_motif_html(&manifest("foo", "Draft Foo", 1),
+            "<head></head><body>draft<script>motif.define({setup(){}})</script></body>");
+        store.write_draft("foo", &draft_html).unwrap();
+        let got = String::from_utf8(store.read_file("foo", "index.html").unwrap()).unwrap();
+        assert!(got.contains("draft"));
+        assert!(store.get_motif("foo").is_some());
+        store.install_draft("foo", "foo").unwrap();
+        let pub_html = String::from_utf8(store.read_file("foo", "index.html").unwrap()).unwrap();
+        assert!(pub_html.contains("draft"));
+        assert!(store.list_manifests().iter().any(|m| m.id == "foo"));
+    }
+
+    #[test]
+    fn list_drafts_returns_draft_motifs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = UserMotifStore::new(tmp.path().to_path_buf());
+        store.write_draft("d1", &compose_motif_html(&manifest("d1", "D1", 1),
+            "<head></head><body><script>motif.define({setup(){}})</script></body>")).unwrap();
+        let drafts = store.list_drafts();
+        assert_eq!(drafts.len(), 1);
+        assert_eq!(drafts[0].id(), "d1");
+    }
+
+    #[test]
+    fn read_file_still_blocks_the_drafts_literal_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = UserMotifStore::new(tmp.path().to_path_buf());
+        store.write_draft("x", "hi").unwrap();
+        assert!(store.read_file("drafts", "x/index.html").is_none());
     }
 
     #[test]
