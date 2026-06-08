@@ -21,12 +21,12 @@ import {
   useState,
 } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { Application as PixiApplication } from "@pixi/react";
 import { Rectangle, type Application } from "pixi.js";
 
 import { previewPlaybackPathFor, useProjectStore } from "../state/projectStore";
-import { MOTIFS_CHANGED_EVENT, type MediaSummary } from "../ipc";
+import { type MediaSummary } from "../ipc";
+import { subscribeMotifCatalog } from "./motifs/catalog";
 import { Compositor } from "./Compositor";
 import { ffprobeColorToWebCodecs } from "./decoder/ffprobeColorSpace";
 import { PerfHUD } from "./PerfHUD";
@@ -275,26 +275,21 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
     compositorRef.current.compositeFrame(t);
   }, [summary, mediaById]);
 
-  // A draft edit / install / delete (motifs:changed) changes a Motif's source
-  // but NOT the project summary, so the [summary] effect won't fire. Tell the
-  // compositor to refresh its live Motif sprites against the new catalog and
-  // recapture at the current playhead.
+  // A draft edit / install / delete updates the runtime Motif catalog (via the
+  // async motifs:changed → syncUserMotifsFromBackend → setUserMotifs chain). We
+  // subscribe to the catalog CHANGE-NOTIFIER rather than the raw Tauri event so
+  // we refresh only AFTER `merged` actually carries the new content_hash —
+  // subscribing to the raw event races the async re-sync and re-captures stale
+  // source. Refresh the live Motif sprites against the fresh catalog + recapture
+  // at the current playhead. The compositor may not be initialized yet (async
+  // onInit) — read the ref live and bail if absent.
   useEffect(() => {
-    let un: (() => void) | undefined;
-    let cleaned = false;
-    void listen(MOTIFS_CHANGED_EVENT, () => {
+    return subscribeMotifCatalog(() => {
       const c = compositorRef.current;
       if (!c) return;
       c.refreshMotifs();
       c.compositeFrame(engineRef.current?.positionUs() ?? 0);
-    }).then((u) => {
-      if (cleaned) u();
-      else un = u;
     });
-    return () => {
-      cleaned = true;
-      un?.();
-    };
   }, []);
 
   // Dispose Compositor + PlaybackEngine on unmount. The library
