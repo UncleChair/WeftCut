@@ -60,12 +60,22 @@ pub async fn motif_capture_frame(
 
     // Ready-probe only when this host isn't already confirmed ready for this id.
     if super::should_probe(cap.ready_for.as_deref(), &motif_id) {
-        let ready_probe = "if(!(typeof window.__motifRender==='function'\
-            &&document.readyState==='complete'))throw new Error('motif-not-ready');true";
+        // The pathname guard closes the navigate→stale-page race: when
+        // `ensure_host` calls `win.navigate(...)` to switch Motif ids, the old
+        // page is still loaded (readyState==='complete', __motifRender defined)
+        // until the new page commits.  The old page's pathname is
+        // `/<old-id>/index.html`, which fails `indexOf('/<new-id>/')===0` — so
+        // the probe correctly keeps retrying until the new document is live.
+        let ready_probe = format!(
+            "if(!(typeof window.__motifRender==='function'\
+            &&document.readyState==='complete'\
+            &&location.pathname.indexOf('/{motif_id}/')===0\
+            ))throw new Error('motif-not-ready');true"
+        );
         let mut last_err = None;
         let mut ready = false;
         for _ in 0..READY_ATTEMPTS {
-            match cdp::eval_await(&win, ready_probe).await {
+            match cdp::eval_await(&win, &ready_probe).await {
                 Ok(()) => {
                     ready = true;
                     break;
