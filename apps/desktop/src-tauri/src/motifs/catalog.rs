@@ -5,9 +5,10 @@
 //! (`canonicalize_props`, `resolve_motif_max_dur_us`) that commands and MCP
 //! tools use when placing or updating a Motif layer.
 //!
-//! One built-in Motif (`countdown`) is embedded via `include_str!` (manifest
-//! JSON + `index.html`) so the desktop binary ships it without runtime file
-//! access. The catalog is exposed to the picker UI and to MCP agents via
+//! Two built-in Motifs (`countdown`, `lower-third`) are embedded via
+//! `include_str!` (manifest JSON + `index.html`) so the desktop binary ships
+//! them without runtime file access. The catalog is exposed to the picker UI
+//! and to MCP agents via
 //! `catalog()` / `builtins()`.
 //!
 //! Cache integration: `Motif::content_hash()` feeds the CDP raster cache
@@ -298,9 +299,9 @@ pub enum MotifError {
 
 // -- Built-in Motifs ---------------------------------------------------------
 //
-// One built-in (`countdown`) is embedded via `include_str!` so the desktop
-// binary ships it without runtime file access. It lives in
-// `motifs/catalog/countdown/`.
+// Two built-ins (`countdown`, `lower-third`) are embedded via `include_str!`
+// so the desktop binary ships them without runtime file access. They live in
+// `motifs/catalog/countdown/` and `motifs/catalog/lower-third/`.
 
 macro_rules! builtin_motif {
     ($fn_name:ident, $dir:literal) => {
