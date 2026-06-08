@@ -247,7 +247,16 @@ pub fn run() {
             // inline pill / View menu / `T` shortcut all mutate this
             // store directly and emit `app_settings:changed` so the
             // frontend re-filters the timeline immediately.
-            app.manage(app_settings::AppSettingsStore::new(config_dir));
+            app.manage(app_settings::AppSettingsStore::new(config_dir.clone()));
+
+            // User-installed Motifs live in `<app_config_dir>/motifs/`, served
+            // by the `motif:` scheme handler and merged into the catalog
+            // alongside the embedded built-ins. (Upload design spec §2.)
+            let motifs_root = config_dir.join("motifs");
+            if let Err(e) = std::fs::create_dir_all(&motifs_root) {
+                tracing::warn!("user-motif dir setup failed: {e:#} ({})", motifs_root.display());
+            }
+            app.manage(motifs::store::UserMotifStore::new(motifs_root));
 
             // Auto-save subscriber. Listens to actor events, debounces
             // 500ms, writes `project.json` whenever a workspace is set.
