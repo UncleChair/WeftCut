@@ -1,20 +1,18 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
-import { listen } from "@tauri-apps/api/event";
 import { formatTimecode, parseTimecode } from "../frames";
 import {
   updateLayer,
   updateLayerParams,
   installMotif,
   deleteMotif,
-  MOTIFS_CHANGED_EVENT,
   type GroupSummary,
   type LayerParamsPatch,
   type LayerSummary,
   type Rgba,
   type TrackSummary,
 } from "../ipc";
-import { getMotif, type PropSpec } from "../render/motifs/catalog";
+import { getMotif, subscribeMotifCatalog, motifCatalogRevision, type PropSpec } from "../render/motifs/catalog";
 import { useLayerBakeStatus } from "../timeline/motifBakeStatusStore";
 // EffectsSection + effects-related ipc calls removed in P12-a.
 
@@ -722,16 +720,9 @@ function MotifLifecycleRow({ motifId }: { motifId: string }) {
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [, setCatalogRev] = useState(0);
-  useEffect(() => {
-    let un: (() => void) | undefined;
-    let cleaned = false;
-    void listen(MOTIFS_CHANGED_EVENT, () => setCatalogRev((r) => r + 1)).then((u) => {
-      if (cleaned) u();
-      else un = u;
-    });
-    return () => { cleaned = true; un?.(); };
-  }, []);
+  // Re-render when the runtime catalog changes (install/delete → motifs:changed
+  // → syncUserMotifsFromBackend → setUserMotifs → this fires), so status is fresh.
+  useSyncExternalStore(subscribeMotifCatalog, motifCatalogRevision);
   const status = getMotif(motifId)?.manifest.status;
   if (!status || status === "builtin") return null;
 
