@@ -36,6 +36,10 @@ export interface MotifManifest {
   /// 2 (default, omitted) is safe for canvas/WebGL Motifs; CSS-only Motifs can
   /// set 1 to shave ~16 ms/frame. Clamped to {0,1,2} by the runtime.
   settle_rafs?: number;
+  /// blake3 of (manifest + html), surfaced by the `list_motifs` IPC. Part of the
+  /// frame cache key so editing a draft's source re-captures even though its
+  /// `version` stays 1. Absent for built-ins seeded from the build-time glob.
+  content_hash?: string;
   /// "builtin" | "installed" | "draft" — set by the backend `list_motifs`
   /// payload; absent for the statically-globbed built-ins (treated as builtin).
   status?: "builtin" | "installed" | "draft";

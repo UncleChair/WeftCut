@@ -54,6 +54,9 @@ export function motifContentFrame(
 export interface MotifFrameCacheKeyInput {
   motifId: string;
   version: number;
+  /// blake3 source hash — makes the key source-derived for drafts so a live
+  /// edit busts the cache even though `version` stays 1. Absent for built-ins.
+  contentHash?: string;
   canonicalProps: Record<string, unknown>;
   renderW: number;
   renderH: number;
@@ -70,6 +73,7 @@ export function motifFrameCacheKey(input: MotifFrameCacheKeyInput): string {
   return [
     input.motifId,
     String(input.version),
+    input.contentHash ?? "",
     String(input.renderW),
     String(input.renderH),
     String(input.fpsNum),
