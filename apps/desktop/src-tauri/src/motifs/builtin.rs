@@ -23,6 +23,7 @@
 //! the scheme handler serves the Motif's files verbatim.
 
 use tauri::http::{header, Request, Response};
+use tauri::Manager;
 use tauri::UriSchemeContext;
 
 /// The custom URI scheme name. The window URL and request origin are derived
@@ -155,11 +156,27 @@ fn not_found(msg: &str) -> Response<Vec<u8>> {
         .unwrap_or_else(|_| Response::new(Vec::new()))
 }
 
+/// Resolve a `(id, rest)` request to bytes: embedded built-in first, then the
+/// on-disk user-Motif store. Built-ins always win, so an uploaded Motif can
+/// never shadow one. Returned as an owned `Vec` to unify the `&'static`
+/// built-in path with the heap-read store path.
+fn resolve_bytes(
+    store: Option<&crate::motifs::store::UserMotifStore>,
+    id: &str,
+    rest: &str,
+) -> Option<Vec<u8>> {
+    if let Some(b) = lookup(id, rest) {
+        return Some(b.to_vec());
+    }
+    store.and_then(|s| s.read_file(id, rest))
+}
+
 /// The synchronous `motif:` scheme handler. Maps
 /// `http://motif.localhost/<id>/<rest>` to the embedded bytes of built-in
-/// Motif `<id>`'s file `<rest>` (defaulting to `index.html`).
+/// Motif `<id>`'s file `<rest>` (defaulting to `index.html`), then falls back
+/// to the user-Motif store managed at `<app_config_dir>/motifs/`.
 pub fn handle_request<R: tauri::Runtime>(
-    _ctx: UriSchemeContext<'_, R>,
+    ctx: UriSchemeContext<'_, R>,
     request: Request<Vec<u8>>,
 ) -> Response<Vec<u8>> {
     let uri = request.uri();
@@ -168,8 +185,13 @@ pub fn handle_request<R: tauri::Runtime>(
         return not_found("motif: malformed path (expected /<id>/<file>)");
     };
 
-    let Some(bytes) = lookup(&id, &rest) else {
-        return not_found(&format!("motif: no built-in file '{id}/{rest}'"));
+    // The store is managed at boot; in the rare pre-manage window it's absent,
+    // and only built-ins resolve — which is correct.
+    let store = ctx
+        .app_handle()
+        .try_state::<crate::motifs::store::UserMotifStore>();
+    let Some(bytes) = resolve_bytes(store.as_deref(), &id, &rest) else {
+        return not_found(&format!("motif: no file '{id}/{rest}'"));
     };
 
     let content_type = content_type_for(&rest);
@@ -181,7 +203,7 @@ pub fn handle_request<R: tauri::Runtime>(
         // is not subject to canvas cross-origin tainting; this CORP/COEP-free
         // response is fine. No caching headers — the host window loads each id
         // once and we want a clean reload to re-fetch.
-        .body(bytes.to_vec())
+        .body(bytes)
         .unwrap_or_else(|_| Response::new(Vec::new()))
 }
 
@@ -264,5 +286,27 @@ mod tests {
         assert!(c.contains("script-src 'unsafe-inline'"));
         assert!(!c.contains("connect-src"));
         assert!(c.contains(SCHEME_ORIGIN));
+    }
+
+    #[test]
+    fn resolve_prefers_builtin_then_store() {
+        use crate::motifs::store::UserMotifStore;
+        let tmp = tempfile::tempdir().unwrap();
+        // A user Motif on disk.
+        let dir = tmp.path().join("user-z");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("index.html"), b"<html>user-z</html>").unwrap();
+        let store = UserMotifStore::new(tmp.path().to_path_buf());
+
+        // Built-in wins even if a same-id dir existed; here ids differ.
+        let builtin = resolve_bytes(Some(&store), "countdown", "index.html").unwrap();
+        assert!(std::str::from_utf8(&builtin).unwrap().contains("motif.define"));
+
+        // User Motif served from the store fallback.
+        let user = resolve_bytes(Some(&store), "user-z", "index.html").unwrap();
+        assert_eq!(user, b"<html>user-z</html>".to_vec());
+
+        // Unknown → None.
+        assert!(resolve_bytes(Some(&store), "nope", "index.html").is_none());
     }
 }
