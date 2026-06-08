@@ -108,6 +108,54 @@ pub fn assign_unique_id(name: &str, taken: &[String]) -> String {
     }
 }
 
+/// Compose the canonical single-file Motif HTML: strip any existing
+/// `<script type="application/json" id="motif-manifest">…</script>` island,
+/// then inject a fresh one (pretty JSON of `manifest`) right after the opening
+/// `<head>` (or at the very top if there is no head). The author's body is
+/// otherwise preserved verbatim, and the result round-trips through
+/// `parse_manifest_island`.
+pub fn compose_motif_html(manifest: &Manifest, html: &str) -> String {
+    let stripped = strip_manifest_island(html);
+    let json = serde_json::to_string_pretty(manifest).unwrap_or_else(|_| "{}".to_string());
+    let island = format!(
+        "<script type=\"application/json\" id=\"motif-manifest\">\n{json}\n</script>\n"
+    );
+    if let Some(pos) = find_ci(&stripped, "<head>") {
+        let at = pos + "<head>".len();
+        let mut out = String::with_capacity(stripped.len() + island.len());
+        out.push_str(&stripped[..at]);
+        out.push('\n');
+        out.push_str(&island);
+        out.push_str(&stripped[at..]);
+        out
+    } else {
+        format!("{island}{stripped}")
+    }
+}
+
+/// Remove the existing manifest island (its owning `<script` .. `</script>`) if present.
+fn strip_manifest_island(html: &str) -> String {
+    let Some(id_marker) = html.find(r#"id="motif-manifest""#) else {
+        return html.to_string();
+    };
+    let Some(open) = html[..id_marker].rfind("<script") else {
+        return html.to_string();
+    };
+    let Some(rel_close) = html[id_marker..].find("</script>") else {
+        return html.to_string();
+    };
+    let close = id_marker + rel_close + "</script>".len();
+    let mut out = String::with_capacity(html.len());
+    out.push_str(&html[..open]);
+    out.push_str(&html[close..]);
+    out
+}
+
+/// Case-insensitive substring search (ASCII needle); returns the byte offset.
+fn find_ci(haystack: &str, needle: &str) -> Option<usize> {
+    haystack.to_ascii_lowercase().find(&needle.to_ascii_lowercase())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -172,5 +220,29 @@ mod tests {
         // The reserved `drafts` dir name is never handed out as a Motif id.
         assert_eq!(assign_unique_id("Drafts", &none), "drafts-2");
         assert_eq!(assign_unique_id("Fresh", &taken), "fresh");
+    }
+
+    #[test]
+    fn compose_injects_island_that_parses_back() {
+        let mut m = base();
+        m.id = "demo".into();
+        m.name = "Demo".into();
+        let html = "<!doctype html><html><head></head><body><script>motif.define({setup(){}})</script></body></html>";
+        let composed = compose_motif_html(&m, html);
+        let parsed = super::super::catalog::parse_manifest_island(&composed).expect("parses");
+        assert_eq!(parsed.id, "demo");
+        assert_eq!(parsed.name, "Demo");
+        assert!(composed.contains("motif.define"));
+    }
+
+    #[test]
+    fn compose_replaces_a_pre_existing_island() {
+        let mut m = base();
+        m.id = "new-id".into();
+        let seed = r#"<head><script type="application/json" id="motif-manifest">{"id":"old-id","name":"Old","version":1,"size":[10,10],"default_duration_s":1.0,"props_schema":{}}</script></head><body><script>motif.define({setup(){}})</script></body>"#;
+        let composed = compose_motif_html(&m, seed);
+        let parsed = super::super::catalog::parse_manifest_island(&composed).expect("parses");
+        assert_eq!(parsed.id, "new-id");
+        assert_eq!(composed.matches(r#"id="motif-manifest""#).count(), 1);
     }
 }
