@@ -318,10 +318,17 @@ function useDebounced<T>(value: T, delay: number): T {
   return debounced;
 }
 
-/// Time (seconds) of the static preview frame. t=0 shows the Motif's first
-/// frame — adequate for the picker, which only needs a representative still.
-/// Animation lives in the editor preview, not the picker.
-const PREVIEW_T_SEC = 0;
+/// Time (seconds) of the static preview frame. The picker shows a still, not an
+/// animation — so capture the Motif's SETTLED state, not content-frame 0. An
+/// animate-in Motif (a fade/slide-in with `fill: both` from opacity 0 — e.g. the
+/// lower third) is invisible at t=0, which would render a blank card.
+/// `content_duration_s` marks the end of the in-animation (the held poster
+/// state), so it's the right still; a Motif without it (e.g. countdown, which
+/// shows its starting number at t=0) captures at 0.
+function posterTSec(template: MotifSummary): number {
+  const cds = template.content_duration_s;
+  return typeof cds === "number" && cds > 0 ? cds : 0;
+}
 
 /// Static still of a Motif's first frame, captured via a single CDP screenshot
 /// (`captureMotifFramePngBlob`). Replaces the old SVG-harness + rAF loop —
@@ -346,6 +353,7 @@ function MotifPreview({
   const boxW = width;
   const boxH = Math.round((width * 9) / 16);
   const scale = Math.min(boxW / w, boxH / h);
+  const tSec = posterTSec(template);
   const { t } = useTranslation();
 
   const urlRef = useRef<string | null>(null);
@@ -357,7 +365,7 @@ function MotifPreview({
   useEffect(() => {
     let cancelled = false;
     setError(null);
-    captureMotifFramePngBlob(template.id, PREVIEW_T_SEC, props, w, h)
+    captureMotifFramePngBlob(template.id, tSec, props, w, h)
       .then((blob) => {
         if (cancelled) return;
         const url = URL.createObjectURL(blob);
@@ -373,7 +381,7 @@ function MotifPreview({
     };
     // `props` identity: MotifForm debounces it (300ms) and MotifCardThumbnail
     // memoizes it, so a re-capture fires per settled edit — not per render. No storm.
-  }, [template.id, props, w, h]);
+  }, [template.id, tSec, props, w, h]);
 
   // Revoke the last blob URL on unmount.
   useEffect(
