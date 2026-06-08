@@ -92,6 +92,16 @@ pub fn ensure_host(
     Ok((win, true))
 }
 
+/// Close + drop the hidden host window if it exists. The next `ensure_host`
+/// rebuilds a fresh one. Used to recover from a wedged host: a Motif whose JS
+/// hangs past the capture timeout leaves the WebView2 UI thread stuck, so the
+/// window must be torn down, not reused.
+pub fn teardown_host(app: &AppHandle) {
+    if let Some(win) = app.get_webview_window(HOST_LABEL) {
+        let _ = win.close();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::motif_id_from_url;

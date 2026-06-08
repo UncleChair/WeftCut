@@ -20,6 +20,14 @@ use tauri::{AppHandle, State};
 
 use super::{cdp, host, MotifCapture, MotifRuntime};
 
+/// A capture/eval error string indicates the host's WebView2 thread is wedged
+/// (a Motif whose JS hung past the timeout) — distinct from a normal CDP
+/// failure. Such a host must be torn down + rebuilt, not reused. Matches the
+/// "timed out after" phrasing `cdp.rs` uses for both eval + screenshot timeouts.
+fn is_timeout_error(msg: &str) -> bool {
+    msg.contains("timed out after")
+}
+
 /// How long to wait for the host page to load + the Motif to register
 /// `window.__motifRender`. Generous: a cold WebView2 window create + first
 /// paint can take a beat. Bounded so a genuinely broken Motif surfaces an
@@ -155,14 +163,27 @@ pub async fn motif_capture_frame(
         props = props,
         meta = meta,
     );
-    cdp::eval_await(&win, &render_expr)
-        .await
-        .map_err(|e| format!("__motifRender failed: {e}"))?;
+    if let Err(e) = cdp::eval_await(&win, &render_expr).await {
+        let msg = e.to_string();
+        if is_timeout_error(&msg) {
+            host::teardown_host(&app);
+            cap.reset();
+        }
+        return Err(format!("__motifRender failed: {msg}"));
+    }
 
     let set_metrics = super::should_set_metrics(cap.last_size, width, height);
-    let b64 = cdp::capture_png_base64(&win, width, height, set_metrics)
-        .await
-        .map_err(|e| format!("capture failed: {e}"))?;
+    let b64 = match cdp::capture_png_base64(&win, width, height, set_metrics).await {
+        Ok(b64) => b64,
+        Err(e) => {
+            let msg = e.to_string();
+            if is_timeout_error(&msg) {
+                host::teardown_host(&app);
+                cap.reset();
+            }
+            return Err(format!("capture failed: {msg}"));
+        }
+    };
     if set_metrics {
         cap.last_size = Some((width, height));
     }
@@ -204,5 +225,12 @@ mod tests {
         // Unknown id → 5.0 fallback.
         let d3 = resolve_capture_duration("ghost", &builtins, Vec::new, &serde_json::json!({}));
         assert!((d3 - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn timeout_errors_are_classified_as_host_wedged() {
+        assert!(is_timeout_error("CDP capture timed out after 5s (...)"));
+        assert!(is_timeout_error("CDP Runtime.evaluate timed out after 5s (...)"));
+        assert!(!is_timeout_error("CDP capture failed: some other error"));
     }
 }
