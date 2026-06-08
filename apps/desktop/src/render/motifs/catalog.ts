@@ -78,10 +78,13 @@ export function listMotifs(): MotifManifest[] {
   return [...catalog.values()].map((t) => t.manifest);
 }
 
-/// Resolve a motif's intrinsic content duration (µs) from its manifest +
-/// the instance props. Mirrors Rust `resolve_motif_max_dur_us`: prefer the
-/// `max_duration_prop` value (seconds, when finite & > 0), else `max_duration_s`,
-/// else `null` (unbounded — no windowing, legacy "animate over layer width").
+/// Resolve a motif's seekable content/animation duration (µs) from its manifest
+/// + the instance props. Priority: `content_duration_s` (highest) →
+/// `max_duration_prop` live value → `max_duration_s` → `null` (unbounded).
+/// Intentionally diverges from Rust `resolve_motif_max_dur_us` (the layer-cap
+/// resolver): `content_duration_s` is included here so holdable overlays report
+/// a finite seek span, but is excluded there so the layer stays freely
+/// extendable.
 export function resolveMotifContentDurationUs(
   manifest: MotifManifest,
   props: Record<string, unknown>,

@@ -224,7 +224,11 @@ export async function exportBakeMotifs(
     // templates fall back to layer-width content with src_in=0 (legacy).
     const cap = resolveMotifContentDurationUs(spec.template.manifest, spec.view.props);
     const contentDurationUs = cap ?? spec.durationUs;
-    const srcInUs = cap == null ? 0 : spec.view.src_in_us;
+    // Windowing (`src_in`) applies ONLY to layer-capped Motifs (`max_duration*`),
+    // matching motifFrameDescriptor.ts — a `content_duration_s` holdable always
+    // plays from content frame 0 so preview pixels equal export pixels.
+    const windowed = spec.template.manifest.content_duration_s == null && cap != null;
+    const srcInUs = windowed ? spec.view.src_in_us : 0;
 
     // L2 fast path: this layer's content cacheKey (playhead/time-independent →
     // tInLayerUs=0; only desc.cacheKey is used, mirroring hydrateBakedIndexAndGc).
