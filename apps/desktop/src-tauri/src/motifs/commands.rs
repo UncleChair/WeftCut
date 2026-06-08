@@ -27,6 +27,24 @@ use super::{cdp, host, MotifCapture, MotifRuntime};
 const READY_ATTEMPTS: u32 = 30;
 const READY_POLL: Duration = Duration::from_millis(100);
 
+/// Resolve the capture `ctx.duration` (seconds) for `motif_id`: search the
+/// built-ins, then the user manifests, then fall back to 5.0. Pure so it's
+/// unit-testable away from the async command + Tauri state.
+fn resolve_capture_duration(
+    motif_id: &str,
+    builtins: &[super::catalog::Motif],
+    user_manifests: &[super::catalog::Manifest],
+    props: &serde_json::Value,
+) -> f64 {
+    if let Some(m) = builtins.iter().find(|m| m.id() == motif_id) {
+        return super::catalog::motif_ctx_duration_s(&m.manifest, props);
+    }
+    if let Some(m) = user_manifests.iter().find(|m| m.id == motif_id) {
+        return super::catalog::motif_ctx_duration_s(m, props);
+    }
+    5.0
+}
+
 /// Render Motif `motif_id` at content time `t_sec` with `props_json`, captured
 /// at `width` x `height`. Returns a base64-encoded PNG (no `data:` prefix).
 ///
@@ -36,6 +54,7 @@ pub async fn motif_capture_frame(
     app: AppHandle,
     state: State<'_, MotifRuntime>,
     capture: State<'_, MotifCapture>,
+    store: State<'_, super::store::UserMotifStore>,
     motif_id: String,
     t_sec: f64,
     props_json: String,
@@ -107,11 +126,12 @@ pub async fn motif_capture_frame(
     // instance props via `motif_ctx_duration_s` (content_duration_s →
     // max_duration_prop value → max_duration_s → default_duration_s). This
     // is correct for every motif, not just countdown. fps is fixed at 30.
-    let duration = super::catalog::builtins()
-        .into_iter()
-        .find(|m| m.id() == motif_id)
-        .map(|m| super::catalog::motif_ctx_duration_s(&m.manifest, &props))
-        .unwrap_or(5.0);
+    let duration = resolve_capture_duration(
+        &motif_id,
+        &super::catalog::builtins(),
+        &store.list_manifests(),
+        &props,
+    );
     let meta = serde_json::json!({
         "duration": duration,
         "width": width,
@@ -143,4 +163,33 @@ pub async fn motif_capture_frame(
         cap.last_size = Some((width, height));
     }
     Ok(b64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::motifs::catalog::{builtin_countdown, Manifest};
+
+    #[test]
+    fn duration_uses_builtin_then_user_then_default() {
+        let builtins = crate::motifs::catalog::builtins();
+        let props = serde_json::json!({ "seconds": 7 });
+
+        // Built-in countdown: max_duration_prop "seconds" → 7.0.
+        let d = resolve_capture_duration("countdown", &builtins, &[], &props);
+        assert!((d - 7.0).abs() < 1e-9);
+
+        // A user manifest (not in builtins) resolves from its own manifest.
+        let mut user: Manifest = builtin_countdown().manifest;
+        user.id = "user-x".into();
+        user.max_duration_prop = None;
+        user.max_duration_s = None;
+        user.content_duration_s = Some(2.5);
+        let d2 = resolve_capture_duration("user-x", &builtins, std::slice::from_ref(&user), &serde_json::json!({}));
+        assert!((d2 - 2.5).abs() < 1e-9);
+
+        // Unknown id → 5.0 fallback (matches the prior hardcoded default).
+        let d3 = resolve_capture_duration("ghost", &builtins, &[], &serde_json::json!({}));
+        assert!((d3 - 5.0).abs() < 1e-9);
+    }
 }

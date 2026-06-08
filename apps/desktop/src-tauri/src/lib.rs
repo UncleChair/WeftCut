@@ -434,10 +434,12 @@ pub fn run() {
                             ($t:expr) => {{
                                 let s2 = app_for_smoke.state::<motifs::MotifRuntime>();
                                 let c2 = app_for_smoke.state::<motifs::MotifCapture>();
+                                let st = app_for_smoke.state::<motifs::store::UserMotifStore>();
                                 motifs::commands::motif_capture_frame(
                                     app_for_smoke.clone(),
                                     s2,
                                     c2,
+                                    st,
                                     "countdown".to_string(),
                                     $t,
                                     props.to_string(),
