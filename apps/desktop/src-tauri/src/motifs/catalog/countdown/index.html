@@ -1,30 +1,40 @@
 <!doctype html>
-<html><head><meta charset="utf-8"></head>
-<body style="margin:0">
-  <svg xmlns="http://www.w3.org/2000/svg" width="480" height="480">
-    <circle cx="240" cy="240" r="200" fill="none" stroke="#ffffff" stroke-width="24" opacity="0.25"/>
-    <circle id="arc" cx="240" cy="240" r="200" fill="none" stroke="#ff4d4d" stroke-width="24"
-            stroke-linecap="round" transform="rotate(-90 240 240)"
-            stroke-dasharray="1256.637" stroke-dashoffset="1256.637"/>
-    <text id="num" x="240" y="300" text-anchor="middle" font-family="Arial, sans-serif"
-          font-size="200" font-weight="700" fill="#ff4d4d">5</text>
-  </svg>
+<html><head><meta charset="utf-8"><style>
+  html,body{margin:0;width:480px;height:480px;overflow:hidden;background:transparent}
+  #wrap{display:grid;place-items:center;width:100%;height:100%;
+        font-family:system-ui,-apple-system,"Segoe UI",Arial,sans-serif}
+  #num{grid-area:1/1;font-size:220px;font-weight:700;line-height:1}
+  #svg{grid-area:1/1}
+  #ring{transform:rotate(-90deg);transform-origin:center}
+</style></head><body>
+  <div id="wrap">
+    <svg id="svg" width="480" height="480">
+      <circle id="ring" cx="240" cy="240" r="200" fill="none" stroke-width="16" stroke-linecap="round"/>
+    </svg>
+    <div id="num"></div>
+  </div>
   <script>
-    var CIRC = 2 * Math.PI * 200;
-    function render(tSec, durationSec, props) {
-      var remaining = Math.max(0, Math.ceil(durationSec - tSec));
-      var label = props && props.label != null ? String(props.label) : "GO";
-      document.getElementById("num").textContent = remaining > 0 ? String(remaining) : label;
-      var frac = Math.min(1, Math.max(0, tSec / durationSec));
-      var arc = document.getElementById("arc");
-      arc.setAttribute("stroke-dashoffset", String(CIRC * (1 - frac)));
-      // `accent` tints BOTH the numeral and the progress arc, matching the
-      // Motif countdown (which drives the live preview + export).
-      if (props && props.accent) {
-        arc.setAttribute("stroke", props.accent);
-        document.getElementById("num").setAttribute("fill", props.accent);
-      }
-    }
-    function ready() { return Promise.resolve(); }
+    var C = 2 * Math.PI * 200;
+    var ring = document.getElementById("ring");
+    var num = document.getElementById("num");
+    var _label = "GO";
+
+    motif.define({
+      setup: async function(props, ctx) {
+        _label = props.label != null ? String(props.label) : "GO";
+        num.style.color = props.accent;
+        ring.style.stroke = props.accent;
+        ring.setAttribute("stroke-dasharray", C);
+        ring.animate(
+          [{ strokeDashoffset: 0 }, { strokeDashoffset: C }],
+          { duration: ctx.duration * 1000, easing: "linear", fill: "both" }
+        );
+        if (document.fonts && document.fonts.ready) await document.fonts.ready;
+      },
+      frame: function(t, ctx) {
+        var n = Math.max(0, Math.ceil(ctx.duration - t));
+        num.textContent = n > 0 ? String(n) : _label;
+      },
+    });
   </script>
 </body></html>

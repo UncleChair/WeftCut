@@ -626,18 +626,14 @@ mod tests {
         assert_eq!(catalog_ids, vec!["countdown".to_string()]);
     }
 
-    /// Built-in HTML is now a self-contained SVG document: an `<svg>` plus an
-    /// inline `<script>` defining `render(...)`. The old `__STYLE__`
-    /// placeholder / separate-CSS mechanism is gone, so assert the new shape
-    /// instead — a missing `render` or `<svg>` ships a blank frame.
+    /// Every built-in's served HTML declares its lifecycle via `motif.define`
+    /// (the live contract). A missing `motif.define` ships a blank frame.
     #[test]
-    fn every_builtin_html_is_svg_with_render() {
+    fn every_builtin_html_uses_motif_define() {
         for t in builtins() {
-            assert_eq!(t.manifest.engine, "svg", "{}: engine must be svg", t.id());
-            assert!(t.html.contains("<svg"), "{}: HTML missing <svg>", t.id());
             assert!(
-                t.html.contains("function render"),
-                "{}: HTML missing render() entry",
+                t.html.contains("motif.define"),
+                "{}: HTML missing motif.define() entry",
                 t.id()
             );
         }
