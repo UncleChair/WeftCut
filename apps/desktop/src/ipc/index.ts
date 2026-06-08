@@ -1117,6 +1117,13 @@ export async function deleteMotif(id: string): Promise<void> {
   await invoke("delete_motif", { id });
 }
 
+/// Overwrite an existing draft from its full edited source (in-app source panel).
+/// Keeps the draft id stable; the backend re-parses the manifest island, forces
+/// id/version, re-composes, and emits `motifs:changed`.
+export async function amendMotifDraft(draftId: string, source: string): Promise<void> {
+  await invoke("amend_motif_draft", { draftId, source });
+}
+
 // ============================================================
 // Status / log surface (see `docs/status-log-system.md`)
 // ============================================================
