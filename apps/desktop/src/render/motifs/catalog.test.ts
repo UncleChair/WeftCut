@@ -4,6 +4,7 @@ import {
   resolveMotifContentDurationUs,
   getMotif,
   listMotifs,
+  setUserMotifs,
   type MotifManifest,
 } from "./catalog";
 
@@ -59,4 +60,33 @@ it("registers the lower-third built-in (content_duration_s, non-square)", () => 
   const ids = listMotifs().map((m) => m.id);
   expect(ids).toContain("countdown");
   expect(ids).toContain("lower-third");
+});
+
+const userManifest = {
+  id: "user-demo",
+  name: "User Demo",
+  version: 1,
+  size: [800, 200] as [number, number],
+  default_duration_s: 3,
+  props_schema: {},
+};
+
+it("merges user motifs at runtime without dropping built-ins", () => {
+  setUserMotifs([userManifest]);
+  expect(getMotif("user-demo")?.manifest.size).toEqual([800, 200]);
+  const ids = listMotifs().map((m) => m.id);
+  expect(ids).toContain("countdown");
+  expect(ids).toContain("lower-third");
+  expect(ids).toContain("user-demo");
+  // Clearing user motifs restores the built-in-only catalog.
+  setUserMotifs([]);
+  expect(getMotif("user-demo")).toBeNull();
+  expect(listMotifs().map((m) => m.id)).toContain("countdown");
+});
+
+it("never lets a user motif shadow a built-in id", () => {
+  setUserMotifs([{ ...userManifest, id: "countdown", size: [1, 1] }]);
+  // Built-in countdown (480x480) must remain authoritative.
+  expect(getMotif("countdown")?.manifest.size).toEqual([480, 480]);
+  setUserMotifs([]);
 });
