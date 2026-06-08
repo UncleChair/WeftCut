@@ -1,9 +1,10 @@
 //! The hidden host `WebviewWindow` that runs a Motif as its top-level document.
 //!
-//! Windows-only (the capture path is CDP/WebView2). For v1 a single Motif is
-//! loaded per host window: the window is created lazily on first capture, keyed
-//! to its initial Motif id, and reused thereafter. Navigating an existing host
-//! to a *different* Motif id is a later concern (see [`ensure_host`]).
+//! Windows-only (the capture path is CDP/WebView2). A single hidden window is
+//! lazily created on first capture and reused across captures. When a capture
+//! requests a different Motif id than the one the host is currently bound to,
+//! the host navigates to the new id's `index.html` rather than being torn down
+//! and rebuilt — see [`ensure_host`].
 
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
@@ -32,11 +33,16 @@ fn motif_id_from_url(url: &tauri::Url) -> Option<String> {
 /// (in the capture path) re-sizes the render surface to the requested capture
 /// dimensions.
 ///
-/// **v1 single-Motif caveat:** if a host already exists we return it as-is,
-/// but only if it is already bound to the same `motif_id`. Requesting a
-/// different id on an existing window returns `Err` with a clear message;
-/// multi-Motif navigation (navigate-or-rebuild) is a follow-up. We pass
-/// `width`/`height` only as the initial window size hint.
+/// Returns `(window, needs_reset)`. `needs_reset` is `true` when the host was
+/// freshly created **or** navigated to a different Motif id; the caller should
+/// reset `CaptureState` in both cases so the ready-probe re-confirms
+/// `window.__motifRender` on the new page and `setDeviceMetricsOverride`
+/// re-applies for the new Motif's size. WebView2 re-runs the
+/// `initialization_script` (the clock-takeover runtime) automatically on
+/// every navigation, so no manual re-injection is needed.
+///
+/// When the host is already bound to the requested `motif_id`, the window is
+/// returned as-is with `needs_reset = false`.
 pub fn ensure_host(
     app: &AppHandle,
     runtime: &str,
@@ -44,26 +50,29 @@ pub fn ensure_host(
     width: u32,
     height: u32,
 ) -> tauri::Result<(WebviewWindow, bool)> {
+    // `http://motif.localhost/<id>/index.html` on Windows — the remapped form
+    // of the `motif:` custom scheme (see the `builtin` module docs).
+    let url = format!("{SCHEME_ORIGIN}/{motif_id}/index.html");
+    let parsed: tauri::Url = url.parse().map_err(tauri::Error::InvalidUrl)?;
+
     if let Some(win) = app.get_webview_window(HOST_LABEL) {
-        // Guard: if the existing window is bound to a different Motif id,
-        // reject the call rather than silently rendering the wrong page.
         let bound_id = win.url().ok().and_then(|u| motif_id_from_url(&u));
-        if bound_id.as_deref() != Some(motif_id) {
-            let bound = bound_id.as_deref().unwrap_or("<unknown>");
-            return Err(tauri::Error::Anyhow(anyhow::anyhow!(
-                "motif host already bound to '{bound}'; \
-                 multi-Motif navigation is a follow-up — \
-                 requested '{motif_id}' cannot reuse this window"
-            )));
+        if bound_id.as_deref() == Some(motif_id) {
+            // Already on the right Motif — reuse as-is, no reset.
+            return Ok((win, false));
         }
-        return Ok((win, false));
+        // Bound to a DIFFERENT Motif: navigate the existing hidden host to the
+        // new id, reusing the window + CDP session. WebView2 re-runs the
+        // `initialization_script` on navigation, so the clock-takeover runtime
+        // re-injects before the new page's `motif.define(...)`. The caller
+        // resets `CaptureState` (returned `true`) so the ready-probe re-confirms
+        // `__motifRender` on the new page and `setDeviceMetricsOverride` re-applies
+        // for the new Motif's size.
+        win.navigate(parsed)?;
+        return Ok((win, true));
     }
 
-    // `http://motif.localhost/<id>/index.html` on Windows — the remapped form
-    // of the `motif:` custom scheme (see `builtin` module docs).
-    let url = format!("{SCHEME_ORIGIN}/{motif_id}/index.html");
-    let parsed = url.parse().map_err(tauri::Error::InvalidUrl)?;
-
+    // No host yet: build it (hidden, no taskbar, runtime injected at doc-start).
     let win = WebviewWindowBuilder::new(app, HOST_LABEL, WebviewUrl::CustomProtocol(parsed))
         .title("motif-host")
         .inner_size(width as f64, height as f64)
@@ -81,4 +90,21 @@ pub fn ensure_host(
         .initialization_script(runtime)
         .build()?;
     Ok((win, true))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::motif_id_from_url;
+
+    #[test]
+    fn extracts_id_from_host_url() {
+        let u: tauri::Url = "http://motif.localhost/lower-third/index.html".parse().unwrap();
+        assert_eq!(motif_id_from_url(&u).as_deref(), Some("lower-third"));
+    }
+
+    #[test]
+    fn none_for_root_url() {
+        let u: tauri::Url = "http://motif.localhost/".parse().unwrap();
+        assert_eq!(motif_id_from_url(&u), None);
+    }
 }
