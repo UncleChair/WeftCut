@@ -142,7 +142,7 @@ pub async fn motif_capture_frame(
     let duration = resolve_capture_duration(
         &motif_id,
         &super::catalog::builtins(),
-        || store.list_manifests(),
+        || store.get_motif(&motif_id).into_iter().map(|m| m.manifest).collect(),
         &props,
     );
     let meta = serde_json::json!({
