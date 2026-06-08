@@ -273,6 +273,14 @@ pub fn parse_manifest_island(html: &str) -> Result<Manifest, MotifError> {
     serde_json::from_str(json).map_err(|e| MotifError::ManifestParse(e.to_string()))
 }
 
+/// Validate that a `PropSpec`'s `default` satisfies the spec (hex color,
+/// string `max_length`, number range). Used by manifest import validation so a
+/// placed layer's defaults can never fail `canonicalize_props`.
+pub fn validate_default_for(key: &str, spec: &PropSpec) -> Result<(), MotifError> {
+    let default_value = spec_default_json(spec);
+    validate_prop(key, spec, &default_value)
+}
+
 fn spec_default_json(spec: &PropSpec) -> serde_json::Value {
     match spec {
         PropSpec::String { default, .. } => serde_json::Value::String(default.clone()),
@@ -348,6 +356,8 @@ pub enum MotifError {
     OutOfRange(String, Option<f64>, Option<f64>),
     #[error("manifest serialize failed: {0}")]
     Serialize(String),
+    #[error("invalid manifest: {0}")]
+    InvalidManifest(String),
     #[error("no <script type=\"application/json\" id=\"motif-manifest\"> island found in HTML")]
     NoManifestIsland,
     #[error("manifest island is not valid JSON: {0}")]
