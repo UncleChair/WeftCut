@@ -698,6 +698,9 @@ function MotifFields({
               spec={spec}
               value={v.props[key]}
               onCommit={(next) => commitProp(key, next)}
+              onCommitDebounced={(next) =>
+                debouncedCommit({ kind: "Motif", props: { [key]: next } })
+              }
             />
           ))}
         </>
@@ -718,11 +721,18 @@ function MotifPropField({
   spec,
   value,
   onCommit,
+  onCommitDebounced,
 }: {
   propKey: string;
   spec: PropSpec;
   value: unknown;
+  /// Immediate commit — used by string/number which fire once, on blur.
   onCommit: (next: unknown) => void;
+  /// Debounced commit — used by the color field, whose `<input type="color">`
+  /// fires `onChange` continuously while the OS color dialog is dragged. Each
+  /// commit triggers a CDP re-capture (~80-100ms, serialized), so an undebounced
+  /// drag floods the capture queue and stutters the preview.
+  onCommitDebounced: (next: unknown) => void;
 }) {
   const { t } = useTranslation();
   const label = t(`property_panel.props.${propKey}`, { defaultValue: propKey });
@@ -732,28 +742,58 @@ function MotifPropField({
       return (
         <StringPropField label={label} spec={spec} value={value} onCommit={onCommit} />
       );
-    case "color": {
-      const current = typeof value === "string" ? value : spec.default;
-      // `<input type="color">` only edits the 6-char RGB triplet; show the
-      // leading 7 chars but commit the raw 6-char hex it returns. (Any
-      // trailing alpha bits in a default like `#000000cc` are dropped once the
-      // user picks a color — same tradeoff as the template picker.)
-      const rgb = current.length >= 7 ? current.slice(0, 7) : current;
+    case "color":
       return (
-        <Field label={label}>
-          <input
-            type="color"
-            value={rgb}
-            onChange={(e) => onCommit(e.target.value)}
-          />
-        </Field>
+        <ColorPropField
+          label={label}
+          spec={spec}
+          value={value}
+          onCommit={onCommitDebounced}
+        />
       );
-    }
     case "number":
       return (
         <NumberPropField label={label} spec={spec} value={value} onCommit={onCommit} />
       );
   }
+}
+
+function ColorPropField({
+  label,
+  spec,
+  value,
+  onCommit,
+}: {
+  label: string;
+  spec: Extract<PropSpec, { type: "color" }>;
+  value: unknown;
+  /// Debounced commit (see MotifPropField).
+  onCommit: (next: unknown) => void;
+}) {
+  // Local state drives the swatch so it tracks the drag live; the actual commit
+  // (and the CDP re-capture it triggers) is debounced by the caller. `<input
+  // type="color">` only edits the 6-char RGB triplet — show the leading 7 chars
+  // but commit the raw value it returns. (Trailing alpha in a default like
+  // `#000000cc` is dropped on first pick — same tradeoff as the picker.)
+  const toRgb = (s: string) => (s.length >= 7 ? s.slice(0, 7) : s);
+  const [color, setColor] = useState(
+    toRgb(typeof value === "string" ? value : spec.default),
+  );
+  useEffect(() => {
+    setColor(toRgb(typeof value === "string" ? value : spec.default));
+  }, [value, spec.default]);
+  return (
+    <Field label={label}>
+      <input
+        type="color"
+        value={color}
+        onChange={(e) => {
+          setColor(e.target.value);
+          onCommit(e.target.value);
+        }}
+      />
+    </Field>
+  );
 }
 
 function StringPropField({
