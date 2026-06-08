@@ -152,8 +152,8 @@ export interface E2EHook {
     width: number;
     height: number;
   }): Promise<string>;
-  /// Add a `countdown` Template layer at t=0 spanning [0, 5s) with default
-  /// props (480×480, seconds/label/accent), via the real `add_template` IPC.
+  /// Add a `countdown` Motif layer at t=0 spanning [0, 5s) with default
+  /// props (480×480, seconds/label/accent), via the real `add_motif` IPC.
   /// Returns the new layer id. Used by the live-preview e2e to put a countdown
   /// on the timeline so the compositor renders it through the Motif CDP path.
   /// Requires an open project + the editor mounted (call newProjectAndEnter

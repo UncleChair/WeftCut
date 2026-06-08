@@ -107,13 +107,12 @@ export interface MotifView {
   scale_x: number;
   scale_y: number;
   opacity: number;
-  /// Window offset (µs) into the template's intrinsic content. Width = layer
+  /// Window offset (µs) into the Motif's intrinsic content. Width = layer
   /// width; src_out is derived. 0 = content frame 0.
   src_in_us: number;
-  /// User-set props for this template instance, validated against the
-  /// template manifest's `props_schema`. Passed verbatim to the template's
-  /// `render(t, dur, props)` entry inside the sandboxed capture iframe (via
-  /// postMessage; see `render/templates/harness.ts`).
+  /// User-set props for this Motif instance, validated against the Motif
+  /// manifest's `props_schema`. Passed to the Motif's `motif.define({ setup,
+  /// frame })` lifecycle when the capture host renders it (see `docs/motifs.md`).
   props: Record<string, unknown>;
 }
 
