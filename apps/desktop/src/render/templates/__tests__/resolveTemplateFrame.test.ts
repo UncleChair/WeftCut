@@ -1,8 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../../motifs/motifRaster", () => ({ rasterMotifFrame: vi.fn(async () => ({ id: "cdp" }) as unknown as ImageBitmap) }));
-vi.mock("../svgRaster", () => ({ rasterizeSvg: vi.fn() }));
-vi.mock("../harness", () => ({ TemplateHarness: class { load() { return Promise.resolve(); } } }));
 import { rasterMotifFrame } from "../../motifs/motifRaster";
 import { resolveTemplateFrame, sharedBakedKeyIndex } from "../templateRaster";
 
