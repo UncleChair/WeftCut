@@ -44,7 +44,12 @@ export function motifFrameDescriptor(
   }
   const cap = resolveMotifContentDurationUs(template.manifest, view.props);
   const contentDurationUs = cap ?? durationUs;
-  const srcInUs = cap == null ? 0 : view.src_in_us;
+  // Windowing (`src_in`) applies ONLY to layer-capped Motifs (`max_duration*`).
+  // A `content_duration_s` holdable always plays from content frame 0 (its
+  // in-animation, then a clamped/held tail); a wholly-uncapped Motif animates
+  // over the layer width from 0. Neither windows.
+  const windowed = template.manifest.content_duration_s == null && cap != null;
+  const srcInUs = windowed ? view.src_in_us : 0;
   const { frame, contentDurationFrames } = motifContentFrame(
     tInLayerUs, srcInUs, contentDurationUs, fpsNum, fpsDen,
   );
