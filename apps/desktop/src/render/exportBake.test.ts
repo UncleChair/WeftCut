@@ -21,8 +21,8 @@ vi.mock("./motifs/motifRaster", () => ({
 }));
 
 // Mock the disk-path infra (L2 baked key index + frame cache).
-vi.mock("./templates/templateRaster", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./templates/templateRaster")>();
+vi.mock("./motifs/motifRasterCache", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./motifs/motifRasterCache")>();
   return {
     ...actual,
     sharedBakedKeyIndex: { has: vi.fn(() => false) },
@@ -39,9 +39,9 @@ vi.mock("./templates/templateRaster", async (importOriginal) => {
 import type { LayerParamsView, ProjectSummary, MotifView } from "../ipc";
 import { frameIndexInLayer, snapFrameFloor } from "../frames";
 import { bakeContentFrameFor, motifLayersToBake, exportBakeMotifs } from "./exportBake";
-import { motifContentFrame, motifDurationFrames } from "./templates/templateFrames";
+import { motifContentFrame, motifDurationFrames } from "./motifs/motifFrames";
 import { bakeMotifFrame } from "./motifs/motifRaster";
-import { sharedBakedKeyIndex, sharedMotifFrameCache } from "./templates/templateRaster";
+import { sharedBakedKeyIndex, sharedMotifFrameCache } from "./motifs/motifRasterCache";
 
 const COUNTDOWN = "countdown"; // built-in, 480x480
 

@@ -6,7 +6,7 @@ import {
   frameTimeSec,
   motifContentFrame,
   templateFrameCacheKey,
-} from "./templateFrames";
+} from "./motifFrames";
 
 /// `renderW/renderH/contentDurationUs/srcInUs/contentDurationFrames` are carried
 /// for the prewarmer path; the sprite only uses cacheKey/contentFrame/tSec/durationSec/canonicalProps.

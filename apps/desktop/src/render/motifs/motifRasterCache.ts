@@ -10,7 +10,7 @@
 import { MotifFrameCache } from "./frameCache";
 import { BakedKeyIndex } from "./bakedKeyIndex";
 import type { Motif } from "./catalog";
-import { rasterMotifFrame } from "../motifs/motifRaster";
+import { rasterMotifFrame } from "./motifRaster";
 
 /// Process-wide per-frame cache shared by every TemplateSprite AND the
 /// prewarmer, so identical (template, props, dims, fps, frame) rasters resolve

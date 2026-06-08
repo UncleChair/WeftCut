@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../../motifs/motifRaster", () => ({ rasterMotifFrame: vi.fn(async () => ({ id: "cdp" }) as unknown as ImageBitmap) }));
-import { rasterMotifFrame } from "../../motifs/motifRaster";
-import { resolveMotifFrame, sharedBakedKeyIndex } from "../templateRaster";
+vi.mock("../motifRaster", () => ({ rasterMotifFrame: vi.fn(async () => ({ id: "cdp" }) as unknown as ImageBitmap) }));
+import { rasterMotifFrame } from "../motifRaster";
+import { resolveMotifFrame, sharedBakedKeyIndex } from "../motifRasterCache";
 
 const template = { manifest: { id: "countdown", size: [480, 480], settle_rafs: 2 } } as unknown as Parameters<typeof resolveMotifFrame>[0];
 

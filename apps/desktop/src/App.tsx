@@ -56,7 +56,7 @@ import {
 } from "./render/exportSettings";
 import { resolveEncodePath } from "./render/exportCodecProbe";
 import { exportBakeMotifs } from "./render/exportBake";
-import { getMotif } from "./render/templates/catalog";
+import { getMotif } from "./render/motifs/catalog";
 import {
   sourcesNeedingPreviewProbe,
   prepareExportMedia,

@@ -10,8 +10,8 @@ import {
   type Rgba,
   type TrackSummary,
 } from "../ipc";
-import { getMotif, type PropSpec } from "../render/templates/catalog";
-import { useLayerBakeStatus } from "../timeline/templateBakeStatusStore";
+import { getMotif, type PropSpec } from "../render/motifs/catalog";
+import { useLayerBakeStatus } from "../timeline/motifBakeStatusStore";
 // EffectsSection + effects-related ipc calls removed in P12-a.
 
 interface Props {

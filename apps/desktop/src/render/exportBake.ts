@@ -24,12 +24,12 @@
 
 import { frameIndexInLayer, snapFrameFloor } from "../frames";
 import type { ProjectSummary, MotifView } from "../ipc";
-import { getMotif, resolveMotifContentDurationUs, type Motif } from "./templates/catalog";
-import { canonicalizeProps } from "./templates/Rasterizer";
+import { getMotif, resolveMotifContentDurationUs, type Motif } from "./motifs/catalog";
+import { canonicalizeProps } from "./motifs/Rasterizer";
 import { bakeMotifFrame } from "./motifs/motifRaster";
-import { motifDurationFrames } from "./templates/templateFrames";
-import { sharedBakedKeyIndex, sharedMotifFrameCache } from "./templates/templateRaster";
-import { motifFrameDescriptor } from "./templates/templateFrameDescriptor";
+import { motifDurationFrames } from "./motifs/motifFrames";
+import { sharedBakedKeyIndex, sharedMotifFrameCache } from "./motifs/motifRasterCache";
+import { motifFrameDescriptor } from "./motifs/motifFrameDescriptor";
 
 const US_PER_SEC = 1_000_000;
 
