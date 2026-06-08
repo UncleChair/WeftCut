@@ -239,6 +239,36 @@ impl Motif {
     }
 }
 
+/// Extract and parse the Motif's metadata island from its HTML, WITHOUT
+/// executing the page. A user Motif is a single self-contained `.html` whose
+/// manifest is a delimited JSON island:
+///
+/// ```html
+/// <script type="application/json" id="motif-manifest">{ … }</script>
+/// ```
+///
+/// This is the single static source of a Motif's metadata (see the upload
+/// design spec §2). We locate the island by its `id="motif-manifest"` marker,
+/// take the text up to the next `</script>`, and `serde_json`-parse it into a
+/// `Manifest`. Whitespace and other attributes on the tag are tolerated; we
+/// control the writer side so the format is stable.
+pub fn parse_manifest_island(html: &str) -> Result<Manifest, MotifError> {
+    let id_marker = html
+        .find(r#"id="motif-manifest""#)
+        .ok_or(MotifError::NoManifestIsland)?;
+    // End of the opening `<script ...>` tag: the first `>` at or after the marker.
+    let tag_end = html[id_marker..]
+        .find('>')
+        .map(|i| id_marker + i + 1)
+        .ok_or(MotifError::NoManifestIsland)?;
+    let close = html[tag_end..]
+        .find("</script>")
+        .map(|i| tag_end + i)
+        .ok_or(MotifError::NoManifestIsland)?;
+    let json = html[tag_end..close].trim();
+    serde_json::from_str(json).map_err(|e| MotifError::ManifestParse(e.to_string()))
+}
+
 fn spec_default_json(spec: &PropSpec) -> serde_json::Value {
     match spec {
         PropSpec::String { default, .. } => serde_json::Value::String(default.clone()),
@@ -314,6 +344,10 @@ pub enum MotifError {
     OutOfRange(String, Option<f64>, Option<f64>),
     #[error("manifest serialize failed: {0}")]
     Serialize(String),
+    #[error("no <script type=\"application/json\" id=\"motif-manifest\"> island found in HTML")]
+    NoManifestIsland,
+    #[error("manifest island is not valid JSON: {0}")]
+    ManifestParse(String),
 }
 
 // -- Built-in Motifs ---------------------------------------------------------
@@ -723,5 +757,36 @@ mod tests {
                 t.id()
             );
         }
+    }
+
+    #[test]
+    fn parses_a_valid_manifest_island() {
+        let html = r#"<!doctype html><html><head>
+<script type="application/json" id="motif-manifest">
+{ "id": "user-x", "name": "User X", "version": 1, "size": [640, 480],
+  "default_duration_s": 4.0, "props_schema": {} }
+</script>
+</head><body><script>motif.define({ setup(){} });</script></body></html>"#;
+        let m = parse_manifest_island(html).expect("island parses");
+        assert_eq!(m.id, "user-x");
+        assert_eq!(m.size, [640, 480]);
+    }
+
+    #[test]
+    fn missing_island_is_an_error() {
+        let html = "<html><body>no island here</body></html>";
+        assert!(matches!(
+            parse_manifest_island(html),
+            Err(MotifError::NoManifestIsland)
+        ));
+    }
+
+    #[test]
+    fn malformed_island_json_is_an_error() {
+        let html = r#"<script type="application/json" id="motif-manifest">{ not json }</script>"#;
+        assert!(matches!(
+            parse_manifest_island(html),
+            Err(MotifError::ManifestParse(_))
+        ));
     }
 }
