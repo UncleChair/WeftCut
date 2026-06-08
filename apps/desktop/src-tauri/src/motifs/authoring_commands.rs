@@ -51,7 +51,14 @@ pub async fn write_motif_draft(
     // TODO(stage 3): every call mints a NEW draft id; an iterative edit UI will
     // want an amend path (reuse an existing draft_id) so refining a draft doesn't
     // litter <root>/drafts/ with abandoned dirs.
-    let draft_id = assign_unique_id(&args.manifest.name, &store.list_draft_ids());
+    // Final-ready id: unique vs BOTH published and existing drafts, so the id
+    // never changes on install (Model B → no layer rebind).
+    let taken: Vec<String> = store
+        .published_ids()
+        .into_iter()
+        .chain(store.list_draft_ids())
+        .collect();
+    let draft_id = assign_unique_id(&args.manifest.name, &taken);
     let mut manifest = args.manifest;
     manifest.id = draft_id.clone();
     let html = compose_motif_html(&manifest, &args.html);
@@ -91,7 +98,15 @@ pub async fn install_motif(
 
     let (final_id, version) = match args.mode {
         InstallMode::New => {
-            let id = assign_unique_id(&draft.manifest.name, &store.published_ids());
+            // The draft id was made final-ready at write time; keep it so placed
+            // layers need no rebind. Guard the rare race where a published Motif
+            // took the id since the draft was written.
+            let id = draft.manifest.id.clone();
+            if store.published_ids().iter().any(|p| p == &id) {
+                return Err(format!(
+                    "a Motif '{id}' is already installed; rename the draft before installing"
+                ));
+            }
             (id, 1)
         }
         InstallMode::Update { target_id } => {
@@ -138,6 +153,30 @@ pub async fn delete_motif(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::store::UserMotifStore;
+    use super::super::catalog::Manifest;
+    use super::super::authoring::{assign_unique_id, compose_motif_html};
+    use std::collections::BTreeMap;
+
+    fn m(name: &str) -> Manifest {
+        Manifest { id: "ignored".into(), name: name.into(), version: 1, size: [100, 100],
+            default_duration_s: 1.0, max_duration_s: None, max_duration_prop: None,
+            content_duration_s: None, fonts: vec![], props_schema: BTreeMap::new() }
+    }
+
+    #[test]
+    fn draft_id_is_final_ready_unique_vs_published_and_drafts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = UserMotifStore::new(tmp.path().to_path_buf());
+        let mut foo = m("Foo"); foo.id = "foo".into();
+        store.write_draft("foo", &compose_motif_html(&foo,
+            "<head></head><body><script>motif.define({setup(){}})</script></body>")).unwrap();
+        store.install_draft("foo", "foo").unwrap();
+        let taken: Vec<String> = store.published_ids().into_iter().chain(store.list_draft_ids()).collect();
+        let id = assign_unique_id("Foo", &taken);
+        assert_ne!(id, "foo");
+        assert_eq!(id, "foo-2");
+    }
 
     /// The InstallMode tag grammar the frontend will send must deserialize.
     #[test]
