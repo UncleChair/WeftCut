@@ -3,11 +3,22 @@
 //! UI-agnostic; the Stage-3 UI and the Stage-4 MCP tools both call these.
 
 use serde::Deserialize;
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 use super::authoring::{assign_unique_id, compose_motif_html, validate_manifest};
 use super::catalog::{builtins, Manifest, BUILTIN_IDS};
 use super::store::UserMotifStore;
+
+/// App-wide event emitted whenever the user-Motif catalog changes (a draft is
+/// written, installed, or deleted). The frontend listens and re-pulls
+/// `list_motifs` → `setUserMotifs` so a placed draft keeps resolving + the
+/// picker refreshes.
+pub const MOTIFS_CHANGED_EVENT: &str = "motifs:changed";
+
+fn emit_motifs_changed(app: &AppHandle) {
+    // Best-effort: a failed emit shouldn't fail the lifecycle op.
+    let _ = app.emit(MOTIFS_CHANGED_EVENT, ());
+}
 
 /// `{ manifest, html }` of a Motif's source. Returned by `get_motif_source`.
 #[derive(serde::Serialize)]
@@ -44,6 +55,7 @@ pub struct WriteDraftArgs {
 /// Validate + compose + write a draft. Returns the assigned draft id.
 #[tauri::command]
 pub async fn write_motif_draft(
+    app: AppHandle,
     store: State<'_, UserMotifStore>,
     args: WriteDraftArgs,
 ) -> Result<String, String> {
@@ -63,6 +75,7 @@ pub async fn write_motif_draft(
     manifest.id = draft_id.clone();
     let html = compose_motif_html(&manifest, &args.html);
     store.write_draft(&draft_id, &html).map_err(|e| e.to_string())?;
+    emit_motifs_changed(&app);
     Ok(draft_id)
 }
 
@@ -86,6 +99,7 @@ pub struct InstallArgs {
 /// Promote a draft to a published user Motif. Returns the published id.
 #[tauri::command]
 pub async fn install_motif(
+    app: AppHandle,
     store: State<'_, UserMotifStore>,
     args: InstallArgs,
 ) -> Result<String, String> {
@@ -135,19 +149,23 @@ pub async fn install_motif(
     store
         .install_draft(&args.draft_id, &final_id)
         .map_err(|e| e.to_string())?;
+    emit_motifs_changed(&app);
     Ok(final_id)
 }
 
 /// Delete a published user Motif. Built-ins are rejected.
 #[tauri::command]
 pub async fn delete_motif(
+    app: AppHandle,
     store: State<'_, UserMotifStore>,
     id: String,
 ) -> Result<(), String> {
     if BUILTIN_IDS.contains(&id.as_str()) {
         return Err(format!("cannot delete the built-in Motif '{id}'"));
     }
-    store.delete_user_motif(&id).map_err(|e| e.to_string())
+    store.delete_user_motif(&id).map_err(|e| e.to_string())?;
+    emit_motifs_changed(&app);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -176,6 +194,11 @@ mod tests {
         let id = assign_unique_id("Foo", &taken);
         assert_ne!(id, "foo");
         assert_eq!(id, "foo-2");
+    }
+
+    #[test]
+    fn motifs_changed_event_name_is_stable() {
+        assert_eq!(super::MOTIFS_CHANGED_EVENT, "motifs:changed");
     }
 
     /// The InstallMode tag grammar the frontend will send must deserialize.
