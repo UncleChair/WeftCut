@@ -1915,26 +1915,44 @@ pub async fn add_subtitles_layer(
         .map_err(|e: CommandError| e.to_string())
 }
 
+/// Serialize a manifest + its raw `html` into the picker payload shape (a
+/// superset of the MCP `list_motifs`: every manifest field plus `html` for the
+/// client-side preview). One helper so built-in and user Motifs emit the same
+/// shape.
+fn motif_to_payload(
+    manifest: &crate::motifs::catalog::Manifest,
+    html: String,
+) -> Result<serde_json::Value, String> {
+    let mut v = serde_json::to_value(manifest).map_err(|e| format!("manifest serialize: {e}"))?;
+    let obj = v
+        .as_object_mut()
+        .ok_or_else(|| "manifest is not a JSON object".to_string())?;
+    obj.insert("html".to_string(), serde_json::Value::String(html));
+    Ok(v)
+}
+
 /// Stage F-Picker: the UI catalog. A superset of the MCP `list_motifs`
 /// payload — every manifest field (which now includes `engine` + `fonts`)
 /// plus the raw `html` document so the picker can render live previews
 /// client-side. The MCP surface stays manifest-only (see
 /// `mcp::templates_payload`); the extra `html` field is UI-only and would
 /// just bloat agent context.
+///
+/// Returns built-ins first (fixed display order), then on-disk user Motifs.
 #[tauri::command]
-pub async fn list_motifs() -> Result<Vec<serde_json::Value>, String> {
-    catalog::builtins()
-        .into_iter()
-        .map(|tpl| {
-            let mut v = serde_json::to_value(&tpl.manifest)
-                .map_err(|e| format!("manifest serialize: {e}"))?;
-            let obj = v
-                .as_object_mut()
-                .ok_or_else(|| "manifest is not a JSON object".to_string())?;
-            obj.insert("html".to_string(), serde_json::Value::String(tpl.html));
-            Ok(v)
-        })
-        .collect()
+pub async fn list_motifs(
+    store: tauri::State<'_, crate::motifs::store::UserMotifStore>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let mut out: Vec<serde_json::Value> = Vec::new();
+    // Built-ins first (fixed display order), then on-disk user Motifs.
+    for t in catalog::builtins() {
+        out.push(motif_to_payload(&t.manifest, t.html)?);
+    }
+    for manifest in store.list_manifests() {
+        let html = store.read_html(&manifest.id).unwrap_or_default();
+        out.push(motif_to_payload(&manifest, html)?);
+    }
+    Ok(out)
 }
 
 /// Stage F-Picker: UI counterpart to the MCP `add_motif` tool. Mirrors
@@ -2451,4 +2469,20 @@ fn demo_color(idx: usize) -> Rgba {
         Rgba::rgb(248, 113, 113), // red
     ];
     PALETTE[idx % PALETTE.len()]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn motif_payload_includes_manifest_fields_and_html() {
+        let m = crate::motifs::catalog::builtin_countdown();
+        let v = motif_to_payload(&m.manifest, m.html.clone()).unwrap();
+        let obj = v.as_object().unwrap();
+        assert_eq!(obj.get("id").unwrap(), "countdown");
+        assert!(obj.get("html").unwrap().as_str().unwrap().contains("motif.define"));
+        assert!(obj.contains_key("size"));
+        assert!(obj.contains_key("props_schema"));
+    }
 }
