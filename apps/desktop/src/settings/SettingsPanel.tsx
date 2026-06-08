@@ -16,7 +16,7 @@ import { formatTimecode, parseTimecode } from "../frames";
 import { KeybindingPanel } from "./KeybindingPanel";
 import {
   setAppSettings,
-  usePrebakeTemplatesEnabled,
+  usePrebakeMotifsEnabled,
   useTailSnapEnabled,
   useTailSnapStrengthPx,
 } from "./appSettingsStore";
@@ -281,7 +281,7 @@ function TimelineSnapSection({
 
 function PrebakeSection({ onError }: { onError: (msg: string) => void }) {
   const { t } = useTranslation();
-  const enabled = usePrebakeTemplatesEnabled();
+  const enabled = usePrebakeMotifsEnabled();
   return (
     <label className="settings-toggle-row">
       <input
@@ -291,15 +291,15 @@ function PrebakeSection({ onError }: { onError: (msg: string) => void }) {
           const next = e.target.checked;
           onError("");
           try {
-            await setAppSettings({ prebake_templates: next });
+            await setAppSettings({ prebake_motifs: next });
           } catch (err) {
             onError(String(err));
           }
         }}
       />
       <span>
-        <span className="settings-toggle-label">{t("settings.prebake_templates")}</span>
-        <span className="settings-toggle-hint">{t("settings.prebake_templates_hint")}</span>
+        <span className="settings-toggle-label">{t("settings.prebake_motifs")}</span>
+        <span className="settings-toggle-hint">{t("settings.prebake_motifs_hint")}</span>
       </span>
     </label>
   );

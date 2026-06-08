@@ -42,7 +42,7 @@ const FALLBACK: AppSettings = {
   media_pool_drawer_open: false,
   tail_snap_enabled: true,
   tail_snap_strength_px: 12,
-  prebake_templates: false,
+  prebake_motifs: false,
 };
 
 export const useAppSettingsStore = create<AppSettingsState & AppSettingsActions>(
@@ -65,8 +65,8 @@ export const useTailSnapEnabled = (): boolean =>
   useAppSettingsStore((s) => s.settings.tail_snap_enabled);
 export const useTailSnapStrengthPx = (): number =>
   useAppSettingsStore((s) => s.settings.tail_snap_strength_px);
-export const usePrebakeTemplatesEnabled = (): boolean =>
-  useAppSettingsStore((s) => s.settings.prebake_templates);
+export const usePrebakeMotifsEnabled = (): boolean =>
+  useAppSettingsStore((s) => s.settings.prebake_motifs);
 export const useAppSettingsLoaded = (): boolean =>
   useAppSettingsStore((s) => s.loaded);
 

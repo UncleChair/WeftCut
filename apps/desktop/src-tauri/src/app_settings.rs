@@ -13,7 +13,7 @@
 //!   - `tail_snap_enabled`: when true, dragging a timeline layer near
 //!     another layer boundary or the playhead snaps the moved layer start there.
 //!   - `tail_snap_strength_px`: pixel threshold for that boundary snap.
-//!   - `prebake_templates`: when true, template layers pre-bake their frames
+//!   - `prebake_motifs`: when true, motif layers pre-bake their frames
 //!     to disk (L2). False by default.
 //!
 //! File layout (`<app_config_dir>/app_settings.json`):
@@ -25,7 +25,7 @@
 //!   "media_pool_drawer_open": false,
 //!   "tail_snap_enabled": true,
 //!   "tail_snap_strength_px": 12,
-//!   "prebake_templates": false
+//!   "prebake_motifs": false
 //! }
 //! ```
 //!
@@ -75,7 +75,7 @@ pub struct AppSettings {
     #[serde(default = "default_tail_snap_strength_px")]
     pub tail_snap_strength_px: u32,
     #[serde(default)]
-    pub prebake_templates: bool,
+    pub prebake_motifs: bool,
 }
 
 fn default_delta_window_us() -> i64 {
@@ -98,7 +98,7 @@ impl Default for AppSettings {
             media_pool_drawer_open: false,
             tail_snap_enabled: default_tail_snap_enabled(),
             tail_snap_strength_px: default_tail_snap_strength_px(),
-            prebake_templates: false,
+            prebake_motifs: false,
         }
     }
 }
@@ -112,7 +112,7 @@ pub struct AppSettingsPatch {
     pub media_pool_drawer_open: Option<bool>,
     pub tail_snap_enabled: Option<bool>,
     pub tail_snap_strength_px: Option<u32>,
-    pub prebake_templates: Option<bool>,
+    pub prebake_motifs: Option<bool>,
 }
 
 /// Tauri-managed store. JSON-backed, lock-protected path. Loosely
@@ -197,8 +197,8 @@ impl AppSettingsStore {
             current.tail_snap_strength_px =
                 v.clamp(MIN_TAIL_SNAP_STRENGTH_PX, MAX_TAIL_SNAP_STRENGTH_PX);
         }
-        if let Some(v) = patch.prebake_templates {
-            current.prebake_templates = v;
+        if let Some(v) = patch.prebake_motifs {
+            current.prebake_motifs = v;
         }
         self.write(&current)?;
         Ok(current)
@@ -223,7 +223,7 @@ mod tests {
         assert!(!s.media_pool_drawer_open);
         assert!(s.tail_snap_enabled);
         assert_eq!(s.tail_snap_strength_px, 12);
-        assert!(!s.prebake_templates);
+        assert!(!s.prebake_motifs);
     }
 
     #[test]
@@ -237,7 +237,7 @@ mod tests {
                 media_pool_drawer_open: Some(true),
                 tail_snap_enabled: Some(false),
                 tail_snap_strength_px: Some(24),
-                prebake_templates: None,
+                prebake_motifs: None,
             })
             .unwrap();
         assert_eq!(after.display_mode, DisplayMode::ShowAll);
@@ -267,7 +267,7 @@ mod tests {
         assert!(!s.media_pool_drawer_open);
         assert!(s.tail_snap_enabled);
         assert_eq!(s.tail_snap_strength_px, 12);
-        assert!(!s.prebake_templates);
+        assert!(!s.prebake_motifs);
     }
 
     #[test]
@@ -324,18 +324,18 @@ mod tests {
     }
 
     #[test]
-    fn prebake_templates_defaults_off_and_round_trips() {
+    fn prebake_motifs_defaults_off_and_round_trips() {
         let tmp = TempDir::new().unwrap();
         let store = fresh(&tmp);
-        assert!(!store.get().prebake_templates); // default OFF
+        assert!(!store.get().prebake_motifs); // default OFF
         let after = store
             .apply(AppSettingsPatch {
-                prebake_templates: Some(true),
+                prebake_motifs: Some(true),
                 ..Default::default()
             })
             .unwrap();
-        assert!(after.prebake_templates);
+        assert!(after.prebake_motifs);
         // Independent reader sees it persisted.
-        assert!(AppSettingsStore::new(tmp.path().to_path_buf()).get().prebake_templates);
+        assert!(AppSettingsStore::new(tmp.path().to_path_buf()).get().prebake_motifs);
     }
 }
