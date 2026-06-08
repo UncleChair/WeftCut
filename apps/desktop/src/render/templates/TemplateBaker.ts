@@ -9,7 +9,7 @@ export interface BakeContentSpec extends BakeContent {
   render: (frame: number) => Promise<ImageBitmap>;
 }
 
-export interface TemplateBakerDeps {
+export interface MotifBakerDeps {
   schedule: (cb: () => void) => number;
   cancel: (token: number) => void;
   /// True if (cacheKey, frame) PNG already on disk → skip. Consulted ONCE per
@@ -32,8 +32,8 @@ export interface TemplateBakerDeps {
 /// and arms; an idle loop renders+persists missing frames in priority order,
 /// yielding between batches. The SOLE writer of L2 (the resolver is read-only),
 /// so there's no fire-and-forget eviction race. Preview-only (DOM-gated by the
-/// Compositor). Mirrors `TemplatePrewarmer`'s idle-loop discipline.
-export class TemplateBaker {
+/// Compositor). Mirrors `MotifPrewarmer`'s idle-loop discipline.
+export class MotifBaker {
   private specsByKey = new Map<string, BakeContentSpec>();
   private queue: { cacheKey: string; frame: number }[] = [];
   private scheduled: number | null = null;
@@ -44,12 +44,12 @@ export class TemplateBaker {
   /// frames persisted OR skipped-as-already-on-disk. Reset each setTargets.
   private status = new Map<string, BakeStatus>();
 
-  constructor(private readonly deps: TemplateBakerDeps) {
+  constructor(private readonly deps: MotifBakerDeps) {
     this.batchSize = deps.batchSize ?? 2;
   }
 
   /// Replace the active bake set, plan the whole content (playhead-first), and
-  /// arm — all synchronously, like `TemplatePrewarmer.setTargets`, so a caller
+  /// arm — all synchronously, like `MotifPrewarmer.setTargets`, so a caller
   /// (and the unit test's settle loop) sees a scheduled callback immediately.
   /// The disk-skip check is async, so it is NOT done here; `drainBatch` skips
   /// on-disk frames as it pulls them, consulting `isOnDisk` once per frame.

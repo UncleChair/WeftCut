@@ -1,14 +1,14 @@
-// Unit tests for the export Motif bake. The PURE half (`templateLayersToBake`,
+// Unit tests for the export Motif bake. The PURE half (`motifLayersToBake`,
 // `bakeContentFrameFor`) is fully Node-testable. The bake LOOP
-// (`exportBakeTemplates`) is covered here too by mocking its CDP producer
+// (`exportBakeMotifs`) is covered here too by mocking its CDP producer
 // (`bakeMotifFrame`); the real CDP capture + encode is exercised end-to-end by
 // the real-WebView2 e2e (`template_export.e2e.js`).
 //
 // The load-bearing invariant: a layer's baked frame range is computed on the
-// COMPOSITION fps with the SAME `templateDurationFrames` / `frameIndexInLayer`
+// COMPOSITION fps with the SAME `motifDurationFrames` / `frameIndexInLayer`
 // math the Worker's `MotifSprite.update` uses to look frames up. A drift
 // here = export binds the wrong (or an out-of-range) frame. The first test
-// pins exactly that: the full-range bake covers `[0, templateDurationFrames-1]`.
+// pins exactly that: the full-range bake covers `[0, motifDurationFrames-1]`.
 
 import { describe, expect, it, test, vi, beforeEach } from "vitest";
 
@@ -26,7 +26,7 @@ vi.mock("./templates/templateRaster", async (importOriginal) => {
   return {
     ...actual,
     sharedBakedKeyIndex: { has: vi.fn(() => false) },
-    sharedTemplateFrameCache: {
+    sharedMotifFrameCache: {
       readPng: vi.fn(async () => new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" })),
     },
   };
@@ -38,10 +38,10 @@ vi.mock("./templates/templateRaster", async (importOriginal) => {
 
 import type { LayerParamsView, ProjectSummary, MotifView } from "../ipc";
 import { frameIndexInLayer, snapFrameFloor } from "../frames";
-import { bakeContentFrameFor, templateLayersToBake, exportBakeTemplates } from "./exportBake";
-import { templateContentFrame, templateDurationFrames } from "./templates/templateFrames";
+import { bakeContentFrameFor, motifLayersToBake, exportBakeMotifs } from "./exportBake";
+import { motifContentFrame, motifDurationFrames } from "./templates/templateFrames";
 import { bakeMotifFrame } from "./motifs/motifRaster";
-import { sharedBakedKeyIndex, sharedTemplateFrameCache } from "./templates/templateRaster";
+import { sharedBakedKeyIndex, sharedMotifFrameCache } from "./templates/templateRaster";
 
 const COUNTDOWN = "countdown"; // built-in, 480x480
 
@@ -67,7 +67,7 @@ function templateLayer(
 }
 
 /// Minimal ProjectSummary carrying one track of the given layers. Only the
-/// fields `templateLayersToBake` reads are populated; the rest is cast.
+/// fields `motifLayersToBake` reads are populated; the rest is cast.
 function summaryWith(
   layers: Array<{
     id: string;
@@ -91,14 +91,14 @@ function summaryWith(
   } as unknown as ProjectSummary;
 }
 
-describe("templateLayersToBake", () => {
-  test("full-range bake covers [0, templateDurationFrames-1] on COMP fps", () => {
+describe("motifLayersToBake", () => {
+  test("full-range bake covers [0, motifDurationFrames-1] on COMP fps", () => {
     // 5 s @ 30 fps → 150 comp frames.
     const summary = summaryWith([templateLayer("L1", 0, 5_000_000)]);
-    const specs = templateLayersToBake(summary, 0, 5_000_000, 30, 1);
+    const specs = motifLayersToBake(summary, 0, 5_000_000, 30, 1);
     expect(specs).toHaveLength(1);
     const s = specs[0]!;
-    expect(s.durationFrames).toBe(templateDurationFrames(5_000_000, 30, 1));
+    expect(s.durationFrames).toBe(motifDurationFrames(5_000_000, 30, 1));
     expect(s.durationFrames).toBe(150);
     // The whole animation is baked: first frame 0, last frame 149.
     expect(s.firstFrame).toBe(0);
@@ -113,14 +113,14 @@ describe("templateLayersToBake", () => {
     // comp fps passed here. Pass comp fps = 30 even for a hypothetical 60fps
     // OUTPUT export: 150 frames, not 300.
     const summary = summaryWith([templateLayer("L1", 0, 5_000_000)]);
-    const specs = templateLayersToBake(summary, 0, 5_000_000, 30, 1);
+    const specs = motifLayersToBake(summary, 0, 5_000_000, 30, 1);
     expect(specs[0]!.durationFrames).toBe(150);
   });
 
   test("a mid-layer export start narrows to the overlapping comp-frame window", () => {
     // 10 s layer @ 30 fps (300 frames). Export only [3s, 6s).
     const summary = summaryWith([templateLayer("L1", 0, 10_000_000)]);
-    const specs = templateLayersToBake(summary, 3_000_000, 6_000_000, 30, 1);
+    const specs = motifLayersToBake(summary, 3_000_000, 6_000_000, 30, 1);
     expect(specs).toHaveLength(1);
     const s = specs[0]!;
     expect(s.durationFrames).toBe(300);
@@ -134,7 +134,7 @@ describe("templateLayersToBake", () => {
     // Layer placed at t=2s, 5 s long → covers [2s, 7s). Templates have no
     // source-in offset, so frame 0 is at the layer's t_start (2s).
     const summary = summaryWith([templateLayer("L1", 2_000_000, 7_000_000)]);
-    const specs = templateLayersToBake(summary, 0, 10_000_000, 30, 1);
+    const specs = motifLayersToBake(summary, 0, 10_000_000, 30, 1);
     const s = specs[0]!;
     expect(s.durationFrames).toBe(150);
     expect(s.firstFrame).toBe(0);
@@ -147,10 +147,10 @@ describe("templateLayersToBake", () => {
       { ...templateLayer("off", 0, 5_000_000), enabled: false },
       templateLayer("past", 8_000_000, 10_000_000), // outside [0, 5s)
     ]);
-    const specs = templateLayersToBake(summary, 0, 5_000_000, 30, 1);
+    const specs = motifLayersToBake(summary, 0, 5_000_000, 30, 1);
     expect(specs.map((s) => s.layerId)).toEqual(["on"]);
 
-    const disabledTrack = templateLayersToBake(
+    const disabledTrack = motifLayersToBake(
       summaryWith([templateLayer("L1", 0, 5_000_000)], false),
       0,
       5_000_000,
@@ -167,13 +167,13 @@ describe("templateLayersToBake", () => {
         motif_id: "does-not-exist",
       } as Partial<MotifView>),
     ]);
-    const specs = templateLayersToBake(summary, 0, 5_000_000, 30, 1);
+    const specs = motifLayersToBake(summary, 0, 5_000_000, 30, 1);
     expect(specs.map((s) => s.layerId)).toEqual(["known"]);
   });
 
   test("no Template layers → empty result", () => {
     const summary = summaryWith([]);
-    expect(templateLayersToBake(summary, 0, 5_000_000, 30, 1)).toEqual([]);
+    expect(motifLayersToBake(summary, 0, 5_000_000, 30, 1)).toEqual([]);
   });
 
   test("frame-parity: off-grid startUs maps to the same firstFrame the Worker visits", () => {
@@ -194,7 +194,7 @@ describe("templateLayersToBake", () => {
     const START_US = 50_000; // deliberately off-grid; between frame 0 (0µs) and frame 1 (~33_333µs)
 
     const summary = summaryWith([templateLayer("L1", 0, 5_000_000)]);
-    const specs = templateLayersToBake(summary, START_US, 5_000_000, FPS_NUM, FPS_DEN);
+    const specs = motifLayersToBake(summary, START_US, 5_000_000, FPS_NUM, FPS_DEN);
     expect(specs).toHaveLength(1);
     const s = specs[0]!;
 
@@ -228,7 +228,7 @@ describe("templateLayersToBake", () => {
 //
 // The core invariant: for every layer-local frame `f` that the export Worker
 // will request, `bakeContentFrameFor(f, ...)` must return the SAME content
-// frame as the live preview's `templateContentFrame(tInLayerUs, ...)`. The
+// frame as the live preview's `motifContentFrame(tInLayerUs, ...)`. The
 // compositor derives `tInLayerUs = snapFrameFloor(compFrameUs) - t_start_us`;
 // this helper reconstructs that exactly so that floor(a+b) ≠ floor(a)+floor(b)
 // divergences at /1001 fps boundaries are eliminated.
@@ -248,7 +248,7 @@ function previewContentFrameAt(
 ): number {
   const compFrameUs = snapFrameFloor(Math.round((compFrameIdx * US * d) / n), n, d);
   const tInLayerUs = compFrameUs - tStartUs;
-  return templateContentFrame(tInLayerUs, srcInUs, contentDurUs, n, d).frame;
+  return motifContentFrame(tInLayerUs, srcInUs, contentDurUs, n, d).frame;
 }
 
 describe("export bake matches preview content frame (windowed template)", () => {
@@ -349,7 +349,7 @@ describe("export bake matches preview content frame (windowed template)", () => 
   });
 });
 
-describe("exportBakeTemplates → CDP (bakeMotifFrame)", () => {
+describe("exportBakeMotifs → CDP (bakeMotifFrame)", () => {
   beforeEach(() => {
     (bakeMotifFrame as unknown as ReturnType<typeof vi.fn>).mockClear();
     (sharedBakedKeyIndex.has as ReturnType<typeof vi.fn>).mockReturnValue(false);
@@ -357,7 +357,7 @@ describe("exportBakeTemplates → CDP (bakeMotifFrame)", () => {
 
   it("bakes a countdown layer's frames via bakeMotifFrame, indexed by comp frame", async () => {
     const summary = summaryWith([templateLayer("L1", 0, 2_000_000)]);
-    const out = await exportBakeTemplates(summary, 0, 2_000_000, 30, 1);
+    const out = await exportBakeMotifs(summary, 0, 2_000_000, 30, 1);
     const frames = out["L1"]!;
     expect(frames).toBeDefined();
     expect(frames.length).toBe(60);
@@ -374,19 +374,19 @@ describe("exportBakeTemplates → CDP (bakeMotifFrame)", () => {
   });
 });
 
-describe("exportBakeTemplates → L2 disk fast path", () => {
+describe("exportBakeMotifs → L2 disk fast path", () => {
   beforeEach(() => {
     (bakeMotifFrame as unknown as ReturnType<typeof vi.fn>).mockClear();
     (sharedBakedKeyIndex.has as ReturnType<typeof vi.fn>).mockReturnValue(true);
     // Default the disk read to a HIT; the miss test below overrides it.
-    (sharedTemplateFrameCache.readPng as ReturnType<typeof vi.fn>).mockResolvedValue(
+    (sharedMotifFrameCache.readPng as ReturnType<typeof vi.fn>).mockResolvedValue(
       new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }),
     );
   });
 
   it("reads L2 PNGs off disk and does NOT re-capture when the key is baked", async () => {
     const summary = summaryWith([templateLayer("L1", 0, 2_000_000)]);
-    const out = await exportBakeTemplates(summary, 0, 2_000_000, 30, 1);
+    const out = await exportBakeMotifs(summary, 0, 2_000_000, 30, 1);
     expect(out["L1"]!.length).toBe(60);
     expect((out["L1"]![0] as unknown as { tag: string }).tag).toBe("from-disk");
     expect(bakeMotifFrame).toHaveBeenCalledTimes(0);
@@ -395,9 +395,9 @@ describe("exportBakeTemplates → L2 disk fast path", () => {
   it("falls back to CDP capture when the key is baked but the PNG is missing on disk", async () => {
     // Stale index (key marked baked) but readPng returns null — must NOT blank
     // the export: fall through to a live capture for every such frame.
-    (sharedTemplateFrameCache.readPng as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    (sharedMotifFrameCache.readPng as ReturnType<typeof vi.fn>).mockResolvedValue(null);
     const summary = summaryWith([templateLayer("L1", 0, 2_000_000)]);
-    const out = await exportBakeTemplates(summary, 0, 2_000_000, 30, 1);
+    const out = await exportBakeMotifs(summary, 0, 2_000_000, 30, 1);
     expect(out["L1"]!.length).toBe(60);
     expect((out["L1"]![0] as unknown as { tag: string }).tag).toBe("countdown#0");
     expect(bakeMotifFrame).toHaveBeenCalledTimes(60);

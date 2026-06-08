@@ -1,5 +1,5 @@
 // Decouples the timeline's "Pre-bake now" context-menu action (React) from the
-// webview Compositor that owns the TemplateBaker. The Compositor subscribes on
+// webview Compositor that owns the MotifBaker. The Compositor subscribes on
 // construction; the menu calls `requestPrebake(layerId)`. Module-level singleton
 // — there is one Compositor and one timeline per window.
 

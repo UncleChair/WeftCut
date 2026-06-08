@@ -14,8 +14,8 @@ export async function rasterMotifFrame(
   settleRafs?: number,
 ): Promise<ImageBitmap> {
   if (typeof window !== "undefined") {
-    const perf = (window as unknown as { __weftcutTemplatePerf?: { renders: number } })
-      .__weftcutTemplatePerf;
+    const perf = (window as unknown as { __weftcutMotifPerf?: { renders: number } })
+      .__weftcutMotifPerf;
     if (perf) perf.renders++;
   }
   return captureMotifFrame(motifId, tSec, props, width, height, settleRafs);
@@ -23,7 +23,7 @@ export async function rasterMotifFrame(
 
 /// Capture one ARBITRARY content frame of a Motif directly via CDP, at the
 /// motif's manifest size. The baker is the sole L2 writer and already gates on
-/// `isOnDisk`, so it must NOT read disk-first (that's `resolveTemplateFrame`'s
+/// `isOnDisk`, so it must NOT read disk-first (that's `resolveMotifFrame`'s
 /// job for the read paths) — it always captures. `tSec = frame * fpsDen/fpsNum`.
 export function bakeMotifFrame(
   template: Motif,

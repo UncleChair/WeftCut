@@ -156,7 +156,7 @@ describe("L2 template pre-bake disk round-trip (real WebView2)", function () {
     console.log("[e2e] L0 evicted for cacheKey");
 
     // Step C: assert the baked-key index marks this cacheKey as baked. If it
-    // doesn't, the `resolveTemplateFrame` disk branch is never entered and the
+    // doesn't, the `resolveMotifFrame` disk branch is never entered and the
     // test would rely on fallback rasters — a loud fail here is correct.
     const indexR = await browser.execute((ck) => {
       return window.__weftcutTest.bakedIndexHas(ck);
@@ -165,14 +165,14 @@ describe("L2 template pre-bake disk round-trip (real WebView2)", function () {
     if (!indexR) {
       throw new Error(
         "bakedIndexHas returned false — sharedBakedKeyIndex was not populated by the baker. " +
-          "The disk-read branch in resolveTemplateFrame cannot be entered. " +
+          "The disk-read branch in resolveMotifFrame cannot be entered. " +
           "This is a real product bug: the baked-key index is not being updated after writePng."
       );
     }
     console.log("[e2e] baked-key index confirms cacheKey is marked baked");
 
     // Step D: arm the raster counter, then resolve frames. With L0 cleared and
-    // the baked-key index populated, resolveTemplateFrame MUST take the disk
+    // the baked-key index populated, resolveMotifFrame MUST take the disk
     // path (readPng → createImageBitmap). Any fresh raster (renders > 0) means
     // the disk read path is broken.
     //
@@ -184,11 +184,11 @@ describe("L2 template pre-bake disk round-trip (real WebView2)", function () {
     // the promise resolves — reads the counter only after all frames settle.
     const r = await browser.executeAsync((done) => {
       // Arm the raster counter BEFORE resolving.
-      window.__weftcutTemplatePerf = { renders: 0 };
+      window.__weftcutMotifPerf = { renders: 0 };
 
       // Drive the REAL TemplateSprite update path (same function the compositor
       // calls) across 5 distinct layer-relative times. Each call internally
-      // reaches resolveTemplateFrame → disk PNG → createImageBitmap.
+      // reaches resolveMotifFrame → disk PNG → createImageBitmap.
       window.__weftcutTest
         .renderTemplateSpriteFrames({
           templateId: "countdown",
@@ -205,12 +205,12 @@ describe("L2 template pre-bake disk round-trip (real WebView2)", function () {
           props: {},
         })
         .then((frames) => {
-          const renders = window.__weftcutTemplatePerf?.renders ?? -1;
-          window.__weftcutTemplatePerf = undefined;
+          const renders = window.__weftcutMotifPerf?.renders ?? -1;
+          window.__weftcutMotifPerf = undefined;
           done({ ok: true, renders, frameCount: frames.length });
         })
         .catch((e) => {
-          window.__weftcutTemplatePerf = undefined;
+          window.__weftcutMotifPerf = undefined;
           done({ ok: false, error: String(e) });
         });
     });

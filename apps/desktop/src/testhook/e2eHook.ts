@@ -21,8 +21,8 @@ import {
 } from "../ipc";
 import { captureMotifFrame } from "../render/motifs/host";
 import { hashCacheKey } from "../render/templates/frameCache";
-import { sharedTemplateFrameCache, sharedBakedKeyIndex } from "../render/templates/templateRaster";
-import { templateFrameDescriptor } from "../render/templates/templateFrameDescriptor";
+import { sharedMotifFrameCache, sharedBakedKeyIndex } from "../render/templates/templateRaster";
+import { motifFrameDescriptor } from "../render/templates/templateFrameDescriptor";
 import { getMotif } from "../render/templates/catalog";
 import { requestPrebake } from "../render/templates/prebakeBus";
 import { mergeSettings, type ExportSettings } from "../render/exportSettings";
@@ -62,7 +62,7 @@ export interface E2EHook {
   /// Add a built-in Template layer at t=0 (default duration) and export to
   /// `outputAbsPath`. No video clip is needed — the export composites the
   /// template-only timeline, driving the FULL real export path: main-thread
-  /// `exportBakeTemplates` → transfer → Worker `TemplateSprite` bind-by-index.
+  /// `exportBakeMotifs` → transfer → Worker `TemplateSprite` bind-by-index.
   /// Proves templates render in export (they were silently absent before). The
   /// caller (project + editor) must already be set up via `newProjectAndEnter`.
   exportTemplateClip(args: {
@@ -76,7 +76,7 @@ export interface E2EHook {
   /// layer-relative times and read back the interior pixel of each bound
   /// raster. Exercises the full sprite chain in real WebView2:
   /// `update(view, tInLayerUs, durationUs)` → frame index → `frameTimeSec` →
-  /// `resolveTemplateFrame` → `rasterMotifFrame` (CDP) → bound `Texture`. The spec
+  /// `resolveMotifFrame` → `rasterMotifFrame` (CDP) → bound `Texture`. The spec
   /// asserts the two frames differ (the template animated across the
   /// timeline). `browser.execute` can't import the bundled `TemplateSprite`,
   /// so it's constructed here and the result reduced to plain numbers.
@@ -116,7 +116,7 @@ export interface E2EHook {
   /// Returns an empty array when no project is open or the dir doesn't exist.
   listBakedHashDirs(): Promise<string[]>;
   /// Run the GC against `activeCacheKeys`: removes every `Cache/raster/<hash>` dir
-  /// whose hash isn't in the active set. Mirrors `TemplateFrameCache.gcUnreferenced`.
+  /// whose hash isn't in the active set. Mirrors `MotifFrameCache.gcUnreferenced`.
   gcRasterDirs(activeCacheKeys: string[]): Promise<void>;
   /// Compute the cacheKey for a template layer by looking up its current state in
   /// the project summary. Returns null if the layer doesn't exist or isn't a Template.
@@ -328,7 +328,7 @@ export function installTemplateHarnessHook(): void {
         const template = getMotif(layer.params.motif_id);
         if (!template) break outer;
         const durationUs = layer.t_end_us - layer.t_start_us;
-        const desc = templateFrameDescriptor(layer.params, 0, durationUs, summary.composition.fps_num, summary.composition.fps_den, template);
+        const desc = motifFrameDescriptor(layer.params, 0, durationUs, summary.composition.fps_num, summary.composition.fps_den, template);
         if (desc) cacheKey = desc.cacheKey;
         break outer;
       }
@@ -372,7 +372,7 @@ export function installTemplateHarnessHook(): void {
   };
 
   hookSlot().gcRasterDirs = async (activeCacheKeys) => {
-    await sharedTemplateFrameCache.gcUnreferenced(activeCacheKeys);
+    await sharedMotifFrameCache.gcUnreferenced(activeCacheKeys);
   };
 
   hookSlot().cacheKeyForLayer = async (layerId) => {
@@ -383,7 +383,7 @@ export function installTemplateHarnessHook(): void {
         const template = getMotif(layer.params.motif_id);
         if (!template) return null;
         const durationUs = layer.t_end_us - layer.t_start_us;
-        const desc = templateFrameDescriptor(layer.params, 0, durationUs, summary.composition.fps_num, summary.composition.fps_den, template);
+        const desc = motifFrameDescriptor(layer.params, 0, durationUs, summary.composition.fps_num, summary.composition.fps_den, template);
         return desc?.cacheKey ?? null;
       }
     }
@@ -399,7 +399,7 @@ export function installTemplateHarnessHook(): void {
   };
 
   hookSlot().clearTemplateCacheKey = (cacheKey: string): void => {
-    sharedTemplateFrameCache.clearKey(cacheKey);
+    sharedMotifFrameCache.clearKey(cacheKey);
   };
 
   hookSlot().bakedIndexHas = (cacheKey: string): boolean => {
@@ -483,7 +483,7 @@ export function installMotifHook(): void {
   // Template layer onto the timeline through the SAME `add_template` IPC the
   // TemplatePicker uses — the legacy SVG catalog supplies the metadata (size
   // 480×480 + props seconds/label/accent), which align with the Motif
-  // `countdown` so the compositor's resolveTemplateFrame → rasterMotifFrame
+  // `countdown` so the compositor's resolveMotifFrame → rasterMotifFrame
   // (CDP) path renders it live. `weftcutSeekUs` / `weftcutSampleComposite`
   // delegate to the PreviewBridge registered by `PixiPreview`.
   hookSlot().motifAddCountdown = async () => {

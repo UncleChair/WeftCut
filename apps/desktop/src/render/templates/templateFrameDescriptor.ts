@@ -4,13 +4,13 @@ import { resolveMotifContentDurationUs, type Motif } from "./catalog";
 import {
   US_PER_SEC,
   frameTimeSec,
-  templateContentFrame,
+  motifContentFrame,
   templateFrameCacheKey,
 } from "./templateFrames";
 
 /// `renderW/renderH/contentDurationUs/srcInUs/contentDurationFrames` are carried
 /// for the prewarmer path; the sprite only uses cacheKey/contentFrame/tSec/durationSec/canonicalProps.
-export interface TemplateFrameDescriptor {
+export interface MotifFrameDescriptor {
   cacheKey: string;
   contentFrame: number;
   contentDurationFrames: number;
@@ -28,14 +28,14 @@ export interface TemplateFrameDescriptor {
 /// prewarmer, so they can never disagree on (cacheKey, contentFrame).
 /// `durationUs` is the LAYER width (used only for uncapped templates).
 /// Returns null when props canonicalization fails.
-export function templateFrameDescriptor(
+export function motifFrameDescriptor(
   view: MotifView,
   tInLayerUs: number,
   durationUs: number,
   fpsNum: number,
   fpsDen: number,
   template: Motif,
-): TemplateFrameDescriptor | null {
+): MotifFrameDescriptor | null {
   let canonicalProps: Record<string, unknown>;
   try {
     canonicalProps = canonicalizeProps(view.props, template.manifest);
@@ -45,7 +45,7 @@ export function templateFrameDescriptor(
   const cap = resolveMotifContentDurationUs(template.manifest, view.props);
   const contentDurationUs = cap ?? durationUs;
   const srcInUs = cap == null ? 0 : view.src_in_us;
-  const { frame, contentDurationFrames } = templateContentFrame(
+  const { frame, contentDurationFrames } = motifContentFrame(
     tInLayerUs, srcInUs, contentDurationUs, fpsNum, fpsDen,
   );
   const [renderW, renderH] = template.manifest.size;
