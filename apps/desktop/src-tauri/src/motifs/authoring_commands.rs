@@ -62,7 +62,9 @@ pub async fn write_motif_draft(
     validate_manifest(&args.manifest).map_err(|e| e.to_string())?;
     // TODO(stage 3): every call mints a NEW draft id; an iterative edit UI will
     // want an amend path (reuse an existing draft_id) so refining a draft doesn't
-    // litter <root>/drafts/ with abandoned dirs.
+    // litter <root>/drafts/ with abandoned dirs. The 3b-2 auto-save path should
+    // also debounce or drop the motifs:changed emit on intermediate writes (it
+    // fires a full list_motifs re-pull) — emit really only matters on install/delete.
     // Final-ready id: unique vs BOTH published and existing drafts, so the id
     // never changes on install (Model B → no layer rebind).
     let taken: Vec<String> = store

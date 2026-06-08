@@ -4,7 +4,7 @@ const invoke = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...a: unknown[]) => invoke(...a) }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 
-import { installMotif, deleteMotif, writeMotifDraft } from "./index";
+import { installMotif, deleteMotif, writeMotifDraft, getMotifSource } from "./index";
 
 describe("motif lifecycle IPC wrappers", () => {
   it("installMotif sends the snake_case nested args Tauri's serde expects", async () => {
@@ -24,5 +24,17 @@ describe("motif lifecycle IPC wrappers", () => {
     invoke.mockResolvedValue(undefined);
     await deleteMotif("foo");
     expect(invoke).toHaveBeenCalledWith("delete_motif", { id: "foo" });
+  });
+  it("installMotif new-mode sends the right shape", async () => {
+    invoke.mockResolvedValue("d2");
+    await installMotif("d2", { kind: "new" });
+    expect(invoke).toHaveBeenCalledWith("install_motif", {
+      args: { draft_id: "d2", mode: { kind: "new" } },
+    });
+  });
+  it("getMotifSource passes a bare id", async () => {
+    invoke.mockResolvedValue({ manifest: { id: "x" }, html: "" });
+    await getMotifSource("x");
+    expect(invoke).toHaveBeenCalledWith("get_motif_source", { id: "x" });
   });
 });
