@@ -1,6 +1,6 @@
 import type { MotifView } from "../../ipc";
 import { canonicalizeProps } from "./Rasterizer";
-import { resolveTemplateContentDurationUs, type Template } from "./catalog";
+import { resolveMotifContentDurationUs, type Motif } from "./catalog";
 import {
   US_PER_SEC,
   frameTimeSec,
@@ -34,7 +34,7 @@ export function templateFrameDescriptor(
   durationUs: number,
   fpsNum: number,
   fpsDen: number,
-  template: Template,
+  template: Motif,
 ): TemplateFrameDescriptor | null {
   let canonicalProps: Record<string, unknown>;
   try {
@@ -42,7 +42,7 @@ export function templateFrameDescriptor(
   } catch {
     return null;
   }
-  const cap = resolveTemplateContentDurationUs(template.manifest, view.props);
+  const cap = resolveMotifContentDurationUs(template.manifest, view.props);
   const contentDurationUs = cap ?? durationUs;
   const srcInUs = cap == null ? 0 : view.src_in_us;
   const { frame, contentDurationFrames } = templateContentFrame(

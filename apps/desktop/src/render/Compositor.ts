@@ -23,7 +23,7 @@ import { SubtitlesSprite } from "./sprite/SubtitlesSprite";
 import { MotifSprite } from "./sprite/MotifSprite";
 import { TextSprite } from "./sprite/TextSprite";
 import { VideoClipSprite } from "./sprite/VideoClipSprite";
-import { getTemplate } from "./templates/catalog";
+import { getMotif } from "./templates/catalog";
 import { TemplatePrewarmer, type PrewarmContentSpec } from "./templates/TemplatePrewarmer";
 import { templateFrameDescriptor } from "./templates/templateFrameDescriptor";
 import {
@@ -1008,7 +1008,7 @@ export class Compositor {
       if (!track.enabled) continue;
       for (const layer of track.layers) {
         if (!layer.enabled || layer.params.kind !== "Motif") continue;
-        const template = getTemplate(layer.params.motif_id);
+        const template = getMotif(layer.params.motif_id);
         if (!template) continue;
         const tInLayerUs = tUs - layer.t_start_us;
         const durationUs = layer.t_end_us - layer.t_start_us;
@@ -1060,7 +1060,7 @@ export class Compositor {
         if (!layer.enabled || layer.params.kind !== "Motif") continue;
         const wanted = globalOn || this.manualPrebakeLayers.has(layer.id);
         if (!wanted) continue;
-        const template = getTemplate(layer.params.motif_id);
+        const template = getMotif(layer.params.motif_id);
         if (!template) continue;
         const tInLayerUs = tUs - layer.t_start_us;
         const durationUs = layer.t_end_us - layer.t_start_us;
@@ -1098,7 +1098,7 @@ export class Compositor {
     for (const track of this.projectSummary.tracks) {
       for (const layer of track.layers) {
         if (layer.params.kind !== "Motif") continue;
-        const template = getTemplate(layer.params.motif_id);
+        const template = getMotif(layer.params.motif_id);
         if (!template) continue;
         // The cacheKey is window/time-independent (it folds props, dims, fps and
         // content-duration, not the playhead), so tInLayerUs = 0 is fine here:
@@ -1143,7 +1143,7 @@ export class Compositor {
     for (const track of this.projectSummary.tracks) {
       for (const layer of track.layers) {
         if (layer.params.kind !== "Motif") continue;
-        const template = getTemplate(layer.params.motif_id);
+        const template = getMotif(layer.params.motif_id);
         if (!template) continue;
         const durationUs = layer.t_end_us - layer.t_start_us;
         const view = layer.params;

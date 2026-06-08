@@ -10,7 +10,7 @@ import {
   type Rgba,
   type TrackSummary,
 } from "../ipc";
-import { getTemplate, type PropSpec } from "../render/templates/catalog";
+import { getMotif, type PropSpec } from "../render/templates/catalog";
 import { useLayerBakeStatus } from "../timeline/templateBakeStatusStore";
 // EffectsSection + effects-related ipc calls removed in P12-a.
 
@@ -620,7 +620,7 @@ function TemplateFields({
   // the placed template_id isn't in the catalog (e.g. a removed built-in) — we
   // can still edit transform/opacity, but render a note instead of guessing
   // prop inputs.
-  const template = getTemplate(v.motif_id);
+  const template = getMotif(v.motif_id);
   const propEntries = template
     ? Object.entries(template.manifest.props_schema)
     : [];

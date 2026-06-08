@@ -3,7 +3,7 @@
 // webcap CDP path, bumping the same perf instrument so existing e2e
 // render-count assertions keep working.
 import { captureMotifFrame } from "./host";
-import type { Template } from "../templates/catalog";
+import type { Motif } from "../templates/catalog";
 
 export async function rasterMotifFrame(
   motifId: string,
@@ -26,7 +26,7 @@ export async function rasterMotifFrame(
 /// `isOnDisk`, so it must NOT read disk-first (that's `resolveTemplateFrame`'s
 /// job for the read paths) — it always captures. `tSec = frame * fpsDen/fpsNum`.
 export function bakeMotifFrame(
-  template: Template,
+  template: Motif,
   frame: number,
   fpsNum: number,
   fpsDen: number,

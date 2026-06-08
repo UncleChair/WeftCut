@@ -56,7 +56,7 @@ import {
 } from "./render/exportSettings";
 import { resolveEncodePath } from "./render/exportCodecProbe";
 import { exportBakeTemplates } from "./render/exportBake";
-import { getTemplate } from "./render/templates/catalog";
+import { getMotif } from "./render/templates/catalog";
 import {
   sourcesNeedingPreviewProbe,
   prepareExportMedia,
@@ -917,7 +917,7 @@ export function App({ onCloseProject }: AppProps) {
       }
       if (templateIds.size > 0) {
         const labels = [...templateIds].map(
-          (id) => getTemplate(id)?.manifest.name ?? id,
+          (id) => getMotif(id)?.manifest.name ?? id,
         );
         // No cancellable step in the bake loop, so omit onCancel — the panel
         // hides the Cancel button rather than offering a dead one.

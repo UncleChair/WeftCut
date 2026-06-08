@@ -24,7 +24,7 @@
 
 import { frameIndexInLayer, snapFrameFloor } from "../frames";
 import type { ProjectSummary, MotifView } from "../ipc";
-import { getTemplate, resolveTemplateContentDurationUs, type Template } from "./templates/catalog";
+import { getMotif, resolveMotifContentDurationUs, type Motif } from "./templates/catalog";
 import { canonicalizeProps } from "./templates/Rasterizer";
 import { bakeMotifFrame } from "./motifs/motifRaster";
 import { templateDurationFrames } from "./templates/templateFrames";
@@ -78,14 +78,14 @@ export function bakeContentFrameFor(
   return contentFrame;
 }
 
-/// One Template layer to bake: its id, the resolved `Template`, the layer's
+/// One Motif layer to bake: its id, the resolved `Motif`, the layer's
 /// `MotifView`, and the comp-fps frame range to raster. `durationFrames` is
 /// the layer's full animated length on the comp grid (NOT clamped to the export
 /// range) so the per-frame index math matches `MotifSprite.update` exactly —
 /// a partial export range only narrows WHICH of those frames we actually bake.
 export interface TemplateBakeSpec {
   layerId: string;
-  template: Template;
+  template: Motif;
   view: MotifView;
   /// Layer duration in microseconds (`t_end_us - t_start_us`).
   durationUs: number;
@@ -102,7 +102,7 @@ export interface TemplateBakeSpec {
   tStartUs: number;
 }
 
-/// Collect the Template layers (enabled, on an enabled track) whose interval
+/// Collect the Motif layers (enabled, on an enabled track) whose interval
 /// overlaps `[startUs, endUs)`, resolving each to a `TemplateBakeSpec`. Pure +
 /// Node-testable: no DOM, no rasterize. Layers whose `template_id` isn't in the
 /// catalog are skipped (they can't render anywhere — the live compositor warns
@@ -127,7 +127,7 @@ export function templateLayersToBake(
       if (layer.t_start_us >= endUs) continue;
 
       const view = layer.params;
-      const template = getTemplate(view.motif_id);
+      const template = getMotif(view.motif_id);
       if (!template) {
         // eslint-disable-next-line no-console
         console.warn(
@@ -222,7 +222,7 @@ export async function exportBakeTemplates(
     const canonical = canonicalizeProps(spec.view.props, spec.template.manifest);
     // Content-window model: src_in offset + intrinsic content duration. Uncapped
     // templates fall back to layer-width content with src_in=0 (legacy).
-    const cap = resolveTemplateContentDurationUs(spec.template.manifest, spec.view.props);
+    const cap = resolveMotifContentDurationUs(spec.template.manifest, spec.view.props);
     const contentDurationUs = cap ?? spec.durationUs;
     const srcInUs = cap == null ? 0 : spec.view.src_in_us;
 
