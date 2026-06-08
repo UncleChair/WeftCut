@@ -2546,7 +2546,7 @@ mod tests {
 
     #[test]
     fn payload_content_hash_changes_with_html() {
-        use crate::motifs::catalog::{Manifest, Motif};
+        use crate::motifs::catalog::Manifest;
         use std::collections::BTreeMap;
         let make_manifest = || Manifest {
             id: "foo".into(),
