@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { formatTimecode, parseTimecode } from "../frames";
 import {
@@ -8,9 +8,7 @@ import {
   type MotifSummary,
   type TrackSummary,
 } from "../ipc";
-import { getTemplate } from "../render/templates/catalog";
-import { TemplateHarness } from "../render/templates/harness";
-import { previewLoopTimeSec } from "./previewLoop";
+import { captureMotifFramePngBlob } from "../render/motifs/host";
 
 interface Props {
   onClose: () => void;
@@ -236,8 +234,6 @@ function TemplateForm({
         props={debouncedProps}
         width={480}
         large
-        animate
-        canvasFps={fpsNum / fpsDen}
       />
 
       <h3>{t("template_picker.props_heading")}</h3>
@@ -314,47 +310,25 @@ function useDebounced<T>(value: T, delay: number): T {
   return debounced;
 }
 
-/// Time (seconds) of the static preview frame. t=0 shows the template's first
+/// Time (seconds) of the static preview frame. t=0 shows the Motif's first
 /// frame — adequate for the picker, which only needs a representative still.
-/// FOLLOW-UP: a scrub slider could let the user preview any t.
+/// Animation lives in the editor preview, not the picker.
 const PREVIEW_T_SEC = 0;
-/// Fallback frame rate for the looping picker preview when no canvas fps is
-/// available; normally the preview defaults to the composition frame rate. The
-/// user can change it via the preview's fps input. There's no upper clamp (it
-/// follows the canvas, which may exceed 60); the live re-render loop is
-/// naturally bounded by rAF + harness throughput, so a high value just renders
-/// as fast as the harness allows. Only the lower bound matters: fps must be >= 1
-/// (a 0/negative value would make the frame interval infinite/negative).
-const PREVIEW_FPS = 20;
-const PREVIEW_FPS_MIN = 1;
 
-/// Live preview of a template's CURRENT frame, captured through the SAME
-/// `TemplateHarness` the timeline/export use — so picker, timeline, and export
-/// agree pixel-for-pixel. The harness runs the template's `render(t)` inside a
-/// sandboxed offscreen iframe and serializes the post-render `<svg>`; we then
-/// display that SVG string in an `<img>` (the same plain-SVG path the
-/// rasterizer relies on; foreignObject would taint).
-///
-/// One harness per preview instance. v1 ships a single built-in (countdown) so
-/// the card grid has one card — a per-preview harness is fine. FOLLOW-UP: pool
-/// or share a harness if the grid grows to many templates.
+/// Static still of a Motif's first frame, captured via a single CDP screenshot
+/// (`captureMotifFramePngBlob`). Replaces the old SVG-harness + rAF loop —
+/// CDP cost (~80ms) makes continuous animation impractical here, and the
+/// picker's job is "show what this Motif looks like", not animate it.
 function TemplatePreview({
   template,
   props,
   width,
   large,
-  animate,
-  canvasFps,
 }: {
   template: MotifSummary;
   props: Record<string, unknown>;
   width: number;
   large?: boolean;
-  animate?: boolean;
-  /// Composition frame rate (rounded). When provided, it's the DEFAULT preview
-  /// playback fps (clamped to the input bounds); otherwise falls back to
-  /// `PREVIEW_FPS`. The user can still override via the fps input.
-  canvasFps?: number;
 }) {
   const [w, h] = template.size;
   // Fixed 16:9 preview box of the given `width`, so a large or oddly-shaped
@@ -366,149 +340,30 @@ function TemplatePreview({
   const scale = Math.min(boxW / w, boxH / h);
   const { t } = useTranslation();
 
-  const harnessRef = useRef<TemplateHarness | null>(null);
-  const loadedRef = useRef<Promise<void> | null>(null);
   const urlRef = useRef<string | null>(null);
-  const [svgUrl, setSvgUrl] = useState<string | null>(null);
+  const [pngUrl, setPngUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // Hover gates the animated preview: it plays only while the pointer is over
-  // the preview (from t=0), and reverts to the static first frame on leave.
-  // Only meaningful when `animate` (the large preview); cards never set it.
-  const [hovered, setHovered] = useState(false);
-  // User-adjustable playback frame rate for the hover loop (frames per second);
-  // higher = smoother but more renders. Only surfaced on the animated preview.
-  // Defaults to the composition fps (so the preview plays at the rate the
-  // template will actually be sampled) with no upper clamp — it follows the
-  // canvas even above 60. Only the >= 1 floor applies. Falls back to PREVIEW_FPS
-  // when no canvas fps is supplied.
-  const [previewFps, setPreviewFps] = useState(() =>
-    Math.max(
-      PREVIEW_FPS_MIN,
-      canvasFps && Number.isFinite(canvasFps) ? Math.round(canvasFps) : PREVIEW_FPS,
-    ),
-  );
 
-  // (Re)load the harness whenever the template identity changes. The catalog's
-  // `getTemplate` is a synchronous in-memory lookup returning the full
-  // `Template` (with real font BYTES — the IPC summary only carries font
-  // declarations, which the harness can't embed).
+  // Capture a single still frame via CDP whenever the Motif identity, props,
+  // or dimensions change. Cancellable to handle rapid prop edits.
   useEffect(() => {
-    const full = getTemplate(template.id);
-    if (!full) {
-      setError(`template not found in catalog: ${template.id}`);
-      return;
-    }
-    // `active` guards against this effect surfacing its OWN teardown as an
-    // error. On unmount/remount (notably React StrictMode's dev double-mount),
-    // the cleanup disposes the harness, which rejects the in-flight `load()`
-    // with "harness: disposed". Without the guard that rejection flashed a raw
-    // error box on first open until the next mount's frame cleared it. The
-    // cleanup sets `active = false` BEFORE dispose, so the self-inflicted
-    // rejection is swallowed; a genuine load failure (component still active)
-    // still surfaces.
-    let active = true;
-    const harness = new TemplateHarness();
-    harnessRef.current = harness;
-    setError(null);
-    loadedRef.current = harness.load(full).catch((e) => {
-      if (active) setError(String(e));
-      throw e;
-    });
-    return () => {
-      active = false;
-      harness.dispose();
-      harnessRef.current = null;
-      loadedRef.current = null;
-    };
-  }, [template.id]);
-
-  // Bind one frame's SVG (string) to the <img> as an object URL, revoking the
-  // previous URL. Shared by the static and animated paths.
-  // Stable (deps: []) — only touches the ref + React setters, all stable. Kept
-  // stable so the render effect's async callbacks never capture a stale variant.
-  const bindSvg = useCallback((svg: string) => {
-    const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
-    if (urlRef.current) URL.revokeObjectURL(urlRef.current);
-    urlRef.current = url;
-    setSvgUrl(url);
-    setError(null);
-  }, []);
-
-  // Render the current frame. When `animate` is true (the selected large
-  // preview), the user is HOVERING the preview, and reduced motion isn't
-  // requested, run a real-time loop: advance t over [0, duration) at
-  // ~PREVIEW_FPS via rAF, re-rendering each frame through the same harness.
-  // Otherwise render a single static frame at t=0 (cards, not-hovered,
-  // reduced-motion). Awaits the in-flight load so the first render after a
-  // template switch doesn't race the iframe mount.
-  useEffect(() => {
-    const harness = harnessRef.current;
-    const loaded = loadedRef.current;
-    if (!harness || !loaded) return;
-    const durSec = template.default_duration_s;
-
-    const prefersReducedMotion =
-      typeof window !== "undefined" &&
-      typeof window.matchMedia === "function" &&
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-
-    // Static path: one frame at t=0 (cards, not hovered, or reduced-motion).
-    if (!animate || !hovered || prefersReducedMotion) {
-      let cancelled = false;
-      loaded
-        .then(() => harness.renderFrameSvg(PREVIEW_T_SEC, durSec, props))
-        .then((svg) => {
-          if (!cancelled) bindSvg(svg);
-        })
-        .catch((e) => {
-          if (!cancelled) setError(String(e));
-        });
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    // Animated path: real-time loop.
     let cancelled = false;
-    let rafId = 0;
-    let rendering = false;
-    let lastRenderMs = Number.NEGATIVE_INFINITY;
-    const startMs = performance.now();
-    const durMs = Math.max(1, durSec * 1000);
-    const frameInterval = 1000 / previewFps;
-
-    const tick = (now: number) => {
-      if (cancelled) return;
-      if (!rendering && now - lastRenderMs >= frameInterval) {
-        lastRenderMs = now;
-        rendering = true;
-        const tSec = previewLoopTimeSec(now - startMs, durMs);
-        loaded
-          .then(() => harness.renderFrameSvg(tSec, durSec, props))
-          .then((svg) => {
-            rendering = false;
-            if (!cancelled) bindSvg(svg);
-          })
-          .catch((e) => {
-            rendering = false;
-            if (!cancelled) setError(String(e));
-          });
-      }
-      rafId = requestAnimationFrame(tick);
-    };
-    rafId = requestAnimationFrame(tick);
-
+    setError(null);
+    captureMotifFramePngBlob(template.id, PREVIEW_T_SEC, props, w, h)
+      .then((blob) => {
+        if (cancelled) return;
+        const url = URL.createObjectURL(blob);
+        if (urlRef.current) URL.revokeObjectURL(urlRef.current);
+        urlRef.current = url;
+        setPngUrl(url);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(String(e));
+      });
     return () => {
       cancelled = true;
-      cancelAnimationFrame(rafId);
     };
-    // `props` identity changes on each edit; the parent debounces it. Including
-    // it here restarts the loop (from t=0) with the new props on each debounced
-    // edit — acceptable and keeps the preview truthful to the current props.
-    // `hovered` starts/stops the loop: entering plays from t=0, leaving falls
-    // back to the static branch above (resets to the first frame).
-    // `previewFps` re-arms the loop with the new frame interval when changed.
-  }, [template.id, template.default_duration_s, props, animate, hovered, previewFps]);
+  }, [template.id, props, w, h]);
 
   // Revoke the last blob URL on unmount.
   useEffect(
@@ -520,69 +375,41 @@ function TemplatePreview({
   );
 
   return (
-    <>
-      <div
-        className={
-          large
-            ? "template-preview-host template-preview-large"
-            : "template-preview-host"
-        }
-        // `.template-preview-host` is `pointer-events: none` (so card clicks pass
-        // through to the card button). The animated large preview needs to RECEIVE
-        // hover, so re-enable pointer events on it; cards keep the default.
-        style={{
-          width: boxW,
-          height: boxH,
-          ...(animate ? { pointerEvents: "auto" as const } : null),
-        }}
-        onMouseEnter={animate ? () => setHovered(true) : undefined}
-        onMouseLeave={animate ? () => setHovered(false) : undefined}
-      >
-        {svgUrl && (
-          <img
-            src={svgUrl}
-            alt={`preview-${template.id}`}
-            width={w}
-            height={h}
-            // Centered + contain-scaled inside the fixed 16:9 box. The host is
-            // position:relative + overflow:hidden, so absolute centering with a
-            // center transform-origin keeps the scaled template middle-anchored.
-            style={{
-              position: "absolute",
-              left: "50%",
-              top: "50%",
-              transformOrigin: "center",
-              transform: `translate(-50%, -50%) scale(${scale})`,
-            }}
-          />
-        )}
-        {!svgUrl && !error && (
-          <span
-            className="template-preview-loading"
-            role="status"
-            aria-label={t("template_picker.preview_loading")}
-          />
-        )}
-        {error && <span className="settings-error">{error}</span>}
-      </div>
-      {animate && (
-        <label className="template-preview-fps">
-          <span>{t("template_picker.preview_fps")}</span>
-          <input
-            type="number"
-            min={PREVIEW_FPS_MIN}
-            step={1}
-            value={previewFps}
-            onChange={(e) => {
-              const n = Math.round(Number(e.target.value));
-              if (Number.isFinite(n)) {
-                setPreviewFps(Math.max(PREVIEW_FPS_MIN, n));
-              }
-            }}
-          />
-        </label>
+    <div
+      className={
+        large
+          ? "template-preview-host template-preview-large"
+          : "template-preview-host"
+      }
+      style={{ width: boxW, height: boxH }}
+    >
+      {pngUrl && (
+        <img
+          src={pngUrl}
+          alt={`preview-${template.id}`}
+          width={w}
+          height={h}
+          // Centered + contain-scaled inside the fixed 16:9 box. The host is
+          // position:relative + overflow:hidden, so absolute centering with a
+          // center transform-origin keeps the scaled template middle-anchored.
+          style={{
+            position: "absolute",
+            left: "50%",
+            top: "50%",
+            transformOrigin: "center",
+            transform: `translate(-50%, -50%) scale(${scale})`,
+          }}
+        />
       )}
-    </>
+      {!pngUrl && !error && (
+        <span
+          className="template-preview-loading"
+          role="status"
+          aria-label={t("template_picker.preview_loading")}
+        />
+      )}
+      {error && <span className="settings-error">{error}</span>}
+    </div>
   );
 }
 
