@@ -163,13 +163,23 @@ impl WeftCutServer {
         }
     }
 
-    /// The full Motif catalog payload (built-ins + installed + draft user Motifs,
-    /// each with `status`/`content_hash`/`target_id`) — same source the Tauri
-    /// `commands::list_motifs` picker uses, so the MCP `list_motifs` tool and the
-    /// `motifs://current` resource stay in lockstep with the human surface.
+    /// The Motif catalog payload for the MCP surface (built-ins + installed +
+    /// draft user Motifs, each with `status`/`content_hash`/`target_id`). Shares
+    /// the Tauri picker's source (`commands::list_motifs_inner`) so the catalog
+    /// can't drift, but STRIPS the per-entry `html` — the picker needs it for
+    /// client-side rendering, agents don't (it would bloat their context; they
+    /// fetch source on demand via `get_motif_source`).
     fn motifs_payload(&self) -> Vec<Value> {
         let store = self.app.state::<crate::motifs::store::UserMotifStore>();
         crate::commands::list_motifs_inner(&store)
+            .into_iter()
+            .map(|mut entry| {
+                if let Some(obj) = entry.as_object_mut() {
+                    obj.remove("html");
+                }
+                entry
+            })
+            .collect()
     }
 
     #[tool(description = "Liveness check. Returns 'pong' to confirm the WeftCut MCP server is reachable.")]

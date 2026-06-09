@@ -1993,8 +1993,8 @@ pub(crate) fn list_motifs_inner(
 /// Stage F-Picker: the UI catalog. A superset of the MCP `list_motifs`
 /// payload — every manifest field (e.g. `fonts`) plus the raw `html`
 /// document so the picker can render live previews client-side. The MCP
-/// surface stays manifest-only (see `mcp::templates_payload`); the extra
-/// `html` field is UI-only and would just bloat agent context.
+/// surface strips `html` (see `mcp::WeftCutServer::motifs_payload`); the
+/// extra `html` field is UI-only and would just bloat agent context.
 ///
 /// Returns built-ins first (fixed display order), then installed user Motifs,
 /// then drafts. Each entry carries a `status` field (`"builtin"` |
