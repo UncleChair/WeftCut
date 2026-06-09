@@ -1052,6 +1052,9 @@ export interface MotifSummary {
   settle_rafs?: number;
   status?: "builtin" | "installed" | "draft";
   content_hash?: string;
+  /// The installed Motif id this draft was forked from (`create_edit_draft`).
+  /// Present only on edit-mode drafts; absent for new drafts and installed/builtin entries.
+  target_id?: string;
   /// Keyed by prop name. Map order is BTreeMap-stable (alphabetical) so the
   /// picker can render fields in a deterministic order without sorting.
   props_schema: Record<string, PropSpec>;
@@ -1124,6 +1127,12 @@ export async function deleteMotif(id: string): Promise<void> {
 /// id/version, re-composes, and emits `motifs:changed`.
 export async function amendMotifDraft(draftId: string, source: string): Promise<void> {
   await invoke("amend_motif_draft", { draftId, source });
+}
+
+/// Open a working draft seeded from an installed/built-in Motif (Edit). Built-in
+/// → forced fork (no Update target). Returns the working draft id.
+export async function createEditDraft(sourceId: string): Promise<string> {
+  return invoke<string>("create_edit_draft", { sourceId });
 }
 
 // ============================================================
