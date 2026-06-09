@@ -52,31 +52,47 @@ pub struct WriteDraftArgs {
     pub html: String,
 }
 
-/// Validate + compose + write a draft. Returns the assigned draft id.
+/// Core of `write_motif_draft`: validate + mint a final-ready unique id (vs
+/// published + existing drafts; Model B → no rebind on install-new) + compose +
+/// write the draft. Identity is app-owned: the id is minted from the name and
+/// `version` is forced to 1 (any id/version in `manifest` is ignored). When
+/// `from` is `Some`, record it as the draft's Update target (`target` sidecar) so
+/// a later `install_motif {Update}` republishes over it. No `AppHandle` / no emit
+/// — the command + the MCP tool wrap this and emit `motifs:changed` themselves.
+pub fn write_motif_draft_core(
+    store: &UserMotifStore,
+    manifest: Manifest,
+    html: &str,
+    from: Option<&str>,
+) -> Result<String, String> {
+    let mut manifest = manifest;
+    validate_manifest(&manifest).map_err(|e| e.to_string())?;
+    let taken: Vec<String> = store
+        .published_ids()
+        .into_iter()
+        .chain(store.list_draft_ids())
+        .collect();
+    let draft_id = assign_unique_id(&manifest.name, &taken);
+    manifest.id = draft_id.clone();
+    manifest.version = 1;
+    let composed = compose_motif_html(&manifest, html);
+    store.write_draft(&draft_id, &composed).map_err(|e| e.to_string())?;
+    if let Some(target) = from {
+        store.write_draft_target(&draft_id, target).map_err(|e| e.to_string())?;
+    }
+    Ok(draft_id)
+}
+
+/// Validate + compose + write a draft. Returns the assigned draft id. Every call
+/// mints a NEW draft id; the iterative edit UI reuses an existing draft_id via
+/// `amend_motif_draft` instead.
 #[tauri::command]
 pub async fn write_motif_draft(
     app: AppHandle,
     store: State<'_, UserMotifStore>,
     args: WriteDraftArgs,
 ) -> Result<String, String> {
-    validate_manifest(&args.manifest).map_err(|e| e.to_string())?;
-    // NOTE: every call mints a NEW draft id; the iterative edit UI reuses an
-    // existing draft_id via `amend_motif_draft` (below) so refining a draft
-    // doesn't litter <root>/drafts/ with abandoned dirs. The 3b-2 auto-save path
-    // should still debounce or drop the motifs:changed emit on intermediate writes
-    // (it fires a full list_motifs re-pull) — emit really only matters on install/delete.
-    // Final-ready id: unique vs BOTH published and existing drafts, so the id
-    // never changes on install (Model B → no layer rebind).
-    let taken: Vec<String> = store
-        .published_ids()
-        .into_iter()
-        .chain(store.list_draft_ids())
-        .collect();
-    let draft_id = assign_unique_id(&args.manifest.name, &taken);
-    let mut manifest = args.manifest;
-    manifest.id = draft_id.clone();
-    let html = compose_motif_html(&manifest, &args.html);
-    store.write_draft(&draft_id, &html).map_err(|e| e.to_string())?;
+    let draft_id = write_motif_draft_core(&store, args.manifest, &args.html, None)?;
     emit_motifs_changed(&app);
     Ok(draft_id)
 }
@@ -219,13 +235,15 @@ pub struct InstallArgs {
     pub mode: InstallMode,
 }
 
-/// Promote a draft to a published user Motif. Returns the published id.
-#[tauri::command]
-pub async fn install_motif(
-    app: AppHandle,
-    store: State<'_, UserMotifStore>,
-    handle: State<'_, crate::state::ProjectHandle>,
-    args: InstallArgs,
+/// Core of `install_motif`: validate the draft, `install_draft` (rewrite island
+/// to the final id/version + move into the published slot), and for an in-place
+/// Update retarget+lenient-migrate current-project layers via `rebind_motif`.
+/// Returns the published id. No `AppHandle` / no emit — the command + the MCP
+/// tool wrap this and emit `motifs:changed` themselves.
+pub async fn install_motif_core(
+    store: &UserMotifStore,
+    handle: &crate::state::ProjectHandle,
+    args: &InstallArgs,
 ) -> Result<String, String> {
     let draft = store
         .get_draft(&args.draft_id)
@@ -237,7 +255,7 @@ pub async fn install_motif(
     // Track whether this install is an in-place Update: only an Update retargets
     // + migrates existing project layers (New keeps a stable id → no rebind).
     let mut is_update = false;
-    let (final_id, version) = match args.mode {
+    let (final_id, version) = match &args.mode {
         InstallMode::New => {
             // The draft id was made final-ready at write time; keep it so placed
             // layers need no rebind. Guard the rare race where a published Motif
@@ -255,12 +273,12 @@ pub async fn install_motif(
                 return Err(format!("cannot overwrite the built-in Motif '{target_id}'"));
             }
             let prev = store
-                .get_motif(&target_id)
+                .get_motif(target_id)
                 .ok_or_else(|| format!("update target '{target_id}' is not an installed Motif"))?;
             is_update = true;
             // Bump version so the (version-keyed) frame cache invalidates -> all
             // placed layers re-render with the new look (live/mutable).
-            (target_id, prev.manifest.version.saturating_add(1))
+            (target_id.clone(), prev.manifest.version.saturating_add(1))
         }
     };
 
@@ -270,8 +288,7 @@ pub async fn install_motif(
     let html = compose_motif_html(&manifest, &draft.html);
     // Rewrite the draft's island to the final id + bumped version, THEN move it
     // into the published slot. Order matters: if install_draft fails, the only
-    // dirty state is the DRAFT (its island momentarily names final_id while its
-    // dir is still draft_id) — the published store is never left inconsistent,
+    // dirty state is the DRAFT — the published store is never left inconsistent,
     // and a retry re-derives the same final_id and re-runs both steps safely.
     store.write_draft(&args.draft_id, &html).map_err(|e| e.to_string())?;
     store
@@ -280,8 +297,7 @@ pub async fn install_motif(
 
     // For an in-place Update, retarget current-project layers from the working
     // draft (and any already on the target) onto the now-published target, and
-    // lenient-migrate their props to the target's NEW schema. New installs keep
-    // a stable id, so they need no rebind.
+    // lenient-migrate their props to the target's NEW schema.
     if is_update {
         let target_manifest = store
             .get_motif(&final_id)
@@ -311,7 +327,18 @@ pub async fn install_motif(
                 .map_err(|e| e.to_string())?;
         }
     }
+    Ok(final_id)
+}
 
+/// Promote a draft to a published user Motif. Returns the published id.
+#[tauri::command]
+pub async fn install_motif(
+    app: AppHandle,
+    store: State<'_, UserMotifStore>,
+    handle: State<'_, crate::state::ProjectHandle>,
+    args: InstallArgs,
+) -> Result<String, String> {
+    let final_id = install_motif_core(&store, &handle, &args).await?;
     emit_motifs_changed(&app);
     Ok(final_id)
 }
