@@ -20,7 +20,7 @@
 // contiguous source-time, sequential timeline-time" pairs and share a
 // decoder for them (warm cut-to-cut). v1 doesn't need that.
 //
-// Plan: docs/pixi-renderer-plan.md (8b.2 + 8c.2 + P1; robustness in P9.5)
+// Plan: docs/render.md (8b.2 + 8c.2 + P1; robustness in P9.5)
 
 import type { EncodedPacketSink } from "mediabunny";
 import { logEmit } from "../../ipc";

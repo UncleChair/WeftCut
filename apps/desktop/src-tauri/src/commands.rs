@@ -41,7 +41,7 @@ pub struct ProjectSummary {
     /// Sparse markers along the timeline. Surfaced so the agent-mode
     /// mini timeline can render them as pips above the scrub bar.
     pub markers: Vec<MarkerSummary>,
-    /// Layer groups (`docs/group-system.md`). UI uses these to render the
+    /// Layer groups (`docs/groups.md`). UI uses these to render the
     /// tinted group indicator + lookup the membership for click-selects-
     /// whole-group behavior.
     pub groups: Vec<GroupSummary>,
@@ -80,7 +80,7 @@ pub struct TrackSummary {
     pub label: Option<String>,
     pub enabled: bool,
     pub locked: bool,
-    /// A/B-roll role stamp (`docs/ab-roll-redesign`). Serializes as the
+    /// A/B-roll role stamp (`docs/data-model.md`). Serializes as the
     /// kebab-case variant name when present (`"a-roll" | "b-roll" |
     /// "audio-a" | "audio-b"`) or `null` for additional/legacy tracks. The
     /// UI uses this to drive the AB display-mode filter and the role-aware
@@ -834,7 +834,7 @@ pub async fn add_media_layer(
         .await
         .map_err(|e: CommandError| e.to_string())?;
 
-    // `docs/group-system.md` — when the source is video-with-audio and
+    // `docs/groups.md` — when the source is video-with-audio and
     // the project's `auto_pair_audio_on_import` setting is on, also place
     // an Audio layer pointing at the same MediaItem and group the pair.
     // Snapshot AFTER add_layer so the freshly-added video layer counts
@@ -1145,7 +1145,7 @@ pub async fn project_open(
         .map_err(|e: CommandError| e.to_string())?;
     recents.push(path, display_name);
 
-    // `docs/preview-scrub.md` S.2 — fan out background jobs for any
+    // `docs/preview.md` S.2 — fan out background jobs for any
     // media missing derivatives. `load_from_dir` cleared `proxy_path`
     // on entries whose `proxy_format_version` was below the current
     // encoder version; this catches those, plus any media whose
@@ -1341,7 +1341,7 @@ pub async fn keybindings_import(
 
 // ---- App-level settings (A/B-roll redesign) ----
 //
-// Strict app-level scope (`docs/ab-roll-redesign`): every project opens
+// Strict app-level scope (`docs/data-model.md`): every project opens
 // under the same value. The pill / View menu / `T` shortcut all funnel
 // here; the inline pill is the natural setting mutator and the Settings
 // panel is mostly a reference UI.
@@ -1790,7 +1790,7 @@ async fn place_imported_media_on_fresh_tracks(
                 .await
                 .map_err(|e: CommandError| e.to_string())?;
             // Group the V/A pair so future trims fan out
-            // (`docs/group-system.md`). Same track placement means
+            // (`docs/groups.md`). Same track placement means
             // the group acts as the "this is one logical clip"
             // signal; V.4's group-follow-on-move keeps them
             // co-located when the user drags the pair onto A or B.
@@ -2113,7 +2113,7 @@ pub async fn move_layer(
         .map_err(|e: CommandError| e.to_string())
 }
 
-/// `docs/group-system.md` — group-aware trim. `edge` is `"in"` or `"out"`.
+/// `docs/groups.md` — group-aware trim. `edge` is `"in"` or `"out"`.
 /// When the layer is in a group and `escape_group` is false (default),
 /// aligned-edge coupling fans the trim out to other members.
 #[tauri::command]
@@ -2465,7 +2465,7 @@ pub async fn get_waveform_peaks(
 }
 
 // ============================================================
-// Status / log surface (see `docs/status-log-system.md`).
+// Status / log surface (see `docs/status-log.md`).
 //
 // `log_list` snapshots the in-memory ring for the frontend Zustand
 // store on mount. `log_clear` empties the ring (the JSONL file is

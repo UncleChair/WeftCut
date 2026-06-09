@@ -1,6 +1,6 @@
 //! Auto-save subscriber + periodic Backups/ snapshots.
 //!
-//! Per `docs/workspace-redesign.md` Q8 the workspace is the truth — every
+//! Per `docs/data-model.md` Q8 the workspace is the truth — every
 //! actor commit eventually lands on disk as `project.json`, no explicit
 //! Save required. This task subscribes to the actor's broadcast and:
 //!

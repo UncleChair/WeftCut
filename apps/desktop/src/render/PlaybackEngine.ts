@@ -1,7 +1,7 @@
 // Transport for the new PixiJS renderer. Owns the SyntheticClock,
 // wires the Compositor and AudioGraph, and exposes play/pause/seek/scrub.
 //
-// Plan: docs/pixi-renderer-plan.md
+// Plan: docs/render.md
 //
 // P0 stub — full implementation lands in P1 (decode + clock + scrub).
 // The shape here is intentionally close to the existing

@@ -157,7 +157,7 @@ pub fn validate(project: &Project) -> Result<(), ValidationError> {
     Ok(())
 }
 
-/// Group invariants (`docs/group-system.md`):
+/// Group invariants (`docs/groups.md`):
 ///   1. Every `Group.members` LayerId resolves to a real layer.
 ///   2. A LayerId appears in at most one group.
 ///   3. Group IDs are unique.
@@ -1137,7 +1137,7 @@ mod tests {
     }
 
     // ============================================================
-    // Groups (Phase G — `docs/group-system.md`)
+    // Groups (Phase G — `docs/groups.md`)
     // ============================================================
 
     use crate::state::group::Group;

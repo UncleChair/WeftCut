@@ -239,7 +239,7 @@ pub struct AudioPatch {
 /// workspace-open invalidation pass when an existing proxy is stale per
 /// `proxy_format_version`); `None` leaves it alone (the common path for
 /// fresh-generation patches that don't touch proxies). See
-/// `docs/preview-scrub.md`.
+/// `docs/preview.md`.
 #[derive(Clone, Debug, Default)]
 pub struct MediaDerivativesPatch {
     pub proxy_path: Option<Option<std::path::PathBuf>>,
@@ -923,7 +923,7 @@ impl ProjectHandle {
     /// Split a layer at `at_t_us`. When the layer is in a group and
     /// `escape_group=false` (default), every group member whose interval
     /// strictly contains `at_t_us` is also split there, with all resulting
-    /// pieces staying in the same group. See `docs/group-system.md`.
+    /// pieces staying in the same group. See `docs/groups.md`.
     pub async fn split_layer(
         &self,
         actor: Actor,
@@ -950,7 +950,7 @@ impl ProjectHandle {
     /// edge sits at the same time as the trimmed layer's pre-trim edge is
     /// moved by the same delta. The op is clamped to the most restrictive
     /// aligned member's source-bound / `t_start < t_end` constraint. See
-    /// `docs/group-system.md`.
+    /// `docs/groups.md`.
     pub async fn trim_layer(
         &self,
         actor: Actor,
@@ -1050,7 +1050,7 @@ impl ProjectHandle {
     /// is in a group and `escape_group=false` (default), every group member
     /// shifts in time by the same delta as the moved layer; only the
     /// targeted layer's track changes (track changes never propagate). See
-    /// `docs/group-system.md`.
+    /// `docs/groups.md`.
     pub async fn move_layer(
         &self,
         actor: Actor,
@@ -1213,7 +1213,7 @@ impl ProjectHandle {
         rx.await.expect("project actor terminated")
     }
 
-    /// `docs/group-system.md` — bundle ≥2 layers into a unit that moves /
+    /// `docs/groups.md` — bundle ≥2 layers into a unit that moves /
     /// trims / splits together. Members must not be in any other group
     /// unless `reassign == true` (in which case they're moved here and
     /// the prior group auto-dissolves below 2 members).
@@ -3099,7 +3099,7 @@ pub(crate) fn apply_add_layer(
 
 /// Mutation half of `do_delete_layer`. Also removes the layer from any
 /// group it belongs to and auto-dissolves the group when its member count
-/// drops below 2 (`docs/group-system.md` invariant #3).
+/// drops below 2 (`docs/groups.md` invariant #3).
 pub(crate) fn apply_delete_layer(
     project: &mut Project,
     id: LayerId,
@@ -3143,7 +3143,7 @@ pub(crate) fn drop_layer_from_groups(project: &mut Project, layer_id: LayerId) {
     }
 }
 
-/// `docs/group-system.md` — create a new group from the given layer ids.
+/// `docs/groups.md` — create a new group from the given layer ids.
 /// Requires ≥2 distinct existing layers. If any target is already in
 /// another group, fails with `LayerAlreadyGrouped` unless `reassign`,
 /// which removes them from their prior group(s) (auto-dissolving below 2)
@@ -3425,7 +3425,7 @@ pub(crate) fn apply_update_layer_params(
 /// t-sorted position on the destination track, and auto-extends composition
 /// duration if needed. When the layer is in a group and `escape_group=false`,
 /// also shifts every group sibling's `t_start_us` / `t_end_us` by the same
-/// delta (`docs/group-system.md` — move propagates time only, tracks stay
+/// delta (`docs/groups.md` — move propagates time only, tracks stay
 /// local). Locked siblings reject the whole op.
 pub(crate) fn apply_move_layer(
     project: &mut Project,
@@ -3761,7 +3761,7 @@ fn split_single_layer(
     Ok((id, right_id))
 }
 
-/// `docs/group-system.md` — trim one edge of a layer's timeline range.
+/// `docs/groups.md` — trim one edge of a layer's timeline range.
 /// When grouped and `escape_group=false`, fan out the same delta to every
 /// member whose corresponding edge sits at the *same* `t` as the trimmed
 /// layer's pre-trim edge. Clamp the delta to the most-restrictive aligned
@@ -6235,7 +6235,7 @@ mod tests {
 
     #[tokio::test]
     async fn blank_project_ships_with_ab_roll_skeleton() {
-        // A/B-roll v2 (`docs/ab-roll-redesign` follow-up): the reserved
+        // A/B-roll v2 (`docs/data-model.md` follow-up): the reserved
         // skeleton shrinks from 4 → 2. Two non-removable, role-stamped
         // tracks (A roll + B roll). Both are kind-agnostic in the
         // user-facing model; in v5.0 the TrackKind field still exists
@@ -6891,7 +6891,7 @@ mod tests {
 
     #[tokio::test]
     async fn move_track_reorders() {
-        // `docs/ab-roll-redesign`: blank project now has 4 reserved tracks
+        // `docs/data-model.md`: blank project now has 4 reserved tracks
         // (Audio B, Audio A, Video A, Video B). Find Video A / Video B by
         // role so this test stays robust against any future re-ordering of
         // the bootstrap skeleton.
@@ -7422,7 +7422,7 @@ mod tests {
     }
 
     // ============================================================
-    // Groups (Phase G.2 — `docs/group-system.md`)
+    // Groups (Phase G.2 — `docs/groups.md`)
     // ============================================================
 
     async fn three_layers_on_video_track() -> (ProjectHandle, TrackId, LayerId, LayerId, LayerId) {
@@ -7644,7 +7644,7 @@ mod tests {
     }
 
     // ============================================================
-    // Group-aware move / trim / split (Phase G.3 — `docs/group-system.md`)
+    // Group-aware move / trim / split (Phase G.3 — `docs/groups.md`)
     // ============================================================
 
     /// Two tracks, A on track1 and B on track2, both at [0..1_000_000].

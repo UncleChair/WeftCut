@@ -136,7 +136,7 @@ function computeLayerSlices(
   return slices;
 }
 
-// V.8 (`docs/ab-roll-redesign` v2) — track rendering order is now a
+// V.8 (`docs/data-model.md` v2) — track rendering order is now a
 // simple reverse of the data-model. Data-model convention (idx 0 =
 // bottom of z-stack, last = top) maps directly to "last index renders
 // at the top of the screen", matching the editor convention that the
@@ -205,7 +205,7 @@ interface DragState {
   deltaUs: number;
   /// During cross-track drag, which track is the pointer currently over.
   overTrackId: string | null;
-  /// `docs/group-system.md` — when true (Alt-held at drag start), this op
+  /// `docs/groups.md` — when true (Alt-held at drag start), this op
   /// stays local even if the dragged layer is in a group. Passed straight
   /// to `moveLayer` / `trimLayer` as `escape_group`.
   escapeGroup: boolean;
@@ -226,12 +226,12 @@ interface PendingLayerPlacement {
 
 interface TimelineProps {
   tracks: TrackSummary[];
-  /// `docs/group-system.md`. Empty array when no groups exist.
+  /// `docs/groups.md`. Empty array when no groups exist.
   groups: GroupSummary[];
   durationUs: number;
   currentTimeUs: number;
   selectedLayerId: string | null;
-  /// R.7 (`docs/ab-roll-redesign`): when set, this hidden track is
+  /// R.7 (`docs/data-model.md`): when set, this hidden track is
   /// included in the AB-mode ordered list at its natural accretion
   /// slot. Cleared by the App when the user selects a layer on a
   /// different track, presses Esc, or the peek list dispatches a new
@@ -272,7 +272,7 @@ function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
 }
 
-/// `docs/group-system.md`. Stable, deterministic hue per group id so all
+/// `docs/groups.md`. Stable, deterministic hue per group id so all
 /// members share an accent color across renders. Skips the yellow/green
 /// band that conflicts with the "is-selected" highlight in `styles.css`.
 function groupHue(groupId: string): number {
@@ -338,7 +338,7 @@ export function Timeline({
     layerId: string;
     layerKind: string;
   } | null>(null);
-  /// `docs/group-system.md` — multi-select for `Ctrl+G` and visual highlight.
+  /// `docs/groups.md` — multi-select for `Ctrl+G` and visual highlight.
   /// `selectedLayerId` (from App) is the primary (drives PropertyPanel);
   /// this set tracks every layer that should render with the selected
   /// chrome. Stays in sync via the click handlers below.
@@ -349,7 +349,7 @@ export function Timeline({
   const groupByLayerId = useMemo(() => indexGroups(groups), [groups]);
 
   // A/B-roll display mode comes from the app-level settings store
-  // (`docs/ab-roll-redesign`). The store hydrates on app mount via
+  // (`docs/data-model.md`). The store hydrates on app mount via
   // `wireAppSettingsStream`. Atomic selector — never include the rest of
   // the settings struct in a single selector (feedback_zustand_composite_
   // selector).
@@ -372,7 +372,7 @@ export function Timeline({
   }, [tracks, displayMode, revealedTrackId]);
 
   /// Map a click event on a layer chip to the resulting selection set.
-  /// `docs/group-system.md`: plain click on a grouped layer selects the
+  /// `docs/groups.md`: plain click on a grouped layer selects the
   /// whole group; `Alt+click` selects only the clicked layer (escape
   /// path); `Shift+click` extends the current selection (with the
   /// clicked layer's whole group if any).
@@ -415,7 +415,7 @@ export function Timeline({
     });
   }, [selectedLayerId, groupByLayerId, groups]);
 
-  /// `docs/group-system.md` — Mod+G groups the current multi-selection;
+  /// `docs/groups.md` — Mod+G groups the current multi-selection;
   /// Mod+Shift+G dissolves every group represented in the selection.
   /// Wired through the global `useShortcuts` registry (Phase H-followup
   /// 2026-05-17) so the Keyboard Shortcuts settings panel exposes them
@@ -802,7 +802,7 @@ export function Timeline({
       if (Math.abs(deltaUs) < 1_000 && sameTrack) return;
 
       try {
-        // `docs/group-system.md` — Alt-held at drag start opts the move /
+        // `docs/groups.md` — Alt-held at drag start opts the move /
         // trim out of group fanout for this single op.
         const escape = committed.escapeGroup;
         switch (committed.kind) {
@@ -1225,7 +1225,7 @@ function MotifBakeDot({ layerId }: { layerId: string }) {
   return <span className={`template-bake-dot is-${phase}`} title={label} aria-label={label} />;
 }
 
-/// `docs/ab-roll-redesign` R.5b. The pill IS the setting: a click
+/// `docs/data-model.md` R.5b. The pill IS the setting: a click
 /// flips the app-level `display_mode` (`appSettingsSet` round-trips
 /// through Rust which emits `app_settings:changed` so every
 /// subscriber syncs). Same surface the View menu and `T` shortcut
@@ -1664,7 +1664,7 @@ function LayerBlock({
   isPrimary: boolean;
   /// Member of the current selection set (highlight only).
   isSelected: boolean;
-  /// `docs/group-system.md` — null when ungrouped.
+  /// `docs/groups.md` — null when ungrouped.
   groupId: string | null;
   dragState: DragState | null;
   pendingPlacement: PendingLayerPlacement | null;
@@ -1785,7 +1785,7 @@ function LayerBlock({
     );
     const kind: DragKind =
       zone === "left" ? "trim-start" : zone === "right" ? "trim-end" : "move";
-    // `docs/group-system.md` — match click-selection semantics on
+    // `docs/groups.md` — match click-selection semantics on
     // pointerdown so drag and click share the same group-aware path.
     onSelectFromClick(layer.id, {
       altKey: e.altKey,
@@ -1833,7 +1833,7 @@ function LayerBlock({
     sliceHeight = interiorHeight - halfHeight - 1;
   }
 
-  // `docs/group-system.md` — tinted left border + chain-link icon hue
+  // `docs/groups.md` — tinted left border + chain-link icon hue
   // derived from group_id so all members share an accent color.
   const groupStyle: React.CSSProperties = {};
   if (groupId !== null) {

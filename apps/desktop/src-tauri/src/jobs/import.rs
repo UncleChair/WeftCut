@@ -1,6 +1,6 @@
 //! Background-copy import worker for `import_media`.
 //!
-//! Per `docs/workspace-redesign.md` Q6 the import flow is:
+//! Per `docs/data-model.md` Q6 the import flow is:
 //!
 //!   1. Tauri command `import_media` probes + hashes the source synchronously
 //!      (fast), inserts a MediaItem with `path_abs = original source`, kicks

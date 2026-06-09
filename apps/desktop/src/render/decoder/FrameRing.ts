@@ -1,6 +1,6 @@
 // Lookahead/lookbehind frame ring for one source.
 //
-// Plan: docs/pixi-renderer-plan.md (8c.2 — 1 s ahead / 0.5 s behind)
+// Plan: docs/render.md (8c.2 — 1 s ahead / 0.5 s behind)
 //
 // Behavior: caller `push(frame)`es decoded VideoFrames in monotonic
 // PTS order. `frameAt(tUs)` returns the frame whose presentation

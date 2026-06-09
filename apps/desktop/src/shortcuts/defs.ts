@@ -64,14 +64,14 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   toggleBladeMode: { defaultKeys: ["C"],                   labelKey: "actions.toggle_blade_mode" },
   toggleLog:       { defaultKeys: ["Mod+`"],               labelKey: "actions.toggle_log" },
   focusLogSearch:  { defaultKeys: ["Mod+Shift+`"],         labelKey: "actions.focus_log_search" },
-  // `docs/ab-roll-redesign` R.8: bare-letter `T` flips the app-level
+  // `docs/data-model.md` R.8: bare-letter `T` flips the app-level
   // display_mode (AB ↔ Show All). Rebindable through Settings →
   // Keyboard. Bare-letter chords don't fire in text inputs by default.
   toggleDisplayMode: { defaultKeys: ["T"],                 labelKey: "actions.toggle_display_mode" },
-  // `docs/ab-roll-redesign` R.9: bare-letter `M` toggles the MediaPool
+  // `docs/data-model.md` R.9: bare-letter `M` toggles the MediaPool
   // left drawer (closed/open). The app-pref store remembers state.
   toggleMediaPool:   { defaultKeys: ["M"],                 labelKey: "actions.toggle_media_pool" },
-  // `docs/group-system.md` — Ctrl/Cmd+G groups the current multi-
+  // `docs/groups.md` — Ctrl/Cmd+G groups the current multi-
   // selection; Ctrl/Cmd+Shift+G dissolves every group represented in
   // the selection. Handler lives in Timeline.tsx (needs `selectedLayerIds`
   // which is Timeline-local). Surfaced here so the Keyboard Shortcuts

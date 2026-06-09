@@ -1,6 +1,6 @@
 //! Slim preview helper module.
 //!
-//! Post DOM-preview cutover (`docs/preview-dom.md` Phase F), the
+//! Post DOM-preview cutover (`docs/preview.md` Phase F), the
 //! Rust-side preview renderer is gone. ffmpeg runs only at import
 //! (proxies) and export. This module survives as the home of
 //! [`with_proxies_substituted`], which both the export pipeline
@@ -11,7 +11,7 @@
 //! segmented cache (`segmented.rs`), encoder + manifest +
 //! queue + codec + failure machinery, the `preview:render_*` and
 //! `preview:segment_*` Tauri events — was deleted at cutover.
-//! See `docs/preview-segmented-cache.md` (now archival) for the
+//! See `docs/preview.md` (now archival) for the
 //! prior design.
 
 use crate::state::Project;

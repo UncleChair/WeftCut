@@ -3,7 +3,7 @@
 // project snapshot serialization, OffscreenCanvas transfer, progress
 // streaming, and chunk backpressure.
 //
-// Plan: docs/pixi-renderer-plan.md (P9)
+// Plan: docs/render.md (P9)
 //
 // Callers provide a writeChunk sink for the video-only fMP4 and get final
 // frame counters. Audio export and mux/transcode run on the Rust side after

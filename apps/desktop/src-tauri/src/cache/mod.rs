@@ -1,7 +1,7 @@
 //! Content-addressable cache layout for media derivatives — proxies,
 //! thumbnails, waveforms, on-demand extracted frames.
 //!
-//! **Per `docs/workspace-redesign.md`** (decision Q3), the cache is now
+//! **Per `docs/data-model.md`** (decision Q3), the cache is now
 //! rooted at `<workspace>/Cache/`. At app boot, before any workspace is
 //! opened or saved, `CacheLayout` points at the OS app-cache as a
 //! transitional fallback. When `project_save_as` or `project_open` lands,

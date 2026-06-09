@@ -10,7 +10,7 @@
 // Activation: `?pixi=1` URL param or
 // `localStorage.setItem("weftcut.preview.pixi", "1")`.
 //
-// Plan: docs/pixi-renderer-plan.md (P2)
+// Plan: docs/render.md (P2)
 
 import {
   forwardRef,

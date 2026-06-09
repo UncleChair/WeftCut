@@ -4,7 +4,7 @@
 // contains the layer-local time, and update the sprite's persistent
 // texture source from it.
 //
-// Plan: docs/pixi-renderer-plan.md (P2)
+// Plan: docs/render.md (P2)
 //
 // Implementation per PixiJS v8 docs:
 //

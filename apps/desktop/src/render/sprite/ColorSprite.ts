@@ -5,7 +5,7 @@
 // frame keyframe interpolation will arrive when the IPC ships full
 // `AnimTrack<T>` (separate work).
 //
-// Plan: docs/pixi-renderer-plan.md (P3)
+// Plan: docs/render.md (P3)
 
 import { Graphics } from "pixi.js";
 

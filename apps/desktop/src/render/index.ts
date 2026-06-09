@@ -1,7 +1,7 @@
 // Barrel for the PixiJS-backed renderer. Stable surface area used by
 // `apps/desktop/src/preview/PreviewSurface.tsx` and downstream phases.
 //
-// Plan: docs/pixi-renderer-plan.md
+// Plan: docs/render.md
 
 export { Compositor } from "./Compositor";
 export type { CompositorInit } from "./Compositor";

@@ -1,4 +1,4 @@
-//! Status / log subsystem. See `docs/status-log-system.md` for the
+//! Status / log subsystem. See `docs/status-log.md` for the
 //! full design.
 //!
 //! The public surface is intentionally small:

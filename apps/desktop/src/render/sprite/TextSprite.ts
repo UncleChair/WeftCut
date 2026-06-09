@@ -1,6 +1,6 @@
 // Text layer rendered via PixiJS native `Text`.
 //
-// Plan: docs/pixi-renderer-plan.md (P4 — T1 decision: PixiJS Text
+// Plan: docs/render.md (P4 — T1 decision: PixiJS Text
 // native canvas)
 //
 // Implementation: a single `Text` object with a cached style

@@ -8,7 +8,7 @@
 // are mixed by the OS audio path. Per-layer gain / pan / mute will
 // land when we route through a Web Audio graph in a follow-up.
 //
-// Plan: docs/pixi-renderer-plan.md (P7)
+// Plan: docs/render.md (P7)
 
 /// Drift threshold beyond which we hard-snap `audio.currentTime` to
 /// the engine's expected position. Anything smaller is absorbed by

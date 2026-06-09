@@ -14,11 +14,11 @@ use super::track::{Track, TrackRole};
 use super::transition::Transition;
 
 // v1 — original .vproj format with absolute media paths.
-// v2 — workspace-first redesign (`docs/workspace-redesign.md`): media
+// v2 — workspace-first redesign (`docs/data-model.md`): media
 //      copied into `<workspace>/Media/`, `path_rel` authoritative,
 //      derivatives in `<workspace>/Cache/`. `io::load_from_dir`
 //      auto-migrates v1 projects to v2 on open.
-// v3 — group system (`docs/group-system.md`): adds project-level
+// v3 — group system (`docs/groups.md`): adds project-level
 //      `groups` table + `settings.auto_pair_audio_on_import`. Old v2
 //      `.vproj` files load with `groups = []` via `#[serde(default)]`;
 //      the migration is a pure version-bump.
@@ -31,7 +31,7 @@ use super::transition::Transition;
 //      present in v5.0; removed in a later V.5). Legacy v4 projects
 //      load as-is — orphan AudioA/AudioB tracks remain visible (no
 //      auto-migration; user manually cleans up if desired).
-// v6 — html-render groups (`docs/html-render-groups.md`): adds
+// v6 — html-render groups (`docs/groups.md`): adds
 //      `Group.render_mode: GroupRenderMode { Native | Html }` field.
 //      Legacy v5 groups load as `Native` via `#[serde(default)]`. Pure
 //      version bump; the migration is a no-op.
@@ -64,7 +64,7 @@ pub struct Project {
     /// otherwise. `#[serde(default)]` keeps older `.vproj` files loadable.
     #[serde(default)]
     pub transitions: imbl::Vector<Transition>,
-    /// Layer groups (`docs/group-system.md`). Each `Group` owns a set of
+    /// Layer groups (`docs/groups.md`). Each `Group` owns a set of
     /// `LayerId`s; flat membership (a layer is in at most one group). The
     /// actor maintains a derived `LayerId → GroupId` index for fast lookup
     /// and fans out move/trim/split ops across members. `#[serde(default)]`
@@ -77,7 +77,7 @@ pub struct Project {
 impl Project {
     pub fn new_blank(name: impl Into<String>) -> Self {
         let now = Utc::now();
-        // A/B-roll v2 (`docs/ab-roll-redesign` follow-up): the reserved
+        // A/B-roll v2 (`docs/data-model.md` follow-up): the reserved
         // skeleton shrinks from 4 → 2 tracks. Each is kind-agnostic in
         // the user-facing model (V.1 still has `TrackKind::Video` on
         // the field; the IR rewrite in V.5 removes the kind field and
@@ -138,7 +138,7 @@ pub struct ProjectSettings {
     pub history_capacity: usize,
     /// When `true` (default), importing a video source that has an audio
     /// stream creates both a `VideoClip` and an `Audio` layer pointing at
-    /// the same media, and groups them. See `docs/group-system.md`. When
+    /// the same media, and groups them. See `docs/groups.md`. When
     /// `false`, only the `VideoClip` layer is created (audio is silently
     /// dropped, matching pre-v3 behavior).
     #[serde(default = "default_auto_pair_audio_on_import")]

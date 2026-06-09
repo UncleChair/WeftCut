@@ -1,6 +1,6 @@
 // Debounced scrub coalescer.
 //
-// Plan: docs/pixi-renderer-plan.md (8d.2 — fresh WebCodecs-native)
+// Plan: docs/render.md (8d.2 — fresh WebCodecs-native)
 //
 // Behavior: caller `requestSeek(tUs)` may fire at scroll-wheel speed
 // (hundreds of times per second). The coalescer batches into one

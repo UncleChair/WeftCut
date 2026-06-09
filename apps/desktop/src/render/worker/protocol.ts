@@ -1,6 +1,6 @@
 // postMessage protocol between the main thread and the export Worker.
 //
-// Plan: docs/pixi-renderer-plan.md (P8)
+// Plan: docs/render.md (P8)
 //
 // The Worker is constructed once per export, receives one `start` request,
 // streams `progress` + `chunk` events, posts a final `done` with counters

@@ -6,8 +6,8 @@
 // the PixiJS sprite samples that canvas as a texture each frame after
 // calling `setCurrentTime`.
 //
-// Plan: docs/pixi-renderer-plan.md (P6 chunk 1 — preview only; export
-// Worker context has no DOM, so SubtitlesSprite no-ops there.)
+// Preview only. Export runs in a Worker with no DOM host; Compositor
+// skips Subtitles layers there (no burn-in or sidecar in Rust export).
 
 import JASSUB from "jassub";
 
