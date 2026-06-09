@@ -143,6 +143,24 @@ impl UserMotifStore {
         std::fs::write(dir.join("index.html"), html)
     }
 
+    /// Write the `target` sidecar for a draft — the id of the installed/built-in
+    /// Motif this draft is editing (so install can offer Update vs Save-as-new,
+    /// and Discard can re-point the layer back). Absent for a from-scratch draft.
+    pub fn write_draft_target(&self, draft_id: &str, target_id: &str) -> std::io::Result<()> {
+        let dir = self.drafts_root().join(safe_seg(draft_id)?);
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(dir.join("target"), target_id)
+    }
+
+    /// Read a draft's `target` sidecar, if present. `None` for a from-scratch
+    /// draft, a missing draft, or an unsafe id.
+    pub fn read_draft_target(&self, draft_id: &str) -> Option<String> {
+        let seg = safe_seg(draft_id).ok()?;
+        let s = std::fs::read_to_string(self.drafts_root().join(seg).join("target")).ok()?;
+        let t = s.trim();
+        if t.is_empty() { None } else { Some(t.to_string()) }
+    }
+
     /// Ids of all drafts under `<root>/drafts/`.
     pub fn list_draft_ids(&self) -> Vec<String> {
         let mut out = Vec::new();
@@ -465,6 +483,26 @@ mod tests {
         let store = UserMotifStore::new(tmp.path().to_path_buf());
         store.write_draft("x", "hi").unwrap();
         assert!(store.read_file("drafts", "x/index.html").is_none());
+    }
+
+    #[test]
+    fn draft_target_sidecar_roundtrips_and_is_absent_by_default() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = UserMotifStore::new(tmp.path().to_path_buf());
+        store.write_draft("d1", "<html>x</html>").unwrap();
+        assert_eq!(store.read_draft_target("d1"), None);
+        store.write_draft_target("d1", "lower-third").unwrap();
+        assert_eq!(store.read_draft_target("d1").as_deref(), Some("lower-third"));
+        store.delete_user_motif("d1").unwrap();
+        assert_eq!(store.read_draft_target("d1"), None);
+    }
+
+    #[test]
+    fn read_draft_target_rejects_unsafe_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = UserMotifStore::new(tmp.path().to_path_buf());
+        assert!(store.write_draft_target("..", "x").is_err());
+        assert_eq!(store.read_draft_target(".."), None);
     }
 
     #[test]
