@@ -7,12 +7,48 @@ The render pipeline has three concerns:
    module, mounted against a `<canvas>` on the main thread for
    preview and against an `OffscreenCanvas` in a Worker for export.
 2. **Audio export** — an audio-only IR compiles to an ffmpeg lavfi
-   graph; ffmpeg produces `audio.m4a`.
-3. **Final mux** — `ffmpeg -c copy` stitches the WebCodecs video.mp4
-   with the audio.m4a into the user's output path.
+   graph; ffmpeg produces a temporary audio file when the user includes
+   audio.
+3. **Final mux / transcode** — Rust either stream-copy muxes the
+   WebCodecs video with optional audio, or transcodes the H.264
+   mezzanine before muxing for codecs not handled directly by WebCodecs.
 
 This doc covers (2) and (3). For (1) see [`render.md`](render.md) and
 [`preview.md`](preview.md).
+
+## Export settings and range
+
+The webview owns the `ExportSettings` schema in
+`apps/desktop/src/render/exportSettings.ts`; Rust persists the saved blob as
+opaque JSON. Audio settings are persisted:
+
+- `include`: when false, JS skips audio export and produces video-only output.
+- `codec`: `aac` or `opus`.
+- `bitrate`: bits per second.
+- `sampleRate`: `null` to follow the composition, otherwise a concrete output
+  sample rate.
+- `channels`: `null` to follow the composition, otherwise mono or stereo.
+
+AAC is valid in `mp4`, `mov`, and `mkv`. Opus is restricted to `mkv` because
+Opus-in-MP4/MOV playback is unreliable in WebView2. `mergeSettings` backfills
+missing audio fields from `DEFAULT_AUDIO_SETTINGS` and snaps stale saved blobs
+back to AAC if the selected container cannot hold the saved audio codec.
+
+The export range is not persisted. `ExportSettingsDialog` keeps it as
+dialog-local state: full project, or a custom `[startUs, endUs)` selected with
+In/Out SMPTE timecode fields and "set to playhead" buttons. `clampExportRange`
+keeps the span ordered and inside `[0, durationUs]`.
+
+`App.tsx` threads the resolved range through all export stages:
+
+- The readiness gate checks only video sources referenced by the export range.
+- Motif layer frames are baked only for the export range before the Worker
+  starts.
+- `runPixiExport` receives `startUs` and `endUs`; the Worker renders that
+  half-open range and resets output video timestamps to start at 0.
+- `exportProjectAudioOnly` receives the same range so Rust trims the final
+  audio mix to match.
+- ffmpeg transcode progress uses `endUs - startUs` as its denominator.
 
 ## Audio IR
 
@@ -51,13 +87,14 @@ graph when no audio layers exist.
 
 ### Emit
 
-`emit_ffmpeg(&graph) → FfmpegPlan` walks the graph depth-first from
+`emit_ffmpeg(&graph, window_us) → FfmpegPlan` walks the graph depth-first from
 `audio_out` and produces:
 
 - A list of `-i <path>` arguments in declaration order
   (`graph.inputs` deduped by exact path).
 - A `-filter_complex_script`-friendly multi-line filter body.
-- The final `-map [aout]` argument.
+- The final `-map [aout]` argument, or `-map [awin]` when a final export
+  window is applied.
 
 The emitter is reachability-driven from the terminal: nodes the
 terminal doesn't reach aren't emitted. When there are no audio
@@ -65,47 +102,74 @@ layers, `graph.audio_out` is `None` and `emit_ffmpeg` returns an
 empty plan — `export_audio_only` then short-circuits without
 invoking ffmpeg.
 
+Each source decode is trimmed to the layer's source span and shifted by the
+layer start. When `window_us` is present, the emitter appends a final
+`atrim=start=...:end=...,asetpts=PTS-STARTPTS` after the mixed output. That
+keeps a partial video export and its audio sample-accurate and aligned at
+timestamp 0.
+
 ## Audio-only export
 
-`export::export_audio_only(app, &project, &output_path)` is the
-single entry point:
+`export::export_audio_only(app, &project, &output_path, &audio, window_us)` is
+the single entry point:
 
-1. `lower(project, target) → graph`.
-2. `emit_ffmpeg(&graph) → plan`.
-3. If `plan.maps.is_empty()` (no audio layers): log a warning and
-   return `Ok(())`. The mux step downstream tolerates a missing
-   audio file.
-4. Otherwise: write the filter graph to a temp `.txt`, spawn ffmpeg
-   with `-y -hide_banner -nostats -filter_complex_script <file>
-   -map [aout] -c:a aac -b:a 192k <output_path>`.
-5. On non-zero exit, return an error with the last ~8 lines of
-   stderr.
+1. Build a `RenderTarget` from the composition, overriding sample rate and
+   channel count when the webview supplied explicit audio settings.
+2. `lower(project, target) → graph`.
+3. `emit_ffmpeg(&graph, window_us) → plan`.
+4. If `plan.maps.is_empty()` (no audio layers): log a warning and return
+   `Ok(())`. The mux step downstream tolerates a missing audio file.
+5. Otherwise: write the filter graph to a temp `.txt`, spawn ffmpeg with the
+   plan's inputs/maps and audio encode args:
 
-No `export:*` events are emitted from this path — the orchestrator
-on the webview side drives ExportPanel state.
+   ```text
+   -filter_complex_script <file> -map <label> -c:a <aac|libopus> -b:a <bps> <output_path>
+   ```
+
+6. On non-zero exit, return an error with the last ~8 lines of stderr.
+
+The JS orchestrator chooses the temp audio extension from the selected codec:
+AAC writes `.m4a`; Opus writes `.mka`. No `export:*` events are emitted from
+this path; the webview owns ExportPanel state.
+
+When `settings.audio.include` is false, `App.tsx` skips
+`exportProjectAudioOnly` entirely.
 
 ## Final mux
 
-`export::mux_to_file(video_path, audio_path, output)` runs:
+`export::mux_to_file(video_path, audio_path, output)` runs a stream-copy mux:
 
-```
+```text
 ffmpeg -y -hide_banner -nostats \
        -i <video.mp4> \
-       -i <audio.m4a> \
+       [-i <audio.m4a|audio.mka>] \
        -c copy \
        <output_path>
 ```
 
-Stream-copy only — no re-encode, ~100 ms for typical inputs. The
-WebCodecs Worker produces `video.mp4` with the project framerate
-baked in; the audio export produces `audio.m4a` at the project sample
-rate; `-c copy` muxes them into a single playable MP4.
+The audio input is optional. If the user excluded audio, or the project has no
+audio layers and `export_audio_only` produced no temp file, `mux_args` omits the
+audio `-i` and writes a video-only file.
 
-If `audio_path` doesn't exist (audio-only export was skipped for a
-project with no audio layers), the mux invocation fails — the
-orchestrator on the webview side checks for the audio file before
-calling `mux_to_file` and falls back to copying the video-only file
-to the output path.
+For codec/container combinations that cannot be emitted directly by the
+WebCodecs path, the Worker first writes a high-quality H.264 mezzanine. Rust
+then calls `transcode_and_mux`, selects a hardware or software ffmpeg encoder,
+pins the requested GOP, copies the optional audio stream, and writes the
+user-chosen container. HEVC in MP4/MOV is tagged as `hvc1` for downstream
+compatibility.
+
+## Coverage
+
+The root behavior above is guarded by focused tests and diagnostics:
+
+- `exportSettings.test.ts`: default merge/backfill, audio codec/container
+  validity, estimate size, and range clamping.
+- `frameGrid.test.ts`: half-open export frame counts and timestamp grid.
+- Rust unit tests in `export/mod.rs`: AAC/Opus encode args and missing-audio
+  mux arguments.
+- Rust IR tests: final `atrim`/`asetpts` appears only when an export window is
+  present.
+- `media_conformance --audio`: frequency-based audio export diagnostics.
 
 ## Proxies
 
