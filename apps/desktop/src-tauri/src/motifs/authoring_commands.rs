@@ -165,6 +165,43 @@ pub async fn create_edit_draft(
     Ok(draft_id)
 }
 
+/// Core of `import_motif`: parse + validate the manifest island from an external
+/// `.html` source, mint a FRESH unique draft id (ignoring any id/version the file
+/// claims — identity is app-owned), and write it as a from-scratch draft (no
+/// target sidecar → it installs as a new Motif, never Update-over-something). No
+/// `AppHandle` so it's unit-testable.
+pub fn import_motif_from_source(store: &UserMotifStore, source: &str) -> Result<String, String> {
+    let mut manifest = parse_manifest_island(source).map_err(|e| e.to_string())?;
+    let taken: Vec<String> = store
+        .published_ids()
+        .into_iter()
+        .chain(store.list_draft_ids())
+        .collect();
+    let draft_id = assign_unique_id(&manifest.name, &taken);
+    manifest.id = draft_id.clone();
+    manifest.version = 1;
+    validate_manifest(&manifest).map_err(|e| e.to_string())?;
+    let html = compose_motif_html(&manifest, source);
+    store.write_draft(&draft_id, &html).map_err(|e| e.to_string())?;
+    Ok(draft_id)
+}
+
+/// Import an external `.html` Motif file (picked via the OS dialog) as a draft.
+/// Reads the user-chosen path directly (the user authorized it). Returns the new
+/// draft id. Emits `motifs:changed`.
+#[tauri::command]
+pub async fn import_motif(
+    app: AppHandle,
+    store: State<'_, UserMotifStore>,
+    path: String,
+) -> Result<String, String> {
+    let source =
+        std::fs::read_to_string(&path).map_err(|e| format!("read '{path}': {e}"))?;
+    let draft_id = import_motif_from_source(&store, &source)?;
+    emit_motifs_changed(&app);
+    Ok(draft_id)
+}
+
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum InstallMode {
@@ -461,5 +498,36 @@ mod tests {
             assert!(!u.props.contains_key("old")); // dropped (lenient)
             assert_eq!(u.props.get("title").and_then(|v| v.as_str()), Some("Hi")); // filled default
         }
+    }
+
+    #[test]
+    fn import_motif_from_source_mints_unique_draft_and_ignores_claimed_id() {
+        use super::super::store::UserMotifStore;
+        use super::super::authoring::compose_motif_html;
+        let tmp = tempfile::tempdir().unwrap();
+        let store = UserMotifStore::new(tmp.path().to_path_buf());
+        // A composed file whose island claims a built-in id — import must ignore it
+        // and mint a fresh unique id.
+        let mut man = m("Imported"); man.id = "countdown".into();
+        let source = compose_motif_html(&man,
+            "<head></head><body>IMPORTED<script>motif.define({setup(){}})</script></body>");
+        let draft_id = super::import_motif_from_source(&store, &source).unwrap();
+        assert_ne!(draft_id, "countdown");
+        let d = store.get_draft(&draft_id).unwrap();
+        assert_eq!(d.manifest.id, draft_id);   // island rewritten to the minted id
+        assert!(d.html.contains("IMPORTED"));  // body preserved
+        assert_eq!(store.read_draft_target(&draft_id), None); // imported draft has no Update target
+    }
+
+    #[test]
+    fn import_motif_from_source_rejects_missing_or_invalid_island() {
+        use super::super::store::UserMotifStore;
+        use super::super::authoring::compose_motif_html;
+        let tmp = tempfile::tempdir().unwrap();
+        let store = UserMotifStore::new(tmp.path().to_path_buf());
+        assert!(super::import_motif_from_source(&store, "<html><body>no island</body></html>").is_err());
+        let mut bad = m("Bad"); bad.size = [0, 0];
+        let src = compose_motif_html(&bad, "<head></head><body>x</body>");
+        assert!(super::import_motif_from_source(&store, &src).is_err());
     }
 }

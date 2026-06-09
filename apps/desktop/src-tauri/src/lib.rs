@@ -153,6 +153,7 @@ pub fn run() {
             motifs::authoring_commands::write_motif_draft,
             motifs::authoring_commands::amend_motif_draft,
             motifs::authoring_commands::create_edit_draft,
+            motifs::authoring_commands::import_motif,
             motifs::authoring_commands::install_motif,
             motifs::authoring_commands::delete_motif,
             commands::log_list,
