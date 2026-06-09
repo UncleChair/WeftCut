@@ -1942,22 +1942,17 @@ fn motif_to_payload(
     Ok(v)
 }
 
-/// Stage F-Picker: the UI catalog. A superset of the MCP `list_motifs`
-/// payload — every manifest field (e.g. `fonts`) plus the raw `html`
-/// document so the picker can render live previews client-side. The MCP
-/// surface stays manifest-only (see `mcp::templates_payload`); the extra
-/// `html` field is UI-only and would just bloat agent context.
-///
-/// Returns built-ins first (fixed display order), then installed user Motifs,
-/// then drafts. Each entry carries a `status` field (`"builtin"` |
-/// `"installed"` | `"draft"`) so the picker can label unpublished uploads.
-#[tauri::command]
-pub async fn list_motifs(
-    store: tauri::State<'_, crate::motifs::store::UserMotifStore>,
-) -> Result<Vec<serde_json::Value>, String> {
+/// Sync core of `list_motifs`. Extracted so tests can call it without a Tauri
+/// `State` wrapper. Skips entries that fail `motif_to_payload` (parse error /
+/// bad on-disk state) rather than aborting the whole list — picker resilience.
+pub(crate) fn list_motifs_inner(
+    store: &crate::motifs::store::UserMotifStore,
+) -> Vec<serde_json::Value> {
     let mut out: Vec<serde_json::Value> = Vec::new();
     for t in catalog::builtins() {
-        out.push(motif_to_payload(&t.manifest, t.html, "builtin")?);
+        if let Ok(e) = motif_to_payload(&t.manifest, t.html, "builtin") {
+            out.push(e);
+        }
     }
     for manifest in store.list_manifests() {
         // list_manifests already confirmed index.html parsed; this re-reads it
@@ -1966,7 +1961,9 @@ pub async fn list_motifs(
         // rather than failing the whole list. (Dedup the double-read via a
         // list_manifests_with_html helper if it ever matters.)
         let html = store.read_html(&manifest.id).unwrap_or_default();
-        out.push(motif_to_payload(&manifest, html, "installed")?);
+        if let Ok(e) = motif_to_payload(&manifest, html, "installed") {
+            out.push(e);
+        }
     }
     // Drafts last, and only if their id isn't already published/built-in — so
     // `id` is a unique key in the result even if an abnormal on-disk state has a
@@ -1976,11 +1973,39 @@ pub async fn list_motifs(
         .filter_map(|v| v.get("id").and_then(|s| s.as_str()).map(str::to_string))
         .collect();
     for draft in store.list_drafts() {
-        if !seen.contains(draft.id()) {
-            out.push(motif_to_payload(&draft.manifest, draft.html, "draft")?);
+        let draft_id = draft.id().to_string();
+        if seen.contains(&draft_id) {
+            continue;
         }
+        let Ok(mut entry) = motif_to_payload(&draft.manifest, draft.html, "draft") else {
+            continue;
+        };
+        if let Some(target) = store.read_draft_target(&draft_id) {
+            if let Some(obj) = entry.as_object_mut() {
+                obj.insert("target_id".to_string(), serde_json::Value::String(target));
+            }
+        }
+        out.push(entry);
     }
-    Ok(out)
+    out
+}
+
+/// Stage F-Picker: the UI catalog. A superset of the MCP `list_motifs`
+/// payload — every manifest field (e.g. `fonts`) plus the raw `html`
+/// document so the picker can render live previews client-side. The MCP
+/// surface stays manifest-only (see `mcp::templates_payload`); the extra
+/// `html` field is UI-only and would just bloat agent context.
+///
+/// Returns built-ins first (fixed display order), then installed user Motifs,
+/// then drafts. Each entry carries a `status` field (`"builtin"` |
+/// `"installed"` | `"draft"`) so the picker can label unpublished uploads.
+/// Draft entries additionally carry `target_id` (the id of the Motif they
+/// are editing) when the draft was seeded from an existing Motif.
+#[tauri::command]
+pub async fn list_motifs(
+    store: tauri::State<'_, crate::motifs::store::UserMotifStore>,
+) -> Result<Vec<serde_json::Value>, String> {
+    Ok(list_motifs_inner(&store))
 }
 
 /// Stage F-Picker: UI counterpart to the MCP `add_motif` tool. Mirrors
@@ -2563,5 +2588,30 @@ mod tests {
         let a = motif_to_payload(&make_manifest(), "<body>one</body>".into(), "draft").unwrap();
         let b = motif_to_payload(&make_manifest(), "<body>two</body>".into(), "draft").unwrap();
         assert_ne!(a.get("content_hash").unwrap(), b.get("content_hash").unwrap());
+    }
+
+    #[test]
+    fn list_motifs_surfaces_draft_target_id() {
+        use crate::motifs::store::UserMotifStore;
+        use crate::motifs::authoring::compose_motif_html;
+        use crate::motifs::catalog::Manifest;
+        use std::collections::BTreeMap;
+        let tmp = tempfile::tempdir().unwrap();
+        let store = UserMotifStore::new(tmp.path().to_path_buf());
+        let man = |id: &str| Manifest {
+            id: id.into(), name: id.into(), version: 1, size: [10, 10],
+            default_duration_s: 1.0, max_duration_s: None, max_duration_prop: None,
+            content_duration_s: None, fonts: vec![], props_schema: BTreeMap::new(),
+        };
+        let body = "<head></head><body><script>motif.define({setup(){}})</script></body>";
+        store.write_draft("d1", &compose_motif_html(&man("d1"), body)).unwrap();
+        store.write_draft_target("d1", "lower-third").unwrap();
+        store.write_draft("d2", &compose_motif_html(&man("d2"), body)).unwrap();
+
+        let out = list_motifs_inner(&store);
+        let d1 = out.iter().find(|v| v["id"] == "d1").unwrap();
+        let d2 = out.iter().find(|v| v["id"] == "d2").unwrap();
+        assert_eq!(d1.get("target_id").and_then(|v| v.as_str()), Some("lower-third"));
+        assert!(d2.get("target_id").map_or(true, |v| v.is_null())); // from-scratch draft: no target
     }
 }
