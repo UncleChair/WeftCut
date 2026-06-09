@@ -4,7 +4,7 @@ const invoke = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...a: unknown[]) => invoke(...a) }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 
-import { installMotif, deleteMotif, writeMotifDraft, getMotifSource, amendMotifDraft, createEditDraft } from "./index";
+import { installMotif, deleteMotif, writeMotifDraft, getMotifSource, amendMotifDraft, createEditDraft, importMotif } from "./index";
 
 describe("motif lifecycle IPC wrappers", () => {
   it("installMotif sends the snake_case nested args Tauri's serde expects", async () => {
@@ -50,5 +50,11 @@ describe("motif lifecycle IPC wrappers", () => {
     const id = await createEditDraft("foo");
     expect(invoke).toHaveBeenCalledWith("create_edit_draft", { sourceId: "foo" });
     expect(id).toBe("foo-2");
+  });
+  it("importMotif passes the path (camelCased top-level arg)", async () => {
+    invoke.mockResolvedValue("imported-2");
+    const id = await importMotif("C:/x/foo.html");
+    expect(invoke).toHaveBeenCalledWith("import_motif", { path: "C:/x/foo.html" });
+    expect(id).toBe("imported-2");
   });
 });

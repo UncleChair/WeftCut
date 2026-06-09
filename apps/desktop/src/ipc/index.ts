@@ -1135,6 +1135,12 @@ export async function createEditDraft(sourceId: string): Promise<string> {
   return invoke<string>("create_edit_draft", { sourceId });
 }
 
+/// Import an external `.html` Motif file (an absolute path from the OS dialog) as
+/// a draft. Returns the new draft id.
+export async function importMotif(path: string): Promise<string> {
+  return invoke<string>("import_motif", { path });
+}
+
 // ============================================================
 // Status / log surface (see `docs/status-log-system.md`)
 // ============================================================
