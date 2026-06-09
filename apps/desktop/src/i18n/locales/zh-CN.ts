@@ -462,6 +462,8 @@ const zhCN: Resources = {
     motif_update: "更新",
     motif_save_as_new: "另存为新",
     motif_discard: "放弃",
+    motif_confirm: "确认",
+    motif_cancel: "取消",
     motif_update_confirm_one: "本项目内有 1 个图层在用。更新会改掉它（其它项目下次打开也会更新）。",
     motif_update_confirm_many: "本项目内有 {{count}} 个图层在用。更新会改掉所有这些（其它项目下次打开也会更新）。",
     motif_source: "源代码",
