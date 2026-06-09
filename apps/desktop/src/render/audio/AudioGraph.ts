@@ -1,7 +1,7 @@
 // Web Audio mixer for preview. Ported from preview/dom/audio/AudioGraph.
 // Wires audioCtx.currentTime into the SyntheticClock's drift correction.
 //
-// Plan: docs/pixi-renderer-plan.md (P7)
+// Plan: docs/render.md (P7)
 //
 // P0 stub. P7 ports the existing implementation.
 

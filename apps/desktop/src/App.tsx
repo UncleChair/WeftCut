@@ -168,7 +168,7 @@ export function App({ onCloseProject }: AppProps) {
   // get on mount so the UI never blinks through the wrong mode on
   // app start.
   const [agentSession, setAgentSession] = useState<AgentSession | null>(null);
-  // Phase D — workspace-redesign.md Q10: the project preview is a DOM
+  // Phase D — docs/data-model.md Q10: the project preview is a DOM
   // `<video>` element driven by `<PreviewSurface>`. The transport buttons
   // here delegate to its imperative handle (play / pause / seek), and
   // playhead state flows back up via callbacks. The previous
@@ -391,7 +391,7 @@ export function App({ onCloseProject }: AppProps) {
     };
   }, []);
 
-  // Project state mirror for the DOM preview (`docs/preview-dom.md` Phase A).
+  // Project state mirror for the DOM preview (`docs/preview.md` Phase A).
   // Coexists with the local-state fetches further down — both subscribe to
   // `project:changed`, both re-fetch, no cross-talk. The DOM preview engine
   // reads from `useProjectStore`; App.tsx's existing fetches stay until
@@ -413,7 +413,7 @@ export function App({ onCloseProject }: AppProps) {
     };
   }, []);
 
-  // App-level settings stream (`docs/ab-roll-redesign`). Seeds the store
+  // App-level settings stream (`docs/data-model.md`). Seeds the store
   // from the current value, then subscribes to `app_settings:changed`
   // so any pill/menu/shortcut flip propagates to every consumer (the
   // timeline filter, the right panel's peek-window width, the
@@ -435,7 +435,7 @@ export function App({ onCloseProject }: AppProps) {
     };
   }, []);
 
-  // Import queue subscription (Phase C.1 — workspace-redesign.md Q6). The
+  // Import queue subscription (Phase C.1 — docs/data-model.md Q6). The
   // background-copy worker pushes a fresh history list on every state
   // change. MediaPool reads the in-flight set out of this so pool items
   // can show a "Copying…" badge while their bytes are being moved into
@@ -1676,7 +1676,7 @@ export function App({ onCloseProject }: AppProps) {
 }
 
 
-/// `docs/ab-roll-redesign` R.8: View menu — radio between A/B-roll and
+/// `docs/data-model.md` R.8: View menu — radio between A/B-roll and
 /// Show-All. Same setting the inline pill + `T` shortcut drive. Reads
 /// the current value from the app-pref store so the checkmark stays in
 /// sync regardless of how it changed.

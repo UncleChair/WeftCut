@@ -48,7 +48,7 @@ pub const PROXY_GOP_FRAMES: u32 = 6;
 /// playback / scrub behavior. `io::load_from_dir` compares each
 /// `MediaItem.proxy_format_version` against this constant on open
 /// and invalidates older proxies so the existing background job
-/// re-encodes them. See `docs/pixi-renderer-plan.md` (P1).
+/// re-encodes them. See `docs/render.md` (P1).
 ///
 /// Versions:
 ///   0 — pre-versioning / legacy. ~8 s GOP from libx264 defaults.

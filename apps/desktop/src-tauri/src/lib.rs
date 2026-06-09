@@ -44,7 +44,7 @@ pub fn run() {
     // Log-bus slot is created here (pre-Tauri) so the tracing layer
     // can hold an `Arc` clone. The slot starts `None`; a workspace
     // open/save-as/new installs the bus. See
-    // `docs/status-log-system.md` Q8 (strict pre-workspace refuse).
+    // `docs/status-log.md` Q8 (strict pre-workspace refuse).
     let log_slot = logs::LogBusSlot::new();
 
     tracing_subscriber::registry()
@@ -192,8 +192,8 @@ pub fn run() {
             app.manage(log_slot.clone());
             let log_slot_for_ui_events = log_slot.clone();
 
-            // Cache layout. **Per workspace-redesign Q3** (`docs/workspace-
-            // redesign.md`), the cache lives at `<workspace>/Cache/` once a
+            // Cache layout. **Per data-model** (`docs/data-model.md`), the cache
+            // lives at `<workspace>/Cache/` once a
             // workspace is opened or saved. Until then — the blank-on-boot
             // session before any Save As / Open — we use OS app-cache as a
             // transitional fallback so the pre-existing import / proxy /
@@ -248,7 +248,7 @@ pub fn run() {
             // Settings → Keyboard panel writes.
             app.manage(keybindings::KeybindingsStore::new(config_dir.clone()));
 
-            // A/B-roll redesign app prefs (`docs/ab-roll-redesign`). Same
+            // A/B-roll redesign app prefs (`docs/data-model.md`). Same
             // physical location as `keybindings.json` and `recents.json`.
             // Display mode + peek-window + drawer-state live here; the
             // inline pill / View menu / `T` shortcut all mutate this
@@ -270,7 +270,7 @@ pub fn run() {
             // Periodic snapshots land in `Backups/`. The blank-on-boot
             // window has no workspace so the task is a dormant
             // dirty-flag-keeper until the first `project_save_as` /
-            // `project_open`. See `docs/workspace-redesign.md` Q8.
+            // `project_open`. See `docs/data-model.md` Q8.
             let autosave =
                 io::autosave::AutosaveController::spawn(
                     project_for_autosave,

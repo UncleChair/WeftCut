@@ -1,6 +1,6 @@
 //! Recent-projects list + app-level prefs persisted in `app_config_dir`.
 //!
-//! Per `docs/workspace-redesign.md` Q7 the startup screen surfaces the last
+//! Per `docs/data-model.md` Q7 the startup screen surfaces the last
 //! 10 workspaces. Schema is intentionally tiny — path + display name + last
 //! opened — and lives in `<app_config_dir>/recents.json` as plain JSON so a
 //! user can hand-edit / reset by deleting the file.

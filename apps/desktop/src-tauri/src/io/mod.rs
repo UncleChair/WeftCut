@@ -91,7 +91,7 @@ pub async fn load_from_dir(dir: &Path) -> Result<Project> {
         project.media_pool.insert(id, item);
     }
 
-    // `docs/preview-scrub.md` S.2 — invalidate proxies whose format
+    // `docs/preview.md` S.2 — invalidate proxies whose format
     // version predates the current encoder shape. Clears `proxy_path`
     // (and best-effort deletes the cached mp4) so subsequent open-time
     // job enqueueing picks them up for re-encoding. The
@@ -363,7 +363,7 @@ mod tests {
         assert!(format!("{err:#}").contains("newer than this build"));
     }
 
-    /// `docs/preview-scrub.md` S.2 — proxies whose recorded
+    /// `docs/preview.md` S.2 — proxies whose recorded
     /// `proxy_format_version` predates the encoder's current version
     /// must be cleared on load so the post-load job-enqueue pass picks
     /// them up. The cached file is best-effort deleted; we just verify

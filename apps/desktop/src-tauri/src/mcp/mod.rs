@@ -197,7 +197,7 @@ impl WeftCutServer {
     // timeline. The session carries a free-text `reason` so the human
     // sees WHY the agent took over (rendered as the panel header).
     //
-    // Lifecycle (matches the design grilled out in `docs/agent-mode.md`):
+    // Lifecycle (matches the design grilled out in `docs/mcp.md`):
     //   - Re-calling while a session is already active REPLACES it
     //     (last writer wins, fresh `reason` shown). Useful when the
     //     agent has finished one batch and is starting another.
@@ -445,7 +445,7 @@ impl WeftCutServer {
             .await
             .map_err(map_command_error)?;
 
-        // `docs/group-system.md` — pair + group when source has audio.
+        // `docs/groups.md` — pair + group when source has audio.
         let should_pair = snap.settings.auto_pair_audio_on_import
             && media_item
                 .as_ref()
@@ -996,7 +996,7 @@ impl WeftCutServer {
                           When the layer is in a group and `escape_group` is false (default), every group \
                           member whose corresponding edge sits at the same t as the trimmed edge is moved \
                           by the same delta, clamped to the tightest aligned member's bounds. Pass \
-                          `escape_group=true` to trim only this layer. See `docs/group-system.md`.")]
+                          `escape_group=true` to trim only this layer. See `docs/groups.md`.")]
     async fn trim_layer(
         &self,
         #[tool(aggr)] args: TrimLayerArgs,
@@ -1017,7 +1017,7 @@ impl WeftCutServer {
     }
 
     // ============================================================
-    // Group tools (Phase G.4 — `docs/group-system.md`)
+    // Group tools (Phase G.4 — `docs/groups.md`)
     // ============================================================
 
     #[tool(description = "List every group in the project. Each entry has `id`, optional `label`, and the \
@@ -1935,7 +1935,7 @@ pub struct MoveLayerArgs {
     pub layer_id: String,
     pub new_track_id: String,
     pub new_t_start_us: i64,
-    /// `docs/group-system.md` — when the moved layer is in a group and
+    /// `docs/groups.md` — when the moved layer is in a group and
     /// `escape_group` is `false` or omitted, every group member shifts in
     /// time by the same delta. Pass `true` to move only this layer.
     #[serde(default)]
@@ -1946,7 +1946,7 @@ pub struct MoveLayerArgs {
 pub struct SplitLayerArgs {
     pub layer_id: String,
     pub at_t_us: i64,
-    /// `docs/group-system.md` — when the split layer is in a group and
+    /// `docs/groups.md` — when the split layer is in a group and
     /// `escape_group` is `false` or omitted, every group member spanning
     /// `at_t_us` is also split there (all halves stay in the same group).
     /// Pass `true` to split only this layer.
@@ -1966,7 +1966,7 @@ pub struct TrimLayerArgs {
     /// Either `"in"` (t_start) or `"out"` (t_end). Case-insensitive.
     pub edge: String,
     pub new_t_us: i64,
-    /// `docs/group-system.md` — when the trimmed layer is in a group and
+    /// `docs/groups.md` — when the trimmed layer is in a group and
     /// `escape_group` is false or omitted, aligned-edge coupling fans the
     /// trim out to other members whose corresponding edge sits at the same
     /// time. Pass `true` to trim only this layer.

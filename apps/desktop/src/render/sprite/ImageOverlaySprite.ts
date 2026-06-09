@@ -2,7 +2,7 @@
 // wraps it in an `ImageSource`-backed `Texture`, then applies the
 // LayerSummary's flattened static transforms each composite tick.
 //
-// Plan: docs/pixi-renderer-plan.md (P3)
+// Plan: docs/render.md (P3)
 //
 // The bitmap stays GPU-resident for the lifetime of the sprite. If
 // the user replaces the image's underlying media, the layer's

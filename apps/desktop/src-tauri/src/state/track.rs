@@ -18,7 +18,7 @@ pub struct Track {
     /// back-compat with `.vproj` files written before this field existed.
     #[serde(default = "default_removable")]
     pub removable: bool,
-    /// A/B-roll role stamp (`docs/ab-roll-redesign`). Role-stamped tracks are
+    /// A/B-roll role stamp (`docs/data-model.md`). Role-stamped tracks are
     /// the only tracks visible in AB display mode; everything else is hidden.
     /// Set on the two reserved tracks at project creation (A roll → ARoll, B
     /// roll → BRoll). Legacy v4 projects may also carry `AudioA`/`AudioB`
@@ -73,7 +73,7 @@ impl Default for Track {
 
 /// A/B-roll role stamp. Drives AB display-mode filtering on the UI and the
 /// role-aware AV-pair fan-out when promoting hidden clips onto A or B
-/// (`docs/ab-roll-redesign`). The audio variants pair with the video variants
+/// (`docs/data-model.md`). The audio variants pair with the video variants
 /// of matching letter — promoting a video to `ARoll` translates a grouped
 /// audio member's destination to the track stamped `AudioA`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

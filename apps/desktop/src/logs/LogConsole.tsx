@@ -20,7 +20,7 @@ import {
 import { useLogStore } from "./store";
 
 /// Expanded console overlay — lifts above the editor. See
-/// `docs/status-log-system.md` Q6 for the layout decision and Q15
+/// `docs/status-log.md` Q6 for the layout decision and Q15
 /// for what's in Phase 2 vs deferred.
 ///
 /// Layout (top to bottom):

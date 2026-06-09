@@ -3,7 +3,7 @@
 // content "value"). Times are in microseconds throughout to match the
 // Rust side; callers convert at the seconds boundary.
 //
-// Plan: docs/pixi-renderer-plan.md (P2)
+// Plan: docs/render.md (P2)
 
 export type Interpolation =
   | { kind: "Hold" }

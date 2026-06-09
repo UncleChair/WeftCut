@@ -1,5 +1,5 @@
 //! Per-user app-level preferences persisted in `app_config_dir`
-//! (`docs/ab-roll-redesign`). Strict app-level scope: every project opens
+//! (`docs/data-model.md`). Strict app-level scope: every project opens
 //! under the same value; the inline pill / View menu / `T` shortcut
 //! mutate the value here directly. No per-project override.
 //!

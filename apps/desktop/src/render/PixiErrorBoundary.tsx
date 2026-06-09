@@ -4,7 +4,7 @@
 // unmount the entire editor. The boundary catches it and renders a
 // visible error so the rest of the UI stays alive.
 //
-// Plan: docs/pixi-renderer-plan.md (P2)
+// Plan: docs/render.md (P2)
 
 import { Component, type ErrorInfo, type ReactNode } from "react";
 

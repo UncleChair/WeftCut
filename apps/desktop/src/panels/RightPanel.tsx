@@ -1,5 +1,5 @@
 // Right panel — peek list (top) + unified inspector (bottom).
-// `docs/ab-roll-redesign` R.6.
+// `docs/data-model.md` R.6.
 //
 // Layout (AB mode):
 //   ┌─────────────────────────┐

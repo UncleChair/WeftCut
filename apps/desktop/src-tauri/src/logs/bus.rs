@@ -2,7 +2,7 @@
 //! to the JSONL writer task. Built by `LogBus::spawn(...)` when a
 //! workspace is opened; rotated when the workspace switches.
 //!
-//! See `docs/status-log-system.md` for the full design.
+//! See `docs/status-log.md` for the full design.
 //!
 //! Pre-workspace policy (strict, per Q8): the slot is `None` until
 //! `project_save_as` / `project_open` / `project_new_workspace`

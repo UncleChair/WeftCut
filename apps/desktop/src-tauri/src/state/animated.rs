@@ -67,7 +67,7 @@ impl<T: Clone + PartialEq> Animated<T> {
     ///
     /// Static tracks and zero/one keyframe tracks return empty.
     ///
-    /// See `docs/effects-routing-pass-b.md` §3.
+    /// See `docs/data-model.md` §3.
     pub fn animating_runs(&self) -> Vec<(TimeUs, TimeUs)> {
         let Animated::Keyframed(kfs) = self else {
             return Vec::new();
@@ -99,7 +99,7 @@ impl<T: Clone + PartialEq> Animated<T> {
     /// `kf[i].value != kf[i+1].value`. The gap fragmenter consults
     /// this so each fragmented static gap has a single held value.
     ///
-    /// See `docs/effects-routing-pass-b.md` §4.
+    /// See `docs/data-model.md` §4.
     pub fn hold_step_times(&self) -> Vec<TimeUs> {
         let Animated::Keyframed(kfs) = self else {
             return Vec::new();

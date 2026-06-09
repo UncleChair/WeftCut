@@ -3,7 +3,7 @@
 // chunked decode → composite → encode loop, posts progress, posts
 // fMP4 chunks with backpressure, posts final counters, and exits.
 //
-// Plan: docs/pixi-renderer-plan.md (P8 perf rewrite)
+// Plan: docs/render.md (P8 perf rewrite)
 //
 // Why chunked + dedicated decoder driver:
 //   The preview-tuned SourceDecoderPool gates decoding on a small
@@ -22,8 +22,9 @@
 //   - Audio is OUT. The Worker has no DOM and audio export rides
 //     the existing Rust ffmpeg compositor. Final mux/transcode combines
 //     this temp video with an optional temp audio file (.m4a/.mka).
-//   - Subtitles render path is absent here (no DOM for JASSUB); the
-//     legacy ffmpeg export path owns subtitles export for now.
+//   - Subtitles are omitted. JASSUB needs a DOM canvas; the export Worker
+//     has none, and Rust export has no subtitle burn-in or sidecar path —
+//     Subtitles layers are skipped silently (see Compositor.ensureSubtitles).
 //   - Motifs DO render: the SVG capture harness can't run in the
 //     Worker (no `document`), so the main thread pre-rasterizes each
 //     Motif layer's frames (`exportBake.ts`) and transfers them in

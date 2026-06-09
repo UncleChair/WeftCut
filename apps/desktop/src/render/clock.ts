@@ -1,6 +1,6 @@
 // Synthetic clock with optional Web Audio drift correction.
 //
-// Plan: docs/pixi-renderer-plan.md (8a.2 — synthetic + Web Audio drift)
+// Plan: docs/render.md (8a.2 — synthetic + Web Audio drift)
 //
 // Behavior:
 //   - When no audio context is bound, clock advances by `performance.now()` deltas.

@@ -10,7 +10,7 @@ import { useLogStore } from "../logs/store";
 
 /// Agent-mode record panel — filtered + grouped view of the log
 /// stream that the agent-attributed entries produce while a session
-/// is active. See `docs/agent-mode.md` Q6 + Q7 + Q8 for the design.
+/// is active. See `docs/mcp.md` Q6 + Q7 + Q8 for the design.
 ///
 /// Filter (Q6.B + Q6.X):
 ///   * source.kind === "Agent"     (agent-attributed events only)

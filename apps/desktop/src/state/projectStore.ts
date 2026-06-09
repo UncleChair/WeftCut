@@ -11,7 +11,7 @@ import {
 
 /// Frontend mirror of the Rust `Project` actor's state, kept in sync via
 /// `project:changed` Tauri events. The DOM preview engine consumes this
-/// directly (no `emit_dom` IR target per `docs/preview-dom.md` Q6).
+/// directly (no `emit_dom` IR target per `docs/preview.md` Q6).
 ///
 /// Atomic selectors only — composite-object selectors infinite-loop
 /// `useSyncExternalStore` per `feedback_zustand_composite_selector`.

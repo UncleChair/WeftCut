@@ -20,7 +20,7 @@ pub struct MediaItem {
     pub proxy_path: Option<PathBuf>,
     /// Format-version of the cached proxy at `proxy_path` — compared
     /// against `jobs::proxy::PROXY_FORMAT_VERSION` on workspace open
-    /// to invalidate stale proxies. See `docs/preview-scrub.md`.
+    /// to invalidate stale proxies. See `docs/preview.md`.
     /// `#[serde(default)]` keeps older `.vproj` files loadable as
     /// version 0.
     #[serde(default)]

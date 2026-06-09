@@ -5,7 +5,7 @@
 // the Application. The Compositor receives an already-initialized
 // `Application` reference at construction.
 //
-// Plan: docs/pixi-renderer-plan.md
+// Plan: docs/render.md
 
 import { Application, Container, Texture } from "pixi.js";
 
@@ -1590,10 +1590,8 @@ export class Compositor {
 
   private ensureSubtitles(layer: LayerSummary): ActiveSubtitles | null {
     if (layer.params.kind !== "Subtitles") return null;
-    // JASSUB needs a real DOM canvas; export Worker has no DOM, so we
-    // can't render subtitles into the export pipeline yet. Skip
-    // silently — the legacy ffmpeg export path is still wired and
-    // will own subtitles export through the v1 cutover.
+    // JASSUB needs a real DOM canvas (`audioHost`). The export Worker has
+    // no DOM host, and there is no ffmpeg subtitle burn-in — omit the layer.
     if (this.audioHost === null) return null;
     const existing = this.subtitles.get(layer.id);
     if (existing) return existing;

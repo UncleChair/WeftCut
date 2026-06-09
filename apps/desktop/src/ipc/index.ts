@@ -41,7 +41,7 @@ export interface MediaSummary {
   /// Absolute path of the 540p proxy MP4 (H.264 + AAC, 1 s GOP) once the
   /// background job has produced it. `null` while pending or for media
   /// kinds that don't get proxied (audio-only sources). DOM preview
-  /// falls back to `path` when null. See `docs/preview-dom.md`.
+  /// falls back to `path` when null. See `docs/preview.md`.
   proxy_path: string | null;
   /// Preview-only fast proxy. Export must not use this path.
   quick_proxy_path: string | null;
@@ -177,7 +177,7 @@ export interface SubtitlesView {
   source_value: string;
 }
 
-/// A/B-roll role stamp (`docs/ab-roll-redesign`). Serialized from the Rust
+/// A/B-roll role stamp (`docs/data-model.md`). Serialized from the Rust
 /// `TrackRole` enum as kebab-case. Null for additional / legacy tracks.
 export type TrackRole = "a-roll" | "b-roll" | "audio-a" | "audio-b";
 
@@ -219,7 +219,7 @@ export interface ProjectSummary {
   media: MediaSummary[];
   tracks: TrackSummary[];
   markers: MarkerSummary[];
-  /// `docs/group-system.md`. Empty when no groups exist. UI uses this to
+  /// `docs/groups.md`. Empty when no groups exist. UI uses this to
   /// render the tinted-border indicator and to resolve "what group is
   /// this layer in?" for click-selects-whole-group behavior.
   groups: GroupSummary[];
@@ -229,7 +229,7 @@ export interface GroupSummary {
   id: string;
   label: string | null;
   layer_ids: string[];
-  /// Group-level effect chain (`docs/html-render-groups.md` 2026-05-17
+  /// Group-level effect chain (`docs/groups.md` 2026-05-17
   /// redesign). The TS distiller reads `HtmlTransform` from here to
   /// build the engine's `compositionTransform`. Any enabled effect
   /// whose kind requires html-cap rendering (today only
@@ -466,7 +466,7 @@ export async function projectOpen(path: string): Promise<void> {
 }
 
 // ============================================================
-// Workspace lifecycle (Phase B — workspace-redesign.md)
+// Workspace lifecycle (Phase B — docs/data-model.md)
 // ============================================================
 
 export interface CanvasPreset {
@@ -601,7 +601,7 @@ export async function workspaceDir(): Promise<string | null> {
 }
 
 // ============================================================
-// App-level settings (A/B-roll redesign, `docs/ab-roll-redesign`).
+// App-level settings (A/B-roll redesign, `docs/data-model.md`).
 // Strict app-level scope: same value across every project. The pill /
 // View menu / `T` shortcut all funnel through `appSettingsSet`. The
 // backend emits `app_settings:changed` on every successful write so
@@ -683,7 +683,7 @@ export async function agentSessionEnd(): Promise<void> {
 }
 
 // ============================================================
-// Background import worker (Phase C.1 — workspace-redesign.md Q6)
+// Background import worker (Phase C.1 — docs/data-model.md Q6)
 // ============================================================
 
 export type ImportStatus =
@@ -828,7 +828,7 @@ export async function moveLayer(
   });
 }
 
-/** `docs/group-system.md` — group-aware trim. `edge` is `"in"` or `"out"`. */
+/** `docs/groups.md` — group-aware trim. `edge` is `"in"` or `"out"`. */
 export async function trimLayer(
   layerId: string,
   edge: "in" | "out",
@@ -855,7 +855,7 @@ export async function splitLayerGrouped(
   });
 }
 
-/** `docs/group-system.md` — bundle ≥2 layer ids into a group. */
+/** `docs/groups.md` — bundle ≥2 layer ids into a group. */
 export async function groupsCreate(
   layerIds: string[],
   label: string | null = null,
@@ -1142,7 +1142,7 @@ export async function importMotif(path: string): Promise<string> {
 }
 
 // ============================================================
-// Status / log surface (see `docs/status-log-system.md`)
+// Status / log surface (see `docs/status-log.md`)
 // ============================================================
 
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error";

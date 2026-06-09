@@ -48,7 +48,7 @@ impl Rational {
 /// 29.97 fps (30000/1001) doesn't yield integer-us frame boundaries; the
 /// final divide truncates. Both Pass B branches snap with the same
 /// function so they agree regardless of the rounding direction. See
-/// `docs/effects-routing-pass-b.md` §10.
+/// `docs/data-model.md` §10.
 pub fn snap_frame_floor(t_us: TimeUs, fps: Rational) -> TimeUs {
     let prod = (t_us as i128) * (fps.num as i128);
     let div = (US_PER_SEC as i128) * (fps.den as i128);

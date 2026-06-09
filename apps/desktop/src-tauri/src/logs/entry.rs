@@ -1,4 +1,4 @@
-//! Schema for log entries. See `docs/status-log-system.md` for the full
+//! Schema for log entries. See `docs/status-log.md` for the full
 //! design — this file is the canonical type definition the rest of the
 //! system (ring buffer, JSONL writer, frontend bridge, MCP transcript)
 //! reads from.
