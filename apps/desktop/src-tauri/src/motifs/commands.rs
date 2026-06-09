@@ -58,25 +58,27 @@ fn resolve_capture_duration(
     5.0
 }
 
-/// Render Motif `motif_id` at content time `t_sec` with `props_json`, captured
-/// at `width` x `height`. Returns a base64-encoded PNG (no `data:` prefix).
-///
-/// All errors map to `String` for the IPC boundary.
-#[tauri::command]
-pub async fn motif_capture_frame(
-    app: AppHandle,
-    state: State<'_, MotifRuntime>,
-    capture: State<'_, MotifCapture>,
-    store: State<'_, super::store::UserMotifStore>,
-    motif_id: String,
+/// Core of `motif_capture_frame`: render Motif `motif_id` at content time
+/// `t_sec` with `props_json`, captured at `width` x `height`, and return a
+/// base64-encoded PNG (no `data:` prefix). Takes plain references so BOTH the
+/// Tauri command and the MCP `preview_motif_draft` tool can drive it. Errors (as
+/// `String`) if the runtime isn't registered (no live webview) — the caller
+/// surfaces it rather than hanging.
+#[allow(clippy::too_many_arguments)]
+pub async fn capture_motif_frame_b64(
+    app: &AppHandle,
+    runtime: &MotifRuntime,
+    capture: &MotifCapture,
+    store: &super::store::UserMotifStore,
+    motif_id: &str,
     t_sec: f64,
-    props_json: String,
+    props_json: &str,
     width: u32,
     height: u32,
     settle_rafs: Option<u32>,
-    content_hash: String,
+    content_hash: &str,
 ) -> Result<String, String> {
-    let runtime = state
+    let runtime_src = runtime
         .get()
         .ok_or_else(|| "motif runtime not registered yet (call motif_register_runtime)".to_string())?;
 
@@ -85,14 +87,14 @@ pub async fn motif_capture_frame(
     // host and screenshot a stale vclock. Also guards the per-host CaptureState.
     let mut cap = capture.0.lock().await;
 
-    let (win, needs_reset) = host::ensure_host(&app, &runtime, &motif_id, &content_hash, width, height)
+    let (win, needs_reset) = host::ensure_host(app, &runtime_src, motif_id, content_hash, width, height)
         .map_err(|e| format!("ensure_host failed: {e}"))?;
     if needs_reset {
         cap.reset();
     }
 
     // Ready-probe only when this host isn't already confirmed ready for this id.
-    if super::should_probe(cap.ready_for.as_deref(), &motif_id) {
+    if super::should_probe(cap.ready_for.as_deref(), motif_id) {
         // The pathname guard closes the navigate→stale-page race: when
         // `ensure_host` calls `win.navigate(...)` to switch Motif ids, the old
         // page is still loaded (readyState==='complete', __motifRender defined)
@@ -127,13 +129,13 @@ pub async fn motif_capture_frame(
                     .unwrap_or_else(|| "no error captured".to_string())
             ));
         }
-        cap.ready_for = Some(motif_id.clone());
+        cap.ready_for = Some(motif_id.to_string());
     }
 
     // Build the render expression. `props` is parsed then re-serialized so the
     // canonical JSON (not the raw caller string) is embedded; `t` and `meta`
     // are embedded via serde_json so escaping is correct.
-    let props: serde_json::Value = serde_json::from_str(&props_json)
+    let props: serde_json::Value = serde_json::from_str(props_json)
         .map_err(|e| format!("props_json is not valid JSON: {e}"))?;
 
     // Duration for the capture meta: derived from the motif's manifest +
@@ -141,9 +143,9 @@ pub async fn motif_capture_frame(
     // max_duration_prop value → max_duration_s → default_duration_s). This
     // is correct for every motif, not just countdown. fps is fixed at 30.
     let duration = resolve_capture_duration(
-        &motif_id,
+        motif_id,
         &super::catalog::builtins(),
-        || store.get_motif(&motif_id).into_iter().map(|m| m.manifest).collect(),
+        || store.get_motif(motif_id).into_iter().map(|m| m.manifest).collect(),
         &props,
     );
     let meta = serde_json::json!({
@@ -168,7 +170,7 @@ pub async fn motif_capture_frame(
     if let Err(e) = cdp::eval_await(&win, &render_expr).await {
         let msg = e.to_string();
         if is_timeout_error(&msg) {
-            host::teardown_host(&app);
+            host::teardown_host(app);
             cap.reset();
         }
         return Err(format!("__motifRender failed: {msg}"));
@@ -180,7 +182,7 @@ pub async fn motif_capture_frame(
         Err(e) => {
             let msg = e.to_string();
             if is_timeout_error(&msg) {
-                host::teardown_host(&app);
+                host::teardown_host(app);
                 cap.reset();
             }
             return Err(format!("capture failed: {msg}"));
@@ -190,6 +192,31 @@ pub async fn motif_capture_frame(
         cap.last_size = Some((width, height));
     }
     Ok(b64)
+}
+
+/// Render Motif `motif_id` at content time `t_sec` with `props_json`, captured
+/// at `width` x `height`. Returns a base64-encoded PNG (no `data:` prefix).
+/// Thin wrapper over `capture_motif_frame_b64`. All errors map to `String`.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn motif_capture_frame(
+    app: AppHandle,
+    state: State<'_, MotifRuntime>,
+    capture: State<'_, MotifCapture>,
+    store: State<'_, super::store::UserMotifStore>,
+    motif_id: String,
+    t_sec: f64,
+    props_json: String,
+    width: u32,
+    height: u32,
+    settle_rafs: Option<u32>,
+    content_hash: String,
+) -> Result<String, String> {
+    capture_motif_frame_b64(
+        &app, &state, &capture, &store, &motif_id, t_sec, &props_json, width, height,
+        settle_rafs, &content_hash,
+    )
+    .await
 }
 
 #[cfg(test)]
