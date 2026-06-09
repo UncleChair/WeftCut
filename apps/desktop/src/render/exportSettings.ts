@@ -5,8 +5,8 @@
 export type CodecId = "h264" | "av1" | "hevc";
 export type QualityPreset = "low" | "medium" | "high" | "custom";
 export type RateMode = "vbr" | "cbr";
-/// Output container. All three hold H.264/AV1/HEVC + AAC, so any codec is
-/// valid in any of them. WebM is deferred (needs Opus audio + VP9/AV1).
+/// Output container. H.264/HEVC can target all three; AV1+MOV is rejected by
+/// ffmpeg's MOV muxer, so AV1 is limited to MP4/MKV. WebM is deferred.
 export type Container = "mp4" | "mov" | "mkv";
 export const CONTAINERS: Container[] = ["mp4", "mov", "mkv"];
 
@@ -261,14 +261,11 @@ export function clampExportRange(
 }
 
 /// H.264 bitrate for the ffmpeg-path mezzanine. The worker WebCodecs-encodes
-/// this; ffmpeg then transcodes it to the target codec. It must be a clean
-/// transcode source, but NOT bigger than a normal H.264 export of the same
-/// quality — the worker buffers the whole mezzanine MP4 in one ArrayBuffer
-/// (mediabunny BufferTarget), and V8 caps a single ArrayBuffer at ~2 GB, so a
-/// too-high mezzanine OOMs long exports. The H.264-equivalent of the chosen
-/// quality already runs ~1.8x the (codec-discounted) final target — ample
-/// headroom — while matching an H.264 export's footprint. A ≥1.5x floor over
-/// the final target covers the custom-bitrate case.
+/// this; ffmpeg then transcodes it to the target codec. The mezzanine should be
+/// a clean source, but not larger than a normal H.264 export of the same
+/// quality — that gives the codec-discounted final target enough headroom
+/// without inflating temp-file IO or transcode cost. A >=1.5x floor over the
+/// final target covers the custom-bitrate case.
 export function mezzanineBitrate(
   settings: ExportSettings,
   width: number,

@@ -75,9 +75,10 @@ The Rust side runs ffmpeg only at:
   preview, plus a source-resolution H.264 export master for sources
   WebCodecs can't decode directly), thumbnails, waveform.
 - **Audio export** — the `lower → emit_ffmpeg → ffmpeg` audio pipeline
-  produces `audio.m4a` for the user's project.
-- **Final mux** — `ffmpeg -c copy` stitches the WebCodecs-produced
-  `video.mp4` with the audio m4a into the user's output path.
+  produces a temporary audio file when the user includes audio.
+- **Final mux / transcode** — ffmpeg stream-copy muxes WebCodecs video with
+  optional audio, or transcodes the H.264 mezzanine for codecs not emitted
+  directly by WebCodecs.
 
 No ffmpeg-driven visual compositor, no offscreen rasterizer, no
 libmpv preview. The visual half of the old IR was deleted with the
@@ -140,7 +141,7 @@ weftcut/
         cache/                ← workspace-scoped derivative cache
                               ←   (workspace/Cache/{proxies, thumbnails,
                               ←    waveforms, frames, voiceover, …})
-        templates/            ← built-in SVG template catalog
+        motifs/               ← built-in motif catalog + CDP capture host
                               ←   (manifests + index.html, embedded)
         mcp/                  ← rmcp server, tool definitions, resources,
                               ←   prompts, /events change-feed
@@ -174,7 +175,7 @@ weftcut/
                               ←   FrameRing, ExportDecoderPool,
                               ←   probeSourceDecodable, scrub
         sprite/               ←   per-layer-kind Sprite implementations
-        templates/            ←   SVG rasterizer + raster cache
+        motifs/               ←   motif raster cache + frame descriptor helpers
         subtitles/            ←   JASSUB binding
         worker/               ←   exportWorker + encoder (OffscreenCanvas)
         audio/                ←   AudioGraph + AudioMixer (Web Audio)
@@ -228,7 +229,7 @@ Adding more locales is a strict addition — drop a resource file under
 | Rust logs / `tracing` output | Stay English. Operator-facing. |
 | Tauri command errors | Tagged structured form (`{kind, detail}`) returned to the UI; the UI maps recognized kinds to localized messages. |
 | MCP tool errors | English machine-readable strings. Agents do their own translation. |
-| Built-in templates | Each template carries text in its props; localization is per-project content. |
+| Built-in motifs | Each motif carries text in its props; localization is per-project content. |
 | Date / time / number formatting | `Intl.DateTimeFormat` and `Intl.NumberFormat` with the active locale. |
 
 ## See also
@@ -238,6 +239,7 @@ Adding more locales is a strict addition — drop a resource file under
 - [Motifs](motifs.md) — parameterized web overlays captured via the DevTools Protocol: authoring contract, capture harness, raster cache.
 - [Preview](preview.md) — interactive preview surface.
 - [Rendering](rendering.md) — audio IR + export + final mux.
+- [Conformance](conformance.md) — media fixtures and E2E gates.
 - [Groups](groups.md) — group model.
 - [MCP](mcp.md) — agent connection protocol and tool surface.
 - [Roadmap](roadmap.md) — phased delivery.

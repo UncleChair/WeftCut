@@ -94,9 +94,9 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "mul
 # on stable; `async-trait` is the standard workaround and keeps the
 # "add Deepgram in a single file" exit criterion clean.
 async-trait = "0.1"
-# P10a: `commands::extract_video_frame` writes the JS-side MP4 bytes to
-# disk so ffmpeg can seek into it. RAII drop on `NamedTempFile` cleans
-# both temps automatically. Already a dev-dep; promoted to production.
+# Export/conformance helpers use temp files for streamed media slices and
+# decoded-frame probes. RAII drop on `NamedTempFile` cleans temps automatically.
+# Already a dev-dep; promoted to production.
 tempfile = "3"
 # P10b: `commands::compare_fixture_frame` SSIM-compares an actual PNG
 # (from `extract_video_frame`) against a committed baseline. We use

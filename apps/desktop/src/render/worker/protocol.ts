@@ -2,10 +2,10 @@
 //
 // Plan: docs/pixi-renderer-plan.md (P8)
 //
-// The Worker is constructed once per export, receives one `start`
-// request, streams `progress` events, posts a final `done` (with
-// MP4 bytes) or `error`, then terminates. The main-thread shell
-// `terminate()`s the worker after `done` to release its heap.
+// The Worker is constructed once per export, receives one `start` request,
+// streams `progress` + `chunk` events, posts a final `done` with counters
+// or `error`, then terminates. The main-thread shell `terminate()`s the
+// worker after `done` to release its heap.
 
 /// Snapshot of project state needed to render the export. The Worker
 /// receives this as a structured-clone of the live `ProjectSummary`,

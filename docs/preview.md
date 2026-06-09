@@ -20,7 +20,6 @@ covers the preview-side surface and transport.
             ├─ VideoClipSprite
             ├─ ImageOverlaySprite
             ├─ TextSprite
-            ├─ TemplateSprite
             ├─ SubtitlesSprite
             └─ ColorSprite
 ```
@@ -117,14 +116,19 @@ What preview decodes depends on the import decode routing (see
 [`data-model.md`](data-model.md) and ADRs 0009–0011):
 
 - **Bypassed** friendly H.264 → preview decodes the original directly.
-- Everything else → preview decodes a **720p short-GOP quick proxy**
+- **Quick proxy ready** → preview decodes the **720p short-GOP quick proxy**
   (`quick_proxy_path`), generated at import by `jobs/quick_proxy.rs`.
+- **Session bridge** → while a proxy is still building, sources that
+  `probeSourceDecodable` proved decodable on this machine may temporarily
+  preview from the original (`previewDecodable` in `previewPlaybackPathFor`).
+  The bridge is not persisted and disappears once a proxy path exists.
 
 The short fixed GOP (`PROXY_GOP_FRAMES`) is what makes scrubbing
 frame-accurate: any scrub target decodes at most a few frames from its
 keyframe, bounding the seek-to-key-then-decode-forward tail (ADR 0008).
-So every preview source is short-GOP — preview never decodes a heavy /
-long-GOP original.
+So the steady-state preview source is either the original only for friendly
+bypassed H.264, or a short-GOP quick proxy. The bridge is a temporary import
+latency optimization, not the durable preview route.
 
 The full `proxy_path` is a source-resolution **export master** (ADR 0011)
 used only at export time; preview ignores it in favor of the quick proxy.

@@ -3,7 +3,7 @@
 // have failed. Shares its probe memo with the import-time sweep so a capable
 // machine probes each source at most once per session.
 //
-// See docs/superpowers/specs/2026-05-31-import-time-decodability-probe-design.md
+// See docs/data-model.md#mediaitem and docs/render.md#export-source-resolution.
 
 import type { MediaSummary } from "../ipc";
 

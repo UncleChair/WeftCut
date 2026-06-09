@@ -77,7 +77,7 @@ agents get confused. The current set is around 40, organised below.
 | `media://{id}/thumbnail` | middle thumbnail as JPG (base64) |
 | `media://{id}/frame/{t_us}` | on-demand frame at the given microsecond, lazy-cached (multimodal-friendly) |
 | `media://{id}/waveform` | audio peaks file (binary, base64) |
-| `templates://current` | built-in template catalog (id, name, size, default_duration_s, props_schema) — same payload as `list_templates` |
+| `motifs://current` | built-in motif catalog (id, name, size, default_duration_s, props_schema) — same payload as `list_motifs` |
 
 `media://*` reads return `404` with a hint pointing at the
 `media:job_complete` Tauri event when derivatives haven't been generated
@@ -102,7 +102,7 @@ Media + tracks:
 Layers:
 - `add_color_layer { track_id, t_start_us, t_end_us, color, width?, height? }` → `LayerId`
 - `add_video_layer { track_id, media_id, t_start_us, t_end_us, src_in_us, src_out_us }` → `LayerId`
-- `add_template { template_id, t_start_us, t_end_us?, track_id?, props? }` → `LayerId` — `t_end_us` defaults to `default_duration_s`; `track_id` auto-creates an "Overlay" Video track when absent; `props` validates against the template's `props_schema`. Rasterization is lazy at next render; the tool returns synchronously.
+- `add_motif { motif_id, t_start_us, t_end_us?, track_id?, props? }` → `LayerId` — `t_end_us` defaults to `default_duration_s`; `track_id` auto-creates an "Overlay" Video track when absent; `props` validates against the motif's `props_schema`. Frame capture is lazy at next render; the tool returns synchronously.
 - `apply_subtitles { body, format?, track_id?, t_start_us?, t_end_us }` — SRT/ASS body inline; format sniffed from `[Script Info]` when omitted. Auto-finds or creates a Subtitle track. Body is materialized to a content-addressed cache file before render.
 - `update_layer { layer_id, patch }` — envelope-only (label, time range, enabled, locked).
 - `update_layer_params { layer_id, patch }` — kind-specific params.
@@ -125,7 +125,7 @@ Markers + composition:
 - `set_composition { patch }`
 
 Catalog:
-- `list_templates()` → `[{ id, name, version, size: [w, h], default_duration_s, props_schema }, ...]`. Inspect `props_schema` before calling `add_template`.
+- `list_motifs()` → `[{ id, name, version, size: [w, h], default_duration_s, props_schema }, ...]`. Inspect `props_schema` before calling `add_motif`.
 
 ### Workflow / safety
 
@@ -134,7 +134,7 @@ Catalog:
 - `undo()` / `redo()`
 - `lock_history { reason }` / `unlock_history()` — freeze undo while a tool batch runs; the UI shows the reason.
 - `begin_agent_session { reason }` — flips the human's UI into a simplified preview / scrub / record-only layout. Auto-checkpoints. The human ends the session via the UI; the agent has no symmetric tool.
-- `dry_run { operations }` — applies the batch against a clone, validates after each op (matching `commit()`), halts at the first error. Does not commit. Op variants: `add_color_layer`, `add_video_layer`, `update_layer`, `update_layer_params`, `move_layer`, `split_layer`, `delete_layer`. Returns `{ results: [{ index, status, output? | error? }, ...], halted_at: number | null }`. Other tools (templates, subtitles, media import, undo/redo) are not dry-runnable.
+- `dry_run { operations }` — applies the batch against a clone, validates after each op (matching `commit()`), halts at the first error. Does not commit. Op variants: `add_color_layer`, `add_video_layer`, `update_layer`, `update_layer_params`, `move_layer`, `split_layer`, `delete_layer`. Returns `{ results: [{ index, status, output? | error? }, ...], halted_at: number | null }`. Other tools (motifs, subtitles, media import, undo/redo) are not dry-runnable.
 
 ### Render
 
