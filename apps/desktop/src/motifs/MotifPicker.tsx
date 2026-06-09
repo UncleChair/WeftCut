@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { formatTimecode, parseTimecode } from "../frames";
 import {
   addMotif,
+  importMotif,
   listMotifs,
   MOTIFS_CHANGED_EVENT,
   writeMotifDraft,
@@ -115,6 +117,20 @@ export function MotifPicker({
     }
   };
 
+  const importFile = async () => {
+    try {
+      const path = await openDialog({
+        multiple: false,
+        filters: [{ name: "Motif HTML", extensions: ["html"] }],
+      });
+      if (typeof path !== "string") return; // cancelled / multiple
+      const draftId = await importMotif(path);
+      setSelectedId(draftId); // motifs:changed → reload() surfaces the card
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
   return (
     <div className="settings-overlay" role="dialog" aria-modal="true">
       <div className="template-picker">
@@ -144,6 +160,11 @@ export function MotifPicker({
           ) : (
             <button className="template-picker-new" onClick={() => setNewOpen(true)}>
               {t("template_picker.new_button")}
+            </button>
+          )}
+          {!newOpen && (
+            <button className="template-picker-new" onClick={importFile}>
+              {t("template_picker.import_button")}
             </button>
           )}
           <button

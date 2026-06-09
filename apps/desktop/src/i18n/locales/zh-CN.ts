@@ -488,6 +488,7 @@ const zhCN: Resources = {
     add: "添加到时间轴",
     adding: "添加中…",
     new_button: "新建 Motif",
+    import_button: "导入",
     new_prompt: "给 Motif 命名",
     new_create: "创建",
     new_cancel: "取消",
