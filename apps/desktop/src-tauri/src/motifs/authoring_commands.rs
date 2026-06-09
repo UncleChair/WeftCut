@@ -122,6 +122,49 @@ pub async fn amend_motif_draft(
     Ok(())
 }
 
+/// Core of `create_edit_draft`: seed a NEW working draft from `source_id`'s
+/// source (built-in or installed), assign a unique working id, and — for an
+/// INSTALLED source — record it as the draft's Update target (built-ins can't be
+/// updated in place, so a built-in fork records no target → install offers only
+/// New). No `AppHandle` so it's unit-testable.
+pub fn create_edit_draft_core(
+    store: &UserMotifStore,
+    builtins: &[crate::motifs::catalog::Motif],
+    source_id: &str,
+) -> Result<String, String> {
+    let is_builtin = BUILTIN_IDS.contains(&source_id);
+    let source = builtins.iter().find(|m| m.id() == source_id).cloned()
+        .or_else(|| store.get_motif(source_id))
+        .ok_or_else(|| format!("unknown source motif '{source_id}'"))?;
+
+    let taken: Vec<String> = store.published_ids().into_iter()
+        .chain(store.list_draft_ids()).collect();
+    let draft_id = assign_unique_id(&source.manifest.name, &taken);
+
+    let mut manifest = source.manifest;
+    manifest.id = draft_id.clone();
+    manifest.version = 1;
+    let html = compose_motif_html(&manifest, &source.html);
+    store.write_draft(&draft_id, &html).map_err(|e| e.to_string())?;
+    if !is_builtin {
+        store.write_draft_target(&draft_id, source_id).map_err(|e| e.to_string())?;
+    }
+    Ok(draft_id)
+}
+
+/// Open a working draft to edit an existing Motif. Built-in → forced fork
+/// (no Update target). Returns the working draft id. Emits `motifs:changed`.
+#[tauri::command]
+pub async fn create_edit_draft(
+    app: AppHandle,
+    store: State<'_, UserMotifStore>,
+    source_id: String,
+) -> Result<String, String> {
+    let draft_id = create_edit_draft_core(&store, &builtins(), &source_id)?;
+    emit_motifs_changed(&app);
+    Ok(draft_id)
+}
+
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum InstallMode {
@@ -270,6 +313,37 @@ mod tests {
         let got = store.get_draft("d1").unwrap();
         assert_eq!(got.manifest.id, "d1");   // id forced back to draft id
         assert!(got.html.contains("TWO"));   // new body persisted
+    }
+
+    #[test]
+    fn create_edit_draft_seeds_unique_id_and_records_target_for_installed() {
+        use super::super::store::UserMotifStore;
+        use super::super::authoring::compose_motif_html;
+        let tmp = tempfile::tempdir().unwrap();
+        let store = UserMotifStore::new(tmp.path().to_path_buf());
+        let mut man = m("Foo"); man.id = "foo".into();
+        store.write_draft("foo", &compose_motif_html(&man,
+            "<head></head><body>FOO<script>motif.define({setup(){}})</script></body>")).unwrap();
+        store.install_draft("foo", "foo").unwrap();
+
+        let draft_id = super::create_edit_draft_core(&store, &[], "foo").unwrap();
+        assert_ne!(draft_id, "foo");
+        let d = store.get_draft(&draft_id).unwrap();
+        assert!(d.html.contains("FOO"));
+        assert_eq!(d.manifest.id, draft_id);
+        assert_eq!(store.read_draft_target(&draft_id).as_deref(), Some("foo"));
+    }
+
+    #[test]
+    fn create_edit_draft_from_builtin_records_no_target() {
+        use super::super::store::UserMotifStore;
+        let tmp = tempfile::tempdir().unwrap();
+        let store = UserMotifStore::new(tmp.path().to_path_buf());
+        let builtins = super::super::catalog::builtins();
+        let draft_id = super::create_edit_draft_core(&store, &builtins, "countdown").unwrap();
+        assert!(store.get_draft(&draft_id).is_some());
+        assert_eq!(store.read_draft_target(&draft_id), None);
+        assert!(super::create_edit_draft_core(&store, &builtins, "nope").is_err());
     }
 
     #[test]
