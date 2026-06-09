@@ -811,13 +811,19 @@ function MotifLifecycleRow({
 
   // status === "draft"
   const target = manifest?.target_id;
-  // Non-hook read inside the click handler (NOT a top-level hook) — counts how
-  // many layers in THIS project still reference the Update target, for the
-  // blast-radius confirm. Reads `summary` synchronously at click time.
-  const usageCount = (id: string) =>
+  // Non-hook read inside the click handler (NOT a top-level hook). Blast radius
+  // of an Update = every layer in THIS project that will change: those still on
+  // the target id PLUS those swapped onto this working draft (they rebind to the
+  // target on Update). Counting both fixes the common single-edit case (the one
+  // edited layer is on the draft, so a target-only count would read "0 layers").
+  const updateBlastRadius = (targetId: string) =>
     (useProjectStore.getState().summary?.tracks ?? [])
       .flatMap((tr) => tr.layers)
-      .filter((l) => l.kind === "Motif" && (l.params as { motif_id?: string }).motif_id === id).length;
+      .filter((l) => {
+        if (l.kind !== "Motif") return false;
+        const mid = (l.params as { motif_id?: string }).motif_id;
+        return mid === targetId || mid === motifId;
+      }).length;
 
   return (
     <div className="prop-motif-lifecycle">
@@ -829,7 +835,7 @@ function MotifLifecycleRow({
           <button
             disabled={busy}
             onClick={run(async () => {
-              const n = usageCount(target);
+              const n = updateBlastRadius(target);
               const msg = n === 1
                 ? t("property_panel.motif_update_confirm_one")
                 : t("property_panel.motif_update_confirm_many", { count: n });
