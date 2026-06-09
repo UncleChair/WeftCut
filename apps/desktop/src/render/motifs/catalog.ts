@@ -43,6 +43,10 @@ export interface MotifManifest {
   /// "builtin" | "installed" | "draft" — set by the backend `list_motifs`
   /// payload; absent for the statically-globbed built-ins (treated as builtin).
   status?: "builtin" | "installed" | "draft";
+  /// For a draft seeded by "Edit installed X", the id of X (the Update target).
+  /// Absent for from-scratch drafts and built-in forks. Drives the row's
+  /// Update-vs-Install choice + Discard's swap-back.
+  target_id?: string;
 }
 
 export interface Motif {
