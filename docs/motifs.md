@@ -298,6 +298,10 @@ selected layer swaps in place onto the draft so the source panel previews it. Fr
 - **Save as new** publishes the draft under its own fresh id; the original is untouched.
 - **Discard** swaps the layer back to the original and deletes the draft.
 
+A Motif can also be **imported** from an external single-file `.html` (its manifest island is
+parsed + validated at import; any id it claims is ignored and a fresh one minted). It lands as a
+draft to preview and install — the same path an agent-authored Motif would take.
+
 ### Status display
 
 Each Motif layer reports a bake phase — `idle | warming{progress} | rastering{progress} | ready | error`.
