@@ -187,6 +187,7 @@ pub struct InstallArgs {
 pub async fn install_motif(
     app: AppHandle,
     store: State<'_, UserMotifStore>,
+    handle: State<'_, crate::state::ProjectHandle>,
     args: InstallArgs,
 ) -> Result<String, String> {
     let draft = store
@@ -196,6 +197,9 @@ pub async fn install_motif(
     // disk could have been hand-edited since write).
     validate_manifest(&draft.manifest).map_err(|e| e.to_string())?;
 
+    // Track whether this install is an in-place Update: only an Update retargets
+    // + migrates existing project layers (New keeps a stable id → no rebind).
+    let mut is_update = false;
     let (final_id, version) = match args.mode {
         InstallMode::New => {
             // The draft id was made final-ready at write time; keep it so placed
@@ -216,6 +220,7 @@ pub async fn install_motif(
             let prev = store
                 .get_motif(&target_id)
                 .ok_or_else(|| format!("update target '{target_id}' is not an installed Motif"))?;
+            is_update = true;
             // Bump version so the (version-keyed) frame cache invalidates -> all
             // placed layers re-render with the new look (live/mutable).
             (target_id, prev.manifest.version.saturating_add(1))
@@ -235,8 +240,80 @@ pub async fn install_motif(
     store
         .install_draft(&args.draft_id, &final_id)
         .map_err(|e| e.to_string())?;
+
+    // For an in-place Update, retarget current-project layers from the working
+    // draft (and any already on the target) onto the now-published target, and
+    // lenient-migrate their props to the target's NEW schema. New installs keep
+    // a stable id, so they need no rebind.
+    if is_update {
+        let target_manifest = store
+            .get_motif(&final_id)
+            .ok_or_else(|| format!("installed target '{final_id}' not readable"))?
+            .manifest;
+        let snap = handle.snapshot().await;
+        let layers: Vec<(crate::state::ids::LayerId, String, serde_json::Value)> = snap
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .filter_map(|l| match &l.params {
+                crate::state::LayerParams::Motif(p) => Some((
+                    l.id,
+                    p.motif_id.clone(),
+                    serde_json::Value::Object(
+                        p.props.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+                    ),
+                )),
+                _ => None,
+            })
+            .collect();
+        let updates = build_rebind_updates(&layers, &args.draft_id, &target_manifest);
+        if !updates.is_empty() {
+            handle
+                .rebind_motif(crate::state::Actor::User, updates)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+    }
+
     emit_motifs_changed(&app);
     Ok(final_id)
+}
+
+/// Build per-layer rebind updates for an Update: every layer whose `motif_id`
+/// is the working draft id OR the target id ends up on the target id, at the new
+/// version, with props lenient-migrated to the new schema (drop unknown keys,
+/// fill new defaults, fall back invalid values). `layers` = the
+/// `(layer_id, motif_id, props_json)` triples extracted from the snapshot. Pure
+/// (no actor / no I/O) so it's unit-testable in isolation.
+pub fn build_rebind_updates(
+    layers: &[(crate::state::ids::LayerId, String, serde_json::Value)],
+    working_id: &str,
+    target: &crate::motifs::catalog::Manifest,
+) -> Vec<crate::state::actor::MotifRebindEntry> {
+    let probe = crate::motifs::catalog::Motif { manifest: target.clone(), html: String::new() };
+    layers
+        .iter()
+        .filter(|(_, mid, _)| mid == working_id || mid == &target.id)
+        .map(|(layer_id, _, props_json)| {
+            // Lenient migration: drop keys not in the new schema, fill new
+            // defaults, fall back any value that fails its spec. The only Err
+            // mode is the final serialize (can't fail for default-filled
+            // values); on the off-chance it does, fall back to all-defaults.
+            let canonical = probe.canonicalize_props_lenient(props_json).unwrap_or_default();
+            let parsed: serde_json::Value =
+                serde_json::from_str(&canonical).unwrap_or_else(|_| serde_json::json!({}));
+            let props: imbl::HashMap<String, serde_json::Value> = parsed
+                .as_object()
+                .map(|o| o.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                .unwrap_or_default();
+            crate::state::actor::MotifRebindEntry {
+                layer_id: *layer_id,
+                motif_id: target.id.clone(),
+                motif_version: target.version,
+                props,
+            }
+        })
+        .collect()
 }
 
 /// Delete a published user Motif. Built-ins are rejected.
@@ -359,5 +436,30 @@ mod tests {
         let mut bad = m("D"); bad.size = [0, 0];
         let bad_src = compose_motif_html(&bad, "<head></head><body>x</body>");
         assert!(super::amend_draft_html(&store, "d1", &bad_src).is_err());
+    }
+
+    #[test]
+    fn build_rebind_updates_retargets_draft_and_migrates_target_layers() {
+        use crate::motifs::catalog::PropSpec;
+        use crate::state::ids::{new_id, LayerId};
+        let mut man = m("Foo");
+        man.id = "foo".into();
+        man.version = 2;
+        man.props_schema
+            .insert("title".into(), PropSpec::String { default: "Hi".into(), max_length: None });
+        let la: LayerId = new_id();
+        let lb: LayerId = new_id();
+        let layers = vec![
+            (la, "wip".to_string(), serde_json::json!({"old": 1})),
+            (lb, "foo".to_string(), serde_json::json!({"old": 2})),
+        ];
+        let updates = super::build_rebind_updates(&layers, "wip", &man);
+        assert_eq!(updates.len(), 2);
+        for u in &updates {
+            assert_eq!(u.motif_id, "foo");
+            assert_eq!(u.motif_version, 2);
+            assert!(!u.props.contains_key("old")); // dropped (lenient)
+            assert_eq!(u.props.get("title").and_then(|v| v.as_str()), Some("Hi")); // filled default
+        }
     }
 }
