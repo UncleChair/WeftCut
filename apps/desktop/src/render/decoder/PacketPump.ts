@@ -1,8 +1,7 @@
 // The async packet pump for preview decode. Replaces the mp4box
 // SourceHandle's synchronous, sample-index-based pump with a
 // single-flight async loop driven by mediabunny's EncodedPacketSink
-// (getKeyPacket / getNextPacket). See:
-//   docs/superpowers/specs/2026-05-30-mediabunny-plan-b-preview-decode-design.md
+// (getKeyPacket / getNextPacket). See docs/render.md#byte-handling.
 //
 // Control-flow invariants (the spec's "dominant risk"):
 //   - SINGLE-FLIGHT: at most one runPump() loop is live at a time

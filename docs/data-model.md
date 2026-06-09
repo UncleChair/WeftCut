@@ -131,16 +131,16 @@ struct MediaItem {
 `path_rel` is the on-disk anchor (workspace-relative, e.g. `Media/clip.mp4`). On load, `io::load_from_dir` rewrites `path_abs = workspace.join(path_rel)` so workspace moves between machines don't break references. `path_abs` is the in-memory convenience path consumed by the IR compiler + background jobs. If `path_rel` is missing (legacy v1 project before migration) or the resolved file doesn't exist, the pool item gets a "missing media" badge — the project still loads.
 
 The proxy fields encode a video's decode routing, decided per source on
-two independent axes (ADR 0009): an **export source** axis (can WebCodecs
-decode this codec / bit-depth?) and a **preview source** axis (does the
-original scrub acceptably — friendly H.264, ≤1080p, short GOP?). The
-combinations:
+two independent axes (ADR 0009): an **export source** axis (can the export
+Worker decode this source directly?) and a **preview source** axis (does the
+original scrub acceptably — friendly H.264, <=1080p, moderate bitrate, known
+short GOP?). The combinations:
 
 - **Bypass** (`proxy_bypassed = true`): a friendly short-GOP H.264 source;
   no proxy generated — preview and export both read the original.
-- **DirectExport** (`export_uses_original = true`): export reads the
-  original at full quality, while a 720p short-GOP `quick_proxy_path` is
-  generated as the preview scrub source.
+- **DirectExport** (`export_uses_original = true`): export reads the original
+  at full quality, while a 720p short-GOP `quick_proxy_path` is generated as
+  the preview scrub source.
 - **Proxied** (neither flag; `proxy_path` set): a source WebCodecs can't
   decode directly (non-H.264-family codec, or 10-bit/HDR) — a 720p
   `quick_proxy_path` is the preview source and a source-resolution
@@ -153,13 +153,25 @@ prefers it over `proxy_path`. Preview readiness is therefore
 `quick_proxy_path || proxy_path || proxy_bypassed || export_uses_original`;
 export readiness is `proxy_path || proxy_bypassed || export_uses_original`.
 
-Codec decodability is not predicted from a stored capability profile — the
-export path tries to decode the original and falls back to generating a
-`proxy_path` if it can't (ADR 0010), so HEVC/AV1 export from the original
-on capable machines and get proxied on machines that can't decode them.
-Background derivative jobs may start before `file_hash_blake3` is final,
-keyed on a temporary `pending-{media_id}` hash that migrates to the content
-hash when the import copy finishes (ADR 0007).
+The static import route is intentionally narrow. H.264 and AV1 8-bit,
+browser-friendly sources can be marked DirectExport; HEVC, VP9, ProRes, and
+10-bit/HDR sources route to a full export master. The webview still verifies
+DirectExport sources with a real `probeSourceDecodable` key-frame decode before
+export. If the probe fails on the current machine, `ensure_full_proxy`
+route-corrects the media by clearing `export_uses_original` and enqueueing a
+full proxy, and the export waits for the store to show a usable path.
+
+Import also runs a session-scoped preview decodability sweep for sources that
+would otherwise be blank until a proxy lands. A successful probe lets preview
+temporarily read the original via `previewPlaybackPathFor(...,
+{ previewDecodable: true })`; this bridge is not persisted and is replaced by
+the quick proxy once it exists. The import optimization dialog classifies the
+same states as `checking`, `bridged`, `transcoding`, `failed`, `ready`, or
+`direct`; it is an informational, non-blocking surface.
+
+Background derivative jobs may start before `file_hash_blake3` is final, keyed
+on a temporary `pending-{media_id}` hash that migrates to the content hash when
+the import copy finishes (ADR 0007).
 
 ## `Track`
 
@@ -247,11 +259,14 @@ struct TextParams {
     outline: Option<Outline>,
     intro: Option<TextAnimPreset>,    // FadeIn, SlideUp, Typewriter, ...
     outro: Option<TextAnimPreset>,
-    backend_hint: TextBackend,        // Auto | DrawText | Rasterized
+    backend_hint: TextBackend,        // Auto | DrawText | Rasterized (legacy schema field)
 }
 ```
 
-The compiler picks `DrawText` (ffmpeg-native) for simple styles and `Rasterized` (bitmap-baked) for animated/styled text. Agents don't need to know which.
+Preview and export render text through PixiJS `TextSprite` (native canvas text,
+shadow/outline filters, intro/outro presets). The visual IR compiler that
+honored `backend_hint` was deleted with the Pixi migration; the field is still
+persisted for schema compatibility but does not change rendering today.
 
 ### `MotifParams`
 

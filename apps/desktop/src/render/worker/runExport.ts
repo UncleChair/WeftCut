@@ -1,13 +1,13 @@
 // Main-thread harness for the export Worker. Drives one export from
-// "user clicked export" to "MP4 bytes in hand" — Worker spawning,
+// "user clicked export" to "video chunks durably written" — Worker spawning,
 // project snapshot serialization, OffscreenCanvas transfer, progress
-// streaming, byte collection.
+// streaming, and chunk backpressure.
 //
 // Plan: docs/pixi-renderer-plan.md (P9)
 //
-// Callers (ExportPanel, Render & Play, future MCP tool) get one
-// Promise<ArrayBuffer> for the video-only MP4. Audio mux runs on
-// the Rust side after this resolves.
+// Callers provide a writeChunk sink for the video-only fMP4 and get final
+// frame counters. Audio export and mux/transcode run on the Rust side after
+// this resolves.
 
 import { convertFileSrc } from "@tauri-apps/api/core";
 
@@ -47,7 +47,7 @@ export interface RunExportInit {
   /// avoids buffering the whole MP4 in one ArrayBuffer (V8's ~2GB cap OOM'd
   /// long exports at finalize).
   writeChunk: (data: ArrayBuffer) => Promise<void>;
-  /// Pre-rasterized Motif-layer frames (`layerId → ImageBitmap[]`, comp-frame
+  /// Pre-rasterized Motif-layer frames (`layerId -> ImageBitmap[]`, comp-frame
   /// indexed), baked on the MAIN thread by `exportBakeMotifs` (the Worker has
   /// no DOM to run the SVG capture harness). TRANSFERRED into the Worker's
   /// `start` message. Absent / empty ⇒ no Motif layers in the export range.

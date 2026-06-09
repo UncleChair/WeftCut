@@ -36,11 +36,12 @@ export interface PixiPreviewHandle {
   /// Run the PixiJS-backed export. The compositor + engine are
   /// suspended for the duration so the preview decoder doesn't fight
   /// the export decoder for the hardware decode slot. Resolves with
-  /// the encoded MP4 bytes; rejects on failure.
+  /// frame counters after video chunks have streamed through `writeChunk`;
+  /// rejects on failure.
   ///
-  /// The handle does not write the bytes anywhere — App.tsx owns
-  /// the save dialog + file write so the existing ExportPanel
-  /// progress UI can drive both pipelines.
+  /// App.tsx owns the save dialog, temp file, audio export, and final
+  /// mux/transcode so the existing ExportPanel progress UI can drive the
+  /// full pipeline.
   runExport(opts: {
     onProgress?: (encoded: number, total: number) => void;
     /// Full encoder config (codec/dims/bitrate/bitrateMode/framerate). When

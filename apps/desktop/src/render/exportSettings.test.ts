@@ -187,7 +187,7 @@ describe("mezzanineBitrate", () => {
     const mezz = mezzanineBitrate(s, 1920, 1080, 30);
     // ≈ a normal H.264 export of the same quality → no worse memory than H.264.
     expect(mezz).toBe(computeBitrate({ ...s, codec: "h264" }, 1920, 1080, 30));
-    // Far below the old 20Mbps that OOM'd long exports past the 2GB buffer cap.
+    // Far below the old fixed 20Mbps mezzanine.
     expect(mezz).toBeLessThan(12_000_000);
   });
   it("keeps >=1.5x headroom over the final target for custom bitrate", () => {

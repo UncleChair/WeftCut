@@ -11,8 +11,8 @@ final mux see [`rendering.md`](rendering.md).
 ## Boundaries
 
 - **In scope:** visual compositing — video clips, image overlays,
-  text, templates, ASS/SRT subtitles, color fills, transforms,
-  opacity, blend modes, transitions.
+  text, ASS/SRT subtitles, color fills, transforms, opacity, blend
+  modes, transitions.
 - **Out of scope:** audio (handled by Web Audio in preview, ffmpeg in
   export), file muxing (handled by ffmpeg `-c copy`), source
   probing / proxy generation / waveforms / thumbnails (all
@@ -39,18 +39,14 @@ apps/desktop/src/render/
     VideoClipSprite.ts
     ImageOverlaySprite.ts
     TextSprite.ts
-    TemplateSprite.ts        — binds the template's rastered SVG frame as a texture
     SubtitlesSprite.ts       — owns JASSUB binding
     ColorSprite.ts
-  templates/
-    Rasterizer.ts            — serialized SVG → ImageBitmap (via <img>); injects @font-face
-    Cache.ts                 — content-hash keyed raster cache (on-demand / RAM ring / persisted PNG)
   subtitles/
     Jassub.ts                — libass-wasm canvas-mode binding
   worker/
     exportWorker.ts          — Worker entry; imports Compositor against OffscreenCanvas
     encoder.ts               — VideoEncoder config + mediabunny Output mux into video.mp4
-    protocol.ts              — postMessage protocol (start/cancel/progress/done)
+    protocol.ts              — postMessage protocol (start/cancel/progress/chunk/done)
   audio/
     AudioGraph.ts            — Web Audio mixer
   fixtures/
@@ -274,16 +270,24 @@ body is fed directly.
 - A time range `[startUs, endUs)`.
 
 The Worker mounts a `Compositor` against the OffscreenCanvas, walks
-the frame grid (project fps × duration), calls `render(tUs)` for
-each, transfers the rendered frame to a `VideoEncoder`, and muxes the
-encoded chunks into an in-memory MP4 via a mediabunny `Output`
-(`EncodedVideoPacketSource` + `BufferTarget`). Progress events fire on
-every encoded frame; the final `done` event hands the MP4 ArrayBuffer
-back to the main thread.
+the output frame grid for that half-open range, calls `render(tUs)` for
+each frame, and captures each output `VideoFrame` with
+`timestamp = tUs - startUs` so the encoded video starts at zero. The
+grid uses the exact rational output fps (`frameGrid.ts`), not
+`i * round(1e6 / fps)`, so trim tails and 29.97/59.94-style rates do
+not drift or over-count.
 
-The main thread then writes the bytes to a temp `video.mp4`, awaits
-the audio-only Rust export into a sibling `audio.m4a`, and asks the
-Rust side to `mux_to_file(video, audio, output)`.
+Encoded chunks stream through mediabunny `Output` using an
+`EncodedVideoPacketSource` and an append-only stream target. The Worker
+posts each fMP4 slice as a `chunk` event and waits for a `chunk-ack` after
+the main thread appends it to a temp `video.mp4`; this keeps long exports
+off V8's single-ArrayBuffer size ceiling. Progress events fire on every
+encoded frame; the final `done` event carries perf counters only, because the
+file has already been streamed to disk.
+
+The main thread then optionally awaits the Rust audio-only export into a
+sibling temp audio file and asks Rust to mux or transcode into the user's
+chosen output; see [`rendering.md`](rendering.md).
 
 ### Export source resolution
 

@@ -1,5 +1,6 @@
-//! Audio-only export + stream-copy mux. The Pixi renderer is the video
-//! source; Rust fills in audio.m4a and `ffmpeg -c copy` stitches them.
+//! Audio-only export + final mux/transcode. The Pixi/WebCodecs worker streams
+//! the video temp file; Rust fills in an optional audio temp file and ffmpeg
+//! writes the user's output.
 //!
 //! Post P12-d — the legacy full-render ffmpeg-compositor pipeline (presets,
 //! HW encoder cache, export queue, progress events, `compile_project`
@@ -47,10 +48,10 @@ fn audio_encode_args(codec: &str, bitrate_bps: u64) -> Vec<std::ffi::OsString> {
     ]
 }
 
-/// Audio-only export. Produces an `.m4a` (AAC) at `output` containing
-/// just the project's audio chain. The PixiJS export Worker emits
-/// `video.mp4` via WebCodecs; this fills in `audio.m4a`; `mux_to_file`
-/// combines them with `ffmpeg -c copy`.
+/// Audio-only export. Produces an audio-only file at `output` (AAC `.m4a` or
+/// Opus `.mka`) containing just the project's audio chain. The PixiJS export
+/// Worker streams the temp video file; `mux_to_file` / `transcode_and_mux`
+/// combine them with ffmpeg.
 ///
 /// `_app` is taken to keep the call-site signature stable with the
 /// Tauri command; this routine emits no events of its own — the JS
@@ -178,8 +179,8 @@ fn mux_args(
     args
 }
 
-/// Stream-copy mux of one video file (+ optional audio) into a single
-/// MP4. Runs `ffmpeg -y -i video [-i audio] -c copy out`. When
+/// Stream-copy mux of one video file (+ optional audio) into the chosen
+/// output container. Runs `ffmpeg -y -i video [-i audio] -c copy out`. When
 /// `audio_path` doesn't exist the audio input is omitted — taken on
 /// projects with no audio layers, where `export_audio_only` returns
 /// without producing anything.
@@ -275,7 +276,7 @@ pub async fn transcode_and_mux(
     for arg in hvc1_tag_args(codec, output) {
         cmd.arg(arg);
     }
-    // Audio is already AAC from export_audio_only → stream-copy it.
+    // Audio is already encoded by export_audio_only; stream-copy it.
     if has_audio {
         cmd.args(["-c:a", "copy"]);
     }
@@ -470,7 +471,7 @@ mod tests {
     /// pass `-i audio_path` to ffmpeg when the audio file doesn't
     /// exist. The previous shape always emitted both `-i`s, so projects
     /// with no audio layers (where `export_audio_only` early-returns
-    /// without writing audio.m4a) failed at the mux step with
+    /// without writing an audio temp file) failed at the mux step with
     /// "No such file or directory".
     #[test]
     fn mux_args_omits_audio_input_when_audio_missing() {

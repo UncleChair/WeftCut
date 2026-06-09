@@ -1,7 +1,7 @@
 // Web Worker entry point for export. Receives an ExportRequest,
 // constructs a Compositor against an OffscreenCanvas, runs the
 // chunked decode → composite → encode loop, posts progress, posts
-// the muxed MP4 bytes back, and exits.
+// fMP4 chunks with backpressure, posts final counters, and exits.
 //
 // Plan: docs/pixi-renderer-plan.md (P8 perf rewrite)
 //
@@ -20,8 +20,8 @@
 //
 // Limitations (v1):
 //   - Audio is OUT. The Worker has no DOM and audio export rides
-//     the existing Rust ffmpeg compositor. P9 final mux combines
-//     video.mp4 (this output) with audio.m4a.
+//     the existing Rust ffmpeg compositor. Final mux/transcode combines
+//     this temp video with an optional temp audio file (.m4a/.mka).
 //   - Subtitles render path is absent here (no DOM for JASSUB); the
 //     legacy ffmpeg export path owns subtitles export for now.
 //   - Motifs DO render: the SVG capture harness can't run in the

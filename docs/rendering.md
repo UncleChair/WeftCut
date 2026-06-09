@@ -29,7 +29,9 @@ opaque JSON. Audio settings are persisted:
   sample rate.
 - `channels`: `null` to follow the composition, otherwise mono or stereo.
 
-AAC is valid in `mp4`, `mov`, and `mkv`. Opus is restricted to `mkv` because
+H.264 and HEVC can target `mp4`, `mov`, and `mkv`. AV1 can target `mp4` and
+`mkv`; `mov` is rejected because ffmpeg's MOV muxer does not accept AV1. AAC is
+valid in every supported container. Opus is restricted to `mkv` because
 Opus-in-MP4/MOV playback is unreliable in WebView2. `mergeSettings` backfills
 missing audio fields from `DEFAULT_AUDIO_SETTINGS` and snaps stale saved blobs
 back to AAC if the selected container cannot hold the saved audio codec.
@@ -160,7 +162,8 @@ compatibility.
 
 ## Coverage
 
-The root behavior above is guarded by focused tests and diagnostics:
+The root behavior above is guarded by focused tests and diagnostics; see
+[`conformance.md`](conformance.md) for the media fixtures and E2E gates:
 
 - `exportSettings.test.ts`: default merge/backfill, audio codec/container
   validity, estimate size, and range clamping.

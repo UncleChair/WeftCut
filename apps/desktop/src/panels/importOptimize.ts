@@ -2,7 +2,7 @@
 // codec-named reason shown in the import notification dialog. Pure; the dialog
 // (ImportProxyDialog) is presentational and App does the classification.
 //
-// See docs/superpowers/specs/2026-06-01-import-proxy-notification-design.md
+// See docs/data-model.md#mediaitem.
 
 import type { MediaSummary } from "../ipc";
 import type { ProbeState, ProxyJobState } from "../render/exportReadiness";

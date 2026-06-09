@@ -1,11 +1,11 @@
-// VideoEncoder + mediabunny mux of the encoded chunks into a non-fragmented
-// MP4 buffer. No audio — audio export rides the Rust ffmpeg final-mux path.
+// VideoEncoder + mediabunny mux of encoded chunks into a fragmented MP4 stream.
+// No audio — audio export rides the Rust ffmpeg final mux/transcode path.
 //
 // We keep our own VideoEncoder (config, GOP cadence, MessageChannel
 // backpressure) and hand only the CONTAINER to mediabunny: an
 // EncodedVideoPacketSource fed the encoder's output chunks, muxed by an
-// Output + Mp4OutputFormat into an in-memory BufferTarget. (Replaces the
-// prior mp4box createFile/addTrack/addSample/write path.)
+// Output + fragmented Mp4OutputFormat into an AppendOnlyStreamTarget.
+// (Replaces the prior mp4box createFile/addTrack/addSample/write path.)
 //
 // The encoder's `output` callback is synchronous, but `source.add` is async
 // (it returns a backpressure Promise). We serialize adds through a promise

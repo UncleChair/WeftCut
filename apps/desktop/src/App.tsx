@@ -772,10 +772,10 @@ export function App({ onCloseProject }: AppProps) {
 
   // Pixi/WebCodecs export. Three-stage pipeline:
   //
-  //   1. PreviewSurface handle suspends the preview compositor,
-  //      drives the Worker, returns video-only MP4 bytes.
-  //   2. Rust audio-only export produces a sibling .m4a.
-  //   3. Rust stream-copy mux joins the two into the user-chosen path.
+  //   1. PreviewSurface handle suspends the preview compositor and drives
+  //      the Worker; the Worker streams video-only fMP4 chunks to tempVideoPath.
+  //   2. Rust audio-only export produces a sibling .m4a (AAC) or .mka (Opus).
+  //   3. Rust mux/transcode writes the user-chosen path.
   //
   // The Worker emits progress on every encoded frame; that maps to
   // the encode phase of ExportPanel. Audio + mux run silently in
@@ -1065,7 +1065,7 @@ export function App({ onCloseProject }: AppProps) {
 
     try {
       // (1) Video is already written to tempVideoPath (streamed above).
-      // Audio-only Rust export → temp audio.m4a (AAC).
+      // Audio-only Rust export -> temp audio file (.m4a/.mka).
       if (settings.audio.include) {
         await exportProjectAudioOnly(
           tempAudioPath,

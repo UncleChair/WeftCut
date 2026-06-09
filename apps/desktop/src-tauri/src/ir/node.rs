@@ -1,8 +1,8 @@
 //! Render graph IR nodes. Audio-only post P12-b: the visual half of the IR
 //! (lavfi-compositor for export) was deleted with the move to the Pixi
 //! renderer. The audio chain survives because `export_audio_only` still
-//! routes through `lower → emit_ffmpeg` to fill in `audio.m4a` for the
-//! Pixi export's stream-copy mux.
+//! routes through `lower → emit_ffmpeg` to fill in the optional audio temp
+//! file for the Pixi export's mux/transcode step.
 
 // `StreamKind` and `IRNode::kind` are API for future optimization /
 // validation passes that need to discriminate audio vs video edges.

@@ -29,6 +29,7 @@ No local AI models. No bundled Chromium. No server backend.
 - **[Render](docs/render.md)** — PixiJS + WebCodecs renderer architecture.
 - **[Preview](docs/preview.md)** — interactive preview surface and transport.
 - **[Rendering](docs/rendering.md)** — audio IR, audio export, final mux.
+- **[Conformance](docs/conformance.md)** — media fixtures and E2E gates for frame alignment, audio sync, and color.
 - **[MCP server & agent UX](docs/mcp.md)** — protocol, tool surface, resources, multi-agent.
 - **[Groups](docs/groups.md)** — flat group model that bundles layers across tracks.
 - **[Status / Log system](docs/status-log.md)** — bottom-of-editor log bus.

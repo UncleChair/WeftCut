@@ -3,7 +3,7 @@
 // packet, racing the outcome against the decoder's error callback AND a
 // deadline — because an unsupported codec does not always fire a clean error
 // (WebCodecs can silently stall: no output, no error). See
-// docs/superpowers/specs/2026-05-30-import-oracle-removal-design.md.
+// docs/render.md#export-source-resolution and docs/data-model.md#mediaitem.
 
 import { openMediaInput, type OpenedMedia } from "./mediaInput";
 
