@@ -747,6 +747,10 @@ function MotifLifecycleRow({
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Inline confirm (replaces native window.confirm): a pending destructive action
+  // + its prompt. While set, the row shows the prompt + Confirm/Cancel instead of
+  // firing the action immediately.
+  const [pending, setPending] = useState<{ message: string; action: () => Promise<unknown> } | null>(null);
   // Re-render when the runtime catalog changes (install/delete/edit →
   // motifs:changed → syncUserMotifsFromBackend → setUserMotifs → this fires),
   // so status + target stay fresh. Hook runs before any early return.
@@ -766,6 +770,25 @@ function MotifLifecycleRow({
       setBusy(false);
     }
   };
+
+  // A destructive action is awaiting inline confirmation — show the prompt +
+  // Confirm/Cancel instead of the normal buttons. Runs AFTER all hooks (rules-of-
+  // hooks-safe). On action error, `err` shows and the prompt stays so the failure
+  // is visible; `setPending(null)` only fires after the action resolves.
+  if (pending) {
+    return (
+      <div className="prop-motif-lifecycle">
+        <p className="meta">{pending.message}</p>
+        <button disabled={busy} onClick={run(async () => { await pending.action(); setPending(null); })}>
+          {t("property_panel.motif_confirm")}
+        </button>
+        <button disabled={busy} onClick={() => setPending(null)}>
+          {t("property_panel.motif_cancel")}
+        </button>
+        {err && <p className="settings-error">{err}</p>}
+      </div>
+    );
+  }
 
   // Edit: fork a working draft and swap this layer onto it (forced version 1 —
   // a fresh draft always starts at v1). The source panel then previews it.
@@ -796,10 +819,9 @@ function MotifLifecycleRow({
         <button disabled={busy} onClick={edit}>{t("property_panel.motif_edit")}</button>
         <button
           disabled={busy}
-          onClick={run(async () => {
-            if (!window.confirm(t("property_panel.motif_delete_confirm", { id: motifId }))) return;
-            await deleteMotif(motifId);
-            await onMutated();
+          onClick={() => setPending({
+            message: t("property_panel.motif_delete_confirm", { id: motifId }),
+            action: async () => { await deleteMotif(motifId); await onMutated(); },
           })}
         >
           {t("property_panel.motif_delete")}
@@ -834,15 +856,19 @@ function MotifLifecycleRow({
         <>
           <button
             disabled={busy}
-            onClick={run(async () => {
+            onClick={() => {
               const n = updateBlastRadius(target);
-              const msg = n === 1
+              const message = n === 1
                 ? t("property_panel.motif_update_confirm_one")
                 : t("property_panel.motif_update_confirm_many", { count: n });
-              if (!window.confirm(msg)) return;
-              await installMotif(motifId, { kind: "update", target_id: target });
-              await onMutated();
-            })}
+              setPending({
+                message,
+                action: async () => {
+                  await installMotif(motifId, { kind: "update", target_id: target });
+                  await onMutated();
+                },
+              });
+            }}
           >
             {t("property_panel.motif_update")}
           </button>

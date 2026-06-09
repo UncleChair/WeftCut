@@ -471,6 +471,8 @@ const enUS = {
     motif_update: "Update",
     motif_save_as_new: "Save as new",
     motif_discard: "Discard",
+    motif_confirm: "Confirm",
+    motif_cancel: "Cancel",
     motif_update_confirm_one: "Used by 1 layer in this project. Updating changes it (and other projects update on next open).",
     motif_update_confirm_many: "Used by {{count}} layers in this project. Updating changes all of them (and other projects update on next open).",
     motif_source: "Source",
