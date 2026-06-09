@@ -15,7 +15,10 @@ use super::store::UserMotifStore;
 /// picker refreshes.
 pub const MOTIFS_CHANGED_EVENT: &str = "motifs:changed";
 
-fn emit_motifs_changed(app: &AppHandle) {
+/// Emit the app-wide `motifs:changed` event so the frontend re-pulls the
+/// catalog. `pub` so the MCP authoring tools (which mutate the same store) can
+/// signal the UI to refresh, mirroring the human commands.
+pub fn emit_motifs_changed(app: &AppHandle) {
     // Best-effort: a failed emit shouldn't fail the lifecycle op.
     let _ = app.emit(MOTIFS_CHANGED_EVENT, ());
 }
