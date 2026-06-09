@@ -77,7 +77,7 @@ agents get confused. The current set is around 40, organised below.
 | `media://{id}/thumbnail` | middle thumbnail as JPG (base64) |
 | `media://{id}/frame/{t_us}` | on-demand frame at the given microsecond, lazy-cached (multimodal-friendly) |
 | `media://{id}/waveform` | audio peaks file (binary, base64) |
-| `motifs://current` | built-in motif catalog (id, name, size, default_duration_s, props_schema) — same payload as `list_motifs` |
+| `motifs://current` | full motif catalog (built-ins, installed, drafts) — same payload as `list_motifs`; `html` stripped |
 
 `media://*` reads return `404` with a hint pointing at the
 `media:job_complete` Tauri event when derivatives haven't been generated
@@ -125,7 +125,14 @@ Markers + composition:
 - `set_composition { patch }`
 
 Catalog:
-- `list_motifs()` → `[{ id, name, version, size: [w, h], default_duration_s, props_schema }, ...]`. Inspect `props_schema` before calling `add_motif`.
+- `list_motifs()` → `[{ id, name, version, size: [w, h], default_duration_s, props_schema, status, content_hash, target_id? }, ...]`. `status` is `builtin | installed | draft`; drafts may carry `target_id` (the Motif they update). Inspect `props_schema` before calling `add_motif`. Drafts are placeable immediately for preview.
+
+Motif authoring (see [motifs.md](motifs.md) "Agent surface"):
+- `get_motif_source { id }` → `{ manifest, html }` — any built-in, installed, or draft.
+- `write_motif_draft { manifest, html, from? }` → draft id. `from` records an existing Motif as the update target.
+- `preview_motif_draft { id, t_sec, width?, height? }` → base64 PNG of one frame.
+- `install_motif { draft_id, mode: new | update }` — publish; update bumps version and rebinds placed layers.
+- `delete_motif { id }` — remove a user Motif (built-ins rejected).
 
 ### Workflow / safety
 

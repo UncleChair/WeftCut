@@ -225,9 +225,11 @@ cache captures each frame index once and reuses it.
   lazily on first capture and reused across Motifs, frames, and layers. The footprint
   is one extra browser process tree, not one per layer.
 - **Window-as-isolation.** The Motif is loaded as the host window's **top-level
-  document**, served by the `motif:` scheme. Isolation comes from: a separate WebView2
-  with **no Tauri API injected**, and a strict CSP (`default-src 'none'` plus only what
-  capture needs) so the page is **fully offline** and can make no network request. The
+  document**, served by the `motif:` scheme. Isolation comes from: a dedicated hidden
+  WebView2 (separate from the editor shell), **capability denial** on the `motif:`
+  origin (Tauri 2.11 cannot suppress IPC script injection from Rust, so rejection is
+  the operative guard), and a strict CSP (`default-src 'none'` plus only what capture
+  needs) so the page is **fully offline** and can make no network request. The
   clock-takeover runtime is injected via the window's `initialization_script` (runs at
   document-start, before the Motif's `motif.define(...)`).
 - **Multi-Motif navigation.** When a capture requests a different Motif than the one the
@@ -381,10 +383,12 @@ Agents observe and author; they never drive the renderer directly.
 ## Security
 
 User Motifs are untrusted web documents (an agent or a human authored them), so the
-capture host is the trust boundary. It runs every Motif in a **separate hidden WebView2**
-with **no Tauri API injected** and CSP `default-src 'none'` — fully offline (no
-`connect-src` → no fetch/XHR/WebSocket), with no reach into the app. That window-as-sandbox
-(built for the trusted built-ins) carries the untrusted case. On top of it:
+capture host is the trust boundary. A **single reused hidden WebView2** (`motif-host`)
+navigates between Motif ids/content hashes; isolation comes from a dedicated window
+(separate from the editor), **capability denial** on the `motif:` origin (IPC scripts
+may be present but all bridge calls are rejected), and CSP `default-src 'none'` — fully
+offline (no `connect-src` → no fetch/XHR/WebSocket). That window-as-sandbox carries
+both trusted built-ins and untrusted user Motifs. On top of it:
 
 - **Import-time validation** — the manifest island is parsed + validated against the
   `Manifest`/`PropSpec` schema (sane `size` bounds, well-formed `props_schema`,
@@ -399,5 +403,5 @@ with **no Tauri API injected** and CSP `default-src 'none'` — fully offline (n
   ignored (app-assigned).
 
 Residual accepted risk: a renderer-level WebView2 exploit is out of our control (mitigated by
-the isolated, offline host with no Tauri bridge); a determinism-violating Motif renders wrong
-but harmlessly (surfaced by the perceptual-determinism story).
+the isolated, offline host with capability-denied bridge access); a determinism-violating Motif
+renders wrong but harmlessly (surfaced by the perceptual-determinism story).

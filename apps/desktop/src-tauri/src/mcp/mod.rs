@@ -43,8 +43,9 @@
 //!   microsecond timestamp, lazy-cached on disk. Multimodal-friendly.
 //! - `media://{id}/waveform` — peaks file (base64). See `jobs/waveform.rs`
 //!   for the binary format.
-//! - `motifs://current` — built-in motif catalog (id, name, size,
-//!   default_duration_s, props_schema). Same payload as `list_motifs`.
+//! - `motifs://current` — full motif catalog (built-ins, installed, drafts;
+//!   each entry carries status/content_hash/target_id?). Same payload as
+//!   `list_motifs` (`html` stripped).
 //!
 //! Edit tools (Stage 3) and workflow tools (Stage 4) live alongside `ping`
 //! in the `WeftCutServer` impl block. The change feed (Stage 5) lives on its
@@ -3154,8 +3155,9 @@ const STATIC_RESOURCES: &[ResourceDescriptor] = &[
     ResourceDescriptor {
         uri: URI_MOTIFS,
         name: "Motifs catalog",
-        description: "Built-in motif catalog as JSON. Same shape as the `list_motifs` tool result. \
-                      Read this once at session start to know what `add_motif` accepts.",
+        description: "Full motif catalog as JSON (built-ins, installed, drafts; html stripped). \
+                      Same shape as the `list_motifs` tool result. Read once at session start \
+                      to know what `add_motif` accepts; use authoring tools to create drafts.",
     },
 ];
 
