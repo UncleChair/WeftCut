@@ -163,6 +163,15 @@ impl WeftCutServer {
         }
     }
 
+    /// The full Motif catalog payload (built-ins + installed + draft user Motifs,
+    /// each with `status`/`content_hash`/`target_id`) — same source the Tauri
+    /// `commands::list_motifs` picker uses, so the MCP `list_motifs` tool and the
+    /// `motifs://current` resource stay in lockstep with the human surface.
+    fn motifs_payload(&self) -> Vec<Value> {
+        let store = self.app.state::<crate::motifs::store::UserMotifStore>();
+        crate::commands::list_motifs_inner(&store)
+    }
+
     #[tool(description = "Liveness check. Returns 'pong' to confirm the WeftCut MCP server is reachable.")]
     async fn ping(&self) -> String {
         "pong".to_string()
@@ -1155,13 +1164,167 @@ impl WeftCutServer {
     // Motif tools (Phase 5 Stage H)
     // ============================================================
 
-    #[tool(description = "List every built-in motif available to add via `add_motif`. Returns an array \
-                          of `{ id, name, version, size: [w,h], default_duration_s, props_schema }`. \
-                          Inspect `props_schema` before calling `add_motif` to know what keys + types each \
-                          motif accepts; unknown keys reject. The catalog is fixed per build; once \
-                          Phase 5 Stage H (community + user motifs) lands this becomes dynamic.")]
+    #[tool(description = "List every motif available to add via `add_motif` — built-ins PLUS installed and \
+                          draft user motifs. Returns an array of `{ id, name, version, size: [w,h], \
+                          default_duration_s, props_schema, status, content_hash, target_id? }` where \
+                          `status` is `builtin` | `installed` | `draft`. Inspect `props_schema` before \
+                          `add_motif` to know what keys + types each motif accepts; unknown keys reject. \
+                          Drafts (status `draft`) are placeable immediately for preview.")]
     async fn list_motifs(&self) -> Result<CallToolResult, McpError> {
-        ok_json(&templates_payload())
+        ok_json(&self.motifs_payload())
+    }
+
+    #[tool(description = "Read a Motif's source { manifest, html } — any built-in, installed, or draft. \
+                          Read this before editing so you can base your changes on the current source. \
+                          `id` comes from `list_motifs`.")]
+    async fn get_motif_source(
+        &self,
+        #[tool(aggr)] args: MotifIdArgs,
+    ) -> Result<CallToolResult, McpError> {
+        if let Some(m) = catalog::builtins().into_iter().find(|m| m.id() == args.id) {
+            return ok_json(&serde_json::json!({ "manifest": m.manifest, "html": m.html }));
+        }
+        let store = self.app.state::<crate::motifs::store::UserMotifStore>();
+        let m = store.get_motif(&args.id).ok_or_else(|| {
+            McpError::invalid_params(format!("unknown motif id '{}'", args.id), None)
+        })?;
+        ok_json(&serde_json::json!({ "manifest": m.manifest, "html": m.html }))
+    }
+
+    #[tool(description = "Write a Motif draft from { manifest, html }. Returns the draft id. The draft is \
+                          placeable immediately (via `add_motif`) for preview, and re-writable. `from` \
+                          (optional) records an existing Motif id as the draft's UPDATE target so a later \
+                          `install_motif {mode:'update'}` republishes over it; omit `from` for a brand-new \
+                          Motif (installs as new). The manifest's `id`/`version` are ignored — app-assigned. \
+                          Expose tweakable controls via `props_schema`.")]
+    async fn write_motif_draft(
+        &self,
+        #[tool(aggr)] args: WriteMotifDraftArgs,
+    ) -> Result<CallToolResult, McpError> {
+        let store = self.app.state::<crate::motifs::store::UserMotifStore>();
+        let manifest: crate::motifs::catalog::Manifest = serde_json::from_value(args.manifest)
+            .map_err(|e| McpError::invalid_params(format!("invalid manifest: {e}"), None))?;
+        let id = crate::motifs::authoring_commands::write_motif_draft_core(
+            &store,
+            manifest,
+            &args.html,
+            args.from.as_deref(),
+        )
+        .map_err(|e| McpError::invalid_params(e, None))?;
+        crate::motifs::authoring_commands::emit_motifs_changed(&self.app);
+        Ok(ok_text(id))
+    }
+
+    #[tool(description = "Render one frame of a Motif (draft / installed / built-in) and return it as a \
+                          base64-encoded PNG, so you can SEE your output and self-correct. Args: `id`, \
+                          `t_sec` (content time), optional `width`/`height` (default = the motif's size), \
+                          optional `props`. Requires the app's preview runtime to be live; returns an error \
+                          (rather than hanging) if it isn't ready.")]
+    async fn preview_motif_draft(
+        &self,
+        #[tool(aggr)] args: PreviewMotifDraftArgs,
+    ) -> Result<CallToolResult, McpError> {
+        let store = self.app.state::<crate::motifs::store::UserMotifStore>();
+        let motif = catalog::builtins()
+            .into_iter()
+            .find(|m| m.id() == args.id)
+            .or_else(|| store.get_motif(&args.id))
+            .ok_or_else(|| {
+                McpError::invalid_params(format!("unknown motif id '{}'", args.id), None)
+            })?;
+        let (dw, dh) = motif.size();
+        let width = args.width.unwrap_or(dw);
+        let height = args.height.unwrap_or(dh);
+        let provided = args
+            .props
+            .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
+        let props_json = motif
+            .canonicalize_props(&provided)
+            .map_err(|e| McpError::invalid_params(format!("invalid props: {e}"), None))?;
+        let content_hash = motif.content_hash();
+        let runtime = self.app.state::<crate::motifs::MotifRuntime>();
+        let capture = self.app.state::<crate::motifs::MotifCapture>();
+        let b64 = crate::motifs::commands::capture_motif_frame_b64(
+            &self.app,
+            &runtime,
+            &capture,
+            &store,
+            &args.id,
+            args.t_sec,
+            &props_json,
+            width,
+            height,
+            None, // settle_rafs: the Rust Manifest has none (TS-only); use the capture default
+            &content_hash,
+        )
+        .await
+        .map_err(|e| McpError::internal_error(e, None))?;
+        ok_json(&serde_json::json!({ "png_base64": b64, "width": width, "height": height }))
+    }
+
+    #[tool(description = "Install a draft. mode 'new' publishes under the draft's own id; 'update' \
+                          republishes over the draft's recorded UPDATE target (set via `write_motif_draft`'s \
+                          `from`) — bumping its version so every placement re-renders, and rebinding + \
+                          migrating current-project layers. Returns the published id.")]
+    async fn install_motif(
+        &self,
+        #[tool(aggr)] args: InstallMotifArgs,
+    ) -> Result<CallToolResult, McpError> {
+        let store = self.app.state::<crate::motifs::store::UserMotifStore>();
+        let mode = match args.mode.as_str() {
+            "new" => crate::motifs::authoring_commands::InstallMode::New,
+            "update" => {
+                let target = store.read_draft_target(&args.draft_id).ok_or_else(|| {
+                    McpError::invalid_params(
+                        format!(
+                            "draft '{}' has no UPDATE target — install with mode 'new', or write it with `from`",
+                            args.draft_id
+                        ),
+                        None,
+                    )
+                })?;
+                crate::motifs::authoring_commands::InstallMode::Update { target_id: target }
+            }
+            other => {
+                return Err(McpError::invalid_params(
+                    format!("mode must be 'new' or 'update', got '{other}'"),
+                    None,
+                ))
+            }
+        };
+        let install_args = crate::motifs::authoring_commands::InstallArgs {
+            draft_id: args.draft_id,
+            mode,
+        };
+        let published = crate::motifs::authoring_commands::install_motif_core(
+            &store,
+            &self.project,
+            &install_args,
+        )
+        .await
+        .map_err(|e| McpError::internal_error(e, None))?;
+        crate::motifs::authoring_commands::emit_motifs_changed(&self.app);
+        Ok(ok_text(published))
+    }
+
+    #[tool(description = "Delete an installed or draft user Motif by id. Built-ins are rejected. Placed \
+                          layers referencing it degrade to an error placeholder.")]
+    async fn delete_motif(
+        &self,
+        #[tool(aggr)] args: MotifIdArgs,
+    ) -> Result<CallToolResult, McpError> {
+        if catalog::BUILTIN_IDS.contains(&args.id.as_str()) {
+            return Err(McpError::invalid_params(
+                format!("cannot delete the built-in Motif '{}'", args.id),
+                None,
+            ));
+        }
+        let store = self.app.state::<crate::motifs::store::UserMotifStore>();
+        store
+            .delete_user_motif(&args.id)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        crate::motifs::authoring_commands::emit_motifs_changed(&self.app);
+        Ok(ok_void())
     }
 
     #[tool(description = "Add a motif layer to a track. The motif is rasterized to a PNG sequence on \
@@ -1176,9 +1339,11 @@ impl WeftCutServer {
         &self,
         #[tool(aggr)] args: AddMotifArgs,
     ) -> Result<CallToolResult, McpError> {
+        let store = self.app.state::<crate::motifs::store::UserMotifStore>();
         let motif = catalog::builtins()
             .into_iter()
             .find(|t| t.id() == args.motif_id)
+            .or_else(|| store.get_motif(&args.motif_id))
             .ok_or_else(|| {
                 McpError::invalid_params(
                     format!(
@@ -1875,6 +2040,50 @@ pub struct AddMotifArgs {
     pub props: Option<Value>,
 }
 
+/// Shared single-id arg for `get_motif_source` + `delete_motif`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MotifIdArgs {
+    /// The Motif id (from `list_motifs`).
+    pub id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct WriteMotifDraftArgs {
+    /// Optional id of an existing Motif this draft will UPDATE on install (records
+    /// it as the draft's target). Omit for a brand-new Motif (installs as new).
+    pub from: Option<String>,
+    /// The manifest as a JSON object (its `id`/`version` are ignored — app-assigned).
+    /// Shape: `{ name, size:[w,h], default_duration_s, props_schema, ... }` — inspect
+    /// a built-in via `get_motif_source` for an exact example. Rejected if malformed.
+    pub manifest: Value,
+    /// The HTML body. The manifest island is injected by the app; a
+    /// `<script>motif.define({...})</script>` drives the render.
+    pub html: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct InstallMotifArgs {
+    /// The draft id (from `write_motif_draft`).
+    pub draft_id: String,
+    /// "new" (publish under the draft's own id) or "update" (republish over the
+    /// draft's recorded target; fails if the draft has no target).
+    pub mode: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PreviewMotifDraftArgs {
+    /// Motif id (draft / installed / built-in).
+    pub id: String,
+    /// Content time in seconds to render (e.g. 0 = first frame).
+    pub t_sec: f64,
+    /// Optional render width (default = the motif's manifest width).
+    pub width: Option<u32>,
+    /// Optional render height (default = the motif's manifest height).
+    pub height: Option<u32>,
+    /// Optional props (JSON object); defaults to the manifest defaults.
+    pub props: Option<Value>,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SetCompositionArgs {
     pub patch: CompositionPatch,
@@ -2170,17 +2379,6 @@ fn agent_actor() -> Actor {
 fn parse_uuid(s: &str, field: &str) -> Result<Uuid, McpError> {
     Uuid::parse_str(s)
         .map_err(|e| McpError::invalid_params(format!("{field} not a UUID: {e}"), None))
-}
-
-/// JSON payload shared by the `list_motifs` tool and the
-/// `motifs://current` resource. Wraps `crate::motifs::catalog::catalog()` so
-/// the Tauri-side picker (`commands::list_motifs`) and the MCP surfaces
-/// emit the same JSON shape from the same source.
-fn templates_payload() -> Vec<Value> {
-    catalog::catalog()
-        .into_iter()
-        .map(|m| serde_json::to_value(m).expect("Manifest is unconditionally Serialize"))
-        .collect()
 }
 
 /// Convert the canonical JSON string produced by `Motif::canonicalize_props`
@@ -2660,7 +2858,7 @@ impl ServerHandler for WeftCutServer {
             URI_TRACKS => serde_json::to_value(&snap.tracks).map_err(serialize_err)?,
             URI_MARKERS => serde_json::to_value(&snap.markers).map_err(serialize_err)?,
             URI_MOTIFS => {
-                serde_json::to_value(templates_payload()).map_err(serialize_err)?
+                serde_json::to_value(self.motifs_payload()).map_err(serialize_err)?
             }
             URI_HISTORY => {
                 let view = self.project.history_view(HISTORY_LIMIT).await;
@@ -3641,25 +3839,6 @@ mod tests {
     // ============================================================
     // Stage H — motif MCP helpers
     // ============================================================
-
-    /// `list_motifs` and `motifs://current` share `templates_payload()`.
-    /// One entry per builtin, ordered to match the picker. If a future
-    /// builtin lands but isn't surfaced through this payload, agents wouldn't
-    /// see it.
-    #[test]
-    fn templates_payload_lists_every_builtin() {
-        let payload = templates_payload();
-        let builtins = catalog::builtins();
-        assert_eq!(payload.len(), builtins.len());
-        for (entry, t) in payload.iter().zip(builtins.iter()) {
-            let obj = entry.as_object().expect("entry is JSON object");
-            assert_eq!(obj.get("id").and_then(|v| v.as_str()), Some(t.id()));
-            assert!(obj.contains_key("name"));
-            assert!(obj.contains_key("size"));
-            assert!(obj.contains_key("default_duration_s"));
-            assert!(obj.contains_key("props_schema"));
-        }
-    }
 
     /// `parse_canonical_props` is the format crossover between
     /// `Motif::canonicalize_props` (returns JSON string) and

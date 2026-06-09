@@ -8,8 +8,7 @@
 //! Two built-in Motifs (`countdown`, `lower-third`) are embedded via
 //! `include_str!` (manifest JSON + `index.html`) so the desktop binary ships
 //! them without runtime file access. The catalog is exposed to the picker UI
-//! and to MCP agents via
-//! `catalog()` / `builtins()`.
+//! and to MCP agents via `builtins()` + the store-backed `commands::list_motifs`.
 //!
 //! Cache integration: `Motif::content_hash()` feeds the CDP raster cache
 //! key, so any change to a Motif's manifest or `index.html` invalidates cached
@@ -411,16 +410,6 @@ macro_rules! builtin_motif {
 builtin_motif!(builtin_countdown, "catalog/countdown");
 builtin_motif!(builtin_lower_third, "catalog/lower-third");
 
-/// Catalog entry — the JSON-serializable shape that the picker UI + the
-/// `list_motifs` MCP tool + the `motifs://current` resource all
-/// agree on. One source of truth so the three surfaces can't drift.
-///
-/// Fields are exactly the manifest's, so adding a new manifest field
-/// surfaces it everywhere without per-surface plumbing.
-pub fn catalog() -> Vec<Manifest> {
-    builtins().into_iter().map(|t| t.manifest).collect()
-}
-
 /// The reserved built-in ids. A user/uploaded Motif may never take one of
 /// these. Kept in sync with `builtins()` by `builtin_ids_const_matches_builtins`.
 pub const BUILTIN_IDS: &[&str] = &["countdown", "lower-third"];
@@ -716,8 +705,6 @@ mod tests {
     fn builtins_cover_starter_set() {
         let actual: Vec<String> = builtins().iter().map(|t| t.id().to_string()).collect();
         assert_eq!(actual, vec!["countdown".to_string(), "lower-third".to_string()]);
-        let catalog_ids: Vec<String> = catalog().iter().map(|m| m.id.clone()).collect();
-        assert_eq!(catalog_ids, vec!["countdown".to_string(), "lower-third".to_string()]);
     }
 
     /// `motif_ctx_duration_s` resolution order: `content_duration_s` →
