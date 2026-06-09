@@ -27,6 +27,7 @@ No local AI models. No bundled Chromium. No server backend.
 - **[Architecture](docs/architecture.md)** — system overview, components, data flow, repo layout.
 - **[Data model](docs/data-model.md)** — project state schema, history, persistence, validation.
 - **[Render](docs/render.md)** — PixiJS + WebCodecs renderer architecture.
+- **[Motifs](docs/motifs.md)** — parameterized web overlays (CDP capture, raster cache, user-authored catalog).
 - **[Preview](docs/preview.md)** — interactive preview surface and transport.
 - **[Rendering](docs/rendering.md)** — audio IR, audio export, final mux.
 - **[Conformance](docs/conformance.md)** — media fixtures and E2E gates for frame alignment, audio sync, and color.
@@ -36,7 +37,7 @@ No local AI models. No bundled Chromium. No server backend.
 - **[Undo-stack scope](docs/undo-stack-scope.md)** — what records into history and what doesn't.
 - **[Setup](docs/setup.md)** — per-OS toolchain prerequisites and first-run flow.
 - **[Roadmap](docs/roadmap.md)** — phased delivery journal.
-- **ADRs** — [`docs/adr/`](docs/adr/) (0001–0013): audio IR, mediabunny demux/mux, GOP-crossing decode, preview `ImageBitmap` frame ring, composition duration, preview/export proxy policy, derivative-job hashing, lazy decodability, DirectExport codec gating, and related WebCodecs decisions.
+- **ADRs** — [`docs/adr/`](docs/adr/) (0001–0016): audio IR, mediabunny demux/mux, GOP-crossing decode, preview `ImageBitmap` frame ring, composition duration, preview/export proxy policy, derivative-job hashing, lazy decodability, DirectExport codec gating, export color conformance, Motif raster cache, and related WebCodecs decisions.
 
 ## Getting started
 
@@ -80,7 +81,7 @@ Project layout follows the [architecture doc](docs/architecture.md):
 ```
 apps/desktop/        Tauri 2 app
   src-tauri/         Rust core (state actor, ir, export, ffmpeg, jobs, cache,
-                     mcp, cloud, io, logs, templates, …)
+                     mcp, cloud, io, logs, motifs, …)
   src/               React UI + PixiJS/WebCodecs renderer (+ export Worker)
 docs/                design + architecture
 ```
