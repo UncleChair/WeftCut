@@ -282,6 +282,22 @@ composite time — moving/scaling/fading never re-captures) and the window posit
 (`src_in_us`; frames are keyed by absolute content-frame index, so trimming reuses cached
 frames). Changing props, the content duration, or the composition fps does change the key.
 
+### Editing an installed Motif
+
+Editing an installed (or built-in) Motif opens a **working draft** seeded from its source —
+a built-in is a forced **fork** (built-ins live in the bundle and can't be overwritten). The
+selected layer swaps in place onto the draft so the source panel previews it. From there:
+
+- **Update** republishes the draft over the original id and **bumps its version**. Because the
+  cache key is source-derived, every placed layer — this project and others — re-renders with the
+  new look. Current-project layers that referenced the working draft are **rebound** to the
+  original id and their stored props are **lenient-migrated** to the new schema (unknown keys
+  dropped, new keys filled from defaults) in one undo step; the source panel's render path already
+  tolerates a mid-flight schema mismatch, so a placed layer never blanks. Other projects pick up
+  the change the next time they open.
+- **Save as new** publishes the draft under its own fresh id; the original is untouched.
+- **Discard** swaps the layer back to the original and deletes the draft.
+
 ### Status display
 
 Each Motif layer reports a bake phase — `idle | warming{progress} | rastering{progress} | ready | error`.
