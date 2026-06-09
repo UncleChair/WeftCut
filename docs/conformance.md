@@ -1,8 +1,9 @@
 # Conformance
 
 The conformance suite verifies that the real app export path preserves frame
-alignment, audio sync, and color behavior. It is separate from the renderer
-fixture suite in `render/fixtures`: these tests drive WebView2, import real
+alignment, audio sync, and color behavior. It is separate from the colocated
+renderer unit tests under `apps/desktop/src/render/**` and the tiny demux fixtures
+in `apps/desktop/fixtures/media`: these tests drive WebView2, import real
 media, export through the Pixi/WebCodecs + Rust ffmpeg pipeline, and analyze
 the resulting file.
 

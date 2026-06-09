@@ -1,8 +1,13 @@
 ---
-status: proposed
+status: superseded
 ---
 
 # Audio compositing in TypeScript
+
+> **Superseded.** Export audio now compiles an IR to an ffmpeg lavfi graph and writes a
+> temporary audio file; Rust muxes or transcodes it with the WebCodecs video mezzanine.
+> See [`docs/rendering.md`](../rendering.md). Preview audio may still use Web Audio in
+> the webview; this ADR described an all-in-Worker TS export path that was not kept.
 
 Audio compositing — per-clip trim, delay, gain, fade, and mix — runs in TypeScript as a Web Audio graph shared between preview (live `AudioContext`) and export (offline render via `decodeAudioData` + per-block PCM mix, feeding `AudioEncoder`). The export Worker emits a single muxed MP4 via mediabunny (ADR 0002), so the export pipeline has no temp audio file and no separate mux step.
 
