@@ -194,6 +194,16 @@ pub struct MotifPatch {
     pub props: Option<std::collections::HashMap<String, serde_json::Value>>,
 }
 
+/// One layer's retarget for `rebind_motif`. The caller (install_motif) precomputes
+/// the target id/version + migrated props per affected layer; the actor applies by id.
+#[derive(Clone, Debug)]
+pub struct MotifRebindEntry {
+    pub layer_id: LayerId,
+    pub motif_id: String,
+    pub motif_version: u32,
+    pub props: imbl::HashMap<String, serde_json::Value>,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ColorPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -429,6 +439,11 @@ enum Command {
     },
     DeleteLayer {
         id: LayerId,
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
+    RebindMotif {
+        updates: Vec<MotifRebindEntry>,
         actor: Actor,
         reply: oneshot::Sender<Result<(), CommandError>>,
     },
@@ -836,6 +851,26 @@ impl ProjectHandle {
         let (reply, rx) = oneshot::channel();
         self.tx
             .send(Command::DeleteLayer { id, actor, reply })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    /// Retarget a set of Motif layers (by id) to new motif_id/version/props in
+    /// one undo entry. Used by install_motif's Update path to rebind working-draft
+    /// layers onto the published target and migrate every affected layer's props.
+    pub async fn rebind_motif(
+        &self,
+        actor: Actor,
+        updates: Vec<MotifRebindEntry>,
+    ) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::RebindMotif {
+                updates,
+                actor,
+                reply,
+            })
             .await
             .expect("project actor terminated");
         rx.await.expect("project actor terminated")
@@ -1495,6 +1530,14 @@ impl ProjectActor {
             }
             Command::DeleteLayer { id, actor, reply } => {
                 let result = self.do_delete_layer(id, actor);
+                let _ = reply.send(result);
+            }
+            Command::RebindMotif {
+                updates,
+                actor,
+                reply,
+            } => {
+                let result = self.do_rebind_motif(updates, actor);
                 let _ = reply.send(result);
             }
             Command::DeleteTrack {
@@ -2829,6 +2872,42 @@ impl ProjectActor {
             actor,
             format!("Deleted layer {id}"),
             vec![EntityRef::Layer(id)],
+            DiffHint::Coarse,
+        )?;
+        Ok(())
+    }
+
+    /// Retarget a set of Motif layers (by id) to new motif_id/version/props as ONE
+    /// undo entry. The caller (install_motif's Update path) precomputes each
+    /// affected layer's target id/version + migrated props; the actor just applies
+    /// them by id. Layers not found, or found but not Motif-kind, are skipped —
+    /// the caller is the source of truth for which layers are affected.
+    fn do_rebind_motif(
+        &mut self,
+        updates: Vec<MotifRebindEntry>,
+        actor: Actor,
+    ) -> Result<(), CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+        let affected: Vec<EntityRef> =
+            updates.iter().map(|u| EntityRef::Layer(u.layer_id)).collect();
+        for entry in &updates {
+            for track in next.tracks.iter_mut() {
+                for layer in track.layers.iter_mut() {
+                    if layer.id == entry.layer_id {
+                        if let LayerParams::Motif(p) = &mut layer.params {
+                            p.motif_id = entry.motif_id.clone();
+                            p.motif_version = entry.motif_version;
+                            p.props = entry.props.clone();
+                        }
+                    }
+                }
+            }
+        }
+        self.commit(
+            next,
+            actor,
+            "Rebound motif layers".to_string(),
+            affected,
             DiffHint::Coarse,
         )?;
         Ok(())
@@ -4332,6 +4411,63 @@ mod tests {
         // `color` overwritten, `seconds` preserved.
         assert_eq!(p.props.get("color"), Some(&serde_json::json!("#00ff00")));
         assert_eq!(p.props.get("seconds"), Some(&serde_json::json!(5.0)));
+    }
+
+    #[tokio::test]
+    async fn rebind_motif_retargets_all_layers_in_one_undo_entry() {
+        let (project, track_id) = project_with_video_track();
+        let h = spawn(project);
+
+        let mk = |id: &str| {
+            LayerParams::Motif(crate::state::MotifParams {
+                motif_id: id.into(),
+                motif_version: 1,
+                props: Default::default(),
+                src_in_us: 0,
+                transform: crate::state::Transform::default(),
+                opacity: crate::state::animated::Animated::Static(1.0),
+            })
+        };
+        let l1 = h
+            .add_layer(Actor::User, track_id, mk("wip"), 0, 1_000_000)
+            .await
+            .unwrap();
+        let l2 = h
+            .add_layer(Actor::User, track_id, mk("foo"), 2_000_000, 3_000_000)
+            .await
+            .unwrap();
+
+        let updates = vec![
+            MotifRebindEntry {
+                layer_id: l1,
+                motif_id: "foo".into(),
+                motif_version: 2,
+                props: Default::default(),
+            },
+            MotifRebindEntry {
+                layer_id: l2,
+                motif_id: "foo".into(),
+                motif_version: 2,
+                props: Default::default(),
+            },
+        ];
+        h.rebind_motif(Actor::User, updates).await.unwrap();
+
+        let snap = h.snapshot().await;
+        for l in snap.tracks.iter().flat_map(|t| &t.layers) {
+            if let LayerParams::Motif(p) = &l.params {
+                assert_eq!(p.motif_id, "foo");
+                assert_eq!(p.motif_version, 2);
+            }
+        }
+
+        // One undo entry reverts the whole rebind.
+        h.undo(Actor::User).await.unwrap();
+        let snap = h.snapshot().await;
+        let has_wip = snap.tracks.iter().flat_map(|t| &t.layers).any(|l| {
+            matches!(&l.params, LayerParams::Motif(p) if p.motif_id == "wip")
+        });
+        assert!(has_wip);
     }
 
     #[tokio::test]
