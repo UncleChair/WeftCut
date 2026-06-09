@@ -1525,9 +1525,17 @@ export class Compositor {
 
   private ensureMotif(layer: LayerSummary): ActiveMotif | null {
     if (layer.params.kind !== "Motif") return null;
-    const existing = this.activeMotifs.get(layer.id);
-    if (existing) return existing;
     const motifId = layer.params.motif_id;
+    const existing = this.activeMotifs.get(layer.id);
+    if (existing) {
+      if (existing.motifId === motifId) return existing;
+      // The layer was retargeted to a different Motif (Edit-swap / Discard /
+      // Update rebind) — dispose the stale sprite so a fresh one re-fetches
+      // getMotif(motifId) and re-captures. Keyed by layer.id, so the map slot
+      // is replaced below.
+      existing.sprite.dispose();
+      this.activeMotifs.delete(layer.id);
+    }
     const sprite = new MotifSprite({
       layerId: layer.id,
       motifId,
