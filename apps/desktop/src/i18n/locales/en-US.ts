@@ -497,6 +497,7 @@ const enUS = {
     add: "Add to timeline",
     adding: "Adding…",
     new_button: "New Motif",
+    import_button: "Import",
     new_prompt: "Name your Motif",
     new_create: "Create",
     new_cancel: "Cancel",
