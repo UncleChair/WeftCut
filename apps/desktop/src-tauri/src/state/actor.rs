@@ -176,6 +176,13 @@ pub struct MotifPatch {
     pub opacity: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub src_in_us: Option<TimeUs>,
+    /// Retarget the layer to a different Motif id (Edit-in-place: swap the
+    /// selected layer onto a working draft; Discard: swap it back). Paired with
+    /// `motif_version` so the seen-at marker matches the new target.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub motif_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub motif_version: Option<u32>,
     /// Props to merge into the layer's existing `props` map, FIELD-WISE — each
     /// key present here overwrites that key, all other keys are left intact.
     /// (Replacing the whole map would let a stale debounced commit clobber a
@@ -4127,6 +4134,12 @@ fn apply_params_patch(
             if let Some(v) = tp.src_in_us {
                 p.src_in_us = v;
             }
+            if let Some(id) = &tp.motif_id {
+                p.motif_id = id.clone();
+            }
+            if let Some(v) = tp.motif_version {
+                p.motif_version = v;
+            }
             // Merge props field-wise — don't replace the whole map (see the
             // doc comment on `MotifPatch::props`).
             if let Some(props) = &tp.props {
@@ -4291,6 +4304,7 @@ mod tests {
                     opacity: Some(0.25),
                     src_in_us: None,
                     props: Some(patch_props),
+                    ..Default::default()
                 }),
             )
             .await
@@ -4363,6 +4377,45 @@ mod tests {
         let p: crate::state::MotifParams =
             serde_json::from_str(json).expect("motif params deserialize");
         assert_eq!(p.src_in_us, 0);
+    }
+
+    #[test]
+    fn motif_patch_retargets_motif_id_and_version() {
+        // Edit-in-place swaps the selected layer onto a working-draft Motif:
+        // a single-layer `motif_id` retarget (Discard swaps it back).
+        let mut layer = Layer {
+            id: new_id(),
+            label: None,
+            t_start_us: 0,
+            t_end_us: 5_000_000,
+            enabled: true,
+            locked: false,
+            metadata: imbl::HashMap::new(),
+            params: LayerParams::Motif(crate::state::MotifParams {
+                motif_id: "old".into(),
+                motif_version: 1,
+                props: imbl::HashMap::new(),
+                src_in_us: 0,
+                transform: crate::state::Transform::default(),
+                opacity: Animated::Static(1.0),
+            }),
+        };
+        let id = layer.id;
+        apply_params_patch(
+            &mut layer,
+            &LayerParamsPatch::Motif(MotifPatch {
+                motif_id: Some("new".into()),
+                motif_version: Some(3),
+                ..Default::default()
+            }),
+            id,
+        )
+        .unwrap();
+        let LayerParams::Motif(p) = &layer.params else {
+            panic!("expected Motif params");
+        };
+        assert_eq!(p.motif_id, "new");
+        assert_eq!(p.motif_version, 3);
     }
 
     #[tokio::test]
