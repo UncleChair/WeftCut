@@ -328,19 +328,76 @@ already persisted at L2, the Worker reads its PNG files directly. Either way the
 come from the same capture path the preview used, so the exported Motif matches the
 preview.
 
+## User Motifs
+
+Beyond the built-ins, users (and agents — see below) author their own Motifs. They're the
+same single self-contained `.html` + manifest-island documents, stored globally under
+`<app_config_dir>/motifs/` (so they're reusable across projects, like built-ins), and they
+render through the exact same capture path — once installed, a user Motif behaves
+indistinguishably from a built-in.
+
+The lifecycle is **draft → preview → install**:
+
+- **Create** — three entry points: the picker's **New** (a starter draft), **Import** of an
+  external single-file `.html`, or an agent over MCP (`write_motif_draft`). A draft gets a
+  unique, final-ready id at birth (Model B → installing it needs no layer rebind).
+- **Preview** — a draft is a placeable layer; the compositor renders it **into the real
+  project canvas** so the author sees it in context. A draft's frames are keyed by
+  `content_hash`, so every source edit re-captures (see [Raster cache](#raster-cache-and-escalation)).
+- **Edit** — a placed draft layer gets an in-app **source panel** (edit the HTML + island,
+  Apply → re-render). Editing an *installed* Motif opens a working draft (see
+  [Editing an installed Motif](#editing-an-installed-motif)).
+- **Install** — **publish-new** (under the draft's own id) or **update-in-place** (republish
+  over the target, bump its version). Updates are **live/mutable**: every placement — this
+  project and others — re-renders with the new look (the cache key is source-derived, never
+  the layer's stored `motif_version`). **Save-as-new** is the "keep my old look" escape hatch.
+
+A project referencing a since-deleted Motif degrades to an error placeholder, not a crash.
+The lifecycle is driven from the property panel (Install / Edit / Update / Save-as-new /
+Discard / Delete) with inline confirms, and equivalently over the MCP tools below. Security
+of the untrusted-document case is covered in [Security](#security).
+
 ## Agent surface
 
-`add_motif` is props-only — agents reason about *what* a Motif says, never about capture
-or timing. `list_motifs` enumerates the catalog and the `motifs://current` resource
-exposes the placed Motifs; raster state is read-only (`idle | warming | rastering | ready
-| error`), and the export "preparing" wait blocks on pending bakes. Agents observe; they
-do not drive the renderer.
+An MCP agent can both *place* and *author* Motifs, mirroring the human lifecycle through the
+same backend cores (so the two surfaces can't drift):
+
+- **Place / inspect.** `add_motif` is props-only — agents reason about *what* a Motif says,
+  never about capture or timing — and resolves built-ins **and** user Motifs (drafts +
+  installed). `list_motifs` enumerates the full catalog (each entry carries `status` =
+  `builtin | installed | draft`, plus `content_hash`/`target_id`), and `motifs://current`
+  mirrors it. Raster state is read-only (`idle | warming | rastering | ready | error`); the
+  export "preparing" wait blocks on pending bakes. (The MCP list is manifest-only — `html` is
+  stripped so it doesn't bloat agent context; agents fetch source on demand.)
+- **Author.** `get_motif_source {id}` reads a Motif's `{ manifest, html }`; `write_motif_draft
+  { manifest, html, from? }` writes a draft (`from` records an existing Motif as the Update
+  target); `preview_motif_draft { id, t_sec, width?, height? }` returns a base64 PNG of one
+  frame so the agent can **see its output and self-correct**; `install_motif { draft_id, mode:
+  new | update }` publishes (update bumps the version + rebinds + migrates placed layers);
+  `delete_motif { id }` removes a user Motif (built-ins rejected).
+
+Agents observe and author; they never drive the renderer directly.
 
 ## Security
 
-Built-in Motifs are trusted code shipped in the binary. The capture host already denies
-network egress (CSP `default-src 'none'`) and app/Tauri reach (no API injected, a separate
-WebView2). Supporting *untrusted, user-uploaded* Motifs additionally requires
-opaque-origin or low-privilege-process isolation, resource and wall-clock quotas, and
-strict manifest/props validation at import time; that hardening is specified separately
-and is a prerequisite for an upload feature.
+User Motifs are untrusted web documents (an agent or a human authored them), so the
+capture host is the trust boundary. It runs every Motif in a **separate hidden WebView2**
+with **no Tauri API injected** and CSP `default-src 'none'` — fully offline (no
+`connect-src` → no fetch/XHR/WebSocket), with no reach into the app. That window-as-sandbox
+(built for the trusted built-ins) carries the untrusted case. On top of it:
+
+- **Import-time validation** — the manifest island is parsed + validated against the
+  `Manifest`/`PropSpec` schema (sane `size` bounds, well-formed `props_schema`,
+  `default_duration_s`/`content_duration_s` finite-and-positive) and rejected at write/import,
+  not as a runtime crash.
+- **Per-frame wall-clock timeout** — `motif_capture_frame` caps the render so an
+  infinite-loop Motif fails the frame (and tears down the wedged host) instead of hanging.
+- **Path-safe disk serving** — the `motif:` scheme resolver rejects `..`/absolute/separator
+  escapes and confirms the resolved path stays under the Motif's own directory.
+- **Id-namespace isolation** — minted ids can never shadow a built-in (`countdown`,
+  `lower-third`) or the reserved `drafts/` segment; the manifest's own `id`/`version` are
+  ignored (app-assigned).
+
+Residual accepted risk: a renderer-level WebView2 exploit is out of our control (mitigated by
+the isolated, offline host with no Tauri bridge); a determinism-violating Motif renders wrong
+but harmlessly (surfaced by the perceptual-determinism story).

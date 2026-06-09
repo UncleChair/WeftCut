@@ -3,8 +3,9 @@
 The foundation is in place: project state actor + history, workspace
 on-disk format, media import with proxy / thumbnail / waveform jobs,
 audio IR + ffmpeg export + final mux, PixiJS + WebCodecs renderer
-(preview and export share one compositor), built-in template
-catalog, cloud transcription + TTS
+(preview and export share one compositor), the Motif catalog
+(built-in + user-authored, with an agent authoring loop over MCP),
+cloud transcription + TTS
 behind a provider-agnostic trait surface, the MCP server with its
 edit / workflow / cloud tools and the `/events` change feed, the
 status-bar `LogBus` console, the i18n stack (en-US + zh-CN).
@@ -110,8 +111,8 @@ first.
 - Onboarding tour on first workspace open.
 - App icon, splash, About dialog.
 - Crash reporter (opt-in).
-- Template-picker thumbnails for the remaining starter templates
-  (currently rendered lazily; verify each template renders end-to-end
+- Motif-picker thumbnails for the remaining starter Motifs
+  (rendered lazily via a CDP still; verify each Motif renders end-to-end
   through the picker → export path).
 - Media-pool thumbnail strip and timeline waveform strip on audio
   layers (backend data already cached; both are React + canvas work).
@@ -156,7 +157,8 @@ validator. Additional types (wipe, slide, push) land as new
 
 - Tree-of-edits history (branch, merge).
 - WebGPU compositor backend tuned for real-time effects.
-- Marketplace / sharing for SVG overlay templates.
+- Marketplace / remote sharing for user Motifs (the current feature is
+  deliberately local-only — no registry).
 - Multi-window timelines.
 - Mobile companion (Tauri mobile or React Native).
 - Remote-server MCP variant (Tailscale-friendly) with proper auth.
