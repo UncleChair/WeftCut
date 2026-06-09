@@ -343,6 +343,8 @@ export interface MotifPatch {
   scale_y?: number;
   opacity?: number;
   src_in_us?: number;
+  motif_id?: string;
+  motif_version?: number;
   /// Props to merge FIELD-WISE into the layer's existing `props` map — each
   /// key present here overwrites that key; absent keys are left intact. The
   /// backend merges (never replaces the whole map) so a stale debounced commit
