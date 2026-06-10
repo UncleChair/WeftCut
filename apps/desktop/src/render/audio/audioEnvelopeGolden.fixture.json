@@ -1,0 +1,85 @@
+{
+  "cases": [
+    {
+      "name": "static_minus6_no_fades",
+      "gain_db": { "mode": "Static", "value": -6.0 },
+      "fade_in_us": 0,
+      "fade_out_us": 0,
+      "span_us": 10000000,
+      "samples": [
+        { "t_us": 0, "expect": 0.5011872336272722 },
+        { "t_us": 9999999, "expect": 0.5011872336272722 }
+      ]
+    },
+    {
+      "name": "unity_with_one_second_fades",
+      "gain_db": { "mode": "Static", "value": 0.0 },
+      "fade_in_us": 1000000,
+      "fade_out_us": 1000000,
+      "span_us": 10000000,
+      "samples": [
+        { "t_us": 0, "expect": 0.0 },
+        { "t_us": 500000, "expect": 0.5 },
+        { "t_us": 1000000, "expect": 1.0 },
+        { "t_us": 5000000, "expect": 1.0 },
+        { "t_us": 9500000, "expect": 0.5 },
+        { "t_us": 10000000, "expect": 0.0 }
+      ]
+    },
+    {
+      "name": "linear_ramp_minus20_to_0",
+      "gain_db": {
+        "mode": "Keyframed",
+        "value": [
+          {
+            "id": "00000000-0000-7000-8000-000000000001",
+            "t_us": 0,
+            "value": -20.0,
+            "interp": { "kind": "Linear" }
+          },
+          {
+            "id": "00000000-0000-7000-8000-000000000002",
+            "t_us": 1000000,
+            "value": 0.0,
+            "interp": { "kind": "Linear" }
+          }
+        ]
+      },
+      "fade_in_us": 0,
+      "fade_out_us": 0,
+      "span_us": 1000000,
+      "samples": [
+        { "t_us": 0, "expect": 0.1 },
+        { "t_us": 500000, "expect": 0.31622776601683794 },
+        { "t_us": 1000000, "expect": 1.0 }
+      ]
+    },
+    {
+      "name": "hold_step_quantizes_within_10ms",
+      "gain_db": {
+        "mode": "Keyframed",
+        "value": [
+          {
+            "id": "00000000-0000-7000-8000-000000000003",
+            "t_us": 0,
+            "value": 0.0,
+            "interp": { "kind": "Hold" }
+          },
+          {
+            "id": "00000000-0000-7000-8000-000000000004",
+            "t_us": 505000,
+            "value": -20.0,
+            "interp": { "kind": "Hold" }
+          }
+        ]
+      },
+      "fade_in_us": 0,
+      "fade_out_us": 0,
+      "span_us": 1000000,
+      "samples": [
+        { "t_us": 500000, "expect": 1.0 },
+        { "t_us": 510000, "expect": 0.1 }
+      ]
+    }
+  ]
+}
