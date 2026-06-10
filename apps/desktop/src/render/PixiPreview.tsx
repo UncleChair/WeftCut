@@ -30,7 +30,7 @@ import {
   setTransportPlaying,
 } from "../state/playbackStore";
 import { previewPlaybackPathFor, useProjectStore } from "../state/projectStore";
-import { type MediaSummary } from "../ipc";
+import { type MediaSummary, reportAudioMeter } from "../ipc";
 import { subscribeMotifCatalog } from "./motifs/catalog";
 import { Compositor } from "./Compositor";
 import { ffprobeColorToWebCodecs } from "./decoder/ffprobeColorSpace";
@@ -57,6 +57,9 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
 ) {
   const compositorRef = useRef<Compositor | null>(null);
   const engineRef = useRef<PlaybackEngine | null>(null);
+  /// MCP meter push timer; set in `onInit`, cleared on unmount (the mount
+  /// effect is async and can't return a cleanup itself).
+  const meterTimerRef = useRef<number | null>(null);
   const [status, setStatus] = useState<string>("Initializing PixiJS…");
 
   useImperativeHandle(
@@ -181,6 +184,23 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       // play/pause without polling.
       engine.onPlayStateChange(setTransportPlaying);
       registerTransport(engine);
+
+      // Master-bus meter push (~2 Hz while playing) for the MCP
+      // `composition://meter` resource. dB values clamp at -120 — JSON
+      // can't carry the analyser's -Infinity silence reading. Clear any
+      // prior timer first (StrictMode re-mount).
+      if (meterTimerRef.current !== null) {
+        window.clearInterval(meterTimerRef.current);
+      }
+      meterTimerRef.current = window.setInterval(() => {
+        const g = compositor.getAudioGraph();
+        if (!g || !engine.isPlaying()) return;
+        const snap = g.meterSnapshot();
+        void reportAudioMeter({
+          rmsDb: Number.isFinite(snap.rmsDb) ? snap.rmsDb : -120,
+          peakDb: Number.isFinite(snap.peakDb) ? snap.peakDb : -120,
+        }).catch(() => {});
+      }, 500);
 
       // E2E-only: register a live bridge so the WebDriver hooks
       // (window.__weftcutTest.weftcutSeekUs / weftcutSampleComposite) can drive
@@ -324,6 +344,10 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       compositorRef.current?.dispose();
       compositorRef.current = null;
       engineRef.current = null;
+      if (meterTimerRef.current !== null) {
+        window.clearInterval(meterTimerRef.current);
+        meterTimerRef.current = null;
+      }
       // E2E-only: clear the preview bridge so seek/readback hooks don't
       // hold a stale closure over the disposed engine + compositor.
       if (import.meta.env.VITE_WEFTCUT_E2E === "1") {
