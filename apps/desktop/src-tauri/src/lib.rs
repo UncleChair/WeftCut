@@ -265,7 +265,20 @@ pub fn run() {
             if let Err(e) = std::fs::create_dir_all(&motifs_root) {
                 tracing::warn!("user-motif dir setup failed: {e:#} ({})", motifs_root.display());
             }
-            app.manage(motifs::store::UserMotifStore::new(motifs_root));
+            app.manage(motifs::store::UserMotifStore::new(motifs_root.clone()));
+            // Stage 5 hot-reload: external edits anywhere under the user-Motif
+            // tree (drafts AND installed) emit a debounced `motifs:changed`,
+            // driving the same resync the in-app source panel uses. Attach
+            // failure degrades to "no hot reload", never an app failure.
+            let watcher_app = app.handle().clone();
+            match motifs::watcher::spawn(motifs_root, move || {
+                motifs::authoring_commands::emit_motifs_changed(&watcher_app);
+            }) {
+                Ok(w) => {
+                    app.manage(w);
+                }
+                Err(e) => tracing::warn!("motif watcher setup failed: {e:#}"),
+            }
 
             // Auto-save subscriber. Listens to actor events, debounces
             // 500ms, writes `project.json` whenever a workspace is set.
