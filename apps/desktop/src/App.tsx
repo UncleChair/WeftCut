@@ -102,7 +102,13 @@ import {
   SUPPORTED_LOCALES,
   type Locale,
 } from "./i18n";
-import { GlobeIcon } from "./i18n/GlobeIcon";
+import {
+  GlobeIcon,
+  PauseIcon,
+  PlayIcon,
+  SkipBackIcon,
+  SkipForwardIcon,
+} from "lucide-react";
 import {
   ShortcutBindingsProvider,
   useShortcuts,
@@ -1591,7 +1597,7 @@ export function App({ onCloseProject }: AppProps) {
             title={t("language.switch_label")}
             aria-label={t("language.switch_label")}
           >
-            <GlobeIcon />
+            <GlobeIcon className="globe-icon" size={14} aria-hidden />
             <span className="locale-toggle-label">
               {LOCALE_LABELS[(i18n.resolvedLanguage ?? "en-US") as Locale] ??
                 "English"}
@@ -1657,7 +1663,7 @@ export function App({ onCloseProject }: AppProps) {
                 title={t("transport.to_start_hint")}
                 aria-label={t("transport.to_start_hint")}
               >
-                {t("transport.to_start")}
+                <SkipBackIcon size={16} aria-hidden />
               </button>
               <button
                 onClick={togglePlay}
@@ -1665,7 +1671,11 @@ export function App({ onCloseProject }: AppProps) {
                 aria-label={t("transport.play_pause_hint")}
                 disabled={(summary?.layer_count ?? 0) === 0}
               >
-                {paused ? t("transport.play") : t("transport.pause")}
+                {paused ? (
+                  <PlayIcon size={16} aria-hidden />
+                ) : (
+                  <PauseIcon size={16} aria-hidden />
+                )}
               </button>
               <button
                 onClick={() => seekTo(summary?.duration_us ?? 0)}
@@ -1673,7 +1683,7 @@ export function App({ onCloseProject }: AppProps) {
                 aria-label={t("transport.to_end_hint")}
                 disabled={!summary || summary.duration_us === 0}
               >
-                {t("transport.to_end")}
+                <SkipForwardIcon size={16} aria-hidden />
               </button>
             </div>
             <span className="preview-meta" aria-hidden="true">

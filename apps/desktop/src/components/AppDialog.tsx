@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { Dialog, DialogOverlay, DialogPortal } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { XIcon } from "lucide-react";
 
 interface AppDialogProps {
   /// Rendered as the <h2> inside <header> that the legacy panel CSS
@@ -67,7 +68,7 @@ export function AppDialog({
                 onClick={onClose}
                 aria-label={closeLabel}
               >
-                ✕
+                <XIcon size={16} aria-hidden />
               </button>
             )}
           </header>

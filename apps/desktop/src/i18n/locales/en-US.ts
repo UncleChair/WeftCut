@@ -235,12 +235,8 @@ const enUS = {
     quit: "Quit anyway",
   },
   transport: {
-    play: "▶",
-    pause: "⏸",
     play_pause_hint: "Play / pause",
-    to_start: "⏮",
     to_start_hint: "Jump to start",
-    to_end: "⏭",
     to_end_hint: "Jump to end",
     timecode_label: "Current time",
     timecode_edit_hint: "Click to edit · Enter to seek · Esc to cancel",

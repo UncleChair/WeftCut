@@ -9,6 +9,11 @@ import { useTranslation } from "react-i18next";
 /// The maximize glyph tracks the real window state via onResized — the
 /// drag-region double-click and Win+arrow paths change it outside our
 /// buttons.
+///
+/// Deliberate exception to the lucide-react icon convention (ADR 0020):
+/// caption buttons must read as native Windows chrome — 10px hairline
+/// glyphs matching Segoe-style caption icons, which lucide's 24px-grid
+/// stroke-2 drawing style cannot reproduce.
 export function WindowControls() {
   const { t } = useTranslation();
   const [maximized, setMaximized] = useState(false);
