@@ -1596,6 +1596,7 @@ pub async fn import_media(
                 proxy_bypassed: false,
                 export_uses_original: false,
                 waveform_path: None,
+                conform_path: None,
                 thumbnails_dir: None,
                 file_hash_blake3,
                 file_size,
@@ -2440,6 +2441,32 @@ pub async fn ensure_full_proxy(
         .await
         .map_err(|e| format!("route-correct {media_id}: {e}"))?;
     crate::jobs::enqueue_full_proxy(app, (*cache).clone(), (*handle).clone(), item);
+    Ok(())
+}
+
+/// Kick a conform job for one media if its VCONF file is absent. Used by the
+/// export readiness gate and as backfill for media imported before the
+/// conform format existed (or after a `CONFORM_FORMAT_VERSION` bump). No-op
+/// for media without an audio stream or when already cached.
+#[tauri::command]
+pub async fn ensure_conform(
+    app: tauri::AppHandle,
+    cache: State<'_, crate::cache::CacheLayout>,
+    handle: State<'_, ProjectHandle>,
+    media_id: String,
+) -> Result<(), String> {
+    let id = Uuid::parse_str(&media_id).map_err(|e| format!("invalid media_id: {e}"))?;
+    let snap = handle.snapshot().await;
+    let Some(item) = snap.media_pool.get(&id).cloned() else {
+        return Err(format!("no media {media_id}"));
+    };
+    if item.metadata.audio.is_none() {
+        return Ok(()); // nothing to conform
+    }
+    if crate::cache::cached_ok(&cache.audio_conform(&item.file_hash_blake3)) {
+        return Ok(());
+    }
+    crate::jobs::enqueue_conform(app, (*cache).clone(), (*handle).clone(), item);
     Ok(())
 }
 

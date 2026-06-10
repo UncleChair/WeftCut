@@ -255,6 +255,7 @@ pub struct MediaDerivativesPatch {
     /// generated proxy). `None` leaves the flag unchanged.
     pub export_uses_original: Option<bool>,
     pub waveform_path: Option<std::path::PathBuf>,
+    pub conform_path: Option<std::path::PathBuf>,
     pub thumbnails_dir: Option<std::path::PathBuf>,
 }
 
@@ -2869,6 +2870,9 @@ impl ProjectActor {
         }
         if let Some(p) = patch.waveform_path {
             item.waveform_path = Some(p);
+        }
+        if let Some(p) = patch.conform_path {
+            item.conform_path = Some(p);
         }
         if let Some(p) = patch.thumbnails_dir {
             item.thumbnails_dir = Some(p);
@@ -6396,6 +6400,7 @@ mod tests {
             proxy_bypassed: false,
             export_uses_original: false,
             waveform_path: None,
+            conform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "0".into(),
             file_size: 0,
@@ -6558,6 +6563,7 @@ mod tests {
             proxy_bypassed: false,
             export_uses_original: false,
             waveform_path: None,
+            conform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "h".into(),
             file_size: 0,
@@ -6943,6 +6949,7 @@ mod tests {
             proxy_bypassed: false,
             export_uses_original: false,
             waveform_path: None,
+            conform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "0".into(),
             file_size: 0,
@@ -7002,6 +7009,7 @@ mod tests {
             proxy_bypassed: false,
             export_uses_original: false,
             waveform_path: None,
+            conform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "0".into(),
             file_size: 0,
@@ -7043,6 +7051,7 @@ mod tests {
             proxy_bypassed: false,
             export_uses_original: false,
             waveform_path: None,
+            conform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "0".into(),
             file_size: 0,
@@ -8409,6 +8418,7 @@ mod tests {
             proxy_bypassed: false,
             export_uses_original: false,
             waveform_path: None,
+            conform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "0".into(),
             file_size: 0,

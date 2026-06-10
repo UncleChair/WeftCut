@@ -149,6 +149,7 @@ pub fn run() {
             commands::get_waveform_peaks,
             commands::get_media_thumbnail,
             commands::ensure_full_proxy,
+            commands::ensure_conform,
             commands::list_motifs,
             commands::add_motif,
             motifs::authoring_commands::get_motif_source,

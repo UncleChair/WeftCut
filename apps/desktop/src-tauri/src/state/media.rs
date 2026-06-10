@@ -40,6 +40,10 @@ pub struct MediaItem {
     #[serde(default)]
     pub export_uses_original: bool,
     pub waveform_path: Option<PathBuf>,
+    /// Canonical conformed PCM (VCONF; see `jobs::conform`). `None` until
+    /// the conform job lands. Serde-defaulted so pre-conform projects load.
+    #[serde(default)]
+    pub conform_path: Option<PathBuf>,
     pub thumbnails_dir: Option<PathBuf>,
     pub file_hash_blake3: String,
     pub file_size: u64,

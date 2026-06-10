@@ -69,6 +69,7 @@ pub enum JobKind {
     #[serde(rename = "proxy_bypass")]
     ProxyBypass,
     Waveform,
+    Conform,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -127,6 +128,7 @@ pub fn enqueue_for_media(
         }
         MediaKind::Audio => {
             spawn_waveform(app.clone(), cache.clone(), project.clone(), media.clone());
+            spawn_conform(app, cache, project, media);
         }
         MediaKind::Image | MediaKind::Subtitle => {
             // No derivatives needed.
@@ -139,8 +141,91 @@ fn spawn_decorations(app: AppHandle, cache: CacheLayout, project: ProjectHandle,
         spawn_thumbnails(app.clone(), cache.clone(), project.clone(), media.clone());
     }
     if media.metadata.audio.is_some() {
-        spawn_waveform(app, cache, project, media);
+        spawn_waveform(app.clone(), cache.clone(), project.clone(), media.clone());
+        spawn_conform(app, cache, project, media);
     }
+}
+
+/// Enqueue ONLY the conform job (export readiness gate / pre-conform-era
+/// backfill via the `ensure_conform` command). Returns immediately.
+pub fn enqueue_conform(
+    app: AppHandle,
+    cache: CacheLayout,
+    project: ProjectHandle,
+    media: MediaItem,
+) {
+    spawn_conform(app, cache, project, media);
+}
+
+fn spawn_conform(app: AppHandle, cache: CacheLayout, project: ProjectHandle, media: MediaItem) {
+    tokio::spawn(async move {
+        let media_id = media.id;
+        emit(
+            &app,
+            EVENT_STARTED,
+            &JobStarted {
+                media_id: media_id.to_string(),
+                kind: JobKind::Conform,
+            },
+        );
+
+        let permit = ffmpeg_sem().acquire().await;
+        if permit.is_err() {
+            warn!("conform job: semaphore closed; skipping {media_id}");
+            return;
+        }
+        let media = fresh_media_item(&project, media_id, media).await;
+        let result = conform::run(&cache, &media).await;
+        drop(permit);
+
+        match result {
+            Ok(conform_path) => {
+                let path_str = conform_path.display().to_string();
+                let patch = MediaDerivativesPatch {
+                    conform_path: Some(conform_path),
+                    ..Default::default()
+                };
+                if let Err(e) = project
+                    .set_media_derivatives(actor_for_jobs(), media_id, patch)
+                    .await
+                {
+                    warn!("conform commit failed for {media_id}: {e}");
+                    emit(
+                        &app,
+                        EVENT_ERROR,
+                        &JobError {
+                            media_id: media_id.to_string(),
+                            kind: JobKind::Conform,
+                            error: format!("commit: {e}"),
+                        },
+                    );
+                    return;
+                }
+                info!("conform ready for {media_id}");
+                emit(
+                    &app,
+                    EVENT_COMPLETE,
+                    &JobComplete {
+                        media_id: media_id.to_string(),
+                        kind: JobKind::Conform,
+                        path: Some(path_str),
+                    },
+                );
+            }
+            Err(e) => {
+                warn!("conform job failed for {media_id}: {e:#}");
+                emit(
+                    &app,
+                    EVENT_ERROR,
+                    &JobError {
+                        media_id: media_id.to_string(),
+                        kind: JobKind::Conform,
+                        error: format!("{e:#}"),
+                    },
+                );
+            }
+        }
+    });
 }
 
 fn spawn_proxy_decision(
