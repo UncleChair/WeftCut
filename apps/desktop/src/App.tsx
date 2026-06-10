@@ -25,6 +25,8 @@ import {
   importQueueList,
   MEDIA_JOB_EVENTS,
   type MediaJobEvent,
+  motifStalenessReport,
+  type MotifStaleEntry,
   ping,
   projectRedo,
   projectSave,
@@ -73,6 +75,7 @@ import {
   type ImportItem,
 } from "./panels/importOptimize";
 import { ImportProxyDialog } from "./panels/ImportProxyDialog";
+import { MotifStaleDialog } from "./panels/MotifStaleDialog";
 import { ExportSettingsDialog } from "./panels/ExportSettingsDialog";
 import {
   PreviewSurface,
@@ -220,6 +223,21 @@ export function App({ onCloseProject }: AppProps) {
   const notifiedImportIds = useRef<Set<string>>(new Set());
   // The current import-proxy dialog batch (media_ids); empty = closed.
   const [dialogBatch, setDialogBatch] = useState<string[]>([]);
+  // §7-B on-open staleness: App mounts exactly once per successful project
+  // open (every open path remounts it), so a mount-time pull IS the
+  // once-per-open check. Read-only; the ack happens on dismiss.
+  const [staleMotifs, setStaleMotifs] = useState<MotifStaleEntry[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void motifStalenessReport()
+      .then((r) => {
+        if (!cancelled && r.length > 0) setStaleMotifs(r);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const timecodeInputRef = useRef<HTMLInputElement | null>(null);
 
   // Centralised playhead clamp — Q5 of the frame-anchor playhead spec.
@@ -1623,6 +1641,12 @@ export function App({ onCloseProject }: AppProps) {
         <ImportProxyDialog
           items={dialogItems}
           onDismiss={() => setDialogBatch([])}
+        />
+      )}
+      {staleMotifs.length > 0 && (
+        <MotifStaleDialog
+          entries={staleMotifs}
+          onDone={() => setStaleMotifs([])}
         />
       )}
       {connectOpen && (
