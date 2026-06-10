@@ -18,7 +18,7 @@
 import { ImageSource, Sprite, Texture } from "pixi.js";
 
 import { frameIndexInLayer } from "../../frames";
-import type { MotifView } from "../../ipc";
+import type { ResolvedMotifView } from "../resolveView";
 import { getMotif, type Motif } from "../motifs/catalog";
 import { resolveMotifFrame, sharedMotifFrameCache } from "../motifs/motifRasterCache";
 import { motifFrameDescriptor } from "../motifs/motifFrameDescriptor";
@@ -112,7 +112,7 @@ export class MotifSprite {
   /// export == preview frame selection. Absent (preview) ⇒ the harness/cache
   /// path below runs unchanged.
   update(
-    view: MotifView,
+    view: ResolvedMotifView,
     tInLayerUs: number,
     durationUs: number,
     injectedFrames?: readonly ImageBitmap[],

@@ -30,7 +30,10 @@ export interface MotifFrameDescriptor {
 /// `| null` return type is kept for defensive typing; callers' null guards are
 /// safe no-ops.
 export function motifFrameDescriptor(
-  view: MotifView,
+  // Only the non-animated identity fields — the cache key must not (and
+  // cannot) vary with per-frame transform/opacity resolution, so both the
+  // raw IPC view and the per-frame resolved view satisfy this.
+  view: Pick<MotifView, "props" | "src_in_us">,
   tInLayerUs: number,
   durationUs: number,
   fpsNum: number,

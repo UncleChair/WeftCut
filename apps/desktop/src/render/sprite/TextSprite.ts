@@ -20,7 +20,7 @@
 
 import { Text, TextStyle } from "pixi.js";
 
-import type { TextView } from "../../ipc";
+import type { ResolvedTextView } from "../resolveView";
 
 export interface TextSpriteInit {
   layerId: string;
@@ -46,7 +46,7 @@ export class TextSprite {
     });
   }
 
-  update(view: TextView): void {
+  update(view: ResolvedTextView): void {
     const sig =
       `${view.content}|${view.font_family}|${view.font_size_px}|` +
       `${view.color.r},${view.color.g},${view.color.b},${view.color.a}`;

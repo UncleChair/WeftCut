@@ -14,7 +14,15 @@ import {
   type LayerSummary,
   type Rgba,
   type TrackSummary,
+  trackStatic,
 } from "../ipc";
+
+// Panel edits operate on the track's STATIC reading (the same flatten the
+// Rust IPC boundary used to apply); commits write scalars and the actor
+// wraps them `Animated::Static`. Keyframe-aware editing arrives with the
+// keyframe authoring UI, not here.
+const WHITE: Rgba = { r: 255, g: 255, b: 255, a: 255 };
+const BLACK: Rgba = { r: 0, g: 0, b: 0, a: 255 };
 import { getMotif, subscribeMotifCatalog, motifCatalogRevision, type PropSpec } from "../render/motifs/catalog";
 import { useProjectStore } from "../state/projectStore";
 import { useLayerBakeStatus } from "../timeline/motifBakeStatusStore";
@@ -237,18 +245,18 @@ function TextFields({
   const [content, setContent] = useState(v.content);
   const [family, setFamily] = useState(v.font_family);
   const [size, setSize] = useState(v.font_size_px);
-  const [color, setColor] = useState(v.color);
-  const [x, setX] = useState(v.x);
-  const [y, setY] = useState(v.y);
-  const [opacity, setOpacity] = useState(v.opacity);
+  const [color, setColor] = useState(trackStatic(v.color, WHITE));
+  const [x, setX] = useState(trackStatic(v.x, 0));
+  const [y, setY] = useState(trackStatic(v.y, 0));
+  const [opacity, setOpacity] = useState(trackStatic(v.opacity, 1));
   useEffect(() => {
     setContent(v.content);
     setFamily(v.font_family);
     setSize(v.font_size_px);
-    setColor(v.color);
-    setX(v.x);
-    setY(v.y);
-    setOpacity(v.opacity);
+    setColor(trackStatic(v.color, WHITE));
+    setX(trackStatic(v.x, 0));
+    setY(trackStatic(v.y, 0));
+    setOpacity(trackStatic(v.opacity, 1));
   }, [layer.id, v]);
 
   const debouncedCommit = useDebouncedCommit<LayerParamsPatch>(commit);
@@ -350,20 +358,20 @@ function VideoClipFields({
   fpsDen: number;
 }) {
   const { t } = useTranslation();
-  const [opacity, setOpacity] = useState(v.opacity);
-  const [scaleX, setScaleX] = useState(v.scale_x);
-  const [scaleY, setScaleY] = useState(v.scale_y);
-  const [x, setX] = useState(v.x);
-  const [y, setY] = useState(v.y);
+  const [opacity, setOpacity] = useState(trackStatic(v.opacity, 1));
+  const [scaleX, setScaleX] = useState(trackStatic(v.scale_x, 1));
+  const [scaleY, setScaleY] = useState(trackStatic(v.scale_y, 1));
+  const [x, setX] = useState(trackStatic(v.x, 0));
+  const [y, setY] = useState(trackStatic(v.y, 0));
   const [speed, setSpeed] = useState(v.speed);
   const [fadeInTc, setFadeInTc] = useState(formatTimecode(v.fade_in_us, fpsNum, fpsDen));
   const [fadeOutTc, setFadeOutTc] = useState(formatTimecode(v.fade_out_us, fpsNum, fpsDen));
   useEffect(() => {
-    setOpacity(v.opacity);
-    setScaleX(v.scale_x);
-    setScaleY(v.scale_y);
-    setX(v.x);
-    setY(v.y);
+    setOpacity(trackStatic(v.opacity, 1));
+    setScaleX(trackStatic(v.scale_x, 1));
+    setScaleY(trackStatic(v.scale_y, 1));
+    setX(trackStatic(v.x, 0));
+    setY(trackStatic(v.y, 0));
     setSpeed(v.speed);
     setFadeInTc(formatTimecode(v.fade_in_us, fpsNum, fpsDen));
     setFadeOutTc(formatTimecode(v.fade_out_us, fpsNum, fpsDen));
@@ -498,15 +506,15 @@ function ImageOverlayFields({
   fpsDen: number;
 }) {
   const { t } = useTranslation();
-  const [opacity, setOpacity] = useState(v.opacity);
-  const [x, setX] = useState(v.x);
-  const [y, setY] = useState(v.y);
+  const [opacity, setOpacity] = useState(trackStatic(v.opacity, 1));
+  const [x, setX] = useState(trackStatic(v.x, 0));
+  const [y, setY] = useState(trackStatic(v.y, 0));
   const [fadeInTc, setFadeInTc] = useState(formatTimecode(v.fade_in_us, fpsNum, fpsDen));
   const [fadeOutTc, setFadeOutTc] = useState(formatTimecode(v.fade_out_us, fpsNum, fpsDen));
   useEffect(() => {
-    setOpacity(v.opacity);
-    setX(v.x);
-    setY(v.y);
+    setOpacity(trackStatic(v.opacity, 1));
+    setX(trackStatic(v.x, 0));
+    setY(trackStatic(v.y, 0));
     setFadeInTc(formatTimecode(v.fade_in_us, fpsNum, fpsDen));
     setFadeOutTc(formatTimecode(v.fade_out_us, fpsNum, fpsDen));
   }, [layer.id, v, fpsNum, fpsDen]);
@@ -609,17 +617,17 @@ function MotifFields({
   onMutated: () => Promise<void>;
 }) {
   const { t } = useTranslation();
-  const [x, setX] = useState(v.x);
-  const [y, setY] = useState(v.y);
-  const [scaleX, setScaleX] = useState(v.scale_x);
-  const [scaleY, setScaleY] = useState(v.scale_y);
-  const [opacity, setOpacity] = useState(v.opacity);
+  const [x, setX] = useState(trackStatic(v.x, 0));
+  const [y, setY] = useState(trackStatic(v.y, 0));
+  const [scaleX, setScaleX] = useState(trackStatic(v.scale_x, 1));
+  const [scaleY, setScaleY] = useState(trackStatic(v.scale_y, 1));
+  const [opacity, setOpacity] = useState(trackStatic(v.opacity, 1));
   useEffect(() => {
-    setX(v.x);
-    setY(v.y);
-    setScaleX(v.scale_x);
-    setScaleY(v.scale_y);
-    setOpacity(v.opacity);
+    setX(trackStatic(v.x, 0));
+    setY(trackStatic(v.y, 0));
+    setScaleX(trackStatic(v.scale_x, 1));
+    setScaleY(trackStatic(v.scale_y, 1));
+    setOpacity(trackStatic(v.opacity, 1));
   }, [layer.id, v]);
 
   const debouncedCommit = useDebouncedCommit<LayerParamsPatch>(commit);
@@ -1150,9 +1158,9 @@ function ColorFields({
       <Field label={t("property_panel.color")}>
         <input
           type="color"
-          value={rgbaToHex(v.color)}
+          value={rgbaToHex(trackStatic(v.color, BLACK))}
           onChange={(e) =>
-            commit({ kind: "Color", color: hexToRgba(e.target.value, v.color.a) })
+            commit({ kind: "Color", color: hexToRgba(e.target.value, trackStatic(v.color, BLACK).a) })
           }
         />
       </Field>
@@ -1197,7 +1205,7 @@ function AudioFields({
           step={0.5}
           min={-30}
           max={20}
-          value={v.gain_db}
+          value={trackStatic(v.gain_db, 0)}
           onChange={(e) =>
             commit({
               kind: "Audio",
@@ -1212,7 +1220,7 @@ function AudioFields({
           min={-1}
           max={1}
           step={0.05}
-          value={v.pan}
+          value={trackStatic(v.pan, 0)}
           onChange={(e) =>
             commit({ kind: "Audio", pan: parseFloat(e.target.value) || 0 })
           }

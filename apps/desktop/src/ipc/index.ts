@@ -99,11 +99,11 @@ export type LayerParamsView =
 
 export interface MotifView {
   motif_id: string;
-  x: number;
-  y: number;
-  scale_x: number;
-  scale_y: number;
-  opacity: number;
+  x: AnimTrack<number>;
+  y: AnimTrack<number>;
+  scale_x: AnimTrack<number>;
+  scale_y: AnimTrack<number>;
+  opacity: AnimTrack<number>;
   /// Window offset (µs) into the Motif's intrinsic content. Width = layer
   /// width; src_out is derived. 0 = content frame 0.
   src_in_us: number;
@@ -118,11 +118,11 @@ export interface VideoClipView {
   media_label: string;
   src_in_us: number;
   src_out_us: number;
-  x: number;
-  y: number;
-  scale_x: number;
-  scale_y: number;
-  opacity: number;
+  x: AnimTrack<number>;
+  y: AnimTrack<number>;
+  scale_x: AnimTrack<number>;
+  scale_y: AnimTrack<number>;
+  opacity: AnimTrack<number>;
   speed: number;
   flip_h: boolean;
   flip_v: boolean;
@@ -133,11 +133,11 @@ export interface VideoClipView {
 export interface ImageOverlayView {
   media_id: string;
   media_label: string;
-  x: number;
-  y: number;
-  scale_x: number;
-  scale_y: number;
-  opacity: number;
+  x: AnimTrack<number>;
+  y: AnimTrack<number>;
+  scale_x: AnimTrack<number>;
+  scale_y: AnimTrack<number>;
+  opacity: AnimTrack<number>;
   fade_in_us: number;
   fade_out_us: number;
 }
@@ -146,14 +146,14 @@ export interface TextView {
   content: string;
   font_family: string;
   font_size_px: number;
-  color: Rgba;
-  x: number;
-  y: number;
-  opacity: number;
+  color: AnimTrack<Rgba>;
+  x: AnimTrack<number>;
+  y: AnimTrack<number>;
+  opacity: AnimTrack<number>;
 }
 
 export interface ColorView {
-  color: Rgba;
+  color: AnimTrack<Rgba>;
   width: number;
   height: number;
 }
@@ -163,8 +163,8 @@ export interface AudioView {
   media_label: string;
   src_in_us: number;
   src_out_us: number;
-  gain_db: number;
-  pan: number;
+  gain_db: AnimTrack<number>;
+  pan: AnimTrack<number>;
   mute: boolean;
 }
 
@@ -227,6 +227,36 @@ export interface GroupSummary {
   layer_ids: string[];
 }
 
+/// Wire-compatible mirror of the Rust `Interpolation` enum.
+export type Interpolation =
+  | { kind: "Hold" }
+  | { kind: "Linear" }
+  | { kind: "EaseIn" }
+  | { kind: "EaseOut" }
+  | { kind: "Bezier"; p1: [number, number]; p2: [number, number] };
+
+export interface Keyframe<T> {
+  id: string;
+  t_us: number;
+  value: T;
+  interp: Interpolation;
+}
+
+/// Wire-compatible mirror of the Rust `Animated<T>` enum
+/// (`#[serde(tag = "mode", content = "value")]`).
+export type AnimTrack<T> =
+  | { mode: "Static"; value: T }
+  | { mode: "Keyframed"; value: Keyframe<T>[] };
+
+/// Static read of a track — the editing-surface view of "the value".
+/// Mirrors the semantics the Rust flattener used to apply at the IPC
+/// boundary (Static → value; Keyframed → first keyframe, else fallback).
+/// UI panels read through this; the RENDER path must use
+/// `render/animated.ts`'s time-aware `resolveAnimated` instead.
+export function trackStatic<T>(track: AnimTrack<T>, fallback: T): T {
+  if (track.mode === "Static") return track.value;
+  return track.value.length > 0 ? track.value[0]!.value : fallback;
+}
 export interface MarkerSummary {
   id: string;
   t_us: number;
