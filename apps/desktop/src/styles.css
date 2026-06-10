@@ -16,6 +16,32 @@
 
 html, body, #root { height: 100%; margin: 0; }
 
+/* Desktop-app selection model: nothing is selectable by default —
+ * pointer drags belong to the timeline, sliders, and the window drag
+ * region, not to text selection. Content the user legitimately edits
+ * or copies opts back in below. */
+body {
+  user-select: none;
+}
+
+input,
+textarea,
+[contenteditable] {
+  user-select: text;
+}
+
+/* Copyable content: connection URLs / tokens / config snippets, log
+ * text and structured details, error messages. */
+.connect-value,
+.connect-snippet pre,
+.log-message,
+.log-details-json,
+.settings-error,
+.new-project-error,
+.export-progress-status {
+  user-select: text;
+}
+
 .app {
   display: grid;
   /* Header (with inline menu-bar), main (1fr), status-bar */
