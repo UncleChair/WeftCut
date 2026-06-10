@@ -37,7 +37,7 @@ No local AI models. No bundled Chromium. No server backend.
 - **[Undo-stack scope](docs/undo-stack-scope.md)** — what records into history and what doesn't.
 - **[Setup](docs/setup.md)** — per-OS toolchain prerequisites and first-run flow.
 - **[Roadmap](docs/roadmap.md)** — phased delivery journal.
-- **ADRs** — [`docs/adr/`](docs/adr/) (0001–0016): architecture decisions with a `status` frontmatter field (`accepted`, `proposed`, or `superseded`). Prefer [`docs/rendering.md`](docs/rendering.md) and other top-level docs for current export/audio behavior; older ADRs may be historical.
+- **ADRs** — [`docs/adr/`](docs/adr/) (0001–0017): architecture decisions with a `status` frontmatter field (`accepted`, `proposed`, or `superseded`). Prefer [`docs/rendering.md`](docs/rendering.md) and other top-level docs for current export/audio behavior; older ADRs may be historical.
 
 ## Getting started
 
