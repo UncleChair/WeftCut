@@ -303,6 +303,12 @@ const zhCN: Resources = {
     editable_note: "仍可立即编辑;导出会自动等待。",
     dismiss: "知道了",
   },
+  motif_stale: {
+    title: "Motif 在放置后已更新",
+    entry: "v{{from}} → v{{to}}（{{n}} 个图层）",
+    note: "这些图层已按当前版本渲染——这只是一个提示。",
+    dismiss: "知道了",
+  },
   connect: {
     heading: "连接代理",
     blurb: "把下面任一片段粘贴到代理的 MCP 配置中。令牌在重启后保持不变 —— 点击「刷新」可重新生成。",

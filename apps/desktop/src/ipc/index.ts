@@ -1141,6 +1141,29 @@ export async function importMotif(path: string): Promise<string> {
   return invoke<string>("import_motif", { path });
 }
 
+/// One row of the on-open staleness report (docs/motifs.md "User Motifs"):
+/// a Motif some placed layers saw at an older version than the catalog's
+/// current. `placed_version` is the lowest seen-at version among them.
+export interface MotifStaleEntry {
+  motif_id: string;
+  name: string;
+  placed_version: number;
+  current_version: number;
+  layer_count: number;
+}
+
+/// Compare every placed Motif layer's seen-at `motif_version` against the
+/// current catalog. Called once by App on mount (= once per project open).
+export async function motifStalenessReport(): Promise<MotifStaleEntry[]> {
+  return invoke<MotifStaleEntry[]>("motif_staleness_report");
+}
+
+/// Dismiss-=-acknowledge: bump all stale layers' seen-at markers to the
+/// current version (one undo entry). Returns the number of layers bumped.
+export async function acknowledgeMotifStaleness(): Promise<number> {
+  return invoke<number>("acknowledge_motif_staleness");
+}
+
 // ============================================================
 // Status / log surface (see `docs/status-log.md`)
 // ============================================================
