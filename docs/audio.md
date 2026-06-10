@@ -8,10 +8,7 @@ writes them at export. Neither path re-derives the model, so preview
 and export cannot disagree about what a curve means; the only thing
 either path owns is playback (or encoding) mechanics.
 
-> Design note: this document specifies the audio pipeline that
-> replaces the lavfi-graph export path in
-> [`rendering.md`](rendering.md); that doc describes the shipped
-> state until this lands. Decision record: [ADR 0019](adr/0019-audio-mixes-in-rust-over-conform-pcm.md).
+Decision record: [ADR 0019](adr/0019-audio-mixes-in-rust-over-conform-pcm.md).
 
 Both paths read the same bytes: a **conform cache** holds every
 audio-bearing source as canonical PCM, produced once at import. The

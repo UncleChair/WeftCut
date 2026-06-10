@@ -6,15 +6,18 @@ The render pipeline has three concerns:
    compositor described in [`render.md`](render.md). One renderer
    module, mounted against a `<canvas>` on the main thread for
    preview and against an `OffscreenCanvas` in a Worker for export.
-2. **Audio export** — an audio-only IR compiles to an ffmpeg lavfi
-   graph; ffmpeg produces a temporary audio file when the user includes
-   audio.
+2. **Audio export** — the Rust block mixer sums conform PCM
+   sample-accurately and pipes the mix to ffmpeg's encode tail
+   (limiter + AAC/Opus), producing a temporary audio file when the
+   user includes audio. The full audio architecture (conform cache,
+   envelope contract, preview mixer) lives in [`audio.md`](audio.md).
 3. **Final mux / transcode** — Rust either stream-copy muxes the
    WebCodecs video with optional audio, or transcodes the H.264
    mezzanine before muxing for codecs not handled directly by WebCodecs.
 
-This doc covers (2) and (3). For (1) see [`render.md`](render.md) and
-[`preview.md`](preview.md).
+This doc covers (2)'s export entry point and (3). For (1) see
+[`render.md`](render.md) and [`preview.md`](preview.md); for the audio
+engine itself see [`audio.md`](audio.md).
 
 ## Export settings and range
 
@@ -52,90 +55,41 @@ keeps the span ordered and inside `[0, durationUs]`.
   audio mix to match.
 - ffmpeg transcode progress uses `endUs - startUs` as its denominator.
 
-## Audio IR
-
-```rust
-enum IRNode {
-    DecodeA  { input: InputIdx, src_in_us: i64, src_out_us: i64 },
-    Adelay   { in_: NodeId, offset_us: i64 },
-    Amix     { inputs: Vec<NodeId> },
-    OutA     { in_: NodeId, label: String, sample_rate: u32 },
-}
-```
-
-That's the entire surface. The visual half of the IR was deleted with
-the PixiJS migration; the compositor lives entirely on the webview
-side now.
-
-### Lowering
-
-`lower(project, target) → IRGraph` walks every enabled, non-locked
-layer with `LayerParams::Audio(_)`:
-
-```text
-DecodeA(media, src_in, src_out)
-  → Adelay(layer.t_start_us)
-```
-
-Resulting nodes are collected into `audio_streams`. If non-empty,
-they're combined via `Amix { inputs: audio_streams }` (or passed
-through directly when there's a single source) and terminate in
-`OutA { label: "aout", sample_rate: target.sample_rate }`.
-
-Layers with `mute: true`, disabled layers, layers on disabled tracks,
-and any non-audio layer kinds are skipped silently. The result is a
-single audio terminal (`graph.audio_out = Some(out_a)`) or an empty
-graph when no audio layers exist.
-
-### Emit
-
-`emit_ffmpeg(&graph, window_us) → FfmpegPlan` walks the graph depth-first from
-`audio_out` and produces:
-
-- A list of `-i <path>` arguments in declaration order
-  (`graph.inputs` deduped by exact path).
-- A `-filter_complex_script`-friendly multi-line filter body.
-- The final `-map [aout]` argument, or `-map [awin]` when a final export
-  window is applied.
-
-The emitter is reachability-driven from the terminal: nodes the
-terminal doesn't reach aren't emitted. When there are no audio
-layers, `graph.audio_out` is `None` and `emit_ffmpeg` returns an
-empty plan — `export_audio_only` then short-circuits without
-invoking ffmpeg.
-
-Each source decode is trimmed to the layer's source span and shifted by the
-layer start. When `window_us` is present, the emitter appends a final
-`atrim=start=...:end=...,asetpts=PTS-STARTPTS` after the mixed output. That
-keeps a partial video export and its audio sample-accurate and aligned at
-timestamp 0.
-
 ## Audio-only export
 
 `export::export_audio_only(app, &project, &output_path, &audio, window_us)` is
-the single entry point:
+the single entry point. It delegates to the audio engine
+([`audio.md`](audio.md)):
 
-1. Build a `RenderTarget` from the composition, overriding sample rate and
-   channel count when the webview supplied explicit audio settings.
-2. `lower(project, target) → graph`.
-3. `emit_ffmpeg(&graph, window_us) → plan`.
-4. If `plan.maps.is_empty()` (no audio layers): log a warning and return
-   `Ok(())`. The mux step downstream tolerates a missing audio file.
-5. Otherwise: write the filter graph to a temp `.txt`, spawn ffmpeg with the
-   plan's inputs/maps and audio encode args:
+1. `audio::mix::plan_for_project(project, window_us) → MixPlan` — every
+   enabled, non-locked, non-muted Audio layer resolved to conform-file
+   placement + sampled gain/pan envelopes. A layer whose conform cache is
+   missing fails the plan loudly with the media named (the webview's
+   readiness gate normally prevents reaching that state).
+2. If the plan has no layers (or the window is empty): log a warning and
+   return `Ok(())`. The mux step downstream tolerates a missing audio file.
+3. Otherwise: spawn ffmpeg reading raw f32 from stdin —
 
    ```text
-   -filter_complex_script <file> -map <label> -c:a <aac|libopus> -b:a <bps> <output_path>
+   -f f32le -ar 48000 -ac 2 -i - \
+     -af alimiter=limit=0.891:level=0 \
+     -ar <target_sr> -ac <target_ch> -c:a <aac|libopus> -b:a <bps> <output>
    ```
 
-6. On non-zero exit, return an error with the last ~8 lines of stderr.
+   — and run the block mixer on a blocking thread, summing 65 536-frame
+   stereo blocks from conform reads and piping them in. The `alimiter`
+   ceiling (−1 dB sample-peak, auto-normalize explicitly off) is what
+   keeps overlapping layers from clipping at encode.
+4. On non-zero exit, return an error with the last ~8 lines of stderr.
 
 The JS orchestrator chooses the temp audio extension from the selected codec:
 AAC writes `.m4a`; Opus writes `.mka`. No `export:*` events are emitted from
 this path; the webview owns ExportPanel state.
 
 When `settings.audio.include` is false, `App.tsx` skips
-`exportProjectAudioOnly` entirely.
+`exportProjectAudioOnly` entirely. When it's true, the export readiness
+gate first holds in "preparing" until every audible layer's conform job
+has landed (kicking `ensure_conform` for anything missing).
 
 ## Final mux
 
@@ -168,11 +122,14 @@ The root behavior above is guarded by focused tests and diagnostics; see
 - `exportSettings.test.ts`: default merge/backfill, audio codec/container
   validity, estimate size, and range clamping.
 - `frameGrid.test.ts`: half-open export frame counts and timestamp grid.
-- Rust unit tests in `export/mod.rs`: AAC/Opus encode args and missing-audio
-  mux arguments.
-- Rust IR tests: final `atrim`/`asetpts` appears only when an export window is
-  present.
-- `media_conformance --audio`: frequency-based audio export diagnostics.
+- Rust unit tests in `export/mod.rs`: AAC/Opus encode args, missing-audio
+  mux arguments, and a real-ffmpeg mixer round-trip (two overlapping
+  layers → AAC → decode → analytic peak).
+- Rust unit tests in `audio/`: envelope sampling (cross-language goldens),
+  pan law, block-mixer placement/summing.
+- `media_conformance --audio`: frequency-based audio export diagnostics;
+  `--audio-envelope` / `--audio-pan`: analytic RMS-envelope, limiter-ceiling,
+  and pan-law gates (`audio_envelope.e2e.js`).
 
 ## Proxies
 
@@ -207,6 +164,7 @@ All ffmpeg-driven derivatives live under `jobs/`:
 | `proxy.rs` / `quick_proxy.rs` | source-res (≤4K) export master + 720p scrub proxy | Auto on import |
 | `thumbnails.rs` | per-source thumb strip | Auto on import |
 | `waveform.rs` | `.peaks` binary file | Auto on import (audio-bearing sources) |
+| `conform.rs` | `.conform` canonical PCM (48 kHz f32, [`audio.md`](audio.md)) | Auto on import (audio-bearing sources); `ensure_conform` backfill |
 | `frame.rs` | single PNG at a t_us | On-demand via `media://{id}/frame/{t}` |
 | `import.rs` | source bytes copied into `<workspace>/Media/` | User import action |
 

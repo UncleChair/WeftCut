@@ -13,10 +13,10 @@ final mux see [`rendering.md`](rendering.md).
 - **In scope:** visual compositing — video clips, image overlays,
   text, ASS/SRT subtitles, color fills, transforms, opacity, blend
   modes, transitions.
-- **Out of scope:** audio (handled by Web Audio in preview, ffmpeg in
-  export), file muxing (handled by ffmpeg `-c copy`), source
-  probing / proxy generation / waveforms / thumbnails (all
-  Rust-side).
+- **Out of scope:** audio (the buffer-scheduled Web Audio preview mixer
+  + Rust export mixer; [`audio.md`](audio.md)), file muxing (handled by
+  ffmpeg `-c copy`), source probing / proxy generation / waveforms /
+  thumbnails (all Rust-side).
 - **Out of scope explicitly:** per-layer effects. The effects
   subsystem was deleted with the renderer migration; a future
   redesign may reintroduce it on the PixiJS path.
@@ -51,8 +51,15 @@ apps/desktop/src/render/
     encoder.ts               — VideoEncoder config + mediabunny Output mux into video.mp4
     protocol.ts              — postMessage protocol (start/cancel/progress/chunk/done)
   audio/
-    AudioGraph.ts            — Web Audio mixer
+    AudioGraph.ts            — master bus (meter + soft limiter)
+    AudioMixer.ts            — per-layer buffer-scheduled playback
+    conformSource.ts         — VCONF Range reader (zero decode)
+    chunkSchedule.ts         — pure scheduling math
+    envelope.ts              — sampled-envelope contract (TS twin)
 ```
+
+Audio architecture detail (conform cache, envelope contract, the Rust
+export mixer): [`audio.md`](audio.md).
 
 ## Compositor
 
