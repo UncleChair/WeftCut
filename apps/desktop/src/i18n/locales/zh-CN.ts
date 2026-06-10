@@ -233,12 +233,8 @@ const zhCN: Resources = {
     quit: "仍要退出",
   },
   transport: {
-    play: "▶",
-    pause: "⏸",
     play_pause_hint: "播放 / 暂停",
-    to_start: "⏮",
     to_start_hint: "跳转到开头",
-    to_end: "⏭",
     to_end_hint: "跳转到结尾",
     timecode_label: "当前时间",
     timecode_edit_hint: "点击编辑 · 回车跳转 · Esc 取消",

@@ -99,7 +99,8 @@ textarea,
 }
 
 .menu-chevron {
-  font-size: 9px;
+  display: inline-flex;
+  align-items: center;
   opacity: 0.7;
 }
 
@@ -142,8 +143,9 @@ textarea,
 .menu-item-check {
   width: 16px;
   flex: 0 0 16px;
+  display: inline-flex;
+  align-items: center;
   color: var(--color-blue-300);
-  font-size: 11px;
 }
 
 .menu-item-label {
@@ -777,8 +779,6 @@ input.preview-timecode:focus {
   padding: 0;
   width: 30px;
   height: 30px;
-  font-size: 16px;
-  line-height: 1;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -1805,7 +1805,8 @@ input.preview-timecode:focus {
 }
 
 .peek-thumb-fallback {
-  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
   color: var(--color-gray-500);
 }
 
@@ -2206,7 +2207,8 @@ input.preview-timecode:focus {
   background: transparent;
   border: none;
   color: var(--muted-foreground);
-  font-size: 16px;
+  display: inline-flex;
+  align-items: center;
   cursor: pointer;
 }
 
@@ -2787,11 +2789,6 @@ input.preview-timecode:focus {
   background: rgba(37, 99, 235, 0.22);
 }
 
-.startup-action-icon {
-  font-size: 22px;
-  line-height: 1;
-}
-
 .startup-action-label {
   font-size: 13px;
   font-weight: 500;
@@ -2951,7 +2948,8 @@ input.preview-timecode:focus {
   background: transparent;
   border: none;
   color: var(--color-gray-500);
-  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
   cursor: pointer;
   padding: 2px 8px;
   border-radius: 3px;
@@ -2978,6 +2976,8 @@ input.preview-timecode:focus {
   border: none;
   color: var(--color-gray-500);
   font-size: 12px;
+  display: inline-flex;
+  align-items: center;
   cursor: pointer;
   transition: color 120ms;
 }
@@ -2987,7 +2987,8 @@ input.preview-timecode:focus {
 }
 
 .startup-recent-toggle-chevron {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
   margin-right: 4px;
 }
 
@@ -3495,9 +3496,9 @@ input.preview-timecode:focus {
   border: none;
   color: var(--muted-foreground);
   cursor: pointer;
-  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
   padding: 0 2px;
-  line-height: 1;
 }
 
 .keybindings-chip-remove:hover {
@@ -3881,7 +3882,8 @@ input.preview-timecode:focus {
 
 .log-action.log-close {
   border-color: transparent;
-  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
 }
 
 .log-console-list {

@@ -13,7 +13,14 @@ import { AppDialog } from "../components/AppDialog";
 import { AppSelect } from "../components/AppSelect";
 import { WindowControls } from "../components/WindowControls";
 import { Button } from "@/components/ui/button";
-import { GlobeIcon } from "../i18n/GlobeIcon";
+import {
+  ChevronDownIcon,
+  ChevronUpIcon,
+  FolderOpenIcon,
+  GlobeIcon,
+  PlusIcon,
+  XIcon,
+} from "lucide-react";
 import {
   projectNewWorkspace,
   projectOpen,
@@ -140,7 +147,7 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
           title={t("language.switch_label")}
           aria-label={t("language.switch_label")}
         >
-          <GlobeIcon />
+          <GlobeIcon className="globe-icon" size={14} aria-hidden />
           <span className="locale-toggle-label">
             {LOCALE_LABELS[(i18n.resolvedLanguage ?? "en-US") as Locale] ??
               "English"}
@@ -160,7 +167,7 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
             onClick={() => setNewProjectOpen(true)}
             disabled={busy}
           >
-            <span className="startup-action-icon" aria-hidden="true">＋</span>
+            <PlusIcon size={22} strokeWidth={1.5} aria-hidden />
             <span className="startup-action-label">{t("startup.new_project")}</span>
           </button>
           <button
@@ -168,20 +175,7 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
             onClick={openWorkspaceFolder}
             disabled={busy}
           >
-            <svg
-              className="startup-action-icon"
-              width="22"
-              height="22"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M3.75 9.776c.112-.017.227-.026.344-.026h15.812c.117 0 .232.009.344.026m-16.5 0a2.25 2.25 0 0 0-1.883 2.542l.857 6a2.25 2.25 0 0 0 2.227 1.932h13.61a2.25 2.25 0 0 0 2.227-1.932l.857-6a2.25 2.25 0 0 0-1.883-2.542m-16.5 0V6A2.25 2.25 0 0 1 6 3.75h3.879a1.5 1.5 0 0 1 1.06.44l2.122 2.12a1.5 1.5 0 0 0 1.06.44H18A2.25 2.25 0 0 1 20.25 6v3.776" />
-            </svg>
+            <FolderOpenIcon size={22} strokeWidth={1.5} aria-hidden />
             <span className="startup-action-label">{t("startup.open_project")}</span>
           </button>
         </div>
@@ -202,7 +196,11 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
                   className="startup-recent-toggle-chevron"
                   aria-hidden="true"
                 >
-                  {recentsExpanded ? "▴" : "▾"}
+                  {recentsExpanded ? (
+                    <ChevronUpIcon size={12} />
+                  ) : (
+                    <ChevronDownIcon size={12} />
+                  )}
                 </span>
                 {recentsExpanded
                   ? t("startup.recent_show_less")
@@ -243,7 +241,7 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
                     title={t("startup.recent_remove_hint")}
                     aria-label={t("startup.recent_remove_hint")}
                   >
-                    ✕
+                    <XIcon size={14} aria-hidden />
                   </button>
                 </li>
               ))}
