@@ -1113,13 +1113,18 @@ pub async fn project_open(
     path: String,
 ) -> Result<(), String> {
     let path = PathBuf::from(path);
-    // Pre-check so we can produce a typed sentinel for the "user picked a
-    // folder that isn't a WeftCut project" case. Without this the raw
-    // anyhow chain bubbles up an OS-localized `read <path>/project.json:
-    // <NLS-translated 'file not found' message> (os error 2)` which the
-    // user can't make sense of. The frontend matches this sentinel and
-    // renders a localized message; other errors flow through unchanged so
-    // the detail is still visible for unexpected failures.
+    // Pre-checks so we can produce typed sentinels for the two common
+    // failure modes. Without these the raw anyhow chain bubbles up an
+    // OS-localized `read <path>/project.json: <NLS-translated 'file not
+    // found' message> (os error 2)` which the user can't make sense of.
+    // The frontend matches the sentinels and renders localized messages;
+    // other errors flow through unchanged so the detail is still visible
+    // for unexpected failures. Order matters: a recents entry whose whole
+    // folder was moved or deleted must read "folder is gone" (and get
+    // dropped from the list), not "isn't a WeftCut project".
+    if !path.exists() {
+        return Err("PROJECT_FOLDER_MISSING".to_string());
+    }
     if !path.join(io::PROJECT_FILE).exists() {
         return Err("NOT_PROJECT_FOLDER".to_string());
     }
