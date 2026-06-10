@@ -62,6 +62,11 @@ export interface MediaSummary {
   color_range?: string | null;
   color_primaries?: string | null;
   color_transfer?: string | null;
+  /// Absolute path of the canonical conformed PCM (VCONF, `jobs/conform.rs`)
+  /// once the conform job has produced it. The preview mixer Range-reads
+  /// this file; `null` means the audio layer is not yet playable. Optional:
+  /// older summaries / test fixtures omit it.
+  conform_path?: string | null;
 }
 
 export interface LayerSummary {
@@ -165,6 +170,8 @@ export interface AudioView {
   src_out_us: number;
   gain_db: AnimTrack<number>;
   pan: AnimTrack<number>;
+  fade_in_us: number;
+  fade_out_us: number;
   mute: boolean;
 }
 
@@ -345,6 +352,8 @@ export interface AudioPatch {
   src_out_us?: number;
   gain_db?: number;
   pan?: number;
+  fade_in_us?: number;
+  fade_out_us?: number;
   mute?: boolean;
 }
 

@@ -225,6 +225,10 @@ pub struct AudioPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pan: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fade_in_us: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fade_out_us: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mute: Option<bool>,
 }
 
@@ -4334,6 +4338,12 @@ fn apply_params_patch(
             }
             if let Some(p_) = ap.pan {
                 p.pan = Animated::Static(p_);
+            }
+            if let Some(v) = ap.fade_in_us {
+                p.fade_in_us = v;
+            }
+            if let Some(v) = ap.fade_out_us {
+                p.fade_out_us = v;
             }
             if let Some(m) = ap.mute {
                 p.mute = m;
