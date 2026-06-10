@@ -15,7 +15,6 @@ use uuid::Uuid;
 
 use crate::export;
 use crate::io;
-use crate::ir;
 use crate::motifs::catalog;
 use crate::state::{
     self, Actor, ColorParams, CommandError, LayerParams, MediaItem, MediaKind, ProjectHandle,
