@@ -10,8 +10,50 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Exact-hex pins for the Tailwind ramp shades the legacy stylesheet
+   references as var(--color-*). The default v4 palette defines these in
+   oklch (same design colors, but conversion can round a channel by one);
+   pinning the legacy hex guarantees the token sweep is rendering-
+   identical and that every referenced variable is emitted. */
+@theme {
+    --color-gray-300: #d1d5db;
+    --color-gray-500: #6b7280;
+    --color-gray-600: #4b5563;
+    --color-gray-900: #111827;
+    --color-slate-200: #e2e8f0;
+    --color-slate-300: #cbd5e1;
+    --color-slate-400: #94a3b8;
+    --color-slate-500: #64748b;
+    --color-slate-600: #475569;
+    --color-slate-700: #334155;
+    --color-slate-800: #1e293b;
+    --color-slate-900: #0f172a;
+    --color-blue-100: #dbeafe;
+    --color-blue-200: #bfdbfe;
+    --color-blue-300: #93c5fd;
+    --color-blue-400: #60a5fa;
+    --color-blue-700: #1d4ed8;
+    --color-blue-800: #1e40af;
+    --color-red-200: #fecaca;
+    --color-red-300: #fca5a5;
+    --color-red-500: #ef4444;
+    --color-red-700: #b91c1c;
+    --color-amber-200: #fde68a;
+    --color-amber-300: #fcd34d;
+    --color-amber-400: #fbbf24;
+    --color-amber-500: #f59e0b;
+    --color-green-300: #86efac;
+    --color-green-900: #14532d;
+    --color-emerald-400: #34d399;
+    --color-violet-300: #c4b5fd;
+    --color-zinc-200: #e4e4e7;
+    --color-zinc-300: #d4d4d8;
+    --color-zinc-400: #a1a1aa;
+}
+
 @theme inline {
     --font-heading: var(--font-sans);
+    --color-border-soft: var(--border-soft);
     /* Match the legacy stack in styles.css :root — WeftCut deliberately uses
        the system font; swapping fonts is a separate design decision. */
     --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -72,6 +114,7 @@
     --accent-foreground: oklch(0.205 0 0);
     --destructive: oklch(0.577 0.245 27.325);
     --border: oklch(0.922 0 0);
+    --border-soft: oklch(0.922 0 0);
     --input: oklch(0.922 0 0);
     --ring: oklch(0.708 0 0);
     --chart-1: oklch(0.87 0 0);
@@ -114,6 +157,9 @@
     --accent-foreground: #f3f4f6;
     --destructive: #f87171;
     --border: #374151;
+    /* Structural hairline dividers (panel header rules, track seams) —
+       deliberately softer than the control border above. */
+    --border-soft: #1f2937;
     --input: #374151;
     --ring: #3b82f6;
     --chart-1: oklch(0.87 0 0);
