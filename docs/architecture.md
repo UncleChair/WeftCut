@@ -215,6 +215,27 @@ weftcut/
 - **libass-wasm** (JASSUB) — ASS/SRT subtitle rendering.
 - **i18next** + **react-i18next** — frontend i18n; bundled resources
   for `en-US` and `zh-CN`.
+- **tailwindcss** v4 (`@tailwindcss/vite`) — design-token carrier +
+  utility layer; entry at `src/app.css`.
+- **@base-ui/react** — headless widget primitives (dialog, menu/menubar,
+  select, slider, tooltip) behind the app wrapper components.
+
+## UI widget & styling layer
+
+The widget layer rides [Base UI](https://base-ui.com) primitives behind
+app-level wrappers; Tailwind v4 carries the design tokens; the legacy
+stylesheet keeps the visual identity. Decision + the full cascade
+contract: [ADR 0018](adr/0018-ui-widgets-on-base-ui-with-tailwind-tokens.md).
+The rules a day-to-day change must respect:
+
+| Rule | Why |
+|---|---|
+| New modals go through `components/AppDialog` (omit `onClose` for an undismissable working-state). | One dismissal/focus/aria behavior app-wide. |
+| Form dropdowns/sliders use `components/AppSelect` / `AppSlider` — never native `<select>` / `<input type="range">`. | App-styled popups, shared keyboard behavior. |
+| A component that consumes Escape inside a dialog must `stopPropagation()`. | Base UI closes the dialog on Escape otherwise. |
+| `styles.css` is unlayered and beats Tailwind's layered output; don't stack utilities onto elements legacy rules target — remove the legacy rule instead. | Layered-vs-unlayered cascade ordering. |
+| If a layout relied on a UA default that preflight resets, pin the value explicitly in `styles.css` (`line-height` is the canonical case). | Preflight only leaks through UA-default reliance. |
+| Tokens live in `src/app.css` (`.dark` block, shadcn naming); the app is dark-only via the hardwired `html.dark`. | Single palette source for the eventual `var(--*)` sweep. |
 
 ## Internationalization (UI)
 
