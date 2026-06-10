@@ -9,6 +9,7 @@
 #![recursion_limit = "512"]
 
 mod app_settings;
+mod audio;
 mod cache;
 mod cloud;
 mod commands;
