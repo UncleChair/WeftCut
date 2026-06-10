@@ -156,6 +156,7 @@ const enUS = {
     proxy_failed: "Preview failed",
     proxy_failed_hint: "Preview could not be prepared. Re-import to retry.",
     click_drag_hint: "Click to preview · drag onto a track to add",
+    drop_to_import: "Drop files to import",
   },
   preview: {
     empty_hint: "Add a layer to start the preview",
