@@ -33,32 +33,9 @@ html, body, #root { height: 100%; margin: 0; }
   color: var(--muted-foreground);
 }
 
-.actions {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  padding: 6px 16px;
-  border-bottom: 1px solid var(--border-soft);
-}
 
-.actions button {
-  background: var(--secondary);
-  border: 1px solid var(--border);
-  color: var(--foreground);
-  padding: 4px 10px;
-  font-size: 12px;
-  border-radius: 4px;
-  cursor: pointer;
-}
 
-.actions button:hover:not(:disabled) {
-  background: var(--accent);
-}
 
-.actions button:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
 
 /* ============================================================ */
 /* Menu bar — dropdown-based action toolbar                     */
@@ -272,69 +249,12 @@ html, body, #root { height: 100%; margin: 0; }
   margin: 0 4px;
 }
 
-.compiler-panel {
-  position: fixed;
-  right: 16px;
-  bottom: 16px;
-  width: min(640px, calc(100vw - 32px));
-  max-height: 60vh;
-  background: var(--background);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  display: flex;
-  flex-direction: column;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
-  overflow: hidden;
-}
 
-.compiler-panel header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border-soft);
-  font-size: 12px;
-}
 
-.compiler-panel header strong {
-  color: var(--foreground);
-}
 
-.compiler-panel header button {
-  background: transparent;
-  border: 1px solid var(--border);
-  color: var(--muted-foreground);
-  padding: 2px 8px;
-  font-size: 11px;
-  border-radius: 3px;
-  cursor: pointer;
-}
 
-.compiler-panel header button:hover {
-  color: var(--foreground);
-}
 
-.compiler-meta {
-  display: flex;
-  gap: 16px;
-  padding: 6px 12px;
-  font-size: 11px;
-  color: var(--muted-foreground);
-  border-bottom: 1px solid var(--border-soft);
-}
 
-.compiler-graph {
-  flex: 1;
-  margin: 0;
-  padding: 12px;
-  overflow: auto;
-  font-family: ui-monospace, "Cascadia Code", "Consolas", monospace;
-  font-size: 11px;
-  line-height: 1.4;
-  color: var(--foreground);
-  background: #0a0b0f;
-  white-space: pre;
-}
 
 .export-panel {
   position: fixed;
@@ -358,15 +278,6 @@ html, body, #root { height: 100%; margin: 0; }
   color: var(--foreground);
 }
 
-.export-panel header button {
-  background: transparent;
-  border: 1px solid var(--border);
-  color: var(--muted-foreground);
-  padding: 2px 8px;
-  font-size: 11px;
-  border-radius: 3px;
-  cursor: pointer;
-}
 
 /* Import proxy notification — reuses .export-panel chrome but sits in the
    opposite corner (top-right) so it never overlaps the export panel
@@ -1267,21 +1178,7 @@ input.preview-timecode:focus {
   text-overflow: ellipsis;
 }
 
-.agent-exit-button {
-  background: var(--secondary);
-  color: #fafafa;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 6px 12px;
-  font-size: 12px;
-  cursor: pointer;
-  white-space: nowrap;
-}
 
-.agent-exit-button:hover {
-  background: var(--accent);
-  border-color: var(--color-gray-600);
-}
 
 .agent-record-body {
   flex: 1;
@@ -2019,124 +1916,6 @@ input.preview-timecode:focus {
   font-family: inherit;
 }
 
-.queue-panel {
-  position: fixed;
-  right: 16px;
-  top: 100px;
-  width: min(420px, calc(100vw - 32px));
-  max-height: 60vh;
-  background: var(--background);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  z-index: 5;
-}
-
-.queue-panel header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border-soft);
-  font-size: 12px;
-  color: var(--foreground);
-}
-
-.queue-panel header strong {
-  font-weight: 600;
-}
-
-.queue-panel header button {
-  background: transparent;
-  border: 1px solid var(--border);
-  color: var(--muted-foreground);
-  padding: 2px 8px;
-  font-size: 11px;
-  border-radius: 3px;
-  cursor: pointer;
-  margin-left: auto;
-}
-
-.queue-panel header button:hover {
-  color: var(--foreground);
-}
-
-.queue-hw {
-  font-size: 11px;
-  color: var(--muted-foreground);
-  background: var(--secondary);
-  padding: 1px 8px;
-  border-radius: 3px;
-}
-
-.queue-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  overflow: auto;
-}
-
-.queue-item {
-  display: grid;
-  grid-template-columns: 80px 100px 1fr auto;
-  gap: 12px;
-  align-items: center;
-  padding: 6px 12px;
-  font-size: 11px;
-  color: var(--color-slate-300);
-  border-bottom: 1px solid #131822;
-}
-
-.queue-item:last-child { border-bottom: none; }
-
-.queue-status {
-  font-weight: 600;
-  font-size: 10px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  padding: 1px 6px;
-  border-radius: 3px;
-  text-align: center;
-  background: var(--secondary);
-}
-
-.queue-status.status-running { background: #1e3a5f; color: var(--color-blue-300); }
-.queue-status.status-completed { background: var(--color-green-900); color: var(--color-green-300); }
-.queue-status.status-failed { background: #581014; color: var(--color-red-300); }
-.queue-status.status-cancelled { background: #292524; color: #a8a29e; }
-.queue-status.status-pending { background: var(--secondary); color: var(--color-gray-300); }
-
-.queue-preset {
-  color: var(--muted-foreground);
-  font-size: 11px;
-}
-
-.queue-path {
-  color: var(--color-gray-300);
-  font-size: 11px;
-  font-family: ui-monospace, monospace;
-}
-
-.queue-remove {
-  background: transparent;
-  border: 1px solid var(--border);
-  color: var(--muted-foreground);
-  width: 22px;
-  height: 22px;
-  border-radius: 3px;
-  cursor: pointer;
-  font-size: 12px;
-  line-height: 1;
-}
-
-.queue-remove:hover {
-  color: var(--color-red-300);
-  border-color: var(--destructive);
-}
-
 /* ---- Connect-agent panel ---- */
 
 .connect-agent-panel {
@@ -2225,22 +2004,7 @@ input.preview-timecode:focus {
   white-space: nowrap;
 }
 
-.connect-field-row button,
-.connect-snippet-header button {
-  background: var(--secondary);
-  border: 1px solid var(--border);
-  color: var(--color-gray-300);
-  padding: 4px 10px;
-  font-size: 11px;
-  border-radius: 3px;
-  cursor: pointer;
-  white-space: nowrap;
-}
 
-.connect-field-row button:hover,
-.connect-snippet-header button:hover {
-  background: var(--accent);
-}
 
 .connect-reveal,
 .connect-refresh {
@@ -2364,25 +2128,8 @@ input.preview-timecode:focus {
   background: var(--popover);
 }
 
-.settings-action {
-  margin: 4px 0 0;
-  padding: 6px 12px;
-  font-size: 12px;
-  color: var(--foreground);
-  background: var(--secondary);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  cursor: pointer;
-}
 
-.settings-action:hover:not(:disabled) {
-  background: #2a3441;
-}
 
-.settings-action:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
 
 .settings-pin-row {
   display: flex;
@@ -2520,25 +2267,8 @@ input.preview-timecode:focus {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-.settings-key-input-row button {
-  background: var(--secondary);
-  border: 1px solid var(--border);
-  color: var(--color-gray-300);
-  padding: 4px 10px;
-  font-size: 11px;
-  border-radius: 3px;
-  cursor: pointer;
-  white-space: nowrap;
-}
 
-.settings-key-input-row button:hover:not(:disabled) {
-  background: var(--accent);
-}
 
-.settings-key-input-row button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
 
 /* ============================================================ */
 /* Motif picker                      */
@@ -2812,26 +2542,8 @@ input.preview-timecode:focus {
   gap: 8px;
 }
 
-.motif-picker-actions button {
-  background: var(--primary);
-  border: 1px solid var(--primary);
-  color: #ffffff;
-  padding: 6px 14px;
-  font-size: 12px;
-  font-weight: 600;
-  border-radius: 4px;
-  cursor: pointer;
-}
 
-.motif-picker-actions button:hover:not(:disabled) {
-  background: var(--color-blue-700);
-  border-color: var(--color-blue-700);
-}
 
-.motif-picker-actions button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
 
 /* --------------------------------------------------------------------------
  * Startup screen (Phase B — docs/data-model.md Q7)
@@ -3209,19 +2921,7 @@ input.preview-timecode:focus {
   text-overflow: ellipsis;
 }
 
-.new-project-folder button {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid var(--border-soft);
-  border-radius: 4px;
-  color: var(--foreground);
-  padding: 6px 12px;
-  font-size: 12px;
-  cursor: pointer;
-}
 
-.new-project-folder button:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.12);
-}
 
 .new-project-error {
   margin: 0;
@@ -3267,30 +2967,9 @@ input.preview-timecode:focus {
   gap: 8px;
 }
 
-.new-project-actions button {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid var(--border-soft);
-  color: var(--foreground);
-  border-radius: 4px;
-  padding: 6px 14px;
-  font-size: 12px;
-  cursor: pointer;
-}
 
-.new-project-actions button.primary {
-  background: var(--primary);
-  border-color: var(--primary);
-}
 
-.new-project-actions button.primary:hover:not(:disabled) {
-  background: var(--color-blue-700);
-  border-color: var(--color-blue-700);
-}
 
-.new-project-actions button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
 
 /* --- Settings toggle row (used by reopen-on-launch) --- */
 
@@ -3559,21 +3238,7 @@ input.preview-timecode:focus {
   text-align: left;
 }
 
-.export-path button,
-.export-actions button {
-  padding: 5px 12px;
-  font-size: 12px;
-  color: var(--foreground);
-  background: var(--secondary);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  cursor: pointer;
-}
 
-.export-path button:hover,
-.export-actions button:hover:not(:disabled) {
-  background: var(--accent);
-}
 
 .export-actions {
   display: flex;
@@ -3584,20 +3249,8 @@ input.preview-timecode:focus {
   border-top: 1px solid var(--border-soft);
 }
 
-.export-actions .export-primary {
-  background: var(--primary);
-  border-color: var(--primary);
-  color: #fff;
-}
 
-.export-actions .export-primary:hover:not(:disabled) {
-  background: var(--ring);
-}
 
-.export-actions button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
 
 /* Export progress modal — reuses the settings popup chrome; these style the
  * status line and a taller, more prominent progress bar. */
@@ -3651,19 +3304,7 @@ input.preview-timecode:focus {
   margin-bottom: 8px;
 }
 
-.keybindings-toolbar button {
-  font-size: 11px;
-  padding: 4px 10px;
-  background: var(--secondary);
-  color: var(--foreground);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  cursor: pointer;
-}
 
-.keybindings-toolbar button:hover {
-  background: #2a3441;
-}
 
 .keybindings-table {
   width: 100%;
@@ -4879,28 +4520,6 @@ input.preview-timecode:focus {
 }
 .kf-add {
   align-self: flex-start;
-}
-.button-primary,
-.button-secondary {
-  background: var(--color-blue-700);
-  border: 1px solid var(--color-blue-800);
-  color: #fff;
-  font-size: 11px;
-  padding: 4px 10px;
-  border-radius: 4px;
-  cursor: pointer;
-  font-family: inherit;
-}
-.button-primary:hover {
-  background: var(--primary);
-}
-.button-secondary {
-  background: var(--secondary);
-  border-color: var(--border);
-  color: var(--foreground);
-}
-.button-secondary:hover {
-  background: #2d3748;
 }
 
 .motif-bake-dot {

@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { exportSettingsGet, exportSettingsSet, workspaceDir } from "../ipc";
 import { AppDialog } from "../components/AppDialog";
 import { AppSelect } from "../components/AppSelect";
+import { Button } from "@/components/ui/button";
 import {
   type EncodePath,
   resolveEncodePath,
@@ -199,9 +200,9 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, onCancel
                       value={location}
                       title={location}
                     />
-                    <button onClick={() => void onBrowse()}>
+                    <Button onClick={() => void onBrowse()}>
                       {t("export_dialog.browse")}
-                    </button>
+                    </Button>
                   </span>
                 </div>
 
@@ -581,16 +582,17 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, onCancel
                 )}
 
                 <div className="export-actions">
-                  <button onClick={onCancel}>
+                  <Button size="lg" onClick={onCancel}>
                     {t("export_dialog.cancel")}
-                  </button>
-                  <button
-                    className="export-primary"
+                  </Button>
+                  <Button
+                    variant="default"
+                    size="lg"
                     disabled={!canExport}
                     onClick={() => void onExport()}
                   >
                     {t("export_dialog.export")}
-                  </button>
+                  </Button>
                 </div>
               </>
             )}
