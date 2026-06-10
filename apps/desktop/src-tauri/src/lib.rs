@@ -88,7 +88,8 @@ pub fn run() {
         )
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_shell::init());
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_notification::init());
     // Dev-only: expose the running webview to the tauri-mcp-server (localhost
     // 9223) so it can be driven for in-app testing. Never active in release.
     #[cfg(debug_assertions)]

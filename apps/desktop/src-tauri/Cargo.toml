@@ -29,6 +29,8 @@ tauri-plugin-shell = "2"
 # and window size/position/maximized persistence across launches.
 tauri-plugin-single-instance = "2"
 tauri-plugin-window-state = "2"
+# Native toasts for export completed/failed while the window is unfocused.
+tauri-plugin-notification = "2"
 # Dev-only: drives the running webview from the tauri-mcp-server for in-app
 # testing. Registered behind `#[cfg(debug_assertions)]` in lib.rs so it never
 # activates in release builds.
