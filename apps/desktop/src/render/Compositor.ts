@@ -13,6 +13,13 @@ import { lastFrameAnchorUs as computeLastFrameStartUs, snapFrameFloor } from "..
 import type { LayerSummary, MediaSummary, ProjectSummary } from "../ipc";
 import { AudioMixer } from "./audio/AudioMixer";
 import {
+  resolveColorView,
+  resolveImageOverlayView,
+  resolveMotifView,
+  resolveTextView,
+  resolveVideoClipView,
+} from "./resolveView";
+import {
   SourceDecoderPool,
   type DecoderHandle,
   type DecoderPool,
@@ -661,7 +668,7 @@ export class Compositor {
         } else if (kind === "Text") {
           const text = this.ensureText(layer);
           if (!text) continue;
-          this.updateText(text, layer, z++);
+          this.updateText(text, layer, z++, tUsSnapped);
           this.stage.addChild(text.sprite.text);
         } else if (kind === "Motif") {
           const tmpl = this.ensureMotif(layer);
@@ -1377,9 +1384,11 @@ export class Compositor {
 
   private updateClip(clip: ActiveClip, layer: LayerSummary, tUs: number, z: number): void {
     if (layer.params.kind !== "VideoClip") return;
-    const params = layer.params;
 
     const layerLocalUs = tUs - layer.t_start_us;
+    // Per-frame keyframe resolution: AnimTrack views -> scalars at the
+    // layer-local time. Identical in preview and the export Worker.
+    const params = resolveVideoClipView(layer.params, layerLocalUs);
     const srcTUs = params.src_in_us + layerLocalUs;
 
     // Upload the current frame BEFORE adjusting transforms so the
@@ -1468,9 +1477,9 @@ export class Compositor {
     z: number,
   ): void {
     if (layer.params.kind !== "ImageOverlay") return;
-    const params = layer.params;
     const tInLayerUs = tUs - layer.t_start_us;
     const durationUs = layer.t_end_us - layer.t_start_us;
+    const params = resolveImageOverlayView(layer.params, tInLayerUs);
     image.sprite.update(params, tInLayerUs, durationUs);
     image.sprite.sprite.zIndex = z;
   }
@@ -1493,7 +1502,7 @@ export class Compositor {
 
   private updateColor(color: ActiveColor, layer: LayerSummary, z: number): void {
     if (layer.params.kind !== "Color") return;
-    color.sprite.update(layer.params);
+    color.sprite.update(resolveColorView(layer.params));
     color.sprite.graphics.zIndex = z;
   }
 
@@ -1513,9 +1522,10 @@ export class Compositor {
     return text;
   }
 
-  private updateText(text: ActiveText, layer: LayerSummary, z: number): void {
+  private updateText(text: ActiveText, layer: LayerSummary, z: number, tUs: number): void {
     if (layer.params.kind !== "Text") return;
-    text.sprite.update(layer.params);
+    const tInLayerUs = tUs - layer.t_start_us;
+    text.sprite.update(resolveTextView(layer.params, tInLayerUs));
     text.sprite.text.zIndex = z;
   }
 
@@ -1568,7 +1578,7 @@ export class Compositor {
     // index synchronously (the Worker has no DOM harness). Undefined in preview
     // (or if this layer wasn't baked) → the sprite's harness/cache path runs.
     const injected = this.motifFrames.get(layer.id);
-    tmpl.sprite.update(layer.params, tInLayerUs, durationUs, injected);
+    tmpl.sprite.update(resolveMotifView(layer.params, tInLayerUs), tInLayerUs, durationUs, injected);
     tmpl.sprite.sprite.zIndex = z;
   }
 

@@ -74,7 +74,7 @@ import {
   motifFrameCacheKey,
 } from "../motifs/motifFrames";
 import type { MotifManifest, Motif } from "../motifs/catalog";
-import type { MotifView } from "../../ipc";
+import type { ResolvedMotifView } from "../resolveView";
 import { MotifSprite } from "./MotifSprite";
 
 describe("motifDurationFrames", () => {
@@ -187,7 +187,7 @@ describe("MotifSprite.refreshMotif", () => {
     return { manifest };
   }
 
-  const view: MotifView = {
+  const view: ResolvedMotifView = {
     motif_id: "d1",
     x: 0,
     y: 0,
