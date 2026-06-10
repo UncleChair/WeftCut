@@ -32,7 +32,7 @@ import { useProjectStore, exportPlaybackPathFor } from "../state/projectStore";
 import { exists, readDir } from "@tauri-apps/plugin-fs";
 import { join as pathJoin } from "@tauri-apps/api/path";
 import { MotifSprite } from "../render/sprite/MotifSprite";
-import type { MotifView } from "../ipc";
+import type { ResolvedMotifView } from "../render/resolveView";
 
 type RunExport = (
   settings: ExportSettings,
@@ -275,7 +275,7 @@ export function installMotifTestHooks(): void {
       },
     });
     try {
-      const view: MotifView = {
+      const view: ResolvedMotifView = {
         motif_id: motifId,
         x: 0,
         y: 0,
