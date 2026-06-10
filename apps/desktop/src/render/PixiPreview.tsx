@@ -24,6 +24,11 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { Application as PixiApplication } from "@pixi/react";
 import { Rectangle, type Application } from "pixi.js";
 
+import {
+  registerTransport,
+  releaseTransport,
+  setTransportPlaying,
+} from "../state/playbackStore";
 import { previewPlaybackPathFor, useProjectStore } from "../state/projectStore";
 import { type MediaSummary } from "../ipc";
 import { subscribeMotifCatalog } from "./motifs/catalog";
@@ -112,7 +117,10 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       c.style.display = "block";
       c.style.objectFit = "contain";
 
-      // Dispose any prior Compositor (StrictMode re-mount).
+      // Dispose any prior Compositor (StrictMode re-mount). Release its
+      // transport registration first so the store never holds a disposed
+      // engine (the new engine re-registers below).
+      if (engineRef.current) releaseTransport(engineRef.current);
       engineRef.current?.dispose();
       compositorRef.current?.dispose();
 
@@ -160,6 +168,13 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
 
       compositorRef.current = compositor;
       engineRef.current = engine;
+
+      // Global transport: expose this engine to code outside the React ref
+      // chain (Tauri event handlers, MCP-driven mutations, dialogs) via the
+      // playback store. Mirror the play state so store subscribers track
+      // play/pause without polling.
+      engine.onPlayStateChange(setTransportPlaying);
+      registerTransport(engine);
 
       // E2E-only: register a live bridge so the WebDriver hooks
       // (window.__weftcutTest.weftcutSeekUs / weftcutSampleComposite) can drive
@@ -296,6 +311,9 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   // disposes the Application itself.
   useEffect(() => {
     return () => {
+      // Identity-guarded release: a stale unmount can't tear down a newer
+      // mount's registration.
+      if (engineRef.current) releaseTransport(engineRef.current);
       engineRef.current?.dispose();
       compositorRef.current?.dispose();
       compositorRef.current = null;
