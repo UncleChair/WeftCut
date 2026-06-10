@@ -11,6 +11,7 @@ import {
 } from "../i18n";
 import { AppDialog } from "../components/AppDialog";
 import { AppSelect } from "../components/AppSelect";
+import { WindowControls } from "../components/WindowControls";
 import { Button } from "@/components/ui/button";
 import { GlobeIcon } from "../i18n/GlobeIcon";
 import {
@@ -129,18 +130,24 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
 
   return (
     <div className="startup-screen">
-      <button
-        className="startup-locale-toggle"
-        onClick={cycleLocale}
-        title={t("language.switch_label")}
-        aria-label={t("language.switch_label")}
-      >
-        <GlobeIcon />
-        <span className="locale-toggle-label">
-          {LOCALE_LABELS[(i18n.resolvedLanguage ?? "en-US") as Locale] ??
-            "English"}
-        </span>
-      </button>
+      {/* Frameless window: the startup screen has no app header, so a
+          slim strip along the top carries the drag region + caption
+          buttons (and the locale toggle, which used to float here). */}
+      <div className="startup-titlebar" data-tauri-drag-region>
+        <button
+          className="startup-locale-toggle"
+          onClick={cycleLocale}
+          title={t("language.switch_label")}
+          aria-label={t("language.switch_label")}
+        >
+          <GlobeIcon />
+          <span className="locale-toggle-label">
+            {LOCALE_LABELS[(i18n.resolvedLanguage ?? "en-US") as Locale] ??
+              "English"}
+          </span>
+        </button>
+        <WindowControls />
+      </div>
       <div className="startup-panel">
         <header className="startup-header">
           <h1>{t("app.title")}</h1>

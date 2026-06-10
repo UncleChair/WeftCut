@@ -75,6 +75,7 @@ import {
   type ImportItem,
 } from "./panels/importOptimize";
 import { AppDialog } from "./components/AppDialog";
+import { WindowControls } from "./components/WindowControls";
 import { Button } from "@/components/ui/button";
 import { ImportProxyDialog } from "./panels/ImportProxyDialog";
 import { MotifStaleDialog } from "./panels/MotifStaleDialog";
@@ -1367,9 +1368,13 @@ export function App({ onCloseProject }: AppProps) {
   return (
     <ShortcutBindingsProvider overrides={shortcutOverrides}>
     <div className="app">
-      <header className="app-header">
-        <div className="header-left">
-          <h1>{t("app.title")}</h1>
+      {/* Frameless window: the header doubles as the title bar. The
+          drag-region attribute only fires when the mousedown target IS
+          the carrying element, so it sits on the header AND its
+          non-interactive children — menus and buttons stay clickable. */}
+      <header className="app-header" data-tauri-drag-region>
+        <div className="header-left" data-tauri-drag-region>
+          <h1 data-tauri-drag-region>{t("app.title")}</h1>
           <MenuBar>
             <Menu label={t("menu.file")}>
               <MenuItem
@@ -1467,9 +1472,9 @@ export function App({ onCloseProject }: AppProps) {
             </Menu>
           </MenuBar>
         </div>
-        <div className="header-right">
+        <div className="header-right" data-tauri-drag-region>
           {pong !== "ok" && pong !== "…" && (
-            <span className="ping">
+            <span className="ping" data-tauri-drag-region>
               {t("app.core_status", { status: pong })}
             </span>
           )}
@@ -1485,6 +1490,7 @@ export function App({ onCloseProject }: AppProps) {
                 "English"}
             </span>
           </button>
+          <WindowControls />
         </div>
       </header>
 

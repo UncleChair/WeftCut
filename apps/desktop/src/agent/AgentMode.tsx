@@ -15,6 +15,7 @@ import {
 import { MiniTimeline } from "./MiniTimeline";
 import { RecordPanel } from "./RecordPanel";
 import { Button } from "@/components/ui/button";
+import { WindowControls } from "../components/WindowControls";
 
 /// Agent mode — the simplified preview / mini-timeline / record-panel
 /// layout the human sees while an MCP-initiated agent session is
@@ -60,6 +61,11 @@ export const AgentMode = forwardRef(function AgentMode(
 ) {
   return (
     <div className="agent-mode-shell">
+      {/* Frameless window: agent mode replaces the whole app layout, so
+          it carries its own slim drag strip + caption buttons. */}
+      <div className="agent-titlebar" data-tauri-drag-region>
+        <WindowControls />
+      </div>
       <section className="agent-preview">
         <div id="video-surface" className="video-surface">
           <PreviewSurface
