@@ -10,6 +10,7 @@ import {
   type Locale,
 } from "../i18n";
 import { AppDialog } from "../components/AppDialog";
+import { AppSelect } from "../components/AppSelect";
 import { GlobeIcon } from "../i18n/GlobeIcon";
 import {
   projectNewWorkspace,
@@ -440,19 +441,16 @@ function NewProjectForm({
 
         <label className="new-project-row">
           <span>{t("new_project.canvas_preset")}</span>
-          <select
+          <AppSelect
             value={presetKey}
-            onChange={(e) => setPresetKey(e.target.value)}
+            onValueChange={setPresetKey}
             disabled={busy}
-          >
-            {CANVAS_PRESETS.map((p) => (
-              <option key={p.key} value={p.key}>
-                {t(`new_project.preset.${p.key}`, {
-                  defaultValue: p.key,
-                })}
-              </option>
-            ))}
-          </select>
+            ariaLabel={t("new_project.canvas_preset")}
+            options={CANVAS_PRESETS.map((p) => ({
+              value: p.key,
+              label: t(`new_project.preset.${p.key}`, { defaultValue: p.key }),
+            }))}
+          />
         </label>
 
         {submitError && (

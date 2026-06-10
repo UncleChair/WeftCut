@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 
 import { exportSettingsGet, exportSettingsSet, workspaceDir } from "../ipc";
 import { AppDialog } from "../components/AppDialog";
+import { AppSelect } from "../components/AppSelect";
 import {
   type EncodePath,
   resolveEncodePath,
@@ -208,67 +209,59 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, onCancel
                   <span className="settings-toggle-label">
                     {t("export_dialog.resolution")}
                   </span>
-                  <select
+                  <AppSelect
                     className="export-select"
-                    value={settings.resolutionHeight ?? ""}
-                    onChange={(e) =>
-                      patch({
-                        resolutionHeight: e.target.value
-                          ? Number(e.target.value)
-                          : null,
-                      })
+                    value={String(settings.resolutionHeight ?? "")}
+                    onValueChange={(v) =>
+                      patch({ resolutionHeight: v ? Number(v) : null })
                     }
-                  >
-                    <option value="">
-                      {t("export_dialog.follow_comp")} ({comp.width}×
-                      {comp.height})
-                    </option>
-                    {downscaleHeightOptions(comp.height).map((h) => (
-                      <option key={h} value={h}>
-                        {h}p
-                      </option>
-                    ))}
-                  </select>
+                    options={[
+                      {
+                        value: "",
+                        label: `${t("export_dialog.follow_comp")} (${comp.width}×${comp.height})`,
+                      },
+                      ...downscaleHeightOptions(comp.height).map((h) => ({
+                        value: String(h),
+                        label: `${h}p`,
+                      })),
+                    ]}
+                  />
                 </div>
 
                 <div className="export-row">
                   <span className="settings-toggle-label">
                     {t("export_dialog.fps")}
                   </span>
-                  <select
+                  <AppSelect
                     className="export-select"
-                    value={settings.fps ?? ""}
-                    onChange={(e) =>
-                      patch({
-                        fps: e.target.value ? Number(e.target.value) : null,
-                      })
-                    }
-                  >
-                    <option value="">
-                      {t("export_dialog.follow_comp")} ({compFps.toFixed(2)})
-                    </option>
-                    {downscaleFpsOptions(compFps).map((f) => (
-                      <option key={f} value={f}>
-                        {f} fps
-                      </option>
-                    ))}
-                  </select>
+                    value={String(settings.fps ?? "")}
+                    onValueChange={(v) => patch({ fps: v ? Number(v) : null })}
+                    options={[
+                      {
+                        value: "",
+                        label: `${t("export_dialog.follow_comp")} (${compFps.toFixed(2)})`,
+                      },
+                      ...downscaleFpsOptions(compFps).map((f) => ({
+                        value: String(f),
+                        label: `${f} fps`,
+                      })),
+                    ]}
+                  />
                 </div>
 
                 <div className="export-row">
                   <span className="settings-toggle-label">
                     {t("export_dialog.range")}
                   </span>
-                  <select
+                  <AppSelect
                     className="export-select"
                     value={rangeMode}
-                    onChange={(e) =>
-                      setRangeMode(e.target.value as "full" | "custom")
-                    }
-                  >
-                    <option value="full">{t("export_dialog.range_full")}</option>
-                    <option value="custom">{t("export_dialog.range_custom")}</option>
-                  </select>
+                    onValueChange={(v) => setRangeMode(v as "full" | "custom")}
+                    options={[
+                      { value: "full", label: t("export_dialog.range_full") },
+                      { value: "custom", label: t("export_dialog.range_custom") },
+                    ]}
+                  />
                 </div>
                 {rangeMode === "custom" && (
                   <>
@@ -327,11 +320,11 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, onCancel
                   <span className="settings-toggle-label">
                     {t("export_dialog.codec")}
                   </span>
-                  <select
+                  <AppSelect
                     className="export-select"
                     value={settings.codec}
-                    onChange={(e) => {
-                      const codec = e.target.value as CodecId;
+                    onValueChange={(v) => {
+                      const codec = v as CodecId;
                       if (!isCodecContainerValid(codec, settings.container)) {
                         // Falls back to MP4 → Opus (MKV-only) must also reset.
                         const audio = { ...settings.audio, codec: "aac" as AudioCodecId };
@@ -340,11 +333,12 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, onCancel
                         patch({ codec });
                       }
                     }}
-                  >
-                    <option value="h264">H.264</option>
-                    <option value="av1">AV1</option>
-                    <option value="hevc">HEVC</option>
-                  </select>
+                    options={[
+                      { value: "h264", label: "H.264" },
+                      { value: "av1", label: "AV1" },
+                      { value: "hevc", label: "HEVC" },
+                    ]}
+                  />
                 </div>
                 {encodePath === null ? (
                   <p className="settings-blurb">
@@ -362,11 +356,11 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, onCancel
                   <span className="settings-toggle-label">
                     {t("export_dialog.container")}
                   </span>
-                  <select
+                  <AppSelect
                     className="export-select"
                     value={settings.container}
-                    onChange={(e) => {
-                      const container = e.target.value as Container;
+                    onValueChange={(v) => {
+                      const container = v as Container;
                       const audio = isAudioCodecContainerValid(
                         settings.audio.codec,
                         container,
@@ -375,37 +369,30 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, onCancel
                         : { ...settings.audio, codec: "aac" as AudioCodecId };
                       patch({ container, audio });
                     }}
-                  >
-                    {containersForCodec(settings.codec).map((c) => (
-                      <option key={c} value={c}>
-                        {c.toUpperCase()}
-                      </option>
-                    ))}
-                  </select>
+                    options={containersForCodec(settings.codec).map((c) => ({
+                      value: c,
+                      label: c.toUpperCase(),
+                    }))}
+                  />
                 </div>
 
                 <div className="export-row">
                   <span className="settings-toggle-label">
                     {t("export_dialog.quality")}
                   </span>
-                  <select
+                  <AppSelect
                     className="export-select"
                     value={settings.quality}
-                    onChange={(e) =>
-                      patch({ quality: e.target.value as QualityPreset })
+                    onValueChange={(v) =>
+                      patch({ quality: v as QualityPreset })
                     }
-                  >
-                    <option value="low">{t("export_dialog.quality_low")}</option>
-                    <option value="medium">
-                      {t("export_dialog.quality_medium")}
-                    </option>
-                    <option value="high">
-                      {t("export_dialog.quality_high")}
-                    </option>
-                    <option value="custom">
-                      {t("export_dialog.quality_custom")}
-                    </option>
-                  </select>
+                    options={[
+                      { value: "low", label: t("export_dialog.quality_low") },
+                      { value: "medium", label: t("export_dialog.quality_medium") },
+                      { value: "high", label: t("export_dialog.quality_high") },
+                      { value: "custom", label: t("export_dialog.quality_custom") },
+                    ]}
+                  />
                 </div>
                 {settings.quality === "custom" && (
                   <div className="export-row">
@@ -442,53 +429,52 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, onCancel
                   <span className="settings-toggle-label">
                     {t("export_dialog.rate_mode")}
                   </span>
-                  <select
+                  <AppSelect
                     className="export-select"
                     value={settings.rateMode}
-                    onChange={(e) =>
-                      patch({ rateMode: e.target.value as RateMode })
-                    }
-                  >
-                    <option value="vbr">VBR</option>
-                    <option value="cbr">CBR</option>
-                  </select>
+                    onValueChange={(v) => patch({ rateMode: v as RateMode })}
+                    options={[
+                      { value: "vbr", label: "VBR" },
+                      { value: "cbr", label: "CBR" },
+                    ]}
+                  />
                 </div>
 
                 <div className="export-row">
                   <span className="settings-toggle-label">
                     {t("export_dialog.keyframe_interval")}
                   </span>
-                  <select
+                  <AppSelect
                     className="export-select"
-                    value={settings.keyframeIntervalSec}
-                    onChange={(e) =>
-                      patch({ keyframeIntervalSec: Number(e.target.value) })
+                    value={String(settings.keyframeIntervalSec)}
+                    onValueChange={(v) =>
+                      patch({ keyframeIntervalSec: Number(v) })
                     }
-                  >
-                    {KEYFRAME_INTERVALS.map((s) => (
-                      <option key={s} value={s}>
-                        {s}s
-                      </option>
-                    ))}
-                  </select>
+                    options={KEYFRAME_INTERVALS.map((s) => ({
+                      value: String(s),
+                      label: `${s}s`,
+                    }))}
+                  />
                 </div>
 
                 <div className="export-row">
                   <span className="settings-toggle-label">
                     {t("export_dialog.encoder_accel")}
                   </span>
-                  <select
+                  <AppSelect
                     className="export-select"
                     value={settings.hwAccel}
-                    onChange={(e) =>
-                      patch({ hwAccel: e.target.value as "auto" | "software" })
+                    onValueChange={(v) =>
+                      patch({ hwAccel: v as "auto" | "software" })
                     }
-                  >
-                    <option value="auto">{t("export_dialog.encoder_auto")}</option>
-                    <option value="software">
-                      {t("export_dialog.encoder_software")}
-                    </option>
-                  </select>
+                    options={[
+                      { value: "auto", label: t("export_dialog.encoder_auto") },
+                      {
+                        value: "software",
+                        label: t("export_dialog.encoder_software"),
+                      },
+                    ]}
+                  />
                 </div>
 
                 <div className="export-row">
@@ -509,94 +495,87 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, onCancel
                       <span className="settings-toggle-label">
                         {t("export_dialog.audio_codec")}
                       </span>
-                      <select
+                      <AppSelect
                         className="export-select"
                         value={settings.audio.codec}
-                        onChange={(e) =>
+                        onValueChange={(v) =>
                           patch({
-                            audio: {
-                              ...settings.audio,
-                              codec: e.target.value as AudioCodecId,
-                            },
+                            audio: { ...settings.audio, codec: v as AudioCodecId },
                           })
                         }
-                      >
-                        {audioCodecsForContainer(settings.container).map((c) => (
-                          <option key={c} value={c}>
-                            {c.toUpperCase()}
-                          </option>
-                        ))}
-                      </select>
+                        options={audioCodecsForContainer(settings.container).map(
+                          (c) => ({ value: c, label: c.toUpperCase() }),
+                        )}
+                      />
                     </div>
                     <div className="export-row">
                       <span className="settings-toggle-label">
                         {t("export_dialog.audio_bitrate")}
                       </span>
-                      <select
+                      <AppSelect
                         className="export-select"
-                        value={settings.audio.bitrate}
-                        onChange={(e) =>
+                        value={String(settings.audio.bitrate)}
+                        onValueChange={(v) =>
                           patch({
-                            audio: { ...settings.audio, bitrate: Number(e.target.value) },
+                            audio: { ...settings.audio, bitrate: Number(v) },
                           })
                         }
-                      >
-                        {AUDIO_BITRATES.map((b) => (
-                          <option key={b} value={b}>
-                            {b / 1000} kbps
-                          </option>
-                        ))}
-                      </select>
+                        options={AUDIO_BITRATES.map((b) => ({
+                          value: String(b),
+                          label: `${b / 1000} kbps`,
+                        }))}
+                      />
                     </div>
                     <div className="export-row">
                       <span className="settings-toggle-label">
                         {t("export_dialog.audio_channels")}
                       </span>
-                      <select
+                      <AppSelect
                         className="export-select"
-                        value={settings.audio.channels ?? ""}
-                        onChange={(e) =>
+                        value={String(settings.audio.channels ?? "")}
+                        onValueChange={(v) =>
                           patch({
                             audio: {
                               ...settings.audio,
-                              channels: e.target.value ? Number(e.target.value) : null,
+                              channels: v ? Number(v) : null,
                             },
                           })
                         }
-                      >
-                        <option value="">{t("export_dialog.follow_comp")}</option>
-                        {AUDIO_CHANNELS.map((c) => (
-                          <option key={c} value={c}>
-                            {c === 1
-                              ? t("export_dialog.channels_mono")
-                              : t("export_dialog.channels_stereo")}
-                          </option>
-                        ))}
-                      </select>
+                        options={[
+                          { value: "", label: t("export_dialog.follow_comp") },
+                          ...AUDIO_CHANNELS.map((c) => ({
+                            value: String(c),
+                            label:
+                              c === 1
+                                ? t("export_dialog.channels_mono")
+                                : t("export_dialog.channels_stereo"),
+                          })),
+                        ]}
+                      />
                     </div>
                     <div className="export-row">
                       <span className="settings-toggle-label">
                         {t("export_dialog.audio_sample_rate")}
                       </span>
-                      <select
+                      <AppSelect
                         className="export-select"
-                        value={settings.audio.sampleRate ?? ""}
-                        onChange={(e) =>
+                        value={String(settings.audio.sampleRate ?? "")}
+                        onValueChange={(v) =>
                           patch({
                             audio: {
                               ...settings.audio,
-                              sampleRate: e.target.value ? Number(e.target.value) : null,
+                              sampleRate: v ? Number(v) : null,
                             },
                           })
                         }
-                      >
-                        <option value="">{t("export_dialog.follow_comp")}</option>
-                        {AUDIO_SAMPLE_RATES.map((r) => (
-                          <option key={r} value={r}>
-                            {(r / 1000).toFixed(1)} kHz
-                          </option>
-                        ))}
-                      </select>
+                        options={[
+                          { value: "", label: t("export_dialog.follow_comp") },
+                          ...AUDIO_SAMPLE_RATES.map((r) => ({
+                            value: String(r),
+                            label: `${(r / 1000).toFixed(1)} kHz`,
+                          })),
+                        ]}
+                      />
                     </div>
                   </>
                 )}
