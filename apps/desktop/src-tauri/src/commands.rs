@@ -205,6 +205,8 @@ pub struct AudioView {
     pub src_out_us: i64,
     pub gain_db: Animated<f64>,
     pub pan: Animated<f64>,
+    pub fade_in_us: u64,
+    pub fade_out_us: u64,
     pub mute: bool,
 }
 
@@ -256,6 +258,10 @@ pub struct MediaSummary {
     pub color_primaries: Option<String>,
     /// Source color transfer characteristics (e.g. "bt709"), `None` when unknown.
     pub color_transfer: Option<String>,
+    /// Absolute path of the canonical conformed PCM (`jobs/conform.rs`),
+    /// when the conform job has completed. The preview mixer Range-reads
+    /// this file; `None` means the audio layer is not yet playable.
+    pub conform_path: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -405,6 +411,10 @@ pub async fn project_summary(handle: State<'_, ProjectHandle>) -> Result<Project
                 .quick_proxy_path
                 .as_ref()
                 .and_then(|p| p.is_file().then(|| p.to_string_lossy().to_string()));
+            let conform_path = m
+                .conform_path
+                .as_ref()
+                .and_then(|p| p.is_file().then(|| p.to_string_lossy().to_string()));
             MediaSummary {
                 id: m.id.to_string(),
                 label,
@@ -425,6 +435,7 @@ pub async fn project_summary(handle: State<'_, ProjectHandle>) -> Result<Project
                 color_range: m.metadata.video.as_ref().and_then(|v| v.color_range.clone()),
                 color_primaries: m.metadata.video.as_ref().and_then(|v| v.color_primaries.clone()),
                 color_transfer: m.metadata.video.as_ref().and_then(|v| v.color_transfer.clone()),
+                conform_path,
             }
         })
         .collect();
@@ -583,6 +594,8 @@ fn layer_params_view(
             src_out_us: p.src_out_us,
             gain_db: p.gain_db.clone(),
             pan: p.pan.clone(),
+            fade_in_us: p.fade_in_us,
+            fade_out_us: p.fade_out_us,
             mute: p.mute,
         }),
         LayerParams::Subtitles(p) => {
