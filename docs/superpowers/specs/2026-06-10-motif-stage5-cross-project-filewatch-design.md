@@ -83,9 +83,12 @@ computation a plain testable function.
 
 ### Trigger
 
-`StartupScreen`, after a successful `project_open` IPC call — the single open funnel. (New
-projects are empty; no call.) A non-empty report is written to a small frontend store; the editor
-root mounts **`MotifStaleDialog`**.
+The editor root (`App`) pulls the report in a **mount effect**. There are three `project_open`
+call sites (startup picker, recents, and the reopen-on-launch auto-open in `main.tsx`) — but all
+of them converge on flipping the root router to the editor stage, which mounts `App` exactly once
+per successful open, so a mount-time pull IS the once-per-open check. (New projects mount `App`
+too; their report is empty.) A non-empty report lands in App-local state, which renders
+**`MotifStaleDialog`**.
 
 ### Surface
 
