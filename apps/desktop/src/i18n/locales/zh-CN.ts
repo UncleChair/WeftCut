@@ -485,6 +485,7 @@ const zhCN: Resources = {
     loading: "正在加载 Motifs…",
     empty: "无可用 Motif。",
     preview_heading: "预览",
+    preview_canvas_size: "{{w}}×{{h}} 画布",
     preview_fps: "预览帧率",
     preview_loading: "正在加载预览…",
     props_heading: "参数",
