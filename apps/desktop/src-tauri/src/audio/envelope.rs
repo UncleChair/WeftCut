@@ -252,4 +252,49 @@ mod tests {
         assert!((l - 1.0).abs() < 1e-6); // 0.3 + 0.7·cos(0) = 1.0
         assert!(r.abs() < 1e-6);
     }
+
+    /// Cross-language golden vectors. The SAME fixture is asserted by
+    /// `render/audio/envelope.golden.test.ts` against the TS twin; a change
+    /// that passes one side and fails the other is envelope-contract drift.
+    /// Also locks the serde wire shape (`mode`/`value`, `interp.kind`).
+    #[test]
+    fn golden_vectors_match_fixture() {
+        #[derive(serde::Deserialize)]
+        struct Sample {
+            t_us: i64,
+            expect: f64,
+        }
+        #[derive(serde::Deserialize)]
+        struct Case {
+            name: String,
+            gain_db: Animated<f64>,
+            fade_in_us: i64,
+            fade_out_us: i64,
+            span_us: i64,
+            samples: Vec<Sample>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Fixture {
+            cases: Vec<Case>,
+        }
+
+        let fixture: Fixture = serde_json::from_str(include_str!(
+            "../../../src/render/audio/audioEnvelopeGolden.fixture.json"
+        ))
+        .expect("fixture parses as Animated<f64> wire shape");
+        assert!(!fixture.cases.is_empty());
+        for case in &fixture.cases {
+            let e = sample_gain(&case.gain_db, case.fade_in_us, case.fade_out_us, case.span_us);
+            for s in &case.samples {
+                let got = e.eval(s.t_us) as f64;
+                assert!(
+                    (got - s.expect).abs() < 1e-5,
+                    "case `{}` t_us={}: got {got}, expect {}",
+                    case.name,
+                    s.t_us,
+                    s.expect
+                );
+            }
+        }
+    }
 }
