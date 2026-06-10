@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { App } from "./App";
 import { StartupScreen } from "./startup/StartupScreen";
 import {
@@ -29,6 +30,25 @@ void installMotifsChangedListener();
 
 const root = document.getElementById("root");
 if (!root) throw new Error("#root missing from index.html");
+
+// Production: suppress the WebView2 default context menu (reload / print /
+// inspect) except over editable or copyable content, where the native
+// cut/copy/paste menu stays useful. The app's own context menus (timeline
+// layers) preventDefault on their targets either way. Dev keeps the default
+// menu for right-click → Inspect.
+if (!import.meta.env.DEV) {
+  document.addEventListener("contextmenu", (e) => {
+    const t = e.target instanceof Element ? e.target : null;
+    if (
+      t?.closest(
+        "input, textarea, [contenteditable], .connect-value, .connect-snippet pre, .log-message, .log-details-json",
+      )
+    ) {
+      return;
+    }
+    e.preventDefault();
+  });
+}
 
 // Phase A.0 / H.0 dev-spike hatches removed in P12-e along with the
 // legacy DOM preview. The Pixi compositor is the only preview surface
@@ -91,6 +111,26 @@ function Root() {
         installMotifHook();
       },
     );
+  }, []);
+
+  // Flash-free startup: the window is created hidden (`visible: false` in
+  // tauri.conf.json) and revealed on the first painted frame after the boot
+  // stage resolves — the user never sees an unpainted surface. show() on an
+  // already-visible window is a no-op, so later stage flips don't matter.
+  useEffect(() => {
+    if (stage === "boot") return;
+    const id = requestAnimationFrame(() => {
+      void getCurrentWindow().show();
+    });
+    return () => cancelAnimationFrame(id);
+  }, [stage]);
+  // Safety net: if boot wedges before the stage resolves (IPC hang), surface
+  // the window anyway so the failure is visible instead of a ghost process.
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      void getCurrentWindow().show();
+    }, 3000);
+    return () => window.clearTimeout(t);
   }, []);
 
   const onWorkspaceReady = useCallback(() => setStage("editor"), []);

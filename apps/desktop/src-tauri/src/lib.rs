@@ -59,9 +59,37 @@ pub fn run() {
     tracing::info!("weftcut starting");
 
     let mut builder = tauri::Builder::default()
+        // Single-instance must be the FIRST registered plugin (its docs).
+        // A second launch would race the project actor and the MCP port;
+        // instead it surfaces the existing window. Dev second-instance
+        // workflows keep working — the lock is keyed on the app
+        // identifier, which those runs override.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.unminimize();
+                let _ = w.set_focus();
+            }
+        }))
+        // Persist size/position/maximized across launches. VISIBLE is
+        // excluded: the window is created hidden (`visible: false`) and
+        // the frontend shows it after first paint — letting the plugin
+        // restore visibility would resurrect the startup flash.
+        .plugin(
+            tauri_plugin_window_state::Builder::new()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::all()
+                        & !tauri_plugin_window_state::StateFlags::VISIBLE,
+                )
+                // The hidden Motif capture host's geometry is owned by the
+                // capture pipeline (CDP metrics override) — persisting or
+                // restoring it is meaningless at best.
+                .with_denylist(&["motif-host"])
+                .build(),
+        )
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_shell::init());
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_notification::init());
     // Dev-only: expose the running webview to the tauri-mcp-server (localhost
     // 9223) so it can be driven for in-app testing. Never active in release.
     #[cfg(debug_assertions)]
@@ -77,6 +105,19 @@ pub fn run() {
     // `http://motif.localhost/<id>/<file>`; the hidden host window loads
     // `http://motif.localhost/<id>/index.html`. See `motifs::builtin`.
     builder = builder.register_uri_scheme_protocol("motif", motifs::builtin::handle_request);
+    // Closing the main window must exit the app. Tauri's default exit rule
+    // is "when ALL windows are gone", but the hidden Motif capture host
+    // (and any Render & Play popup) keeps the process alive as a windowless
+    // zombie — which also meant RunEvent::Exit (where window-state persists
+    // itself) never fired. `exit()` runs the normal exit path, so plugins
+    // still get their save hooks.
+    builder = builder.on_window_event(|window, event| {
+        if let tauri::WindowEvent::Destroyed = event {
+            if window.label() == "main" {
+                window.app_handle().exit(0);
+            }
+        }
+    });
     builder
         .invoke_handler(tauri::generate_handler![
             commands::ping,
@@ -173,6 +214,34 @@ pub fn run() {
             sysmon::get_system_stats,
         ])
         .setup(move |app| {
+            // WebView2 polish (Windows): kill Ctrl+wheel / Ctrl+± page zoom
+            // always, and the browser-feature accelerator keys (F5 / Ctrl+R
+            // reload, Ctrl+F find bar, Ctrl+P print, F12) in RELEASE builds
+            // only. Per WebView2 docs this leaves text-editing accelerators
+            // (Ctrl+C/V/X/Z) and plain DOM keydown delivery untouched — the
+            // app's rebindable shortcut dispatcher sees every key it did
+            // before, whatever the user binds.
+            #[cfg(windows)]
+            if let Some(main) = app.get_webview_window("main") {
+                let _ = main.with_webview(|pw| unsafe {
+                    let Ok(core) = pw.controller().CoreWebView2() else {
+                        return;
+                    };
+                    let Ok(settings) = core.Settings() else {
+                        return;
+                    };
+                    let _ = settings.SetIsZoomControlEnabled(false);
+                    #[cfg(not(debug_assertions))]
+                    {
+                        use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
+                        use windows::core::Interface;
+                        if let Ok(s3) = settings.cast::<ICoreWebView2Settings3>() {
+                            let _ = s3.SetAreBrowserAcceleratorKeysEnabled(false);
+                        }
+                    }
+                });
+            }
+
             // Motifs runtime slot — holds the JS-side clock-takeover runtime
             // source string. `None` until the frontend calls
             // `motif_register_runtime` once at boot; the hidden host window

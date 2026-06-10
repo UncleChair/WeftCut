@@ -226,6 +226,12 @@ const zhCN: Resources = {
     restore: "还原",
     close: "关闭",
   },
+  close_guard: {
+    title: "导出进行中",
+    body: "导出尚未完成。现在退出将中止导出并留下不完整的输出文件。",
+    stay: "继续导出",
+    quit: "仍要退出",
+  },
   transport: {
     play: "▶",
     pause: "⏸",
@@ -252,6 +258,10 @@ const zhCN: Resources = {
     failed: "导出失败：{{detail}}",
     cancel: "取消",
     dismiss: "关闭",
+    notify_done_title: "导出完成",
+    notify_done_body: "已保存到 {{path}}",
+    notify_failed_title: "导出失败",
+    notify_failed_body: "{{detail}}",
   },
   export_dialog: {
     title: "导出设置",
