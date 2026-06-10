@@ -328,7 +328,7 @@ fn validate_track(
     sorted.sort_by_key(|l| l.t_start_us);
 
     // A/B-roll v2 (V.2): the overlap invariant is now per-class, not
-    // per-track. Visual-class layers (video / image / color / template
+    // per-track. Visual-class layers (video / image / color / motif
     // / text / subtitle) can't overlap with each other on the same
     // track; Audio layers can't overlap with each other; but a Visual
     // layer and an Audio layer CAN coexist at the same time slot

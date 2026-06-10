@@ -643,10 +643,8 @@ mod tests {
         }
     }
 
-    /// The render-path redesign (ADR 0015) trimmed the starter set to the
-    /// single `countdown` exemplar. If `builtins()` is ever expanded or the
-    /// id renamed, this guard surfaces it so the picker-UI / docs side stays
-    /// in sync.
+    /// If `builtins()` is ever expanded or an id renamed, this guard
+    /// surfaces it so the picker-UI / docs side stays in sync.
     /// `max_duration_us` must return `None` for non-positive values (zero or
     /// negative), matching the TS `resolveMotifContentDurationUs` guard
     /// (`max_duration_s > 0`). A positive value converts normally.

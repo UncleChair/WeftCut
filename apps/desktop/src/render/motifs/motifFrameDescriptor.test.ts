@@ -5,7 +5,7 @@ import { motifContentFrame, motifFrameCacheKey } from "./motifFrames";
 import { canonicalizeProps } from "./Rasterizer";
 
 function view(props: Record<string, unknown>, srcInUs = 0): any {
-  return { template_id: "countdown", x: 0, y: 0, scale_x: 1, scale_y: 1, opacity: 1, src_in_us: srcInUs, props };
+  return { motif_id: "countdown", x: 0, y: 0, scale_x: 1, scale_y: 1, opacity: 1, src_in_us: srcInUs, props };
 }
 
 describe("motifFrameDescriptor", () => {
@@ -52,7 +52,7 @@ describe("motifFrameDescriptor", () => {
     expect(d.contentFrame).toBe(d.contentDurationFrames - 1); // clamped to last → deduped hold
   });
 
-  it("uncapped template uses layer width as content duration and ignores src_in", () => {
+  it("uncapped motif uses layer width as content duration and ignores src_in", () => {
     const uncapped: typeof tpl = {
       ...tpl,
       manifest: {

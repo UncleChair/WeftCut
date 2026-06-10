@@ -1,7 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 
-// Real-WebView2 end-to-end gate for the L2 persisted template pre-bake.
+// Real-WebView2 end-to-end gate for the L2 persisted motif pre-bake.
 //
 // Three tests that cannot run in the vitest environment (OffscreenCanvas and
 // the Tauri fs plugin are absent there):
@@ -22,13 +22,13 @@ import path from "node:path";
 
 const PROJECT_PARENT = path.resolve(os.tmpdir(), "weftcut-e2e-prebake-proj");
 
-// Countdown template: 480×480, 5 s at 30 fps → 150 content frames.
+// Countdown motif: 480×480, 5 s at 30 fps → 150 content frames.
 // A full bake writes exactly `contentDurationFrames` PNGs.
 const MOTIF_ID = "countdown";
 const DURATION_US = 5_000_000; // 5 s
 const CONTENT_FRAMES = 150; // Math.round(5 * 30)
 
-describe("L2 template pre-bake disk round-trip (real WebView2)", function () {
+describe("L2 motif pre-bake disk round-trip (real WebView2)", function () {
   let projectLayerId = null;
   let firstHashName = null;
 
@@ -76,7 +76,7 @@ describe("L2 template pre-bake disk round-trip (real WebView2)", function () {
     await waitForHook("addMotifLayer");
     await waitForHook("prebakeLayerAndWait");
 
-    // 3) Add a countdown template layer and record its layerId.
+    // 3) Add a countdown motif layer and record its layerId.
     const r2 = await browser.executeAsync((motifId, durationUs, done) => {
       window.__weftcutTest
         .addMotifLayer({ motifId, durationUs })
@@ -86,7 +86,7 @@ describe("L2 template pre-bake disk round-trip (real WebView2)", function () {
 
     if (!r2.ok) throw new Error("addMotifLayer failed: " + r2.error);
     projectLayerId = r2.layerId;
-    console.log(`[e2e] added countdown template layer: ${projectLayerId}`);
+    console.log(`[e2e] added countdown motif layer: ${projectLayerId}`);
   });
 
   // ── TEST 1: bake writes PNGs ───────────────────────────────────────────────
@@ -186,7 +186,7 @@ describe("L2 template pre-bake disk round-trip (real WebView2)", function () {
       // Arm the raster counter BEFORE resolving.
       window.__weftcutMotifPerf = { renders: 0 };
 
-      // Drive the REAL TemplateSprite update path (same function the compositor
+      // Drive the REAL MotifSprite update path (same function the compositor
       // calls) across 5 distinct layer-relative times. Each call internally
       // reaches resolveMotifFrame → disk PNG → createImageBitmap.
       window.__weftcutTest
@@ -227,7 +227,7 @@ describe("L2 template pre-bake disk round-trip (real WebView2)", function () {
 
   // ── TEST 3: GC removes orphan hash dir after a prop change ────────────────
 
-  it("GC removes orphan hash dir after a template prop change", async () => {
+  it("GC removes orphan hash dir after a motif prop change", async () => {
     if (!projectLayerId) throw new Error("setup: no layer id");
     if (!firstHashName) throw new Error("test 1 must pass first (firstHashName not recorded)");
 

@@ -237,14 +237,14 @@ describe("MotifFrameCache — L0 LRU", () => {
 
 describe("hashCacheKey", () => {
   test("is deterministic and 8-char lowercase hex", () => {
-    const h = hashCacheKey("template|3|640|360|{\"x\":1}");
-    expect(h).toBe(hashCacheKey("template|3|640|360|{\"x\":1}"));
+    const h = hashCacheKey("motif|3|640|360|{\"x\":1}");
+    expect(h).toBe(hashCacheKey("motif|3|640|360|{\"x\":1}"));
     expect(h).toMatch(/^[0-9a-f]{8}$/);
   });
 
   test("distinct keys hash to distinct dir names (no trivial collision)", () => {
     expect(hashCacheKey("a")).not.toBe(hashCacheKey("b"));
-    expect(hashCacheKey("template|1")).not.toBe(hashCacheKey("template|2"));
+    expect(hashCacheKey("motif|1")).not.toBe(hashCacheKey("motif|2"));
   });
 });
 

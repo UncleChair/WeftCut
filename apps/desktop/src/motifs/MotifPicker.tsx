@@ -15,17 +15,17 @@ import {
 } from "../ipc";
 import { captureMotifFramePngBlob } from "../render/motifs/host";
 import { setUserMotifs, type MotifManifest } from "../render/motifs/catalog";
-import { newDraftSource } from "../render/motifs/starterTemplate";
+import { newDraftSource } from "../render/motifs/newDraftSource";
 
 interface Props {
   onClose: () => void;
   onAdded: () => Promise<void>;
   /// Current playhead position in microseconds. Used as the default
-  /// "insert at" time so the template lands wherever the user is
+  /// "insert at" time so the motif lands wherever the user is
   /// actively looking, matching AE/Premiere behavior.
   currentTimeUs: number;
   /// Project's current tracks. The picker filters to Video tracks for the
-  /// target dropdown — templates lower to PngSeq overlay nodes and would
+  /// target dropdown — motifs lower to PngSeq overlay nodes and would
   /// silently render nothing on an Audio/Subtitle lane.
   tracks: TrackSummary[];
   fpsNum: number;
@@ -46,7 +46,7 @@ export function MotifPicker({
   fpsDen,
 }: Props) {
   const { t } = useTranslation();
-  const [templates, setTemplates] = useState<MotifSummary[] | null>(null);
+  const [motifs, setMotifs] = useState<MotifSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [newOpen, setNewOpen] = useState(false);
@@ -57,7 +57,7 @@ export function MotifPicker({
     listMotifs().then(
       (list) => {
         if (!aliveRef.current) return;
-        setTemplates(list);
+        setMotifs(list);
         // Refresh the runtime frame-math catalog from the SAME fetch the picker
         // shows. The boot-time sync (main.tsx) is one-shot; without this, a Motif
         // the picker can add (it lists via this IPC) but the runtime catalog
@@ -94,8 +94,8 @@ export function MotifPicker({
   }, []);
 
   const selected = useMemo(
-    () => templates?.find((tpl) => tpl.id === selectedId) ?? null,
-    [templates, selectedId],
+    () => motifs?.find((tpl) => tpl.id === selectedId) ?? null,
+    [motifs, selectedId],
   );
 
   const videoTracks = useMemo(
@@ -133,44 +133,44 @@ export function MotifPicker({
 
   return (
     <div className="settings-overlay" role="dialog" aria-modal="true">
-      <div className="template-picker">
+      <div className="motif-picker">
         <header>
-          <h2>{t("template_picker.heading")}</h2>
+          <h2>{t("motif_picker.heading")}</h2>
           {newOpen ? (
             <form
-              className="template-picker-new-form"
+              className="motif-picker-new-form"
               onSubmit={(e) => { e.preventDefault(); void createDraft(); }}
             >
               <input
                 type="text"
                 autoFocus
                 value={newName}
-                placeholder={t("template_picker.new_name_placeholder")}
-                aria-label={t("template_picker.new_prompt")}
+                placeholder={t("motif_picker.new_name_placeholder")}
+                aria-label={t("motif_picker.new_prompt")}
                 onChange={(e) => setNewName(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Escape") { setNewOpen(false); setNewName(""); } }}
               />
               <button type="submit" disabled={newName.trim() === ""}>
-                {t("template_picker.new_create")}
+                {t("motif_picker.new_create")}
               </button>
               <button type="button" onClick={() => { setNewOpen(false); setNewName(""); }}>
-                {t("template_picker.new_cancel")}
+                {t("motif_picker.new_cancel")}
               </button>
             </form>
           ) : (
-            <button className="template-picker-new" onClick={() => setNewOpen(true)}>
-              {t("template_picker.new_button")}
+            <button className="motif-picker-new" onClick={() => setNewOpen(true)}>
+              {t("motif_picker.new_button")}
             </button>
           )}
           {!newOpen && (
-            <button className="template-picker-new" onClick={importFile}>
-              {t("template_picker.import_button")}
+            <button className="motif-picker-new" onClick={importFile}>
+              {t("motif_picker.import_button")}
             </button>
           )}
           <button
             className="settings-close"
             onClick={onClose}
-            aria-label={t("template_picker.close")}
+            aria-label={t("motif_picker.close")}
           >
             ✕
           </button>
@@ -178,40 +178,40 @@ export function MotifPicker({
 
         {error && <p className="settings-error">{error}</p>}
 
-        {templates === null ? (
-          <p className="settings-status">{t("template_picker.loading")}</p>
+        {motifs === null ? (
+          <p className="settings-status">{t("motif_picker.loading")}</p>
         ) : (
-          <div className="template-picker-body">
-            <div className="template-picker-list">
-              {templates.map((tpl) => (
+          <div className="motif-picker-body">
+            <div className="motif-picker-list">
+              {motifs.map((tpl) => (
                 <button
                   key={tpl.id}
                   type="button"
                   className={
                     tpl.id === selectedId
-                      ? "template-card template-card-selected"
-                      : "template-card"
+                      ? "motif-card motif-card-selected"
+                      : "motif-card"
                   }
                   onClick={() => setSelectedId(tpl.id)}
                 >
-                  <MotifCardThumbnail template={tpl} />
-                  <span className="template-card-name">{tpl.name}</span>
-                  <span className="template-card-meta">
+                  <MotifCardThumbnail motif={tpl} />
+                  <span className="motif-card-name">{tpl.name}</span>
+                  <span className="motif-card-meta">
                     {tpl.size[0]}×{tpl.size[1]} · {formatTimecode(Math.round(tpl.default_duration_s * 1_000_000), fpsNum, fpsDen)}
                   </span>
-                  <span className="template-card-id">{tpl.id}</span>
-                  <span className={`template-card-status status-${tpl.status ?? "builtin"}`}>
-                    {t(`template_picker.status.${tpl.status ?? "builtin"}`)}
+                  <span className="motif-card-id">{tpl.id}</span>
+                  <span className={`motif-card-status status-${tpl.status ?? "builtin"}`}>
+                    {t(`motif_picker.status.${tpl.status ?? "builtin"}`)}
                   </span>
                 </button>
               ))}
             </div>
 
-            <div className="template-picker-form">
+            <div className="motif-picker-form">
               {selected ? (
                 <MotifForm
                   key={selected.id}
-                  template={selected}
+                  motif={selected}
                   currentTimeUs={currentTimeUs}
                   tracks={videoTracks}
                   fpsNum={fpsNum}
@@ -233,7 +233,7 @@ export function MotifPicker({
                   }}
                 />
               ) : (
-                <p className="settings-status">{t("template_picker.empty")}</p>
+                <p className="settings-status">{t("motif_picker.empty")}</p>
               )}
             </div>
           </div>
@@ -253,23 +253,23 @@ function defaultPropValue(spec: PropSpec): unknown {
   }
 }
 
-function defaultPropsFor(template: MotifSummary): Record<string, unknown> {
+function defaultPropsFor(motif: MotifSummary): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  for (const [key, spec] of Object.entries(template.props_schema)) {
+  for (const [key, spec] of Object.entries(motif.props_schema)) {
     out[key] = defaultPropValue(spec);
   }
   return out;
 }
 
 function MotifForm({
-  template,
+  motif,
   currentTimeUs,
   tracks,
   fpsNum,
   fpsDen,
   onSubmit,
 }: {
-  template: MotifSummary;
+  motif: MotifSummary;
   currentTimeUs: number;
   tracks: TrackSummary[];
   fpsNum: number;
@@ -284,13 +284,13 @@ function MotifForm({
 }) {
   const { t } = useTranslation();
   const [propValues, setPropValues] = useState<Record<string, unknown>>(() =>
-    defaultPropsFor(template),
+    defaultPropsFor(motif),
   );
   const [insertAtTc, setInsertAtTc] = useState<string>(
     formatTimecode(currentTimeUs, fpsNum, fpsDen),
   );
   // Default to auto-create. The backend spawns a fresh Overlay track
-  // on every auto insert so consecutive templates never collide on
+  // on every auto insert so consecutive motifs never collide on
   // the same track — picking an existing Overlay as the default would
   // walk straight back into the overlap invariant.
   const [trackChoice, setTrackChoice] = useState<string>(AUTO_OVERLAY_SENTINEL);
@@ -300,7 +300,7 @@ function MotifForm({
     setPropValues((prev) => ({ ...prev, [key]: value }));
 
   // Re-mounting the preview iframe on every keystroke would reset the
-  // template's RAF-driven animations. Debounce until the user pauses typing.
+  // motif's RAF-driven animations. Debounce until the user pauses typing.
   const debouncedProps = useDebounced(propValues, 300);
 
   const submit = async () => {
@@ -315,7 +315,7 @@ function MotifForm({
     }
   };
 
-  const propKeys = Object.keys(template.props_schema);
+  const propKeys = Object.keys(motif.props_schema);
 
   return (
     <form
@@ -324,32 +324,32 @@ function MotifForm({
         submit();
       }}
     >
-      <h3>{t("template_picker.preview_heading")}</h3>
+      <h3>{t("motif_picker.preview_heading")}</h3>
       <MotifPreview
-        template={template}
+        motif={motif}
         props={debouncedProps}
         width={480}
         large
       />
 
-      <h3>{t("template_picker.props_heading")}</h3>
+      <h3>{t("motif_picker.props_heading")}</h3>
       {propKeys.length === 0 ? (
-        <p className="settings-status">{t("template_picker.no_props")}</p>
+        <p className="settings-status">{t("motif_picker.no_props")}</p>
       ) : (
         propKeys.map((key) => (
           <PropField
             key={key}
             propKey={key}
-            spec={template.props_schema[key]!}
+            spec={motif.props_schema[key]!}
             value={propValues[key]}
             onChange={(v) => setProp(key, v)}
           />
         ))
       )}
 
-      <h3>{t("template_picker.timing_heading")}</h3>
-      <label className="template-picker-field">
-        <span>{t("template_picker.insert_at")}</span>
+      <h3>{t("motif_picker.timing_heading")}</h3>
+      <label className="motif-picker-field">
+        <span>{t("motif_picker.insert_at")}</span>
         <input
           type="text"
           value={insertAtTc}
@@ -364,14 +364,14 @@ function MotifForm({
           }}
         />
       </label>
-      <label className="template-picker-field">
-        <span>{t("template_picker.track_label")}</span>
+      <label className="motif-picker-field">
+        <span>{t("motif_picker.track_label")}</span>
         <select
           value={trackChoice}
           onChange={(e) => setTrackChoice(e.target.value)}
         >
           <option value={AUTO_OVERLAY_SENTINEL}>
-            {t("template_picker.track_overlay_auto")}
+            {t("motif_picker.track_overlay_auto")}
           </option>
           {tracks.map((tr) => (
             <option key={tr.id} value={tr.id}>
@@ -380,17 +380,17 @@ function MotifForm({
           ))}
         </select>
       </label>
-      <p className="template-picker-hint">
-        {t("template_picker.duration_hint", {
-          value: formatTimecode(Math.round(template.default_duration_s * 1_000_000), fpsNum, fpsDen),
+      <p className="motif-picker-hint">
+        {t("motif_picker.duration_hint", {
+          value: formatTimecode(Math.round(motif.default_duration_s * 1_000_000), fpsNum, fpsDen),
         })}
       </p>
 
-      <div className="template-picker-actions">
+      <div className="motif-picker-actions">
         <button type="submit" disabled={busy}>
           {busy
-            ? t("template_picker.adding")
-            : t("template_picker.add")}
+            ? t("motif_picker.adding")
+            : t("motif_picker.add")}
         </button>
       </div>
     </form>
@@ -413,8 +413,8 @@ function useDebounced<T>(value: T, delay: number): T {
 /// `content_duration_s` marks the end of the in-animation (the held poster
 /// state), so it's the right still; a Motif without it (e.g. countdown, which
 /// shows its starting number at t=0) captures at 0.
-function posterTSec(template: MotifSummary): number {
-  const cds = template.content_duration_s;
+function posterTSec(motif: MotifSummary): number {
+  const cds = motif.content_duration_s;
   return typeof cds === "number" && cds > 0 ? cds : 0;
 }
 
@@ -423,25 +423,25 @@ function posterTSec(template: MotifSummary): number {
 /// CDP cost (~80ms) makes continuous animation impractical here, and the
 /// picker's job is "show what this Motif looks like", not animate it.
 function MotifPreview({
-  template,
+  motif,
   props,
   width,
   large,
 }: {
-  template: MotifSummary;
+  motif: MotifSummary;
   props: Record<string, unknown>;
   width: number;
   large?: boolean;
 }) {
-  const [w, h] = template.size;
+  const [w, h] = motif.size;
   // Fixed 16:9 preview box of the given `width`, so a large or oddly-shaped
-  // template can't blow up the display area. The template is scaled to CONTAIN
+  // motif can't blow up the display area. The motif is scaled to CONTAIN
   // (whole thing visible, never cropped) and centered; the host's checkerboard
   // shows through the letterbox margins.
   const boxW = width;
   const boxH = Math.round((width * 9) / 16);
   const scale = Math.min(boxW / w, boxH / h);
-  const tSec = posterTSec(template);
+  const tSec = posterTSec(motif);
   const { t } = useTranslation();
 
   const urlRef = useRef<string | null>(null);
@@ -453,7 +453,7 @@ function MotifPreview({
   useEffect(() => {
     let cancelled = false;
     setError(null);
-    captureMotifFramePngBlob(template.id, tSec, props, w, h, undefined, template.content_hash)
+    captureMotifFramePngBlob(motif.id, tSec, props, w, h, undefined, motif.content_hash)
       .then((blob) => {
         if (cancelled) return;
         const url = URL.createObjectURL(blob);
@@ -471,7 +471,7 @@ function MotifPreview({
     // memoizes it, so a re-capture fires per settled edit — not per render. No storm.
     // `content_hash` is in the deps so a same-id draft edit (new content, same id)
     // re-captures — the host reloads off the `?v=` cache-buster threaded above.
-  }, [template.id, template.content_hash, tSec, props, w, h]);
+  }, [motif.id, motif.content_hash, tSec, props, w, h]);
 
   // Revoke the last blob URL on unmount.
   useEffect(
@@ -486,20 +486,20 @@ function MotifPreview({
     <div
       className={
         large
-          ? "template-preview-host template-preview-large"
-          : "template-preview-host"
+          ? "motif-preview-host motif-preview-large"
+          : "motif-preview-host"
       }
       style={{ width: boxW, height: boxH }}
     >
       {pngUrl && (
         <img
           src={pngUrl}
-          alt={`preview-${template.id}`}
+          alt={`preview-${motif.id}`}
           width={w}
           height={h}
           // Centered + contain-scaled inside the fixed 16:9 box. The host is
           // position:relative + overflow:hidden, so absolute centering with a
-          // center transform-origin keeps the scaled template middle-anchored.
+          // center transform-origin keeps the scaled motif middle-anchored.
           style={{
             position: "absolute",
             left: "50%",
@@ -511,9 +511,9 @@ function MotifPreview({
       )}
       {!pngUrl && !error && (
         <span
-          className="template-preview-loading"
+          className="motif-preview-loading"
           role="status"
-          aria-label={t("template_picker.preview_loading")}
+          aria-label={t("motif_picker.preview_loading")}
         />
       )}
       {error && <span className="settings-error">{error}</span>}
@@ -524,9 +524,9 @@ function MotifPreview({
 /// Card-grid thumbnail. Renders the live preview at default props — same
 /// component the form's large preview uses, so card and form stay visually
 /// consistent.
-function MotifCardThumbnail({ template }: { template: MotifSummary }) {
-  const defaults = useMemo(() => defaultPropsFor(template), [template.id]);
-  return <MotifPreview template={template} props={defaults} width={240} />;
+function MotifCardThumbnail({ motif }: { motif: MotifSummary }) {
+  const defaults = useMemo(() => defaultPropsFor(motif), [motif.id]);
+  return <MotifPreview motif={motif} props={defaults} width={240} />;
 }
 
 function PropField({
@@ -543,7 +543,7 @@ function PropField({
   switch (spec.type) {
     case "string":
       return (
-        <label className="template-picker-field">
+        <label className="motif-picker-field">
           <span>{propKey}</span>
           <input
             type="text"
@@ -555,7 +555,7 @@ function PropField({
       );
     case "color":
       return (
-        <label className="template-picker-field">
+        <label className="motif-picker-field">
           <span>{propKey}</span>
           <ColorInput
             value={typeof value === "string" ? value : spec.default}
@@ -565,7 +565,7 @@ function PropField({
       );
     case "number":
       return (
-        <label className="template-picker-field">
+        <label className="motif-picker-field">
           <span>{propKey}</span>
           <input
             type="number"
@@ -601,7 +601,7 @@ function ColorInput({
   // the form value carries whatever the original default had.
   const rgb = value.length >= 7 ? value.slice(0, 7) : value;
   return (
-    <span className="template-picker-color">
+    <span className="motif-picker-color">
       <input
         type="color"
         value={rgb}

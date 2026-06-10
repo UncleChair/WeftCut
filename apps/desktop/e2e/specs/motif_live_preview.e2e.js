@@ -4,7 +4,7 @@ import path from "node:path";
 const PROJECT_PARENT = path.resolve(os.tmpdir(), "weftcut-e2e-motif-live-proj");
 
 // Proves end-to-end, in the REAL app (real WebView2), that a `countdown`
-// Template layer renders LIVE in the editor preview with its pixels coming
+// Motif layer renders LIVE in the editor preview with its pixels coming
 // from the Motif webcap CDP path — NOT the old SVG harness.
 //
 // The chain under test (all production code paths):
@@ -77,7 +77,7 @@ describe("motif live preview (CDP in compositor)", function () {
       window.__weftcutMotifPerf = { renders: 0 };
     });
 
-    // 3) Add the countdown Template layer (5 s span at t=0) and confirm a
+    // 3) Add the countdown Motif layer (5 s span at t=0) and confirm a
     //    layer id came back.
     const addRes = await browser.executeAsync((done) => {
       window.__weftcutTest

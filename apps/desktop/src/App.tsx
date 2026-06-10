@@ -913,7 +913,7 @@ export function App({ onCloseProject }: AppProps) {
     };
     const exportSpanUs = exportRange.endUs - exportRange.startUs;
 
-    // ---- Bake Template layers --------------------------------------------
+    // ---- Bake Motif layers --------------------------------------------
     // The export Worker has no DOM, so it can't run the SVG capture harness.
     // Pre-rasterize every Motif layer's frames here (main thread) and pass
     // them into the export request; the Worker binds them by comp-frame index.
@@ -950,8 +950,8 @@ export function App({ onCloseProject }: AppProps) {
       );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      console.error("[weftcut/pixi] template bake failed:", e);
-      setExportState({ kind: "error", detail: `Template render failed: ${msg}` });
+      console.error("[weftcut/pixi] motif bake failed:", e);
+      setExportState({ kind: "error", detail: `Motif render failed: ${msg}` });
       return;
     }
     // ---- end bake --------------------------------------------------------
@@ -1326,7 +1326,7 @@ export function App({ onCloseProject }: AppProps) {
     // editor body. ShortcutBindingsProvider stays so the agent-mode
     // panel can still consume bound actions if it grows any (none in
     // Phase 5). Floating editor panels (export, compile, settings,
-    // template-picker) are deliberately suppressed — the user is
+    // motif-picker) are deliberately suppressed — the user is
     // watching the agent, not driving the editor.
     return (
       <ShortcutBindingsProvider overrides={shortcutOverrides}>
@@ -1410,11 +1410,11 @@ export function App({ onCloseProject }: AppProps) {
               {/* R.10 + 2026-05-16 import revert: "Import Media" moved to
                   the File menu (it's a file-operation, not a timeline
                   insert). "Add Track" / "Add color layer" / "Add text
-                  layer" are gone. Only Templates remain as a true
+                  layer" are gone. Only Motifs remain as a true
                   timeline-insert affordance. */}
               <MenuItem
-                label={t("actions.templates")}
-                hint={t("actions.templates_hint")}
+                label={t("actions.motifs")}
+                hint={t("actions.motifs_hint")}
                 onSelect={() => setMotifPickerOpen(true)}
               />
             </Menu>
@@ -1774,7 +1774,7 @@ interface ExportComplete {
 
 type ExportState =
   // `onCancel` is optional: the proxy-wait phase can abort its in-flight
-  // wait, but the template-bake phase has no cancellable step today, so it
+  // wait, but the motif-bake phase has no cancellable step today, so it
   // omits the handler and the panel hides the Cancel button (rather than
   // showing one wired to a no-op).
   | { kind: "starting" }

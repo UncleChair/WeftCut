@@ -1,6 +1,6 @@
 import { planPrewarmTargets, type PrewarmContent } from "./prewarmPlan";
 
-/// One active template content the prewarmer can rasterize. The planning fields
+/// One active motif content the prewarmer can rasterize. The planning fields
 /// (cacheKey, contentFrame, contentDurationFrames) come from
 /// `motifFrameDescriptor`; `render(frame)` rasters an arbitrary content frame
 /// of this content.

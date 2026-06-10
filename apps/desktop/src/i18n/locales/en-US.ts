@@ -107,8 +107,8 @@ const enUS = {
     settings: "Settings…",
     settings_hint:
       "Manage cloud-provider API keys (transcription, future TTS). Keys live in the OS keyring.",
-    templates: "Motifs…",
-    templates_hint:
+    motifs: "Motifs…",
+    motifs_hint:
       "Pick a motif overlay (lower third, title card, callout, …) and drop it on the timeline.",
     // Not menu items — these labels show up in the Settings → Keyboard
     // panel for shortcuts that don't have a menu home (transport,
@@ -407,7 +407,7 @@ const enUS = {
     testing: "Testing…",
     test_hint:
       "Run a cheap API call to confirm the saved key works. Surfaces InvalidKey / rate-limit errors before your first cloud-backed agent call.",
-    templates_heading: "Motifs",
+    motifs_heading: "Motifs",
     prebake_motifs: "Pre-bake motifs",
     prebake_motifs_hint:
       "Render motif animation frames to disk in the background so playback stays smooth and reopening the project is instant. Uses disk space under the project's Cache folder.",
@@ -461,10 +461,10 @@ const enUS = {
     mute: "Mute",
     subtitles: "Subtitles",
     subtitles_source: "Source",
-    template: "Motif",
+    motif: "Motif",
     transform: "Transform",
     props: "Props",
-    unknown_template: "Unknown motif — its props can't be edited here.",
+    unknown_motif: "Unknown motif — its props can't be edited here.",
     bake_idle: "Not pre-baked — enable Pre-bake in Settings, or right-click → Pre-bake now",
     bake_warming: "Warming preview… {{done}}/{{total}}",
     bake_baking: "Pre-baking… {{done}}/{{total}}",
@@ -488,7 +488,7 @@ const enUS = {
     motif_source_applying: "Applying…",
     motif_source_hint: "Edit the Motif's HTML + manifest island, then Apply to update the preview.",
   },
-  template_picker: {
+  motif_picker: {
     heading: "Motifs",
     close: "Close",
     loading: "Loading motifs…",
@@ -578,7 +578,7 @@ const enUS = {
     videoclip: "Video clip",
     imageoverlay: "Image overlay",
     text: "Text",
-    template: "Motif",
+    motif: "Motif",
     subtitles: "Subtitles",
     color: "Color",
   },

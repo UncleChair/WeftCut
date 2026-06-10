@@ -3366,7 +3366,7 @@ pub(crate) fn apply_update_layer_params(
 
         let catalog = crate::motifs::catalog::builtins();
         let clamp: Option<(i64, i64)> = if let LayerParams::Motif(ref tp) = layer.params {
-            template_cap_us(&catalog, &layer.params)
+            motif_cap_us(&catalog, &layer.params)
                 .and_then(|content_dur| {
                     let src_in = tp.src_in_us;
                     let width = t_end - t_start;
@@ -3724,7 +3724,7 @@ fn split_single_layer(
     right.t_start_us = at_t_us;
     right.t_end_us = original.t_end_us;
     // Resolve the cap flag from an immutable borrow BEFORE match &mut right.params.
-    let right_capped = template_cap_us(&catalog, &right.params).is_some();
+    let right_capped = motif_cap_us(&catalog, &right.params).is_some();
     match &mut right.params {
         LayerParams::VideoClip(p) => {
             p.src_in_us = p.src_in_us + split_offset;
@@ -3733,8 +3733,8 @@ fn split_single_layer(
             p.src_in_us = p.src_in_us + split_offset;
         }
         LayerParams::Motif(p) => {
-            // Only capped templates window content (see apply_trim_layer). An
-            // uncapped template keeps src_in_us = 0 across a split.
+            // Only capped motifs window content (see apply_trim_layer). An
+            // uncapped motif keeps src_in_us = 0 across a split.
             if right_capped {
                 p.src_in_us = p.src_in_us + split_offset;
             }
@@ -3844,8 +3844,8 @@ pub(crate) fn apply_trim_layer(
             // prop changes the cap live). Resolve per-member so a group mixing a
             // capped motif with an uncapped one (or non-motif) clamps each
             // by its own bound. Unknown id / absent cap → None → unbounded.
-            let template_max_dur_us = template_cap_us(&catalog, &m.params);
-            let bounds = trim_delta_bounds(m, edge, template_max_dur_us, fps);
+            let motif_max_dur_us = motif_cap_us(&catalog, &m.params);
+            let bounds = trim_delta_bounds(m, edge, motif_max_dur_us, fps);
             d = clamp_signed(d, bounds.min, bounds.max);
         }
         d
@@ -3868,7 +3868,7 @@ pub(crate) fn apply_trim_layer(
         let (mti, mli) = locate_layer(project, mid).expect("aligned member exists");
         // Resolve the cap flag with an immutable borrow BEFORE taking &mut below;
         // the borrow checker requires the immutable borrow to end first.
-        let capped = template_cap_us(&catalog, &project.tracks[mti].layers[mli].params).is_some();
+        let capped = motif_cap_us(&catalog, &project.tracks[mti].layers[mli].params).is_some();
         let m = &mut project.tracks[mti].layers[mli];
         match edge {
             LayerEdge::In => {
@@ -3881,11 +3881,11 @@ pub(crate) fn apply_trim_layer(
                         p.src_in_us += clamped_delta;
                     }
                     LayerParams::Motif(p) => {
-                        // Only capped templates window their content; an uncapped
-                        // template (holdable overlay) keeps src_in_us = 0 — its
+                        // Only capped motifs window their content; an uncapped
+                        // motif (holdable overlay) keeps src_in_us = 0 — its
                         // content animates over the layer width from frame 0.
                         // (No uncapped builtin exists today, so this guard is
-                        // forward-looking; capped templates still scrub.)
+                        // forward-looking; capped motifs still scrub.)
                         if capped {
                             p.src_in_us += clamped_delta;
                         }
@@ -3937,7 +3937,7 @@ pub(crate) fn apply_trim_layer(
 /// "what is this motif's window/content cap" across trim, split, and the
 /// seconds-edit clamp — keep all cap lookups going through here so they can't
 /// drift (cf. the snap-math / engine-source drift hazards in this codebase).
-fn template_cap_us(
+fn motif_cap_us(
     catalog: &[crate::motifs::catalog::Motif],
     params: &LayerParams,
 ) -> Option<i64> {
@@ -3960,7 +3960,7 @@ struct DeltaBounds {
 /// keeps the layer geometrically valid (`t_start < t_end`, src window
 /// non-negative).
 ///
-/// `template_max_dur_us` is the per-motif length cap (from the manifest's
+/// `motif_max_dur_us` is the per-motif length cap (from the manifest's
 /// `max_duration_s`), applied *only* when `layer` is a `Motif`. It binds
 /// both edges so the total length `dur` can't grow past the cap, AND so the
 /// capped edge lands on the composition frame grid (the hard storage
@@ -3979,31 +3979,31 @@ struct DeltaBounds {
 /// raw floor value can land 1µs below a grid point — re-rounding fixes that
 /// while staying `<= target`, since `round_output(n) <= n_exact <= target`).
 ///
-/// For a capped template, `src_in_us` (the window offset into content) shifts
+/// For a capped motif, `src_in_us` (the window offset into content) shifts
 /// the bounds: the IN edge is floored at `-src_in_us` (can't scrub before
 /// content frame 0), and the OUT cap uses `cap - src_in_us` (the derived
 /// `src_out` can't pass content end). For `src_in_us == 0` both are identical
 /// to the original cap math.
 ///
 /// `fps` is the composition frame rate used for the snap. `None`
-/// (no cap, or a non-template layer) keeps the historical unbounded behavior
+/// (no cap, or a non-motif layer) keeps the historical unbounded behavior
 /// so holdable overlays (lower-thirds) stay freely extendable.
 fn trim_delta_bounds(
     layer: &Layer,
     edge: LayerEdge,
-    template_max_dur_us: Option<i64>,
+    motif_max_dur_us: Option<i64>,
     fps: Rational,
 ) -> DeltaBounds {
     let dur = layer.t_end_us - layer.t_start_us;
     let inf = i64::MAX / 4; // large enough to feel infinite, small enough to clamp safely
     // The cap applies only to Motif layers with a declared cap; everything
     // else is unbounded.
-    let template_cap = match (&layer.params, template_max_dur_us) {
+    let motif_cap = match (&layer.params, motif_max_dur_us) {
         (LayerParams::Motif(_), Some(cap)) => Some(cap),
         _ => None,
     };
     // The window start for a capped motif (0 for non-motif / uncapped).
-    let template_src_in = match (&layer.params, template_cap) {
+    let motif_src_in = match (&layer.params, motif_cap) {
         (LayerParams::Motif(p), Some(_)) => p.src_in_us,
         _ => 0,
     };
@@ -4018,7 +4018,7 @@ fn trim_delta_bounds(
             let (src_min, src_max) = match &layer.params {
                 LayerParams::VideoClip(p) => (-p.src_in_us, p.src_out_us - p.src_in_us - 1),
                 LayerParams::Audio(p) => (-p.src_in_us, p.src_out_us - p.src_in_us - 1),
-                LayerParams::Motif(_) if template_cap.is_some() => (-template_src_in, inf),
+                LayerParams::Motif(_) if motif_cap.is_some() => (-motif_src_in, inf),
                 _ => (-inf, inf),
             };
             // Motif cap: dragging the IN edge earlier (negative delta)
@@ -4026,7 +4026,7 @@ fn trim_delta_bounds(
             // length <= cap is `round∘ceil(t_end - cap)`; floor the resulting
             // delta at 0 so a layer already at/over the cap can't be forced to
             // shrink (the historical slack-at-0 behavior).
-            let cap_min = match template_cap {
+            let cap_min = match motif_cap {
                 Some(cap) => {
                     use crate::state::time::{snap_frame_ceil, snap_frame_round};
                     // saturating_sub/saturating_sub guard against i64 overflow
@@ -4064,7 +4064,7 @@ fn trim_delta_bounds(
             // The latest grid-aligned t_end that keeps length <= cap is
             // `round∘floor(t_start + cap)`; ceil the resulting delta at 0 so a
             // layer already at/over the cap can't extend (slack-at-0).
-            let cap_max = match template_cap {
+            let cap_max = match motif_cap {
                 Some(cap) => {
                     use crate::state::time::{snap_frame_floor, snap_frame_round};
                     // saturating_add/saturating_sub guard against i64 overflow
@@ -4074,7 +4074,7 @@ fn trim_delta_bounds(
                         snap_frame_floor(
                             layer
                                 .t_start_us
-                                .saturating_add(cap.saturating_sub(template_src_in)),
+                                .saturating_add(cap.saturating_sub(motif_src_in)),
                             fps,
                         ),
                         fps,
@@ -4340,7 +4340,7 @@ mod tests {
         })
     }
 
-    fn template_layer(props: imbl::HashMap<String, serde_json::Value>) -> LayerParams {
+    fn motif_layer(props: imbl::HashMap<String, serde_json::Value>) -> LayerParams {
         LayerParams::Motif(crate::state::MotifParams {
             motif_id: "countdown".into(),
             motif_version: 1,
@@ -4352,7 +4352,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn template_params_patch_applies_transform_opacity_and_merges_props() {
+    async fn motif_params_patch_applies_transform_opacity_and_merges_props() {
         let (project, track_id) = project_with_video_track();
         let handle = spawn(project);
 
@@ -4361,7 +4361,7 @@ mod tests {
         props.insert("color".into(), serde_json::json!("#ff3366"));
 
         let layer_id = handle
-            .add_layer(Actor::User, track_id, template_layer(props), 0, 5_000_000)
+            .add_layer(Actor::User, track_id, motif_layer(props), 0, 5_000_000)
             .await
             .expect("add_layer");
 
@@ -4702,12 +4702,12 @@ mod tests {
         assert_eq!(layer.t_start_us, 33_333);
     }
 
-    /// A template whose manifest declares `max_duration_s` cannot be
+    /// A motif whose manifest declares `max_duration_s` cannot be
     /// trimmed/extended longer than that cap. The `countdown` builtin caps
     /// at 5.0s; a layer below the cap (3s) that's OUT-extended to 8s must
     /// clamp to a total length of exactly the cap (5s), not the requested 8s.
     #[tokio::test]
-    async fn trim_out_clamps_template_to_manifest_max_duration() {
+    async fn trim_out_clamps_motif_to_manifest_max_duration() {
         let (project, track_id) = project_with_video_track();
         let handle = spawn(project);
         // countdown caps at 5.0s. Start at 3s (below the cap) so the OUT
@@ -4718,7 +4718,7 @@ mod tests {
             .add_layer(
                 Actor::User,
                 track_id,
-                template_layer(imbl::HashMap::new()),
+                motif_layer(imbl::HashMap::new()),
                 0,
                 3_000_000,
             )
@@ -4761,7 +4761,7 @@ mod tests {
             .add_layer(
                 Actor::User,
                 track_id,
-                template_layer(imbl::HashMap::new()),
+                motif_layer(imbl::HashMap::new()),
                 0,
                 3_000_000,
             )
@@ -4812,7 +4812,7 @@ mod tests {
     /// the old static code clamps to ~5s, which trivially satisfies `<= 10s`
     /// but fails the exact-10s equality.
     #[tokio::test]
-    async fn trim_out_caps_template_at_seconds_prop_not_static_max() {
+    async fn trim_out_caps_motif_at_seconds_prop_not_static_max() {
         let (project, track_id) = project_with_video_track();
         let handle = spawn(project);
         // 30 fps: 10s is on-grid so the cap snaps to itself (no floor slack).
@@ -4821,7 +4821,7 @@ mod tests {
         // Start at 3s (on-grid at 30fps) below the 10s cap so the OUT
         // extension has a non-zero clamped delta.
         let layer_id = handle
-            .add_layer(Actor::User, track_id, template_layer(props), 0, 3_000_000)
+            .add_layer(Actor::User, track_id, motif_layer(props), 0, 3_000_000)
             .await
             .expect("add_layer");
         // Request an OUT trim well past the 10s cap.
@@ -4846,14 +4846,14 @@ mod tests {
     /// clamps to exactly 3s (on-grid at 30 fps). Self-RED on the upper bound:
     /// the old static cap (5s) lets the length exceed 3s.
     #[tokio::test]
-    async fn trim_out_caps_template_at_lowered_seconds_prop() {
+    async fn trim_out_caps_motif_at_lowered_seconds_prop() {
         let (project, track_id) = project_with_video_track();
         let handle = spawn(project);
         let mut props: imbl::HashMap<String, serde_json::Value> = imbl::HashMap::new();
         props.insert("seconds".into(), serde_json::json!(3.0));
         // Start below the 3s cap (1s, on-grid at 30fps).
         let layer_id = handle
-            .add_layer(Actor::User, track_id, template_layer(props), 0, 1_000_000)
+            .add_layer(Actor::User, track_id, motif_layer(props), 0, 1_000_000)
             .await
             .expect("add_layer");
         handle
@@ -4871,13 +4871,13 @@ mod tests {
         assert_eq!(layer.t_end_us - layer.t_start_us, 3_000_000);
     }
 
-    /// A template with no `max_duration_s` cap (e.g. a holdable lower-third
+    /// A motif with no `max_duration_s` cap (e.g. a holdable lower-third
     /// overlay) stays freely extendable — `trim_delta_bounds` returns an
     /// unbounded OUT max. Tested directly on the bound fn (no `builtins()`
     /// entry is uncapped, so a synthetic layer + `None` cap exercises the
     /// "absent cap = unbounded" arm without routing through validation/snap).
     #[test]
-    fn trim_delta_bounds_template_without_cap_is_unbounded() {
+    fn trim_delta_bounds_motif_without_cap_is_unbounded() {
         let inf = i64::MAX / 4;
         let layer = Layer {
             id: new_id(),
@@ -4887,7 +4887,7 @@ mod tests {
             enabled: true,
             locked: false,
             metadata: imbl::HashMap::new(),
-            params: template_layer(imbl::HashMap::new()),
+            params: motif_layer(imbl::HashMap::new()),
         };
         // No cap supplied → OUT max stays effectively infinite.
         // 30 fps is on-grid for whole-second caps/durations, so the snap is a
@@ -4906,7 +4906,7 @@ mod tests {
         // timeline_min (-t_start = -4s) — but source-windowing adds a tighter
         // constraint: src_in_us = 0 means no content before frame 0, so the
         // IN edge can't move earlier (src_min = -src_in_us = 0 binds harder).
-        // This changed when Task 5 added per-template src_in floor enforcement.
+        // This changed when Task 5 added per-motif src_in floor enforcement.
         let layer_4_to_7 = Layer {
             t_start_us: 4_000_000,
             t_end_us: 7_000_000,
@@ -4915,7 +4915,7 @@ mod tests {
         let in_capped = trim_delta_bounds(&layer_4_to_7, LayerEdge::In, Some(5_000_000), fps);
         // src_min (0, from src_in=0) is tighter than cap_min (-2s); IN is blocked.
         assert_eq!(in_capped.min, 0);
-        // No cap → template is NOT source-windowed; IN min falls back to
+        // No cap → motif is NOT source-windowed; IN min falls back to
         // the timeline floor (-t_start = -4s).
         let in_uncapped = trim_delta_bounds(&layer_4_to_7, LayerEdge::In, None, fps);
         assert_eq!(in_uncapped.min, -4_000_000);
@@ -4944,7 +4944,7 @@ mod tests {
             .add_layer(
                 Actor::User,
                 track_id,
-                template_layer(props),
+                motif_layer(props),
                 1_000_000,
                 4_000_000,
             )
@@ -5002,7 +5002,7 @@ mod tests {
             .add_layer(
                 Actor::User,
                 track_id,
-                template_layer(props),
+                motif_layer(props),
                 0,
                 6_000_000,
             )
@@ -5045,19 +5045,19 @@ mod tests {
         );
     }
 
-    /// A capped template layer (countdown seconds=5 → content 5s) already at
+    /// A capped motif layer (countdown seconds=5 → content 5s) already at
     /// the full content width cannot be OUT-extended further — the capped
     /// `t_end` equals the current `t_end`, so delta clamps to 0 and the trim
     /// returns `TrimEdgeOutOfRange`.
     #[tokio::test]
-    async fn template_out_trim_cannot_extend_past_content() {
+    async fn motif_out_trim_cannot_extend_past_content() {
         // countdown seconds=5 -> content cap 5s. A 5s layer cannot OUT-extend.
         let mut props = imbl::HashMap::new();
         props.insert("seconds".to_string(), serde_json::json!(5));
         let (project, track_id) = project_with_video_track();
         let handle = spawn(project);
         let layer_id = handle
-            .add_layer(Actor::User, track_id, template_layer(props), 0, 5_000_000)
+            .add_layer(Actor::User, track_id, motif_layer(props), 0, 5_000_000)
             .await
             .expect("add_layer");
         let err = handle
@@ -5076,18 +5076,18 @@ mod tests {
         assert_eq!(layer.t_end_us, 5_000_000, "t_end_us must not change on rejected OUT trim");
     }
 
-    /// Dragging the IN edge of a capped template forward (positive delta) must
+    /// Dragging the IN edge of a capped motif forward (positive delta) must
     /// advance `src_in_us` by the same amount — the window scrubs into the
     /// content. countdown seconds=6 → 6s content; full-window layer; drag IN +1s.
     #[tokio::test]
-    async fn template_in_trim_scrubs_src_in() {
+    async fn motif_in_trim_scrubs_src_in() {
         // countdown seconds=6 -> content cap 6s. Full 6s window, drag IN +1s.
         let mut props = imbl::HashMap::new();
         props.insert("seconds".to_string(), serde_json::json!(6));
         let (project, track_id) = project_with_video_track();
         let handle = spawn(project);
         let layer_id = handle
-            .add_layer(Actor::User, track_id, template_layer(props), 0, 6_000_000)
+            .add_layer(Actor::User, track_id, motif_layer(props), 0, 6_000_000)
             .await
             .expect("add_layer");
         handle
@@ -5109,12 +5109,12 @@ mod tests {
         }
     }
 
-    /// A capped template window already at `src_in_us = 0` cannot be
+    /// A capped motif window already at `src_in_us = 0` cannot be
     /// IN-extended earlier — there is no content before frame 0. Even though
     /// there is timeline room to the left (layer starts at 2s), the trim must
     /// be rejected.
     #[tokio::test]
-    async fn template_in_trim_cannot_scrub_before_content_zero() {
+    async fn motif_in_trim_cannot_scrub_before_content_zero() {
         // Window at src_in=0 cannot IN-extend earlier (no content before 0).
         let mut props = imbl::HashMap::new();
         props.insert("seconds".to_string(), serde_json::json!(6));
@@ -5122,7 +5122,7 @@ mod tests {
         let handle = spawn(project);
         // Place at t_start=2s so there is timeline room to the left.
         let layer_id = handle
-            .add_layer(Actor::User, track_id, template_layer(props), 2_000_000, 5_000_000)
+            .add_layer(Actor::User, track_id, motif_layer(props), 2_000_000, 5_000_000)
             .await
             .expect("add_layer");
         let err = handle
@@ -5166,11 +5166,11 @@ mod tests {
         assert_eq!(layer.t_end_us, 1_001_000);
     }
 
-    /// When the composition fps changes, a template layer's `src_in_us` (which
+    /// When the composition fps changes, a motif layer's `src_in_us` (which
     /// lives on the COMPOSITION grid, not the source-PTS grid) must also be
     /// re-snapped to the new grid — just like `t_start_us` / `t_end_us`.
     #[tokio::test]
-    async fn fps_change_re_snaps_template_src_in() {
+    async fn fps_change_re_snaps_motif_src_in() {
         // Add countdown seconds=6 at 30fps. IN-trim it to push src_in_us > 0.
         // 30fps grid: trim IN edge to frame 30 = 1_000_000us.
         // After trim: t_start=1_000_000, t_end=6_000_000, src_in=1_000_000.
@@ -5179,7 +5179,7 @@ mod tests {
         let (project, track_id) = project_with_video_track();
         let handle = spawn(project);
         let layer_id = handle
-            .add_layer(Actor::User, track_id, template_layer(props), 0, 6_000_000)
+            .add_layer(Actor::User, track_id, motif_layer(props), 0, 6_000_000)
             .await
             .expect("add_layer");
         handle
@@ -5727,7 +5727,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn split_template_layer_advances_right_src_in() {
+    async fn split_motif_layer_advances_right_src_in() {
         // countdown seconds=6, layer [0, 6_000_000], src_in=0. Split at 2s.
         // EXPECT: right half src_in_us == 2_000_000; left half src_in_us == 0.
         let (project, track_id) = project_with_video_track();
@@ -5735,7 +5735,7 @@ mod tests {
         let mut props: imbl::HashMap<String, serde_json::Value> = imbl::HashMap::new();
         props.insert("seconds".into(), serde_json::json!(6.0));
         let layer_id = handle
-            .add_layer(Actor::User, track_id, template_layer(props), 0, 6_000_000)
+            .add_layer(Actor::User, track_id, motif_layer(props), 0, 6_000_000)
             .await
             .expect("add_layer");
         let (left_id, right_id) = handle
@@ -8488,7 +8488,7 @@ mod tests {
         let (project, track_id) = project_with_video_track();
         let handle = spawn(project);
         let layer_id = handle
-            .add_layer(Actor::User, track_id, template_layer(props), 0, 5_000_000)
+            .add_layer(Actor::User, track_id, motif_layer(props), 0, 5_000_000)
             .await
             .expect("add_layer");
 
@@ -8533,7 +8533,7 @@ mod tests {
         let (project, track_id) = project_with_video_track();
         let handle = spawn(project);
         let layer_id = handle
-            .add_layer(Actor::User, track_id, template_layer(props), 0, 6_000_000)
+            .add_layer(Actor::User, track_id, motif_layer(props), 0, 6_000_000)
             .await
             .expect("add_layer");
 
@@ -8594,7 +8594,7 @@ mod tests {
         let mut props: imbl::HashMap<String, serde_json::Value> = imbl::HashMap::new();
         props.insert("seconds".into(), serde_json::json!(6));
         let layer_id = handle
-            .add_layer(Actor::User, track_id, template_layer(props), 0, 6_000_000)
+            .add_layer(Actor::User, track_id, motif_layer(props), 0, 6_000_000)
             .await
             .expect("add_layer");
 

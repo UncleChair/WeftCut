@@ -2702,10 +2702,10 @@ input.preview-timecode:focus {
 }
 
 /* ============================================================ */
-/* Template picker (Phase 5 Stage F-Picker)                      */
+/* Motif picker                      */
 /* ============================================================ */
 
-.template-picker {
+.motif-picker {
   /* Widened from 880px to accommodate the iframe preview pane on the right. */
   width: min(1040px, calc(100vw - 32px));
   max-height: calc(100vh - 64px);
@@ -2718,21 +2718,21 @@ input.preview-timecode:focus {
   overflow: hidden;
 }
 
-.template-picker header {
+.motif-picker header {
   display: flex;
   align-items: center;
   padding: 12px 16px;
   border-bottom: 1px solid #1f2937;
 }
 
-.template-picker header h2 {
+.motif-picker header h2 {
   margin: 0;
   font-size: 14px;
   font-weight: 600;
   color: #e5e7eb;
 }
 
-.template-picker-body {
+.motif-picker-body {
   display: grid;
   grid-template-columns: 280px 1fr;
   gap: 0;
@@ -2746,7 +2746,7 @@ input.preview-timecode:focus {
    The host has the SCALED size (so it claims the right layout box); the
    iframe overflows out and the host clips it. Checkerboard backdrop shows
    transparent regions for lower-thirds / callout / logo-bug. */
-.template-preview-host {
+.motif-preview-host {
   position: relative;
   overflow: hidden;
   border-radius: 4px;
@@ -2767,21 +2767,21 @@ input.preview-timecode:focus {
   pointer-events: none;
 }
 
-.template-preview-host iframe {
+.motif-preview-host iframe {
   position: absolute;
   top: 0;
   left: 0;
   border: 0;
 }
 
-.template-preview-large {
+.motif-preview-large {
   margin: 4px 0 8px;
 }
 
 /* Loading spinner shown in the preview box until the first frame is bound
    (the harness mounts + rasters async). Replaces the brief blank/error flash
    on first open. Centered over the host's checkerboard. */
-.template-preview-loading {
+.motif-preview-loading {
   position: absolute;
   top: 50%;
   left: 50%;
@@ -2791,10 +2791,10 @@ input.preview-timecode:focus {
   border: 3px solid rgba(148, 163, 184, 0.25);
   border-top-color: #94a3b8;
   border-radius: 50%;
-  animation: template-preview-spin 0.8s linear infinite;
+  animation: motif-preview-spin 0.8s linear infinite;
 }
 
-@keyframes template-preview-spin {
+@keyframes motif-preview-spin {
   to {
     transform: rotate(360deg);
   }
@@ -2802,7 +2802,7 @@ input.preview-timecode:focus {
 
 /* Preview FPS control — sits under the large animated preview. Compact row;
    the number input is narrow since the value is 1–60. */
-.template-preview-fps {
+.motif-preview-fps {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -2811,7 +2811,7 @@ input.preview-timecode:focus {
   color: #94a3b8;
 }
 
-.template-preview-fps input[type='number'] {
+.motif-preview-fps input[type='number'] {
   width: 64px;
   background: #0b1220;
   border: 1px solid #1f2937;
@@ -2821,7 +2821,7 @@ input.preview-timecode:focus {
   font-size: 12px;
 }
 
-.template-picker-list {
+.motif-picker-list {
   border-right: 1px solid #1f2937;
   /* `max-height` here (instead of relying on the parent body's clip) makes
      this element the scroll container — without it, the list grows to fit
@@ -2836,7 +2836,7 @@ input.preview-timecode:focus {
   gap: 4px;
 }
 
-.template-card {
+.motif-card {
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -2850,49 +2850,49 @@ input.preview-timecode:focus {
   text-align: left;
 }
 
-.template-card:hover {
+.motif-card:hover {
   background: #1f2937;
 }
 
-.template-card-selected {
+.motif-card-selected {
   background: rgba(30, 58, 138, 0.25);
   border-color: #3b82f6;
 }
 
-.template-card-name {
+.motif-card-name {
   font-size: 13px;
   font-weight: 600;
   color: #e5e7eb;
 }
 
-.template-card-meta {
+.motif-card-meta {
   font-size: 11px;
   color: #9ca3af;
 }
 
-.template-card-id {
+.motif-card-id {
   font-size: 10px;
   color: #6b7280;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-.template-card-status { font-size: 11px; padding: 1px 6px; border-radius: 6px; }
-.template-card-status.status-draft { background: #b8860b; color: #fff; }
-.template-card-status.status-installed { background: #2a6; color: #fff; }
-.template-card-status.status-builtin { background: #444; color: #ccc; }
-.template-picker-new { margin-left: auto; }
-.template-picker-new-form { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+.motif-card-status { font-size: 11px; padding: 1px 6px; border-radius: 6px; }
+.motif-card-status.status-draft { background: #b8860b; color: #fff; }
+.motif-card-status.status-installed { background: #2a6; color: #fff; }
+.motif-card-status.status-builtin { background: #444; color: #ccc; }
+.motif-picker-new { margin-left: auto; }
+.motif-picker-new-form { margin-left: auto; display: flex; gap: 6px; align-items: center; }
 
-.template-picker-form {
+.motif-picker-form {
   padding: 8px 16px 16px;
-  /* Same reason as `.template-picker-list` above — needs its own height cap
+  /* Same reason as `.motif-picker-list` above — needs its own height cap
      so its overflow-y scroll activates when props + large preview push the
      form past the picker's visible area. */
   max-height: calc(100vh - 160px);
   overflow-y: auto;
 }
 
-.template-picker-form h3 {
+.motif-picker-form h3 {
   margin: 12px 0 6px;
   font-size: 11px;
   font-weight: 600;
@@ -2901,7 +2901,7 @@ input.preview-timecode:focus {
   letter-spacing: 0.05em;
 }
 
-.template-picker-field {
+.motif-picker-field {
   display: grid;
   grid-template-columns: 110px 1fr;
   align-items: center;
@@ -2909,15 +2909,15 @@ input.preview-timecode:focus {
   margin-bottom: 8px;
 }
 
-.template-picker-field > span {
+.motif-picker-field > span {
   font-size: 12px;
   color: #d1d5db;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-.template-picker-field input[type='text'],
-.template-picker-field input[type='number'],
-.template-picker-field select {
+.motif-picker-field input[type='text'],
+.motif-picker-field input[type='number'],
+.motif-picker-field select {
   background: #1f2937;
   border: 1px solid #374151;
   color: #e5e7eb;
@@ -2928,13 +2928,13 @@ input.preview-timecode:focus {
   box-sizing: border-box;
 }
 
-.template-picker-color {
+.motif-picker-color {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.template-picker-color input[type='color'] {
+.motif-picker-color input[type='color'] {
   width: 36px;
   height: 26px;
   border: 1px solid #374151;
@@ -2944,25 +2944,25 @@ input.preview-timecode:focus {
   padding: 0;
 }
 
-.template-picker-color code {
+.motif-picker-color code {
   font-size: 11px;
   color: #9ca3af;
 }
 
-.template-picker-hint {
+.motif-picker-hint {
   margin: 4px 0 0;
   font-size: 11px;
   color: #6b7280;
 }
 
-.template-picker-actions {
+.motif-picker-actions {
   margin-top: 16px;
   display: flex;
   justify-content: flex-end;
   gap: 8px;
 }
 
-.template-picker-actions button {
+.motif-picker-actions button {
   background: #2563eb;
   border: 1px solid #2563eb;
   color: #ffffff;
@@ -2973,12 +2973,12 @@ input.preview-timecode:focus {
   cursor: pointer;
 }
 
-.template-picker-actions button:hover:not(:disabled) {
+.motif-picker-actions button:hover:not(:disabled) {
   background: #1d4ed8;
   border-color: #1d4ed8;
 }
 
-.template-picker-actions button:disabled {
+.motif-picker-actions button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
@@ -5069,7 +5069,7 @@ input.preview-timecode:focus {
   background: #2d3748;
 }
 
-.template-bake-dot {
+.motif-bake-dot {
   position: absolute;
   top: 4px;
   right: 4px;
@@ -5078,16 +5078,16 @@ input.preview-timecode:focus {
   border-radius: 50%;
   pointer-events: none;
 }
-.template-bake-dot.is-warming { background: #f0a020; }
-.template-bake-dot.is-ready { background: #46c46a; }
-.template-bake-dot.is-error { background: #e5534b; }
-.template-bake-dot.is-baking {
+.motif-bake-dot.is-warming { background: #f0a020; }
+.motif-bake-dot.is-ready { background: #46c46a; }
+.motif-bake-dot.is-error { background: #e5534b; }
+.motif-bake-dot.is-baking {
   background: transparent;
   border: 1.5px solid rgba(255, 255, 255, 0.85);
   border-top-color: transparent;
-  animation: template-bake-spin 0.8s linear infinite;
+  animation: motif-bake-spin 0.8s linear infinite;
 }
-@keyframes template-bake-spin { to { transform: rotate(360deg); } }
+@keyframes motif-bake-spin { to { transform: rotate(360deg); } }
 
 .prop-bake-status { margin: 0 0 8px; font-size: 12px; opacity: 0.8; }
 .prop-bake-status.is-error { color: #e5534b; }

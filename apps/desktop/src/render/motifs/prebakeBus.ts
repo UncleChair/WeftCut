@@ -7,7 +7,7 @@ type Listener = (layerId: string) => void;
 
 const listeners = new Set<Listener>();
 
-/// Request an immediate full pre-bake of a single template layer. No-op if no
+/// Request an immediate full pre-bake of a single motif layer. No-op if no
 /// Compositor is subscribed (e.g. before the preview mounts).
 export function requestPrebake(layerId: string): void {
   for (const l of listeners) l(layerId);

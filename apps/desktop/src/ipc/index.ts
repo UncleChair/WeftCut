@@ -349,7 +349,7 @@ export interface MotifPatch {
   /// key present here overwrites that key; absent keys are left intact. The
   /// backend merges (never replaces the whole map) so a stale debounced commit
   /// can't clobber a concurrent edit. Values are passed verbatim; the property
-  /// panel types them per the template's `props_schema` (`number` / hex
+  /// panel types them per the motif's `props_schema` (`number` / hex
   /// `string` / `string`), so no further validation happens on this path.
   props?: Record<string, unknown>;
 }
@@ -1013,10 +1013,10 @@ export async function ensureFullProxy(mediaId: string): Promise<void> {
 }
 
 // ============================================================
-// Templates (Stage F + Stage F-Picker)
+// Motifs
 // ============================================================
 
-/// Discriminated union mirroring `raster::template::PropSpec`. The picker
+/// Discriminated union mirroring `motifs::catalog::PropSpec`. The picker
 /// switches on `type` to render the right input. New prop types must be
 /// added here AND in the picker's form generator.
 export type PropSpec =
@@ -1034,8 +1034,8 @@ export interface MotifSummary {
   size: [number, number];
   default_duration_s: number;
   /// Optional hard cap on a placed layer's total length, in seconds. When
-  /// present, the timeline forbids trimming/adding the template longer than
-  /// this; when absent the template is freely extendable (holdable overlays).
+  /// present, the timeline forbids trimming/adding the motif longer than
+  /// this; when absent the motif is freely extendable (holdable overlays).
   /// Static fallback — overridden live by `max_duration_prop` when that names
   /// a prop carrying a valid value.
   max_duration_s?: number;
@@ -1067,7 +1067,7 @@ export async function listMotifs(): Promise<MotifSummary[]> {
 /// Add a motif layer. Mirrors the MCP `add_motif` tool's behavior:
 /// - `t_end_us` defaults to `t_start_us + default_duration_s * 1e6`.
 /// - `track_id` defaults to first existing Video track or auto-creates
-///   one labeled "Templates".
+///   one labeled "Motifs".
 /// - `props` is validated against the motif's `props_schema`; unknown
 ///   keys reject, missing keys fall back to defaults.
 export async function addMotif(args: {

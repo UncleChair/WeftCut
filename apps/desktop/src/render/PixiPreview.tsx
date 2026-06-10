@@ -182,7 +182,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
               const W = app.renderer.width;
               const H = app.renderer.height;
               // Force a render of the live tree before extracting so the
-              // freshly-bound template texture is on the framebuffer (the
+              // freshly-bound motif texture is on the framebuffer (the
               // always-on ticker also renders, but extracting right after an
               // explicit render removes any race with removeChildren()).
               compositor.compositeFrame(engine.positionUs());

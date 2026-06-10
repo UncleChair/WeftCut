@@ -260,7 +260,7 @@ function formatOffset(
 
 /// Media-backed layer params carry `media_label` (the filename / pool
 /// label). Surface it for clip identification; non-media layers
-/// (Text, Color, Subtitles, Template) have no associated media.
+/// (Text, Color, Subtitles, Motif) have no associated media.
 function mediaLabelFor(layer: LayerSummary): string | null {
   switch (layer.params.kind) {
     case "VideoClip":

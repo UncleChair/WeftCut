@@ -1,15 +1,24 @@
 ---
-status: accepted
+status: superseded
 ---
 
 # Templates rasterize from SVG, not foreignObject HTML/CSS
+
+> **Superseded.** Templates were rebuilt as **Motifs**: every Motif is a real
+> HTML/CSS/JS page rendered in a hidden WebView2 window and captured taint-free
+> via the DevTools Protocol (CDP screenshot), with determinism by clock
+> takeover — the "OS-level offscreen-webview screenshot" alternative this ADR
+> deferred. The SVG `render(t)` engine described below was deleted. The
+> foreignObject-taint analysis remains the accurate record of why in-webview
+> HTML rasterization is impossible. See [`docs/motifs.md`](../motifs.md).
 
 Templates are authored as SVG documents — shapes, `<text>`, gradients, masks,
 transforms — and animated by a synchronous `render(t)` that mutates SVG
 attributes and text. Capture serializes the post-`render` SVG and rasterizes it
 via `<img>` → `createImageBitmap`. Authoring in HTML/CSS and rasterizing through
-an SVG `<foreignObject>` is rejected. The full render path is in
-[`templates.md`](../templates.md).
+an SVG `<foreignObject>` is rejected. The full render path was in
+`templates.md` (deleted with the SVG engine; see
+[`motifs.md`](../motifs.md)).
 
 ## Why
 

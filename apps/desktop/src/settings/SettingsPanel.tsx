@@ -133,7 +133,7 @@ export function SettingsPanel({
         <p className="settings-blurb">{t("settings.timeline_blurb")}</p>
         <TimelineSnapSection onError={setError} />
 
-        <h3>{t("settings.templates_heading")}</h3>
+        <h3>{t("settings.motifs_heading")}</h3>
         <PrebakeSection onError={setError} />
 
         <h3>{t("settings.keybindings_heading")}</h3>

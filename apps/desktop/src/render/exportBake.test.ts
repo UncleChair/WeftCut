@@ -2,7 +2,7 @@
 // `bakeContentFrameFor`) is fully Node-testable. The bake LOOP
 // (`exportBakeMotifs`) is covered here too by mocking its CDP producer
 // (`bakeMotifFrame`); the real CDP capture + encode is exercised end-to-end by
-// the real-WebView2 e2e (`template_export.e2e.js`).
+// the real-WebView2 e2e (`motif_export.e2e.js`).
 //
 // The load-bearing invariant: a layer's baked frame range is computed on the
 // COMPOSITION fps with the SAME `motifDurationFrames` / `frameIndexInLayer`
@@ -15,8 +15,8 @@ import { describe, expect, it, test, vi, beforeEach } from "vitest";
 // Mock the CDP producer so the bake loop is Node-testable (no host/DOM).
 vi.mock("./motifs/motifRaster", () => ({
   bakeMotifFrame: vi.fn(
-    async (template, frame) =>
-      ({ tag: `${template.manifest.id}#${frame}` }) as unknown as ImageBitmap,
+    async (motif, frame) =>
+      ({ tag: `${motif.manifest.id}#${frame}` }) as unknown as ImageBitmap,
   ),
 }));
 
@@ -131,7 +131,7 @@ describe("motifLayersToBake", () => {
   });
 
   test("a layer offset on the timeline bakes from its own frame 0", () => {
-    // Layer placed at t=2s, 5 s long → covers [2s, 7s). Templates have no
+    // Layer placed at t=2s, 5 s long → covers [2s, 7s). Motifs have no
     // source-in offset, so frame 0 is at the layer's t_start (2s).
     const summary = summaryWith([motifLayer("L1", 2_000_000, 7_000_000)]);
     const specs = motifLayersToBake(summary, 0, 10_000_000, 30, 1);
@@ -160,7 +160,7 @@ describe("motifLayersToBake", () => {
     expect(disabledTrack).toHaveLength(0);
   });
 
-  test("skips non-Template layers and unknown template ids", () => {
+  test("skips non-Motif layers and unknown motif ids", () => {
     const summary = summaryWith([
       motifLayer("known", 0, 5_000_000),
       motifLayer("unknown", 0, 5_000_000, {
@@ -171,7 +171,7 @@ describe("motifLayersToBake", () => {
     expect(specs.map((s) => s.layerId)).toEqual(["known"]);
   });
 
-  test("no Template layers → empty result", () => {
+  test("no Motif layers → empty result", () => {
     const summary = summaryWith([]);
     expect(motifLayersToBake(summary, 0, 5_000_000, 30, 1)).toEqual([]);
   });
@@ -182,7 +182,7 @@ describe("motifLayersToBake", () => {
     // to playhead" — `currentTimeUs` is not snapped), the bake must snap
     // `startUs` the same way the Worker does before computing `firstFrame`.
     //
-    // Setup: 5 s Template layer at t_start=0, comp fps = 30/1.
+    // Setup: 5 s Motif layer at t_start=0, comp fps = 30/1.
     // At 30 fps a frame is 33_333 µs (floor of 33_333.333…). startUs=50_000 µs
     // falls inside frame 1's interval [33_333, 66_666) by the raw index math
     // (`Math.floor(50_000 * 30 / 1_000_000) = 1`), but the Worker's
@@ -251,7 +251,7 @@ function previewContentFrameAt(
   return motifContentFrame(tInLayerUs, srcInUs, contentDurUs, n, d).frame;
 }
 
-describe("export bake matches preview content frame (windowed template)", () => {
+describe("export bake matches preview content frame (windowed motif)", () => {
   it("agrees for every layer-local frame at 29.97fps with src_in>0 and t_start>0", () => {
     const n = 30000, d = 1001;
     // Layer starts at comp frame 30, src_in scrubbed in by ~1s, content 6s.

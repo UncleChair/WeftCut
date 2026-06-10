@@ -110,8 +110,8 @@ const zhCN: Resources = {
     settings: "设置…",
     settings_hint:
       "管理云服务 API 密钥（转写、未来的 TTS）。密钥存储在系统密钥环中。",
-    templates: "Motifs…",
-    templates_hint: "选择 Motif 叠加层（下三分位、标题卡、标注…）并添加到时间轴。",
+    motifs: "Motifs…",
+    motifs_hint: "选择 Motif 叠加层（下三分位、标题卡、标注…）并添加到时间轴。",
     toggle_play: "播放 / 暂停",
     delete_selected: "删除选中的图层",
     toggle_log: "切换活动日志",
@@ -399,7 +399,7 @@ const zhCN: Resources = {
     testing: "测试中…",
     test_hint:
       "运行一次廉价的 API 调用，确认所保存的密钥可用。可在首次调用云端工具前提前暴露密钥无效或速率限制错误。",
-    templates_heading: "Motifs",
+    motifs_heading: "Motifs",
     prebake_motifs: "预烘焙 Motifs",
     prebake_motifs_hint:
       "在后台将 Motif 动画帧渲染到磁盘，使播放更流畅、重新打开项目时即时加载。会在项目的 Cache 文件夹下占用磁盘空间。",
@@ -452,10 +452,10 @@ const zhCN: Resources = {
     mute: "静音",
     subtitles: "字幕",
     subtitles_source: "来源",
-    template: "Motif",
+    motif: "Motif",
     transform: "变换",
     props: "参数",
-    unknown_template: "未知 Motif——无法在此编辑其参数。",
+    unknown_motif: "未知 Motif——无法在此编辑其参数。",
     bake_idle: "未烘焙 — 在设置中开启预烘焙，或右键『立即预烘焙』",
     bake_warming: "预热预览… {{done}}/{{total}}",
     bake_baking: "预烘焙中 {{done}}/{{total}}",
@@ -479,7 +479,7 @@ const zhCN: Resources = {
     motif_source_applying: "应用中…",
     motif_source_hint: "编辑 Motif 的 HTML 与清单岛，然后点击「应用」更新预览。",
   },
-  template_picker: {
+  motif_picker: {
     heading: "Motifs",
     close: "关闭",
     loading: "正在加载 Motifs…",
@@ -565,7 +565,7 @@ const zhCN: Resources = {
     videoclip: "视频片段",
     imageoverlay: "图片叠加",
     text: "文本",
-    template: "Motif",
+    motif: "Motif",
     subtitles: "字幕",
     color: "颜色",
   },

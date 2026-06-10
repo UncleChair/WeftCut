@@ -2414,7 +2414,7 @@ fn parse_canonical_props(
 /// `saturating_add` guards the i64 overflow on absurd inputs (e.g. agent
 /// passes `i64::MAX` as start time + a default duration).
 ///
-/// `max_duration_us` is the template's `max_duration_s` cap (in µs) or
+/// `max_duration_us` is the motif's `max_duration_s` cap (in µs) or
 /// `None` when unbounded. When present, the resolved length is clamped to
 /// the cap so an explicit over-long `t_end_us` can't place the layer longer
 /// than the manifest allows — mirrors the trim-time clamp in the actor.

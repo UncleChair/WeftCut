@@ -1,6 +1,6 @@
 import { hashCacheKey } from "./frameCache";
 
-/// Tracks which template cacheKeys have at least one frame baked on disk, so
+/// Tracks which motif cacheKeys have at least one frame baked on disk, so
 /// the read path can skip a per-frame `exists` IPC for never-baked content.
 /// Membership is by RAW cacheKey; on-disk dirs are named by `hashCacheKey`,
 /// so `hydrateFromHashes` maps a set of live cacheKeys onto the dir names a
@@ -8,7 +8,7 @@ import { hashCacheKey } from "./frameCache";
 export class BakedKeyIndex {
   private keys = new Set<string>();
   /// The set of cacheKeys the caller considers "live" this project (active
-  /// template layers). Set by the Compositor before `hydrateFromHashes`.
+  /// motif layers). Set by the Compositor before `hydrateFromHashes`.
   private liveCandidates: string[] = [];
 
   has(cacheKey: string): boolean {

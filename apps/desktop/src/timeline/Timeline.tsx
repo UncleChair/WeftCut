@@ -93,7 +93,7 @@ interface VisualTrack {
 }
 
 /// V.6 layer-overlap class. Visual-class layers (VideoClip,
-/// ImageOverlay, Color, Template, Text, Subtitles) can't overlap each
+/// ImageOverlay, Color, Motif, Text, Subtitles) can't overlap each
 /// other on a track; Audio can't overlap Audio. Visual + Audio CAN
 /// coexist at the same time — that's the AE-style "combined row"
 /// trigger.
@@ -1222,7 +1222,7 @@ function MotifBakeDot({ layerId }: { layerId: string }) {
         : phase === "ready"
           ? t("timeline.bake_dot_ready", { defaultValue: "Pre-baked" })
           : t("timeline.bake_dot_error", { defaultValue: "Pre-bake failed" });
-  return <span className={`template-bake-dot is-${phase}`} title={label} aria-label={label} />;
+  return <span className={`motif-bake-dot is-${phase}`} title={label} aria-label={label} />;
 }
 
 /// `docs/data-model.md` R.5b. The pill IS the setting: a click

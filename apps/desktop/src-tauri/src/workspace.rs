@@ -21,7 +21,7 @@ use tauri_plugin_fs::FsExt;
 use crate::state::media::MediaItem;
 
 /// Allow the fs plugin to read/write under the open workspace folder.
-/// L2 template raster frames live at `<workspace>/Cache/raster/...`, a
+/// L2 motif raster frames live at `<workspace>/Cache/raster/...`, a
 /// user-chosen path the static `default.json` scope can't express. Grant it
 /// at every workspace-activation site. Best-effort: a scope error is logged,
 /// not fatal — the editor still runs, L2 just degrades to live rastering.
