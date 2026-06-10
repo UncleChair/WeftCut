@@ -3,7 +3,12 @@ import { listen } from "@tauri-apps/api/event";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { join, tempDir } from "@tauri-apps/api/path";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow, ProgressBarStatus } from "@tauri-apps/api/window";
+import {
+  isPermissionGranted,
+  requestPermission,
+  sendNotification,
+} from "@tauri-apps/plugin-notification";
 import { remove, writeFile } from "@tauri-apps/plugin-fs";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -143,6 +148,12 @@ export function App({ onCloseProject }: AppProps) {
   const [, setError] = useState<string | null>(null);
   const [exportState, setExportState] = useState<ExportState | null>(null);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  // Close-guard: the window ✕ (or any close request) during a running
+  // export pops a confirm instead of silently killing the export. The ref
+  // mirrors export-busy so the close-requested listener (registered once)
+  // reads fresh state.
+  const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
+  const exportBusyRef = useRef(false);
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
   // Blade-tool mode: pressing `C` toggles it; clicks on layers in the
   // timeline split the layer at the click point instead of selecting it.
@@ -296,6 +307,102 @@ export function App({ onCloseProject }: AppProps) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  // Close-guard wiring. "Busy" = an export that closing would kill;
+  // complete/error states are dismissable and don't block the window.
+  useEffect(() => {
+    exportBusyRef.current =
+      exportState !== null &&
+      exportState.kind !== "complete" &&
+      exportState.kind !== "error";
+  }, [exportState]);
+  useEffect(() => {
+    const win = getCurrentWindow();
+    const unlisten = win.onCloseRequested((event) => {
+      if (exportBusyRef.current) {
+        event.preventDefault();
+        setCloseConfirmOpen(true);
+      }
+    });
+    return () => {
+      void unlisten.then((f) => f());
+    };
+  }, []);
+
+  // Taskbar progress mirrors the export lifecycle (ITaskbarList3 on
+  // Windows, via Tauri): indeterminate pulse while starting/preparing,
+  // percent while encoding, error-red on failure, cleared on dismiss or
+  // completion. Best-effort — a failed call never blocks the export.
+  useEffect(() => {
+    const win = getCurrentWindow();
+    const set = (bar: Parameters<typeof win.setProgressBar>[0]) =>
+      void win.setProgressBar(bar).catch(() => {});
+    if (exportState === null || exportState.kind === "complete") {
+      set({ status: ProgressBarStatus.None });
+      return;
+    }
+    switch (exportState.kind) {
+      case "starting":
+      case "preparing":
+        set({ status: ProgressBarStatus.Indeterminate });
+        break;
+      case "progress":
+        set({
+          status: ProgressBarStatus.Normal,
+          progress: Math.round(exportState.progress.progress * 100),
+        });
+        break;
+      case "error":
+        set({ status: ProgressBarStatus.Error, progress: 100 });
+        break;
+    }
+  }, [exportState]);
+  // Clear any leftover taskbar state if the editor unmounts (project
+  // closed) while a progress bar is showing.
+  useEffect(() => {
+    return () => {
+      void getCurrentWindow()
+        .setProgressBar({ status: ProgressBarStatus.None })
+        .catch(() => {});
+    };
+  }, []);
+
+  // Native toast when an export reaches a terminal state while the window
+  // is unfocused — the in-app panel and taskbar progress are invisible to
+  // a user working in another app. Terminal states are set exactly once
+  // per export, so this fires at most once each. Best-effort.
+  useEffect(() => {
+    if (
+      !exportState ||
+      (exportState.kind !== "complete" && exportState.kind !== "error")
+    ) {
+      return;
+    }
+    const state = exportState;
+    void (async () => {
+      try {
+        if (await getCurrentWindow().isFocused()) return;
+        let granted = await isPermissionGranted();
+        if (!granted) granted = (await requestPermission()) === "granted";
+        if (!granted) return;
+        if (state.kind === "complete") {
+          sendNotification({
+            title: t("export.notify_done_title"),
+            body: t("export.notify_done_body", {
+              path: state.payload.outputPath,
+            }),
+          });
+        } else {
+          sendNotification({
+            title: t("export.notify_failed_title"),
+            body: t("export.notify_failed_body", { detail: state.detail }),
+          });
+        }
+      } catch {
+        // Notifications are a courtesy; never let them surface as errors.
+      }
+    })();
+  }, [exportState, t]);
 
   // R.7: when the user clicks a layer on a DIFFERENT track from the
   // revealed one, collapse the reveal. Plain deselect (selectedLayerId
@@ -1732,6 +1839,32 @@ export function App({ onCloseProject }: AppProps) {
           }}
           onPlay={openRenderPlayPopup}
         />
+      )}
+      {closeConfirmOpen && (
+        <AppDialog
+          title={t("close_guard.title")}
+          onClose={() => setCloseConfirmOpen(false)}
+          closeLabel={t("close_guard.stay")}
+          panelClassName="settings-panel"
+        >
+          <div className="settings-body">
+            <div className="settings-card">
+              <p className="settings-blurb">{t("close_guard.body")}</p>
+              <div className="export-actions">
+                <Button size="lg" onClick={() => setCloseConfirmOpen(false)}>
+                  {t("close_guard.stay")}
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="lg"
+                  onClick={() => void getCurrentWindow().destroy()}
+                >
+                  {t("close_guard.quit")}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </AppDialog>
       )}
       {dialogHasAttention && (
         <ImportProxyDialog

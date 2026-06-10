@@ -267,6 +267,53 @@ textarea,
   cursor: not-allowed;
 }
 
+/* AppSwitch — the on/off pill replacing bare checkboxes. */
+.app-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  width: 30px;
+  height: 16px;
+  padding: 0;
+  background: var(--secondary);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.app-switch[data-checked] {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+
+.app-switch:focus-visible {
+  outline: none;
+  border-color: var(--ring);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.4);
+}
+
+.app-switch[data-disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.app-switch-thumb {
+  position: absolute;
+  left: 2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--muted-foreground);
+  transition: left 120ms ease, background 120ms ease;
+}
+
+.app-switch-thumb[data-checked] {
+  left: 16px;
+  background: #fff;
+}
+
 .separator {
   display: inline-block;
   width: 1px;
