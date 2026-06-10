@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { getMcpInfo, resetMcpToken, type McpInfoView } from "../ipc";
 import { AppDialog } from "../components/AppDialog";
+import { Button } from "@/components/ui/button";
 
 interface Props {
   onClose: () => void;
@@ -154,22 +155,17 @@ export function ConnectAgentPanel({ onClose }: Props) {
               copiedLabel={t("connect.copied")}
               extraButton={
                 <>
-                  <button
-                    type="button"
-                    className="connect-reveal"
-                    onClick={() => setRevealed((r) => !r)}
-                  >
+                  <Button size="sm" onClick={() => setRevealed((r) => !r)}>
                     {revealed ? t("connect.hide") : t("connect.reveal")}
-                  </button>
-                  <button
-                    type="button"
-                    className="connect-refresh"
+                  </Button>
+                  <Button
+                    size="sm"
                     onClick={refreshToken}
                     disabled={refreshing}
                     title={t("connect.refresh_hint")}
                   >
                     {refreshing ? t("connect.refreshing") : t("connect.refresh")}
-                  </button>
+                  </Button>
                 </>
               }
             />
@@ -241,9 +237,9 @@ function ConnectField({
       <label>{label}</label>
       <div className="connect-field-row">
         <code className="connect-value">{value}</code>
-        <button onClick={onCopy} type="button">
+        <Button size="sm" onClick={onCopy}>
           {copied ? copiedLabel : copyLabel}
-        </button>
+        </Button>
         {extraButton}
       </div>
     </div>
@@ -271,9 +267,9 @@ function ConnectSnippet({
     <div className="connect-snippet">
       <div className="connect-snippet-header">
         <span>{label}</span>
-        <button onClick={onCopy} type="button">
+        <Button size="sm" onClick={onCopy}>
           {copied ? copiedLabel : copyLabel}
-        </button>
+        </Button>
       </div>
       <pre>
         <code>{value}</code>
