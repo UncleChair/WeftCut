@@ -9,6 +9,8 @@ import {
   SUPPORTED_LOCALES,
   type Locale,
 } from "../i18n";
+import { AppDialog } from "../components/AppDialog";
+import { AppSelect } from "../components/AppSelect";
 import { GlobeIcon } from "../i18n/GlobeIcon";
 import {
   projectNewWorkspace,
@@ -386,19 +388,11 @@ function NewProjectForm({
   }, [canCreate, parentFolder, name, preset, onCreated]);
 
   return (
-    <div
-      className="new-project-overlay"
-      role="dialog"
-      aria-modal="true"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget && !busy) onCancel();
-      }}
+    <AppDialog
+      title={t("new_project.title")}
+      onClose={busy ? undefined : onCancel}
+      panelClassName="new-project-panel"
     >
-      <div className="new-project-panel">
-        <header>
-          <h2>{t("new_project.title")}</h2>
-        </header>
-
         <label className="new-project-row">
           <span>{t("new_project.name")}</span>
           <input
@@ -447,19 +441,16 @@ function NewProjectForm({
 
         <label className="new-project-row">
           <span>{t("new_project.canvas_preset")}</span>
-          <select
+          <AppSelect
             value={presetKey}
-            onChange={(e) => setPresetKey(e.target.value)}
+            onValueChange={setPresetKey}
             disabled={busy}
-          >
-            {CANVAS_PRESETS.map((p) => (
-              <option key={p.key} value={p.key}>
-                {t(`new_project.preset.${p.key}`, {
-                  defaultValue: p.key,
-                })}
-              </option>
-            ))}
-          </select>
+            ariaLabel={t("new_project.canvas_preset")}
+            options={CANVAS_PRESETS.map((p) => ({
+              value: p.key,
+              label: t(`new_project.preset.${p.key}`, { defaultValue: p.key }),
+            }))}
+          />
         </label>
 
         {submitError && (
@@ -478,8 +469,7 @@ function NewProjectForm({
             {busy ? t("new_project.creating") : t("new_project.create")}
           </button>
         </footer>
-      </div>
-    </div>
+    </AppDialog>
   );
 }
 
