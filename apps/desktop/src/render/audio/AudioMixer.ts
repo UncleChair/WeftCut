@@ -243,6 +243,32 @@ export class AudioMixer {
     }
 
     const ctx = this.graph.ctx;
+
+    // The Range read is async — by resolve time the planned `when` may
+    // already be in the past. Starting the buffer at a past time would
+    // play it shifted (overlapping the next chunk's start), and Chromium
+    // CLAMPS a past-start setValueCurveAtTime to currentTime, sliding the
+    // curve into the next one ("overlaps" NotSupportedError). Recompute
+    // lateness now and skip INTO the buffer instead, keeping both the
+    // audio and its curves ending exactly on the chunk's grid end. One
+    // render quantum (128 frames) of cushion absorbs the µs between this
+    // computation and the start() call.
+    let startAt = when;
+    let offsetFrames = bufferOffsetFrames;
+    const ctxNow = ctx.currentTime;
+    if (ctxNow > when) {
+      const lateFrames = Math.ceil((ctxNow - when) * SAMPLE_RATE) + 128;
+      offsetFrames += lateFrames;
+      startAt = when + lateFrames / SAMPLE_RATE;
+      if (offsetFrames >= frames) {
+        // Entirely in the past by now — drop; the next tick replans.
+        if (this.liveChunks.get(srcStartFrame) === null) {
+          this.liveChunks.delete(srcStartFrame);
+        }
+        return;
+      }
+    }
+
     const buffer = ctx.createBuffer(channels.length, frames, SAMPLE_RATE);
     channels.forEach((data, c) => buffer.copyToChannel(data, c));
     const node = ctx.createBufferSource();
@@ -253,10 +279,10 @@ export class AudioMixer {
         this.liveChunks.delete(srcStartFrame);
       }
     };
-    node.start(when, bufferOffsetFrames / SAMPLE_RATE);
+    node.start(startAt, offsetFrames / SAMPLE_RATE);
     this.liveChunks.set(srcStartFrame, node);
 
-    this.applyCurves(srcStartFrame, frames, when, bufferOffsetFrames);
+    this.applyCurves(srcStartFrame, frames, startAt, offsetFrames);
   }
 
   /// Schedule the envelope curve windows covering this chunk's playback
@@ -290,21 +316,30 @@ export class AudioMixer {
       return curve;
     };
 
+    // One sample shorter than the chunk: consecutive curves whose end and
+    // start times are bit-identical trip Chromium's setValueCurveAtTime
+    // overlap check. The param holds the curve's last value through the
+    // 1-sample gap, and the next curve starts at that same value, so the
+    // hold is inaudible.
+    const curveDurationS = Math.max(durationS - 1 / SAMPLE_RATE, 1 / SAMPLE_RATE);
     try {
       const gainCurve = cut(this.gainEnv);
       if (gainCurve) {
-        this.gainNode.gain.setValueCurveAtTime(gainCurve, when, durationS);
+        this.gainNode.gain.setValueCurveAtTime(gainCurve, when, curveDurationS);
       }
       const panCurve = cut(this.panEnv);
       if (panCurve) {
-        this.panner.pan.setValueCurveAtTime(panCurve, when, durationS);
+        this.panner.pan.setValueCurveAtTime(panCurve, when, curveDurationS);
       }
     } catch (e) {
       // Overlap rejection here means a scheduling bug upstream — surface
       // it loudly in dev consoles rather than failing silent.
+      const detail =
+        e instanceof DOMException || e instanceof Error
+          ? `${e.name}: ${e.message}`
+          : String(e);
       console.warn(
-        `[weftcut/audio] envelope curve scheduling failed for layer ${this.layerId}:`,
-        e,
+        `[weftcut/audio] envelope curve scheduling failed for layer ${this.layerId}: ${detail}`,
       );
     }
   }
