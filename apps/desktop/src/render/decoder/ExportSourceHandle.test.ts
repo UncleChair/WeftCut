@@ -145,9 +145,13 @@ describe("ExportSourceHandle EOS tail", () => {
     expect(dec.decoded.length).toBe(50); // no packets were re-dispatched
   });
 
-  it("issues the EOS flush even when the discovering range dispatched zero packets", async () => {
-    // The stream's LAST packet is a key just past chunk A's range end: chunk A
-    // dispatches it via the stop-after-key rule and exits WITHOUT seeing EOS.
+  it("issues exactly one EOS flush when the stream ends on a stop-after-key boundary", async () => {
+    // The stream's LAST packet is a key just past chunk A's range end. The
+    // pre-fix code dispatched it via the stop-after-key rule, exited without
+    // seeing EOS, and chunk B's continue then found nothing with dispatched
+    // === 0 — no flush was EVER issued, parking the final GOP forever (the
+    // lone-IDR shape). Whether EOS is discovered during A (leading-B peek) or
+    // B (zero-dispatch probe), exactly one flush must be in flight after both.
     const packets = [pkt(0, "key")];
     for (let i = 1; i <= 24; i++) packets.push(pkt(i * 0.02, "delta")); // ..0.48s
     packets.push(pkt(0.5, "key"));
@@ -155,13 +159,8 @@ describe("ExportSourceHandle EOS tail", () => {
     const h = makeHandle();
 
     await h.decodeRange(0, 480_000);
-    const dec = FakeVideoDecoder.instances[0]!;
-    expect(dec.flushCalls).toBe(0);
-
-    // Chunk B continues from the cursor and finds nothing: true EOS with
-    // dispatched === 0. Without a flush the final GOP's frames stay parked in
-    // the reorder buffer and the consumer hangs (the lone-IDR shape).
     await h.decodeRange(500_000, 980_000);
+    const dec = FakeVideoDecoder.instances[0]!;
     expect(dec.flushCalls).toBe(1);
   });
 
@@ -187,6 +186,42 @@ describe("ExportSourceHandle EOS tail", () => {
     const second = FakeVideoDecoder.instances[1]!;
     expect(second.decoded.length).toBeGreaterThan(0); // re-seeked into the fresh decoder
     expect(first.closed).toBe(true);
+  });
+
+  // The stop-after-key rule overshoots the dispatch frontier to the NEXT GOP's
+  // key pts. The continue-vs-seek decision must use COVERAGE semantics, not the
+  // per-packet frontier: a forward range starting below the overshot key is NOT
+  // a backward jump. Re-seeking from the range's GOP key re-feeds the whole
+  // stream prefix BEHIND the consumer — the decoder then re-emits stale early
+  // frames interleaved with the live tail and `frameAt` serves them into the
+  // output (observed: source frame 12 composited at output 150 on a 5s-GOP
+  // source; outputs 145..151 corrupted around the GOP boundary).
+  it("treats a forward range under the overshot key frontier as covered/continuing, never a re-seek", async () => {
+    // Two GOPs: key@0 (+49 deltas to 0.98s), key@1.0 (+25 deltas to 1.5s).
+    const packets = [pkt(0, "key")];
+    for (let i = 1; i <= 49; i++) packets.push(pkt(i * 0.02, "delta"));
+    packets.push(pkt(1.0, "key"));
+    for (let i = 1; i <= 25; i++) packets.push(pkt(1.0 + i * 0.02, "delta"));
+    sink = makeSink(packets);
+    const h = makeHandle();
+
+    // Chunk 1 [0..0.4s): stop-after-key dispatches through key@1.0 — the
+    // frontier overshoots to 1.0s while coverage is only "everything ≤ 1.0s".
+    await h.decodeRange(0, 400_000);
+    const dec = FakeVideoDecoder.instances[0]!;
+    const fedAfterChunk1 = dec.decoded.length;
+    expect(fedAfterChunk1).toBe(51); // key@0 + 49 deltas + key@1.0
+
+    // Chunk 2 [0.4s..0.8s): fully covered by chunk 1's dispatch. Nothing to
+    // feed — and CRUCIALLY no re-seek back to key@0 (the corruption source).
+    await h.decodeRange(400_000, 800_000);
+    expect(dec.decoded.length).toBe(fedAfterChunk1);
+
+    // Chunk 3 [0.8s..1.2s): extends past the parked key — continues from the
+    // cursor (packets after key@1.0), still without re-feeding the prefix.
+    await h.decodeRange(800_000, 1_200_000);
+    expect(dec.decoded.length).toBeGreaterThan(fedAfterChunk1);
+    expect(dec.decoded.length).toBeLessThanOrEqual(packets.length);
   });
 
   it("finalizes the ring when the EOS flush completes so grid-overhang waits clamp", async () => {

@@ -293,9 +293,24 @@ export class ExportSourceHandle implements DecoderHandle {
   private readyP: Promise<void> | null = null;
   /// Last packet dispatched to the decoder (decode order); null = unpositioned.
   private cursor: EncodedPacket | null = null;
-  /// Presentation PTS (µs) of `cursor` — the dispatch frontier. Sentinel
-  /// until the first dispatch; used to decide seek-vs-continue per range.
+  /// Presentation PTS (µs) of the last dispatched packet. Diagnostic only —
+  /// the stop-after-key rule overshoots it to the NEXT GOP's key, so it must
+  /// NOT drive the seek-vs-continue decision (see `lastRangeAUs`): treating a
+  /// forward range below the overshot key as a backward jump re-feeds the
+  /// whole stream prefix behind the consumer, and the decoder's stale
+  /// re-emissions then get composited into the output (observed: source
+  /// frame 12 at output frame 150 around a 5s-GOP boundary).
   private lastDispatchedPtsUs = Number.NEGATIVE_INFINITY;
+  /// `aUs` of the previous `decodeRange`. Ranges are monotonic per handle in
+  /// the export's forward march; `aUs < lastRangeAUs` is a true backward jump
+  /// (same-media clip reuse) and the only case that re-seeks.
+  private lastRangeAUs = Number.NEGATIVE_INFINITY;
+  /// Presentation time strictly below which EVERY packet has been dispatched.
+  /// Advanced to the stop key's PTS on a key-break exit (the leading-B peek
+  /// makes that claim exact even for open-GOP streams) and to +∞ at EOS. A
+  /// forward range with `bUs < coveredThroughUs` needs no dispatch at all —
+  /// its frames are already in the decoder/ring pipeline.
+  private coveredThroughUs = Number.NEGATIVE_INFINITY;
   private outputFrameCount = 0;
   /// Cumulative packets fed to the decoder across all `decodeRange` calls.
   /// With a 1:1 export this should track the frame count; a large excess means
@@ -457,6 +472,8 @@ export class ExportSourceHandle implements DecoderHandle {
     this.decoder.configure(this.buildConfig());
     this.cursor = null;
     this.lastDispatchedPtsUs = Number.NEGATIVE_INFINITY;
+    this.lastRangeAUs = Number.NEGATIVE_INFINITY;
+    this.coveredThroughUs = Number.NEGATIVE_INFINITY;
     // The fresh decoder supersedes any in-flight EOS flush on the old one (its
     // .then/.catch are identity-guarded and settle harmlessly), and can produce
     // frames again — reset the EOS frontier and the ring's finalized state.
@@ -511,11 +528,24 @@ export class ExportSourceHandle implements DecoderHandle {
       this.rebuildDecoder();
     }
 
-    // Position: continue from the cursor when aUs is at/ahead of the frontier
-    // (the normal forward-export case); otherwise seek to aUs's GOP key.
+    // Forward ranges (the export's normal march) continue from the cursor;
+    // only a true backward jump (aUs before the previous range — same-media
+    // clip reuse) re-seeks. The per-packet frontier `lastDispatchedPtsUs` must
+    // NOT drive this: the stop-after-key rule overshoots it to the next GOP's
+    // key, and misreading that as "backward" re-feeds the whole stream prefix
+    // behind the consumer (stale-frame corruption at GOP boundaries).
+    const forward = this.cursor !== null && aUs >= this.lastRangeAUs;
+    this.lastRangeAUs = aUs;
+
+    // Fully covered by a prior overshooting dispatch: every packet this range
+    // needs is already in the decoder/ring pipeline — feed nothing.
+    if (forward && bUs < this.coveredThroughUs) {
+      return;
+    }
+
     let pkt: EncodedPacket | null;
-    if (this.cursor !== null && aUs >= this.lastDispatchedPtsUs) {
-      pkt = await packetSink.getNextPacket(this.cursor);
+    if (forward) {
+      pkt = await packetSink.getNextPacket(this.cursor!);
     } else {
       pkt = await packetSink.getKeyPacket(aUs / 1e6);
       // `getKeyPacket` is null when `aUs` precedes the first key packet — a
@@ -538,19 +568,30 @@ export class ExportSourceHandle implements DecoderHandle {
     );
 
     let dispatched = 0;
+    // PTS of the stop key once dispatched. The loop then keeps feeding ONLY
+    // the packets that decode after the key but display before it (open-GOP
+    // leading B-frames) so "everything strictly below the key's PTS is fed"
+    // becomes an exact invariant — what `coveredThroughUs` claims.
+    let stopKeyPtsUs: number | null = null;
     while (pkt) {
       const ptsUs = Math.round(pkt.timestamp * 1e6);
+      if (stopKeyPtsUs !== null && ptsUs >= stopKeyPtsUs) break;
       this.decoder.decode(pkt.toEncodedVideoChunk());
       this.cursor = pkt;
       this.lastDispatchedPtsUs = ptsUs;
       dispatched++;
       this.dispatchedTotal++;
-      // Stop AFTER dispatching the first key strictly past bUs — that key
-      // begins the GOP after bUs, so everything with PTS ≤ bUs (incl.
-      // open-GOP B-refs) has now been fed.
-      if (pkt.type === "key" && ptsUs > bUs) break;
+      // Mark the first key strictly past bUs — that key begins the GOP after
+      // bUs, so everything with PTS ≤ bUs has been fed once its leading
+      // B-frames (if any) follow.
+      if (stopKeyPtsUs === null && pkt.type === "key" && ptsUs > bUs) {
+        stopKeyPtsUs = ptsUs;
+      }
       pkt = await packetSink.getNextPacket(pkt);
       if (this._disposed) return;
+    }
+    if (stopKeyPtsUs !== null) {
+      this.coveredThroughUs = Math.max(this.coveredThroughUs, stopKeyPtsUs);
     }
     // eslint-disable-next-line no-console
     console.log(
@@ -568,6 +609,7 @@ export class ExportSourceHandle implements DecoderHandle {
     // drain mechanism — the next GOP key — can never arrive).
     if (pkt === null && (dispatched > 0 || this.cursor !== null)) {
       this.eosFrontierUs = aUs;
+      this.coveredThroughUs = Number.POSITIVE_INFINITY;
       this.issueEosFlush();
     }
   }
@@ -641,6 +683,8 @@ export class ExportSourceHandle implements DecoderHandle {
     this.readyP = null;
     this.cursor = null;
     this.lastDispatchedPtsUs = Number.NEGATIVE_INFINITY;
+    this.lastRangeAUs = Number.NEGATIVE_INFINITY;
+    this.coveredThroughUs = Number.NEGATIVE_INFINITY;
     this.outputFrameCount = 0;
     this.downgraded = false;
     this.eosFrontierUs = null;
