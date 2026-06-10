@@ -51,6 +51,45 @@ export function analyzeSelf({ output, samples, ssimMax }) {
   }
 }
 
+// Windowed-RMS envelope assertions (fades / keyframed gain / limiter ceiling)
+// against the deterministic Rust mixer's output. `expects` is
+// [{ t_s, expect_rms_db_delta }] — deltas relative to the file's loudest
+// 100 ms window. `peakMaxDb` additionally asserts the file's sample peak
+// stays at/below the given dBFS (the alimiter ceiling check).
+export function analyzeAudioEnvelope({ output, expects, peakMaxDb }) {
+  const args = [
+    "run", "--manifest-path", "apps/desktop/src-tauri/Cargo.toml",
+    "--bin", "media_conformance", "--quiet", "--",
+    "--audio-envelope", JSON.stringify(expects), "--output", output,
+  ];
+  if (peakMaxDb != null) args.push("--peak-max", String(peakMaxDb));
+  const r = spawnSync("cargo", args, { cwd: REPO, encoding: "utf8" });
+  try {
+    return JSON.parse(r.stdout);
+  } catch {
+    throw new Error(
+      `media_conformance --audio-envelope exit ${r.status}: ${r.stdout}\n${r.stderr}`,
+    );
+  }
+}
+
+// Whole-file per-channel RMS ratio vs the expected L−R dB delta (pan law).
+export function analyzeAudioPan({ output, expectLrDb }) {
+  const args = [
+    "run", "--manifest-path", "apps/desktop/src-tauri/Cargo.toml",
+    "--bin", "media_conformance", "--quiet", "--",
+    "--audio-pan", "--expect-lr-db", String(expectLrDb), "--output", output,
+  ];
+  const r = spawnSync("cargo", args, { cwd: REPO, encoding: "utf8" });
+  try {
+    return JSON.parse(r.stdout);
+  } catch {
+    throw new Error(
+      `media_conformance --audio-pan exit ${r.status}: ${r.stdout}\n${r.stderr}`,
+    );
+  }
+}
+
 export function analyzeColor({ output, source, manifest, inMatrix, inRange, sample }) {
   const args = [
     "run", "--manifest-path", "apps/desktop/src-tauri/Cargo.toml",
