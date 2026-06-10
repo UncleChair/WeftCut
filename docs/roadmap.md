@@ -15,16 +15,57 @@ lives in the topical doc — this is the index.
 
 ## Open work
 
+### Keyframes (`Animated<T>` goes live)
+
+The schema and both interpolation engines already exist (Rust
+`state/animated.rs::value_at`, TS `render/animated.ts::resolveAnimated`,
+byte-identical); what's missing is transport and evaluation:
+`projectSummary` flattens every `Animated<T>` to a static scalar, so
+the renderer never sees keyframes. The work: ship `AnimTrack<T>`
+through the `LayerSummary` views, pre-resolve per frame in the
+Compositor (sprites stay schema-agnostic), exempt animated properties
+from sprite signature caches (text color via tint, not re-raster),
+add a cross-language golden-vector test over the engine copies before
+enabling, then the `add_keyframe` / `update_keyframe` /
+`remove_keyframe` actor surface + MCP tools. Export needs no extra
+work — the Worker clones the same summary and runs the same
+Compositor. Trim-vs-keyframe validation rules need defining. See
+[`data-model.md`](data-model.md).
+
 ### Effect subsystem on the PixiJS path
 
 The IR-driven per-layer effects subsystem was deleted with the PixiJS
-migration. A redesign lives in `apps/desktop/src/render/sprite/` as
-additional per-sprite effect chains, plus an actor surface
+migration. The redesign is per-sprite Pixi filter chains driven by
+`layer.effects` — the field already ships over IPC; the Compositor
+just never reads it. Animated effect parameters ride the keyframe
+work above (keyframes first, then effects). Schema cleanup on the way
+in: cull the HTML-era `HtmlTransform` variant; `Speed` is time
+remapping, not a filter, and needs its own design. Actor surface
 (`add_effect`, `update_effect`, `move_effect`, `remove_effect`) and
-the corresponding MCP tools. Same redesign unblocks per-frame
-`Animated<T>` sampling, which is what gates the `add_keyframe` /
-`update_keyframe` / `remove_keyframe` MCP tools — see
-[`data-model.md`](data-model.md).
+the corresponding MCP tools follow. Filters break batching (one
+render-target switch per filtered sprite) — plan a preview-LOD flag
+from day one.
+
+### Subtitle import + export
+
+Subtitles render in preview (JASSUB) but are omitted from export —
+the Worker has no DOM host and there is no burn-in path
+(`Compositor.ensureSubtitles`). Phased work, not a defect: the
+planned feature adds subtitle import plus an export surface in the
+export settings — burn-in via ffmpeg's `subtitles` filter at the
+transcode/mux stage, and/or a sidecar subtitle track for containers
+that carry one (mkv).
+
+### Export decode redundancy
+
+Export re-decodes ~4.35× the packets it needs when clips re-visit
+earlier source time (A/B roll, same-source multi-track), measured via
+the committed `__weftcutExportPerf` counters — roughly a 30–45%
+export-time lever. The fix shape is merging overlapping
+same-`mediaId` source ranges into one `decodeRange` per chunk (or
+continuous-forward decode). Preview has the sibling optimization
+already designed in [`render.md`](render.md): sharing a warm decoder
+across sequential cuts of one source.
 
 ### Zero-copy color-correct GPU frame upload
 
