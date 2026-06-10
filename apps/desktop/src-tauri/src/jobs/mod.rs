@@ -19,6 +19,7 @@
 //! Job kinds today: `thumbnails`, `proxy`, `quick_proxy`, `proxy_bypass`,
 //! `waveform`.
 
+pub mod conform;
 mod frame;
 pub mod hwaccel;
 pub mod import;
