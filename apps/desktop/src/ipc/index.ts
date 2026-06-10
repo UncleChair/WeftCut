@@ -1017,6 +1017,13 @@ export async function ensureFullProxy(mediaId: string): Promise<void> {
   await invoke("ensure_full_proxy", { mediaId });
 }
 
+/// Kick a conform job for one media if its VCONF file is absent (export
+/// readiness gate + pre-conform-era backfill). No-op for media without an
+/// audio stream or when already cached.
+export async function ensureConform(mediaId: string): Promise<void> {
+  await invoke("ensure_conform", { mediaId });
+}
+
 // ============================================================
 // Motifs
 // ============================================================
