@@ -221,6 +221,7 @@ mod tests {
             proxy_bypassed: false,
             export_uses_original: false,
             waveform_path: None,
+            conform_path: None,
             thumbnails_dir: None,
             file_hash_blake3: "abc".into(),
             file_size: 10_000_000,

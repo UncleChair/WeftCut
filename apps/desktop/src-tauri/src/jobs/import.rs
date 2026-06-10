@@ -477,6 +477,12 @@ async fn patch_derivative_paths_after_hash_migration(
             touched = true;
         }
     }
+    if let Some(ref p) = item.conform_path {
+        if let Some(next) = rewrite_hash_in_path(p, old_hash, new_hash) {
+            patch.conform_path = Some(next);
+            touched = true;
+        }
+    }
 
     if !touched {
         return;
