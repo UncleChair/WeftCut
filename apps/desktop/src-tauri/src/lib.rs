@@ -101,6 +101,8 @@ pub fn run() {
             commands::delete_layer,
             commands::set_composition,
             commands::fit_composition_to_layers,
+            commands::get_project_settings,
+            commands::update_project_settings,
             commands::add_marker,
             commands::project_undo,
             commands::project_redo,

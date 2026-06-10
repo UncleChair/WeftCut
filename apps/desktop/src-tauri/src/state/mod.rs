@@ -58,7 +58,9 @@ pub use layer::{
 };
 pub use marker::Marker;
 pub use media::{AudioStreamMeta, MediaItem, MediaKind, MediaMetadata, VideoStreamMeta};
-pub use project::{Project, ProjectMetadata, ProjectSettings, SCHEMA_VERSION};
+pub use project::{
+    Project, ProjectMetadata, ProjectSettings, ProjectSettingsPatch, SCHEMA_VERSION,
+};
 pub use time::{Rational, TimeUs, US_PER_MS, US_PER_SEC, snap_frame_ceil, snap_frame_floor};
 pub use track::{Track, TrackRole};
 pub use transform::{BlendMode, Rect, Transform};

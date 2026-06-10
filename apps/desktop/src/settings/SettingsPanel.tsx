@@ -4,6 +4,7 @@ import {
   type ApiKeyStatus,
   type KeybindingsMap,
   fitCompositionToLayers,
+  getProjectSettings,
   recentsGetReopenOnLaunch,
   recentsSetReopenOnLaunch,
   setComposition,
@@ -11,6 +12,7 @@ import {
   settingsGetApiKeyStatus,
   settingsSetApiKey,
   settingsTestProvider,
+  updateProjectSettings,
 } from "../ipc";
 import { formatTimecode, parseTimecode } from "../frames";
 import { KeybindingPanel } from "./KeybindingPanel";
@@ -132,6 +134,7 @@ export function SettingsPanel({
         <h3>{t("settings.timeline_heading")}</h3>
         <p className="settings-blurb">{t("settings.timeline_blurb")}</p>
         <TimelineSnapSection onError={setError} />
+        <AutoDeleteEmptyTracksSection onError={setError} />
 
         <h3>{t("settings.motifs_heading")}</h3>
         <PrebakeSection onError={setError} />
@@ -276,6 +279,54 @@ function TimelineSnapSection({
         {t("settings.tail_snap_strength_hint")}
       </p>
     </>
+  );
+}
+
+/// Per-project toggle (`Project.settings.auto_delete_empty_tracks`),
+/// unlike the app-level sections around it — it travels with the .vproj
+/// because the actor's delete mutation reads it. Fetch-on-mount +
+/// optimistic flip with rollback, same shape as the reopen-on-launch row.
+function AutoDeleteEmptyTracksSection({
+  onError,
+}: {
+  onError: (msg: string) => void;
+}) {
+  const { t } = useTranslation();
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    getProjectSettings()
+      .then((s) => setEnabled(s.auto_delete_empty_tracks))
+      .catch((e) => onError(String(e)));
+  }, []);
+
+  return (
+    <label className="settings-toggle-row">
+      <input
+        type="checkbox"
+        checked={enabled === true}
+        disabled={enabled === null}
+        onChange={async (e) => {
+          const next = e.target.checked;
+          setEnabled(next);
+          onError("");
+          try {
+            await updateProjectSettings({ auto_delete_empty_tracks: next });
+          } catch (err) {
+            onError(String(err));
+            setEnabled(!next);
+          }
+        }}
+      />
+      <span>
+        <span className="settings-toggle-label">
+          {t("settings.auto_delete_empty_tracks")}
+        </span>
+        <span className="settings-toggle-hint">
+          {t("settings.auto_delete_empty_tracks_hint")}
+        </span>
+      </span>
+    </label>
   );
 }
 

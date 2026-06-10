@@ -201,6 +201,19 @@ answer when they don't have other context. Users can rename them;
 they cannot delete them. `delete_track` returns
 `CommandError::TrackNotRemovable` if invoked on one.
 
+When a layer deletion empties its track, two pruning rules apply.
+`transient` tracks (import-created holding tracks) are always removed.
+Plain tracks — removable, unlocked, no role stamp — are removed too
+when `settings.auto_delete_empty_tracks` is on (the default), folded
+into the same history entry as the layer deletion so a single undo
+restores layer and track together. Role-stamped tracks survive
+emptying unconditionally: legacy projects predate the `removable`
+field (it deserializes `true`), so the role stamp is the load-bearing
+guard for their reserved skeleton. The toggle lives in the Settings
+panel and travels with the project; like all `ProjectSettings`
+fields it is preference-shaped, patched into every history snapshot
+on change rather than recorded, so undo never flips it.
+
 ## `Layer`
 
 Common envelope, kind-specific params:

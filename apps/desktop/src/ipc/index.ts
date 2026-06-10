@@ -926,6 +926,28 @@ export async function fitCompositionToLayers(): Promise<void> {
   return invoke<void>("fit_composition_to_layers");
 }
 
+/// Per-project behavior settings (`Project.settings`). Only the fields
+/// the UI consumes are typed; the Rust struct carries more.
+export interface ProjectSettingsView {
+  auto_delete_empty_tracks: boolean;
+}
+
+export interface ProjectSettingsPatch {
+  auto_delete_empty_tracks?: boolean;
+}
+
+export async function getProjectSettings(): Promise<ProjectSettingsView> {
+  return invoke<ProjectSettingsView>("get_project_settings");
+}
+
+/// Preference-shaped, not editing-shaped: applied to every history
+/// snapshot and not recorded, so undo never flips a settings toggle.
+export async function updateProjectSettings(
+  patch: ProjectSettingsPatch,
+): Promise<void> {
+  return invoke<void>("update_project_settings", { patch });
+}
+
 // mpvPlayFile / mpvPlayMedia were the media-pool "click to preview a
 // raw clip" surface. Deleted in P12-d alongside the libmpv module.
 

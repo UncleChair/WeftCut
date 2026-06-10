@@ -19,7 +19,8 @@ use crate::ir;
 use crate::motifs::catalog;
 use crate::state::{
     self, Actor, ColorParams, CommandError, LayerParams, MediaItem, MediaKind, ProjectHandle,
-    MotifParams, Rgba, SubtitlesParams, SubtitlesSource, Transform,
+    MotifParams, ProjectSettings, ProjectSettingsPatch, Rgba, SubtitlesParams, SubtitlesSource,
+    Transform,
     actor::{CompositionPatch, LayerParamsPatch, LayerPatch},
     animated::Animated,
     ids::new_id,
@@ -2240,6 +2241,26 @@ pub async fn fit_composition_to_layers(
 ) -> Result<(), String> {
     handle
         .fit_composition_to_layers(Actor::User)
+        .await
+        .map_err(|e: CommandError| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_project_settings(
+    handle: State<'_, ProjectHandle>,
+) -> Result<ProjectSettings, String> {
+    Ok(handle.snapshot().await.settings.clone())
+}
+
+/// Preference-shaped (not editing-shaped): applied to every history
+/// snapshot and not recorded, so undo never flips a settings toggle.
+#[tauri::command]
+pub async fn update_project_settings(
+    handle: State<'_, ProjectHandle>,
+    patch: ProjectSettingsPatch,
+) -> Result<(), String> {
+    handle
+        .update_project_settings(Actor::User, patch)
         .await
         .map_err(|e: CommandError| e.to_string())
 }

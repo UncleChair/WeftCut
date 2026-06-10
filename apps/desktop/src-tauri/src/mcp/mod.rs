@@ -978,7 +978,10 @@ impl WeftCutServer {
         })
     }
 
-    #[tool(description = "Delete a layer.")]
+    #[tool(description = "Delete a layer. When the project setting `auto_delete_empty_tracks` is on \
+                          (default) and this empties a non-reserved, unlocked track, the track is \
+                          deleted in the same history entry (one undo restores both). A/B-roll and \
+                          other role-stamped tracks always stay.")]
     async fn delete_layer(
         &self,
         #[tool(aggr)] args: LayerIdArgs,

@@ -363,6 +363,9 @@ const zhCN: Resources = {
     tail_snap_strength: "吸附强度",
     tail_snap_strength_hint:
       "以屏幕像素为单位；当前时间线缩放越低，对应的时间范围越大。",
+    auto_delete_empty_tracks: "自动删除空轨道",
+    auto_delete_empty_tracks_hint:
+      "删除轨道上最后一个片段时一并移除该轨道，一次撤销即可同时恢复；A/B 轨始终保留。此选项随工程保存。",
     keybindings_heading: "键盘快捷键",
     keybindings_blurb:
       "点击快捷键可移除，点击 [+ 添加] 可绑定新组合。每个组合在所有操作中必须唯一——若想改绑已被占用的键，请先在原操作处取消。",
