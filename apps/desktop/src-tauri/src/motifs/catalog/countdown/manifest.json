@@ -6,6 +6,7 @@
   "default_duration_s": 5.0,
   "max_duration_s": 5.0,
   "max_duration_prop": "seconds",
+  "settle_rafs": 1,
   "props_schema": {
     "seconds": {
       "type": "number",
