@@ -17,6 +17,7 @@ import {
   projectOpen,
   projectSave,
   projectSummary,
+  updateLayer,
   updateLayerParams,
   workspaceDir,
   type AudioPatch,
@@ -575,9 +576,11 @@ export function installExportHook(runExport: RunExport): void {
     if (audioPatches && audioPatches.length > 0) {
       const summary = await projectSummary();
       const audioLayerIds: string[] = [];
+      const videoLayerIds: string[] = [];
       for (const tr of summary.tracks) {
         for (const l of tr.layers) {
           if (l.params.kind === "Audio") audioLayerIds.push(l.id);
+          if (l.params.kind === "VideoClip") videoLayerIds.push(l.id);
         }
       }
       if (audioLayerIds.length < audioPatches.length) {
@@ -590,6 +593,13 @@ export function installExportHook(runExport: RunExport): void {
           kind: "Audio",
           ...audioPatches[i]!,
         });
+      }
+      // The extra clip copies exist only to contribute their AUDIO layers.
+      // Disable their VideoClips: two overlapping export decoders on one
+      // source wedge the export Worker's decode pool (preexisting video
+      // limitation, unrelated to audio — frame counter freezes mid-export).
+      for (let i = 1; i < videoLayerIds.length; i++) {
+        await updateLayer(videoLayerIds[i]!, { enabled: false });
       }
     }
     await runExport(mergeSettings(settings ?? null), outputAbsPath, range);
