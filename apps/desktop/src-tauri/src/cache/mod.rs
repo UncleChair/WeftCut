@@ -125,6 +125,16 @@ impl CacheLayout {
         self.waveforms_dir().join(format!("{hash}.peaks"))
     }
 
+    /// Canonical conformed PCM for a hashed media file — 48 kHz, f32le,
+    /// interleaved, ≤2 channels. See `jobs::conform` for the header format.
+    pub fn audio_conform_dir(&self) -> PathBuf {
+        self.current_root().join("audio")
+    }
+
+    pub fn audio_conform(&self, hash: &str) -> PathBuf {
+        self.audio_conform_dir().join(format!("{hash}.conform"))
+    }
+
     /// On-demand extracted frame, lazy-cached. Used by
     /// `media://{id}/frame/{t_us}` MCP resource.
     pub fn frames(&self, hash: &str) -> PathBuf {
@@ -175,6 +185,7 @@ impl CacheLayout {
             self.proxies_dir(),
             self.thumbnails_root(),
             self.waveforms_dir(),
+            self.audio_conform_dir(),
             self.frames_root(),
             self.inline_subs_dir(),
             self.transcribe_audio_dir(),
@@ -276,6 +287,7 @@ pub fn migrate_hash_artifacts(cache: &CacheLayout, old_hash: &str, new_hash: &st
     rename_file(cache.quick_proxy(old_hash), cache.quick_proxy(new_hash))?;
     rename_dir(cache.thumbnails(old_hash), cache.thumbnails(new_hash))?;
     rename_file(cache.waveform(old_hash), cache.waveform(new_hash))?;
+    rename_file(cache.audio_conform(old_hash), cache.audio_conform(new_hash))?;
     rename_dir(cache.frames(old_hash), cache.frames(new_hash))?;
 
     Ok(())
@@ -307,6 +319,10 @@ mod tests {
             tmp.path().join("waveforms").join("abc.peaks"),
         );
         assert_eq!(
+            layout.audio_conform("abc"),
+            tmp.path().join("audio").join("abc.conform"),
+        );
+        assert_eq!(
             layout.frame("abc", 1_500_000),
             tmp.path().join("frames").join("abc").join("1500000.jpg"),
         );
@@ -329,6 +345,7 @@ mod tests {
         assert!(layout.proxies_dir().is_dir());
         assert!(layout.thumbnails_root().is_dir());
         assert!(layout.waveforms_dir().is_dir());
+        assert!(layout.audio_conform_dir().is_dir());
         assert!(layout.frames_root().is_dir());
         assert!(layout.inline_subs_dir().is_dir());
         assert!(layout.transcribe_audio_dir().is_dir());
@@ -421,13 +438,16 @@ mod tests {
         let new = "realhash";
         std::fs::write(layout.proxy(old), b"proxy").unwrap();
         std::fs::write(layout.waveform(old), b"peaks").unwrap();
+        std::fs::write(layout.audio_conform(old), b"pcm").unwrap();
 
         migrate_hash_artifacts(&layout, old, new).unwrap();
 
         assert!(layout.proxy(new).is_file());
         assert!(layout.waveform(new).is_file());
+        assert!(layout.audio_conform(new).is_file());
         assert!(!layout.proxy(old).exists());
         assert!(!layout.waveform(old).exists());
+        assert!(!layout.audio_conform(old).exists());
     }
 
     #[test]
