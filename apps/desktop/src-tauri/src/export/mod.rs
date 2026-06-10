@@ -20,7 +20,6 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tracing::{info, warn};
 
-use crate::ir::{RenderTarget, emit_ffmpeg, lower};
 use crate::state::Project;
 
 /// Audio encode parameters passed from the webview. `sample_rate`/`channels`
@@ -49,9 +48,11 @@ fn audio_encode_args(codec: &str, bitrate_bps: u64) -> Vec<std::ffi::OsString> {
 }
 
 /// Audio-only export. Produces an audio-only file at `output` (AAC `.m4a` or
-/// Opus `.mka`) containing just the project's audio chain. The PixiJS export
-/// Worker streams the temp video file; `mux_to_file` / `transcode_and_mux`
-/// combine them with ffmpeg.
+/// Opus `.mka`) containing the project's mixed audio. The mix itself happens
+/// in Rust (`audio::mix`, sample-accurate over conform PCM); ffmpeg's role is
+/// reduced to the encode tail — `alimiter` ceiling + AAC/Opus encode. The
+/// PixiJS export Worker streams the temp video file; `mux_to_file` /
+/// `transcode_and_mux` combine them. ADR 0019.
 ///
 /// `_app` is taken to keep the call-site signature stable with the
 /// Tauri command; this routine emits no events of its own — the JS
@@ -63,6 +64,19 @@ pub async fn export_audio_only(
     audio: &AudioEncodeSpec,
     window_us: Option<(i64, i64)>,
 ) -> Result<()> {
+    mix_and_encode(project, output, audio, window_us).await
+}
+
+/// The AppHandle-free core of `export_audio_only`, separated for direct
+/// integration testing.
+async fn mix_and_encode(
+    project: &Project,
+    output: &Path,
+    audio: &AudioEncodeSpec,
+    window_us: Option<(i64, i64)>,
+) -> Result<()> {
+    use crate::audio::mix::{MIX_BLOCK_FRAMES, mix_block, plan_for_project};
+
     if !ffmpeg_is_installed() {
         anyhow::bail!(
             "ffmpeg is not installed. Install via `winget install -e --id Gyan.FFmpeg` (Windows), \
@@ -70,58 +84,39 @@ pub async fn export_audio_only(
         );
     }
 
-    let target = RenderTarget::full(
-        project.composition.width,
-        project.composition.height,
-        project.composition.fps,
-        audio.sample_rate.unwrap_or(project.composition.sample_rate),
-        audio.channels.unwrap_or(project.composition.channels),
-    );
-    let graph = lower(project, target).context("lower IR")?;
-    let plan = emit_ffmpeg(&graph, window_us);
-
-    if plan.maps.is_empty() {
-        // No audio layers — produce nothing. The Pixi mux step
-        // tolerates a missing audio file by stream-copy muxing
+    let plan = plan_for_project(project, window_us).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let total_frames = (plan.window_end_frame - plan.window_start_frame).max(0);
+    if plan.layers.is_empty() || total_frames == 0 {
+        // No audio layers (or an empty window) — produce nothing. The Pixi
+        // mux step tolerates a missing audio file by stream-copy muxing
         // video-only.
-        warn!("audio-only export: project has no audio layers; skipping ffmpeg");
+        warn!("audio-only export: no audio layers in range; skipping ffmpeg");
         return Ok(());
     }
 
-    let script_path = std::env::temp_dir().join(format!(
-        "weftcut-export-{}.txt",
-        uuid::Uuid::now_v7().simple()
-    ));
-    std::fs::write(&script_path, &plan.filter_graph).context("write filter script")?;
+    let target_sr = audio.sample_rate.unwrap_or(project.composition.sample_rate);
+    let target_ch = audio.channels.unwrap_or(2).clamp(1, 2);
 
     let mut cmd = Command::new(ffmpeg_path());
-    cmd.arg("-y").arg("-hide_banner").arg("-nostats");
-
-    for input in &plan.inputs {
-        for arg in input.cli_args() {
-            cmd.arg(arg);
-        }
-    }
-
-    cmd.arg("-filter_complex_script").arg(&script_path);
-
-    for map in &plan.maps {
-        cmd.arg("-map").arg(map);
-    }
+    cmd.args(["-y", "-hide_banner", "-nostats"])
+        .args(["-f", "f32le", "-ar", "48000", "-ac", "2", "-i", "-"])
+        // −1 dB sample-peak ceiling answers overlap summing past full scale;
+        // `level=0` disables alimiter's auto-normalize (defaults ON — the
+        // known trap). True-peak oversampling is future work (docs/audio.md).
+        .args(["-af", "alimiter=limit=0.891:level=0"])
+        .args(["-ar", &target_sr.to_string(), "-ac", &target_ch.to_string()]);
     for arg in audio_encode_args(&audio.codec, audio.bitrate) {
         cmd.arg(arg);
     }
-
     cmd.arg(output);
-
-    cmd.stdin(Stdio::null())
+    cmd.stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
 
-    info!("ffmpeg audio-only export starting → {}", output.display());
+    info!("audio mix+encode starting → {}", output.display());
     let mut child = cmd.spawn().context("spawn ffmpeg")?;
-
+    let mut stdin = child.stdin.take().context("take ffmpeg stdin")?;
     let stderr = child.stderr.take().context("take ffmpeg stderr")?;
     let stderr_task = tokio::spawn(async move {
         let mut reader = BufReader::new(stderr).lines();
@@ -135,11 +130,50 @@ pub async fn export_audio_only(
         tail.join("\n")
     });
 
+    // The mixer is synchronous file I/O — run it on a blocking thread and
+    // feed blocks through a channel to the async stdin writer.
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<f32>>(4);
+    let mix_task = tokio::task::spawn_blocking(move || -> Result<()> {
+        let mut readers = plan
+            .layers
+            .iter()
+            .map(|l| crate::audio::conform_reader::ConformReader::open(&l.conform_path))
+            .collect::<Result<Vec<_>>>()?;
+        let mut done: i64 = 0;
+        while done < total_frames {
+            let frames = MIX_BLOCK_FRAMES.min((total_frames - done) as usize);
+            let mut out = vec![0f32; frames * 2];
+            mix_block(
+                &plan,
+                &mut readers,
+                plan.window_start_frame + done,
+                frames,
+                &mut out,
+            )?;
+            if tx.blocking_send(out).is_err() {
+                break; // ffmpeg died; the stderr tail reports below
+            }
+            done += frames as i64;
+        }
+        Ok(())
+    });
+
+    use tokio::io::AsyncWriteExt;
+    while let Some(block) = rx.recv().await {
+        let mut bytes = Vec::with_capacity(block.len() * 4);
+        for s in &block {
+            bytes.extend_from_slice(&s.to_le_bytes());
+        }
+        if let Err(e) = stdin.write_all(&bytes).await {
+            warn!("ffmpeg stdin write failed: {e}");
+            break;
+        }
+    }
+    drop(stdin); // EOF → ffmpeg finalizes the file
+    mix_task.await.context("join mixer")??;
+
     let status = child.wait().await.context("await ffmpeg")?;
     let stderr_tail = stderr_task.await.unwrap_or_default();
-
-    let _ = std::fs::remove_file(&script_path);
-
     if !status.success() {
         warn!("ffmpeg exited with {}\nstderr tail:\n{}", status, stderr_tail);
         anyhow::bail!(
@@ -148,8 +182,7 @@ pub async fn export_audio_only(
             stderr_tail.lines().rev().take(8).collect::<Vec<_>>().join("\n")
         );
     }
-
-    info!("ffmpeg audio-only export complete → {}", output.display());
+    info!("audio mix+encode complete → {}", output.display());
     Ok(())
 }
 
@@ -465,6 +498,148 @@ mod tests {
         assert!(hvc1_tag_args(TargetCodec::Hevc, Path::new("o.mkv")).is_empty());
         assert!(hvc1_tag_args(TargetCodec::Av1, Path::new("o.mp4")).is_empty());
         assert!(hvc1_tag_args(TargetCodec::H264, Path::new("o.mov")).is_empty());
+    }
+
+    /// End-to-end over the Rust mixer + ffmpeg encode tail: two overlapping
+    /// flat mono conform layers (0.3 + 0.2) mix to (0.5·cos(π/4)) per
+    /// channel, encode to AAC, decode back, and the mid-file peak must land
+    /// within lossy-codec tolerance of the analytic value. Self-skips
+    /// without ffmpeg on PATH.
+    #[tokio::test]
+    async fn mix_and_encode_two_layer_roundtrip() {
+        use crate::audio::conform_reader::write_vconf;
+        use crate::state::{
+            animated::Animated,
+            layer::{AudioParams, Layer, LayerParams},
+            media::{MediaItem, MediaKind, MediaMetadata},
+            project::Project,
+            track::Track,
+        };
+        use chrono::Utc;
+        use uuid::Uuid;
+
+        let ffmpeg_ok = std::process::Command::new("ffmpeg")
+            .arg("-version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if !ffmpeg_ok {
+            eprintln!("ffmpeg not on PATH — skipping mix_and_encode smoke");
+            return;
+        }
+
+        let tmp = TempDir::new().unwrap();
+        let n = 48_000usize; // 1 s
+        let c1 = tmp.path().join("a.conform");
+        let c2 = tmp.path().join("b.conform");
+        write_vconf(&c1, 1, &vec![0.3f32; n]);
+        write_vconf(&c2, 1, &vec![0.2f32; n]);
+
+        let mk_media = |id: Uuid, conform: &std::path::Path| MediaItem {
+            id,
+            label: Some("tone".into()),
+            path_abs: "/m/tone.wav".into(),
+            path_rel: None,
+            kind: MediaKind::Audio,
+            metadata: MediaMetadata {
+                duration_us: Some(1_000_000),
+                video: None,
+                audio: None,
+            },
+            proxy_path: None,
+            proxy_format_version: 0,
+            quick_proxy_path: None,
+            proxy_bypassed: false,
+            export_uses_original: false,
+            waveform_path: None,
+            conform_path: Some(conform.to_path_buf()),
+            thumbnails_dir: None,
+            file_hash_blake3: "0".into(),
+            file_size: 0,
+            file_mtime: 0,
+            imported_at: Utc::now(),
+        };
+        let mk_layer = |id: Uuid, media: Uuid| Layer {
+            id,
+            label: None,
+            t_start_us: 0,
+            t_end_us: 1_000_000,
+            enabled: true,
+            locked: false,
+            metadata: imbl::HashMap::new(),
+            params: LayerParams::Audio(AudioParams {
+                media,
+                src_in_us: 0,
+                src_out_us: 1_000_000,
+                gain_db: Animated::Static(0.0),
+                pan: Animated::Static(0.0),
+                fade_in_us: 0,
+                fade_out_us: 0,
+                mute: false,
+            }),
+        };
+
+        let m1 = Uuid::parse_str("01900000-0000-7000-8000-0000000000d1").unwrap();
+        let m2 = Uuid::parse_str("01900000-0000-7000-8000-0000000000d2").unwrap();
+        let mut p = Project::new_blank("mix-roundtrip");
+        p.composition.duration_us = 1_000_000;
+        p.media_pool.insert(m1, mk_media(m1, &c1));
+        p.media_pool.insert(m2, mk_media(m2, &c2));
+        p.tracks.push_back(Track {
+            id: Uuid::parse_str("01900000-0000-7000-8000-0000000000d3").unwrap(),
+            label: None,
+            enabled: true,
+            locked: false,
+            removable: true,
+            role: None,
+            transient: false,
+            height_px: 48,
+            layers: imbl::vector![
+                mk_layer(
+                    Uuid::parse_str("01900000-0000-7000-8000-0000000000d4").unwrap(),
+                    m1
+                ),
+                mk_layer(
+                    Uuid::parse_str("01900000-0000-7000-8000-0000000000d5").unwrap(),
+                    m2
+                )
+            ],
+        });
+
+        let out = tmp.path().join("mix.m4a");
+        let spec = super::AudioEncodeSpec {
+            codec: "aac".into(),
+            bitrate: 192_000,
+            sample_rate: Some(48_000),
+            channels: Some(2),
+        };
+        super::mix_and_encode(&p, &out, &spec, None)
+            .await
+            .expect("mix_and_encode");
+        assert!(out.is_file() && std::fs::metadata(&out).unwrap().len() > 0);
+
+        // Decode back to f32 and inspect the middle 50% (skips AAC priming
+        // and end padding).
+        let decoded = std::process::Command::new("ffmpeg")
+            .args(["-hide_banner", "-loglevel", "error", "-i"])
+            .arg(&out)
+            .args(["-f", "f32le", "-ac", "2", "-ar", "48000", "-"])
+            .output()
+            .expect("decode back");
+        assert!(decoded.status.success());
+        let bytes = decoded.stdout;
+        let total = bytes.len() / 4;
+        let q = total / 4;
+        let mut peak = 0f32;
+        for i in q..(3 * q) {
+            let s = f32::from_le_bytes(bytes[i * 4..i * 4 + 4].try_into().unwrap());
+            peak = peak.max(s.abs());
+        }
+        let expect = 0.5 * std::f32::consts::FRAC_PI_4.cos(); // ≈ 0.35355
+        assert!(
+            (peak - expect).abs() < expect * 0.10,
+            "decoded mid-file peak {peak}, expected ≈{expect}"
+        );
     }
 
     /// Regression for the no-audio export path: `mux_to_file` must NOT
