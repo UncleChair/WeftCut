@@ -20,6 +20,8 @@ const enUS = {
     recent_open_failed: "Couldn't open project: {{detail}}",
     not_project_folder:
       "That folder isn't a WeftCut project. Pick a folder created by WeftCut, or start a new project.",
+    project_folder_missing:
+      "That project folder no longer exists — it may have been moved, renamed, or deleted. It was removed from the recent list.",
     time_just_now: "just now",
     time_minutes_ago_one: "{{count}} minute ago",
     time_minutes_ago_other: "{{count}} minutes ago",
