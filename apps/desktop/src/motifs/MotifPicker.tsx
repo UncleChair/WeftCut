@@ -20,6 +20,12 @@ import { newDraftSource } from "../render/motifs/newDraftSource";
 interface Props {
   onClose: () => void;
   onAdded: () => Promise<void>;
+  /// Fired after "New Motif" auto-places the fresh draft at the playhead.
+  /// The App selects the layer and reveals its (role-null, AB-hidden)
+  /// auto-created Overlay track, landing the user straight in the property
+  /// panel's source editor — the draft's real editing home (docs/motifs.md
+  /// canvas-context editing).
+  onDraftPlaced: (layerId: string) => void;
   /// Current playhead position in microseconds. Used as the default
   /// "insert at" time so the motif lands wherever the user is
   /// actively looking, matching AE/Premiere behavior.
@@ -45,6 +51,7 @@ const AUTO_OVERLAY_SENTINEL = "__auto_overlay__";
 export function MotifPicker({
   onClose,
   onAdded,
+  onDraftPlaced,
   currentTimeUs,
   tracks,
   fpsNum,
@@ -116,9 +123,19 @@ export function MotifPicker({
     try {
       const { manifest, html } = newDraftSource(name);
       const draftId = await writeMotifDraft(manifest, html);
+      // Keeps the picker useful if the auto-place below fails: the draft's
+      // card is already selected and the error shows in place.
       setSelectedId(draftId); // motifs:changed → reload() surfaces the card
-      setNewOpen(false);
-      setNewName("");
+      // Straight into the editing surface: place the draft at the playhead
+      // (default props/duration, fresh Overlay track), hand the new layer to
+      // the App for select + reveal, and close the picker.
+      const layerId = await addMotif({
+        motifId: draftId,
+        tStartUs: currentTimeUs,
+      });
+      await onAdded();
+      onDraftPlaced(layerId);
+      onClose();
     } catch (e) {
       setError(String(e));
     }

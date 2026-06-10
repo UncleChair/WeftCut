@@ -264,6 +264,23 @@ export function App({ onCloseProject }: AppProps) {
     setSelectedLayerId(layerId);
   }, []);
 
+  // "New Motif" auto-places the fresh draft (MotifPicker.onDraftPlaced) and
+  // should land the user on its property panel with the layer visible. The
+  // owner track is only knowable from the refreshed summary (the layer sits
+  // on a just-created, role-null Overlay track the AB view hides), so the
+  // select + reveal is deferred here until the summary contains the layer.
+  const [pendingRevealLayerId, setPendingRevealLayerId] = useState<string | null>(null);
+  useEffect(() => {
+    if (pendingRevealLayerId === null) return;
+    const owner = (summary?.tracks ?? []).find((t) =>
+      t.layers.some((l) => l.id === pendingRevealLayerId),
+    );
+    if (owner) {
+      revealTrack(owner.id, pendingRevealLayerId);
+      setPendingRevealLayerId(null);
+    }
+  }, [pendingRevealLayerId, summary, revealTrack]);
+
   // R.7: Esc collapses the inline reveal.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -1681,6 +1698,7 @@ export function App({ onCloseProject }: AppProps) {
         <MotifPicker
           onClose={() => setMotifPickerOpen(false)}
           onAdded={refresh}
+          onDraftPlaced={setPendingRevealLayerId}
           currentTimeUs={currentTimeUs}
           tracks={summary?.tracks ?? []}
           fpsNum={summary?.composition.fps_num ?? 30}
