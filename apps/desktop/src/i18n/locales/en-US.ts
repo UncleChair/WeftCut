@@ -261,6 +261,10 @@ const enUS = {
     failed: "Export failed: {{detail}}",
     cancel: "Cancel",
     dismiss: "Dismiss",
+    notify_done_title: "Export finished",
+    notify_done_body: "Saved to {{path}}",
+    notify_failed_title: "Export failed",
+    notify_failed_body: "{{detail}}",
   },
   export_dialog: {
     title: "Export settings",
