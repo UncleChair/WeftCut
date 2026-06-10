@@ -52,6 +52,13 @@ export interface ExportColorDiag {
 
 export class ExportFrameStore implements FrameStore {
   private entries: RingEntry[] = [];
+  /// EOS drain lifecycle. `draining`: the end-of-stream flush was ISSUED —
+  /// frames may still arrive, but eviction pins the last held entry so a late
+  /// finalization always has a clamp target. `ended`: the flush COMPLETED — no
+  /// frame will ever arrive again; `isReadyFor` clamps any target while a
+  /// frame is held.
+  private draining = false;
+  private ended = false;
   /// Pending `waitForPts` resolvers. On every `push` we resolve and
   /// remove the ones whose tUs is now covered. The Worker uses this
   /// to await each source frame before composing the next output
@@ -133,6 +140,42 @@ export class ExportFrameStore implements FrameStore {
     return p;
   }
 
+  /// The end-of-stream `decoder.flush()` was issued. From now on `evictBefore`
+  /// keeps the last held entry: the consumer's per-frame cutoff can overrun the
+  /// final frame's interval (composition grid extending past the video track),
+  /// and an emptied ring would leave `finishEosDrain` nothing to clamp to.
+  beginEosDrain(): void {
+    this.draining = true;
+  }
+
+  /// The end-of-stream flush completed: every frame the source will ever
+  /// produce has been pushed. Remaining wait targets are final — resolve them
+  /// (and all future ones) by clamping to the nearest held frame. Must NOT be
+  /// called while the drain is still emitting: clamping early hands a stale
+  /// frame to a waiter whose real frame is still on its way (silent dup-frame
+  /// corruption across the export tail).
+  finishEosDrain(): void {
+    this.draining = true;
+    this.ended = true;
+    if (this.waiters.length === 0) return;
+    const stillWaiting: typeof this.waiters = [];
+    for (const w of this.waiters) {
+      if (this.isReadyFor(w.tUs)) {
+        w.resolve();
+      } else {
+        stillWaiting.push(w);
+      }
+    }
+    this.waiters = stillWaiting;
+  }
+
+  /// A re-seek (backward clip-reuse jump / decoder rebuild) makes new frames
+  /// possible again — finalized clamping and tail-pinning must deactivate.
+  clearEosDrain(): void {
+    this.draining = false;
+    this.ended = false;
+  }
+
   /// Readiness gate for `waitForPts`. The source frame to display at `tUs`
   /// is FINAL — and `frameAt(tUs)` will return it, clamping to the nearest
   /// held frame — once either its interval is held, or a frame with a
@@ -149,7 +192,9 @@ export class ExportFrameStore implements FrameStore {
   private isReadyFor(tUs: number): boolean {
     if (this.containsPts(tUs)) return true;
     const last = this.lastPtsUs();
-    return last !== null && last > tUs;
+    if (last !== null && last > tUs) return true;
+    // Source fully drained: no better frame can arrive — clamp to what's held.
+    return this.ended && this.entries.length > 0;
   }
 
   frameAt(tUs: number): VideoFrame | null {
@@ -195,8 +240,11 @@ export class ExportFrameStore implements FrameStore {
   }
 
   evictBefore(cutoffUs: number): void {
+    // During/after the EOS drain the last entry is pinned as the clamp target
+    // for grid-overhang waits (see `beginEosDrain`).
+    const stop = this.draining ? Math.max(0, this.entries.length - 1) : this.entries.length;
     let n = 0;
-    while (n < this.entries.length) {
+    while (n < stop) {
       const e = this.entries[n]!;
       if (e.ptsUs + (e.durationUs || 0) <= cutoffUs) {
         e.frame.close();
@@ -211,6 +259,8 @@ export class ExportFrameStore implements FrameStore {
   flush(): void {
     for (const e of this.entries) e.frame.close();
     this.entries = [];
+    this.draining = false;
+    this.ended = false;
     // Any caller still awaiting waitForPts is now in a state where
     // their wait will never resolve naturally. Don't resolve them —
     // that would mislead the caller into thinking a frame is
@@ -243,9 +293,24 @@ export class ExportSourceHandle implements DecoderHandle {
   private readyP: Promise<void> | null = null;
   /// Last packet dispatched to the decoder (decode order); null = unpositioned.
   private cursor: EncodedPacket | null = null;
-  /// Presentation PTS (µs) of `cursor` — the dispatch frontier. Sentinel
-  /// until the first dispatch; used to decide seek-vs-continue per range.
+  /// Presentation PTS (µs) of the last dispatched packet. Diagnostic only —
+  /// the stop-after-key rule overshoots it to the NEXT GOP's key, so it must
+  /// NOT drive the seek-vs-continue decision (see `lastRangeAUs`): treating a
+  /// forward range below the overshot key as a backward jump re-feeds the
+  /// whole stream prefix behind the consumer, and the decoder's stale
+  /// re-emissions then get composited into the output (observed: source
+  /// frame 12 at output frame 150 around a 5s-GOP boundary).
   private lastDispatchedPtsUs = Number.NEGATIVE_INFINITY;
+  /// `aUs` of the previous `decodeRange`. Ranges are monotonic per handle in
+  /// the export's forward march; `aUs < lastRangeAUs` is a true backward jump
+  /// (same-media clip reuse) and the only case that re-seeks.
+  private lastRangeAUs = Number.NEGATIVE_INFINITY;
+  /// Presentation time strictly below which EVERY packet has been dispatched.
+  /// Advanced to the stop key's PTS on a key-break exit (the leading-B peek
+  /// makes that claim exact even for open-GOP streams) and to +∞ at EOS. A
+  /// forward range with `bUs < coveredThroughUs` needs no dispatch at all —
+  /// its frames are already in the decoder/ring pipeline.
+  private coveredThroughUs = Number.NEGATIVE_INFINITY;
   private outputFrameCount = 0;
   /// Cumulative packets fed to the decoder across all `decodeRange` calls.
   /// With a 1:1 export this should track the frame count; a large excess means
@@ -254,10 +319,12 @@ export class ExportSourceHandle implements DecoderHandle {
   dispatchedTotal = 0;
   private downgraded = false;
   private _disposed = false;
-  /// In-flight end-of-stream `decoder.flush()` (floated, never awaited inline —
-  /// see `issueEosFlush`). A subsequent `decodeRange` on this handle awaits it
-  /// before feeding new packets, so a re-decode never races a pending flush.
-  private flushP: Promise<void> | null = null;
+  /// Source PTS where the EOS drain began — the `aUs` of the range whose
+  /// dispatch ran out of packets. Ranges at/after it need no packet dispatch
+  /// (everything was already fed; frames arrive via the floated flush); a range
+  /// before it is a true backward clip-reuse jump and re-seeks through a
+  /// decoder rebuild. null = EOS not reached.
+  private eosFrontierUs: number | null = null;
 
   get disposed(): boolean {
     return this._disposed;
@@ -405,9 +472,13 @@ export class ExportSourceHandle implements DecoderHandle {
     this.decoder.configure(this.buildConfig());
     this.cursor = null;
     this.lastDispatchedPtsUs = Number.NEGATIVE_INFINITY;
+    this.lastRangeAUs = Number.NEGATIVE_INFINITY;
+    this.coveredThroughUs = Number.NEGATIVE_INFINITY;
     // The fresh decoder supersedes any in-flight EOS flush on the old one (its
-    // .then/.catch are identity-guarded and settle harmlessly).
-    this.flushP = null;
+    // .then/.catch are identity-guarded and settle harmlessly), and can produce
+    // frames again — reset the EOS frontier and the ring's finalized state.
+    this.eosFrontierUs = null;
+    this.ring.clearEosDrain();
   }
 
   /// Compositor's `setAnchorTime` reaches us here; export drives decoding via
@@ -436,21 +507,45 @@ export class ExportSourceHandle implements DecoderHandle {
     const packetSink = this.opened?.packetSink;
     if (!packetSink) return;
 
-    // A prior range hit end-of-stream and floated a decoder flush, leaving the
-    // decoder drained + reset (cursor cleared). Await the drain before feeding
-    // new packets so this re-decode never races a pending flush. By now the
-    // encode loop has freed the pool, so this resolves promptly.
-    if (this.flushP) {
-      await this.flushP;
-      this.flushP = null;
-      if (this._disposed) return;
+    // End-of-stream handling. A forward tail range was already fully fed by
+    // the range that hit EOS — return immediately so the worker proceeds to
+    // `waitForPts`, which frees the pool slots the floated flush needs to keep
+    // emitting. Blocking here on the flush deadlocks the export: the final
+    // GOP's drain can span multiple chunks, and nothing frees slots until the
+    // consumer loop runs (the observed freeze at 12660/12731).
+    if (this.eosFrontierUs !== null) {
+      if (aUs >= this.eosFrontierUs) return;
+      // True backward jump (same-media clip reuse) into a drained/draining
+      // decoder. A re-seek must restart from a keyframe anyway, and the
+      // in-flight flush may be stalled on pool slots — rebuild instead of
+      // awaiting it; the superseded flush settles harmlessly (identity-guarded
+      // callbacks).
+      // eslint-disable-next-line no-console
+      console.log(
+        `[weftcut/export] ${this.mediaId} backward range pts=[${aUs}..${bUs}]us ` +
+          `across EOS frontier — rebuilding decoder`,
+      );
+      this.rebuildDecoder();
     }
 
-    // Position: continue from the cursor when aUs is at/ahead of the frontier
-    // (the normal forward-export case); otherwise seek to aUs's GOP key.
+    // Forward ranges (the export's normal march) continue from the cursor;
+    // only a true backward jump (aUs before the previous range — same-media
+    // clip reuse) re-seeks. The per-packet frontier `lastDispatchedPtsUs` must
+    // NOT drive this: the stop-after-key rule overshoots it to the next GOP's
+    // key, and misreading that as "backward" re-feeds the whole stream prefix
+    // behind the consumer (stale-frame corruption at GOP boundaries).
+    const forward = this.cursor !== null && aUs >= this.lastRangeAUs;
+    this.lastRangeAUs = aUs;
+
+    // Fully covered by a prior overshooting dispatch: every packet this range
+    // needs is already in the decoder/ring pipeline — feed nothing.
+    if (forward && bUs < this.coveredThroughUs) {
+      return;
+    }
+
     let pkt: EncodedPacket | null;
-    if (this.cursor !== null && aUs >= this.lastDispatchedPtsUs) {
-      pkt = await packetSink.getNextPacket(this.cursor);
+    if (forward) {
+      pkt = await packetSink.getNextPacket(this.cursor!);
     } else {
       pkt = await packetSink.getKeyPacket(aUs / 1e6);
       // `getKeyPacket` is null when `aUs` precedes the first key packet — a
@@ -473,19 +568,30 @@ export class ExportSourceHandle implements DecoderHandle {
     );
 
     let dispatched = 0;
+    // PTS of the stop key once dispatched. The loop then keeps feeding ONLY
+    // the packets that decode after the key but display before it (open-GOP
+    // leading B-frames) so "everything strictly below the key's PTS is fed"
+    // becomes an exact invariant — what `coveredThroughUs` claims.
+    let stopKeyPtsUs: number | null = null;
     while (pkt) {
       const ptsUs = Math.round(pkt.timestamp * 1e6);
+      if (stopKeyPtsUs !== null && ptsUs >= stopKeyPtsUs) break;
       this.decoder.decode(pkt.toEncodedVideoChunk());
       this.cursor = pkt;
       this.lastDispatchedPtsUs = ptsUs;
       dispatched++;
       this.dispatchedTotal++;
-      // Stop AFTER dispatching the first key strictly past bUs — that key
-      // begins the GOP after bUs, so everything with PTS ≤ bUs (incl.
-      // open-GOP B-refs) has now been fed.
-      if (pkt.type === "key" && ptsUs > bUs) break;
+      // Mark the first key strictly past bUs — that key begins the GOP after
+      // bUs, so everything with PTS ≤ bUs has been fed once its leading
+      // B-frames (if any) follow.
+      if (stopKeyPtsUs === null && pkt.type === "key" && ptsUs > bUs) {
+        stopKeyPtsUs = ptsUs;
+      }
       pkt = await packetSink.getNextPacket(pkt);
       if (this._disposed) return;
+    }
+    if (stopKeyPtsUs !== null) {
+      this.coveredThroughUs = Math.max(this.coveredThroughUs, stopKeyPtsUs);
     }
     // eslint-disable-next-line no-console
     console.log(
@@ -493,14 +599,17 @@ export class ExportSourceHandle implements DecoderHandle {
         `(queue=${this.decoder.decodeQueueSize})`,
     );
 
-    // End-of-stream discriminator: the loop exited because `getNextPacket`
-    // returned null (`pkt === null`) after dispatching at least one packet —
-    // NOT via the key-past-bUs `break` (which leaves `pkt` holding that key).
-    // At EOS we fed every remaining packet, so a mid-stream chunk's drain
-    // mechanism (the next GOP key flushing the prior GOP's reorder buffer) can
-    // never fire — the final GOP's trailing B-frames stay parked in the
-    // decoder's reorder buffer until an explicit flush.
-    if (dispatched > 0 && pkt === null) {
+    // End-of-stream discriminator: `getNextPacket` returned null (`pkt ===
+    // null`), NOT the key-past-bUs `break` (which leaves `pkt` holding that
+    // key). Either this range dispatched to exhaustion, or — `dispatched === 0`
+    // with a positioned cursor — a PREVIOUS range's stop-after-key break
+    // already consumed the stream's final packet and this range found nothing
+    // left. Both are true EOS: the final GOP's trailing frames stay parked in
+    // the decoder's reorder buffer until an explicit flush (the mid-stream
+    // drain mechanism — the next GOP key — can never arrive).
+    if (pkt === null && (dispatched > 0 || this.cursor !== null)) {
+      this.eosFrontierUs = aUs;
+      this.coveredThroughUs = Number.POSITIVE_INFINITY;
       this.issueEosFlush();
     }
   }
@@ -519,21 +628,26 @@ export class ExportSourceHandle implements DecoderHandle {
   /// Floating it lets the encode loop run concurrently: it parks on each trailing
   /// frame, frees the pool behind the waiter, the flush makes progress, the
   /// trailing frames emit, and the waiters resolve. A flushed decoder must resume
-  /// from a keyframe, so reset the cursor → the next `decodeRange` (e.g. a final
-  /// GOP spanning multiple chunks) re-seeks instead of continuing from a stale
-  /// cursor into a reset decoder.
+  /// from a keyframe, so reset the cursor; forward ranges across the tail skip
+  /// dispatch entirely (`eosFrontierUs`), and a backward clip-reuse range
+  /// re-seeks through a decoder rebuild.
   private issueEosFlush(): void {
     const dec = this.decoder;
     if (!dec) return;
+    this.ring.beginEosDrain();
     // eslint-disable-next-line no-console
     console.log(
       `[weftcut/export] ${this.mediaId} EOS — flushing decoder reorder buffer ` +
         `(queue=${dec.decodeQueueSize}, ring=${this.ring.size()})`,
     );
-    this.flushP = dec
+    void dec
       .flush()
       .then(() => {
         if (this.decoder !== dec) return; // superseded by rebuild/dispose
+        // Every frame the source will ever produce is now in the ring (or
+        // already consumed) — finalize so grid-overhang tail waits clamp to
+        // the last held frame instead of parking forever.
+        this.ring.finishEosDrain();
         // eslint-disable-next-line no-console
         console.log(
           `[weftcut/export] ${this.mediaId} EOS flush drained ` +
@@ -569,9 +683,11 @@ export class ExportSourceHandle implements DecoderHandle {
     this.readyP = null;
     this.cursor = null;
     this.lastDispatchedPtsUs = Number.NEGATIVE_INFINITY;
+    this.lastRangeAUs = Number.NEGATIVE_INFINITY;
+    this.coveredThroughUs = Number.NEGATIVE_INFINITY;
     this.outputFrameCount = 0;
     this.downgraded = false;
-    this.flushP = null;
+    this.eosFrontierUs = null;
     this._disposed = true;
   }
 }
