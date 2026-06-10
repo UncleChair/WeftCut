@@ -258,6 +258,10 @@ const zhCN: Resources = {
     failed: "导出失败：{{detail}}",
     cancel: "取消",
     dismiss: "关闭",
+    notify_done_title: "导出完成",
+    notify_done_body: "已保存到 {{path}}",
+    notify_failed_title: "导出失败",
+    notify_failed_body: "{{detail}}",
   },
   export_dialog: {
     title: "导出设置",
