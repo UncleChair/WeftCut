@@ -21,6 +21,8 @@ mod jobs;
 mod keybindings;
 mod logs;
 mod mcp;
+#[cfg(windows)]
+mod media_drop;
 mod motifs;
 mod preview;
 mod agent_session;
@@ -240,6 +242,11 @@ pub fn run() {
                         }
                     }
                 });
+                // Media-pool drag-to-import: path recovery for HTML5 file
+                // drops (see media_drop.rs).
+                if let Err(e) = media_drop::attach(&main) {
+                    tracing::warn!("media_drop attach failed: {e}");
+                }
             }
 
             // Motifs runtime slot — holds the JS-side clock-takeover runtime

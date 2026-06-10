@@ -894,6 +894,20 @@ export function App({ onCloseProject }: AppProps) {
     }
   }, [run, t]);
 
+  // Shared tail of every import entry point (file picker, media-pool
+  // file drop): feed absolute paths into the import pipeline.
+  const importPaths = useCallback(
+    async (paths: string[]) => {
+      if (paths.length === 0) return;
+      await run(async () => {
+        for (const p of paths) {
+          await importMedia(p);
+        }
+      });
+    },
+    [run],
+  );
+
   const importMediaFiles = useCallback(async () => {
     const picked = await openDialog({
       title: t("dialogs.import_title"),
@@ -915,13 +929,20 @@ export function App({ onCloseProject }: AppProps) {
       : typeof picked === "string"
         ? [picked]
         : [];
-    if (paths.length === 0) return;
-    await run(async () => {
-      for (const p of paths) {
-        await importMedia(p);
-      }
+    await importPaths(paths);
+  }, [importPaths, t]);
+
+  // Media-pool drag-to-import: the Rust side recovers real filesystem
+  // paths from HTML5 file drops (src-tauri/src/media_drop.rs) and emits
+  // them here — same pipeline as the picker from this point on.
+  useEffect(() => {
+    const un = listen<string[]>("media:external-drop", (e) => {
+      void importPaths(e.payload);
     });
-  }, [run, t]);
+    return () => {
+      void un.then((f) => f());
+    };
+  }, [importPaths]);
 
   // Pixi/WebCodecs export. Three-stage pipeline:
   //
@@ -1796,7 +1817,7 @@ export function App({ onCloseProject }: AppProps) {
           />
         </section>
 
-        <section className="media-pool">
+        <MediaDropZone>
           <MediaPool
             media={summary?.media ?? []}
             importing={importingMediaIds}
@@ -1807,7 +1828,7 @@ export function App({ onCloseProject }: AppProps) {
               await importCancel(id).catch(() => false);
             }}
           />
-        </section>
+        </MediaDropZone>
 
         <section className="properties">
           <RightPanel
@@ -2150,6 +2171,86 @@ function ExportPanel({
           </div>
         </div>
     </AppDialog>
+  );
+}
+
+/// The media-pool column doubles as the drop target for Explorer file
+/// drags. HTML5 drag events fire because Tauri's drop interception is
+/// off (`dragDropEnabled: false`, load-bearing for the timeline's
+/// internal DnD); the dropped Files go to Rust via WebView2's
+/// `postMessageWithAdditionalObjects`, the one channel that surfaces
+/// their real filesystem paths (`media_drop.rs`). Internal media-item
+/// drags carry a custom MIME type, not "Files", and are ignored here.
+function MediaDropZone({ children }: { children: React.ReactNode }) {
+  const { t } = useTranslation();
+  const [active, setActive] = useState(false);
+  // dragenter/leave fire per descendant; track depth so the highlight
+  // doesn't flicker while moving across children.
+  const depth = useRef(0);
+  const isFileDrag = (e: React.DragEvent) =>
+    Array.from(e.dataTransfer.types).includes("Files");
+  return (
+    <section
+      className="media-pool"
+      onDragEnter={(e) => {
+        if (!isFileDrag(e)) return;
+        e.preventDefault();
+        depth.current += 1;
+        setActive(true);
+      }}
+      onDragOver={(e) => {
+        if (!isFileDrag(e)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+      }}
+      onDragLeave={(e) => {
+        if (!isFileDrag(e)) return;
+        depth.current -= 1;
+        if (depth.current <= 0) {
+          depth.current = 0;
+          setActive(false);
+        }
+      }}
+      onDrop={(e) => {
+        if (!isFileDrag(e)) return;
+        e.preventDefault();
+        depth.current = 0;
+        setActive(false);
+        const webview = (
+          window as unknown as {
+            chrome?: {
+              webview?: {
+                postMessageWithAdditionalObjects?: (
+                  message: string,
+                  objects: FileList,
+                ) => void;
+              };
+            };
+          }
+        ).chrome?.webview;
+        if (
+          webview?.postMessageWithAdditionalObjects &&
+          e.dataTransfer.files.length > 0
+        ) {
+          try {
+            webview.postMessageWithAdditionalObjects(
+              JSON.stringify({ kind: "weftcut:media-drop" }),
+              e.dataTransfer.files,
+            );
+          } catch {
+            // The runtime throws for Files not backed by disk (e.g. an
+            // image dragged out of a browser). Nothing importable there.
+          }
+        }
+      }}
+    >
+      {children}
+      {active && (
+        <div className="media-pool-drop-overlay" aria-hidden="true">
+          {t("media_pool.drop_to_import")}
+        </div>
+      )}
+    </section>
   );
 }
 
