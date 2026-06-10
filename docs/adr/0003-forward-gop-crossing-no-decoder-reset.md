@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # Forward GOP-crossings don't reset the decoder

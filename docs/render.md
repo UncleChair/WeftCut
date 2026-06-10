@@ -39,8 +39,11 @@ apps/desktop/src/render/
     VideoClipSprite.ts
     ImageOverlaySprite.ts
     TextSprite.ts
+    MotifSprite.ts           — binds a Motif's captured PNG frame as a texture
     SubtitlesSprite.ts       — owns JASSUB binding
     ColorSprite.ts
+  motifs/                    — Motif raster cache + frame descriptor helpers
+                               (capture/cache pipeline covered in motifs.md)
   subtitles/
     Jassub.ts                — libass-wasm canvas-mode binding
   worker/
@@ -49,8 +52,6 @@ apps/desktop/src/render/
     protocol.ts              — postMessage protocol (start/cancel/progress/chunk/done)
   audio/
     AudioGraph.ts            — Web Audio mixer
-  fixtures/
-    runFixture.ts            — reusable fixture runner (used by tests + Tauri command)
 ```
 
 ## Compositor

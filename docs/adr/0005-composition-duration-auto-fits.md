@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # Composition duration auto-fits to layers unless the user pins it

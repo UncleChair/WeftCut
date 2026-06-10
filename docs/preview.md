@@ -20,6 +20,7 @@ covers the preview-side surface and transport.
             ├─ VideoClipSprite
             ├─ ImageOverlaySprite
             ├─ TextSprite
+            ├─ MotifSprite
             ├─ SubtitlesSprite
             └─ ColorSprite
 ```

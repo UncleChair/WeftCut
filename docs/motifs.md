@@ -373,8 +373,8 @@ same backend cores (so the two surfaces can't drift):
   stripped so it doesn't bloat agent context; agents fetch source on demand.)
 - **Author.** `get_motif_source {id}` reads a Motif's `{ manifest, html }`; `write_motif_draft
   { manifest, html, from? }` writes a draft (`from` records an existing Motif as the Update
-  target); `preview_motif_draft { id, t_sec, width?, height? }` returns a base64 PNG of one
-  frame so the agent can **see its output and self-correct**; `install_motif { draft_id, mode:
+  target); `preview_motif_draft { id, t_sec, width?, height?, props? }` returns a base64 PNG of
+  one frame so the agent can **see its output and self-correct**; `install_motif { draft_id, mode:
   new | update }` publishes (update bumps the version + rebinds + migrates placed layers);
   `delete_motif { id }` removes a user Motif (built-ins rejected).
 

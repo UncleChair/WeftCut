@@ -130,7 +130,7 @@ Catalog:
 Motif authoring (see [motifs.md](motifs.md) "Agent surface"):
 - `get_motif_source { id }` → `{ manifest, html }` — any built-in, installed, or draft.
 - `write_motif_draft { manifest, html, from? }` → draft id. `from` records an existing Motif as the update target.
-- `preview_motif_draft { id, t_sec, width?, height? }` → base64 PNG of one frame.
+- `preview_motif_draft { id, t_sec, width?, height?, props? }` → base64 PNG of one frame; `props` defaults to the Motif's schema defaults.
 - `install_motif { draft_id, mode: new | update }` — publish; update bumps version and rebinds placed layers.
 - `delete_motif { id }` — remove a user Motif (built-ins rejected).
 
