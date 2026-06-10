@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { exportSettingsGet, exportSettingsSet, workspaceDir } from "../ipc";
 import { AppDialog } from "../components/AppDialog";
 import { AppSelect } from "../components/AppSelect";
+import { AppSwitch } from "../components/AppSwitch";
 import { Button } from "@/components/ui/button";
 import {
   type EncodePath,
@@ -482,11 +483,11 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, onCancel
                   <span className="settings-toggle-label">
                     {t("export_dialog.audio_include")}
                   </span>
-                  <input
-                    type="checkbox"
+                  <AppSwitch
                     checked={settings.audio.include}
-                    onChange={(e) =>
-                      patch({ audio: { ...settings.audio, include: e.target.checked } })
+                    ariaLabel={t("export_dialog.audio_include")}
+                    onCheckedChange={(next) =>
+                      patch({ audio: { ...settings.audio, include: next } })
                     }
                   />
                 </div>
