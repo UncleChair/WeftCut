@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { formatTimecode, parseTimecode } from "../frames";
 import { AppDialog } from "../components/AppDialog";
+import { AppSelect } from "../components/AppSelect";
 import {
   addMotif,
   importMotif,
@@ -410,19 +411,21 @@ function MotifForm({
       </label>
       <label className="motif-picker-field">
         <span>{t("motif_picker.track_label")}</span>
-        <select
+        <AppSelect
           value={trackChoice}
-          onChange={(e) => setTrackChoice(e.target.value)}
-        >
-          <option value={AUTO_OVERLAY_SENTINEL}>
-            {t("motif_picker.track_overlay_auto")}
-          </option>
-          {tracks.map((tr) => (
-            <option key={tr.id} value={tr.id}>
-              {tr.label ?? `track ${tr.id.slice(0, 8)}`}
-            </option>
-          ))}
-        </select>
+          onValueChange={setTrackChoice}
+          ariaLabel={t("motif_picker.track_label")}
+          options={[
+            {
+              value: AUTO_OVERLAY_SENTINEL,
+              label: t("motif_picker.track_overlay_auto"),
+            },
+            ...tracks.map((tr) => ({
+              value: tr.id,
+              label: tr.label ?? `track ${tr.id.slice(0, 8)}`,
+            })),
+          ]}
+        />
       </label>
       <p className="motif-picker-hint">
         {t("motif_picker.duration_hint", {

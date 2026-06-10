@@ -16,6 +16,7 @@ import {
 } from "../ipc";
 import { formatTimecode, parseTimecode } from "../frames";
 import { AppDialog } from "../components/AppDialog";
+import { AppSlider } from "../components/AppSlider";
 import { KeybindingPanel } from "./KeybindingPanel";
 import {
   setAppSettings,
@@ -222,30 +223,14 @@ function TimelineSnapSection({
         <span className="settings-slider-label">
           {t("settings.tail_snap_strength")}
         </span>
-        <input
-          type="range"
+        <AppSlider
           min={TAIL_SNAP_MIN_PX}
           max={TAIL_SNAP_MAX_PX}
           value={draftStrengthPx}
           disabled={!enabled}
-          onChange={(e) => setDraftStrengthPx(Number(e.target.value))}
-          onPointerUp={(e) => {
-            void commitStrength(Number(e.currentTarget.value));
-          }}
-          onKeyUp={(e) => {
-            if (
-              e.key === "ArrowLeft" ||
-              e.key === "ArrowRight" ||
-              e.key === "Home" ||
-              e.key === "End"
-            ) {
-              void commitStrength(Number(e.currentTarget.value));
-            }
-          }}
-          onBlur={(e) => {
-            void commitStrength(Number(e.currentTarget.value));
-          }}
-          aria-label={t("settings.tail_snap_strength")}
+          onValueChange={setDraftStrengthPx}
+          onValueCommitted={(v) => void commitStrength(v)}
+          ariaLabel={t("settings.tail_snap_strength")}
         />
         <input
           type="number"

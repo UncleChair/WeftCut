@@ -179,6 +179,91 @@ html, body, #root { height: 100%; margin: 0; }
   margin-left: auto;
 }
 
+/* ============================================================ */
+/* Shared form controls (AppSelect / AppSlider wrappers)         */
+/* ============================================================ */
+
+/* AppSelect trigger — the closed control. The open popup reuses the
+ * .menu-list / .menu-item dropdown chrome. */
+.app-select {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 5px 8px;
+  font-size: 12px;
+  text-align: left;
+  color: #e5e7eb;
+  background: #11151b;
+  border: 1px solid #374151;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.app-select:focus-visible,
+.app-select[data-popup-open] {
+  outline: none;
+  border-color: #3b82f6;
+}
+
+.app-select[data-disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* AppSlider — track/thumb skin replacing the native range input. */
+.app-slider {
+  display: flex;
+  align-items: center;
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.app-slider-control {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 16px;
+  cursor: pointer;
+}
+
+.app-slider-track {
+  position: relative;
+  width: 100%;
+  height: 4px;
+  background: #374151;
+  border-radius: 2px;
+}
+
+.app-slider-indicator {
+  position: absolute;
+  height: 100%;
+  background: #3b82f6;
+  border-radius: 2px;
+}
+
+.app-slider-thumb {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background: #e5e7eb;
+  border-radius: 50%;
+  outline: none;
+}
+
+.app-slider-thumb:focus-visible {
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.5);
+}
+
+.app-slider[data-disabled] {
+  opacity: 0.5;
+}
+
+.app-slider[data-disabled] .app-slider-control {
+  cursor: not-allowed;
+}
+
 .separator {
   display: inline-block;
   width: 1px;
@@ -1848,10 +1933,6 @@ input.preview-timecode:focus {
   gap: 8px;
   font-size: 12px;
   color: #cbd5e1;
-  /* Positioned ancestor for `.prop-field-hint-bubble` so the bubble's
-     `right: 0; top: 100%` anchors to the row's bounds — never
-     overflowing horizontally into a scrollbar trigger. */
-  position: relative;
 }
 
 .prop-field-label {
@@ -1881,31 +1962,20 @@ input.preview-timecode:focus {
   cursor: help;
   user-select: none;
   outline: none;
-  /* Intentionally NOT `position: relative`: the bubble anchors to the
-     parent `.prop-field` row instead of this icon. See the comment on
-     `.prop-field-hint-bubble` for why. */
 }
 
 .prop-field-hint:hover,
-.prop-field-hint:focus-visible {
+.prop-field-hint:focus-visible,
+.prop-field-hint[data-popup-open] {
   background: #334155;
   color: #e5e7eb;
 }
 
+/* Visual chrome only — the bubble is a portaled Base UI Tooltip popup
+ * now (Positioner owns placement and collision-flipping; show/hide is
+ * hover/focus-driven by the library). */
 .prop-field-hint-bubble {
-  position: absolute;
-  /* Anchor to the parent row (`.prop-field`) rather than the icon: the
-     right panel is narrow (~280 px), so a 240 px bubble extending
-     rightward from the icon would either overflow the panel or trigger
-     a horizontal scrollbar. Right-anchored below the row keeps the
-     bubble fully inside the panel for any reasonable width. */
-  top: calc(100% + 4px);
-  right: 0;
-  left: auto;
-  z-index: 50;
-  /* Cap at the row's own width so the bubble can NEVER widen the
-     inspector column. Vast majority of hints fit in 240 px. */
-  width: min(240px, 100%);
+  max-width: 240px;
   padding: 8px 10px;
   background: #0e1218;
   border: 1px solid #1f2937;
@@ -1917,16 +1987,6 @@ input.preview-timecode:focus {
   text-align: left;
   white-space: normal;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-  pointer-events: none;
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity 80ms ease-out, visibility 80ms ease-out;
-}
-
-.prop-field-hint:hover .prop-field-hint-bubble,
-.prop-field-hint:focus-visible .prop-field-hint-bubble {
-  opacity: 1;
-  visibility: visible;
 }
 
 .prop-field-control {
@@ -1942,7 +2002,7 @@ input.preview-timecode:focus {
 
 .prop-field-control input[type="text"],
 .prop-field-control input[type="number"],
-.prop-field-control select,
+.prop-field-control .app-select,
 .prop-field-control textarea {
   background: #0e1218;
   border: 1px solid #1f2937;
@@ -1969,14 +2029,8 @@ input.preview-timecode:focus {
   cursor: pointer;
 }
 
-.prop-field-control input[type="range"] {
-  /* `flex: 1 1 0` (instead of `flex: 1` = `1 1 0%`) is identical for
-     basis here, but combined with the explicit `min-width: 0` below
-     it overrides the ~129 px UA min for range inputs — letting the
-     track shrink to whatever the panel actually has room for. */
-  flex: 1 1 0;
-  min-width: 0;
-}
+/* Range inputs are gone — .app-slider's own flex: 1 1 0 / min-width: 0
+ * base already lets the track shrink to the panel's available room. */
 
 .prop-range-value {
   color: #9ca3af;
@@ -2427,7 +2481,7 @@ input.preview-timecode:focus {
   padding: 0 0 6px;
 }
 
-.settings-slider-row input[type="range"] {
+.settings-slider-row .app-slider {
   flex: 1 1 auto;
   min-width: 120px;
 }
@@ -2753,7 +2807,7 @@ input.preview-timecode:focus {
 
 .motif-picker-field input[type='text'],
 .motif-picker-field input[type='number'],
-.motif-picker-field select {
+.motif-picker-field .app-select {
   background: #1f2937;
   border: 1px solid #374151;
   color: #e5e7eb;
@@ -3159,7 +3213,7 @@ input.preview-timecode:focus {
 }
 
 .new-project-row input[type="text"],
-.new-project-row select {
+.new-project-row .app-select {
   background: #0b0d11;
   border: 1px solid #1f2937;
   border-radius: 4px;
@@ -3170,7 +3224,8 @@ input.preview-timecode:focus {
 }
 
 .new-project-row input[type="text"]:focus,
-.new-project-row select:focus {
+.new-project-row .app-select:focus-visible,
+.new-project-row .app-select[data-popup-open] {
   border-color: #60a5fa;
 }
 
@@ -3498,20 +3553,10 @@ input.preview-timecode:focus {
   padding: 7px 0;
 }
 
+/* Export-dialog context: AppSelect triggers here keep the wide field
+ * footprint native selects had (.app-select carries the shared skin). */
 .export-select {
   min-width: 180px;
-  padding: 5px 8px;
-  font-size: 12px;
-  color: #e5e7eb;
-  background: #11151b;
-  border: 1px solid #374151;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.export-select:focus {
-  outline: none;
-  border-color: #3b82f6;
 }
 
 .export-bitrate {
