@@ -28,6 +28,7 @@ pub mod authoring;
 pub mod authoring_commands;
 pub mod builtin;
 pub mod catalog;
+pub mod staleness;
 pub mod store;
 
 #[cfg(windows)]
