@@ -14,6 +14,8 @@ import {
   addMediaLayer,
   addMotif,
   projectNewWorkspace,
+  projectOpen,
+  projectSave,
   projectSummary,
   updateLayerParams,
   workspaceDir,
@@ -48,6 +50,11 @@ export interface E2EHook {
     name: string;
     canvas: CanvasPreset;
   }): Promise<void>;
+  /// Save, hop Root back to the StartupScreen (unmounting App), reopen the
+  /// project at `path`, and re-enter the editor. Remounting App re-runs its
+  /// on-open Motif staleness check — this mirrors the real close-and-reopen
+  /// flow (the only in-session way to switch projects). Dev/e2e only.
+  motifReopenProject(args: { path: string }): Promise<void>;
   /// Import `mediaAbsPath`, place it 1:1 at t=0 on a fresh video track, and
   /// export to `outputAbsPath`. `settings` overlays DEFAULT_EXPORT_SETTINGS
   /// (H.264/mp4, follow-composition res+fps). `range` trims the export to
@@ -214,10 +221,21 @@ function hookSlot(): Partial<E2EHook> {
 }
 
 /// Root-side: workspace creation + entering the editor. `enterEditor` is
-/// Root's `setStage("editor")`.
-export function installBootstrapHook(enterEditor: () => void): void {
+/// Root's `setStage("editor")`; `exitToStartup` is `setStage("startup")`.
+export function installBootstrapHook(
+  enterEditor: () => void,
+  exitToStartup: () => void,
+): void {
   hookSlot().newProjectAndEnter = async (args) => {
     await projectNewWorkspace(args);
+    enterEditor();
+  };
+  hookSlot().motifReopenProject = async ({ path }) => {
+    await projectSave();
+    exitToStartup();
+    // Let React commit the App unmount before swapping actor state under it.
+    await new Promise((r) => setTimeout(r, 50));
+    await projectOpen(path);
     enterEditor();
   };
 }
