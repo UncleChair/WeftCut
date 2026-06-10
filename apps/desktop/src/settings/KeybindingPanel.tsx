@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { XIcon } from "lucide-react";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import {
   keybindingsExport,
@@ -215,7 +216,7 @@ export function KeybindingPanel({
                         aria-label={t("keybindings.remove_hint")}
                         onClick={() => onRemoveChord(id, chord)}
                       >
-                        ✕
+                        <XIcon size={11} aria-hidden />
                       </button>
                     </span>
                   ))}

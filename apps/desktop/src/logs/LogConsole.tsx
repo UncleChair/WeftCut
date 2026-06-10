@@ -7,6 +7,7 @@ import {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { XIcon } from "lucide-react";
 import { open as openInShell } from "@tauri-apps/plugin-shell";
 import {
   logClear,
@@ -365,7 +366,7 @@ export const LogConsole = forwardRef<LogConsoleHandle, Props>(function LogConsol
             onClick={onClose}
             aria-label={t("log.close")}
           >
-            ✕
+            <XIcon size={13} aria-hidden />
           </button>
         </div>
       </div>

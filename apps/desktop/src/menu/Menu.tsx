@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Menubar } from "@base-ui/react/menubar";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
+import { CheckIcon, ChevronDownIcon } from "lucide-react";
 import {
   resolveAccelerator,
   useEffectiveBindings,
@@ -38,7 +39,7 @@ export function Menu({ label, hint, children }: MenuProps) {
       <MenuPrimitive.Trigger className="menu-trigger" title={hint}>
         <span className="menu-trigger-label">{label}</span>
         <span className="menu-chevron" aria-hidden="true">
-          ▾
+          <ChevronDownIcon size={11} />
         </span>
       </MenuPrimitive.Trigger>
       <MenuPrimitive.Portal>
@@ -95,7 +96,7 @@ export function MenuItem({
       onClick={() => void onSelect()}
     >
       <span className="menu-item-check" aria-hidden="true">
-        {checked ? "✓" : ""}
+        {checked ? <CheckIcon size={12} /> : null}
       </span>
       <span className="menu-item-label">{label}</span>
       {accelerator && (

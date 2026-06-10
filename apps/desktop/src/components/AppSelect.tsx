@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Select } from "@base-ui/react/select";
+import { CheckIcon, ChevronDownIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export interface AppSelectOption {
@@ -48,7 +49,7 @@ export function AppSelect({
       >
         <Select.Value />
         <span className="menu-chevron" aria-hidden="true">
-          ▾
+          <ChevronDownIcon size={11} />
         </span>
       </Select.Trigger>
       <Select.Portal>
@@ -70,7 +71,9 @@ export function AppSelect({
                 className="menu-item"
               >
                 <span className="menu-item-check" aria-hidden="true">
-                  <Select.ItemIndicator>✓</Select.ItemIndicator>
+                  <Select.ItemIndicator>
+                    <CheckIcon size={12} />
+                  </Select.ItemIndicator>
                 </span>
                 <Select.ItemText className="menu-item-label">
                   {o.label}

@@ -21,8 +21,9 @@
 // temporarily reveal the clicked layer's track. R.6 ships without the
 // reveal callback; R.7 wires it.
 
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { CircleIcon, FilmIcon, MusicIcon, TypeIcon } from "lucide-react";
 
 import { formatTimecode } from "../frames";
 import { type GroupSummary, type LayerSummary, type TrackSummary } from "../ipc";
@@ -272,17 +273,17 @@ function mediaLabelFor(layer: LayerSummary): string | null {
   }
 }
 
-function iconForKind(kind: string): string {
-  // Cheap text glyph fallback when no thumbnail/waveform is available.
+function iconForKind(kind: string): ReactNode {
+  // Cheap icon fallback when no thumbnail/waveform is available.
   // Subtitle layers + audio layers tend not to have a thumbnail path.
   switch (kind.toLowerCase()) {
     case "video":
-      return "▶";
+      return <FilmIcon size={14} />;
     case "audio":
-      return "♪";
+      return <MusicIcon size={14} />;
     case "subtitle":
-      return "T";
+      return <TypeIcon size={14} />;
     default:
-      return "•";
+      return <CircleIcon size={10} />;
   }
 }
