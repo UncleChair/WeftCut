@@ -358,4 +358,47 @@ mod tests {
         ]);
         assert!((a.value_at(5_000_000, 0.0) - 2.5).abs() < 1e-6);
     }
+
+    /// Cross-language golden vectors. The SAME fixture is asserted by
+    /// `render/animated.golden.test.ts` against the TS `resolveAnimated`;
+    /// a change that passes one side and fails the other is an engine
+    /// drift, which is exactly what this test exists to catch. Also
+    /// locks the serde wire shape (`mode`/`value`, `interp.kind`).
+    #[test]
+    fn golden_vectors_match_fixture() {
+        #[derive(serde::Deserialize)]
+        struct Sample {
+            t_us: TimeUs,
+            expect: f64,
+        }
+        #[derive(serde::Deserialize)]
+        struct Case {
+            name: String,
+            track: Animated<f64>,
+            samples: Vec<Sample>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Fixture {
+            default: f64,
+            cases: Vec<Case>,
+        }
+
+        let fixture: Fixture = serde_json::from_str(include_str!(
+            "../../../src/render/animatedGolden.fixture.json"
+        ))
+        .expect("fixture parses as Animated<f64> wire shape");
+        assert!(!fixture.cases.is_empty());
+        for case in &fixture.cases {
+            for s in &case.samples {
+                let got = case.track.value_at(s.t_us, fixture.default);
+                assert!(
+                    (got - s.expect).abs() < 1e-6,
+                    "case `{}` t_us={}: got {got}, expect {}",
+                    case.name,
+                    s.t_us,
+                    s.expect
+                );
+            }
+        }
+    }
 }
