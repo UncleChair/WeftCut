@@ -400,6 +400,39 @@ html, body, #root { height: 100%; margin: 0; }
   display: flex;
   align-items: center;
   gap: 12px;
+  /* Let the caption buttons stretch to the header's full height. */
+  align-self: stretch;
+}
+
+/* Caption buttons for the frameless window (WindowControls). Windows
+ * convention: square, flush to the top-right corner, full bar height,
+ * red close hover. The negative margins cancel .app-header's padding so
+ * the buttons truly reach the window edge. */
+.window-controls {
+  display: flex;
+  align-self: stretch;
+  margin: -8px -16px -8px 4px;
+}
+
+.window-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  background: transparent;
+  border: none;
+  color: var(--muted-foreground);
+  cursor: default;
+}
+
+.window-control:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--foreground);
+}
+
+.window-control-close:hover {
+  background: #e81123;
+  color: #fff;
 }
 
 .locale-toggle {
@@ -1017,12 +1050,26 @@ input.preview-timecode:focus {
   inset: 0;
   display: grid;
   grid-template-columns: 1fr 360px;
-  grid-template-rows: 1fr 80px;
+  grid-template-rows: 30px 1fr 80px;
   grid-template-areas:
-    "preview record"
-    "mini    record";
+    "titlebar titlebar"
+    "preview  record"
+    "mini     record";
   background: #08090b;
   color: var(--foreground);
+}
+
+/* Frameless window: agent mode's slim drag strip + caption buttons. */
+.agent-titlebar {
+  grid-area: titlebar;
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
+  user-select: none;
+}
+
+.agent-titlebar .window-controls {
+  margin: 0;
 }
 
 .agent-preview {
@@ -2563,10 +2610,28 @@ input.preview-timecode:focus {
   background: var(--background);
 }
 
+/* Frameless window: slim title strip across the top of the startup
+ * screen — drag region + locale toggle + caption buttons. */
+.startup-titlebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 34px;
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
+  gap: 8px;
+  user-select: none;
+  z-index: 10;
+}
+
+.startup-titlebar .window-controls {
+  margin: 0;
+}
+
 .startup-locale-toggle {
-  position: absolute;
-  top: 16px;
-  right: 16px;
+  align-self: center;
   display: inline-flex;
   align-items: center;
   gap: 6px;

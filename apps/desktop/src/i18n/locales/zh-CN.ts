@@ -220,6 +220,12 @@ const zhCN: Resources = {
     en_US: "English",
     zh_CN: "中文",
   },
+  window_controls: {
+    minimize: "最小化",
+    maximize: "最大化",
+    restore: "还原",
+    close: "关闭",
+  },
   transport: {
     play: "▶",
     pause: "⏸",
