@@ -30,6 +30,11 @@ interface Props {
   tracks: TrackSummary[];
   fpsNum: number;
   fpsDen: number;
+  /// Composition canvas size in pixels. The form's large preview draws the
+  /// canvas as its backdrop so the motif's true relative size and default
+  /// placement (top-left at (0,0), natural pixels) are visible before adding.
+  compWidth: number;
+  compHeight: number;
 }
 
 /// `<select>` value when the user wants the picker to find-or-create the
@@ -44,6 +49,8 @@ export function MotifPicker({
   tracks,
   fpsNum,
   fpsDen,
+  compWidth,
+  compHeight,
 }: Props) {
   const { t } = useTranslation();
   const [motifs, setMotifs] = useState<MotifSummary[] | null>(null);
@@ -216,6 +223,8 @@ export function MotifPicker({
                   tracks={videoTracks}
                   fpsNum={fpsNum}
                   fpsDen={fpsDen}
+                  compWidth={compWidth}
+                  compHeight={compHeight}
                   onSubmit={async ({ tStartUs, props, trackId }) => {
                     setError(null);
                     try {
@@ -267,6 +276,8 @@ function MotifForm({
   tracks,
   fpsNum,
   fpsDen,
+  compWidth,
+  compHeight,
   onSubmit,
 }: {
   motif: MotifSummary;
@@ -274,6 +285,8 @@ function MotifForm({
   tracks: TrackSummary[];
   fpsNum: number;
   fpsDen: number;
+  compWidth: number;
+  compHeight: number;
   onSubmit: (args: {
     tStartUs: number;
     props: Record<string, unknown>;
@@ -324,12 +337,21 @@ function MotifForm({
         submit();
       }}
     >
-      <h3>{t("motif_picker.preview_heading")}</h3>
+      <h3>
+        {t("motif_picker.preview_heading")}
+        <span className="motif-preview-canvas-size">
+          {t("motif_picker.preview_canvas_size", {
+            w: compWidth,
+            h: compHeight,
+          })}
+        </span>
+      </h3>
       <MotifPreview
         motif={motif}
         props={debouncedProps}
-        width={480}
+        maxWidth={480}
         large
+        canvas={[compWidth, compHeight]}
       />
 
       <h3>{t("motif_picker.props_heading")}</h3>
@@ -425,23 +447,24 @@ function posterTSec(motif: MotifSummary): number {
 function MotifPreview({
   motif,
   props,
-  width,
+  maxWidth,
   large,
+  canvas,
 }: {
   motif: MotifSummary;
   props: Record<string, unknown>;
-  width: number;
+  maxWidth: number;
   large?: boolean;
+  /// Composition `[width, height]`. When set, the box becomes the canvas
+  /// (comp aspect-ratio) and the motif renders at the compositor's default
+  /// placement — top-left at (0,0), natural pixels relative to the canvas —
+  /// instead of being contain-zoomed to fill the box.
+  canvas?: [number, number];
 }) {
   const [w, h] = motif.size;
-  // Fixed 16:9 preview box of the given `width`, so a large or oddly-shaped
-  // motif can't blow up the display area. The motif is scaled to CONTAIN
-  // (whole thing visible, never cropped) and centered; the host's checkerboard
-  // shows through the letterbox margins.
-  const boxW = width;
-  const boxH = Math.round((width * 9) / 16);
-  const scale = Math.min(boxW / w, boxH / h);
   const tSec = posterTSec(motif);
+  const [compW, compH] = canvas ?? [0, 0];
+  const canvasMode = compW > 0 && compH > 0;
   const { t } = useTranslation();
 
   const urlRef = useRef<string | null>(null);
@@ -489,24 +512,38 @@ function MotifPreview({
           ? "motif-preview-host motif-preview-large"
           : "motif-preview-host"
       }
-      style={{ width: boxW, height: boxH }}
+      // The host is a 16:9 box (CSS aspect-ratio) filling the parent's width,
+      // capped here — so a large or oddly-shaped motif can't blow up the
+      // display area, and the box can never overflow a narrower parent (the
+      // card column, or the form pane in a narrow window). Canvas mode swaps
+      // the aspect for the composition's, making the box the canvas itself.
+      style={
+        canvasMode
+          ? { maxWidth, aspectRatio: `${compW} / ${compH}` }
+          : { maxWidth }
+      }
     >
       {pngUrl && (
+        // Default: contain-scaled + centered by `.motif-preview-host img`
+        // (object-fit); the checkerboard shows through the letterbox margins.
+        // Canvas mode: inline percentages override that to the motif's true
+        // size relative to the canvas, anchored top-left — mirroring the
+        // compositor's default placement (Transform::default → x:0, y:0,
+        // scale:1, Pixi top-left anchor). Oversized motifs clip at the box
+        // edge exactly as the real canvas would.
         <img
           src={pngUrl}
           alt={`preview-${motif.id}`}
           width={w}
           height={h}
-          // Centered + contain-scaled inside the fixed 16:9 box. The host is
-          // position:relative + overflow:hidden, so absolute centering with a
-          // center transform-origin keeps the scaled motif middle-anchored.
-          style={{
-            position: "absolute",
-            left: "50%",
-            top: "50%",
-            transformOrigin: "center",
-            transform: `translate(-50%, -50%) scale(${scale})`,
-          }}
+          style={
+            canvasMode
+              ? {
+                  width: `${(w / compW) * 100}%`,
+                  height: `${(h / compH) * 100}%`,
+                }
+              : undefined
+          }
         />
       )}
       {!pngUrl && !error && (
@@ -526,7 +563,7 @@ function MotifPreview({
 /// consistent.
 function MotifCardThumbnail({ motif }: { motif: MotifSummary }) {
   const defaults = useMemo(() => defaultPropsFor(motif), [motif.id]);
-  return <MotifPreview motif={motif} props={defaults} width={240} />;
+  return <MotifPreview motif={motif} props={defaults} maxWidth={240} />;
 }
 
 function PropField({

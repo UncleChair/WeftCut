@@ -494,6 +494,7 @@ const enUS = {
     loading: "Loading motifs…",
     empty: "No motifs available.",
     preview_heading: "Preview",
+    preview_canvas_size: "{{w}}×{{h}} canvas",
     preview_fps: "Preview FPS",
     preview_loading: "Loading preview…",
     props_heading: "Props",

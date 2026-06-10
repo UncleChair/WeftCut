@@ -2740,14 +2740,16 @@ input.preview-timecode:focus {
   max-height: calc(100vh - 160px);
 }
 
-/* ---- Live iframe previews ---------------------------------------------- */
+/* ---- Still previews ----------------------------------------------------- */
 
-/* Host wraps a natural-size iframe scaled down via `transform: scale(...)`.
-   The host has the SCALED size (so it claims the right layout box); the
-   iframe overflows out and the host clips it. Checkerboard backdrop shows
-   transparent regions for lower-thirds / callout / logo-bug. */
+/* Fixed 16:9 box that fills its parent's width; the component caps it with an
+   inline `max-width`, so it can never overflow a narrower container (the
+   280px card column, or the form pane in a narrow window). Checkerboard
+   backdrop shows transparent regions for lower-thirds / callout / logo-bug. */
 .motif-preview-host {
   position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
   overflow: hidden;
   border-radius: 4px;
   border: 1px solid #1f2937;
@@ -2759,23 +2761,32 @@ input.preview-timecode:focus {
     linear-gradient(-45deg, transparent 75%, #1f2937 75%);
   background-size: 12px 12px;
   background-position: 0 0, 0 6px, 6px -6px, -6px 0;
-  /* Disable pointer events on the host and any descendants (incl. the iframe)
-     so clicks AND wheel events pass through to the parent `<button>`, which
-     in turn bubbles them up to the scrollable card list. Setting on the host
-     alone (rather than just the iframe) is what fixes wheel-scroll being
-     trapped by the iframe's inner document in Chromium/WebView2. */
+  /* Input-transparent: the preview sits inside the card <button>; let clicks
+     and wheel events fall through to it and bubble to the scrollable list. */
   pointer-events: none;
 }
 
-.motif-preview-host iframe {
-  position: absolute;
-  top: 0;
-  left: 0;
-  border: 0;
+/* CDP-captured still at the motif's natural size; the browser contain-scales
+   and centers it, letterbox margins show the host checkerboard. */
+.motif-preview-host img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 .motif-preview-large {
   margin: 4px 0 8px;
+}
+
+/* Muted canvas-size tag next to the "Preview" heading — marks the canvas-mode
+   box as the composition canvas. Undoes the h3's uppercase/bold styling. */
+.motif-preview-canvas-size {
+  margin-left: 8px;
+  color: #6b7280;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
 }
 
 /* Loading spinner shown in the preview box until the first frame is bound

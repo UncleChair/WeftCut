@@ -1685,6 +1685,8 @@ export function App({ onCloseProject }: AppProps) {
           tracks={summary?.tracks ?? []}
           fpsNum={summary?.composition.fps_num ?? 30}
           fpsDen={summary?.composition.fps_den ?? 1}
+          compWidth={summary?.composition.width ?? 1920}
+          compHeight={summary?.composition.height ?? 1080}
         />
       )}
       {logConsoleOpen && (
