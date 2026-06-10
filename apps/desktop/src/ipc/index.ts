@@ -1024,6 +1024,16 @@ export async function ensureConform(mediaId: string): Promise<void> {
   await invoke("ensure_conform", { mediaId });
 }
 
+/// Push the preview master-bus meter reading to Rust (~2 Hz while playing)
+/// for the MCP `composition://meter` resource. Clamp non-finite dB values
+/// before calling — JSON cannot carry -Infinity.
+export async function reportAudioMeter(report: {
+  rmsDb: number;
+  peakDb: number;
+}): Promise<void> {
+  await invoke("report_audio_meter", { report });
+}
+
 // ============================================================
 // Motifs
 // ============================================================

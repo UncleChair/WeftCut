@@ -103,6 +103,7 @@ const URI_TRACKS: &str = "project://tracks";
 const URI_MARKERS: &str = "project://markers";
 const URI_HISTORY: &str = "project://history";
 const URI_COMPILED: &str = "project://compiled";
+const URI_METER: &str = "composition://meter";
 const URI_MOTIFS: &str = "motifs://current";
 const PREFIX_LAYERS: &str = "project://layers/";
 const PREFIX_MEDIA: &str = "media://";
@@ -914,7 +915,11 @@ impl WeftCutServer {
 
     #[tool(description = "Update a layer's kind-specific params. \
                           The patch is tagged with `kind` ('Text' | 'VideoClip' | 'ImageOverlay' | 'Color' | 'Audio') \
-                          and must match the layer's kind.")]
+                          and must match the layer's kind. \
+                          Audio fields take real effect in both preview and export: `gain_db` (dB; this \
+                          patch sets a STATIC value, replacing any existing keyframes on the track), \
+                          `pan` (-1..1 equal-power, same static-replace semantics), \
+                          `fade_in_us`/`fade_out_us` (linear edge fades), `mute`.")]
     async fn update_layer_params(
         &self,
         #[tool(aggr)] args: UpdateLayerParamsArgs,
@@ -2869,6 +2874,22 @@ impl ServerHandler for WeftCutServer {
                 let view = self.project.history_view(HISTORY_LIMIT).await;
                 serde_json::to_value(&view).map_err(serialize_err)?
             }
+            URI_METER => {
+                let state = self.app.state::<crate::commands::AudioMeterState>();
+                let latest = state.0.lock().expect("meter lock poisoned").clone();
+                match latest {
+                    Some((at, report))
+                        if at.elapsed() < std::time::Duration::from_secs(2) =>
+                    {
+                        serde_json::json!({
+                            "live": true,
+                            "rms_db": report.rms_db,
+                            "peak_db": report.peak_db,
+                        })
+                    }
+                    _ => serde_json::json!({ "live": false }),
+                }
+            }
             URI_COMPILED => {
                 // The audio mix plan IS the compiled view of the export
                 // audio pipeline (the lavfi IR it replaced is gone; ADR
@@ -3157,6 +3178,11 @@ const STATIC_RESOURCES: &[ResourceDescriptor] = &[
         uri: URI_COMPILED,
         name: "Audio mix plan",
         description: "Compiled export-audio mix plan (layer placement on the 48 kHz frame grid + envelope summaries) — for agents that want structural reasoning about what export will mix.",
+    },
+    ResourceDescriptor {
+        uri: URI_METER,
+        name: "Audio meter",
+        description: "Latest preview master-bus level reading (rms/peak dBFS). `live: false` when nothing has played in the last 2 seconds.",
     },
     ResourceDescriptor {
         uri: URI_MOTIFS,

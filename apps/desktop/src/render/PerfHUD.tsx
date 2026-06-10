@@ -112,6 +112,9 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
   // CPU%/RSS). Null until its first tick, or in a release build where the
   // command doesn't exist.
   const [sys, setSys] = useState<SystemStats | null>(null);
+  // Master audio bus meter (rms/peak dBFS). Null in export mode or before
+  // the graph exists.
+  const [aud, setAud] = useState<{ rmsDb: number; peakDb: number } | null>(null);
 
   // rAF interval tracking. We keep the ring + last-tick time on refs
   // so the rAF callback doesn't re-render on every frame; the HUD only
@@ -175,6 +178,7 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
         prevSamplesRef.current = nextSamples;
         setFpsByLayer(nextFps);
         setSnap(s);
+        setAud(c.getAudioGraph()?.meterSnapshot() ?? null);
       }
       const { p50, p99 } = p50p99FromRing(intervalsRef.current);
       setRafP50(p50);
@@ -371,6 +375,19 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
             {sys.cpu_percent.toFixed(0)}%
           </span>{" "}
           · rss: {formatMb(sys.rss_bytes)} · {sys.process_count}p
+        </div>
+      )}
+      {aud && (
+        <div title="Master audio bus (rms / peak dBFS)">
+          aud: rms {Number.isFinite(aud.rmsDb) ? aud.rmsDb.toFixed(1) : "-inf"} dB · peak{" "}
+          <span
+            style={{
+              color:
+                Number.isFinite(aud.peakDb) && aud.peakDb > -1 ? "#f59e0b" : undefined,
+            }}
+          >
+            {Number.isFinite(aud.peakDb) ? aud.peakDb.toFixed(1) : "-inf"} dB
+          </span>
         </div>
       )}
 

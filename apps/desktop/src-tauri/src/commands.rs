@@ -2456,6 +2456,33 @@ pub async fn ensure_full_proxy(
     Ok(())
 }
 
+/// Latest master-bus meter reading pushed by the webview (~2 Hz while
+/// playing). Read by the MCP `composition://meter` resource so agents can
+/// check levels without driving the UI. Non-finite dB values are clamped
+/// webview-side (JSON can't carry -Infinity).
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioMeterReport {
+    pub rms_db: f64,
+    pub peak_db: f64,
+}
+
+/// Managed state holding the latest meter report + its arrival instant.
+/// Staleness (no report for >2 s) reads as "not playing".
+#[derive(Clone, Default)]
+pub struct AudioMeterState(
+    pub std::sync::Arc<std::sync::Mutex<Option<(std::time::Instant, AudioMeterReport)>>>,
+);
+
+#[tauri::command]
+pub fn report_audio_meter(
+    state: State<'_, AudioMeterState>,
+    report: AudioMeterReport,
+) {
+    *state.0.lock().expect("meter lock poisoned") =
+        Some((std::time::Instant::now(), report));
+}
+
 /// Kick a conform job for one media if its VCONF file is absent. Used by the
 /// export readiness gate and as backfill for media imported before the
 /// conform format existed (or after a `CONFORM_FORMAT_VERSION` bump). No-op

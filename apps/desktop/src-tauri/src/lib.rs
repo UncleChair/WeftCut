@@ -150,6 +150,7 @@ pub fn run() {
             commands::get_media_thumbnail,
             commands::ensure_full_proxy,
             commands::ensure_conform,
+            commands::report_audio_meter,
             commands::list_motifs,
             commands::add_motif,
             motifs::authoring_commands::get_motif_source,
@@ -179,6 +180,10 @@ pub fn run() {
             app.manage(motifs::MotifRuntime::new());
             // Serializes Motif captures + caches per-host metrics/ready state.
             app.manage(motifs::MotifCapture::new());
+
+            // Latest preview master-bus meter reading (webview pushes ~2 Hz
+            // while playing); read by the MCP `composition://meter` resource.
+            app.manage(commands::AudioMeterState::default());
 
             // Project actor — single writer for all state mutations, shared by
             // UI commands (now) and the MCP tool surface.
