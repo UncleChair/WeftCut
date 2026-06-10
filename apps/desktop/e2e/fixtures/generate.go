@@ -87,6 +87,7 @@ func main() {
 	fps := flag.Int("fps", 0, "frame rate (required, positive integer)")
 	format := flag.String("format", "mp4", "output format: mp4, mkv, mov, webm, gif, prores")
 	audio := flag.Bool("audio", false, "add a per-second frequency-stepped tone track (test marker) + name output *_audio.mp4")
+	eosTail := flag.Bool("eostail", false, "EOS-tail geometry: keyframes every 5s only (final GOP spans multiple 60-frame export chunks) + tone track 1s LONGER than the video; names output *_eostail.mp4")
 	colorEnc := flag.String("color", "", "color chart encoding: 709ltd|601ltd|709full|601full (draws chart + manifest, ignores --fps content)")
 	gradient := flag.Bool("gradient", false, "emit a 10-bit BT.709 grayscale gradient ramp (HEVC Main10) for axis B")
 	flag.Parse()
@@ -204,7 +205,43 @@ func main() {
 	var args []string
 	switch *format {
 	case "mp4", "mkv", "mov":
-		if *audio {
+		if *eosTail {
+			// Export tail-deadlock gate fixture (see export_eos_tail.e2e.js).
+			// Two deliberate properties:
+			//   - Keyframes pinned to one per 5s (-g 5*fps, scenecut off): a 10s
+			//     clip has keys at 0s and 5s ONLY, so the export's 60-frame chunks
+			//     hit true end-of-stream while dispatching a NON-final chunk and
+			//     the decoder's reorder tail must drain across chunk boundaries
+			//     (the floated-flush path).
+			//   - The tone track runs 1s LONGER than the video: ffprobe duration
+			//     is the max across streams, so the placed clip + composition
+			//     outrun the final video frame by a second and the tail output
+			//     frames must clamp to it (hold-last) instead of waiting for
+			//     frames that can never arrive.
+			out = fmt.Sprintf("test_%dp_%dfps_eostail.%s", height, *fps, *format)
+			const audioBaseHz = 400
+			const audioStepHz = 120
+			const audioSR = 48000
+			audioSecs := duration + 1
+			args = append([]string{}, input...)
+			for k := 0; k < audioSecs; k++ {
+				freq := audioBaseHz + audioStepHz*k
+				args = append(args, "-f", "lavfi", "-i",
+					fmt.Sprintf("sine=frequency=%d:duration=1:sample_rate=%d", freq, audioSR))
+			}
+			var concatIn strings.Builder
+			for k := 1; k <= audioSecs; k++ {
+				concatIn.WriteString(fmt.Sprintf("[%d:a]", k))
+			}
+			fc := fmt.Sprintf("[0:v]%s,%s[v];%sconcat=n=%d:v=0:a=1[a]",
+				vfChain, colorVF, concatIn.String(), audioSecs)
+			gop := fmt.Sprintf("%d", 5**fps)
+			args = append(args, "-filter_complex", fc, "-map", "[v]", "-map", "[a]",
+				"-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "23", "-preset", "medium",
+				"-g", gop, "-keyint_min", gop, "-sc_threshold", "0")
+			args = append(args, colorTags...)
+			args = append(args, "-c:a", "aac", "-b:a", "192k", out)
+		} else if *audio {
 			out = fmt.Sprintf("test_%dp_%dfps_audio.%s", height, *fps, *format)
 			const audioBaseHz = 400
 			const audioStepHz = 120

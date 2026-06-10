@@ -23,6 +23,9 @@ export const MATRIX = [
   { fps: 30, format: "mp4", audio: true },
   { fps: 60, format: "mp4", audio: true },
   { fps: 120, format: "mp4", audio: true },
+  // EOS-tail geometry (keys at 0s/5s only + audio 1s longer than video) —
+  // the export tail-deadlock gate (export_eos_tail.e2e.js)
+  { fps: 30, format: "mp4", eostail: true },
   // color charts (flat patches, tagged) — axis A fixtures
   { color: "709ltd" },
   { color: "601ltd" },
@@ -32,10 +35,11 @@ export const MATRIX = [
   { gradient: true },
 ];
 
-export function outputName({ fps, format, audio, color, gradient }) {
+export function outputName({ fps, format, audio, color, gradient, eostail }) {
   if (color) return `test_${WIDTH_HEIGHT}p_color_${color}.mp4`;
   if (gradient) return `test_${WIDTH_HEIGHT}p_gradient10.mp4`;
   if (format === "prores") return `test_${WIDTH_HEIGHT}p_${fps}fps_prores.mov`;
+  if (eostail) return `test_${WIDTH_HEIGHT}p_${fps}fps_eostail.${format}`;
   if (audio) return `test_${WIDTH_HEIGHT}p_${fps}fps_audio.${format}`;
   return `test_${WIDTH_HEIGHT}p_${fps}fps.${format}`;
 }
@@ -56,6 +60,7 @@ export async function ensureFixtures(mediaDir) {
         ? ["run", GENERATOR, "--gradient"]
         : ["run", GENERATOR, "--fps", String(entry.fps), "--format", entry.format];
     if (entry.audio) args.push("--audio");
+    if (entry.eostail) args.push("--eostail");
     console.log(`[fixtures] generating ${name} ...`);
     const r = spawnSync("go", args, { cwd: mediaDir, stdio: "inherit", shell: true });
     if (r.status !== 0) {

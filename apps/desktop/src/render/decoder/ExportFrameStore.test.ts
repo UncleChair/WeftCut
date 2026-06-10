@@ -134,3 +134,81 @@ describe("ExportFrameStore.waitForPts", () => {
     expect(closed.length).toBeGreaterThanOrEqual(14);
   });
 });
+
+// EOS finalization — the ring-side half of the export tail-deadlock fix. Once
+// the source hits end-of-stream the ring goes through two phases:
+//
+//   beginEosDrain()  — the EOS flush was ISSUED. Frames are still arriving from
+//                      the drain, but eviction must keep the last held entry
+//                      from now on: the consumer's per-frame cutoff can overrun
+//                      the final frame's interval (composition grid extends
+//                      past the video track), and an emptied ring leaves
+//                      nothing to clamp to later.
+//   finishEosDrain() — the flush COMPLETED: no frame will EVER arrive again.
+//                      Any wait target is now final — resolve by clamping to
+//                      the nearest held frame instead of parking forever.
+//
+// The clamp must NOT activate at issue time: during the drain the real frame
+// for a target may still be on its way, and clamping early would composite a
+// stale frame (silent dup-frame corruption across the export tail).
+describe("ExportFrameStore EOS finalization", () => {
+  it("finishEosDrain resolves a parked tail waiter by clamping to the last held frame", async () => {
+    const store = new ExportFrameStore();
+    let resolved = false;
+    const waited = store.waitForPts(212_166_667).then(() => {
+      resolved = true;
+    });
+
+    // The true-last source frame arrives; it doesn't cover the target (the
+    // composition grid overhangs the video track) → still parked.
+    store.push(fakeFrame(212_046_000, 33_333));
+    await Promise.resolve();
+    expect(resolved).toBe(false);
+
+    // Decoder reports fully drained → the target is final, clamp.
+    store.finishEosDrain();
+    await waited;
+    expect(store.frameAt(212_166_667)).not.toBeNull();
+  });
+
+  it("resolves new tail waits immediately once ended while a frame is held", async () => {
+    const store = new ExportFrameStore();
+    store.push(fakeFrame(100_000, 33_333));
+    store.finishEosDrain();
+    await expect(store.waitForPts(999_999)).resolves.toBeUndefined();
+    expect(store.frameAt(999_999)).not.toBeNull();
+  });
+
+  it("keeps the last entry during the EOS drain so the clamp target survives eviction", () => {
+    const store = new ExportFrameStore();
+    const closed: number[] = [];
+    const frame = (pts: number) =>
+      ({ timestamp: pts, duration: 33_333, close: () => closed.push(pts) }) as unknown as VideoFrame;
+    store.push(frame(100_000));
+    store.push(frame(133_333));
+    store.beginEosDrain();
+    // Per-frame evict with a cutoff past EVERYTHING (grid overhang): the last
+    // entry must survive as the future clamp target.
+    store.evictBefore(1_000_000);
+    expect(store.size()).toBe(1);
+    expect(closed).toEqual([100_000]);
+  });
+
+  it("clearEosDrain re-arms real waiting after a re-seek", async () => {
+    const store = new ExportFrameStore();
+    store.push(fakeFrame(0, 33_333));
+    store.beginEosDrain();
+    store.finishEosDrain();
+    // A backward clip-reuse jump rebuilds the decoder: new frames CAN arrive
+    // again, so finalized clamping must deactivate...
+    store.clearEosDrain();
+    const outcome = await Promise.race([
+      store.waitForPts(500_000).then(() => "resolved" as const),
+      new Promise<"parked">((r) => setTimeout(() => r("parked"), 150)),
+    ]);
+    expect(outcome).toBe("parked");
+    // ...and eviction stops pinning the stale last entry.
+    store.evictBefore(1_000_000);
+    expect(store.size()).toBe(0);
+  });
+});
