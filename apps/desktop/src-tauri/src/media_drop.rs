@@ -20,6 +20,17 @@
 //! The handler is ADDED alongside wry's own `WebMessageReceived`
 //! subscriber (COM events fan out to every sink); messages without the
 //! marker are ignored here, and wry ignores ours.
+//!
+//! Portability: BOTH halves of this story are Windows-only, and they
+//! cancel out elsewhere. The wry-drop-target-vs-HTML5-DnD conflict that
+//! forces `dragDropEnabled: false` exists only on Windows; macOS
+//! (WKWebView) and Linux (WebKitGTK) run both side by side — and neither
+//! has `postMessageWithAdditionalObjects`. If WeftCut ever ports, skip
+//! this module on those platforms: enable Tauri's drag-drop there and
+//! consume `onDragDropEvent` (native paths) into the same frontend
+//! `importPaths()`. Gate the MediaDropZone overlay on capability at the
+//! same time — today it would light up on a non-Windows build while the
+//! drop silently no-ops.
 
 use tauri::{Emitter, WebviewWindow};
 use webview2_com::Microsoft::Web::WebView2::Win32::{
