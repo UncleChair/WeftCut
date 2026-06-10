@@ -236,6 +236,7 @@ The rules a day-to-day change must respect:
 | `styles.css` is unlayered and beats Tailwind's layered output; don't stack utilities onto elements legacy rules target — remove the legacy rule instead. | Layered-vs-unlayered cascade ordering. |
 | If a layout relied on a UA default that preflight resets, pin the value explicitly in `styles.css` (`line-height` is the canonical case). | Preflight only leaks through UA-default reliance. |
 | Tokens live in `src/app.css` (`.dark` block, shadcn naming); the app is dark-only via the hardwired `html.dark`. | Single palette source for the eventual `var(--*)` sweep. |
+| Icons come from [lucide](https://lucide.dev/icons) via `lucide-react` named imports (`size` explicit, `aria-hidden`, color via `currentColor`) — no inline `<svg>`, no Unicode glyphs. [ADR 0020](adr/0020-ui-icons-from-lucide-react.md); `WindowControls` and CSS cursors are the documented exceptions. | One drawing style; glyph rendering no longer font-dependent. |
 
 ## Internationalization (UI)
 
