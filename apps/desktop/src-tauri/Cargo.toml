@@ -133,7 +133,9 @@ sysinfo = { version = "0.33", default-features = false, features = ["system"] }
 # version. See `apps/desktop/src-tauri/src/motifs/cdp.rs`.
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.38"
-windows = "0.61"
+# Win32_System_Com: CoTaskMemFree for the PWSTRs returned by
+# ICoreWebView2File::Path (media_drop).
+windows = { version = "0.61", features = ["Win32_System_Com"] }
 
 [dev-dependencies]
 insta = { version = "1", features = ["json", "yaml"] }
