@@ -11,6 +11,7 @@ import { Application, Container, Texture } from "pixi.js";
 
 import { lastFrameAnchorUs as computeLastFrameStartUs, snapFrameFloor } from "../frames";
 import type { LayerSummary, MediaSummary, ProjectSummary } from "../ipc";
+import { AudioGraph } from "./audio/AudioGraph";
 import { AudioMixer } from "./audio/AudioMixer";
 import {
   resolveColorView,
@@ -139,6 +140,11 @@ export interface CompositorInit {
   sourceColor: (mediaId: string) => VideoColorSpaceInit | undefined;
   /// Lookup for media-side codec dimensions.
   mediaById: (mediaId: string) => MediaSummary | undefined;
+  /// Resolver for the asset URL of a media item's conform PCM (VCONF).
+  /// Drives the buffer-scheduled preview audio mixer; `null` while the
+  /// conform job hasn't completed (the layer stays silent). Optional:
+  /// the export Worker omits it (export audio mixes in Rust).
+  conformAssetUrl?: (mediaId: string) => string | null;
   /// Optional decoder pool override. Defaults to a preview-tuned
   /// `SourceDecoderPool` with per-frame lookahead + ring eviction. The
   /// export Worker injects an `ExportDecoderPool` that drives decoding
@@ -210,6 +216,12 @@ interface ActiveAudio {
   layerId: string;
   mediaId: string;
   mixer: AudioMixer;
+  /// Change detection for `updateView`: the params object reference is
+  /// stable between `setProject` calls, so per-tick comparison is one
+  /// identity check; on a new summary the JSON guard avoids tearing down
+  /// the mixer's schedule when nothing audio-relevant actually changed.
+  lastParamsRef: unknown;
+  lastParamsJson: string;
 }
 
 /// Schedule `cb` for an idle slice: `requestIdleCallback` when available
@@ -270,6 +282,12 @@ export class Compositor {
   private originalAssetUrl: (mediaId: string) => string | null;
   private sourceColor: (mediaId: string) => VideoColorSpaceInit | undefined;
   private mediaById: (mediaId: string) => MediaSummary | undefined;
+  private conformAssetUrl: (mediaId: string) => string | null;
+  /// Master audio bus (preview mode only; null in the export Worker).
+  private audioGraph: AudioGraph | null = null;
+  /// Media ids already warned about a missing conform (once per media,
+  /// cleared when the conform shows up).
+  private conformWarned = new Set<string>();
   private compositionWidth = 1920;
   private compositionHeight = 1080;
   private disposed = false;
@@ -389,19 +407,27 @@ export class Compositor {
     this.compositionWidth = init.width;
     this.compositionHeight = init.height;
     this.mode = init.mode;
+    this.conformAssetUrl = init.conformAssetUrl ?? ((): string | null => null);
     this.app.stage.addChild(this.stage);
-    // Hidden DOM host for AudioMixer's `<audio>` elements. Only
-    // mounted in preview mode — the export Worker has no `document`
-    // and routes audio through Rust ffmpeg (P9 final mux). Without
-    // this gate the Worker would crash at construction.
+    // Hidden DOM host element. The buffer-scheduled audio mixer no longer
+    // mounts `<audio>` elements, but the host remains the "am I in a real
+    // DOM context" gate for JASSUB (see `ensureSubtitles`) — the export
+    // Worker has neither `document` nor preview audio.
     if (this.mode === "preview" && typeof document !== "undefined") {
       this.audioHost = document.createElement("div");
       this.audioHost.setAttribute("data-pixi-audio-host", "");
       this.audioHost.style.display = "none";
       document.body.appendChild(this.audioHost);
+      this.audioGraph = new AudioGraph();
     } else {
       this.audioHost = null;
     }
+  }
+
+  /// The preview master audio bus, for the dev PerfHUD meter row and the
+  /// MCP meter report. Null in export mode.
+  getAudioGraph(): AudioGraph | null {
+    return this.audioGraph;
   }
 
   /// Coalesced repaint at the current playhead time. Called by
@@ -603,18 +629,16 @@ export class Compositor {
     this.stage.removeChildren();
 
     // First pass: ensure audio mixers for every Audio layer. Skipped
-    // entirely in export mode — the Worker has no DOM `<audio>` element
-    // to drive, and audio export rides the existing Rust ffmpeg
-    // compositor.
+    // entirely in export mode — export audio mixes in Rust
+    // (`audio::mix`, docs/audio.md).
     //
-    // VideoClip layers are NOT eligible. Mirrors `ir/lower.rs`'s
-    // canonical export routing: only `LayerParams::Audio(_)` contributes
-    // to the IR's `audio_streams`; VideoClips are video-only. Import's
-    // `auto_pair_audio_on_import` (default-on) places a sibling Audio
-    // layer on the same media for the audio track. Treating the
-    // VideoClip as also audio-bearing here would play the same proxy
-    // through two `<audio>` elements — the audible doubling bug.
-    if (this.audioHost !== null) {
+    // VideoClip layers are NOT eligible. Mirrors `audio::mix`'s canonical
+    // export routing: only Audio layers are audible; VideoClips are
+    // video-only. Import's `auto_pair_audio_on_import` (default-on)
+    // places a sibling Audio layer on the same media for the audio
+    // track. Treating the VideoClip as also audio-bearing here would
+    // play the same audio twice — the audible doubling bug.
+    if (this.audioGraph !== null) {
       for (const track of this.projectSummary.tracks) {
         if (!track.enabled) continue;
         for (const layer of track.layers) {
@@ -622,10 +646,20 @@ export class Compositor {
           if (layer.params.kind === "Audio") {
             const audio = this.ensureAudio(layer);
             if (audio) {
-              audio.mixer.updateLayerParams(
-                layer.t_start_us,
-                layer.params.src_in_us,
-              );
+              if (audio.lastParamsRef !== layer.params) {
+                const json =
+                  JSON.stringify(layer.params) +
+                  `|${layer.t_start_us}|${layer.t_end_us}`;
+                if (json !== audio.lastParamsJson) {
+                  audio.mixer.updateView(
+                    layer.params,
+                    layer.t_start_us,
+                    layer.t_end_us,
+                  );
+                  audio.lastParamsJson = json;
+                }
+                audio.lastParamsRef = layer.params;
+              }
               audio.mixer.tick(tUsSnapped, this.playing, layer.t_end_us);
             }
           }
@@ -926,6 +960,8 @@ export class Compositor {
     this.subtitles.clear();
     for (const a of this.audios.values()) a.mixer.dispose();
     this.audios.clear();
+    this.audioGraph?.dispose();
+    this.audioGraph = null;
     if (this.audioHost && this.audioHost.parentNode) {
       this.audioHost.parentNode.removeChild(this.audioHost);
     }
@@ -1642,34 +1678,46 @@ export class Compositor {
   // ============================================================
 
   private ensureAudio(layer: LayerSummary): ActiveAudio | null {
-    const kind = layer.params.kind;
-    if (kind !== "Audio") return null;
-    if (this.audioHost === null) return null;
+    if (layer.params.kind !== "Audio") return null;
+    const graph = this.audioGraph;
+    if (graph === null) return null;
     const existing = this.audios.get(layer.id);
     if (existing) return existing;
     const mediaId = layer.params.media_id;
-    // Audio-only media has no proxy; `proxyAssetUrl` falls back to the
-    // original file. AV-paired Audio layers reference the same media as
-    // a sibling VideoClip and use that media's proxy MP4, whose audio
-    // track an `<audio>` element decodes correctly.
-    const url = this.proxyAssetUrl(mediaId);
+    // The mixer Range-reads the media's conform PCM — no decode in the
+    // webview. `null` until the conform job lands: the layer stays
+    // silent and we retry on a later tick (the media summary updates
+    // when the job completes).
+    const url = this.conformAssetUrl(mediaId);
     if (!url) {
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[weftcut/pixi] no audio URL for media ${mediaId} (layer ${layer.id})`,
-      );
+      if (!this.conformWarned.has(mediaId)) {
+        this.conformWarned.add(mediaId);
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[weftcut/pixi] no conform PCM yet for media ${mediaId} (layer ${layer.id}); audio silent until the conform job completes`,
+        );
+      }
       return null;
     }
+    this.conformWarned.delete(mediaId);
     const mixer = new AudioMixer(
       {
         layerId: layer.id,
-        audioUrl: url,
+        conformUrl: url,
+        view: layer.params,
         layerTStartUs: layer.t_start_us,
-        srcInUs: layer.params.src_in_us,
+        layerTEndUs: layer.t_end_us,
       },
-      this.audioHost,
+      graph,
     );
-    const audio: ActiveAudio = { layerId: layer.id, mediaId, mixer };
+    const audio: ActiveAudio = {
+      layerId: layer.id,
+      mediaId,
+      mixer,
+      lastParamsRef: layer.params,
+      lastParamsJson:
+        JSON.stringify(layer.params) + `|${layer.t_start_us}|${layer.t_end_us}`,
+    };
     this.audios.set(layer.id, audio);
     // eslint-disable-next-line no-console
     console.log(`[weftcut/pixi] audio ${layer.id} → media ${mediaId} attached`);
