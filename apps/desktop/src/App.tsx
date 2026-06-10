@@ -75,6 +75,7 @@ import {
   type ImportItem,
 } from "./panels/importOptimize";
 import { AppDialog } from "./components/AppDialog";
+import { Button } from "@/components/ui/button";
 import { ImportProxyDialog } from "./panels/ImportProxyDialog";
 import { MotifStaleDialog } from "./panels/MotifStaleDialog";
 import { ExportSettingsDialog } from "./panels/ExportSettingsDialog";
@@ -1904,12 +1905,13 @@ function ExportPanel({
             {((state.kind === "preparing" && state.onCancel) || dismissable) && (
               <div className="export-actions">
                 {state.kind === "preparing" && state.onCancel && (
-                  <button onClick={state.onCancel}>
+                  <Button size="lg" onClick={state.onCancel}>
                     {t("export.preparing_cancel")}
-                  </button>
+                  </Button>
                 )}
                 {state.kind === "complete" && onPlay && (
-                  <button
+                  <Button
+                    size="lg"
                     onClick={() => onPlay(state.payload.outputPath)}
                     title={t("export.play_hint", {
                       defaultValue:
@@ -1917,12 +1919,12 @@ function ExportPanel({
                     })}
                   >
                     {t("export.play", { defaultValue: "Play" })}
-                  </button>
+                  </Button>
                 )}
                 {dismissable && (
-                  <button className="export-primary" onClick={onClose}>
+                  <Button variant="default" size="lg" onClick={onClose}>
                     {t("export.dismiss")}
-                  </button>
+                  </Button>
                 )}
               </div>
             )}

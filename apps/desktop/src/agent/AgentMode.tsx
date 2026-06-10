@@ -14,6 +14,7 @@ import {
 } from "../preview/PreviewSurface";
 import { MiniTimeline } from "./MiniTimeline";
 import { RecordPanel } from "./RecordPanel";
+import { Button } from "@/components/ui/button";
 
 /// Agent mode — the simplified preview / mini-timeline / record-panel
 /// layout the human sees while an MCP-initiated agent session is
@@ -110,13 +111,9 @@ function RecordPanelHeader({
           {session.reason}
         </span>
       </div>
-      <button
-        className="agent-exit-button"
-        onClick={onExit}
-        title={t("agent_mode.exit_hint")}
-      >
+      <Button size="lg" onClick={onExit} title={t("agent_mode.exit_hint")}>
         {t("agent_mode.exit")}
-      </button>
+      </Button>
     </header>
   );
 }
