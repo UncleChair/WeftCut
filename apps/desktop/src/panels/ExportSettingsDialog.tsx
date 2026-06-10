@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { exportSettingsGet, exportSettingsSet, workspaceDir } from "../ipc";
+import { AppDialog } from "../components/AppDialog";
 import {
   type EncodePath,
   resolveEncodePath,
@@ -155,19 +156,12 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, onCancel
     (rangeMode === "full" || rangeStartUs < rangeEndUs);
 
   return (
-    <div className="settings-overlay" role="dialog" aria-modal="true">
-      <div className="settings-panel">
-        <header>
-          <h2>{t("export_dialog.title")}</h2>
-          <button
-            className="settings-close"
-            onClick={onCancel}
-            aria-label={t("export_dialog.cancel")}
-          >
-            ✕
-          </button>
-        </header>
-
+    <AppDialog
+      title={t("export_dialog.title")}
+      onClose={onCancel}
+      closeLabel={t("export_dialog.cancel")}
+      panelClassName="settings-panel"
+    >
         <div className="settings-body">
           <div className="settings-card">
             {!settings ? (
@@ -623,7 +617,6 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, onCancel
             )}
           </div>
         </div>
-      </div>
-    </div>
+    </AppDialog>
   );
 }

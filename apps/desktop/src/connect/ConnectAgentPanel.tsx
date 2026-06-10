@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { getMcpInfo, resetMcpToken, type McpInfoView } from "../ipc";
+import { AppDialog } from "../components/AppDialog";
 
 interface Props {
   onClose: () => void;
@@ -115,15 +116,12 @@ export function ConnectAgentPanel({ onClose }: Props) {
   };
 
   return (
-    <div className="connect-agent-overlay" role="dialog" aria-modal="true">
-      <div className="connect-agent-panel">
-        <header>
-          <h2>{t("connect.heading")}</h2>
-          <button className="connect-close" onClick={onClose} aria-label={t("connect.close")}>
-            ✕
-          </button>
-        </header>
-
+    <AppDialog
+      title={t("connect.heading")}
+      onClose={onClose}
+      closeLabel={t("connect.close")}
+      panelClassName="connect-agent-panel"
+    >
         <div className="connect-agent-body">
         {!info ? (
           <p className="connect-status">{t("connect.starting")}</p>
@@ -215,8 +213,7 @@ export function ConnectAgentPanel({ onClose }: Props) {
           </>
         )}
         </div>
-      </div>
-    </div>
+    </AppDialog>
   );
 }
 

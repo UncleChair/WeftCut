@@ -74,6 +74,7 @@ import {
   type OptimizeDeps,
   type ImportItem,
 } from "./panels/importOptimize";
+import { AppDialog } from "./components/AppDialog";
 import { ImportProxyDialog } from "./panels/ImportProxyDialog";
 import { MotifStaleDialog } from "./panels/MotifStaleDialog";
 import { ExportSettingsDialog } from "./panels/ExportSettingsDialog";
@@ -1880,20 +1881,12 @@ function ExportPanel({
   }
 
   return (
-    <div className="settings-overlay" role="dialog" aria-modal="true">
-      <div className="settings-panel export-progress-panel">
-        <header>
-          <h2>{t("export.title")}</h2>
-          {dismissable && (
-            <button
-              className="settings-close"
-              onClick={onClose}
-              aria-label={t("export.dismiss")}
-            >
-              ✕
-            </button>
-          )}
-        </header>
+    <AppDialog
+      title={t("export.title")}
+      onClose={dismissable ? onClose : undefined}
+      closeLabel={t("export.dismiss")}
+      panelClassName="settings-panel export-progress-panel"
+    >
         <div className="settings-body">
           <div className="settings-card">
             {body}
@@ -1934,8 +1927,7 @@ function ExportPanel({
             )}
           </div>
         </div>
-      </div>
-    </div>
+    </AppDialog>
   );
 }
 

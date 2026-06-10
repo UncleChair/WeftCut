@@ -9,6 +9,7 @@ import {
   SUPPORTED_LOCALES,
   type Locale,
 } from "../i18n";
+import { AppDialog } from "../components/AppDialog";
 import { GlobeIcon } from "../i18n/GlobeIcon";
 import {
   projectNewWorkspace,
@@ -386,19 +387,11 @@ function NewProjectForm({
   }, [canCreate, parentFolder, name, preset, onCreated]);
 
   return (
-    <div
-      className="new-project-overlay"
-      role="dialog"
-      aria-modal="true"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget && !busy) onCancel();
-      }}
+    <AppDialog
+      title={t("new_project.title")}
+      onClose={busy ? undefined : onCancel}
+      panelClassName="new-project-panel"
     >
-      <div className="new-project-panel">
-        <header>
-          <h2>{t("new_project.title")}</h2>
-        </header>
-
         <label className="new-project-row">
           <span>{t("new_project.name")}</span>
           <input
@@ -478,8 +471,7 @@ function NewProjectForm({
             {busy ? t("new_project.creating") : t("new_project.create")}
           </button>
         </footer>
-      </div>
-    </div>
+    </AppDialog>
   );
 }
 

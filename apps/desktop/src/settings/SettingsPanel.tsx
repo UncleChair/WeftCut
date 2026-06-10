@@ -15,6 +15,7 @@ import {
   updateProjectSettings,
 } from "../ipc";
 import { formatTimecode, parseTimecode } from "../frames";
+import { AppDialog } from "../components/AppDialog";
 import { KeybindingPanel } from "./KeybindingPanel";
 import {
   setAppSettings,
@@ -81,19 +82,12 @@ export function SettingsPanel({
   }, []);
 
   return (
-    <div className="settings-overlay" role="dialog" aria-modal="true">
-      <div className="settings-panel">
-        <header>
-          <h2>{t("settings.heading")}</h2>
-          <button
-            className="settings-close"
-            onClick={onClose}
-            aria-label={t("settings.close")}
-          >
-            ✕
-          </button>
-        </header>
-
+    <AppDialog
+      title={t("settings.heading")}
+      onClose={onClose}
+      closeLabel={t("settings.close")}
+      panelClassName="settings-panel"
+    >
         <div className="settings-body">
         <div className="settings-card">
         <h3>{t("settings.startup_heading")}</h3>
@@ -166,8 +160,7 @@ export function SettingsPanel({
         )}
         </div>
         </div>
-      </div>
-    </div>
+    </AppDialog>
   );
 }
 
@@ -490,6 +483,9 @@ function CompositionSection({
               void commit();
             } else if (e.key === "Escape") {
               e.preventDefault();
+              // Consume: this Escape reverts the draft only; without
+              // stopPropagation the Settings dialog would close too.
+              e.stopPropagation();
               setDraft(null);
               setLocalError(null);
             }

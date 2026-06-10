@@ -65,9 +65,12 @@ export function KeybindingCapture({
     function onKey(e: KeyboardEvent) {
       // Escape always cancels — the dispatcher is suspended via
       // `onActiveChange(true)` so this can't conflict with any bound
-      // shortcut.
+      // shortcut. stopPropagation: this capture-phase window listener
+      // runs before the Settings dialog's Escape-close; without it one
+      // Escape would cancel the capture AND close the whole dialog.
       if (e.key === "Escape") {
         e.preventDefault();
+        e.stopPropagation();
         onCancel();
         return;
       }
