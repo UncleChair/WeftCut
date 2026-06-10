@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
+import { Tooltip } from "@base-ui/react/tooltip";
 import { formatTimecode, parseTimecode } from "../frames";
+import { AppSelect } from "../components/AppSelect";
+import { AppSlider } from "../components/AppSlider";
 import {
   updateLayer,
   updateLayerParams,
@@ -273,19 +276,14 @@ function TextFields({
         />
       </Field>
       <Field label={t("property_panel.font_family")}>
-        <select
+        <AppSelect
           value={family}
-          onChange={(e) => {
-            setFamily(e.target.value);
-            commit({ kind: "Text", font_family: e.target.value });
+          onValueChange={(v) => {
+            setFamily(v);
+            commit({ kind: "Text", font_family: v });
           }}
-        >
-          {FONT_FAMILIES.map((f) => (
-            <option key={f} value={f}>
-              {f}
-            </option>
-          ))}
-        </select>
+          options={FONT_FAMILIES.map((f) => ({ value: f, label: f }))}
+        />
       </Field>
       <Field label={t("property_panel.font_size_px")}>
         <input
@@ -326,14 +324,12 @@ function TextFields({
         />
       </Field>
       <Field label={t("property_panel.opacity")}>
-        <input
-          type="range"
+        <AppSlider
           min={0}
           max={1}
           step={0.01}
           value={opacity}
-          onChange={(e) => {
-            const v = parseFloat(e.target.value);
+          onValueChange={(v) => {
             setOpacity(v);
             debouncedCommit({ kind: "Text", opacity: v });
           }}
@@ -385,14 +381,12 @@ function VideoClipFields({
         {t("property_panel.media")}: {v.media_label}
       </h3>
       <Field label={t("property_panel.opacity")}>
-        <input
-          type="range"
+        <AppSlider
           min={0}
           max={1}
           step={0.01}
           value={opacity}
-          onChange={(e) => {
-            const v = parseFloat(e.target.value);
+          onValueChange={(v) => {
             setOpacity(v);
             debouncedCommit({ kind: "VideoClip", opacity: v });
           }}
@@ -525,14 +519,12 @@ function ImageOverlayFields({
         {t("property_panel.media")}: {v.media_label}
       </h3>
       <Field label={t("property_panel.opacity")}>
-        <input
-          type="range"
+        <AppSlider
           min={0}
           max={1}
           step={0.01}
           value={opacity}
-          onChange={(e) => {
-            const v = parseFloat(e.target.value);
+          onValueChange={(v) => {
             setOpacity(v);
             debouncedCommit({ kind: "ImageOverlay", opacity: v });
           }}
@@ -695,14 +687,12 @@ function MotifFields({
         />
       </Field>
       <Field label={t("property_panel.opacity")}>
-        <input
-          type="range"
+        <AppSlider
           min={0}
           max={1}
           step={0.01}
           value={opacity}
-          onChange={(e) => {
-            const next = parseFloat(e.target.value);
+          onValueChange={(next) => {
             setOpacity(next);
             debouncedCommit({ kind: "Motif", opacity: next });
           }}
@@ -1215,15 +1205,12 @@ function AudioFields({
         />
       </Field>
       <Field label={t("property_panel.pan")}>
-        <input
-          type="range"
+        <AppSlider
           min={-1}
           max={1}
           step={0.05}
           value={trackStatic(v.pan, 0)}
-          onChange={(e) =>
-            commit({ kind: "Audio", pan: parseFloat(e.target.value) || 0 })
-          }
+          onValueChange={(v2) => commit({ kind: "Audio", pan: v2 })}
         />
       </Field>
       <Field label={t("property_panel.mute")}>
@@ -1275,21 +1262,38 @@ function Field({
       <span className="prop-field-label">
         {label}
         {hint ? (
-          <span
-            className="prop-field-hint"
-            tabIndex={0}
-            role="tooltip"
-            aria-label={hint}
-            // Stop clicks on the icon from also focusing the label's
-            // input — the user clicked the hint, not the value.
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-            }}
-          >
-            ?
-            <span className="prop-field-hint-bubble">{hint}</span>
-          </span>
+          <Tooltip.Root>
+            <Tooltip.Trigger
+              className="prop-field-hint"
+              // Keep a span (not the default button): a button inside
+              // this <label> would steal the label's input activation.
+              render={<span tabIndex={0} />}
+              aria-label={hint}
+              // Stop clicks on the icon from also focusing the label's
+              // input — the user clicked the hint, not the value.
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+            >
+              ?
+            </Tooltip.Trigger>
+            <Tooltip.Portal>
+              {/* end-aligned below the icon ≈ the old right-anchored
+                  bubble; the Positioner flips on collisions, which the
+                  hand-rolled CSS bubble never could. */}
+              <Tooltip.Positioner
+                side="bottom"
+                align="end"
+                sideOffset={4}
+                className="z-50"
+              >
+                <Tooltip.Popup className="prop-field-hint-bubble">
+                  {hint}
+                </Tooltip.Popup>
+              </Tooltip.Positioner>
+            </Tooltip.Portal>
+          </Tooltip.Root>
         ) : null}
       </span>
       <div className="prop-field-control">{children}</div>

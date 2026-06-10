@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { CornerNotice } from "../components/CornerNotice";
 import { partitionImportItems, type ImportItem } from "./importOptimize";
 
 export function ImportProxyDialog({
@@ -12,11 +13,11 @@ export function ImportProxyDialog({
   const { listed, checkingCount } = partitionImportItems(items);
 
   return (
-    <aside className="export-panel import-proxy-dialog">
-      <header>
-        <span>{t("import_proxy.title")}</span>
-        <button onClick={onDismiss}>{t("import_proxy.dismiss")}</button>
-      </header>
+    <CornerNotice
+      title={t("import_proxy.title")}
+      actionLabel={t("import_proxy.dismiss")}
+      onAction={onDismiss}
+    >
       {listed.length > 0 && (
         <>
           <p className="import-proxy-heading">{t("import_proxy.optimizing_heading")}</p>
@@ -40,6 +41,6 @@ export function ImportProxyDialog({
         </p>
       )}
       <p className="import-proxy-note">{t("import_proxy.editable_note")}</p>
-    </aside>
+    </CornerNotice>
   );
 }

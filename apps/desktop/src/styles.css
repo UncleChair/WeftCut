@@ -1,6 +1,13 @@
 :root {
   color-scheme: dark;
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* Tailwind preflight sets `html { line-height: 1.5 }`; every legacy
+   * layout in this file was sized against the UA default (`normal`,
+   * ~1.2) — e.g. .startup-recent-list's fixed 140px = exactly 3 rows.
+   * Pin the pre-Tailwind metric here (unlayered, so it beats preflight's
+   * @layer base). New shadcn components are unaffected: their text-*
+   * utilities set their own line-height. */
+  line-height: normal;
   background: #0b0d11;
   color: #e5e7eb;
 }
@@ -63,10 +70,6 @@ html, body, #root { height: 100%; margin: 0; }
   gap: 2px;
 }
 
-.menu-root {
-  position: relative;
-}
-
 .menu-trigger {
   background: transparent;
   border: 1px solid transparent;
@@ -85,7 +88,8 @@ html, body, #root { height: 100%; margin: 0; }
   color: #f3f4f6;
 }
 
-.menu-trigger.is-open {
+/* Base UI sets data-popup-open on the trigger while its menu is open. */
+.menu-trigger[data-popup-open] {
   background: #1f2937;
   border-color: #374151;
   color: #f3f4f6;
@@ -96,16 +100,14 @@ html, body, #root { height: 100%; margin: 0; }
   opacity: 0.7;
 }
 
+/* Placement (portal + 4px below the trigger) is owned by Base UI's
+ * Positioner; this class is purely the dropdown's visual chrome. */
 .menu-list {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
   min-width: 220px;
   background: #0e1218;
   border: 1px solid #374151;
   border-radius: 4px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-  z-index: 50;
   padding: 4px 0;
 }
 
@@ -122,11 +124,14 @@ html, body, #root { height: 100%; margin: 0; }
   cursor: pointer;
 }
 
-.menu-item:hover:not(:disabled) {
+/* data-highlighted covers BOTH hover and keyboard navigation (Base UI
+ * moves the highlight with ArrowUp/Down); data-disabled replaces
+ * :disabled now that items render as divs, not buttons. */
+.menu-item[data-highlighted] {
   background: rgba(255, 255, 255, 0.08);
 }
 
-.menu-item:disabled {
+.menu-item[data-disabled] {
   color: #6b7280;
   cursor: not-allowed;
 }
@@ -150,7 +155,7 @@ html, body, #root { height: 100%; margin: 0; }
   white-space: nowrap;
 }
 
-.menu-item:disabled .menu-item-accelerator {
+.menu-item[data-disabled] .menu-item-accelerator {
   color: #4b5563;
 }
 
@@ -172,6 +177,91 @@ html, body, #root { height: 100%; margin: 0; }
   color: #f87171;
   font-size: 12px;
   margin-left: auto;
+}
+
+/* ============================================================ */
+/* Shared form controls (AppSelect / AppSlider wrappers)         */
+/* ============================================================ */
+
+/* AppSelect trigger — the closed control. The open popup reuses the
+ * .menu-list / .menu-item dropdown chrome. */
+.app-select {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 5px 8px;
+  font-size: 12px;
+  text-align: left;
+  color: #e5e7eb;
+  background: #11151b;
+  border: 1px solid #374151;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.app-select:focus-visible,
+.app-select[data-popup-open] {
+  outline: none;
+  border-color: #3b82f6;
+}
+
+.app-select[data-disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* AppSlider — track/thumb skin replacing the native range input. */
+.app-slider {
+  display: flex;
+  align-items: center;
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.app-slider-control {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 16px;
+  cursor: pointer;
+}
+
+.app-slider-track {
+  position: relative;
+  width: 100%;
+  height: 4px;
+  background: #374151;
+  border-radius: 2px;
+}
+
+.app-slider-indicator {
+  position: absolute;
+  height: 100%;
+  background: #3b82f6;
+  border-radius: 2px;
+}
+
+.app-slider-thumb {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background: #e5e7eb;
+  border-radius: 50%;
+  outline: none;
+}
+
+.app-slider-thumb:focus-visible {
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.5);
+}
+
+.app-slider[data-disabled] {
+  opacity: 0.5;
+}
+
+.app-slider[data-disabled] .app-slider-control {
+  cursor: not-allowed;
 }
 
 .separator {
@@ -717,48 +807,8 @@ input.preview-timecode:focus {
   font-size: 11px;
 }
 
-/* V.7 (A/B-roll v2): floating context menu for layer right-click.
-   Anchored at the cursor (top/left set inline). Closes on outside
-   pointerdown. Single action today: "Separate audio to new track" for
-   Audio layers; future scope adds more entries here. */
-.layer-context-menu {
-  position: fixed;
-  z-index: 1000;
-  min-width: 200px;
-  background: #11151c;
-  border: 1px solid #374151;
-  border-radius: 6px;
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.55);
-  padding: 4px;
-  font-size: 12px;
-  color: #e5e7eb;
-}
-
-.layer-context-menu-item {
-  display: block;
-  width: 100%;
-  padding: 7px 10px;
-  background: transparent;
-  border: none;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-  border-radius: 4px;
-  font: inherit;
-}
-
-.layer-context-menu-item:hover,
-.layer-context-menu-item:focus-visible {
-  background: rgba(96, 165, 250, 0.18);
-  outline: none;
-}
-
-.layer-context-menu-disabled {
-  display: block;
-  padding: 7px 10px;
-  color: #6b7280;
-  font-style: italic;
-}
+/* The V.7 layer right-click menu renders through Base UI Menu now and
+   reuses the .menu-list / .menu-item dropdown chrome. */
 
 /* R.7 inline-reveal chrome (`docs/data-model.md`): a hidden track
    that the user surfaced via the peek panel renders with a dashed
@@ -1843,10 +1893,6 @@ input.preview-timecode:focus {
   gap: 8px;
   font-size: 12px;
   color: #cbd5e1;
-  /* Positioned ancestor for `.prop-field-hint-bubble` so the bubble's
-     `right: 0; top: 100%` anchors to the row's bounds — never
-     overflowing horizontally into a scrollbar trigger. */
-  position: relative;
 }
 
 .prop-field-label {
@@ -1876,31 +1922,20 @@ input.preview-timecode:focus {
   cursor: help;
   user-select: none;
   outline: none;
-  /* Intentionally NOT `position: relative`: the bubble anchors to the
-     parent `.prop-field` row instead of this icon. See the comment on
-     `.prop-field-hint-bubble` for why. */
 }
 
 .prop-field-hint:hover,
-.prop-field-hint:focus-visible {
+.prop-field-hint:focus-visible,
+.prop-field-hint[data-popup-open] {
   background: #334155;
   color: #e5e7eb;
 }
 
+/* Visual chrome only — the bubble is a portaled Base UI Tooltip popup
+ * now (Positioner owns placement and collision-flipping; show/hide is
+ * hover/focus-driven by the library). */
 .prop-field-hint-bubble {
-  position: absolute;
-  /* Anchor to the parent row (`.prop-field`) rather than the icon: the
-     right panel is narrow (~280 px), so a 240 px bubble extending
-     rightward from the icon would either overflow the panel or trigger
-     a horizontal scrollbar. Right-anchored below the row keeps the
-     bubble fully inside the panel for any reasonable width. */
-  top: calc(100% + 4px);
-  right: 0;
-  left: auto;
-  z-index: 50;
-  /* Cap at the row's own width so the bubble can NEVER widen the
-     inspector column. Vast majority of hints fit in 240 px. */
-  width: min(240px, 100%);
+  max-width: 240px;
   padding: 8px 10px;
   background: #0e1218;
   border: 1px solid #1f2937;
@@ -1912,16 +1947,6 @@ input.preview-timecode:focus {
   text-align: left;
   white-space: normal;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-  pointer-events: none;
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity 80ms ease-out, visibility 80ms ease-out;
-}
-
-.prop-field-hint:hover .prop-field-hint-bubble,
-.prop-field-hint:focus-visible .prop-field-hint-bubble {
-  opacity: 1;
-  visibility: visible;
 }
 
 .prop-field-control {
@@ -1937,7 +1962,7 @@ input.preview-timecode:focus {
 
 .prop-field-control input[type="text"],
 .prop-field-control input[type="number"],
-.prop-field-control select,
+.prop-field-control .app-select,
 .prop-field-control textarea {
   background: #0e1218;
   border: 1px solid #1f2937;
@@ -1964,14 +1989,8 @@ input.preview-timecode:focus {
   cursor: pointer;
 }
 
-.prop-field-control input[type="range"] {
-  /* `flex: 1 1 0` (instead of `flex: 1` = `1 1 0%`) is identical for
-     basis here, but combined with the explicit `min-width: 0` below
-     it overrides the ~129 px UA min for range inputs — letting the
-     track shrink to whatever the panel actually has room for. */
-  flex: 1 1 0;
-  min-width: 0;
-}
+/* Range inputs are gone — .app-slider's own flex: 1 1 0 / min-width: 0
+ * base already lets the track shrink to the panel's available room. */
 
 .prop-range-value {
   color: #9ca3af;
@@ -2120,16 +2139,6 @@ input.preview-timecode:focus {
 
 /* ---- Connect-agent panel ---- */
 
-.connect-agent-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 20;
-}
-
 .connect-agent-panel {
   width: min(640px, calc(100vw - 32px));
   max-height: calc(100vh - 64px);
@@ -2153,19 +2162,6 @@ input.preview-timecode:focus {
   margin: 0;
   font-size: 14px;
   font-weight: 600;
-  color: #e5e7eb;
-}
-
-.connect-close {
-  margin-left: auto;
-  background: transparent;
-  border: none;
-  color: #9ca3af;
-  font-size: 16px;
-  cursor: pointer;
-}
-
-.connect-close:hover {
   color: #e5e7eb;
 }
 
@@ -2293,16 +2289,6 @@ input.preview-timecode:focus {
   border: 1px solid rgba(245, 158, 11, 0.3);
   border-radius: 4px;
   padding: 8px 10px;
-}
-
-.settings-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 20;
 }
 
 .settings-panel {
@@ -2455,7 +2441,7 @@ input.preview-timecode:focus {
   padding: 0 0 6px;
 }
 
-.settings-slider-row input[type="range"] {
+.settings-slider-row .app-slider {
   flex: 1 1 auto;
   min-width: 120px;
 }
@@ -2515,153 +2501,6 @@ input.preview-timecode:focus {
   font-size: 11px;
   color: #f87171;
   word-break: break-word;
-}
-
-/* ============================================================ */
-/* Activity panel (Phase 4.x cleanup)                            */
-/* ============================================================ */
-
-.activity-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 20;
-}
-
-.activity-panel {
-  width: min(720px, calc(100vw - 32px));
-  max-height: calc(100vh - 64px);
-  background: #0b0d11;
-  border: 1px solid #374151;
-  border-radius: 8px;
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.activity-panel header {
-  display: flex;
-  align-items: center;
-  padding: 12px 16px;
-  border-bottom: 1px solid #1f2937;
-}
-
-.activity-panel header h2 {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: #e5e7eb;
-}
-
-.activity-close {
-  margin-left: auto;
-  background: transparent;
-  border: none;
-  color: #9ca3af;
-  font-size: 16px;
-  cursor: pointer;
-}
-
-.activity-close:hover {
-  color: #e5e7eb;
-}
-
-.activity-filters {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 16px;
-  border-bottom: 1px solid #1f2937;
-}
-
-.activity-filter {
-  background: transparent;
-  border: 1px solid #374151;
-  color: #9ca3af;
-  padding: 4px 10px;
-  font-size: 11px;
-  border-radius: 3px;
-  cursor: pointer;
-}
-
-.activity-filter:hover {
-  color: #e5e7eb;
-}
-
-.activity-filter.is-active {
-  background: #1f2937;
-  border-color: #4b5563;
-  color: #e5e7eb;
-}
-
-.activity-count {
-  margin-left: auto;
-  font-size: 11px;
-  color: #6b7280;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-
-.activity-empty {
-  margin: 24px 16px;
-  text-align: center;
-  font-size: 12px;
-  color: #6b7280;
-}
-
-.activity-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  overflow-y: auto;
-  max-height: calc(100vh - 200px);
-}
-
-.activity-entry {
-  display: grid;
-  grid-template-columns: 80px 140px 1fr;
-  gap: 12px;
-  align-items: baseline;
-  padding: 6px 16px;
-  font-size: 12px;
-  border-bottom: 1px solid #111827;
-}
-
-.activity-entry:hover {
-  background: rgba(255, 255, 255, 0.02);
-}
-
-.activity-entry .activity-time {
-  color: #6b7280;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
-}
-
-.activity-entry .activity-actor {
-  color: #9ca3af;
-  font-size: 11px;
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.activity-entry.actor-agent .activity-actor {
-  color: #fbbf24;
-}
-
-.activity-entry.actor-user .activity-actor {
-  color: #60a5fa;
-}
-
-.activity-entry .activity-summary {
-  color: #d1d5db;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .settings-key-input-row {
@@ -2928,7 +2767,7 @@ input.preview-timecode:focus {
 
 .motif-picker-field input[type='text'],
 .motif-picker-field input[type='number'],
-.motif-picker-field select {
+.motif-picker-field .app-select {
   background: #1f2937;
   border: 1px solid #374151;
   color: #e5e7eb;
@@ -3166,10 +3005,13 @@ input.preview-timecode:focus {
    * to MAX_RECENTS (10). Without this, the panel total height shifts when
    * the toggle is clicked, and since the screen container centers the
    * panel vertically, the header + action buttons visibly bump upward.
-   * Collapsed: 3 items (~140px) fill the region exactly. Expanded: list
-   * scrolls internally. Sized to keep the whole panel under typical
-   * laptop viewport heights so the page never grows a scrollbar. */
-  height: 140px;
+   * Collapsed: 3 rows ≈ 142px at 110% display scaling (rows are pure
+   * line-box heights, so they accumulate fractional-DPI rounding) — the
+   * 144px includes that slack so the collapsed state never grows a
+   * scrollbar. Expanded: list scrolls internally. Sized to keep the whole
+   * panel under typical laptop viewport heights so the page never grows
+   * a scrollbar. */
+  height: 144px;
   overflow-y: auto;
 }
 
@@ -3301,16 +3143,6 @@ input.preview-timecode:focus {
 
 /* --- New project modal --- */
 
-.new-project-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.6);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 50;
-}
-
 .new-project-panel {
   width: min(440px, 100%);
   padding: 20px;
@@ -3341,7 +3173,7 @@ input.preview-timecode:focus {
 }
 
 .new-project-row input[type="text"],
-.new-project-row select {
+.new-project-row .app-select {
   background: #0b0d11;
   border: 1px solid #1f2937;
   border-radius: 4px;
@@ -3352,7 +3184,8 @@ input.preview-timecode:focus {
 }
 
 .new-project-row input[type="text"]:focus,
-.new-project-row select:focus {
+.new-project-row .app-select:focus-visible,
+.new-project-row .app-select[data-popup-open] {
   border-color: #60a5fa;
 }
 
@@ -3670,7 +3503,7 @@ input.preview-timecode:focus {
 }
 
 /* Export settings dialog — reuses the settings popup chrome
- * (.settings-overlay / .settings-panel / .settings-body / .settings-card);
+ * (.settings-panel / .settings-body / .settings-card inside AppDialog);
  * these rules style the per-field label/control rows + footer actions. */
 .export-row {
   display: flex;
@@ -3680,20 +3513,10 @@ input.preview-timecode:focus {
   padding: 7px 0;
 }
 
+/* Export-dialog context: AppSelect triggers here keep the wide field
+ * footprint native selects had (.app-select carries the shared skin). */
 .export-select {
   min-width: 180px;
-  padding: 5px 8px;
-  font-size: 12px;
-  color: #e5e7eb;
-  background: #11151b;
-  border: 1px solid #374151;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.export-select:focus {
-  outline: none;
-  border-color: #3b82f6;
 }
 
 .export-bitrate {
