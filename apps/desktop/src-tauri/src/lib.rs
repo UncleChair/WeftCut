@@ -156,6 +156,8 @@ pub fn run() {
             motifs::authoring_commands::import_motif,
             motifs::authoring_commands::install_motif,
             motifs::authoring_commands::delete_motif,
+            motifs::staleness::motif_staleness_report,
+            motifs::staleness::acknowledge_motif_staleness,
             commands::log_list,
             commands::log_clear,
             commands::log_emit,
