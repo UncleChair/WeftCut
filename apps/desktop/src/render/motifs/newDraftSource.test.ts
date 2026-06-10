@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { newDraftSource } from "./starterTemplate";
+import { newDraftSource } from "./newDraftSource";
 
 describe("newDraftSource", () => {
   it("produces a valid manifest + a motif.define HTML carrying the given name", () => {

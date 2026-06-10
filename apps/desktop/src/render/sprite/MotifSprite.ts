@@ -98,7 +98,7 @@ export class MotifSprite {
   }
 
   /// Apply the layer's transform and bind the raster for the frame at
-  /// `tInLayerUs` (composition-time minus the layer's start; templates have no
+  /// `tInLayerUs` (composition-time minus the layer's start; motifs have no
   /// source-in offset, so this resets to 0 at `t_start`). On a cache hit the
   /// frame binds synchronously; on a miss it's captured + rasterized async and
   /// bound once ready (if still wanted).

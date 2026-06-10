@@ -629,13 +629,13 @@ function MotifFields({
   // in sync with `merged`, not a stale snapshot from mount. Same notifier the
   // lifecycle row rides.
   useSyncExternalStore(subscribeMotifCatalog, motifCatalogRevision);
-  // The template's prop schema drives the props section. A null lookup means
-  // the placed template_id isn't in the catalog (e.g. a removed built-in) — we
+  // The motif's prop schema drives the props section. A null lookup means
+  // the placed motif_id isn't in the catalog (e.g. a removed built-in) — we
   // can still edit transform/opacity, but render a note instead of guessing
   // prop inputs.
-  const template = getMotif(v.motif_id);
-  const propEntries = template
-    ? Object.entries(template.manifest.props_schema)
+  const motif = getMotif(v.motif_id);
+  const propEntries = motif
+    ? Object.entries(motif.manifest.props_schema)
     : [];
 
   // Partial props patch: send ONLY the changed key so the backend's field-wise
@@ -647,7 +647,7 @@ function MotifFields({
 
   return (
     <section className="prop-section">
-      <h3>{t("property_panel.template")}</h3>
+      <h3>{t("property_panel.motif")}</h3>
       <BakeStatusLine layerId={layer.id} />
       <MotifLifecycleRow motifId={v.motif_id} layerId={layer.id} onMutated={onMutated} />
       <MotifSourcePanel motifId={v.motif_id} />
@@ -701,8 +701,8 @@ function MotifFields({
         />
         <span className="prop-range-value">{opacity.toFixed(2)}</span>
       </Field>
-      {template === null ? (
-        <p className="meta">{t("property_panel.unknown_template")}</p>
+      {motif === null ? (
+        <p className="meta">{t("property_panel.unknown_motif")}</p>
       ) : propEntries.length > 0 ? (
         <>
           <h4>{t("property_panel.props")}</h4>
@@ -801,7 +801,7 @@ function MotifLifecycleRow({
   if (status === "builtin") {
     return (
       <div className="prop-motif-lifecycle">
-        <span className="template-card-status status-builtin">
+        <span className="motif-card-status status-builtin">
           {t("property_panel.motif_status.builtin", { defaultValue: "builtin" })}
         </span>
         <button disabled={busy} onClick={edit}>{t("property_panel.motif_edit_fork")}</button>
@@ -813,7 +813,7 @@ function MotifLifecycleRow({
   if (status === "installed") {
     return (
       <div className="prop-motif-lifecycle">
-        <span className="template-card-status status-installed">
+        <span className="motif-card-status status-installed">
           {t("property_panel.motif_status.installed")}
         </span>
         <button disabled={busy} onClick={edit}>{t("property_panel.motif_edit")}</button>
@@ -849,7 +849,7 @@ function MotifLifecycleRow({
 
   return (
     <div className="prop-motif-lifecycle">
-      <span className="template-card-status status-draft">
+      <span className="motif-card-status status-draft">
         {t("property_panel.motif_status.draft")}
       </span>
       {target ? (
@@ -981,8 +981,8 @@ function MotifSourcePanel({ motifId }: { motifId: string }) {
   );
 }
 
-/// One editable template prop, switched on `PropSpec.type`. Mirrors the
-/// template picker's `PropField` (string / color / number), but commits each
+/// One editable motif prop, switched on `PropSpec.type`. Mirrors the
+/// motif picker's `PropField` (string / color / number), but commits each
 /// change field-wise via `onCommit`. The string/number variants delegate to
 /// dedicated sub-components so each can hold the local-state hooks at the top
 /// of its body (rules-of-hooks; the color variant needs no local state).
@@ -1122,7 +1122,7 @@ function NumberPropField({
         value={num}
         min={spec.min}
         max={spec.max}
-        // Step heuristic copied from the template picker: small ranges
+        // Step heuristic copied from the motif picker: small ranges
         // (≤10 wide) get a 0.1 step, everything else 1.
         step={
           spec.max !== undefined && spec.max - (spec.min ?? 0) <= 10 ? 0.1 : 1

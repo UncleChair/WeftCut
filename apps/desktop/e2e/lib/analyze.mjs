@@ -31,9 +31,9 @@ export function analyze({ output, source, samples, ssimMin, audio }) {
 
 // Self-SSIM: compare pairs of indices WITHIN one output video (no source).
 // `samples` is read as consecutive pairs [a0,b0,a1,b1,...]. Returns the parsed
-// `{ output, ssim_max, pairs:[{a,b,ssim,differ}], pass }`. Used by the template-
-// export e2e to prove an animated template makes two output frames DIFFER (a
-// skipped template would render static black → near-identical → fail).
+// `{ output, ssim_max, pairs:[{a,b,ssim,differ}], pass }`. Used by the motif-
+// export e2e to prove an animated motif makes two output frames DIFFER (a
+// skipped motif would render static black → near-identical → fail).
 export function analyzeSelf({ output, samples, ssimMax }) {
   const args = [
     "run", "--manifest-path", "apps/desktop/src-tauri/Cargo.toml",

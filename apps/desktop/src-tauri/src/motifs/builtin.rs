@@ -3,7 +3,7 @@
 //!
 //! A built-in Motif is an `index.html` (+ optional sibling assets) shipped in
 //! `motifs/catalog/<id>/`. The files are embedded with `include_str!` /
-//! `include_bytes!` (mirroring the old `templates` module) so they travel with
+//! `include_bytes!` so they travel with
 //! the binary and need no on-disk install.
 //!
 //! ## Scheme / URL convention (Windows)

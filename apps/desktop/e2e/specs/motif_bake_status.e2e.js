@@ -1,11 +1,11 @@
 import os from "node:os";
 import path from "node:path";
 
-// Real-WebView2 end-to-end gate for the per-template-layer bake-status dot.
+// Real-WebView2 end-to-end gate for the per-motif-layer bake-status dot.
 //
 // Asserts that:
-//   - Before a pre-bake the .template-bake-dot span is absent from the DOM
-//     (phase is idle → TemplateBakeDot returns null).
+//   - Before a pre-bake the .motif-bake-dot span is absent from the DOM
+//     (phase is idle → MotifBakeDot returns null).
 //   - After prebakeLayerAndWait resolves the span gains .is-ready within 15 s
 //     (Compositor.recomputeBakeStatuses picks up the baker's "ready" status and
 //     setLayerBakeStatuses → React re-render shows the dot).
@@ -28,7 +28,7 @@ const MOTIF_ID = "countdown";
 const DURATION_US = 5_000_000; // 5 s
 const CONTENT_FRAMES = 150;    // Math.round(5 * 30)
 
-describe("template bake-status dot (real WebView2)", function () {
+describe("motif bake-status dot (real WebView2)", function () {
   let layerId = null;
 
   // ── helpers ────────────────────────────────────────────────────────────────
@@ -85,7 +85,7 @@ describe("template bake-status dot (real WebView2)", function () {
     if (!r2.ok) throw new Error("addMotifLayer failed: " + r2.error);
 
     layerId = r2.id;
-    console.log(`[e2e] added countdown template layer: ${layerId}`);
+    console.log(`[e2e] added countdown motif layer: ${layerId}`);
   });
 
   // ── TEST: idle → ready ────────────────────────────────────────────────────
@@ -93,9 +93,9 @@ describe("template bake-status dot (real WebView2)", function () {
   it("shows no dot before pre-bake, then a ready dot after baking", async () => {
     if (!layerId) throw new Error("setup: no layer id");
 
-    // Phase is idle → TemplateBakeDot returns null → no span in the DOM.
+    // Phase is idle → MotifBakeDot returns null → no span in the DOM.
     const before = await browser.execute(
-      () => document.querySelectorAll(".template-bake-dot").length,
+      () => document.querySelectorAll(".motif-bake-dot").length,
     );
     expect(before).toBe(0);
 
@@ -116,14 +116,14 @@ describe("template bake-status dot (real WebView2)", function () {
     await browser.waitUntil(
       async () =>
         await browser.execute(
-          () => !!document.querySelector(".template-bake-dot.is-ready"),
+          () => !!document.querySelector(".motif-bake-dot.is-ready"),
         ),
-      { timeout: 15000, timeoutMsg: ".template-bake-dot.is-ready never appeared" },
+      { timeout: 15000, timeoutMsg: ".motif-bake-dot.is-ready never appeared" },
     );
 
     // No error dot should be present.
     const errCount = await browser.execute(
-      () => document.querySelectorAll(".template-bake-dot.is-error").length,
+      () => document.querySelectorAll(".motif-bake-dot.is-error").length,
     );
     expect(errCount).toBe(0);
 

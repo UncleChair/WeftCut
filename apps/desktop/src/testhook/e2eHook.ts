@@ -303,7 +303,7 @@ export function installMotifTestHooks(): void {
           (sprite.sprite.texture.source?.resource ?? null) === prevResource
         ) {
           if (Date.now() > deadline) {
-            throw new Error("template sprite bind timed out");
+            throw new Error("motif sprite bind timed out");
           }
           // eslint-disable-next-line no-await-in-loop
           await sleep(20);
@@ -312,7 +312,7 @@ export function installMotifTestHooks(): void {
         const bitmap = tex.source?.resource as ImageBitmap | undefined;
         if (!bitmap) throw new Error("sprite bound no bitmap resource");
         // Checksum the whole frame via a 2D canvas (createImageBitmap output
-        // is clean — getImageData won't taint; see templates.e2e.js).
+        // is clean — getImageData won't taint; see motif_live_preview.e2e.js).
         const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
         const ctx = canvas.getContext("2d");
         if (!ctx) throw new Error("no 2d context");
@@ -333,7 +333,7 @@ export function installMotifTestHooks(): void {
     return out;
   };
 
-  // Trigger a full L2 pre-bake of a template layer (via the prebakeBus) and
+  // Trigger a full L2 pre-bake of a motif layer (via the prebakeBus) and
   // wait until `expectedFrames` PNG files appear on disk. The cacheKey is
   // computed from the live project summary so the spec needs only the layerId.
   hookSlot().prebakeLayerAndWait = async ({ layerId, expectedFrames, timeoutMs = 60_000 }) => {
@@ -343,16 +343,16 @@ export function installMotifTestHooks(): void {
     outer: for (const track of summary.tracks) {
       for (const layer of track.layers) {
         if (layer.id !== layerId || layer.params.kind !== "Motif") continue;
-        const template = getMotif(layer.params.motif_id);
-        if (!template) break outer;
+        const motif = getMotif(layer.params.motif_id);
+        if (!motif) break outer;
         const durationUs = layer.t_end_us - layer.t_start_us;
-        const desc = motifFrameDescriptor(layer.params, 0, durationUs, summary.composition.fps_num, summary.composition.fps_den, template);
+        const desc = motifFrameDescriptor(layer.params, 0, durationUs, summary.composition.fps_num, summary.composition.fps_den, motif);
         if (desc) cacheKey = desc.cacheKey;
         break outer;
       }
     }
     if (cacheKey === null) {
-      throw new Error(`prebakeLayerAndWait: layer ${layerId} not found or has no template`);
+      throw new Error(`prebakeLayerAndWait: layer ${layerId} not found or has no motif`);
     }
 
     requestPrebake(layerId);
@@ -398,10 +398,10 @@ export function installMotifTestHooks(): void {
     for (const track of summary.tracks) {
       for (const layer of track.layers) {
         if (layer.id !== layerId || layer.params.kind !== "Motif") continue;
-        const template = getMotif(layer.params.motif_id);
-        if (!template) return null;
+        const motif = getMotif(layer.params.motif_id);
+        if (!motif) return null;
         const durationUs = layer.t_end_us - layer.t_start_us;
-        const desc = motifFrameDescriptor(layer.params, 0, durationUs, summary.composition.fps_num, summary.composition.fps_den, template);
+        const desc = motifFrameDescriptor(layer.params, 0, durationUs, summary.composition.fps_num, summary.composition.fps_den, motif);
         return desc?.cacheKey ?? null;
       }
     }

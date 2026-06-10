@@ -31,11 +31,11 @@ describe("bakeMotifFrame", () => {
   });
 
   it("captures a content frame at manifest size and forwards manifest settle_rafs", async () => {
-    const template = { manifest: { id: "countdown", size: [480, 480], settle_rafs: 1 } } as unknown as Parameters<
+    const motif = { manifest: { id: "countdown", size: [480, 480], settle_rafs: 1 } } as unknown as Parameters<
       typeof bakeMotifFrame
     >[0];
     // frame 9 at 30fps → tSec = 9 * 1/30 = 0.3; settle_rafs:1 must reach the capture.
-    await bakeMotifFrame(template, 9, 30, 1, { seconds: 5 });
+    await bakeMotifFrame(motif, 9, 30, 1, { seconds: 5 });
     expect(captureMotifFrame).toHaveBeenCalledWith("countdown", 0.3, { seconds: 5 }, 480, 480, 1, undefined);
   });
 });

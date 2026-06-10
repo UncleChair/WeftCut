@@ -997,7 +997,7 @@ export class Compositor {
     };
   }
 
-  /// Map the active template layers at composition-time `tUs` to prewarm specs
+  /// Map the active motif layers at composition-time `tUs` to prewarm specs
   /// (deduped by cacheKey inside the planner) and hand them to the prewarmer.
   /// Runs whether playing or paused (compositeFrame fires on seek/scrub too), so
   /// the cache warms ahead of the playhead in both states.
@@ -1008,12 +1008,12 @@ export class Compositor {
       if (!track.enabled) continue;
       for (const layer of track.layers) {
         if (!layer.enabled || layer.params.kind !== "Motif") continue;
-        const template = getMotif(layer.params.motif_id);
-        if (!template) continue;
+        const motif = getMotif(layer.params.motif_id);
+        if (!motif) continue;
         const tInLayerUs = tUs - layer.t_start_us;
         const durationUs = layer.t_end_us - layer.t_start_us;
         const view = layer.params;
-        const desc = motifFrameDescriptor(view, tInLayerUs, durationUs, this.fpsNum, this.fpsDen, template);
+        const desc = motifFrameDescriptor(view, tInLayerUs, durationUs, this.fpsNum, this.fpsDen, motif);
         if (!desc) continue;
         // Capture the plan-time inputs in locals so the async render closure
         // binds the values that produced THIS cacheKey, not whatever `this.fps*`
@@ -1031,7 +1031,7 @@ export class Compositor {
           // to `rasterMotifFrame` (CDP) inside the resolver on miss / fs hiccup.
           render: (frame: number) =>
             resolveMotifFrame(
-              template,
+              motif,
               desc.cacheKey,
               frame,
               (frame * fpsDen) / fpsNum,
@@ -1060,12 +1060,12 @@ export class Compositor {
         if (!layer.enabled || layer.params.kind !== "Motif") continue;
         const wanted = globalOn || this.manualPrebakeLayers.has(layer.id);
         if (!wanted) continue;
-        const template = getMotif(layer.params.motif_id);
-        if (!template) continue;
+        const motif = getMotif(layer.params.motif_id);
+        if (!motif) continue;
         const tInLayerUs = tUs - layer.t_start_us;
         const durationUs = layer.t_end_us - layer.t_start_us;
         const view = layer.params;
-        const desc = motifFrameDescriptor(view, tInLayerUs, durationUs, this.fpsNum, this.fpsDen, template);
+        const desc = motifFrameDescriptor(view, tInLayerUs, durationUs, this.fpsNum, this.fpsDen, motif);
         if (!desc) continue;
         // Capture the plan-time inputs in locals so the async render closure
         // binds the values that produced THIS cacheKey, not whatever `this.fps*`
@@ -1080,7 +1080,7 @@ export class Compositor {
           // tSec for an arbitrary content frame = frame * fpsDen / fpsNum.
           // `bakeMotifFrame` (CDP capture, no disk read): the baker is the sole
           // L2 writer; reading disk-first here would be pointless.
-          render: (frame: number) => bakeMotifFrame(template, frame, fpsNum, fpsDen, canonicalProps),
+          render: (frame: number) => bakeMotifFrame(motif, frame, fpsNum, fpsDen, canonicalProps),
         });
       }
     }
@@ -1098,8 +1098,8 @@ export class Compositor {
     for (const track of this.projectSummary.tracks) {
       for (const layer of track.layers) {
         if (layer.params.kind !== "Motif") continue;
-        const template = getMotif(layer.params.motif_id);
-        if (!template) continue;
+        const motif = getMotif(layer.params.motif_id);
+        if (!motif) continue;
         // The cacheKey is window/time-independent (it folds props, dims, fps and
         // content-duration, not the playhead), so tInLayerUs = 0 is fine here:
         // we only read `desc.cacheKey`. durationUs is the layer width, mirroring
@@ -1111,7 +1111,7 @@ export class Compositor {
           durationUs,
           this.fpsNum,
           this.fpsDen,
-          template,
+          motif,
         );
         if (desc) activeKeys.push(desc.cacheKey);
       }
@@ -1125,14 +1125,14 @@ export class Compositor {
       this.recomputeBakeStatuses();
       await sharedMotifFrameCache.gcUnreferenced(activeKeys);
     } catch (e) {
-      console.warn("[weftcut/templates] baked-index hydrate/gc failed", e);
+      console.warn("[weftcut/motifs] baked-index hydrate/gc failed", e);
     }
   }
 
   /// Build the per-layer bake-status map and publish it to the store. A layer
   /// shows: its baker status if live; else "ready" if its frames are already on
   /// disk (sharedBakedKeyIndex — e.g. baked last session, toggle off); else it
-  /// is omitted (idle → no dot). O(template layers); called on every onStatus,
+  /// is omitted (idle → no dot). O(motif layers); called on every onStatus,
   /// updateBakeTargets, and setProject.
   private recomputeBakeStatuses(): void {
     if (!this.projectSummary) {
@@ -1143,11 +1143,11 @@ export class Compositor {
     for (const track of this.projectSummary.tracks) {
       for (const layer of track.layers) {
         if (layer.params.kind !== "Motif") continue;
-        const template = getMotif(layer.params.motif_id);
-        if (!template) continue;
+        const motif = getMotif(layer.params.motif_id);
+        if (!motif) continue;
         const durationUs = layer.t_end_us - layer.t_start_us;
         const view = layer.params;
-        const desc = motifFrameDescriptor(view, 0, durationUs, this.fpsNum, this.fpsDen, template);
+        const desc = motifFrameDescriptor(view, 0, durationUs, this.fpsNum, this.fpsDen, motif);
         if (!desc) continue;
         const live = this.bakeStatusByCacheKey.get(desc.cacheKey);
         // L0 coverage of this layer's content frames (cheap Map lookups; the
@@ -1559,9 +1559,9 @@ export class Compositor {
     tUs: number,
   ): void {
     if (layer.params.kind !== "Motif") return;
-    // Layer-relative time, mirroring `updateImage`. Templates have no
+    // Layer-relative time, mirroring `updateImage`. Motifs have no
     // source-in offset, so this resets to 0 at `t_start` — the intended v1
-    // semantic (a template animates over its own placed duration).
+    // semantic (a motif animates over its own placed duration).
     const tInLayerUs = tUs - layer.t_start_us;
     const durationUs = layer.t_end_us - layer.t_start_us;
     // Export mode: pass the baked frames for this layer so the sprite binds by

@@ -1,5 +1,5 @@
-// Per-template-layer L2 bake status, surfaced to the timeline dot + property
-// panel. Written by the Compositor (which maps active template layers →
+// Per-motif-layer L2 bake status, surfaced to the timeline dot + property
+// panel. Written by the Compositor (which maps active motif layers →
 // cacheKey → status); read via ATOMIC selectors only (per
 // `feedback_zustand_composite_selector` — never select the whole map object).
 //

@@ -21,13 +21,13 @@ export const sharedMotifFrameCache = new MotifFrameCache();
 /// Compositor hydrates it on project load; the baker `add`s on each write.
 export const sharedBakedKeyIndex = new BakedKeyIndex();
 
-/// Obtain one template frame, preferring a pre-baked PNG on disk over a live
+/// Obtain one motif frame, preferring a pre-baked PNG on disk over a live
 /// raster. Read-only: writing is the MotifBaker's job (single writer →
 /// no LRU-eviction race on a fire-and-forget encode). Shared by the on-demand
 /// sprite path and the prewarmer, so disk-first is uniform.
 ///
 /// Disk read is attempted only when `sharedBakedKeyIndex.has(cacheKey)` — so an
-/// un-baked template never pays an IPC. Any read/permission error is swallowed
+/// un-baked motif never pays an IPC. Any read/permission error is swallowed
 /// and falls through to a live raster, so an fs hiccup can never blank preview.
 export async function resolveMotifFrame(
   motif: Motif,

@@ -22,10 +22,10 @@ export interface MotifFrameDescriptor {
   durationSec: number;
 }
 
-/// The cache identity + render inputs for one template frame at `tInLayerUs`.
+/// The cache identity + render inputs for one motif frame at `tInLayerUs`.
 /// Single source of truth shared by the on-demand sprite path and the
 /// prewarmer, so they can never disagree on (cacheKey, contentFrame).
-/// `durationUs` is the LAYER width (used only for uncapped templates).
+/// `durationUs` is the LAYER width (used only for uncapped motifs).
 /// Always returns a descriptor — the lenient canonicalize never fails. The
 /// `| null` return type is kept for defensive typing; callers' null guards are
 /// safe no-ops.

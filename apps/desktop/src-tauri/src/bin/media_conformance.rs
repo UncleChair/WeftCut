@@ -523,9 +523,9 @@ struct SelfReport {
     pass: bool,
 }
 
-/// Compare pairs of indices WITHIN one video (no source). Used by the template-
-/// export e2e: a baked, animating template makes two output frames differ
-/// (ssim < ssim_max); a skipped template renders a static black frame, so the
+/// Compare pairs of indices WITHIN one video (no source). Used by the motif-
+/// export e2e: a baked, animating motif makes two output frames differ
+/// (ssim < ssim_max); a skipped motif renders a static black frame, so the
 /// pair would be near-identical (ssim ~1.0) and fail. `samples` is read in
 /// consecutive pairs: [a0,b0, a1,b1, ...]; an odd trailing index is ignored.
 fn analyze_self(output: &Path, samples: &[u64], ssim_max: f64) -> Result<SelfReport> {
@@ -954,7 +954,7 @@ mod tests {
     #[test]
     fn self_ssim_identical_index_does_not_differ() {
         // Comparing an index to ITSELF must score ~1.0 → differ=false → fail
-        // (this is the "static / skipped template" case the e2e guards against).
+        // (this is the "static / skipped motif" case the e2e guards against).
         let clip = std::path::Path::new(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../fixtures/media/tiny.mp4"

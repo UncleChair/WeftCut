@@ -1,10 +1,9 @@
-// Per-frame raster cache for animated SVG templates.
+// Per-frame raster cache for animated motifs.
 //
-// A template animates over its duration: each composition frame is a
-// distinct `render(t)` rasterized to an `ImageBitmap`. This cache holds a
-// SEQUENCE of frames per template instance, keyed by `(cacheKey, frameIndex)`
-// — distinct from a single-bitmap-per-template cache, which the old
-// foreignObject path used before the SVG render redesign.
+// A motif animates over its duration: each composition frame is a distinct
+// CDP capture decoded to an `ImageBitmap`. This cache holds a SEQUENCE of
+// frames per motif instance, keyed by `(cacheKey, frameIndex)` — distinct
+// from a single-bitmap-per-motif cache.
 //
 // Two layers:
 //
@@ -102,9 +101,9 @@ export class MotifFrameCache {
   }
 
   /// Insert a frame, or keep the bitmap already cached for this (key, frame).
-  /// A given (cacheKey, frameIndex) is deterministic — same template, props,
+  /// A given (cacheKey, frameIndex) is deterministic — same motif, props,
   /// size, fps, content-duration and absolute content frame — so a concurrent
-  /// re-raster (e.g. several same-config template layers cold-missing on
+  /// re-raster (e.g. several same-config motif layers cold-missing on
   /// project reopen) produces an IDENTICAL image. Keep the existing bitmap (a
   /// live sprite may have already bound it) and close the redundant incoming
   /// one; return the CANONICAL cache-owned bitmap the caller should bind. This
@@ -313,7 +312,7 @@ async function rasterDirFor(cacheKey: string): Promise<string | null> {
 /// dir name is JS-owned (`Cache/raster/` is not created by the Rust
 /// `CacheLayout`), so it does NOT need to match Rust's blake3 scheme. A
 /// 32-bit space is ample BECAUSE the number of live keys is tiny: only a
-/// handful of distinct template-instance keys exist in one workspace, so
+/// handful of distinct motif-instance keys exist in one workspace, so
 /// the birthday-bound collision probability against a 2^32 space is
 /// negligible. (A collision would NOT be self-healing — two colliding keys
 /// share the `<hash>` dir and their frame `<i>.png` files would CLOBBER each

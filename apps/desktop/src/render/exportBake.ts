@@ -104,7 +104,7 @@ export interface MotifBakeSpec {
 
 /// Collect the Motif layers (enabled, on an enabled track) whose interval
 /// overlaps `[startUs, endUs)`, resolving each to a `MotifBakeSpec`. Pure +
-/// Node-testable: no DOM, no rasterize. Layers whose `template_id` isn't in the
+/// Node-testable: no DOM, no rasterize. Layers whose `motif_id` isn't in the
 /// catalog are skipped (they can't render anywhere — the live compositor warns
 /// too). `fpsNum/fpsDen` are the COMPOSITION fps.
 export function motifLayersToBake(
@@ -131,7 +131,7 @@ export function motifLayersToBake(
       if (!motif) {
         // eslint-disable-next-line no-console
         console.warn(
-          `[weftcut/export] bake: unknown template "${view.motif_id}" ` +
+          `[weftcut/export] bake: unknown motif "${view.motif_id}" ` +
             `(layer ${layer.id}) — skipping`,
         );
         continue;
@@ -141,7 +141,7 @@ export function motifLayersToBake(
       const durationFrames = motifDurationFrames(durationUs, fpsNum, fpsDen);
 
       // Comp-frame indices of the export-range overlap, expressed layer-local
-      // (templates have no source-in offset, so layer-local time = comp time −
+      // (motifs have no source-in offset, so layer-local time = comp time −
       // t_start_us). Mirrors `MotifSprite.update`'s
       // `frameIndexInLayer(tInLayerUs, ...)` + the `min(durationFrames - 1, …)`
       // clamp. We bake only the frames the export can reach; a frame the
@@ -221,7 +221,7 @@ export async function exportBakeMotifs(
     // canonicalize against the same manifest, so export pixels == preview.
     const canonical = canonicalizeProps(spec.view.props, spec.motif.manifest);
     // Content-window model: src_in offset + intrinsic content duration. Uncapped
-    // templates fall back to layer-width content with src_in=0 (legacy).
+    // motifs fall back to layer-width content with src_in=0 (legacy).
     const cap = resolveMotifContentDurationUs(spec.motif.manifest, spec.view.props);
     const contentDurationUs = cap ?? spec.durationUs;
     // Windowing (`src_in`) applies ONLY to layer-capped Motifs (`max_duration*`),

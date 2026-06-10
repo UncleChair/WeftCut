@@ -1,8 +1,7 @@
-// Encode an SVG-rastered ImageBitmap to lossless PNG bytes for the L2 disk
+// Encode a captured motif ImageBitmap to lossless PNG bytes for the L2 disk
 // cache. PNG (not WebP) because the Canvas WebP encoder is lossy and crisp
-// template text edges matter (ADR 0015). The SVG raster path is untainted
-// (no <foreignObject>), so `convertToBlob` succeeds — unlike the dead
-// foreignObject path that SecurityError'd here.
+// motif text edges matter. CDP-captured bitmaps are taint-free, so
+// `convertToBlob` succeeds.
 //
 // Reading the bitmap via drawImage does NOT consume or neuter it, so the same
 // ImageBitmap can be bound as a texture and encoded for disk.
