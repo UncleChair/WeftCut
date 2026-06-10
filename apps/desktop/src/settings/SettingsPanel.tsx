@@ -17,6 +17,7 @@ import {
 import { formatTimecode, parseTimecode } from "../frames";
 import { AppDialog } from "../components/AppDialog";
 import { AppSlider } from "../components/AppSlider";
+import { AppSwitch } from "../components/AppSwitch";
 import { Button } from "@/components/ui/button";
 import { KeybindingPanel } from "./KeybindingPanel";
 import {
@@ -94,12 +95,10 @@ export function SettingsPanel({
         <div className="settings-card">
         <h3>{t("settings.startup_heading")}</h3>
         <label className="settings-toggle-row">
-          <input
-            type="checkbox"
+          <AppSwitch
             checked={reopenOnLaunch === true}
             disabled={reopenOnLaunch === null}
-            onChange={async (e) => {
-              const next = e.target.checked;
+            onCheckedChange={async (next) => {
               setReopenOnLaunch(next);
               try {
                 await recentsSetReopenOnLaunch(next);
@@ -198,11 +197,9 @@ function TimelineSnapSection({
   return (
     <>
       <label className="settings-toggle-row">
-        <input
-          type="checkbox"
+        <AppSwitch
           checked={enabled}
-          onChange={async (e) => {
-            const next = e.target.checked;
+          onCheckedChange={async (next) => {
             onError("");
             try {
               await setAppSettings({ tail_snap_enabled: next });
@@ -281,12 +278,10 @@ function AutoDeleteEmptyTracksSection({
 
   return (
     <label className="settings-toggle-row">
-      <input
-        type="checkbox"
+      <AppSwitch
         checked={enabled === true}
         disabled={enabled === null}
-        onChange={async (e) => {
-          const next = e.target.checked;
+        onCheckedChange={async (next) => {
           setEnabled(next);
           onError("");
           try {
@@ -314,11 +309,9 @@ function PrebakeSection({ onError }: { onError: (msg: string) => void }) {
   const enabled = usePrebakeMotifsEnabled();
   return (
     <label className="settings-toggle-row">
-      <input
-        type="checkbox"
+      <AppSwitch
         checked={enabled}
-        onChange={async (e) => {
-          const next = e.target.checked;
+        onCheckedChange={async (next) => {
           onError("");
           try {
             await setAppSettings({ prebake_motifs: next });
@@ -438,12 +431,11 @@ function CompositionSection({
     <>
       <div className="settings-pin-row">
         <label className="settings-pin-checkbox">
-          <input
-            type="checkbox"
+          <AppSwitch
             checked={pinned}
             disabled={disabled}
-            onChange={(e) => {
-              void togglePin(e.target.checked);
+            onCheckedChange={(next) => {
+              void togglePin(next);
             }}
           />
           <span className="settings-toggle-label">

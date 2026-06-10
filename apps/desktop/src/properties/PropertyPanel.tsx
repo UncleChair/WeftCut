@@ -4,6 +4,7 @@ import { Tooltip } from "@base-ui/react/tooltip";
 import { formatTimecode, parseTimecode } from "../frames";
 import { AppSelect } from "../components/AppSelect";
 import { AppSlider } from "../components/AppSlider";
+import { AppSwitch } from "../components/AppSwitch";
 import { Button } from "@/components/ui/button";
 import {
   updateLayer,
@@ -146,12 +147,12 @@ function EnvelopeFields({
         />
       </Field>
       <Field label={t("property_panel.enabled")}>
-        <input
-          type="checkbox"
+        <AppSwitch
           checked={enabled}
-          onChange={(e) => {
-            setEnabled(e.target.checked);
-            commit({ enabled: e.target.checked });
+          ariaLabel={t("property_panel.enabled")}
+          onCheckedChange={(next) => {
+            setEnabled(next);
+            commit({ enabled: next });
           }}
         />
       </Field>
@@ -470,17 +471,17 @@ function VideoClipFields({
         />
       </Field>
       <Field label={t("property_panel.flip_h")}>
-        <input
-          type="checkbox"
+        <AppSwitch
           checked={v.flip_h}
-          onChange={(e) => commit({ kind: "VideoClip", flip_h: e.target.checked })}
+          ariaLabel={t("property_panel.flip_h")}
+          onCheckedChange={(next) => commit({ kind: "VideoClip", flip_h: next })}
         />
       </Field>
       <Field label={t("property_panel.flip_v")}>
-        <input
-          type="checkbox"
+        <AppSwitch
           checked={v.flip_v}
-          onChange={(e) => commit({ kind: "VideoClip", flip_v: e.target.checked })}
+          ariaLabel={t("property_panel.flip_v")}
+          onCheckedChange={(next) => commit({ kind: "VideoClip", flip_v: next })}
         />
       </Field>
     </section>
@@ -1221,10 +1222,10 @@ function AudioFields({
         />
       </Field>
       <Field label={t("property_panel.mute")}>
-        <input
-          type="checkbox"
+        <AppSwitch
           checked={v.mute}
-          onChange={(e) => commit({ kind: "Audio", mute: e.target.checked })}
+          ariaLabel={t("property_panel.mute")}
+          onCheckedChange={(next) => commit({ kind: "Audio", mute: next })}
         />
       </Field>
     </section>
