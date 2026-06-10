@@ -84,7 +84,6 @@ use uuid::Uuid;
 
 use crate::cache::{CacheLayout, cached_ok};
 use crate::io::probe;
-use crate::ir::{self, RenderTarget};
 use crate::jobs;
 use crate::cloud;
 use crate::motifs::catalog;
@@ -2871,21 +2870,33 @@ impl ServerHandler for WeftCutServer {
                 serde_json::to_value(&view).map_err(serialize_err)?
             }
             URI_COMPILED => {
-                let target = RenderTarget::full(
-                    snap.composition.width,
-                    snap.composition.height,
-                    Rational::new(snap.composition.fps.num, snap.composition.fps.den),
-                    snap.composition.sample_rate,
-                    snap.composition.channels,
-                );
-                match ir::lower(&snap, target) {
-                    Ok(graph) => serde_json::to_value(&graph).map_err(serialize_err)?,
-                    Err(e) => {
-                        return Err(McpError::internal_error(
-                            format!("compile project: {e}"),
-                            None,
-                        ));
-                    }
+                // The audio mix plan IS the compiled view of the export
+                // audio pipeline (the lavfi IR it replaced is gone; ADR
+                // 0019). Envelope point COUNTS, not values — keyframed
+                // gain on a long layer would be hundreds of thousands of
+                // floats. A transient ConformMissing state reports inline
+                // instead of failing the read.
+                match crate::audio::mix::plan_for_project(&snap, None) {
+                    Ok(plan) => serde_json::json!({
+                        "kind": "audio_mix_plan",
+                        "sample_rate": crate::audio::mix::MIX_SAMPLE_RATE,
+                        "window_frames": [plan.window_start_frame, plan.window_end_frame],
+                        "layers": plan.layers.iter().map(|l| serde_json::json!({
+                            "label": l.label,
+                            "conform_path": l.conform_path.display().to_string(),
+                            "start_frame": l.start_frame,
+                            "src_in_frame": l.src_in_frame,
+                            "src_out_frame": l.src_out_frame,
+                            "gain_constant": l.gain.is_constant(),
+                            "gain_points": l.gain.values.len(),
+                            "pan_constant": l.pan.is_constant(),
+                            "pan_points": l.pan.values.len(),
+                        })).collect::<Vec<_>>(),
+                    }),
+                    Err(e) => serde_json::json!({
+                        "kind": "audio_mix_plan",
+                        "error": e.to_string(),
+                    }),
                 }
             }
             other if other.starts_with(PREFIX_LAYERS) => {
@@ -3144,8 +3155,8 @@ const STATIC_RESOURCES: &[ResourceDescriptor] = &[
     },
     ResourceDescriptor {
         uri: URI_COMPILED,
-        name: "Compiled IR",
-        description: "Compiled IR graph for the current project — for agents that want structural reasoning.",
+        name: "Audio mix plan",
+        description: "Compiled export-audio mix plan (layer placement on the 48 kHz frame grid + envelope summaries) — for agents that want structural reasoning about what export will mix.",
     },
     ResourceDescriptor {
         uri: URI_MOTIFS,

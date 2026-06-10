@@ -17,7 +17,6 @@ mod export;
 mod export_settings_store;
 mod ffmpeg;
 mod io;
-mod ir;
 mod jobs;
 mod keybindings;
 mod logs;
