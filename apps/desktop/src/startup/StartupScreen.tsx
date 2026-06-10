@@ -11,6 +11,7 @@ import {
 } from "../i18n";
 import { AppDialog } from "../components/AppDialog";
 import { AppSelect } from "../components/AppSelect";
+import { Button } from "@/components/ui/button";
 import { GlobeIcon } from "../i18n/GlobeIcon";
 import {
   projectNewWorkspace,
@@ -426,9 +427,9 @@ function NewProjectForm({
             >
               {parentFolder || t("new_project.parent_folder_placeholder")}
             </span>
-            <button onClick={pickParent} disabled={busy}>
+            <Button onClick={pickParent} disabled={busy}>
               {t("new_project.choose_folder")}
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -458,16 +459,17 @@ function NewProjectForm({
         )}
 
         <footer className="new-project-actions">
-          <button onClick={onCancel} disabled={busy}>
+          <Button size="lg" onClick={onCancel} disabled={busy}>
             {t("new_project.cancel")}
-          </button>
-          <button
-            className="primary"
+          </Button>
+          <Button
+            variant="default"
+            size="lg"
             onClick={submit}
             disabled={!canCreate}
           >
             {busy ? t("new_project.creating") : t("new_project.create")}
-          </button>
+          </Button>
         </footer>
     </AppDialog>
   );

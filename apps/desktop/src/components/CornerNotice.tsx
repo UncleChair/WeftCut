@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 interface CornerNoticeProps {
@@ -32,9 +33,9 @@ export function CornerNotice({
     >
       <header>
         <span>{title}</span>
-        <button disabled={actionDisabled} onClick={onAction}>
+        <Button variant="outline" size="xs" disabled={actionDisabled} onClick={onAction}>
           {actionLabel}
-        </button>
+        </Button>
       </header>
       {children}
     </aside>

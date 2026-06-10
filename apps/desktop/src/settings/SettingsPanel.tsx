@@ -17,6 +17,7 @@ import {
 import { formatTimecode, parseTimecode } from "../frames";
 import { AppDialog } from "../components/AppDialog";
 import { AppSlider } from "../components/AppSlider";
+import { Button } from "@/components/ui/button";
 import { KeybindingPanel } from "./KeybindingPanel";
 import {
   setAppSettings,
@@ -600,8 +601,8 @@ function ApiKeyRow({
           }
           disabled={busy !== null}
         />
-        <button
-          type="button"
+        <Button
+          size="sm"
           onClick={save}
           disabled={busy !== null || value.trim() === ""}
         >
@@ -610,9 +611,9 @@ function ApiKeyRow({
             : flash === "saved"
               ? t("settings.saved")
               : t("settings.save")}
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          size="sm"
           onClick={clear}
           disabled={busy !== null || !status.configured}
         >
@@ -621,15 +622,15 @@ function ApiKeyRow({
             : flash === "cleared"
               ? t("settings.cleared")
               : t("settings.clear")}
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          size="sm"
           onClick={test}
           disabled={busy !== null || !status.configured}
           title={t("settings.test_hint")}
         >
           {busy === "test" ? t("settings.testing") : t("settings.test")}
-        </button>
+        </Button>
       </div>
       {testResult && (
         <p

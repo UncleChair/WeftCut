@@ -5,6 +5,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { formatTimecode, parseTimecode } from "../frames";
 import { AppDialog } from "../components/AppDialog";
 import { AppSelect } from "../components/AppSelect";
+import { Button } from "@/components/ui/button";
 import {
   addMotif,
   importMotif,
@@ -434,11 +435,11 @@ function MotifForm({
       </p>
 
       <div className="motif-picker-actions">
-        <button type="submit" disabled={busy}>
+        <Button type="submit" variant="default" size="lg" disabled={busy}>
           {busy
             ? t("motif_picker.adding")
             : t("motif_picker.add")}
-        </button>
+        </Button>
       </div>
     </form>
   );

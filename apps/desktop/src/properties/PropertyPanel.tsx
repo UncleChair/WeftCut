@@ -4,6 +4,7 @@ import { Tooltip } from "@base-ui/react/tooltip";
 import { formatTimecode, parseTimecode } from "../frames";
 import { AppSelect } from "../components/AppSelect";
 import { AppSlider } from "../components/AppSlider";
+import { Button } from "@/components/ui/button";
 import {
   updateLayer,
   updateLayerParams,
@@ -777,12 +778,12 @@ function MotifLifecycleRow({
     return (
       <div className="prop-motif-lifecycle">
         <p className="meta">{pending.message}</p>
-        <button disabled={busy} onClick={run(async () => { await pending.action(); setPending(null); })}>
+        <Button size="sm" disabled={busy} onClick={run(async () => { await pending.action(); setPending(null); })}>
           {t("property_panel.motif_confirm")}
-        </button>
-        <button disabled={busy} onClick={() => setPending(null)}>
+        </Button>
+        <Button size="sm" disabled={busy} onClick={() => setPending(null)}>
           {t("property_panel.motif_cancel")}
-        </button>
+        </Button>
         {err && <p className="settings-error">{err}</p>}
       </div>
     );
@@ -802,7 +803,7 @@ function MotifLifecycleRow({
         <span className="motif-card-status status-builtin">
           {t("property_panel.motif_status.builtin", { defaultValue: "builtin" })}
         </span>
-        <button disabled={busy} onClick={edit}>{t("property_panel.motif_edit_fork")}</button>
+        <Button size="sm" disabled={busy} onClick={edit}>{t("property_panel.motif_edit_fork")}</Button>
         {err && <p className="settings-error">{err}</p>}
       </div>
     );
@@ -814,8 +815,9 @@ function MotifLifecycleRow({
         <span className="motif-card-status status-installed">
           {t("property_panel.motif_status.installed")}
         </span>
-        <button disabled={busy} onClick={edit}>{t("property_panel.motif_edit")}</button>
-        <button
+        <Button size="sm" disabled={busy} onClick={edit}>{t("property_panel.motif_edit")}</Button>
+        <Button
+          size="sm"
           disabled={busy}
           onClick={() => setPending({
             message: t("property_panel.motif_delete_confirm", { id: motifId }),
@@ -823,7 +825,7 @@ function MotifLifecycleRow({
           })}
         >
           {t("property_panel.motif_delete")}
-        </button>
+        </Button>
         {err && <p className="settings-error">{err}</p>}
       </div>
     );
@@ -852,7 +854,8 @@ function MotifLifecycleRow({
       </span>
       {target ? (
         <>
-          <button
+          <Button
+            size="sm"
             disabled={busy}
             onClick={() => {
               const n = updateBlastRadius(target);
@@ -869,8 +872,9 @@ function MotifLifecycleRow({
             }}
           >
             {t("property_panel.motif_update")}
-          </button>
-          <button
+          </Button>
+          <Button
+            size="sm"
             disabled={busy}
             onClick={run(async () => {
               await installMotif(motifId, { kind: "new" });
@@ -878,8 +882,9 @@ function MotifLifecycleRow({
             })}
           >
             {t("property_panel.motif_save_as_new")}
-          </button>
-          <button
+          </Button>
+          <Button
+            size="sm"
             disabled={busy}
             onClick={run(async () => {
               await updateLayerParams(layerId, { kind: "Motif", motif_id: target });
@@ -888,11 +893,12 @@ function MotifLifecycleRow({
             })}
           >
             {t("property_panel.motif_discard")}
-          </button>
+          </Button>
         </>
       ) : (
         <>
-          <button
+          <Button
+            size="sm"
             disabled={busy}
             onClick={run(async () => {
               await installMotif(motifId, { kind: "new" });
@@ -900,8 +906,9 @@ function MotifLifecycleRow({
             })}
           >
             {t("property_panel.motif_install")}
-          </button>
-          <button
+          </Button>
+          <Button
+            size="sm"
             disabled={busy}
             onClick={run(async () => {
               await deleteMotif(motifId);
@@ -909,7 +916,7 @@ function MotifLifecycleRow({
             })}
           >
             {t("property_panel.motif_delete")}
-          </button>
+          </Button>
         </>
       )}
       {err && <p className="settings-error">{err}</p>}
@@ -971,9 +978,9 @@ function MotifSourcePanel({ motifId }: { motifId: string }) {
         disabled={source == null || busy}
         onChange={(e) => setSource(e.target.value)}
       />
-      <button disabled={busy || source == null} onClick={apply}>
+      <Button size="sm" disabled={busy || source == null} onClick={apply}>
         {busy ? t("property_panel.motif_source_applying") : t("property_panel.motif_source_apply")}
-      </button>
+      </Button>
       {err && <p className="settings-error">{err}</p>}
     </div>
   );

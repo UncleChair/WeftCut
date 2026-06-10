@@ -18,6 +18,7 @@ import {
   KeybindingCapture,
   bindingLabel,
 } from "./KeybindingCapture";
+import { Button } from "@/components/ui/button";
 
 interface Props {
   /// Current overrides loaded by App.tsx. Missing entries inherit the
@@ -177,15 +178,15 @@ export function KeybindingPanel({
   return (
     <div className="keybindings">
       <div className="keybindings-toolbar">
-        <button type="button" onClick={onResetAll}>
+        <Button size="sm" onClick={onResetAll}>
           {t("keybindings.reset_all")}
-        </button>
-        <button type="button" onClick={onExport}>
+        </Button>
+        <Button size="sm" onClick={onExport}>
           {t("keybindings.export")}
-        </button>
-        <button type="button" onClick={onImport}>
+        </Button>
+        <Button size="sm" onClick={onImport}>
           {t("keybindings.import")}
-        </button>
+        </Button>
       </div>
       <table className="keybindings-table">
         <tbody>
