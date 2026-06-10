@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # Preview's `FrameRing` caches `ImageBitmap` snapshots, not `VideoFrame`s
