@@ -1,15 +1,14 @@
 // Color layer — a flat rectangle of `(width, height)` at the
-// composition origin, filled with the layer's animated `Rgba`.
-// The Rust schema stores `color: Animated<Rgba>` but the LayerSummary
-// view ships only the static-resolved snapshot (`color: Rgba`); per-
-// frame keyframe interpolation will arrive when the IPC ships full
-// `AnimTrack<T>` (separate work).
+// composition origin, filled with the layer's `Rgba`. The IPC ships the
+// full `Animated<Rgba>` track; the Compositor resolves it statically
+// (`resolveColorView`) until the Rust `Animated<Rgba>::value_at` twin
+// exists to mirror per-frame color interpolation.
 //
 // Plan: docs/render.md (P3)
 
 import { Graphics } from "pixi.js";
 
-import type { ColorView } from "../../ipc";
+import type { ResolvedColorView } from "../resolveView";
 
 export interface ColorSpriteInit {
   layerId: string;
@@ -28,7 +27,7 @@ export class ColorSprite {
     this.graphics = new Graphics();
   }
 
-  update(view: ColorView): void {
+  update(view: ResolvedColorView): void {
     const sig = `${view.color.r},${view.color.g},${view.color.b},${view.color.a}|${view.width}x${view.height}`;
     if (sig === this.appliedSig) return;
     this.appliedSig = sig;

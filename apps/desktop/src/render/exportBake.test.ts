@@ -36,7 +36,7 @@ vi.mock("./motifs/motifRasterCache", async (importOriginal) => {
 (globalThis as unknown as { createImageBitmap: (b: Blob) => Promise<ImageBitmap> }).createImageBitmap =
   vi.fn(async () => ({ tag: "from-disk" }) as unknown as ImageBitmap);
 
-import type { LayerParamsView, ProjectSummary, MotifView } from "../ipc";
+import type { AnimTrack, LayerParamsView, ProjectSummary, MotifView } from "../ipc";
 import { frameIndexInLayer, snapFrameFloor } from "../frames";
 import { bakeContentFrameFor, motifLayersToBake, exportBakeMotifs } from "./exportBake";
 import { motifContentFrame, motifDurationFrames } from "./motifs/motifFrames";
@@ -44,6 +44,8 @@ import { bakeMotifFrame } from "./motifs/motifRaster";
 import { sharedBakedKeyIndex, sharedMotifFrameCache } from "./motifs/motifRasterCache";
 
 const COUNTDOWN = "countdown"; // built-in, 480x480
+
+const stat = (v: number): AnimTrack<number> => ({ mode: "Static", value: v });
 
 function motifLayer(
   id: string,
@@ -54,11 +56,11 @@ function motifLayer(
   const params: LayerParamsView = {
     kind: "Motif",
     motif_id: COUNTDOWN,
-    x: 0,
-    y: 0,
-    scale_x: 1,
-    scale_y: 1,
-    opacity: 1,
+    x: stat(0),
+    y: stat(0),
+    scale_x: stat(1),
+    scale_y: stat(1),
+    opacity: stat(1),
     src_in_us: 0,
     props: {},
     ...overrides,

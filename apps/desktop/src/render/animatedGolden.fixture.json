@@ -1,0 +1,43 @@
+{
+  "comment": "Golden vectors for the Animated<f64> engine pair. Rust state/animated.rs::value_at and TS render/animated.ts::resolveAnimated MUST both reproduce these. Edit only with a matching change on BOTH sides.",
+  "default": 99.0,
+  "cases": [
+    { "name": "static", "track": { "mode": "Static", "value": 7.5 },
+      "samples": [ { "t_us": 0, "expect": 7.5 }, { "t_us": 999999, "expect": 7.5 } ] },
+    { "name": "empty_keyframed_falls_back", "track": { "mode": "Keyframed", "value": [] },
+      "samples": [ { "t_us": 0, "expect": 99.0 } ] },
+    { "name": "single_kf_clamps", "track": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 5000000, "value": 3.0, "interp": { "kind": "Linear" } } ] },
+      "samples": [ { "t_us": 0, "expect": 3.0 }, { "t_us": 9000000, "expect": 3.0 } ] },
+    { "name": "linear_lerp_and_clamp", "track": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": 0.0, "interp": { "kind": "Linear" } },
+        { "id": "00000000-0000-7000-8000-000000000002", "t_us": 10000000, "value": 10.0, "interp": { "kind": "Linear" } } ] },
+      "samples": [ { "t_us": -1, "expect": 0.0 }, { "t_us": 2000000, "expect": 2.0 },
+                   { "t_us": 5000000, "expect": 5.0 }, { "t_us": 10000000, "expect": 10.0 },
+                   { "t_us": 15000000, "expect": 10.0 } ] },
+    { "name": "hold_keeps_left_until_next", "track": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": 3.0, "interp": { "kind": "Hold" } },
+        { "id": "00000000-0000-7000-8000-000000000002", "t_us": 10000000, "value": 8.0, "interp": { "kind": "Hold" } } ] },
+      "samples": [ { "t_us": 5000000, "expect": 3.0 }, { "t_us": 9999999, "expect": 3.0 },
+                   { "t_us": 10000000, "expect": 8.0 } ] },
+    { "name": "ease_in_quadratic", "track": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": 0.0, "interp": { "kind": "EaseIn" } },
+        { "id": "00000000-0000-7000-8000-000000000002", "t_us": 10000000, "value": 10.0, "interp": { "kind": "EaseIn" } } ] },
+      "samples": [ { "t_us": 5000000, "expect": 2.5 } ] },
+    { "name": "ease_out_quadratic", "track": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": 0.0, "interp": { "kind": "EaseOut" } },
+        { "id": "00000000-0000-7000-8000-000000000002", "t_us": 10000000, "value": 10.0, "interp": { "kind": "EaseOut" } } ] },
+      "samples": [ { "t_us": 5000000, "expect": 7.5 } ] },
+    { "name": "bezier_stubs_to_linear", "track": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": 0.0,
+          "interp": { "kind": "Bezier", "p1": [0.4, 0.0], "p2": [0.6, 1.0] } },
+        { "id": "00000000-0000-7000-8000-000000000002", "t_us": 10000000, "value": 10.0, "interp": { "kind": "Linear" } } ] },
+      "samples": [ { "t_us": 5000000, "expect": 5.0 } ] },
+    { "name": "multi_segment_picks_governing_left_kf", "track": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": 0.0, "interp": { "kind": "Linear" } },
+        { "id": "00000000-0000-7000-8000-000000000002", "t_us": 4000000, "value": 8.0, "interp": { "kind": "Hold" } },
+        { "id": "00000000-0000-7000-8000-000000000003", "t_us": 8000000, "value": 2.0, "interp": { "kind": "Linear" } } ] },
+      "samples": [ { "t_us": 2000000, "expect": 4.0 }, { "t_us": 6000000, "expect": 8.0 },
+                   { "t_us": 8000000, "expect": 2.0 } ] }
+  ]
+}

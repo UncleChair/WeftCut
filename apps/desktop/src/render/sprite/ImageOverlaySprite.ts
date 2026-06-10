@@ -11,7 +11,7 @@
 
 import { ImageSource, Sprite, Texture } from "pixi.js";
 
-import type { ImageOverlayView } from "../../ipc";
+import type { ResolvedImageOverlayView } from "../resolveView";
 
 export interface ImageOverlaySpriteInit {
   layerId: string;
@@ -76,7 +76,7 @@ export class ImageOverlaySprite {
   /// Apply transform/opacity from the LayerSummary view + fade
   /// windows. `tInLayerUs` is composition-time minus the layer's
   /// start.
-  update(view: ImageOverlayView, tInLayerUs: number, durationUs: number): void {
+  update(view: ResolvedImageOverlayView, tInLayerUs: number, durationUs: number): void {
     if (this.disposed) return;
     this.sprite.position.set(view.x, view.y);
     this.sprite.scale.set(view.scale_x, view.scale_y);

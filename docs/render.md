@@ -73,11 +73,17 @@ Sprite of the right kind; removed layers dispose; surviving layers
 get their `LayerSummary` patched in place. Z-order follows the
 track + within-track index that the project summary already carries.
 
-`render(tUs)` walks the mounted sprites in z-order and asks each to
-update its texture / position / opacity / transform / blend mode for
-the requested timestamp. Sprites resolve `Animated<T>` values via
-the shared `engine.ts` helpers (which mirror the Rust-side
-interpolation semantics exactly).
+`render(tUs)` walks the mounted sprites in z-order. For each layer the
+Compositor first resolves the view's `AnimTrack<T>` properties at the
+layer-local time via `render/resolveView.ts` — numeric tracks through
+`render/animated.ts`'s `resolveAnimated`, the byte-for-byte mirror of
+Rust `state/animated.rs::value_at`; color tracks statically until the
+Rgba engine twin lands — then hands the resolved scalar view to the
+sprite to update its texture / position / opacity / transform / blend
+mode. A shared golden-vector fixture
+(`render/animatedGolden.fixture.json`) locks the two engines together:
+both sides assert it in their unit suites, so an interpolation change
+that lands on one side only fails the other side's gate.
 
 ## Decoder pool
 
