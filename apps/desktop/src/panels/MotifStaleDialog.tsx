@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { CornerNotice } from "../components/CornerNotice";
 import { acknowledgeMotifStaleness, type MotifStaleEntry } from "../ipc";
 
 /// One-time on-open notice: some placed Motif layers were created at an
@@ -28,13 +29,13 @@ export function MotifStaleDialog({
     onDone();
   };
   return (
-    <aside className="export-panel import-proxy-dialog motif-stale-dialog">
-      <header>
-        <span>{t("motif_stale.title")}</span>
-        <button disabled={busy} onClick={() => void dismiss()}>
-          {t("motif_stale.dismiss")}
-        </button>
-      </header>
+    <CornerNotice
+      title={t("motif_stale.title")}
+      actionLabel={t("motif_stale.dismiss")}
+      onAction={() => void dismiss()}
+      actionDisabled={busy}
+      className="motif-stale-dialog"
+    >
       <ul className="import-proxy-list">
         {entries.map((e) => (
           <li key={e.motif_id}>
@@ -50,6 +51,6 @@ export function MotifStaleDialog({
         ))}
       </ul>
       <p className="import-proxy-note">{t("motif_stale.note")}</p>
-    </aside>
+    </CornerNotice>
   );
 }

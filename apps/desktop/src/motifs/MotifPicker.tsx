@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { formatTimecode, parseTimecode } from "../frames";
+import { AppDialog } from "../components/AppDialog";
 import {
   addMotif,
   importMotif,
@@ -156,10 +157,13 @@ export function MotifPicker({
   };
 
   return (
-    <div className="settings-overlay" role="dialog" aria-modal="true">
-      <div className="motif-picker">
-        <header>
-          <h2>{t("motif_picker.heading")}</h2>
+    <AppDialog
+      title={t("motif_picker.heading")}
+      onClose={onClose}
+      closeLabel={t("motif_picker.close")}
+      panelClassName="motif-picker"
+      headerExtra={
+        <>
           {newOpen ? (
             <form
               className="motif-picker-new-form"
@@ -172,7 +176,15 @@ export function MotifPicker({
                 placeholder={t("motif_picker.new_name_placeholder")}
                 aria-label={t("motif_picker.new_prompt")}
                 onChange={(e) => setNewName(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Escape") { setNewOpen(false); setNewName(""); } }}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    // Consume: this Escape collapses the inline form only;
+                    // without stopPropagation the dialog would close too.
+                    e.stopPropagation();
+                    setNewOpen(false);
+                    setNewName("");
+                  }
+                }}
               />
               <button type="submit" disabled={newName.trim() === ""}>
                 {t("motif_picker.new_create")}
@@ -191,15 +203,9 @@ export function MotifPicker({
               {t("motif_picker.import_button")}
             </button>
           )}
-          <button
-            className="settings-close"
-            onClick={onClose}
-            aria-label={t("motif_picker.close")}
-          >
-            ✕
-          </button>
-        </header>
-
+        </>
+      }
+    >
         {error && <p className="settings-error">{error}</p>}
 
         {motifs === null ? (
@@ -264,8 +270,7 @@ export function MotifPicker({
             </div>
           </div>
         )}
-      </div>
-    </div>
+    </AppDialog>
   );
 }
 
