@@ -416,6 +416,162 @@ fn fit_boundaries(pcm: &[f32], cands: &[f64], sr: f64) -> (f64, f64) {
     (slope, offset)
 }
 
+// ---- Envelope / pan analysis (audio engine conformance; docs/audio.md) ----
+
+const ENVELOPE_WIN_S: f64 = 0.1;
+const ENVELOPE_TOL_DB: f64 = 1.5;
+const PAN_TOL_DB: f64 = 1.0;
+
+/// One expectation: at `t_s` seconds the 100 ms-window RMS sits
+/// `expect_rms_db_delta` dB relative to the file's loudest window (the
+/// unity-gain reference — fades and ramps are NEGATIVE deltas).
+#[derive(Debug, serde::Deserialize)]
+struct EnvelopeExpect {
+    t_s: f64,
+    expect_rms_db_delta: f64,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct EnvelopePoint {
+    t_s: f64,
+    expect_db_delta: f64,
+    got_db_delta: f64,
+    pass: bool,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct EnvelopeReport {
+    ref_rms_dbfs: f64,
+    peak_dbfs: f64,
+    /// Present only when `--peak-max` was given.
+    peak_ceiling_pass: Option<bool>,
+    points: Vec<EnvelopePoint>,
+    pass: bool,
+}
+
+fn db(v: f64) -> f64 {
+    if v <= 0.0 { f64::NEG_INFINITY } else { 20.0 * v.log10() }
+}
+
+/// RMS of the 100 ms window centered at `t_s`.
+fn rms_window(pcm: &[f32], sr: f64, t_s: f64, win_s: f64) -> f64 {
+    let half = (win_s * sr / 2.0) as i64;
+    let center = (t_s * sr) as i64;
+    let lo = (center - half).max(0) as usize;
+    let hi = ((center + half) as usize).min(pcm.len());
+    if hi <= lo {
+        return 0.0;
+    }
+    let sum_sq: f64 = pcm[lo..hi].iter().map(|&s| (s as f64) * (s as f64)).sum();
+    (sum_sq / (hi - lo) as f64).sqrt()
+}
+
+/// Windowed-RMS envelope assertions against analytic expectations. The
+/// reference level is the file's LOUDEST 100 ms window (hop = 50 ms), so
+/// deltas are gain-staging-independent; the deterministic Rust mixer makes
+/// ±1.5 dB a comfortable bound even through AAC.
+fn analyze_audio_envelope(
+    pcm: &[f32],
+    expects: &[EnvelopeExpect],
+    peak_max_dbfs: Option<f64>,
+) -> EnvelopeReport {
+    let sr = AUDIO_SAMPLE_RATE;
+    let hop = ENVELOPE_WIN_S / 2.0;
+    let duration_s = pcm.len() as f64 / sr;
+    let mut ref_rms = 0.0f64;
+    let mut t = ENVELOPE_WIN_S / 2.0;
+    while t < duration_s {
+        ref_rms = ref_rms.max(rms_window(pcm, sr, t, ENVELOPE_WIN_S));
+        t += hop;
+    }
+    let ref_db = db(ref_rms);
+
+    let points: Vec<EnvelopePoint> = expects
+        .iter()
+        .map(|e| {
+            let got = db(rms_window(pcm, sr, e.t_s, ENVELOPE_WIN_S)) - ref_db;
+            EnvelopePoint {
+                t_s: e.t_s,
+                expect_db_delta: e.expect_rms_db_delta,
+                got_db_delta: got,
+                pass: (got - e.expect_rms_db_delta).abs() <= ENVELOPE_TOL_DB,
+            }
+        })
+        .collect();
+
+    let peak = pcm.iter().fold(0.0f32, |m, &s| m.max(s.abs())) as f64;
+    let peak_dbfs = db(peak);
+    let peak_ceiling_pass = peak_max_dbfs.map(|max| peak_dbfs <= max);
+
+    let pass = !points.is_empty()
+        && points.iter().all(|p| p.pass)
+        && peak_ceiling_pass.unwrap_or(true);
+    EnvelopeReport { ref_rms_dbfs: ref_db, peak_dbfs, peak_ceiling_pass, points, pass }
+}
+
+/// Decode STEREO f32 PCM at 48 kHz (interleaved L R L R …).
+fn extract_audio_pcm_stereo(mp4: &Path) -> Result<Vec<f32>> {
+    if !mp4.exists() {
+        anyhow::bail!("mp4 not found: {}", mp4.display());
+    }
+    let out = Command::new(ffmpeg_path())
+        .args(["-hide_banner", "-nostats", "-loglevel", "error", "-i"])
+        .arg(mp4)
+        .args(["-vn", "-ac", "2", "-ar", "48000", "-f", "f32le", "-"])
+        .stdin(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .context("spawn ffmpeg (stereo audio)")?;
+    if !out.status.success() {
+        anyhow::bail!(
+            "ffmpeg stereo decode failed for {}: {}",
+            mp4.display(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    let mut pcm = Vec::with_capacity(out.stdout.len() / 4);
+    for chunk in out.stdout.chunks_exact(4) {
+        pcm.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+    }
+    if pcm.len() < 4 {
+        anyhow::bail!("no stereo audio decoded from {}", mp4.display());
+    }
+    Ok(pcm)
+}
+
+#[derive(Debug, serde::Serialize)]
+struct PanReport {
+    l_rms_dbfs: f64,
+    r_rms_dbfs: f64,
+    lr_delta_db: f64,
+    expect_lr_delta_db: f64,
+    pass: bool,
+}
+
+/// Whole-file per-channel RMS ratio vs the expected L−R dB difference
+/// (the pan-law fixture; docs/audio.md §Testing).
+fn analyze_audio_pan(stereo: &[f32], expect_lr_delta_db: f64) -> PanReport {
+    let mut sum_l = 0.0f64;
+    let mut sum_r = 0.0f64;
+    let frames = stereo.len() / 2;
+    for f in 0..frames {
+        let l = stereo[f * 2] as f64;
+        let r = stereo[f * 2 + 1] as f64;
+        sum_l += l * l;
+        sum_r += r * r;
+    }
+    let l_db = db((sum_l / frames as f64).sqrt());
+    let r_db = db((sum_r / frames as f64).sqrt());
+    let lr = l_db - r_db;
+    PanReport {
+        l_rms_dbfs: l_db,
+        r_rms_dbfs: r_db,
+        lr_delta_db: lr,
+        expect_lr_delta_db,
+        pass: (lr - expect_lr_delta_db).abs() <= PAN_TOL_DB,
+    }
+}
+
 #[derive(Debug, serde::Serialize)]
 struct SampleResult {
     index: u64,
@@ -693,12 +849,22 @@ fn main() -> std::process::ExitCode {
     let mut gradient_row = false;
     let mut self_ssim = false;
     let mut ssim_max: f64 = 0.99;
+    let mut audio_envelope: Option<String> = None;
+    let mut peak_max: Option<f64> = None;
+    let mut audio_pan = false;
+    let mut expect_lr_db: f64 = 0.0;
     let mut it = args.iter().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
             "--output" => output = it.next().cloned(),
             "--source" => source = it.next().cloned(),
             "--audio" => audio = true,
+            "--audio-envelope" => audio_envelope = it.next().cloned(),
+            "--peak-max" => peak_max = it.next().and_then(|s| s.parse().ok()),
+            "--audio-pan" => audio_pan = true,
+            "--expect-lr-db" => {
+                expect_lr_db = it.next().and_then(|s| s.parse().ok()).unwrap_or(0.0)
+            }
             "--self-ssim" => self_ssim = true,
             "--ssim-max" => ssim_max = it.next().and_then(|s| s.parse().ok()).unwrap_or(0.99),
             "--samples" => {
@@ -736,6 +902,43 @@ fn main() -> std::process::ExitCode {
             Ok(r) => {
                 println!("{}", serde_json::to_string_pretty(&r).unwrap());
                 if r.pass { std::process::ExitCode::SUCCESS } else { std::process::ExitCode::from(1) }
+            }
+            Err(e) => { eprintln!("media_conformance: {e:#}"); std::process::ExitCode::from(3) }
+        };
+    }
+    // Envelope + pan modes need only --output; handle before the
+    // source-required guard.
+    if let Some(expects_json) = audio_envelope {
+        let Some(output) = output else {
+            eprintln!("media_conformance --audio-envelope requires --output");
+            return std::process::ExitCode::from(2);
+        };
+        let expects: Vec<EnvelopeExpect> = match serde_json::from_str(&expects_json) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("media_conformance: --audio-envelope JSON parse: {e:#}");
+                return std::process::ExitCode::from(2);
+            }
+        };
+        return match extract_audio_pcm(Path::new(&output)) {
+            Ok(pcm) => {
+                let report = analyze_audio_envelope(&pcm, &expects, peak_max);
+                println!("{}", serde_json::to_string_pretty(&report).unwrap());
+                if report.pass { std::process::ExitCode::SUCCESS } else { std::process::ExitCode::from(1) }
+            }
+            Err(e) => { eprintln!("media_conformance: {e:#}"); std::process::ExitCode::from(3) }
+        };
+    }
+    if audio_pan {
+        let Some(output) = output else {
+            eprintln!("media_conformance --audio-pan requires --output");
+            return std::process::ExitCode::from(2);
+        };
+        return match extract_audio_pcm_stereo(Path::new(&output)) {
+            Ok(stereo) => {
+                let report = analyze_audio_pan(&stereo, expect_lr_db);
+                println!("{}", serde_json::to_string_pretty(&report).unwrap());
+                if report.pass { std::process::ExitCode::SUCCESS } else { std::process::ExitCode::from(1) }
             }
             Err(e) => { eprintln!("media_conformance: {e:#}"); std::process::ExitCode::from(3) }
         };
@@ -810,6 +1013,73 @@ fn main() -> std::process::ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 2 s of 440 Hz sine with a 1 s linear fade-in, amplitude 0.8.
+    fn fade_in_sine() -> Vec<f32> {
+        let sr = 48000.0;
+        let n = (2.0 * sr) as usize;
+        (0..n)
+            .map(|i| {
+                let t = i as f64 / sr;
+                let gain = (t / 1.0).min(1.0);
+                (0.8 * gain * (2.0 * std::f64::consts::PI * 440.0 * t).sin()) as f32
+            })
+            .collect()
+    }
+
+    #[test]
+    fn envelope_fade_in_deltas_match_analytic() {
+        let pcm = fade_in_sine();
+        let expects = vec![
+            EnvelopeExpect { t_s: 0.25, expect_rms_db_delta: -12.04 }, // gain 0.25
+            EnvelopeExpect { t_s: 0.50, expect_rms_db_delta: -6.02 },  // gain 0.5
+            EnvelopeExpect { t_s: 1.50, expect_rms_db_delta: 0.0 },    // unity
+        ];
+        let r = analyze_audio_envelope(&pcm, &expects, None);
+        assert!(
+            r.pass,
+            "fade-in envelope should pass: {}",
+            serde_json::to_string(&r).unwrap()
+        );
+    }
+
+    #[test]
+    fn envelope_rejects_wrong_expectation() {
+        let pcm = fade_in_sine();
+        let expects = vec![EnvelopeExpect { t_s: 0.25, expect_rms_db_delta: 0.0 }];
+        let r = analyze_audio_envelope(&pcm, &expects, None);
+        assert!(!r.pass, "−12 dB window asserted as unity must fail");
+    }
+
+    #[test]
+    fn envelope_peak_ceiling() {
+        let pcm = fade_in_sine(); // peak 0.8 ≈ −1.94 dBFS
+        let expects = vec![EnvelopeExpect { t_s: 1.5, expect_rms_db_delta: 0.0 }];
+        let ok = analyze_audio_envelope(&pcm, &expects, Some(-0.9));
+        assert_eq!(ok.peak_ceiling_pass, Some(true));
+        assert!(ok.pass);
+        let too_low = analyze_audio_envelope(&pcm, &expects, Some(-3.0));
+        assert_eq!(too_low.peak_ceiling_pass, Some(false));
+        assert!(!too_low.pass);
+    }
+
+    #[test]
+    fn pan_lr_ratio_matches_expectation() {
+        // Stereo: L at 0.8, R at 0.4 → L−R = +6.02 dB.
+        let sr = 48000.0;
+        let n = sr as usize;
+        let mut stereo = Vec::with_capacity(n * 2);
+        for i in 0..n {
+            let t = i as f64 / sr;
+            let s = (2.0 * std::f64::consts::PI * 440.0 * t).sin();
+            stereo.push((0.8 * s) as f32);
+            stereo.push((0.4 * s) as f32);
+        }
+        let r = analyze_audio_pan(&stereo, 6.02);
+        assert!(r.pass, "{}", serde_json::to_string(&r).unwrap());
+        let wrong = analyze_audio_pan(&stereo, -6.0);
+        assert!(!wrong.pass);
+    }
 
     #[test]
     fn goertzel_picks_the_present_tone() {

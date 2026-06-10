@@ -19,6 +19,7 @@ import {
   projectSummary,
   updateLayerParams,
   workspaceDir,
+  type AudioPatch,
   type CanvasPreset,
 } from "../ipc";
 import { captureMotifFrame } from "../render/motifs/host";
@@ -59,12 +60,16 @@ export interface E2EHook {
   /// export to `outputAbsPath`. `settings` overlays DEFAULT_EXPORT_SETTINGS
   /// (H.264/mp4, follow-composition res+fps). `range` trims the export to
   /// `[startUs, endUs)` (audio + video); omit for the whole composition.
+  /// `audioPatches` drives the audio-engine conformance specs: N patches
+  /// place N copies of the clip (each on its own track) and apply patch i to
+  /// the i-th auto-paired Audio layer (gain/pan/fades/mute) before export.
   /// Rejects if no output is written.
   exportClip(args: {
     mediaAbsPath: string;
     outputAbsPath: string;
     settings?: Partial<ExportSettings>;
     range?: { startUs: number; endUs: number };
+    audioPatches?: AudioPatch[];
   }): Promise<void>;
   /// Add a built-in Motif layer at t=0 (default duration) and export to
   /// `outputAbsPath`. No video clip is needed — the export composites the
@@ -546,13 +551,47 @@ export function clearPreviewBridge(): void {
 /// App-side: the real export. `runExport` is App's `runExportWithSettings`,
 /// which awaits the full encode + audio + mux to completion.
 export function installExportHook(runExport: RunExport): void {
-  hookSlot().exportClip = async ({ mediaAbsPath, outputAbsPath, settings, range }) => {
+  hookSlot().exportClip = async ({
+    mediaAbsPath,
+    outputAbsPath,
+    settings,
+    range,
+    audioPatches,
+  }) => {
     const mediaId = await importMedia(mediaAbsPath);
     const trackId = await addTrack();
     await addMediaLayer(trackId, mediaId, 0);
+    // Audio-engine scenarios: N patches want N copies of the clip (the
+    // extras on their own tracks), so overlap/limiter cases can stack.
+    if (audioPatches && audioPatches.length > 1) {
+      for (let i = 1; i < audioPatches.length; i++) {
+        const extraTrack = await addTrack();
+        await addMediaLayer(extraTrack, mediaId, 0);
+      }
+    }
     // Mirror a real user: don't export until the clip is export-ready in the
     // store the gate reads (see waitForMediaExportReady).
     await waitForMediaExportReady(mediaId, 60000);
+    if (audioPatches && audioPatches.length > 0) {
+      const summary = await projectSummary();
+      const audioLayerIds: string[] = [];
+      for (const tr of summary.tracks) {
+        for (const l of tr.layers) {
+          if (l.params.kind === "Audio") audioLayerIds.push(l.id);
+        }
+      }
+      if (audioLayerIds.length < audioPatches.length) {
+        throw new Error(
+          `expected ${audioPatches.length} auto-paired Audio layers, found ${audioLayerIds.length} — is auto_pair_audio_on_import off, or does the fixture lack an audio stream?`,
+        );
+      }
+      for (let i = 0; i < audioPatches.length; i++) {
+        await updateLayerParams(audioLayerIds[i]!, {
+          kind: "Audio",
+          ...audioPatches[i]!,
+        });
+      }
+    }
     await runExport(mergeSettings(settings ?? null), outputAbsPath, range);
     if (!(await exists(outputAbsPath))) {
       throw new Error(`export produced no output file at ${outputAbsPath}`);
