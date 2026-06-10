@@ -19,7 +19,7 @@ use super::actor::{Actor, EntityRef};
 use super::composition::Composition;
 use super::ids::{CheckpointId, MediaId, OpId, new_id};
 use super::media::MediaItem;
-use super::project::Project;
+use super::project::{Project, ProjectSettings};
 
 pub const DEFAULT_CAP: usize = 200;
 
@@ -252,6 +252,23 @@ impl History {
         for cp in self.checkpoints.values_mut() {
             let mut p = (*cp.snapshot).clone();
             apply_canvas_fields(&mut p.composition, canvas);
+            cp.snapshot = Arc::new(p);
+        }
+    }
+
+    /// Apply `settings` to every snapshot (history + checkpoints). Project
+    /// settings are preference-shaped, not editing-shaped — patching them
+    /// everywhere keeps Ctrl-Z from flipping a Settings-panel toggle. Same
+    /// out-of-band-edit pattern as `replace_media_pool_everywhere`.
+    pub fn replace_settings_everywhere(&mut self, settings: &ProjectSettings) {
+        for entry in self.snapshots.iter_mut() {
+            let mut p = (*entry.snapshot).clone();
+            p.settings = settings.clone();
+            entry.snapshot = Arc::new(p);
+        }
+        for cp in self.checkpoints.values_mut() {
+            let mut p = (*cp.snapshot).clone();
+            p.settings = settings.clone();
             cp.snapshot = Arc::new(p);
         }
     }

@@ -370,6 +370,9 @@ const enUS = {
     tail_snap_strength: "Snap strength",
     tail_snap_strength_hint:
       "Measured in screen pixels, so the effective time range follows the current timeline zoom.",
+    auto_delete_empty_tracks: "Auto-delete emptied tracks",
+    auto_delete_empty_tracks_hint:
+      "Deleting the last clip on a track also removes the track — one undo restores both. A/B roll always stays. Saved with the project.",
     keybindings_heading: "Keyboard shortcuts",
     keybindings_blurb:
       "Click a chord to remove it, or [+ Add] to bind a new one. Each chord must be unique across actions — unset the current owner first if you want to repurpose a key.",

@@ -22,7 +22,7 @@ use super::ids::{
 use super::layer::{Layer, LayerParams};
 use super::marker::Marker;
 use super::media::MediaItem;
-use super::project::Project;
+use super::project::{Project, ProjectSettingsPatch};
 use super::time::{Rational, TimeUs};
 use super::track::{Track, TrackRole};
 use super::transition::{Transition, TransitionKind};
@@ -504,6 +504,11 @@ enum Command {
         reply: oneshot::Sender<Result<(), CommandError>>,
     },
     FitCompositionToLayers {
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
+    UpdateProjectSettings {
+        patch: ProjectSettingsPatch,
         actor: Actor,
         reply: oneshot::Sender<Result<(), CommandError>>,
     },
@@ -1126,6 +1131,27 @@ impl ProjectHandle {
         rx.await.expect("project actor terminated")
     }
 
+    /// Patch per-project behavior settings (`Project.settings`).
+    /// Preference-shaped, not editing-shaped: the patch is applied to
+    /// every history snapshot and NOT recorded, so Ctrl-Z never flips a
+    /// Settings-panel toggle.
+    pub async fn update_project_settings(
+        &self,
+        actor: Actor,
+        patch: ProjectSettingsPatch,
+    ) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::UpdateProjectSettings {
+                patch,
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
     pub async fn add_marker(
         &self,
         actor: Actor,
@@ -1635,6 +1661,14 @@ impl ProjectActor {
             }
             Command::FitCompositionToLayers { actor, reply } => {
                 let result = self.do_fit_composition_to_layers(actor);
+                let _ = reply.send(result);
+            }
+            Command::UpdateProjectSettings {
+                patch,
+                actor,
+                reply,
+            } => {
+                let result = self.do_update_project_settings(patch, actor);
                 let _ = reply.send(result);
             }
             Command::AddMarker {
@@ -2866,14 +2900,35 @@ impl ProjectActor {
 
     fn do_delete_layer(&mut self, id: LayerId, actor: Actor) -> Result<(), CommandError> {
         let mut next: Project = (*self.history.current()).clone();
-        apply_delete_layer(&mut next, id)?;
-        self.commit(
-            next,
-            actor,
-            format!("Deleted layer {id}"),
-            vec![EntityRef::Layer(id)],
-            DiffHint::Coarse,
-        )?;
+        let pruned_track = apply_delete_layer(&mut next, id)?;
+        let mut affected = vec![EntityRef::Layer(id)];
+        let summary = match pruned_track {
+            // The emptied track went with the layer — one entry, so one
+            // undo restores both (`settings.auto_delete_empty_tracks`).
+            Some(track_id) => {
+                affected.push(EntityRef::Track(track_id));
+                format!("Deleted layer {id} and its emptied track {track_id}")
+            }
+            None => format!("Deleted layer {id}"),
+        };
+        self.commit(next, actor, summary, affected, DiffHint::Coarse)?;
+        Ok(())
+    }
+
+    /// `Project.settings` patch — see the `update_project_settings` wrapper
+    /// for why this bypasses the recorded stack (preference, not edit).
+    fn do_update_project_settings(
+        &mut self,
+        patch: ProjectSettingsPatch,
+        actor: Actor,
+    ) -> Result<(), CommandError> {
+        let mut next = self.history.current().settings.clone();
+        if let Some(v) = patch.auto_delete_empty_tracks {
+            next.auto_delete_empty_tracks = v;
+        }
+        self.history.replace_settings_everywhere(&next);
+        let snapshot = self.history.current();
+        self.broadcast_unrecorded(actor, "Updated project settings".to_string(), snapshot);
         Ok(())
     }
 
@@ -3099,30 +3154,53 @@ pub(crate) fn apply_add_layer(
 
 /// Mutation half of `do_delete_layer`. Also removes the layer from any
 /// group it belongs to and auto-dissolves the group when its member count
-/// drops below 2 (`docs/groups.md` invariant #3).
+/// drops below 2 (`docs/groups.md` invariant #3). Returns the id of the
+/// track that the deletion emptied and `prune_emptied_track` removed (if
+/// any) so the caller can fold it into the same history entry.
 pub(crate) fn apply_delete_layer(
     project: &mut Project,
     id: LayerId,
-) -> Result<(), CommandError> {
-    let mut removed = false;
+) -> Result<Option<TrackId>, CommandError> {
+    let mut source_track: Option<TrackId> = None;
     for track in project.tracks.iter_mut() {
         if let Some(idx) = track.layers.iter().position(|l| l.id == id) {
             track.layers.remove(idx);
-            removed = true;
+            source_track = Some(track.id);
             break;
         }
     }
-    if !removed {
+    let Some(source_track) = source_track else {
         return Err(CommandError::LayerNotFound { layer: id });
-    }
+    };
     drop_layer_from_groups(project, id);
     // A/B-roll redesign R.4: a deletion can leave behind an empty hidden
     // track (the import-created kind). Prune so the timeline graveyard
     // doesn't accumulate. Reserved tracks are protected by their role
     // stamp.
     prune_empty_hidden_tracks(project);
+    let pruned = prune_emptied_track(project, source_track);
     apply_duration_autofit(project);
-    Ok(())
+    Ok(pruned)
+}
+
+/// `settings.auto_delete_empty_tracks`: drop the track a deletion just
+/// emptied, within the same pending mutation, so layer + track land in one
+/// history entry. Role-stamped tracks stay even when `removable` (legacy
+/// projects predate the `removable` field and deserialize it `true`, so
+/// the role stamp is the load-bearing guard for their A/B skeleton);
+/// non-removable and locked tracks stay too. Transient tracks are already
+/// gone via `prune_empty_hidden_tracks`.
+fn prune_emptied_track(project: &mut Project, track_id: TrackId) -> Option<TrackId> {
+    if !project.settings.auto_delete_empty_tracks {
+        return None;
+    }
+    let idx = project.tracks.iter().position(|t| t.id == track_id)?;
+    let track = &project.tracks[idx];
+    if !track.layers.is_empty() || !track.removable || track.role.is_some() || track.locked {
+        return None;
+    }
+    project.tracks.remove(idx);
+    Some(track_id)
 }
 
 /// Remove `layer_id` from every group it appears in and auto-dissolve any
@@ -4352,6 +4430,182 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn delete_last_layer_auto_deletes_emptied_track() {
+        // new_blank keeps the reserved A/B pair; the third track is a
+        // plain user-owned one (removable, no role).
+        let h = spawn(Project::new_blank("test"));
+        let track_id = h
+            .add_track(Actor::User, Some("overlay".into()))
+            .await
+            .expect("add_track");
+        let layer_id = h
+            .add_layer(Actor::User, track_id, color_layer(Rgba::WHITE), 0, 1_000_000)
+            .await
+            .expect("add_layer");
+
+        h.delete_layer(Actor::User, layer_id)
+            .await
+            .expect("delete_layer");
+        let snap = h.snapshot().await;
+        assert!(
+            snap.tracks.iter().all(|t| t.id != track_id),
+            "emptied track should be auto-deleted with its last layer"
+        );
+        assert_eq!(snap.tracks.len(), 2, "reserved A/B skeleton untouched");
+
+        // ONE undo restores both the layer and its track…
+        h.undo(Actor::User).await.expect("undo");
+        let snap = h.snapshot().await;
+        let track = snap
+            .tracks
+            .iter()
+            .find(|t| t.id == track_id)
+            .expect("track restored by a single undo");
+        assert_eq!(track.layers.len(), 1);
+        assert_eq!(track.layers[0].id, layer_id);
+
+        // …and ONE redo removes both again.
+        h.redo(Actor::User).await.expect("redo");
+        let snap = h.snapshot().await;
+        assert!(snap.tracks.iter().all(|t| t.id != track_id));
+    }
+
+    #[tokio::test]
+    async fn delete_layer_keeps_emptied_track_when_setting_off() {
+        let h = spawn(Project::new_blank("test"));
+        h.update_project_settings(
+            Actor::User,
+            ProjectSettingsPatch {
+                auto_delete_empty_tracks: Some(false),
+            },
+        )
+        .await
+        .expect("update_project_settings");
+        let track_id = h
+            .add_track(Actor::User, Some("overlay".into()))
+            .await
+            .expect("add_track");
+        let layer_id = h
+            .add_layer(Actor::User, track_id, color_layer(Rgba::WHITE), 0, 1_000_000)
+            .await
+            .expect("add_layer");
+        h.delete_layer(Actor::User, layer_id)
+            .await
+            .expect("delete_layer");
+        let snap = h.snapshot().await;
+        let track = snap
+            .tracks
+            .iter()
+            .find(|t| t.id == track_id)
+            .expect("emptied track stays when the setting is off");
+        assert!(track.layers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn auto_delete_never_touches_reserved_or_role_tracks() {
+        // A layer dropped straight onto the reserved A-roll: deleting it
+        // leaves the A-roll in place even though it ends up empty.
+        let h = spawn(Project::new_blank("test"));
+        let a_roll = h
+            .snapshot()
+            .await
+            .tracks
+            .iter()
+            .find(|t| t.role == Some(TrackRole::ARoll))
+            .expect("A roll")
+            .id;
+        let layer_id = h
+            .add_layer(Actor::User, a_roll, color_layer(Rgba::WHITE), 0, 1_000_000)
+            .await
+            .expect("add_layer");
+        h.delete_layer(Actor::User, layer_id)
+            .await
+            .expect("delete_layer");
+        let snap = h.snapshot().await;
+        assert!(
+            snap.tracks.iter().any(|t| t.id == a_roll),
+            "A roll must survive emptying"
+        );
+
+        // Legacy role-stamped track: `removable` deserializes `true` for
+        // pre-field projects, so the role stamp alone must protect it.
+        let mut legacy = Project::new_blank("legacy");
+        let mut audio_a = Track::new();
+        audio_a.role = Some(TrackRole::AudioA);
+        let audio_a_id = audio_a.id;
+        legacy.tracks.push_back(audio_a);
+        let h = spawn(legacy);
+        let layer_id = h
+            .add_layer(Actor::User, audio_a_id, color_layer(Rgba::WHITE), 0, 1_000_000)
+            .await
+            .expect("add_layer");
+        h.delete_layer(Actor::User, layer_id)
+            .await
+            .expect("delete_layer");
+        let snap = h.snapshot().await;
+        assert!(
+            snap.tracks.iter().any(|t| t.id == audio_a_id),
+            "role-stamped track must survive even while removable"
+        );
+    }
+
+    #[tokio::test]
+    async fn auto_delete_skips_track_with_remaining_layers() {
+        let h = spawn(Project::new_blank("test"));
+        let track_id = h
+            .add_track(Actor::User, Some("overlay".into()))
+            .await
+            .expect("add_track");
+        let l1 = h
+            .add_layer(Actor::User, track_id, color_layer(Rgba::WHITE), 0, 1_000_000)
+            .await
+            .expect("add_layer l1");
+        let _l2 = h
+            .add_layer(Actor::User, track_id, color_layer(Rgba::WHITE), 2_000_000, 3_000_000)
+            .await
+            .expect("add_layer l2");
+        h.delete_layer(Actor::User, l1).await.expect("delete_layer");
+        let snap = h.snapshot().await;
+        let track = snap
+            .tracks
+            .iter()
+            .find(|t| t.id == track_id)
+            .expect("track with remaining layers stays");
+        assert_eq!(track.layers.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn update_project_settings_is_unrecorded_and_patches_history() {
+        let h = spawn(Project::new_blank("test"));
+        let track_id = h
+            .add_track(Actor::User, Some("overlay".into()))
+            .await
+            .expect("add_track");
+        h.update_project_settings(
+            Actor::User,
+            ProjectSettingsPatch {
+                auto_delete_empty_tracks: Some(false),
+            },
+        )
+        .await
+        .expect("update_project_settings");
+        let snap = h.snapshot().await;
+        assert!(!snap.settings.auto_delete_empty_tracks);
+        // The toggle is not a history entry: one undo rewinds add_track,
+        // and the rewound snapshot still carries the new setting value.
+        h.undo(Actor::User).await.expect("undo");
+        let snap = h.snapshot().await;
+        assert!(
+            snap.tracks.iter().all(|t| t.id != track_id),
+            "undo rewound add_track, not the settings toggle"
+        );
+        assert!(
+            !snap.settings.auto_delete_empty_tracks,
+            "setting survives undo (patched into every snapshot)"
+        );
+    }
+
+    #[tokio::test]
     async fn motif_params_patch_applies_transform_opacity_and_merges_props() {
         let (project, track_id) = project_with_video_track();
         let handle = spawn(project);
@@ -5334,8 +5588,13 @@ mod tests {
         handle.delete_layer(Actor::User, id).await.expect("delete");
 
         let snap = handle.snapshot().await;
-        let track = snap.tracks.iter().find(|t| t.id == track_id).unwrap();
-        assert!(track.layers.is_empty());
+        assert!(
+            snap.tracks.iter().flat_map(|t| t.layers.iter()).all(|l| l.id != id),
+            "layer gone"
+        );
+        // Default `auto_delete_empty_tracks`: the emptied plain track
+        // goes with its last layer.
+        assert!(snap.tracks.iter().all(|t| t.id != track_id));
     }
 
     #[tokio::test]

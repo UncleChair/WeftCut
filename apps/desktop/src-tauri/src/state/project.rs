@@ -143,10 +143,29 @@ pub struct ProjectSettings {
     /// dropped, matching pre-v3 behavior).
     #[serde(default = "default_auto_pair_audio_on_import")]
     pub auto_pair_audio_on_import: bool,
+    /// When `true` (default), deleting the last layer on a track also
+    /// deletes the now-empty track inside the same history entry, so one
+    /// undo restores both. Role-stamped tracks (A/B roll and the legacy
+    /// audio roles), non-removable tracks, and locked tracks always stay.
+    /// When `false`, an emptied track lingers until deleted explicitly.
+    #[serde(default = "default_auto_delete_empty_tracks")]
+    pub auto_delete_empty_tracks: bool,
 }
 
 fn default_auto_pair_audio_on_import() -> bool {
     true
+}
+
+fn default_auto_delete_empty_tracks() -> bool {
+    true
+}
+
+/// Patch shape for `update_project_settings`. Mirrors `AppSettingsPatch`:
+/// every field optional so the UI can send tiny diffs without echoing the
+/// rest of the struct.
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct ProjectSettingsPatch {
+    pub auto_delete_empty_tracks: Option<bool>,
 }
 
 impl Default for ProjectSettings {
@@ -157,6 +176,7 @@ impl Default for ProjectSettings {
             autosave_interval_secs: Some(60),
             history_capacity: 200,
             auto_pair_audio_on_import: true,
+            auto_delete_empty_tracks: true,
         }
     }
 }
