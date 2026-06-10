@@ -32,13 +32,14 @@ closing the app loses nothing.
 │  │   (OffscreenCanvas)    │         │ ┌────────────▼────────────┐ │  │
 │  └────────────────────────┘         │ │ Background jobs         │ │  │
 │                                     │ │  • proxy / thumbnails / │ │  │
-│                                     │ │    waveform / import    │ │  │
+│                                     │ │    waveform / conform / │ │  │
+│                                     │ │    import               │ │  │
 │                                     │ └────────────┬────────────┘ │  │
 │                                     │ ┌────────────▼────────────┐ │  │
-│                                     │ │ Audio compositor        │ │  │
-│                                     │ │  • lower(Project) → IR  │ │  │
-│                                     │ │  • emit ffmpeg          │ │  │
-│                                     │ │  • export_audio_only +  │ │  │
+│                                     │ │ Audio mixer (export)    │ │  │
+│                                     │ │  • MixPlan → block sum  │ │  │
+│                                     │ │    over conform PCM     │ │  │
+│                                     │ │  • ffmpeg encode tail + │ │  │
 │                                     │ │    mux_to_file          │ │  │
 │                                     │ └─────────────────────────┘ │  │
 │                                     │ ┌─────────────────────────┐ │  │
@@ -73,9 +74,12 @@ The Rust side runs ffmpeg only at:
 
 - **Import** — proxy generation (a 720p short-GOP scrub proxy for
   preview, plus a source-resolution H.264 export master for sources
-  WebCodecs can't decode directly), thumbnails, waveform.
-- **Audio export** — the `lower → emit_ffmpeg → ffmpeg` audio pipeline
-  produces a temporary audio file when the user includes audio.
+  WebCodecs can't decode directly), thumbnails, waveform, and the audio
+  conform (canonical 48 kHz f32 PCM both audio paths read;
+  [`audio.md`](audio.md)).
+- **Audio export** — the encode tail only: the mix itself happens in
+  Rust (`audio::mix`, sample-accurate over conform PCM); ffmpeg applies
+  the limiter ceiling and encodes AAC/Opus into a temporary audio file.
 - **Final mux / transcode** — ffmpeg stream-copy muxes WebCodecs video with
   optional audio, or transcodes the H.264 mezzanine for codecs not emitted
   directly by WebCodecs.
@@ -120,7 +124,7 @@ directly; no encode-and-swap step.
 | Webview UI → workspace files | `convertFileSrc(path)` via Tauri's `asset://` protocol (scope `**`, enabled in `tauri.conf.json`) — used by the Pixi decoder pool to fetch proxies and originals |
 | External agent → Rust core | MCP over SSE on localhost (rmcp 0.1.x; bearer in `app_config_dir/mcp_auth.json`) |
 | Rust core → External agent | MCP SSE change feed on a separate axum `/events` endpoint |
-| Rust core → ffmpeg | `ffmpeg-sidecar` subprocess. Used by audio export, proxy / thumbnail / waveform / frame-extract jobs, audio-extract for cloud transcription, and the final stream-copy mux. |
+| Rust core → ffmpeg | `ffmpeg-sidecar` subprocess. Used by the audio encode tail (limiter + AAC/Opus), proxy / thumbnail / waveform / conform / frame-extract jobs, audio-extract for cloud transcription, and the final stream-copy mux. |
 
 ## Repository layout
 
@@ -132,15 +136,17 @@ weftcut/
     src-tauri/                ← Rust core
       src/
         state/                ← project state types, actor, history, validation
-        ir/                   ← audio-only IR: lower → emit_ffmpeg
-        export/               ← export_audio_only + mux_to_file
+        audio/                ← envelope contract + export block mixer
+                              ←   (conform_reader, mix; docs/audio.md)
+        export/               ← export_audio_only (mix + encode tail) +
+                              ←   mux_to_file
         ffmpeg/               ← sidecar wrapper, install bootstrap
         jobs/                 ← background derivative jobs:
-                              ←   proxy, thumbnails, waveform, frame,
-                              ←   import (workspace copy worker)
+                              ←   proxy, thumbnails, waveform, conform,
+                              ←   frame, import (workspace copy worker)
         cache/                ← workspace-scoped derivative cache
                               ←   (workspace/Cache/{proxies, thumbnails,
-                              ←    waveforms, frames, voiceover, …})
+                              ←    waveforms, audio, frames, voiceover, …})
         motifs/               ← built-in motif catalog + CDP capture host
                               ←   (manifests + index.html, embedded)
         mcp/                  ← rmcp server, tool definitions, resources,
@@ -178,7 +184,10 @@ weftcut/
         motifs/               ←   motif raster cache + frame descriptor helpers
         subtitles/            ←   JASSUB binding
         worker/               ←   exportWorker + encoder (OffscreenCanvas)
-        audio/                ←   AudioGraph + AudioMixer (Web Audio)
+        audio/                ←   buffer-scheduled preview mixer:
+                              ←   AudioGraph (master bus), AudioMixer,
+                              ←   conformSource, chunkSchedule, envelope
+                              ←   (the TS twin; docs/audio.md)
         fixtures/             ←   runFixture + browser-test fixtures
       timeline/
       properties/
@@ -259,7 +268,8 @@ Adding more locales is a strict addition — drop a resource file under
 - [Render](render.md) — PixiJS + WebCodecs renderer architecture.
 - [Motifs](motifs.md) — parameterized web overlays captured via the DevTools Protocol: authoring contract, capture harness, raster cache.
 - [Preview](preview.md) — interactive preview surface.
-- [Rendering](rendering.md) — audio IR + export + final mux.
+- [Rendering](rendering.md) — export orchestration + final mux.
+- [Audio](audio.md) — conform cache, envelope contract, preview + export mixers.
 - [Conformance](conformance.md) — media fixtures and E2E gates.
 - [Groups](groups.md) — group model.
 - [MCP](mcp.md) — agent connection protocol and tool surface.
