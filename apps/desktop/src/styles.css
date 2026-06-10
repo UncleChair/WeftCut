@@ -70,10 +70,6 @@ html, body, #root { height: 100%; margin: 0; }
   gap: 2px;
 }
 
-.menu-root {
-  position: relative;
-}
-
 .menu-trigger {
   background: transparent;
   border: 1px solid transparent;
@@ -92,7 +88,8 @@ html, body, #root { height: 100%; margin: 0; }
   color: #f3f4f6;
 }
 
-.menu-trigger.is-open {
+/* Base UI sets data-popup-open on the trigger while its menu is open. */
+.menu-trigger[data-popup-open] {
   background: #1f2937;
   border-color: #374151;
   color: #f3f4f6;
@@ -103,16 +100,14 @@ html, body, #root { height: 100%; margin: 0; }
   opacity: 0.7;
 }
 
+/* Placement (portal + 4px below the trigger) is owned by Base UI's
+ * Positioner; this class is purely the dropdown's visual chrome. */
 .menu-list {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
   min-width: 220px;
   background: #0e1218;
   border: 1px solid #374151;
   border-radius: 4px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-  z-index: 50;
   padding: 4px 0;
 }
 
@@ -129,11 +124,14 @@ html, body, #root { height: 100%; margin: 0; }
   cursor: pointer;
 }
 
-.menu-item:hover:not(:disabled) {
+/* data-highlighted covers BOTH hover and keyboard navigation (Base UI
+ * moves the highlight with ArrowUp/Down); data-disabled replaces
+ * :disabled now that items render as divs, not buttons. */
+.menu-item[data-highlighted] {
   background: rgba(255, 255, 255, 0.08);
 }
 
-.menu-item:disabled {
+.menu-item[data-disabled] {
   color: #6b7280;
   cursor: not-allowed;
 }
@@ -157,7 +155,7 @@ html, body, #root { height: 100%; margin: 0; }
   white-space: nowrap;
 }
 
-.menu-item:disabled .menu-item-accelerator {
+.menu-item[data-disabled] .menu-item-accelerator {
   color: #4b5563;
 }
 
