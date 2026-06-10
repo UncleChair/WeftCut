@@ -222,6 +222,12 @@ const enUS = {
     en_US: "English",
     zh_CN: "中文",
   },
+  window_controls: {
+    minimize: "Minimize",
+    maximize: "Maximize",
+    restore: "Restore",
+    close: "Close",
+  },
   transport: {
     play: "▶",
     pause: "⏸",
