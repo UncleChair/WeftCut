@@ -85,6 +85,7 @@ import {
 
 import {
   Menu,
+  MenuBar,
   MenuHeading,
   MenuItem,
   MenuSeparator,
@@ -1368,7 +1369,7 @@ export function App({ onCloseProject }: AppProps) {
       <header className="app-header">
         <div className="header-left">
           <h1>{t("app.title")}</h1>
-          <section className="menu-bar">
+          <MenuBar>
             <Menu label={t("menu.file")}>
               <MenuItem
                 actionId="importMedia"
@@ -1463,7 +1464,7 @@ export function App({ onCloseProject }: AppProps) {
                 onSelect={() => setSettingsOpen(true)}
               />
             </Menu>
-          </section>
+          </MenuBar>
         </div>
         <div className="header-right">
           {pong !== "ok" && pong !== "…" && (
