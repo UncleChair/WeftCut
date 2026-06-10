@@ -347,12 +347,25 @@ The lifecycle is **draft → preview → install**:
   project canvas** so the author sees it in context. A draft's frames are keyed by
   `content_hash`, so every source edit re-captures (see [Raster cache](#raster-cache-and-escalation)).
 - **Edit** — a placed draft layer gets an in-app **source panel** (edit the HTML + island,
-  Apply → re-render). Editing an *installed* Motif opens a working draft (see
+  Apply → re-render). The on-disk store is also **watched**: saving a Motif's file from any
+  external editor hot-reloads the same way — disk changes coalesce (debounced) into the same
+  catalog resync the panel uses, and the content-hash cache key plus the capture-host
+  cache-buster force a fresh capture. This covers installed Motifs too: any disk edit
+  re-renders every placement. Editing an *installed* Motif opens a working draft (see
   [Editing an installed Motif](#editing-an-installed-motif)).
 - **Install** — **publish-new** (under the draft's own id) or **update-in-place** (republish
   over the target, bump its version). Updates are **live/mutable**: every placement — this
   project and others — re-renders with the new look (the cache key is source-derived, never
   the layer's stored `motif_version`). **Save-as-new** is the "keep my old look" escape hatch.
+
+Because updates are live/mutable, the `motif_version` stored on a placed layer is only a
+**seen-at marker** — it never pins rendering. When a project opens, each Motif layer's marker
+is compared against the catalog's current version; any mismatch surfaces a one-time
+**"Motifs changed since you placed them"** notice (v1 → v3, with the affected layer count)
+plus a status-log entry — the cross-project signal for updates made while this project was
+closed. Dismissing it acknowledges: the markers bump to current in one undo step, so the
+notice doesn't repeat on the next open. There is deliberately no global reverse index of
+which projects use a Motif; each project self-reports when it opens.
 
 A project referencing a since-deleted Motif degrades to an error placeholder, not a crash.
 The lifecycle is driven from the property panel (Install / Edit / Update / Save-as-new /
