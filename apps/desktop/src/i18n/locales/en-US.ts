@@ -228,6 +228,12 @@ const enUS = {
     restore: "Restore",
     close: "Close",
   },
+  close_guard: {
+    title: "Export in progress",
+    body: "An export is still running. Quitting now will abort it and leave a partial output file.",
+    stay: "Keep exporting",
+    quit: "Quit anyway",
+  },
   transport: {
     play: "▶",
     pause: "⏸",

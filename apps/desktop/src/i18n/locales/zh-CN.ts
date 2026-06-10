@@ -226,6 +226,12 @@ const zhCN: Resources = {
     restore: "还原",
     close: "关闭",
   },
+  close_guard: {
+    title: "导出进行中",
+    body: "导出尚未完成。现在退出将中止导出并留下不完整的输出文件。",
+    stay: "继续导出",
+    quit: "仍要退出",
+  },
   transport: {
     play: "▶",
     pause: "⏸",
