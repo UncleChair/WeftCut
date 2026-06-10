@@ -43,6 +43,9 @@ uuid = { version = "1", features = ["v5", "v7", "serde"] }
 blake3 = "1"
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
 parking_lot = "0.12"
+# Stage-5 Motif hot-reload: watches `<app_config_dir>/motifs/` and coalesces
+# disk changes into `motifs:changed` (src/motifs/watcher.rs).
+notify = "8"
 
 # Errors / logs
 anyhow = "1"

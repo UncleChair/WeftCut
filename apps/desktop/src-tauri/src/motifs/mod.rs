@@ -30,6 +30,7 @@ pub mod builtin;
 pub mod catalog;
 pub mod staleness;
 pub mod store;
+pub mod watcher;
 
 #[cfg(windows)]
 pub mod commands;
