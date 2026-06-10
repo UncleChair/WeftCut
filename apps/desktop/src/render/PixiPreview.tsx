@@ -144,6 +144,11 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       };
       const lookupMedia = (mediaId: string): MediaSummary | undefined =>
         useProjectStore.getState().mediaById.get(mediaId);
+      const conformAssetUrl = (mediaId: string): string | null => {
+        const m = useProjectStore.getState().mediaById.get(mediaId);
+        const p = m?.conform_path;
+        return p ? convertFileSrc(p) : null;
+      };
 
       const compositor = new Compositor({
         app,
@@ -154,6 +159,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         originalAssetUrl,
         sourceColor,
         mediaById: lookupMedia,
+        conformAssetUrl,
       });
       const initialSummary = useProjectStore.getState().summary;
       compositor.setProject(initialSummary);
