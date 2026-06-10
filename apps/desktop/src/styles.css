@@ -1,6 +1,13 @@
 :root {
   color-scheme: dark;
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* Tailwind preflight sets `html { line-height: 1.5 }`; every legacy
+   * layout in this file was sized against the UA default (`normal`,
+   * ~1.2) — e.g. .startup-recent-list's fixed 140px = exactly 3 rows.
+   * Pin the pre-Tailwind metric here (unlayered, so it beats preflight's
+   * @layer base). New shadcn components are unaffected: their text-*
+   * utilities set their own line-height. */
+  line-height: normal;
   background: #0b0d11;
   color: #e5e7eb;
 }
@@ -2986,10 +2993,13 @@ input.preview-timecode:focus {
    * to MAX_RECENTS (10). Without this, the panel total height shifts when
    * the toggle is clicked, and since the screen container centers the
    * panel vertically, the header + action buttons visibly bump upward.
-   * Collapsed: 3 items (~140px) fill the region exactly. Expanded: list
-   * scrolls internally. Sized to keep the whole panel under typical
-   * laptop viewport heights so the page never grows a scrollbar. */
-  height: 140px;
+   * Collapsed: 3 rows ≈ 142px at 110% display scaling (rows are pure
+   * line-box heights, so they accumulate fractional-DPI rounding) — the
+   * 144px includes that slack so the collapsed state never grows a
+   * scrollbar. Expanded: list scrolls internally. Sized to keep the whole
+   * panel under typical laptop viewport heights so the page never grows
+   * a scrollbar. */
+  height: 144px;
   overflow-y: auto;
 }
 
