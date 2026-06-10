@@ -7,6 +7,7 @@ import {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import {
   addMediaLayer,
   groupsCreate,
@@ -964,16 +965,15 @@ export function Timeline({
     [],
   );
 
-  // Close the context menu on any click outside its own area.
+  // Close the context menu when the timeline scrolls under it — the
+  // popup is anchored to fixed cursor coordinates, so it would float
+  // detached over moving content. Outside-click and Escape closing is
+  // Base UI's job now.
   useEffect(() => {
     if (!contextMenu) return;
-    const onDown = () => setContextMenu(null);
-    window.addEventListener("pointerdown", onDown);
-    window.addEventListener("scroll", onDown, true);
-    return () => {
-      window.removeEventListener("pointerdown", onDown);
-      window.removeEventListener("scroll", onDown, true);
-    };
+    const onScroll = () => setContextMenu(null);
+    window.addEventListener("scroll", onScroll, true);
+    return () => window.removeEventListener("scroll", onScroll, true);
   }, [contextMenu]);
 
   const onSeparateAudio = useCallback(
@@ -1141,6 +1141,7 @@ export function Timeline({
         y={contextMenu.y}
         layerId={contextMenu.layerId}
         layerKind={contextMenu.layerKind}
+        onClose={() => setContextMenu(null)}
         onSeparateAudio={onSeparateAudio}
         onPrebakeNow={onPrebakeNow}
       />
@@ -1149,10 +1150,12 @@ export function Timeline({
   );
 }
 
-/// V.7 floating context menu. Anchored at the cursor; closes on any
-/// outside pointer-down (wired in Timeline above). Shows action items
-/// scoped to the right-clicked layer's kind — today the only entry is
-/// "Separate audio to new track" when the target is an Audio layer.
+/// V.7 floating context menu, rendered with Base UI Menu anchored to a
+/// zero-size virtual element at the right-click coordinates — the
+/// `contextMenu` state plumbing (and its coexistence with drag/blade
+/// pointer handling) is unchanged; only the popup machinery moved to
+/// the library (portal, outside-press + Escape close, arrow-key nav).
+/// Shows action items scoped to the right-clicked layer's kind.
 /// (The 2026-05-17 effect-redesign removed the H.6 render-mode toggle;
 /// group html-rendering is now driven by the presence of an
 /// HtmlTransform effect on the group, authored via MCP / a future
@@ -1162,6 +1165,7 @@ function LayerContextMenu({
   y,
   layerId,
   layerKind,
+  onClose,
   onSeparateAudio,
   onPrebakeNow,
 }: {
@@ -1169,42 +1173,72 @@ function LayerContextMenu({
   y: number;
   layerId: string;
   layerKind: string;
+  onClose: () => void;
   onSeparateAudio: (id: string) => void;
   onPrebakeNow: (id: string) => void;
 }) {
   const { t } = useTranslation();
+  const anchor = useMemo(
+    () => ({
+      getBoundingClientRect: () => ({
+        x,
+        y,
+        top: y,
+        left: x,
+        right: x,
+        bottom: y,
+        width: 0,
+        height: 0,
+      }),
+    }),
+    [x, y],
+  );
   return (
-    <div
-      className="layer-context-menu"
-      style={{ left: x, top: y }}
-      onPointerDown={(e) => e.stopPropagation()}
+    <MenuPrimitive.Root
+      open
+      // Non-modal: no scroll lock — the scroll-close effect in Timeline
+      // handles the anchored-to-stale-coordinates case instead.
+      modal={false}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
     >
-      {layerKind === "Audio" ? (
-        <button
-          type="button"
-          className="layer-context-menu-item"
-          onClick={() => onSeparateAudio(layerId)}
+      <MenuPrimitive.Portal>
+        <MenuPrimitive.Positioner
+          anchor={anchor}
+          side="bottom"
+          align="start"
+          sideOffset={0}
+          className="z-50"
         >
-          {t("timeline.separate_audio", {
-            defaultValue: "Separate audio to new track",
-          })}
-        </button>
-      ) : layerKind === "Motif" ? (
-        <button
-          type="button"
-          className="layer-context-menu-item"
-          onClick={() => onPrebakeNow(layerId)}
-        >
-          {t("timeline.prebake_now", { defaultValue: "Pre-bake now" })}
-        </button>
-      ) : (
-        <span className="layer-context-menu-disabled">
-          {t("timeline.no_actions_here", {
-            defaultValue: "(no actions for this layer)",
-          })}
-        </span>
-      )}
-    </div>
+          <MenuPrimitive.Popup className="menu-list">
+            {layerKind === "Audio" ? (
+              <MenuPrimitive.Item
+                className="menu-item"
+                onClick={() => onSeparateAudio(layerId)}
+              >
+                {t("timeline.separate_audio", {
+                  defaultValue: "Separate audio to new track",
+                })}
+              </MenuPrimitive.Item>
+            ) : layerKind === "Motif" ? (
+              <MenuPrimitive.Item
+                className="menu-item"
+                onClick={() => onPrebakeNow(layerId)}
+              >
+                {t("timeline.prebake_now", { defaultValue: "Pre-bake now" })}
+              </MenuPrimitive.Item>
+            ) : (
+              <MenuPrimitive.Item className="menu-item" disabled>
+                {t("timeline.no_actions_here", {
+                  defaultValue: "(no actions for this layer)",
+                })}
+              </MenuPrimitive.Item>
+            )}
+          </MenuPrimitive.Popup>
+        </MenuPrimitive.Positioner>
+      </MenuPrimitive.Portal>
+    </MenuPrimitive.Root>
   );
 }
 
