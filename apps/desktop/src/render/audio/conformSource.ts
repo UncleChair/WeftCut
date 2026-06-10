@@ -42,13 +42,18 @@ export class ConformSource {
 
   /// Read `frameCount` frames starting at `startFrame` (may be negative or
   /// run past EOF — out-of-range portions are zero-filled silence),
-  /// de-interleaved into one Float32Array per channel.
+  /// de-interleaved into one Float32Array per channel. Explicit
+  /// `ArrayBuffer` backing so `AudioBuffer.copyToChannel`'s strict
+  /// `Float32Array<ArrayBuffer>` overload accepts the result.
   async readWindow(
     startFrame: number,
     frameCount: number,
-  ): Promise<Float32Array[]> {
+  ): Promise<Float32Array<ArrayBuffer>[]> {
     const ch = this.header.channels;
-    const out = Array.from({ length: ch }, () => new Float32Array(frameCount));
+    const out = Array.from(
+      { length: ch },
+      () => new Float32Array(new ArrayBuffer(frameCount * 4)),
+    );
     const total = this.header.frameCount;
     const readStart = Math.min(Math.max(startFrame, 0), total);
     const readEnd = Math.min(Math.max(startFrame + frameCount, 0), total);

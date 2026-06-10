@@ -1,125 +1,368 @@
-// Per-layer audio playback wrapper. Hides an `<audio>` element off-DOM
-// (mounted under a single host element managed by the Compositor),
-// keeps it in sync with the engine's master clock, and routes
-// play/pause/seek calls through to it.
+// Per-layer buffer-scheduled audio playback (docs/audio.md §Preview mixer).
+// Replaces the element-based mixer: chunks of conform PCM are read over
+// asset:// Range (zero decode), wrapped as AudioBuffers, and scheduled
+// sample-accurately on the AudioContext clock against a play anchor.
 //
-// v1 (this phase): browser-native audio mixing. Each AudioMixer plays
-// independently through the default destination; concurrent layers
-// are mixed by the OS audio path. Per-layer gain / pan / mute will
-// land when we route through a Web Audio graph in a follow-up.
+// Node chain per layer:
+//   AudioBufferSourceNode (chunk) → GainNode (envelope automation)
+//     → StereoPannerNode (pan) → GainNode (trim: micro-fades, re-anchor
+//       masking) → AudioGraph.input
 //
-// Plan: docs/render.md (P7)
+// The gain/pan envelopes are the sampled-envelope contract
+// (`envelope.ts` ↔ Rust `audio::envelope`): identical control points,
+// identical linear interpolation — `setValueCurveAtTime` here, per-sample
+// lerp in the export mixer.
+//
+// Clock: the Pixi ticker stays master. Chunks run on the AudioContext
+// clock against an anchor pair; each tick compares the audio-predicted
+// position with the engine position and re-anchors past 40 ms with a 5 ms
+// micro-fade (chunkSchedule.shouldReanchor). The audio-master upgrade is
+// specified in docs/audio.md §Out of scope.
 
-/// Drift threshold beyond which we hard-snap `audio.currentTime` to
-/// the engine's expected position. Anything smaller is absorbed by
-/// the browser's natural playback ramp (matches the DOM
-/// `AudioHandle`'s 100 ms heuristic).
-const DRIFT_NUDGE_THRESHOLD_SEC = 0.1;
+import type { AudioView } from "../../ipc";
+import type { AudioGraph } from "./AudioGraph";
+import {
+  type Envelope,
+  evalEnvelope,
+  sampleGain,
+  samplePan,
+} from "./envelope";
+import { ConformSource } from "./conformSource";
+import {
+  MICRO_FADE_S,
+  SAMPLE_RATE,
+  planChunks,
+  shouldReanchor,
+} from "./chunkSchedule";
 
 export interface AudioMixerInit {
   layerId: string;
-  audioUrl: string;
-  /// Layer's start in composition time (microseconds).
+  /// asset:// URL of the layer's conform file.
+  conformUrl: string;
+  /// The layer's audio view (gain/pan tracks, fades, src trims, mute).
+  view: AudioView;
+  /// Layer placement in composition time (µs).
   layerTStartUs: number;
-  /// In-point inside the source media (microseconds). For
-  /// VideoClips/Audio with no trim this is 0.
-  srcInUs: number;
+  layerTEndUs: number;
+}
+
+function usToFrames(us: number): number {
+  return Math.round((us * 48) / 1000);
+}
+
+function framesToUs(frames: number): number {
+  return (frames * 1000) / 48;
 }
 
 export class AudioMixer {
   readonly layerId: string;
-  private el: HTMLAudioElement;
+
+  private readonly graph: AudioGraph;
+  private readonly gainNode: GainNode;
+  private readonly panner: StereoPannerNode;
+  private readonly trim: GainNode;
+
+  private source: ConformSource | null = null;
+  private sourcePending = false;
+  private readFailedWarned = false;
+
+  private view: AudioView;
   private layerTStartUs: number;
-  private srcInUs: number;
-  /// Set on `loadedmetadata` — before this fires, `play()` /
-  /// `currentTime =` are no-ops.
-  private metadataReady = false;
-  /// Loud-fail subscriber kept around so `dispose` can remove it.
-  private onMetadata: () => void;
+  private layerTEndUs: number;
+  private srcInFrame = 0;
+  private srcOutFrame = 0;
+  private gainEnv: Envelope;
+  private panEnv: Envelope;
 
-  constructor(init: AudioMixerInit, host: HTMLElement) {
+  private anchor: { compUs: number; ctxTime: number } | null = null;
+  /// Bumped on teardown; in-flight chunk reads from an older generation
+  /// are dropped instead of scheduled.
+  private generation = 0;
+  private liveChunks = new Map<number, AudioBufferSourceNode | null>();
+
+  constructor(init: AudioMixerInit, graph: AudioGraph) {
     this.layerId = init.layerId;
+    this.graph = graph;
+    this.view = init.view;
     this.layerTStartUs = init.layerTStartUs;
-    this.srcInUs = init.srcInUs;
+    this.layerTEndUs = init.layerTEndUs;
 
-    this.el = document.createElement("audio");
-    this.el.preload = "auto";
-    this.el.style.display = "none";
-    this.el.src = init.audioUrl;
-    this.onMetadata = (): void => {
-      this.metadataReady = true;
-    };
-    this.el.addEventListener("loadedmetadata", this.onMetadata);
-    host.appendChild(this.el);
+    const ctx = graph.ctx;
+    this.gainNode = ctx.createGain();
+    this.panner = ctx.createStereoPanner();
+    this.trim = ctx.createGain();
+    this.gainNode.connect(this.panner);
+    this.panner.connect(this.trim);
+    this.trim.connect(graph.input);
+
+    this.gainEnv = { stepUs: 10_000, spanUs: 0, values: [1] };
+    this.panEnv = { stepUs: 10_000, spanUs: 0, values: [0] };
+    this.deriveFromView();
+
+    void this.openSource(init.conformUrl);
   }
 
-  /// Update layer-window params if the LayerSummary changed (trim,
-  /// move). Idempotent if values are the same.
-  updateLayerParams(layerTStartUs: number, srcInUs: number): void {
+  private async openSource(url: string): Promise<void> {
+    if (this.sourcePending) return;
+    this.sourcePending = true;
+    try {
+      this.source = await ConformSource.open(url);
+    } catch (e) {
+      console.warn(
+        `[weftcut/audio] conform open failed for layer ${this.layerId}:`,
+        e,
+      );
+    } finally {
+      this.sourcePending = false;
+    }
+  }
+
+  private deriveFromView(): void {
+    const spanUs = this.view.src_out_us - this.view.src_in_us;
+    this.srcInFrame = usToFrames(this.view.src_in_us);
+    this.srcOutFrame = usToFrames(this.view.src_out_us);
+    this.gainEnv = sampleGain(
+      this.view.gain_db,
+      this.view.fade_in_us,
+      this.view.fade_out_us,
+      spanUs,
+    );
+    this.panEnv = samplePan(this.view.pan, spanUs);
+    // Constant fast path: park the static value on the param; curves are
+    // scheduled per chunk only for non-constant envelopes.
+    if (this.gainEnv.values.length === 1) {
+      this.gainNode.gain.value = this.gainEnv.values[0]!;
+    }
+    if (this.panEnv.values.length === 1) {
+      this.panner.pan.value = this.panEnv.values[0]!;
+    }
+  }
+
+  /// Layer summary changed (trim, move, gain/pan/fade edit, mute). Re-derive
+  /// envelopes and reschedule — `setValueCurveAtTime` forbids overlapping
+  /// automation, so a fresh schedule is the only correct move.
+  updateView(view: AudioView, layerTStartUs: number, layerTEndUs: number): void {
+    this.view = view;
     this.layerTStartUs = layerTStartUs;
-    this.srcInUs = srcInUs;
+    this.layerTEndUs = layerTEndUs;
+    this.teardown(true);
+    this.anchor = null;
+    this.deriveFromView();
   }
 
-  /// Engine tick. `masterUs` is the composition-time playhead;
-  /// `playing` mirrors `engine.isPlaying()`.
+  /// Engine tick. `masterUs` is the composition playhead; `playing`
+  /// mirrors the engine transport.
   tick(masterUs: number, playing: boolean, layerTEndUs: number): void {
-    if (!this.metadataReady) return;
+    this.layerTEndUs = layerTEndUs;
+    if (!this.source) return;
 
-    // Outside the layer's window: keep silent.
-    if (masterUs < this.layerTStartUs || masterUs >= layerTEndUs) {
-      if (!this.el.paused) this.el.pause();
-      return;
-    }
-
-    if (playing && this.el.paused) {
-      void this.el.play().catch(() => {
-        // Common during the first tick before a user gesture; the
-        // engine's `play()` resumes the AudioContext + a fresh play
-        // attempt fires after the user clicks play. Subsequent
-        // failures are silent.
-      });
-    } else if (!playing && !this.el.paused) {
-      this.el.pause();
-    }
-
-    const layerLocalUs = masterUs - this.layerTStartUs + this.srcInUs;
-    const targetSec = Math.max(0, layerLocalUs / 1_000_000);
-
-    if (!playing) {
-      // Hard-snap when paused — drift is irrelevant here, only
-      // accuracy matters for the next play() resume.
-      if (Math.abs(this.el.currentTime - targetSec) > 0.005) {
-        try {
-          this.el.currentTime = targetSec;
-        } catch {
-          // ignored
-        }
+    const inside =
+      masterUs >= this.layerTStartUs && masterUs < this.layerTEndUs;
+    if (!playing || !inside || this.view.mute) {
+      if (this.anchor) {
+        this.teardown(false);
+        this.anchor = null;
       }
       return;
     }
 
-    const drift = this.el.currentTime - targetSec;
-    if (Math.abs(drift) > DRIFT_NUDGE_THRESHOLD_SEC) {
+    const ctxNow = this.graph.ctx.currentTime;
+    if (!this.anchor) {
+      void this.graph.resume();
+      this.anchor = { compUs: masterUs, ctxTime: ctxNow };
+      this.rampTrimIn(ctxNow);
+    } else {
+      const predictedUs =
+        this.anchor.compUs + (ctxNow - this.anchor.ctxTime) * 1_000_000;
+      if (shouldReanchor(predictedUs, masterUs)) {
+        this.teardown(true);
+        this.anchor = { compUs: masterUs, ctxTime: ctxNow };
+        this.rampTrimIn(ctxNow);
+      }
+    }
+
+    const planned = planChunks({
+      masterUs,
+      anchorCompUs: this.anchor.compUs,
+      anchorCtxTime: this.anchor.ctxTime,
+      ctxNow,
+      layerTStartUs: this.layerTStartUs,
+      layerTEndUs: this.layerTEndUs,
+      srcInFrame: this.srcInFrame,
+      srcOutFrame: this.srcOutFrame,
+      liveChunkStarts: [...this.liveChunks.keys()],
+    });
+    for (const chunk of planned) {
+      // Reserve the slot synchronously so the next tick doesn't double-
+      // schedule while the Range read is in flight; the placeholder is
+      // replaced by the real node on resolve.
+      this.liveChunks.set(chunk.srcStartFrame, null);
+      void this.scheduleChunk(
+        chunk.srcStartFrame,
+        chunk.frames,
+        chunk.when,
+        chunk.bufferOffsetFrames,
+        this.generation,
+      );
+    }
+  }
+
+  private async scheduleChunk(
+    srcStartFrame: number,
+    frames: number,
+    when: number,
+    bufferOffsetFrames: number,
+    gen: number,
+  ): Promise<void> {
+    const source = this.source;
+    if (!source) return;
+    let channels: Float32Array<ArrayBuffer>[];
+    try {
+      channels = await source.readWindow(srcStartFrame, frames);
+    } catch (e) {
+      // Failed read = this chunk stays silent; drop the reservation so the
+      // next tick retries. Warn once per layer.
+      if (this.liveChunks.get(srcStartFrame) === null) {
+        this.liveChunks.delete(srcStartFrame);
+      }
+      if (!this.readFailedWarned) {
+        this.readFailedWarned = true;
+        console.warn(
+          `[weftcut/audio] conform read failed for layer ${this.layerId}; chunk muted:`,
+          e,
+        );
+      }
+      return;
+    }
+    if (gen !== this.generation) {
+      // Torn down while reading — drop silently.
+      if (this.liveChunks.get(srcStartFrame) === null) {
+        this.liveChunks.delete(srcStartFrame);
+      }
+      return;
+    }
+
+    const ctx = this.graph.ctx;
+    const buffer = ctx.createBuffer(channels.length, frames, SAMPLE_RATE);
+    channels.forEach((data, c) => buffer.copyToChannel(data, c));
+    const node = ctx.createBufferSource();
+    node.buffer = buffer;
+    node.connect(this.gainNode);
+    node.onended = (): void => {
+      if (this.liveChunks.get(srcStartFrame) === node) {
+        this.liveChunks.delete(srcStartFrame);
+      }
+    };
+    node.start(when, bufferOffsetFrames / SAMPLE_RATE);
+    this.liveChunks.set(srcStartFrame, node);
+
+    this.applyCurves(srcStartFrame, frames, when, bufferOffsetFrames);
+  }
+
+  /// Schedule the envelope curve windows covering this chunk's playback
+  /// interval. Chunks are contiguous and non-overlapping on both axes, so
+  /// per-chunk curves never violate setValueCurveAtTime's no-overlap rule.
+  private applyCurves(
+    srcStartFrame: number,
+    frames: number,
+    when: number,
+    bufferOffsetFrames: number,
+  ): void {
+    const playedFrames = frames - bufferOffsetFrames;
+    if (playedFrames <= 0) return;
+    const localStartUs = framesToUs(
+      srcStartFrame + bufferOffsetFrames - this.srcInFrame,
+    );
+    const localEndUs = framesToUs(srcStartFrame + frames - this.srcInFrame);
+    const durationS = playedFrames / SAMPLE_RATE;
+
+    const cut = (env: Envelope): Float32Array | null => {
+      if (env.values.length === 1) return null;
+      const n = Math.max(
+        2,
+        Math.ceil((localEndUs - localStartUs) / 10_000) + 1,
+      );
+      const curve = new Float32Array(n);
+      for (let i = 0; i < n; i++) {
+        const t = localStartUs + ((localEndUs - localStartUs) * i) / (n - 1);
+        curve[i] = evalEnvelope(env, t);
+      }
+      return curve;
+    };
+
+    try {
+      const gainCurve = cut(this.gainEnv);
+      if (gainCurve) {
+        this.gainNode.gain.setValueCurveAtTime(gainCurve, when, durationS);
+      }
+      const panCurve = cut(this.panEnv);
+      if (panCurve) {
+        this.panner.pan.setValueCurveAtTime(panCurve, when, durationS);
+      }
+    } catch (e) {
+      // Overlap rejection here means a scheduling bug upstream — surface
+      // it loudly in dev consoles rather than failing silent.
+      console.warn(
+        `[weftcut/audio] envelope curve scheduling failed for layer ${this.layerId}:`,
+        e,
+      );
+    }
+  }
+
+  private rampTrimIn(ctxNow: number): void {
+    const g = this.trim.gain;
+    g.cancelScheduledValues(ctxNow);
+    g.setValueAtTime(0, ctxNow);
+    g.linearRampToValueAtTime(1, ctxNow + MICRO_FADE_S);
+  }
+
+  /// Stop everything scheduled. `microFade` masks the discontinuity with a
+  /// 5 ms trim ramp (re-anchor / live edit); pause paths skip it.
+  private teardown(microFade: boolean): void {
+    this.generation += 1;
+    const ctxNow = this.graph.ctx.currentTime;
+    const stopAt = microFade ? ctxNow + MICRO_FADE_S : ctxNow;
+    if (microFade) {
+      const g = this.trim.gain;
+      g.cancelScheduledValues(ctxNow);
+      g.setValueAtTime(g.value, ctxNow);
+      g.linearRampToValueAtTime(0, stopAt);
+    }
+    for (const node of this.liveChunks.values()) {
+      if (!node) continue;
       try {
-        this.el.currentTime = targetSec;
+        node.onended = null;
+        node.stop(stopAt);
+        node.disconnect();
       } catch {
-        // ignored
+        // already stopped — fine
       }
+    }
+    this.liveChunks.clear();
+    try {
+      this.gainNode.gain.cancelScheduledValues(0);
+      this.panner.pan.cancelScheduledValues(0);
+    } catch {
+      // ignored
+    }
+    // Restore constant values (curve re-application happens per chunk).
+    if (this.gainEnv.values.length === 1) {
+      this.gainNode.gain.value = this.gainEnv.values[0]!;
+    }
+    if (this.panEnv.values.length === 1) {
+      this.panner.pan.value = this.panEnv.values[0]!;
     }
   }
 
   dispose(): void {
-    this.el.removeEventListener("loadedmetadata", this.onMetadata);
+    this.teardown(false);
     try {
-      this.el.pause();
+      this.gainNode.disconnect();
+      this.panner.disconnect();
+      this.trim.disconnect();
     } catch {
       // ignored
     }
-    if (this.el.parentNode) {
-      this.el.parentNode.removeChild(this.el);
-    }
-    // Clear src to release the file handle / decoder resources.
-    this.el.src = "";
-    this.el.load();
+    this.source = null;
   }
 }
