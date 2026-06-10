@@ -307,6 +307,12 @@ const enUS = {
     editable_note: "You can edit now; export will wait automatically.",
     dismiss: "Got it",
   },
+  motif_stale: {
+    title: "Motifs changed since you placed them",
+    entry: "v{{from}} → v{{to}} ({{n}} layers)",
+    note: "These layers already render with the current version — this is just a heads-up.",
+    dismiss: "Got it",
+  },
   connect: {
     heading: "Connect an agent",
     blurb:
