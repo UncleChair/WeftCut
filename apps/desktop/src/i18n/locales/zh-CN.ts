@@ -155,6 +155,7 @@ const zhCN: Resources = {
     proxy_failed: "预览准备失败",
     proxy_failed_hint: "预览代理生成失败，请重新导入素材。",
     click_drag_hint: "点击预览 · 拖到轨道添加",
+    drop_to_import: "松开以导入文件",
   },
   preview: {
     empty_hint: "添加图层后预览将自动启动",

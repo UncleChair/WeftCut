@@ -564,6 +564,25 @@ textarea,
   border-right: 1px solid var(--border-soft);
   background: #0a0c10;
   min-height: 0;
+  /* Anchor for the file-drop overlay. */
+  position: relative;
+}
+
+/* Shown while an Explorer file drag hovers the pool. pointer-events:
+ * none keeps dragleave from churning as the cursor crosses it. */
+.media-pool-drop-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(37, 99, 235, 0.12);
+  border: 2px dashed var(--primary);
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 500;
+  pointer-events: none;
+  z-index: 5;
 }
 
 .media-pool::-webkit-scrollbar {
