@@ -128,12 +128,15 @@ pub enum LayerParamsView {
 #[derive(Serialize, Clone)]
 pub struct MotifView {
     pub motif_id: String,
-    /// Canvas-space pixel offset.
-    pub x: f64,
-    pub y: f64,
-    pub scale_x: f64,
-    pub scale_y: f64,
-    pub opacity: f64,
+    /// Canvas-space pixel offset. Animated fields ship the FULL track
+    /// (`{mode, value}` wire shape — TS mirror `AnimTrack<T>`); resolution
+    /// to a scalar happens per frame in the webview (`render/resolveView.ts`),
+    /// never at this boundary.
+    pub x: Animated<f64>,
+    pub y: Animated<f64>,
+    pub scale_x: Animated<f64>,
+    pub scale_y: Animated<f64>,
+    pub opacity: Animated<f64>,
     pub src_in_us: i64,
     /// Validated props the user set on this motif instance.
     /// Keys match the motif manifest's `props_schema`; values
@@ -151,11 +154,11 @@ pub struct VideoClipView {
     pub media_label: String,
     pub src_in_us: i64,
     pub src_out_us: i64,
-    pub x: f64,
-    pub y: f64,
-    pub scale_x: f64,
-    pub scale_y: f64,
-    pub opacity: f64,
+    pub x: Animated<f64>,
+    pub y: Animated<f64>,
+    pub scale_x: Animated<f64>,
+    pub scale_y: Animated<f64>,
+    pub opacity: Animated<f64>,
     pub speed: f64,
     pub flip_h: bool,
     pub flip_v: bool,
@@ -167,11 +170,11 @@ pub struct VideoClipView {
 pub struct ImageOverlayView {
     pub media_id: String,
     pub media_label: String,
-    pub x: f64,
-    pub y: f64,
-    pub scale_x: f64,
-    pub scale_y: f64,
-    pub opacity: f64,
+    pub x: Animated<f64>,
+    pub y: Animated<f64>,
+    pub scale_x: Animated<f64>,
+    pub scale_y: Animated<f64>,
+    pub opacity: Animated<f64>,
     pub fade_in_us: u64,
     pub fade_out_us: u64,
 }
@@ -181,15 +184,15 @@ pub struct TextView {
     pub content: String,
     pub font_family: String,
     pub font_size_px: f32,
-    pub color: Rgba,
-    pub x: f64,
-    pub y: f64,
-    pub opacity: f64,
+    pub color: Animated<Rgba>,
+    pub x: Animated<f64>,
+    pub y: Animated<f64>,
+    pub opacity: Animated<f64>,
 }
 
 #[derive(Serialize, Clone)]
 pub struct ColorView {
-    pub color: Rgba,
+    pub color: Animated<Rgba>,
     pub width: u32,
     pub height: u32,
 }
@@ -200,8 +203,8 @@ pub struct AudioView {
     pub media_label: String,
     pub src_in_us: i64,
     pub src_out_us: i64,
-    pub gain_db: f64,
-    pub pan: f64,
+    pub gain_db: Animated<f64>,
+    pub pan: Animated<f64>,
     pub mute: bool,
 }
 
@@ -519,19 +522,6 @@ fn layer_params_view(
     params: &LayerParams,
     media_pool: &imbl::HashMap<state::MediaId, state::MediaItem>,
 ) -> LayerParamsView {
-    use state::Animated;
-    let static_or = |a: &Animated<f64>, fb: f64| -> f64 {
-        match a {
-            Animated::Static(v) => *v,
-            Animated::Keyframed(kfs) => kfs.iter().next().map(|kf| kf.value).unwrap_or(fb),
-        }
-    };
-    let static_or_rgba = |a: &Animated<Rgba>, fb: Rgba| -> Rgba {
-        match a {
-            Animated::Static(v) => *v,
-            Animated::Keyframed(kfs) => kfs.iter().next().map(|kf| kf.value).unwrap_or(fb),
-        }
-    };
     let media_label_for = |id: &state::MediaId| -> String {
         media_pool
             .get(id)
@@ -550,11 +540,11 @@ fn layer_params_view(
             media_label: media_label_for(&p.media),
             src_in_us: p.src_in_us,
             src_out_us: p.src_out_us,
-            x: static_or(&p.transform.x, 0.0),
-            y: static_or(&p.transform.y, 0.0),
-            scale_x: static_or(&p.transform.scale_x, 1.0),
-            scale_y: static_or(&p.transform.scale_y, 1.0),
-            opacity: static_or(&p.opacity, 1.0),
+            x: p.transform.x.clone(),
+            y: p.transform.y.clone(),
+            scale_x: p.transform.scale_x.clone(),
+            scale_y: p.transform.scale_y.clone(),
+            opacity: p.opacity.clone(),
             speed: p.speed,
             flip_h: p.flip_h,
             flip_v: p.flip_v,
@@ -564,11 +554,11 @@ fn layer_params_view(
         LayerParams::ImageOverlay(p) => LayerParamsView::ImageOverlay(ImageOverlayView {
             media_id: p.media.to_string(),
             media_label: media_label_for(&p.media),
-            x: static_or(&p.transform.x, 0.0),
-            y: static_or(&p.transform.y, 0.0),
-            scale_x: static_or(&p.transform.scale_x, 1.0),
-            scale_y: static_or(&p.transform.scale_y, 1.0),
-            opacity: static_or(&p.opacity, 1.0),
+            x: p.transform.x.clone(),
+            y: p.transform.y.clone(),
+            scale_x: p.transform.scale_x.clone(),
+            scale_y: p.transform.scale_y.clone(),
+            opacity: p.opacity.clone(),
             fade_in_us: p.fade_in_us,
             fade_out_us: p.fade_out_us,
         }),
@@ -576,13 +566,13 @@ fn layer_params_view(
             content: p.content.clone(),
             font_family: p.font.family.clone(),
             font_size_px: p.font.size_px,
-            color: static_or_rgba(&p.color, Rgba::WHITE),
-            x: static_or(&p.transform.x, 0.0),
-            y: static_or(&p.transform.y, 0.0),
-            opacity: static_or(&p.opacity, 1.0),
+            color: p.color.clone(),
+            x: p.transform.x.clone(),
+            y: p.transform.y.clone(),
+            opacity: p.opacity.clone(),
         }),
         LayerParams::Color(p) => LayerParamsView::Color(ColorView {
-            color: static_or_rgba(&p.color, Rgba::BLACK),
+            color: p.color.clone(),
             width: p.width,
             height: p.height,
         }),
@@ -591,8 +581,8 @@ fn layer_params_view(
             media_label: media_label_for(&p.media),
             src_in_us: p.src_in_us,
             src_out_us: p.src_out_us,
-            gain_db: static_or(&p.gain_db, 0.0),
-            pan: static_or(&p.pan, 0.0),
+            gain_db: p.gain_db.clone(),
+            pan: p.pan.clone(),
             mute: p.mute,
         }),
         LayerParams::Subtitles(p) => {
@@ -616,11 +606,11 @@ fn layer_params_view(
             }
             LayerParamsView::Motif(MotifView {
                 motif_id: p.motif_id.clone(),
-                x: static_or(&p.transform.x, 0.0),
-                y: static_or(&p.transform.y, 0.0),
-                scale_x: static_or(&p.transform.scale_x, 1.0),
-                scale_y: static_or(&p.transform.scale_y, 1.0),
-                opacity: static_or(&p.opacity, 1.0),
+                x: p.transform.x.clone(),
+                y: p.transform.y.clone(),
+                scale_x: p.transform.scale_x.clone(),
+                scale_y: p.transform.scale_y.clone(),
+                opacity: p.opacity.clone(),
                 src_in_us: p.src_in_us,
                 props,
             })
@@ -2532,6 +2522,39 @@ fn demo_color(idx: usize) -> Rgba {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The IPC views must ship full `Animated<T>` tracks — flattening to a
+    /// scalar at this boundary is what kept keyframes invisible to the
+    /// renderer. Locks the wire shape the TS `AnimTrack<T>` mirror expects.
+    #[test]
+    fn layer_params_view_ships_full_animated_tracks() {
+        use crate::state::{Animated, Interpolation, Keyframe};
+        let params = LayerParams::VideoClip(state::layer::VideoClipParams {
+            media: Uuid::now_v7(),
+            src_in_us: 0,
+            src_out_us: 1_000_000,
+            transform: Default::default(),
+            opacity: Animated::Keyframed(imbl::vector![Keyframe {
+                id: Uuid::now_v7(),
+                t_us: 0,
+                value: 0.25,
+                interp: Interpolation::Linear,
+            }]),
+            crop: None,
+            flip_h: false,
+            flip_v: false,
+            blend_mode: Default::default(),
+            speed: 1.0,
+            fade_in_us: 0,
+            fade_out_us: 0,
+        });
+        let view = layer_params_view(&params, &imbl::HashMap::new());
+        let json = serde_json::to_value(&view).unwrap();
+        // Animated fields ship as tagged tracks, not flattened scalars.
+        assert_eq!(json["opacity"]["mode"], "Keyframed");
+        assert_eq!(json["opacity"]["value"][0]["value"], 0.25);
+        assert_eq!(json["x"]["mode"], "Static");
+    }
 
     #[test]
     fn motif_payload_includes_manifest_fields_and_html() {
