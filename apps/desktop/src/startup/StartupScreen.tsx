@@ -19,6 +19,7 @@ import {
   type CanvasPreset,
   type RecentEntry,
 } from "../ipc";
+import { describeOpenError, isDeadRecentError } from "./openError";
 
 interface Props {
   /// Called once the user has successfully picked or created a workspace.
@@ -106,12 +107,11 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
             await projectOpen(entry.path);
             onWorkspaceReady();
           } catch (e) {
-            // Folder was moved, deleted, or wasn't a project to begin with
-            // (the backend's NOT_PROJECT_FOLDER sentinel also covers
-            // "folder doesn't exist anymore" — that path simply has no
-            // project.json). Drop the dead recent entry so the list
-            // doesn't keep offering it.
-            if (String(e).includes(NOT_PROJECT_FOLDER_SENTINEL)) {
+            // Folder was moved/deleted (PROJECT_FOLDER_MISSING) or stopped
+            // being a project (NOT_PROJECT_FOLDER). Either way the entry is
+            // permanently dead — drop it so the list doesn't keep offering
+            // it. Transient errors keep the entry for a retry.
+            if (isDeadRecentError(e)) {
               await recentsRemove(entry.path).catch(() => {});
               await refreshRecents();
             }
@@ -259,27 +259,6 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
 /// backend caps the store at 10 (see `recents.rs::MAX_RECENTS`), so the
 /// "expanded" view reveals at most 7 additional entries.
 const COLLAPSED_RECENT_COUNT = 3;
-
-/// Sentinel error string returned by `project_open` when the picked folder
-/// has no `project.json`. Mirrors the literal in commands.rs.
-const NOT_PROJECT_FOLDER_SENTINEL = "NOT_PROJECT_FOLDER";
-
-/// Localize a `projectOpen` rejection so the user sees something readable
-/// instead of the raw anyhow chain (which on Windows-CN renders the OS
-/// error in Chinese system locale, e.g. "系统找不到指定的文件。"). The
-/// path is what the user picked / clicked, so we re-attach it here rather
-/// than parsing it back out of the error string.
-function describeOpenError(
-  err: unknown,
-  path: string,
-  t: TFunction,
-): string {
-  const detail = String(err);
-  if (detail.includes(NOT_PROJECT_FOLDER_SENTINEL)) {
-    return t("startup.not_project_folder", { path });
-  }
-  return t("startup.recent_open_failed", { detail });
-}
 
 const CANVAS_PRESETS: { key: string; preset: CanvasPreset }[] = [
   { key: "hd1080p30", preset: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 } },

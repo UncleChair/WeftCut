@@ -22,6 +22,8 @@ const zhCN: Resources = {
     recent_open_failed: "无法打开项目：{{detail}}",
     not_project_folder:
       "此文件夹不是 WeftCut 项目。请选择由 WeftCut 创建的文件夹，或新建项目。",
+    project_folder_missing:
+      "找不到此项目的文件夹——它可能已被移动、重命名或删除，已自动从最近列表中移除。",
     time_just_now: "刚刚",
     // Chinese has no plural forms; both _one and _other collapse.
     time_minutes_ago_one: "{{count}} 分钟前",
