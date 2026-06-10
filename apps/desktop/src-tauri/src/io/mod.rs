@@ -1,11 +1,7 @@
-//! Project save/load (`.vproj` folder), schema migrations, media probing.
+//! Project save/load (`.vproj` folder), schema-version gate, media probing.
 //!
 //! On-disk layout, versioning rules: `docs/data-model.md`
-//! ("On-disk format: `.vproj` folder" and "Versioning").
-//!
-//! Phase 1 footprint: write/read `project.json` + `schema_version` files,
-//! probe + hash imported media. Migrations, cache/history subdirs, proxy +
-//! thumbnail + waveform generation come online as their phases land.
+//! ("On-disk format: workspace folder" and "Versioning").
 
 pub mod autosave;
 pub mod migrate;
@@ -17,10 +13,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use tracing::{info, warn};
 
-use crate::state::{Project, project::SCHEMA_VERSION};
+use crate::state::Project;
 
 pub const PROJECT_FILE: &str = "project.json";
-pub const SCHEMA_FILE: &str = "schema_version";
 pub const MEDIA_DIR: &str = "Media";
 pub const BACKUPS_DIR: &str = "Backups";
 
@@ -28,14 +23,11 @@ pub const BACKUPS_DIR: &str = "Backups";
 pub async fn save_to_dir(project: &Project, dir: &Path) -> Result<()> {
     let json = serde_json::to_string_pretty(project).context("serialize project")?;
     let dir: PathBuf = dir.to_path_buf();
-    let schema = SCHEMA_VERSION.to_string();
 
     tokio::task::spawn_blocking(move || -> Result<()> {
         fs::create_dir_all(&dir).with_context(|| format!("create project dir {}", dir.display()))?;
         fs::write(dir.join(PROJECT_FILE), json)
             .with_context(|| format!("write {}", dir.join(PROJECT_FILE).display()))?;
-        fs::write(dir.join(SCHEMA_FILE), schema)
-            .with_context(|| format!("write {}", dir.join(SCHEMA_FILE).display()))?;
         info!("project saved to {}", dir.display());
         Ok(())
     })
@@ -50,8 +42,9 @@ pub async fn save_to_dir(project: &Project, dir: &Path) -> Result<()> {
 /// has its in-memory `path_abs` recomputed as `dir.join(path_rel)` — this
 /// reconciles the absolute path with the current workspace location
 /// (handles "user moved the workspace folder between sessions"). Items
-/// whose `path_rel` is still `None` (legacy projects, pre-migration) keep
-/// their serialized `path_abs` until Phase A.4's migration fills `path_rel`.
+/// whose `path_rel` is `None` (import-worker copy still pending, or
+/// synthesized media like voiceover that lives in `Cache/`) keep their
+/// serialized `path_abs` verbatim.
 pub async fn load_from_dir(dir: &Path) -> Result<Project> {
     let path: PathBuf = dir.join(PROJECT_FILE);
     let json = tokio::task::spawn_blocking(move || -> Result<String> {
@@ -178,6 +171,7 @@ async fn invalidate_stale_proxies(project: &mut crate::state::Project) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::project::SCHEMA_VERSION;
     use tempfile::TempDir;
 
     #[tokio::test]
@@ -190,7 +184,6 @@ mod tests {
         save_to_dir(&original, &vproj).await.expect("save");
 
         assert!(vproj.join(PROJECT_FILE).exists());
-        assert!(vproj.join(SCHEMA_FILE).exists());
 
         let loaded = load_from_dir(&vproj).await.expect("load");
         assert_eq!(loaded.project_id, original_id);
@@ -242,11 +235,6 @@ mod tests {
             moved_vproj.join(PROJECT_FILE),
         )
         .unwrap();
-        fs::copy(
-            vproj.join(SCHEMA_FILE),
-            moved_vproj.join(SCHEMA_FILE),
-        )
-        .unwrap();
 
         let loaded = load_from_dir(&moved_vproj).await.unwrap();
         let loaded_item = loaded.media_pool.get(&id).unwrap();
@@ -269,15 +257,15 @@ mod tests {
         use std::path::PathBuf;
 
         let dir = TempDir::new().unwrap();
-        let vproj = dir.path().join("legacy.vproj");
+        let vproj = dir.path().join("pending.vproj");
 
-        let mut project = Project::new_blank("legacy");
-        let legacy_abs = PathBuf::from("/external/source/video.mp4");
+        let mut project = Project::new_blank("pending-import");
+        let source_abs = PathBuf::from("/external/source/video.mp4");
         let item = MediaItem {
             id: uuid::Uuid::now_v7(),
             label: None,
-            path_abs: legacy_abs.clone(),
-            path_rel: None, // legacy: pre-workspace-redesign import
+            path_abs: source_abs.clone(),
+            path_rel: None, // import-worker copy not landed yet
             kind: MediaKind::Video,
             metadata: MediaMetadata::default(),
             proxy_path: None,
@@ -298,9 +286,9 @@ mod tests {
         save_to_dir(&project, &vproj).await.unwrap();
 
         let loaded = load_from_dir(&vproj).await.unwrap();
-        // Legacy item: path_abs preserved verbatim. Phase A.4 migration is
-        // what flips it into the workspace format.
-        assert_eq!(loaded.media_pool.get(&id).unwrap().path_abs, legacy_abs);
+        // No path_rel anchor → path_abs preserved verbatim (the import
+        // worker's SetMediaWorkspacePaths is what fills path_rel in).
+        assert_eq!(loaded.media_pool.get(&id).unwrap().path_abs, source_abs);
     }
 
     #[tokio::test]

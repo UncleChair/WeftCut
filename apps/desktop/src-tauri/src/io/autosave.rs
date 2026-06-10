@@ -252,7 +252,7 @@ mod tests {
         let ctl = AutosaveController::spawn(handle.clone(), workspace.clone());
 
         // Drive a mutation through the actor — anything that produces a
-        // ChangeEvent. `add_video_track` is fine.
+        // ChangeEvent. `add_track` is fine.
         handle
             .add_track(Actor::User, None)
             .await

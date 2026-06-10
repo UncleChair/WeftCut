@@ -6,19 +6,18 @@
 //! `project_open` runs (Phase B's startup screen will make that window
 //! unreachable).
 //!
-//! The slot is updated by `project_save_as` / `project_open` in commands.rs,
-//! and read by `resolve_media_path` so consumers (IR materialization, ffmpeg
-//! inputs, jobs, MCP responses) compute absolute paths from the workspace-
-//! relative `MediaItem.path_rel` instead of trusting the (legacy, brittle)
-//! `path_abs`.
+//! The slot is updated by `project_save_as` / `project_open` in commands.rs
+//! and read wherever a job or command needs the workspace root (cache
+//! layout, import copies, fs-scope grants). Media paths themselves don't
+//! route through here: `io::load_from_dir` reconciles `MediaItem.path_abs`
+//! from the workspace-relative `path_rel` at load time, so consumers read
+//! `path_abs` directly.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 use tauri::AppHandle;
 use tauri_plugin_fs::FsExt;
-
-use crate::state::media::MediaItem;
 
 /// Allow the fs plugin to read/write under the open workspace folder.
 /// L2 motif raster frames live at `<workspace>/Cache/raster/...`, a
@@ -54,47 +53,9 @@ impl WorkspaceSlot {
     }
 }
 
-/// Resolve a media item's absolute path. Per workspace-redesign Q2 the
-/// workspace owns its copies of imported media; `path_rel` is authoritative
-/// once it's populated (Phase A.4 migration fills it in for legacy projects,
-/// Phase C.1 imports set it directly). When the workspace is unknown or
-/// `path_rel` is `None`, fall back to the legacy `path_abs` so the editor
-/// still works during the transition window.
-pub fn resolve_media_path(workspace: Option<&Path>, item: &MediaItem) -> PathBuf {
-    match (workspace, item.path_rel.as_ref()) {
-        (Some(ws), Some(rel)) => ws.join(rel),
-        _ => item.path_abs.clone(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::media::{MediaKind, MediaMetadata};
-    use chrono::Utc;
-
-    fn dummy_item(path_abs: &str, path_rel: Option<&str>) -> MediaItem {
-        MediaItem {
-            id: uuid::Uuid::now_v7(),
-            label: None,
-            path_abs: PathBuf::from(path_abs),
-            path_rel: path_rel.map(PathBuf::from),
-            kind: MediaKind::Video,
-            metadata: MediaMetadata::default(),
-            proxy_path: None,
-
-            proxy_format_version: 0,
-            quick_proxy_path: None,
-            proxy_bypassed: false,
-            export_uses_original: false,
-            waveform_path: None,
-            thumbnails_dir: None,
-            file_hash_blake3: "abc".into(),
-            file_size: 0,
-            file_mtime: 0,
-            imported_at: Utc::now(),
-        }
-    }
 
     #[test]
     fn slot_starts_empty_and_sets() {
@@ -102,34 +63,5 @@ mod tests {
         assert!(slot.current().is_none());
         slot.set(PathBuf::from("/tmp/my-proj"));
         assert_eq!(slot.current(), Some(PathBuf::from("/tmp/my-proj")));
-    }
-
-    #[test]
-    fn resolve_uses_workspace_relative_when_both_available() {
-        let ws = Path::new("/projects/doc");
-        let item = dummy_item("/legacy/abs/clip.mp4", Some("Media/clip.mp4"));
-        assert_eq!(
-            resolve_media_path(Some(ws), &item),
-            PathBuf::from("/projects/doc").join("Media/clip.mp4"),
-        );
-    }
-
-    #[test]
-    fn resolve_falls_back_to_path_abs_when_no_workspace() {
-        let item = dummy_item("/legacy/abs/clip.mp4", Some("Media/clip.mp4"));
-        assert_eq!(
-            resolve_media_path(None, &item),
-            PathBuf::from("/legacy/abs/clip.mp4"),
-        );
-    }
-
-    #[test]
-    fn resolve_falls_back_to_path_abs_when_no_rel() {
-        let ws = Path::new("/projects/doc");
-        let item = dummy_item("/legacy/abs/clip.mp4", None);
-        assert_eq!(
-            resolve_media_path(Some(ws), &item),
-            PathBuf::from("/legacy/abs/clip.mp4"),
-        );
     }
 }

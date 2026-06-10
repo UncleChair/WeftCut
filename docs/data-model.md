@@ -464,7 +464,7 @@ the UI uses the same actor via Tauri commands.
 |---|---|
 | `import_media(path)` → `MediaId` | hashes, probes metadata, fans out proxy / thumbnails / waveform jobs |
 | `remove_media(id, force?)` | rejects with `MediaInUse { referenced_by }` if any layer references it unless `force=true` |
-| `add_track(kind, label?)` → `TrackId` | `kind` is `"video" | "audio" | "subtitle"` |
+| `add_track(label?)` → `TrackId` | tracks are kind-agnostic — any layer kind can be placed on any track |
 | `remove_track(id, force?)` | rejects if non-empty unless `force` |
 | `move_track(id, new_position)` | |
 | `add_color_layer(track_id, t_start_us, t_end_us, color, width?, height?)` → `LayerId` | rejects on overlap |
@@ -504,7 +504,6 @@ The workspace folder *is* the project. Opening a workspace folder = opening the 
 ```
 <workspace>/
 ├── project.json              ← canonical state, auto-saved 500ms-debounced
-├── schema_version            ← redundant copy for tooling that reads only this
 ├── Media/                    ← imported originals (workspace owns the bytes)
 │   ├── interview.mov
 │   └── b-roll-001.mp4
@@ -526,25 +525,22 @@ The workspace folder *is* the project. Opening a workspace folder = opening the 
 
 ## Versioning
 
-```json
-{ "schema_version": N, "project": { ... } }
-```
+`project.json` embeds a `schema_version: u32` field. `SCHEMA_VERSION`
+is bumped whenever the on-disk shape changes incompatibly.
 
-`SCHEMA_VERSION` is bumped whenever the on-disk shape changes.
-`io/migrate.rs` carries a per-version migration chain; on load the
-migration chain `vN → vN+1 → ... → current` runs and mutates the
-in-memory Project before save-back. Missing source files stay in
-legacy mode with a "missing media" badge on the pool item; the
-editor still loads.
+The load path is a cut-over gate (`io/migrate.rs`), not a migration
+chain: a project at the build's `SCHEMA_VERSION` loads; anything
+below it is rejected with guidance to re-create the project in a
+fresh workspace; anything above it is rejected with "update the
+app". There is no carry-forward of older folders — maintaining
+migration code for unshipped formats is pure overhead.
 
-On load:
-1. Read `schema_version`.
-2. Run the migration chain.
-3. Refuse to load a `schema_version` newer than the binary supports.
-
-Be permissive at deserialization (unknown fields are ignored) so a
-shipped binary can load projects authored by a slightly newer binary
-without crashing — the unknown fields drop on next save.
+Within a schema version, additive fields use `#[serde(default)]` so
+existing `project.json` files keep loading without a version bump;
+the default fills in and the field materializes on next save. Be
+permissive at deserialization (unknown fields are ignored) so a
+binary can load projects authored by a slightly newer binary without
+crashing — the unknown fields drop on next save.
 
 ## Pitfalls
 

@@ -95,7 +95,7 @@ Each maps 1:1 to a project actor command (see
 Media + tracks:
 - `import_media { path }` → `{ media_id, … }`
 - `remove_media { media_id, force? }`
-- `add_track { kind, label? }` → `TrackId` (`kind` ∈ `"video" | "audio" | "subtitle"`)
+- `add_track { label? }` → `TrackId` (tracks are kind-agnostic — any layer kind can be placed on any track)
 - `remove_track { track_id, force? }`
 - `move_track { track_id, new_position }`
 

@@ -10,7 +10,7 @@
 // flip Root to the editor stage); App installs `exportClip` once mounted.
 import {
   importMedia,
-  addVideoTrack,
+  addTrack,
   addMediaLayer,
   addMotif,
   projectNewWorkspace,
@@ -548,7 +548,7 @@ export function clearPreviewBridge(): void {
 export function installExportHook(runExport: RunExport): void {
   hookSlot().exportClip = async ({ mediaAbsPath, outputAbsPath, settings, range }) => {
     const mediaId = await importMedia(mediaAbsPath);
-    const trackId = await addVideoTrack();
+    const trackId = await addTrack();
     await addMediaLayer(trackId, mediaId, 0);
     // Mirror a real user: don't export until the clip is export-ready in the
     // store the gate reads (see waitForMediaExportReady).

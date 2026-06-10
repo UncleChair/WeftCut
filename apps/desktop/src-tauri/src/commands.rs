@@ -736,11 +736,9 @@ pub async fn separate_audio_to_new_track(
 }
 
 #[tauri::command]
-pub async fn add_video_track(handle: State<'_, ProjectHandle>) -> Result<String, String> {
-    // V.5: tracks are kind-agnostic. The legacy "add_video_track"
-    // command keeps its name for IPC compatibility but produces a
-    // generic track (no kind). Removed from the Insert menu in R.10
-    // but the command stays callable for agent / test paths.
+pub async fn add_track(handle: State<'_, ProjectHandle>) -> Result<String, String> {
+    // Tracks are kind-agnostic — the new track accepts any layer kind.
+    // Not in the Insert menu; callable from agent / test paths.
     let id = handle
         .add_track(Actor::User, Some("Track".into()))
         .await
@@ -2192,11 +2190,6 @@ pub async fn groups_dissolve(
         .await
         .map_err(|e: CommandError| e.to_string())
 }
-
-// groups_set_effects / layers_set_effects commands removed in P12-a.
-// The Pixi renderer doesn't read effects; the mutation surface for
-// them is dead in v1. P12-b deletes the Layer::effects / Group::effects
-// fields proper, alongside the IR visual half.
 
 #[tauri::command]
 pub async fn delete_layer(
