@@ -11,6 +11,9 @@ import {
 import { MOTIF_RUNTIME_SOURCE } from "./render/motifs/runtime";
 import { syncUserMotifsFromBackend, installMotifsChangedListener } from "./render/motifs/syncCatalog";
 import "./i18n";
+// Tailwind entry first; styles.css stays unlayered so its legacy rules win
+// over Tailwind's layered output wherever both match (see app.css header).
+import "./app.css";
 import "./styles.css";
 
 // Motifs: hand the clock-takeover runtime source to Rust once at boot so the
