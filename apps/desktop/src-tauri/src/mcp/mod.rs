@@ -338,15 +338,11 @@ impl WeftCutServer {
     // ============================================================
 
     #[tool(description = "Add a new track to the project. Returns the new track id as a UUID string. \
-                          `kind` is one of 'video', 'audio', 'subtitle' (case-insensitive).")]
+                          Tracks are kind-agnostic — any layer kind can be placed on any track.")]
     async fn add_track(
         &self,
         #[tool(aggr)] args: AddTrackArgs,
     ) -> Result<CallToolResult, McpError> {
-        // V.5: tracks are kind-agnostic. The args.kind arg is
-        // accepted but ignored (backward-compat with existing agent
-        // prompts). New tracks accept any layer kind.
-        let _ = &args.kind;
         let id = self
             .project
             .add_track(agent_actor(), args.label)
@@ -1805,8 +1801,6 @@ pub struct LockHistoryArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct AddTrackArgs {
-    /// One of 'video', 'audio', 'subtitle' (case-insensitive).
-    pub kind: String,
     /// Optional human-readable label.
     pub label: Option<String>,
 }
@@ -2439,10 +2433,6 @@ pub(crate) fn resolve_motif_t_end_us(
         _ => end,
     }
 }
-
-// V.5: tracks are kind-agnostic; `parse_track_kind` is removed. The
-// MCP `add_track` tool's `kind` arg is now ignored (kept on the wire
-// for backward compat with existing agent prompts).
 
 fn parse_layer_edge(s: &str) -> Result<LayerEdge, McpError> {
     match s.to_ascii_lowercase().as_str() {

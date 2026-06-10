@@ -86,10 +86,6 @@ export interface LayerSummary {
   enabled: boolean;
   locked: boolean;
   params: LayerParamsView;
-  /// Per-layer effect chain. Inside an html-render group, an enabled
-  /// `HtmlTransform` here composes on top of the layer's static
-  /// transform from `params` at every composition tick.
-  effects: Effect[];
 }
 
 export type LayerParamsView =
@@ -229,53 +225,7 @@ export interface GroupSummary {
   id: string;
   label: string | null;
   layer_ids: string[];
-  /// Group-level effect chain (`docs/groups.md` 2026-05-17
-  /// redesign). The TS distiller reads `HtmlTransform` from here to
-  /// build the engine's `compositionTransform`. Any enabled effect
-  /// whose kind requires html-cap rendering (today only
-  /// `HtmlTransform`) flags the group for the html-render path —
-  /// there is no separate `render_mode` flag.
-  effects: Effect[];
 }
-
-/// Wire-compatible mirror of the Rust `Interpolation` enum.
-export type Interpolation =
-  | { kind: "Hold" }
-  | { kind: "Linear" }
-  | { kind: "EaseIn" }
-  | { kind: "EaseOut" }
-  | { kind: "Bezier"; p1: [number, number]; p2: [number, number] };
-
-export interface Keyframe<T> {
-  id: string;
-  t_us: number;
-  value: T;
-  interp: Interpolation;
-}
-
-/// Wire-compatible mirror of the Rust `Animated<T>` enum
-/// (`#[serde(tag = "mode", content = "value")]`).
-export type AnimTrack<T> =
-  | { mode: "Static"; value: T }
-  | { mode: "Keyframed"; value: Keyframe<T>[] };
-
-export interface Effect {
-  id: string;
-  enabled: boolean;
-  params: EffectParams;
-}
-
-/// Effect params discriminated union. Today we only need the
-/// `HtmlTransform` variant typed for the preview-side distiller;
-/// other variants pass through opaquely. When per-effect authoring
-/// lands, fill in the others.
-export type EffectParams =
-  | { kind: "HtmlTransform"; x: AnimTrack<number>; y: AnimTrack<number>; scale_x: AnimTrack<number>; scale_y: AnimTrack<number>; rotation_deg: AnimTrack<number>; opacity: AnimTrack<number> }
-  | { kind: "ColorCorrect"; [k: string]: unknown }
-  | { kind: "Blur"; radius: AnimTrack<number> }
-  | { kind: "ChromaKey"; [k: string]: unknown }
-  | { kind: "Speed"; [k: string]: unknown }
-  | { kind: "Vignette"; [k: string]: unknown };
 
 export interface MarkerSummary {
   id: string;
@@ -407,8 +357,9 @@ export async function projectSummary(): Promise<ProjectSummary> {
   return invoke<ProjectSummary>("project_summary");
 }
 
-export async function addVideoTrack(): Promise<string> {
-  return invoke<string>("add_video_track");
+/// Tracks are kind-agnostic — the new track accepts any layer kind.
+export async function addTrack(): Promise<string> {
+  return invoke<string>("add_track");
 }
 
 export async function addDemoColorLayer(): Promise<string> {
@@ -867,13 +818,6 @@ export async function groupsCreate(
     reassign,
   });
 }
-
-// groupsSetEffects / layersSetEffects deleted in P12-a — the Pixi
-// renderer doesn't read effects in v1, so the mutation surface for
-// them is gone. The `effects: Effect[]` field on `LayerSummary` /
-// `GroupSummary` (above) stays alive until P12-b sweeps the IR visual
-// half; legacy DOM preview consumers continue to read it (always
-// empty now since nothing can write).
 
 export async function groupsDissolve(groupId: string): Promise<void> {
   return invoke<void>("groups_dissolve", { groupId });

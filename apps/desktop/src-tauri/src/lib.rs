@@ -83,7 +83,7 @@ pub fn run() {
             commands::get_mcp_info,
             commands::reset_mcp_token,
             commands::project_summary,
-            commands::add_video_track,
+            commands::add_track,
             commands::separate_audio_to_new_track,
             commands::add_demo_color_layer,
             commands::add_media_layer,
@@ -215,10 +215,10 @@ pub fn run() {
             }
 
             // Workspace path tracker. Starts empty; `project_save_as` /
-            // `project_open` populate it. `workspace::resolve_media_path`
-            // routes media-path reads through it so the workspace's
-            // `path_rel` becomes authoritative once Phase A.4 migration or
-            // Phase C.1 import fills it in.
+            // `project_open` populate it. Jobs and commands read it for
+            // the workspace root (cache layout, import copies, fs-scope
+            // grants); media paths come from `MediaItem.path_abs`, which
+            // `io::load_from_dir` reconciles against this root at load.
             let workspace_slot = workspace::WorkspaceSlot::new();
             app.manage(workspace_slot.clone());
 
@@ -354,16 +354,6 @@ pub fn run() {
                                 "project:changed",
                                 serde_json::json!({
                                     "op_id": event.op_id.to_string(),
-                                    // Legacy: short human-readable label kept
-                                    // for back-compat with the existing
-                                    // hot-reload bridge.
-                                    "actor": match &event.actor {
-                                        state::Actor::User => "User".to_string(),
-                                        state::Actor::Agent { client } => {
-                                            format!("Agent({client})")
-                                        }
-                                    },
-                                    // Structured fields for the activity panel.
                                     "actor_kind": actor_kind,
                                     "client": client,
                                     "summary": event.summary,
