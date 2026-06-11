@@ -395,6 +395,11 @@ mod tests {
         project.tracks[0].muted = true;
         let plan = plan_for_project(&project, None).unwrap();
         assert_eq!(plan.layers.len(), 1, "muted track A must be excluded");
+        assert_eq!(
+            plan.layers[0].conform_path,
+            tmp.path().join("b.conform"),
+            "track B (b.conform) must be the surviving layer"
+        );
     }
 
     #[test]
@@ -405,6 +410,26 @@ mod tests {
         project.tracks[0].solo = true;
         let plan = plan_for_project(&project, None).unwrap();
         assert_eq!(plan.layers.len(), 1, "only soloed track A should play");
+        assert_eq!(
+            plan.layers[0].conform_path,
+            tmp.path().join("a.conform"),
+            "track A (a.conform) must be the surviving layer"
+        );
+    }
+
+    #[test]
+    fn disabled_track_solo_does_not_gate() {
+        let tmp = TempDir::new().unwrap();
+        let mut project = two_audio_tracks_project(tmp.path());
+        // Disabled tracks' solo flags don't gate the mix.
+        project.tracks[0].enabled = false;
+        project.tracks[0].solo = true;
+        let plan = plan_for_project(&project, None).unwrap();
+        assert_eq!(
+            plan.layers.len(),
+            1,
+            "disabled track A's solo must not silence track B"
+        );
     }
 
     #[test]
