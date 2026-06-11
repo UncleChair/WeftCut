@@ -168,6 +168,19 @@ pub struct ProjectSettingsPatch {
     pub auto_delete_empty_tracks: Option<bool>,
 }
 
+/// Patch shape for `update_track_flags` — the timeline header's
+/// eye/M/S/lock toggles. Preference-shaped like `ProjectSettingsPatch`:
+/// applied to every history snapshot via
+/// `History::replace_track_flags_everywhere` and never recorded, so
+/// Ctrl-Z never flips a track toggle. Only `Some(_)` fields are applied.
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct TrackFlagsPatch {
+    pub enabled: Option<bool>,
+    pub muted: Option<bool>,
+    pub solo: Option<bool>,
+    pub locked: Option<bool>,
+}
+
 impl Default for ProjectSettings {
     fn default() -> Self {
         Self {

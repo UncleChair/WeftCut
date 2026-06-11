@@ -146,6 +146,7 @@ pub fn run() {
             commands::fit_composition_to_layers,
             commands::get_project_settings,
             commands::update_project_settings,
+            commands::update_track_flags,
             commands::add_marker,
             commands::project_undo,
             commands::project_redo,

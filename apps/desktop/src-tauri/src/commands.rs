@@ -19,7 +19,7 @@ use crate::motifs::catalog;
 use crate::state::{
     self, Actor, ColorParams, CommandError, LayerParams, MediaItem, MediaKind, ProjectHandle,
     MotifParams, ProjectSettings, ProjectSettingsPatch, Rgba, SubtitlesParams, SubtitlesSource,
-    Transform,
+    TrackFlagsPatch, Transform,
     actor::{CompositionPatch, LayerParamsPatch, LayerPatch},
     animated::Animated,
     ids::new_id,
@@ -2265,6 +2265,22 @@ pub async fn update_project_settings(
 ) -> Result<(), String> {
     handle
         .update_project_settings(Actor::User, patch)
+        .await
+        .map_err(|e: CommandError| e.to_string())
+}
+
+/// Unrecorded toggle path (timeline redesign spec §3): the header's
+/// eye/M/S/lock changes never enter undo history; the actor patches
+/// every history snapshot instead.
+#[tauri::command]
+pub async fn update_track_flags(
+    handle: State<'_, ProjectHandle>,
+    track_id: String,
+    patch: TrackFlagsPatch,
+) -> Result<(), String> {
+    let id = Uuid::parse_str(&track_id).map_err(|e| format!("track_id: {e}"))?;
+    handle
+        .update_track_flags(Actor::User, id, patch)
         .await
         .map_err(|e: CommandError| e.to_string())
 }

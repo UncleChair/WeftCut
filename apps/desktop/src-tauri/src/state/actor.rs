@@ -22,7 +22,7 @@ use super::ids::{
 use super::layer::{Layer, LayerParams};
 use super::marker::Marker;
 use super::media::MediaItem;
-use super::project::{Project, ProjectSettingsPatch};
+use super::project::{Project, ProjectSettingsPatch, TrackFlagsPatch};
 use super::time::{Rational, TimeUs};
 use super::track::{Track, TrackRole};
 use super::transition::{Transition, TransitionKind};
@@ -514,6 +514,12 @@ enum Command {
     },
     UpdateProjectSettings {
         patch: ProjectSettingsPatch,
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
+    UpdateTrackFlags {
+        id: TrackId,
+        patch: TrackFlagsPatch,
         actor: Actor,
         reply: oneshot::Sender<Result<(), CommandError>>,
     },
@@ -1157,6 +1163,29 @@ impl ProjectHandle {
         rx.await.expect("project actor terminated")
     }
 
+    /// Toggle a track's enabled/muted/solo/locked flags (timeline header
+    /// eye/M/S/lock buttons). Preference-shaped, not editing-shaped: the
+    /// patch is applied to every history snapshot and NOT recorded, so
+    /// Ctrl-Z never flips a track toggle.
+    pub async fn update_track_flags(
+        &self,
+        actor: Actor,
+        id: TrackId,
+        patch: TrackFlagsPatch,
+    ) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::UpdateTrackFlags {
+                id,
+                patch,
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
     pub async fn add_marker(
         &self,
         actor: Actor,
@@ -1674,6 +1703,15 @@ impl ProjectActor {
                 reply,
             } => {
                 let result = self.do_update_project_settings(patch, actor);
+                let _ = reply.send(result);
+            }
+            Command::UpdateTrackFlags {
+                id,
+                patch,
+                actor,
+                reply,
+            } => {
+                let result = self.do_update_track_flags(id, patch, actor);
                 let _ = reply.send(result);
             }
             Command::AddMarker {
@@ -2937,6 +2975,24 @@ impl ProjectActor {
         self.history.replace_settings_everywhere(&next);
         let snapshot = self.history.current();
         self.broadcast_unrecorded(actor, "Updated project settings".to_string(), snapshot);
+        Ok(())
+    }
+
+    /// Track flag toggles (enabled/muted/solo/locked) — see the
+    /// `update_track_flags` wrapper for why this bypasses the recorded
+    /// stack (preference, not edit).
+    fn do_update_track_flags(
+        &mut self,
+        id: TrackId,
+        patch: TrackFlagsPatch,
+        actor: Actor,
+    ) -> Result<(), CommandError> {
+        if !self.history.current().tracks.iter().any(|t| t.id == id) {
+            return Err(CommandError::TrackNotFound { track: id });
+        }
+        self.history.replace_track_flags_everywhere(id, &patch);
+        let snapshot = self.history.current();
+        self.broadcast_unrecorded(actor, format!("Updated track flags {id}"), snapshot);
         Ok(())
     }
 
@@ -4617,6 +4673,64 @@ mod tests {
             !snap.settings.auto_delete_empty_tracks,
             "setting survives undo (patched into every snapshot)"
         );
+    }
+
+    #[tokio::test]
+    async fn update_track_flags_is_unrecorded_and_patches_history() {
+        let h = spawn(Project::new_blank("test"));
+        let snap = h.snapshot().await;
+        let track_id = snap.tracks.front().expect("blank project has tracks").id;
+        // A recorded op AFTER which we toggle, so undo has something to rewind.
+        let added = h
+            .add_track(Actor::User, Some("overlay".into()))
+            .await
+            .expect("add_track");
+        h.update_track_flags(
+            Actor::User,
+            track_id,
+            TrackFlagsPatch {
+                enabled: None,
+                muted: Some(true),
+                solo: Some(true),
+                locked: Some(true),
+            },
+        )
+        .await
+        .expect("update_track_flags");
+        let snap = h.snapshot().await;
+        let t = snap.tracks.iter().find(|t| t.id == track_id).unwrap();
+        assert!(t.muted && t.solo && t.locked);
+        assert!(t.enabled, "None field left untouched");
+        // Undo rewinds add_track, NOT the flags toggle; flags survive.
+        h.undo(Actor::User).await.expect("undo");
+        let snap = h.snapshot().await;
+        assert!(
+            snap.tracks.iter().all(|t| t.id != added),
+            "undo rewound add_track, not the flags toggle"
+        );
+        let t = snap.tracks.iter().find(|t| t.id == track_id).unwrap();
+        assert!(
+            t.muted && t.solo && t.locked,
+            "flags survive undo (patched into every snapshot)"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_track_flags_unknown_track_rejected() {
+        let h = spawn(Project::new_blank("test"));
+        let err = h
+            .update_track_flags(
+                Actor::User,
+                new_id(),
+                TrackFlagsPatch {
+                    enabled: None,
+                    muted: Some(true),
+                    solo: None,
+                    locked: None,
+                },
+            )
+            .await;
+        assert!(matches!(err, Err(CommandError::TrackNotFound { .. })));
     }
 
     #[tokio::test]
