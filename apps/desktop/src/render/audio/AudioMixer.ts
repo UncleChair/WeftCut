@@ -29,10 +29,12 @@ import {
 } from "./envelope";
 import { ConformSource } from "./conformSource";
 import {
+  type ClockAnchor,
   MICRO_FADE_S,
   SAMPLE_RATE,
+  framesToUs,
   planChunks,
-  shouldReanchor,
+  usToFrames,
 } from "./chunkSchedule";
 
 export interface AudioMixerInit {
@@ -44,14 +46,6 @@ export interface AudioMixerInit {
   /// Layer placement in composition time (µs).
   layerTStartUs: number;
   layerTEndUs: number;
-}
-
-function usToFrames(us: number): number {
-  return Math.round((us * 48) / 1000);
-}
-
-function framesToUs(frames: number): number {
-  return (frames * 1000) / 48;
 }
 
 export class AudioMixer {
@@ -74,7 +68,13 @@ export class AudioMixer {
   private gainEnv: Envelope;
   private panEnv: Envelope;
 
-  private anchor: { compUs: number; ctxTime: number } | null = null;
+  /// The engine's clock anchor as of the last tick — by REFERENCE. The
+  /// mixer never takes its own anchor: the playhead and every scheduled
+  /// chunk derive from the same pair (chunkSchedule.ClockAnchor), so
+  /// there is no second clock to reconcile against. Identity change
+  /// (engine re-anchored: seek-during-play, ctx state flip) triggers a
+  /// micro-faded reschedule.
+  private lastAnchor: ClockAnchor | null = null;
   /// Bumped on teardown; in-flight chunk reads from an older generation
   /// are dropped instead of scheduled.
   private generation = 0;
@@ -146,45 +146,52 @@ export class AudioMixer {
     this.layerTStartUs = layerTStartUs;
     this.layerTEndUs = layerTEndUs;
     this.teardown(true);
-    this.anchor = null;
+    this.lastAnchor = null;
     this.deriveFromView();
   }
 
   /// Engine tick. `masterUs` is the composition playhead; `playing`
-  /// mirrors the engine transport.
-  tick(masterUs: number, playing: boolean, layerTEndUs: number): void {
+  /// mirrors the engine transport; `anchor` is the engine's clock anchor
+  /// (null while paused or while the AudioContext is suspended — a
+  /// suspended context makes no sound, so silence is correct).
+  tick(
+    masterUs: number,
+    playing: boolean,
+    layerTEndUs: number,
+    anchor: ClockAnchor | null,
+  ): void {
     this.layerTEndUs = layerTEndUs;
     if (!this.source) return;
 
     const inside =
       masterUs >= this.layerTStartUs && masterUs < this.layerTEndUs;
-    if (!playing || !inside || this.view.mute) {
-      if (this.anchor) {
+    if (!playing || !inside || this.view.mute || anchor === null) {
+      // Keep the resume nudge: the first play often starts with the
+      // context suspended (autoplay policy) and a null anchor — resuming
+      // here lets the engine's clock flip to audio-derived next tick.
+      if (playing && anchor === null) void this.graph.resume();
+      if (this.lastAnchor) {
         this.teardown(false);
-        this.anchor = null;
+        this.lastAnchor = null;
       }
       return;
     }
 
     const ctxNow = this.graph.ctx.currentTime;
-    if (!this.anchor) {
+    if (this.lastAnchor === null) {
       void this.graph.resume();
-      this.anchor = { compUs: masterUs, ctxTime: ctxNow };
       this.rampTrimIn(ctxNow);
-    } else {
-      const predictedUs =
-        this.anchor.compUs + (ctxNow - this.anchor.ctxTime) * 1_000_000;
-      if (shouldReanchor(predictedUs, masterUs)) {
-        this.teardown(true);
-        this.anchor = { compUs: masterUs, ctxTime: ctxNow };
-        this.rampTrimIn(ctxNow);
-      }
+    } else if (this.lastAnchor !== anchor) {
+      // Engine re-anchored (seek during play / clock-source flip):
+      // everything scheduled against the old anchor is mis-timed now.
+      this.teardown(true);
+      this.rampTrimIn(ctxNow);
     }
+    this.lastAnchor = anchor;
 
     const planned = planChunks({
       masterUs,
-      anchorCompUs: this.anchor.compUs,
-      anchorCtxTime: this.anchor.ctxTime,
+      anchor,
       ctxNow,
       layerTStartUs: this.layerTStartUs,
       layerTEndUs: this.layerTEndUs,
