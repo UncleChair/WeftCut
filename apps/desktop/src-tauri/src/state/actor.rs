@@ -3570,7 +3570,8 @@ pub(crate) fn apply_update_layer_params(
 /// duration if needed. When the layer is in a group and `escape_group=false`,
 /// also shifts every group sibling's `t_start_us` / `t_end_us` by the same
 /// delta (`docs/groups.md` — move propagates time only, tracks stay
-/// local). Locked siblings reject the whole op.
+/// local). Locked siblings — or siblings on locked tracks — reject the
+/// whole op.
 pub(crate) fn apply_move_layer(
     project: &mut Project,
     id: LayerId,
@@ -3582,12 +3583,9 @@ pub(crate) fn apply_move_layer(
     let new_t_start_us =
         crate::state::time::snap_frame_round(new_t_start_us, project.composition.fps);
     // Locate the target layer to compute the delta before we mutate anything.
-    let (src_ti, _) = locate_layer(project, id).ok_or(CommandError::LayerNotFound { layer: id })?;
-    let cur_start = project.tracks[src_ti].layers
-        .iter()
-        .find(|l| l.id == id)
-        .map(|l| l.t_start_us)
-        .expect("layer verified above");
+    let (src_ti, src_li) =
+        locate_layer(project, id).ok_or(CommandError::LayerNotFound { layer: id })?;
+    let cur_start = project.tracks[src_ti].layers[src_li].t_start_us;
     // Reject if the source track is locked.
     {
         let src_track = &project.tracks[src_ti];
@@ -3757,8 +3755,11 @@ fn group_siblings_excluding(project: &Project, id: LayerId) -> Vec<LayerId> {
     group.members.iter().copied().filter(|&m| m != id).collect()
 }
 
-/// Reject if any of `touched` is `locked`. Used by group-aware ops to
-/// honour `Layer.locked` as a hard "don't touch" promise.
+/// Reject if any of `touched` is `locked`, or lives on a locked track.
+/// Used by group-aware ops to honour both `Layer.locked` and
+/// `Track.locked` as hard "don't touch" promises — group fan-out must
+/// never mutate a member on a locked track even when the anchor's own
+/// track is unlocked (cross-track AV groups are the common case).
 fn check_group_lock<I: IntoIterator<Item = LayerId>>(
     project: &Project,
     touched_anchor: LayerId,
@@ -3771,7 +3772,11 @@ fn check_group_lock<I: IntoIterator<Item = LayerId>>(
     };
     for id in touched {
         if let Some((ti, li)) = locate_layer(project, id) {
-            let layer = &project.tracks[ti].layers[li];
+            let track = &project.tracks[ti];
+            if track.locked {
+                return Err(CommandError::TrackLocked { track: track.id });
+            }
+            let layer = &track.layers[li];
             if layer.locked {
                 return Err(CommandError::GroupLockedMember {
                     group: gid,
@@ -9177,5 +9182,81 @@ mod tests {
             .find(|l| l.id == layer_id)
             .expect("original layer must still exist");
         assert_eq!(layer.t_start_us, 0, "locked layer must not have moved");
+    }
+
+    #[tokio::test]
+    async fn locked_track_rejects_grouped_fanout() {
+        // Cross-track group: anchor on unlocked track A, sibling on track B.
+        // Locking track B must reject move/trim/split issued through the
+        // anchor (group fan-out would otherwise mutate the sibling on the
+        // locked track). Same edges on both layers so the trim aligned-edge
+        // coupling fans out, and a mid-span split spans both members.
+        let (project, track_a) = project_with_video_track();
+        let h = spawn(project);
+        let anchor = h
+            .add_layer(Actor::User, track_a, color_layer(Rgba::WHITE), 0, 2_000_000)
+            .await
+            .expect("add anchor layer");
+        let track_b = h
+            .add_track(Actor::User, Some("b".into()))
+            .await
+            .expect("add track b");
+        let sibling = h
+            .add_layer(Actor::User, track_b, color_layer(Rgba::BLACK), 0, 2_000_000)
+            .await
+            .expect("add sibling layer");
+        h.groups_create(Actor::User, vec![anchor, sibling], None, false)
+            .await
+            .expect("group anchor + sibling");
+
+        // Lock the sibling's track only; the anchor's track stays unlocked.
+        h.update_track_flags(
+            Actor::User,
+            track_b,
+            TrackFlagsPatch { enabled: None, muted: None, solo: None, locked: Some(true) },
+        )
+        .await
+        .expect("lock track b");
+
+        // move via the group path (escape_group=false) — fan-out would shift
+        // the sibling on locked track B.
+        let res = h.move_layer(Actor::User, anchor, track_a, 500_000, false).await;
+        assert!(
+            matches!(res, Err(CommandError::TrackLocked { .. })),
+            "grouped move with a sibling on a locked track must return TrackLocked, got {res:?}"
+        );
+
+        // trim — both In edges sit at 0, so the aligned-edge coupling would
+        // fan out to the sibling on locked track B.
+        let res = h.trim_layer(Actor::User, anchor, LayerEdge::In, 200_000, false).await;
+        assert!(
+            matches!(res, Err(CommandError::TrackLocked { .. })),
+            "grouped trim with an aligned sibling on a locked track must return TrackLocked, got {res:?}"
+        );
+
+        // split — 1_000_000 is strictly inside both members' [0, 2_000_000),
+        // so the spanning-sibling fan-out would split the sibling too.
+        let res = h.split_layer(Actor::User, anchor, 1_000_000, false).await;
+        assert!(
+            matches!(res, Err(CommandError::TrackLocked { .. })),
+            "grouped split spanning a sibling on a locked track must return TrackLocked, got {res:?}"
+        );
+
+        // escape_group=true is anchor-only: siblings are skipped, and the
+        // anchor's own track is unlocked, so the op must still be allowed.
+        h.trim_layer(Actor::User, anchor, LayerEdge::In, 200_000, true)
+            .await
+            .expect("escape_group trim on the unlocked anchor track must succeed");
+
+        // The sibling on the locked track must be untouched throughout.
+        let snap = h.snapshot().await;
+        let s = snap
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .find(|l| l.id == sibling)
+            .expect("sibling must still exist");
+        assert_eq!(s.t_start_us, 0, "sibling on locked track must not have moved");
+        assert_eq!(s.t_end_us, 2_000_000, "sibling on locked track must not have been trimmed");
     }
 }
