@@ -156,7 +156,7 @@ so rescheduling is the only correct move). Seek/pause cancel all
 scheduled sources; resume re-anchors. Mute, track-silenced, and
 out-of-window layers simply don't schedule.
 
-**Layer skip rules (preview and export share the same set):**
+**Layer skip rules (preview and export share rules 1–6):**
 
 1. `Track.enabled == false` — the whole track is off; skip all its audio layers.
 2. `Track.muted == true` — audio layers on this track are silenced; video is unaffected.
@@ -164,6 +164,10 @@ out-of-window layers simply don't schedule.
 4. `mute wins over solo` — a track that is both muted and soloed is silent.
 5. `Layer.enabled == false` — the individual layer is off; skip it regardless of track flags.
 6. `AudioParams.mute == true` — the layer's own mute; skip it.
+7. `Layer.locked == true` — **export-side only**: the export planner drops locked
+   layers' audio; the preview mixer does not apply this rule, so a locked layer
+   still plays back. The divergence is inherited, not designed — locking is an
+   edit guard, and silencing on lock is arguably wrong on both sides.
 
 The master meter (RMS + peak per channel) is engine plumbing in this
 slice: surfaced to the dev PerfHUD and over MCP, with no product UI.
