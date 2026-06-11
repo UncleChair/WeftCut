@@ -19,8 +19,8 @@ pub struct Track {
     /// `false` for `.vproj` files written before the field existed.
     #[serde(default)]
     pub muted: bool,
-    /// Track-level solo. When ANY track has `solo == true`, only solo
-    /// tracks are audible; `muted` wins over `solo`. Same unrecorded
+    /// Track-level solo. When ANY enabled track has `solo == true`, only
+    /// solo tracks are audible; `muted` wins over `solo`. Same unrecorded
     /// toggle path and back-compat default as `muted`.
     #[serde(default)]
     pub solo: bool,
