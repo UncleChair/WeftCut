@@ -667,6 +667,8 @@ Replace the current root JSX (toolbar stays; inside `timeline-root`) with the tw
 </div>
 ```
 
+> **Executed-with-fixes note (review findings, landed in `f527cd99`):** the snippet above has two bugs found in code review — the body wrapper needs `className="relative grow"` (without `grow` it sizes to max-content and short projects get no lane stretch + a dead drop zone right of the content), and the ruler-corner spacer needs the same `onPointerDown`/`onClick` stopPropagation as TrackHeader (otherwise clicking it seeks). Also the header column width is pinned via `style={{ width: HEADER_COL_PX }}` instead of `w-40` so the wheel-anchor constant can't diverge from the rendered width.
+
 Behavior notes the implementer must preserve:
 - `onCanvasPointerDown` sits on `timeline-root`; TrackHeader's `stopPropagation` keeps header clicks from seeking. Verify clicking a header does NOT move the playhead.
 - The playhead now lives inside the body wrapper → `left: playheadX` stays t-relative; when scrolled right it slides UNDER the sticky header (z-10 header > z-[4] playhead). That is the intended NLE look.
@@ -1230,6 +1232,8 @@ Blade cursor: the `is-blade-mode` class on the root is still referenced by the C
 ```
 
 Rename the class in Timeline.tsx root from `is-blade-mode` to `timeline-root-blade`, and remove the transitional `timeline-root` class from the root in the same edit (its legacy rules die with the deleted block; all its styles are already covered by the Tailwind classes from Task 6).
+
+> **Accumulated review notes for this task:** (a) migrate the `overflow: hidden` rationale comment (styles.css ~926-933, phantom-scrollWidth clip) and the 20px-height↔playhead-knob coupling note (~913-916) into `TimelineRuler.tsx` before deleting them; fix the stale `.timeline-ruler` mention in the comment at ~907. (b) The deletion list explicitly includes the now-dead `.timeline-canvas`, `.timeline-playhead`/`.playhead-knob`, `.timeline-root.is-dragging`, `.timeline-root.is-resizing-track`, `.track-resize-handle`, and `.drop-indicator` blocks. (c) While in TrackLane: make the drop-target/revealed background conditionals mutually exclusive (`isCrossTrackTarget ? … : isRevealed ? … : ""`) so precedence stops depending on Tailwind's alphabetical emit order. (d) After deletion, re-verify the selected+locked outline interplay on LayerBlock (legacy rules gone → Tailwind emit order decides). (e) Optionally hoist TimelineRuler's tuning consts to module scope.
 
 - [ ] **Step 2: Delete the legacy timeline block from styles.css**
 
