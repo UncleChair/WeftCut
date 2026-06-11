@@ -118,7 +118,12 @@ members stay untouched and stay in the group.
 **Lock interaction.** Before any fan-out, the actor enumerates the
 members the op would touch. If any has `locked == true`, the whole op
 rejects with `GroupLockedMember { group, locked_layer }`. The
-targeted layer being locked also rejects (current behavior).
+targeted layer being locked also rejects. Additionally, the actor
+rejects structural ops (`move_layer`, `trim_layer`, `split_layer`,
+`delete_layer`, `update_layer`, `update_layer_params`) on any layer
+whose **track** has `Track.locked == true` — the track lock acts as a
+blanket guard; group fan-out respects it the same way layer-level lock
+does.
 
 ### Validation invariants
 

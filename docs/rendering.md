@@ -62,8 +62,10 @@ the single entry point. It delegates to the audio engine
 ([`audio.md`](audio.md)):
 
 1. `audio::mix::plan_for_project(project, window_us) → MixPlan` — every
-   enabled, non-locked, non-muted Audio layer resolved to conform-file
-   placement + sampled gain/pan envelopes. A layer whose conform cache is
+   audible Audio layer resolved to conform-file placement + sampled
+   gain/pan envelopes. "Audible" applies the full skip-rule set from
+   [`audio.md`](audio.md): track `enabled`/`muted`/`solo` gates and
+   `Layer.enabled`/`AudioParams.mute`. A layer whose conform cache is
    missing fails the plan loudly with the media named (the webview's
    readiness gate normally prevents reaching that state).
 2. If the plan has no layers (or the window is empty): log a warning and
