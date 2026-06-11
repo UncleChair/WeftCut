@@ -182,9 +182,10 @@ export function TrackLane({
     <div
       className={[
         "relative border-b border-border-soft bg-background",
-        // Mutually exclusive so Tailwind's emit order never decides a
-        // bg/outline conflict: drop-target trumps revealed (matching
-        // the old `!important` precedence).
+        // Mutually exclusive so emit order never decides which state's
+        // chrome wins (drop-target vs revealed); the base bg-background
+        // vs branch-bg conflict still resolves by emit order, currently
+        // favouring the branches.
         isCrossTrackTarget
           ? "bg-secondary outline outline-1 outline-dashed -outline-offset-1 outline-primary"
           : isRevealed
