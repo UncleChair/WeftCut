@@ -12,6 +12,18 @@ pub struct Track {
     pub label: Option<String>,
     pub enabled: bool,
     pub locked: bool,
+    /// Track-level audio mute (timeline redesign spec, section 3).
+    /// Silences this track's Audio layers in preview AND export; video
+    /// output is unaffected. Toggled via the unrecorded
+    /// `update_track_flags` path so undo never flips it. Defaults to
+    /// `false` for `.vproj` files written before the field existed.
+    #[serde(default)]
+    pub muted: bool,
+    /// Track-level solo. When ANY track has `solo == true`, only solo
+    /// tracks are audible; `muted` wins over `solo`. Same unrecorded
+    /// toggle path and back-compat default as `muted`.
+    #[serde(default)]
+    pub solo: bool,
     /// Whether the user (or an agent) is allowed to delete this track. The
     /// default A-roll / B-roll tracks of a fresh project are non-removable so
     /// the editor always has a place to drop clips. Defaults to `true` for
@@ -56,6 +68,8 @@ impl Track {
             label: None,
             enabled: true,
             locked: false,
+            muted: false,
+            solo: false,
             removable: true,
             role: None,
             transient: false,
@@ -101,5 +115,24 @@ impl TrackRole {
     /// without leaking TrackKind dependency.
     pub fn is_video(self) -> bool {
         matches!(self, TrackRole::ARoll | TrackRole::BRoll)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Old `.vproj` JSON (written before muted/solo existed) must load
+    /// with both flags defaulting to false.
+    #[test]
+    fn track_deserializes_without_muted_solo() {
+        let t = Track::new();
+        let mut v = serde_json::to_value(&t).expect("serialize");
+        let obj = v.as_object_mut().unwrap();
+        obj.remove("muted");
+        obj.remove("solo");
+        let back: Track = serde_json::from_value(v).expect("deserialize legacy");
+        assert!(!back.muted);
+        assert!(!back.solo);
     }
 }

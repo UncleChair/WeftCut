@@ -147,6 +147,8 @@ mod tests {
             label: Some("V1".into()),
             enabled: true,
             locked: false,
+            muted: false,
+            solo: false,
             removable: true,
             role: None,
             transient: false,
