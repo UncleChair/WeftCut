@@ -25,7 +25,7 @@ import {
   type TrackSummary,
 } from "../ipc";
 import { mediaReadiness, type ProxyState } from "../panels/mediaReadiness";
-import { formatTimecode, snapFrameRound } from "../frames";
+import { snapFrameRound } from "../frames";
 import {
   toggleDisplayMode,
   useDisplayMode,
@@ -34,7 +34,6 @@ import {
 } from "../settings/appSettingsStore";
 import { useShortcuts, type OverrideMap } from "../shortcuts";
 import { requestPrebake } from "../render/motifs/prebakeBus";
-import { useLayerBakePhase } from "./motifBakeStatusStore";
 import {
   DEFAULT_PX_PER_SEC,
   DEFAULT_TRACK_HEIGHT,
@@ -46,12 +45,11 @@ import {
   VIEW_SAVE_DEBOUNCE_MS,
   clamp,
   computeLayerSlices,
-  groupHue,
   indexGroups,
   visualOrderedTracks,
-  type LayerSlice,
 } from "./geometry";
 import { TimelineRuler } from "./TimelineRuler";
+import { LayerBlock, type DragState, type PendingLayerPlacement } from "./LayerBlock";
 
 const MEDIA_DRAG_TYPE = "application/x-weftcut-media";
 
@@ -90,38 +88,10 @@ function trackAcceptsMediaForAutoRoute(_trackKind: string, _mediaKind: string): 
   return false;
 }
 
-type DragKind = "move" | "trim-start" | "trim-end";
-
-interface DragState {
-  kind: DragKind;
-  layerId: string;
-  trackId: string;
-  /// Carried so cross-track drops only land on tracks of the same kind.
-  trackKind: string;
-  startX: number;
-  startY: number;
-  originalTStart: number;
-  originalTEnd: number;
-  deltaUs: number;
-  /// During cross-track drag, which track is the pointer currently over.
-  overTrackId: string | null;
-  /// `docs/groups.md` — when true (Alt-held at drag start), this op
-  /// stays local even if the dragged layer is in a group. Passed straight
-  /// to `moveLayer` / `trimLayer` as `escape_group`.
-  escapeGroup: boolean;
-}
-
 interface HeightDragState {
   trackId: string;
   startY: number;
   startHeight: number;
-}
-
-interface PendingLayerPlacement {
-  layerId: string;
-  trackId: string;
-  tStartUs: number;
-  tEndUs: number;
 }
 
 interface TimelineProps {
@@ -1112,23 +1082,6 @@ function LayerContextMenu({
   );
 }
 
-/// Small status dot on a Motif layer block. Phase-only (no count) so it
-/// re-renders only on phase change. Hidden when idle (selector returns null).
-function MotifBakeDot({ layerId }: { layerId: string }) {
-  const { t } = useTranslation();
-  const phase = useLayerBakePhase(layerId);
-  if (!phase) return null;
-  const label =
-    phase === "warming"
-      ? t("timeline.bake_dot_warming", { defaultValue: "Warming…" })
-      : phase === "baking"
-        ? t("timeline.bake_dot_baking", { defaultValue: "Pre-baking…" })
-        : phase === "ready"
-          ? t("timeline.bake_dot_ready", { defaultValue: "Pre-baked" })
-          : t("timeline.bake_dot_error", { defaultValue: "Pre-bake failed" });
-  return <span className={`motif-bake-dot is-${phase}`} title={label} aria-label={label} />;
-}
-
 /// `docs/data-model.md` R.5b. The pill IS the setting: a click
 /// flips the app-level `display_mode` (`appSettingsSet` round-trips
 /// through Rust which emits `app_settings:changed` so every
@@ -1399,266 +1352,3 @@ function TrackLane({
   );
 }
 
-function LayerBlock({
-  layer,
-  trackId,
-  trackKind,
-  pxPerSec,
-  laneHeight,
-  slice,
-  isPrimary,
-  isSelected,
-  groupId,
-  dragState,
-  pendingPlacement,
-  bladeMode,
-  onBladeSplit,
-  onSelectFromClick,
-  onDragStart,
-  onContextMenu,
-  fpsNum,
-  fpsDen,
-}: {
-  layer: LayerSummary;
-  trackId: string;
-  trackKind: string;
-  pxPerSec: number;
-  laneHeight: number;
-  /// V.6 vertical slot. "full" = entire row; "top" = top half (visual
-  /// layer paired with audio); "bottom" = bottom half (audio paired
-  /// with visual). Determines the rendered height + top offset.
-  slice: LayerSlice;
-  /// Primary selection (drives PropertyPanel). One layer at a time.
-  isPrimary: boolean;
-  /// Member of the current selection set (highlight only).
-  isSelected: boolean;
-  /// `docs/groups.md` — null when ungrouped.
-  groupId: string | null;
-  dragState: DragState | null;
-  pendingPlacement: PendingLayerPlacement | null;
-  /// Blade-tool mode: pointerdown splits at the click point instead
-  /// of selecting/dragging. Cursor is set by the timeline-root class.
-  bladeMode: boolean;
-  onBladeSplit: (layer: LayerSummary, clientX: number) => void;
-  onSelect: (id: string | null) => void;
-  onSelectFromClick: (
-    layerId: string,
-    e: { altKey: boolean; shiftKey: boolean; metaKey: boolean },
-  ) => void;
-  onDragStart: (state: DragState) => void;
-  onContextMenu: (
-    e: React.MouseEvent,
-    layerId: string,
-    layerKind: string,
-  ) => void;
-  fpsNum: number;
-  fpsDen: number;
-}) {
-  const { t } = useTranslation();
-  const isDragging = dragState?.layerId === layer.id;
-  const isPendingPlacement = pendingPlacement?.layerId === layer.id;
-  let liveStart = isPendingPlacement
-    ? pendingPlacement.tStartUs
-    : layer.t_start_us;
-  let liveEnd = isPendingPlacement
-    ? pendingPlacement.tEndUs
-    : layer.t_end_us;
-  if (isDragging && dragState) {
-    const dx = dragState.deltaUs;
-    switch (dragState.kind) {
-      case "move":
-        liveStart += dx;
-        liveEnd += dx;
-        break;
-      case "trim-start":
-        liveStart = Math.min(
-          liveStart + dx,
-          liveEnd - MIN_LAYER_DURATION_US,
-        );
-        break;
-      case "trim-end":
-        liveEnd = Math.max(
-          liveStart + MIN_LAYER_DURATION_US,
-          liveEnd + dx,
-        );
-        break;
-    }
-  }
-
-  const left = (Math.max(0, liveStart) / 1_000_000) * pxPerSec;
-  const width = ((liveEnd - liveStart) / 1_000_000) * pxPerSec;
-  const kindLabel = t(`kinds.${layer.kind.toLowerCase()}`, {
-    defaultValue: layer.kind,
-  });
-  const label = layer.label ?? kindLabel;
-
-  // Source copies are normally filtered out for cross-track drag/pending
-  // states. If one still renders during a transitional frame, keep it
-  // non-interactive and visually secondary.
-  const movedAcrossTracks =
-    (isDragging &&
-      dragState?.kind === "move" &&
-      dragState.overTrackId !== null &&
-      dragState.overTrackId !== trackId) ||
-    (isPendingPlacement && pendingPlacement.trackId !== trackId);
-
-  // Edge-hover trim: pointerdown within EDGE_ZONE_PX of the layer's
-  // left/right edge dispatches trim-start/trim-end; everywhere else
-  // dispatches a move. The zone clamps to a third of the chip's width
-  // so the two edges never overlap on a narrow clip.
-  const EDGE_ZONE_PX = 6;
-  const [edgeHover, setEdgeHover] = useState<"left" | "right" | null>(null);
-
-  const edgeZoneFor = (
-    clientX: number,
-    rect: DOMRect,
-  ): "left" | "right" | null => {
-    const zone = Math.min(EDGE_ZONE_PX, Math.floor(rect.width / 3));
-    if (zone <= 0) return null;
-    const rel = clientX - rect.left;
-    if (rel < zone) return "left";
-    if (rect.width - rel < zone) return "right";
-    return null;
-  };
-
-  const onPointerMoveHover = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (e.buttons !== 0) return; // ignore moves with a button held (drag)
-    if (layer.locked || bladeMode || isDragging) {
-      if (edgeHover !== null) setEdgeHover(null);
-      return;
-    }
-    const next = edgeZoneFor(
-      e.clientX,
-      e.currentTarget.getBoundingClientRect(),
-    );
-    if (next !== edgeHover) setEdgeHover(next);
-  };
-
-  const onPointerLeaveHover = () => {
-    if (edgeHover !== null) setEdgeHover(null);
-  };
-
-  const onLayerPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (e.button !== 0 || layer.locked) return;
-    e.stopPropagation();
-    // Blade-tool mode hijacks every pointerdown on the layer surface:
-    // the click is a cut request, not a select/drag.
-    if (bladeMode) {
-      onBladeSplit(layer, e.clientX);
-      return;
-    }
-    const zone = edgeZoneFor(
-      e.clientX,
-      e.currentTarget.getBoundingClientRect(),
-    );
-    const kind: DragKind =
-      zone === "left" ? "trim-start" : zone === "right" ? "trim-end" : "move";
-    // `docs/groups.md` — match click-selection semantics on
-    // pointerdown so drag and click share the same group-aware path.
-    onSelectFromClick(layer.id, {
-      altKey: e.altKey,
-      shiftKey: e.shiftKey,
-      metaKey: e.metaKey,
-    });
-    onDragStart({
-      kind,
-      layerId: layer.id,
-      trackId,
-      trackKind,
-      startX: e.clientX,
-      startY: e.clientY,
-      originalTStart: layer.t_start_us,
-      originalTEnd: layer.t_end_us,
-      deltaUs: 0,
-      overTrackId: trackId,
-      escapeGroup: e.altKey,
-    });
-  };
-
-  const layerWidthPx = Math.max(width, 4);
-
-  // V.6 vertical slot. Each row has a 4px outer breathing room so the
-  // chip doesn't touch the row edges. Within that interior:
-  //   - "full"   → one block spans top:4 to bottom-4 (legacy behavior)
-  //   - "top"    → top half (4 → midline-1)
-  //   - "bottom" → bottom half (midline+1 → height-4)
-  // The 1px gap at the midline visually separates V from A in the
-  // combined-row case so the user sees they're hit-test independent.
-  const ROW_PADDING = 4;
-  const interiorTop = ROW_PADDING;
-  const interiorHeight = Math.max(8, laneHeight - 2 * ROW_PADDING);
-  const halfHeight = Math.max(8, Math.floor((interiorHeight - 1) / 2));
-  let sliceTop: number;
-  let sliceHeight: number;
-  if (slice === "full") {
-    sliceTop = interiorTop;
-    sliceHeight = interiorHeight;
-  } else if (slice === "top") {
-    sliceTop = interiorTop;
-    sliceHeight = halfHeight;
-  } else {
-    sliceTop = interiorTop + halfHeight + 1;
-    sliceHeight = interiorHeight - halfHeight - 1;
-  }
-
-  // `docs/groups.md` — tinted left border + chain-link icon hue
-  // derived from group_id so all members share an accent color.
-  const groupStyle: React.CSSProperties = {};
-  if (groupId !== null) {
-    const hue = groupHue(groupId);
-    groupStyle.borderLeft = `2px solid hsl(${hue} 75% 60%)`;
-  }
-
-  return (
-    <div
-      className={`timeline-layer slice-${slice} ${isPrimary ? "is-primary" : ""} ${
-        isSelected ? "is-selected" : ""
-      } ${isDragging ? "is-dragging" : ""} ${layer.locked ? "is-locked" : ""} ${
-        movedAcrossTracks ? "is-ghost" : ""
-      }`}
-      style={{
-        left,
-        top: sliceTop,
-        width: layerWidthPx,
-        height: sliceHeight,
-        background: layer.color_hint,
-        opacity: movedAcrossTracks
-          ? 0.3
-          : layer.enabled
-            ? 1
-            : 0.45,
-        // Edge-hover signals "you can trim here"; falls through to the
-        // class-driven cursor (grab / grabbing / not-allowed / blade)
-        // otherwise.
-        cursor:
-          !layer.locked && !bladeMode && !isDragging && edgeHover !== null
-            ? "ew-resize"
-            : undefined,
-        ...groupStyle,
-      }}
-      onClick={(e) => {
-        e.stopPropagation();
-        // In blade mode the pointerdown already handled the cut; the
-        // synthesised click that follows should not flip the selection.
-        if (bladeMode) return;
-        onSelectFromClick(layer.id, {
-          altKey: e.altKey,
-          shiftKey: e.shiftKey,
-          metaKey: e.metaKey,
-        });
-      }}
-      onPointerDown={onLayerPointerDown}
-      onPointerMove={onPointerMoveHover}
-      onPointerLeave={onPointerLeaveHover}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        onContextMenu(e, layer.id, layer.kind);
-      }}
-      title={`${layer.kind}: ${formatTimecode(liveStart, fpsNum, fpsDen)} → ${formatTimecode(liveEnd, fpsNum, fpsDen)}`}
-    >
-      <span className="layer-label">{label}</span>
-      {layer.kind === "Motif" && <MotifBakeDot layerId={layer.id} />}
-    </div>
-  );
-}
