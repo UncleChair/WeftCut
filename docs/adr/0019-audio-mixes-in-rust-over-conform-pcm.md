@@ -56,8 +56,10 @@ clipping answer.
   stereo panner → master with meter + soft compressor), chunks
   scheduled sample-accurately against an anchor pair. The Pixi ticker
   stays master in this slice; cross-clock drift is re-anchored past
-  40 ms. The audio-master clock upgrade is specified as future work in
-  [`audio.md`](../audio.md).
+  40 ms. (The audio-master clock landed as the immediate follow-up —
+  one shared `ClockAnchor` drives playhead and chunk scheduling, the
+  reconciler is gone; current state in [`audio.md`](../audio.md)
+  §Clock.)
 - **Export** mixes in Rust: `lower` produces a MixPlan (layers +
   envelopes + placement), a block-pull loop sums f32 stereo blocks
   from conform reads, and ffmpeg's role shrinks to the encode tail —

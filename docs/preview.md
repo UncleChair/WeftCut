@@ -31,18 +31,22 @@ TypeScript driven by an imperative handle (`play()`, `pause()`,
 
 ## Clock
 
-A synthetic `currentTimeUs` is the source of truth. It advances on a
-`requestAnimationFrame` loop while playing; while paused it's set
-directly by `seekTo`. When audio is playing the clock corrects against
-`audioCtx.currentTime` to absorb scheduler jitter.
+The audio hardware clock is the master. While the `AudioContext` is
+running, the playing position is DERIVED from `ctx.currentTime`
+against the engine's `ClockAnchor` — the same pair every `AudioMixer`
+schedules its chunks against, so playhead and audio share one clock by
+construction ([`audio.md`](audio.md) §Clock). While the context is
+suspended (autoplay policy, before the first gesture) the clock falls
+back to `performance.now()` deltas; the flip back re-anchors from the
+current position, so switching sources never jumps the playhead.
+While paused the position is set directly by `seekTo`.
 
-Internally the clock keeps raw wall-clock state so drift correction
-operates with sub-frame precision. Externally observable
-`positionUs()` and the `onTimeUpdate` emit stream return the value
-snapped to the composition-frame grid, deduped per snap — at 30 fps
-comp on a 60 Hz display, time-update listeners fire ~30/s instead of
-every rAF. Timecode display is SMPTE `HH:MM:SS:FF`, NDF; see
-[data-model.md](data-model.md) for the snap rule that anchors it.
+Internally the clock keeps the raw (unsnapped) position. Externally
+observable `positionUs()` and the `onTimeUpdate` emit stream return
+the value snapped to the composition-frame grid, deduped per snap — at
+30 fps comp on a 60 Hz display, time-update listeners fire ~30/s
+instead of every rAF. Timecode display is SMPTE `HH:MM:SS:FF`, NDF;
+see [data-model.md](data-model.md) for the snap rule that anchors it.
 
 `play()` releases the clock only once the decoder has filled
 `WARMUP_MIN_LOOKAHEAD_US` (~150 ms) of ring past the play position,
