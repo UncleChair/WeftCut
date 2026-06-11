@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { viewStateGet, viewStateSet, type TrackSummary } from "../../ipc";
 import {
   DEFAULT_PX_PER_SEC,
+  HEADER_COL_PX,
   MAX_PX_PER_SEC,
   MIN_PX_PER_SEC_FLOOR,
   VIEW_SAVE_DEBOUNCE_MS,
@@ -121,7 +122,11 @@ export function useTimelineView(opts: {
       if (!e.ctrlKey) return;
       e.preventDefault();
       const rect = root.getBoundingClientRect();
-      const cursorXInViewport = e.clientX - rect.left;
+      // The root's left edge starts under the sticky track-header
+      // column, which doesn't scroll — measure the cursor from the
+      // scrolling body's left edge instead so the re-anchor math
+      // holds.
+      const cursorXInViewport = e.clientX - rect.left - HEADER_COL_PX;
       // deltaMode varies by device — normalise lines/pages to pixels
       // before computing the zoom factor (advisor note #3).
       const lineHeight = 16;
@@ -138,7 +143,10 @@ export function useTimelineView(opts: {
       // there's only empty space to the right of the content, so this
       // is the natural Ctrl+wheel stop for max zoom-out. Recomputed
       // every tick so it tracks viewport resize + project growth.
-      const viewportWidth = root.clientWidth;
+      // The sticky header column occupies the first HEADER_COL_PX of
+      // the viewport; only the remaining lane area should fit the
+      // whole timeline at min zoom.
+      const viewportWidth = root.clientWidth - HEADER_COL_PX;
       const totalSec = Math.max(durationUsRef.current / 1_000_000, 5);
       const fitMin = Math.max(
         MIN_PX_PER_SEC_FLOOR,
