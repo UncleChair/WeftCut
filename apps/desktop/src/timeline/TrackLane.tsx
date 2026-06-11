@@ -41,6 +41,7 @@ export function TrackLane({
   onContextMenu,
   isGroupStart,
   isRevealed,
+  isResizing,
   onHeightDragStart,
   fpsNum,
   fpsDen,
@@ -81,6 +82,10 @@ export function TrackLane({
   /// (dashed border / "hidden" badge) so the user knows this row is
   /// only here because they clicked a peek item.
   isRevealed: boolean;
+  /// True while any track-height drag is in flight — keeps the resize
+  /// handle highlighted even when the pointer wanders off it mid-drag
+  /// (the legacy `.is-resizing-track .track-resize-handle` CSS rule).
+  isResizing: boolean;
   onHeightDragStart: (e: React.PointerEvent) => void;
   fpsNum: number;
   fpsDen: number;
@@ -235,7 +240,7 @@ export function TrackLane({
         ));
       })()}
       <div
-        className="absolute inset-x-0 -bottom-[3px] z-[3] h-1.5 cursor-ns-resize bg-transparent transition-colors duration-75 hover:bg-blue-400/35"
+        className={`absolute inset-x-0 -bottom-[3px] z-[3] h-1.5 cursor-ns-resize transition-colors duration-75 hover:bg-blue-400/35 ${isResizing ? "bg-blue-400/35" : "bg-transparent"}`}
         title={t("timeline.resize_track_hint", {
           defaultValue: "Drag to resize this track",
         })}
