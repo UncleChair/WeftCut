@@ -1,23 +1,17 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import {
   addMediaLayer,
   groupsCreate,
   groupsDissolve,
-  moveLayer,
   separateAudioToNewTrack,
   splitLayerGrouped,
-  trimLayer,
-  viewStateGet,
-  viewStateSet,
   type GroupSummary,
   type KeybindingsMap,
   type LayerSummary,
@@ -35,21 +29,16 @@ import {
 import { useShortcuts, type OverrideMap } from "../shortcuts";
 import { requestPrebake } from "../render/motifs/prebakeBus";
 import {
-  DEFAULT_PX_PER_SEC,
   DEFAULT_TRACK_HEIGHT,
-  MAX_PX_PER_SEC,
-  MAX_TRACK_HEIGHT,
-  MIN_LAYER_DURATION_US,
-  MIN_PX_PER_SEC_FLOOR,
-  MIN_TRACK_HEIGHT,
-  VIEW_SAVE_DEBOUNCE_MS,
-  clamp,
   indexGroups,
   visualOrderedTracks,
 } from "./geometry";
 import { TimelineRuler } from "./TimelineRuler";
-import { type DragState, type PendingLayerPlacement } from "./LayerBlock";
 import { TrackLane, type MediaDragPayload } from "./TrackLane";
+import { LayerContextMenu } from "./contextMenu";
+import { useTimelineView } from "./hooks/useTimelineView";
+import { useHeightDrag } from "./hooks/useHeightDrag";
+import { useLayerDrag } from "./hooks/useLayerDrag";
 
 // V.10 (A/B-roll v2): any media drops on any track. The function is
 // kept as a stub returning true to minimise churn at call-sites; future
@@ -69,12 +58,6 @@ function trackAcceptsMedia(_trackKind: string, _mediaKind: string): boolean {
 // returns true unconditionally.
 function trackAcceptsMediaForAutoRoute(_trackKind: string, _mediaKind: string): boolean {
   return false;
-}
-
-interface HeightDragState {
-  trackId: string;
-  startY: number;
-  startHeight: number;
 }
 
 interface TimelineProps {
@@ -141,19 +124,6 @@ export function Timeline({
   onSeek,
   onMutated,
 }: TimelineProps) {
-  const [pxPerSec, setPxPerSec] = useState<number>(DEFAULT_PX_PER_SEC);
-  const [trackHeights, setTrackHeights] = useState<Record<string, number>>({});
-  // Suppress the initial post-load save: we don't want the first
-  // load-then-set-state pair to immediately echo the same values back to
-  // disk. Flipped to true only after the in-flight load completes.
-  const viewLoadedRef = useRef<boolean>(false);
-
-  const totalSec = Math.max(durationUs / 1_000_000, 5);
-  const widthPx = totalSec * pxPerSec;
-  const [drag, setDrag] = useState<DragState | null>(null);
-  const [pendingPlacement, setPendingPlacement] =
-    useState<PendingLayerPlacement | null>(null);
-  const [heightDrag, setHeightDrag] = useState<HeightDragState | null>(null);
   // V.7: right-click context-menu state. `null` when closed; otherwise
   // anchors the menu at the cursor and stores the target layer id.
   const [contextMenu, setContextMenu] = useState<{
@@ -169,6 +139,12 @@ export function Timeline({
   const [selectedLayerIds, setSelectedLayerIds] = useState<Set<string>>(new Set());
   const rootRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
+
+  const { pxPerSec, trackHeights, setTrackHeights, trackHeightsRef } =
+    useTimelineView({ rootRef, tracks, durationUs });
+
+  const totalSec = Math.max(durationUs / 1_000_000, 5);
+  const widthPx = totalSec * pxPerSec;
 
   const groupByLayerId = useMemo(() => indexGroups(groups), [groups]);
 
@@ -304,431 +280,27 @@ export function Timeline({
     return rows;
   }, [orderedTracks, trackHeights]);
 
-  const pendingLayer = useMemo(() => {
-    if (!pendingPlacement) return null;
-    for (const track of tracks) {
-      const layer = track.layers.find(
-        (candidate) => candidate.id === pendingPlacement.layerId,
-      );
-      if (layer) return layer;
-    }
-    return null;
-  }, [pendingPlacement, tracks]);
+  const { heightDrag, beginHeightDrag } = useHeightDrag({
+    trackHeightsRef,
+    setTrackHeights,
+  });
 
-  const dragLayer = useMemo(() => {
-    if (!drag || drag.kind !== "move") return null;
-    for (const track of tracks) {
-      const layer = track.layers.find(
-        (candidate) => candidate.id === drag.layerId,
-      );
-      if (layer) return layer;
-    }
-    return null;
-  }, [drag?.kind, drag?.layerId, tracks]);
-
-  useEffect(() => {
-    if (!pendingPlacement) return;
-    const track = tracks.find((t) => t.id === pendingPlacement.trackId);
-    const layer = track?.layers.find((l) => l.id === pendingPlacement.layerId);
-    if (
-      layer &&
-      layer.t_start_us === pendingPlacement.tStartUs &&
-      layer.t_end_us === pendingPlacement.tEndUs
-    ) {
-      setPendingPlacement(null);
-    }
-  }, [pendingPlacement, tracks]);
-
-  // -------- Initial load + debounced save --------
-
-  // One-shot load on mount. The backend returns defaults pre-workspace
-  // (blank-on-boot session), so this is safe to call unconditionally.
-  useEffect(() => {
-    let cancelled = false;
-    viewStateGet()
-      .then((state) => {
-        if (cancelled) return;
-        setPxPerSec(
-          clamp(
-            state.timeline_px_per_sec,
-            MIN_PX_PER_SEC_FLOOR,
-            MAX_PX_PER_SEC,
-          ),
-        );
-        setTrackHeights(state.track_heights ?? {});
-      })
-      .catch((e) => {
-        console.warn("view_state load failed:", e);
-      })
-      .finally(() => {
-        if (!cancelled) viewLoadedRef.current = true;
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // Debounced persist. Refs hold the latest values so the timer doesn't
-  // need to restart with React's render cadence on every wheel tick.
-  const pxPerSecRef = useRef(pxPerSec);
-  const trackHeightsRef = useRef(trackHeights);
-  // Latest project duration — the wheel handler reads this to compute
-  // the "fit-to-viewport" min zoom each tick, so a project getting
-  // longer (new clips added) immediately widens the wheel-out range.
-  const durationUsRef = useRef(durationUs);
-  useEffect(() => {
-    pxPerSecRef.current = pxPerSec;
-  }, [pxPerSec]);
-  useEffect(() => {
-    trackHeightsRef.current = trackHeights;
-  }, [trackHeights]);
-  useEffect(() => {
-    durationUsRef.current = durationUs;
-  }, [durationUs]);
-
-  useEffect(() => {
-    if (!viewLoadedRef.current) return;
-    const handle = setTimeout(() => {
-      // Prune dead track ids on save so view.json doesn't accumulate
-      // entries for tracks the user has deleted (see advisor note: state
-      // map keeps stale keys until we filter on the way out).
-      const live = new Set(tracks.map((t) => t.id));
-      const pruned: Record<string, number> = {};
-      for (const [id, h] of Object.entries(trackHeightsRef.current)) {
-        if (live.has(id)) pruned[id] = h;
-      }
-      viewStateSet({
-        timeline_px_per_sec: pxPerSecRef.current,
-        track_heights: pruned,
-      }).catch((e) => console.warn("view_state save failed:", e));
-    }, VIEW_SAVE_DEBOUNCE_MS);
-    return () => clearTimeout(handle);
-    // `tracks` participates so a track-deletion triggers a save that
-    // prunes the stale id even if neither zoom nor height changed.
-  }, [pxPerSec, trackHeights, tracks]);
-
-  // -------- Ctrl+wheel zoom (cursor-anchored) --------
-
-  // We capture { scrollLeft, cursorXInViewport, oldPxPerSec } when the
-  // wheel fires, kick off `setPxPerSec`, and apply the new scrollLeft
-  // in a useLayoutEffect once React has re-rendered with the new
-  // px/sec. Doing it inline in the handler reads stale state and
-  // produces a one-frame jitter (advisor note #2).
-  const wheelPendingRef = useRef<{
-    scrollLeft: number;
-    cursorXInViewport: number;
-    oldPxPerSec: number;
-  } | null>(null);
-
-  useEffect(() => {
-    const root = rootRef.current;
-    if (!root) return;
-    // React's JSX `onWheel` is registered passive in modern React, so
-    // `preventDefault()` from there silently fails. Attach manually
-    // with `{ passive: false }` so we can swallow the default
-    // page-scroll behaviour when Ctrl is held.
-    const onWheel = (e: WheelEvent) => {
-      if (!e.ctrlKey) return;
-      e.preventDefault();
-      const rect = root.getBoundingClientRect();
-      const cursorXInViewport = e.clientX - rect.left;
-      // deltaMode varies by device — normalise lines/pages to pixels
-      // before computing the zoom factor (advisor note #3).
-      const lineHeight = 16;
-      const pageHeight = 100;
-      const px =
-        e.deltaY *
-        (e.deltaMode === 1 ? lineHeight : e.deltaMode === 2 ? pageHeight : 1);
-      // Exponential zoom: small wheel ticks scale by ~ε near 1.0, big
-      // ones don't snap-jump. Negative px (scrolling up) zooms in.
-      const factor = Math.exp(-px * 0.001);
-      const oldPxPerSec = pxPerSecRef.current;
-      // Lower bound = "fit-to-viewport" zoom — the level at which the
-      // whole timeline exactly fills the visible width. Beyond this
-      // there's only empty space to the right of the content, so this
-      // is the natural Ctrl+wheel stop for max zoom-out. Recomputed
-      // every tick so it tracks viewport resize + project growth.
-      const viewportWidth = root.clientWidth;
-      const totalSec = Math.max(durationUsRef.current / 1_000_000, 5);
-      const fitMin = Math.max(
-        MIN_PX_PER_SEC_FLOOR,
-        viewportWidth / totalSec,
-      );
-      const newPxPerSec = clamp(oldPxPerSec * factor, fitMin, MAX_PX_PER_SEC);
-      if (newPxPerSec === oldPxPerSec) return;
-      wheelPendingRef.current = {
-        scrollLeft: root.scrollLeft,
-        cursorXInViewport,
-        oldPxPerSec,
-      };
-      setPxPerSec(newPxPerSec);
-    };
-    root.addEventListener("wheel", onWheel, { passive: false });
-    return () => {
-      root.removeEventListener("wheel", onWheel);
-    };
-  }, []);
-
-  // Re-anchor scroll position so the time under the cursor stays put.
-  // Runs synchronously after the layout flip so there's no flash.
-  useLayoutEffect(() => {
-    const pending = wheelPendingRef.current;
-    if (!pending) return;
-    wheelPendingRef.current = null;
-    const root = rootRef.current;
-    if (!root) return;
-    const ratio = pxPerSec / pending.oldPxPerSec;
-    root.scrollLeft =
-      (pending.scrollLeft + pending.cursorXInViewport) * ratio -
-      pending.cursorXInViewport;
-  }, [pxPerSec]);
-
-  // -------- Layer drag (move / trim) --------
-
-  const trackUnderPointer = useCallback(
-    (clientY: number): TrackSummary | null => {
-      if (!canvasRef.current) return null;
-      const rect = canvasRef.current.getBoundingClientRect();
-      const y = clientY - rect.top;
-      for (const row of trackRows) {
-        if (y >= row.y && y < row.y + row.height) return row.track;
-      }
-      return null;
-    },
-    [trackRows],
-  );
-
-  /// Snap a raw drag delta so the dragged edge / clip-start lands on
-  /// a composition-frame boundary. Snapping the DESTINATION (not the
-  /// delta itself) handles the case where the source value was
-  /// already off-grid: we always end up on grid regardless of the
-  /// pre-state. Returns the adjusted deltaUs.
-  const snapDragDelta = useCallback(
-    (kind: DragState["kind"], originalTStart: number, originalTEnd: number, rawDeltaUs: number): number => {
-      const anchor = kind === "trim-end" ? originalTEnd : originalTStart;
-      const snappedDest = snapFrameRound(anchor + rawDeltaUs, fpsNum, fpsDen);
-      return snappedDest - anchor;
-    },
-    [fpsNum, fpsDen],
-  );
-
-  const snapMoveDeltaToClipBoundary = useCallback(
-    (
-      state: DragState,
-      frameDeltaUs: number,
-    ): number => {
-      if (!tailSnapEnabled || state.kind !== "move") return frameDeltaUs;
-      const desiredStart = Math.max(0, state.originalTStart + frameDeltaUs);
-      const desiredEnd = Math.max(0, state.originalTEnd + frameDeltaUs);
-      const thresholdUs = (Math.max(0, tailSnapStrengthPx) / pxPerSec) * 1_000_000;
-      if (thresholdUs <= 0) return frameDeltaUs;
-
-      const ignoredLayerIds = new Set<string>([state.layerId]);
-      if (!state.escapeGroup) {
-        const groupId = groupByLayerId.get(state.layerId);
-        const group = groupId ? groups.find((g) => g.id === groupId) : null;
-        for (const layerId of group?.layer_ids ?? []) {
-          ignoredLayerIds.add(layerId);
-        }
-      }
-
-      let bestDeltaUs: number | null = null;
-      let bestDistanceUs = Number.POSITIVE_INFINITY;
-      const considerDelta = (distanceUs: number, deltaUs: number) => {
-        if (state.originalTStart + deltaUs < 0) return;
-        if (distanceUs <= thresholdUs && distanceUs < bestDistanceUs) {
-          bestDistanceUs = distanceUs;
-          bestDeltaUs = deltaUs;
-        }
-      };
-      const considerBoundary = (boundaryUs: number) => {
-        const startDistanceUs = Math.abs(boundaryUs - desiredStart);
-        considerDelta(startDistanceUs, boundaryUs - state.originalTStart);
-
-        const endDistanceUs = Math.abs(boundaryUs - desiredEnd);
-        considerDelta(endDistanceUs, boundaryUs - state.originalTEnd);
-      };
-
-      for (const { track } of orderedTracks) {
-        for (const layer of track.layers) {
-          if (ignoredLayerIds.has(layer.id)) continue;
-          const boundaries = [
-            snapFrameRound(layer.t_start_us, fpsNum, fpsDen),
-            snapFrameRound(layer.t_end_us, fpsNum, fpsDen),
-          ];
-          for (const boundaryUs of boundaries) {
-            considerBoundary(boundaryUs);
-          }
-        }
-      }
-      const playheadUs = snapFrameRound(currentTimeUs, fpsNum, fpsDen);
-      considerBoundary(playheadUs);
-
-      return bestDeltaUs === null ? frameDeltaUs : bestDeltaUs;
-    },
-    [
+  const { drag, setDrag, pendingPlacement, pendingLayer, dragLayer } =
+    useLayerDrag({
+      tracks,
+      groups,
+      groupByLayerId,
+      orderedTracks,
+      trackRows,
+      canvasRef,
+      pxPerSec,
       currentTimeUs,
       fpsNum,
       fpsDen,
-      groupByLayerId,
-      groups,
-      orderedTracks,
-      pxPerSec,
       tailSnapEnabled,
       tailSnapStrengthPx,
-    ],
-  );
-
-  const handlePointerMove = useCallback(
-    (e: PointerEvent) => {
-      if (!drag) return;
-      const deltaPx = e.clientX - drag.startX;
-      const rawDeltaUs = (deltaPx / pxPerSec) * 1_000_000;
-      const frameDeltaUs = snapDragDelta(
-        drag.kind,
-        drag.originalTStart,
-        drag.originalTEnd,
-        rawDeltaUs,
-      );
-      const overTrack =
-        drag.kind === "move" ? trackUnderPointer(e.clientY) : null;
-      const deltaUs = snapMoveDeltaToClipBoundary(drag, frameDeltaUs);
-      setDrag({
-        ...drag,
-        deltaUs,
-        overTrackId: overTrack?.id ?? null,
-      });
-    },
-    [drag, pxPerSec, snapDragDelta, snapMoveDeltaToClipBoundary, trackUnderPointer],
-  );
-
-  const handlePointerUp = useCallback(
-    async (e: PointerEvent) => {
-      if (!drag) return;
-      const deltaPx = e.clientX - drag.startX;
-      const rawDeltaUs = Math.round((deltaPx / pxPerSec) * 1_000_000);
-      const frameDeltaUs = snapDragDelta(
-        drag.kind,
-        drag.originalTStart,
-        drag.originalTEnd,
-        rawDeltaUs,
-      );
-      const overTrack =
-        drag.kind === "move" ? trackUnderPointer(e.clientY) : null;
-      const deltaUs = snapMoveDeltaToClipBoundary(drag, frameDeltaUs);
-      const committed = drag;
-      setDrag(null);
-
-      // Treat tiny deltas + same track as a no-op so a click doesn't accidentally
-      // shove a layer one frame.
-      const sameTrack =
-        !overTrack || overTrack.id === committed.trackId;
-      if (Math.abs(deltaUs) < 1_000 && sameTrack) return;
-
-      try {
-        // `docs/groups.md` — Alt-held at drag start opts the move /
-        // trim out of group fanout for this single op.
-        const escape = committed.escapeGroup;
-        switch (committed.kind) {
-          case "move": {
-            const newStart = Math.max(0, committed.originalTStart + deltaUs);
-            const newEnd =
-              newStart + (committed.originalTEnd - committed.originalTStart);
-            const destTrackId =
-              overTrack && trackAcceptsForLayer(overTrack, committed)
-                ? overTrack.id
-                : committed.trackId;
-            setPendingPlacement({
-              layerId: committed.layerId,
-              trackId: destTrackId,
-              tStartUs: newStart,
-              tEndUs: newEnd,
-            });
-            await moveLayer(committed.layerId, destTrackId, newStart, escape);
-            break;
-          }
-          case "trim-start": {
-            const newStart = Math.max(
-              0,
-              Math.min(
-                committed.originalTStart + deltaUs,
-                committed.originalTEnd - MIN_LAYER_DURATION_US,
-              ),
-            );
-            await trimLayer(committed.layerId, "in", newStart, escape);
-            break;
-          }
-          case "trim-end": {
-            const newEnd = Math.max(
-              committed.originalTStart + MIN_LAYER_DURATION_US,
-              committed.originalTEnd + deltaUs,
-            );
-            await trimLayer(committed.layerId, "out", newEnd, escape);
-            break;
-          }
-        }
-        await onMutated();
-      } catch (err) {
-        setPendingPlacement(null);
-        console.error("timeline commit failed:", err);
-      }
-    },
-    [drag, onMutated, pxPerSec, snapDragDelta, snapMoveDeltaToClipBoundary, trackUnderPointer],
-  );
-
-  useEffect(() => {
-    if (!drag) return;
-    window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", handlePointerUp);
-    return () => {
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", handlePointerUp);
-    };
-  }, [drag, handlePointerMove, handlePointerUp]);
-
-  // -------- Track-height drag --------
-
-  const beginHeightDrag = useCallback(
-    (trackId: string) => (e: React.PointerEvent) => {
-      if (e.button !== 0) return;
-      // The lane below the handle would normally start a seek; stop the
-      // pointerdown here so the seek-on-empty-canvas path never fires.
-      e.stopPropagation();
-      e.preventDefault();
-      const current =
-        trackHeightsRef.current[trackId] ?? DEFAULT_TRACK_HEIGHT;
-      setHeightDrag({
-        trackId,
-        startY: e.clientY,
-        startHeight: current,
-      });
-    },
-    [],
-  );
-
-  useEffect(() => {
-    if (!heightDrag) return;
-    const onMove = (e: PointerEvent) => {
-      const dy = e.clientY - heightDrag.startY;
-      const next = clamp(
-        Math.round(heightDrag.startHeight + dy),
-        MIN_TRACK_HEIGHT,
-        MAX_TRACK_HEIGHT,
-      );
-      setTrackHeights((prev) =>
-        prev[heightDrag.trackId] === next
-          ? prev
-          : { ...prev, [heightDrag.trackId]: next },
-      );
-    };
-    const onUp = () => setHeightDrag(null);
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    return () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-    };
-  }, [heightDrag]);
+      onMutated,
+    });
 
   // -------- Media drop, seek, render --------
 
@@ -943,6 +515,7 @@ export function Timeline({
             onMediaDrop={onMediaDrop}
             isGroupStart={isGroupStart}
             isRevealed={track.id === (revealedTrackId ?? null)}
+            isResizing={heightDrag !== null}
             onHeightDragStart={beginHeightDrag(track.id)}
             fpsNum={fpsNum}
             fpsDen={fpsDen}
@@ -970,98 +543,6 @@ export function Timeline({
       />
     )}
     </>
-  );
-}
-
-/// V.7 floating context menu, rendered with Base UI Menu anchored to a
-/// zero-size virtual element at the right-click coordinates — the
-/// `contextMenu` state plumbing (and its coexistence with drag/blade
-/// pointer handling) is unchanged; only the popup machinery moved to
-/// the library (portal, outside-press + Escape close, arrow-key nav).
-/// Shows action items scoped to the right-clicked layer's kind.
-/// (The 2026-05-17 effect-redesign removed the H.6 render-mode toggle;
-/// group html-rendering is now driven by the presence of an
-/// HtmlTransform effect on the group, authored via MCP / a future
-/// effects panel.)
-function LayerContextMenu({
-  x,
-  y,
-  layerId,
-  layerKind,
-  onClose,
-  onSeparateAudio,
-  onPrebakeNow,
-}: {
-  x: number;
-  y: number;
-  layerId: string;
-  layerKind: string;
-  onClose: () => void;
-  onSeparateAudio: (id: string) => void;
-  onPrebakeNow: (id: string) => void;
-}) {
-  const { t } = useTranslation();
-  const anchor = useMemo(
-    () => ({
-      getBoundingClientRect: () => ({
-        x,
-        y,
-        top: y,
-        left: x,
-        right: x,
-        bottom: y,
-        width: 0,
-        height: 0,
-      }),
-    }),
-    [x, y],
-  );
-  return (
-    <MenuPrimitive.Root
-      open
-      // Non-modal: no scroll lock — the scroll-close effect in Timeline
-      // handles the anchored-to-stale-coordinates case instead.
-      modal={false}
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
-    >
-      <MenuPrimitive.Portal>
-        <MenuPrimitive.Positioner
-          anchor={anchor}
-          side="bottom"
-          align="start"
-          sideOffset={0}
-          className="z-50"
-        >
-          <MenuPrimitive.Popup className="menu-list">
-            {layerKind === "Audio" ? (
-              <MenuPrimitive.Item
-                className="menu-item"
-                onClick={() => onSeparateAudio(layerId)}
-              >
-                {t("timeline.separate_audio", {
-                  defaultValue: "Separate audio to new track",
-                })}
-              </MenuPrimitive.Item>
-            ) : layerKind === "Motif" ? (
-              <MenuPrimitive.Item
-                className="menu-item"
-                onClick={() => onPrebakeNow(layerId)}
-              >
-                {t("timeline.prebake_now", { defaultValue: "Pre-bake now" })}
-              </MenuPrimitive.Item>
-            ) : (
-              <MenuPrimitive.Item className="menu-item" disabled>
-                {t("timeline.no_actions_here", {
-                  defaultValue: "(no actions for this layer)",
-                })}
-              </MenuPrimitive.Item>
-            )}
-          </MenuPrimitive.Popup>
-        </MenuPrimitive.Positioner>
-      </MenuPrimitive.Portal>
-    </MenuPrimitive.Root>
   );
 }
 
@@ -1095,13 +576,6 @@ function DisplayModePill({ mode }: { mode: "AbRoll" | "ShowAll" }) {
   );
 }
 
-/// V.10: tracks are kind-agnostic; any layer can land on any track.
-/// The cross-kind reject the function used to enforce is gone — the
-/// IR routes by LayerParams (V.5), not by track kind.
-function trackAcceptsForLayer(_target: TrackSummary, _drag: DragState): boolean {
-  return true;
-}
-
 
 function EmptyHint({ mode }: { mode?: "AbRoll" | "ShowAll" }) {
   const { t } = useTranslation();
@@ -1117,5 +591,3 @@ function EmptyHint({ mode }: { mode?: "AbRoll" | "ShowAll" }) {
       : t("timeline.empty_placeholder");
   return <div className="timeline-empty">{message}</div>;
 }
-
-
