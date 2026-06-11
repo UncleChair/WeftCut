@@ -1,7 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { analyze } from "../lib/analyze.mjs";
 
@@ -28,7 +28,7 @@ function toneHz(second) {
 }
 
 /// Boot a fresh 30fps project at `<PROJECT_PARENT>/<namePrefix><now>/` and
-/// wait for the editor hooks to mount.
+/// wait for the editor hooks to mount. Returns the project directory.
 async function bootProject(namePrefix) {
   await browser.waitUntil(
     async () =>
@@ -37,16 +37,17 @@ async function bootProject(namePrefix) {
       )) === true,
     { timeout: 30000, timeoutMsg: "newProjectAndEnter never mounted" },
   );
-  const r1 = await browser.executeAsync((parent, name, done) => {
+  const name = namePrefix + Date.now();
+  const r1 = await browser.executeAsync((parent, projName, done) => {
     window.__weftcutTest
       .newProjectAndEnter({
         parentFolder: parent,
-        name,
+        name: projName,
         canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
       })
       .then(() => done({ ok: true }))
       .catch((e) => done({ ok: false, error: String(e) }));
-  }, PROJECT_PARENT, namePrefix + Date.now());
+  }, PROJECT_PARENT, name);
   if (!r1.ok) throw new Error("newProjectAndEnter failed: " + r1.error);
 
   await browser.waitUntil(
@@ -56,6 +57,7 @@ async function bootProject(namePrefix) {
       )) === true,
     { timeout: 30000, timeoutMsg: "exportClip never mounted" },
   );
+  return path.join(PROJECT_PARENT, name);
 }
 
 /// Poll an export started via `window.__e2eExportDone` to settlement,
@@ -65,6 +67,7 @@ async function waitExportSettled(timeout = 170000) {
   let lastKind = null;
   let lastDetail = null;
   let settled = null;
+  const kindsSeen = new Set();
   try {
     await browser.waitUntil(
       async () => {
@@ -78,7 +81,7 @@ async function waitExportSettled(timeout = 170000) {
           };
         });
         if (snap.frame != null && snap.frame !== lastFrame) lastFrame = snap.frame;
-        if (snap.kind != null) lastKind = snap.kind;
+        if (snap.kind != null) { lastKind = snap.kind; kindsSeen.add(snap.kind); }
         if (snap.detail != null) lastDetail = snap.detail;
         if (snap.done) { settled = snap.done; return true; }
         return false;
@@ -95,7 +98,7 @@ async function waitExportSettled(timeout = 170000) {
       `export failed: ${settled.error} | exportState kind=${lastKind} detail=${lastDetail} (last frame=${lastFrame})`,
     );
   }
-  return { settled, lastKind, lastDetail };
+  return { settled, lastKind, lastDetail, kindsSeen };
 }
 
 /// Boot a fresh 30fps project, then drive `exportClip` and wait for it to
@@ -325,7 +328,16 @@ describe("export range + audio settings (real WebView2)", function () {
     const output = path.resolve(os.tmpdir(), "weftcut-e2e-range-conform.mp4");
     rmSync(output, { force: true });
 
-    await bootProject("e2e-range-conform-");
+    const projDir = await bootProject("e2e-range-conform-");
+    // Documented cache layout (docs/audio.md): Cache/audio/{hash}.conform.
+    // Assertions count files rather than chase exact paths — a fresh import
+    // carries a pending-hash cache key until the import queue's hash job
+    // finalizes and renames the files, and that timing is the app's business.
+    const audioCacheDir = path.join(projDir, "Cache", "audio");
+    const conformsIn = () =>
+      existsSync(audioCacheDir)
+        ? readdirSync(audioCacheDir).filter((f) => f.endsWith(".conform"))
+        : [];
 
     const place = async (mediaAbsPath, tStartUs) => {
       const r = await browser.executeAsync((p, t, done) => {
@@ -338,48 +350,33 @@ describe("export range + audio settings (real WebView2)", function () {
       expect(r.kind).toBe("Audio");
       return r.mediaId;
     };
-    const inRangeId = await place(WAV, 0);
-    const outOfRangeId = await place(MP3, 12_000_000);
+    await place(WAV, 0);
+    await place(MP3, 12_000_000);
 
-    // Import-time conform jobs land for both.
-    await browser.waitUntil(
-      async () =>
-        await browser.execute(
-          (a, b) =>
-            window.__weftcutTest.mediaConformPath({ mediaId: a }) != null &&
-            window.__weftcutTest.mediaConformPath({ mediaId: b }) != null,
-          inRangeId,
-          outOfRangeId,
-        ),
-      { timeout: 60000, timeoutMsg: "import-time conform never landed" },
-    );
-    const conformOf = (id) =>
-      browser.execute(
-        (m) => window.__weftcutTest.mediaConformPath({ mediaId: m }),
-        id,
-      );
-    const inRangeConform = await conformOf(inRangeId);
-    const outOfRangeConform = await conformOf(outOfRangeId);
+    // Both import-time conform jobs land (pending or final names — either
+    // counts).
+    await browser.waitUntil(async () => conformsIn().length === 2, {
+      timeout: 60000,
+      timeoutMsg: "import-time conform never landed for both sources",
+    });
 
     // Invalidate BOTH caches on disk; the store still says "conformed".
-    // Retried: a preview Range read can hold the file open for a moment.
-    const rmWithRetry = async (file) => {
+    // Retried: a preview Range read can hold a file open for a moment.
+    for (const f of conformsIn()) {
+      const file = path.join(audioCacheDir, f);
       for (let i = 0; ; i++) {
         try {
           rmSync(file, { force: true });
-          return;
+          break;
         } catch (e) {
           if (i >= 20) throw e;
           await new Promise((r) => setTimeout(r, 100));
         }
       }
-    };
-    await rmWithRetry(inRangeConform);
-    await rmWithRetry(outOfRangeConform);
-    expect(existsSync(inRangeConform)).toBe(false);
-    expect(existsSync(outOfRangeConform)).toBe(false);
+    }
+    expect(conformsIn()).toHaveLength(0);
 
-    // Range export [0, 2s) — covers only A.
+    // Range export [0, 2s) — covers only the WAV.
     await browser.execute(
       (out, rng) => {
         window.__e2eExportDone = null;
@@ -391,12 +388,17 @@ describe("export range + audio settings (real WebView2)", function () {
       output,
       { startUs: 0, endUs: 2_000_000 },
     );
-    await waitExportSettled();
+    const { kindsSeen } = await waitExportSettled();
+    console.log(
+      `[e2e] export state kinds seen: ${JSON.stringify([...kindsSeen])}; ` +
+        `conform files after export: ${JSON.stringify(conformsIn())}`,
+    );
 
-    // The gate re-conformed the in-range media (regenerated at the same
-    // hash-keyed path); the out-of-range media stayed untouched.
-    expect(existsSync(inRangeConform)).toBe(true);
-    expect(existsSync(outOfRangeConform)).toBe(false);
+    // Exactly ONE conform regenerated: the gate re-conformed the in-range
+    // media (stale store path, invalid cache file) and never touched the
+    // out-of-range one — the window-gated plan no longer hard-errors
+    // ConformMissing on clips the export never reads.
+    expect(conformsIn()).toHaveLength(1);
 
     // And the audio really rendered from the regenerated conform — the WAV's
     // per-second tone markers (F_k = 400 + 120k Hz) survive into the output.
