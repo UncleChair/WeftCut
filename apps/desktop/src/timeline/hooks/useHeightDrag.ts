@@ -42,7 +42,7 @@ export function useHeightDrag(opts: {
         startHeight: current,
       });
     },
-    [],
+    [trackHeightsRef, setTrackHeights],
   );
 
   useEffect(() => {
@@ -67,7 +67,7 @@ export function useHeightDrag(opts: {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
     };
-  }, [heightDrag]);
+  }, [heightDrag, trackHeightsRef, setTrackHeights]);
 
   return { heightDrag, beginHeightDrag };
 }
