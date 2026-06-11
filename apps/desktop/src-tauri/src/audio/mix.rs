@@ -61,16 +61,30 @@ pub enum PlanError {
     MissingMedia(String),
 }
 
-/// Walk every enabled, non-locked, non-muted Audio layer — the same skip
-/// rules the lavfi lowering used — and resolve envelopes.
+/// Walk every enabled, non-muted, non-locked Audio layer — applying
+/// track-level gates (mute and solo) before layer-level gates — and
+/// resolve envelopes. When any enabled track is soloed, only soloed
+/// tracks contribute to the plan; mute wins over solo.
 pub fn plan_for_project(
     project: &Project,
     window_us: Option<(i64, i64)>,
 ) -> Result<MixPlan, PlanError> {
     let (w_start_us, w_end_us) = window_us.unwrap_or((0, project.composition.duration_us));
     let mut layers = Vec::new();
+    // Track-level solo set (timeline redesign spec §3): when any ENABLED
+    // track is soloed, only soloed tracks are audible. Disabled tracks'
+    // solo flags don't gate the mix.
+    let any_solo = project.tracks.iter().any(|t| t.enabled && t.solo);
     for track in project.tracks.iter() {
         if !track.enabled {
+            continue;
+        }
+        // Track-level audio gates (spec §3). Mute wins over solo; an
+        // empty solo set takes the normal path.
+        if track.muted {
+            continue;
+        }
+        if any_solo && !track.solo {
             continue;
         }
         for layer in track.layers.iter() {
@@ -164,6 +178,11 @@ pub fn mix_block(
 mod tests {
     use super::*;
     use crate::audio::conform_reader::{ConformReader, write_vconf};
+    use crate::state::animated::Animated;
+    use crate::state::layer::{AudioParams, Layer, LayerParams};
+    use crate::state::media::{MediaItem, MediaKind, MediaMetadata};
+    use crate::state::project::{Project, ProjectMetadata, ProjectSettings, SCHEMA_VERSION};
+    use crate::state::track::Track;
     use tempfile::TempDir;
 
     fn flat_mono_conform(
@@ -252,6 +271,152 @@ mod tests {
         mix_block(&plan, &mut readers, 0, 50, &mut out).unwrap();
         let expect = (0.3 + 0.2) * (std::f32::consts::FRAC_PI_4).cos();
         assert!((out[0] - expect).abs() < 1e-4);
+    }
+
+    // ── plan_for_project mute/solo helpers ──────────────────────────────────
+
+    /// Build a minimal `Project` with two Audio tracks, one layer each.
+    /// Both conform files are written into `dir`. The returned `Project`
+    /// is valid for `plan_for_project` — media pool entries point at real
+    /// non-zero files so `cached_ok` passes.
+    fn two_audio_tracks_project(dir: &std::path::Path) -> Project {
+        let now = chrono::Utc::now();
+
+        // Conform files for each track
+        let conform_a = dir.join("a.conform");
+        let conform_b = dir.join("b.conform");
+        write_vconf(&conform_a, 1, &vec![0.5f32; 48_000]);
+        write_vconf(&conform_b, 1, &vec![0.3f32; 48_000]);
+
+        let media_id_a = uuid::Uuid::new_v4();
+        let media_id_b = uuid::Uuid::new_v4();
+
+        let make_media =
+            |id: uuid::Uuid, conform: std::path::PathBuf| -> MediaItem {
+                MediaItem {
+                    id,
+                    label: None,
+                    path_abs: conform.clone(),
+                    path_rel: None,
+                    kind: MediaKind::Audio,
+                    metadata: MediaMetadata::default(),
+                    proxy_path: None,
+                    proxy_format_version: 0,
+                    quick_proxy_path: None,
+                    proxy_bypassed: false,
+                    export_uses_original: false,
+                    waveform_path: None,
+                    conform_path: Some(conform),
+                    thumbnails_dir: None,
+                    file_hash_blake3: "0000000000000000".into(),
+                    file_size: 1,
+                    file_mtime: 0,
+                    imported_at: now,
+                }
+            };
+
+        let make_audio_layer = |media_id: uuid::Uuid| -> Layer {
+            Layer {
+                id: uuid::Uuid::new_v4(),
+                label: None,
+                t_start_us: 0,
+                t_end_us: 1_000_000,
+                enabled: true,
+                locked: false,
+                metadata: imbl::HashMap::new(),
+                params: LayerParams::Audio(AudioParams {
+                    media: media_id,
+                    src_in_us: 0,
+                    src_out_us: 1_000_000,
+                    gain_db: Animated::Static(0.0),
+                    pan: Animated::Static(0.0),
+                    fade_in_us: 0,
+                    fade_out_us: 0,
+                    mute: false,
+                }),
+            }
+        };
+
+        let track_a = Track {
+            id: uuid::Uuid::new_v4(),
+            label: Some("A".into()),
+            enabled: true,
+            locked: false,
+            muted: false,
+            solo: false,
+            removable: true,
+            role: None,
+            transient: false,
+            height_px: 64,
+            layers: imbl::vector![make_audio_layer(media_id_a)],
+        };
+        let track_b = Track {
+            id: uuid::Uuid::new_v4(),
+            label: Some("B".into()),
+            enabled: true,
+            locked: false,
+            muted: false,
+            solo: false,
+            removable: true,
+            role: None,
+            transient: false,
+            height_px: 64,
+            layers: imbl::vector![make_audio_layer(media_id_b)],
+        };
+
+        let mut media_pool = imbl::HashMap::new();
+        media_pool.insert(media_id_a, make_media(media_id_a, conform_a));
+        media_pool.insert(media_id_b, make_media(media_id_b, conform_b));
+
+        Project {
+            schema_version: SCHEMA_VERSION,
+            project_id: uuid::Uuid::new_v4(),
+            metadata: ProjectMetadata {
+                name: "mute/solo test".into(),
+                created_at: now,
+                modified_at: now,
+                description: None,
+            },
+            composition: crate::state::composition::Composition::default(),
+            media_pool,
+            tracks: imbl::vector![track_a, track_b],
+            markers: imbl::Vector::new(),
+            transitions: imbl::Vector::new(),
+            groups: imbl::Vector::new(),
+            settings: ProjectSettings::default(),
+        }
+    }
+
+    #[test]
+    fn muted_track_is_skipped() {
+        let tmp = TempDir::new().unwrap();
+        let mut project = two_audio_tracks_project(tmp.path());
+        // Mute track A
+        project.tracks[0].muted = true;
+        let plan = plan_for_project(&project, None).unwrap();
+        assert_eq!(plan.layers.len(), 1, "muted track A must be excluded");
+    }
+
+    #[test]
+    fn solo_silences_non_solo_tracks() {
+        let tmp = TempDir::new().unwrap();
+        let mut project = two_audio_tracks_project(tmp.path());
+        // Solo track A only
+        project.tracks[0].solo = true;
+        let plan = plan_for_project(&project, None).unwrap();
+        assert_eq!(plan.layers.len(), 1, "only soloed track A should play");
+    }
+
+    #[test]
+    fn mute_wins_over_solo() {
+        let tmp = TempDir::new().unwrap();
+        let mut project = two_audio_tracks_project(tmp.path());
+        // Track A: solo AND muted — mute wins, A is excluded; B is silenced by
+        // the solo set ⇒ no layers at all.
+        project.tracks[0].solo = true;
+        project.tracks[0].muted = true;
+        let plan = plan_for_project(&project, None).unwrap();
+        assert_eq!(plan.layers.len(), 0, "mute wins over solo; nothing plays");
     }
 
     #[test]
