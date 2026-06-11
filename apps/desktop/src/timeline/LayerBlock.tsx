@@ -100,7 +100,6 @@ export function LayerBlock({
   /// class (styles.css) via the `timeline-layer` hook class below.
   bladeMode: boolean;
   onBladeSplit: (layer: LayerSummary, clientX: number) => void;
-  onSelect: (id: string | null) => void;
   onSelectFromClick: (
     layerId: string,
     e: { altKey: boolean; shiftKey: boolean; metaKey: boolean },

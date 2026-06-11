@@ -45,6 +45,7 @@ import {
 } from "./ipc";
 import { formatTimecode, frameDurUs, lastFrameAnchorUs, parseTimecode } from "./frames";
 import { Timeline } from "./timeline/Timeline";
+import { MEDIA_DRAG_TYPE } from "./timeline/TrackLane";
 import { AgentMode } from "./agent/AgentMode";
 import { RightPanel } from "./panels/RightPanel";
 import { ConnectAgentPanel } from "./connect/ConnectAgentPanel";
@@ -2348,7 +2349,7 @@ function MediaPool({
               aria-disabled={!interactive}
               onDragStart={(e) => {
                 e.dataTransfer.setData(
-                  "application/x-weftcut-media",
+                  MEDIA_DRAG_TYPE,
                   JSON.stringify({ mediaId: m.id, kind: m.kind }),
                 );
                 e.dataTransfer.effectAllowed = "copy";

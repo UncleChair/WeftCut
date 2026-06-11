@@ -73,8 +73,6 @@ export function TimelineRuler({
           isMajor: f % stride === 0,
         });
       }
-      // stride retained in `f % stride === 0` above — not needed outside this branch.
-      void stride;
       return { items: out, majorSec: 0, isFrameMode: true };
     }
 

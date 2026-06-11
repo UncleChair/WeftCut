@@ -236,7 +236,6 @@ export function TrackLane({
             pendingPlacement={pendingPlacement}
             bladeMode={bladeMode}
             onBladeSplit={onBladeSplit}
-            onSelect={onSelect}
             onSelectFromClick={onSelectFromClick}
             onDragStart={onDragStart}
             onContextMenu={onContextMenu}
