@@ -1,0 +1,172 @@
+import type { GroupSummary, LayerSummary, TrackSummary } from "../ipc";
+
+// Zoom + height bounds. The default matches the pre-refactor constant so
+// projects that have never written `view.json` look identical to before.
+// The lower bound is computed dynamically as `viewport / totalSec` so
+// Ctrl+wheel can always zoom out far enough to fit the entire timeline
+// in view, regardless of how long it is. `MIN_PX_PER_SEC_FLOOR` is a
+// tiny absolute floor that keeps the math sane in pathological cases
+// (zero-width viewport, zero-duration project).
+export const DEFAULT_PX_PER_SEC = 80;
+export const MIN_PX_PER_SEC_FLOOR = 0.05;
+export const MAX_PX_PER_SEC = 800;
+// V.6 (A/B-roll v2): default row is taller so combined V+A rows have
+// room for a thumbnail strip (top half) + waveform strip (bottom half).
+// Single-class tracks still fit comfortably at this height.
+export const DEFAULT_TRACK_HEIGHT = 56;
+export const MIN_TRACK_HEIGHT = 24;
+export const MAX_TRACK_HEIGHT = 200;
+export const MIN_LAYER_DURATION_US = 100_000;
+// Debounce window after the last zoom/height edit before we hit disk.
+// Resize-drag tends to fire ~60×/sec; 200ms keeps the file write off the
+// critical drag path while still landing within a beat of the user
+// releasing the handle.
+export const VIEW_SAVE_DEBOUNCE_MS = 200;
+
+/// Width of the sticky track-header column introduced by the Phase-1
+/// redesign (spec section 1).
+export const HEADER_COL_PX = 160;
+
+export interface VisualTrack {
+  track: TrackSummary;
+  /// True when this is the first lane of its kind group — the renderer adds
+  /// a divider line above it. Today the boundaries are: between the video
+  /// stack and subtitles, and between subtitles and the audio stack.
+  isGroupStart: boolean;
+}
+
+/// V.6 layer-overlap class. Visual-class layers (VideoClip,
+/// ImageOverlay, Color, Motif, Text, Subtitles) can't overlap each
+/// other on a track; Audio can't overlap Audio. Visual + Audio CAN
+/// coexist at the same time — that's the AE-style "combined row"
+/// trigger.
+export type LayerOverlapClass = "visual" | "audio";
+
+export function layerOverlapClass(layer: LayerSummary): LayerOverlapClass {
+  return layer.params.kind === "Audio" ? "audio" : "visual";
+}
+
+/// Vertical slice the layer occupies within its track row:
+///   - "full"   — uses the entire row height (default; no opposite-
+///                class layer overlaps in time)
+///   - "top"    — uses the top half (Visual layer paired with an
+///                Audio layer at the same time slot)
+///   - "bottom" — uses the bottom half (Audio layer paired with a
+///                Visual layer at the same time slot)
+export type LayerSlice = "full" | "top" | "bottom";
+
+export function computeLayerSlices(
+  layers: readonly LayerSummary[],
+): Map<string, LayerSlice> {
+  // Walk all (visual, audio) pairs; any overlap in time flips both
+  // sides to half-height. O(V × A) per track, which is fine because a
+  // typical track has at most a handful of layers.
+  const slices = new Map<string, LayerSlice>();
+  const visual = layers.filter((l) => layerOverlapClass(l) === "visual");
+  const audio = layers.filter((l) => layerOverlapClass(l) === "audio");
+  for (const v of visual) {
+    for (const a of audio) {
+      if (v.t_end_us > a.t_start_us && a.t_end_us > v.t_start_us) {
+        slices.set(v.id, "top");
+        slices.set(a.id, "bottom");
+      }
+    }
+  }
+  // Layers that didn't get a half-slot stay full-height.
+  for (const l of layers) {
+    if (!slices.has(l.id)) slices.set(l.id, "full");
+  }
+  return slices;
+}
+
+// V.8 (`docs/data-model.md` v2) — track rendering order is now a
+// simple reverse of the data-model. Data-model convention (idx 0 =
+// bottom of z-stack, last = top) maps directly to "last index renders
+// at the top of the screen", matching the editor convention that the
+// top-of-z-stack composites visually on top.
+//
+//   data-model (bottom → top of z-stack)        visual (top → bottom of screen)
+//   ┌─────────────────────────────────┐         ┌─────────────────────────────┐
+//   │ idx 0 — additional / transient  │         │ B roll                      │
+//   │ idx 1 — A roll                  │   ⇄     │ B's separated audio (if any)│
+//   │ idx 2 — A's separated audio     │ reverse │ A roll                      │
+//   │ idx 3 — B roll                  │         │ A's separated audio (if any)│
+//   │ idx 4 — B's separated audio     │         │ additional / transient      │
+//   │ idx 5 — additional (extra)      │         └─────────────────────────────┘
+//   └─────────────────────────────────┘
+//
+// Placement rules at creation time (NOT in this function):
+//   - import_media: prepends the transient track at idx 0 → visually
+//     at the bottom of the timeline, out of the way of A/B work.
+//   - separate_audio_to_new_track: inserts at `source.idx` (source
+//     shifts up) so audio sits BELOW its video visually.
+//
+// Group-start dividers separate the kind-buckets visually. Today we
+// only emit a divider between the role-stamped tracks and the
+// transient tail (the "additional" region at the bottom). Future
+// kind-cluster dividers can be added if needed.
+export function visualOrderedTracks(tracks: TrackSummary[]): VisualTrack[] {
+  // Simple reverse: walk the data-model from last index to first.
+  const reversed = tracks.slice().reverse();
+  const out: VisualTrack[] = [];
+  let prevSection: "role" | "extra" | null = null;
+  for (const track of reversed) {
+    // Role-stamped tracks (the reserved A/B skeleton + their separated
+    // audio derivatives if any) form one section; everything else
+    // (transient imports, user/agent-added additional tracks) forms
+    // the bottom section. The boundary between them gets a divider.
+    const section: "role" | "extra" = track.role !== null ? "role" : "extra";
+    const isGroupStart = prevSection !== null && section !== prevSection;
+    out.push({ track, isGroupStart });
+    prevSection = section;
+  }
+  return out;
+}
+
+export function clamp(v: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, v));
+}
+
+/// `docs/groups.md`. Stable, deterministic hue per group id so all
+/// members share an accent color across renders. Skips the yellow/green
+/// band that conflicts with the "is-selected" highlight in `styles.css`.
+export function groupHue(groupId: string): number {
+  let h = 0;
+  for (let i = 0; i < groupId.length; i++) {
+    h = (h * 31 + groupId.charCodeAt(i)) >>> 0;
+  }
+  // 360 hues, skip 60-120 (yellow/green band).
+  const raw = h % 300;
+  return raw < 60 ? raw : raw + 60;
+}
+
+/// Build the layer-id → group-id lookup used by every render path that
+/// asks "what group is this in?". `groups` is small in practice (a
+/// handful), so a simple O(N*M) walk is cheaper than a Map allocation.
+export function indexGroups(groups: GroupSummary[]): Map<string, string> {
+  const idx = new Map<string, string>();
+  for (const g of groups) {
+    for (const lid of g.layer_ids) {
+      idx.set(lid, g.id);
+    }
+  }
+  return idx;
+}
+
+/// `mm:ss` for second-grain steps, `mm:ss.cs` (centiseconds) for
+/// sub-second steps so the user sees a meaningful precision delta as
+/// they zoom in. Rounding is done in integer milliseconds to keep
+/// floating-point accumulation out of the label.
+export function formatRulerLabel(seconds: number, majorSec: number): string {
+  const sec = Math.max(0, seconds);
+  const ms = Math.round(sec * 1000);
+  const totalSec = Math.floor(ms / 1000);
+  const mm = Math.floor(totalSec / 60);
+  const ss = totalSec % 60;
+  const ssStr = String(ss).padStart(2, "0");
+  if (majorSec < 1) {
+    const cs = Math.round((ms % 1000) / 10);
+    return `${mm}:${ssStr}.${String(cs).padStart(2, "0")}`;
+  }
+  return `${mm}:${ssStr}`;
+}
