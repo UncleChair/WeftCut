@@ -194,6 +194,7 @@ pub fn run() {
             commands::get_media_thumbnail,
             commands::ensure_full_proxy,
             commands::ensure_conform,
+            commands::ensure_export_audio_conform,
             commands::report_audio_meter,
             commands::list_motifs,
             commands::add_motif,

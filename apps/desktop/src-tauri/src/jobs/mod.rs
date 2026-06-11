@@ -59,6 +59,39 @@ pub(crate) fn ffmpeg_sem() -> &'static Semaphore {
     S.get_or_init(|| Semaphore::new(MAX_PARALLEL_FFMPEG))
 }
 
+/// Per-media in-flight set for conform jobs. The export gate re-kicks any
+/// media whose conform cache is invalid; if the import-time job is still
+/// running, a second concurrent run would interleave writes into the SAME
+/// `<dest>.tmp` (the ffmpeg semaphore holds 2 permits, so they genuinely
+/// overlap). Dedupe instead — the running job's completion event serves
+/// every waiter.
+fn conform_in_flight() -> &'static std::sync::Mutex<std::collections::HashSet<MediaId>> {
+    static S: OnceLock<std::sync::Mutex<std::collections::HashSet<MediaId>>> = OnceLock::new();
+    S.get_or_init(Default::default)
+}
+
+fn try_begin_conform(id: MediaId) -> bool {
+    conform_in_flight()
+        .lock()
+        .expect("conform in-flight set poisoned")
+        .insert(id)
+}
+
+fn end_conform(id: MediaId) {
+    conform_in_flight()
+        .lock()
+        .expect("conform in-flight set poisoned")
+        .remove(&id);
+}
+
+/// Drop guard so `end_conform` runs on every task exit path.
+struct ConformGuard(MediaId);
+impl Drop for ConformGuard {
+    fn drop(&mut self) {
+        end_conform(self.0);
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum JobKind {
@@ -158,8 +191,14 @@ pub fn enqueue_conform(
 }
 
 fn spawn_conform(app: AppHandle, cache: CacheLayout, project: ProjectHandle, media: MediaItem) {
+    if !try_begin_conform(media.id) {
+        // Already conforming — that job's complete/error event serves this
+        // caller's wait too.
+        return;
+    }
     tokio::spawn(async move {
         let media_id = media.id;
+        let _guard = ConformGuard(media_id);
         emit(
             &app,
             EVENT_STARTED,
@@ -681,5 +720,20 @@ async fn fresh_media_item(
 fn actor_for_jobs() -> Actor {
     Actor::Agent {
         client: "jobs".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn conform_in_flight_guard_dedups_until_ended() {
+        let id = uuid::Uuid::new_v4();
+        assert!(try_begin_conform(id), "first begin wins");
+        assert!(!try_begin_conform(id), "second begin is deduped");
+        end_conform(id);
+        assert!(try_begin_conform(id), "free again after end");
+        end_conform(id);
     }
 }

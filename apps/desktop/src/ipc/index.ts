@@ -1045,6 +1045,22 @@ export async function ensureConform(mediaId: string): Promise<void> {
   await invoke("ensure_conform", { mediaId });
 }
 
+/// Export-readiness audio gate (Rust `ensure_export_audio_conform`): media
+/// ids of audible in-range audio layers whose conform cache is absent or
+/// invalid, each with a conform job kicked. Selection mirrors the Rust mix
+/// plan exactly (track mute/solo, layer lock/mute, window overlap, real
+/// cache-file validation). Register conform job listeners BEFORE calling
+/// (`createConformTracker`) so a fast job can't complete unseen.
+export async function ensureExportAudioConform(range: {
+  startUs: number;
+  endUs: number;
+}): Promise<string[]> {
+  return invoke<string[]>("ensure_export_audio_conform", {
+    startUs: range.startUs,
+    endUs: range.endUs,
+  });
+}
+
 /// Push the preview master-bus meter reading to Rust (~2 Hz while playing)
 /// for the MCP `composition://meter` resource. Clamp non-finite dB values
 /// before calling — JSON cannot carry -Infinity.

@@ -4,11 +4,12 @@ import {
   sourcesNeedingPreviewProbe,
   prepareExportMedia,
   waitForProxies,
+  createConformTracker,
   ExportCancelled,
   ExportProxyFailed,
   type ProbeState,
 } from "./exportReadiness";
-import type { MediaSummary } from "../ipc";
+import { MEDIA_JOB_EVENTS, type MediaSummary } from "../ipc";
 
 const vid = (over: Record<string, unknown>) => ({
   id: "m", label: "clip", kind: "Video", path: "/o.mov",
@@ -175,5 +176,100 @@ describe("waitForProxies", () => {
     const p = waitForProxies(["a"], deps);
     ctrl.abort();
     await expect(p).rejects.toBeInstanceOf(ExportCancelled);
+  });
+});
+
+describe("createConformTracker", () => {
+  /// Fake `listen`: records handlers by event name; `emit` drives them.
+  const makeListen = () => {
+    const handlers = new Map<string, (e: { payload: unknown }) => void>();
+    const unlisten = vi.fn();
+    const listen = (<T,>(event: string, cb: (e: { payload: T }) => void) => {
+      handlers.set(event, cb as (e: { payload: unknown }) => void);
+      return Promise.resolve(unlisten);
+    }) as Parameters<typeof createConformTracker>[0];
+    const emit = (event: string, payload: unknown) =>
+      handlers.get(event)?.({ payload });
+    return { listen, emit, unlisten };
+  };
+  const complete = (id: string) => ({ media_id: id, kind: "conform" });
+  const errored = (id: string) => ({ media_id: id, kind: "conform" });
+  const signal = () => new AbortController().signal;
+
+  it("resolves once every waited id lands a conform completion", async () => {
+    const h = makeListen();
+    const t = createConformTracker(h.listen);
+    await t.ready;
+    const p = t.waitFor(["a", "b"], signal());
+    h.emit(MEDIA_JOB_EVENTS.complete, complete("a"));
+    h.emit(MEDIA_JOB_EVENTS.complete, complete("b"));
+    await expect(p).resolves.toBeUndefined();
+    t.dispose();
+  });
+
+  it("counts completions that arrived before waitFor was called", async () => {
+    // The readiness command returns AFTER jobs are enqueued; a fast conform
+    // can land between the command and the wait. Registration happens at
+    // tracker creation, so that completion must still count.
+    const h = makeListen();
+    const t = createConformTracker(h.listen);
+    await t.ready;
+    h.emit(MEDIA_JOB_EVENTS.complete, complete("a"));
+    await expect(t.waitFor(["a"], signal())).resolves.toBeUndefined();
+    t.dispose();
+  });
+
+  it("ignores non-conform job kinds", async () => {
+    const h = makeListen();
+    const t = createConformTracker(h.listen);
+    await t.ready;
+    const p = t.waitFor(["a"], signal());
+    let settled = false;
+    void p.then(() => { settled = true; });
+    h.emit(MEDIA_JOB_EVENTS.complete, { media_id: "a", kind: "proxy" });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    h.emit(MEDIA_JOB_EVENTS.complete, complete("a"));
+    await expect(p).resolves.toBeUndefined();
+    t.dispose();
+  });
+
+  it("rejects ExportProxyFailed when a pending id's conform errors", async () => {
+    const h = makeListen();
+    const t = createConformTracker(h.listen);
+    await t.ready;
+    const p = t.waitFor(["a"], signal());
+    h.emit(MEDIA_JOB_EVENTS.error, errored("a"));
+    await expect(p).rejects.toBeInstanceOf(ExportProxyFailed);
+    t.dispose();
+  });
+
+  it("an error for an id that already completed is ignored", async () => {
+    const h = makeListen();
+    const t = createConformTracker(h.listen);
+    await t.ready;
+    h.emit(MEDIA_JOB_EVENTS.complete, complete("a"));
+    h.emit(MEDIA_JOB_EVENTS.error, errored("a"));
+    await expect(t.waitFor(["a"], signal())).resolves.toBeUndefined();
+    t.dispose();
+  });
+
+  it("rejects ExportCancelled when the signal aborts", async () => {
+    const ctrl = new AbortController();
+    const h = makeListen();
+    const t = createConformTracker(h.listen);
+    await t.ready;
+    const p = t.waitFor(["a"], ctrl.signal);
+    ctrl.abort();
+    await expect(p).rejects.toBeInstanceOf(ExportCancelled);
+    t.dispose();
+  });
+
+  it("dispose unsubscribes both listeners", async () => {
+    const h = makeListen();
+    const t = createConformTracker(h.listen);
+    await t.ready;
+    t.dispose();
+    expect(h.unlisten).toHaveBeenCalledTimes(2);
   });
 });
