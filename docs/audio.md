@@ -153,8 +153,17 @@ reschedule behind a ~5 ms micro-fade.
 envelopes and reschedules that layer (`cancelAndHoldAtTime`, then
 fresh curves — `setValueCurveAtTime` forbids overlapping automation,
 so rescheduling is the only correct move). Seek/pause cancel all
-scheduled sources; resume re-anchors. Mute and out-of-window layers
-simply don't schedule.
+scheduled sources; resume re-anchors. Mute, track-silenced, and
+out-of-window layers simply don't schedule.
+
+**Layer skip rules (preview and export share the same set):**
+
+1. `Track.enabled == false` — the whole track is off; skip all its audio layers.
+2. `Track.muted == true` — audio layers on this track are silenced; video is unaffected.
+3. Solo set non-empty — any track with `solo == true` exists; skip audio layers on tracks where `solo == false`. (Only enabled tracks' `solo` flag counts; an empty solo set → normal path.)
+4. `mute wins over solo` — a track that is both muted and soloed is silent.
+5. `Layer.enabled == false` — the individual layer is off; skip it regardless of track flags.
+6. `AudioParams.mute == true` — the layer's own mute; skip it.
 
 The master meter (RMS + peak per channel) is engine plumbing in this
 slice: surfaced to the dev PerfHUD and over MCP, with no product UI.
@@ -165,8 +174,10 @@ Mixer UI belongs to the UX redesign.
 `lower(project, target, window)` no longer produces an ffmpeg filter
 graph; it produces a **MixPlan**: per audible layer, the conform path
 + channel count, source span, timeline placement, and the two
-envelopes (or scalars). Layers whose conform is missing fail
-readiness before any work starts.
+envelopes (or scalars). The plan applies the same layer skip rules as
+the preview (see above) — track `enabled`/`muted`/`solo` gates and
+`Layer.enabled`/`AudioParams.mute` all take effect in export. Layers
+whose conform is missing fail readiness before any work starts.
 
 The mixer (`export::mix`) is a block-pull loop, deterministic and
 allocation-flat:

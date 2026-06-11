@@ -179,8 +179,10 @@ the import copy finishes (ADR 0007).
 struct Track {
     id: TrackId,
     label: Option<String>,
-    enabled: bool,                    // hides/mutes whole track
-    locked: bool,                     // UI prevents edits; MCP can override with explicit flag
+    enabled: bool,                    // eye toggle: hides video + silences audio for the whole track
+    muted: bool,                      // M toggle: silences audio layers only; video unaffected
+    solo: bool,                       // S toggle: when any track is soloed, only soloed tracks are audible; mute wins over solo
+    locked: bool,                     // lock toggle: UI prevents edits; actor rejects structural ops on locked tracks
     removable: bool,                  // false → delete_track refuses; default tracks set this
     transient: bool,                  // auto-prune candidate when emptied
     role: Option<TrackRole>,          // "a-roll" | "b-roll" | "audio-a" | "audio-b" | None
@@ -192,6 +194,18 @@ struct Track {
 Tracks are kind-agnostic — any `LayerParams` variant can live on any
 track. The dominant class on a track ("Video", "Audio", "Empty") is
 derived from the layers it actually contains.
+
+The four track-header controls map to fields as follows: the **eye**
+toggle sets `enabled` (hides video and silences audio); **M** sets
+`muted` (silences audio layers only, video is unaffected); **S** sets
+`solo` (when any track is soloed, only soloed tracks are audible; mute
+wins over solo — only enabled tracks' solo flags count); **lock** sets
+`locked` (the actor rejects `move_layer`, `trim_layer`, `split_layer`,
+`delete_layer`, `update_layer`, and `update_layer_params` on layers that
+belong to a locked track, including via group fan-out). All four flags
+are toggled through `update_track_flags`, an **unrecorded** mutation
+(same `replace_settings_everywhere` convention as `ProjectSettings`
+patches) so undo never flips a track control back.
 
 A fresh project ships with non-removable tracks tagged with A-roll /
 B-roll / audio roles. They give every project a guaranteed drop
@@ -467,6 +481,7 @@ the UI uses the same actor via Tauri commands.
 | `add_track(label?)` → `TrackId` | tracks are kind-agnostic — any layer kind can be placed on any track |
 | `remove_track(id, force?)` | rejects if non-empty unless `force` |
 | `move_track(id, new_position)` | |
+| `update_track_flags(id, patch)` | unrecorded; patch any subset of `{enabled, muted, solo, locked}`; undo never reverts these |
 | `add_color_layer(track_id, t_start_us, t_end_us, color, width?, height?)` → `LayerId` | rejects on overlap |
 | `add_video_layer(track_id, media_id, t_start_us, t_end_us, src_in_us, src_out_us)` → `LayerId` | rejects on overlap |
 | `add_motif(motif_id, t_start_us, t_end_us?, track_id?, props?)` → `LayerId` | `t_end_us` defaults to `default_duration_s`; `track_id` auto-creates an "Overlay" track when absent |
