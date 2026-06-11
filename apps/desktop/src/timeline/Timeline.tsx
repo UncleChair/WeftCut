@@ -35,7 +35,7 @@ import {
 } from "./geometry";
 import { TimelineRuler } from "./TimelineRuler";
 import { TrackLane, type MediaDragPayload } from "./TrackLane";
-import { LayerContextMenu } from "./contextMenu";
+import { LayerContextMenu } from "./LayerContextMenu";
 import { useTimelineView } from "./hooks/useTimelineView";
 import { useHeightDrag } from "./hooks/useHeightDrag";
 import { useLayerDrag } from "./hooks/useLayerDrag";
