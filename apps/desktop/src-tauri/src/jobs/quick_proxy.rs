@@ -199,6 +199,7 @@ mod tests {
                     fps_den,
                     codec: codec.into(),
                     pix_fmt: pix_fmt.into(),
+                    nb_frames: None,
                     color_matrix: None,
                     color_range: None,
                     color_primaries: None,

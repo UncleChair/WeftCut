@@ -74,6 +74,12 @@ pub struct VideoStreamMeta {
     pub fps_den: u32,
     pub codec: String,
     pub pix_fmt: String,
+    /// Demuxer-reported frame count (ffprobe `nb_frames`), when the container
+    /// carries one. `Some(1)` marks a single-frame stream — how `detect_kind`
+    /// tells a still image from an animated GIF. `None` when the demuxer
+    /// doesn't report it (common for png/webp pipes and many mp4s).
+    #[serde(default)]
+    pub nb_frames: Option<u64>,
     /// Color tags from the container/bitstream (ffprobe names). `color_matrix`
     /// corresponds to ffprobe's `color_space` key (YCbCr matrix coefficients,
     /// e.g. "bt709", "smpte170m") — named `matrix` here to avoid conflation with
