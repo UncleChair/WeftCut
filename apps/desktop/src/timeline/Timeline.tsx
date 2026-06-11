@@ -483,12 +483,14 @@ export function Timeline({
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
           /> {/* ruler corner */}
-          {orderedTracks.map(({ track }) => (
+          {orderedTracks.map(({ track, isGroupStart }) => (
             <TrackHeader
               key={track.id}
               track={track}
               height={trackHeights[track.id] ?? DEFAULT_TRACK_HEIGHT}
               isRevealed={track.id === (revealedTrackId ?? null)}
+              isGroupStart={isGroupStart}
+              onMutated={onMutated}
             />
           ))}
         </div>

@@ -201,6 +201,12 @@ export function TrackLane({
           style={{ left: dragOverX }}
         />
       )}
+      {/* Eye-off feedback: dim + freeze the whole layer area. When the
+          track is enabled the wrapper is `display: contents` (no box, no
+          layout impact); when disabled it's an unpositioned plain div, so
+          the absolutely-positioned LayerBlocks still resolve against the
+          lane's `relative` box — geometry identical in both states. */}
+      <div className={track.enabled ? "contents" : "pointer-events-none opacity-40"}>
       {(() => {
         // V.6: compute per-layer slice once per track render. Layers
         // with a co-located opposite-class layer render half-height
@@ -213,6 +219,7 @@ export function TrackLane({
             layer={layer}
             trackId={track.id}
             trackKind={track.kind}
+            trackLocked={track.locked}
             pxPerSec={pxPerSec}
             laneHeight={height}
             slice={slices.get(layer.id) ?? "full"}
@@ -232,6 +239,7 @@ export function TrackLane({
           />
         ));
       })()}
+      </div>
       <div
         className={`absolute inset-x-0 -bottom-[3px] z-[3] h-1.5 cursor-ns-resize transition-colors duration-75 hover:bg-blue-400/35 ${isResizing ? "bg-blue-400/35" : "bg-transparent"}`}
         title={t("timeline.resize_track_hint", {
