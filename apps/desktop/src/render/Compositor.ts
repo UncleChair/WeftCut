@@ -652,10 +652,10 @@ export class Compositor {
     if (this.audioGraph !== null) {
       // Track-level audio gates — mirror audio/mix.rs plan_for_project
       // semantics: mute wins over solo; only ENABLED tracks' solo flags
-      // count. Gated-out layers stop being ticked; their already-scheduled
-      // chunks (≤ LOOKAHEAD_S) play out and the mixer goes quiet — same
-      // path as a layer leaving the playhead window.
+      // count. Gated-out layers are skipped here, then swept below with a
+      // pause-shaped tick so their pre-scheduled chunks stop immediately.
       const anySolo = this.projectSummary.tracks.some((t) => t.enabled && t.solo);
+      const tickedAudio = new Set<string>();
       for (const track of this.projectSummary.tracks) {
         if (!track.enabled) continue;
         if (track.muted) continue;
@@ -679,6 +679,7 @@ export class Compositor {
                 }
                 audio.lastParamsRef = layer.params;
               }
+              tickedAudio.add(layer.id);
               audio.mixer.tick(
                 tUsSnapped,
                 this.playing,
@@ -688,6 +689,17 @@ export class Compositor {
             }
           }
         }
+      }
+      // Mixers gated out above (track mute/solo/disable, layer disable)
+      // would otherwise never tick again, leaving their pre-scheduled
+      // chunks (≤ LOOKAHEAD_S ≈ 3 s) audible after the gate flips. Tick
+      // them with pause semantics (playing=false, null anchor — the exact
+      // branch a transport pause exercises) so the mixer's own teardown
+      // stops every live node this frame.
+      for (const [layerId, audio] of this.audios) {
+        if (tickedAudio.has(layerId)) continue;
+        const layer = this.layerById.get(layerId);
+        audio.mixer.tick(tUsSnapped, false, layer?.t_end_us ?? 0, null);
       }
     }
 

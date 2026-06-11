@@ -54,7 +54,10 @@ export function TrackHeader({ track, height, isRevealed, isGroupStart, onMutated
       onPointerDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
     >
-      <span className="min-w-0 flex-1 truncate text-[10.5px] font-medium text-muted-foreground">
+      <span
+        className="min-w-0 flex-1 truncate text-[10.5px] font-medium text-muted-foreground"
+        title={track.label ?? kindLabel}
+      >
         {track.label ?? kindLabel}
         {isRevealed && <span className="font-medium text-blue-400/70"> (revealed)</span>}
       </span>
