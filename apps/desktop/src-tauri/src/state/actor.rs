@@ -4713,6 +4713,23 @@ mod tests {
             t.muted && t.solo && t.locked,
             "flags survive undo (patched into every snapshot)"
         );
+        // Redo reinstates add_track; the redo-direction snapshot was patched by
+        // replace_track_flags_everywhere too.  The pre-add snapshot (the one
+        // undo just restored) doesn't contain `added`, so the everywhere-walk
+        // silently skips it — this pins that skip-when-absent branch.  The
+        // toggle targets the reserved track (present in every snapshot), so
+        // the flag assertions hold both before and after the added track exists.
+        h.redo(Actor::User).await.expect("redo");
+        let snap = h.snapshot().await;
+        assert!(
+            snap.tracks.iter().any(|t| t.id == added),
+            "redo restores add_track"
+        );
+        let t = snap.tracks.iter().find(|t| t.id == track_id).unwrap();
+        assert!(
+            t.muted && t.solo && t.locked,
+            "flags still set in redo-direction snapshot"
+        );
     }
 
     #[tokio::test]
