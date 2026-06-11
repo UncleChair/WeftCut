@@ -72,6 +72,21 @@ export interface E2EHook {
     range?: { startUs: number; endUs: number };
     audioPatches?: AudioPatch[];
   }): Promise<void>;
+  /// Import `mediaAbsPath` and place it 1:1 at `tStartUs` (default 0) on a
+  /// fresh track — the same IPC chain the UI uses — WITHOUT exporting.
+  /// Returns the new ids plus the media's classified kind as the project
+  /// store sees it. Used by the media-support specs (still images /
+  /// audio-only files) together with `weftcutSeekUs` +
+  /// `weftcutSampleComposite` for preview-level assertions.
+  importAndPlaceMedia(args: {
+    mediaAbsPath: string;
+    tStartUs?: number;
+  }): Promise<{ mediaId: string; layerId: string; kind: string }>;
+  /// Resolve once `exportPlaybackPathFor` is non-null for the media — for a
+  /// Video source that means the proxy/bypass route has been decided AND any
+  /// needed proxy has landed. The animated-gif spec uses this to prove the
+  /// gif routes through the video pipeline to an export-ready state.
+  waitMediaExportReady(args: { mediaId: string; timeoutMs?: number }): Promise<void>;
   /// Add a built-in Motif layer at t=0 (default duration) and export to
   /// `outputAbsPath`. No video clip is needed — the export composites the
   /// motif-only timeline, driving the FULL real export path: main-thread
@@ -549,9 +564,56 @@ export function clearPreviewBridge(): void {
   previewBridge = null;
 }
 
+/// Resolve once the media appears in the project store (the `project:changed`
+/// bridge delivers actor mutations asynchronously) and, when `pred` is given,
+/// once it also satisfies `pred`.
+function waitForMediaInStore(
+  mediaId: string,
+  timeoutMs: number,
+  what: string,
+  pred?: (m: NonNullable<ReturnType<typeof mediaFromStore>>) => boolean,
+): Promise<void> {
+  const ready = () => {
+    const m = mediaFromStore(mediaId);
+    return m != null && (pred?.(m) ?? true);
+  };
+  if (ready()) return Promise.resolve();
+  return new Promise<void>((resolve, reject) => {
+    let unsub = () => {};
+    const timer = setTimeout(() => {
+      unsub();
+      reject(new Error(`media ${mediaId}: ${what} not satisfied within ${timeoutMs}ms`));
+    }, timeoutMs);
+    const settle = () => {
+      if (!ready()) return;
+      clearTimeout(timer);
+      unsub();
+      resolve();
+    };
+    unsub = useProjectStore.subscribe(settle);
+    settle();
+  });
+}
+
+function mediaFromStore(mediaId: string) {
+  return useProjectStore.getState().mediaById.get(mediaId);
+}
+
 /// App-side: the real export. `runExport` is App's `runExportWithSettings`,
 /// which awaits the full encode + audio + mux to completion.
 export function installExportHook(runExport: RunExport): void {
+  hookSlot().importAndPlaceMedia = async ({ mediaAbsPath, tStartUs }) => {
+    const mediaId = await importMedia(mediaAbsPath);
+    const trackId = await addTrack();
+    const layerId = await addMediaLayer(trackId, mediaId, tStartUs ?? 0);
+    await waitForMediaInStore(mediaId, 10000, "store sync");
+    return { mediaId, layerId, kind: mediaFromStore(mediaId)!.kind };
+  };
+
+  hookSlot().waitMediaExportReady = async ({ mediaId, timeoutMs }) => {
+    await waitForMediaExportReady(mediaId, timeoutMs ?? 120000);
+  };
+
   hookSlot().exportClip = async ({
     mediaAbsPath,
     outputAbsPath,
@@ -573,6 +635,19 @@ export function installExportHook(runExport: RunExport): void {
     // Mirror a real user: don't export until the clip is export-ready in the
     // store the gate reads (see waitForMediaExportReady).
     await waitForMediaExportReady(mediaId, 60000);
+    // Audio-only sources: the export-readiness gate only watches VIDEO
+    // proxies; the Rust mix plan hard-errors (`ConformMissing`) if the
+    // conform job hasn't landed yet. A video source masks this race behind
+    // its proxy wait — an audio-only one doesn't, so wait for the conform
+    // here. (Product gap noted: the real export gate has the same race.)
+    if (mediaFromStore(mediaId)?.kind === "Audio") {
+      await waitForMediaInStore(
+        mediaId,
+        60000,
+        "audio conform",
+        (m) => m.conform_path != null,
+      );
+    }
     if (audioPatches && audioPatches.length > 0) {
       const summary = await projectSummary();
       const audioLayerIds: string[] = [];
