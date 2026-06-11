@@ -1177,6 +1177,22 @@ Timeline.tsx passes `onMutated={onMutated}` to each `TrackHeader`.
 
 Blade: `onLayerPointerDown` returns before `onBladeSplit` when `trackLocked` (covered by the first guard since blade routes through pointerdown).
 
+- [ ] **Step 2.5: Preview-side M/S gating (review finding — the spec assumed mix.rs served preview, it does NOT)**
+
+Preview audio is mixed TS-side: `render/Compositor.ts` `compositeFrame`'s audio pass iterates tracks (~line 653) with only `!track.enabled` / `!layer.enabled` skips, then per-layer WebAudio mixers. Mirror the `audio/mix.rs` gates there so M/S affect playback, not just export:
+
+```typescript
+// before the track loop (once per compositeFrame):
+// Track-level audio gates — mirror audio/mix.rs plan_for_project semantics:
+// mute wins over solo; only ENABLED tracks' solo flags count.
+const anySolo = this.projectSummary.tracks.some((t) => t.enabled && t.solo);
+// inside the loop, right after the `!track.enabled` skip:
+if (track.muted) continue;
+if (anySolo && !track.solo) continue;
+```
+
+Verify the existing teardown path handles "track became inaudible mid-playback" (mixers for layers that drop out of the collection set should already be stopped/cleaned the way disabling a layer does — check how `ensureAudio` mixers are reaped and confirm gated tracks go silent promptly, not just stop scheduling new chunks).
+
 - [ ] **Step 3: i18n keys**
 
 Add to both locale files under the existing `timeline` object (grep `"timeline"` to find it): `track_eye_hint`, `track_mute_hint`, `track_solo_hint`, `track_lock_hint`. zh-CN values: `"隐藏此轨道的输出（影响导出）"`, `"静音此轨道的音频（影响导出）"`, `"独奏此轨道的音频（影响导出）"`, `"锁定此轨道禁止编辑"`.
