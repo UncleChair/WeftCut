@@ -129,7 +129,7 @@ export function clamp(v: number, lo: number, hi: number): number {
 
 /// `docs/groups.md`. Stable, deterministic hue per group id so all
 /// members share an accent color across renders. Skips the yellow/green
-/// band that conflicts with the "is-selected" highlight in `styles.css`.
+/// band that conflicts with the selection highlight (ring token) on LayerBlock.
 export function groupHue(groupId: string): number {
   let h = 0;
   for (let i = 0; i < groupId.length; i++) {
