@@ -17,7 +17,7 @@ import {
   agentSessionEnd,
   agentSessionGet,
   deleteLayer,
-  ensureConform,
+  ensureExportAudioConform,
   ensureFullProxy,
   keybindingsGet,
   type AgentSession,
@@ -70,6 +70,7 @@ import {
   sourcesNeedingPreviewProbe,
   prepareExportMedia,
   waitForProxies,
+  createConformTracker,
   ExportCancelled,
   ExportProxyFailed,
   type ProbeState,
@@ -1057,70 +1058,44 @@ export function App({ onCloseProject }: AppProps) {
 
       // ---- Audio conform gate ---------------------------------------------
       // Every audible Audio layer in range needs its conform PCM — the Rust
-      // export mixer reads only conform files (docs/audio.md). Kick
-      // ensure_conform for anything missing and hold in "preparing" until
-      // the conform jobs land (or fail, naming the media).
+      // export mixer reads only conform files (docs/audio.md). Selection +
+      // readiness live Rust-side (`ensure_export_audio_conform`, sharing the
+      // mix plan's layer walk so gate and plan can't disagree); completion is
+      // job-event-tracked because a stale conform_path (cache file deleted)
+      // reads identically in the store before and after the re-conform.
       if (settings.audio.include) {
-        const audioMediaIds = new Set<string>();
-        for (const tr of proj.tracks) {
-          if (!tr.enabled) continue;
-          for (const l of tr.layers) {
-            if (!l.enabled || l.params.kind !== "Audio" || l.params.mute) {
-              continue;
-            }
-            if (l.t_start_us < endUs && l.t_end_us > startUs) {
-              audioMediaIds.add(l.params.media_id);
-            }
-          }
-        }
-        const conformWaiting = [...audioMediaIds].filter(
-          (id) => !useProjectStore.getState().mediaById.get(id)?.conform_path,
-        );
-        if (conformWaiting.length > 0) {
-          for (const id of conformWaiting) void ensureConform(id);
-          const ctrl = new AbortController();
-          setExportState({
-            kind: "preparing",
-            labels: conformWaiting.map(
-              (id) => store.mediaById.get(id)?.label ?? id,
-            ),
-            onCancel: () => ctrl.abort(),
+        const tracker = createConformTracker(listen);
+        try {
+          await tracker.ready; // listeners first — a fast job must not slip by
+          const conformWaiting = await ensureExportAudioConform({
+            startUs,
+            endUs,
           });
-          try {
-            await waitForProxies(conformWaiting, {
-              pathReady: (id) =>
-                useProjectStore.getState().mediaById.get(id)?.conform_path !=
-                null,
-              subscribeStore: (cb) => useProjectStore.subscribe(cb),
-              onProxyError: (cb) => {
-                let off: (() => void) | null = null;
-                let disposed = false;
-                void listen<MediaJobEvent>(MEDIA_JOB_EVENTS.error, (e) => {
-                  if (e.payload.kind === "conform") cb(e.payload.media_id);
-                }).then((u) => {
-                  if (disposed) u();
-                  else off = u;
-                });
-                return () => {
-                  disposed = true;
-                  off?.();
-                };
-              },
-              signal: ctrl.signal,
-            });
-          } catch (e) {
-            if (e instanceof ExportCancelled) {
-              setExportState(null);
-              return;
-            }
-            const id = e instanceof ExportProxyFailed ? e.mediaId : "";
-            const label = store.mediaById.get(id)?.label ?? id;
+          if (conformWaiting.length > 0) {
+            const ctrl = new AbortController();
             setExportState({
-              kind: "error",
-              detail: t("export.failed_prepare", { labels: label }),
+              kind: "preparing",
+              labels: conformWaiting.map(
+                (id) => store.mediaById.get(id)?.label ?? id,
+              ),
+              onCancel: () => ctrl.abort(),
             });
+            await tracker.waitFor(conformWaiting, ctrl.signal);
+          }
+        } catch (e) {
+          if (e instanceof ExportCancelled) {
+            setExportState(null);
             return;
           }
+          const id = e instanceof ExportProxyFailed ? e.mediaId : "";
+          const label = store.mediaById.get(id)?.label ?? id;
+          setExportState({
+            kind: "error",
+            detail: t("export.failed_prepare", { labels: label }),
+          });
+          return;
+        } finally {
+          tracker.dispose();
         }
       }
     }
