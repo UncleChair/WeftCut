@@ -130,18 +130,24 @@ at most 8 live chunks per layer (~3 MB). Mono conform produces mono
 buffers; the panner up-mixes.
 
 **Scheduling:** sample-accurate inside the audio clock domain —
-`when = anchorCtxTime + (chunkCompUs − anchorCompUs) / 1e6` against an
-anchor pair captured at play/seek. Chunks that would start in the
-past start now with a compensating buffer offset.
+`when = ctxTimeAtCompUs(anchor, chunkCompUs)` against the engine's
+clock anchor. Chunks that would start in the past start now with a
+compensating buffer offset.
 
-**Clock:** the Pixi ticker remains the master clock. Audio runs on the
-`AudioContext` clock against the anchor; each engine tick compares the
-audio-predicted position with the engine position and re-anchors
-(cancel + reschedule, with a ~5 ms micro-fade) when the divergence
-exceeds 40 ms. This bounds cross-clock drift without touching the
-playback engine. The structural fix — audio as master clock when
-audible layers exist — is specified under Future work and is the
-planned follow-up, not part of this slice.
+**Clock:** the audio hardware clock is the master. One `ClockAnchor`
+(a composition-µs ↔ `AudioContext.currentTime` pair, defined in
+`chunkSchedule.ts` and nowhere else) is owned by the `PlaybackEngine`:
+while the context is running, the playing position is DERIVED from
+`ctx.currentTime` against it — pure mapping, no accumulation — and the
+engine forwards the same anchor to every `AudioMixer`, which schedules
+chunks against it. Playhead and audio share one clock by construction;
+there is no second clock to reconcile, so there is no reconciler.
+While the context is suspended (autoplay policy, before the first
+gesture) the clock falls back to `performance.now()` deltas; the flip
+back to audio-derived re-anchors from the current position, so
+switching sources never jumps the playhead. The anchor is re-taken on
+play and on seek-during-play; mixers detect the identity change and
+reschedule behind a ~5 ms micro-fade.
 
 **Edits during playback:** a parameter change re-derives the layer's
 envelopes and reschedules that layer (`cancelAndHoldAtTime`, then
@@ -249,15 +255,6 @@ checks.
 
 ## Out of scope here, designed elsewhere or later
 
-- **Audio-master clock** — the follow-up with a defined shape: when
-  audible layers exist, the playhead derives from
-  `audioContext.currentTime` against the same anchor pair the
-  scheduler uses (`positionUs = anchorCompUs + (ctxTime −
-  anchorCtxTime) × 1e6`); the ticker reads the playhead instead of
-  advancing it; silent compositions fall back to a wall-clock anchor;
-  the 40 ms reconciler is deleted. Trigger to do it: PerfHUD
-  telemetry showing re-anchors firing in real sessions, or the start
-  of any scrub-audio work.
 - **Denoise** — offline job producing a processed sibling of the
   conform artifact (DeepFilterNet-class), never a realtime insert.
 - **Retime / speed** — needs A/V group-coupling semantics first;

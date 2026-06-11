@@ -13,7 +13,7 @@ covers the preview-side surface and transport.
 <PreviewSurface>             — React mount, canvas host, transport handle
   └─ Compositor              — PixiJS Application owner; per-frame composite
        ├─ PlaybackEngine     — play / pause / seek / scrub
-       │    ├─ clock         — synthetic clock + Web Audio drift correction
+       │    ├─ clock         — audio-master clock (anchor-derived; wall fallback)
        │    └─ AudioGraph    — Web Audio mixer
        ├─ SourceDecoderPool  — per-clip VideoDecoder + ring; shared mediabunny Input per source
        └─ LiveLayers         — per-layer Sprite instances mounted on the stage
