@@ -293,6 +293,74 @@ mod tests {
         assert!(max > 0.05 && max <= 1.01, "max sample {max}");
     }
 
+    /// The conform contract across the audio formats the import dialog
+    /// offers (wav/mp3/flac/m4a/ogg) plus opus: every one must decode to a
+    /// well-formed 48 kHz mono VCONF. The decoder is ffmpeg's auto-discovery
+    /// (no allowlist in `run`), so this is the test that actually pins the
+    /// supported-format range. Lossy codecs carry encoder priming/padding, so
+    /// their frame-count tolerance is wider than the lossless ones'.
+    #[tokio::test]
+    async fn conform_format_matrix_against_real_ffmpeg() {
+        if !ffmpeg_available() {
+            eprintln!("ffmpeg not on PATH — skipping conform format matrix");
+            return;
+        }
+        let tmp = TempDir::new().unwrap();
+        let cache = CacheLayout::new(tmp.path().join("cache"));
+        cache.ensure_dirs().unwrap();
+
+        // (file, extra encode args, lossless). 1 s of 1 kHz mono sine;
+        // 44.1 kHz source except opus (libopus wants 48 k).
+        let cases: &[(&str, &[&str], bool)] = &[
+            ("tone.wav", &[], true),
+            ("tone.flac", &[], true),
+            ("tone.mp3", &[], false),
+            ("tone.m4a", &["-c:a", "aac"], false),
+            ("tone.ogg", &["-c:a", "libvorbis"], false),
+            ("tone.opus", &["-c:a", "libopus"], false),
+        ];
+        for (name, extra, lossless) in cases {
+            let src = tmp.path().join(name);
+            let rate = if *name == "tone.opus" { "48000" } else { "44100" };
+            let status = Command::new("ffmpeg")
+                .args(["-y", "-hide_banner", "-loglevel", "error"])
+                .args(["-f", "lavfi", "-i", "sine=frequency=1000:duration=1"])
+                .args(["-ac", "1", "-ar", rate])
+                .args(*extra)
+                .arg(&src)
+                .status()
+                .await
+                .expect("spawn ffmpeg");
+            if !status.success() {
+                // Encoder not in this ffmpeg build (e.g. no libmp3lame) —
+                // skip the case rather than fail the suite.
+                eprintln!("ffmpeg could not encode {name} — skipping case");
+                continue;
+            }
+
+            let path = run(&cache, &media_for(src, 1, &format!("hash-{name}")))
+                .await
+                .unwrap_or_else(|e| panic!("conform {name}: {e:#}"));
+            let h = read_header(&path).expect("header");
+            assert_eq!(h.sample_rate, CONFORM_SAMPLE_RATE, "{name}");
+            assert_eq!(h.channels, 1, "{name}: mono stays mono");
+            let range = if *lossless { 47_900..=48_100 } else { 46_000..=50_500 };
+            assert!(
+                range.contains(&(h.frame_count as i64)),
+                "{name}: expected ~48000 frames, got {}",
+                h.frame_count
+            );
+            let len = std::fs::metadata(&path).unwrap().len();
+            assert_eq!(len, h.byte_offset_of_frame(h.frame_count), "{name}: body length");
+            let bytes = std::fs::read(&path).unwrap();
+            let mut max = 0.0_f32;
+            for c in bytes[HEADER_LEN as usize..].chunks_exact(4) {
+                max = max.max(f32::from_le_bytes([c[0], c[1], c[2], c[3]]).abs());
+            }
+            assert!(max > 0.05 && max <= 1.01, "{name}: max sample {max}");
+        }
+    }
+
     #[tokio::test]
     async fn rejects_media_without_audio() {
         let tmp = TempDir::new().unwrap();

@@ -83,14 +83,148 @@ func writeColorChart(width, height int) (string, error) {
 	return "color_chart.png", nil
 }
 
+// Renders the color-patch chart at the given size and writes it as a PNG.
+// Shared by --imageset (the still-image fixtures) and --audiotones' embedded
+// mp3 cover art.
+func writeChartPNG(name string, width, height int) error {
+	patches := colorPatches(width, height)
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	for _, p := range patches {
+		col := color.RGBA{uint8(p.RGB[0]), uint8(p.RGB[1]), uint8(p.RGB[2]), 255}
+		draw.Draw(img, image.Rect(p.X, p.Y, p.X+p.W, p.Y+p.H), &image.Uniform{col}, image.Point{}, draw.Src)
+	}
+	f, err := os.Create(name)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return png.Encode(f, img)
+}
+
+// Still-image fixture set: the color-patch chart in every format the import
+// dialog offers (png/jpg/webp/gif) plus bmp (drag-drop reachable) and tiff
+// (the documented-UNSUPPORTED negative — WebView2's createImageBitmap cannot
+// decode TIFF). 320x240 so the chart sits inside the canvas top-left and the
+// e2e can sample patch centers directly. webp is encoded LOSSLESS and jpg at
+// high quality so flat patches survive within tight tolerances.
+func writeImageSet() error {
+	const width, height = 320, 240
+	base := fmt.Sprintf("test_chart_%dx%d", width, height)
+	if err := writeChartPNG(base+".png", width, height); err != nil {
+		return err
+	}
+	mf, err := os.Create(base + "_manifest.json")
+	if err != nil {
+		return err
+	}
+	enc := json.NewEncoder(mf)
+	enc.SetIndent("", "  ")
+	err = enc.Encode(manifest{Width: width, Height: height, Patches: colorPatches(width, height)})
+	mf.Close()
+	if err != nil {
+		return err
+	}
+	conversions := [][]string{
+		{"-q:v", "2", base + ".jpg"},
+		{"-c:v", "libwebp", "-lossless", "1", base + ".webp"},
+		{base + ".bmp"},
+		{base + ".tiff"},
+		{base + ".gif"},
+	}
+	for _, c := range conversions {
+		args := append([]string{"-y", "-hide_banner", "-loglevel", "error", "-i", base + ".png"}, c...)
+		cmd := exec.Command("ffmpeg", args...)
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("ffmpeg %s: %w", c[len(c)-1], err)
+		}
+	}
+	return nil
+}
+
+// Audio-only fixture: 10 s of the per-second frequency-stepped tone markers
+// (F_k = 400 + 120k Hz — the same pattern `media_conformance --audio`
+// expects), encoded to the requested format. The mp3 variant embeds the
+// color chart as attached_pic cover art — the real-world mp3 shape that used
+// to misclassify as Video (see probe::detect_kind).
+func writeAudioTones(aformat string) error {
+	const seconds = 10
+	const audioBaseHz = 400
+	const audioStepHz = 120
+	const audioSR = 48000
+	out := fmt.Sprintf("test_tones_%ds.%s", seconds, aformat)
+
+	args := []string{"-y", "-hide_banner", "-loglevel", "error"}
+	for k := 0; k < seconds; k++ {
+		freq := audioBaseHz + audioStepHz*k
+		args = append(args, "-f", "lavfi", "-i",
+			fmt.Sprintf("sine=frequency=%d:duration=1:sample_rate=%d", freq, audioSR))
+	}
+	withCover := aformat == "mp3"
+	cover := "tones_cover_tmp.png"
+	if withCover {
+		if err := writeChartPNG(cover, 320, 240); err != nil {
+			return err
+		}
+		defer os.Remove(cover)
+		args = append(args, "-i", cover)
+	}
+	var concatIn strings.Builder
+	for k := 0; k < seconds; k++ {
+		concatIn.WriteString(fmt.Sprintf("[%d:a]", k))
+	}
+	args = append(args, "-filter_complex",
+		fmt.Sprintf("%sconcat=n=%d:v=0:a=1[a]", concatIn.String(), seconds),
+		"-map", "[a]")
+	switch aformat {
+	case "wav", "flac":
+		// container-default lossless codec
+	case "mp3":
+		args = append(args, "-c:a", "libmp3lame", "-b:a", "192k")
+	case "m4a":
+		args = append(args, "-c:a", "aac", "-b:a", "192k")
+	case "ogg":
+		args = append(args, "-c:a", "libvorbis", "-q:a", "5")
+	default:
+		return fmt.Errorf("unsupported --aformat %q (wav|mp3|flac|m4a|ogg)", aformat)
+	}
+	if withCover {
+		args = append(args, "-map", fmt.Sprintf("%d:v", seconds),
+			"-c:v", "mjpeg", "-disposition:v", "attached_pic")
+	}
+	args = append(args, out)
+	fmt.Printf("Generating %s (%ds tone steps, audio-only)\n", out, seconds)
+	cmd := exec.Command("ffmpeg", args...)
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	return cmd.Run()
+}
+
 func main() {
 	fps := flag.Int("fps", 0, "frame rate (required, positive integer)")
 	format := flag.String("format", "mp4", "output format: mp4, mkv, mov, webm, gif, prores")
 	audio := flag.Bool("audio", false, "add a per-second frequency-stepped tone track (test marker) + name output *_audio.mp4")
+	imageset := flag.Bool("imageset", false, "emit the still-image chart set (png/jpg/webp/bmp/gif/tiff + manifest)")
+	audioTones := flag.Bool("audiotones", false, "emit a 10s audio-ONLY tone-step file (use with --aformat)")
+	aformat := flag.String("aformat", "wav", "audio-only format for --audiotones: wav|mp3|flac|m4a|ogg")
 	eosTail := flag.Bool("eostail", false, "EOS-tail geometry: keyframes every 5s only (final GOP spans multiple 60-frame export chunks) + tone track 1s LONGER than the video; names output *_eostail.mp4")
 	colorEnc := flag.String("color", "", "color chart encoding: 709ltd|601ltd|709full|601full (draws chart + manifest, ignores --fps content)")
 	gradient := flag.Bool("gradient", false, "emit a 10-bit BT.709 grayscale gradient ramp (HEVC Main10) for axis B")
 	flag.Parse()
+
+	if *imageset {
+		if err := writeImageSet(); err != nil {
+			log.Fatalf("imageset: %v", err)
+		}
+		fmt.Println("Done: still-image chart set")
+		return
+	}
+
+	if *audioTones {
+		if err := writeAudioTones(*aformat); err != nil {
+			log.Fatalf("audiotones: %v", err)
+		}
+		return
+	}
 
 	if *colorEnc != "" {
 		const width, height, duration = 1920, 1080, 1

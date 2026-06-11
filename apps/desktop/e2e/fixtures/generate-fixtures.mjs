@@ -33,9 +33,26 @@ export const MATRIX = [
   { color: "601full" },
   // 10-bit BT.709 grayscale ramp (HEVC Main10) — axis B "proxy fidelity on gradients"
   { gradient: true },
+  // still-image chart set (png/jpg/webp/bmp/gif/tiff + manifest, one flag) —
+  // image_support.e2e.js. The png is the canonical existence check; the
+  // generator writes the whole set in one run.
+  { imageset: true },
+  // audio-ONLY per-second tone files — audio_formats.e2e.js. The mp3 embeds
+  // attached_pic cover art (regression for the still-image/cover-art
+  // classification fix in probe::detect_kind).
+  { audiotones: true, aformat: "wav" },
+  { audiotones: true, aformat: "mp3" },
+  { audiotones: true, aformat: "flac" },
+  { audiotones: true, aformat: "m4a" },
+  { audiotones: true, aformat: "ogg" },
+  // animated gif — classifies as VIDEO (multi-frame) and routes through the
+  // full-proxy pipeline; image_support.e2e.js asserts that routing.
+  { fps: 10, format: "gif" },
 ];
 
-export function outputName({ fps, format, audio, color, gradient, eostail }) {
+export function outputName({ fps, format, audio, color, gradient, eostail, imageset, audiotones, aformat }) {
+  if (imageset) return "test_chart_320x240.png";
+  if (audiotones) return `test_tones_10s.${aformat}`;
   if (color) return `test_${WIDTH_HEIGHT}p_color_${color}.mp4`;
   if (gradient) return `test_${WIDTH_HEIGHT}p_gradient10.mp4`;
   if (format === "prores") return `test_${WIDTH_HEIGHT}p_${fps}fps_prores.mov`;
@@ -54,11 +71,15 @@ export async function ensureFixtures(mediaDir) {
       console.log(`[fixtures] skip (exists): ${name}`);
       continue;
     }
-    const args = entry.color
-      ? ["run", GENERATOR, "--color", entry.color]
-      : entry.gradient
-        ? ["run", GENERATOR, "--gradient"]
-        : ["run", GENERATOR, "--fps", String(entry.fps), "--format", entry.format];
+    const args = entry.imageset
+      ? ["run", GENERATOR, "--imageset"]
+      : entry.audiotones
+        ? ["run", GENERATOR, "--audiotones", "--aformat", entry.aformat]
+        : entry.color
+          ? ["run", GENERATOR, "--color", entry.color]
+          : entry.gradient
+            ? ["run", GENERATOR, "--gradient"]
+            : ["run", GENERATOR, "--fps", String(entry.fps), "--format", entry.format];
     if (entry.audio) args.push("--audio");
     if (entry.eostail) args.push("--eostail");
     console.log(`[fixtures] generating ${name} ...`);

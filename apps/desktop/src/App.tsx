@@ -916,10 +916,13 @@ export function App({ onCloseProject }: AppProps) {
       filters: [
         {
           name: t("dialogs.media_filter"),
+          // Mirrors the backend's extension fallback (io/probe.rs detect_kind)
+          // EXCEPT tif/tiff: WebView2's createImageBitmap can't decode TIFF,
+          // so offering it would import a layer that composites nothing.
           extensions: [
-            "mp4", "mov", "mkv", "webm", "avi",
-            "wav", "mp3", "flac", "aac", "m4a", "ogg",
-            "png", "jpg", "jpeg", "gif", "webp",
+            "mp4", "mov", "mkv", "webm", "avi", "m4v",
+            "wav", "mp3", "flac", "aac", "m4a", "ogg", "opus",
+            "png", "jpg", "jpeg", "gif", "webp", "bmp",
             "srt", "ass", "vtt",
           ],
         },
