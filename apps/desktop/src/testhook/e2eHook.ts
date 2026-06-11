@@ -87,6 +87,20 @@ export interface E2EHook {
   /// needed proxy has landed. The animated-gif spec uses this to prove the
   /// gif routes through the video pipeline to an export-ready state.
   waitMediaExportReady(args: { mediaId: string; timeoutMs?: number }): Promise<void>;
+  /// Export the CURRENT timeline as-is (no import/placement) to
+  /// `outputAbsPath`. Lets a spec compose a multi-media timeline via
+  /// `importAndPlaceMedia` and then drive the REAL export path, including
+  /// both readiness gates (video proxies + audio conform). Rejects if no
+  /// output is written.
+  exportTimeline(args: {
+    outputAbsPath: string;
+    settings?: Partial<ExportSettings>;
+    range?: { startUs: number; endUs: number };
+  }): Promise<void>;
+  /// The media's conform cache path as the project store sees it (null until
+  /// the conform job lands). Cache-surgery specs (conform invalidation) read
+  /// the real absolute path here instead of reconstructing the cache layout.
+  mediaConformPath(args: { mediaId: string }): string | null;
   /// Add a built-in Motif layer at t=0 (default duration) and export to
   /// `outputAbsPath`. No video clip is needed — the export composites the
   /// motif-only timeline, driving the FULL real export path: main-thread
@@ -614,6 +628,16 @@ export function installExportHook(runExport: RunExport): void {
     await waitForMediaExportReady(mediaId, timeoutMs ?? 120000);
   };
 
+  hookSlot().exportTimeline = async ({ outputAbsPath, settings, range }) => {
+    await runExport(mergeSettings(settings ?? null), outputAbsPath, range);
+    if (!(await exists(outputAbsPath))) {
+      throw new Error(`export produced no output file at ${outputAbsPath}`);
+    }
+  };
+
+  hookSlot().mediaConformPath = ({ mediaId }) =>
+    mediaFromStore(mediaId)?.conform_path ?? null;
+
   hookSlot().exportClip = async ({
     mediaAbsPath,
     outputAbsPath,
@@ -633,21 +657,11 @@ export function installExportHook(runExport: RunExport): void {
       }
     }
     // Mirror a real user: don't export until the clip is export-ready in the
-    // store the gate reads (see waitForMediaExportReady).
+    // store the gate reads (see waitForMediaExportReady). Audio conform is
+    // deliberately NOT pre-waited: the export's own audio gate
+    // (`ensure_export_audio_conform` + conform job events) owns that wait,
+    // and pre-waiting here would shadow the very path these specs gate.
     await waitForMediaExportReady(mediaId, 60000);
-    // Audio-only sources: the export-readiness gate only watches VIDEO
-    // proxies; the Rust mix plan hard-errors (`ConformMissing`) if the
-    // conform job hasn't landed yet. A video source masks this race behind
-    // its proxy wait — an audio-only one doesn't, so wait for the conform
-    // here. (Product gap noted: the real export gate has the same race.)
-    if (mediaFromStore(mediaId)?.kind === "Audio") {
-      await waitForMediaInStore(
-        mediaId,
-        60000,
-        "audio conform",
-        (m) => m.conform_path != null,
-      );
-    }
     if (audioPatches && audioPatches.length > 0) {
       const summary = await projectSummary();
       const audioLayerIds: string[] = [];

@@ -27,10 +27,9 @@ function toneHz(second) {
   return 400 + 120 * second;
 }
 
-/// Boot a fresh 30fps project, then drive `exportClip` and wait for it to
-/// settle. Returns { settled, perf, lastKind, lastDetail }. `perf` is the
-/// worker's `window.__weftcutExportPerf` (E2E-only), carrying `totalFrames`.
-async function bootAndExport({ output, settings, range, source = SOURCE }) {
+/// Boot a fresh 30fps project at `<PROJECT_PARENT>/<namePrefix><now>/` and
+/// wait for the editor hooks to mount.
+async function bootProject(namePrefix) {
   await browser.waitUntil(
     async () =>
       (await browser.execute(
@@ -38,16 +37,16 @@ async function bootAndExport({ output, settings, range, source = SOURCE }) {
       )) === true,
     { timeout: 30000, timeoutMsg: "newProjectAndEnter never mounted" },
   );
-  const r1 = await browser.executeAsync((parent, done) => {
+  const r1 = await browser.executeAsync((parent, name, done) => {
     window.__weftcutTest
       .newProjectAndEnter({
         parentFolder: parent,
-        name: "e2e-range-audio-" + Date.now(),
+        name,
         canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
       })
       .then(() => done({ ok: true }))
       .catch((e) => done({ ok: false, error: String(e) }));
-  }, PROJECT_PARENT);
+  }, PROJECT_PARENT, namePrefix + Date.now());
   if (!r1.ok) throw new Error("newProjectAndEnter failed: " + r1.error);
 
   await browser.waitUntil(
@@ -57,25 +56,11 @@ async function bootAndExport({ output, settings, range, source = SOURCE }) {
       )) === true,
     { timeout: 30000, timeoutMsg: "exportClip never mounted" },
   );
+}
 
-  await browser.execute(
-    (media, out, s, rng) => {
-      window.__e2eExportDone = null;
-      window.__weftcutExportPerf = null;
-      const args = { mediaAbsPath: media, outputAbsPath: out };
-      if (s) args.settings = s;
-      if (rng) args.range = rng;
-      window.__weftcutTest
-        .exportClip(args)
-        .then(() => { window.__e2eExportDone = { ok: true }; })
-        .catch((e) => { window.__e2eExportDone = { ok: false, error: String(e) }; });
-    },
-    source,
-    output,
-    settings ?? null,
-    range ?? null,
-  );
-
+/// Poll an export started via `window.__e2eExportDone` to settlement,
+/// surfacing the last export-state snapshot in any failure message.
+async function waitExportSettled(timeout = 170000) {
   let lastFrame = -1;
   let lastKind = null;
   let lastDetail = null;
@@ -98,7 +83,7 @@ async function bootAndExport({ output, settings, range, source = SOURCE }) {
         if (snap.done) { settled = snap.done; return true; }
         return false;
       },
-      { timeout: 170000, interval: 1000 },
+      { timeout, interval: 1000 },
     );
   } catch (e) {
     throw new Error(
@@ -107,9 +92,37 @@ async function bootAndExport({ output, settings, range, source = SOURCE }) {
   }
   if (!settled.ok) {
     throw new Error(
-      `exportClip failed: ${settled.error} | exportState kind=${lastKind} detail=${lastDetail} (last frame=${lastFrame})`,
+      `export failed: ${settled.error} | exportState kind=${lastKind} detail=${lastDetail} (last frame=${lastFrame})`,
     );
   }
+  return { settled, lastKind, lastDetail };
+}
+
+/// Boot a fresh 30fps project, then drive `exportClip` and wait for it to
+/// settle. Returns { settled, perf, lastKind, lastDetail }. `perf` is the
+/// worker's `window.__weftcutExportPerf` (E2E-only), carrying `totalFrames`.
+async function bootAndExport({ output, settings, range, source = SOURCE }) {
+  await bootProject("e2e-range-audio-");
+
+  await browser.execute(
+    (media, out, s, rng) => {
+      window.__e2eExportDone = null;
+      window.__weftcutExportPerf = null;
+      const args = { mediaAbsPath: media, outputAbsPath: out };
+      if (s) args.settings = s;
+      if (rng) args.range = rng;
+      window.__weftcutTest
+        .exportClip(args)
+        .then(() => { window.__e2eExportDone = { ok: true }; })
+        .catch((e) => { window.__e2eExportDone = { ok: false, error: String(e) }; });
+    },
+    source,
+    output,
+    settings ?? null,
+    range ?? null,
+  );
+
+  const { settled, lastKind, lastDetail } = await waitExportSettled();
   const perf = await browser.execute(() => window.__weftcutExportPerf ?? null);
   return { settled, perf, lastKind, lastDetail };
 }
@@ -293,6 +306,104 @@ describe("export range + audio settings (real WebView2)", function () {
     // ~2 s cadence, clearly not the 1 s default (~1 s) or 5 s.
     expect(medianGap).toBeGreaterThan(1.5);
     expect(medianGap).toBeLessThan(2.5);
+  });
+
+  it("range export re-conforms only in-range audio after cache invalidation", async function () {
+    // Two distinct audio-only sources: A in the export range, B outside it.
+    // Deleting both VCONF files while the store still carries conform_path
+    // reproduces the stale-cache shape (e.g. a cleared Cache dir). The
+    // export's audio gate must detect A's invalid cache (cached_ok, not the
+    // store path), re-conform it, and hold the export until it lands; it must
+    // NOT touch B — the Rust mix plan window-skips layers the export never
+    // reads, where it previously hard-errored ConformMissing project-wide.
+    const WAV = path.resolve(MEDIA_DIR, "test_tones_10s.wav");
+    const MP3 = path.resolve(MEDIA_DIR, "test_tones_10s.mp3");
+    if (!existsSync(WAV) || !existsSync(MP3)) {
+      console.warn(`[e2e] SKIP: tone fixtures not found under ${MEDIA_DIR}`);
+      this.skip();
+    }
+    const output = path.resolve(os.tmpdir(), "weftcut-e2e-range-conform.mp4");
+    rmSync(output, { force: true });
+
+    await bootProject("e2e-range-conform-");
+
+    const place = async (mediaAbsPath, tStartUs) => {
+      const r = await browser.executeAsync((p, t, done) => {
+        window.__weftcutTest
+          .importAndPlaceMedia({ mediaAbsPath: p, tStartUs: t })
+          .then((x) => done({ ok: true, ...x }))
+          .catch((e) => done({ ok: false, error: String(e) }));
+      }, mediaAbsPath, tStartUs);
+      if (!r.ok) throw new Error(`importAndPlaceMedia failed: ${r.error}`);
+      expect(r.kind).toBe("Audio");
+      return r.mediaId;
+    };
+    const inRangeId = await place(WAV, 0);
+    const outOfRangeId = await place(MP3, 12_000_000);
+
+    // Import-time conform jobs land for both.
+    await browser.waitUntil(
+      async () =>
+        await browser.execute(
+          (a, b) =>
+            window.__weftcutTest.mediaConformPath({ mediaId: a }) != null &&
+            window.__weftcutTest.mediaConformPath({ mediaId: b }) != null,
+          inRangeId,
+          outOfRangeId,
+        ),
+      { timeout: 60000, timeoutMsg: "import-time conform never landed" },
+    );
+    const conformOf = (id) =>
+      browser.execute(
+        (m) => window.__weftcutTest.mediaConformPath({ mediaId: m }),
+        id,
+      );
+    const inRangeConform = await conformOf(inRangeId);
+    const outOfRangeConform = await conformOf(outOfRangeId);
+
+    // Invalidate BOTH caches on disk; the store still says "conformed".
+    // Retried: a preview Range read can hold the file open for a moment.
+    const rmWithRetry = async (file) => {
+      for (let i = 0; ; i++) {
+        try {
+          rmSync(file, { force: true });
+          return;
+        } catch (e) {
+          if (i >= 20) throw e;
+          await new Promise((r) => setTimeout(r, 100));
+        }
+      }
+    };
+    await rmWithRetry(inRangeConform);
+    await rmWithRetry(outOfRangeConform);
+    expect(existsSync(inRangeConform)).toBe(false);
+    expect(existsSync(outOfRangeConform)).toBe(false);
+
+    // Range export [0, 2s) — covers only A.
+    await browser.execute(
+      (out, rng) => {
+        window.__e2eExportDone = null;
+        window.__weftcutTest
+          .exportTimeline({ outputAbsPath: out, range: rng })
+          .then(() => { window.__e2eExportDone = { ok: true }; })
+          .catch((e) => { window.__e2eExportDone = { ok: false, error: String(e) }; });
+      },
+      output,
+      { startUs: 0, endUs: 2_000_000 },
+    );
+    await waitExportSettled();
+
+    // The gate re-conformed the in-range media (regenerated at the same
+    // hash-keyed path); the out-of-range media stayed untouched.
+    expect(existsSync(inRangeConform)).toBe(true);
+    expect(existsSync(outOfRangeConform)).toBe(false);
+
+    // And the audio really rendered from the regenerated conform — the WAV's
+    // per-second tone markers (F_k = 400 + 120k Hz) survive into the output.
+    const pcm = extractPcm(output);
+    const cands = [toneHz(0), toneHz(1), toneHz(2)];
+    expect(dominantTone(pcm, 0, cands)).toBe(toneHz(0));
+    expect(dominantTone(pcm, 1, cands)).toBe(toneHz(1));
   });
 
   it("software encoder export stays frame-aligned with low loss", async function () {
