@@ -120,6 +120,7 @@ struct MediaItem {
     proxy_bypassed: bool,             // source decodes directly for preview+export; no proxy
     export_uses_original: bool,       // export decodes the original; preview uses the quick proxy
     waveform_path: Option<PathBuf>,
+    conform_path: Option<PathBuf>,    // canonical 48 kHz PCM (VCONF); see docs/audio.md
     thumbnails_dir: Option<PathBuf>,
     file_hash_blake3: String,         // for relink-by-content + cache key
     file_size: u64,
@@ -172,6 +173,44 @@ same states as `checking`, `bridged`, `transcoding`, `failed`, `ready`, or
 Background derivative jobs may start before `file_hash_blake3` is final, keyed
 on a temporary `pending-{media_id}` hash that migrates to the content hash when
 the import copy finishes (ADR 0007).
+
+### Media kinds & import classification
+
+`kind` is decided at import by `io::probe::detect_kind`, ffprobe-first with an
+extension fallback:
+
+- A probed **video stream** means `Video` — except two ffprobe traps. Embedded
+  cover art (mp3/m4a/flac/ogg) probes as a video stream with
+  `disposition.attached_pic`; those streams are skipped entirely (neither kind
+  evidence nor metadata). And still images (png/jpg/webp/gif/bmp/tiff) probe as
+  a single-frame video stream; an image-codec stream counts as `Video` only
+  when it actually moves (demuxed `nb_frames > 1`, or a real duration — think
+  motion-JPEG). A multi-frame GIF is therefore `Video` on purpose: it routes
+  through the proxy pipeline and animates, where `Image` would freeze its
+  first frame.
+- A probed **audio stream** (and no counting video stream) means `Audio`.
+- No probe (ffprobe missing/unreadable) falls back to the extension lists
+  below; anything unrecognized defaults to `Video`.
+
+Supported formats per kind — the import dialog offers exactly these, and the
+extension fallback recognizes them plus `tif`/`tiff`:
+
+| Kind | Dialog extensions | Notes |
+| --- | --- | --- |
+| Video | mp4, mov, mkv, webm, avi, m4v | Decode routing per the proxy axes above; animated GIF lands here via probe. |
+| Audio | wav, mp3, flac, aac, m4a, ogg, opus | Anything ffmpeg decodes conforms; the VCONF cache is the only contract (docs/audio.md). |
+| Image | png, jpg/jpeg, gif, webp, bmp | Rendered from the ORIGINAL via `createImageBitmap` (no derivatives). Single-frame GIF renders static. |
+| Subtitle | srt, ass, vtt | Preview-only (JASSUB); not burned into exports. |
+
+TIFF classifies as `Image` when it arrives anyway (drag-drop / MCP take any
+path) but WebView2's `createImageBitmap` cannot decode it — the layer
+composites nothing — so the dialog doesn't offer it. SVG and AVIF are
+unsupported: unlisted extensions default to `Video` and won't produce a
+usable layer.
+
+Derivative jobs follow the kind: `Video` gets the proxy axes + waveform +
+conform + thumbnails; `Audio` gets waveform + conform only (ready as soon as
+the workspace copy lands — no proxy wait); `Image`/`Subtitle` get none.
 
 ## `Track`
 
