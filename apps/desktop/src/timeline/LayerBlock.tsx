@@ -96,7 +96,8 @@ export function LayerBlock({
   dragState: DragState | null;
   pendingPlacement: PendingLayerPlacement | null;
   /// Blade-tool mode: pointerdown splits at the click point instead
-  /// of selecting/dragging. Cursor is set by the timeline-root class.
+  /// of selecting/dragging. Cursor is set by the `timeline-root-blade`
+  /// class (styles.css) via the `timeline-layer` hook class below.
   bladeMode: boolean;
   onBladeSplit: (layer: LayerSummary, clientX: number) => void;
   onSelect: (id: string | null) => void;
@@ -284,9 +285,17 @@ export function LayerBlock({
         "shadow-[0_1px_2px_rgba(0,0,0,0.4)] transition-[outline,filter] duration-75",
         "hover:brightness-110",
         sliceClasses,
-        isSelected ? "z-[2] outline outline-2 -outline-offset-2 outline-ring" : "",
+        isSelected ? "z-[2]" : "",
         isDragging ? "z-[3] cursor-grabbing brightness-[1.15]" : "",
-        (layer.locked || trackLocked) ? "cursor-not-allowed outline outline-1 outline-dashed outline-black/50" : "",
+        // Outline conditionals are mutually exclusive so Tailwind's emit
+        // order never decides the conflict: the locked chrome trumps the
+        // selected chrome (matching the legacy cascade, where
+        // `.is-locked` was declared after `.is-selected`).
+        (layer.locked || trackLocked)
+          ? "cursor-not-allowed outline outline-1 outline-dashed outline-black/50"
+          : isSelected
+            ? "outline outline-2 -outline-offset-2 outline-ring"
+            : "",
         movedAcrossTracks ? "pointer-events-none" : "",
       ].join(" ")}
       style={{

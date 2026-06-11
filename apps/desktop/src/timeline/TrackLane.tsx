@@ -83,8 +83,7 @@ export function TrackLane({
   /// only here because they clicked a peek item.
   isRevealed: boolean;
   /// True while any track-height drag is in flight — keeps the resize
-  /// handle highlighted even when the pointer wanders off it mid-drag
-  /// (the legacy `.is-resizing-track .track-resize-handle` CSS rule).
+  /// handle highlighted even when the pointer wanders off it mid-drag.
   isResizing: boolean;
   onHeightDragStart: (e: React.PointerEvent) => void;
   fpsNum: number;
@@ -183,9 +182,15 @@ export function TrackLane({
     <div
       className={[
         "relative border-b border-border-soft bg-background",
-        isCrossTrackTarget ? "bg-secondary outline outline-1 outline-dashed -outline-offset-1 outline-primary" : "",
+        // Mutually exclusive so Tailwind's emit order never decides a
+        // bg/outline conflict: drop-target trumps revealed (matching
+        // the old `!important` precedence).
+        isCrossTrackTarget
+          ? "bg-secondary outline outline-1 outline-dashed -outline-offset-1 outline-primary"
+          : isRevealed
+            ? "outline outline-1 outline-dashed -outline-offset-1 outline-blue-400/55 bg-blue-400/5"
+            : "",
         isGroupStart ? "border-t border-t-border" : "",
-        isRevealed ? "outline outline-1 outline-dashed -outline-offset-1 outline-blue-400/55 bg-blue-400/5" : "",
       ].join(" ")}
       style={{ height }}
       onClick={(e) => {

@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { formatTimecode, frameDurUs } from "../frames";
 import { formatRulerLabel } from "./geometry";
 
-/// Time ruler that lives at the top of the scrollable `.timeline-root`,
+/// Time ruler that lives at the top of the scrollable timeline root,
 /// replacing the legacy 18 px playhead-strip padding. Width matches the
 /// canvas so horizontal scroll keeps ticks aligned with the layers
 /// below, and tick density scales with `pxPerSec`.
@@ -16,6 +16,19 @@ import { formatRulerLabel } from "./geometry";
 ///     SMPTE `HH:MM:SS:FF`, and minor ticks land at every single frame
 ///     regardless of major stride so the user has a visible frame
 ///     grid to align edits against.
+
+// Major-tick candidates: classic 1/2/5 decade ladder extended into
+// sub-second territory for high-zoom cases. Anything above 600 s
+// falls off the top of the ladder and clamps to 600.
+const NICE_STEPS_SEC = [
+  0.1, 0.2, 0.5, 1, 2, 5, 10, 30, 60, 120, 300, 600,
+] as const;
+const NICE_STEPS_FRAMES = [1, 2, 5, 10, 30] as const;
+const TARGET_MAJOR_PX = 100;
+const TARGET_MAJOR_PX_FRAME_MODE = 80;
+const SUBDIVISIONS = 5;
+const FRAME_MODE_THRESHOLD_PX = 12;
+
 export function TimelineRuler({
   pxPerSec,
   totalSec,
@@ -29,18 +42,6 @@ export function TimelineRuler({
   fpsNum: number;
   fpsDen: number;
 }) {
-  // Major-tick candidates: classic 1/2/5 decade ladder extended into
-  // sub-second territory for high-zoom cases. Anything above 600 s
-  // falls off the top of the ladder and clamps to 600.
-  const NICE_STEPS_SEC = [
-    0.1, 0.2, 0.5, 1, 2, 5, 10, 30, 60, 120, 300, 600,
-  ] as const;
-  const NICE_STEPS_FRAMES = [1, 2, 5, 10, 30] as const;
-  const TARGET_MAJOR_PX = 100;
-  const TARGET_MAJOR_PX_FRAME_MODE = 80;
-  const SUBDIVISIONS = 5;
-  const FRAME_MODE_THRESHOLD_PX = 12;
-
   const { items, majorSec, isFrameMode } = useMemo(() => {
     const fDur = frameDurUs(fpsNum, fpsDen);
     const pxPerFrame = (fDur / 1_000_000) * pxPerSec;
@@ -101,6 +102,20 @@ export function TimelineRuler({
   }, [pxPerSec, totalSec, fpsNum, fpsDen]);
 
   return (
+    /* Sizing notes (migrated from the legacy `.timeline-ruler` CSS):
+       - `h-5` (20 px) accommodates a 10 px label in the upper half and
+         4–8 px tick marks at the bottom; the playhead's `top: 2px` knob
+         (Timeline.tsx renders it `top-0.5`) still lands inside this
+         strip — keep the two coupled.
+       - `overflow-hidden` is load-bearing: the major label is
+         `whitespace-nowrap` at `left-[3px]` of an abs-positioned tick,
+         so the rightmost major's label would spill past widthPx and
+         inflate the parent's scrollWidth, leaving a few px of phantom
+         horizontal scroll at fit-zoom that the user can't get rid of by
+         zooming further. Same for the trailing-frame tick deliberately
+         rendered past `totalSec` ("visually it gets clipped by the
+         canvas width" below — this overflow clip is what actually
+         clips it). */
     <div
       className="relative h-5 flex-none select-none overflow-hidden border-b border-border-soft bg-card text-[10px] text-muted-foreground"
       style={{ width: widthPx }}

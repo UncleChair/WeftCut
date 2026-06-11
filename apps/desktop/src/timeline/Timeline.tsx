@@ -464,14 +464,14 @@ export function Timeline({
 
   return (
     <>
-    <div className="timeline-toolbar">
+    <div className="flex flex-none items-center gap-2 border-b border-border-soft bg-black/20 px-2 py-1 text-[11px]">
       <DisplayModePill mode={displayMode} />
     </div>
     <div
       ref={rootRef}
-      className={`timeline-root relative min-h-0 w-full flex-1 overflow-auto bg-background [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${
+      className={`relative min-h-0 w-full flex-1 overflow-auto bg-background [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${
         drag ? "cursor-grabbing select-none" : ""
-      } ${heightDrag ? "cursor-ns-resize select-none" : ""} ${bladeMode ? "is-blade-mode" : ""}`}
+      } ${heightDrag ? "cursor-ns-resize select-none" : ""} ${bladeMode ? "timeline-root-blade" : ""}`}
       onClick={() => onSelect(null)}
       onPointerDown={onCanvasPointerDown}
     >
@@ -586,7 +586,11 @@ function DisplayModePill({ mode }: { mode: "AbRoll" | "ShowAll" }) {
   return (
     <button
       type="button"
-      className={`timeline-mode-pill ${mode === "AbRoll" ? "is-ab" : ""}`}
+      className={`inline-flex cursor-pointer items-center gap-1 rounded-full border px-2.5 py-[3px] text-[11px] font-semibold tracking-wide transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring ${
+        mode === "AbRoll"
+          ? "border-blue-400/50 bg-blue-950 text-blue-100"
+          : "border-border bg-secondary text-foreground hover:bg-accent"
+      }`}
       onClick={() => {
         void toggleDisplayMode();
       }}
@@ -614,5 +618,5 @@ function EmptyHint({ mode }: { mode?: "AbRoll" | "ShowAll" }) {
             "No A/B-roll content here. Drop a clip on Video A or Video B, or click the A/B pill above to switch to Show All.",
         })
       : t("timeline.empty_placeholder");
-  return <div className="timeline-empty">{message}</div>;
+  return <div className="p-6 text-center text-xs text-muted-foreground">{message}</div>;
 }

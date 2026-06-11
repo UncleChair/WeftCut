@@ -28,7 +28,7 @@ function FlagButton({ active, activeClass, label, onToggle, children }: {
 /// One sticky header cell per track row: name + the eye/M/S/lock flag
 /// toggles. Flag changes go through the unrecorded `update_track_flags`
 /// path (never enter undo history); `onMutated` re-fetches the summary.
-/// pointerdown must not bubble into the timeline-root seek path.
+/// pointerdown must not bubble into the timeline root's seek path.
 export function TrackHeader({ track, height, isRevealed, isGroupStart, onMutated }: {
   track: TrackSummary;
   height: number;
