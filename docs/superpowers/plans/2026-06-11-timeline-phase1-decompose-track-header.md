@@ -1290,6 +1290,16 @@ New-behavior items: header column sticky on horizontal scroll; header click does
 
 Run the export/audio e2e suites per `docs/conformance.md` (wdio harness; msedgedriver must match WebView2 — see harness README). Expected: same pass rate as before this branch. The timeline refactor must not touch them — any new failure is a regression to fix before merge.
 
+- [ ] **Step 3.5: Phase-1 deferred follow-ups (recorded by the final review — for later phases/sessions, NOT this branch)**
+
+- **Per-layer `Layer.locked` delete/param-edit gap (pre-existing):** the actor's new locked-TRACK guards cover move/trim/split/delete/update_layer/update_layer_params, but a locked LAYER on an unlocked track can still be deleted / param-edited. A blanket layer-lock rejection in `apply_update_layer` would make a locked layer un-unlockable (update_layer is also the unlock path) — needs a deliberate design (e.g. allow `locked`-field-only patches through).
+- **Preview locked-layer audio divergence:** export drops locked layers' audio (mix.rs), preview plays them — recorded in `docs/audio.md` skip-rule 7; resolving it (probably by removing the export-side locked skip) is a behavior decision.
+- **Dead Phase-0 CSS:** `.timeline-grid` / `.timeline-track` (styles.css ~431/439) have zero consumers; candidate for a general dead-CSS pass.
+- **`timeline/types.ts` consolidation:** drag types live in LayerBlock.tsx, media-drag contract in TrackLane.tsx with the producer in App.tsx (now sharing `MEDIA_DRAG_TYPE`); a neutral `timeline/dnd.ts` + `makeMediaDrag` serializer would lock the payload shape in one place.
+- **V.10 stub inlining:** `trackAcceptsMedia`/`trackAcceptsMediaForAutoRoute` (Timeline.tsx) and `trackAcceptsForLayer` (useLayerDrag.ts) are always-constant stubs awaiting the promised inline-away cleanup.
+- **`formatRulerLabel` centisecond carry bug (pre-existing, unreachable from the ruler):** `formatRulerLabel(1.999, 0.5)` → `"0:01.100"` (cs rounds to 100 without carrying into seconds).
+- **UX polish ideas from reviews:** per-handle resize highlight (`heightDrag?.trackId === track.id`); locked-layer right-click could offer "Unlock track"; optimistic flag-button UI; eye-off currently freezes interaction (`pointer-events-none`) beyond the spec's 40%-dim — deliberate v1, revisit if users want to edit hidden tracks.
+
 - [ ] **Step 4: Update docs**
 
 `docs/` is evergreen (no phase numbers / dates in design docs): if any doc describes the old timeline layout (grep `docs/` for "track label" / timeline structure mentions — likely `docs/data-model.md` R.5b ruler/toolbar notes), update the description to the two-column layout + track-header controls. Commit doc changes separately:
