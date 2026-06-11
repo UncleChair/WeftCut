@@ -355,6 +355,8 @@ pub enum CommandError {
     TrackNotEmpty { track: TrackId },
     #[error("track {track} is not removable (default A-roll/B-roll)")]
     TrackNotRemovable { track: TrackId },
+    #[error("track {track} is locked")]
+    TrackLocked { track: TrackId },
     #[error("split point {at_t}us is outside layer {layer} bounds")]
     SplitOutsideLayer { layer: LayerId, at_t: TimeUs },
     #[error(
@@ -3580,9 +3582,27 @@ pub(crate) fn apply_move_layer(
     let new_t_start_us =
         crate::state::time::snap_frame_round(new_t_start_us, project.composition.fps);
     // Locate the target layer to compute the delta before we mutate anything.
-    let cur_start = locate_layer(project, id)
-        .map(|(ti, li)| project.tracks[ti].layers[li].t_start_us)
-        .ok_or(CommandError::LayerNotFound { layer: id })?;
+    let (src_ti, _) = locate_layer(project, id).ok_or(CommandError::LayerNotFound { layer: id })?;
+    let cur_start = project.tracks[src_ti].layers
+        .iter()
+        .find(|l| l.id == id)
+        .map(|l| l.t_start_us)
+        .expect("layer verified above");
+    // Reject if the source track is locked.
+    {
+        let src_track = &project.tracks[src_ti];
+        if src_track.locked {
+            return Err(CommandError::TrackLocked { track: src_track.id });
+        }
+    }
+    // Reject if the destination track is locked (cross-track move).
+    if new_track_id != project.tracks[src_ti].id {
+        if let Some(dst) = project.tracks.iter().find(|t| t.id == new_track_id) {
+            if dst.locked {
+                return Err(CommandError::TrackLocked { track: new_track_id });
+            }
+        }
+    }
     let delta = new_t_start_us - cur_start;
 
     // If grouped & not escaped, identify the sibling members we'll shift and
@@ -3780,10 +3800,15 @@ pub(crate) fn apply_split_layer(
 ) -> Result<(LayerId, LayerId), CommandError> {
     // Snap on entry — storage invariant per apply_add_layer.
     let at_t_us = crate::state::time::snap_frame_round(at_t_us, project.composition.fps);
-    // Pre-flight on the target: existence + valid split point.
+    // Pre-flight on the target: existence + valid split point + track not locked.
     {
         let (ti, li) = locate_layer(project, id).ok_or(CommandError::LayerNotFound { layer: id })?;
-        let l = &project.tracks[ti].layers[li];
+        // Reject if the owning track is locked.
+        let track = &project.tracks[ti];
+        if track.locked {
+            return Err(CommandError::TrackLocked { track: track.id });
+        }
+        let l = &track.layers[li];
         if at_t_us <= l.t_start_us || at_t_us >= l.t_end_us {
             return Err(CommandError::SplitOutsideLayer { layer: id, at_t: at_t_us });
         }
@@ -3918,6 +3943,13 @@ pub(crate) fn apply_trim_layer(
     // Snap on entry — storage invariant per apply_add_layer.
     let new_t_us = crate::state::time::snap_frame_round(new_t_us, project.composition.fps);
     let (ti, li) = locate_layer(project, id).ok_or(CommandError::LayerNotFound { layer: id })?;
+    // Reject if the owning track is locked.
+    {
+        let track = &project.tracks[ti];
+        if track.locked {
+            return Err(CommandError::TrackLocked { track: track.id });
+        }
+    }
     let target = &project.tracks[ti].layers[li];
     let cur_start = target.t_start_us;
     let cur_end = target.t_end_us;
@@ -9072,5 +9104,78 @@ mod tests {
             layer.t_end_us <= layer.t_start_us + 2_000_000,
             "t_end_us must be within new content window"
         );
+    }
+
+    // ============================================================
+    // Task 10: locked tracks reject layer mutations.
+    // ============================================================
+
+    #[tokio::test]
+    async fn locked_track_rejects_layer_mutations() {
+        // Use project_with_video_track() so we have a single clean track.
+        let (project, track_id) = project_with_video_track();
+        let h = spawn(project);
+
+        // Add a color layer spanning [0, 2_000_000) so trim + split have room.
+        let layer_id = h
+            .add_layer(Actor::User, track_id, color_layer(Rgba::WHITE), 0, 2_000_000)
+            .await
+            .expect("add_layer");
+
+        // Lock the track.
+        h.update_track_flags(
+            Actor::User,
+            track_id,
+            TrackFlagsPatch { enabled: None, muted: None, solo: None, locked: Some(true) },
+        )
+        .await
+        .expect("lock track");
+
+        // move — same track, new position: must be rejected.
+        let res = h.move_layer(Actor::User, layer_id, track_id, 500_000, false).await;
+        assert!(
+            matches!(res, Err(CommandError::TrackLocked { .. })),
+            "move on locked track must return TrackLocked, got {res:?}"
+        );
+
+        // trim — must be rejected.
+        let res = h.trim_layer(Actor::User, layer_id, LayerEdge::In, 200_000, false).await;
+        assert!(
+            matches!(res, Err(CommandError::TrackLocked { .. })),
+            "trim on locked track must return TrackLocked, got {res:?}"
+        );
+
+        // split — at 1_000_000 which is inside [0, 2_000_000): must be rejected.
+        let res = h.split_layer(Actor::User, layer_id, 1_000_000, false).await;
+        assert!(
+            matches!(res, Err(CommandError::TrackLocked { .. })),
+            "split on locked track must return TrackLocked, got {res:?}"
+        );
+
+        // Cross-track move ONTO a locked track: add an unlocked source track,
+        // add a layer there, then try to move it onto the locked track_id.
+        let src_track = h
+            .add_track(Actor::User, Some("src".into()))
+            .await
+            .expect("add src track");
+        let src_layer = h
+            .add_layer(Actor::User, src_track, color_layer(Rgba::BLACK), 0, 1_000_000)
+            .await
+            .expect("add src layer");
+        let res = h.move_layer(Actor::User, src_layer, track_id, 0, false).await;
+        assert!(
+            matches!(res, Err(CommandError::TrackLocked { .. })),
+            "cross-track move onto locked destination must return TrackLocked, got {res:?}"
+        );
+
+        // Verify the original layer is untouched (still at t_start=0).
+        let snap = h.snapshot().await;
+        let layer = snap
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .find(|l| l.id == layer_id)
+            .expect("original layer must still exist");
+        assert_eq!(layer.t_start_us, 0, "locked layer must not have moved");
     }
 }
