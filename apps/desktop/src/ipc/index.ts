@@ -790,6 +790,22 @@ export async function updateLayer(layerId: string, patch: LayerPatch): Promise<v
   return invoke<void>("update_layer", { layerId, patch });
 }
 
+export interface TrackFlagsPatch {
+  enabled?: boolean;
+  muted?: boolean;
+  solo?: boolean;
+  locked?: boolean;
+}
+
+/// Unrecorded toggle path (timeline redesign spec §3): eye/M/S/lock changes
+/// never enter undo history; the actor patches every history snapshot instead.
+export async function updateTrackFlags(
+  trackId: string,
+  patch: TrackFlagsPatch,
+): Promise<void> {
+  return invoke<void>("update_track_flags", { trackId, patch });
+}
+
 export async function updateLayerParams(
   layerId: string,
   patch: LayerParamsPatch,

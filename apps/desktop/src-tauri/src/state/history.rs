@@ -17,9 +17,9 @@ use serde::{Deserialize, Serialize};
 
 use super::actor::{Actor, EntityRef};
 use super::composition::Composition;
-use super::ids::{CheckpointId, MediaId, OpId, new_id};
+use super::ids::{CheckpointId, MediaId, OpId, TrackId, new_id};
 use super::media::MediaItem;
-use super::project::{Project, ProjectSettings};
+use super::project::{Project, ProjectSettings, TrackFlagsPatch};
 
 pub const DEFAULT_CAP: usize = 200;
 
@@ -273,6 +273,24 @@ impl History {
         }
     }
 
+    /// Patch one track's preference-shaped flags into EVERY snapshot
+    /// (history + checkpoints) so undo/redo never flips them — same
+    /// contract as `replace_settings_everywhere`. Only `Some(_)` fields
+    /// are applied. Snapshots from before the track existed (or after it
+    /// was deleted) are left alone.
+    pub fn replace_track_flags_everywhere(&mut self, track_id: TrackId, patch: &TrackFlagsPatch) {
+        for entry in self.snapshots.iter_mut() {
+            if let Some(p) = apply_track_flags(&entry.snapshot, track_id, patch) {
+                entry.snapshot = Arc::new(p);
+            }
+        }
+        for cp in self.checkpoints.values_mut() {
+            if let Some(p) = apply_track_flags(&cp.snapshot, track_id, patch) {
+                cp.snapshot = Arc::new(p);
+            }
+        }
+    }
+
     /// Discard the existing stack and checkpoints, seeding a fresh history
     /// with `initial` as the sole entry. Used by `replace_state` when a
     /// different project is loaded — the old project's snapshots and
@@ -295,6 +313,34 @@ impl History {
         // ephemeral and shouldn't survive into a different project.
         self.lock = None;
     }
+}
+
+/// Apply `patch` to track `track_id` inside a clone of `snapshot`,
+/// returning the patched project — or `None` when the track doesn't
+/// exist in this snapshot (leave it alone). Used by
+/// `replace_track_flags_everywhere`.
+fn apply_track_flags(
+    snapshot: &Arc<Project>,
+    track_id: TrackId,
+    patch: &TrackFlagsPatch,
+) -> Option<Project> {
+    let idx = snapshot.tracks.iter().position(|t| t.id == track_id)?;
+    let mut p = (**snapshot).clone();
+    let mut track = p.tracks[idx].clone();
+    if let Some(v) = patch.enabled {
+        track.enabled = v;
+    }
+    if let Some(v) = patch.muted {
+        track.muted = v;
+    }
+    if let Some(v) = patch.solo {
+        track.solo = v;
+    }
+    if let Some(v) = patch.locked {
+        track.locked = v;
+    }
+    p.tracks.set(idx, track);
+    Some(p)
 }
 
 /// Copy the canvas-only fields (everything except `duration_us` and
