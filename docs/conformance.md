@@ -23,8 +23,10 @@ apps/desktop/e2e/
   specs/
     conformance.e2e.js           # video frame alignment + SSIM gate
     audio_conformance.e2e.js     # audio matrix gate
+    audio_formats.e2e.js         # audio-ONLY source matrix gate
     export_range_audio.e2e.js    # range + audio-settings gate
     color_conformance.e2e.js     # color patch gate
+    image_support.e2e.js         # still-image + gif support gate
   lib/analyze.mjs                # Node wrapper around Rust analyzer
 apps/desktop/src-tauri/src/bin/
   media_conformance.rs           # ffmpeg-backed analyzer binary
@@ -47,6 +49,9 @@ clips before the suite runs. Requires `go` and `ffmpeg` on PATH.
 | Color patches | `test_1080p_color_{709ltd,601ltd,709full,601full}.mp4` + `color_manifest.json` | `color_conformance.e2e.js` |
 | 10-bit gradient | `test_1080p_gradient10.mp4` | gradient baseline / proxy-fidelity probes |
 | ProRes MOV | `test_1080p_30fps_prores.mov` | import routing smoke (not a conformance gate) |
+| Still-image chart set | `test_chart_320x240.{png,jpg,webp,bmp,gif,tiff}` + `_manifest.json` | `image_support.e2e.js` |
+| Audio-only tone files | `test_tones_10s.{wav,mp3,flac,m4a,ogg}` (mp3 embeds cover art) | `audio_formats.e2e.js` |
+| Animated GIF | `test_1080p_10fps.gif` | `image_support.e2e.js` (Video-routing leg) |
 
 The generator, matrix script, baselines, and `.gitkeep` are tracked. Generated
 media is written to the repo-local `apps/desktop/e2e/fixtures/media` directory
@@ -88,6 +93,21 @@ and mux pipeline.
 range export trims audio at the requested source time, exercises AAC/Opus and
 muted export settings, and checks the software video-encoder path with frame
 alignment diagnostics.
+
+`audio_formats.e2e.js` runs audio-ONLY sources (wav/mp3/flac/m4a/ogg tone
+files) through import → conform → Audio layer → export mix and verifies the
+same tone markers. The format RANGE itself is pinned cheaply by the Rust unit
+matrix (`jobs::conform::tests::conform_format_matrix_against_real_ffmpeg`);
+this gate proves the audio-only pipeline. The mp3 fixture embeds attached_pic
+cover art — the regression fixture for `probe::detect_kind`'s cover-art skip.
+
+`image_support.e2e.js` imports the color-patch chart in every dialog-offered
+still format, places ImageOverlays, and samples patch centers off the live
+composite (the same `fetch` → `createImageBitmap` → Pixi texture path export
+uses). TIFF is asserted as the documented-unsupported negative (composites
+nothing); the animated GIF leg asserts multi-frame GIF classifies as Video and
+reaches an export-ready proxy route. Classification itself is unit-pinned in
+`io::probe::tests` (captured ffprobe JSON + a real-ffprobe integration test).
 
 `color_conformance.e2e.js` exports the color patch fixtures and compares
 perceptual app-only color error. Limited-range 709/601 encodings are expected
