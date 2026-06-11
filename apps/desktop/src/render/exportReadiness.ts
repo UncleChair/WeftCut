@@ -5,7 +5,7 @@
 //
 // See docs/data-model.md#mediaitem and docs/render.md#export-source-resolution.
 
-import type { MediaSummary } from "../ipc";
+import { MEDIA_JOB_EVENTS, type MediaJobEvent, type MediaSummary } from "../ipc";
 
 /// Session probe memo value. "ok" = decoded a key frame this session (cache
 /// hit, skip re-probe). "pending" = a probe is in flight (avoid double-probe).
@@ -142,6 +142,93 @@ export interface WaitDeps {
   /// Subscribe to proxy-job errors by media id; returns an unsubscribe fn.
   onProxyError: (cb: (mediaId: string) => void) => () => void;
   signal: AbortSignal;
+}
+
+/// Listener-shaped dependency: subscribe to a Tauri event, resolve to an
+/// unlisten fn. Matches `@tauri-apps/api/event`'s `listen`.
+export type ListenLike = <T>(
+  event: string,
+  cb: (e: { payload: T }) => void,
+) => Promise<() => void>;
+
+export interface ConformTracker {
+  /// Resolves once both job listeners are registered. Invoke the readiness
+  /// command (`ensure_export_audio_conform`) only AFTER this — a fast conform
+  /// job completing between enqueue and registration would otherwise be
+  /// missed and the wait would hang.
+  ready: Promise<void>;
+  /// Resolves when every id has landed a `kind=conform` job completion since
+  /// the tracker was created; rejects ExportProxyFailed when a still-pending
+  /// id's conform job errors, ExportCancelled when the signal aborts. One
+  /// wait at a time.
+  waitFor(ids: string[], signal: AbortSignal): Promise<void>;
+  dispose(): void;
+}
+
+/// Tracks conform job completions/errors by media id. The store can't carry
+/// this wait: a stale `conform_path` (cache file deleted) is non-null both
+/// before AND after the re-conform, so only the job event marks readiness.
+export function createConformTracker(listen: ListenLike): ConformTracker {
+  const landed = new Set<string>();
+  const failed = new Set<string>();
+  let notify: (() => void) | null = null;
+  const unsubs: Array<() => void> = [];
+  let disposed = false;
+  const ready = Promise.all([
+    listen<MediaJobEvent>(MEDIA_JOB_EVENTS.complete, (e) => {
+      if (e.payload.kind !== "conform") return;
+      landed.add(e.payload.media_id);
+      notify?.();
+    }),
+    listen<MediaJobEvent>(MEDIA_JOB_EVENTS.error, (e) => {
+      if (e.payload.kind !== "conform") return;
+      failed.add(e.payload.media_id);
+      notify?.();
+    }),
+  ]).then((us) => {
+    if (disposed) for (const u of us) u();
+    else unsubs.push(...us);
+  });
+  return {
+    ready,
+    waitFor(ids, signal) {
+      return new Promise<void>((resolve, reject) => {
+        const pending = new Set(ids);
+        const settle = (fn: () => void) => {
+          notify = null;
+          signal.removeEventListener("abort", onAbort);
+          fn();
+        };
+        const onAbort = () => settle(() => reject(new ExportCancelled()));
+        const check = () => {
+          for (const id of [...pending]) if (landed.has(id)) pending.delete(id);
+          if (pending.size === 0) {
+            settle(resolve);
+            return;
+          }
+          // landed wins over failed: a retry's success supersedes the error.
+          for (const id of pending) {
+            if (failed.has(id)) {
+              settle(() => reject(new ExportProxyFailed(id)));
+              return;
+            }
+          }
+        };
+        if (signal.aborted) {
+          reject(new ExportCancelled());
+          return;
+        }
+        signal.addEventListener("abort", onAbort);
+        notify = check;
+        check();
+      });
+    },
+    dispose() {
+      disposed = true;
+      notify = null;
+      for (const u of unsubs) u();
+    },
+  };
 }
 
 /// Resolves when every id has a ready export path in the store; rejects with
