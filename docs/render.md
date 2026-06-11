@@ -26,7 +26,7 @@ final mux see [`rendering.md`](rendering.md).
 ```
 apps/desktop/src/render/
   Compositor.ts              — PixiJS Application owner; per-frame composite
-  clock.ts                   — synthetic clock + Web Audio drift correction
+  clock.ts                   — audio-master clock (anchor-derived; wall fallback)
   PlaybackEngine.ts          — transport (play/pause/seek/scrub)
   decoder/
     SourceDecoderPool.ts     — per-clip VideoDecoder + ring; refcounted shared mediabunny Input per source; idle-dispose
