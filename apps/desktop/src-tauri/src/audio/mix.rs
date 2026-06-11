@@ -8,11 +8,12 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
+use uuid::Uuid;
 
 use crate::audio::conform_reader::ConformReader;
 use crate::audio::envelope::{Envelope, pan_frame, sample_gain, sample_pan};
 use crate::state::Project;
-use crate::state::layer::LayerParams;
+use crate::state::layer::{AudioParams, Layer, LayerParams};
 
 pub const MIX_SAMPLE_RATE: i64 = 48_000;
 pub const MIX_BLOCK_FRAMES: usize = 65_536;
@@ -61,30 +62,22 @@ pub enum PlanError {
     MissingMedia(String),
 }
 
-/// Walk every enabled, non-muted, non-locked Audio layer — applying
-/// track-level gates (mute and solo) before layer-level gates — and
-/// resolve envelopes. When any enabled track is soloed, only soloed
-/// tracks contribute to the plan; mute wins over solo.
-pub fn plan_for_project(
-    project: &Project,
-    window_us: Option<(i64, i64)>,
-) -> Result<MixPlan, PlanError> {
-    let (w_start_us, w_end_us) = window_us.unwrap_or((0, project.composition.duration_us));
-    let mut layers = Vec::new();
+/// Every audible audio layer in track order: track gates (enabled, mute,
+/// solo — mute wins over solo, disabled tracks' solo flags don't gate),
+/// layer gates (enabled, unlocked, unmuted), and the half-open window
+/// overlap. Shared by `plan_for_project` and `conform_waiting_media` so the
+/// export-readiness gate and the mix plan can never disagree on selection.
+fn audible_audio_layers<'a>(
+    project: &'a Project,
+    w_start_us: i64,
+    w_end_us: i64,
+) -> Vec<(&'a Layer, &'a AudioParams)> {
     // Track-level solo set (timeline redesign spec §3): when any ENABLED
-    // track is soloed, only soloed tracks are audible. Disabled tracks'
-    // solo flags don't gate the mix.
+    // track is soloed, only soloed tracks are audible.
     let any_solo = project.tracks.iter().any(|t| t.enabled && t.solo);
+    let mut out = Vec::new();
     for track in project.tracks.iter() {
-        if !track.enabled {
-            continue;
-        }
-        // Track-level audio gates (spec §3). Mute wins over solo; an
-        // empty solo set takes the normal path.
-        if track.muted {
-            continue;
-        }
-        if any_solo && !track.solo {
+        if !track.enabled || track.muted || (any_solo && !track.solo) {
             continue;
         }
         for layer in track.layers.iter() {
@@ -97,41 +90,94 @@ pub fn plan_for_project(
             if p.mute {
                 continue;
             }
-            let media = project
-                .media_pool
-                .get(&p.media)
-                .ok_or_else(|| PlanError::MissingMedia(p.media.to_string()))?;
-            let label = media
-                .label
-                .clone()
-                .unwrap_or_else(|| media.path_abs.display().to_string());
-            let conform_path = media
-                .conform_path
-                .clone()
-                .filter(|c| crate::cache::cached_ok(c))
-                .ok_or_else(|| PlanError::ConformMissing(label.clone()))?;
-            let span_us = p.src_out_us - p.src_in_us;
-            layers.push(MixLayer {
-                label,
-                conform_path,
-                start_frame: us_to_frame(layer.t_start_us),
-                src_in_frame: us_to_frame(p.src_in_us),
-                src_out_frame: us_to_frame(p.src_out_us),
-                gain: sample_gain(
-                    &p.gain_db,
-                    p.fade_in_us as i64,
-                    p.fade_out_us as i64,
-                    span_us,
-                ),
-                pan: sample_pan(&p.pan, span_us),
-            });
+            // Window gate (half-open [w_start, w_end)): a layer the mix will
+            // never read must neither require a conform cache nor occupy a
+            // reader slot — otherwise a range export hard-errors
+            // (ConformMissing) on clips entirely outside the range.
+            if layer.t_end_us <= w_start_us || layer.t_start_us >= w_end_us {
+                continue;
+            }
+            out.push((layer, p));
         }
+    }
+    out
+}
+
+/// Walk every audible Audio layer (see `audible_audio_layers`) and resolve
+/// envelopes into a `MixPlan`.
+pub fn plan_for_project(
+    project: &Project,
+    window_us: Option<(i64, i64)>,
+) -> Result<MixPlan, PlanError> {
+    let (w_start_us, w_end_us) = window_us.unwrap_or((0, project.composition.duration_us));
+    let mut layers = Vec::new();
+    for (layer, p) in audible_audio_layers(project, w_start_us, w_end_us) {
+        let media = project
+            .media_pool
+            .get(&p.media)
+            .ok_or_else(|| PlanError::MissingMedia(p.media.to_string()))?;
+        let label = media
+            .label
+            .clone()
+            .unwrap_or_else(|| media.path_abs.display().to_string());
+        let conform_path = media
+            .conform_path
+            .clone()
+            .filter(|c| crate::cache::cached_ok(c))
+            .ok_or_else(|| PlanError::ConformMissing(label.clone()))?;
+        let span_us = p.src_out_us - p.src_in_us;
+        layers.push(MixLayer {
+            label,
+            conform_path,
+            start_frame: us_to_frame(layer.t_start_us),
+            src_in_frame: us_to_frame(p.src_in_us),
+            src_out_frame: us_to_frame(p.src_out_us),
+            gain: sample_gain(
+                &p.gain_db,
+                p.fade_in_us as i64,
+                p.fade_out_us as i64,
+                span_us,
+            ),
+            pan: sample_pan(&p.pan, span_us),
+        });
     }
     Ok(MixPlan {
         window_start_frame: us_to_frame(w_start_us),
         window_end_frame: us_to_frame(w_end_us),
         layers,
     })
+}
+
+/// Media ids (deduped, first-appearance order) of audible in-window audio
+/// layers whose conform cache is absent or fails `cached_ok` — exactly the
+/// set `plan_for_project` would `ConformMissing` on. The export-readiness
+/// gate waits on these (kicking `ensure_conform`) before the audio stage.
+/// Media without an audio stream can never conform and are excluded;
+/// `plan_for_project` remains the backstop for that pathological case.
+pub fn conform_waiting_media(project: &Project, window_us: Option<(i64, i64)>) -> Vec<Uuid> {
+    let (w_start_us, w_end_us) = window_us.unwrap_or((0, project.composition.duration_us));
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for (_, p) in audible_audio_layers(project, w_start_us, w_end_us) {
+        if !seen.insert(p.media) {
+            continue;
+        }
+        let Some(media) = project.media_pool.get(&p.media) else {
+            continue; // plan_for_project reports MissingMedia
+        };
+        if media.metadata.audio.is_none() {
+            continue;
+        }
+        let ready = media
+            .conform_path
+            .as_deref()
+            .map(crate::cache::cached_ok)
+            .unwrap_or(false);
+        if !ready {
+            out.push(p.media);
+        }
+    }
+    out
 }
 
 /// Sum one output block (stereo interleaved f32) starting at absolute
@@ -180,7 +226,7 @@ mod tests {
     use crate::audio::conform_reader::{ConformReader, write_vconf};
     use crate::state::animated::Animated;
     use crate::state::layer::{AudioParams, Layer, LayerParams};
-    use crate::state::media::{MediaItem, MediaKind, MediaMetadata};
+    use crate::state::media::{AudioStreamMeta, MediaItem, MediaKind, MediaMetadata};
     use crate::state::project::{Project, ProjectMetadata, ProjectSettings, SCHEMA_VERSION};
     use crate::state::track::Track;
     use tempfile::TempDir;
@@ -299,7 +345,15 @@ mod tests {
                     path_abs: conform.clone(),
                     path_rel: None,
                     kind: MediaKind::Audio,
-                    metadata: MediaMetadata::default(),
+                    metadata: MediaMetadata {
+                        duration_us: Some(1_000_000),
+                        video: None,
+                        audio: Some(AudioStreamMeta {
+                            sample_rate: 48_000,
+                            channels: 1,
+                            codec: "pcm_f32le".into(),
+                        }),
+                    },
                     proxy_path: None,
                     proxy_format_version: 0,
                     quick_proxy_path: None,
@@ -368,6 +422,14 @@ mod tests {
         media_pool.insert(media_id_a, make_media(media_id_a, conform_a));
         media_pool.insert(media_id_b, make_media(media_id_b, conform_b));
 
+        // Real projects keep duration_us ≥ max(layer.t_end_us) (the ADR 0005
+        // autofit guard holds even when pinned); the window gate relies on it
+        // for the `None` ⇒ whole-project window.
+        let composition = crate::state::composition::Composition {
+            duration_us: 10_000_000,
+            ..Default::default()
+        };
+
         Project {
             schema_version: SCHEMA_VERSION,
             project_id: uuid::Uuid::new_v4(),
@@ -377,7 +439,7 @@ mod tests {
                 modified_at: now,
                 description: None,
             },
-            composition: crate::state::composition::Composition::default(),
+            composition,
             media_pool,
             tracks: imbl::vector![track_a, track_b],
             markers: imbl::Vector::new(),
@@ -442,6 +504,120 @@ mod tests {
         project.tracks[0].muted = true;
         let plan = plan_for_project(&project, None).unwrap();
         assert_eq!(plan.layers.len(), 0, "mute wins over solo; nothing plays");
+    }
+
+    // ── conform_waiting_media ────────────────────────────────────────────────
+
+    /// Media id behind the (single) audio layer of `project.tracks[track]`.
+    fn layer_media(project: &Project, track: usize) -> uuid::Uuid {
+        let LayerParams::Audio(p) = &project.tracks[track].layers[0].params else {
+            unreachable!("fixture tracks carry audio layers");
+        };
+        p.media
+    }
+
+    #[test]
+    fn waiting_lists_unconformed_in_window_media() {
+        let tmp = TempDir::new().unwrap();
+        let project = two_audio_tracks_project(tmp.path());
+        assert!(
+            conform_waiting_media(&project, None).is_empty(),
+            "everything conformed ⇒ nothing to wait on"
+        );
+        std::fs::remove_file(tmp.path().join("b.conform")).unwrap();
+        assert_eq!(
+            conform_waiting_media(&project, None),
+            vec![layer_media(&project, 1)],
+            "track B's media lost its conform cache"
+        );
+    }
+
+    #[test]
+    fn waiting_skips_out_of_window_and_gated_layers() {
+        let tmp = TempDir::new().unwrap();
+        let mut project = two_audio_tracks_project(tmp.path());
+        std::fs::remove_file(tmp.path().join("b.conform")).unwrap();
+        // Out of window: the plan never reads it, so the gate never waits.
+        project.tracks[1].layers[0].t_start_us = 2_000_000;
+        project.tracks[1].layers[0].t_end_us = 3_000_000;
+        assert!(conform_waiting_media(&project, Some((0, 1_000_000))).is_empty());
+        project.tracks[1].layers[0].t_start_us = 0;
+        project.tracks[1].layers[0].t_end_us = 1_000_000;
+        // Muted track.
+        project.tracks[1].muted = true;
+        assert!(conform_waiting_media(&project, None).is_empty());
+        project.tracks[1].muted = false;
+        // Locked layer.
+        project.tracks[1].layers[0].locked = true;
+        assert!(conform_waiting_media(&project, None).is_empty());
+        project.tracks[1].layers[0].locked = false;
+        // Solo'd out by track A.
+        project.tracks[0].solo = true;
+        assert!(conform_waiting_media(&project, None).is_empty());
+    }
+
+    #[test]
+    fn waiting_dedups_media_and_skips_streamless() {
+        let tmp = TempDir::new().unwrap();
+        let mut project = two_audio_tracks_project(tmp.path());
+        std::fs::remove_file(tmp.path().join("b.conform")).unwrap();
+        // A second layer of the same media ⇒ still one waiting entry.
+        let mut extra = project.tracks[1].layers[0].clone();
+        extra.id = uuid::Uuid::new_v4();
+        project.tracks[1].layers.push_back(extra);
+        assert_eq!(conform_waiting_media(&project, None).len(), 1);
+        // Media with no audio stream can never conform ⇒ excluded from the
+        // wait set (plan_for_project's ConformMissing stays the backstop).
+        let id_b = layer_media(&project, 1);
+        let mut media_b = project.media_pool.get(&id_b).unwrap().clone();
+        media_b.metadata.audio = None;
+        project.media_pool.insert(id_b, media_b);
+        assert!(conform_waiting_media(&project, None).is_empty());
+    }
+
+    // ── plan_for_project window gating ──────────────────────────────────────
+
+    #[test]
+    fn plan_skips_unconformed_layer_outside_window() {
+        let tmp = TempDir::new().unwrap();
+        let mut project = two_audio_tracks_project(tmp.path());
+        // Track B's layer sits past the window and its conform cache is gone.
+        // A window-limited plan must neither error on it nor include it — the
+        // mix will never read a frame of it.
+        project.tracks[1].layers[0].t_start_us = 2_000_000;
+        project.tracks[1].layers[0].t_end_us = 3_000_000;
+        std::fs::remove_file(tmp.path().join("b.conform")).unwrap();
+        let plan = plan_for_project(&project, Some((0, 1_000_000))).unwrap();
+        assert_eq!(plan.layers.len(), 1, "only the in-window layer plans");
+        assert_eq!(plan.layers[0].conform_path, tmp.path().join("a.conform"));
+    }
+
+    #[test]
+    fn plan_errors_on_unconformed_layer_inside_window() {
+        let tmp = TempDir::new().unwrap();
+        let project = two_audio_tracks_project(tmp.path());
+        std::fs::remove_file(tmp.path().join("b.conform")).unwrap();
+        let err = plan_for_project(&project, Some((0, 1_000_000))).unwrap_err();
+        assert!(matches!(err, PlanError::ConformMissing(_)));
+    }
+
+    #[test]
+    fn window_overlap_is_half_open() {
+        let tmp = TempDir::new().unwrap();
+        let mut project = two_audio_tracks_project(tmp.path());
+        // Track B's layer at [1s, 2s); track A's stays at [0, 1s).
+        project.tracks[1].layers[0].t_start_us = 1_000_000;
+        project.tracks[1].layers[0].t_end_us = 2_000_000;
+        // Window [0, 1s): B's t_start == window end ⇒ B excluded.
+        let plan = plan_for_project(&project, Some((0, 1_000_000))).unwrap();
+        assert_eq!(plan.layers.len(), 1, "t_start == w_end is no overlap");
+        // Window [2s, 3s): B's t_end == window start ⇒ both excluded.
+        let plan = plan_for_project(&project, Some((2_000_000, 3_000_000))).unwrap();
+        assert_eq!(plan.layers.len(), 0, "t_end == w_start is no overlap");
+        // Window [1.5s, 2.5s): genuine partial overlap ⇒ B included.
+        let plan = plan_for_project(&project, Some((1_500_000, 2_500_000))).unwrap();
+        assert_eq!(plan.layers.len(), 1, "partial overlap plans the layer");
+        assert_eq!(plan.layers[0].conform_path, tmp.path().join("b.conform"));
     }
 
     #[test]

@@ -2533,6 +2533,36 @@ pub async fn ensure_conform(
     Ok(())
 }
 
+/// Export-readiness audio gate: media ids of audible in-window audio layers
+/// whose conform cache is absent or invalid (`conform_waiting_media`), with a
+/// conform job kicked for each. The frontend holds the export in "preparing"
+/// until a `media:job_complete kind=conform` lands for every returned id.
+/// Selection mirrors the mix plan's exactly, so the gate can neither
+/// over-wait (muted / solo'd-out / locked / out-of-window layers) nor
+/// under-wait (stale `conform_path` whose cache file is gone).
+#[tauri::command]
+pub async fn ensure_export_audio_conform(
+    app: tauri::AppHandle,
+    cache: State<'_, crate::cache::CacheLayout>,
+    handle: State<'_, ProjectHandle>,
+    start_us: Option<i64>,
+    end_us: Option<i64>,
+) -> Result<Vec<String>, String> {
+    let snap = handle.snapshot().await;
+    let window = match (start_us, end_us) {
+        (Some(s), Some(e)) => Some((s, e)),
+        _ => None,
+    };
+    let waiting = crate::audio::mix::conform_waiting_media(&snap, window);
+    for id in &waiting {
+        let Some(item) = snap.media_pool.get(id).cloned() else {
+            continue;
+        };
+        crate::jobs::enqueue_conform(app.clone(), (*cache).clone(), (*handle).clone(), item);
+    }
+    Ok(waiting.iter().map(|u| u.to_string()).collect())
+}
+
 /// Read the cached peaks file for `media_id` and return the f32 array plus the
 /// peaks-per-second rate the timeline needs to map a layer's src window onto
 /// a slice of the peaks. Errors with `not_ready` if the waveform job hasn't
