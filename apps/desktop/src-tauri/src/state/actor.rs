@@ -3218,6 +3218,21 @@ pub(crate) fn apply_add_layer(
     Ok(layer_id)
 }
 
+/// Reject if the track owning `id` is locked. Shared early guard for the
+/// per-layer write paths — locked tracks are a hard "don't touch" promise
+/// actor-side, so every mutation entry point (delete / envelope update /
+/// params update, alongside the move/trim/split guards) must bounce before
+/// touching anything. Maps a missing layer to `LayerNotFound`, matching the
+/// callers' existing not-found semantics.
+fn check_track_lock(project: &Project, id: LayerId) -> Result<(), CommandError> {
+    let (ti, _) = locate_layer(project, id).ok_or(CommandError::LayerNotFound { layer: id })?;
+    let track = &project.tracks[ti];
+    if track.locked {
+        return Err(CommandError::TrackLocked { track: track.id });
+    }
+    Ok(())
+}
+
 /// Mutation half of `do_delete_layer`. Also removes the layer from any
 /// group it belongs to and auto-dissolves the group when its member count
 /// drops below 2 (`docs/groups.md` invariant #3). Returns the id of the
@@ -3227,6 +3242,8 @@ pub(crate) fn apply_delete_layer(
     project: &mut Project,
     id: LayerId,
 ) -> Result<Option<TrackId>, CommandError> {
+    // Locked tracks reject deletion — guard before any mutation.
+    check_track_lock(project, id)?;
     let mut source_track: Option<TrackId> = None;
     for track in project.tracks.iter_mut() {
         if let Some(idx) = track.layers.iter().position(|l| l.id == id) {
@@ -3449,6 +3466,9 @@ pub(crate) fn apply_update_layer(
     id: LayerId,
     patch: &LayerPatch,
 ) -> Result<(), CommandError> {
+    // Locked tracks reject envelope edits (incl. t_start/t_end) — guard
+    // before any mutation.
+    check_track_lock(project, id)?;
     for track in project.tracks.iter_mut() {
         if let Some(idx) = track.layers.iter().position(|l| l.id == id) {
             let layer = track.layers.get_mut(idx).expect("index just verified");
@@ -3486,6 +3506,8 @@ pub(crate) fn apply_update_layer_params(
     id: LayerId,
     patch: &LayerParamsPatch,
 ) -> Result<(), CommandError> {
+    // Locked tracks reject params edits — guard before any mutation.
+    check_track_lock(project, id)?;
     let fps = project.composition.fps;
 
     // Locate by index so the &mut borrow is released before apply_duration_autofit.
@@ -9258,5 +9280,82 @@ mod tests {
             .expect("sibling must still exist");
         assert_eq!(s.t_start_us, 0, "sibling on locked track must not have moved");
         assert_eq!(s.t_end_us, 2_000_000, "sibling on locked track must not have been trimmed");
+    }
+
+    #[tokio::test]
+    async fn locked_track_rejects_delete_and_updates() {
+        // Lock back doors: delete / envelope update / params update must be
+        // rejected actor-side just like move/trim/split — a stale selection
+        // surviving the lock toggle must not mutate locked-track layers.
+        let (project, track_id) = project_with_video_track();
+        let h = spawn(project);
+
+        let layer_id = h
+            .add_layer(Actor::User, track_id, color_layer(Rgba::WHITE), 0, 2_000_000)
+            .await
+            .expect("add_layer");
+
+        // Lock the track.
+        h.update_track_flags(
+            Actor::User,
+            track_id,
+            TrackFlagsPatch { enabled: None, muted: None, solo: None, locked: Some(true) },
+        )
+        .await
+        .expect("lock track");
+
+        // delete — must be rejected.
+        let res = h.delete_layer(Actor::User, layer_id).await;
+        assert!(
+            matches!(res, Err(CommandError::TrackLocked { .. })),
+            "delete on locked track must return TrackLocked, got {res:?}"
+        );
+
+        // envelope update (t_start shift) — must be rejected.
+        let res = h
+            .update_layer(
+                Actor::User,
+                layer_id,
+                LayerPatch {
+                    t_start_us: Some(500_000),
+                    ..Default::default()
+                },
+            )
+            .await;
+        assert!(
+            matches!(res, Err(CommandError::TrackLocked { .. })),
+            "update_layer on locked track must return TrackLocked, got {res:?}"
+        );
+
+        // params update — must be rejected.
+        let res = h
+            .update_layer_params(
+                Actor::User,
+                layer_id,
+                LayerParamsPatch::Color(ColorPatch {
+                    color: Some(Rgba::BLACK),
+                    ..Default::default()
+                }),
+            )
+            .await;
+        assert!(
+            matches!(res, Err(CommandError::TrackLocked { .. })),
+            "update_layer_params on locked track must return TrackLocked, got {res:?}"
+        );
+
+        // The layer must be entirely untouched.
+        let snap = h.snapshot().await;
+        let layer = snap
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .find(|l| l.id == layer_id)
+            .expect("layer on locked track must still exist");
+        assert_eq!(layer.t_start_us, 0, "locked-track layer must not have shifted");
+        let LayerParams::Color(p) = &layer.params else { panic!("expected Color") };
+        assert!(
+            matches!(p.color, Animated::Static(c) if c == Rgba::WHITE),
+            "locked-track layer params must be untouched"
+        );
     }
 }
