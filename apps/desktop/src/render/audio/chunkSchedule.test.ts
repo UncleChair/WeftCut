@@ -3,8 +3,11 @@ import {
   CHUNK_FRAMES,
   MAX_LIVE_CHUNKS,
   type ChunkPlanInput,
+  compUsAtCtxTime,
+  ctxTimeAtCompUs,
+  framesToUs,
   planChunks,
-  shouldReanchor,
+  usToFrames,
 } from "./chunkSchedule";
 
 /// 10 s layer at comp 0, full source span, anchor at comp 0 == ctx 100 s,
@@ -12,8 +15,7 @@ import {
 function base(): ChunkPlanInput {
   return {
     masterUs: 0,
-    anchorCompUs: 0,
-    anchorCtxTime: 100,
+    anchor: { compUs: 0, ctxTime: 100 },
     ctxNow: 100,
     layerTStartUs: 0,
     layerTEndUs: 10_000_000,
@@ -22,6 +24,27 @@ function base(): ChunkPlanInput {
     liveChunkStarts: [],
   };
 }
+
+describe("ClockAnchor mapping", () => {
+  it("maps composition time to context time and back exactly", () => {
+    const a = { compUs: 2_500_000, ctxTime: 41.25 };
+    expect(ctxTimeAtCompUs(a, 2_500_000)).toBeCloseTo(41.25, 9);
+    expect(ctxTimeAtCompUs(a, 3_500_000)).toBeCloseTo(42.25, 9);
+    expect(compUsAtCtxTime(a, 42.25)).toBeCloseTo(3_500_000, 3);
+    // Round trip.
+    expect(compUsAtCtxTime(a, ctxTimeAtCompUs(a, 7_777_777))).toBeCloseTo(
+      7_777_777,
+      3,
+    );
+  });
+
+  it("frame conversion is exact on the 48 kHz grid", () => {
+    expect(usToFrames(0)).toBe(0);
+    expect(usToFrames(1_000_000)).toBe(48_000);
+    expect(usToFrames(20_833)).toBe(1_000);
+    expect(framesToUs(48_000)).toBe(1_000_000);
+  });
+});
 
 describe("planChunks", () => {
   it("schedules lookahead chunks aligned to the source grid", () => {
@@ -92,13 +115,5 @@ describe("planChunks", () => {
     // Playhead past the layer end — nothing.
     const past = planChunks({ ...base(), masterUs: 11_000_000, ctxNow: 111 });
     expect(past).toEqual([]);
-  });
-});
-
-describe("shouldReanchor", () => {
-  it("fires only past the 40 ms threshold", () => {
-    expect(shouldReanchor(1_000_000, 1_030_000)).toBe(false);
-    expect(shouldReanchor(1_000_000, 1_041_000)).toBe(true);
-    expect(shouldReanchor(1_041_000, 1_000_000)).toBe(true);
   });
 });

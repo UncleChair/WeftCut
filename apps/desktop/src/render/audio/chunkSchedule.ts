@@ -11,14 +11,42 @@ export const SAMPLE_RATE = 48_000;
 export const CHUNK_FRAMES = 48_000; // 1 s
 export const LOOKAHEAD_S = 3;
 export const MAX_LIVE_CHUNKS = 8;
-export const REANCHOR_THRESHOLD_S = 0.04;
 export const MICRO_FADE_S = 0.005;
 
+/// THE clock anchor: one (composition µs, AudioContext seconds) pair maps
+/// between the two time domains. PlaybackEngine owns the single live
+/// instance — the playhead derivation (SyntheticClock) and every
+/// AudioMixer's chunk schedule consume the same one, so the mapping is
+/// implemented HERE and nowhere else. A/V sync is structural: there is no
+/// second clock to reconcile against.
+export interface ClockAnchor {
+  compUs: number;
+  ctxTime: number;
+}
+
+export function ctxTimeAtCompUs(a: ClockAnchor, compUs: number): number {
+  return a.ctxTime + (compUs - a.compUs) / 1_000_000;
+}
+
+export function compUsAtCtxTime(a: ClockAnchor, ctxTime: number): number {
+  return a.compUs + (ctxTime - a.ctxTime) * 1_000_000;
+}
+
+/// µs ↔ 48 kHz frames. 48 000 frames / 1 000 000 µs reduces to 48/1000,
+/// so the conversion is exact on the frame grid (mirrors Rust
+/// `audio::mix::us_to_frame`).
+export function usToFrames(us: number): number {
+  return Math.round((us * 48) / 1000);
+}
+
+export function framesToUs(frames: number): number {
+  return (frames * 1000) / 48;
+}
+
 export interface ChunkPlanInput {
-  /// Playhead in composition µs and the play anchor pair.
+  /// Playhead in composition µs and the engine's clock anchor.
   masterUs: number;
-  anchorCompUs: number;
-  anchorCtxTime: number;
+  anchor: ClockAnchor;
   ctxNow: number;
   /// Layer placement (composition µs) and source trim (conform frames).
   layerTStartUs: number;
@@ -37,14 +65,6 @@ export interface PlannedChunk {
   /// the source clock stays aligned.
   when: number;
   bufferOffsetFrames: number;
-}
-
-function usToFrames(us: number): number {
-  return Math.round((us * 48) / 1000);
-}
-
-function framesToUs(frames: number): number {
-  return (frames * 1000) / 48;
 }
 
 /// Plan the chunks to schedule right now: source-grid-aligned, within the
@@ -80,8 +100,7 @@ export function planChunks(input: ChunkPlanInput): PlannedChunk[] {
 
     const chunkCompUs =
       input.layerTStartUs + framesToUs(srcStartFrame - input.srcInFrame);
-    const whenIdeal =
-      input.anchorCtxTime + (chunkCompUs - input.anchorCompUs) / 1_000_000;
+    const whenIdeal = ctxTimeAtCompUs(input.anchor, chunkCompUs);
     const lateBy = input.ctxNow - whenIdeal;
     if (lateBy <= 0) {
       out.push({ srcStartFrame, frames, when: whenIdeal, bufferOffsetFrames: 0 });
@@ -97,16 +116,4 @@ export function planChunks(input: ChunkPlanInput): PlannedChunk[] {
     }
   }
   return out;
-}
-
-/// Cross-clock drift gate: the audio clock's predicted composition position
-/// vs the engine's. Within the threshold the schedule stands; past it the
-/// mixer re-anchors (cancel + reschedule with a micro-fade).
-export function shouldReanchor(
-  predictedCompUs: number,
-  engineCompUs: number,
-): boolean {
-  return (
-    Math.abs(predictedCompUs - engineCompUs) > REANCHOR_THRESHOLD_S * 1_000_000
-  );
 }
