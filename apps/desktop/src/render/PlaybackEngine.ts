@@ -94,6 +94,10 @@ export class PlaybackEngine {
   constructor(init: PlaybackEngineInit) {
     this.compositor = init.compositor;
     this.ticker = init.ticker;
+    // Audio-master clock: bind the preview master bus's AudioContext so
+    // the playing position derives from the audio hardware clock (null in
+    // export mode / when the graph is absent — wall-clock fallback).
+    this.clock.bindAudio(init.compositor.getAudioGraph()?.ctx ?? null);
     this.scrubCoalescer = new ScrubCoalescer({
       debounceMs: 50,
       // Ceiling so an unbroken drag still re-targets the decoder a few
@@ -324,6 +328,10 @@ export class PlaybackEngine {
   private tick = (): void => {
     try {
       const { tUs } = this.clock.tick();
+      // Forward THE clock anchor so the AudioMixers schedule against the
+      // exact pair the playhead derives from (docs/audio.md §Clock).
+      // Cheap: a reference set; null while paused or audio-suspended.
+      this.compositor.setClockAnchor(this.clock.getAnchor());
       // Auto-pause when the playhead reaches the end of the last
       // piece of playable material — not just the composition's
       // authored duration. Composition duration auto-extends to fit

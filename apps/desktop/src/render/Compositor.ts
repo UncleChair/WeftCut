@@ -13,6 +13,7 @@ import { lastFrameAnchorUs as computeLastFrameStartUs, snapFrameFloor } from "..
 import type { LayerSummary, MediaSummary, ProjectSummary } from "../ipc";
 import { AudioGraph } from "./audio/AudioGraph";
 import { AudioMixer } from "./audio/AudioMixer";
+import type { ClockAnchor } from "./audio/chunkSchedule";
 import {
   resolveColorView,
   resolveImageOverlayView,
@@ -288,6 +289,9 @@ export class Compositor {
   /// Media ids already warned about a missing conform (once per media,
   /// cleared when the conform shows up).
   private conformWarned = new Set<string>();
+  /// The engine's clock anchor, forwarded each tick (null while paused
+  /// or while the AudioContext is suspended). Consumed by the audio pass.
+  private clockAnchor: ClockAnchor | null = null;
   private compositionWidth = 1920;
   private compositionHeight = 1080;
   private disposed = false;
@@ -455,10 +459,17 @@ export class Compositor {
   }
 
   /// PlaybackEngine writes its current play state here on play /
-  /// pause / seek so AudioMixers know whether to call .play() or
-  /// .pause() on their `<audio>` elements.
+  /// pause / seek so the audio pass knows whether to schedule.
   setMasterPlayState(playing: boolean): void {
     this.playing = playing;
+  }
+
+  /// PlaybackEngine forwards its clock anchor every tick. The AudioMixers
+  /// schedule chunks against this exact pair — the same one the playhead
+  /// derives from — so playhead and audio share ONE clock
+  /// (docs/audio.md §Clock). Null while paused or audio-suspended.
+  setClockAnchor(anchor: ClockAnchor | null): void {
+    this.clockAnchor = anchor;
   }
 
   /// Export-only: install the pre-rasterized Motif-layer frames the export
@@ -660,7 +671,12 @@ export class Compositor {
                 }
                 audio.lastParamsRef = layer.params;
               }
-              audio.mixer.tick(tUsSnapped, this.playing, layer.t_end_us);
+              audio.mixer.tick(
+                tUsSnapped,
+                this.playing,
+                layer.t_end_us,
+                this.clockAnchor,
+              );
             }
           }
         }
