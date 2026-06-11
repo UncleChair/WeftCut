@@ -64,10 +64,13 @@ the single entry point. It delegates to the audio engine
 1. `audio::mix::plan_for_project(project, window_us) → MixPlan` — every
    audible Audio layer resolved to conform-file placement + sampled
    gain/pan envelopes. "Audible" applies the full skip-rule set from
-   [`audio.md`](audio.md): track `enabled`/`muted`/`solo` gates and
-   `Layer.enabled`/`AudioParams.mute`. A layer whose conform cache is
-   missing fails the plan loudly with the media named (the webview's
-   readiness gate normally prevents reaching that state).
+   [`audio.md`](audio.md): track `enabled`/`muted`/`solo` gates,
+   `Layer.enabled`/`locked`/`AudioParams.mute`, and overlap with the
+   half-open export window — a layer entirely outside `[start, end)` is
+   neither planned nor required to have a conform cache. An audible
+   in-window layer whose conform cache is missing fails the plan loudly
+   with the media named (the webview's readiness gate normally prevents
+   reaching that state).
 2. If the plan has no layers (or the window is empty): log a warning and
    return `Ok(())`. The mux step downstream tolerates a missing audio file.
 3. Otherwise: spawn ffmpeg reading raw f32 from stdin —
@@ -90,8 +93,16 @@ this path; the webview owns ExportPanel state.
 
 When `settings.audio.include` is false, `App.tsx` skips
 `exportProjectAudioOnly` entirely. When it's true, the export readiness
-gate first holds in "preparing" until every audible layer's conform job
-has landed (kicking `ensure_conform` for anything missing).
+gate first asks Rust `ensure_export_audio_conform(start_us, end_us)` for
+the media whose conform cache is absent or invalid — the command shares
+`plan_for_project`'s layer walk (`conform_waiting_media`), so the gate
+and the plan can never disagree on selection, and it validates the cache
+file itself (`cached_ok`), not the store's `conform_path` (which goes
+stale if the cache dir is cleared). The command kicks a conform job per
+missing media; the gate holds in "preparing" until a
+`media:job_complete kind=conform` event lands for every returned id
+(`createConformTracker` in `exportReadiness.ts` — listeners register
+before the command so a fast job can't complete unseen).
 
 ## Final mux
 

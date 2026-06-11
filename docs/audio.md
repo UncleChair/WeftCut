@@ -231,9 +231,14 @@ retired by this design; the mixer plan is its replacement.
 
 - **Export:** conform readiness joins the existing media-readiness
   gate; the export auto-wait ("preparing") panel covers conform jobs
-  exactly as it covers proxies, kicking `ensure_conform` for anything
-  missing. A conform job that *failed* (unreadable audio) fails the
-  export loudly with the media named — never a silent layer drop.
+  exactly as it covers proxies. The wait set comes from Rust
+  (`ensure_export_audio_conform`, sharing the mix plan's audible-layer
+  walk and validating the cache file itself), and completion is tracked
+  by `media:job_complete kind=conform` events — the store's
+  `conform_path` can't carry this wait because a stale path reads
+  identically before and after a re-conform. A conform job that
+  *failed* (unreadable audio) fails the export loudly with the media
+  named — never a silent layer drop.
 - **Preview:** a layer without conform (job still running, or failed)
   is silent and logs once to the status log. Range-read failures
   retry; a chunk that misses its deadline mutes briefly rather than
