@@ -208,6 +208,7 @@ mod tests {
                     fps_den: 1,
                     codec: "h264".into(),
                     pix_fmt: "yuv420p".into(),
+                    nb_frames: None,
                     color_matrix: None,
                     color_range: None,
                     color_primaries: None,
