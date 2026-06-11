@@ -24,7 +24,7 @@ closing the app loses nothing.
 │  │ • Property panels      │         │ │  • Arc<Project>+history │ │  │
 │  │ • PreviewSurface       │         │ │  • single-writer queue  │ │  │
 │  │   - PixiJS Application │         │ └────────────┬────────────┘ │  │
-│  │   - synthetic clock    │         │ ┌────────────▼────────────┐ │  │
+│  │   - audio-master clock │         │ ┌────────────▼────────────┐ │  │
 │  │   - WebCodecs decoder  │         │ │ Subscriber tasks        │ │  │
 │  │     pool               │         │ │  • Autosave (debounce)  │ │  │
 │  │   - Web Audio mixer    │         │ │  • UI event bridge      │ │  │
@@ -175,7 +175,8 @@ weftcut/
       preview/                ← <PreviewSurface> mounting the Pixi compositor
       render/                 ← PixiJS + WebCodecs renderer
         Compositor.ts         ←   PixiJS Application owner
-        clock.ts              ←   synthetic clock + Web Audio drift
+        clock.ts              ←   audio-master clock (anchor-derived;
+                              ←   wall fallback while suspended)
         PlaybackEngine.ts     ←   transport
         decoder/              ←   SourceDecoderPool, PacketPump, mediaInput,
                               ←   FrameRing, ExportDecoderPool,
