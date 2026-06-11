@@ -20,9 +20,9 @@ function layer(partial: Partial<LayerSummary>): LayerSummary {
     enabled: true,
     locked: false,
     color_hint: "#888",
-    params: { kind: "VideoClip" },
+    params: { kind: "VideoClip" } as LayerSummary["params"],
     ...partial,
-  } as LayerSummary;
+  };
 }
 
 function track(partial: Partial<TrackSummary>): TrackSummary {
@@ -36,7 +36,7 @@ function track(partial: Partial<TrackSummary>): TrackSummary {
     transient: false,
     layers: [],
     ...partial,
-  } as TrackSummary;
+  };
 }
 
 describe("clamp", () => {
@@ -84,6 +84,18 @@ describe("computeLayerSlices", () => {
     expect(slices.get("v")).toBe("full");
     expect(slices.get("a")).toBe("full");
   });
+  it("treats touching but non-overlapping layers (half-open intervals) as full", () => {
+    const v = layer({ id: "v", t_start_us: 0, t_end_us: 1_000_000 });
+    const a = layer({
+      id: "a",
+      params: { kind: "Audio" } as never,
+      t_start_us: 1_000_000,
+      t_end_us: 2_000_000,
+    });
+    const slices = computeLayerSlices([v, a]);
+    expect(slices.get("v")).toBe("full");
+    expect(slices.get("a")).toBe("full");
+  });
 });
 
 describe("visualOrderedTracks", () => {
@@ -95,21 +107,35 @@ describe("visualOrderedTracks", () => {
     expect(out.map((v) => v.track.id)).toEqual(["t2", "t1", "t0"]);
     expect(out.map((v) => v.isGroupStart)).toEqual([false, false, true]);
   });
+  it("produces isGroupStart === false for every entry when all tracks have role: null", () => {
+    const tracks = [
+      track({ id: "t0", role: null }),
+      track({ id: "t1", role: null }),
+      track({ id: "t2", role: null }),
+    ];
+    const out = visualOrderedTracks(tracks);
+    expect(out.every((v) => v.isGroupStart === false)).toBe(true);
+  });
 });
 
 describe("groupHue", () => {
-  it("is deterministic and skips the 60-120 band", () => {
-    const h = groupHue("group-1");
-    expect(h).toBe(groupHue("group-1"));
-    expect(h < 60 || h >= 120).toBe(true);
-    expect(h).toBeLessThan(360);
+  it("is deterministic, integer, in [0,360), and skips the 60-120 band for 20 ids", () => {
+    for (let i = 0; i < 20; i++) {
+      const id = `g-${i}`;
+      const h = groupHue(id);
+      expect(h).toBe(groupHue(id));
+      expect(Number.isInteger(h)).toBe(true);
+      expect(h).toBeGreaterThanOrEqual(0);
+      expect(h).toBeLessThan(360);
+      expect(h < 60 || h >= 120).toBe(true);
+    }
   });
 });
 
 describe("indexGroups", () => {
   it("maps layer ids to group ids", () => {
     const idx = indexGroups([
-      { id: "g1", layer_ids: ["a", "b"] } as never,
+      { id: "g1", label: null, layer_ids: ["a", "b"] },
     ]);
     expect(idx.get("a")).toBe("g1");
     expect(idx.get("b")).toBe("g1");
