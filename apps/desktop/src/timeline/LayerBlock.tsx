@@ -309,6 +309,8 @@ export function LayerBlock({
         // In blade mode the pointerdown already handled the cut; the
         // synthesised click that follows should not flip the selection.
         if (bladeMode) return;
+        // Spec §3: locked layers are unselectable (per-layer or track lock).
+        if (layer.locked || trackLocked) return;
         onSelectFromClick(layer.id, {
           altKey: e.altKey,
           shiftKey: e.shiftKey,
@@ -321,6 +323,8 @@ export function LayerBlock({
       onContextMenu={(e) => {
         e.preventDefault();
         e.stopPropagation();
+        // Spec §3: locked layers are unselectable; suppress context menu too.
+        if (layer.locked || trackLocked) return;
         onContextMenu(e, layer.id, layer.kind);
       }}
       title={`${layer.kind}: ${formatTimecode(liveStart, fpsNum, fpsDen)} → ${formatTimecode(liveEnd, fpsNum, fpsDen)}`}
