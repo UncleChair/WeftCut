@@ -195,6 +195,11 @@ export interface TrackSummary {
   label: string | null;
   enabled: boolean;
   locked: boolean;
+  /// Track-level audio mute — audio layers silent, video unaffected.
+  muted: boolean;
+  /// Track-level solo — when any track is soloed, only soloed tracks
+  /// are audible (mute wins over solo).
+  solo: boolean;
   /// `null` for tracks created after the reserved 4 (additional video, music,
   /// SFX, captions, voiceover, etc.) and for legacy projects. AB display mode
   /// hides any track where `role === null`; Show-All ignores the field.

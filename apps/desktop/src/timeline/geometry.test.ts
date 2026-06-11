@@ -32,6 +32,8 @@ function track(partial: Partial<TrackSummary>): TrackSummary {
     label: null,
     enabled: true,
     locked: false,
+    muted: false,
+    solo: false,
     role: null,
     transient: false,
     layers: [],

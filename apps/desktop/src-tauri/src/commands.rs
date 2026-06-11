@@ -80,6 +80,12 @@ pub struct TrackSummary {
     pub label: Option<String>,
     pub enabled: bool,
     pub locked: bool,
+    /// Track-level audio mute — silences Audio layers in preview and
+    /// export; video output is unaffected.
+    pub muted: bool,
+    /// Track-level solo — when any track is soloed, only soloed tracks
+    /// are audible; `muted` wins over `solo`.
+    pub solo: bool,
     /// A/B-roll role stamp (`docs/data-model.md`). Serializes as the
     /// kebab-case variant name when present (`"a-roll" | "b-roll" |
     /// "audio-a" | "audio-b"`) or `null` for additional/legacy tracks. The
@@ -455,6 +461,8 @@ pub async fn project_summary(handle: State<'_, ProjectHandle>) -> Result<Project
             label: t.label.clone(),
             enabled: t.enabled,
             locked: t.locked,
+            muted: t.muted,
+            solo: t.solo,
             role: t.role.map(|r| match r {
                 TrackRole::ARoll => "a-roll".to_string(),
                 TrackRole::BRoll => "b-roll".to_string(),

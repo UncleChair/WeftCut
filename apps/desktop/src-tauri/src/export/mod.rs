@@ -590,6 +590,8 @@ mod tests {
             label: None,
             enabled: true,
             locked: false,
+            muted: false,
+            solo: false,
             removable: true,
             role: None,
             transient: false,
