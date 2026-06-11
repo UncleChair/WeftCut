@@ -164,9 +164,28 @@ fn max_keyframe_gap_secs(timestamps: &[f64], window_secs: f64) -> Option<f64> {
     }
 }
 
+/// Codecs ffprobe also reports for plain still-image files. A SINGLE-frame
+/// stream of one of these is Image evidence, not Video (see `detect_kind`);
+/// multi-frame streams (animated GIF, motion-JPEG) stay Video.
+const STILL_IMAGE_CODECS: &[&str] = &["png", "mjpeg", "webp", "gif", "bmp", "tiff"];
+
 pub fn detect_kind(path: &Path, metadata: &MediaMetadata) -> MediaKind {
-    if metadata.video.is_some() {
-        return MediaKind::Video;
+    if let Some(v) = &metadata.video {
+        // ffprobe reports still images (png/jpg/webp/gif/bmp/tiff) as a video
+        // stream too, so "has a video stream" alone would misroute every
+        // imported image into the proxy/WebCodecs pipeline. Count the stream
+        // as Video evidence only when it actually moves: a non-image codec, a
+        // demuxed frame count > 1 (animated GIF — Video so it animates via the
+        // proxy), or a real duration (motion-JPEG; stills report none or one
+        // frame's worth).
+        let image_codec = STILL_IMAGE_CODECS.contains(&v.codec.as_str());
+        let animated = v.nb_frames.is_some_and(|n| n > 1)
+            || metadata.duration_us.is_some_and(|d| d >= 500_000);
+        return if image_codec && !animated {
+            MediaKind::Image
+        } else {
+            MediaKind::Video
+        };
     }
     if metadata.audio.is_some() {
         return MediaKind::Audio;
@@ -198,6 +217,14 @@ struct RawFormat {
     duration: Option<String>,
 }
 
+/// Stream disposition flags — only `attached_pic` matters here (embedded
+/// cover art in mp3/m4a/flac/ogg probes as a video stream carrying it).
+#[derive(Deserialize, Default)]
+struct RawDisposition {
+    #[serde(default)]
+    attached_pic: u8,
+}
+
 #[derive(Deserialize)]
 #[serde(tag = "codec_type", rename_all = "lowercase")]
 enum RawStream {
@@ -208,10 +235,13 @@ enum RawStream {
         codec_name: Option<String>,
         pix_fmt: Option<String>,
         duration: Option<String>,
+        nb_frames: Option<String>,
         color_space: Option<String>,
         color_range: Option<String>,
         color_primaries: Option<String>,
         color_transfer: Option<String>,
+        #[serde(default)]
+        disposition: RawDisposition,
     },
     Audio {
         sample_rate: Option<String>,
@@ -255,6 +285,14 @@ impl RawProbe {
         let mut video = None;
         let mut audio = None;
         for stream in self.streams {
+            // Embedded cover art (mp3/m4a/flac/ogg) probes as a video stream
+            // with `attached_pic` set. It is neither video evidence nor a
+            // duration source — skip it entirely.
+            if let RawStream::Video { disposition, .. } = &stream {
+                if disposition.attached_pic != 0 {
+                    continue;
+                }
+            }
             match stream {
                 RawStream::Video {
                     width,
@@ -263,10 +301,12 @@ impl RawProbe {
                     codec_name,
                     pix_fmt,
                     duration,
+                    nb_frames,
                     color_space,
                     color_range,
                     color_primaries,
                     color_transfer,
+                    disposition: _,
                 } if video.is_none() => {
                     consider(duration.as_deref());
                     let (num, den) = parse_rational(r_frame_rate.as_deref().unwrap_or("0/1"));
@@ -277,6 +317,7 @@ impl RawProbe {
                         fps_den: den,
                         codec: codec_name.unwrap_or_default(),
                         pix_fmt: pix_fmt.unwrap_or_default(),
+                        nb_frames: nb_frames.as_deref().and_then(|s| s.parse().ok()),
                         color_matrix: clean_color(color_space),
                         color_range: clean_color(color_range),
                         color_primaries: clean_color(color_primaries),
@@ -459,6 +500,7 @@ mod tests {
                 fps_den: 1,
                 codec: "h264".into(),
                 pix_fmt: "yuv420p".into(),
+                nb_frames: None,
                 color_matrix: None,
                 color_range: None,
                 color_primaries: None,
@@ -493,6 +535,313 @@ mod tests {
         let v = serde_json::from_slice::<RawProbe>(json.as_bytes()).unwrap().into_metadata().video.unwrap();
         assert_eq!(v.color_matrix, None);
         assert_eq!(v.color_range, None);
+    }
+
+    /// Build MediaMetadata exactly the way `probe_metadata` does — through the
+    /// RawProbe JSON parser — so these tests pin the REAL classification path
+    /// for captured ffprobe output, not hand-built structs.
+    fn meta_from_probe_json(json: &str) -> MediaMetadata {
+        serde_json::from_str::<RawProbe>(json)
+            .expect("probe JSON")
+            .into_metadata()
+    }
+
+    /// mp3 with embedded cover art (very common in the wild): ffprobe reports
+    /// a SECOND stream — mjpeg video with `disposition.attached_pic: 1`.
+    /// Album art is not video evidence: it must not populate metadata.video,
+    /// and the file must classify as Audio. (Captured from a real
+    /// `ffprobe -print_format json` run, trimmed to the fields we parse.)
+    #[test]
+    fn attached_pic_cover_art_is_not_video_evidence() {
+        let json = r#"{
+            "format": { "format_name": "mp3", "duration": "2.000000" },
+            "streams": [
+                {
+                    "codec_type": "audio", "codec_name": "mp3",
+                    "sample_rate": "44100", "channels": 1,
+                    "duration": "2.000000",
+                    "disposition": { "attached_pic": 0 }
+                },
+                {
+                    "codec_type": "video", "codec_name": "mjpeg",
+                    "width": 320, "height": 240, "pix_fmt": "yuvj444p",
+                    "r_frame_rate": "90000/1", "duration": "2.000000",
+                    "disposition": { "attached_pic": 1 }
+                }
+            ]
+        }"#;
+        let meta = meta_from_probe_json(json);
+        assert!(meta.video.is_none(), "album art must not become video meta");
+        assert!(meta.audio.is_some());
+        assert_eq!(
+            detect_kind(Path::new("/x/song.mp3"), &meta),
+            MediaKind::Audio
+        );
+    }
+
+    /// Still images probe as a single video stream (png_pipe / image2 /
+    /// webp_pipe / 1-frame gif). They must classify as Image, not Video —
+    /// otherwise import routes them into the proxy/WebCodecs pipeline and
+    /// the ImageOverlay path is unreachable whenever ffprobe is installed.
+    #[test]
+    fn still_images_classify_as_image_despite_probe_video_stream() {
+        // (json, file) per format — trimmed from real ffprobe output. PNG and
+        // WebP report no duration at all; JPEG and single-frame GIF report one
+        // frame's worth (1/25 s). GIF also reports nb_frames.
+        let cases: &[(&str, &str)] = &[
+            (
+                r#"{
+                    "format": { "format_name": "png_pipe" },
+                    "streams": [{
+                        "codec_type": "video", "codec_name": "png",
+                        "width": 320, "height": 240, "pix_fmt": "rgb24",
+                        "r_frame_rate": "25/1",
+                        "disposition": { "attached_pic": 0 }
+                    }]
+                }"#,
+                "/x/chart.png",
+            ),
+            (
+                r#"{
+                    "format": { "format_name": "image2", "duration": "0.040000" },
+                    "streams": [{
+                        "codec_type": "video", "codec_name": "mjpeg",
+                        "width": 320, "height": 240, "pix_fmt": "yuvj444p",
+                        "r_frame_rate": "25/1", "duration": "0.040000",
+                        "disposition": { "attached_pic": 0 }
+                    }]
+                }"#,
+                "/x/photo.jpg",
+            ),
+            (
+                r#"{
+                    "format": { "format_name": "webp_pipe" },
+                    "streams": [{
+                        "codec_type": "video", "codec_name": "webp",
+                        "width": 320, "height": 240, "pix_fmt": "argb",
+                        "r_frame_rate": "25/1",
+                        "disposition": { "attached_pic": 0 }
+                    }]
+                }"#,
+                "/x/chart.webp",
+            ),
+            (
+                r#"{
+                    "format": { "format_name": "gif", "duration": "0.040000" },
+                    "streams": [{
+                        "codec_type": "video", "codec_name": "gif",
+                        "width": 320, "height": 240, "pix_fmt": "bgra",
+                        "r_frame_rate": "100/1", "nb_frames": "1",
+                        "duration": "0.040000",
+                        "disposition": { "attached_pic": 0 }
+                    }]
+                }"#,
+                "/x/chart.gif",
+            ),
+            (
+                r#"{
+                    "format": { "format_name": "bmp_pipe" },
+                    "streams": [{
+                        "codec_type": "video", "codec_name": "bmp",
+                        "width": 320, "height": 240, "pix_fmt": "bgr24",
+                        "r_frame_rate": "25/1",
+                        "disposition": { "attached_pic": 0 }
+                    }]
+                }"#,
+                "/x/chart.bmp",
+            ),
+        ];
+        for (json, file) in cases {
+            let meta = meta_from_probe_json(json);
+            assert_eq!(
+                detect_kind(Path::new(file), &meta),
+                MediaKind::Image,
+                "{file} must classify as Image"
+            );
+        }
+    }
+
+    /// A MULTI-frame gif is real motion: keep it Video so it routes through
+    /// the proxy pipeline and actually animates (ImageOverlay would freeze
+    /// it on the first frame).
+    #[test]
+    fn animated_gif_classifies_as_video() {
+        let json = r#"{
+            "format": { "format_name": "gif", "duration": "2.000000" },
+            "streams": [{
+                "codec_type": "video", "codec_name": "gif",
+                "width": 160, "height": 120, "pix_fmt": "bgra",
+                "r_frame_rate": "5/1", "nb_frames": "10",
+                "duration": "2.000000",
+                "disposition": { "attached_pic": 0 }
+            }]
+        }"#;
+        let meta = meta_from_probe_json(json);
+        assert_eq!(
+            detect_kind(Path::new("/x/anim.gif"), &meta),
+            MediaKind::Video
+        );
+    }
+
+    /// Motion-JPEG video (e.g. .avi capture): codec mjpeg like a still JPEG,
+    /// but a real duration — stays Video.
+    #[test]
+    fn mjpeg_motion_video_stays_video() {
+        let json = r#"{
+            "format": { "format_name": "avi", "duration": "10.000000" },
+            "streams": [{
+                "codec_type": "video", "codec_name": "mjpeg",
+                "width": 640, "height": 480, "pix_fmt": "yuvj422p",
+                "r_frame_rate": "30/1", "nb_frames": "300",
+                "duration": "10.000000",
+                "disposition": { "attached_pic": 0 }
+            }]
+        }"#;
+        let meta = meta_from_probe_json(json);
+        assert_eq!(
+            detect_kind(Path::new("/x/capture.avi"), &meta),
+            MediaKind::Video
+        );
+    }
+
+    /// Extension fallback (no ffprobe metadata) over the full lists, including
+    /// the formats the import dialog doesn't offer, plus the Video default.
+    #[test]
+    fn detect_kind_extension_fallback_full_matrix() {
+        let empty = MediaMetadata::default();
+        let cases: &[(&str, MediaKind)] = &[
+            ("/x/a.m4v", MediaKind::Video),
+            ("/x/a.webm", MediaKind::Video),
+            ("/x/a.opus", MediaKind::Audio),
+            ("/x/a.m4a", MediaKind::Audio),
+            ("/x/a.flac", MediaKind::Audio),
+            ("/x/a.ogg", MediaKind::Audio),
+            ("/x/a.webp", MediaKind::Image),
+            ("/x/a.bmp", MediaKind::Image),
+            ("/x/a.tiff", MediaKind::Image),
+            ("/x/a.gif", MediaKind::Image),
+            ("/x/a.ass", MediaKind::Subtitle),
+            ("/x/a.vtt", MediaKind::Subtitle),
+            ("/x/a.unknown-ext", MediaKind::Video),
+            ("/x/no-extension", MediaKind::Video),
+        ];
+        for (file, want) in cases {
+            assert_eq!(detect_kind(Path::new(file), &empty), *want, "{file}");
+        }
+    }
+
+    /// End-to-end against the REAL ffprobe: generate one sample per media
+    /// shape with ffmpeg and assert `probe_metadata` + `detect_kind` classify
+    /// it correctly. The JSON-fixture tests above pin the parsing logic; this
+    /// one catches ffprobe OUTPUT drift (new field names, changed defaults).
+    /// Self-skips (whole test or per-case) when ffmpeg/an encoder is missing.
+    #[test]
+    fn detect_kind_against_real_ffprobe() {
+        use std::process::Command as StdCommand;
+        let ffmpeg_ok = StdCommand::new("ffmpeg")
+            .arg("-version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if !ffmpeg_ok || !ffprobe_is_installed() {
+            eprintln!("ffmpeg/ffprobe not on PATH — skipping real-probe classification");
+            return;
+        }
+        let dir = TempDir::new().unwrap();
+        let gen = |args: &[&str], out: &std::path::Path| -> bool {
+            StdCommand::new("ffmpeg")
+                .args(["-y", "-hide_banner", "-loglevel", "error"])
+                .args(args)
+                .arg(out)
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+        };
+
+        let png = dir.path().join("chart.png");
+        assert!(
+            gen(
+                &["-f", "lavfi", "-i", "testsrc2=size=64x48:rate=1:duration=1", "-frames:v", "1"],
+                &png
+            ),
+            "png fixture"
+        );
+
+        // (file, ffmpeg args, expected kind, expect_video_meta)
+        let mut cases: Vec<(std::path::PathBuf, MediaKind, bool)> = vec![(png.clone(), MediaKind::Image, true)];
+        let png_arg = png.to_str().unwrap().to_string();
+        let derived: &[(&str, Vec<String>, MediaKind, bool)] = &[
+            ("chart.jpg", vec!["-i".into(), png_arg.clone()], MediaKind::Image, true),
+            ("chart.gif", vec!["-i".into(), png_arg.clone()], MediaKind::Image, true),
+            (
+                "anim.gif",
+                vec!["-f".into(), "lavfi".into(), "-i".into(), "testsrc2=size=64x48:rate=5:duration=2".into()],
+                MediaKind::Video,
+                true,
+            ),
+            (
+                "plain.wav",
+                vec!["-f".into(), "lavfi".into(), "-i".into(), "sine=frequency=1000:duration=1".into(), "-ac".into(), "1".into()],
+                MediaKind::Audio,
+                false,
+            ),
+            (
+                "plain.mp3",
+                vec!["-f".into(), "lavfi".into(), "-i".into(), "sine=frequency=1000:duration=1".into(), "-ac".into(), "1".into()],
+                MediaKind::Audio,
+                false,
+            ),
+            // mp3 with embedded cover art: the attached_pic stream must be
+            // ignored (no video meta, classifies Audio).
+            (
+                "cover.mp3",
+                vec![
+                    "-f".into(), "lavfi".into(), "-i".into(), "sine=frequency=1000:duration=1".into(),
+                    "-i".into(), png_arg.clone(),
+                    "-map".into(), "0:a".into(), "-map".into(), "1:v".into(),
+                    "-c:v".into(), "mjpeg".into(),
+                    "-disposition:v".into(), "attached_pic".into(),
+                ],
+                MediaKind::Audio,
+                false,
+            ),
+            (
+                "plain.m4a",
+                vec!["-f".into(), "lavfi".into(), "-i".into(), "sine=frequency=1000:duration=1".into(), "-c:a".into(), "aac".into()],
+                MediaKind::Audio,
+                false,
+            ),
+        ];
+        for (name, args, kind, has_video) in derived {
+            let out = dir.path().join(name);
+            let argv: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+            if !gen(&argv, &out) {
+                // Encoder missing on this build (e.g. no libmp3lame) — skip
+                // the case rather than fail the suite.
+                eprintln!("ffmpeg could not generate {name} — skipping case");
+                continue;
+            }
+            cases.push((out, *kind, *has_video));
+        }
+
+        for (file, want, has_video) in &cases {
+            let meta = probe_metadata(file);
+            assert_eq!(
+                meta.video.is_some(),
+                *has_video,
+                "{} video-meta presence",
+                file.display()
+            );
+            assert_eq!(
+                &detect_kind(file, &meta),
+                want,
+                "{} classification (meta: video={:?} audio={:?} dur={:?})",
+                file.display(),
+                meta.video.as_ref().map(|v| (&v.codec, v.nb_frames)),
+                meta.audio.as_ref().map(|a| &a.codec),
+                meta.duration_us,
+            );
+        }
     }
 
     #[test]
