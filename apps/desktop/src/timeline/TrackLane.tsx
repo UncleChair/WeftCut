@@ -91,9 +91,6 @@ export function TrackLane({
   fpsDen: number;
 }) {
   const { t } = useTranslation();
-  const kindLabel = t(`kinds.${track.kind.toLowerCase()}`, {
-    defaultValue: track.kind,
-  });
   const [dragOverX, setDragOverX] = useState<number | null>(null);
 
   const renderedLayers = useMemo(() => {
@@ -198,10 +195,6 @@ export function TrackLane({
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
-      <div className="pointer-events-none absolute left-1 top-1 text-[10px] uppercase tracking-wider text-muted-foreground">
-        {track.label ?? kindLabel}
-        {isRevealed && <span className="font-medium text-blue-400/70"> (revealed)</span>}
-      </div>
       {dragOverX !== null && (
         <div
           className="pointer-events-none absolute bottom-1 top-1 w-0.5 bg-foreground shadow-[0_0_6px_rgba(255,255,255,0.4)]"

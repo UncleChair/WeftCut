@@ -34,6 +34,7 @@ import {
   visualOrderedTracks,
 } from "./geometry";
 import { TimelineRuler } from "./TimelineRuler";
+import { TrackHeader } from "./TrackHeader";
 import { TrackLane, type MediaDragPayload } from "./TrackLane";
 import { LayerContextMenu } from "./LayerContextMenu";
 import { useTimelineView } from "./hooks/useTimelineView";
@@ -467,69 +468,86 @@ export function Timeline({
     </div>
     <div
       ref={rootRef}
-      className={`timeline-root ${drag ? "is-dragging" : ""} ${
-        heightDrag ? "is-resizing-track" : ""
-      } ${bladeMode ? "is-blade-mode" : ""}`}
+      className={`timeline-root relative min-h-0 w-full flex-1 overflow-auto bg-background [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${
+        drag ? "cursor-grabbing select-none" : ""
+      } ${heightDrag ? "cursor-ns-resize select-none" : ""} ${bladeMode ? "is-blade-mode" : ""}`}
       onClick={() => onSelect(null)}
       onPointerDown={onCanvasPointerDown}
     >
-      <TimelineRuler
-        pxPerSec={pxPerSec}
-        totalSec={totalSec}
-        widthPx={Math.max(widthPx, 200)}
-        fpsNum={fpsNum}
-        fpsDen={fpsDen}
-      />
-      <div
-        ref={canvasRef}
-        className="timeline-canvas"
-        style={{ width: Math.max(widthPx, 200) }}
-      >
-        {orderedTracks.length === 0 && <EmptyHint mode={displayMode} />}
-        {/*
-          Data model: `tracks[0]` is the bottom of the z-stack, `tracks[last]`
-          is the top (see `Project::tracks` doc-comment). The visual order
-          groups by kind (Video on top, then Subtitle, then Audio at the
-          bottom — Premiere/Resolve/FCP convention) and within each group is
-          z-stack-reversed so the top of the group is the top of z-stack.
-        */}
-        {orderedTracks.map(({ track, isGroupStart }) => (
-          <TrackLane
-            key={track.id}
-            track={track}
+      <div className="flex min-w-max">
+        {/* sticky header column */}
+        <div className="sticky left-0 z-10 w-40 flex-none border-r border-border bg-card">
+          <div className="h-5 border-b border-border-soft" /> {/* ruler corner */}
+          {orderedTracks.map(({ track }) => (
+            <TrackHeader
+              key={track.id}
+              track={track}
+              height={trackHeights[track.id] ?? DEFAULT_TRACK_HEIGHT}
+              isRevealed={track.id === (revealedTrackId ?? null)}
+            />
+          ))}
+        </div>
+        {/* scrolling body */}
+        <div className="relative">
+          <TimelineRuler
             pxPerSec={pxPerSec}
-            height={trackHeights[track.id] ?? DEFAULT_TRACK_HEIGHT}
-            selectedLayerId={selectedLayerId}
-            selectedLayerIds={selectedLayerIds}
-            groupByLayerId={groupByLayerId}
-            dragState={drag}
-            pendingPlacement={pendingPlacement}
-            pendingLayer={pendingLayer}
-            dragLayer={dragLayer}
-            bladeMode={bladeMode}
-            onBladeSplit={splitFromClientX}
-            onSelect={onSelect}
-            onSelectFromClick={selectFromClick}
-            onDragStart={(state) => setDrag(state)}
-            onContextMenu={onContextMenu}
-            onMediaDrop={onMediaDrop}
-            isGroupStart={isGroupStart}
-            isRevealed={track.id === (revealedTrackId ?? null)}
-            isResizing={heightDrag !== null}
-            onHeightDragStart={beginHeightDrag(track.id)}
+            totalSec={totalSec}
+            widthPx={Math.max(widthPx, 200)}
             fpsNum={fpsNum}
             fpsDen={fpsDen}
           />
-        ))}
-      </div>
-      {currentTimeUs >= 0 && (
-        <div
-          className="timeline-playhead"
-          style={{ left: playheadX }}
-        >
-          <div className="playhead-knob" />
+          <div
+            ref={canvasRef}
+            className="relative min-w-full"
+            style={{ width: Math.max(widthPx, 200) }}
+          >
+            {orderedTracks.length === 0 && <EmptyHint mode={displayMode} />}
+            {/*
+              Data model: `tracks[0]` is the bottom of the z-stack, `tracks[last]`
+              is the top (see `Project::tracks` doc-comment). The visual order
+              groups by kind (Video on top, then Subtitle, then Audio at the
+              bottom — Premiere/Resolve/FCP convention) and within each group is
+              z-stack-reversed so the top of the group is the top of z-stack.
+            */}
+            {orderedTracks.map(({ track, isGroupStart }) => (
+              <TrackLane
+                key={track.id}
+                track={track}
+                pxPerSec={pxPerSec}
+                height={trackHeights[track.id] ?? DEFAULT_TRACK_HEIGHT}
+                selectedLayerId={selectedLayerId}
+                selectedLayerIds={selectedLayerIds}
+                groupByLayerId={groupByLayerId}
+                dragState={drag}
+                pendingPlacement={pendingPlacement}
+                pendingLayer={pendingLayer}
+                dragLayer={dragLayer}
+                bladeMode={bladeMode}
+                onBladeSplit={splitFromClientX}
+                onSelect={onSelect}
+                onSelectFromClick={selectFromClick}
+                onDragStart={(state) => setDrag(state)}
+                onContextMenu={onContextMenu}
+                onMediaDrop={onMediaDrop}
+                isGroupStart={isGroupStart}
+                isRevealed={track.id === (revealedTrackId ?? null)}
+                isResizing={heightDrag !== null}
+                onHeightDragStart={beginHeightDrag(track.id)}
+                fpsNum={fpsNum}
+                fpsDen={fpsDen}
+              />
+            ))}
+          </div>
+          {currentTimeUs >= 0 && (
+            <div
+              className="pointer-events-none absolute bottom-0 top-0.5 z-[4] w-0.5 rounded-[1px] bg-gradient-to-b from-red-300 via-red-500 to-red-500 shadow-[0_0_0_0.5px_rgba(0,0,0,0.55),0_0_6px_rgba(239,68,68,0.35)]"
+              style={{ left: playheadX }}
+            >
+              <div className="absolute -left-1.5 top-0 h-3.5 w-3.5 bg-gradient-to-b from-[#fb7185] via-red-500 to-red-700 [clip-path:polygon(0_0,100%_0,100%_45%,50%_100%,0_45%)] [filter:drop-shadow(0_1px_1.5px_rgba(0,0,0,0.6))]" />
+            </div>
+          )}
         </div>
-      )}
+      </div>
     </div>
     {contextMenu && (
       <LayerContextMenu
