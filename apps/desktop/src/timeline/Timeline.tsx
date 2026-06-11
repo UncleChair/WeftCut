@@ -30,6 +30,7 @@ import { useShortcuts, type OverrideMap } from "../shortcuts";
 import { requestPrebake } from "../render/motifs/prebakeBus";
 import {
   DEFAULT_TRACK_HEIGHT,
+  HEADER_COL_PX,
   indexGroups,
   visualOrderedTracks,
 } from "./geometry";
@@ -476,8 +477,12 @@ export function Timeline({
     >
       <div className="flex min-w-max">
         {/* sticky header column */}
-        <div className="sticky left-0 z-10 w-40 flex-none border-r border-border bg-card">
-          <div className="h-5 border-b border-border-soft" /> {/* ruler corner */}
+        <div className="sticky left-0 z-10 flex-none border-r border-border bg-card" style={{ width: HEADER_COL_PX }}>
+          <div
+            className="h-5 border-b border-border-soft"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          /> {/* ruler corner */}
           {orderedTracks.map(({ track }) => (
             <TrackHeader
               key={track.id}
@@ -488,7 +493,7 @@ export function Timeline({
           ))}
         </div>
         {/* scrolling body */}
-        <div className="relative">
+        <div className="relative grow">
           <TimelineRuler
             pxPerSec={pxPerSec}
             totalSec={totalSec}
