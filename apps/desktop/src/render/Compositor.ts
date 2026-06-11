@@ -650,8 +650,16 @@ export class Compositor {
     // track. Treating the VideoClip as also audio-bearing here would
     // play the same audio twice — the audible doubling bug.
     if (this.audioGraph !== null) {
+      // Track-level audio gates — mirror audio/mix.rs plan_for_project
+      // semantics: mute wins over solo; only ENABLED tracks' solo flags
+      // count. Gated-out layers stop being ticked; their already-scheduled
+      // chunks (≤ LOOKAHEAD_S) play out and the mixer goes quiet — same
+      // path as a layer leaving the playhead window.
+      const anySolo = this.projectSummary.tracks.some((t) => t.enabled && t.solo);
       for (const track of this.projectSummary.tracks) {
         if (!track.enabled) continue;
+        if (track.muted) continue;
+        if (anySolo && !track.solo) continue;
         for (const layer of track.layers) {
           if (!layer.enabled) continue;
           if (layer.params.kind === "Audio") {

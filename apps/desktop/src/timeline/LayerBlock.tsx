@@ -58,6 +58,7 @@ export function LayerBlock({
   layer,
   trackId,
   trackKind,
+  trackLocked,
   pxPerSec,
   laneHeight,
   slice,
@@ -77,6 +78,9 @@ export function LayerBlock({
   layer: LayerSummary;
   trackId: string;
   trackKind: string;
+  /// Track-level lock — blocks move/trim/blade on every layer in the
+  /// lane, same affordance as the per-layer lock.
+  trackLocked: boolean;
   pxPerSec: number;
   laneHeight: number;
   /// V.6 vertical slot. "full" = entire row; "top" = top half (visual
@@ -178,7 +182,7 @@ export function LayerBlock({
 
   const onPointerMoveHover = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.buttons !== 0) return; // ignore moves with a button held (drag)
-    if (layer.locked || bladeMode || isDragging) {
+    if (layer.locked || trackLocked || bladeMode || isDragging) {
       if (edgeHover !== null) setEdgeHover(null);
       return;
     }
@@ -194,7 +198,7 @@ export function LayerBlock({
   };
 
   const onLayerPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (e.button !== 0 || layer.locked) return;
+    if (e.button !== 0 || layer.locked || trackLocked) return;
     e.stopPropagation();
     // Blade-tool mode hijacks every pointerdown on the layer surface:
     // the click is a cut request, not a select/drag.
@@ -282,7 +286,7 @@ export function LayerBlock({
         sliceClasses,
         isSelected ? "z-[2] outline outline-2 -outline-offset-2 outline-ring" : "",
         isDragging ? "z-[3] cursor-grabbing brightness-[1.15]" : "",
-        layer.locked ? "cursor-not-allowed outline outline-1 outline-dashed outline-black/50" : "",
+        (layer.locked || trackLocked) ? "cursor-not-allowed outline outline-1 outline-dashed outline-black/50" : "",
         movedAcrossTracks ? "pointer-events-none" : "",
       ].join(" ")}
       style={{
@@ -295,7 +299,7 @@ export function LayerBlock({
           "linear-gradient(180deg, rgba(255,255,255,0.10), rgba(0,0,0,0.14))",
         opacity: movedAcrossTracks ? 0.3 : layer.enabled ? 1 : 0.45,
         cursor:
-          !layer.locked && !bladeMode && !isDragging && edgeHover !== null
+          !layer.locked && !trackLocked && !bladeMode && !isDragging && edgeHover !== null
             ? "ew-resize"
             : undefined,
         ...groupStyle,
