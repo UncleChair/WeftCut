@@ -53,8 +53,13 @@ pub enum LogCategory {
 /// Who originated the entry. `Agent { client }` carries the MCP client
 /// identifier (e.g. "claude-desktop") so the UI can distinguish multiple
 /// concurrent agents.
+// Internally tagged (NOT adjacently tagged): the `Agent` struct variant's
+// `client` field flattens alongside the `kind` tag → {"kind":"Agent",
+// "client":"x"}. With `content = "client"` (adjacent tagging) the variant
+// body would nest under the content key as {"kind":"Agent","client":
+// {"client":"x"}}, which the UI renders as "Agent · [object Object]".
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", content = "client")]
+#[serde(tag = "kind")]
 pub enum LogSource {
     User,
     Agent { client: String },
@@ -182,6 +187,22 @@ mod tests {
         assert_eq!(parsed.message, entry.message);
         assert_eq!(parsed.level, entry.level);
         assert_eq!(parsed.category, entry.category);
+    }
+
+    #[test]
+    fn agent_source_serializes_client_as_a_flat_string() {
+        // The UI reads `entry.source.client` directly and interpolates it into
+        // "Agent · {{client}}". The shape MUST be {"kind":"Agent","client":"x"}
+        // — NOT the adjacently-tagged {"kind":"Agent","client":{"client":"x"}},
+        // which renders as "[object Object]" in the status bar.
+        let v = serde_json::to_value(LogSource::Agent { client: "jobs".into() }).expect("ser");
+        assert_eq!(v["kind"], "Agent");
+        assert_eq!(v["client"], "jobs", "client must be a flat string, got {}", v["client"]);
+        // Unit variants stay tag-only.
+        assert_eq!(serde_json::to_value(LogSource::System).expect("ser")["kind"], "System");
+        // Round-trips back.
+        let back: LogSource = serde_json::from_value(v).expect("de");
+        assert_eq!(back, LogSource::Agent { client: "jobs".into() });
     }
 
     #[test]
