@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { rgbToYuv10, yuv10ToRgb, BT709 } from "./yuv10";
+import { rgbToYuv10, yuv10ToRgb, BT709, BT601, packTwoSamples } from "./yuv10";
 
 describe("yuv10 (BT.709 limited, gamma-domain)", () => {
   it("maps black/white/grey to canonical codes", () => {
@@ -26,5 +26,13 @@ describe("yuv10 (BT.709 limited, gamma-domain)", () => {
   it("clamps out-of-range input", () => {
     expect(rgbToYuv10(2, 2, 2, BT709)[0]).toBe(940);
     expect(rgbToYuv10(-1, -1, -1, BT709)[0]).toBe(64);
+  });
+  it("maps pure red per BT.601 (pins the 601 constants)", () => {
+    expect(rgbToYuv10(1, 0, 0, BT601)).toEqual([326, 361, 960]);
+    // 64 + 876*0.299 = 325.92 → 326; 512 − 896*0.299/1.772 = 360.83 → 361; 512 + 448
+  });
+  it("packs two 10-bit samples as u16LE byte quads", () => {
+    expect(packTwoSamples(0x3ff, 0x040)).toEqual([255, 3, 64, 0]);
+    expect(packTwoSamples(0, 1023)).toEqual([0, 0, 255, 3]);
   });
 });
