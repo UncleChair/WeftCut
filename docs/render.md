@@ -408,7 +408,8 @@ selector):** the Worker switches to the WebGL2 backend for the
 composite. The encode exit diverges at three points:
 
 - **Source ingest.** 10-bit-capable sources (H.264 Hi10P originals
-  whose import-time `probeSourceDecodable` set `tenBitExportCapable`)
+  identified at export time by a pure ffprobe-metadata rule — codec
+  h264 + pix_fmt yuv420p10le — that sets `tenBitExportCapable`)
   are decoded through a CPU-plane lane. The decoder's output callback
   runs `VideoFrame.copyTo` into a typed `I420P10` buffer and closes the
   source frame immediately — the copy-then-close pattern satisfies
@@ -423,10 +424,12 @@ composite. The encode exit diverges at three points:
   the PTS-order invariant is never broken at stream end.
 
   A software-decoder reorder margin (`TENBIT_REORDER_MARGIN`) accounts
-  for B-frame reorder depth: the ring high-water backpressure pauses
-  packet dispatch until the tail drains, keeping ring occupancy within
-  the margin. The current cap is entry-count-based; a byte-based cap is
-  the named follow-up for 4K content.
+  for B-frame reorder depth: the ring high-water entry count gates the
+  serialized copy chain — un-copied frames wait in the decoder output
+  queue until occupancy falls below the high-water mark — while the
+  reorder margin is a separate dispatch lead-in that keeps the decoder
+  fed ahead of the copy chain. The current cap is entry-count-based; a
+  byte-based cap is the named follow-up for 4K content.
 
   8-bit sources are unchanged on the ingest side — they go through the
   normal `createImageBitmap` / `drawImage` snapshot path — but they
@@ -459,8 +462,9 @@ composite. The encode exit diverges at three points:
   transport if the loopback WebSocket cannot be established.
 
 The parity gate (`iso_tenbit_gl_parity.e2e.js`) validates that the
-WebGL2 f16 composite and the reference 8-bit composite agree on
-pixel values within the rounding margin for known inputs. The end-to-
+WebGL2 f16 ingest and pack fragment passes agree with the CPU
+`yuv10.ts` reference on pixel values within the rounding margin for
+known inputs. The end-to-
 end gate (`export_10bit.e2e.js`) exports a Hi10P H.264 source through
 the full 10-bit path and confirms distinct-step counts above the 8-bit
 ceiling at the analyzer's gradient-row meter.
