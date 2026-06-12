@@ -85,6 +85,31 @@ discipline is unchanged. The 8-bit export path is untouched.
   intermediate so they ingest at full precision), an AV1-10 source decode
   probe, and the byte-based ring cap for 4K.
 
+## Addendum (2026-06-13)
+
+Three consequence-section facts moved after this ADR was accepted; the
+decision itself is unchanged:
+
+- **The "~80–100 MB/s, below realtime" transport figure was a dev-profile
+  artifact, not a WS design property.** The receiver (tungstenite) ran at
+  opt-level 0 in dev builds; release builds always sustained ~330 MB/s.
+  With `[profile.dev] opt-level = 1` (a per-package override does not work —
+  the read path monomorphizes into the caller's crate), the dev-build
+  transport measures ~293 MB/s: above the 186 MB/s 1080p30 realtime bar.
+  4K (~750 MB/s) remains beyond it; byte reduction (dense 10-bit packing)
+  is the lever there.
+- **AV1 10-bit sources are admitted** alongside Hi10P: dav1d under
+  prefer-software decodes to copyTo-able I420P10, while the hardware path
+  "succeeds" with opaque `format=null` frames — making the lane's
+  prefer-software flag a correctness requirement for AV1.
+- **The ring cap is resolution-derived**, replacing the flat 48-entry
+  high-water: a per-ring byte target over the first frame's actual plane
+  bytes, clamped to an entry floor/ceiling. 4K bounds at ~500 MB (entry
+  floor) instead of ~1.2 GB.
+
+Current state lives in `docs/render.md` ("Encode exits"); remaining
+follow-ups in `docs/roadmap.md`.
+
 ## References
 
 - ADR 0021 — color converges at ingest; working space = output space
