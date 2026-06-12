@@ -276,6 +276,17 @@ export class SourceHandle {
   /// timing in user-visible behavior).
   private outputsInWindow = 0;
   private windowStartMs = 0;
+  /// Diagnostic: VideoFrames decoded but not yet snapshotted to an
+  /// ImageBitmap (i.e. `createImageBitmap` is still in flight). Each such
+  /// frame pins one of the hardware decoder's ~13 output-pool slots, so a
+  /// burst that outruns `createImageBitmap` can exhaust the pool and stall
+  /// decode — the pump caps the INPUT queue (`decodeQueueSize`) but nothing
+  /// caps this OUTPUT-side count. Surfaced in the throughput log (`inflight`
+  /// = current, `peak` = window max) so a repro shows whether a stall is
+  /// pool-pinning (high peak) vs. external GPU starvation (low peak, slow
+  /// `createImageBitmap`). See systematic-debugging note on the preview stall.
+  private conversionsInFlight = 0;
+  private peakConversionsInWindow = 0;
   private _disposed = false;
 
   get disposed(): boolean {
@@ -344,8 +355,13 @@ export class SourceHandle {
         // holding the decoder's buffers across many ticks.
         const ptsUs = frame.timestamp;
         const durationUs = frame.duration ?? 0;
+        this.conversionsInFlight += 1;
+        if (this.conversionsInFlight > this.peakConversionsInWindow) {
+          this.peakConversionsInWindow = this.conversionsInFlight;
+        }
         createImageBitmap(frame).then(
           (bitmap) => {
+            this.conversionsInFlight -= 1;
             frame.close();
             // Re-check decoder identity after the async hop. An
             // inactivity-rebuild or software-downgrade between the
@@ -388,9 +404,11 @@ export class SourceHandle {
                   `${(nowMs - this.windowStartMs).toFixed(0)}ms ` +
                   `(${((this.outputsInWindow * 1000) / (nowMs - this.windowStartMs)).toFixed(1)} fps) ` +
                   `[total=${this.outputFrameCount} queue=${dec.decodeQueueSize} ` +
-                  `ring=${this.ring.size()}@${ringLastMs}ms]`,
+                  `ring=${this.ring.size()}@${ringLastMs}ms ` +
+                  `inflight=${this.conversionsInFlight} peak=${this.peakConversionsInWindow}]`,
               );
               this.outputsInWindow = 0;
+              this.peakConversionsInWindow = this.conversionsInFlight;
               this.windowStartMs = nowMs;
             }
           },
@@ -401,6 +419,7 @@ export class SourceHandle {
             // `createImageBitmap`. Not fatal; the next output may
             // succeed (the decoder isn't required to emit identical
             // formats every chunk).
+            this.conversionsInFlight -= 1;
             try {
               frame.close();
             } catch {
