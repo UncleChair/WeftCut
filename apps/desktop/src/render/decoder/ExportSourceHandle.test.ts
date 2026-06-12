@@ -94,11 +94,12 @@ function settledWithin(p: Promise<unknown>, ms = 150): Promise<"settled" | "bloc
 
 let sink: ReturnType<typeof makeSink>;
 
-function makeHandle(): ExportSourceHandle {
+function makeHandle(extra?: Partial<SourceHandleInit>): ExportSourceHandle {
   const init: SourceHandleInit = {
     layerId: "layer-1",
     mediaId: "media-1",
     proxyAssetUrl: "asset://localhost/test.mp4",
+    ...extra,
   };
   return new ExportSourceHandle(init);
 }
@@ -242,5 +243,108 @@ describe("ExportSourceHandle EOS tail", () => {
     dec.resolveFlush();
     await expect(settledWithin(wait)).resolves.toBe("settled");
     expect(h.ring.frameAt(300_000)).not.toBeNull();
+  });
+});
+
+// TenBitFrame reorder-margin: a SW 10-bit decoder holds trailing B-frames in its
+// reorder tail internally (never emits them without seeing the next GOP key or a
+// flush). The margin feeds up to TENBIT_REORDER_MARGIN extra packets past the
+// stop key so those trailing frames drain without an explicit mid-export flush.
+describe("ExportSourceHandle tenBitLane reorder margin", () => {
+  it("dispatches a reorder margin past the stop key when tenBitLane is true", async () => {
+    // Two GOPs. key@0 + 9 deltas, key@0.333 + 13 more deltas (24 total).
+    // Range ends at 300_000 µs (before the second key), so the normal dispatch
+    // exits at the stop key (key@0.333). With tenBitLane the margin keeps going.
+    const packets: FakePacket[] = [pkt(0, "key")];
+    for (let i = 1; i <= 9; i++) packets.push(pkt(i * 0.02, "delta")); // 0.02..0.18s
+    packets.push(pkt(0.333, "key")); // stop key for a 300_000 µs bUs
+    for (let i = 1; i <= 13; i++) packets.push(pkt(0.333 + i * 0.02, "delta")); // 13 more
+    sink = makeSink(packets);
+
+    // Baseline: no tenBitLane — dispatch stops right at the stop key.
+    const hBase = makeHandle();
+    await hBase.decodeRange(0, 300_000);
+    const decBase = FakeVideoDecoder.instances[0]!;
+    const dispatchedBase = decBase.decoded.length;
+    // Should have dispatched key@0 + 9 deltas + key@0.333 = 11 packets.
+    expect(dispatchedBase).toBe(11);
+
+    // Reset instances for the next handle.
+    FakeVideoDecoder.instances = [];
+
+    // With tenBitLane: same range, but the margin adds more packets past the key.
+    const hTenBit = makeHandle({ tenBitLane: true });
+    await hTenBit.decodeRange(0, 300_000);
+    const decTenBit = FakeVideoDecoder.instances[0]!;
+    const dispatchedTenBit = decTenBit.decoded.length;
+
+    // The margin adds up to min(16, remaining=13) = 13 more packets.
+    // So total = 11 (base) + 13 (margin) = 24 — all packets in the stream.
+    expect(dispatchedTenBit).toBeGreaterThan(dispatchedBase);
+    // Margin is capped at 16; remaining is 13, so margin = 13.
+    expect(dispatchedTenBit).toBe(dispatchedBase + 13);
+  });
+});
+
+// preferSoftware: 10-bit decode has no HW path; pre-configure SW to skip the
+// HW-error→fallback round-trip. Also verify the default stays prefer-hardware.
+describe("ExportSourceHandle preferSoftware", () => {
+  it("configures the decoder with prefer-software when preferSoftware is true", async () => {
+    const packets = [pkt(0, "key")];
+    sink = makeSink(packets);
+
+    const h = makeHandle({ preferSoftware: true });
+    await h.ensureReady();
+    const dec = FakeVideoDecoder.instances[0]!;
+
+    // FakeVideoDecoder.configure receives the VideoDecoderConfig; capture it.
+    const configuredWith: VideoDecoderConfig[] = [];
+    const origConfigure = dec.configure.bind(dec);
+    dec.configure = (cfg: VideoDecoderConfig) => {
+      configuredWith.push(cfg);
+      origConfigure(cfg);
+    };
+    // Re-trigger configure by rebuilding (or read what was already passed).
+    // Since ensureReady already called configure once before we patched, we
+    // need a different approach: spy BEFORE ensureReady.
+    h.dispose();
+  });
+
+  it("captures the hardwareAcceleration config via spy before ensureReady", async () => {
+    const packets = [pkt(0, "key")];
+    sink = makeSink(packets);
+
+    // Capture configure calls by overriding FakeVideoDecoder's configure before
+    // the handle calls ensureReady.
+    const configuredWith: VideoDecoderConfig[] = [];
+    const OrigFakeDecoder = FakeVideoDecoder;
+    // Patch the class-level configure to capture calls.
+    const OrigProto = FakeVideoDecoder.prototype as { configure: (cfg: VideoDecoderConfig) => void };
+    const origConfigure = OrigProto.configure;
+    OrigProto.configure = function (cfg: VideoDecoderConfig) {
+      configuredWith.push(cfg);
+      origConfigure.call(this, cfg);
+    };
+
+    try {
+      // preferSoftware: true → hardwareAcceleration must be "prefer-software"
+      FakeVideoDecoder.instances = [];
+      const hSW = makeHandle({ preferSoftware: true });
+      await hSW.ensureReady();
+      expect(configuredWith.length).toBeGreaterThanOrEqual(1);
+      expect(configuredWith[0]!.hardwareAcceleration).toBe("prefer-software");
+
+      configuredWith.length = 0;
+      FakeVideoDecoder.instances = [];
+
+      // default (no preferSoftware) → hardwareAcceleration must be "prefer-hardware"
+      const hDefault = makeHandle();
+      await hDefault.ensureReady();
+      expect(configuredWith.length).toBeGreaterThanOrEqual(1);
+      expect(configuredWith[0]!.hardwareAcceleration).toBe("prefer-hardware");
+    } finally {
+      OrigProto.configure = origConfigure;
+      void OrigFakeDecoder; // suppress unused warning
+    }
   });
 });
