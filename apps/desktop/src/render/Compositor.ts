@@ -531,6 +531,8 @@ export class Compositor {
     if (!summary) {
       for (const c of this.clips.values()) c.sprite.dispose();
       this.clips.clear();
+      this.tenBitIngest?.dispose();
+      this.tenBitIngest = null;
       this.baker?.setTargets([]);
       this.manualPrebakeLayers.clear();
       sharedBakedKeyIndex.clear();
