@@ -56,20 +56,22 @@ export settings — burn-in via ffmpeg's `subtitles` filter at the
 transcode/mux stage, and/or a sidecar subtitle track for containers
 that carry one (mkv).
 
-### Export decode redundancy
+### Export decode redundancy — resolved, nothing actionable left
 
-Same-phase clips of one source (stacked copies, trims of one pass) now
-share a merged-range decode pipeline (`exportHandleKey` grouping, see
-[`render.md`](render.md)), so identical ranges are decoded once. What
-remains is the cross-chunk re-seek redundancy: a backward clip-reuse
-jump re-decodes from the GOP key, and different-phase overlaps each
-pay their own full decode — measured up to ~4.35× dispatched packets
-via the committed `__weftcutExportPerf` counters on adversarial
-timelines, roughly a 30–45% export-time lever. The fix shape is
-continuous-forward decode (serve a backward-jumping clip from a
-second forward pass instead of re-seeking). Preview has the sibling
-optimization already designed in [`render.md`](render.md): sharing a
-warm decoder across sequential cuts of one source.
+Export decode dispatch sits ON the inherent floor across the timeline
+shapes that used to thrash (single clip, sequential source re-use,
+different-phase overlap, mid-GOP range entry) — measured via the
+`__weftcutExportPerf` counters with
+`e2e/tools/perf_export_redundancy.e2e.js`. The phase-keyed pipeline
+grouping in [`render.md`](render.md) collected the old "up to ~4.35×"
+lever; what remains is inherent cost, not waste: a different-phase
+overlap decodes one pass per phase (sharing would need a ring deeper
+than the WebCodecs buffer pool), and a mid-GOP entry decodes from the
+GOP key (long-GOP sources, unavoidable without re-keyframing).
+Revisit only if Speed / reverse playback lands — a backward-marching
+source mapping is the one shape the forward-only pipelines don't
+cover. Preview keeps its own sibling item (warm-decoder handoff
+across sequential cuts, designed in [`render.md`](render.md)).
 
 ### Zero-copy color-correct GPU frame upload
 
