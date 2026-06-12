@@ -217,17 +217,23 @@ validator. Additional types (wipe, slide, push) land as new
 - Remote-server MCP variant (Tailscale-friendly) with proper auth.
 - Plugin system for third-party effects via WebAssembly.
 - Collaboration (CRDT-based shared editing).
-- **Native Rust export backend (wgpu compositing + ffmpeg 10-bit encode).**
-  The escape hatch from the WebCodecs *output* ceiling: WebView2's encoder
-  emits 8-bit only and ignores the input `colorSpace` (resolution-default
-  BT.709 tagging — see ADR 0014 / [`render.md`](render.md)), so true 10-bit /
-  HDR output and exact color-tag control are unreachable in-webview. A native
-  render/export path — decode → wgpu composite → ffmpeg encode (x265 Main10 /
-  libaom 10-bit) with no webview round-trip — lifts both ceilings and drops the
-  asset-scheme per-frame transfer cost. Scope it to the *export* path only; the
-  React/Pixi editor stays for editing (no native-GUI / gpui rewrite — gpui has
-  no custom-GPU-render hook today anyway). Revisit only if 10-bit/HDR output
-  becomes a real deliverable requirement; today the practical loss is a single
-  transcode generation, since output is 8-bit either way. Distinct from the
-  "WebGPU compositor backend" item above (that's in-webview real-time effects;
-  this is the native output pipeline).
+- **HDR preview sink and wider-gamut working space.**
+  The native encode exit exists: the 10-bit pipeline's Rust video sink
+  (`export/videosink.rs`, loopback WebSocket → ffmpeg rawvideo → Main10
+  encoder) ships the ffmpeg encoder surface that was the main prize of the
+  old "native Rust export backend" item. What remains gated on the HDR-
+  deliverable trigger is: (a) the **HDR preview sink** — `rgba16float`
+  WebGPU canvas with `toneMapping:{mode:'extended'}` in Pixi; this requires
+  the Pixi WebGPU pipeline-cache patch (tracked upstream as PR #12020 /
+  issue #12019) or the verified runtime override, plus real HDR-glass
+  verification on Windows; (b) the **wider-gamut working space** — evolving
+  ADR 0021's ingest chokepoint from display-referred BT.709 to a scene-light
+  or wide-color-gamut space, which changes blending semantics and needs a
+  full conformance re-pass. Both remain post-v1 and both gate on HDR output
+  becoming a real deliverable requirement.
+  Follow-up in the 10-bit bucket: **HEVC Main10 source conform** — HW-opaque
+  HEVC frames cannot `copyTo` (P1 probe finding), so 10-bit HEVC originals
+  currently proxy to a SW-decodable form; `importExternalTexture` or a
+  format-conversion approach is the open P6 investigation.
+  Distinct from the "WebGPU compositor backend" item above (that's real-time
+  effects; this is the output pipeline and preview sink).
