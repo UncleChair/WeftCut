@@ -38,7 +38,7 @@ import type { MediaSummary, ProjectSummary } from "../../ipc";
 import { selectActiveVideoLayers } from "../activeVideoLayers";
 import { gopFrames } from "../exportSettings";
 import { Compositor } from "../Compositor";
-import { ExportDecoderPool } from "../decoder/ExportDecoderPool";
+import { ExportDecoderPool, exportHandleKey } from "../decoder/ExportDecoderPool";
 import { EncoderSink } from "./encoder";
 import { exportFrameCount, frameTimeUs as gridFrameTimeUs } from "./frameGrid";
 import type { ExportEvent, ExportRequest } from "./protocol";
@@ -258,21 +258,30 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     // the decoder and returns immediately. No flush. The decoder
     // emits frames asynchronously via its output callback; the
     // encode loop below pulls them via `ring.waitForPts`.
+    //
+    // Clips are grouped per decode pipeline (`exportHandleKey`: mediaId +
+    // timeline→source phase) and each group dispatches ONE merged range.
+    // Per-clip dispatch on a shared handle let two overlapping clips of one
+    // source interleave `decodeRange` calls — the cursor raced and the
+    // export wedged (frame counter frozen mid-run); same-phase clips also
+    // each paid a full decode for identical ranges.
     const stagedClips = activeVideoClips(summary, chunkStartUs, chunkEndUs);
+    const stagedGroups = groupStagedClips(stagedClips);
     const decodeT0 = performance.now();
     await Promise.all(
-      stagedClips.map(async (c) => {
-        const proxyUrl = req.project.proxyAssetUrls[c.mediaId];
+      [...stagedGroups.values()].map(async (g) => {
+        const proxyUrl = req.project.proxyAssetUrls[g.mediaId];
         if (!proxyUrl) return;
         const handle = exportPool.acquire({
-          layerId: c.layerId,
-          mediaId: c.mediaId,
+          layerId: g.clips[0]!.layerId,
+          mediaId: g.mediaId,
+          handleKey: g.key,
           proxyAssetUrl: proxyUrl,
           // Defined only for original-file (DirectExport) decodes; undefined for
           // proxies. Threads the source's real color tags into the decoder.
-          sourceColor: req.project.mediaColor[c.mediaId],
+          sourceColor: req.project.mediaColor[g.mediaId],
         });
-        await handle.decodeRange(c.srcAUs, c.srcBUs);
+        await handle.decodeRange(g.srcAUs, g.srcBUs);
       }),
     );
     const decodeMs = performance.now() - decodeT0;
@@ -306,7 +315,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
       if (activeNow.length > 0) {
         await Promise.all(
           activeNow.map((c) => {
-            const handle = exportPool.handles.get(c.mediaId);
+            const handle = exportPool.handles.get(c.key);
             if (!handle) return Promise.resolve();
             return handle.ring.waitForPts(clipSrcPtsAt(c, tUs));
           }),
@@ -347,16 +356,21 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
       // or before the NEXT output frame's source PTS. For the last
       // output frame in the chunk, drop everything through srcBUs.
       // This is what keeps the WebCodecs decoder pool from
-      // saturating.
+      // saturating. The cutoff is aggregated per GROUP (min across the
+      // group's active clips): a per-clip evict on a shared ring would
+      // let one clip drop frames a sibling still needs next frame.
       const nextTUs = i + 1 < chunkEnd ? frameTimeUs(i + 1) : null;
+      const cutoffByKey = new Map<string, number>();
       for (const c of activeNow) {
-        const handle = exportPool.handles.get(c.mediaId);
-        if (!handle) continue;
         const cutoff =
           nextTUs !== null && c.tStartUs <= nextTUs && nextTUs < c.tEndUs
             ? clipSrcPtsAt(c, nextTUs)
             : c.srcBUs + 1;
-        handle.evictBefore(cutoff);
+        const prev = cutoffByKey.get(c.key);
+        cutoffByKey.set(c.key, prev === undefined ? cutoff : Math.min(prev, cutoff));
+      }
+      for (const [key, cutoff] of cutoffByKey) {
+        exportPool.handles.get(key)?.evictBefore(cutoff);
       }
 
       if (i % 5 === 0) {
@@ -379,9 +393,8 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     // stale frames in handles that weren't active at the last
     // output frame.
     const evictT0 = performance.now();
-    for (const c of stagedClips) {
-      const handle = exportPool.handles.get(c.mediaId);
-      handle?.evictBefore(c.srcBUs + 1);
+    for (const g of stagedGroups.values()) {
+      exportPool.handles.get(g.key)?.evictBefore(g.srcBUs + 1);
     }
     const evictMs = performance.now() - evictT0;
     totals.evictMs += evictMs;
@@ -476,6 +489,10 @@ function cleanup(
 interface StagedClip {
   layerId: string;
   mediaId: string;
+  /// Decode-pipeline identity (`exportHandleKey`): mediaId + timeline→source
+  /// phase. Clips sharing a key share one handle and one merged range per
+  /// chunk; the encode loop's waits + evicts look handles up by this.
+  key: string;
   /// Source-local PTS interval to dispatch for this chunk: [srcAUs, srcBUs].
   srcAUs: number;
   srcBUs: number;
@@ -489,6 +506,39 @@ interface StagedClip {
   /// to compute srcAUs/srcBUs; we keep the raw inputs so the
   /// encode loop can compute the per-frame srcPts itself.
   srcInUs: number;
+}
+
+/// One decode pipeline's per-chunk work: the clips that share an
+/// `exportHandleKey` and the union of their source ranges. Same-phase clips
+/// have coinciding (or nested) ranges, so the union is contiguous and a
+/// single `decodeRange` serves every clip in the group.
+interface StagedGroup {
+  key: string;
+  mediaId: string;
+  srcAUs: number;
+  srcBUs: number;
+  clips: StagedClip[];
+}
+
+function groupStagedClips(clips: StagedClip[]): Map<string, StagedGroup> {
+  const groups = new Map<string, StagedGroup>();
+  for (const c of clips) {
+    const g = groups.get(c.key);
+    if (!g) {
+      groups.set(c.key, {
+        key: c.key,
+        mediaId: c.mediaId,
+        srcAUs: c.srcAUs,
+        srcBUs: c.srcBUs,
+        clips: [c],
+      });
+    } else {
+      g.srcAUs = Math.min(g.srcAUs, c.srcAUs);
+      g.srcBUs = Math.max(g.srcBUs, c.srcBUs);
+      g.clips.push(c);
+    }
+  }
+  return groups;
 }
 
 /// Compute the source-local PTS that an output time `tUs` maps to
@@ -514,6 +564,7 @@ function activeVideoClips(
     return {
       layerId: l.layerId,
       mediaId: l.mediaId,
+      key: exportHandleKey(l.mediaId, l.srcInUs, l.tStartUs),
       srcAUs: l.srcInUs + (overlapStartUs - l.tStartUs),
       srcBUs: l.srcInUs + (overlapEndUs - l.tStartUs),
       tStartUs: l.tStartUs,
