@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ExportFrameStore } from "./ExportDecoderPool";
+import { ExportFrameStore, tenBitHighWaterFor } from "./ExportDecoderPool";
 import type { TenBitFrame } from "./tenBitFrame";
 
 // ExportFrameStore.push reads only `timestamp` + `duration` and calls `close()`
@@ -11,6 +11,21 @@ function fakeFrame(ptsUs: number, durationUs: number): VideoFrame {
     close: () => {},
   } as unknown as VideoFrame;
 }
+
+/// Ten-bit stub: push reads `kind` (type guard) + `data.byteLength` (high-water
+/// derivation) on top of the VideoFrame fields above.
+function fakeTenBitFrame(ptsUs: number, durationUs: number, byteLength: number): TenBitFrame {
+  return {
+    kind: "p10",
+    data: { byteLength },
+    timestamp: ptsUs,
+    duration: durationUs,
+    close: () => {},
+  } as unknown as TenBitFrame;
+}
+
+const BYTES_1080P = 1920 * 1080 * 3; // I420P10 ≈ 6.2 MB
+const BYTES_4K = 3840 * 2160 * 3; // ≈ 24.9 MB
 
 describe("ExportFrameStore.waitForPts", () => {
   // Regression: the export wedged at frame 0 ("stuck at 0%") whenever a
@@ -315,5 +330,87 @@ describe("ExportFrameStore.waitBelowTenBitHighWater", () => {
     store.evictBefore(33333);
     await gateP;
     expect(gateResolved).toBe(true);
+  });
+});
+
+// Resolution-derived high-water: the entry cap derives from the first
+// TenBitFrame's actual plane bytes (a per-ring byte target expressed as an
+// entry count — frame size is constant within one ring), clamped to
+// [MIN 20, MAX 48]. Bounds 4K memory (~500 MB at the MIN floor) without
+// live byte accounting.
+describe("tenBitHighWaterFor", () => {
+  it("clamps 1080p to the 48-entry ceiling (today's behavior unchanged)", () => {
+    expect(tenBitHighWaterFor(BYTES_1080P)).toBe(48);
+  });
+  it("clamps 4K to the 20-entry deadlock floor", () => {
+    expect(tenBitHighWaterFor(BYTES_4K)).toBe(20);
+  });
+  it("uses the byte-target quotient between the clamps (1440p → 30)", () => {
+    expect(tenBitHighWaterFor(2560 * 1440 * 3)).toBe(30);
+  });
+});
+
+describe("ExportFrameStore resolution-derived ten-bit high-water", () => {
+  it("derives the gate level from the first TenBitFrame's bytes (4K → 20)", async () => {
+    const store = new ExportFrameStore();
+    for (let i = 0; i < 20; i++) store.push(fakeTenBitFrame(i * 33333, 33333, BYTES_4K));
+    expect(store.tenBitHighWater).toBe(20);
+
+    let gateResolved = false;
+    const gateP = store.waitBelowTenBitHighWater().then(() => {
+      gateResolved = true;
+    });
+    await Promise.resolve();
+    expect(gateResolved).toBe(false); // parked at the derived (lower) HWM
+
+    store.evictBefore(33333); // 19 entries — below the derived HWM
+    await gateP;
+    expect(gateResolved).toBe(true);
+  });
+
+  it("derives once — later frames with different sizes don't re-derive", () => {
+    const store = new ExportFrameStore();
+    store.push(fakeTenBitFrame(0, 33333, BYTES_1080P));
+    expect(store.tenBitHighWater).toBe(48);
+    store.push(fakeTenBitFrame(33333, 33333, BYTES_4K * 4));
+    expect(store.tenBitHighWater).toBe(48);
+  });
+
+  it("keeps the 48 ceiling for plain VideoFrame rings (8-bit lane untouched)", async () => {
+    const store = new ExportFrameStore();
+    for (let i = 0; i < 47; i++) store.push(fakeFrame(i * 33333, 33333));
+    expect(store.tenBitHighWater).toBe(48);
+    await expect(store.waitBelowTenBitHighWater()).resolves.toBeUndefined();
+  });
+
+  // Deadlock-freedom at the MIN floor: a parked consumer always reopens the
+  // gate. Decoder output is presentation-ordered, so an unsatisfied waiter
+  // implies every held frame is at/below its target — all evictable except
+  // the immediate lower neighbour. `waitForPts` runs `freeBehindWaiters`
+  // itself, so parking the consumer shrinks the ring and releases the chain.
+  it("at the 20-entry floor, a parked waiter evicts behind itself and reopens the gate", async () => {
+    const store = new ExportFrameStore();
+    for (let i = 0; i < 20; i++) store.push(fakeTenBitFrame(i * 33333, 33333, BYTES_4K));
+
+    let gateResolved = false;
+    const gateP = store.waitBelowTenBitHighWater().then(() => {
+      gateResolved = true;
+    });
+    await Promise.resolve();
+    expect(gateResolved).toBe(false); // chain blocked at the floor
+
+    // Consumer parks for a frame beyond everything held (pts 30 × 33333).
+    let waiterResolved = false;
+    const waitP = store.waitForPts(30 * 33333).then(() => {
+      waiterResolved = true;
+    });
+    // Its freeBehindWaiters keeps only the immediate lower neighbour → the
+    // gate reopens and the copy chain can progress toward the awaited frame.
+    await gateP;
+    expect(gateResolved).toBe(true);
+
+    store.push(fakeTenBitFrame(30 * 33333, 33333, BYTES_4K));
+    await waitP;
+    expect(waiterResolved).toBe(true);
   });
 });
