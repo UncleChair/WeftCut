@@ -34,6 +34,10 @@ import { copyToTenBit, isTenBitDecoderFormat, type TenBitFrame } from "./tenBitF
 /// max DPB is 16.
 const TENBIT_REORDER_MARGIN = 16;
 
+/// 10-bit lane high-water mark (entries). ~48 × 6.2 MB ≈ 300 MB at 1080p —
+/// bounds the CPU-plane ring the way the WebCodecs pool bounds VideoFrames.
+const TENBIT_RING_HIGH_WATER = 48;
+
 interface RingEntry {
   ptsUs: number;
   durationUs: number;
@@ -72,7 +76,11 @@ export class ExportFrameStore implements FrameStore {
   /// frame — keeps the WebCodecs decoder pool from piling up
   /// unconsumed frames (pool exhaustion at ~8 outstanding frames
   /// was the export-stuck wedge).
-  private waiters: Array<{ tUs: number; resolve: () => void }> = [];
+  private waiters: Array<{ tUs: number; resolve: () => void; reject: (e: Error) => void }> = [];
+  /// Pending resolvers parked at the 10-bit high-water gate (I2 backpressure).
+  private gateWaiters: Array<() => void> = [];
+  /// Non-null once `fail()` is called; subsequent waitForPts calls reject.
+  private failure: string | null = null;
 
   push(frame: VideoFrame | TenBitFrame): void {
     this.entries.push({
@@ -125,6 +133,7 @@ export class ExportFrameStore implements FrameStore {
     if (keepFrom > 0) {
       for (let i = 0; i < keepFrom; i++) this.entries[i]!.frame.close();
       this.entries.splice(0, keepFrom);
+      this.notifyShrink();
     }
   }
 
@@ -133,9 +142,10 @@ export class ExportFrameStore implements FrameStore {
   /// resolves the next time `push()` delivers a covering frame.
   /// Producer→consumer sync point for the export Worker.
   waitForPts(tUs: number): Promise<void> {
+    if (this.failure) return Promise.reject(new Error(this.failure));
     if (this.isReadyFor(tUs)) return Promise.resolve();
-    const p = new Promise<void>((resolve) => {
-      this.waiters.push({ tUs, resolve });
+    const p = new Promise<void>((resolve, reject) => {
+      this.waiters.push({ tUs, resolve, reject });
     });
     // KICK a possibly-stalled decoder: free pool slots behind this newly-parked
     // waiter NOW. Frames can pile up during a chunk's `decodeRange` dispatch
@@ -260,7 +270,10 @@ export class ExportFrameStore implements FrameStore {
         break;
       }
     }
-    if (n > 0) this.entries.splice(0, n);
+    if (n > 0) {
+      this.entries.splice(0, n);
+      this.notifyShrink();
+    }
   }
 
   flush(): void {
@@ -273,6 +286,45 @@ export class ExportFrameStore implements FrameStore {
     // that would mislead the caller into thinking a frame is
     // present. Caller is expected to bail out via the dispose path.
     this.waiters = [];
+    this.notifyShrink();
+  }
+
+  /// Backpressure gate for the 10-bit copy chain (I2). Resolves immediately
+  /// when the ring is below the high-water mark OR the ring has failed (so
+  /// chain links drain and the failure surfaces at `waitForPts`).
+  waitBelowTenBitHighWater(): Promise<void> {
+    if (this.entries.length < TENBIT_RING_HIGH_WATER || this.failure !== null) {
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => {
+      this.gateWaiters.push(resolve);
+    });
+  }
+
+  /// Resolve all gateWaiters if the ring has shrunk below the high-water mark.
+  /// Called whenever entries are removed (evictBefore, freeBehindWaiters, flush).
+  private notifyShrink(): void {
+    if (this.gateWaiters.length === 0) return;
+    if (this.entries.length < TENBIT_RING_HIGH_WATER) {
+      const waiters = this.gateWaiters.splice(0);
+      for (const r of waiters) r();
+    }
+  }
+
+  /// Mark the ring as failed and reject all pending waiters + gate-waiters.
+  /// Future `waitForPts` calls will reject immediately. Gate-waiters are
+  /// resolved (not rejected) so copy-chain links drain and the failure
+  /// surfaces at the next `waitForPts` call.
+  fail(reason: string): void {
+    if (this.failure) return; // idempotent
+    this.failure = reason;
+    // Drain gate-waiters so any in-flight copy chain links exit cleanly.
+    const gates = this.gateWaiters.splice(0);
+    for (const r of gates) r();
+    // Reject pending waitForPts waiters.
+    const err = new Error(reason);
+    const pending = this.waiters.splice(0);
+    for (const w of pending) w.reject(err);
   }
 
   size(): number {
@@ -327,6 +379,10 @@ export class ExportSourceHandle implements DecoderHandle {
   /// its frames are already in the decoder/ring pipeline.
   private coveredThroughUs = Number.NEGATIVE_INFINITY;
   private outputFrameCount = 0;
+  /// Serialized copy chain for the 10-bit lane (C1+C2 fix). Each decoder
+  /// output callback appends to this chain so copies land in emit order and
+  /// the EOS flush `.then` awaits the chain before calling finishEosDrain.
+  private copyChain: Promise<void> = Promise.resolve();
   /// Cumulative packets fed to the decoder across all `decodeRange` calls.
   /// With a 1:1 export this should track the frame count; a large excess means
   /// re-decode waste (the long-GOP re-seek redundancy). Read by the export
@@ -437,17 +493,25 @@ export class ExportSourceHandle implements DecoderHandle {
           );
         }
         if (this.tenBitLane && isTenBitDecoderFormat(frame.format)) {
-          void copyToTenBit(frame)
-            .then((tb) => {
-              frame.close();
-              if (this.decoder !== dec) return;
-              this.ring.push(tb);
-            })
-            .catch((e: unknown) => {
-              frame.close();
-              // eslint-disable-next-line no-console
-              console.error(`[weftcut/export] ${this.mediaId} copyTo failed:`, e);
-            });
+          this.copyChain = this.copyChain.then(async () => {
+            // Backpressure: while the ring is at high water, leaving this frame
+            // un-copied (and un-closed) keeps it in the decoder's output queue —
+            // the decoder self-throttles exactly like the 8-bit pool-slot lane.
+            await this.ring.waitBelowTenBitHighWater();
+            const tb = await copyToTenBit(frame);
+            frame.close();
+            if (this.decoder !== dec) return;
+            this.ring.push(tb);
+          }).catch((e: unknown) => {
+            try { frame.close(); } catch { /* already closed */ }
+            if (this.decoder !== dec) return;
+            const msg = `[weftcut/export] ${this.mediaId} 10-bit copyTo failed: ${String(e)}`;
+            // eslint-disable-next-line no-console
+            console.error(msg);
+            // I1: a dropped frame is silent corruption and a parked-forever waiter —
+            // fail the ring loudly so the worker's waitForPts rejects the export.
+            this.ring.fail(msg);
+          });
           return;
         }
         this.ring.push(frame);
@@ -512,6 +576,9 @@ export class ExportSourceHandle implements DecoderHandle {
     // frames again — reset the EOS frontier and the ring's finalized state.
     this.eosFrontierUs = null;
     this.ring.clearEosDrain();
+    // Stale copy-chain links are identity-guarded; reset so new copies from the
+    // rebuilt decoder don't chain behind an old settled tail.
+    this.copyChain = Promise.resolve();
   }
 
   /// Compositor's `setAnchorTime` reaches us here; export drives decoding via
@@ -688,6 +755,7 @@ export class ExportSourceHandle implements DecoderHandle {
     );
     void dec
       .flush()
+      .then(() => this.copyChain)
       .then(() => {
         if (this.decoder !== dec) return; // superseded by rebuild/dispose
         // Every frame the source will ever produce is now in the ring (or
@@ -734,6 +802,7 @@ export class ExportSourceHandle implements DecoderHandle {
     this.outputFrameCount = 0;
     this.downgraded = false;
     this.eosFrontierUs = null;
+    this.copyChain = Promise.resolve();
     this._disposed = true;
   }
 }
