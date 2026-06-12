@@ -231,9 +231,13 @@ validator. Additional types (wipe, slide, push) land as new
   or wide-color-gamut space, which changes blending semantics and needs a
   full conformance re-pass. Both remain post-v1 and both gate on HDR output
   becoming a real deliverable requirement.
-  Follow-up in the 10-bit bucket: **HEVC Main10 source conform** — HW-opaque
-  HEVC frames cannot `copyTo` (P1 probe finding), so 10-bit HEVC originals
-  currently proxy to a SW-decodable form; `importExternalTexture` or a
-  format-conversion approach is the open P6 investigation.
+  Follow-ups in the 10-bit bucket (all post-v1; see ADR 0022): **HEVC
+  Main10 source conform** — HW-opaque HEVC frames cannot `copyTo` (P1 probe
+  finding), so 10-bit HEVC originals currently proxy to a SW-decodable form;
+  `importExternalTexture` or a format-conversion approach is the open P6
+  investigation. **AV1-10 source probe** — admit AV1 10-bit originals to
+  `tenBitExportCapable` once a decode probe confirms `copyTo` works (the v1
+  rule is Hi10P H.264 only). **Byte-based ring cap** — the CPU-plane lane's
+  high-water is entry-count based; a byte-based cap bounds 4K memory.
   Distinct from the "WebGPU compositor backend" item above (that's real-time
   effects; this is the output pipeline and preview sink).

@@ -447,10 +447,11 @@ composite. The encode exit diverges at three points:
   modes — run in this space identically to the 8-bit path.
 
 - **GPU byte-pack and native encode sink.** After each composited
-  frame, `PackYuv420p10` runs a GLSL compute pass over the
-  `rgba16float` RenderTexture: it applies the BT.709 limited-range
-  matrix and 10-bit quantization in one shader and writes luma and
-  chroma planes into an output buffer sized for `yuv420p10le`. This
+  frame, `PackYuv420p10` runs GLSL fragment passes over the
+  `rgba16float` RenderTexture: they apply the BT.709 limited-range
+  matrix and 10-bit quantization and write luma and chroma planes
+  (byte-packed, two 10-bit samples per RGBA8 texel) into an output
+  buffer sized for `yuv420p10le`. This
   pack pass is the output transform — the encode-domain color
   conversion is folded into it — and it also handles any encoder
   downscale via the sampler, eliminating a separate blit. The resulting
@@ -469,12 +470,10 @@ end gate (`export_10bit.e2e.js`) exports a Hi10P H.264 source through
 the full 10-bit path and confirms distinct-step counts above the 8-bit
 ceiling at the analyzer's gradient-row meter.
 
-Cross-reference: ADR 0021 describes the color model and its named
-revisit trigger (the f16 composite is that trigger's realization for
-the export path); the float16 pipeline exploration spec
-(`docs/superpowers/specs/2026-06-12-float16-pipeline-exploration.md`)
-records the probe results that settled the transport and ingest
-choices.
+Cross-reference: ADR 0022 records the decision and its probe-backed
+rationale (WebGL2 stock f16, the WebSocket transport, copyTo ingest,
+deferred HDR); ADR 0021 describes the color model whose named revisit
+trigger the f16 composite realizes for the export path.
 
 ### Backpressure
 
