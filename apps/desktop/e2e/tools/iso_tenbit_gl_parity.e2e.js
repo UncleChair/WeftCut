@@ -1,8 +1,15 @@
 // GL-parity gate for the 10-bit ingest + pack pipeline (Task 5).
 // Verifies that:
 //   T1: TenBitIngest's RG8→RGBA16F shader matches the yuv10.ts CPU reference.
-//   T2: PackP010's f16→RGBA8 byte-pack shaders are byte-exact (±1 code) and
-//       pins the PACK_ROW_FLIP orientation constant.
+//   T1b: 601-tagged (smpte170m) case — same pipeline with BT601 coefficients.
+//   T1c: awkward-width (70×64) case — pins the UNPACK_ALIGNMENT=1 fix.
+//   T2: PackYuv420p10's f16→RGBA8 byte-pack shaders are byte-exact (±1 code)
+//       and pins the PACK_ROW_FLIP orientation constant.
+//
+// NOTE: The shader strings inlined below are copied verbatim from their
+// source files — keep both in sync:
+//   T1 VERT/FRAG  ← src/render/tenbit/TenBitIngest.ts
+//   T2 VERT_PACK/FRAG_Y/FRAG_C ← src/render/tenbit/PackYuv420p10.ts
 //
 // Self-contained: pixi.js injected from node_modules as a blob-URL ES module.
 // Run (from apps/desktop/e2e):
@@ -122,12 +129,13 @@ void main() {
 }`;
 
         const out = {};
+        let renderer;
         try {
           const PIXI = await window.__probeImport("pixi");
           out.pixiVersion = PIXI.VERSION;
 
           const W = 64, H = 64;
-          const renderer = await PIXI.autoDetectRenderer({
+          renderer = await PIXI.autoDetectRenderer({
             preference: "webgl",
             width: W,
             height: H,
@@ -273,9 +281,10 @@ void main() {
             err: +e.err.toFixed(6),
           }));
 
-          try { renderer.destroy(); } catch { /* ignore teardown */ }
         } catch (e) {
           out.fatal = String((e && e.stack) || e);
+        } finally {
+          try { renderer?.destroy(); } catch { /* ignore teardown */ }
         }
         done(out);
       })().catch((e) => done({ fatal: String((e && e.stack) || e) }));
@@ -294,6 +303,377 @@ void main() {
         }
       }
       console.log(`[T1] verdict: ${r.pass ? "PASS — GL ingest matches CPU reference" : "FAIL — error exceeds threshold"}`);
+    }
+
+    expect(r.fatal).toBeUndefined();
+    expect(r.glReadError).toBe(0);
+    expect(r.pass).toBe(true);
+  });
+
+  it("T1b — ingest parity: 601-tagged (smpte170m) case matches BT601 CPU reference", async function () {
+    this.timeout(180000);
+
+    const r = await browser.executeAsync((done) => {
+      (async () => {
+        // ---- inline yuv10.ts CPU reference (BT601) ----
+        function inverseCoef(c) {
+          const kg = 1 - c.kr - c.kb;
+          const crR = 2 * (1 - c.kr);
+          const cbB = 2 * (1 - c.kb);
+          return [crR, (c.kb * cbB) / kg, (c.kr * crR) / kg, cbB];
+        }
+        function yuv10ToRgb(y10, u10, v10, c) {
+          const [crR, cbG, crG, cbB] = inverseCoef(c);
+          const y = (y10 - 64) / 876;
+          const cb = (u10 - 512) / 896;
+          const cr = (v10 - 512) / 896;
+          const clamp01 = (x) => Math.min(1, Math.max(0, x));
+          return [
+            clamp01(y + crR * cr),
+            clamp01(y - crG * cr - cbG * cb),
+            clamp01(y + cbB * cb),
+          ];
+        }
+        // BT.601 — same kr/kb for smpte170m and bt470bg
+        const BT601 = { kr: 0.299, kb: 0.114 };
+
+        // ---- shader source (verbatim from TenBitIngest.ts) ----
+        const VERT = `#version 300 es
+precision highp float;
+in vec2 aPosition;
+in vec2 aUV;
+out vec2 vUV;
+uniform mat3 uProjectionMatrix;
+uniform mat3 uWorldTransformMatrix;
+void main() {
+  mat3 mvp = uProjectionMatrix * uWorldTransformMatrix;
+  gl_Position = vec4((mvp * vec3(aPosition, 1.0)).xy, 0.0, 1.0);
+  vUV = aUV;
+}`;
+        const FRAG = `#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 finalColor;
+uniform sampler2D uY;
+uniform sampler2D uU;
+uniform sampler2D uV;
+uniform vec4 uCoef;   // crR, cbG, crG, cbB
+uniform vec2 uScale;  // y scale (876 limited / 1023 full), c scale (896 / 1023)
+uniform float uYOff;  // 64 limited / 0 full
+float decode10(vec4 t) { return t.r * 255.0 + t.g * 255.0 * 256.0; }
+void main() {
+  float y  = (decode10(texture(uY, vUV)) - uYOff) / uScale.x;
+  float cb = (decode10(texture(uU, vUV)) - 512.0) / uScale.y;
+  float cr = (decode10(texture(uV, vUV)) - 512.0) / uScale.y;
+  vec3 rgb = vec3(
+    y + uCoef.x * cr,
+    y - uCoef.z * cr - uCoef.y * cb,
+    y + uCoef.w * cb);
+  finalColor = vec4(clamp(rgb, 0.0, 1.0), 1.0);
+}`;
+
+        const out = {};
+        let renderer;
+        try {
+          const PIXI = await window.__probeImport("pixi");
+          out.pixiVersion = PIXI.VERSION;
+
+          const W = 64, H = 64;
+          renderer = await PIXI.autoDetectRenderer({
+            preference: "webgl", width: W, height: H, antialias: false,
+          });
+          const gl = renderer.gl;
+          if (!gl) { done({ ...out, error: "no GL context" }); return; }
+
+          const CW = W >> 1, CH = H >> 1;
+          const yPlane = new Uint8Array(W * H * 2);
+          const uPlane = new Uint8Array(CW * CH * 2);
+          const vPlane = new Uint8Array(CW * CH * 2);
+          for (let row = 0; row < H; row++) {
+            for (let x = 0; x < W; x++) {
+              const code = Math.round(64 + (x / (W - 1)) * 876);
+              const idx = (row * W + x) * 2;
+              yPlane[idx] = code & 0xff; yPlane[idx + 1] = (code >> 8) & 0xff;
+            }
+          }
+          for (let i = 0; i < CW * CH; i++) {
+            uPlane[i * 2] = 512 & 0xff; uPlane[i * 2 + 1] = (512 >> 8) & 0xff;
+            vPlane[i * 2] = 640 & 0xff; vPlane[i * 2 + 1] = (640 >> 8) & 0xff;
+          }
+
+          const ySource = new PIXI.BufferImageSource({
+            resource: yPlane, width: W, height: H, format: "rg8unorm",
+            alphaMode: "no-premultiply-alpha", scaleMode: "nearest",
+          });
+          const uSource = new PIXI.BufferImageSource({
+            resource: uPlane, width: CW, height: CH, format: "rg8unorm",
+            alphaMode: "no-premultiply-alpha", scaleMode: "nearest",
+          });
+          const vSource = new PIXI.BufferImageSource({
+            resource: vPlane, width: CW, height: CH, format: "rg8unorm",
+            alphaMode: "no-premultiply-alpha", scaleMode: "nearest",
+          });
+
+          const rt = PIXI.RenderTexture.create({ width: W, height: H, format: "rgba16float" });
+          const geometry = new PIXI.MeshGeometry({
+            positions: new Float32Array([0, 0, W, 0, W, H, 0, H]),
+            uvs: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
+            indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
+          });
+          // Use BT601 coefficients (smpte170m / bt470bg path in TenBitIngest)
+          const coef = inverseCoef(BT601);
+          const shader = PIXI.Shader.from({
+            gl: { vertex: VERT, fragment: FRAG },
+            resources: {
+              uY: ySource, uYSampler: ySource.style,
+              uU: uSource, uUSampler: uSource.style,
+              uV: vSource, uVSampler: vSource.style,
+              tenbit: {
+                uCoef: { value: new Float32Array(coef), type: "vec4<f32>" },
+                uScale: { value: new Float32Array([876, 896]), type: "vec2<f32>" },
+                uYOff: { value: 64, type: "f32" },
+              },
+            },
+          });
+          const mesh = new PIXI.Mesh({ geometry, shader });
+          renderer.render({ container: mesh, target: rt });
+
+          renderer.renderTarget.bind(rt, false);
+          const f32buf = new Float32Array(W * H * 4);
+          gl.readPixels(0, 0, W, H, gl.RGBA, gl.FLOAT, f32buf);
+          out.glReadError = gl.getError();
+
+          const THRESH = 2 / 876;
+          let maxErr = 0;
+          // Sample row 32 (try both orientations, pick best match)
+          const SAMPLE_Y_TOP = 32;
+          const rowGlBottomUp = H - 1 - SAMPLE_Y_TOP;
+          const samplePoints = [];
+          for (let i = 0; i < 16; i++) samplePoints.push(Math.round((i / 15) * (W - 1)));
+
+          for (const glRow of [rowGlBottomUp, SAMPLE_Y_TOP]) {
+            let rowMax = 0;
+            for (const x of samplePoints) {
+              const y10 = Math.round(64 + (x / (W - 1)) * 876);
+              const [refR, refG, refB] = yuv10ToRgb(y10, 512, 640, BT601);
+              const idx = (glRow * W + x) * 4;
+              const err = Math.max(
+                Math.abs(f32buf[idx] - refR),
+                Math.abs(f32buf[idx + 1] - refG),
+                Math.abs(f32buf[idx + 2] - refB),
+              );
+              if (err > rowMax) rowMax = err;
+            }
+            if (maxErr === 0 || rowMax < maxErr) maxErr = rowMax;
+          }
+
+          out.maxErr = maxErr;
+          out.threshold = THRESH;
+          out.pass = maxErr < THRESH;
+        } catch (e) {
+          out.fatal = String((e && e.stack) || e);
+        } finally {
+          try { renderer?.destroy(); } catch { /* ignore */ }
+        }
+        done(out);
+      })().catch((e) => done({ fatal: String((e && e.stack) || e) }));
+    });
+
+    console.log("\n[T1b] ===== Ingest parity: 601-tagged case =====");
+    if (r.fatal) {
+      console.log("[T1b] FATAL:", r.fatal);
+    } else {
+      console.log(`[T1b] maxErr=${r.maxErr?.toFixed(6)} threshold=${r.threshold?.toFixed(6)}`);
+      console.log(`[T1b] verdict: ${r.pass ? "PASS — BT601 ingest matches CPU reference" : "FAIL"}`);
+    }
+
+    expect(r.fatal).toBeUndefined();
+    expect(r.glReadError).toBe(0);
+    expect(r.pass).toBe(true);
+  });
+
+  it("T1c — ingest parity: 70×64 awkward-width pins UNPACK_ALIGNMENT=1 fix", async function () {
+    this.timeout(180000);
+
+    const r = await browser.executeAsync((done) => {
+      (async () => {
+        // ---- inline yuv10.ts CPU reference ----
+        function inverseCoef(c) {
+          const kg = 1 - c.kr - c.kb;
+          const crR = 2 * (1 - c.kr);
+          const cbB = 2 * (1 - c.kb);
+          return [crR, (c.kb * cbB) / kg, (c.kr * crR) / kg, cbB];
+        }
+        function yuv10ToRgb(y10, u10, v10, c) {
+          const [crR, cbG, crG, cbB] = inverseCoef(c);
+          const y = (y10 - 64) / 876;
+          const cb = (u10 - 512) / 896;
+          const cr = (v10 - 512) / 896;
+          const clamp01 = (x) => Math.min(1, Math.max(0, x));
+          return [
+            clamp01(y + crR * cr),
+            clamp01(y - crG * cr - cbG * cb),
+            clamp01(y + cbB * cb),
+          ];
+        }
+        const BT709 = { kr: 0.2126, kb: 0.0722 };
+
+        // ---- shader source (verbatim from TenBitIngest.ts) ----
+        const VERT = `#version 300 es
+precision highp float;
+in vec2 aPosition;
+in vec2 aUV;
+out vec2 vUV;
+uniform mat3 uProjectionMatrix;
+uniform mat3 uWorldTransformMatrix;
+void main() {
+  mat3 mvp = uProjectionMatrix * uWorldTransformMatrix;
+  gl_Position = vec4((mvp * vec3(aPosition, 1.0)).xy, 0.0, 1.0);
+  vUV = aUV;
+}`;
+        const FRAG = `#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 finalColor;
+uniform sampler2D uY;
+uniform sampler2D uU;
+uniform sampler2D uV;
+uniform vec4 uCoef;   // crR, cbG, crG, cbB
+uniform vec2 uScale;  // y scale (876 limited / 1023 full), c scale (896 / 1023)
+uniform float uYOff;  // 64 limited / 0 full
+float decode10(vec4 t) { return t.r * 255.0 + t.g * 255.0 * 256.0; }
+void main() {
+  float y  = (decode10(texture(uY, vUV)) - uYOff) / uScale.x;
+  float cb = (decode10(texture(uU, vUV)) - 512.0) / uScale.y;
+  float cr = (decode10(texture(uV, vUV)) - 512.0) / uScale.y;
+  vec3 rgb = vec3(
+    y + uCoef.x * cr,
+    y - uCoef.z * cr - uCoef.y * cb,
+    y + uCoef.w * cb);
+  finalColor = vec4(clamp(rgb, 0.0, 1.0), 1.0);
+}`;
+
+        // W=70: chroma row = 35 * 2 = 70 bytes; 70 % 4 == 2 → skewed with UNPACK_ALIGNMENT=4.
+        // This test sets UNPACK_ALIGNMENT=1 (same as TenBitIngest constructor fix) and asserts
+        // parity. Without the pixelStorei the upload would be skewed and this must fail.
+        const W = 70, H = 64;
+        const out = {};
+        let renderer;
+        try {
+          const PIXI = await window.__probeImport("pixi");
+          out.pixiVersion = PIXI.VERSION;
+
+          renderer = await PIXI.autoDetectRenderer({
+            preference: "webgl", width: W, height: H, antialias: false,
+          });
+          const gl = renderer.gl;
+          if (!gl) { done({ ...out, error: "no GL context" }); return; }
+
+          // Set UNPACK_ALIGNMENT=1 exactly as TenBitIngest constructor does.
+          gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+
+          const CW = W >> 1, CH = H >> 1;
+          const yPlane = new Uint8Array(W * H * 2);
+          const uPlane = new Uint8Array(CW * CH * 2);
+          const vPlane = new Uint8Array(CW * CH * 2);
+          // Y ramp across x, U=512, V=720
+          for (let row = 0; row < H; row++) {
+            for (let x = 0; x < W; x++) {
+              const code = Math.round(64 + (x / (W - 1)) * 876);
+              const idx = (row * W + x) * 2;
+              yPlane[idx] = code & 0xff; yPlane[idx + 1] = (code >> 8) & 0xff;
+            }
+          }
+          for (let i = 0; i < CW * CH; i++) {
+            uPlane[i * 2] = 512 & 0xff; uPlane[i * 2 + 1] = (512 >> 8) & 0xff;
+            vPlane[i * 2] = 720 & 0xff; vPlane[i * 2 + 1] = (720 >> 8) & 0xff;
+          }
+
+          const ySource = new PIXI.BufferImageSource({
+            resource: yPlane, width: W, height: H, format: "rg8unorm",
+            alphaMode: "no-premultiply-alpha", scaleMode: "nearest",
+          });
+          const uSource = new PIXI.BufferImageSource({
+            resource: uPlane, width: CW, height: CH, format: "rg8unorm",
+            alphaMode: "no-premultiply-alpha", scaleMode: "nearest",
+          });
+          const vSource = new PIXI.BufferImageSource({
+            resource: vPlane, width: CW, height: CH, format: "rg8unorm",
+            alphaMode: "no-premultiply-alpha", scaleMode: "nearest",
+          });
+
+          const rt = PIXI.RenderTexture.create({ width: W, height: H, format: "rgba16float" });
+          const geometry = new PIXI.MeshGeometry({
+            positions: new Float32Array([0, 0, W, 0, W, H, 0, H]),
+            uvs: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
+            indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
+          });
+          const coef = inverseCoef(BT709);
+          const shader = PIXI.Shader.from({
+            gl: { vertex: VERT, fragment: FRAG },
+            resources: {
+              uY: ySource, uYSampler: ySource.style,
+              uU: uSource, uUSampler: uSource.style,
+              uV: vSource, uVSampler: vSource.style,
+              tenbit: {
+                uCoef: { value: new Float32Array(coef), type: "vec4<f32>" },
+                uScale: { value: new Float32Array([876, 896]), type: "vec2<f32>" },
+                uYOff: { value: 64, type: "f32" },
+              },
+            },
+          });
+          const mesh = new PIXI.Mesh({ geometry, shader });
+          renderer.render({ container: mesh, target: rt });
+
+          renderer.renderTarget.bind(rt, false);
+          const f32buf = new Float32Array(W * H * 4);
+          gl.readPixels(0, 0, W, H, gl.RGBA, gl.FLOAT, f32buf);
+          out.glReadError = gl.getError();
+
+          const THRESH = 2 / 876;
+          let maxErr = 0;
+          // Sample row 32, try both orientations, pick best
+          const SAMPLE_Y_TOP = 32;
+          const rowGlBottomUp = H - 1 - SAMPLE_Y_TOP;
+          const samplePoints = [];
+          for (let i = 0; i < 12; i++) samplePoints.push(Math.round((i / 11) * (W - 1)));
+
+          for (const glRow of [rowGlBottomUp, SAMPLE_Y_TOP]) {
+            let rowMax = 0;
+            for (const x of samplePoints) {
+              const y10 = Math.round(64 + (x / (W - 1)) * 876);
+              const [refR, refG, refB] = yuv10ToRgb(y10, 512, 720, BT709);
+              const idx = (glRow * W + x) * 4;
+              const err = Math.max(
+                Math.abs(f32buf[idx] - refR),
+                Math.abs(f32buf[idx + 1] - refG),
+                Math.abs(f32buf[idx + 2] - refB),
+              );
+              if (err > rowMax) rowMax = err;
+            }
+            if (maxErr === 0 || rowMax < maxErr) maxErr = rowMax;
+          }
+
+          out.maxErr = maxErr;
+          out.threshold = THRESH;
+          out.pass = maxErr < THRESH;
+          out.note = "W=70 chroma rows=70 bytes (70%4==2) — UNPACK_ALIGNMENT=1 required";
+        } catch (e) {
+          out.fatal = String((e && e.stack) || e);
+        } finally {
+          try { renderer?.destroy(); } catch { /* ignore */ }
+        }
+        done(out);
+      })().catch((e) => done({ fatal: String((e && e.stack) || e) }));
+    });
+
+    console.log("\n[T1c] ===== Ingest parity: 70×64 awkward-width (UNPACK_ALIGNMENT pin) =====");
+    if (r.fatal) {
+      console.log("[T1c] FATAL:", r.fatal);
+    } else {
+      console.log(`[T1c] note: ${r.note}`);
+      console.log(`[T1c] maxErr=${r.maxErr?.toFixed(6)} threshold=${r.threshold?.toFixed(6)}`);
+      console.log(`[T1c] verdict: ${r.pass ? "PASS — awkward-width upload correct with UNPACK_ALIGNMENT=1" : "FAIL"}`);
     }
 
     expect(r.fatal).toBeUndefined();
@@ -327,7 +707,7 @@ void main() {
           return [a10 & 255, a10 >> 8, b10 & 255, b10 >> 8];
         }
 
-        // ---- shader sources (verbatim from PackP010.ts) ----
+        // ---- shader sources (verbatim from PackYuv420p10.ts) ----
         const VERT_COMPOSITE = `#version 300 es
 precision highp float;
 in vec2 aPosition;
@@ -399,12 +779,13 @@ void main() {
         // So rows differ (B changes with row) and columns differ (R/G change with col).
         const W = 128, H = 16;
         const out = {};
+        let renderer;
 
         try {
           const PIXI = await window.__probeImport("pixi");
           out.pixiVersion = PIXI.VERSION;
 
-          const renderer = await PIXI.autoDetectRenderer({
+          renderer = await PIXI.autoDetectRenderer({
             preference: "webgl",
             width: W,
             height: H,
@@ -578,11 +959,7 @@ void main() {
             [0, UH - 1], [1, UH - 1], [2, UH - 1], [3, UH - 1],
           ];
           for (const [cx, cy] of chromaSamples) {
-            const [glCbA, glCbB] = decodePairFromTexel(uRaw, cy * UW + Math.floor(cx / 2));
-            const [glCrA, glCrB] = decodePairFromTexel(vRaw, cy * UW + Math.floor(cx / 2));
-            // Each texel packs two chroma samples side by side
-            // texelIdx = cx/2 (integer); first sample = A, second = B for odd/even cx
-            // Actually: cx maps to texel cx>>1, within that texel sample 0 or 1
+            // cx maps to texel cx>>1; sample 0 or 1 within that texel
             const texelCx = Math.floor(cx / 2);
             const sampleInTexel = cx % 2;
             const [glCbPair] = [decodePairFromTexel(uRaw, cy * UW + texelCx)];
@@ -605,10 +982,10 @@ void main() {
           out.yErrSample = yErrDetails.slice(0, 3);
 
           out.pass = out.yPass && out.cPass && out.rowFlipCorrect;
-
-          try { renderer.destroy(); } catch { /* ignore */ }
         } catch (e) {
           out.fatal = String((e && e.stack) || e);
+        } finally {
+          try { renderer?.destroy(); } catch { /* ignore */ }
         }
         done(out);
       })().catch((e) => done({ fatal: String((e && e.stack) || e) }));

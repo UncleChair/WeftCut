@@ -4,9 +4,13 @@
 // downscale folds in here. Chroma = one bilinear tap at each 2×2 block
 // midpoint (an exact box average). GL readback rows are bottom-up; rows are
 // flipped on the CPU copy (PACK_ROW_FLIP, pinned by the parity e2e).
+//
+// NOTE: VERT, FRAG_Y, and FRAG_C below are copied verbatim into
+// e2e/tools/iso_tenbit_gl_parity.e2e.js (the GL-parity gate) — keep both in sync.
 
 import { Mesh, MeshGeometry, RenderTexture, Shader } from "pixi.js";
-import type { Renderer, Texture } from "pixi.js";
+import type { TextureSource, WebGLRenderer } from "pixi.js";
+import type { Texture } from "pixi.js";
 
 /// Pixi's GL renderer applies a Y-flip projection (y=0 = RT top), so
 /// gl_FragCoord.y=0.5 corresponds to visual row 0 (top). readPixels at y=0
@@ -69,20 +73,21 @@ void main() {
 
 interface Pass { rt: RenderTexture; mesh: Mesh<MeshGeometry, Shader>; w: number; h: number }
 
-export class PackP010 {
+export class PackYuv420p10 {
   private y: Pass | null = null;
   private u: Pass | null = null;
   private v: Pass | null = null;
   private out: Uint8Array | null = null;
   private flip: Uint8Array | null = null;
+  private boundSource: TextureSource | null = null;
 
   constructor(
-    private renderer: Renderer,
+    private renderer: WebGLRenderer,
     private outW: number,
     private outH: number,
   ) {
     if (outW % 4 !== 0 || outH % 2 !== 0) {
-      throw new Error(`10-bit export needs width%4==0 and height%2==0, got ${outW}x${outH}`);
+      throw new Error(`PackYuv420p10: width%4==0 and height%2==0 required, got ${outW}x${outH}`);
     }
   }
 
@@ -111,6 +116,11 @@ export class PackP010 {
   /// yuv420p10le plane order. The returned view is REUSED across calls —
   /// the caller must consume (send) it before the next pack().
   pack(composite: Texture): Uint8Array {
+    if (this.boundSource === null) {
+      this.boundSource = composite.source;
+    } else if (composite.source !== this.boundSource) {
+      throw new Error("PackYuv420p10: composite texture changed after first pack() — recreate the packer");
+    }
     const W = this.outW, H = this.outH;
     this.y ??= this.buildPass(FRAG_Y, W / 2, H, null, composite);
     this.u ??= this.buildPass(FRAG_C, W / 4, H / 2, 0, composite);
@@ -128,10 +138,8 @@ export class PackP010 {
   }
 
   private readPlane(pass: Pass, dst: Uint8Array): void {
-    const renderer = this.renderer as Renderer & { gl: WebGL2RenderingContext };
-    (renderer as unknown as { renderTarget: { bind(t: unknown, clear: boolean): void } })
-      .renderTarget.bind(pass.rt, false);
-    const gl = renderer.gl;
+    this.renderer.renderTarget.bind(pass.rt, false);
+    const gl = this.renderer.gl;
     const rowBytes = pass.w * 4;
     if (!PACK_ROW_FLIP) {
       gl.readPixels(0, 0, pass.w, pass.h, gl.RGBA, gl.UNSIGNED_BYTE, dst);
@@ -147,9 +155,16 @@ export class PackP010 {
 
   dispose(): void {
     for (const p of [this.y, this.u, this.v]) {
-      if (p) { p.mesh.destroy(); p.rt.destroy(true); }
+      if (p) {
+        const { geometry, shader } = p.mesh;
+        p.mesh.destroy();
+        geometry.destroy();
+        shader?.destroy();
+        p.rt.destroy(true);
+      }
     }
     this.y = this.u = this.v = null;
+    this.boundSource = null;
     this.out = null;
     this.flip = null;
   }
