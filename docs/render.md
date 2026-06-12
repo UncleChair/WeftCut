@@ -434,8 +434,15 @@ composite. The encode exit diverges at three points:
   serialized copy chain — un-copied frames wait in the decoder output
   queue until occupancy falls below the high-water mark — while the
   reorder margin is a separate dispatch lead-in that keeps the decoder
-  fed ahead of the copy chain. The current cap is entry-count-based; a
-  byte-based cap is the named follow-up for 4K content.
+  fed ahead of the copy chain. The high-water derives from resolution:
+  a per-ring byte target divided by the first frame's actual plane
+  bytes (frame size is constant within a ring — one source, one coded
+  size), clamped to an entry floor and ceiling. 1080p sits at the
+  ceiling (~300 MB); 4K clamps to the floor (~500 MB). The floor is
+  the deadlock guard — decoder output is presentation-ordered, so a
+  parked consumer can always evict behind itself and reopen the gate.
+  Multiple simultaneous 10-bit sources each carry their own ring (no
+  cross-ring global budget — a known limitation).
 
   8-bit sources are unchanged on the ingest side — they go through the
   normal `createImageBitmap` / `drawImage` snapshot path — but they

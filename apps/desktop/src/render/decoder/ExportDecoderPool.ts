@@ -26,7 +26,7 @@ import type { DecoderHandle, DecoderPool, FrameStore, SourceHandleInit } from ".
 import { withDefaultColorSpace } from "./colorSpaceDefault";
 import { handleDecodeError } from "./decoderFallback";
 import { openMediaInput, type OpenedMedia } from "./mediaInput";
-import { copyToTenBit, isTenBitDecoderFormat, type TenBitFrame } from "./tenBitFrame";
+import { copyToTenBit, isTenBitDecoderFormat, isTenBitFrame, type TenBitFrame } from "./tenBitFrame";
 
 /// SW 10-bit decoders hold a reorder tail internally and the chunked model
 /// never mid-flushes (see the reverted 2026-06-04 10-bit DirectExport).
@@ -34,13 +34,32 @@ import { copyToTenBit, isTenBitDecoderFormat, type TenBitFrame } from "./tenBitF
 /// max DPB is 16.
 const TENBIT_REORDER_MARGIN = 16;
 
-/// 10-bit lane high-water mark (entry count). ~48 × 6.2 MB ≈ 300 MB at 1080p;
-/// ~4× that (~1.2 GB) at 4K — the cap is entry-count, not bytes, so 4K sources
-/// hit the memory ceiling much sooner. A byte-based cap is the 4K follow-up.
+/// 10-bit lane ring cap, derived from RESOLUTION: the per-ring entry
+/// high-water is a byte target divided by the actual frame size (constant
+/// within one ring — one source, one coded size), clamped to [MIN, MAX].
+/// 1080p (6.2 MB) hits the 48 ceiling — today's behavior unchanged at
+/// ~300 MB; 4K (24.9 MB) clamps to the 20 floor ≈ 500 MB (vs 1.2 GB when
+/// the cap was a flat 48 entries). The MIN floor is the deadlock guard:
+/// decoder output is presentation-ordered, so an unsatisfied waiter implies
+/// everything held is at/below its target and evictable — but the floor
+/// keeps comfortable headroom over the DPB-16 reorder window anyway. No live
+/// byte accounting and no cross-ring global budget (N simultaneous 10-bit
+/// sources stack N × the per-ring bound — known limitation).
 /// Bounds the CPU-plane ring; SW decoders don't self-throttle on held frames
 /// (no HW pool slots), so in-flight chain links beyond the ring are bounded by
 /// the dispatch window (chunk/GOP + TENBIT_REORDER_MARGIN) instead.
-const TENBIT_RING_HIGH_WATER = 48;
+const TENBIT_RING_TARGET_BYTES = 320 << 20;
+const TENBIT_RING_MIN_ENTRIES = 20;
+const TENBIT_RING_MAX_ENTRIES = 48;
+
+/// Entry high-water for a ring whose frames are `frameBytes` each. Exported
+/// for unit tests; pure.
+export function tenBitHighWaterFor(frameBytes: number): number {
+  return Math.min(
+    TENBIT_RING_MAX_ENTRIES,
+    Math.max(TENBIT_RING_MIN_ENTRIES, Math.floor(TENBIT_RING_TARGET_BYTES / frameBytes)),
+  );
+}
 
 interface RingEntry {
   ptsUs: number;
@@ -85,8 +104,21 @@ export class ExportFrameStore implements FrameStore {
   private gateWaiters: Array<() => void> = [];
   /// Non-null once `fail()` is called; subsequent waitForPts calls reject.
   private failure: string | null = null;
+  /// Resolution-derived entry cap for the 10-bit gate. Starts at the ceiling
+  /// (plain VideoFrame rings never derive) and is set ONCE from the first
+  /// TenBitFrame's actual plane bytes — exact, no estimate, and constant for
+  /// the ring's lifetime (one source = one coded size). Public read for
+  /// tests/diagnostics.
+  private derivedTenBitHighWater: number | null = null;
+
+  get tenBitHighWater(): number {
+    return this.derivedTenBitHighWater ?? TENBIT_RING_MAX_ENTRIES;
+  }
 
   push(frame: VideoFrame | TenBitFrame): void {
+    if (this.derivedTenBitHighWater === null && isTenBitFrame(frame)) {
+      this.derivedTenBitHighWater = tenBitHighWaterFor(frame.data.byteLength);
+    }
     this.entries.push({
       ptsUs: frame.timestamp,
       durationUs: frame.duration ?? 0,
@@ -297,7 +329,7 @@ export class ExportFrameStore implements FrameStore {
   /// when the ring is below the high-water mark OR the ring has failed (so
   /// chain links drain and the failure surfaces at `waitForPts`).
   waitBelowTenBitHighWater(): Promise<void> {
-    if (this.entries.length < TENBIT_RING_HIGH_WATER || this.failure !== null) {
+    if (this.entries.length < this.tenBitHighWater || this.failure !== null) {
       return Promise.resolve();
     }
     return new Promise<void>((resolve) => {
@@ -309,7 +341,7 @@ export class ExportFrameStore implements FrameStore {
   /// Called whenever entries are removed (evictBefore, freeBehindWaiters, flush).
   private notifyShrink(): void {
     if (this.gateWaiters.length === 0) return;
-    if (this.entries.length < TENBIT_RING_HIGH_WATER) {
+    if (this.entries.length < this.tenBitHighWater) {
       const waiters = this.gateWaiters.splice(0);
       for (const r of waiters) r();
     }
@@ -500,13 +532,14 @@ export class ExportSourceHandle implements DecoderHandle {
         }
         if (this.tenBitLane && isTenBitDecoderFormat(frame.format)) {
           this.copyChain = this.copyChain.then(async () => {
-            // Backpressure: while the ring is at high water, block the copy chain
-            // here. Note: SW decoders don't stall on held frames the way HW
-            // decoders do (no pool slots), so this gate bounds the RING entry
-            // count, not the decoder. The un-copied frames backlogged in the chain
-            // are bounded by the dispatch window (chunk/GOP + TENBIT_REORDER_MARGIN),
-            // which for long-GOP 4K sources can be large — see the known-limitation
-            // note on TENBIT_RING_HIGH_WATER.
+            // Backpressure: while the ring is at high water (resolution-derived,
+            // see tenBitHighWaterFor), block the copy chain here. Note: SW
+            // decoders don't stall on held frames the way HW decoders do (no
+            // pool slots), so this gate bounds the RING entry count, not the
+            // decoder. The un-copied frames backlogged in the chain are bounded
+            // by the dispatch window (chunk/GOP + TENBIT_REORDER_MARGIN), which
+            // for long-GOP 4K sources can be large — see the known-limitation
+            // note on TENBIT_RING_TARGET_BYTES.
             await this.ring.waitBelowTenBitHighWater();
             const tb = await copyToTenBit(frame);
             frame.close();

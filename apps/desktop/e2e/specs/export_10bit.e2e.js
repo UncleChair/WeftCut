@@ -13,9 +13,11 @@ const REPO = path.resolve(HERE, "..", "..", "..", "..");
 const SOURCE_RAMP = path.resolve(MEDIA_DIR, "test_1080p_gradient10_h264.mp4");
 const SOURCE_BF = path.resolve(MEDIA_DIR, "test_1080p_gradient10_h264_bf.mp4");
 const SOURCE_AV1 = path.resolve(MEDIA_DIR, "test_1080p_gradient10_av1.mp4");
+const SOURCE_4K = path.resolve(MEDIA_DIR, "test_2160p_gradient10_h264.mp4");
 const OUTPUT_RAMP = path.resolve(os.tmpdir(), "weftcut-e2e-10bit-ramp.mp4");
 const OUTPUT_BF = path.resolve(os.tmpdir(), "weftcut-e2e-10bit-bf.mp4");
 const OUTPUT_AV1 = path.resolve(os.tmpdir(), "weftcut-e2e-10bit-av1.mp4");
+const OUTPUT_4K = path.resolve(os.tmpdir(), "weftcut-e2e-10bit-4k.mp4");
 const PROJECT_PARENT = path.resolve(os.tmpdir(), "weftcut-e2e-10bit-proj");
 
 // 10-bit export settings: f16/WebGL2 composite -> yuv420p10le pack -> loopback
@@ -84,7 +86,7 @@ function gradientReport(output, sample) {
 /// mirrored frame counter so a pipeline hang reports its exact stall frame
 /// (the reorder-tail deadlock class pins the counter at a chunk boundary)
 /// instead of timing out blind. Returns the perf counters (or null).
-async function bootAndExport(source, output, name) {
+async function bootAndExport(source, output, name, canvas = { width: 1920, height: 1080 }) {
   await browser.waitUntil(
     async () =>
       (await browser.execute(
@@ -93,16 +95,16 @@ async function bootAndExport(source, output, name) {
     { timeout: 30000, timeoutMsg: "newProjectAndEnter never mounted" },
   );
 
-  const r1 = await browser.executeAsync((parent, nm, done) => {
+  const r1 = await browser.executeAsync((parent, nm, cv, done) => {
     window.__weftcutTest
       .newProjectAndEnter({
         parentFolder: parent,
         name: nm + Date.now(),
-        canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
+        canvas: { width: cv.width, height: cv.height, fpsNum: 30, fpsDen: 1 },
       })
       .then(() => done({ ok: true }))
       .catch((e) => done({ ok: false, error: String(e) }));
-  }, PROJECT_PARENT, name);
+  }, PROJECT_PARENT, name, canvas);
   if (!r1.ok) throw new Error("newProjectAndEnter failed: " + r1.error);
 
   await browser.waitUntil(
@@ -190,7 +192,7 @@ async function bootAndExport(source, output, name) {
 // yuv420p10le pack -> loopback WS -> ffmpeg Main10 encode) runs end to end.
 describe("10-bit export pipeline (real WebView2)", function () {
   before(function () {
-    for (const src of [SOURCE_RAMP, SOURCE_BF, SOURCE_AV1]) {
+    for (const src of [SOURCE_RAMP, SOURCE_BF, SOURCE_AV1, SOURCE_4K]) {
       if (!existsSync(src)) {
         console.warn(
           `[e2e] SKIP: source media not found at ${src} (run: node fixtures/generate-fixtures.mjs)`,
@@ -202,6 +204,7 @@ describe("10-bit export pipeline (real WebView2)", function () {
     rmSync(OUTPUT_RAMP, { force: true });
     rmSync(OUTPUT_BF, { force: true });
     rmSync(OUTPUT_AV1, { force: true });
+    rmSync(OUTPUT_4K, { force: true });
   });
 
   it("10-bit survives end-to-end (gradient ramp keeps >600 distinct steps)", async function () {
@@ -270,6 +273,42 @@ describe("10-bit export pipeline (real WebView2)", function () {
     const luma = report.banding[0];
     console.log(
       `[e2e] AV1-10 gradient meter: distinct_levels=${luma.distinct_levels} ` +
+        `max_plateau=${luma.max_plateau} (floor ${DISTINCT_FLOOR})`,
+    );
+    expect(luma.distinct_levels).toBeGreaterThan(DISTINCT_FLOOR);
+  });
+
+  it("4K 10-bit export completes under the resolution-derived ring cap", async function () {
+    // A 4K I420P10 frame is ~24.9 MB — the ring's resolution-derived
+    // high-water clamps to its 20-entry floor (~500 MB) instead of the flat
+    // 48 entries (~1.2 GB). Completion here is the deadlock-freedom proof at
+    // the floor: the copy chain blocks at 20 entries and must always be
+    // reopened by consumer-side eviction. 4K SW Hi10P decode is slow; the
+    // fixture is 1s (30 frames) to keep the case bounded.
+    this.timeout(600000);
+
+    await bootAndExport(SOURCE_4K, OUTPUT_4K, "e2e-10bit-4k-", { width: 3840, height: 2160 });
+    if (!existsSync(OUTPUT_4K)) {
+      throw new Error(`export produced no output at ${OUTPUT_4K}`);
+    }
+
+    const st = probeVideoStream(
+      OUTPUT_4K,
+      "codec_name,profile,pix_fmt,width,height",
+    );
+    console.log("[e2e] 4K output stream:", JSON.stringify(st));
+    expect(st.codec_name).toBe("hevc");
+    expect(["yuv420p10le", "p010le"]).toContain(st.pix_fmt);
+    expect(st.profile).toContain("Main 10");
+    expect(Number(st.width)).toBe(3840);
+    expect(Number(st.height)).toBe(2160);
+
+    // 10 bits must survive at 4K too (the ramp spans 3840 columns onto 1024
+    // levels — same >600 floor as the 1080p case).
+    const report = gradientReport(OUTPUT_4K, 10);
+    const luma = report.banding[0];
+    console.log(
+      `[e2e] 4K gradient meter: distinct_levels=${luma.distinct_levels} ` +
         `max_plateau=${luma.max_plateau} (floor ${DISTINCT_FLOOR})`,
     );
     expect(luma.distinct_levels).toBeGreaterThan(DISTINCT_FLOOR);

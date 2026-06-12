@@ -212,6 +212,7 @@ func main() {
 	gradientH264 := flag.Bool("gradient-h264", false, "emit the 10-bit gradient ramp as H.264 High10 (the one 10-bit shape WebView2 software-decodes) — the 10-bit export gate's static fixture")
 	gradientH264BF := flag.Bool("gradient-h264-bf", false, "emit a 10s ANIMATED 10-bit ramp, H.264 High10 with keyint=120+bframes=3 — the 10-bit export reorder-tail regression fixture")
 	gradientAv1 := flag.Bool("gradient-av1", false, "emit the 10-bit gradient ramp as AV1 10-bit (SVT-AV1) — the AV1-10 source probe + export-gate fixture")
+	gradientH2644K := flag.Bool("gradient-h264-4k", false, "emit the 10-bit H.264 High10 gradient ramp at 3840x2160 — the 4K ring-cap export-gate fixture")
 	flag.Parse()
 
 	if *imageset {
@@ -316,6 +317,34 @@ func main() {
 			"-an", out,
 		}
 		fmt.Printf("Generating %s (10-bit BT.709 gradient, H.264 High10)\n", out)
+		cmd := exec.Command("ffmpeg", args...)
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		if err := cmd.Run(); err != nil {
+			log.Fatalf("ffmpeg failed: %v", err)
+		}
+		fmt.Printf("Done: %s\n", out)
+		return
+	}
+
+	if *gradientH2644K {
+		const width, height, duration = 3840, 2160, 1
+		out := fmt.Sprintf("test_%dp_gradient10_h264.mp4", height)
+		// The --gradient-h264 ramp at 4K (see the crux comment on --gradient):
+		// exercises the 10-bit lane's resolution-derived ring cap — a 4K
+		// I420P10 frame is ~24.9 MB, so the ring clamps to its entry floor.
+		vf := "format=yuv420p10le,geq=lum='(X/(W-1))*1023':cb=512:cr=512,scale=out_color_matrix=bt709:out_range=tv"
+		args := []string{
+			"-y", "-f", "lavfi", "-i",
+			fmt.Sprintf("nullsrc=size=%dx%d:rate=30:duration=%d", width, height, duration),
+			"-vf", vf,
+			"-c:v", "libx264",
+			"-profile:v", "high10",
+			"-pix_fmt", "yuv420p10le",
+			"-crf", "18",
+			"-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv",
+			"-an", out,
+		}
+		fmt.Printf("Generating %s (4K 10-bit BT.709 gradient, H.264 High10)\n", out)
 		cmd := exec.Command("ffmpeg", args...)
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 		if err := cmd.Run(); err != nil {

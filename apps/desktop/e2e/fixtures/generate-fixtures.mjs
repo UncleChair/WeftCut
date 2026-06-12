@@ -42,6 +42,9 @@ export const MATRIX = [
   // 10-bit ramp as AV1 10-bit (SVT-AV1) — the AV1-10 source admission probe +
   // export gate (the second tenBitExportCapable codec).
   { gradientAv1: true },
+  // The H.264 High10 ramp at 3840x2160 — the 4K ring-cap export gate
+  // (resolution-derived ten-bit high-water clamps to its entry floor).
+  { gradientH2644k: true },
   // still-image chart set (png/jpg/webp/bmp/gif/tiff + manifest, one flag) —
   // image_support.e2e.js. The png is the canonical existence check; the
   // generator writes the whole set in one run.
@@ -59,7 +62,7 @@ export const MATRIX = [
   { fps: 10, format: "gif" },
 ];
 
-export function outputName({ fps, format, audio, color, gradient, gradientH264, gradientH264Bf, gradientAv1, eostail, imageset, audiotones, aformat }) {
+export function outputName({ fps, format, audio, color, gradient, gradientH264, gradientH264Bf, gradientAv1, gradientH2644k, eostail, imageset, audiotones, aformat }) {
   if (imageset) return "test_chart_320x240.png";
   if (audiotones) return `test_tones_10s.${aformat}`;
   if (color) return `test_${WIDTH_HEIGHT}p_color_${color}.mp4`;
@@ -67,6 +70,7 @@ export function outputName({ fps, format, audio, color, gradient, gradientH264, 
   if (gradientH264) return `test_${WIDTH_HEIGHT}p_gradient10_h264.mp4`;
   if (gradientH264Bf) return `test_${WIDTH_HEIGHT}p_gradient10_h264_bf.mp4`;
   if (gradientAv1) return `test_${WIDTH_HEIGHT}p_gradient10_av1.mp4`;
+  if (gradientH2644k) return "test_2160p_gradient10_h264.mp4";
   if (format === "prores") return `test_${WIDTH_HEIGHT}p_${fps}fps_prores.mov`;
   if (eostail) return `test_${WIDTH_HEIGHT}p_${fps}fps_eostail.${format}`;
   if (audio) return `test_${WIDTH_HEIGHT}p_${fps}fps_audio.${format}`;
@@ -97,7 +101,9 @@ export async function ensureFixtures(mediaDir) {
                 ? ["run", GENERATOR, "--gradient-h264-bf"]
                 : entry.gradientAv1
                   ? ["run", GENERATOR, "--gradient-av1"]
-                  : ["run", GENERATOR, "--fps", String(entry.fps), "--format", entry.format];
+                  : entry.gradientH2644k
+                    ? ["run", GENERATOR, "--gradient-h264-4k"]
+                    : ["run", GENERATOR, "--fps", String(entry.fps), "--format", entry.format];
     if (entry.audio) args.push("--audio");
     if (entry.eostail) args.push("--eostail");
     console.log(`[fixtures] generating ${name} ...`);
