@@ -74,3 +74,4 @@ apps/desktop/e2e/fixtures/media/*
 
 # Playwright MCP page-snapshot artifacts
 .playwright-mcp/
+.superpowers/
