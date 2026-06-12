@@ -259,6 +259,10 @@ ADR 0014 records the evidence: reverting the export snapshot scores
 alternative (`importExternalTexture`, which also honors the matrix)
 is deliberately parked at lowest priority — see the roadmap.
 
+The snapshot rule is one instance of the project-wide color model —
+color converges once at an explicit, gated chokepoint and the rest of
+the pipeline is color-naive (ADR 0021).
+
 ## Motifs
 
 A Motif is a parameterized, time-varying web overlay (a lower-third, a
