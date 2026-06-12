@@ -692,31 +692,51 @@ export class ExportSourceHandle implements DecoderHandle {
   }
 }
 
+/// Pool key for an export handle. Clips of one media whose timeline→source
+/// offset (`srcInUs - tStartUs`, the "phase") is EQUAL march through source
+/// time in lockstep — at any output time they want the SAME source PTS, so
+/// their per-chunk ranges coincide and one decoder + ring serves them all (a
+/// stacked copy costs no extra decode). Clips at a DIFFERENT phase want
+/// source times a constant gap apart: serving both from one ring would have
+/// to hold the whole gap's worth of frames (deadlocking the ~13-slot
+/// WebCodecs pool once the gap exceeds it), and their concurrent
+/// `decodeRange` calls would corrupt the shared cursor + evict each other's
+/// frames (the same-source overlap export wedge) — so each phase gets its
+/// own pipeline.
+export function exportHandleKey(
+  mediaId: string,
+  srcInUs: number,
+  tStartUs: number,
+): string {
+  return `${mediaId}#${srcInUs - tStartUs}`;
+}
+
 export class ExportDecoderPool implements DecoderPool {
   readonly handles = new Map<string, ExportSourceHandle>();
 
-  /// Export keeps the original mediaId-keyed sharing: the Worker drives
-  /// decoding sequentially per output frame, so the preview-side anchor-
-  /// thrash failure (multiple clips of one media racing each other in
-  /// the same tick) doesn't manifest here. The `init.layerId` field is
-  /// accepted for interface symmetry with the preview pool but ignored.
-  /// (Note: same-source clips with disjoint source-time ranges in one
-  /// chunk still cost an extra GOP jump per output frame — a separate
-  /// optimisation, not a correctness issue.)
+  /// Handles are keyed by `init.handleKey` — the export Worker and the
+  /// export-mode Compositor both pass `exportHandleKey(...)`, giving one
+  /// decode pipeline per (media, phase) group — falling back to `mediaId`
+  /// for callers that don't group. Keying by bare mediaId let two
+  /// overlapping clips of one source race a single handle: interleaved
+  /// `decodeRange` calls corrupted the packet cursor and each clip's
+  /// per-frame evict dropped frames the other still needed — the export's
+  /// frame counter froze mid-run.
   acquire(init: SourceHandleInit): ExportSourceHandle {
-    let h = this.handles.get(init.mediaId);
+    const key = init.handleKey ?? init.mediaId;
+    let h = this.handles.get(key);
     if (!h) {
       h = new ExportSourceHandle(init);
-      this.handles.set(init.mediaId, h);
+      this.handles.set(key, h);
     }
     return h;
   }
 
-  release(mediaId: string): void {
-    const h = this.handles.get(mediaId);
+  release(key: string): void {
+    const h = this.handles.get(key);
     if (!h) return;
     h.dispose();
-    this.handles.delete(mediaId);
+    this.handles.delete(key);
   }
 
   dispose(): void {
