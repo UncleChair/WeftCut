@@ -62,7 +62,14 @@ import {
   gopFrames,
   mezzanineBitrate,
   resolveOutputDims,
+  tenBitExportCapable,
 } from "./render/exportSettings";
+import {
+  exportVideoSinkStart,
+  exportVideoSinkFinish,
+  exportVideoSinkCancel,
+  exportVideoSinkWrite,
+} from "./ipc";
 import { resolveEncodePath } from "./render/exportCodecProbe";
 import { exportBakeMotifs } from "./render/exportBake";
 import { getMotif } from "./render/motifs/catalog";
@@ -1166,14 +1173,41 @@ export function App({ onCloseProject }: AppProps) {
     const outFps = fpsNum / fpsDen;
     // `path` already carries the chosen container extension (set by the dialog).
 
+    // 10-bit path: open the native-encode video sink before the Worker starts.
+    // The sink accepts frames over WebSocket, encodes them natively (HEVC Main10
+    // / AV1 10-bit), and writes the result to tempVideoPath. On the 8-bit path
+    // videoSink stays undefined and the existing fMP4 streaming path is used.
+    const tenBit = settings.bitDepth === 10 && settings.codec !== "h264";
+    let videoSink: { port: number; token: string } | undefined;
+    if (tenBit) {
+      videoSink = await exportVideoSinkStart({
+        mode: "ws",
+        width: dims.width,
+        height: dims.height,
+        fpsNum,
+        fpsDen,
+        codec: settings.codec,
+        bitrate: computeBitrate(settings, dims.width, dims.height, outFps),
+        cbr: settings.rateMode === "cbr",
+        gop: gopFrames(settings.keyframeIntervalSec, outFps),
+        software: settings.hwAccel === "software",
+        outputPath: tempVideoPath,
+      });
+    }
+
     // Decide the path for the chosen codec: WebCodecs when the browser can
-    // encode it (hw/sw auto), else ffmpeg transcodes a mezzanine.
-    const encodePath = await resolveEncodePath(
-      settings.codec,
-      dims.width,
-      dims.height,
-      outFps,
-    );
+    // encode it (hw/sw auto), else ffmpeg transcodes a mezzanine. On the
+    // 10-bit path the Worker streams raw frames to the Rust sink — skip the
+    // encode-path probe and treat it as "webcodecs" so no transcode spec is
+    // generated downstream.
+    const encodePath = tenBit
+      ? ("webcodecs" as const)
+      : await resolveEncodePath(
+          settings.codec,
+          dims.width,
+          dims.height,
+          outFps,
+        );
 
     // WebCodecs path → worker encodes the target codec directly. ffmpeg path →
     // worker encodes a high-quality H.264 mezzanine; Rust transcodes it.
@@ -1234,9 +1268,16 @@ export function App({ onCloseProject }: AppProps) {
     // with `append` is used instead of an open FileHandle because `fs:allow-open`
     // isn't in the app's capabilities (`fs:allow-write-file` is). The temp path
     // is a fresh UUID, so the first append creates it (create defaults true).
-    const writeChunk = async (data: ArrayBuffer): Promise<void> => {
-      await writeFile(tempVideoPath, new Uint8Array(data), { append: true });
-    };
+    // On the 10-bit path the Worker streams raw yuv420p10le frames to the Rust
+    // sink over WebSocket; any overflow chunks (WS connect failure fallback) are
+    // forwarded via the IPC write command.
+    const writeChunk = tenBit
+      ? async (data: ArrayBuffer): Promise<void> => {
+          await exportVideoSinkWrite(new Uint8Array(data));
+        }
+      : async (data: ArrayBuffer): Promise<void> => {
+          await writeFile(tempVideoPath, new Uint8Array(data), { append: true });
+        };
 
     setExportState({ kind: "starting" });
     let result;
@@ -1250,10 +1291,13 @@ export function App({ onCloseProject }: AppProps) {
         keyframeIntervalSec: settings.keyframeIntervalSec,
         writeChunk,
         motifFrames,
+        bitDepth: settings.bitDepth,
+        ...(videoSink ? { videoSink } : {}),
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("[weftcut/pixi] export failed:", e);
+      if (tenBit) void exportVideoSinkCancel().catch(() => {});
       setExportState({ kind: "error", detail: msg });
       return;
     }
@@ -1284,6 +1328,22 @@ export function App({ onCloseProject }: AppProps) {
             });
           })
         : null;
+
+    // On the 10-bit path, signal the native sink that all frames have been
+    // sent. The sink flushes its encoder + muxer and writes the final
+    // tempVideoPath. Must run BEFORE the audio export + mux.
+    if (tenBit) {
+      try {
+        await exportVideoSinkFinish();
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error("[weftcut/pixi] sink finish failed:", e);
+        setExportState({ kind: "error", detail: `Finalize failed: ${msg}` });
+        void remove(tempVideoPath).catch(() => {});
+        void remove(tempAudioPath).catch(() => {});
+        return;
+      }
+    }
 
     try {
       // (1) Video is already written to tempVideoPath (streamed above).
@@ -1324,6 +1384,7 @@ export function App({ onCloseProject }: AppProps) {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("[weftcut/pixi] finalize failed:", e);
+      // tenBit sink-finish already ran (above); mux failure doesn't need cancel.
       setExportState({
         kind: "error",
         detail: `Finalize failed: ${msg}`,
@@ -1833,6 +1894,9 @@ export function App({ onCloseProject }: AppProps) {
           comp={summary.composition}
           currentTimeUs={currentTimeUs}
           durationUs={summary.duration_us}
+          hasTenBitSource={summary.media.some(
+            (m) => m.kind === "Video" && tenBitExportCapable(m),
+          )}
           onCancel={() => setExportDialogOpen(false)}
           onConfirm={(settings, path, range) => {
             // Don't close — the progress panel takes over the same overlay.

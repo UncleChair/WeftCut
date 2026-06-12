@@ -56,5 +56,9 @@ export interface PixiPreviewHandle {
     /// baked on the main thread (the export Worker has no DOM). Transferred
     /// into the Worker and bound by comp-frame index. Omit ⇒ no motifs.
     motifFrames?: Record<string, ImageBitmap[]>;
+    /// Output bit depth (8 = existing pipeline; 10 = f16/WebGL2 + native-encode).
+    bitDepth?: 8 | 10;
+    /// Native-encode sink endpoint for the 10-bit path.
+    videoSink?: { port: number; token: string };
   }): Promise<PixiExportResult>;
 }

@@ -1286,3 +1286,53 @@ export async function logEmit(input: LogEntryInput): Promise<void> {
 export async function logDirPath(): Promise<string | null> {
   return invoke<string | null>("log_dir_path");
 }
+
+// ============================================================
+// Video-sink IPC — 10-bit export pipeline (native encode path)
+// ============================================================
+
+/// Arguments for the native-encode video sink. Mirrors `VideoSinkStartArgs`
+/// in `export/videosink.rs` (serde camelCase).
+export interface VideoSinkStartArgs {
+  mode: "ws";
+  width: number;
+  height: number;
+  fpsNum: number;
+  fpsDen: number;
+  codec: string;
+  bitrate: number;
+  cbr: boolean;
+  gop: number;
+  software: boolean;
+  outputPath: string;
+}
+
+/// Start a native-encode video sink. Returns the WebSocket port + bearer
+/// token the Worker connects to for streaming encoded frames.
+export function exportVideoSinkStart(
+  args: VideoSinkStartArgs,
+): Promise<{ port: number; token: string }> {
+  return invoke("export_video_sink_start", { args });
+}
+
+/// Finalize the video sink after all frames have been sent. Returns byte
+/// count, frame count, and elapsed ms for diagnostics.
+export function exportVideoSinkFinish(): Promise<{
+  bytes: number;
+  frames: number;
+  elapsedMs: number;
+}> {
+  return invoke("export_video_sink_finish");
+}
+
+/// Abort a running sink (error / cancel paths). Safe to call even if the
+/// sink has already finished — the backend no-ops on a dead sink.
+export function exportVideoSinkCancel(): Promise<void> {
+  return invoke("export_video_sink_cancel");
+}
+
+/// Stream a raw encoded chunk to the native sink. The bytes are forwarded
+/// to ffmpeg's input pipe; call in sequence to preserve muxer order.
+export function exportVideoSinkWrite(bytes: Uint8Array): Promise<void> {
+  return invoke("export_video_sink_write", { bytes });
+}

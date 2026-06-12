@@ -54,6 +54,10 @@ export interface PreviewSurfaceHandle {
     /// launching the export Worker (which has no DOM). Threaded through to
     /// `runExport` and transferred into the Worker.
     motifFrames?: Record<string, ImageBitmap[]>;
+    /// Output bit depth (8 = existing pipeline; 10 = f16/WebGL2 + native-encode).
+    bitDepth?: 8 | 10;
+    /// Native-encode sink endpoint for the 10-bit path.
+    videoSink?: { port: number; token: string };
   }): Promise<PixiExportResult>;
 }
 
@@ -90,7 +94,11 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
           if (!handle) {
             throw new Error("Pixi preview is not initialized yet.");
           }
-          return handle.runExport(opts);
+          return handle.runExport({
+            ...opts,
+            ...(opts.bitDepth != null ? { bitDepth: opts.bitDepth } : {}),
+            ...(opts.videoSink ? { videoSink: opts.videoSink } : {}),
+          });
         },
       }),
       [],

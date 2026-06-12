@@ -20,6 +20,7 @@ import {
   resolveOutputDims,
   clampExportRange,
   gopFrames,
+  tenBitExportCapable,
   type ExportSettings,
 } from "./exportSettings";
 
@@ -313,5 +314,21 @@ describe("clampExportRange", () => {
       startUs: 0,
       endUs: 10_000_000,
     });
+  });
+});
+
+describe("bitDepth", () => {
+  it("defaults to 8 and survives merge", () => {
+    expect(mergeSettings(null).bitDepth).toBe(8);
+    expect(mergeSettings({ bitDepth: 10, codec: "hevc" }).bitDepth).toBe(10);
+  });
+  it("snaps 10-bit H.264 back to 8 (no Hi10P output)", () => {
+    expect(mergeSettings({ bitDepth: 10, codec: "h264" }).bitDepth).toBe(8);
+  });
+  it("detects 10-bit-capable sources (Hi10P only, v1)", () => {
+    expect(tenBitExportCapable({ codec: "h264", pix_fmt: "yuv420p10le" })).toBe(true);
+    expect(tenBitExportCapable({ codec: "hevc", pix_fmt: "yuv420p10le" })).toBe(false);
+    expect(tenBitExportCapable({ codec: "h264", pix_fmt: "yuv420p" })).toBe(false);
+    expect(tenBitExportCapable({ codec: null, pix_fmt: null })).toBe(false);
   });
 });

@@ -15,6 +15,7 @@ import type { MediaSummary, ProjectSummary } from "../../ipc";
 import { exportPlaybackPathFor } from "../../state/projectStore";
 import { referencedVideoMediaIds } from "../activeVideoLayers";
 import { ffprobeColorToWebCodecs } from "../decoder/ffprobeColorSpace";
+import { tenBitExportCapable } from "../exportSettings";
 import type {
   ExportEvent,
   ExportProjectSnapshot,
@@ -55,6 +56,13 @@ export interface RunExportInit {
   /// Optional cancel signal — the Worker checks at each frame
   /// boundary.
   signal?: AbortSignal;
+  /// Output bit depth (8 = existing pipeline; 10 = f16/WebGL2 + native-encode).
+  /// Absent ⇒ 8.
+  bitDepth?: 8 | 10;
+  /// Native-encode sink connection details (port + token). Required when
+  /// `bitDepth === 10`; the Worker connects to this sink to stream encoded
+  /// frames instead of writing fMP4 chunks via `writeChunk`.
+  videoSink?: { port: number; token: string };
 }
 
 export interface RunExportResult {
@@ -154,7 +162,19 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     { type: "module" },
   );
 
-  // 5. Wait for ready, then post start.
+  // 5. Build the tenBitMedia map: sources whose originals WebView2 can decode
+  // to I420P10 (Hi10P H.264 only in v1). Only populated on the 10-bit path;
+  // the Worker uses this to route those sources through the 10-bit lane.
+  const tenBitMedia: Record<string, boolean> = {};
+  if (init.bitDepth === 10) {
+    for (const m of init.mediaById.values()) {
+      if (m.kind === "Video" && tenBitExportCapable(m)) {
+        tenBitMedia[m.id] = true;
+      }
+    }
+  }
+
+  // 6. Wait for ready, then post start.
   const motifFrames = init.motifFrames ?? {};
   const startReq: Extract<ExportRequest, { type: "start" }> = {
     type: "start",
@@ -167,6 +187,9 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     keyframeIntervalSec: init.keyframeIntervalSec ?? 1,
     canvas: offscreen,
     motifFrames,
+    bitDepth: init.bitDepth ?? 8,
+    ...(init.videoSink ? { videoSink: init.videoSink } : {}),
+    ...(Object.keys(tenBitMedia).length > 0 ? { tenBitMedia } : {}),
   };
 
   // ImageBitmaps are transferable; transferring them avoids a structured-clone
