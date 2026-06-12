@@ -1,6 +1,6 @@
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { documentDir, join } from "@tauri-apps/api/path";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { exportSettingsGet, exportSettingsSet, workspaceDir } from "../ipc";
@@ -13,6 +13,7 @@ import {
   resolveEncodePath,
 } from "../render/exportCodecProbe";
 import {
+  type BitDepth,
   type CodecId,
   type Container,
   type ExportSettings,
@@ -20,6 +21,7 @@ import {
   type RateMode,
   containerExtension,
   containersForCodec,
+  isBitDepthValid,
   isCodecContainerValid,
   downscaleFpsOptions,
   downscaleHeightOptions,
@@ -47,6 +49,10 @@ interface Props {
   comp: Comp;
   currentTimeUs: number;
   durationUs: number;
+  /// True when the project has at least one H.264 Hi10P video source. Used to
+  /// show the 10-bit hint and smart-default the bit-depth selector to 10 when
+  /// the user picks HEVC or AV1 for the first time this dialog session.
+  hasTenBitSource: boolean;
   onCancel: () => void;
   onConfirm: (
     settings: ExportSettings,
@@ -55,7 +61,7 @@ interface Props {
   ) => void;
 }
 
-export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, onCancel, onConfirm }: Props) {
+export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBitSource, onCancel, onConfirm }: Props) {
   const { t } = useTranslation();
   const [settings, setSettings] = useState<ExportSettings | null>(null);
   const [location, setLocation] = useState<string>("");
@@ -64,6 +70,10 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, onCancel
   const [rangeMode, setRangeMode] = useState<"full" | "custom">("full");
   const [rangeStartUs, setRangeStartUs] = useState<number>(0);
   const [rangeEndUs, setRangeEndUs] = useState<number>(durationUs);
+  /// True once the user has explicitly touched the bit-depth selector this
+  /// dialog session. Suppresses the smart-default (auto-10 on 10-bit-capable
+  /// codec change) after the first explicit choice.
+  const userTouchedBitDepth = useRef(false);
   // Keep the default "custom" end in sync if the project duration arrives late.
   useEffect(() => {
     setRangeEndUs((e) => (e === 0 ? durationUs : e));
@@ -327,12 +337,19 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, onCancel
                     value={settings.codec}
                     onValueChange={(v) => {
                       const codec = v as CodecId;
+                      // Snap bitDepth: H.264 cannot produce Hi10P output.
+                      const bitDepth: BitDepth =
+                        codec === "h264"
+                          ? 8
+                          : !userTouchedBitDepth.current && hasTenBitSource
+                            ? 10
+                            : settings.bitDepth;
                       if (!isCodecContainerValid(codec, settings.container)) {
                         // Falls back to MP4 → Opus (MKV-only) must also reset.
                         const audio = { ...settings.audio, codec: "aac" as AudioCodecId };
-                        patch({ codec, container: "mp4", audio });
+                        patch({ codec, container: "mp4", audio, bitDepth });
                       } else {
-                        patch({ codec });
+                        patch({ codec, bitDepth });
                       }
                     }}
                     options={[
@@ -351,6 +368,33 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, onCancel
                     {encodePath === "ffmpeg"
                       ? t("export_dialog.path_ffmpeg")
                       : t("export_dialog.path_webcodecs")}
+                  </p>
+                )}
+
+                <div className="export-row">
+                  <span className="settings-toggle-label">
+                    {t("export_dialog.bit_depth")}
+                  </span>
+                  <AppSelect
+                    className="export-select"
+                    value={String(settings.bitDepth)}
+                    onValueChange={(v) => {
+                      userTouchedBitDepth.current = true;
+                      patch({ bitDepth: Number(v) as BitDepth });
+                    }}
+                    options={[
+                      { value: "8", label: t("export_dialog.bit_depth_8") },
+                      {
+                        value: "10",
+                        label: t("export_dialog.bit_depth_10"),
+                        disabled: !isBitDepthValid(settings.codec, 10),
+                      },
+                    ]}
+                  />
+                </div>
+                {hasTenBitSource && settings.bitDepth === 8 && (
+                  <p className="settings-blurb">
+                    {t("export_dialog.bit_depth_hint")}
                   </p>
                 )}
 

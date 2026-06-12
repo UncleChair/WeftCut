@@ -3,6 +3,7 @@
 // this schema end to end; Rust persists it as an opaque JSON blob.
 
 export type CodecId = "h264" | "av1" | "hevc";
+export type BitDepth = 8 | 10;
 export type QualityPreset = "low" | "medium" | "high" | "custom";
 export type RateMode = "vbr" | "cbr";
 /// Output container. H.264/HEVC can target all three; AV1+MOV is rejected by
@@ -56,6 +57,10 @@ export interface ExportSettings {
   /// per bitrate and bit-reproducible across machines. Not a color setting:
   /// color is governed by the colorspace tags + the conformance gate either way.
   hwAccel: "auto" | "software";
+  /// Output bit depth. 10 runs the f16/WebGL2 + native-encode pipeline
+  /// (HEVC Main10 / AV1 10-bit); 8 is the existing pipeline, unchanged.
+  /// H.264 output is always 8 (Hi10P output compatibility is poor).
+  bitDepth: BitDepth;
   /// Output container. Audio is AAC (any container) or Opus (MKV only).
   container: Container;
   /// Audio track settings. Persisted; null/missing back-fills to defaults.
@@ -71,6 +76,7 @@ export const DEFAULT_EXPORT_SETTINGS: ExportSettings = {
   rateMode: "vbr",
   keyframeIntervalSec: 1,
   hwAccel: "auto",
+  bitDepth: 8,
   container: "mp4",
   audio: DEFAULT_AUDIO_SETTINGS,
 };
@@ -203,11 +209,29 @@ export function mergeSettings(
   if (!isAudioCodecContainerValid(merged.audio.codec, merged.container)) {
     merged.audio = { ...merged.audio, codec: "aac" };
   }
+  // Snap an invalid bit depth (e.g. 10 saved with H.264 from a future downgrade).
+  if (!isBitDepthValid(merged.codec, merged.bitDepth)) {
+    merged.bitDepth = 8;
+  }
   return merged;
 }
 
 export function containerExtension(c: Container): string {
   return c;
+}
+
+export function isBitDepthValid(codec: CodecId, d: BitDepth): boolean {
+  return d === 8 || codec !== "h264";
+}
+
+/// v1 rule (probe P1): only H.264 Hi10P software-decodes to I420P10 in
+/// WebView2. AV1 10-bit is a candidate behind a decode probe; HEVC Main10
+/// originals are HW-opaque (no copyTo) until the 10-bit conform lands.
+export function tenBitExportCapable(m: {
+  codec: string | null;
+  pix_fmt: string | null;
+}): boolean {
+  return m.codec === "h264" && m.pix_fmt === "yuv420p10le";
 }
 
 /// ffmpeg's MOV muxer rejects AV1 ("av1 only supported in MP4 and AVIF"), so

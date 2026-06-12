@@ -313,6 +313,10 @@ const enUS = {
     audio_sample_rate: "Sample rate",
     channels_mono: "Mono",
     channels_stereo: "Stereo",
+    bit_depth: "Bit depth",
+    bit_depth_8: "8-bit",
+    bit_depth_10: "10-bit (HEVC Main10 / AV1)",
+    bit_depth_hint: "Timeline has 10-bit sources — 10-bit output preserves their precision.",
   },
   import_proxy: {
     title: "Some clips need optimizing",

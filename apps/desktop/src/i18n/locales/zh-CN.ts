@@ -309,6 +309,10 @@ const zhCN: Resources = {
     audio_sample_rate: "采样率",
     channels_mono: "单声道",
     channels_stereo: "立体声",
+    bit_depth: "位深",
+    bit_depth_8: "8-bit",
+    bit_depth_10: "10-bit（HEVC Main10 / AV1）",
+    bit_depth_hint: "时间线含 10-bit 素材——10-bit 输出可保留其精度。",
   },
   import_proxy: {
     title: "部分素材需要优化",
