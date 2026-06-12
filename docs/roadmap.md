@@ -108,19 +108,6 @@ correctness. The design work this defers:
   gate (the analyzer is the arbiter), watching the non-primary patches
   where any primaries residual surfaces.
 
-### Full-range source color fidelity through the proxy
-
-Full-range (`pc`) sources lose their range on export: the output is
-limited-range (`tv`) while the source is full-range, a real `pc`→`tv` squash
-(confirmed by ffprobe). The suspected cause is the proxy re-encode dropping full
-range — full-range sources are expected to route through a proxy — though that
-routing hasn't been directly confirmed. The color-conformance gate keeps these
-encodings (`709full`, `601full`) marked known-bad against a perceptual metric
-(see ADR 0014). First step is to confirm the path (DirectExport vs proxy for a
-full-range source); the fix is then either preserving the source range through
-the proxy re-encode, or routing full-range sources through DirectExport so they
-decode from the original like the limited-range cases already do.
-
 ### macOS and Linux verification
 
 The PixiJS + WebCodecs path runs in WebView2 today; WKWebView and

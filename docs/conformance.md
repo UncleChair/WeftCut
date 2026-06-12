@@ -134,10 +134,12 @@ reaches an export-ready proxy route. Classification itself is unit-pinned in
 `io::probe::tests` (captured ffprobe JSON + a real-ffprobe integration test).
 
 `color_conformance.e2e.js` exports the color patch fixtures and compares
-perceptual app-only color error. Limited-range 709/601 encodings are expected
-to be faithful. Full-range encodings are currently known-bad and remain a
-roadmap item; the gate asserts the known-bad state so it flips red when the
-proxy/full-range fix lands and the baseline can be updated.
+perceptual app-only color error. All four encodings (709/601 × limited/full)
+are expected faithful: the limited-range fixtures decode from the original
+(DirectExport) and the full-range ones from a self-describing proxy — the
+recipe asserts the source's color tags and writes the mp4 `colr` atom
+(mediabunny never parses the SPS VUI), and ffprobe source tags are also
+threaded into proxy decodes as the colr-less fallback. See ADR 0014.
 
 ## Running
 

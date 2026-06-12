@@ -16,7 +16,25 @@ canvas, and re-encodes. The color outcome depends on two conversions:
 1. **YUV→RGB at decode.** The decoder is configured with the source's color tags
    (`withDefaultColorSpace` layered over the ffprobe-extracted matrix/range), so
    it emits a correctly-tagged frame — verified: a 601 source yields a frame
-   tagged `smpte170m`. But PixiJS uploads that frame to a texture via WebGPU
+   tagged `smpte170m`. The decoder follows that config over the bitstream's own
+   VUI (verified live: a pc/601-VUI proxy decoded under a bt709/limited config
+   stamps bt709/limited on its frames), so the config must be right for BOTH
+   decode targets:
+   - **Originals** carry their ffprobe tags directly.
+   - **Proxies** preserve the source's colorimetry but historically carried it
+     only in the SPS VUI — and mediabunny reads only the mp4 `colr` atom, never
+     the VUI, so `getDecoderConfig().colorSpace` came back null and the decode
+     fell back to the bt709/limited resolution default. That misread full-range
+     sources (pc decoded as tv: clip + stretch) and 601 proxies (601 decoded as
+     709) — the gate's `709full`/`601full` failures. Two-layer fix: the proxy
+     recipes assert the source's ffprobe tags + `-movflags +write_colr`
+     (`source_color_args`, PROXY_FORMAT_VERSION 7 / quick-q4) so every proxy is
+     self-describing via colr, AND the ffprobe `sourceColor` is threaded into
+     proxy decodes too (`withDefaultColorSpace`'s per-field priority keeps the
+     decode target's own colr tag above it), which also covers older colr-less
+     cached proxies.
+
+   But PixiJS uploads the decoded frame to a texture via WebGPU
    `copyExternalImageToTexture`, which **ignores `VideoFrame.colorSpace`** and
    converts every frame as BT.709. A 601 frame uploaded that way is mis-converted
    (wrong RGB on the canvas). The fix: `VideoClipSprite` routes the frame through
@@ -52,16 +70,13 @@ and a full→limited **range** squash scores large.
 
 ## Consequences
 
-- `709ltd` and `601ltd` are faithful (`worst_app_max` 0 and 2). The decode-side
-  `drawImage` fix is load-bearing: reverting it scored ~22 (PSNR 22.6 dB vs
-  42 dB), confirming Pixi's upload drops the matrix.
-- `709full` / `601full` remain known-bad: their output is limited-range (tv)
-  while the source is full-range (pc) — a real pc→tv squash (verified via
-  ffprobe). The suspected cause is the full-range proxy re-encode dropping full
-  range (full-range sources are expected to route through a proxy), not directly
-  confirmed here — a real loss the original-decode path does not touch (the
-  deferred proxy-color slice). They assert `worst_app_max > faithfulMax` and flip
-  red when it is addressed.
+- All four encodings are faithful: `709ltd`/`601ltd` decode from the original
+  (DirectExport), `709full`/`601full` decode from a self-describing proxy (their
+  `yuvj420p` pixel format keeps them off the DirectExport whitelist). The
+  decode-side `drawImage` fix is load-bearing: reverting it scored ~22 (PSNR
+  22.6 dB vs 42 dB), confirming Pixi's upload drops the matrix. A full-range
+  export is still EMITTED limited-range (the WebCodecs encoder choice) — a
+  correct pc→tv conversion, which the perceptual gate scores as faithful.
 - Preserving the source matrix tag in the output would require encoding outside
   WebCodecs (a Rust ffmpeg re-encode) purely to relabel HD to a non-standard
   matrix — rejected as a bad trade.

@@ -134,11 +134,12 @@ export interface CompositorInit {
   /// that don't get proxied (images, audio).
   originalAssetUrl: (mediaId: string) => string | null;
   /// Resolver for a media item's ffprobe-derived source color tags
-  /// (matrix/range/primaries/transfer), mapped to WebCodecs. Applied to the
-  /// preview decode ONLY when the decoded URL is the ORIGINAL file (see the
-  /// `=== originalAssetUrl` gate at each handle site) so 601/full-range
-  /// originals preview with their real color; a proxy is a re-encode and
-  /// gets the resolution default instead. Returns undefined when nothing maps.
+  /// (matrix/range/primaries/transfer), mapped to WebCodecs. Applied to every
+  /// decode target for the media — the original trivially, and proxies too
+  /// (a proxy preserves the source's colorimetry; its own container tag still
+  /// outranks this per-field in `withDefaultColorSpace`) — so 601/full-range
+  /// sources render with their real color from either URL. Returns undefined
+  /// when nothing maps.
   sourceColor: (mediaId: string) => VideoColorSpaceInit | undefined;
   /// Lookup for media-side codec dimensions.
   mediaById: (mediaId: string) => MediaSummary | undefined;
@@ -1285,11 +1286,13 @@ export class Compositor {
       console.warn(`[weftcut/pixi] no proxy URL for media ${mediaId} (clip ${layer.id})`);
       return null;
     }
-    // Source color tags apply ONLY when the decoded URL is the ORIGINAL file —
-    // a proxy/quick-proxy is a re-encode whose color may differ, so it takes
-    // the resolution default instead (undefined here).
-    const sourceColor =
-      proxyUrl === this.originalAssetUrl(mediaId) ? this.sourceColor(mediaId) : undefined;
+    // Source color tags apply to ANY decode target for this media: the
+    // original carries them trivially, and a proxy/quick-proxy PRESERVES the
+    // source's colorimetry (the recipe never converts matrix/range). The
+    // decode target's own container tag still outranks this per-field in
+    // `withDefaultColorSpace`, so a self-describing (colr-tagged) proxy is
+    // unaffected; colr-less ones stop being misread as bt709/limited.
+    const sourceColor = this.sourceColor(mediaId);
     const source = this.pool.acquire({
       layerId: layer.id,
       mediaId,
@@ -1355,12 +1358,12 @@ export class Compositor {
       this.abandonSwap(clip.layerId);
     }
     const { swapLayerId, swapMediaId } = swapKeys(clip.layerId, clip.mediaId);
-    // `newUrl` may be the original or a freshly-built proxy; the gate resolves
-    // against the REAL media (`clip.mediaId`) even though we acquire under the
-    // synthetic `swapMediaId`, so color applies only while the original is the
-    // decoded URL.
-    const sourceColor =
-      newUrl === this.originalAssetUrl(clip.mediaId) ? this.sourceColor(clip.mediaId) : undefined;
+    // `newUrl` may be the original or a freshly-built proxy; either way the
+    // source's ffprobe tags apply (a proxy preserves the source colorimetry,
+    // and its own colr tag outranks this per-field). Resolve against the REAL
+    // media (`clip.mediaId`) even though we acquire under the synthetic
+    // `swapMediaId`.
+    const sourceColor = this.sourceColor(clip.mediaId);
     const handle = this.pool.acquire({
       layerId: swapLayerId,
       mediaId: swapMediaId,
