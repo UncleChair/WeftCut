@@ -70,13 +70,17 @@ and a full→limited **range** squash scores large.
 
 ## Consequences
 
-- All four encodings are faithful: `709ltd`/`601ltd` decode from the original
-  (DirectExport), `709full`/`601full` decode from a self-describing proxy (their
-  `yuvj420p` pixel format keeps them off the DirectExport whitelist). The
-  decode-side `drawImage` fix is load-bearing: reverting it scored ~22 (PSNR
-  22.6 dB vs 42 dB), confirming Pixi's upload drops the matrix. A full-range
-  export is still EMITTED limited-range (the WebCodecs encoder choice) — a
-  correct pc→tv conversion, which the perceptual gate scores as faithful.
+- All four encodings are faithful and DirectExport from the original
+  (`yuvj420p` — the full-range alias of yuv420p — is on the browser-friendly
+  whitelist, so full-range H.264 skips the proxy hop entirely). The proxy
+  self-description machinery still carries color for proxy-routed sources
+  (HEVC/VP9/10-bit), guarded by a Rust integration test
+  (`proxy_carries_source_color_tags_and_colr_atom`: tags + colr atom on a real
+  ffmpeg round-trip). The decode-side `drawImage` fix is load-bearing:
+  reverting it scored ~22 (PSNR 22.6 dB vs 42 dB), confirming Pixi's upload
+  drops the matrix. A full-range export is still EMITTED limited-range (the
+  WebCodecs encoder choice) — a correct pc→tv conversion, which the perceptual
+  gate scores as faithful.
 - Preserving the source matrix tag in the output would require encoding outside
   WebCodecs (a Rust ffmpeg re-encode) purely to relabel HD to a non-standard
   matrix — rejected as a bad trade.

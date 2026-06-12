@@ -264,6 +264,17 @@ mod tests {
     }
 
     #[test]
+    fn remuxes_full_range_yuvj420p_h264() {
+        // Full-range "J" 4:2:0 remuxes like yuv420p; +write_colr derives the
+        // colr atom from the input VUI so the remuxed quick proxy stays
+        // color-readable to mediabunny.
+        assert!(can_remux(
+            &video("h264", "yuvj420p", 1920, 1080, 30, 1),
+            Some(0.2)
+        ));
+    }
+
+    #[test]
     fn transcodes_h264_with_unfriendly_pix_fmt() {
         assert!(!can_remux(
             &video("h264", "yuv420p10le", 1920, 1080, 30, 1),

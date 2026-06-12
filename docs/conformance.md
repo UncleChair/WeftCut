@@ -135,11 +135,13 @@ reaches an export-ready proxy route. Classification itself is unit-pinned in
 
 `color_conformance.e2e.js` exports the color patch fixtures and compares
 perceptual app-only color error. All four encodings (709/601 × limited/full)
-are expected faithful: the limited-range fixtures decode from the original
-(DirectExport) and the full-range ones from a self-describing proxy — the
-recipe asserts the source's color tags and writes the mp4 `colr` atom
-(mediabunny never parses the SPS VUI), and ffprobe source tags are also
-threaded into proxy decodes as the colr-less fallback. See ADR 0014.
+are expected faithful and DirectExport from the original (`yuvj420p` is on the
+browser-friendly whitelist). Proxy-routed sources keep their color through the
+self-describing proxy recipes — source tags asserted + the mp4 `colr` atom
+written (mediabunny never parses the SPS VUI), with ffprobe source tags also
+threaded into proxy decodes as the colr-less fallback; that machinery is
+guarded by the Rust test `proxy_carries_source_color_tags_and_colr_atom`. See
+ADR 0014.
 
 ## Running
 
