@@ -146,3 +146,16 @@ insta = { version = "1", features = ["json", "yaml"] }
 [features]
 default = []
 custom-protocol = ["tauri/custom-protocol"]
+
+# The 10-bit export's WS video sink (export/videosink.rs) reads ~6 MB/frame
+# through tungstenite; at opt-level 0 its read loop tops out at ~107 MB/s on
+# loopback (measured), capping dev-build 10-bit exports at ~71 MB/s end-to-end
+# — well under the ~190 MB/s a 1080p30 yuv420p10le stream needs. At opt-level
+# 1 the same loop sustains ~340 MB/s and the webview→Rust transport reaches
+# ~312 MB/s (the webview send path becomes the ceiling). A per-package
+# override on tungstenite does NOT work: the entire read path is generic over
+# the stream and monomorphizes into THIS crate at THIS crate's opt-level. So
+# the whole dev profile runs at opt-level 1 — release builds were never
+# affected; this keeps dev/e2e (--debug) transport honest.
+[profile.dev]
+opt-level = 1
