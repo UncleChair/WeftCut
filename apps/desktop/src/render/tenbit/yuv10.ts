@@ -10,6 +10,8 @@ export interface YuvCoef {
 export const BT709: YuvCoef = { kr: 0.2126, kb: 0.0722 };
 export const BT601: YuvCoef = { kr: 0.299, kb: 0.114 };
 
+// GLSL twin: clamp(floor(x + 0.5), 0.0, 1023.0) — NOT round(), whose .5
+// behavior is implementation-defined in GLSL ES. Math.round ≡ floor(x+0.5).
 const clamp10 = (x: number) => Math.min(1023, Math.max(0, Math.round(x)));
 const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
 
@@ -21,6 +23,7 @@ export function inverseCoef(c: YuvCoef): [number, number, number, number] {
   return [crR, (c.kb * cbB) / kg, (c.kr * crR) / kg, cbB];
 }
 
+/// r/g/b: gamma-encoded [0,1] (clamped). Returns 10-bit LIMITED-range codes (Y 64–940, C 64–960), clamped to [0,1023].
 export function rgbToYuv10(
   r: number,
   g: number,
@@ -34,6 +37,7 @@ export function rgbToYuv10(
   return [clamp10(64 + 876 * y), clamp10(512 + 896 * cb), clamp10(512 + 896 * cr)];
 }
 
+/// Inverse of rgbToYuv10; outputs clamped to [0,1].
 export function yuv10ToRgb(
   y10: number,
   u10: number,
