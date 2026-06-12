@@ -42,9 +42,13 @@ pub struct SinkShared {
     pub ws_connected: AtomicBool,
     /// Set by finish()/cancel() — tells the accept loop to wrap up promptly.
     pub finishing: AtomicBool,
+    /// Time origin for `last_write_ms` and SinkStats.
+    pub t0: Instant,
     /// Millis since `t0` of the last IPC write (liveness for the no-WS path).
     /// Initialized to 0; the deadline logic compares against t0.elapsed() so
-    /// a never-writing WS-mode crash errors at ~30s+30s worst case.
+    /// a never-writing-worker crash errors ~30s after the connect deadline.
+    /// Updated after every successful IPC write (and discard-mode ok path)
+    /// so an active IPC stream never trips the staleness check.
     pub last_write_ms: AtomicU64,
     /// IPC-path counters so the fallback's SinkStats are real.
     pub ipc_bytes: AtomicU64,
@@ -57,9 +61,6 @@ pub struct SinkShared {
 pub struct ActiveSink {
     pub join: Option<JoinHandle<Result<SinkStats, String>>>,
     pub shared: Arc<SinkShared>,
-    /// Wall-clock start; stored so SinkStats.elapsed_ms is accurate on the
-    /// IPC path and for the no-WS liveness deadline.
-    pub t0: Instant,
 }
 
 #[derive(Serialize, Clone, Copy, Debug)]
@@ -134,9 +135,9 @@ fn run_ws_sink(
     listener: TcpListener,
     token: String,
     shared: Arc<SinkShared>,
-    t0: Instant,
     max_frame_bytes: usize,
 ) -> Result<SinkStats, String> {
+    let t0 = shared.t0;
     let deadline = t0 + Duration::from_secs(30);
     listener
         .set_nonblocking(true)
@@ -378,6 +379,7 @@ pub async fn export_video_sink_start(
         stdin: Mutex::new(stdin_opt),
         ws_connected: AtomicBool::new(false),
         finishing: AtomicBool::new(false),
+        t0: Instant::now(),
         last_write_ms: AtomicU64::new(0),
         ipc_bytes: AtomicU64::new(0),
         ipc_frames: AtomicU64::new(0),
@@ -410,12 +412,11 @@ pub async fn export_video_sink_start(
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     let token = make_token();
     let max_frame_bytes = (args.width as usize) * (args.height as usize) * 3 + 65536;
-    let t0 = Instant::now();
     info!("video sink listening on 127.0.0.1:{port} mode={}", args.mode);
     let join = {
         let token = token.clone();
         let shared = shared.clone();
-        std::thread::spawn(move || run_ws_sink(listener, token, shared, t0, max_frame_bytes))
+        std::thread::spawn(move || run_ws_sink(listener, token, shared, max_frame_bytes))
     };
     let mut guard = state.0.lock().unwrap();
     if guard.is_some() {
@@ -430,7 +431,6 @@ pub async fn export_video_sink_start(
     *guard = Some(ActiveSink {
         join: Some(join),
         shared,
-        t0,
     });
     Ok(VideoSinkStartReply { port, token })
 }
@@ -506,12 +506,8 @@ pub fn export_video_sink_write(
             s.write_all(bytes).map_err(|e| {
                 format!("ffmpeg stdin: {e}{}", tail_suffix(&shared))
             })?;
-            // --- M2: update liveness + IPC counters on every successful write.
-            // We don't have t0 here (it's on ActiveSink). Store u64::MAX as a
-            // sentinel so the accept-loop's `elapsed.saturating_sub(last_write)`
-            // is always 0 (saturating) while IPC writes are flowing — the liveness
-            // deadline never fires mid-stream. ---
-            shared.last_write_ms.store(u64::MAX, Ordering::Relaxed);
+            // --- M2: update liveness + IPC counters on every successful write. ---
+            shared.last_write_ms.store(shared.t0.elapsed().as_millis() as u64, Ordering::Relaxed);
             shared.ipc_bytes.fetch_add(bytes.len() as u64, Ordering::Relaxed);
             shared.ipc_frames.fetch_add(1, Ordering::Relaxed);
             Ok(())
@@ -521,7 +517,10 @@ pub fn export_video_sink_write(
             if shared.finishing.load(Ordering::Relaxed) {
                 Err("video sink already finishing".into())
             } else {
-                Ok(()) // discard mode: stdin is None by design
+                // discard mode: stdin is None by design; update liveness so the
+                // accept loop knows the IPC stream is alive.
+                shared.last_write_ms.store(shared.t0.elapsed().as_millis() as u64, Ordering::Relaxed);
+                Ok(())
             }
         }
     }
