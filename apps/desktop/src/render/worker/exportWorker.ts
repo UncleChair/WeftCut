@@ -32,7 +32,8 @@
 //     installs them and `MotifSprite` binds by comp-frame index.
 //     VideoClip / ImageOverlay / Color / Text render fine.
 
-import { Application, DOMAdapter, WebWorkerAdapter } from "pixi.js";
+import { Application, Container, DOMAdapter, RenderTexture, WebWorkerAdapter } from "pixi.js";
+import type { WebGLRenderer } from "pixi.js";
 
 import type { MediaSummary, ProjectSummary } from "../../ipc";
 import { selectActiveVideoLayers } from "../activeVideoLayers";
@@ -42,6 +43,8 @@ import { ExportDecoderPool, exportHandleKey } from "../decoder/ExportDecoderPool
 import { EncoderSink } from "./encoder";
 import { exportFrameCount, frameTimeUs as gridFrameTimeUs } from "./frameGrid";
 import type { ExportEvent, ExportRequest } from "./protocol";
+import { PackYuv420p10 } from "../tenbit/PackYuv420p10";
+import { VideoSinkClient } from "./videoSinkClient";
 
 // PixiJS defaults to `BrowserAdapter`, which calls `document.*`
 // and `new Image()`. In a Worker neither exists, so any renderer
@@ -103,12 +106,13 @@ const CHUNK_FRAMES = 60;
 async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   const startedAtMs = performance.now();
 
+  const tenBit = req.bitDepth === 10;
+
   // 1. PixiJS Application against the transferred OffscreenCanvas.
-  // `preference: "webgpu"` matches the preview surface; PixiJS auto-
-  // falls back to WebGL when the worker context doesn't expose
-  // `navigator.gpu`. Matching preference keeps export pixels
-  // identical to preview pixels (different backends can disagree on
-  // edge cases like sub-pixel rasterization).
+  // For the 10-bit path we force WebGL2 (PackYuv420p10 needs a GL renderer
+  // with EXT_color_buffer_float for rgba16float targets). For the 8-bit
+  // path we prefer WebGPU to match the preview surface; PixiJS auto-falls
+  // back to WebGL when the worker context doesn't expose `navigator.gpu`.
   const app = new Application();
   await app.init({
     canvas: req.canvas as unknown as HTMLCanvasElement,
@@ -116,8 +120,30 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     height: req.project.height,
     background: 0x000000,
     autoStart: false,
-    preference: "webgpu",
+    preference: tenBit ? "webgl" : "webgpu",
   });
+
+  if (tenBit) {
+    if (!("gl" in app.renderer)) {
+      throw new Error("10-bit export needs the WebGL2 renderer; got " + app.renderer.name);
+    }
+    // Capability check: render 1 px into an f16 target and read it back —
+    // fails loudly here rather than producing a silent black export on a
+    // context without renderable float16 (EXT_color_buffer_float).
+    {
+      const renderer = app.renderer as WebGLRenderer;
+      const probe = RenderTexture.create({ width: 1, height: 1, format: "rgba16float" });
+      renderer.render({ container: new Container(), target: probe });
+      renderer.renderTarget.bind(probe, false);
+      const px = new Float32Array(4);
+      renderer.gl.readPixels(0, 0, 1, 1, renderer.gl.RGBA, renderer.gl.FLOAT, px);
+      const err = renderer.gl.getError();
+      probe.destroy(true);
+      if (err !== 0) {
+        throw new Error(`10-bit export: float16 render targets unsupported (glError ${err})`);
+      }
+    }
+  }
 
   // 2. Dedicated export decoder pool — bypasses the preview-tuned
   // lookahead pump entirely.
@@ -182,14 +208,42 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     outWidth !== req.project.width || outHeight !== req.project.height;
 
   // 4. Encoder pipeline. Dims/fps come from the encoder config + output fps.
-  const encoder = new EncoderSink({
-    config: req.encoderConfig,
-    width: outWidth,
-    height: outHeight,
-    fpsNum: outFpsNum,
-    fpsDen: outFpsDen,
-    onChunk: postChunk,
-  });
+  // For the 10-bit path, encoding rides the Rust ffmpeg sink (PackYuv420p10
+  // + VideoSinkClient), so the WebCodecs EncoderSink is not created.
+  const encoder = tenBit
+    ? null
+    : new EncoderSink({
+        config: req.encoderConfig,
+        width: outWidth,
+        height: outHeight,
+        fpsNum: outFpsNum,
+        fpsDen: outFpsDen,
+        onChunk: postChunk,
+      });
+
+  // 4b. 10-bit-path resources: composite render target (rgba16float),
+  // YUV packer, and the loopback WS connection to the Rust sink.
+  // pack() ctor throws on odd-ish dims — that propagates out of runExport as
+  // an `error` event (desired; don't catch it here).
+  let compositeRT: RenderTexture | null = null;
+  let pack: PackYuv420p10 | null = null;
+  let sinkClient: VideoSinkClient | null = null;
+  if (tenBit) {
+    compositeRT = RenderTexture.create({
+      width: req.project.width,
+      height: req.project.height,
+      format: "rgba16float",
+    });
+    pack = new PackYuv420p10(app.renderer as WebGLRenderer, outWidth, outHeight);
+    if (req.videoSink) {
+      try {
+        sinkClient = await VideoSinkClient.connect(req.videoSink.port, req.videoSink.token);
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn("[weftcut/export] WS sink connect failed, falling back to IPC:", e);
+      }
+    }
+  }
 
   // 5. Frame grid — driven by OUTPUT fps. The grid is time-based, so a lower
   // output fps naturally samples fewer composition frames (drops); a higher
@@ -216,7 +270,9 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   const gop = gopFrames(req.keyframeIntervalSec ?? 1, outFps);
 
   // Reusable downscale target — allocated once, drawn into per frame.
-  const scaleCanvas = needsScale
+  // Not used in the 10-bit path: PackYuv420p10 samples the composite at
+  // output dims directly via its GLSL shaders.
+  const scaleCanvas = !tenBit && needsScale
     ? new OffscreenCanvas(outWidth, outHeight)
     : null;
   const scaleCtx = scaleCanvas
@@ -243,7 +299,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     if (cancelled) {
       // eslint-disable-next-line no-console
       console.log("[weftcut/export] cancelled");
-      cleanup(encoder, compositor, exportPool, app);
+      cleanup({ encoder, compositor, pool: exportPool, app, sinkClient, pack, compositeRT });
       return;
     }
     const chunkEnd = Math.min(chunkStart + CHUNK_FRAMES, totalFrames);
@@ -270,17 +326,23 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     const decodeT0 = performance.now();
     await Promise.all(
       [...stagedGroups.values()].map(async (g) => {
-        const proxyUrl = req.project.proxyAssetUrls[g.mediaId];
-        if (!proxyUrl) return;
+        // For 10-bit media, acquire the ORIGINAL asset URL and mark the lane
+        // so the decoder pool uses the software (Hi10P-capable) path.
+        const tenBitSource = tenBit && req.tenBitMedia?.[g.mediaId] === true;
+        const url = tenBitSource
+          ? req.project.originalAssetUrls[g.mediaId]
+          : req.project.proxyAssetUrls[g.mediaId];
+        if (!url) return;
         const handle = exportPool.acquire({
           layerId: g.clips[0]!.layerId,
           mediaId: g.mediaId,
           handleKey: g.key,
-          proxyAssetUrl: proxyUrl,
+          proxyAssetUrl: url,
           // The source's real color tags, for original AND proxy decodes (a
           // proxy preserves the source colorimetry; its own colr tag outranks
           // this per-field in withDefaultColorSpace).
           sourceColor: req.project.mediaColor[g.mediaId],
+          ...(tenBitSource ? { tenBitLane: true, preferSoftware: true } : {}),
         });
         await handle.decodeRange(g.srcAUs, g.srcBUs);
       }),
@@ -304,7 +366,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     let waitMs = 0;
     for (let i = chunkStart; i < chunkEnd; i++) {
       if (cancelled) {
-        cleanup(encoder, compositor, exportPool, app);
+        cleanup({ encoder, compositor, pool: exportPool, app, sinkClient, pack, compositeRT });
         return;
       }
       const tUs = frameTimeUs(i);
@@ -327,31 +389,57 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
       const compT0 = performance.now();
       compositor.setAnchorTime(tUs);
       compositor.compositeFrame(tUs);
-      app.render();
       compositeMs += performance.now() - compT0;
 
-      const capT0 = performance.now();
-      let source: CanvasImageSource = req.canvas as unknown as CanvasImageSource;
-      if (scaleCtx && scaleCanvas) {
-        scaleCtx.drawImage(
-          req.canvas as unknown as CanvasImageSource,
-          0,
-          0,
-          outWidth,
-          outHeight,
-        );
-        source = scaleCanvas as unknown as CanvasImageSource;
-      }
-      const captured = new VideoFrame(source, {
-        timestamp: tUs - startUs,
-        duration: frameDurUs,
-      });
-      captureMs += performance.now() - capT0;
+      if (tenBit) {
+        // 10-bit path: render into the rgba16float RenderTexture, pack to
+        // yuv420p10le, then stream to the Rust sink (WS) or fall back to IPC.
+        app.renderer.render({ container: app.stage, target: compositeRT! });
 
-      const isKey = i % gop === 0;
-      const encT0 = performance.now();
-      encoder.encodeFrame(captured, isKey);
-      encodeMs += performance.now() - encT0;
+        const capT0 = performance.now();
+        const bytes = pack!.pack(compositeRT!);
+        captureMs += performance.now() - capT0;
+
+        const encT0 = performance.now();
+        if (sinkClient) {
+          // WS.send() copies synchronously, so pack()'s reused buffer is safe
+          // to overwrite next iteration without an explicit copy here.
+          await sinkClient.write(bytes);
+        } else {
+          // IPC fallback: reuse the chunk/ack backpressure path; the main
+          // thread routes these bytes to export_video_sink_write. Must copy
+          // because postChunk transfers the buffer and pack() reuses its output.
+          await postChunk(bytes.slice());
+        }
+        encodeMs += performance.now() - encT0;
+      } else {
+        // 8-bit path: render to the OffscreenCanvas, capture as a VideoFrame,
+        // push to the WebCodecs EncoderSink — UNCHANGED.
+        app.render();
+
+        const capT0 = performance.now();
+        let source: CanvasImageSource = req.canvas as unknown as CanvasImageSource;
+        if (scaleCtx && scaleCanvas) {
+          scaleCtx.drawImage(
+            req.canvas as unknown as CanvasImageSource,
+            0,
+            0,
+            outWidth,
+            outHeight,
+          );
+          source = scaleCanvas as unknown as CanvasImageSource;
+        }
+        const captured = new VideoFrame(source, {
+          timestamp: tUs - startUs,
+          duration: frameDurUs,
+        });
+        captureMs += performance.now() - capT0;
+
+        const isKey = i % gop === 0;
+        const encT0 = performance.now();
+        encoder!.encodeFrame(captured, isKey);
+        encodeMs += performance.now() - encT0;
+      }
 
       // Per-frame evict — drop source frames whose intervals end at
       // or before the NEXT output frame's source PTS. For the last
@@ -378,7 +466,9 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
         post({ type: "progress", framesEncoded: i, totalFrames });
       }
       const qT0 = performance.now();
-      await encoder.awaitQueueBelow(8);
+      if (!tenBit) {
+        await encoder!.awaitQueueBelow(8);
+      }
       queueWaitMs += performance.now() - qT0;
     }
     totals.compositeMs += compositeMs;
@@ -442,10 +532,16 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
       `  evict       ${totals.evictMs.toFixed(0).padStart(7)}ms  (${pct(totals.evictMs)}%)`,
   );
 
-  // 7. Finalize. The bytes were streamed to the main thread via `onChunk`
-  // (finalize flushes the trailing fragments through the same path); the temp
-  // file is fully written on the main side, so `done` carries no payload.
-  await encoder.finalize();
+  // 7. Finalize.
+  // 10-bit: drain + Normal-close the WS so the Rust sink signals EOF to
+  // ffmpeg and lets it write its trailing headers.
+  // 8-bit: flush the WebCodecs encoder and finalize the mediabunny mux
+  // (flushes trailing fMP4 fragments through the same onChunk path).
+  if (tenBit) {
+    await sinkClient?.finish();
+  } else {
+    await encoder!.finalize();
+  }
   post({ type: "progress", framesEncoded: totalFrames, totalFrames });
 
   // Perf counters for the E2E harness (decode efficiency / re-seek redundancy).
@@ -468,16 +564,35 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   });
 
   // 8. Cleanup.
-  cleanup(encoder, compositor, exportPool, app);
+  cleanup({ encoder, compositor, pool: exportPool, app, sinkClient, pack, compositeRT });
 }
 
-function cleanup(
-  encoder: EncoderSink,
-  compositor: Compositor,
-  pool: ExportDecoderPool,
-  app: Application,
-): void {
-  encoder.dispose();
+interface CleanupArgs {
+  encoder: EncoderSink | null;
+  compositor: Compositor;
+  pool: ExportDecoderPool;
+  app: Application;
+  sinkClient: VideoSinkClient | null;
+  pack: PackYuv420p10 | null;
+  compositeRT: RenderTexture | null;
+}
+
+function cleanup({
+  encoder,
+  compositor,
+  pool,
+  app,
+  sinkClient,
+  pack,
+  compositeRT,
+}: CleanupArgs): void {
+  // On the cancel path the sink must be aborted BEFORE GL resources are
+  // destroyed, so the WS close races the pack dispose rather than using a
+  // partially-torn-down renderer.
+  sinkClient?.abort();
+  pack?.dispose();
+  compositeRT?.destroy(true);
+  encoder?.dispose();
   compositor.dispose();
   pool.dispose();
   try {
