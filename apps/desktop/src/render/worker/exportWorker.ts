@@ -133,6 +133,9 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     {
       const renderer = app.renderer as WebGLRenderer;
       const probe = RenderTexture.create({ width: 1, height: 1, format: "rgba16float" });
+      // Drain any stale GL errors left by PixiJS init before the probe so
+      // a pre-existing error doesn't false-positive as a probe failure.
+      while (renderer.gl.getError() !== renderer.gl.NO_ERROR) { /* drain stale errors */ }
       renderer.render({ container: new Container(), target: probe });
       renderer.renderTarget.bind(probe, false);
       const px = new Float32Array(4);
@@ -587,9 +590,8 @@ function cleanup({
   pack,
   compositeRT,
 }: CleanupArgs): void {
-  // On the cancel path the sink must be aborted BEFORE GL resources are
-  // destroyed, so the WS close races the pack dispose rather than using a
-  // partially-torn-down renderer.
+  // Signal the sink (abort) before tearing down GL resources so that any
+  // in-flight write() throws immediately rather than touching a dead renderer.
   sinkClient?.abort();
   pack?.dispose();
   compositeRT?.destroy(true);
