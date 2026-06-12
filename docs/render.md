@@ -392,6 +392,86 @@ opening a second decoder — concurrent probes contend for the WebCodecs
 buffer pool and false-negative a decodable source (ADR 0013). See ADRs
 0010–0011, 0013.
 
+### Encode exits
+
+The Worker supports two encode exits, selected by the export settings'
+bit-depth choice.
+
+**8-bit (default):** the existing WebCodecs path described above.
+`VideoEncoder` receives each composited `VideoFrame` from the PixiJS
+`OffscreenCanvas`, streams encoded chunks through mediabunny `Output`,
+and the fMP4 slices land on disk via the chunk/`writeFile(append)`
+loop. No changes to this path.
+
+**10-bit (HEVC Main10 or AV1, via the export settings bit-depth
+selector):** the Worker switches to the WebGL2 backend for the
+composite. The encode exit diverges at three points:
+
+- **Source ingest.** 10-bit-capable sources (H.264 Hi10P originals
+  whose import-time `probeSourceDecodable` set `tenBitExportCapable`)
+  are decoded through a CPU-plane lane. The decoder's output callback
+  runs `VideoFrame.copyTo` into a typed `I420P10` buffer and closes the
+  source frame immediately — the copy-then-close pattern satisfies
+  ADR 0004's buffer-pool discipline outright, returning the hardware
+  slot before the ring ever takes ownership. The extracted planes are
+  handed to `TenBitIngest` as an RG8→f16 conversion pass: each chroma-
+  and luma-plane pair is uploaded as an RG8 texture and a GLSL shader
+  unpacks and scales the 10-bit samples into an `rgba16float`
+  `RenderTexture`. The serialized copy chain inside the decoder output
+  callback preserves PTS order; EOS finalization (the `SourceHandle`'s
+  flush and ring drain) runs after all in-flight copies complete, so
+  the PTS-order invariant is never broken at stream end.
+
+  A software-decoder reorder margin (`TENBIT_REORDER_MARGIN`) accounts
+  for B-frame reorder depth: the ring high-water backpressure pauses
+  packet dispatch until the tail drains, keeping ring occupancy within
+  the margin. The current cap is entry-count-based; a byte-based cap is
+  the named follow-up for 4K content.
+
+  8-bit sources are unchanged on the ingest side — they go through the
+  normal `createImageBitmap` / `drawImage` snapshot path — but they
+  also composite into the same `rgba16float` `RenderTexture`, gaining
+  the intermediate-rounding benefit (blends and gradient layers see 16-
+  bit precision throughout the composite rather than 8-bit fixed-point
+  accumulation).
+
+- **Composite.** The WebGL2 `Compositor` instance targets an
+  `rgba16float` `RenderTexture`. The working space is display-referred
+  gamma-encoded BT.709 — there is no linear-light blending (ADR 0021:
+  color converges once at ingest; the f16 composite is not a linear
+  scene-light space but a precision-preserving carry of the already-
+  encoded signal). All sprite operations — transforms, opacity, blend
+  modes — run in this space identically to the 8-bit path.
+
+- **GPU byte-pack and native encode sink.** After each composited
+  frame, `PackYuv420p10` runs a GLSL compute pass over the
+  `rgba16float` RenderTexture: it applies the BT.709 limited-range
+  matrix and 10-bit quantization in one shader and writes luma and
+  chroma planes into an output buffer sized for `yuv420p10le`. This
+  pack pass is the output transform — the encode-domain color
+  conversion is folded into it — and it also handles any encoder
+  downscale via the sampler, eliminating a separate blit. The resulting
+  raw buffer streams to the Rust video sink (`export/videosink.rs`)
+  over a one-shot loopback WebSocket, which pipes ffmpeg `-f rawvideo
+  -pix_fmt yuv420p10le` into the probed Main10 encoder
+  (`hwencoder.rs`'s 10-bit lane: NVENC/QSV/AMF Main10 with libx265 /
+  libsvtav1 software fallbacks). Raw-invoke IPC is the fallback
+  transport if the loopback WebSocket cannot be established.
+
+The parity gate (`iso_tenbit_gl_parity.e2e.js`) validates that the
+WebGL2 f16 composite and the reference 8-bit composite agree on
+pixel values within the rounding margin for known inputs. The end-to-
+end gate (`export_10bit.e2e.js`) exports a Hi10P H.264 source through
+the full 10-bit path and confirms distinct-step counts above the 8-bit
+ceiling at the analyzer's gradient-row meter.
+
+Cross-reference: ADR 0021 describes the color model and its named
+revisit trigger (the f16 composite is that trigger's realization for
+the export path); the float16 pipeline exploration spec
+(`docs/superpowers/specs/2026-06-12-float16-pipeline-exploration.md`)
+records the probe results that settled the transport and ingest
+choices.
+
 ### Backpressure
 
 `encoder.encodeQueueSize > 8` → await one tick before submitting the
