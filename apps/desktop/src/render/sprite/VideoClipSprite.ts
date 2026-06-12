@@ -60,6 +60,7 @@
 import { ImageSource, Sprite, Texture } from "pixi.js";
 
 import type { DecodedFrame } from "../decoder/SourceDecoderPool";
+import { isTenBitFrame } from "../decoder/tenBitFrame";
 
 export interface VideoClipSpriteInit {
   layerId: string;
@@ -110,7 +111,7 @@ export class VideoClipSprite {
   /// frames (`VideoFrame`) are snapshotted into the sprite-owned canvas
   /// — see the file header for why this single path serves both.
   updateFrame(frame: DecodedFrame): void {
-    if ((frame as { kind?: string }).kind === "p10") {
+    if (isTenBitFrame(frame)) {
       throw new Error("VideoClipSprite.updateFrame got a TenBitFrame — use bindExternalTexture");
     }
     if (this.currentFrame === frame) return;

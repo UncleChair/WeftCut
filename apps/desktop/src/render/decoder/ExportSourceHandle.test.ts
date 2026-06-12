@@ -284,6 +284,34 @@ describe("ExportSourceHandle tenBitLane reorder margin", () => {
     // Margin is capped at 16; remaining is 13, so margin = 13.
     expect(dispatchedTenBit).toBe(dispatchedBase + 13);
   });
+
+  // I3: the 16-packet cap is enforced even when more than 16 packets remain
+  // after the stop key. Ensures the margin never grows unbounded on long-GOP
+  // sources (e.g. a stream with a 250-packet GOP and the stop key near the start).
+  it("caps the reorder margin at exactly 16 packets when more than 16 remain after the stop key", async () => {
+    // key@0 + 9 deltas = 10 packets, then key@0.333 (stop key for 300_000µs bUs),
+    // then 20 more deltas — 17 remain after the stop key (above the cap of 16).
+    const packets: FakePacket[] = [pkt(0, "key")];
+    for (let i = 1; i <= 9; i++) packets.push(pkt(i * 0.02, "delta")); // 0.02..0.18s
+    packets.push(pkt(0.333, "key")); // stop key
+    for (let i = 1; i <= 20; i++) packets.push(pkt(0.333 + i * 0.02, "delta")); // 20 more
+    sink = makeSink(packets);
+
+    // Baseline (no tenBitLane): key@0 + 9 deltas + key@0.333 = 11 packets.
+    const hBase = makeHandle();
+    await hBase.decodeRange(0, 300_000);
+    const decBase = FakeVideoDecoder.instances[0]!;
+    const dispatchedBase = decBase.decoded.length;
+    expect(dispatchedBase).toBe(11);
+
+    FakeVideoDecoder.instances = [];
+
+    // tenBitLane: margin must be exactly 16 (not 17 or more).
+    const hTenBit = makeHandle({ tenBitLane: true });
+    await hTenBit.decodeRange(0, 300_000);
+    const decTenBit = FakeVideoDecoder.instances[0]!;
+    expect(decTenBit.decoded.length).toBe(dispatchedBase + 16);
+  });
 });
 
 // preferSoftware: 10-bit decode has no HW path; pre-configure SW to skip the
@@ -296,7 +324,6 @@ describe("ExportSourceHandle preferSoftware", () => {
     // Capture configure calls by overriding FakeVideoDecoder's configure before
     // the handle calls ensureReady.
     const configuredWith: VideoDecoderConfig[] = [];
-    const OrigFakeDecoder = FakeVideoDecoder;
     // Patch the class-level configure to capture calls.
     const OrigProto = FakeVideoDecoder.prototype as { configure: (cfg: VideoDecoderConfig) => void };
     const origConfigure = OrigProto.configure;
@@ -323,7 +350,6 @@ describe("ExportSourceHandle preferSoftware", () => {
       expect(configuredWith[0]!.hardwareAcceleration).toBe("prefer-hardware");
     } finally {
       OrigProto.configure = origConfigure;
-      void OrigFakeDecoder; // suppress unused warning
     }
   });
 });

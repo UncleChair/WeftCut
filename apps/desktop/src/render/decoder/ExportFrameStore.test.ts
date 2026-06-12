@@ -236,7 +236,7 @@ describe("ExportFrameStore TenBitFrame integration", () => {
 
     const store = new ExportFrameStore();
     // push accepts the widened union (TenBitFrame carries timestamp/duration/close)
-    store.push(tb as unknown as VideoFrame);
+    store.push(tb);
 
     expect(store.containsPts(10)).toBe(true);
     await expect(store.waitForPts(10)).resolves.toBeUndefined();
@@ -244,5 +244,76 @@ describe("ExportFrameStore TenBitFrame integration", () => {
     store.evictBefore(40000);
     expect(store.size()).toBe(0);
     expect(closeFn).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ExportFrameStore.fail — loud copy failure (I1)
+describe("ExportFrameStore.fail", () => {
+  it("rejects a parked waitForPts waiter immediately", async () => {
+    const store = new ExportFrameStore();
+    const waitP = store.waitForPts(50_000);
+    store.fail("copyTo exploded");
+    await expect(waitP).rejects.toThrow("copyTo exploded");
+  });
+
+  it("rejects future waitForPts calls without parking", async () => {
+    const store = new ExportFrameStore();
+    store.fail("copyTo exploded");
+    await expect(store.waitForPts(0)).rejects.toThrow("copyTo exploded");
+  });
+
+  it("is idempotent — second fail does not change the failure reason", () => {
+    const store = new ExportFrameStore();
+    store.fail("first");
+    store.fail("second");
+    // The rejection carries the first reason.
+    return expect(store.waitForPts(0)).rejects.toThrow("first");
+  });
+
+  it("resolves gateWaiters so copy-chain links drain after failure", async () => {
+    const store = new ExportFrameStore();
+    // Fill to high-water: push 48 fake frames.
+    for (let i = 0; i < 48; i++) {
+      store.push(fakeFrame(i * 33333, 33333));
+    }
+    // Park a gate waiter.
+    let gateResolved = false;
+    const gateP = store.waitBelowTenBitHighWater().then(() => {
+      gateResolved = true;
+    });
+    await Promise.resolve(); // still at HWM
+    expect(gateResolved).toBe(false);
+
+    // fail() must unblock the gate so chain links can drain.
+    store.fail("error");
+    await gateP;
+    expect(gateResolved).toBe(true);
+  });
+});
+
+// ExportFrameStore.waitBelowTenBitHighWater — I2 backpressure
+describe("ExportFrameStore.waitBelowTenBitHighWater", () => {
+  it("resolves immediately when the ring is below the high-water mark", async () => {
+    const store = new ExportFrameStore();
+    for (let i = 0; i < 47; i++) store.push(fakeFrame(i * 33333, 33333));
+    await expect(store.waitBelowTenBitHighWater()).resolves.toBeUndefined();
+  });
+
+  it("parks at exactly high-water and resolves after evictBefore shrinks the ring", async () => {
+    const store = new ExportFrameStore();
+    // Push 48 entries — exactly at HWM.
+    for (let i = 0; i < 48; i++) store.push(fakeFrame(i * 33333, 33333));
+
+    let gateResolved = false;
+    const gateP = store.waitBelowTenBitHighWater().then(() => {
+      gateResolved = true;
+    });
+    await Promise.resolve();
+    expect(gateResolved).toBe(false); // still at HWM
+
+    // Evict one entry — ring drops to 47, below HWM.
+    store.evictBefore(33333);
+    await gateP;
+    expect(gateResolved).toBe(true);
   });
 });
