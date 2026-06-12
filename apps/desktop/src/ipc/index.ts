@@ -1334,5 +1334,5 @@ export function exportVideoSinkCancel(): Promise<void> {
 /// Stream a raw encoded chunk to the native sink. The bytes are forwarded
 /// to ffmpeg's input pipe; call in sequence to preserve muxer order.
 export function exportVideoSinkWrite(bytes: Uint8Array): Promise<void> {
-  return invoke("export_video_sink_write", bytes as unknown as any);
+  return invoke("export_video_sink_write", bytes);
 }

@@ -86,7 +86,10 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
     let cancelled = false;
     exportSettingsGet()
       .then((saved) => {
-        if (!cancelled) setSettings(mergeSettings(saved));
+        if (!cancelled) {
+          userTouchedBitDepth.current = saved?.bitDepth != null;
+          setSettings(mergeSettings(saved));
+        }
       })
       .catch(() => {
         if (!cancelled) setSettings(mergeSettings(null));

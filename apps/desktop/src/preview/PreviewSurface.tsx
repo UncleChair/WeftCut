@@ -94,11 +94,7 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
           if (!handle) {
             throw new Error("Pixi preview is not initialized yet.");
           }
-          return handle.runExport({
-            ...opts,
-            ...(opts.bitDepth != null ? { bitDepth: opts.bitDepth } : {}),
-            ...(opts.videoSink ? { videoSink: opts.videoSink } : {}),
-          });
+          return handle.runExport(opts);
         },
       }),
       [],

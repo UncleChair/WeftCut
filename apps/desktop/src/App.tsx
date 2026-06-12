@@ -1180,19 +1180,26 @@ export function App({ onCloseProject }: AppProps) {
     const tenBit = settings.bitDepth === 10 && settings.codec !== "h264";
     let videoSink: { port: number; token: string } | undefined;
     if (tenBit) {
-      videoSink = await exportVideoSinkStart({
-        mode: "ws",
-        width: dims.width,
-        height: dims.height,
-        fpsNum,
-        fpsDen,
-        codec: settings.codec,
-        bitrate: computeBitrate(settings, dims.width, dims.height, outFps),
-        cbr: settings.rateMode === "cbr",
-        gop: gopFrames(settings.keyframeIntervalSec, outFps),
-        software: settings.hwAccel === "software",
-        outputPath: tempVideoPath,
-      });
+      try {
+        videoSink = await exportVideoSinkStart({
+          mode: "ws",
+          width: dims.width,
+          height: dims.height,
+          fpsNum,
+          fpsDen,
+          codec: settings.codec,
+          bitrate: computeBitrate(settings, dims.width, dims.height, outFps),
+          cbr: settings.rateMode === "cbr",
+          gop: gopFrames(settings.keyframeIntervalSec, outFps),
+          software: settings.hwAccel === "software",
+          outputPath: tempVideoPath,
+        });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error("[weftcut/pixi] video sink start failed:", e);
+        setExportState({ kind: "error", detail: `Failed to start the 10-bit encoder: ${msg}` });
+        return;
+      }
     }
 
     // Decide the path for the chosen codec: WebCodecs when the browser can
@@ -1291,7 +1298,7 @@ export function App({ onCloseProject }: AppProps) {
         keyframeIntervalSec: settings.keyframeIntervalSec,
         writeChunk,
         motifFrames,
-        bitDepth: settings.bitDepth,
+        bitDepth: tenBit ? 10 : 8,
         ...(videoSink ? { videoSink } : {}),
       });
     } catch (e) {
@@ -1302,6 +1309,7 @@ export function App({ onCloseProject }: AppProps) {
       return;
     }
     if (!result) {
+      if (tenBit) void exportVideoSinkCancel().catch(() => {});
       setExportState({
         kind: "error",
         detail: "Preview not initialized.",
