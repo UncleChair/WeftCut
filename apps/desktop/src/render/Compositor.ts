@@ -8,6 +8,7 @@
 // Plan: docs/render.md
 
 import { Application, Container, Texture } from "pixi.js";
+import type { WebGLRenderer } from "pixi.js";
 
 import { lastFrameAnchorUs as computeLastFrameStartUs, snapFrameFloor } from "../frames";
 import type { LayerSummary, MediaSummary, ProjectSummary } from "../ipc";
@@ -52,6 +53,8 @@ import {
 } from "../timeline/motifBakeStatusStore";
 import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { swapKeys } from "./swapKeys";
+import { isTenBitFrame } from "./decoder/tenBitFrame";
+import { TenBitIngest } from "./tenbit/TenBitIngest";
 
 /// Match the preview ring's default lookahead window. We only use
 /// this to warm the next clip boundary; the play() warm-up gate stays
@@ -297,6 +300,11 @@ export class Compositor {
   private compositionWidth = 1920;
   private compositionHeight = 1080;
   private disposed = false;
+  /// Lazily created on the first TenBitFrame. Null in preview (TenBitFrames
+  /// never reach the preview ring) and in WebGPU export contexts (10-bit
+  /// export forces the WebGL backend, so reaching this non-null on WebGPU
+  /// is a wiring bug caught by ensureTenBitIngest).
+  private tenBitIngest: TenBitIngest | null = null;
   /// Most recent composition time we composited at. Used by
   /// `scheduleRepaint()` for async-arrived frames when the playhead
   /// is paused (no rAF tick incoming).
@@ -504,6 +512,8 @@ export class Compositor {
     if (s) {
       for (const c of this.clips.values()) c.sprite.dispose();
       this.clips.clear();
+      this.tenBitIngest?.dispose();
+      this.tenBitIngest = null;
       for (const a of this.audios.values()) a.mixer.dispose();
       this.audios.clear();
       this.stage.removeChildren();
@@ -546,6 +556,7 @@ export class Compositor {
     for (const [layerId, c] of this.clips) {
       if (!livingLayerIds.has(layerId)) {
         this.abandonSwap(layerId);
+        this.tenBitIngest?.release(layerId);
         c.sprite.dispose();
         this.clips.delete(layerId);
       }
@@ -1004,6 +1015,8 @@ export class Compositor {
       this.audioHost.parentNode.removeChild(this.audioHost);
     }
     this.cancelAllSwaps();
+    this.tenBitIngest?.dispose();
+    this.tenBitIngest = null;
     this.pool.dispose();
     try {
       this.app.stage.removeChild(this.stage);
@@ -1016,6 +1029,28 @@ export class Compositor {
   // ============================================================
   // private
   // ============================================================
+
+  /// Lazily construct the 10-bit ingest. TenBitFrames only flow when the
+  /// export worker runs the WebGL backend (bitDepth=10 forces preference
+  /// "webgl"), so reaching this on a WebGPU renderer is a wiring bug — fail
+  /// loudly rather than mis-render.
+  private ensureTenBitIngest(): TenBitIngest {
+    if (!this.tenBitIngest) {
+      const renderer = this.app.renderer;
+      // `"gl" in renderer` distinguishes WebGLRenderer (exposes `gl`) from
+      // WebGPURenderer (exposes `gpu`). Both share the `Renderer` union type;
+      // this narrowing is sufficient and avoids importing WebGLRenderer as a
+      // value (it's already in the bundle via TenBitIngest, so no bloat either
+      // way — kept as type-import to match the rest of this file's style).
+      if (!("gl" in renderer)) {
+        throw new Error(
+          "TenBitFrame reached a non-WebGL renderer — 10-bit export requires the WebGL backend",
+        );
+      }
+      this.tenBitIngest = new TenBitIngest(renderer as WebGLRenderer);
+    }
+    return this.tenBitIngest;
+  }
 
   /// Warm the next VideoClip boundary inside the ring-sized lookahead
   /// window. This keeps normal playback's current-frame pump unchanged
@@ -1477,7 +1512,13 @@ export class Compositor {
     // sprite's natural size reflects the real texture dimensions.
     const frame = clip.source.ring.frameAt(srcTUs);
     if (frame) {
-      clip.sprite.updateFrame(frame);
+      if (isTenBitFrame(frame)) {
+        clip.sprite.bindExternalTexture(
+          this.ensureTenBitIngest().textureFor(clip.layerId, frame),
+        );
+      } else {
+        clip.sprite.updateFrame(frame);
+      }
     } else {
       // Diagnostic: log when frameAt returns null (painter holds
       // previous frame). Throttled to "only when this clip's state
