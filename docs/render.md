@@ -479,9 +479,10 @@ The parity gate (`iso_tenbit_gl_parity.e2e.js`) validates that the
 WebGL2 f16 ingest and pack fragment passes agree with the CPU
 `yuv10.ts` reference on pixel values within the rounding margin for
 known inputs. The end-to-end gate (`export_10bit.e2e.js`) exports a
-Hi10P H.264 source and an AV1 10-bit source through the full 10-bit
-path and confirms distinct-step counts above the 8-bit ceiling at the
-analyzer's gradient-row meter.
+Hi10P H.264 source, an AV1 10-bit source, and a 4K Hi10P source (the
+ring cap's entry-floor case) through the full 10-bit path and confirms
+distinct-step counts above the 8-bit ceiling at the analyzer's
+gradient-row meter, plus a long-GOP B-frame reorder-tail regression.
 
 Cross-reference: ADR 0022 records the decision and its probe-backed
 rationale (WebGL2 stock f16, the WebSocket transport, copyTo ingest,
