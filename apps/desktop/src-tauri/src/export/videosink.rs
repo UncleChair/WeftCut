@@ -4,14 +4,12 @@
 //! -- the transport spike and the throughput e2e use it. Token = first text
 //! message on the socket; anything else closes the connection.
 
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::net::TcpListener;
 use std::process::{Child, ChildStdin};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -79,16 +77,7 @@ pub struct VideoSinkStartReply {
 }
 
 fn make_token() -> String {
-    let mut h = DefaultHasher::new();
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos()
-        .hash(&mut h);
-    std::process::id().hash(&mut h);
-    let a = h.finish();
-    a.hash(&mut h);
-    format!("{:016x}{:016x}", a, h.finish())
+    uuid::Uuid::new_v4().simple().to_string()
 }
 
 /// Accept exactly one WS client, verify the token, then pump binary frames
@@ -109,7 +98,25 @@ fn run_ws_sink(
             Ok((s, _)) => break s,
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 if Instant::now() > deadline {
-                    return Err("sink: no client within 30s".into());
+                    // IPC path: if stdin was already taken (finish() drained
+                    // frames via write command), reap the child and return OK.
+                    // If stdin is still present, a WS client may still arrive.
+                    let stdin_present = shared.stdin.lock().unwrap().is_some();
+                    if !stdin_present {
+                        let child = shared.child.lock().unwrap().take();
+                        let status = match child {
+                            Some(mut c) => Some(c.wait().map_err(|e| format!("ffmpeg wait: {e}"))?),
+                            None => None,
+                        };
+                        if let Some(st) = status {
+                            if !st.success() {
+                                return Err(format!("ffmpeg exited {st}"));
+                            }
+                        }
+                        return Ok(SinkStats { bytes: 0, frames: 0, elapsed_ms: 0 });
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                    continue;
                 }
                 std::thread::sleep(Duration::from_millis(25));
             }
@@ -198,15 +205,56 @@ fn run_ws_sink(
 #[tauri::command]
 pub async fn export_video_sink_start(
     state: State<'_, VideoSinkState>,
+    hw: tauri::State<'_, super::hwencoder::HwEncoderCache>,
     args: VideoSinkStartArgs,
 ) -> Result<VideoSinkStartReply, String> {
     if args.mode != "discard" && args.mode != "ws" {
         return Err(format!("unknown sink mode {}", args.mode));
     }
-    // Task 3 spawns ffmpeg here for mode == "ws"; discard runs sinkless.
+    // Cheap early bail: if already active, refuse immediately.
+    if state.0.lock().unwrap().is_some() {
+        return Err("video sink already active".into());
+    }
+    let mut child_opt: Option<Child> = None;
+    let mut stdin_opt: Option<ChildStdin> = None;
+    if args.mode != "discard" {
+        let codec = super::hwencoder::TargetCodec::parse(&args.codec)
+            .ok_or_else(|| format!("unknown codec {}", args.codec))?;
+        let encoder: String = if args.software {
+            codec.software_encoder().to_string()
+        } else {
+            hw.encoder_for_10bit(codec).await.as_ref().clone()
+        };
+        let mut cmd = std::process::Command::new(ffmpeg_sidecar::paths::ffmpeg_path());
+        cmd.args(["-y", "-hide_banner", "-loglevel", "error"]);
+        cmd.args(["-f", "rawvideo", "-pix_fmt", "yuv420p10le"]);
+        cmd.arg("-video_size").arg(format!("{}x{}", args.width, args.height));
+        cmd.arg("-framerate").arg(format!("{}/{}", args.fps_num, args.fps_den));
+        cmd.args(["-i", "-"]);
+        for arg in super::video_encode_args(&encoder, args.bitrate, args.cbr, args.gop) {
+            cmd.arg(arg);
+        }
+        for arg in super::hwencoder::tenbit_encode_args(&encoder) {
+            cmd.arg(arg);
+        }
+        cmd.args([
+            "-colorspace", "bt709", "-color_primaries", "bt709",
+            "-color_trc", "bt709", "-color_range", "tv",
+        ]);
+        for arg in super::hvc1_tag_args(codec, std::path::Path::new(&args.output_path)) {
+            cmd.arg(arg);
+        }
+        cmd.arg(&args.output_path);
+        cmd.stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::inherit());
+        let mut child = cmd.spawn().map_err(|e| format!("spawn ffmpeg: {e}"))?;
+        stdin_opt = child.stdin.take();
+        child_opt = Some(child);
+    }
     let shared = Arc::new(SinkShared {
-        child: Mutex::new(None),
-        stdin: Mutex::new(None),
+        child: Mutex::new(child_opt),
+        stdin: Mutex::new(stdin_opt),
     });
     let listener =
         TcpListener::bind("127.0.0.1:0").map_err(|e| format!("sink bind: {e}"))?;
@@ -221,6 +269,12 @@ pub async fn export_video_sink_start(
     };
     let mut guard = state.0.lock().unwrap();
     if guard.is_some() {
+        // Race: another concurrent call won. Kill any spawned ffmpeg and bail.
+        drop(guard);
+        if let Some(mut c) = shared.child.lock().unwrap().take() {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
         return Err("video sink already active".into());
     }
     *guard = Some(ActiveSink {
@@ -234,6 +288,13 @@ pub async fn export_video_sink_start(
 pub async fn export_video_sink_finish(
     state: State<'_, VideoSinkState>,
 ) -> Result<SinkStats, String> {
+    // Drop stdin so the IPC-write path and the WS path both converge on EOF.
+    {
+        let guard = state.0.lock().unwrap();
+        if let Some(s) = guard.as_ref() {
+            drop(s.shared.stdin.lock().unwrap().take());
+        }
+    }
     let (join, shared) = {
         let mut guard = state.0.lock().unwrap();
         let sink = guard.as_mut().ok_or("no active video sink")?;

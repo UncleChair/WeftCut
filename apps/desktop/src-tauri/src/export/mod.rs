@@ -375,7 +375,7 @@ pub async fn transcode_and_mux(
 /// HEVC in MP4/MOV needs the `hvc1` fourcc tag; ffmpeg defaults to `hev1`
 /// which Apple/Premiere/WebView2 won't play. MKV uses no such tag, and other
 /// codecs (H.264 `avc1`, AV1 `av01`) already get correct defaults.
-fn hvc1_tag_args(codec: TargetCodec, output: &Path) -> Vec<std::ffi::OsString> {
+pub(crate) fn hvc1_tag_args(codec: TargetCodec, output: &Path) -> Vec<std::ffi::OsString> {
     let ext = output
         .extension()
         .and_then(|e| e.to_str())
@@ -394,7 +394,7 @@ fn hvc1_tag_args(codec: TargetCodec, output: &Path) -> Vec<std::ffi::OsString> {
 /// maxrate/minrate + a 2× bufsize. `gop` pins the keyframe interval (frames) so
 /// the ffmpeg output matches the WebCodecs path's cadence. Software encoders
 /// get a speed preset so AV1/HEVC don't take minutes.
-fn video_encode_args(encoder: &str, bitrate: u64, cbr: bool, gop: u64) -> Vec<std::ffi::OsString> {
+pub(crate) fn video_encode_args(encoder: &str, bitrate: u64, cbr: bool, gop: u64) -> Vec<std::ffi::OsString> {
     use std::ffi::OsString;
     let mut a: Vec<OsString> = vec!["-c:v".into(), encoder.into()];
     a.push("-b:v".into());

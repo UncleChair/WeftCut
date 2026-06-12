@@ -45,7 +45,7 @@ ts-rs = { version = "12", features = ["uuid-impl", "chrono-impl"] }
 
 # Domain primitives
 imbl = { version = "3", features = ["serde"] }
-uuid = { version = "1", features = ["v5", "v7", "serde"] }
+uuid = { version = "1", features = ["v4", "v5", "v7", "serde"] }
 blake3 = "1"
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
 parking_lot = "0.12"

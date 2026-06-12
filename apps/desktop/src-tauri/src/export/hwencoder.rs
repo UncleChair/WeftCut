@@ -96,18 +96,36 @@ pub fn platform_families() -> &'static [HwFamily] {
     }
 }
 
+/// Output pixel-format + profile flags for a 10-bit encode through `encoder`.
+/// NVENC/QSV/AMF HEVC take P010 input frames; software encoders take planar.
+pub fn tenbit_encode_args(encoder: &str) -> Vec<std::ffi::OsString> {
+    let mk = |xs: &[&str]| xs.iter().map(|s| s.into()).collect();
+    match encoder {
+        "hevc_nvenc" | "hevc_qsv" | "hevc_amf" => mk(&["-pix_fmt", "p010le", "-profile:v", "main10"]),
+        "libx265" => mk(&["-pix_fmt", "yuv420p10le", "-profile:v", "main10"]),
+        _ => mk(&["-pix_fmt", "yuv420p10le"]),
+    }
+}
+
 /// Per-codec cache of the chosen ffmpeg encoder name (HW if probed-good,
 /// else the software encoder). Held in Tauri state so each export reads from
 /// memory.
-#[derive(Default)]
 pub struct HwEncoderCache {
     inner: Mutex<HashMap<TargetCodec, Arc<String>>>,
+    inner10: Mutex<HashMap<TargetCodec, Arc<String>>>,
+}
+
+impl Default for HwEncoderCache {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl HwEncoderCache {
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(HashMap::new()),
+            inner10: Mutex::new(HashMap::new()),
         }
     }
 
@@ -120,6 +138,18 @@ impl HwEncoderCache {
         let chosen = pick_encoder(codec).await;
         let arc = Arc::new(chosen);
         self.inner.lock().await.insert(codec, arc.clone());
+        arc
+    }
+
+    /// The ffmpeg `-c:v` encoder name to use for 10-bit `codec`. Probes HW
+    /// families for 10-bit capability in platform order on first call; caches.
+    pub async fn encoder_for_10bit(&self, codec: TargetCodec) -> Arc<String> {
+        if let Some(cached) = self.inner10.lock().await.get(&codec) {
+            return cached.clone();
+        }
+        let chosen = pick_encoder_10bit(codec).await;
+        let arc = Arc::new(chosen);
+        self.inner10.lock().await.insert(codec, arc.clone());
         arc
     }
 }
@@ -138,15 +168,22 @@ async fn pick_encoder(codec: TargetCodec) -> String {
     sw.to_string()
 }
 
-/// 0.1s synthetic encode through `encoder_name`; true iff ffmpeg returns 0.
-/// Time-boxed at 4s (some HW init can hang).
-async fn probe_encoder(encoder_name: &str) -> bool {
-    let mut cmd = Command::new(ffmpeg_path());
-    cmd.args([
-        "-y", "-hide_banner", "-loglevel", "error",
-        "-f", "lavfi", "-i", "color=c=black:s=128x128:d=0.1:r=30",
-        "-c:v", encoder_name, "-frames:v", "1", "-f", "null", "-",
-    ]);
+async fn pick_encoder_10bit(codec: TargetCodec) -> String {
+    for &fam in platform_families() {
+        if let Some(name) = fam.encoder_for(codec) {
+            if probe_encoder_10bit(name).await {
+                info!("hw 10-bit encoder for {:?}: {}", codec, name);
+                return name.to_string();
+            }
+        }
+    }
+    let sw = codec.software_encoder();
+    info!("no usable hw 10-bit encoder for {:?}, using software {}", codec, sw);
+    sw.to_string()
+}
+
+/// Shared spawn/stderr/wait/timeout tail for both probe variants.
+async fn run_probe(mut cmd: Command, encoder_name: &str) -> bool {
     cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped());
     let mut child = match cmd.spawn() {
         Ok(c) => c,
@@ -178,9 +215,47 @@ async fn probe_encoder(encoder_name: &str) -> bool {
     }
 }
 
+/// 0.1s synthetic encode through `encoder_name`; true iff ffmpeg returns 0.
+/// Time-boxed at 4s (some HW init can hang).
+async fn probe_encoder(encoder_name: &str) -> bool {
+    let mut cmd = Command::new(ffmpeg_path());
+    cmd.args([
+        "-y", "-hide_banner", "-loglevel", "error",
+        "-f", "lavfi", "-i", "color=c=black:s=128x128:d=0.1:r=30",
+        "-c:v", encoder_name, "-frames:v", "1", "-f", "null", "-",
+    ]);
+    run_probe(cmd, encoder_name).await
+}
+
+/// 0.1s synthetic 10-bit encode through `encoder_name`; true iff ffmpeg returns 0.
+/// Uses a yuv420p10le lavfi source + the encoder's 10-bit pixel-format flags.
+async fn probe_encoder_10bit(encoder_name: &str) -> bool {
+    let mut cmd = Command::new(ffmpeg_path());
+    cmd.args([
+        "-y", "-hide_banner", "-loglevel", "error",
+        "-f", "lavfi", "-i", "color=c=black:s=128x128:d=0.1:r=30,format=yuv420p10le",
+        "-c:v", encoder_name,
+    ]);
+    for arg in tenbit_encode_args(encoder_name) {
+        cmd.arg(arg);
+    }
+    cmd.args(["-frames:v", "1", "-f", "null", "-"]);
+    run_probe(cmd, encoder_name).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tenbit_args_per_encoder() {
+        let s = |v: &Vec<std::ffi::OsString>| -> Vec<String> {
+            v.iter().map(|o| o.to_string_lossy().into_owned()).collect()
+        };
+        assert_eq!(s(&tenbit_encode_args("hevc_nvenc")), vec!["-pix_fmt", "p010le", "-profile:v", "main10"]);
+        assert_eq!(s(&tenbit_encode_args("libx265")), vec!["-pix_fmt", "yuv420p10le", "-profile:v", "main10"]);
+        assert_eq!(s(&tenbit_encode_args("libsvtav1")), vec!["-pix_fmt", "yuv420p10le"]);
+    }
 
     #[test]
     fn parse_codec_strings() {

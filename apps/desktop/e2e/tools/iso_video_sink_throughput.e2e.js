@@ -33,7 +33,7 @@ describe("export video sink loopback throughput (spike)", function () {
         ws.close(1000);
         const stats = await T.core.invoke("export_video_sink_finish");
         done({ sendMs: Math.round(sendMs), clientMBps: Math.round((FRAME * N / 1048576) / (sendMs / 1000)), stats, frame: FRAME, n: N });
-      })().catch((e) => done({ fatal: String((e && e.stack) || e) }));
+      })().catch(async (e) => { await window.__TAURI__.core.invoke("export_video_sink_cancel").catch(() => {}); done({ fatal: String((e && e.stack) || e) }); });
     });
     console.log("\n[sinkSpike] result:", JSON.stringify(r));
     if (!r.fatal) {
@@ -42,6 +42,7 @@ describe("export video sink loopback throughput (spike)", function () {
         : "❌ <60 MB/s -- STOP and re-plan transport";
       console.log(`[sinkSpike] ${r.clientMBps} MB/s -> ${v}`);
       expect(r.stats.bytes).toBe(r.frame * r.n);
+      expect(r.stats.frames).toBe(r.n);
     }
     expect(r.fatal).toBeUndefined();
   });
