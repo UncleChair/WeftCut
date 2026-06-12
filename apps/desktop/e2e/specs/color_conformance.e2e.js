@@ -25,17 +25,17 @@ const PROJ = path.resolve(os.tmpdir(), "weftcut-e2e-color-proj");
 // (force-decode the output as the source matrix) measured the relabel, not the
 // colors, and reported the same error whether the pixels were right or wrong.
 //
-// All four encodings are FAITHFUL. The decode side honors the source
-// matrix/range from EITHER decode target: the decoder config is tagged via
-// withDefaultColorSpace (decode target's own colr tag > ffprobe sourceColor >
-// resolution default), then a colorSpace-honoring 2D drawImage in
-// VideoClipSprite (Pixi's copyExternalImageToTexture upload ignores
-// VideoFrame.colorSpace). 709ltd/601ltd decode the original (DirectExport);
-// 709full/601full decode a PROXY (yuvj420p is off the DirectExport whitelist)
-// that the recipe makes self-describing (source_color_args + write_colr, proxy
-// v7/quick-q4) — mediabunny reads only colr, never the SPS VUI, and the
-// decoder follows the config over the VUI, so a colr-less proxy used to be
-// misread as bt709/limited (the old known-bad pc→tv squash + 601-as-709).
+// All four encodings are FAITHFUL and DirectExport from the original
+// (yuvj420p — full-range yuv420p — is on the browser-friendly whitelist). The
+// decode side honors the source matrix/range: the decoder config is tagged
+// via withDefaultColorSpace (decode target's own colr tag > ffprobe
+// sourceColor > resolution default), then a colorSpace-honoring 2D drawImage
+// in VideoClipSprite (Pixi's copyExternalImageToTexture upload ignores
+// VideoFrame.colorSpace). Proxy-routed sources (HEVC/VP9/10-bit) rely on the
+// self-describing proxy recipes (source_color_args + write_colr, proxy
+// v7/quick-q4 — mediabunny reads only colr, never the SPS VUI, and the
+// decoder follows the config over the VUI); that machinery is guarded by the
+// Rust integration test proxy_carries_source_color_tags_and_colr_atom.
 // 601→709 normalization and full→limited range conversion cost only codec
 // round-trip. ADR docs/adr/0014-export-color-perceptual-conformance.md.
 

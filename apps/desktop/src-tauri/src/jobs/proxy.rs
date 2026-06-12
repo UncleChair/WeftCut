@@ -433,6 +433,113 @@ mod tests {
         );
     }
 
+    /// The proxy must stay color-readable to mediabunny: source ffprobe tags
+    /// asserted on the encode + a colr atom in the mp4 (mediabunny never
+    /// parses the SPS VUI). This is the integration guard for the machinery
+    /// behind the color-conformance gate's proxy-decode path — the e2e color
+    /// fixtures DirectExport since yuvj420p joined the bypass whitelist, so
+    /// without this test a dropped color arg would go unnoticed until a
+    /// proxy-routed source (HEVC/VP9/10-bit) mis-renders.
+    #[tokio::test]
+    async fn proxy_carries_source_color_tags_and_colr_atom() {
+        if !ffmpeg_available() {
+            eprintln!("ffmpeg not on PATH — skipping proxy color smoke");
+            return;
+        }
+        let tmp = TempDir::new().unwrap();
+        let cache = CacheLayout::new(tmp.path().join("cache"));
+        cache.ensure_dirs().unwrap();
+
+        // A full-range 601 source — the combination the resolution default
+        // gets maximally wrong (bt709/limited).
+        let video = tmp.path().join("source_601full.mp4");
+        let status = Command::new("ffmpeg")
+            .args([
+                "-y", "-hide_banner", "-loglevel", "error",
+                "-f", "lavfi",
+                "-i", "testsrc=duration=1:size=640x360:rate=30",
+                "-vf", "format=rgb24,scale=out_color_matrix=smpte170m:out_range=pc,format=yuv420p",
+                "-colorspace", "smpte170m",
+                "-color_primaries", "smpte170m",
+                "-color_trc", "smpte170m",
+                "-color_range", "pc",
+                "-c:v", "libx264",
+                "-preset", "ultrafast",
+            ])
+            .arg(&video)
+            .status()
+            .await
+            .expect("spawn ffmpeg for 601full fixture");
+        assert!(status.success(), "601full fixture ffmpeg failed: {status}");
+
+        let mut media = MediaItem {
+            id: new_id(),
+            label: Some("source_601full.mp4".into()),
+            path_abs: video,
+            path_rel: None,
+            kind: MediaKind::Video,
+            metadata: MediaMetadata {
+                duration_us: Some(1_000_000),
+                video: None,
+                audio: None,
+            },
+            proxy_path: None,
+            proxy_format_version: 0,
+            quick_proxy_path: None,
+            proxy_bypassed: false,
+            export_uses_original: false,
+            waveform_path: None,
+            conform_path: None,
+            thumbnails_dir: None,
+            file_hash_blake3: "colrsmoke".into(),
+            file_size: 0,
+            file_mtime: 0,
+            imported_at: Utc::now(),
+        };
+        // Color tags as `probe.rs` would fill them from the fixture above.
+        media.metadata.video = Some(
+            video_with_color(
+                Some("smpte170m"),
+                Some("pc"),
+                Some("smpte170m"),
+                Some("smpte170m"),
+            )
+            .metadata
+            .video
+            .unwrap(),
+        );
+
+        let proxy_path = run(&cache, &media).await.expect("proxy run");
+
+        // 1. ffprobe sees the asserted tags on the proxy stream.
+        let out = Command::new("ffprobe")
+            .args([
+                "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=color_space,color_range",
+                "-of", "csv=p=0",
+            ])
+            .arg(&proxy_path)
+            .output()
+            .await
+            .expect("ffprobe color tags");
+        assert!(out.status.success(), "ffprobe rejected the proxy output");
+        let tags = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            tags.contains("smpte170m") && tags.contains("pc"),
+            "proxy lost the source color tags (got: {})",
+            tags.trim()
+        );
+
+        // 2. The mp4 carries a colr atom (what mediabunny actually reads).
+        let bytes = tokio::fs::read(&proxy_path).await.unwrap();
+        assert!(
+            bytes.windows(4).any(|w| w == b"colr"),
+            "proxy mp4 has no colr atom — mediabunny would fall back to the \
+             bt709/limited resolution default"
+        );
+    }
+
     #[tokio::test]
     async fn skip_when_proxy_cached() {
         let tmp = TempDir::new().unwrap();

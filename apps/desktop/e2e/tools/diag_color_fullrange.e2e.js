@@ -3,11 +3,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 
-// DIAGNOSTIC TOOL (non-gating): full-range proxy decode colorSpace autopsy.
-// Exports the 709full/601full fixtures (which route to the FULL-PROXY export
-// path — yuvj420p fails pix_fmt_is_browser_friendly) and dumps
-// ExportColorDiag: the decoder config's colorSpace vs what the decoder
-// actually stamped on its output frames.
+// DIAGNOSTIC TOOL (non-gating): export decode colorSpace autopsy. Exports the
+// 709full/601full fixtures and dumps ExportColorDiag: the decoder config's
+// colorSpace vs what the decoder actually stamped on its output frames.
+// (These fixtures DirectExport now that yuvj420p is on the browser-friendly
+// whitelist; when this tool found the root cause below they still routed
+// through the full proxy. To autopsy a proxy decode today, point it at a
+// proxy-routed source — HEVC/VP9/10-bit.)
 //
 // VERIFIED FINDING (the root cause of the historical full-range squash):
 // WebView2's VideoDecoder FOLLOWS THE CONFIG OVER THE BITSTREAM VUI. A proxy

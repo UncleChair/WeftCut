@@ -172,9 +172,14 @@ pub fn codec_is_vp9(codec: &str) -> bool {
     matches!(codec.to_ascii_lowercase().as_str(), "vp9" | "vp09")
 }
 
+/// 8-bit 4:2:0 formats WebCodecs decodes on this pipeline. `yuvj420p` is
+/// ffprobe's legacy "J" alias for full-range yuv420p — the identical bitstream
+/// layout, just `color_range=pc` (the decode side honors that via the threaded
+/// ffprobe sourceColor; see ADR 0014). It was once excluded, which silently
+/// routed every full-range H.264 through a pointless proxy hop.
 pub fn pix_fmt_is_browser_friendly(pix_fmt: &str) -> bool {
     let p = pix_fmt.to_ascii_lowercase();
-    matches!(p.as_str(), "yuv420p" | "nv12")
+    matches!(p.as_str(), "yuv420p" | "yuvj420p" | "nv12")
 }
 
 fn estimated_bitrate_bps(media: &MediaItem) -> Option<u64> {
@@ -341,6 +346,25 @@ mod tests {
             v.pix_fmt = "yuv420p10le".into();
         });
         assert_eq!(decide(&item, Some(0.2)), BOTH_PROXY);
+    }
+
+    #[test]
+    fn full_range_h264_yuvj420p_routes_like_yuv420p() {
+        // yuvj420p is the legacy "J" alias for full-range 8-bit 4:2:0 — the
+        // same stream WebCodecs already decodes (verified in-app: the v6-era
+        // full proxies WERE yuvj420p and exported through WebCodecs). The
+        // decode side reads the source's ffprobe range via sourceColor, so
+        // full-range H.264 DirectExports faithfully (color gate). Excluding
+        // it only bought a pointless proxy hop.
+        assert_eq!(
+            decide(
+                &video(|m| {
+                    m.metadata.video.as_mut().unwrap().pix_fmt = "yuvj420p".into();
+                }),
+                Some(0.2),
+            ),
+            BOTH_ORIGINAL,
+        );
     }
 
     #[test]
