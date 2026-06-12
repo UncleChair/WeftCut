@@ -58,14 +58,18 @@ that carry one (mkv).
 
 ### Export decode redundancy
 
-Export re-decodes ~4.35× the packets it needs when clips re-visit
-earlier source time (A/B roll, same-source multi-track), measured via
-the committed `__weftcutExportPerf` counters — roughly a 30–45%
-export-time lever. The fix shape is merging overlapping
-same-`mediaId` source ranges into one `decodeRange` per chunk (or
-continuous-forward decode). Preview has the sibling optimization
-already designed in [`render.md`](render.md): sharing a warm decoder
-across sequential cuts of one source.
+Same-phase clips of one source (stacked copies, trims of one pass) now
+share a merged-range decode pipeline (`exportHandleKey` grouping, see
+[`render.md`](render.md)), so identical ranges are decoded once. What
+remains is the cross-chunk re-seek redundancy: a backward clip-reuse
+jump re-decodes from the GOP key, and different-phase overlaps each
+pay their own full decode — measured up to ~4.35× dispatched packets
+via the committed `__weftcutExportPerf` counters on adversarial
+timelines, roughly a 30–45% export-time lever. The fix shape is
+continuous-forward decode (serve a backward-jumping clip from a
+second forward pass instead of re-seeking). Preview has the sibling
+optimization already designed in [`render.md`](render.md): sharing a
+warm decoder across sequential cuts of one source.
 
 ### Zero-copy color-correct GPU frame upload
 
