@@ -29,8 +29,11 @@ apps/desktop/e2e/
     export_overlap_same_source.e2e.js  # same-source overlap decode gate
     color_conformance.e2e.js     # color patch gate
     image_support.e2e.js         # still-image + gif support gate
+    export_10bit.e2e.js          # 10-bit HEVC export: tags + distinct-step + reorder-tail gate
   tools/
     perf_export_redundancy.e2e.js  # non-gating decode-dispatch measurement
+    iso_tenbit_gl_parity.e2e.js    # f16 ingest/pack shaders vs yuv10.ts reference
+    iso_video_sink_throughput.e2e.js  # loopback-WS sink transport spike
   lib/analyze.mjs                # Node wrapper around Rust analyzer
 apps/desktop/src-tauri/src/bin/
   media_conformance.rs           # ffmpeg-backed analyzer binary
@@ -52,7 +55,8 @@ clips before the suite runs. Requires `go` and `ffmpeg` on PATH.
 | EOS-tail geometry | `test_1080p_30fps_eostail.mp4` (keys at 0 s/5 s only, audio 1 s longer than video) | `export_eos_tail.e2e.js` |
 | Tone-marker audio | `test_1080p_{30,60,120}fps_audio.mp4` | `audio_conformance.e2e.js`, `export_range_audio.e2e.js` |
 | Color patches | `test_1080p_color_{709ltd,601ltd,709full,601full}.mp4` + `color_manifest.json` | `color_conformance.e2e.js` |
-| 10-bit gradient | `test_1080p_gradient10.mp4` | gradient baseline / proxy-fidelity probes |
+| 10-bit gradient (HEVC) | `test_1080p_gradient10.mp4` | gradient baseline / proxy-fidelity probes |
+| 10-bit gradient (Hi10P H.264) | `test_1080p_gradient10_h264.mp4`, `test_1080p_gradient10_h264_bf.mp4` (long-GOP + B-frames) | `export_10bit.e2e.js`, `tools/iso_tenbit_gl_parity.e2e.js`, `tools/float16_probes.e2e.js` |
 | ProRes MOV | `test_1080p_30fps_prores.mov` | import routing smoke (not a conformance gate) |
 | Still-image chart set | `test_chart_320x240.{png,jpg,webp,bmp,gif,tiff}` + `_manifest.json` | `image_support.e2e.js` |
 | Audio-only tone files | `test_tones_10s.{wav,mp3,flac,m4a,ogg}` (mp3 embeds cover art) | `audio_formats.e2e.js` |
