@@ -85,7 +85,40 @@ pub const PROXY_GOP_FRAMES: u32 = 6;
 ///       22->18 (the proxy is now a pure export intermediate, not also a
 ///       preview artifact). Preview reads the quick proxy instead. See
 ///       ADR 0011.
-pub const PROXY_FORMAT_VERSION: u32 = 6;
+///   7 — source color tags asserted on the encode (`source_color_args`) +
+///       `+write_colr`, so the proxy mp4 carries a colr atom. Without it
+///       mediabunny (colr-only, no VUI parsing) returned a null colorSpace
+///       and every proxy decode fell back to bt709/limited — full-range and
+///       601 proxies were misread (ADR 0014's full-range follow-up).
+pub const PROXY_FORMAT_VERSION: u32 = 7;
+
+/// Output-side ffmpeg args asserting the SOURCE's ffprobe color tags on a
+/// proxy re-encode. The transcode preserves the source's actual colorimetry
+/// (the filter chain never converts matrix/range), but x264 records it only in
+/// the SPS VUI — and pure-container demuxers (mediabunny) read only the mp4
+/// `colr` atom, never the VUI. Asserting the tags explicitly (plus
+/// `+write_colr` on the muxer) emits that colr atom, so proxy decodes get the
+/// real matrix/range instead of falling back to the bt709/limited resolution
+/// default (the full-range/601 proxy misread the color-conformance gate
+/// caught). Only tags ffprobe actually reported are asserted; missing fields
+/// are left for ffmpeg to infer.
+pub fn source_color_args(media: &MediaItem) -> Vec<String> {
+    let Some(v) = media.metadata.video.as_ref() else {
+        return Vec::new();
+    };
+    let mut args = Vec::new();
+    let mut push = |flag: &str, val: &Option<String>| {
+        if let Some(val) = val {
+            args.push(flag.to_string());
+            args.push(val.clone());
+        }
+    };
+    push("-colorspace", &v.color_matrix);
+    push("-color_primaries", &v.color_primaries);
+    push("-color_trc", &v.color_transfer);
+    push("-color_range", &v.color_range);
+    args
+}
 
 pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     if !ffmpeg_is_installed() {
@@ -112,6 +145,7 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     let scale_filter = format!("scale=-2:'min(ih,{PROXY_HEIGHT_CAP})'");
     let gop = PROXY_GOP_FRAMES.to_string();
     let input = media.path_abs.clone();
+    let color_args = source_color_args(media);
     let tmp = tmp.clone();
 
     let output = hwaccel::output_with_hw_decode_fallback("full proxy", |hw, cmd| {
@@ -143,10 +177,13 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
             "-b:a",
             "128k",
             "-movflags",
-            "+faststart",
+            "+faststart+write_colr",
             "-f",
             "mp4",
         ]);
+        // Source color tags → VUI AND (with +write_colr) the mp4 colr atom;
+        // see `source_color_args`.
+        cmd.args(&color_args);
         cmd.arg(&tmp)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -184,7 +221,89 @@ mod tests {
     use std::process::Command as StdCommand;
     use tempfile::TempDir;
 
-    use crate::state::{MediaKind, MediaMetadata, new_id};
+    use crate::state::{MediaKind, MediaMetadata, VideoStreamMeta, new_id};
+
+    fn video_with_color(
+        matrix: Option<&str>,
+        range: Option<&str>,
+        primaries: Option<&str>,
+        transfer: Option<&str>,
+    ) -> MediaItem {
+        MediaItem {
+            id: new_id(),
+            label: None,
+            path_abs: "clip.mp4".into(),
+            path_rel: None,
+            kind: MediaKind::Video,
+            metadata: MediaMetadata {
+                duration_us: Some(10_000_000),
+                video: Some(VideoStreamMeta {
+                    width: 1920,
+                    height: 1080,
+                    fps_num: 30,
+                    fps_den: 1,
+                    codec: "h264".into(),
+                    pix_fmt: "yuvj420p".into(),
+                    nb_frames: None,
+                    color_matrix: matrix.map(Into::into),
+                    color_range: range.map(Into::into),
+                    color_primaries: primaries.map(Into::into),
+                    color_transfer: transfer.map(Into::into),
+                }),
+                audio: None,
+            },
+            proxy_path: None,
+            proxy_format_version: 0,
+            quick_proxy_path: None,
+            proxy_bypassed: false,
+            export_uses_original: false,
+            waveform_path: None,
+            conform_path: None,
+            thumbnails_dir: None,
+            file_hash_blake3: "abc".into(),
+            file_size: 1,
+            file_mtime: 0,
+            imported_at: Utc::now(),
+        }
+    }
+
+    // The proxy re-encode preserves the source's colorimetry (verified: ffmpeg
+    // carries matrix/range through scale + libx264), so the recipe must ASSERT
+    // the source's ffprobe tags on the output — that plus `+write_colr` is what
+    // puts a colr atom in the mp4 for mediabunny (which never parses SPS VUI).
+
+    #[test]
+    fn source_color_args_full_range_source_asserts_all_tags() {
+        let m = video_with_color(Some("bt709"), Some("pc"), Some("bt709"), Some("bt709"));
+        assert_eq!(
+            source_color_args(&m),
+            vec![
+                "-colorspace",
+                "bt709",
+                "-color_primaries",
+                "bt709",
+                "-color_trc",
+                "bt709",
+                "-color_range",
+                "pc",
+            ]
+        );
+    }
+
+    #[test]
+    fn source_color_args_partial_tags_emit_only_known_flags() {
+        // The ltd fixtures carry only a matrix; range/primaries/transfer are
+        // unset and must be OMITTED (ffmpeg keeps its own inference) rather
+        // than asserted wrong.
+        let m = video_with_color(Some("smpte170m"), None, None, None);
+        assert_eq!(source_color_args(&m), vec!["-colorspace", "smpte170m"]);
+    }
+
+    #[test]
+    fn source_color_args_untagged_source_emits_nothing() {
+        let m = video_with_color(None, None, None, None);
+        assert!(source_color_args(&m).is_empty());
+    }
 
     fn ffmpeg_available() -> bool {
         StdCommand::new("ffmpeg")

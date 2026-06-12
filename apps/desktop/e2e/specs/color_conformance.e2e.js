@@ -25,16 +25,19 @@ const PROJ = path.resolve(os.tmpdir(), "weftcut-e2e-color-proj");
 // (force-decode the output as the source matrix) measured the relabel, not the
 // colors, and reported the same error whether the pixels were right or wrong.
 //
-// 709ltd + 601ltd are FAITHFUL: the decode side honors the source matrix
-// (decoder config tagged via withDefaultColorSpace + ffprobe color, then a
-// colorSpace-honoring 2D drawImage in VideoClipSprite — Pixi's
-// copyExternalImageToTexture upload ignored VideoFrame.colorSpace). 601→709
-// normalization costs only codec round-trip (601ltd=2). 709full/601full stay
-// KNOWN-BAD: their output is limited-range while the source is full-range — a
-// real pc→tv squash (verified via ffprobe; suspected proxy re-encode, not
-// confirmed here) outside the original-decode path (deferred proxy-color slice)
-// — they assert worst_app_max > faithfulMax and flip RED when that lands. ADR
-// docs/adr/0014-export-color-perceptual-conformance.md.
+// All four encodings are FAITHFUL. The decode side honors the source
+// matrix/range from EITHER decode target: the decoder config is tagged via
+// withDefaultColorSpace (decode target's own colr tag > ffprobe sourceColor >
+// resolution default), then a colorSpace-honoring 2D drawImage in
+// VideoClipSprite (Pixi's copyExternalImageToTexture upload ignores
+// VideoFrame.colorSpace). 709ltd/601ltd decode the original (DirectExport);
+// 709full/601full decode a PROXY (yuvj420p is off the DirectExport whitelist)
+// that the recipe makes self-describing (source_color_args + write_colr, proxy
+// v7/quick-q4) — mediabunny reads only colr, never the SPS VUI, and the
+// decoder follows the config over the VUI, so a colr-less proxy used to be
+// misread as bt709/limited (the old known-bad pc→tv squash + 601-as-709).
+// 601→709 normalization and full→limited range conversion cost only codec
+// round-trip. ADR docs/adr/0014-export-color-perceptual-conformance.md.
 
 // Reference matrix/range each encoding's SOURCE is decoded with (its tags are
 // incomplete — only a matrix is present). The OUTPUT is decoded by its own tag.

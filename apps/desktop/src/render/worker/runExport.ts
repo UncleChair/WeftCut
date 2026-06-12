@@ -101,12 +101,14 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
   const proxyAssetUrls: Record<string, string> = {};
   const originalAssetUrls: Record<string, string> = {};
   const mediaDims: Record<string, { width: number | null; height: number | null }> = {};
-  // Per-media source color, applied ONLY when the export decodes the ORIGINAL
-  // file (DirectExport). `exportPlaybackPathFor(m)` returns the RAW path the
-  // export will decode (proxy_path, or m.path on bypass / export_uses_original);
-  // when it equals `m.path` the decode target is the original, so its ffprobe
-  // tags are correct. For a proxy (a re-encode) we leave it undefined — the
-  // proxy's color may differ, so only the resolution default applies there.
+  // Per-media source color, applied to WHATEVER the export decodes — the
+  // original trivially carries its own ffprobe tags, and a proxy PRESERVES the
+  // source's colorimetry (the recipe never converts matrix/range, and since
+  // PROXY_FORMAT_VERSION 7 asserts the source tags + a colr atom outright).
+  // mediabunny's own container tag still outranks this per-field in
+  // `withDefaultColorSpace`, so a self-describing proxy reads its colr and an
+  // older colr-less one falls back to these source tags instead of the
+  // bt709/limited resolution default that misread full-range/601 proxies.
   const mediaColor: Record<string, VideoColorSpaceInit | undefined> = {};
   for (const m of init.mediaById.values()) {
     const exportPath = exportPlaybackPathFor(m);
@@ -118,8 +120,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     if (exportPath) proxyAssetUrls[m.id] = convertFileSrc(exportPath);
     originalAssetUrls[m.id] = convertFileSrc(m.path);
     mediaDims[m.id] = { width: m.width, height: m.height };
-    const decodesOriginal = !!exportPath && exportPath === m.path; // original, not a proxy
-    mediaColor[m.id] = decodesOriginal ? ffprobeColorToWebCodecs(m) : undefined;
+    mediaColor[m.id] = ffprobeColorToWebCodecs(m);
   }
 
   const snapshot: ExportProjectSnapshot = {

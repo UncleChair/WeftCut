@@ -277,8 +277,9 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
           mediaId: g.mediaId,
           handleKey: g.key,
           proxyAssetUrl: proxyUrl,
-          // Defined only for original-file (DirectExport) decodes; undefined for
-          // proxies. Threads the source's real color tags into the decoder.
+          // The source's real color tags, for original AND proxy decodes (a
+          // proxy preserves the source colorimetry; its own colr tag outranks
+          // this per-field in withDefaultColorSpace).
           sourceColor: req.project.mediaColor[g.mediaId],
         });
         await handle.decodeRange(g.srcAUs, g.srcBUs);

@@ -83,8 +83,11 @@ async fn run_remux(media: &MediaItem, tmp: &PathBuf) -> Result<()> {
             "0:a?",
             "-c",
             "copy",
+            // +write_colr: emit the mp4 colr atom from the input's parsed VUI
+            // (color flags don't apply under -c copy). mediabunny reads only
+            // colr, so a remuxed quick proxy is otherwise color-untagged to it.
             "-movflags",
-            "+faststart",
+            "+faststart+write_colr",
             "-f",
             "mp4",
         ])
@@ -116,6 +119,7 @@ async fn run_fast_transcode(media: &MediaItem, tmp: &PathBuf) -> Result<()> {
     let input = media.path_abs.clone();
     let tmp = tmp.clone();
 
+    let color_args = crate::jobs::proxy::source_color_args(media);
     let output = hwaccel::output_with_hw_decode_fallback("quick proxy", |hw, cmd| {
         cmd.args(["-y", "-hide_banner", "-nostats", "-loglevel", "error"]);
         if hw {
@@ -147,10 +151,13 @@ async fn run_fast_transcode(media: &MediaItem, tmp: &PathBuf) -> Result<()> {
             "-b:a",
             "96k",
             "-movflags",
-            "+faststart",
+            "+faststart+write_colr",
             "-f",
             "mp4",
         ]);
+        // Source color tags → VUI AND (with +write_colr) the mp4 colr atom;
+        // see `proxy::source_color_args`.
+        cmd.args(&color_args);
         cmd.arg(&tmp)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
