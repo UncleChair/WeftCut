@@ -235,9 +235,10 @@ validator. Additional types (wipe, slide, push) land as new
   Main10 source conform** — HW-opaque HEVC frames cannot `copyTo` (P1 probe
   finding), so 10-bit HEVC originals currently proxy to a SW-decodable form;
   `importExternalTexture` or a format-conversion approach is the open P6
-  investigation. **AV1-10 source probe** — admit AV1 10-bit originals to
-  `tenBitExportCapable` once a decode probe confirms `copyTo` works (the v1
-  rule is Hi10P H.264 only). **Byte-based ring cap** — the CPU-plane lane's
+  investigation. **Byte-based ring cap** — the CPU-plane lane's
   high-water is entry-count based; a byte-based cap bounds 4K memory.
   Distinct from the "WebGPU compositor backend" item above (that's real-time
   effects; this is the output pipeline and preview sink).
+  (AV1 10-bit sources are admitted: `tenBitExportCapable` covers h264 + av1 —
+  the decode probe confirmed dav1d-under-prefer-software yields copyTo-able
+  I420P10, while the hardware path emits opaque frames.)

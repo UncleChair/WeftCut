@@ -407,10 +407,16 @@ loop. No changes to this path.
 selector):** the Worker switches to the WebGL2 backend for the
 composite. The encode exit diverges at three points:
 
-- **Source ingest.** 10-bit-capable sources (H.264 Hi10P originals
-  identified at export time by a pure ffprobe-metadata rule — codec
-  h264 + pix_fmt yuv420p10le — that sets `tenBitExportCapable`)
-  are decoded through a CPU-plane lane. The decoder's output callback
+- **Source ingest.** 10-bit-capable sources (H.264 Hi10P and AV1
+  10-bit originals, identified at export time by a pure
+  ffprobe-metadata rule — codec h264 or av1 + pix_fmt yuv420p10le —
+  that sets `tenBitExportCapable`) are decoded through a CPU-plane
+  lane, configured prefer-software up front. For Hi10P that skips a
+  doomed hardware attempt (no HW path exists); for AV1 it is a
+  correctness requirement — the hardware decoder "succeeds" but emits
+  opaque `format=null` frames that cannot `copyTo`, and only dav1d
+  software decode yields readable `I420P10` planes. The decoder's
+  output callback
   runs `VideoFrame.copyTo` into a typed `I420P10` buffer and closes the
   source frame immediately — the copy-then-close pattern satisfies
   ADR 0004's buffer-pool discipline outright, returning the hardware
@@ -465,10 +471,10 @@ composite. The encode exit diverges at three points:
 The parity gate (`iso_tenbit_gl_parity.e2e.js`) validates that the
 WebGL2 f16 ingest and pack fragment passes agree with the CPU
 `yuv10.ts` reference on pixel values within the rounding margin for
-known inputs. The end-to-
-end gate (`export_10bit.e2e.js`) exports a Hi10P H.264 source through
-the full 10-bit path and confirms distinct-step counts above the 8-bit
-ceiling at the analyzer's gradient-row meter.
+known inputs. The end-to-end gate (`export_10bit.e2e.js`) exports a
+Hi10P H.264 source and an AV1 10-bit source through the full 10-bit
+path and confirms distinct-step counts above the 8-bit ceiling at the
+analyzer's gradient-row meter.
 
 Cross-reference: ADR 0022 records the decision and its probe-backed
 rationale (WebGL2 stock f16, the WebSocket transport, copyTo ingest,

@@ -163,8 +163,9 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
   );
 
   // 5. Build the tenBitMedia map: sources whose originals WebView2 can decode
-  // to I420P10 (Hi10P H.264 only in v1). Only populated on the 10-bit path;
-  // the Worker uses this to route those sources through the 10-bit lane.
+  // to I420P10 (H.264 Hi10P + AV1 10-bit — `tenBitExportCapable`). Only
+  // populated on the 10-bit path; the Worker uses this to route those
+  // sources through the 10-bit lane.
   const tenBitMedia: Record<string, boolean> = {};
   if (init.bitDepth === 10) {
     for (const m of init.mediaById.values()) {

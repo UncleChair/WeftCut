@@ -62,8 +62,10 @@ export interface SourceHandleInit {
   /// Export-only: copy >8-bit decoder output to CPU planes (TenBitFrame)
   /// instead of holding VideoFrames. Implies the 10-bit export lane.
   tenBitLane?: boolean;
-  /// Export-only: configure the decoder prefer-software up front (Hi10P has
-  /// no HW path; skipping the error-fallback round-trip).
+  /// Export-only: configure the decoder prefer-software up front. For Hi10P
+  /// this skips a doomed HW attempt (no HW path exists); for AV1-10 it is a
+  /// CORRECTNESS requirement — the HW decoder succeeds but emits opaque
+  /// format=null frames with no copyTo, so the error-fallback never fires.
   preferSoftware?: boolean;
 }
 

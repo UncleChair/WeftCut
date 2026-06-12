@@ -224,14 +224,19 @@ export function isBitDepthValid(codec: CodecId, d: BitDepth): boolean {
   return d === 8 || codec !== "h264";
 }
 
-/// v1 rule (probe P1): only H.264 Hi10P software-decodes to I420P10 in
-/// WebView2. AV1 10-bit is a candidate behind a decode probe; HEVC Main10
-/// originals are HW-opaque (no copyTo) until the 10-bit conform lands.
+/// Sources whose ORIGINALS WebView2 decodes to copyTo-able I420P10, so the
+/// 10-bit export lane can read them at full precision: H.264 Hi10P (probe P1)
+/// and AV1 10-bit (probed in real WebView2: dav1d under prefer-software gives
+/// I420P10 with a clean 875-step ramp; the default/HW path "succeeds" but
+/// yields format=null OPAQUE frames — so the lane's preferSoftware flag is a
+/// correctness requirement for AV1, not just a fallback shortcut). HEVC
+/// Main10 originals are HW-opaque with no SW decoder (no copyTo) until the
+/// 10-bit conform lands.
 export function tenBitExportCapable(m: {
   codec: string | null;
   pix_fmt: string | null;
 }): boolean {
-  return m.codec === "h264" && m.pix_fmt === "yuv420p10le";
+  return (m.codec === "h264" || m.codec === "av1") && m.pix_fmt === "yuv420p10le";
 }
 
 /// ffmpeg's MOV muxer rejects AV1 ("av1 only supported in MP4 and AVIF"), so

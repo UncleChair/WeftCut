@@ -325,10 +325,12 @@ describe("bitDepth", () => {
   it("snaps 10-bit H.264 back to 8 (no Hi10P output)", () => {
     expect(mergeSettings({ bitDepth: 10, codec: "h264" }).bitDepth).toBe(8);
   });
-  it("detects 10-bit-capable sources (Hi10P only, v1)", () => {
+  it("detects 10-bit-capable sources (Hi10P H.264 + AV1-10)", () => {
     expect(tenBitExportCapable({ codec: "h264", pix_fmt: "yuv420p10le" })).toBe(true);
+    expect(tenBitExportCapable({ codec: "av1", pix_fmt: "yuv420p10le" })).toBe(true);
     expect(tenBitExportCapable({ codec: "hevc", pix_fmt: "yuv420p10le" })).toBe(false);
     expect(tenBitExportCapable({ codec: "h264", pix_fmt: "yuv420p" })).toBe(false);
+    expect(tenBitExportCapable({ codec: "av1", pix_fmt: "yuv420p" })).toBe(false);
     expect(tenBitExportCapable({ codec: null, pix_fmt: null })).toBe(false);
   });
 });

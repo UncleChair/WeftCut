@@ -211,6 +211,7 @@ func main() {
 	gradient := flag.Bool("gradient", false, "emit a 10-bit BT.709 grayscale gradient ramp (HEVC Main10) for axis B")
 	gradientH264 := flag.Bool("gradient-h264", false, "emit the 10-bit gradient ramp as H.264 High10 (the one 10-bit shape WebView2 software-decodes) — the 10-bit export gate's static fixture")
 	gradientH264BF := flag.Bool("gradient-h264-bf", false, "emit a 10s ANIMATED 10-bit ramp, H.264 High10 with keyint=120+bframes=3 — the 10-bit export reorder-tail regression fixture")
+	gradientAv1 := flag.Bool("gradient-av1", false, "emit the 10-bit gradient ramp as AV1 10-bit (SVT-AV1) — the AV1-10 source probe + export-gate fixture")
 	flag.Parse()
 
 	if *imageset {
@@ -315,6 +316,35 @@ func main() {
 			"-an", out,
 		}
 		fmt.Printf("Generating %s (10-bit BT.709 gradient, H.264 High10)\n", out)
+		cmd := exec.Command("ffmpeg", args...)
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		if err := cmd.Run(); err != nil {
+			log.Fatalf("ffmpeg failed: %v", err)
+		}
+		fmt.Printf("Done: %s\n", out)
+		return
+	}
+
+	if *gradientAv1 {
+		const width, height, duration = 1920, 1080, 1
+		out := fmt.Sprintf("test_%dp_gradient10_av1.mp4", height)
+		// Same true-10-bit ramp as --gradient (format=yuv420p10le BEFORE geq —
+		// see the crux comment there), encoded AV1 10-bit via SVT-AV1. Probes
+		// whether WebView2 decodes AV1-10 to copyTo-able I420P10 (dav1d SW path)
+		// the way Hi10P H.264 does — the tenBitExportCapable admission test.
+		vf := "format=yuv420p10le,geq=lum='(X/(W-1))*1023':cb=512:cr=512,scale=out_color_matrix=bt709:out_range=tv"
+		args := []string{
+			"-y", "-f", "lavfi", "-i",
+			fmt.Sprintf("nullsrc=size=%dx%d:rate=30:duration=%d", width, height, duration),
+			"-vf", vf,
+			"-c:v", "libsvtav1",
+			"-preset", "6",
+			"-crf", "18",
+			"-pix_fmt", "yuv420p10le",
+			"-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv",
+			"-an", out,
+		}
+		fmt.Printf("Generating %s (10-bit BT.709 gradient, AV1 10-bit SVT-AV1)\n", out)
 		cmd := exec.Command("ffmpeg", args...)
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 		if err := cmd.Run(); err != nil {

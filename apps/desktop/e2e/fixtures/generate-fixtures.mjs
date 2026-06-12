@@ -39,6 +39,9 @@ export const MATRIX = [
   // regression).
   { gradientH264: true },
   { gradientH264Bf: true },
+  // 10-bit ramp as AV1 10-bit (SVT-AV1) — the AV1-10 source admission probe +
+  // export gate (the second tenBitExportCapable codec).
+  { gradientAv1: true },
   // still-image chart set (png/jpg/webp/bmp/gif/tiff + manifest, one flag) —
   // image_support.e2e.js. The png is the canonical existence check; the
   // generator writes the whole set in one run.
@@ -56,13 +59,14 @@ export const MATRIX = [
   { fps: 10, format: "gif" },
 ];
 
-export function outputName({ fps, format, audio, color, gradient, gradientH264, gradientH264Bf, eostail, imageset, audiotones, aformat }) {
+export function outputName({ fps, format, audio, color, gradient, gradientH264, gradientH264Bf, gradientAv1, eostail, imageset, audiotones, aformat }) {
   if (imageset) return "test_chart_320x240.png";
   if (audiotones) return `test_tones_10s.${aformat}`;
   if (color) return `test_${WIDTH_HEIGHT}p_color_${color}.mp4`;
   if (gradient) return `test_${WIDTH_HEIGHT}p_gradient10.mp4`;
   if (gradientH264) return `test_${WIDTH_HEIGHT}p_gradient10_h264.mp4`;
   if (gradientH264Bf) return `test_${WIDTH_HEIGHT}p_gradient10_h264_bf.mp4`;
+  if (gradientAv1) return `test_${WIDTH_HEIGHT}p_gradient10_av1.mp4`;
   if (format === "prores") return `test_${WIDTH_HEIGHT}p_${fps}fps_prores.mov`;
   if (eostail) return `test_${WIDTH_HEIGHT}p_${fps}fps_eostail.${format}`;
   if (audio) return `test_${WIDTH_HEIGHT}p_${fps}fps_audio.${format}`;
@@ -91,7 +95,9 @@ export async function ensureFixtures(mediaDir) {
               ? ["run", GENERATOR, "--gradient-h264"]
               : entry.gradientH264Bf
                 ? ["run", GENERATOR, "--gradient-h264-bf"]
-                : ["run", GENERATOR, "--fps", String(entry.fps), "--format", entry.format];
+                : entry.gradientAv1
+                  ? ["run", GENERATOR, "--gradient-av1"]
+                  : ["run", GENERATOR, "--fps", String(entry.fps), "--format", entry.format];
     if (entry.audio) args.push("--audio");
     if (entry.eostail) args.push("--eostail");
     console.log(`[fixtures] generating ${name} ...`);
