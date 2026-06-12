@@ -1,7 +1,50 @@
-# Preview decode scrub stall — investigation (open)
+# Preview decode scrub stall — investigation (RESOLVED: transient contention)
 
-Status: **root cause NOT yet pinned; diagnostic instrumentation shipped,
-candidate fix identified, awaiting a repro to confirm before fixing.**
+Status: **root cause identified via MCP repro 2026-06-12 — NOT a decoder
+bug. The pool-exhaustion hypothesis is REFUTED by the shipped
+instrumentation; the original 0.9 fps was transient CPU contention from a
+concurrent proxy-transcode job at import. No decoder fix warranted.**
+
+## Resolution (MCP repro, 2026-06-12)
+
+Reconnected via MCP to the live instance, re-opened the same project, drove
+alternating far seeks + a play burst, and read the new throughput log:
+
+```
+decoder throughput: 46 frames in 69455ms (0.7 fps) [total=46 queue=24 ring=38@1877ms inflight=0 peak=1]
+decoder throughput: 28 frames in 1194ms (23.4 fps) ... ring=38 inflight=0 peak=1   (during play)
+```
+
+- **`inflight=0 peak=1`** → the output-side createImageBitmap path is never
+  the bottleneck. **Pool-exhaustion hypothesis REFUTED.** The candidate fix
+  (a `conversionsInFlight` gate on the pump) is NOT warranted and was dropped.
+- **`ring=38` (FULL) now vs `ring=1` (EMPTY) in the original.** Both print
+  "<1 fps", but they are opposite conditions: ring-full = the pump idling
+  because the lookahead is satisfied (benign — what my repro hit); ring-empty
+  + `queue=20` = the decoder genuinely not producing (the original stall).
+  **`ring=` is the discriminator, not the fps number.**
+- The original session had the **quick proxy `PENDING`** (mid-transcode);
+  on repro it is `done`. The decode-side starvation (ring empty, queue piling,
+  ~1 fps output) coincided with a concurrent ffmpeg proxy transcode of the
+  1.4 GB Hi10P source pegging the CPU at import. Once the transcode finished,
+  preview is healthy (ring fills to 38, play hits ~23 fps).
+
+**Conclusion:** transient import-time CPU contention (proxy transcode ±
+first-Motif CDP-capture spinup), not a decoder/pool/`createImageBitmap` bug.
+Self-resolves when the import jobs finish. The `A VideoFrame was garbage
+collected without being closed` warning did NOT reproduce — likely a one-off
+under the same load (export worker or a dropped conversion); left unresolved
+but not actionable without a repro.
+
+**Kept:** the `inflight=/peak=` instrumentation (it produced this answer and
+discriminates idle-vs-stall on any future report). **Not built:** the
+output-side gate. **Possible (low-priority) future lever:** de-prioritize /
+throttle the import-time proxy transcode so first-preview decode isn't starved
+— a UX nicety, not a correctness fix.
+
+---
+
+## Original investigation (pre-repro) — retained for context
 
 ## Symptom (real WebView2, 2026-06-12, user session)
 
