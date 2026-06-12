@@ -313,6 +313,7 @@ const zhCN: Resources = {
     bit_depth_8: "8-bit",
     bit_depth_10: "10-bit（HEVC Main10 / AV1）",
     bit_depth_hint: "时间线含 10-bit 素材——10-bit 输出可保留其精度。",
+    bit_depth_slow_hint: "10-bit 导出远慢于实时（软件解码 + 原生编码），耗时会明显长于 8-bit 导出。",
   },
   import_proxy: {
     title: "部分素材需要优化",

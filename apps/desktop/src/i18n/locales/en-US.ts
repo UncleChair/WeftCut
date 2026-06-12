@@ -317,6 +317,7 @@ const enUS = {
     bit_depth_8: "8-bit",
     bit_depth_10: "10-bit (HEVC Main10 / AV1)",
     bit_depth_hint: "Timeline has 10-bit sources — 10-bit output preserves their precision.",
+    bit_depth_slow_hint: "10-bit export runs well below realtime (software decode + native encode) — expect it to take noticeably longer than an 8-bit export.",
   },
   import_proxy: {
     title: "Some clips need optimizing",
