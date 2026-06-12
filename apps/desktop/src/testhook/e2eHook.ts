@@ -17,7 +17,6 @@ import {
   projectOpen,
   projectSave,
   projectSummary,
-  updateLayer,
   updateLayerParams,
   workspaceDir,
   type AudioPatch,
@@ -82,6 +81,15 @@ export interface E2EHook {
     mediaAbsPath: string;
     tStartUs?: number;
   }): Promise<{ mediaId: string; layerId: string; kind: string }>;
+  /// Place an ALREADY-imported media 1:1 at `tStartUs` (default 0) on a fresh
+  /// track — the placement half of `importAndPlaceMedia`. Lets a spec put N
+  /// copies of ONE mediaId on the timeline (the same-source overlap export
+  /// scenarios); re-importing the file would mint a new mediaId and dodge the
+  /// shared-source decoder path under test.
+  placeMediaLayer(args: {
+    mediaId: string;
+    tStartUs?: number;
+  }): Promise<{ layerId: string }>;
   /// Resolve once `exportPlaybackPathFor` is non-null for the media — for a
   /// Video source that means the proxy/bypass route has been decided AND any
   /// needed proxy has landed. The animated-gif spec uses this to prove the
@@ -624,6 +632,12 @@ export function installExportHook(runExport: RunExport): void {
     return { mediaId, layerId, kind: mediaFromStore(mediaId)!.kind };
   };
 
+  hookSlot().placeMediaLayer = async ({ mediaId, tStartUs }) => {
+    const trackId = await addTrack();
+    const layerId = await addMediaLayer(trackId, mediaId, tStartUs ?? 0);
+    return { layerId };
+  };
+
   hookSlot().waitMediaExportReady = async ({ mediaId, timeoutMs }) => {
     await waitForMediaExportReady(mediaId, timeoutMs ?? 120000);
   };
@@ -665,11 +679,9 @@ export function installExportHook(runExport: RunExport): void {
     if (audioPatches && audioPatches.length > 0) {
       const summary = await projectSummary();
       const audioLayerIds: string[] = [];
-      const videoLayerIds: string[] = [];
       for (const tr of summary.tracks) {
         for (const l of tr.layers) {
           if (l.params.kind === "Audio") audioLayerIds.push(l.id);
-          if (l.params.kind === "VideoClip") videoLayerIds.push(l.id);
         }
       }
       if (audioLayerIds.length < audioPatches.length) {
@@ -683,13 +695,10 @@ export function installExportHook(runExport: RunExport): void {
           ...audioPatches[i]!,
         });
       }
-      // The extra clip copies exist only to contribute their AUDIO layers.
-      // Disable their VideoClips: two overlapping export decoders on one
-      // source wedge the export Worker's decode pool (preexisting video
-      // limitation, unrelated to audio — frame counter freezes mid-export).
-      for (let i = 1; i < videoLayerIds.length; i++) {
-        await updateLayer(videoLayerIds[i]!, { enabled: false });
-      }
+      // The extra copies' VideoClips stay ENABLED: stacked same-phase clips
+      // of one source share a merged-range export pipeline (see
+      // exportHandleKey), so they cost nothing — and leaving them on keeps
+      // these audio scenarios doubling as overlap-export regression cover.
     }
     await runExport(mergeSettings(settings ?? null), outputAbsPath, range);
     if (!(await exists(outputAbsPath))) {
