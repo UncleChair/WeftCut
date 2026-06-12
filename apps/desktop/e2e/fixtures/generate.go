@@ -209,6 +209,8 @@ func main() {
 	eosTail := flag.Bool("eostail", false, "EOS-tail geometry: keyframes every 5s only (final GOP spans multiple 60-frame export chunks) + tone track 1s LONGER than the video; names output *_eostail.mp4")
 	colorEnc := flag.String("color", "", "color chart encoding: 709ltd|601ltd|709full|601full (draws chart + manifest, ignores --fps content)")
 	gradient := flag.Bool("gradient", false, "emit a 10-bit BT.709 grayscale gradient ramp (HEVC Main10) for axis B")
+	gradientH264 := flag.Bool("gradient-h264", false, "emit the 10-bit gradient ramp as H.264 High10 (the one 10-bit shape WebView2 software-decodes) — the 10-bit export gate's static fixture")
+	gradientH264BF := flag.Bool("gradient-h264-bf", false, "emit a 10s ANIMATED 10-bit ramp, H.264 High10 with keyint=120+bframes=3 — the 10-bit export reorder-tail regression fixture")
 	flag.Parse()
 
 	if *imageset {
@@ -284,6 +286,70 @@ func main() {
 			"-tag:v", "hvc1", "-an", out,
 		}
 		fmt.Printf("Generating %s (10-bit BT.709 gradient, HEVC Main10)\n", out)
+		cmd := exec.Command("ffmpeg", args...)
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		if err := cmd.Run(); err != nil {
+			log.Fatalf("ffmpeg failed: %v", err)
+		}
+		fmt.Printf("Done: %s\n", out)
+		return
+	}
+
+	if *gradientH264 {
+		const width, height, duration = 1920, 1080, 1
+		out := fmt.Sprintf("test_%dp_gradient10_h264.mp4", height)
+		// Same true-10-bit ramp as --gradient (format=yuv420p10le BEFORE geq —
+		// see the crux comment there), but encoded H.264 High10: the one 10-bit
+		// shape WebView2 software-decodes to I420P10, so the 10-bit export can
+		// read the ORIGINAL (tenBitExportCapable) instead of an 8-bit proxy.
+		vf := "format=yuv420p10le,geq=lum='(X/(W-1))*1023':cb=512:cr=512,scale=out_color_matrix=bt709:out_range=tv"
+		args := []string{
+			"-y", "-f", "lavfi", "-i",
+			fmt.Sprintf("nullsrc=size=%dx%d:rate=30:duration=%d", width, height, duration),
+			"-vf", vf,
+			"-c:v", "libx264",
+			"-profile:v", "high10",
+			"-pix_fmt", "yuv420p10le",
+			"-crf", "18",
+			"-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv",
+			"-an", out,
+		}
+		fmt.Printf("Generating %s (10-bit BT.709 gradient, H.264 High10)\n", out)
+		cmd := exec.Command("ffmpeg", args...)
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		if err := cmd.Run(); err != nil {
+			log.Fatalf("ffmpeg failed: %v", err)
+		}
+		fmt.Printf("Done: %s\n", out)
+		return
+	}
+
+	if *gradientH264BF {
+		const width, height, duration = 1920, 1080, 10
+		out := fmt.Sprintf("test_%dp_gradient10_h264_bf.mp4", height)
+		// ANIMATED ramp: the +N*4 per-frame phase shift (mod 1024) makes every
+		// frame differ while keeping all 10-bit levels in play. Encoded with a
+		// long GOP (keyint=120) + B-frames (bframes=3): combined with software
+		// 10-bit decode, that is exactly the reorder-tail shape that deadlocked
+		// the reverted 10-bit DirectExport — the decoder holds its reorder tail
+		// until well past each export chunk boundary. b-adapt=0 + scenecut=0
+		// FORCE the IBBBP pattern: the smooth ramp's near-zero intra cost makes
+		// x264's scenecut detector fire on EVERY frame (demoting all of them
+		// to P — 1 B-frame in 300), so without these the fixture silently
+		// loses the very reorder property it exists for.
+		vf := "format=yuv420p10le,geq=lum='mod((X/(W-1))*1023+N*4,1024)':cb=512:cr=512,scale=out_color_matrix=bt709:out_range=tv"
+		args := []string{
+			"-y", "-f", "lavfi", "-i",
+			fmt.Sprintf("nullsrc=size=%dx%d:rate=30:duration=%d", width, height, duration),
+			"-vf", vf,
+			"-c:v", "libx264",
+			"-profile:v", "high10",
+			"-pix_fmt", "yuv420p10le",
+			"-x264-params", "keyint=120:bframes=3:b-adapt=0:scenecut=0",
+			"-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv",
+			"-an", out,
+		}
+		fmt.Printf("Generating %s (10s animated 10-bit ramp, H.264 High10 long-GOP+B-frames)\n", out)
 		cmd := exec.Command("ffmpeg", args...)
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 		if err := cmd.Run(); err != nil {
