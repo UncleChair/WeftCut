@@ -356,6 +356,16 @@ pub async fn export_video_sink_start(
         cmd.arg("-video_size").arg(format!("{}x{}", args.width, args.height));
         cmd.arg("-framerate").arg(format!("{}/{}", args.fps_num, args.fps_den));
         cmd.args(["-i", "-"]);
+        // Tag the FRAMES, not just the codec context: rawvideo frames carry no
+        // color metadata, and hevc_nvenc writes its VUI colour_description from
+        // the frame side (the `-color_primaries`/`-color_trc` context options
+        // below land matrix+range but leave primaries/transfer "unspecified").
+        // setparams stamps every frame bt709/limited so every encoder family
+        // emits the full 4-tuple (found by the export_10bit gate).
+        cmd.args([
+            "-vf",
+            "setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv",
+        ]);
         for arg in super::video_encode_args(&encoder, args.bitrate, args.cbr, args.gop) {
             cmd.arg(arg);
         }
