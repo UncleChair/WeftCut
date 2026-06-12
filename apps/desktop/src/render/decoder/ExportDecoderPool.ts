@@ -34,8 +34,12 @@ import { copyToTenBit, isTenBitDecoderFormat, type TenBitFrame } from "./tenBitF
 /// max DPB is 16.
 const TENBIT_REORDER_MARGIN = 16;
 
-/// 10-bit lane high-water mark (entries). ~48 × 6.2 MB ≈ 300 MB at 1080p —
-/// bounds the CPU-plane ring the way the WebCodecs pool bounds VideoFrames.
+/// 10-bit lane high-water mark (entry count). ~48 × 6.2 MB ≈ 300 MB at 1080p;
+/// ~4× that (~1.2 GB) at 4K — the cap is entry-count, not bytes, so 4K sources
+/// hit the memory ceiling much sooner. A byte-based cap is the 4K follow-up.
+/// Bounds the CPU-plane ring; SW decoders don't self-throttle on held frames
+/// (no HW pool slots), so in-flight chain links beyond the ring are bounded by
+/// the dispatch window (chunk/GOP + TENBIT_REORDER_MARGIN) instead.
 const TENBIT_RING_HIGH_WATER = 48;
 
 interface RingEntry {
@@ -494,9 +498,13 @@ export class ExportSourceHandle implements DecoderHandle {
         }
         if (this.tenBitLane && isTenBitDecoderFormat(frame.format)) {
           this.copyChain = this.copyChain.then(async () => {
-            // Backpressure: while the ring is at high water, leaving this frame
-            // un-copied (and un-closed) keeps it in the decoder's output queue —
-            // the decoder self-throttles exactly like the 8-bit pool-slot lane.
+            // Backpressure: while the ring is at high water, block the copy chain
+            // here. Note: SW decoders don't stall on held frames the way HW
+            // decoders do (no pool slots), so this gate bounds the RING entry
+            // count, not the decoder. The un-copied frames backlogged in the chain
+            // are bounded by the dispatch window (chunk/GOP + TENBIT_REORDER_MARGIN),
+            // which for long-GOP 4K sources can be large — see the known-limitation
+            // note on TENBIT_RING_HIGH_WATER.
             await this.ring.waitBelowTenBitHighWater();
             const tb = await copyToTenBit(frame);
             frame.close();
