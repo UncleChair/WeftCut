@@ -86,4 +86,5 @@ and a full→limited **range** squash scores large.
   matrix — rejected as a bad trade.
 - The zero-copy decode path (`importExternalTexture`, which also honors the
   matrix and would drop the per-frame `drawImage` blit) is tracked in the
-  roadmap, not built here.
+  roadmap — deliberately parked at lowest priority pending profiling — and
+  not built here.

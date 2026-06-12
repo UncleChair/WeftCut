@@ -73,40 +73,59 @@ source mapping is the one shape the forward-only pipelines don't
 cover. Preview keeps its own sibling item (warm-decoder handoff
 across sequential cuts, designed in [`render.md`](render.md)).
 
-### Zero-copy color-correct GPU frame upload
+### Zero-copy GPU frame upload — deprioritized, measure first
 
 Export composites a decoded `VideoFrame` by snapshotting it into a 2D
 `OffscreenCanvas` (`VideoClipSprite`) before Pixi uploads the canvas.
-The snapshot exists because Pixi's WebGPU upload of a raw `VideoFrame`
+The snapshot exists because Pixi's raw-`VideoFrame` upload
 (`copyExternalImageToTexture`) ignores the frame's `colorSpace` and
-converts every frame as BT.709, so non-709 sources mis-convert; a 2D
-`drawImage` performs the YUV→RGB conversion honoring the frame's
-matrix/range. Correct, but it costs a per-frame GPU blit that scales
-with resolution.
+converts every frame as BT.709/limited — a destructive pixel
+mis-convert for 601 / full-range sources (screen recordings, phone
+footage), not a repairable tag error. The prohibition and both
+surfaces' conforming paths are documented in [`render.md`](render.md)
+("the snapshot rule") and ADR 0014.
 
-The zero-copy alternative is WebGPU `importExternalTexture` sampled via
-`textureSampleBaseClampToEdge` in a custom shader. A standalone POC
-(`apps/desktop/e2e/tools/iso_importexternaltexture.e2e.js`) confirms
-WebView2 HONORS the matrix through this path (601 and 709 sample to
-distinct RGB), so it can replace the snapshot without losing color
-correctness. The design work this defers:
+**Deliberately parked at lowest priority.** Color correctness is fully
+handled today at zero marginal cost — the snapshot *is* the honoring
+conversion. What zero-copy would buy is removing one per-frame blit in
+offline export, a cost that is bounded, unmeasured, and instrumented
+(`__weftcutExportPerf` `compositeMs`); the full replacement is heavy
+(bespoke Pixi pass, a permanent WebGL dual-path, external-texture
+sampling limits, a fresh conformance pass). Do not start without
+profiling showing the blit matters (4K export is where it would).
 
-- **Custom Pixi pass.** Pixi's `TextureSource` model only does
-  `copyExternalImageToTexture`; it never imports an external texture.
-  The export composite needs a bespoke `GpuProgram` + bind group that
-  re-imports the per-frame `GPUExternalTexture` (it expires each frame)
-  and samples it.
-- **WebGL fallback.** `importExternalTexture` is WebGPU-only. The
-  export's WebGL path (no `navigator.gpu`) still needs the 2D-canvas
-  snapshot, so both coexist.
-- **Color-management exactness.** `importExternalTexture` does a full
-  matrix + primaries/transfer → sRGB conversion whose exact output
-  differs from `drawImage` on chromatic values; the snapshot path's
-  `drawImage` has no `colorSpaceConversion` knob, whereas the external
-  texture's `GPUExternalTextureDescriptor.colorSpace` is the lever.
-  Whichever path ships must be validated against the color-conformance
-  gate (the analyzer is the arbiter), watching the non-primary patches
-  where any primaries residual surfaces.
+If profiling ever justifies it, the staged plan:
+
+1. **colorSpace-routed hybrid first.** The raw upload's fixed-function
+   conversion is *correct* for bt709/limited frames — the dominant
+   content class. Route in `VideoClipSprite`: raw-bind frames whose
+   `colorSpace` is bt709/limited, keep the snapshot for everything
+   else. One branch plus one analyzer run; no custom shaders, the
+   conformance gate stays untouched.
+2. **`importExternalTexture` as last resort.** A standalone POC
+   (`apps/desktop/e2e/tools/iso_importexternaltexture.e2e.js`) confirms
+   WebView2 HONORS the matrix through `importExternalTexture` +
+   `textureSampleBaseClampToEdge` (601 and 709 sample to distinct RGB),
+   so full zero-copy is *possible* without losing color correctness.
+   The design work it defers:
+   - **Custom Pixi pass.** Pixi's `TextureSource` model only does
+     `copyExternalImageToTexture`; it never imports an external
+     texture. Needs a bespoke `GpuProgram` + bind group re-importing
+     the per-frame `GPUExternalTexture` (it expires each frame).
+   - **WebGL fallback.** `importExternalTexture` is WebGPU-only. The
+     export's WebGL path (no `navigator.gpu`) keeps the snapshot, so
+     both paths coexist permanently.
+   - **Sampling limits.** External textures sample only via
+     `textureSampleBaseClampToEdge` — no mips, bilinear only — so
+     heavily downscaled clips lose filtering quality vs a canvas
+     texture; large-downscale sprites may need the snapshot anyway.
+   - **Color-management exactness.** `importExternalTexture` does a
+     full matrix + primaries/transfer → sRGB conversion whose exact
+     output differs from `drawImage` on chromatic values; the external
+     texture's `GPUExternalTextureDescriptor.colorSpace` is the lever.
+     Whichever path ships must re-pass the color-conformance gate (the
+     analyzer is the arbiter), watching the non-primary patches where
+     any primaries residual surfaces.
 
 ### macOS and Linux verification
 

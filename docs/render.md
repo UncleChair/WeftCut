@@ -228,12 +228,36 @@ drag works without churn.
 
 | Sprite | Source | Notes |
 |---|---|---|
-| `VideoClipSprite` | `FrameRing` snapshot → `Texture` | Consumes the `DecodedFrame` returned by `FrameStore.frameAt` — `ImageBitmap` from preview's `FrameRing`, `VideoFrame` from export's `ExportFrameStore`. PixiJS v8 `ImageSource` accepts both. |
+| `VideoClipSprite` | `FrameRing` snapshot → `Texture` | Consumes the `DecodedFrame` returned by `FrameStore.frameAt` — `ImageBitmap` from preview's `FrameRing`, `VideoFrame` from export's `ExportFrameStore`. Both are snapshotted into a sprite-owned canvas before upload (see the snapshot rule below). |
 | `ImageOverlaySprite` | `createImageBitmap` → `Texture` | One-shot bitmap creation at sprite spawn; cached for the layer's lifetime. |
 | `TextSprite` | PixiJS `Text` (native canvas) | Shadow via drop-shadow filter; outline via stroke option; intro / outro presets are sprite-side animation. |
 | `MotifSprite` | CDP-captured PNG frame → `Texture` | Binds the Motif's frame for the playhead's layer-relative time (on demand, RAM lookahead, or persisted PNG); frames come from the webcap CDP capture path, not an in-process raster; see [`motifs.md`](motifs.md). |
 | `SubtitlesSprite` | JASSUB canvas → `Texture` | libass-wasm renders into its own canvas; we copy as a texture each frame. |
 | `ColorSprite` | PixiJS `Graphics` rect | Animated fill color. |
+
+### Frame upload: the snapshot rule
+
+**Never bind a raw `VideoFrame` to a Pixi texture.** Pixi's default
+WebGPU upload (`copyExternalImageToTexture`) drops the frame's
+`colorSpace` and converts every frame with a fixed BT.709/limited
+formula. For a 601 or full-range frame that is a destructive pixel
+mis-convert — wrong RGB values baked into the composite, which no
+downstream re-tagging can repair — not a recoverable metadata error.
+The browser's 2D-canvas paths (`drawImage`, `createImageBitmap`) do
+honor the frame's matrix/range, so both surfaces route through one of
+them before Pixi ever sees pixels:
+
+- **Preview** converts at decode output: `SourceHandle.output` runs
+  `createImageBitmap(frame)` (which also returns the decoder's buffer
+  slot — ADR 0004), so the `FrameRing` already holds correct RGB.
+- **Export** holds raw `VideoFrame`s for pool-drain reasons, so
+  `VideoClipSprite` snapshots each frame into its sprite-owned
+  `OffscreenCanvas` via a synchronous `drawImage` and binds the canvas.
+
+ADR 0014 records the evidence: reverting the export snapshot scores
+~22 on the perceptual conformance gate vs ≈0 with it. The zero-copy
+alternative (`importExternalTexture`, which also honors the matrix)
+is deliberately parked at lowest priority — see the roadmap.
 
 ## Motifs
 
