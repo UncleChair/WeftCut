@@ -389,12 +389,12 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
       const compT0 = performance.now();
       compositor.setAnchorTime(tUs);
       compositor.compositeFrame(tUs);
-      compositeMs += performance.now() - compT0;
 
       if (tenBit) {
         // 10-bit path: render into the rgba16float RenderTexture, pack to
         // yuv420p10le, then stream to the Rust sink (WS) or fall back to IPC.
         app.renderer.render({ container: app.stage, target: compositeRT! });
+        compositeMs += performance.now() - compT0;
 
         const capT0 = performance.now();
         const bytes = pack!.pack(compositeRT!);
@@ -416,6 +416,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
         // 8-bit path: render to the OffscreenCanvas, capture as a VideoFrame,
         // push to the WebCodecs EncoderSink — UNCHANGED.
         app.render();
+        compositeMs += performance.now() - compT0;
 
         const capT0 = performance.now();
         let source: CanvasImageSource = req.canvas as unknown as CanvasImageSource;
