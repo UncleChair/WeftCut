@@ -31,8 +31,13 @@ use super::validate::{ValidationError, validate};
 const INBOX_CAPACITY: usize = 100;
 const BROADCAST_CAPACITY: usize = 256;
 
+// Internally tagged (NOT adjacently tagged): `Agent`'s `client` field
+// flattens alongside the `kind` tag → {"kind":"Agent","client":"x"}. This
+// shape is serialized whole onto the MCP `/events` feed via
+// `ChangeEventSummary`; `content = "client"` (adjacent tagging) would nest it
+// as {"kind":"Agent","client":{"client":"x"}} (the "[object Object]" bug).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", content = "client")]
+#[serde(tag = "kind")]
 pub enum Actor {
     User,
     Agent { client: String },
@@ -4524,6 +4529,19 @@ fn layer_params_patch_kind(patch: &LayerParamsPatch) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_actor_serializes_client_as_a_flat_string() {
+        // Serialized whole onto the MCP /events feed (ChangeEventSummary).
+        // Must be {"kind":"Agent","client":"x"} — not the adjacently-tagged
+        // {"kind":"Agent","client":{"client":"x"}} nesting.
+        let v = serde_json::to_value(Actor::Agent { client: "jobs".into() }).expect("ser");
+        assert_eq!(v["kind"], "Agent");
+        assert_eq!(v["client"], "jobs", "client must be flat, got {}", v["client"]);
+        assert_eq!(serde_json::to_value(Actor::User).expect("ser")["kind"], "User");
+        let back: Actor = serde_json::from_value(v).expect("de");
+        assert_eq!(back, Actor::Agent { client: "jobs".into() });
+    }
     use crate::state::{
         Animated, ColorParams, LayerParams, MediaKind, MediaMetadata, Project, Rgba, Track,
     };
