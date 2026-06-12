@@ -120,6 +120,20 @@ export class VideoClipSprite {
     this.bindFromSnapshot(frame, width, height);
   }
 
+  /// 10-bit export lane: bind a converter-owned texture directly (the f16
+  /// conversion result). Skips the 8-bit canvas snapshot entirely. The texture
+  /// is owned by TenBitIngest — dispose() must NOT destroy it, so it is never
+  /// stored in `this.texture`.
+  ///
+  /// Safety: `sprite.destroy({ children: true })` in dispose() does NOT pass
+  /// `{ texture: true }`, so the sprite's bound texture is never destroyed by
+  /// Pixi on cleanup. The texture here therefore remains alive and ingest-owned
+  /// through the clip's full lifecycle.
+  bindExternalTexture(texture: Texture): void {
+    this.currentFrame = null;
+    if (this.sprite.texture !== texture) this.sprite.texture = texture;
+  }
+
   private bindFromSnapshot(
     frame: DecodedFrame,
     width: number,
