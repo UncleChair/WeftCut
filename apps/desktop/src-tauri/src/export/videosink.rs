@@ -213,13 +213,12 @@ pub async fn export_video_sink_finish(
         let sink = guard.as_mut().ok_or("no active video sink")?;
         sink.join.take().ok_or("sink already finished")?
     };
-    let res = tauri::async_runtime::spawn_blocking(move || {
+    let join_result = tauri::async_runtime::spawn_blocking(move || {
         join.join().unwrap_or_else(|_| Err("sink thread panicked".into()))
     })
-    .await
-    .map_err(|e| e.to_string())?;
+    .await;
     *state.0.lock().unwrap() = None;
-    res
+    join_result.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -247,9 +246,12 @@ pub fn export_video_sink_write(
     let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
         return Err("expected raw body".into());
     };
-    let guard = state.0.lock().unwrap();
-    let sink = guard.as_ref().ok_or("no active video sink")?;
-    let mut stdin = sink.shared.stdin.lock().unwrap();
+    let shared = {
+        let guard = state.0.lock().unwrap();
+        let sink = guard.as_ref().ok_or("no active video sink")?;
+        sink.shared.clone()
+    };
+    let mut stdin = shared.stdin.lock().unwrap();
     match stdin.as_mut() {
         Some(s) => s.write_all(bytes).map_err(|e| format!("ffmpeg stdin: {e}")),
         None => Ok(()), // discard mode
