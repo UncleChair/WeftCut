@@ -33,6 +33,12 @@ export const MATRIX = [
   { color: "601full" },
   // 10-bit BT.709 grayscale ramp (HEVC Main10) — axis B "proxy fidelity on gradients"
   { gradient: true },
+  // 10-bit ramps as H.264 High10 (the one 10-bit shape WebView2 software-
+  // decodes) — the 10-bit export gates (export_10bit.e2e.js): a static 1s ramp
+  // (end-to-end fidelity) + a 10s animated long-GOP/B-frame ramp (reorder-tail
+  // regression).
+  { gradientH264: true },
+  { gradientH264Bf: true },
   // still-image chart set (png/jpg/webp/bmp/gif/tiff + manifest, one flag) —
   // image_support.e2e.js. The png is the canonical existence check; the
   // generator writes the whole set in one run.
@@ -50,11 +56,13 @@ export const MATRIX = [
   { fps: 10, format: "gif" },
 ];
 
-export function outputName({ fps, format, audio, color, gradient, eostail, imageset, audiotones, aformat }) {
+export function outputName({ fps, format, audio, color, gradient, gradientH264, gradientH264Bf, eostail, imageset, audiotones, aformat }) {
   if (imageset) return "test_chart_320x240.png";
   if (audiotones) return `test_tones_10s.${aformat}`;
   if (color) return `test_${WIDTH_HEIGHT}p_color_${color}.mp4`;
   if (gradient) return `test_${WIDTH_HEIGHT}p_gradient10.mp4`;
+  if (gradientH264) return `test_${WIDTH_HEIGHT}p_gradient10_h264.mp4`;
+  if (gradientH264Bf) return `test_${WIDTH_HEIGHT}p_gradient10_h264_bf.mp4`;
   if (format === "prores") return `test_${WIDTH_HEIGHT}p_${fps}fps_prores.mov`;
   if (eostail) return `test_${WIDTH_HEIGHT}p_${fps}fps_eostail.${format}`;
   if (audio) return `test_${WIDTH_HEIGHT}p_${fps}fps_audio.${format}`;
@@ -79,7 +87,11 @@ export async function ensureFixtures(mediaDir) {
           ? ["run", GENERATOR, "--color", entry.color]
           : entry.gradient
             ? ["run", GENERATOR, "--gradient"]
-            : ["run", GENERATOR, "--fps", String(entry.fps), "--format", entry.format];
+            : entry.gradientH264
+              ? ["run", GENERATOR, "--gradient-h264"]
+              : entry.gradientH264Bf
+                ? ["run", GENERATOR, "--gradient-h264-bf"]
+                : ["run", GENERATOR, "--fps", String(entry.fps), "--format", entry.format];
     if (entry.audio) args.push("--audio");
     if (entry.eostail) args.push("--eostail");
     console.log(`[fixtures] generating ${name} ...`);
