@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ExportFrameStore } from "./ExportDecoderPool";
+import type { TenBitFrame } from "./tenBitFrame";
 
 // ExportFrameStore.push reads only `timestamp` + `duration` and calls `close()`
 // on eviction, so a plain stub stands in for a real VideoFrame in node/vitest.
@@ -210,5 +211,38 @@ describe("ExportFrameStore EOS finalization", () => {
     // ...and eviction stops pinning the stale last entry.
     store.evictBefore(1_000_000);
     expect(store.size()).toBe(0);
+  });
+});
+
+// TenBitFrame integration — the ring only reads timestamp/duration/close, so a
+// TenBitFrame-shaped object (CPU planes, no VideoFrame pool slot) integrates
+// without any ring changes.
+describe("ExportFrameStore TenBitFrame integration", () => {
+  it("accepts a TenBitFrame: containsPts, waitForPts, and evictBefore all work", async () => {
+    const closeFn = vi.fn();
+    const tb: TenBitFrame = {
+      kind: "p10",
+      width: 1920,
+      height: 1080,
+      data: new Uint8Array(0),
+      yOffset: 0,
+      uOffset: 0,
+      vOffset: 0,
+      colorSpace: null,
+      timestamp: 0,
+      duration: 33333,
+      close: closeFn,
+    };
+
+    const store = new ExportFrameStore();
+    // push accepts the widened union (TenBitFrame carries timestamp/duration/close)
+    store.push(tb as unknown as VideoFrame);
+
+    expect(store.containsPts(10)).toBe(true);
+    await expect(store.waitForPts(10)).resolves.toBeUndefined();
+
+    store.evictBefore(40000);
+    expect(store.size()).toBe(0);
+    expect(closeFn).toHaveBeenCalledTimes(1);
   });
 });

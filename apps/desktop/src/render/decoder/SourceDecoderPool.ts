@@ -24,6 +24,7 @@
 
 import type { EncodedPacketSink } from "mediabunny";
 import { logEmit } from "../../ipc";
+import type { TenBitFrame } from "./tenBitFrame";
 import { withDefaultColorSpace } from "./colorSpaceDefault";
 import { FrameRing } from "./FrameRing";
 import { handleDecodeError } from "./decoderFallback";
@@ -58,16 +59,23 @@ export interface SourceHandleInit {
   /// pool carries it onto the shared `SourceMedia` (per-mediaId) so the once-
   /// per-source config build at `SourceMedia.ensureReady` tags the decode.
   sourceColor?: VideoColorSpaceInit | undefined;
+  /// Export-only: copy >8-bit decoder output to CPU planes (TenBitFrame)
+  /// instead of holding VideoFrames. Implies the 10-bit export lane.
+  tenBitLane?: boolean;
+  /// Export-only: configure the decoder prefer-software up front (Hi10P has
+  /// no HW path; skipping the error-fallback round-trip).
+  preferSoftware?: boolean;
 }
 
 /// Decoded-frame surface as exposed to the Compositor / VideoClipSprite.
 /// Preview returns `ImageBitmap` (decoupled from the WebCodecs hardware
 /// decoder's buffer pool — see the snapshot path in `SourceHandle.output`);
 /// export returns `VideoFrame` (frames are evicted after each composited
-/// output, so the pool stays drained naturally — see `ExportFrameStore`).
-/// `PixiJS v8 ImageSource` accepts both types as a resource, so the
-/// sprite consumes either without branching.
-export type DecodedFrame = VideoFrame | ImageBitmap;
+/// output, so the pool stays drained naturally — see `ExportFrameStore`);
+/// 10-bit export returns `TenBitFrame` (CPU-plane copy, pool released on
+/// copyTo — see tenBitFrame.ts). `PixiJS v8 ImageSource` accepts VideoFrame
+/// and ImageBitmap; TenBitFrame is routed to bindExternalTexture instead.
+export type DecodedFrame = VideoFrame | ImageBitmap | TenBitFrame;
 
 /// Minimal frame-by-PTS surface the Compositor reads through. Implemented
 /// by `FrameRing` (preview) and `ExportFrameStore` (export).

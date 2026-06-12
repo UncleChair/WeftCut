@@ -26,11 +26,18 @@ import type { DecoderHandle, DecoderPool, FrameStore, SourceHandleInit } from ".
 import { withDefaultColorSpace } from "./colorSpaceDefault";
 import { handleDecodeError } from "./decoderFallback";
 import { openMediaInput, type OpenedMedia } from "./mediaInput";
+import { copyToTenBit, isTenBitDecoderFormat, type TenBitFrame } from "./tenBitFrame";
+
+/// SW 10-bit decoders hold a reorder tail internally and the chunked model
+/// never mid-flushes (see the reverted 2026-06-04 10-bit DirectExport).
+/// Feeding a bounded lead-in past the stop key pushes the tail out; H.264's
+/// max DPB is 16.
+const TENBIT_REORDER_MARGIN = 16;
 
 interface RingEntry {
   ptsUs: number;
   durationUs: number;
-  frame: VideoFrame;
+  frame: VideoFrame | TenBitFrame;
 }
 
 /// E2E color diagnostic captured off the FIRST decoded frame of a handle.
@@ -67,7 +74,7 @@ export class ExportFrameStore implements FrameStore {
   /// was the export-stuck wedge).
   private waiters: Array<{ tUs: number; resolve: () => void }> = [];
 
-  push(frame: VideoFrame): void {
+  push(frame: VideoFrame | TenBitFrame): void {
     this.entries.push({
       ptsUs: frame.timestamp,
       durationUs: frame.duration ?? 0,
@@ -197,7 +204,7 @@ export class ExportFrameStore implements FrameStore {
     return this.ended && this.entries.length > 0;
   }
 
-  frameAt(tUs: number): VideoFrame | null {
+  frameAt(tUs: number): VideoFrame | TenBitFrame | null { // satisfies DecodedFrame | null
     if (this.entries.length === 0) return null;
     const first = this.entries[0]!;
     if (tUs < first.ptsUs) return first.frame;
@@ -284,6 +291,13 @@ export class ExportSourceHandle implements DecoderHandle {
   /// targets (a proxy preserves the source's colorimetry). Threaded into
   /// `withDefaultColorSpace`; the target's own colr tag outranks per-field.
   private readonly sourceColor: VideoColorSpaceInit | undefined;
+  /// Copy >8-bit decoder output to CPU planes (TenBitFrame) instead of
+  /// holding VideoFrames. Also activates the reorder-margin extension in
+  /// `decodeRange` so SW decoders drain their reorder tail.
+  private readonly tenBitLane: boolean;
+  /// Pre-configure the decoder as prefer-software (Hi10P has no HW path;
+  /// skipping the error-fallback round-trip saves a useless HW attempt).
+  private readonly preferSoftware: boolean;
   readonly ring: ExportFrameStore;
   /// E2E-only: colorSpace of the first decoded frame vs the config we passed.
   /// Read by the export worker and forwarded in the `done` perf payload.
@@ -335,6 +349,8 @@ export class ExportSourceHandle implements DecoderHandle {
     this.mediaId = init.mediaId;
     this.proxyAssetUrl = init.proxyAssetUrl;
     this.sourceColor = init.sourceColor;
+    this.tenBitLane = init.tenBitLane ?? false;
+    this.preferSoftware = init.preferSoftware ?? false;
     this.ring = new ExportFrameStore();
   }
 
@@ -420,6 +436,20 @@ export class ExportSourceHandle implements DecoderHandle {
               `pts=${frame.timestamp}us`,
           );
         }
+        if (this.tenBitLane && isTenBitDecoderFormat(frame.format)) {
+          void copyToTenBit(frame)
+            .then((tb) => {
+              frame.close();
+              if (this.decoder !== dec) return;
+              this.ring.push(tb);
+            })
+            .catch((e: unknown) => {
+              frame.close();
+              // eslint-disable-next-line no-console
+              console.error(`[weftcut/export] ${this.mediaId} copyTo failed:`, e);
+            });
+          return;
+        }
         this.ring.push(frame);
       },
       error: (e: unknown) => {
@@ -446,15 +476,17 @@ export class ExportSourceHandle implements DecoderHandle {
     return dec;
   }
 
-  /// Build the decoder config, honoring `downgraded`. Spreads the full
-  /// mediabunny config (colorSpace etc.) and overrides only hwAccel.
+  /// Build the decoder config, honoring `downgraded` and `preferSoftware`.
+  /// Spreads the full mediabunny config (colorSpace etc.) and overrides only
+  /// hwAccel. `preferSoftware` pre-configures SW for codecs known to have no
+  /// HW path (e.g. Hi10P), skipping the error-fallback round-trip.
   private buildConfig(): VideoDecoderConfig {
     if (!this.config) {
       throw new Error(`[weftcut/export] ${this.mediaId}: buildConfig before ready`);
     }
     return {
       ...this.config,
-      hardwareAcceleration: this.downgraded ? "prefer-software" : "prefer-hardware",
+      hardwareAcceleration: this.downgraded || this.preferSoftware ? "prefer-software" : "prefer-hardware",
     };
   }
 
@@ -590,6 +622,19 @@ export class ExportSourceHandle implements DecoderHandle {
       }
       pkt = await packetSink.getNextPacket(pkt);
       if (this._disposed) return;
+    }
+    if (this.tenBitLane) {
+      let extra = 0;
+      while (pkt && extra < TENBIT_REORDER_MARGIN) {
+        this.decoder.decode(pkt.toEncodedVideoChunk());
+        this.cursor = pkt;
+        this.lastDispatchedPtsUs = Math.round(pkt.timestamp * 1e6);
+        dispatched++;
+        this.dispatchedTotal++;
+        extra++;
+        pkt = await packetSink.getNextPacket(pkt);
+        if (this._disposed) return;
+      }
     }
     if (stopKeyPtsUs !== null) {
       this.coveredThroughUs = Math.max(this.coveredThroughUs, stopKeyPtsUs);

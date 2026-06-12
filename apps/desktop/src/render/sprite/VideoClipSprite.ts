@@ -110,6 +110,9 @@ export class VideoClipSprite {
   /// frames (`VideoFrame`) are snapshotted into the sprite-owned canvas
   /// — see the file header for why this single path serves both.
   updateFrame(frame: DecodedFrame): void {
+    if ((frame as { kind?: string }).kind === "p10") {
+      throw new Error("VideoClipSprite.updateFrame got a TenBitFrame — use bindExternalTexture");
+    }
     if (this.currentFrame === frame) return;
     this.currentFrame = frame;
     const { width, height } = decodedDims(frame);
