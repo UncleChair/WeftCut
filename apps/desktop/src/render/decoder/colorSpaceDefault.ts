@@ -12,13 +12,18 @@
 // SD, limited range.
 //
 // Three-layer priority per field (highest to lowest):
-//   1. mediabunny's tag from the bitstream VUI — always authoritative.
-//   2. An explicit `sourceColor` from ffprobe — the container colr box that
-//      the VUI often omits, supplied by `ffprobeColorSpace()`. This beats the
-//      resolution default but loses to a live mediabunny tag.
+//   1. mediabunny's tag — read from the container's `colr` atom (mediabunny
+//      NEVER parses the bitstream SPS VUI). The decode target's own
+//      declaration, authoritative when present.
+//   2. An explicit `sourceColor` from ffprobe (which DOES read the VUI),
+//      supplied by `ffprobeColorSpace()` — for original and proxy decodes
+//      alike (a proxy preserves the source's colorimetry). Beats the
+//      resolution default, loses to the target's own colr tag.
 //   3. The resolution-keyed default (HD→bt709, SD→smpte170m, limited range).
 // Only the fields each layer omits fall through to the next, so a partial tag
-// keeps what it has and only fills what is missing.
+// keeps what it has and only fills what is missing. NOTE: the WebCodecs
+// decoder follows this config over the bitstream VUI (verified in WebView2),
+// so getting these layers right is load-bearing, not cosmetic — see ADR 0014.
 
 /// Return `config` with `colorSpace` fields filled from `sourceColor` (ffprobe)
 /// and/or the resolution-keyed default, in that priority order. mediabunny's
@@ -31,8 +36,8 @@ export function withDefaultColorSpace(
   const cs = config.colorSpace;
   const hd = (config.codedHeight ?? 0) >= 720;
   // Per field: mediabunny's tag wins, then the source's ffprobe tag, then the
-  // resolution default. (mediabunny only provides what the bitstream VUI
-  // declares; ffprobe adds the container colr box the VUI often omits.)
+  // resolution default. (mediabunny only provides what the container colr atom
+  // declares; ffprobe adds the bitstream VUI tags that colr-less files carry.)
   const matrix = cs?.matrix ?? sourceColor?.matrix ?? (hd ? "bt709" : "smpte170m");
   const primaries = cs?.primaries ?? sourceColor?.primaries ?? (hd ? "bt709" : "smpte170m");
   const transfer = cs?.transfer ?? sourceColor?.transfer ?? (hd ? "bt709" : "smpte170m");
