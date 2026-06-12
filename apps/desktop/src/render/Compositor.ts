@@ -26,6 +26,7 @@ import {
   type DecoderHandle,
   type DecoderPool,
 } from "./decoder/SourceDecoderPool";
+import { exportHandleKey } from "./decoder/ExportDecoderPool";
 import { ColorSprite } from "./sprite/ColorSprite";
 import { ImageOverlaySprite } from "./sprite/ImageOverlaySprite";
 import { SubtitlesSprite } from "./sprite/SubtitlesSprite";
@@ -1292,6 +1293,12 @@ export class Compositor {
     const source = this.pool.acquire({
       layerId: layer.id,
       mediaId,
+      // Export pool keying: must match the Worker's per-(media, phase)
+      // grouping so this sprite reads the ring the Worker is filling.
+      // Preview keys by layerId and ignores handleKey.
+      ...(this.mode === "export"
+        ? { handleKey: exportHandleKey(mediaId, layer.params.src_in_us, layer.t_start_us) }
+        : {}),
       proxyAssetUrl: proxyUrl,
       sourceColor,
     });

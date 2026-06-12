@@ -303,6 +303,40 @@ The main thread then optionally awaits the Rust audio-only export into a
 sibling temp audio file and asks Rust to mux or transcode into the user's
 chosen output; see [`rendering.md`](rendering.md).
 
+### Export decode pipelines (one per media × phase)
+
+The Worker drives an `ExportDecoderPool` in ~2 s chunks: per chunk it
+dispatches every needed packet per pipeline in one `decodeRange(aUs, bUs)`
+call (no mid-export `decoder.flush()` — see the EOS-tail notes in
+`ExportDecoderPool.ts`), then the encode loop awaits each output frame via
+`ring.waitForPts` and evicts consumed frames to keep the WebCodecs
+buffer pool drained.
+
+Pipelines are keyed by `exportHandleKey` = `mediaId` + the clip's
+timeline→source offset (`src_in_us − t_start_us`, the *phase*), and the
+Worker groups the chunk's active clips by that key, dispatching ONE
+merged source range per group:
+
+- **Same phase** (a stacked copy, or trims of one pass through the
+  source): every clip wants the same source PTS at the same output time,
+  so one decoder + ring serves them all and the extra copies cost no
+  extra decode. Frame eviction takes the group **minimum** cutoff so no
+  clip drops a frame a sibling still needs.
+- **Different phase** (A/B-roll offsets of one source): the clips want
+  source times a constant gap apart. One shared ring would have to hold
+  the whole gap's worth of `VideoFrame`s — past ~13 frames that deadlocks
+  the decoder's buffer pool — so each phase gets its own pipeline,
+  mirroring the preview's per-clip keying.
+
+The pool used to key handles by bare `mediaId`. Two enabled overlapping
+clips of one source then raced a single handle — their concurrent
+`decodeRange` calls interleaved on the shared packet cursor and each
+clip's per-frame evict dropped frames the other still needed — and the
+export's frame counter froze mid-run. The e2e gate is
+`export_overlap_same_source.e2e.js`: stacked completion + no extra
+dispatch vs the single-clip baseline, and offset completion + shifted
+frame alignment in the offset clip's exclusive region.
+
 ### Export source resolution
 
 Before launching the Worker, `runExport.ts` resolves each clip's

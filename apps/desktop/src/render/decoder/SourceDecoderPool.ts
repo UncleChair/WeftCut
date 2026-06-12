@@ -35,10 +35,16 @@ const IDLE_DISPOSE_MS = 5_000;
 export interface SourceHandleInit {
   /// Per-clip identity. The preview pool keys decoder + ring instances
   /// by this so that overlapping clips of the same source don't share
-  /// (and thrash) a single decoder. The export pool ignores it — it
-  /// still keys its `ExportSourceHandle` by `mediaId` because the
-  /// export Worker drives decoding sequentially per output frame.
+  /// (and thrash) a single decoder. The export pool keys by `handleKey`
+  /// instead and ignores this.
   layerId: string;
+  /// Optional pool-key override. The EXPORT pool keys handles by this when
+  /// present — the export Worker and the export-mode Compositor both pass
+  /// the shared `exportHandleKey(mediaId, srcInUs, tStartUs)` so clips of
+  /// one media that march through source time in lockstep share one decode
+  /// pipeline while clips at a different timeline→source offset get their
+  /// own. The preview pool keys by `layerId` and ignores it.
+  handleKey?: string;
   mediaId: string;
   /// `asset://` URL of the source's 1080p master proxy.
   proxyAssetUrl: string;
