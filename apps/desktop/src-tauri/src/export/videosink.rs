@@ -218,18 +218,24 @@ fn run_ws_sink(
             Err(e) => return Err(format!("sink accept: {e}")),
         }
     };
+    // Helper: abort child and return a formatted error. Used for the three
+    // pre-pump failure sites so no return path leaves ffmpeg un-reaped.
+    let fail = |msg: String| -> String {
+        abort_child(&shared);
+        msg
+    };
     stream
         .set_nonblocking(false)
-        .map_err(|e| format!("sink stream: {e}"))?;
+        .map_err(|e| fail(format!("sink stream: {e}")))?;
     stream
         .set_read_timeout(Some(Duration::from_secs(30)))
-        .map_err(|e| format!("sink stream: {e}"))?;
+        .map_err(|e| fail(format!("sink stream: {e}")))?;
     use tungstenite::protocol::WebSocketConfig;
     let mut cfg = WebSocketConfig::default();
     cfg.max_message_size = Some(max_frame_bytes.max(64 << 20));
     cfg.max_frame_size = Some(max_frame_bytes.max(16 << 20));
     let mut ws = tungstenite::accept_with_config(stream, Some(cfg))
-        .map_err(|e| format!("ws handshake: {e}"))?;
+        .map_err(|e| fail(format!("ws handshake: {e}")))?;
     // --- I5: token errors must kill+reap ffmpeg before returning ---
     match ws.read() {
         Ok(tungstenite::Message::Text(t)) if t == token => {}
@@ -478,8 +484,10 @@ pub async fn export_video_sink_cancel(
     let mut guard = state.0.lock().unwrap();
     if let Some(sink) = guard.take() {
         sink.shared.finishing.store(true, Ordering::Relaxed);
-        drop(sink.shared.stdin.lock().unwrap().take());
+        // Kill first: breaks the pipe so any blocked write_all in the WS thread
+        // unblocks immediately. Only then drop stdin (releases the lock / sends EOF).
         abort_child(&sink.shared);
+        drop(sink.shared.stdin.lock().unwrap().take());
         warn!("video sink cancelled");
     }
     Ok(())
