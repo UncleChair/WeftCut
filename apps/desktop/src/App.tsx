@@ -1304,12 +1304,12 @@ export function App({ onCloseProject }: AppProps) {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("[weftcut/pixi] export failed:", e);
-      if (tenBit) void exportVideoSinkCancel().catch(() => {});
+      if (tenBit) await exportVideoSinkCancel().catch(() => {});
       setExportState({ kind: "error", detail: msg });
       return;
     }
     if (!result) {
-      if (tenBit) void exportVideoSinkCancel().catch(() => {});
+      if (tenBit) await exportVideoSinkCancel().catch(() => {});
       setExportState({
         kind: "error",
         detail: "Preview not initialized.",
