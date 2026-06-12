@@ -107,6 +107,9 @@ async-trait = "0.1"
 # decoded-frame probes. RAII drop on `NamedTempFile` cleans temps automatically.
 # Already a dev-dep; promoted to production.
 tempfile = "3"
+# Task 1 (10-bit export): loopback WebSocket transport — webview streams raw
+# yuv420p10le frames into the Rust video sink for ffmpeg encode.
+tungstenite = "0.24"
 # P10b: `commands::compare_fixture_frame` SSIM-compares an actual PNG
 # (from `extract_video_frame`) against a committed baseline. We use
 # `image-compare`'s `rgb_similarity_structure` with `MSSIMSimple` —

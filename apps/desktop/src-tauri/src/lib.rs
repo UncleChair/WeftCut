@@ -216,6 +216,10 @@ pub fn run() {
             motifs::commands::motif_capture_frame,
             #[cfg(debug_assertions)]
             sysmon::get_system_stats,
+            export::videosink::export_video_sink_start,
+            export::videosink::export_video_sink_finish,
+            export::videosink::export_video_sink_cancel,
+            export::videosink::export_video_sink_write,
         ])
         .setup(move |app| {
             // WebView2 polish (Windows): kill Ctrl+wheel / Ctrl+± page zoom
@@ -389,6 +393,11 @@ pub fn run() {
             // Per-codec HW-encoder cache for the ffmpeg export-transcode path
             // (lazily probed on first non-WebCodecs export).
             app.manage(export::HwEncoderCache::new());
+
+            // Task 1 (10-bit export): loopback WS video sink. Starts empty;
+            // `export_video_sink_start` activates it, `_finish` / `_cancel`
+            // clear it.
+            app.manage(crate::export::videosink::VideoSinkState::default());
 
             // Import queue. Single-task FIFO. Pops a PendingImport, copies
             // source → `<workspace>/Media/...`, dispatches an actor command

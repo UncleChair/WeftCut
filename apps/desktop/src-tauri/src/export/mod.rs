@@ -9,6 +9,7 @@
 
 mod hwencoder;
 pub use hwencoder::{HwEncoderCache, TargetCodec};
+pub mod videosink;
 
 use std::path::Path;
 use std::process::Stdio;
