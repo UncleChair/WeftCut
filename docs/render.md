@@ -337,6 +337,15 @@ export's frame counter froze mid-run. The e2e gate is
 dispatch vs the single-clip baseline, and offset completion + shifted
 frame alignment in the offset clip's exclusive region.
 
+With this grouping, dispatch sits on the inherent floor for every
+forward-marching timeline shape (`e2e/tools/perf_export_redundancy.e2e.js`
+measures single-clip, sequential re-use, different-phase overlap, and
+mid-GOP range entry against their floors via `__weftcutExportPerf`).
+Source time per pipeline is `t + phase`, monotonic in `t`, so backward
+re-seeks never fire in normal export; the residual costs — one decode
+pass per phase, and the GOP-key prefix at a mid-GOP entry — are
+properties of the content, not the scheduler.
+
 ### Export source resolution
 
 Before launching the Worker, `runExport.ts` resolves each clip's
