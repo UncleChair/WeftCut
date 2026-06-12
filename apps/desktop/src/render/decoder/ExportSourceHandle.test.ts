@@ -289,27 +289,6 @@ describe("ExportSourceHandle tenBitLane reorder margin", () => {
 // preferSoftware: 10-bit decode has no HW path; pre-configure SW to skip the
 // HW-error→fallback round-trip. Also verify the default stays prefer-hardware.
 describe("ExportSourceHandle preferSoftware", () => {
-  it("configures the decoder with prefer-software when preferSoftware is true", async () => {
-    const packets = [pkt(0, "key")];
-    sink = makeSink(packets);
-
-    const h = makeHandle({ preferSoftware: true });
-    await h.ensureReady();
-    const dec = FakeVideoDecoder.instances[0]!;
-
-    // FakeVideoDecoder.configure receives the VideoDecoderConfig; capture it.
-    const configuredWith: VideoDecoderConfig[] = [];
-    const origConfigure = dec.configure.bind(dec);
-    dec.configure = (cfg: VideoDecoderConfig) => {
-      configuredWith.push(cfg);
-      origConfigure(cfg);
-    };
-    // Re-trigger configure by rebuilding (or read what was already passed).
-    // Since ensureReady already called configure once before we patched, we
-    // need a different approach: spy BEFORE ensureReady.
-    h.dispose();
-  });
-
   it("captures the hardwareAcceleration config via spy before ensureReady", async () => {
     const packets = [pkt(0, "key")];
     sink = makeSink(packets);
