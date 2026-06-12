@@ -164,6 +164,11 @@ export class VideoClipSprite {
     // overwritten. Mark the source dirty so Pixi re-uploads on next
     // render.
     this.source.update();
+    // A prior bindExternalTexture may have swapped the sprite's texture out;
+    // re-point it at the snapshot texture so 8-bit frames become visible again.
+    if (this.texture && this.sprite.texture !== this.texture) {
+      this.sprite.texture = this.texture;
+    }
   }
 
   /// Build (or rebuild on a dims change) the ImageSource + Texture
