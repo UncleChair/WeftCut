@@ -49,13 +49,14 @@ export interface SourceHandleInit {
   /// `asset://` URL of the source's 1080p master proxy.
   proxyAssetUrl: string;
   /// Source color tags mapped from ffprobe (matrix/range/primaries/transfer),
-  /// applied ONLY when the decode target is the ORIGINAL file (DirectExport /
-  /// direct preview) — a proxy is a re-encode whose color may not match.
-  /// Threaded into `withDefaultColorSpace` as the middle-priority layer (below a
-  /// live mediabunny VUI tag, above the resolution default). Undefined ⇒
-  /// untagged or proxy decode ⇒ resolution default applies. The preview pool
-  /// carries it onto the shared `SourceMedia` (per-mediaId) so the once-per-
-  /// source config build at `SourceMedia.ensureReady` tags the decode.
+  /// applied to ANY decode target for this media — the original trivially,
+  /// and proxies too (a proxy preserves the source's colorimetry; the recipe
+  /// asserts the tags outright since proxy v7). Threaded into
+  /// `withDefaultColorSpace` as the middle-priority layer (below the decode
+  /// target's own mediabunny colr tag, above the resolution default).
+  /// Undefined ⇒ untagged source ⇒ resolution default applies. The preview
+  /// pool carries it onto the shared `SourceMedia` (per-mediaId) so the once-
+  /// per-source config build at `SourceMedia.ensureReady` tags the decode.
   sourceColor?: VideoColorSpaceInit | undefined;
 }
 
@@ -150,10 +151,10 @@ export interface DecoderPool {
 export class SourceMedia {
   readonly mediaId: string;
   private readonly proxyAssetUrl: string;
-  /// Source color tags (ffprobe-mapped), present only when this media is
-  /// decoded from its ORIGINAL file (direct-decodable preview). Threaded into
-  /// `withDefaultColorSpace` so 601/full-range originals preview with their
-  /// real matrix/range. Undefined for proxy decode ⇒ resolution default only.
+  /// Source color tags (ffprobe-mapped), for original AND proxy decodes (a
+  /// proxy preserves the source's colorimetry). Threaded into
+  /// `withDefaultColorSpace` so 601/full-range sources preview with their
+  /// real matrix/range from either URL. Undefined ⇒ untagged source.
   private readonly sourceColor: VideoColorSpaceInit | undefined;
   private opened: OpenedMedia | null = null;
   private config: VideoDecoderConfig | null = null;
@@ -204,10 +205,10 @@ export class SourceMedia {
       this.opened = opened;
       // Untagged sources get a resolution-keyed default matrix so preview decode
       // matches the rest of the toolchain (see colorSpaceDefault) — and stays
-      // consistent with the export pool, which applies the same default. When
-      // this media is decoded from its ORIGINAL file, `sourceColor` carries the
-      // ffprobe tags as the middle-priority layer (below a live mediabunny VUI
-      // tag, above the resolution default); proxy decode leaves it undefined.
+      // consistent with the export pool, which applies the same default.
+      // `sourceColor` carries the source's ffprobe tags as the middle-priority
+      // layer (below the decode target's own mediabunny colr tag, above the
+      // resolution default) for original AND proxy decodes alike.
       this.config = withDefaultColorSpace(config, this.sourceColor);
       // eslint-disable-next-line no-console
       console.log(

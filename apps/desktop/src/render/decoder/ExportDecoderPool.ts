@@ -280,8 +280,9 @@ export class ExportFrameStore implements FrameStore {
 export class ExportSourceHandle implements DecoderHandle {
   readonly mediaId: string;
   private readonly proxyAssetUrl: string;
-  /// Source color tags (ffprobe-mapped), present only when this handle decodes
-  /// the ORIGINAL file (DirectExport). Threaded into `withDefaultColorSpace`.
+  /// Source color tags (ffprobe-mapped), for original AND proxy decode
+  /// targets (a proxy preserves the source's colorimetry). Threaded into
+  /// `withDefaultColorSpace`; the target's own colr tag outranks per-field.
   private readonly sourceColor: VideoColorSpaceInit | undefined;
   readonly ring: ExportFrameStore;
   /// E2E-only: colorSpace of the first decoded frame vs the config we passed.
@@ -351,11 +352,11 @@ export class ExportSourceHandle implements DecoderHandle {
       throw new Error(`[weftcut/export] ${this.mediaId}: no decoder config`);
     }
     // Untagged sources get a resolution-keyed default matrix so WebView2's
-    // decode matches the rest of the toolchain (see colorSpaceDefault). When
-    // this handle decodes the ORIGINAL (DirectExport), `sourceColor` carries the
-    // source's ffprobe tags as the middle-priority layer (below a live
-    // mediabunny VUI tag, above the resolution default); a proxy decode leaves
-    // it undefined so only the resolution default applies.
+    // decode matches the rest of the toolchain (see colorSpaceDefault).
+    // `sourceColor` carries the source's ffprobe tags as the middle-priority
+    // layer (below the decode target's own mediabunny colr tag, above the
+    // resolution default) — for original AND proxy decodes alike (a proxy
+    // preserves the source's colorimetry).
     this.config = withDefaultColorSpace(config, this.sourceColor);
     // eslint-disable-next-line no-console
     console.log(

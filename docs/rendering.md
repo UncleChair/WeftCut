@@ -164,6 +164,12 @@ are two, for two roles (full detail in [`preview.md`](preview.md) and
   `PROXY_FORMAT_VERSION` bump or `proxy_path = Some(None)` invalidates
   it for re-encode on next open.
 
+Both recipes assert the source's ffprobe color tags on the encode and
+write the mp4 `colr` atom (`source_color_args` + `+write_colr`; the
+quick proxy's remux path derives colr from the input VUI), keeping
+proxies color-readable to mediabunny, which never parses the SPS VUI
+(ADR 0014).
+
 Sources WebCodecs *can* decode are bypassed (no proxy) or DirectExport
 (export reads the original); see the decode-routing summary in
 [`data-model.md`](data-model.md).
