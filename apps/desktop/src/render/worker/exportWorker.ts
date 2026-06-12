@@ -330,7 +330,10 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     await Promise.all(
       [...stagedGroups.values()].map(async (g) => {
         // For 10-bit media, acquire the ORIGINAL asset URL and mark the lane
-        // so the decoder pool uses the software (Hi10P-capable) path.
+        // so the decoder pool uses the software path. preferSoftware is a
+        // correctness requirement for AV1-10 (the HW decoder succeeds but
+        // emits opaque format=null frames with no copyTo); for Hi10P it just
+        // skips a doomed HW attempt (no HW path exists).
         const tenBitSource = tenBit && req.tenBitMedia?.[g.mediaId] === true;
         const url = tenBitSource
           ? req.project.originalAssetUrls[g.mediaId]

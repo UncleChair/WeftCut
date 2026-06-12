@@ -49,9 +49,10 @@ interface Props {
   comp: Comp;
   currentTimeUs: number;
   durationUs: number;
-  /// True when the project has at least one H.264 Hi10P video source. Used to
-  /// show the 10-bit hint and smart-default the bit-depth selector to 10 when
-  /// the user picks HEVC or AV1 for the first time this dialog session.
+  /// True when the project has at least one 10-bit-capable video source
+  /// (H.264 Hi10P or AV1 10-bit — `tenBitExportCapable`). Used to show the
+  /// 10-bit hint and smart-default the bit-depth selector to 10 when the
+  /// user picks HEVC or AV1 for the first time this dialog session.
   hasTenBitSource: boolean;
   onCancel: () => void;
   onConfirm: (

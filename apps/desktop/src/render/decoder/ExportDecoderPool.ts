@@ -351,8 +351,10 @@ export class ExportSourceHandle implements DecoderHandle {
   /// holding VideoFrames. Also activates the reorder-margin extension in
   /// `decodeRange` so SW decoders drain their reorder tail.
   private readonly tenBitLane: boolean;
-  /// Pre-configure the decoder as prefer-software (Hi10P has no HW path;
-  /// skipping the error-fallback round-trip saves a useless HW attempt).
+  /// Pre-configure the decoder as prefer-software. For Hi10P this skips a
+  /// doomed HW attempt (no HW path exists); for AV1-10 it is a CORRECTNESS
+  /// requirement — the HW decoder succeeds but emits opaque format=null
+  /// frames with no copyTo, so the error-fallback never fires.
   private readonly preferSoftware: boolean;
   readonly ring: ExportFrameStore;
   /// E2E-only: colorSpace of the first decoded frame vs the config we passed.

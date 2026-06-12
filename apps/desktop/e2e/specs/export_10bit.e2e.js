@@ -12,8 +12,10 @@ const REPO = path.resolve(HERE, "..", "..", "..", "..");
 
 const SOURCE_RAMP = path.resolve(MEDIA_DIR, "test_1080p_gradient10_h264.mp4");
 const SOURCE_BF = path.resolve(MEDIA_DIR, "test_1080p_gradient10_h264_bf.mp4");
+const SOURCE_AV1 = path.resolve(MEDIA_DIR, "test_1080p_gradient10_av1.mp4");
 const OUTPUT_RAMP = path.resolve(os.tmpdir(), "weftcut-e2e-10bit-ramp.mp4");
 const OUTPUT_BF = path.resolve(os.tmpdir(), "weftcut-e2e-10bit-bf.mp4");
+const OUTPUT_AV1 = path.resolve(os.tmpdir(), "weftcut-e2e-10bit-av1.mp4");
 const PROJECT_PARENT = path.resolve(os.tmpdir(), "weftcut-e2e-10bit-proj");
 
 // 10-bit export settings: f16/WebGL2 composite -> yuv420p10le pack -> loopback
@@ -188,7 +190,7 @@ async function bootAndExport(source, output, name) {
 // yuv420p10le pack -> loopback WS -> ffmpeg Main10 encode) runs end to end.
 describe("10-bit export pipeline (real WebView2)", function () {
   before(function () {
-    for (const src of [SOURCE_RAMP, SOURCE_BF]) {
+    for (const src of [SOURCE_RAMP, SOURCE_BF, SOURCE_AV1]) {
       if (!existsSync(src)) {
         console.warn(
           `[e2e] SKIP: source media not found at ${src} (run: node fixtures/generate-fixtures.mjs)`,
@@ -199,6 +201,7 @@ describe("10-bit export pipeline (real WebView2)", function () {
     mkdirSync(PROJECT_PARENT, { recursive: true });
     rmSync(OUTPUT_RAMP, { force: true });
     rmSync(OUTPUT_BF, { force: true });
+    rmSync(OUTPUT_AV1, { force: true });
   });
 
   it("10-bit survives end-to-end (gradient ramp keeps >600 distinct steps)", async function () {
@@ -232,6 +235,41 @@ describe("10-bit export pipeline (real WebView2)", function () {
     const luma = report.banding[0];
     console.log(
       `[e2e] gradient meter: distinct_levels=${luma.distinct_levels} ` +
+        `max_plateau=${luma.max_plateau} (floor ${DISTINCT_FLOOR})`,
+    );
+    expect(luma.distinct_levels).toBeGreaterThan(DISTINCT_FLOOR);
+  });
+
+  it("AV1-10 source survives end-to-end (dav1d prefer-software lane)", async function () {
+    // The second tenBitExportCapable codec: an AV1 10-bit ORIGINAL routes
+    // through the same CPU-plane lane. preferSoftware is a CORRECTNESS
+    // requirement here — the hardware AV1 decoder "succeeds" but emits opaque
+    // format=null frames with no copyTo (probed in real WebView2); only the
+    // dav1d software path yields readable I420P10 planes.
+    this.timeout(600000);
+
+    await bootAndExport(SOURCE_AV1, OUTPUT_AV1, "e2e-10bit-av1-");
+    if (!existsSync(OUTPUT_AV1)) {
+      throw new Error(`export produced no output at ${OUTPUT_AV1}`);
+    }
+
+    const st = probeVideoStream(
+      OUTPUT_AV1,
+      "codec_name,profile,pix_fmt,color_space,color_transfer,color_primaries,color_range",
+    );
+    console.log("[e2e] AV1-10-source output stream:", JSON.stringify(st));
+    expect(st.codec_name).toBe("hevc");
+    expect(["yuv420p10le", "p010le"]).toContain(st.pix_fmt);
+    expect(st.profile).toContain("Main 10");
+    expect(st.color_space).toBe("bt709");
+    expect(st.color_range).toBe("tv");
+
+    // The SVT-AV1 ramp decodes to ~875 distinct mid-row levels (probe) — the
+    // same >600 floor proves the AV1 ingest didn't collapse to the 8-bit proxy.
+    const report = gradientReport(OUTPUT_AV1, 10);
+    const luma = report.banding[0];
+    console.log(
+      `[e2e] AV1-10 gradient meter: distinct_levels=${luma.distinct_levels} ` +
         `max_plateau=${luma.max_plateau} (floor ${DISTINCT_FLOOR})`,
     );
     expect(luma.distinct_levels).toBeGreaterThan(DISTINCT_FLOOR);
