@@ -2,11 +2,14 @@
 // WebGL2 mesh pass. Planes upload as RG8 (r = low byte, g = high byte of the
 // u16LE sample) with NEAREST sampling — bilinear would interpolate the two
 // bytes independently and produce garbage. Chroma is upsampled nearest (v1).
+//
+// NOTE: VERT and FRAG below are copied verbatim into
+// e2e/tools/iso_tenbit_gl_parity.e2e.js (the GL-parity gate) — keep both in sync.
 
 import {
   BufferImageSource, Mesh, MeshGeometry, RenderTexture, Shader, Texture,
 } from "pixi.js";
-import type { Renderer } from "pixi.js";
+import type { WebGLRenderer } from "pixi.js";
 import type { TenBitFrame } from "../decoder/tenBitFrame";
 import { BT601, BT709, inverseCoef } from "./yuv10";
 
@@ -63,7 +66,12 @@ function planeSource(data: Uint8Array, w: number, h: number): BufferImageSource 
 
 export class TenBitIngest {
   private states = new Map<string, ClipState>();
-  constructor(private renderer: Renderer) {}
+  constructor(private renderer: WebGLRenderer) {
+    // Chroma plane rows are (w/2)*2 = w bytes — not 4-aligned for w%4==2
+    // sources (854/1918-wide). Pixi never touches UNPACK_ALIGNMENT; default 4
+    // would skew those uploads.
+    this.renderer.gl.pixelStorei(this.renderer.gl.UNPACK_ALIGNMENT, 1);
+  }
 
   /// Convert `tb` (if not already current) and return the clip's RGBA16F
   /// texture. Keyed by layerId; textures are ingest-owned (callers must not
@@ -85,7 +93,9 @@ export class TenBitIngest {
       s.v.resource = tb.data.subarray(tb.vOffset, tb.vOffset + cw * ch * 2);
       s.y.update(); s.u.update(); s.v.update();
       const full = tb.colorSpace?.fullRange === true;
-      const coef = inverseCoef(tb.colorSpace?.matrix === "smpte170m" ? BT601 : BT709);
+      const m = tb.colorSpace?.matrix;
+      // bt470bg is PAL 601 — identical kr/kb to smpte170m (both are BT.601).
+      const coef = inverseCoef(m === "smpte170m" || m === "bt470bg" ? BT601 : BT709);
       const u = s.mesh.shader!.resources.tenbit.uniforms;
       u.uCoef = new Float32Array(coef);
       u.uScale = new Float32Array(full ? [1023, 1023] : [876, 896]);
@@ -127,7 +137,10 @@ export class TenBitIngest {
   release(key: string): void {
     const s = this.states.get(key);
     if (!s) return;
+    const { geometry, shader } = s.mesh;
     s.mesh.destroy();
+    geometry.destroy();
+    shader?.destroy();
     s.rt.destroy(true);
     s.y.destroy(); s.u.destroy(); s.v.destroy();
     this.states.delete(key);
