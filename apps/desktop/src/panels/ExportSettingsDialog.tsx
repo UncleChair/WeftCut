@@ -400,6 +400,11 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
                     {t("export_dialog.bit_depth_hint")}
                   </p>
                 )}
+                {settings.bitDepth === 10 && (
+                  <p className="settings-blurb">
+                    {t("export_dialog.bit_depth_slow_hint")}
+                  </p>
+                )}
 
                 <div className="export-row">
                   <span className="settings-toggle-label">
