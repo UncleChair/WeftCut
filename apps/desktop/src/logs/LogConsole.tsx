@@ -9,6 +9,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { XIcon } from "lucide-react";
 import { open as openInShell } from "@tauri-apps/plugin-shell";
+import { AppInput } from "../components/AppInput";
 import {
   logClear,
   logDirPath,
@@ -326,13 +327,14 @@ export const LogConsole = forwardRef<LogConsoleHandle, Props>(function LogConsol
           ))}
         </div>
 
-        <input
+        <AppInput
           ref={searchRef}
           type="search"
           className="log-search"
           placeholder={t("log.search_placeholder")}
+          ariaLabel={t("log.search_placeholder")}
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onValueChange={setSearch}
           onKeyDown={onKeyDownSearch}
         />
 

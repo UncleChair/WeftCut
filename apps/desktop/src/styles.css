@@ -1674,51 +1674,8 @@ input.preview-timecode:focus {
   margin-bottom: 8px;
 }
 
-.media-pool-search-input {
-  width: 100%;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 4px;
-  color: var(--foreground);
-  padding: 4px 24px 4px 8px;
-  font-size: 12px;
-  outline: none;
-  box-sizing: border-box;
-}
-
-.media-pool-search-input::placeholder {
-  color: var(--color-gray-500);
-}
-
-.media-pool-search-input:focus {
-  border-color: var(--color-blue-400);
-  background: rgba(255, 255, 255, 0.06);
-}
-
-.media-pool-search-clear {
-  position: absolute;
-  top: 50%;
-  right: 4px;
-  transform: translateY(-50%);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  background: transparent;
-  border: none;
-  border-radius: 3px;
-  color: var(--color-gray-500);
-  font-size: 14px;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.media-pool-search-clear:hover {
-  color: var(--foreground);
-  background: rgba(255, 255, 255, 0.08);
-}
+/* Search field + its ✕ now come from AppInput (.app-input / .app-input-clear);
+ * .media-pool-search just provides the bottom margin around the wrap. */
 
 /* 2026-05-16 MediaPool redesign: card grid. Thumbnail on top + name
    strip at the bottom by default; details overlay fades in on hover.
@@ -3180,7 +3137,8 @@ input.preview-timecode:focus {
   font-weight: 500;
 }
 
-.new-project-row input[type="text"],
+/* The name input is now AppInput (.app-input skin); only .app-select keeps
+ * this per-row chrome so the two controls match in the dialog. */
 .new-project-row .app-select {
   background: var(--background);
   border: 1px solid var(--border-soft);
@@ -3191,7 +3149,6 @@ input.preview-timecode:focus {
   outline: none;
 }
 
-.new-project-row input[type="text"]:focus,
 .new-project-row .app-select:focus-visible,
 .new-project-row .app-select[data-popup-open] {
   border-color: var(--color-blue-400);
@@ -3991,20 +3948,10 @@ input.preview-timecode:focus {
   border-color: rgba(59, 130, 246, 0.4);
 }
 
+/* Skin from .app-input; .log-search keeps only the toolbar layout. */
 .log-search {
   flex: 1;
   min-width: 160px;
-  padding: 4px 8px;
-  border-radius: 4px;
-  border: 1px solid var(--color-slate-700);
-  background: var(--color-slate-900);
-  color: var(--color-slate-200);
-  font-size: 12px;
-}
-
-.log-search:focus {
-  outline: none;
-  border-color: var(--ring);
 }
 
 .log-toolbar-actions {
@@ -4888,11 +4835,13 @@ input.preview-timecode:focus {
   text-align: center;
 }
 
-/* Clearable search: ✕ button overlaid on the right. */
+/* Clearable search: ✕ button overlaid on the right. The wrap fills its
+ * container (block contexts) so the input inside still spans full width. */
 .app-input-wrap {
   position: relative;
   display: flex;
   align-items: center;
+  width: 100%;
 }
 .app-input--clearable {
   padding-right: 24px;

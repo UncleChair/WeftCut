@@ -90,6 +90,7 @@ import {
   type ImportItem,
 } from "./panels/importOptimize";
 import { AppDialog } from "./components/AppDialog";
+import { AppInput } from "./components/AppInput";
 import { WindowControls } from "./components/WindowControls";
 import { Button } from "@/components/ui/button";
 import { ImportProxyDialog } from "./panels/ImportProxyDialog";
@@ -1767,12 +1768,11 @@ export function App({ onCloseProject }: AppProps) {
           </div>
           <div className="preview-transport" role="toolbar" aria-label="Preview transport">
             {editingTimecode !== null ? (
-              <input
+              <AppInput
                 ref={timecodeInputRef}
                 className="preview-timecode"
-                type="text"
                 value={editingTimecode}
-                onChange={(e) => setEditingTimecode(e.target.value)}
+                onValueChange={setEditingTimecode}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     e.preventDefault();
@@ -1783,7 +1783,7 @@ export function App({ onCloseProject }: AppProps) {
                   }
                 }}
                 onBlur={commitTimecode}
-                aria-label={t("transport.timecode_label")}
+                ariaLabel={t("transport.timecode_label")}
                 spellCheck={false}
               />
             ) : (
@@ -2359,13 +2359,13 @@ function MediaPool({
         {trimmed ? `${filtered.length}/${media.length}` : media.length})
       </h2>
       <div className="media-pool-search">
-        <input
-          type="text"
-          className="media-pool-search-input"
+        <AppInput
+          type="search"
+          clearable
           placeholder={t("media_pool.search_placeholder")}
-          aria-label={t("media_pool.search_placeholder")}
+          ariaLabel={t("media_pool.search_placeholder")}
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onValueChange={setQuery}
           onKeyDown={(e) => {
             if (e.key === "Escape" && query !== "") {
               e.preventDefault();
@@ -2373,17 +2373,6 @@ function MediaPool({
             }
           }}
         />
-        {query !== "" && (
-          <button
-            type="button"
-            className="media-pool-search-clear"
-            onClick={() => setQuery("")}
-            title={t("media_pool.clear_search")}
-            aria-label={t("media_pool.clear_search")}
-          >
-            ×
-          </button>
-        )}
       </div>
       {filtered.length === 0 ? (
         <p className="placeholder">
