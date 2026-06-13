@@ -110,3 +110,22 @@ export function partitionImportItems(items: ImportItem[]): Partitioned {
   const checkingCount = items.filter((i) => i.status === "checking").length;
   return { listed, checkingCount, hasAttention: listed.length > 0 || checkingCount > 0 };
 }
+
+export type ImportDialogNoteKey =
+  | "editable_note"
+  | "waiting_note"
+  | "mixed_note"
+  | "failed_note";
+
+export function importDialogNoteKey(items: ImportItem[]): ImportDialogNoteKey {
+  const { listed, checkingCount } = partitionImportItems(items);
+  const hasBridged = listed.some((i) => i.status === "bridged");
+  const hasWaiting =
+    checkingCount > 0 || listed.some((i) => i.status === "transcoding");
+  const hasFailed = listed.some((i) => i.status === "failed");
+
+  if (hasBridged && (hasWaiting || hasFailed)) return "mixed_note";
+  if (hasBridged) return "editable_note";
+  if (hasWaiting) return "waiting_note";
+  return "failed_note";
+}

@@ -4,6 +4,7 @@ import {
   codecDisplayName,
   is10bit,
   optimizeReason,
+  importDialogNoteKey,
   partitionImportItems,
   type OptimizeDeps,
   type ImportItem,
@@ -185,5 +186,35 @@ describe("partitionImportItems", () => {
     expect(r.listed).toEqual([]);
     expect(r.checkingCount).toBe(0);
     expect(r.hasAttention).toBe(false);
+  });
+});
+
+describe("importDialogNoteKey", () => {
+  const item = (over: Partial<ImportItem>): ImportItem => ({
+    id: "m",
+    label: "clip",
+    status: "transcoding",
+    reason: { key: "reason_transcode", codec: "ProRes" },
+    ...over,
+  });
+
+  it("says editable only when every attention item is bridged", () => {
+    expect(importDialogNoteKey([item({ status: "bridged" })])).toBe("editable_note");
+  });
+
+  it("uses a waiting note for checking/transcoding items", () => {
+    expect(importDialogNoteKey([item({ status: "checking" })])).toBe("waiting_note");
+    expect(importDialogNoteKey([item({ status: "transcoding" })])).toBe("waiting_note");
+  });
+
+  it("uses a mixed note when editable and waiting items coexist", () => {
+    expect(importDialogNoteKey([
+      item({ id: "a", status: "bridged" }),
+      item({ id: "b", status: "transcoding" }),
+    ])).toBe("mixed_note");
+  });
+
+  it("uses a failed note when failed items are the only attention items", () => {
+    expect(importDialogNoteKey([item({ status: "failed" })])).toBe("failed_note");
   });
 });

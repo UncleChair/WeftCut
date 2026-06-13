@@ -66,11 +66,21 @@ describe("mediaReadiness", () => {
     expect(r).toEqual({ ready: true });
   });
 
-  it("video is ready when export_uses_original", () => {
+  it("video waits when export_uses_original has no preview source yet", () => {
     const r = mediaReadiness(
       baseVideo({ export_uses_original: true }),
       emptyImporting,
       emptyProxyState,
+    );
+    expect(r).toEqual({ ready: false, reason: "proxy_pending" });
+  });
+
+  it("video is ready when the preview bridge probe succeeded", () => {
+    const r = mediaReadiness(
+      baseVideo({ export_uses_original: true }),
+      emptyImporting,
+      emptyProxyState,
+      { previewDecodable: true },
     );
     expect(r).toEqual({ ready: true });
   });

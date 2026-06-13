@@ -250,6 +250,14 @@ export function App({ onCloseProject }: AppProps) {
   // Bumped whenever the sweep mutates decodeProbeMemo/routeCorrected (refs, so
   // they don't re-render on their own) to force the dialog to reclassify.
   const [sweepTick, setSweepTick] = useState(0);
+  const previewDecodableMediaIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const [id, state] of decodeProbeMemo.current) {
+      if (state === "ok") ids.add(id);
+    }
+    return ids;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sweepTick]);
   // Completed import media_ids already routed into a dialog batch (session).
   const notifiedImportIds = useRef<Set<string>>(new Set());
   // The current import-proxy dialog batch (media_ids); empty = closed.
@@ -1858,6 +1866,7 @@ export function App({ onCloseProject }: AppProps) {
             media={summary?.media ?? []}
             importing={importingMediaIds}
             proxyState={proxyState}
+            previewDecodable={previewDecodableMediaIds}
             onExitBlade={() => setBladeMode(false)}
             onSelect={setSelectedLayerId}
             onSeek={seekTo}
@@ -1870,6 +1879,7 @@ export function App({ onCloseProject }: AppProps) {
             media={summary?.media ?? []}
             importing={importingMediaIds}
             proxyState={proxyState}
+            previewDecodable={previewDecodableMediaIds}
             fpsNum={summary?.composition.fps_num ?? 30}
             fpsDen={summary?.composition.fps_den ?? 1}
             onCancelImport={async (id) => {
@@ -2309,6 +2319,7 @@ function MediaPool({
   media,
   importing,
   proxyState,
+  previewDecodable,
   fpsNum,
   fpsDen,
   onCancelImport,
@@ -2316,6 +2327,7 @@ function MediaPool({
   media: MediaSummary[];
   importing: ReadonlySet<string>;
   proxyState: ReadonlyMap<string, ProxyState>;
+  previewDecodable: ReadonlySet<string>;
   fpsNum: number;
   fpsDen: number;
   onCancelImport: (mediaId: string) => Promise<void>;
@@ -2380,10 +2392,12 @@ function MediaPool({
       ) : (
         <ul className="media-list">
           {filtered.map((m) => {
-          const readiness = mediaReadiness(m, importing, proxyState);
-          const interactive = readiness.ready;
-          const reason = readiness.ready ? null : readiness.reason;
-          return (
+            const readiness = mediaReadiness(m, importing, proxyState, {
+              previewDecodable: previewDecodable.has(m.id),
+            });
+            const interactive = readiness.ready;
+            const reason = readiness.ready ? null : readiness.reason;
+            return (
             <li
               key={m.id}
               className={[

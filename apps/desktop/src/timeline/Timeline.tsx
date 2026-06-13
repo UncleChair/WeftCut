@@ -100,6 +100,9 @@ interface TimelineProps {
   /// Per-video proxy lifecycle from `media:job_*`. Same defence-in-depth
   /// role at the drop site as `importing`.
   proxyState: ReadonlyMap<string, ProxyState>;
+  /// Media ids whose original can be used as a session preview bridge while
+  /// optimization is still running.
+  previewDecodable: ReadonlySet<string>;
   onExitBlade: () => void;
   onSelect: (id: string | null) => void;
   onSeek: (tUs: number) => void;
@@ -121,6 +124,7 @@ export function Timeline({
   media,
   importing,
   proxyState,
+  previewDecodable,
   onExitBlade,
   onSelect,
   onSeek,
@@ -328,7 +332,9 @@ export function Timeline({
         );
         return;
       }
-      const readiness = mediaReadiness(m, importing, proxyState);
+      const readiness = mediaReadiness(m, importing, proxyState, {
+        previewDecodable: previewDecodable.has(m.id),
+      });
       if (!readiness.ready) {
         console.warn(
           `media drop rejected: ${payload.mediaId} is ${readiness.reason}`,
@@ -345,7 +351,7 @@ export function Timeline({
         console.error("media drop failed:", err);
       }
     },
-    [importing, media, onMutated, proxyState, pxPerSec],
+    [importing, media, onMutated, previewDecodable, proxyState, pxPerSec],
   );
 
   // V.7: context-menu open handler. Captures cursor position +

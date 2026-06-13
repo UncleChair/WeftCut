@@ -324,7 +324,10 @@ const zhCN: Resources = {
     reason_10bit: "{{codec}} 10-bit/HDR · 需优化",
     reason_bridged: "{{codec}} · 可即时预览,后台优化滚动",
     failed: "准备失败,请重新导入",
-    editable_note: "仍可立即编辑;导出会自动等待。",
+    editable_note: "可用素材现在即可编辑；导出会自动等待。",
+    waiting_note: "准备中的素材会在预览源就绪后变为可拖动。",
+    mixed_note: "可用素材现在即可编辑；准备中的素材会在预览源就绪后变为可拖动。",
+    failed_note: "准备失败的素材需要重新导入后才能使用。",
     dismiss: "知道了",
   },
   motif_stale: {
