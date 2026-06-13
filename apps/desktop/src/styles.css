@@ -2786,8 +2786,6 @@ input.preview-timecode:focus {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-.motif-picker-field input[type='text'],
-.motif-picker-field input[type='number'],
 .motif-picker-field .app-select {
   background: var(--secondary);
   border: 1px solid var(--border);
@@ -2803,16 +2801,6 @@ input.preview-timecode:focus {
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.motif-picker-color input[type='color'] {
-  width: 36px;
-  height: 26px;
-  border: 1px solid var(--border);
-  background: var(--secondary);
-  border-radius: 3px;
-  cursor: pointer;
-  padding: 0;
 }
 
 .motif-picker-color code {

@@ -3,7 +3,10 @@ import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { formatTimecode, parseTimecode } from "../frames";
+import { AppColorField } from "../components/AppColorField";
 import { AppDialog } from "../components/AppDialog";
+import { AppInput } from "../components/AppInput";
+import { AppNumberField } from "../components/AppNumberField";
 import { AppSelect } from "../components/AppSelect";
 import { Button } from "@/components/ui/button";
 import {
@@ -171,13 +174,12 @@ export function MotifPicker({
               className="motif-picker-new-form"
               onSubmit={(e) => { e.preventDefault(); void createDraft(); }}
             >
-              <input
-                type="text"
-                autoFocus
+              <AppInput
                 value={newName}
+                onValueChange={setNewName}
+                autoFocus
                 placeholder={t("motif_picker.new_name_placeholder")}
-                aria-label={t("motif_picker.new_prompt")}
-                onChange={(e) => setNewName(e.target.value)}
+                ariaLabel={t("motif_picker.new_prompt")}
                 onKeyDown={(e) => {
                   if (e.key === "Escape") {
                     // Consume: this Escape collapses the inline form only;
@@ -396,10 +398,10 @@ function MotifForm({
       <h3>{t("motif_picker.timing_heading")}</h3>
       <label className="motif-picker-field">
         <span>{t("motif_picker.insert_at")}</span>
-        <input
-          type="text"
+        <AppInput
           value={insertAtTc}
-          onChange={(e) => setInsertAtTc(e.target.value)}
+          onValueChange={setInsertAtTc}
+          ariaLabel={t("motif_picker.insert_at")}
           onBlur={() => {
             const us = parseTimecode(insertAtTc, fpsNum, fpsDen);
             if (us !== null) {
@@ -608,11 +610,11 @@ function PropField({
       return (
         <label className="motif-picker-field">
           <span>{propKey}</span>
-          <input
-            type="text"
+          <AppInput
             value={typeof value === "string" ? value : ""}
             maxLength={spec.max_length}
-            onChange={(e) => onChange(e.target.value)}
+            ariaLabel={propKey}
+            onValueChange={(v) => onChange(v)}
           />
         </label>
       );
@@ -630,18 +632,18 @@ function PropField({
       return (
         <label className="motif-picker-field">
           <span>{propKey}</span>
-          <input
-            type="number"
+          <AppNumberField
             value={typeof value === "number" ? value : spec.default}
-            min={spec.min}
-            max={spec.max}
             step={
               // Step heuristic: percent-style 0..100 → 1; small ranges (0..4) → 0.1
               spec.max !== undefined && spec.max - (spec.min ?? 0) <= 10
                 ? 0.1
                 : 1
             }
-            onChange={(e) => onChange(Number(e.target.value))}
+            ariaLabel={propKey}
+            onValueChange={(v) => onChange(v)}
+            {...(spec.min !== undefined ? { min: spec.min } : {})}
+            {...(spec.max !== undefined ? { max: spec.max } : {})}
           />
         </label>
       );
@@ -665,11 +667,7 @@ function ColorInput({
   const rgb = value.length >= 7 ? value.slice(0, 7) : value;
   return (
     <span className="motif-picker-color">
-      <input
-        type="color"
-        value={rgb}
-        onChange={(e) => onChange(e.target.value)}
-      />
+      <AppColorField value={rgb} onValueChange={onChange} />
       <code>{value}</code>
     </span>
   );
