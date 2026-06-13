@@ -2163,8 +2163,6 @@ input.preview-timecode:focus {
   min-width: 0;
 }
 
-.prop-field-control input[type="text"],
-.prop-field-control input[type="number"],
 .prop-field-control .app-select,
 .prop-field-control textarea {
   background: var(--card);
@@ -2175,21 +2173,6 @@ input.preview-timecode:focus {
   border-radius: 3px;
   width: 100%;
   font-family: inherit;
-}
-
-.prop-field-control input[type="number"] {
-  font-variant-numeric: tabular-nums;
-  width: 100%;
-}
-
-.prop-field-control input[type="color"] {
-  width: 32px;
-  height: 22px;
-  padding: 0;
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  background: transparent;
-  cursor: pointer;
 }
 
 /* Range inputs are gone — .app-slider's own flex: 1 1 0 / min-width: 0
