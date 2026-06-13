@@ -10,6 +10,7 @@ import {
   type Locale,
 } from "../i18n";
 import { AppDialog } from "../components/AppDialog";
+import { AppInput } from "../components/AppInput";
 import { AppSelect } from "../components/AppSelect";
 import { WindowControls } from "../components/WindowControls";
 import { Button } from "@/components/ui/button";
@@ -401,11 +402,11 @@ function NewProjectForm({
     >
         <label className="new-project-row">
           <span>{t("new_project.name")}</span>
-          <input
-            type="text"
+          <AppInput
             value={name}
             placeholder={t("new_project.name_placeholder")}
-            onChange={(e) => setName(e.target.value)}
+            ariaLabel={t("new_project.name")}
+            onValueChange={setName}
             onKeyDown={(e) => {
               if (e.key === "Enter" && canCreate) {
                 e.preventDefault();

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { formatTimecode } from "../frames";
+import { AppInput } from "../components/AppInput";
 import {
   HEADER_COL_PX,
   MIN_LAYER_DURATION_US,
@@ -372,14 +373,16 @@ export function LayerBlock({
       title={`${layer.kind}: ${formatTimecode(liveStart, fpsNum, fpsDen)} → ${formatTimecode(liveEnd, fpsNum, fpsDen)}`}
     >
       {isEditing ? (
-        <input
+        <AppInput
           ref={inputRef}
           // Sticky like the label so the editor appears at the clip's current
           // visible left edge, not its (possibly scrolled-off) absolute start.
-          className="sticky z-[2] w-40 max-w-full rounded-sm border border-blue-400 bg-black/60 px-1 text-inherit outline-none"
-          style={{ left: HEADER_COL_PX + 4 }}
+          // Width pinned inline because .app-input's width:100% would beat a
+          // `w-40` utility class.
+          className="sticky z-[2]"
+          style={{ left: HEADER_COL_PX + 4, width: "10rem", maxWidth: "100%" }}
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
+          onValueChange={setDraft}
           onClick={(e) => e.stopPropagation()}
           onPointerDown={(e) => e.stopPropagation()}
           onDoubleClick={(e) => e.stopPropagation()}
