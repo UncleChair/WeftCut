@@ -23,13 +23,14 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { CircleIcon, FilmIcon, MusicIcon, TypeIcon } from "lucide-react";
+import { FilmIcon, MusicIcon, TypeIcon } from "lucide-react";
 
 import { formatTimecode } from "../frames";
 import { type GroupSummary, type LayerSummary, type TrackSummary } from "../ipc";
 import {
   buildPeekItems,
   groupPeekItems,
+  peekCategory,
   PEEK_CATEGORY_ORDER,
   type PeekCategory,
   type PeekItem,
@@ -37,6 +38,11 @@ import {
 import { PropertyPanel } from "../properties/PropertyPanel";
 import { useDeltaWindowUs, useDisplayMode } from "../settings/appSettingsStore";
 import { MediaThumbnail } from "./MediaThumbnail";
+
+/// Filter chips for the AB-mode peek list: "all" plus each category in
+/// render order. Static — defined at module scope so it isn't rebuilt
+/// per render.
+const PEEK_FILTERS: ("all" | PeekCategory)[] = ["all", ...PEEK_CATEGORY_ORDER];
 
 export interface RightPanelProps {
   tracks: TrackSummary[];
@@ -80,7 +86,6 @@ export function RightPanel({
     () => groupPeekItems(peekItems, peekFilter),
     [peekItems, peekFilter],
   );
-  const peekFilters: ("all" | PeekCategory)[] = ["all", ...PEEK_CATEGORY_ORDER];
 
   return (
     <aside className="right-panel">
@@ -107,7 +112,7 @@ export function RightPanel({
             role="group"
             aria-label={t("peek.filter_label", { defaultValue: "Filter near-playhead items by kind" })}
           >
-            {peekFilters.map((f) => (
+            {PEEK_FILTERS.map((f) => (
               <button
                 key={f}
                 type="button"
@@ -211,7 +216,7 @@ function PeekRow({
             <MediaThumbnail mediaId={thumbMediaId} mediaKind={item.trackKind} />
           ) : (
             <span className="peek-thumb-fallback" aria-hidden="true">
-              {iconForKind(item.trackKind)}
+              {iconForCategory(peekCategory(item.layer.params.kind))}
             </span>
           )}
         </span>
@@ -260,17 +265,17 @@ function mediaLabelFor(layer: LayerSummary): string | null {
   }
 }
 
-function iconForKind(kind: string): ReactNode {
-  // Cheap icon fallback when no thumbnail/waveform is available.
-  // Subtitle layers + audio layers tend not to have a thumbnail path.
-  switch (kind.toLowerCase()) {
+function iconForCategory(category: PeekCategory): ReactNode {
+  // Cheap icon fallback when no thumbnail is available. Keyed by the
+  // layer's peek category so the row icon always matches its section
+  // header (a kind-agnostic track's dominant `trackKind` can differ
+  // from an individual layer's category).
+  switch (category) {
     case "video":
       return <FilmIcon size={14} />;
     case "audio":
       return <MusicIcon size={14} />;
-    case "subtitle":
+    case "text":
       return <TypeIcon size={14} />;
-    default:
-      return <CircleIcon size={10} />;
   }
 }
