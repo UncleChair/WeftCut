@@ -188,6 +188,25 @@ return `MissingKey` errors instead of being hidden. Revisit when rmcp
 gains per-session filtering — the alternative is omitting
 unsupported cloud tools from `list_tools` entirely.
 
+### Frame analysis for agents (`analyze_clip` / `compare_frames`) — unscheduled
+
+**Designed, not scheduled.** The MCP surface lets an agent *see* a frame
+(`media://{id}/frame/{t_us}`) but not reason about how a clip's picture
+changes over time. The planned addition is two "Analysis tools" beside
+`detect_silences`: `analyze_clip` (a structured shot list — scene
+boundaries, a representative keyframe timestamp per shot, per-shot
+brightness/motion, and black/freeze/fade events) and `compare_frames`
+(pairwise perceptual-hash similarity). A heuristic Rust pass —
+histogram-difference scene scoring (the PySceneDetect approach), driven by
+the same ffmpeg CLI child + `ffmpeg_sem` as the other derivative jobs,
+lazy on the 720p proxy, content-addressed cache — behind a `SceneDetector`
+trait so a learned model (TransNetV2 via ONNX) can slot in later for
+gradual-transition accuracy. Deliberately *not* the webview/GPU path (keeps
+analysis off the compositor the user is driving) and *not* a vision model
+(semantic "what's in the frame" stays the multimodal agent's job). Full
+design in
+[`superpowers/specs/2026-06-14-frame-analysis-mcp-design.md`](superpowers/specs/2026-06-14-frame-analysis-mcp-design.md).
+
 ### Transitions beyond crossfade
 
 `Transition` ships with crossfade / dissolve via ffmpeg's
