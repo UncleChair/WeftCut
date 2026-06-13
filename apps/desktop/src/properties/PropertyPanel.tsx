@@ -7,7 +7,6 @@ import { AppSlider } from "../components/AppSlider";
 import { AppSwitch } from "../components/AppSwitch";
 import { Button } from "@/components/ui/button";
 import {
-  updateLayer,
   updateLayerParams,
   installMotif,
   deleteMotif,
@@ -78,8 +77,6 @@ export function PropertyPanel({
         {t("property_panel.heading")} —{" "}
         {t(`kinds.${layer.kind.toLowerCase()}`, { defaultValue: layer.kind })}
       </h2>
-      <EnvelopeFields layer={layer} onMutated={onMutated} fpsNum={fpsNum} fpsDen={fpsDen} />
-      <hr />
       <KindFields layer={layer} onMutated={onMutated} fpsNum={fpsNum} fpsDen={fpsDen} />
     </aside>
   );
@@ -95,105 +92,6 @@ function findLayer(
     if (m) return m;
   }
   return null;
-}
-
-function EnvelopeFields({
-  layer,
-  onMutated,
-  fpsNum,
-  fpsDen,
-}: {
-  layer: LayerSummary;
-  onMutated: () => Promise<void>;
-  fpsNum: number;
-  fpsDen: number;
-}) {
-  const { t } = useTranslation();
-  const [label, setLabel] = useState<string>(layer.label ?? "");
-  const [enabled, setEnabled] = useState(layer.enabled);
-  const [tStartTc, setTStartTc] = useState(formatTimecode(layer.t_start_us, fpsNum, fpsDen));
-  const [tEndTc, setTEndTc] = useState(formatTimecode(layer.t_end_us, fpsNum, fpsDen));
-
-  // Reset form state when the user selects a different layer.
-  useEffect(() => {
-    setLabel(layer.label ?? "");
-    setEnabled(layer.enabled);
-    setTStartTc(formatTimecode(layer.t_start_us, fpsNum, fpsDen));
-    setTEndTc(formatTimecode(layer.t_end_us, fpsNum, fpsDen));
-  }, [layer.id, layer.label, layer.enabled, layer.t_start_us, layer.t_end_us, fpsNum, fpsDen]);
-
-  const commit = async (
-    patch: Parameters<typeof updateLayer>[1],
-  ): Promise<void> => {
-    try {
-      await updateLayer(layer.id, patch);
-      await onMutated();
-    } catch (e) {
-      console.warn("update_layer failed:", e);
-    }
-  };
-
-  return (
-    <section className="prop-section">
-      <h3>{t("property_panel.envelope")}</h3>
-      <Field label={t("property_panel.label")}>
-        <input
-          type="text"
-          value={label}
-          onChange={(e) => setLabel(e.target.value)}
-          onBlur={() => {
-            if ((layer.label ?? "") !== label) commit({ label });
-          }}
-        />
-      </Field>
-      <Field label={t("property_panel.enabled")}>
-        <AppSwitch
-          checked={enabled}
-          ariaLabel={t("property_panel.enabled")}
-          onCheckedChange={(next) => {
-            setEnabled(next);
-            commit({ enabled: next });
-          }}
-        />
-      </Field>
-      <Field
-        label={t("property_panel.t_start")}
-        hint={t("property_panel.t_start_hint")}
-      >
-        <input
-          type="text"
-          value={tStartTc}
-          onChange={(e) => setTStartTc(e.target.value)}
-          onBlur={() => {
-            const us = parseTimecode(tStartTc, fpsNum, fpsDen);
-            if (us !== null) {
-              commit({ t_start_us: us });
-            } else {
-              setTStartTc(formatTimecode(layer.t_start_us, fpsNum, fpsDen));
-            }
-          }}
-        />
-      </Field>
-      <Field
-        label={t("property_panel.t_end")}
-        hint={t("property_panel.t_end_hint")}
-      >
-        <input
-          type="text"
-          value={tEndTc}
-          onChange={(e) => setTEndTc(e.target.value)}
-          onBlur={() => {
-            const us = parseTimecode(tEndTc, fpsNum, fpsDen);
-            if (us !== null) {
-              commit({ t_end_us: us });
-            } else {
-              setTEndTc(formatTimecode(layer.t_end_us, fpsNum, fpsDen));
-            }
-          }}
-        />
-      </Field>
-    </section>
-  );
 }
 
 function KindFields({
