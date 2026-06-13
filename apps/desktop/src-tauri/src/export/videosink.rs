@@ -311,6 +311,27 @@ fn run_ws_sink(
     })
 }
 
+/// Tear down a sink left in `state`, if any. The app runs at most one export
+/// at a time, so a sink still present when a NEW export starts is always an
+/// orphan — its webview-side `finish()`/`cancel()` never ran. The dominant
+/// cause is a webview reload / HMR / crash while a 10-bit export was in flight:
+/// `VideoSinkState` is app-global and outlives the webview, so the JS that
+/// would have cleaned up is gone and only Rust can reclaim it. Without this,
+/// one leaked sink wedges every future export behind "already active" until a
+/// full app restart. Signal the old WS thread to wind down, kill its ffmpeg,
+/// and drop the handle (the thread observes `finishing` within its ~25ms
+/// accept-loop tick and exits; its listener was on an ephemeral port, so the
+/// fresh sink's `127.0.0.1:0` bind never collides).
+fn reclaim_stale_sink(state: &Mutex<Option<ActiveSink>>) {
+    let stale = state.lock().unwrap().take();
+    if let Some(sink) = stale {
+        warn!("video sink already active at start — reclaiming orphaned sink (prior export's teardown never ran, e.g. a webview reload mid-export)");
+        sink.shared.finishing.store(true, Ordering::Relaxed);
+        abort_child(&sink.shared);
+        drop(sink.shared.stdin.lock().unwrap().take());
+    }
+}
+
 #[tauri::command]
 pub async fn export_video_sink_start(
     state: State<'_, VideoSinkState>,
@@ -320,10 +341,10 @@ pub async fn export_video_sink_start(
     if args.mode != "discard" && args.mode != "ws" {
         return Err(format!("unknown sink mode {}", args.mode));
     }
-    // Cheap early bail: if already active, refuse immediately.
-    if state.0.lock().unwrap().is_some() {
-        return Err("video sink already active".into());
-    }
+    // Reclaim any orphaned sink rather than refusing: an active sink here is
+    // always stale (single-export invariant), and refusing would wedge every
+    // future export until an app restart. See `reclaim_stale_sink`.
+    reclaim_stale_sink(&state.0);
 
     let mut child_opt: Option<Child> = None;
     let mut stdin_opt: Option<ChildStdin> = None;
@@ -541,5 +562,55 @@ pub fn export_video_sink_write(
                 Ok(())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dummy_shared() -> Arc<SinkShared> {
+        Arc::new(SinkShared {
+            child: Mutex::new(None),
+            stdin: Mutex::new(None),
+            ws_connected: AtomicBool::new(false),
+            finishing: AtomicBool::new(false),
+            t0: Instant::now(),
+            last_write_ms: AtomicU64::new(0),
+            ipc_bytes: AtomicU64::new(0),
+            ipc_frames: AtomicU64::new(0),
+            stderr_tail: Mutex::new(String::new()),
+        })
+    }
+
+    // Regression: a leaked/orphaned sink (webview reloaded mid-export, etc.)
+    // must be reclaimed by the next start instead of wedging every future
+    // export behind "video sink already active".
+    #[test]
+    fn reclaim_clears_orphaned_sink_and_signals_finishing() {
+        let shared = dummy_shared();
+        let probe = shared.clone();
+        // Stand-in for the orphaned sink's WS thread join handle.
+        let join =
+            std::thread::spawn(|| Ok(SinkStats { bytes: 0, frames: 0, elapsed_ms: 0 }));
+        let state = Mutex::new(Some(ActiveSink { join: Some(join), shared }));
+
+        reclaim_stale_sink(&state);
+
+        assert!(
+            state.lock().unwrap().is_none(),
+            "an orphaned sink must be reclaimed so the next start can proceed"
+        );
+        assert!(
+            probe.finishing.load(Ordering::Relaxed),
+            "reclaim must signal the old WS thread to wind down"
+        );
+    }
+
+    #[test]
+    fn reclaim_is_a_noop_when_no_sink_is_active() {
+        let state: Mutex<Option<ActiveSink>> = Mutex::new(None);
+        reclaim_stale_sink(&state);
+        assert!(state.lock().unwrap().is_none());
     }
 }
