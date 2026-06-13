@@ -17,7 +17,10 @@ export function LayerContextMenu({
   y,
   layerId,
   layerKind,
+  layerEnabled,
   onClose,
+  onRename,
+  onToggleEnabled,
   onSeparateAudio,
   onPrebakeNow,
 }: {
@@ -25,7 +28,10 @@ export function LayerContextMenu({
   y: number;
   layerId: string;
   layerKind: string;
+  layerEnabled: boolean;
   onClose: () => void;
+  onRename: (id: string) => void;
+  onToggleEnabled: (id: string, enabled: boolean) => void;
   onSeparateAudio: (id: string) => void;
   onPrebakeNow: (id: string) => void;
 }) {
@@ -64,28 +70,43 @@ export function LayerContextMenu({
           className="z-50"
         >
           <MenuPrimitive.Popup className="menu-list">
-            {layerKind === "Audio" ? (
-              <MenuPrimitive.Item
-                className="menu-item"
-                onClick={() => onSeparateAudio(layerId)}
-              >
-                {t("timeline.separate_audio", {
-                  defaultValue: "Separate audio to new track",
-                })}
-              </MenuPrimitive.Item>
-            ) : layerKind === "Motif" ? (
-              <MenuPrimitive.Item
-                className="menu-item"
-                onClick={() => onPrebakeNow(layerId)}
-              >
-                {t("timeline.prebake_now", { defaultValue: "Pre-bake now" })}
-              </MenuPrimitive.Item>
-            ) : (
-              <MenuPrimitive.Item className="menu-item" disabled>
-                {t("timeline.no_actions_here", {
-                  defaultValue: "(no actions for this layer)",
-                })}
-              </MenuPrimitive.Item>
+            <MenuPrimitive.Item
+              className="menu-item"
+              onClick={() => onRename(layerId)}
+            >
+              {t("timeline.rename", { defaultValue: "Rename" })}
+            </MenuPrimitive.Item>
+            <MenuPrimitive.Item
+              className="menu-item"
+              onClick={() => onToggleEnabled(layerId, !layerEnabled)}
+            >
+              {layerEnabled
+                ? t("timeline.disable_layer", { defaultValue: "Disable layer" })
+                : t("timeline.enable_layer", { defaultValue: "Enable layer" })}
+            </MenuPrimitive.Item>
+            {layerKind === "Audio" && (
+              <>
+                <MenuPrimitive.Separator className="menu-separator" />
+                <MenuPrimitive.Item
+                  className="menu-item"
+                  onClick={() => onSeparateAudio(layerId)}
+                >
+                  {t("timeline.separate_audio", {
+                    defaultValue: "Separate audio to new track",
+                  })}
+                </MenuPrimitive.Item>
+              </>
+            )}
+            {layerKind === "Motif" && (
+              <>
+                <MenuPrimitive.Separator className="menu-separator" />
+                <MenuPrimitive.Item
+                  className="menu-item"
+                  onClick={() => onPrebakeNow(layerId)}
+                >
+                  {t("timeline.prebake_now", { defaultValue: "Pre-bake now" })}
+                </MenuPrimitive.Item>
+              </>
             )}
           </MenuPrimitive.Popup>
         </MenuPrimitive.Positioner>

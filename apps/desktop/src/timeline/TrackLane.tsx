@@ -77,6 +77,7 @@ export function TrackLane({
     e: React.MouseEvent,
     layerId: string,
     layerKind: string,
+    layerEnabled: boolean,
   ) => void;
   onCommitLabel: (layerId: string, label: string) => void;
   isGroupStart: boolean;
