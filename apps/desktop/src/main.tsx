@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { App } from "./App";
 import { StartupScreen } from "./startup/StartupScreen";
+import { PerfHUDWindow } from "./render/PerfHUD";
 import {
   projectOpen,
   recentsGetReopenOnLaunch,
@@ -17,16 +18,24 @@ import "./i18n";
 import "./app.css";
 import "./styles.css";
 
+const isPerfHudWindow = new URLSearchParams(window.location.search).get("perfHud") === "1";
+
 // Motifs: hand the clock-takeover runtime source to Rust once at boot so the
 // hidden Motif host window can inject it as its `initialization_script`.
 // Fire-and-forget — the capture command errors clearly if this hasn't landed.
-void invoke("motif_register_runtime", { source: MOTIF_RUNTIME_SOURCE });
+if (!isPerfHudWindow) {
+  void invoke("motif_register_runtime", { source: MOTIF_RUNTIME_SOURCE });
+}
 // Populate the runtime Motif catalog (built-ins + on-disk user Motifs) so the
 // frame-math and picker see user Motifs. Fire-and-forget; failures keep the
 // built-in-only catalog.
-void syncUserMotifsFromBackend();
+if (!isPerfHudWindow) {
+  void syncUserMotifsFromBackend();
+}
 // Keep the runtime Motif catalog fresh as drafts are written/installed/deleted.
-void installMotifsChangedListener();
+if (!isPerfHudWindow) {
+  void installMotifsChangedListener();
+}
 
 const root = document.getElementById("root");
 if (!root) throw new Error("#root missing from index.html");
@@ -149,6 +158,6 @@ function Root() {
 
 ReactDOM.createRoot(root).render(
   <React.StrictMode>
-    <Root />
+    {isPerfHudWindow ? <PerfHUDWindow /> : <Root />}
   </React.StrictMode>,
 );

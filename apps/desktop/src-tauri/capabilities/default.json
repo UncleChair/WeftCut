@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capabilities for the main window and the Render & Play popup",
-  "windows": ["main", "render-play-*"],
+  "description": "Capabilities for the main window, Render & Play popup, and Performance HUD popup",
+  "windows": ["main", "render-play-*", "perf-hud"],
   "permissions": [
     "core:default",
     "core:event:default",
@@ -14,10 +14,12 @@
     "core:window:allow-close",
     "core:window:allow-destroy",
     "core:window:allow-show",
+    "core:window:allow-set-focus",
     "core:window:allow-start-dragging",
     "core:window:allow-set-progress-bar",
     "core:window:allow-is-focused",
     "core:webview:default",
+    "core:webview:allow-create-webview-window",
     "notification:default",
     "dialog:default",
     "fs:default",
