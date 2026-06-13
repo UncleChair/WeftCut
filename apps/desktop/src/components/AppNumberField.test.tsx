@@ -40,4 +40,20 @@ describe("AppNumberField", () => {
     render(<AppNumberField value={1} onValueChange={() => {}} disabled ariaLabel="x" />);
     expect((screen.getByLabelText("x") as HTMLInputElement).disabled).toBe(true);
   });
+
+  it("renders an empty field when value is null", () => {
+    render(<AppNumberField value={null} onValueChange={() => {}} ariaLabel="x" />);
+    expect((screen.getByLabelText("x") as HTMLInputElement).value).toBe("");
+  });
+
+  it("calls onClear (not onValueChange) when an optional field is cleared", async () => {
+    const onValueChange = vi.fn();
+    const onClear = vi.fn();
+    render(
+      <AppNumberField value={5} onValueChange={onValueChange} onClear={onClear} ariaLabel="x" />,
+    );
+    await userEvent.clear(screen.getByLabelText("x"));
+    expect(onClear).toHaveBeenCalled();
+    expect(onValueChange).not.toHaveBeenCalledWith(null);
+  });
 });

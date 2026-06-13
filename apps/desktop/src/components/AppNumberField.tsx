@@ -3,7 +3,9 @@ import { ChevronUpIcon, ChevronDownIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export interface AppNumberFieldProps {
-  value: number;
+  /// `null` renders an empty field — for optional values (e.g. an unset
+  /// custom bitrate). Required-value call sites just pass their number.
+  value: number | null;
   /// Live value (every keystroke / scrub tick). Drives the call site's local
   /// state, mirroring the old `parseFloat(e.target.value) || prev` onChange.
   onValueChange: (value: number) => void;
@@ -11,6 +13,10 @@ export interface AppNumberFieldProps {
   /// commit-on-blur so undo stays one entry per edit. Omit for live-commit
   /// call sites (they use onValueChange only).
   onCommit?: (value: number) => void;
+  /// Fires (live) when the field is cleared to empty. Without it, an empty
+  /// field is dropped so the call site keeps its last good number; with it,
+  /// the call site can represent the unset state (e.g. bitrate → null).
+  onClear?: () => void;
   min?: number;
   max?: number;
   step?: number;
@@ -23,14 +29,16 @@ export interface AppNumberFieldProps {
 
 /// The one numeric input for every WeftCut form. Wraps Base UI NumberField:
 /// keyboard arrows, drag-scrub (the left grip), and hover-revealed steppers.
-/// `value` may go null mid-edit (empty field) — we drop nulls so the call
-/// site keeps the last good number, matching the old `|| prev` guard.
+/// `value` may go null mid-edit (empty field): without `onClear` we drop the
+/// null so the call site keeps its last good number (matching the old
+/// `|| prev` guard); with `onClear` the call site learns the field is unset.
 /// No ref forwarding: number fields aren't programmatically focused (unlike
 /// the rename/timecode AppInput sites).
 export function AppNumberField({
   value,
   onValueChange,
   onCommit,
+  onClear,
   min,
   max,
   step,
@@ -48,6 +56,7 @@ export function AppNumberField({
       disabled={disabled ?? false}
       onValueChange={(next) => {
         if (next !== null) onValueChange(next);
+        else onClear?.();
       }}
       onValueCommitted={(next) => {
         if (next !== null) onCommit?.(next);
