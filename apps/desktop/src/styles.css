@@ -4969,6 +4969,8 @@ input.preview-timecode:focus {
 .app-number-input {
   /* leave room for the grip; steppers overlay so need no reserved width */
   padding-left: 14px;
+  /* aligned digits, matching the old .prop-field-control input[type=number] */
+  font-variant-numeric: tabular-nums;
 }
 .app-number-scrub {
   position: absolute;
