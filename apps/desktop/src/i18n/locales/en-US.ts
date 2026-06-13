@@ -321,9 +321,20 @@ const enUS = {
     channels_stereo: "Stereo",
     bit_depth: "Bit depth",
     bit_depth_8: "8-bit",
-    bit_depth_10: "10-bit (HEVC Main10 / AV1)",
+    bit_depth_10: "10-bit (HEVC Main10 / AV1) — experimental",
     bit_depth_hint: "Timeline has 10-bit sources — 10-bit output preserves their precision.",
-    bit_depth_slow_hint: "10-bit export runs well below realtime (software decode + native encode) — expect it to take noticeably longer than an 8-bit export.",
+    bit_depth_experimental_warning:
+      "10-bit export is experimental. The preview is shown in standard 8-bit, so on-screen colors and gradients may not match the final 10-bit file — HDR / wide-gamut preview isn't possible on the web platform yet. It also runs well below realtime and may fail or produce incorrect output on some sources.",
+    experimental_title: "10-bit export is experimental",
+    experimental_body:
+      "This feature is still experimental and may fail or produce incorrect output:",
+    experimental_point_preview:
+      "The preview is shown in 8-bit/SDR and can't be guaranteed to match the actual 10-bit result — color, gradients, and HDR may differ.",
+    experimental_point_slow:
+      "Software 10-bit decode runs well below realtime — 4K or long projects can be very slow.",
+    experimental_point_reliability:
+      "Some sources (e.g. HEVC Main10 originals) get transcoded and may be less reliable.",
+    experimental_proceed: "Export anyway",
   },
   import_proxy: {
     title: "Some clips need optimizing",

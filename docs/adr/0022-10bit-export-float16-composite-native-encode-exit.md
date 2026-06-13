@@ -106,6 +106,16 @@ decision itself is unchanged:
   high-water: a per-ring byte target over the first frame's actual plane
   bytes, clamped to an entry floor/ceiling. 4K bounds at ~500 MB (entry
   floor) instead of ~1.2 GB.
+- **v1 10-bit export ships as an experimental feature.** The export-
+  settings UI labels the 10-bit option experimental and gates the export
+  click behind an explicit confirmation. The driving caveat is preview
+  fidelity: HDR/wide-gamut preview is unavailable on the web platform
+  (the preview stays 8-bit/SDR per the Context section), so what the user
+  sees **cannot be guaranteed to match** the 10-bit output — colors and
+  gradients may differ. Compounding hazards: software 10-bit decode runs
+  below realtime (4K especially), and HEVC Main10 source conform is still
+  pending (HW-opaque originals get transcoded). The lane stays selectable;
+  it is flagged, not removed.
 
 Current state lives in `docs/render.md` ("Encode exits"); remaining
 follow-ups in `docs/roadmap.md`.

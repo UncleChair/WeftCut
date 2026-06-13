@@ -484,6 +484,13 @@ ring cap's entry-floor case) through the full 10-bit path and confirms
 distinct-step counts above the 8-bit ceiling at the analyzer's
 gradient-row meter, plus a long-GOP B-frame reorder-tail regression.
 
+This exit ships as **experimental**: the export-settings UI labels the
+10-bit option experimental and confirms the export click. The preview
+cannot be guaranteed to match the 10-bit output — there is no HDR/wide-
+gamut preview on the web platform, so the preview stays 8-bit/SDR — and
+the path runs below realtime (4K especially), with HEVC Main10 source
+conform still pending (ADR 0022).
+
 Cross-reference: ADR 0022 records the decision and its probe-backed
 rationale (WebGL2 stock f16, the WebSocket transport, copyTo ingest,
 deferred HDR); ADR 0021 describes the color model whose named revisit
