@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { Tooltip } from "@base-ui/react/tooltip";
 import { formatTimecode, parseTimecode } from "../frames";
+import { AppNumberField } from "../components/AppNumberField";
 import { AppSelect } from "../components/AppSelect";
 import { AppSlider } from "../components/AppSlider";
 import { AppSwitch } from "../components/AppSwitch";
@@ -186,14 +187,14 @@ function TextFields({
         />
       </Field>
       <Field label={t("property_panel.font_size_px")}>
-        <input
-          type="number"
+        <AppNumberField
           value={size}
           step={1}
           min={6}
           max={400}
-          onChange={(e) => setSize(parseFloat(e.target.value) || size)}
-          onBlur={() => commit({ kind: "Text", font_size_px: size })}
+          ariaLabel={t("property_panel.font_size_px")}
+          onValueChange={setSize}
+          onCommit={(v) => commit({ kind: "Text", font_size_px: v })}
         />
       </Field>
       <Field label={t("property_panel.color")}>
