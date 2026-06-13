@@ -28,7 +28,10 @@ export interface AppNumberFieldProps {
 }
 
 /// The one numeric input for every WeftCut form. Wraps Base UI NumberField:
-/// keyboard arrows, drag-scrub (the left grip), and hover-revealed steppers.
+/// type a value, use ↑/↓ arrow keys, or the hover-revealed +/- steppers.
+/// (Drag-scrub was dropped: Base UI's ScrubArea needs the Pointer Lock API,
+/// which doesn't engage in WebView2 — the bounded cursor only ever scrubbed
+/// the value up, never down.)
 /// `value` may go null mid-edit (empty field): without `onClear` we drop the
 /// null so the call site keeps its last good number (matching the old
 /// `|| prev` guard); with `onClear` the call site learns the field is unset.
@@ -64,9 +67,6 @@ export function AppNumberField({
       className={cn("app-number-field", className)}
     >
       <NumberField.Group className="app-number-group">
-        <NumberField.ScrubArea className="app-number-scrub" direction="horizontal">
-          <span className="app-number-grip" aria-hidden="true" />
-        </NumberField.ScrubArea>
         <NumberField.Input
           aria-label={ariaLabel}
           className={cn("app-input", "app-number-input", align === "center" && "app-input--center")}
