@@ -16,6 +16,8 @@ import {
 } from "../ipc";
 import { formatTimecode, parseTimecode } from "../frames";
 import { AppDialog } from "../components/AppDialog";
+import { AppInput } from "../components/AppInput";
+import { AppNumberField } from "../components/AppNumberField";
 import { AppSlider } from "../components/AppSlider";
 import { AppSwitch } from "../components/AppSwitch";
 import { Button } from "@/components/ui/button";
@@ -230,25 +232,10 @@ function TimelineSnapSection({
           onValueCommitted={(v) => void commitStrength(v)}
           ariaLabel={t("settings.tail_snap_strength")}
         />
-        <input
-          type="number"
-          className="settings-input settings-input-narrow"
-          min={TAIL_SNAP_MIN_PX}
-          max={TAIL_SNAP_MAX_PX}
-          value={draftStrengthPx}
-          disabled={!enabled}
-          onChange={(e) => setDraftStrengthPx(Number(e.target.value))}
-          onBlur={(e) => {
-            void commitStrength(Number(e.currentTarget.value));
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              void commitStrength(Number(e.currentTarget.value));
-            }
-          }}
-          aria-label={t("settings.tail_snap_strength")}
-        />
+        <AppNumberField value={draftStrengthPx} min={TAIL_SNAP_MIN_PX} max={TAIL_SNAP_MAX_PX}
+          disabled={!enabled} align="center" className="settings-input-narrow"
+          ariaLabel={t("settings.tail_snap_strength")}
+          onValueChange={setDraftStrengthPx} onCommit={(v) => void commitStrength(v)} />
         <span className="settings-slider-unit">px</span>
       </div>
       <p className="settings-toggle-hint">
@@ -442,19 +429,10 @@ function CompositionSection({
             {t("settings.pin_composition_duration")}
           </span>
         </label>
-        <input
-          id="composition-duration"
-          type="text"
-          className={`settings-input ${localError ? "is-invalid" : ""}`}
-          value={draft ?? displayValue}
-          disabled={disabled || !pinned}
-          spellCheck={false}
-          aria-label={t("settings.composition_duration_label")}
-          onChange={(e) => {
-            const v = e.target.value;
-            setDraft(v);
-            setLocalError(validateDraft(v));
-          }}
+        <AppInput id="composition-duration" value={draft ?? displayValue} disabled={disabled || !pinned}
+          spellCheck={false} mono align="center" invalid={!!localError} className="settings-input"
+          ariaLabel={t("settings.composition_duration_label")}
+          onValueChange={(v) => { setDraft(v); setLocalError(validateDraft(v)); }}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               e.preventDefault();
@@ -468,14 +446,11 @@ function CompositionSection({
               setLocalError(null);
             }
           }}
-          onBlur={() => {
-            if (draft !== null) void commit();
-          }}
+          onBlur={() => { if (draft !== null) void commit(); }}
           aria-invalid={localError !== null}
           aria-describedby={
             localError ? "composition-duration-error" : "composition-duration-hint"
-          }
-        />
+          } />
       </div>
       {localError ? (
         <p
@@ -580,19 +555,14 @@ function ApiKeyRow({
         </span>
       </div>
       <div className="settings-key-input-row">
-        <input
-          type="password"
-          autoComplete="off"
-          spellCheck={false}
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
+        <AppInput type="password" mono autoComplete="off" spellCheck={false} value={value}
           placeholder={
             status.configured
               ? t("settings.placeholder_set")
               : t("settings.placeholder_unset")
           }
           disabled={busy !== null}
-        />
+          onValueChange={setValue} />
         <Button
           size="sm"
           onClick={save}
