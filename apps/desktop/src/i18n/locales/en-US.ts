@@ -264,6 +264,10 @@ const enUS = {
     preparing_cancel: "Cancel",
     failed_prepare:
       "Couldn't prepare {{labels}} for export — the file may be corrupt or unsupported. Re-import it and try again.",
+    no_video_material:
+      "No video to export: the selected range has no visible layers.",
+    no_audio_material:
+      "No audio to export: the selected range has no audio.",
     progress_label:
       "{{percent}}% · frame {{frame}} · {{fps}}fps · {{speed}}x",
     complete: "Exported to {{path}}",

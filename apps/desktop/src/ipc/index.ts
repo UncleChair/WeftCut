@@ -745,8 +745,8 @@ export async function exportProjectAudioOnly(
   outputPath: string,
   audio: AudioExportSpec,
   range: { startUs: number; endUs: number } | null,
-): Promise<void> {
-  return invoke<void>("export_project_audio_only", {
+): Promise<boolean> {
+  return invoke<boolean>("export_project_audio_only", {
     outputPath,
     audio,
     startUs: range?.startUs ?? null,

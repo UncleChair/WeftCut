@@ -64,7 +64,7 @@ pub async fn export_audio_only(
     output: &Path,
     audio: &AudioEncodeSpec,
     window_us: Option<(i64, i64)>,
-) -> Result<()> {
+) -> Result<bool> {
     mix_and_encode(project, output, audio, window_us).await
 }
 
@@ -75,7 +75,7 @@ async fn mix_and_encode(
     output: &Path,
     audio: &AudioEncodeSpec,
     window_us: Option<(i64, i64)>,
-) -> Result<()> {
+) -> Result<bool> {
     use crate::audio::mix::{MIX_BLOCK_FRAMES, mix_block, plan_for_project};
 
     if !ffmpeg_is_installed() {
@@ -92,7 +92,7 @@ async fn mix_and_encode(
         // mux step tolerates a missing audio file by stream-copy muxing
         // video-only.
         warn!("audio-only export: no audio layers in range; skipping ffmpeg");
-        return Ok(());
+        return Ok(false);
     }
 
     let target_sr = audio.sample_rate.unwrap_or(project.composition.sample_rate);
@@ -196,7 +196,7 @@ async fn mix_and_encode(
         );
     }
     info!("audio mix+encode complete → {}", output.display());
-    Ok(())
+    Ok(true)
 }
 
 /// Build the ffmpeg argv for `mux_to_file`. Extracted out of the async
@@ -633,9 +633,10 @@ mod tests {
             sample_rate: Some(48_000),
             channels: Some(2),
         };
-        super::mix_and_encode(&p, &out, &spec, None)
+        let produced = super::mix_and_encode(&p, &out, &spec, None)
             .await
             .expect("mix_and_encode");
+        assert!(produced, "two audio layers in range -> should produce a file");
         assert!(out.is_file() && std::fs::metadata(&out).unwrap().len() > 0);
 
         // Decode back to f32 and inspect the middle 50% (skips AAC priming

@@ -2312,7 +2312,7 @@ pub async fn export_project_audio_only(
     audio: crate::export::AudioEncodeSpec,
     start_us: Option<i64>,
     end_us: Option<i64>,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let snap = handle.snapshot().await;
     let project = (*snap).clone();
     let path = PathBuf::from(output_path);
