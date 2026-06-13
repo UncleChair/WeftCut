@@ -39,6 +39,7 @@ export function TrackLane({
   onDragStart,
   onMediaDrop,
   onContextMenu,
+  onCommitLabel,
   isGroupStart,
   isRevealed,
   isResizing,
@@ -77,6 +78,7 @@ export function TrackLane({
     layerId: string,
     layerKind: string,
   ) => void;
+  onCommitLabel: (layerId: string, label: string) => void;
   isGroupStart: boolean;
   /// R.7 inline-reveal flag. The lane renders with extra chrome
   /// (dashed border / "hidden" badge) so the user knows this row is
@@ -239,6 +241,7 @@ export function TrackLane({
             onSelectFromClick={onSelectFromClick}
             onDragStart={onDragStart}
             onContextMenu={onContextMenu}
+            onCommitLabel={onCommitLabel}
             fpsNum={fpsNum}
             fpsDen={fpsDen}
           />
