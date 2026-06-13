@@ -1065,14 +1065,20 @@ function ColorFields({
         <AppNumberField
           value={v.width}
           ariaLabel={t("property_panel.width")}
-          onValueChange={(n) => commit({ kind: "Color", width: n })}
+          step={1}
+          // width is u32 on the Rust side — round so a manually-typed
+          // fraction can't fail serde (the old parseInt truncated likewise).
+          onValueChange={(n) => commit({ kind: "Color", width: Math.round(n) })}
         />
       </Field>
       <Field label={t("property_panel.height")}>
         <AppNumberField
           value={v.height}
           ariaLabel={t("property_panel.height")}
-          onValueChange={(n) => commit({ kind: "Color", height: n })}
+          step={1}
+          // height is u32 on the Rust side — round so a manually-typed
+          // fraction can't fail serde (the old parseInt truncated likewise).
+          onValueChange={(n) => commit({ kind: "Color", height: Math.round(n) })}
         />
       </Field>
     </section>
