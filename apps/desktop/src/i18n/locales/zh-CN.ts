@@ -261,6 +261,8 @@ const zhCN: Resources = {
     preparing_cancel: "取消",
     failed_prepare:
       "无法为 {{labels}} 准备导出媒体 —— 文件可能损坏或不受支持。请重新导入后再试。",
+    no_video_material: "无可导出的视频：所选范围内没有可见图层。",
+    no_audio_material: "无可导出的音频：所选范围内没有音频。",
     progress_label:
       "{{percent}}% · 第 {{frame}} 帧 · {{fps}}fps · {{speed}}x",
     complete: "已导出到 {{path}}",

@@ -56,3 +56,28 @@ export function referencedVideoMediaIds(
     selectActiveVideoLayers(summary, startUs, endUs - 1).map((l) => l.mediaId),
   );
 }
+
+/// True iff the export of `[startUs, endUs)` has any *visible* content — an
+/// enabled non-Audio layer (VideoClip / ImageOverlay / Text / Color / Motif)
+/// on an enabled track overlapping the range. A video export with nothing
+/// visible would emit pure black; the caller rejects that as "no video
+/// material" instead. (Audio emptiness is judged Rust-side — a video clip's
+/// audio stream isn't visible from a ProjectSummary.)
+export function hasVisibleContent(
+  summary: ProjectSummary,
+  startUs: number,
+  endUs: number,
+): boolean {
+  for (const track of summary.tracks) {
+    if (!track.enabled) continue;
+    for (const layer of track.layers) {
+      if (!layer.enabled) continue;
+      if (layer.params.kind === "Audio") continue;
+      // Half-open overlap with [startUs, endUs).
+      if (layer.t_end_us <= startUs) continue;
+      if (layer.t_start_us >= endUs) continue;
+      return true;
+    }
+  }
+  return false;
+}

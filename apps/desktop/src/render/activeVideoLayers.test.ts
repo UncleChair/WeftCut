@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { selectActiveVideoLayers, referencedVideoMediaIds } from "./activeVideoLayers";
+import {
+  selectActiveVideoLayers,
+  referencedVideoMediaIds,
+  hasVisibleContent,
+} from "./activeVideoLayers";
 import type { ProjectSummary } from "../ipc";
 
 const layer = (over: Record<string, unknown>) => ({
@@ -53,5 +57,40 @@ describe("referencedVideoMediaIds", () => {
     ]);
     // Range [0, 1000): A and B (both media "a"); C excluded.
     expect([...referencedVideoMediaIds(s, 0, 1000)].sort()).toEqual(["a"]);
+  });
+});
+
+describe("hasVisibleContent", () => {
+  it("is true when any enabled non-Audio layer overlaps the range", () => {
+    for (const kind of ["VideoClip", "ImageOverlay", "Text", "Color", "Motif"]) {
+      const s = summaryOf([
+        { enabled: true, layers: [layer({ params: { kind } })] },
+      ]);
+      expect(hasVisibleContent(s, 0, 1_000_000)).toBe(true);
+    }
+  });
+
+  it("is false for an audio-only project (only Audio layers)", () => {
+    const s = summaryOf([
+      { enabled: true, layers: [layer({ params: { kind: "Audio", media_id: "a" } })] },
+    ]);
+    expect(hasVisibleContent(s, 0, 1_000_000)).toBe(false);
+  });
+
+  it("ignores disabled tracks, disabled layers, and out-of-range layers", () => {
+    const s = summaryOf([
+      { enabled: false, layers: [layer({ params: { kind: "Color" } })] },
+      { enabled: true, layers: [layer({ enabled: false, params: { kind: "Color" } })] },
+      { enabled: true, layers: [layer({ t_start_us: 5_000_000, t_end_us: 6_000_000, params: { kind: "Color" } })] },
+    ]);
+    expect(hasVisibleContent(s, 0, 1_000_000)).toBe(false);
+  });
+
+  it("uses half-open overlap with [startUs, endUs)", () => {
+    const s = summaryOf([
+      { enabled: true, layers: [layer({ t_start_us: 1_000_000, t_end_us: 2_000_000, params: { kind: "Color" } })] },
+    ]);
+    expect(hasVisibleContent(s, 0, 1_000_000)).toBe(false); // ends exactly at start of nothing; layer starts at endUs
+    expect(hasVisibleContent(s, 0, 1_000_001)).toBe(true);
   });
 });

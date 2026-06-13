@@ -54,7 +54,7 @@ import { MotifPicker } from "./motifs/MotifPicker";
 import { MediaThumbnail } from "./panels/MediaThumbnail";
 import { mediaReadiness, type ProxyState } from "./panels/mediaReadiness";
 import { probeSourceDecodable } from "./render/decoder/probeSourceDecodable";
-import { referencedVideoMediaIds } from "./render/activeVideoLayers";
+import { hasVisibleContent, referencedVideoMediaIds } from "./render/activeVideoLayers";
 import {
   type ExportSettings,
   codecString,
@@ -966,6 +966,23 @@ export function App({ onCloseProject }: AppProps) {
   // clear.
   const runExportWithSettings = useCallback(
     async (settings: ExportSettings, path: string, range?: { startUs: number; endUs: number }) => {
+    // ---- No-material guard -----------------------------------------------
+    // A video export with nothing visible to render would emit pure black —
+    // reject it as "no video material" instead. (Audio emptiness is judged
+    // below via export_project_audio_only's `produced` flag, since a clip's
+    // audio stream isn't visible from the project summary.)
+    if (settings.includeVideo) {
+      const proj = useProjectStore.getState().summary;
+      if (proj) {
+        const sUs = range?.startUs ?? 0;
+        const eUs = range?.endUs ?? proj.duration_us;
+        if (!hasVisibleContent(proj, sUs, eUs)) {
+          setExportState({ kind: "error", detail: t("export.no_video_material") });
+          return;
+        }
+      }
+    }
+
     // ---- Audio-only export: skip every video stage -----------------------
     // No decode/proxy gate, motif bake, encode, sink, or mux — just conform the
     // audible layers and write the audio file straight to `path` (.m4a/.mka by
@@ -974,7 +991,13 @@ export function App({ onCloseProject }: AppProps) {
     // false), which the existing code below already does.
     if (settings.includeAudio && !settings.includeVideo) {
       const store = useProjectStore.getState();
-      const proj = store.summary;
+      // Read the project from Rust directly, not the event-driven store: the
+      // store summary can lag a just-added layer (its autofit `duration_us`
+      // arrives a tick later), and a stale `duration_us` of 0 would window the
+      // export to [0,0] → empty plan → a false "no audio material". The main
+      // video path is immune because it reads the summary only after its
+      // readiness-gate awaits.
+      const proj = await projectSummary().catch(() => store.summary);
       if (!proj) {
         setExportState({ kind: "error", detail: "No project loaded." });
         return;
@@ -1014,7 +1037,7 @@ export function App({ onCloseProject }: AppProps) {
       }
       try {
         setExportState({ kind: "starting" });
-        await exportProjectAudioOnly(
+        const produced = await exportProjectAudioOnly(
           path,
           {
             codec: settings.audio.codec,
@@ -1024,6 +1047,15 @@ export function App({ onCloseProject }: AppProps) {
           },
           { startUs, endUs },
         );
+        if (!produced) {
+          // No audio layers in range → Rust wrote nothing. Surface it rather
+          // than reporting a "complete" export with no file on disk.
+          setExportState({
+            kind: "error",
+            detail: t("export.no_audio_material"),
+          });
+          return;
+        }
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error("[weftcut/pixi] audio-only export failed:", e);
