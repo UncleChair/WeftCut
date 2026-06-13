@@ -1,15 +1,23 @@
-// Dev-only performance HUD overlaid on the preview canvas. Reads the
-// Compositor's `getPerfSnapshot()` every 500 ms and runs its own rAF
-// loop to measure real frame intervals. Toggle visibility with
-// Ctrl+Shift+P (or pass `forceVisible` from a parent that already
-// gates on `import.meta.env.DEV`).
+// Dev-only performance HUD. Two surfaces share one data feed:
 //
-// Why this exists: console-only logging is fine for one-shot
-// diagnostics but won't catch trends — e.g. "ring drains during scrub
-// and never refills". With this HUD pinned to the corner during real
-// editing we can watch rAF P99 inch up before the user perceives a
-// stutter, or spot a decoder queue stalling at zero while ring is
-// also empty.
+//  • The inline overlay (this `PerfHUD`) is a compact vitals strip pinned to
+//    the preview corner — a glance-and-go health check. Toggle it with
+//    Ctrl+Shift+P. Its health dot turns amber when any deeper metric is hot,
+//    the cue to pop out the full view.
+//  • The popup (`PerfHUDWindow`, `/?perfHud=1`) is the full dashboard:
+//    stat tiles, a frame-interval sparkline, an audio meter, and the per-clip
+//    decode table. The two are mutually exclusive — while the popup is open
+//    the inline overlay is suppressed, and closing the popup restores it.
+//
+// This component stays mounted regardless of which surface is showing so its
+// polling + `PERF_HUD_SNAPSHOT_EVENT` emit keeps feeding the popup, which has
+// no Compositor ref of its own.
+//
+// Why this exists: console-only logging is fine for one-shot diagnostics but
+// won't catch trends — e.g. "ring drains during scrub and never refills".
+// Pinned during real editing, the HUD lets us watch rAF P99 inch up before
+// the user perceives a stutter, or spot a decoder queue stalling at zero
+// while the ring is also empty.
 
 import {
   useCallback,
@@ -22,6 +30,7 @@ import {
 } from "react";
 import { listen, emit, type UnlistenFn } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { PanelTopOpenIcon, RotateCcwIcon } from "lucide-react";
 
 import { getSystemStats, type SystemStats } from "../ipc";
@@ -50,7 +59,18 @@ export interface PerfMemory {
 
 function readMemory(): PerfMemory | null {
   const p = performance as unknown as { memory?: PerfMemory };
-  return p.memory ?? null;
+  const m = p.memory;
+  // Copy into a plain object: `performance.memory`'s fields are prototype
+  // getters, not own enumerable properties, so the live object serializes to
+  // `{}` when the sample crosses the Tauri event boundary to the popup —
+  // which rendered the heap tile as "NaN MB".
+  return m
+    ? {
+        usedJSHeapSize: m.usedJSHeapSize,
+        totalJSHeapSize: m.totalJSHeapSize,
+        jsHeapSizeLimit: m.jsHeapSizeLimit,
+      }
+    : null;
 }
 
 /// Ring of recent rAF intervals (ms). Sized for ~2 s @ 60 Hz so the
@@ -90,7 +110,7 @@ function p50p99FromRing(ring: IntervalRing): { p50: number; p99: number } {
 }
 
 function formatMb(bytes: number): string {
-  return `${(bytes / 1024 / 1024).toFixed(0)} MB`;
+  return `${(bytes / 1024 / 1024).toFixed(0)}`;
 }
 
 function formatMs(ms: number): string {
@@ -109,40 +129,23 @@ function jsonSafeDb(db: number): number {
   return Number.isFinite(db) ? db : -120;
 }
 
-type MetricTone = "ok" | "warn" | "muted";
+/// Frames-per-second from a mean frame interval (ms). 0 before the rAF
+/// ring has data.
+function fpsFromMs(ms: number): number {
+  return ms > 0 ? Math.round(1000 / ms) : 0;
+}
+
 const HUD_EDGE_MARGIN = 12;
 export const PERF_HUD_SNAPSHOT_EVENT = "weftcut://perf-hud-snapshot";
+/// Emitted (globally) by the popup from its own close handler so the inline
+/// overlay can restore itself the instant the popup is dismissed.
+const PERF_HUD_WINDOW_CLOSED_EVENT = "weftcut://perf-hud-window-closed";
+/// Emitted (globally) by the popup's reset button; the inline component owns
+/// the Compositor ref, so it does the actual peak reset.
+const PERF_HUD_RESET_EVENT = "weftcut://perf-hud-reset";
 const PERF_HUD_WINDOW_LABEL = "perf-hud";
-
-function toneClass(tone: MetricTone | undefined): string {
-  return tone ? ` perf-hud-metric-${tone}` : "";
-}
-
-function mutedDash(): ReactNode {
-  return <span className="perf-hud-muted">—</span>;
-}
-
-function MetricCard({
-  label,
-  value,
-  meta,
-  tone,
-  title,
-}: {
-  label: string;
-  value: ReactNode;
-  meta?: ReactNode | undefined;
-  tone?: MetricTone | undefined;
-  title?: string | undefined;
-}) {
-  return (
-    <div className={`perf-hud-metric${toneClass(tone)}`} title={title}>
-      <div className="perf-hud-label">{label}</div>
-      <div className="perf-hud-value">{value}</div>
-      {meta ? <div className="perf-hud-meta">{meta}</div> : null}
-    </div>
-  );
-}
+/// Sparkline history depth (~30 s at the 500 ms emit cadence).
+const SPARK_CAP = 60;
 
 export interface PerfHudSample {
   snap: CompositorPerfSnapshot | null;
@@ -154,6 +157,12 @@ export interface PerfHudSample {
   fpsByLayer: Array<[string, number]>;
   sys: SystemStats | null;
   aud: { rmsDb: number; peakDb: number } | null;
+}
+
+/// One point of the popup's frame-interval sparkline.
+interface HistPoint {
+  p50: number;
+  p99: number;
 }
 
 interface HudPosition {
@@ -197,289 +206,396 @@ function hudPositionFromRects(hudEl: HTMLElement, parentEl: HTMLElement): HudPos
   };
 }
 
-function PerfHUDPanel({
+/// Heap usage as a fraction of the hard JS heap ceiling, or null if the
+/// runtime doesn't expose `performance.memory`. used/limit (not used/total)
+/// is the real OOM-pressure signal — the arena grows on demand.
+function heapCapRatioOf(memory: PerfMemory | null): number | null {
+  return memory && memory.jsHeapSizeLimit > 0
+    ? memory.usedJSHeapSize / memory.jsHeapSizeLimit
+    : null;
+}
+
+/// True when any tracked metric is in its warn band — drives the inline
+/// health dot so the compact strip still tells you when to pop out.
+function sampleHot(s: PerfHudSample): boolean {
+  if (s.rafP99 > 34) return true;
+  if ((s.snap?.compositeMsMax ?? 0) > 24) return true;
+  if (s.sys && s.sys.cpu_percent > 80) return true;
+  const cap = heapCapRatioOf(s.memory);
+  if (cap !== null && cap > 0.85) return true;
+  if (s.aud && Number.isFinite(s.aud.peakDb) && s.aud.peakDb > -1) return true;
+  if (s.snap?.clips.some((c) => !c.lookaheadFull)) return true;
+  if (s.warmup.lastReason === "deadline-hit") return true;
+  return false;
+}
+
+// ── Inline strip ──────────────────────────────────────────────────────────
+
+function InlineStat({
+  value,
+  unit,
+  warn,
+  title,
+}: {
+  value: ReactNode;
+  unit: string;
+  warn?: boolean | undefined;
+  title?: string | undefined;
+}) {
+  return (
+    <span className={`perf-stat${warn ? " is-warn" : ""}`} title={title}>
+      <span className="perf-stat-val">{value}</span>
+      <span className="perf-stat-unit">{unit}</span>
+    </span>
+  );
+}
+
+// ── Dashboard pieces ────────────────────────────────────────────────────────
+
+function StatTile({
+  label,
+  value,
+  meta,
+  warn,
+  title,
+}: {
+  label: string;
+  value: ReactNode;
+  meta?: ReactNode | undefined;
+  warn?: boolean | undefined;
+  title?: string | undefined;
+}) {
+  return (
+    <div className={`perf-tile${warn ? " is-warn" : ""}`} title={title}>
+      <div className="perf-tile-label">{label}</div>
+      <div className="perf-tile-value">{value}</div>
+      {meta !== undefined ? <div className="perf-tile-meta">{meta}</div> : null}
+    </div>
+  );
+}
+
+/// Frame-interval trend. P50 solid, P99 faint, with 60 fps (16.7 ms) and
+/// 30 fps (33.3 ms) guide lines so spikes read against a real budget.
+function Sparkline({ points }: { points: HistPoint[] }) {
+  if (points.length < 2) {
+    return <div className="perf-spark-empty">collecting frame samples…</div>;
+  }
+  const W = 100;
+  const H = 36;
+  const p50s = points.map((p) => p.p50);
+  const p99s = points.map((p) => p.p99);
+  // Floor the scale at the 30 fps budget so a healthy 60 Hz trace doesn't
+  // get amplified into alarming-looking noise; let real spikes push it up.
+  const peak = Math.max(33.34, ...p99s);
+  const toPath = (vals: number[]): string =>
+    vals
+      .map((v, i) => {
+        const x = (i / (vals.length - 1)) * W;
+        const y = H - Math.min(1, v / peak) * H;
+        return `${i === 0 ? "M" : "L"}${x.toFixed(1)} ${y.toFixed(1)}`;
+      })
+      .join(" ");
+  const guide60 = H - Math.min(1, 16.67 / peak) * H;
+  const guide30 = H - Math.min(1, 33.34 / peak) * H;
+  const last = p50s[p50s.length - 1] ?? 0;
+  return (
+    <div className="perf-spark-wrap">
+      <svg
+        className="perf-spark"
+        viewBox={`0 0 ${W} ${H}`}
+        preserveAspectRatio="none"
+        aria-hidden="true"
+      >
+        <line className="perf-spark-guide" x1="0" x2={W} y1={guide60} y2={guide60} />
+        <line className="perf-spark-guide is-warn" x1="0" x2={W} y1={guide30} y2={guide30} />
+        <path className="perf-spark-p99" d={toPath(p99s)} vectorEffect="non-scaling-stroke" />
+        <path
+          className={`perf-spark-p50${last > 34 ? " is-warn" : ""}`}
+          d={toPath(p50s)}
+          vectorEffect="non-scaling-stroke"
+        />
+      </svg>
+      <div className="perf-spark-legend">
+        <span className="perf-spark-key perf-spark-key-p50">P50</span>
+        <span className="perf-spark-key perf-spark-key-p99">P99</span>
+        <span className="perf-spark-grow" />
+        <span className="perf-spark-guide-key">— 60fps</span>
+        <span className="perf-spark-guide-key is-warn">— 30fps</span>
+      </div>
+    </div>
+  );
+}
+
+/// Horizontal dBFS meter (−60…0). Amber near clipping.
+function MeterBar({ label, db, warn }: { label: string; db: number; warn?: boolean }) {
+  const pct = Number.isFinite(db) ? Math.max(0, Math.min(1, (db + 60) / 60)) * 100 : 0;
+  return (
+    <div className="perf-meter">
+      <span className="perf-meter-label">{label}</span>
+      <span className="perf-meter-track">
+        <span
+          className={`perf-meter-fill${warn ? " is-warn" : ""}`}
+          style={{ width: `${pct.toFixed(1)}%` }}
+        />
+      </span>
+      <span className="perf-meter-val">{formatDb(db)} dB</span>
+    </div>
+  );
+}
+
+function PerfDashboard({
   sample,
-  onResetPeaks,
-  onPopOut,
-  onHeaderPointerDown,
-  onHeaderPointerMove,
-  onHeaderPointerUp,
-  onHeaderPointerCancel,
-  detached = false,
+  history,
+  onReset,
 }: {
   sample: PerfHudSample;
-  onResetPeaks?: (() => void) | undefined;
-  onPopOut?: (() => void) | undefined;
-  onHeaderPointerDown?: ((e: React.PointerEvent<HTMLDivElement>) => void) | undefined;
-  onHeaderPointerMove?: ((e: React.PointerEvent<HTMLDivElement>) => void) | undefined;
-  onHeaderPointerUp?: ((e: React.PointerEvent<HTMLDivElement>) => void) | undefined;
-  onHeaderPointerCancel?: ((e: React.PointerEvent<HTMLDivElement>) => void) | undefined;
-  detached?: boolean | undefined;
+  history: HistPoint[];
+  onReset: () => void;
 }) {
-  const {
-    snap,
-    rafP50,
-    rafP99,
-    memory,
-    playheadUs,
-    warmup,
-    fpsByLayer,
-    sys,
-    aud,
-  } = sample;
+  const { snap, rafP50, rafP99, memory, playheadUs, warmup, fpsByLayer, sys, aud } = sample;
   const fpsLookup = new Map(fpsByLayer);
+  const fps = fpsFromMs(rafP50);
+  const heapCapRatio = heapCapRatioOf(memory);
   const prewarm = snap?.upcomingPrewarm;
-  const prewarmRequested = prewarm?.clips.filter((clip) => clip.requested).length ?? 0;
+  const prewarmRequested = prewarm?.clips.filter((c) => c.requested).length ?? 0;
   const prewarmDueMs =
     prewarm?.nextStartUs === null || prewarm?.nextStartUs === undefined
       ? null
       : formatUsAsMs(Math.max(0, prewarm.nextStartUs - prewarm.anchorUs));
-  const heapCapRatio =
-    memory && memory.jsHeapSizeLimit > 0 ? memory.usedJSHeapSize / memory.jsHeapSizeLimit : null;
-  const hasPrewarmRows = (prewarm?.clips.length ?? 0) > 0;
-  const hasClipRows = (snap?.clips.length ?? 0) > 0;
-  const hasDetails = Boolean(hasPrewarmRows || hasClipRows || (snap && snap.swapsInFlight > 0));
+  const hasClips = (snap?.clips.length ?? 0) > 0;
+  const hasPrewarm = (prewarm?.clips.length ?? 0) > 0;
+  const hot = sampleHot(sample);
 
   return (
-    <>
-      <div
-        className="perf-hud-header"
-        onPointerDown={onHeaderPointerDown}
-        onPointerMove={onHeaderPointerMove}
-        onPointerUp={onHeaderPointerUp}
-        onPointerCancel={onHeaderPointerCancel}
-      >
-        <div className="perf-hud-heading">
-          <div className="perf-hud-title">
-            <span className="perf-hud-live-dot" aria-hidden="true" />
-            Performance
-          </div>
-          <div className="perf-hud-subtitle">playhead {(playheadUs / 1000).toFixed(0)}ms</div>
+    <div className="perf-dash" data-testid="perf-hud-window">
+      <header className="perf-dash-head">
+        <div className="perf-dash-titlewrap">
+          <span className={`perf-dot${hot ? " is-hot" : ""}`} aria-hidden="true" />
+          <span className="perf-dash-title">Performance</span>
         </div>
-        <div className="perf-hud-actions">
-          {onPopOut ? (
-            <button
-              type="button"
-              className="perf-hud-icon-button"
-              onClick={onPopOut}
-              title="Open performance window"
-              aria-label="Open performance window"
-            >
-              <PanelTopOpenIcon size={12} aria-hidden="true" />
-            </button>
-          ) : null}
-          {onResetPeaks ? (
-            <button
-              type="button"
-              className="perf-hud-icon-button"
-              onClick={onResetPeaks}
-              title="Reset peaks"
-              aria-label="Reset performance peaks"
-            >
-              <RotateCcwIcon size={12} aria-hidden="true" />
-            </button>
-          ) : null}
-        </div>
-      </div>
+        <span className="perf-dash-sub">playhead {(playheadUs / 1000).toFixed(0)} ms</span>
+        <span className="perf-dash-grow" />
+        <button
+          type="button"
+          className="perf-icon-btn"
+          onClick={onReset}
+          title="Reset peaks"
+          aria-label="Reset performance peaks"
+        >
+          <RotateCcwIcon size={13} aria-hidden="true" />
+        </button>
+      </header>
 
-      <div className="perf-hud-grid">
-        <MetricCard
-          label="rAF"
-          value={`${formatMs(rafP50)}ms`}
-          meta={`P99 ${formatMs(rafP99)}ms`}
-          tone={rafP99 > 34 ? "warn" : undefined}
+      <div className="perf-tiles">
+        <StatTile
+          label="Frame rate"
+          value={<>{fps} <span className="perf-tile-unit">fps</span></>}
+          meta={`P50 ${formatMs(rafP50)} · P99 ${formatMs(rafP99)} ms`}
+          warn={rafP99 > 34}
         />
-        <MetricCard
+        <StatTile
           label="Composite"
-          value={`${formatMs(snap?.compositeMsLast ?? 0)}ms`}
-          meta={`max ${formatMs(snap?.compositeMsMax ?? 0)}ms`}
-          tone={(snap?.compositeMsMax ?? 0) > 24 ? "warn" : undefined}
+          value={<>{formatMs(snap?.compositeMsLast ?? 0)} <span className="perf-tile-unit">ms</span></>}
+          meta={`max ${formatMs(snap?.compositeMsMax ?? 0)} ms`}
+          warn={(snap?.compositeMsMax ?? 0) > 24}
         />
-        <MetricCard
+        <StatTile
           label="Warmup"
-          value={warmup.lastMs === null ? mutedDash() : `${formatMs(warmup.lastMs)}ms`}
-          meta={
+          value={
             warmup.lastMs === null ? (
-              "idle"
+              <span className="perf-muted">idle</span>
             ) : (
-              <>
-                max {formatMs(warmup.maxMs)}ms
-                {warmup.lastReason ? (
-                  <span
-                    className={
-                      warmup.lastReason === "deadline-hit"
-                        ? "perf-hud-inline-warn"
-                        : "perf-hud-inline-muted"
-                    }
-                    title={
-                      warmup.lastReason === "deadline-hit"
-                        ? "WARMUP_MAX_WAIT_MS cap hit — ring may not have been full; possible initial-frame stutter"
-                        : "Lookahead ready before the cap — healthy"
-                    }
-                  >
-                    {" "}
-                    {warmup.lastReason === "lookahead-ready" ? "lh" : "cap"}
-                  </span>
-                ) : null}
-              </>
+              <>{formatMs(warmup.lastMs)} <span className="perf-tile-unit">ms</span></>
             )
           }
-          tone={warmup.lastReason === "deadline-hit" ? "warn" : undefined}
+          meta={
+            warmup.lastMs === null
+              ? "no warmup yet"
+              : `max ${formatMs(warmup.maxMs)} ms · ${
+                  warmup.lastReason === "deadline-hit"
+                    ? "cap hit"
+                    : warmup.lastReason === "lookahead-ready"
+                      ? "lookahead"
+                      : "—"
+                }`
+          }
+          warn={warmup.lastReason === "deadline-hit"}
+          title="Preview warmup before play. 'cap hit' = WARMUP_MAX_WAIT_MS reached before the ring filled (possible initial-frame stutter)."
         />
-        <MetricCard
+        <StatTile
           label="Prewarm"
-          value={!prewarm ? mutedDash() : prewarmDueMs === null ? "none" : `${prewarmDueMs}ms`}
+          value={
+            !prewarm ? (
+              <span className="perf-muted">—</span>
+            ) : prewarmDueMs === null ? (
+              "none"
+            ) : (
+              <>{prewarmDueMs} <span className="perf-tile-unit">ms</span></>
+            )
+          }
           meta={
             !prewarm
               ? "waiting"
               : prewarmDueMs === null
-                ? `<${(prewarm.windowUs / 1_000_000).toFixed(1)}s`
-                : `${prewarmRequested}/${prewarm.clips.length} req`
+                ? `idle <${(prewarm.windowUs / 1_000_000).toFixed(1)}s`
+                : `${prewarmRequested}/${prewarm.clips.length} requested`
           }
-          tone={
-            prewarm && prewarmDueMs !== null && prewarmRequested < prewarm.clips.length
-              ? "warn"
-              : undefined
-          }
+          warn={Boolean(
+            prewarm && prewarmDueMs !== null && prewarmRequested < prewarm.clips.length,
+          )}
+          title="Time until the next upcoming clip starts, and how many of its decoders have been pre-requested."
         />
         {memory ? (
-          <MetricCard
-            label="Heap"
-            value={`${formatMb(memory.usedJSHeapSize)}`}
+          <StatTile
+            label="JS heap"
+            value={<>{formatMb(memory.usedJSHeapSize)} <span className="perf-tile-unit">MB</span></>}
             meta={
               <>
-                {formatMb(memory.totalJSHeapSize)}
-                {heapCapRatio !== null ? (
-                  <span
-                    // % of the hard heap ceiling — the actual pressure signal.
-                    // used/total only shows fill of the current arena, which
-                    // grows on demand; used/limit is how close we are to OOM.
-                    className={
-                      heapCapRatio > 0.85 ? "perf-hud-inline-warn" : "perf-hud-inline-muted"
-                    }
-                  >
-                    {" "}
-                    {`${(heapCapRatio * 100).toFixed(0)}% cap`}
-                  </span>
-                ) : null}
+                {formatMb(memory.totalJSHeapSize)} MB alloc
+                {heapCapRatio !== null ? ` · ${(heapCapRatio * 100).toFixed(0)}% of cap` : ""}
               </>
             }
-            tone={heapCapRatio !== null && heapCapRatio > 0.85 ? "warn" : undefined}
+            warn={heapCapRatio !== null && heapCapRatio > 0.85}
+            title="Used heap, current arena size, and % of the hard heap ceiling (the real OOM-pressure signal)."
           />
         ) : null}
         {sys ? (
-          <MetricCard
-            label="CPU"
-            value={`${sys.cpu_percent.toFixed(0)}%`}
-            meta={`${formatMb(sys.rss_bytes)} · ${sys.process_count}p`}
-            tone={sys.cpu_percent > 80 ? "warn" : undefined}
-            title={`${sys.process_count} processes · ${sys.logical_cores} logical cores`}
-          />
-        ) : null}
-        {aud ? (
-          <MetricCard
-            label="Audio"
-            value={`rms ${formatDb(aud.rmsDb)}`}
-            meta={
-              <>
-                peak{" "}
-                <span
-                  className={
-                    Number.isFinite(aud.peakDb) && aud.peakDb > -1
-                      ? "perf-hud-inline-warn"
-                      : undefined
-                  }
-                >
-                  {formatDb(aud.peakDb)} dB
-                </span>
-              </>
-            }
-            tone={Number.isFinite(aud.peakDb) && aud.peakDb > -1 ? "warn" : undefined}
-            title="Master audio bus (rms / peak dBFS)"
+          <StatTile
+            label="Process CPU"
+            value={<>{sys.cpu_percent.toFixed(0)}<span className="perf-tile-unit">%</span></>}
+            meta={`${formatMb(sys.rss_bytes)} MB RSS · ${sys.process_count}p · ${sys.logical_cores}c`}
+            warn={sys.cpu_percent > 80}
+            title={`${sys.process_count} processes across the WebView2 tree · ${sys.logical_cores} logical cores`}
           />
         ) : null}
       </div>
 
-      {hasDetails ? (
-        <div className={`perf-hud-details${detached ? " perf-hud-details-detached" : ""}`}>
-          {snap && snap.swapsInFlight > 0 ? (
-            <div
-              className="perf-hud-alert-row"
-              title="In-flight no-flash source swaps (bridge→proxy)"
-            >
-              swaps in flight: {snap.swapsInFlight}
-            </div>
-          ) : null}
+      <section className="perf-card">
+        <div className="perf-card-title">Frame interval</div>
+        <Sparkline points={history} />
+      </section>
 
-          {hasPrewarmRows ? (
-            <div className="perf-hud-section">
-              <div className="perf-hud-section-title">Prewarm</div>
-              {prewarm?.clips.map((clip) => {
-                const lastMs =
-                  clip.ringLastPtsUs !== null ? formatUsAsMs(clip.ringLastPtsUs) : "—";
-                return (
-                  <div
-                    key={`prewarm-${clip.layerId}`}
-                    className={`perf-hud-row${clip.requested ? "" : " perf-hud-row-warn"}`}
-                  >
-                    <span className="perf-hud-row-id">{clip.layerId.slice(0, 6)}</span>
-                    <span className="perf-hud-row-main">
-                      q={clip.decodeQueueSize} · ring={clip.ringSize}@{lastMs}ms
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          ) : null}
+      {aud ? (
+        <section className="perf-card">
+          <div className="perf-card-title">Master audio bus</div>
+          <MeterBar label="rms" db={aud.rmsDb} />
+          <MeterBar
+            label="peak"
+            db={aud.peakDb}
+            warn={Number.isFinite(aud.peakDb) && aud.peakDb > -1}
+          />
+        </section>
+      ) : null}
 
-          {hasClipRows ? (
-            <div className="perf-hud-section">
-              <div className="perf-hud-section-title">Clips</div>
-              {snap?.clips.map((clip) => {
-                // Ring span shown as [first-last] composition-ms. The HUD
-                // doesn't know each clip's t_start_us / src_in_us mapping, so
-                // this is a rough lookahead trend, not an exact source-time
-                // comparison. `HW`/`SW` flags a software-decode downgrade;
-                // the trailing mark is green when the lookahead window is
-                // satisfied, amber when the decoder is running behind.
-                const firstMs =
-                  clip.ringFirstPtsUs !== null ? (clip.ringFirstPtsUs / 1000).toFixed(0) : "—";
-                const lastMs =
-                  clip.ringLastPtsUs !== null ? (clip.ringLastPtsUs / 1000).toFixed(0) : "—";
-                const fps = fpsLookup.get(clip.layerId) ?? 0;
-                return (
-                  <div key={clip.layerId} className="perf-hud-row perf-hud-clip-row">
-                    <span className="perf-hud-row-id">{clip.layerId.slice(0, 6)}</span>
-                    <span
-                      className={`perf-hud-pill${clip.downgraded ? " perf-hud-pill-warn" : ""}`}
-                      title={clip.downgraded ? "Software decode (downgraded)" : "Hardware decode"}
-                    >
-                      {clip.downgraded ? "SW" : "HW"}
-                    </span>
-                    <span className="perf-hud-row-main">
-                      {fps.toFixed(0)}fps · q={clip.decodeQueueSize} · ring={clip.ringSize} [
-                      {firstMs}-{lastMs}]
-                    </span>
-                    <span
-                      className={clip.lookaheadFull ? "perf-hud-ok" : "perf-hud-inline-warn"}
-                      title={
-                        clip.lookaheadFull
-                          ? "Lookahead window satisfied"
-                          : "Decoder running behind the lookahead window"
-                      }
-                    >
-                      {clip.lookaheadFull ? "✓" : "…"}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          ) : null}
+      {snap && snap.swapsInFlight > 0 ? (
+        <div className="perf-alert" title="In-flight no-flash source swaps (bridge→proxy)">
+          {snap.swapsInFlight} source swap{snap.swapsInFlight > 1 ? "s" : ""} in flight
         </div>
       ) : null}
-    </>
+
+      {hasClips ? (
+        <section className="perf-card">
+          <div className="perf-card-title">Active clips</div>
+          <table className="perf-clips">
+            <thead>
+              <tr>
+                <th>Layer</th>
+                <th>Dec</th>
+                <th className="perf-num">fps</th>
+                <th className="perf-num">queue</th>
+                <th className="perf-num">ring</th>
+                <th>span (ms)</th>
+                <th className="perf-num">LA</th>
+              </tr>
+            </thead>
+            <tbody>
+              {snap?.clips.map((clip) => {
+                const fpsV = fpsLookup.get(clip.layerId) ?? 0;
+                const first =
+                  clip.ringFirstPtsUs !== null ? (clip.ringFirstPtsUs / 1000).toFixed(0) : "—";
+                const last =
+                  clip.ringLastPtsUs !== null ? (clip.ringLastPtsUs / 1000).toFixed(0) : "—";
+                return (
+                  <tr key={clip.layerId}>
+                    <td className="perf-clips-id" title={clip.layerId}>
+                      {clip.layerId.slice(0, 8)}
+                    </td>
+                    <td>
+                      <span
+                        className={`perf-pill${clip.downgraded ? " is-sw" : ""}`}
+                        title={clip.downgraded ? "Software decode (downgraded)" : "Hardware decode"}
+                      >
+                        {clip.downgraded ? "SW" : "HW"}
+                      </span>
+                    </td>
+                    <td className="perf-num">{fpsV.toFixed(0)}</td>
+                    <td className="perf-num">{clip.decodeQueueSize}</td>
+                    <td className="perf-num">{clip.ringSize}</td>
+                    <td className="perf-clips-span">
+                      {first}–{last}
+                    </td>
+                    <td className="perf-num">
+                      <span
+                        className={clip.lookaheadFull ? "perf-ok" : "perf-warn"}
+                        title={
+                          clip.lookaheadFull
+                            ? "Lookahead window satisfied"
+                            : "Decoder running behind the lookahead window"
+                        }
+                      >
+                        {clip.lookaheadFull ? "✓" : "…"}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </section>
+      ) : null}
+
+      {hasPrewarm ? (
+        <section className="perf-card">
+          <div className="perf-card-title">Upcoming prewarm</div>
+          <table className="perf-clips">
+            <thead>
+              <tr>
+                <th>Layer</th>
+                <th>State</th>
+                <th className="perf-num">queue</th>
+                <th className="perf-num">ring</th>
+                <th>last (ms)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {prewarm?.clips.map((clip) => {
+                const last =
+                  clip.ringLastPtsUs !== null ? formatUsAsMs(clip.ringLastPtsUs) : "—";
+                return (
+                  <tr key={`prewarm-${clip.layerId}`}>
+                    <td className="perf-clips-id" title={clip.layerId}>
+                      {clip.layerId.slice(0, 8)}
+                    </td>
+                    <td>
+                      <span className={`perf-pill${clip.requested ? "" : " is-sw"}`}>
+                        {clip.requested ? "req" : "idle"}
+                      </span>
+                    </td>
+                    <td className="perf-num">{clip.decodeQueueSize}</td>
+                    <td className="perf-num">{clip.ringSize}</td>
+                    <td className="perf-clips-span">{last}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </section>
+      ) : null}
+    </div>
   );
 }
+
+// ── Inline overlay component ────────────────────────────────────────────────
 
 export function PerfHUD({ compositorRef, engineRef }: Props) {
   const [visible, setVisible] = useState(true);
@@ -508,6 +624,10 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
   const [aud, setAud] = useState<{ rmsDb: number; peakDb: number } | null>(null);
   const [hudPosition, setHudPosition] = useState<HudPosition | null>(null);
   const [dragging, setDragging] = useState(false);
+  // True while the detached Performance window is open. Suppresses the inline
+  // overlay (see render gate) without unmounting this component, so the
+  // snapshot emit keeps feeding the popup.
+  const [poppedOut, setPoppedOut] = useState(false);
 
   // rAF interval tracking. We keep the ring + last-tick time on refs
   // so the rAF callback doesn't re-render on every frame; the HUD only
@@ -605,8 +725,9 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
     };
   }, []);
 
-  // Ctrl+Shift+P toggle. Captured at the window level so the user
-  // doesn't need to focus the HUD to dismiss it.
+  // Ctrl+Shift+P toggles ONLY the inline overlay. Captured at the window
+  // level so the user doesn't need to focus the HUD to dismiss it; the popup
+  // window (a separate webview) has no such binding by design.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.ctrlKey && e.shiftKey && e.code === "KeyP") {
@@ -618,11 +739,29 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // Pop-out lifecycle. The popup emits `PERF_HUD_WINDOW_CLOSED_EVENT` from its
+  // own close handler, restoring the inline overlay the moment it's dismissed
+  // (focus-independent — a focus check misses closing the popup on a second
+  // monitor while this window stays focused). On mount we also reconcile
+  // against any popup that survived an HMR reload.
   useEffect(() => {
-    if (visible) return;
-    dragRef.current = null;
-    setDragging(false);
-  }, [visible]);
+    let unlisten: UnlistenFn | null = null;
+    let cancelled = false;
+    void listen(PERF_HUD_WINDOW_CLOSED_EVENT, () => setPoppedOut(false)).then((off) => {
+      if (cancelled) {
+        off();
+        return;
+      }
+      unlisten = off;
+    });
+    void WebviewWindow.getByLabel(PERF_HUD_WINDOW_LABEL).then((w) => {
+      if (!cancelled) setPoppedOut(w !== null);
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
 
   const onResetPeaks = useCallback(() => {
     compositorRef.current?.resetPerfPeaks();
@@ -630,8 +769,31 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
     setWarmup({ lastMs: null, maxMs: 0, lastReason: null });
   }, [compositorRef, engineRef]);
 
+  // Reset requested from the popup (which has no Compositor ref of its own).
+  useEffect(() => {
+    let unlisten: UnlistenFn | null = null;
+    let cancelled = false;
+    void listen(PERF_HUD_RESET_EVENT, () => onResetPeaks()).then((off) => {
+      if (cancelled) {
+        off();
+        return;
+      }
+      unlisten = off;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [onResetPeaks]);
+
+  useEffect(() => {
+    if (visible) return;
+    dragRef.current = null;
+    setDragging(false);
+  }, [visible]);
+
   useLayoutEffect(() => {
-    if (!visible) return;
+    if (!visible || poppedOut) return;
     const hudEl = hudRef.current;
     const parentEl = hudEl?.parentElement;
     if (!hudEl || !parentEl) return;
@@ -650,7 +812,7 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
     observer.observe(parentEl);
     observer.observe(hudEl);
     return () => observer.disconnect();
-  }, [visible]);
+  }, [visible, poppedOut]);
 
   const beginDrag = useCallback((e: React.PointerEvent<HTMLDivElement>): void => {
     if (e.button !== 0) return;
@@ -724,6 +886,7 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
     try {
       const existing = await WebviewWindow.getByLabel(PERF_HUD_WINDOW_LABEL);
       if (existing) {
+        setPoppedOut(true);
         await existing.show().catch(() => {});
         await existing.setFocus().catch(() => {});
         await emit(PERF_HUD_SNAPSHOT_EVENT, sample).catch(() => {});
@@ -732,31 +895,35 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
       const win = new WebviewWindow(PERF_HUD_WINDOW_LABEL, {
         url: "/?perfHud=1",
         title: "WeftCut — Performance",
-        width: 620,
-        height: 520,
-        minWidth: 480,
-        minHeight: 360,
+        width: 640,
+        height: 560,
+        minWidth: 380,
+        minHeight: 320,
         resizable: true,
         decorations: true,
       });
+      // Optimistic: hide the inline overlay now; revert if creation errors.
+      setPoppedOut(true);
       void win.once("tauri://created", () => {
         void emit(PERF_HUD_SNAPSHOT_EVENT, sample).catch(() => {});
       });
       void win.once("tauri://error", (e) => {
         console.error("[weftcut/perf-hud] webview error:", e);
+        setPoppedOut(false);
       });
     } catch (e) {
       console.error("[weftcut/perf-hud] failed to open popup:", e);
+      setPoppedOut(false);
     }
   }, [sample]);
 
-  if (!visible) return null;
+  // Hidden while the popup owns the view (poppedOut) or the user dismissed the
+  // overlay (Ctrl+Shift+P → visible). Hooks above keep running regardless, so
+  // the popup keeps receiving snapshots.
+  if (!visible || poppedOut) return null;
 
-  const inlineHasDetails = Boolean(
-    (snap?.upcomingPrewarm?.clips.length ?? 0) > 0 ||
-      (snap?.clips.length ?? 0) > 0 ||
-      (snap && snap.swapsInFlight > 0),
-  );
+  const hot = sampleHot(sample);
+  const fps = fpsFromMs(rafP50);
   const hudStyle: CSSProperties | undefined = hudPosition
     ? { left: hudPosition.left, top: hudPosition.top, bottom: "auto" }
     : undefined;
@@ -764,33 +931,93 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
   return (
     <div
       ref={hudRef}
-      className={`perf-hud${dragging ? " is-dragging" : ""}${
-        inlineHasDetails ? " has-details" : ""
-      }`}
+      className={`perf-hud${dragging ? " is-dragging" : ""}`}
       style={hudStyle}
       data-testid="perf-hud"
     >
-      <PerfHUDPanel
-        sample={sample}
-        onResetPeaks={onResetPeaks}
-        onPopOut={() => void openPerfHudWindow()}
-        onHeaderPointerDown={beginDrag}
-        onHeaderPointerMove={moveDrag}
-        onHeaderPointerUp={endDrag}
-        onHeaderPointerCancel={endDrag}
-      />
+      <div
+        className="perf-bar"
+        onPointerDown={beginDrag}
+        onPointerMove={moveDrag}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+      >
+        <span
+          className={`perf-dot${hot ? " is-hot" : ""}`}
+          aria-hidden="true"
+          title={hot ? "A metric is in its warn band — pop out for detail" : "All metrics nominal"}
+        />
+        <span className="perf-bar-title">PERF</span>
+        <span className="perf-bar-stats">
+          <InlineStat
+            value={fps}
+            unit="fps"
+            warn={rafP99 > 34}
+            title={`rAF P50 ${formatMs(rafP50)} ms · P99 ${formatMs(rafP99)} ms`}
+          />
+          <InlineStat
+            value={formatMs(snap?.compositeMsLast ?? 0)}
+            unit="ms"
+            warn={(snap?.compositeMsMax ?? 0) > 24}
+            title={`composite · max ${formatMs(snap?.compositeMsMax ?? 0)} ms`}
+          />
+          {memory ? (
+            <InlineStat
+              value={formatMb(memory.usedJSHeapSize)}
+              unit="MB"
+              warn={heapCapRatioOf(memory) !== null && (heapCapRatioOf(memory) ?? 0) > 0.85}
+              title="JS heap used"
+            />
+          ) : null}
+          {sys ? (
+            <InlineStat
+              value={sys.cpu_percent.toFixed(0)}
+              unit="%"
+              warn={sys.cpu_percent > 80}
+              title={`process CPU · ${sys.process_count}p · ${sys.logical_cores}c`}
+            />
+          ) : null}
+        </span>
+        <span className="perf-bar-actions">
+          <button
+            type="button"
+            className="perf-icon-btn"
+            onClick={() => void openPerfHudWindow()}
+            title="Open performance window"
+            aria-label="Open performance window"
+          >
+            <PanelTopOpenIcon size={12} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="perf-icon-btn"
+            onClick={onResetPeaks}
+            title="Reset peaks"
+            aria-label="Reset performance peaks"
+          >
+            <RotateCcwIcon size={12} aria-hidden="true" />
+          </button>
+        </span>
+      </div>
     </div>
   );
 }
 
+// ── Popup window component ──────────────────────────────────────────────────
+
 export function PerfHUDWindow() {
   const [sample, setSample] = useState<PerfHudSample | null>(null);
+  const [history, setHistory] = useState<HistPoint[]>([]);
 
   useEffect(() => {
     let unlisten: UnlistenFn | null = null;
     let cancelled = false;
     void listen<PerfHudSample>(PERF_HUD_SNAPSHOT_EVENT, (event) => {
       setSample(event.payload);
+      setHistory((h) => {
+        const next = [...h, { p50: event.payload.rafP50, p99: event.payload.rafP99 }];
+        return next.length > SPARK_CAP ? next.slice(next.length - SPARK_CAP) : next;
+      });
     }).then((off) => {
       if (cancelled) {
         off();
@@ -804,12 +1031,29 @@ export function PerfHUDWindow() {
     };
   }, []);
 
+  // Tell the main window we're closing so it can restore the inline overlay,
+  // then complete the close ourselves. `preventDefault` must come before the
+  // first await so Tauri sees it; the global emit reaches the main window.
+  useEffect(() => {
+    const win = getCurrentWindow();
+    const unlistenPromise = win.onCloseRequested(async (event) => {
+      event.preventDefault();
+      await emit(PERF_HUD_WINDOW_CLOSED_EVENT).catch(() => {});
+      await win.destroy().catch(() => {});
+    });
+    return () => {
+      void unlistenPromise.then((off) => off());
+    };
+  }, []);
+
+  const onReset = useCallback(() => {
+    void emit(PERF_HUD_RESET_EVENT).catch(() => {});
+  }, []);
+
   return (
     <div className="perf-hud-window">
       {sample ? (
-        <div className="perf-hud perf-hud-detached" data-testid="perf-hud-window">
-          <PerfHUDPanel sample={sample} detached />
-        </div>
+        <PerfDashboard sample={sample} history={history} onReset={onReset} />
       ) : (
         <div className="perf-hud-window-empty">Waiting for preview performance data…</div>
       )}
