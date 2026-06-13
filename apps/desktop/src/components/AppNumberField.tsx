@@ -25,6 +25,8 @@ export interface AppNumberFieldProps {
 /// keyboard arrows, drag-scrub (the left grip), and hover-revealed steppers.
 /// `value` may go null mid-edit (empty field) — we drop nulls so the call
 /// site keeps the last good number, matching the old `|| prev` guard.
+/// No ref forwarding: number fields aren't programmatically focused (unlike
+/// the rename/timecode AppInput sites).
 export function AppNumberField({
   value,
   onValueChange,
@@ -60,7 +62,10 @@ export function AppNumberField({
           aria-label={ariaLabel}
           className={cn("app-input", "app-number-input", align === "center" && "app-input--center")}
         />
-        <div className="app-number-steppers" aria-hidden="true">
+        {/* Mouse-only affordance: hidden until hover (keyboard users change
+            the value with arrow keys on the input). Not aria-hidden — the
+            Increment/Decrement buttons keep their own button semantics. */}
+        <div className="app-number-steppers">
           <NumberField.Increment className="app-number-step">
             <ChevronUpIcon size={10} />
           </NumberField.Increment>

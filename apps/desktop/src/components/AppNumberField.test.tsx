@@ -20,8 +20,13 @@ describe("AppNumberField", () => {
     const el = screen.getByLabelText("x");
     await userEvent.type(el, "12");
     expect(onCommit).not.toHaveBeenCalled();
-    el.blur();
+    // Click outside to blur through the full event chain (more faithful than
+    // a raw el.blur()): exercises Base UI's inputBlur commit path.
+    await userEvent.click(document.body);
     expect(onCommit).toHaveBeenCalledWith(12);
+    // (Enter-to-commit and drag-scrub also commit via onValueCommitted, but
+    // jsdom doesn't drive Base UI's keyboard/pointer commit paths — those are
+    // covered by visual smoke, like scrub.)
   });
 
   it("does not emit null onValueChange when the field is cleared", async () => {
