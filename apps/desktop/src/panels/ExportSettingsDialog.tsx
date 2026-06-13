@@ -5,6 +5,8 @@ import { useTranslation } from "react-i18next";
 
 import { exportSettingsGet, exportSettingsSet, workspaceDir } from "../ipc";
 import { AppDialog } from "../components/AppDialog";
+import { AppInput } from "../components/AppInput";
+import { AppNumberField } from "../components/AppNumberField";
 import { AppSelect } from "../components/AppSelect";
 import { AppSwitch } from "../components/AppSwitch";
 import { Button } from "@/components/ui/button";
@@ -221,12 +223,13 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
                     {t("export_dialog.filename")}
                   </span>
                   <span className="export-filename">
-                    <input
-                      type="text"
-                      className="settings-input export-filename-input"
+                    <AppInput
                       value={filename}
+                      onValueChange={setFilename}
+                      mono
                       spellCheck={false}
-                      onChange={(e) => setFilename(e.target.value)}
+                      className="export-filename-input"
+                      ariaLabel={t("export_dialog.filename")}
                     />
                     <span className="settings-slider-unit">
                       .{containerExtension(settings.container)}
@@ -239,12 +242,14 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
                     {t("export_dialog.location")}
                   </span>
                   <span className="export-path">
-                    <input
-                      type="text"
-                      className="settings-input export-path-input"
-                      readOnly
+                    <AppInput
                       value={location}
+                      onValueChange={() => {}}
+                      readOnly
+                      mono
                       title={location}
+                      className="export-path-input"
+                      ariaLabel={t("export_dialog.location")}
                     />
                     <Button onClick={() => void onBrowse()}>
                       {t("export_dialog.browse")}
@@ -317,13 +322,15 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
                         {t("export_dialog.range_in")}
                       </span>
                       <span className="export-range-field">
-                        <input
-                          type="text"
-                          className="settings-input"
-                          spellCheck={false}
+                        <AppInput
                           value={formatTimecode(rangeStartUs, comp.fps_num, comp.fps_den)}
-                          onChange={(e) => {
-                            const us = parseTimecode(e.target.value, comp.fps_num, comp.fps_den);
+                          mono
+                          align="center"
+                          spellCheck={false}
+                          className="settings-input"
+                          ariaLabel={t("export_dialog.range_in")}
+                          onValueChange={(v) => {
+                            const us = parseTimecode(v, comp.fps_num, comp.fps_den);
                             if (us !== null) setRangeStartUs(us);
                           }}
                         />
@@ -341,13 +348,15 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
                         {t("export_dialog.range_out")}
                       </span>
                       <span className="export-range-field">
-                        <input
-                          type="text"
-                          className="settings-input"
-                          spellCheck={false}
+                        <AppInput
                           value={formatTimecode(rangeEndUs, comp.fps_num, comp.fps_den)}
-                          onChange={(e) => {
-                            const us = parseTimecode(e.target.value, comp.fps_num, comp.fps_den);
+                          mono
+                          align="center"
+                          spellCheck={false}
+                          className="settings-input"
+                          ariaLabel={t("export_dialog.range_out")}
+                          onValueChange={(v) => {
+                            const us = parseTimecode(v, comp.fps_num, comp.fps_den);
                             if (us !== null) setRangeEndUs(us);
                           }}
                         />
@@ -486,23 +495,14 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
                       {t("export_dialog.custom_bitrate")}
                     </span>
                     <span className="export-bitrate">
-                      <input
-                        type="number"
-                        className="settings-input settings-input-narrow"
-                        min={500}
-                        step={500}
-                        value={
-                          settings.customBitrate
-                            ? settings.customBitrate / 1_000_000
-                            : ""
-                        }
-                        onChange={(e) =>
-                          patch({
-                            customBitrate: e.target.value
-                              ? Math.round(Number(e.target.value) * 1_000_000)
-                              : null,
-                          })
-                        }
+                      <AppNumberField
+                        value={settings.customBitrate ? settings.customBitrate / 1_000_000 : null}
+                        step={1}
+                        align="center"
+                        className="settings-input-narrow"
+                        ariaLabel={t("export_dialog.custom_bitrate")}
+                        onValueChange={(v) => patch({ customBitrate: Math.round(v * 1_000_000) })}
+                        onClear={() => patch({ customBitrate: null })}
                       />
                       <span className="settings-slider-unit">
                         {t("export_dialog.mbps")}
