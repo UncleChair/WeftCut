@@ -15,7 +15,8 @@ export interface AppInputProps extends NativeInputProps {
   type?: "text" | "password" | "search";
   invalid?: boolean;
   mono?: boolean;
-  align?: "left" | "center";
+  /// Left is the default (no class); pass "center" to center the value.
+  align?: "center";
   /// search only: render a ✕ that clears to "" when the value is non-empty.
   clearable?: boolean;
   ariaLabel?: string;
@@ -59,6 +60,9 @@ export const AppInput = forwardRef<HTMLInputElement, AppInputProps>(
             type="button"
             className="app-input-clear"
             aria-label="Clear"
+            // Keep focus in the input after clearing (prevent the button's
+            // mousedown from stealing focus and firing the input's onBlur).
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => onValueChange("")}
           >
             <XIcon size={12} />
