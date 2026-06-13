@@ -2473,28 +2473,6 @@ input.preview-timecode:focus {
 
 .settings-input {
   width: 132px;
-  padding: 5px 8px;
-  font-size: 12px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: var(--foreground);
-  background: var(--popover);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  text-align: center;
-}
-
-.settings-input:focus {
-  outline: none;
-  border-color: var(--ring);
-}
-
-.settings-input:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.settings-input.is-invalid {
-  border-color: var(--destructive);
 }
 
 .settings-input-narrow {
@@ -2578,13 +2556,6 @@ input.preview-timecode:focus {
 
 .settings-key-input-row input {
   flex: 1;
-  background: var(--secondary);
-  border: 1px solid var(--border);
-  color: var(--foreground);
-  padding: 4px 8px;
-  font-size: 12px;
-  border-radius: 3px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 
