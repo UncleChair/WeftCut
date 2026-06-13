@@ -137,7 +137,6 @@ const zhCN: Resources = {
     empty: "尚未导入素材 — 点击「导入素材…」添加文件。",
     search_placeholder: "搜索素材…",
     no_matches: "未找到与「{{query}}」匹配的素材。",
-    clear_search: "清除搜索",
     duration: "{{value}}",
     size_bytes: "{{bytes}} B",
     size_kib: "{{value}} KiB",
