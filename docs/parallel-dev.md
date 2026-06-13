@@ -112,6 +112,24 @@ the normal way with `npm run dev` / `tauri dev`.
 > identifier isolation each instance writes its own `mcp_auth.json`. Query
 > `get_mcp_info` (or read that file) per instance to connect an external agent.
 
+## Stopping dev & freeing stuck ports
+
+Stop a dev session with **Ctrl-C in its terminal**, not by closing the app
+window. On Windows, closing the window only exits the Rust app — `tauri dev`'s
+vite child is frequently orphaned and keeps holding its strict port, so the
+next launch fails with a port collision. (Dev-only: a packaged build has no
+vite and binds no port, so it never hits this.)
+
+When a port is stuck, free it:
+
+```powershell
+pwsh scripts/dev-clean-ports.ps1               # frees 1420/1430/1440 (+5173)
+pwsh scripts/dev-clean-ports.ps1 -Ports 1430   # just one
+```
+
+It kills only Node/vite listeners (plus their npm parent); a non-vite process
+on a port is reported and left alone.
+
 ## Adding / removing a worktree
 
 ```powershell
