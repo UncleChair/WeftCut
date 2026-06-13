@@ -71,6 +71,16 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
   const [rangeMode, setRangeMode] = useState<"full" | "custom">("full");
   const [rangeStartUs, setRangeStartUs] = useState<number>(0);
   const [rangeEndUs, setRangeEndUs] = useState<number>(durationUs);
+  /// True while the experimental-10-bit confirmation gate is showing. Set when
+  /// the user clicks Export with bitDepth === 10; cleared on cancel. The actual
+  /// export only fires from the gate's "export anyway" button.
+  const [confirmExperimental, setConfirmExperimental] = useState(false);
+  /// Latches once an export actually launches so a double-click on Export /
+  /// "Export anyway" can't fire two concurrent runs — two 10-bit exports would
+  /// race to open the single native sink and the loser errors "video sink
+  /// already active". The dialog unmounts once the export starts, so this never
+  /// needs resetting except when launch itself throws before starting.
+  const submittingRef = useRef(false);
   /// True once the user has explicitly touched the bit-depth selector this
   /// dialog session. Suppresses the smart-default (auto-10 on 10-bit-capable
   /// codec change) after the first explicit choice.
@@ -154,16 +164,36 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
     if (typeof chosen === "string") setLocation(chosen);
   }
 
-  async function onExport() {
+  async function doExport() {
     if (!settings || !location || !filename.trim()) return;
-    const ext = containerExtension(settings.container);
-    const out = await join(location, `${filename.trim()}.${ext}`);
-    await exportSettingsSet(settings).catch(() => {});
-    const range =
-      rangeMode === "full"
-        ? { startUs: 0, endUs: durationUs }
-        : clampExportRange(rangeStartUs, rangeEndUs, durationUs);
-    onConfirm(settings, out, range);
+    if (submittingRef.current) return; // guard against double-fire
+    submittingRef.current = true;
+    try {
+      const ext = containerExtension(settings.container);
+      const out = await join(location, `${filename.trim()}.${ext}`);
+      await exportSettingsSet(settings).catch(() => {});
+      const range =
+        rangeMode === "full"
+          ? { startUs: 0, endUs: durationUs }
+          : clampExportRange(rangeStartUs, rangeEndUs, durationUs);
+      onConfirm(settings, out, range);
+    } catch {
+      // Launch never reached onConfirm (e.g. path join failed) — unlatch so
+      // the user can retry rather than being stuck on a dead dialog.
+      submittingRef.current = false;
+    }
+  }
+
+  function onExport() {
+    if (!settings || !location || !filename.trim()) return;
+    // 10-bit export is experimental — gate it behind an explicit confirmation
+    // (the on-screen preview can't be guaranteed to match the 10-bit output;
+    // see the inline warning). 8-bit export proceeds directly.
+    if (settings.bitDepth === 10) {
+      setConfirmExperimental(true);
+      return;
+    }
+    void doExport();
   }
 
   const canExport =
@@ -173,6 +203,7 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
     (rangeMode === "full" || rangeStartUs < rangeEndUs);
 
   return (
+    <>
     <AppDialog
       title={t("export_dialog.title")}
       onClose={onCancel}
@@ -402,8 +433,8 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
                   </p>
                 )}
                 {settings.bitDepth === 10 && (
-                  <p className="settings-blurb">
-                    {t("export_dialog.bit_depth_slow_hint")}
+                  <p className="settings-warn">
+                    {t("export_dialog.bit_depth_experimental_warning")}
                   </p>
                 )}
 
@@ -653,5 +684,39 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
           </div>
         </div>
     </AppDialog>
+    {confirmExperimental && (
+      <AppDialog
+        title={t("export_dialog.experimental_title")}
+        onClose={() => setConfirmExperimental(false)}
+        closeLabel={t("export_dialog.cancel")}
+        panelClassName="settings-panel export-experimental-confirm"
+      >
+        <div className="settings-body">
+          <div className="settings-card">
+            <p className="settings-blurb">
+              {t("export_dialog.experimental_body")}
+            </p>
+            <ul className="export-experimental-points">
+              <li>{t("export_dialog.experimental_point_preview")}</li>
+              <li>{t("export_dialog.experimental_point_slow")}</li>
+              <li>{t("export_dialog.experimental_point_reliability")}</li>
+            </ul>
+            <div className="export-actions">
+              <Button size="lg" onClick={() => setConfirmExperimental(false)}>
+                {t("export_dialog.cancel")}
+              </Button>
+              <Button
+                variant="default"
+                size="lg"
+                onClick={() => void doExport()}
+              >
+                {t("export_dialog.experimental_proceed")}
+              </Button>
+            </div>
+          </div>
+        </div>
+      </AppDialog>
+    )}
+    </>
   );
 }

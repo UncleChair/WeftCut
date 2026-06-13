@@ -231,6 +231,11 @@ validator. Additional types (wipe, slide, push) land as new
   or wide-color-gamut space, which changes blending semantics and needs a
   full conformance re-pass. Both remain post-v1 and both gate on HDR output
   becoming a real deliverable requirement.
+  v1 10-bit export ships **experimental** (UI-labeled, with an export-time
+  confirmation gate). The headline gap is preview fidelity: there is no
+  HDR/wide-gamut preview on the web platform, so the 8-bit/SDR preview is
+  not guaranteed to match the 10-bit file — compounded by sub-realtime
+  speed (4K especially) and the pending HEVC-source conform below.
   Follow-ups in the 10-bit bucket (all post-v1; see ADR 0022): **HEVC
   Main10 source conform** — HW-opaque HEVC frames cannot `copyTo` (P1 probe
   finding), so 10-bit HEVC originals currently proxy to a SW-decodable form;

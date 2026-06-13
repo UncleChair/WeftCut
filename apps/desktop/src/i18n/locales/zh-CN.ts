@@ -317,9 +317,19 @@ const zhCN: Resources = {
     channels_stereo: "立体声",
     bit_depth: "位深",
     bit_depth_8: "8-bit",
-    bit_depth_10: "10-bit（HEVC Main10 / AV1）",
+    bit_depth_10: "10-bit（HEVC Main10 / AV1）— 实验性",
     bit_depth_hint: "时间线含 10-bit 素材——10-bit 输出可保留其精度。",
-    bit_depth_slow_hint: "10-bit 导出远慢于实时（软件解码 + 原生编码），耗时会明显长于 8-bit 导出。",
+    bit_depth_experimental_warning:
+      "10-bit 导出为实验性功能。预览以标准 8-bit 显示，受当前 Web 平台限制（暂无法呈现 HDR / 广色域预览），画面颜色与渐变可能与最终 10-bit 文件不一致。该流程远慢于实时，且在部分素材上可能失败或产生错误输出。",
+    experimental_title: "10-bit 导出为实验性功能",
+    experimental_body: "此功能仍处于实验阶段，可能失败或产生错误的输出：",
+    experimental_point_preview:
+      "预览以 8-bit/SDR 显示，无法保证与实际 10-bit 结果一致——颜色、渐变、HDR 可能不同。",
+    experimental_point_slow:
+      "软件 10-bit 解码远慢于实时——4K 或较长项目可能非常缓慢。",
+    experimental_point_reliability:
+      "部分素材（如 HEVC Main10 原始文件）会被转码，可靠性较低。",
+    experimental_proceed: "仍要导出",
   },
   import_proxy: {
     title: "部分素材需要优化",
