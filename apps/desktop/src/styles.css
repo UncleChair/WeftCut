@@ -4916,3 +4916,44 @@ input.preview-timecode:focus {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* Timecode field: one .app-input-skinned box holding four borderless numeric
+ * segments with static ":" separators. Content-width (overrides .app-input's
+ * width:100%); the box shows the focus ring via :focus-within. */
+.app-timecode {
+  display: inline-flex;
+  align-items: center;
+  width: auto;
+  padding: 4px 6px;
+  cursor: text;
+}
+.app-timecode:focus-within {
+  border-color: var(--ring);
+}
+.app-timecode--disabled {
+  opacity: 0.5;
+}
+.app-timecode-seg-wrap {
+  display: inline-flex;
+  align-items: center;
+}
+.app-timecode-seg {
+  width: 2ch;
+  box-sizing: content-box;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  padding: 0;
+  outline: none;
+}
+.app-timecode-seg:disabled {
+  cursor: not-allowed;
+}
+.app-timecode-sep {
+  padding: 0 1px;
+  color: var(--muted-foreground);
+  user-select: none;
+}
