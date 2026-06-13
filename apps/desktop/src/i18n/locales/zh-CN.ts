@@ -108,8 +108,7 @@ const zhCN: Resources = {
     connect_agent_hint:
       "显示外部代理（Claude Desktop、Cursor）通过 MCP 驱动 WeftCut 所需的 URL 和令牌。",
     settings: "设置…",
-    settings_hint:
-      "管理云服务 API 密钥（转写、未来的 TTS）。密钥存储在系统密钥环中。",
+    settings_hint: "偏好设置、快捷键与 API 密钥。",
     motifs: "Motifs…",
     motifs_hint: "选择 Motif 叠加层（下三分位、标题卡、标注…）并添加到时间轴。",
     toggle_play: "播放 / 暂停",
@@ -386,6 +385,12 @@ const zhCN: Resources = {
   settings: {
     heading: "设置",
     close: "关闭",
+    cat_general: "通用",
+    cat_editing: "编辑",
+    cat_keyboard: "键盘",
+    cat_api_keys: "API 密钥",
+    scope_project: "项目",
+    scope_project_hint: "仅作用于当前项目。",
     startup_heading: "启动",
     reopen_on_launch: "启动时重新打开上一个项目",
     reopen_on_launch_hint:

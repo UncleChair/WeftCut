@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 import {
   type ApiKeyStatus,
@@ -31,6 +31,32 @@ import {
 
 const TAIL_SNAP_MIN_PX = 2;
 const TAIL_SNAP_MAX_PX = 80;
+
+type SettingsCategory = "general" | "editing" | "keyboard" | "apikeys";
+
+/// Sidebar order. Every pane stays mounted (toggled via `hidden`) so
+/// in-progress input and per-section fetches survive a tab switch.
+const CATEGORIES: ReadonlyArray<{ id: SettingsCategory; labelKey: string }> = [
+  { id: "general", labelKey: "settings.cat_general" },
+  { id: "editing", labelKey: "settings.cat_editing" },
+  { id: "keyboard", labelKey: "settings.cat_keyboard" },
+  { id: "apikeys", labelKey: "settings.cat_api_keys" },
+];
+
+/// Small pill marking a setting whose value travels with the .vproj
+/// (per-project) instead of the app — the two scopes look identical in
+/// the list otherwise.
+function ProjectBadge() {
+  const { t } = useTranslation();
+  return (
+    <span
+      className="settings-scope-badge"
+      title={t("settings.scope_project_hint")}
+    >
+      {t("settings.scope_project")}
+    </span>
+  );
+}
 
 interface CompositionState {
   durationUs: number;
@@ -69,6 +95,28 @@ export function SettingsPanel({
   const [statuses, setStatuses] = useState<ApiKeyStatus[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reopenOnLaunch, setReopenOnLaunch] = useState<boolean | null>(null);
+  const [category, setCategory] = useState<SettingsCategory>("general");
+  const tabRefs = useRef<
+    Partial<Record<SettingsCategory, HTMLButtonElement | null>>
+  >({});
+
+  /// Roving-tabindex keyboard nav for the vertical tablist (WAI-ARIA
+  /// tabs pattern): arrows move + activate, Home/End jump to the ends.
+  const onNavKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    const order = CATEGORIES.map((c) => c.id);
+    const idx = order.indexOf(category);
+    let next: SettingsCategory | undefined;
+    if (e.key === "ArrowDown") next = order[(idx + 1) % order.length];
+    else if (e.key === "ArrowUp")
+      next = order[(idx - 1 + order.length) % order.length];
+    else if (e.key === "Home") next = order[0];
+    else if (e.key === "End") next = order[order.length - 1];
+    if (next) {
+      e.preventDefault();
+      setCategory(next);
+      tabRefs.current[next]?.focus();
+    }
+  };
 
   const refresh = async () => {
     try {
@@ -91,78 +139,166 @@ export function SettingsPanel({
       title={t("settings.heading")}
       onClose={onClose}
       closeLabel={t("settings.close")}
-      panelClassName="settings-panel"
+      panelClassName="settings-panel settings-panel--nav"
     >
-        <div className="settings-body">
-        <div className="settings-card">
-        <h3>{t("settings.startup_heading")}</h3>
-        <label className="settings-toggle-row">
-          <AppSwitch
-            checked={reopenOnLaunch === true}
-            disabled={reopenOnLaunch === null}
-            onCheckedChange={async (next) => {
-              setReopenOnLaunch(next);
-              try {
-                await recentsSetReopenOnLaunch(next);
-              } catch (err) {
-                setError(String(err));
-                setReopenOnLaunch(!next);
+      <div className="settings-layout">
+        <div
+          className="settings-nav"
+          role="tablist"
+          aria-orientation="vertical"
+          aria-label={t("settings.heading")}
+          onKeyDown={onNavKeyDown}
+        >
+          {CATEGORIES.map((c) => (
+            <button
+              key={c.id}
+              ref={(el) => {
+                tabRefs.current[c.id] = el;
+              }}
+              type="button"
+              role="tab"
+              id={`settings-tab-${c.id}`}
+              aria-selected={category === c.id}
+              aria-controls={`settings-panel-${c.id}`}
+              tabIndex={category === c.id ? 0 : -1}
+              className={
+                category === c.id
+                  ? "settings-nav-item is-active"
+                  : "settings-nav-item"
               }
-            }}
-          />
-          <span>
-            <span className="settings-toggle-label">
-              {t("settings.reopen_on_launch")}
-            </span>
-            <span className="settings-toggle-hint">
-              {t("settings.reopen_on_launch_hint")}
-            </span>
-          </span>
-        </label>
-
-        <h3>{t("settings.composition_heading")}</h3>
-        <p className="settings-blurb">{t("settings.composition_blurb")}</p>
-        <CompositionSection
-          composition={composition}
-          onChanged={onCompositionChanged}
-          onError={setError}
-        />
-
-        <h3>{t("settings.timeline_heading")}</h3>
-        <p className="settings-blurb">{t("settings.timeline_blurb")}</p>
-        <TimelineSnapSection onError={setError} />
-        <AutoDeleteEmptyTracksSection onError={setError} />
-
-        <h3>{t("settings.motifs_heading")}</h3>
-        <PrebakeSection onError={setError} />
-
-        <h3>{t("settings.keybindings_heading")}</h3>
-        <p className="settings-blurb">{t("settings.keybindings_blurb")}</p>
-        <KeybindingPanel
-          keybindings={keybindings}
-          onChanged={onKeybindingsChanged}
-          onError={setError}
-        />
-
-        <h3>{t("settings.api_keys_heading")}</h3>
-        <p className="settings-blurb">{t("settings.api_keys_blurb")}</p>
-
-        {error && <p className="settings-error">{error}</p>}
-
-        {statuses === null ? (
-          <p className="settings-status">…</p>
-        ) : (
-          statuses.map((s) => (
-            <ApiKeyRow
-              key={s.provider}
-              status={s}
-              onChanged={refresh}
-              onError={setError}
-            />
-          ))
-        )}
+              onClick={() => setCategory(c.id)}
+            >
+              {t(c.labelKey)}
+            </button>
+          ))}
         </div>
+
+        <div className="settings-content">
+          {error && (
+            <p className="settings-error" role="alert">
+              {error}
+            </p>
+          )}
+
+          <div
+            role="tabpanel"
+            id="settings-panel-general"
+            aria-labelledby="settings-tab-general"
+            hidden={category !== "general"}
+            className="settings-pane"
+          >
+            <div className="settings-pane-title">{t("settings.cat_general")}</div>
+            <section className="settings-section">
+              <h3>{t("settings.startup_heading")}</h3>
+              <label className="settings-toggle-row">
+                <AppSwitch
+                  checked={reopenOnLaunch === true}
+                  disabled={reopenOnLaunch === null}
+                  onCheckedChange={async (next) => {
+                    setReopenOnLaunch(next);
+                    try {
+                      await recentsSetReopenOnLaunch(next);
+                    } catch (err) {
+                      setError(String(err));
+                      setReopenOnLaunch(!next);
+                    }
+                  }}
+                />
+                <span>
+                  <span className="settings-toggle-label">
+                    {t("settings.reopen_on_launch")}
+                  </span>
+                  <span className="settings-toggle-hint">
+                    {t("settings.reopen_on_launch_hint")}
+                  </span>
+                </span>
+              </label>
+            </section>
+
+            <section className="settings-section">
+              <h3>{t("settings.motifs_heading")}</h3>
+              <PrebakeSection onError={setError} />
+            </section>
+          </div>
+
+          <div
+            role="tabpanel"
+            id="settings-panel-editing"
+            aria-labelledby="settings-tab-editing"
+            hidden={category !== "editing"}
+            className="settings-pane"
+          >
+            <div className="settings-pane-title">{t("settings.cat_editing")}</div>
+            <section className="settings-section">
+              <h3>
+                {t("settings.composition_heading")}
+                <ProjectBadge />
+              </h3>
+              <p className="settings-blurb">{t("settings.composition_blurb")}</p>
+              <CompositionSection
+                composition={composition}
+                onChanged={onCompositionChanged}
+                onError={setError}
+              />
+            </section>
+
+            <section className="settings-section">
+              <h3>{t("settings.timeline_heading")}</h3>
+              <p className="settings-blurb">{t("settings.timeline_blurb")}</p>
+              <TimelineSnapSection onError={setError} />
+              <AutoDeleteEmptyTracksSection onError={setError} />
+            </section>
+          </div>
+
+          <div
+            role="tabpanel"
+            id="settings-panel-keyboard"
+            aria-labelledby="settings-tab-keyboard"
+            hidden={category !== "keyboard"}
+            className="settings-pane"
+          >
+            <div className="settings-pane-title">
+              {t("settings.cat_keyboard")}
+            </div>
+            <section className="settings-section">
+              <p className="settings-blurb">{t("settings.keybindings_blurb")}</p>
+              <KeybindingPanel
+                keybindings={keybindings}
+                onChanged={onKeybindingsChanged}
+                onError={setError}
+              />
+            </section>
+          </div>
+
+          <div
+            role="tabpanel"
+            id="settings-panel-apikeys"
+            aria-labelledby="settings-tab-apikeys"
+            hidden={category !== "apikeys"}
+            className="settings-pane"
+          >
+            <div className="settings-pane-title">
+              {t("settings.cat_api_keys")}
+            </div>
+            <section className="settings-section">
+              <p className="settings-blurb">{t("settings.api_keys_blurb")}</p>
+
+              {statuses === null ? (
+                <p className="settings-status">…</p>
+              ) : (
+                statuses.map((s) => (
+                  <ApiKeyRow
+                    key={s.provider}
+                    status={s}
+                    onChanged={refresh}
+                    onError={setError}
+                  />
+                ))
+              )}
+            </section>
+          </div>
         </div>
+      </div>
     </AppDialog>
   );
 }
@@ -282,6 +418,7 @@ function AutoDeleteEmptyTracksSection({
       <span>
         <span className="settings-toggle-label">
           {t("settings.auto_delete_empty_tracks")}
+          <ProjectBadge />
         </span>
         <span className="settings-toggle-hint">
           {t("settings.auto_delete_empty_tracks_hint")}

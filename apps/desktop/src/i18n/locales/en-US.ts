@@ -105,8 +105,7 @@ const enUS = {
     connect_agent_hint:
       "Show the URL + token an external agent (Claude Desktop, Cursor) needs to drive WeftCut over MCP.",
     settings: "Settings…",
-    settings_hint:
-      "Manage cloud-provider API keys (transcription, future TTS). Keys live in the OS keyring.",
+    settings_hint: "Preferences, shortcuts & API keys.",
     motifs: "Motifs…",
     motifs_hint:
       "Pick a motif overlay (lower third, title card, callout, …) and drop it on the timeline.",
@@ -394,6 +393,12 @@ const enUS = {
   settings: {
     heading: "Settings",
     close: "Close",
+    cat_general: "General",
+    cat_editing: "Editing",
+    cat_keyboard: "Keyboard",
+    cat_api_keys: "API Keys",
+    scope_project: "Project",
+    scope_project_hint: "Applies to the current project only.",
     startup_heading: "Startup",
     reopen_on_launch: "Reopen last project on launch",
     reopen_on_launch_hint:
