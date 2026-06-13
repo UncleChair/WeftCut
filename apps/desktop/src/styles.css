@@ -1527,6 +1527,50 @@ input.preview-timecode:focus {
   color: var(--color-gray-500);
 }
 
+.peek-filter {
+  display: flex;
+  gap: 4px;
+  padding: 2px 12px 6px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.peek-filter-chip {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-soft);
+  background: transparent;
+  color: var(--color-gray-500);
+  cursor: pointer;
+}
+
+.peek-filter-chip:hover {
+  color: var(--muted-foreground);
+}
+
+.peek-filter-chip.is-active {
+  background: rgba(96, 165, 250, 0.18);
+  color: var(--muted-foreground);
+  border-color: transparent;
+}
+
+.peek-section-header {
+  padding: 5px 12px 1px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-gray-500);
+}
+
+.peek-filter-empty {
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 11px;
+  color: var(--color-gray-500);
+}
+
 .right-panel-inspector {
   flex: 1 1 auto;
   min-height: 0;

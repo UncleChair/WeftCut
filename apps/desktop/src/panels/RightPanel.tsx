@@ -21,13 +21,19 @@
 // temporarily reveal the clicked layer's track. R.6 ships without the
 // reveal callback; R.7 wires it.
 
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { CircleIcon, FilmIcon, MusicIcon, TypeIcon } from "lucide-react";
 
 import { formatTimecode } from "../frames";
 import { type GroupSummary, type LayerSummary, type TrackSummary } from "../ipc";
-import { buildPeekItems, type PeekItem } from "./peek";
+import {
+  buildPeekItems,
+  groupPeekItems,
+  PEEK_CATEGORY_ORDER,
+  type PeekCategory,
+  type PeekItem,
+} from "./peek";
 import { PropertyPanel } from "../properties/PropertyPanel";
 import { useDeltaWindowUs, useDisplayMode } from "../settings/appSettingsStore";
 import { MediaThumbnail } from "./MediaThumbnail";
@@ -69,6 +75,13 @@ export function RightPanel({
 
   const showPeek = displayMode === "AbRoll" && peekItems.length > 0;
 
+  const [peekFilter, setPeekFilter] = useState<"all" | PeekCategory>("all");
+  const peekSections = useMemo(
+    () => groupPeekItems(peekItems, peekFilter),
+    [peekItems, peekFilter],
+  );
+  const peekFilters: ("all" | PeekCategory)[] = ["all", ...PEEK_CATEGORY_ORDER];
+
   return (
     <aside className="right-panel">
       {showPeek && (
@@ -89,23 +102,55 @@ export function RightPanel({
               ±{formatTimecode(deltaWindowUs, fpsNum, fpsDen)}
             </span>
           </header>
-          <ul className="right-panel-peek-list">
-            {peekItems.map((item) => (
-              <PeekRow
-                key={item.layer.id}
-                item={item}
-                isSelected={item.layer.id === selectedLayerId}
-                fpsNum={fpsNum}
-                fpsDen={fpsDen}
-                onClick={() => {
-                  onSelect(item.layer.id);
-                  if (onRevealTrack) {
-                    onRevealTrack(item.trackId, item.layer.id);
-                  }
-                }}
-              />
+          <div
+            className="peek-filter"
+            role="group"
+            aria-label={t("peek.filter_label", { defaultValue: "Filter near-playhead items by kind" })}
+          >
+            {peekFilters.map((f) => (
+              <button
+                key={f}
+                type="button"
+                className={`peek-filter-chip ${peekFilter === f ? "is-active" : ""}`}
+                aria-pressed={peekFilter === f}
+                onClick={() => setPeekFilter(f)}
+              >
+                {f === "all"
+                  ? t("peek.filter_all", { defaultValue: "All" })
+                  : t(`peek.cat_${f}`, { defaultValue: f })}
+              </button>
             ))}
-          </ul>
+          </div>
+          {peekSections.length === 0 ? (
+            <p className="peek-filter-empty">
+              {t("peek.filter_empty", { defaultValue: "Nothing of that kind near the playhead" })}
+            </p>
+          ) : (
+            peekSections.map((section) => (
+              <div key={section.category}>
+                <div className="peek-section-header">
+                  {t(`peek.cat_${section.category}`, { defaultValue: section.category })}
+                </div>
+                <ul className="right-panel-peek-list">
+                  {section.items.map((item) => (
+                    <PeekRow
+                      key={item.layer.id}
+                      item={item}
+                      isSelected={item.layer.id === selectedLayerId}
+                      fpsNum={fpsNum}
+                      fpsDen={fpsDen}
+                      onClick={() => {
+                        onSelect(item.layer.id);
+                        if (onRevealTrack) {
+                          onRevealTrack(item.trackId, item.layer.id);
+                        }
+                      }}
+                    />
+                  ))}
+                </ul>
+              </div>
+            ))
+          )}
         </section>
       )}
       <section className="right-panel-inspector">
