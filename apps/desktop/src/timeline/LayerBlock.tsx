@@ -111,6 +111,7 @@ export function LayerBlock({
     e: React.MouseEvent,
     layerId: string,
     layerKind: string,
+    layerEnabled: boolean,
   ) => void;
   /// Persist an inline-rename edit. `label` may be empty (clears the custom
   /// label → block falls back to the kind name). Wired by Timeline to
@@ -363,7 +364,7 @@ export function LayerBlock({
         e.stopPropagation();
         // Spec §3: locked layers are unselectable; suppress context menu too.
         if (layer.locked || trackLocked) return;
-        onContextMenu(e, layer.id, layer.kind);
+        onContextMenu(e, layer.id, layer.kind, layer.enabled);
       }}
       title={`${layer.kind}: ${formatTimecode(liveStart, fpsNum, fpsDen)} → ${formatTimecode(liveEnd, fpsNum, fpsDen)}`}
     >

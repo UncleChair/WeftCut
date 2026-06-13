@@ -39,6 +39,7 @@ import { TimelineRuler } from "./TimelineRuler";
 import { TrackHeader } from "./TrackHeader";
 import { TrackLane, type MediaDragPayload } from "./TrackLane";
 import { LayerContextMenu } from "./LayerContextMenu";
+import { beginRename } from "./renameStore";
 import { useTimelineView } from "./hooks/useTimelineView";
 import { useHeightDrag } from "./hooks/useHeightDrag";
 import { useLayerDrag } from "./hooks/useLayerDrag";
@@ -138,6 +139,7 @@ export function Timeline({
     y: number;
     layerId: string;
     layerKind: string;
+    layerEnabled: boolean;
   } | null>(null);
   /// `docs/groups.md` — multi-select for `Ctrl+G` and visual highlight.
   /// `selectedLayerId` (from App) is the primary (drives PropertyPanel);
@@ -358,12 +360,18 @@ export function Timeline({
   // V.7: context-menu open handler. Captures cursor position +
   // target layer. Triggered by LayerBlock's onContextMenu (right-click).
   const onContextMenu = useCallback(
-    (e: React.MouseEvent, layerId: string, layerKind: string) => {
+    (
+      e: React.MouseEvent,
+      layerId: string,
+      layerKind: string,
+      layerEnabled: boolean,
+    ) => {
       setContextMenu({
         x: e.clientX,
         y: e.clientY,
         layerId,
         layerKind,
+        layerEnabled,
       });
     },
     [],
@@ -376,6 +384,24 @@ export function Timeline({
         await onMutated();
       } catch (e) {
         console.warn("update_layer (label) failed:", e);
+      }
+    },
+    [onMutated],
+  );
+
+  const onRename = useCallback((layerId: string) => {
+    setContextMenu(null);
+    beginRename(layerId);
+  }, []);
+
+  const onToggleEnabled = useCallback(
+    async (layerId: string, enabled: boolean) => {
+      setContextMenu(null);
+      try {
+        await updateLayer(layerId, { enabled });
+        await onMutated();
+      } catch (e) {
+        console.warn("update_layer (enabled) failed:", e);
       }
     },
     [onMutated],
@@ -582,7 +608,10 @@ export function Timeline({
         y={contextMenu.y}
         layerId={contextMenu.layerId}
         layerKind={contextMenu.layerKind}
+        layerEnabled={contextMenu.layerEnabled}
         onClose={() => setContextMenu(null)}
+        onRename={onRename}
+        onToggleEnabled={onToggleEnabled}
         onSeparateAudio={onSeparateAudio}
         onPrebakeNow={onPrebakeNow}
       />
