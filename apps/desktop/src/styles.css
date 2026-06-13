@@ -2743,13 +2743,10 @@ input.preview-timecode:focus {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+/* Use the standard .app-select skin (matches selects app-wide and pairs with
+ * .app-input like the Settings/Export forms); only force full width to fill
+ * the field's grid column. */
 .motif-picker-field .app-select {
-  background: var(--secondary);
-  border: 1px solid var(--border);
-  color: var(--foreground);
-  padding: 4px 8px;
-  font-size: 12px;
-  border-radius: 3px;
   width: 100%;
   box-sizing: border-box;
 }
