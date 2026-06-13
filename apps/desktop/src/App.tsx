@@ -43,7 +43,7 @@ import {
   type MediaSummary,
   type ProjectSummary,
 } from "./ipc";
-import { formatTimecode, frameDurUs, lastFrameAnchorUs, parseTimecode } from "./frames";
+import { formatTimecode, frameDurUs, lastFrameAnchorUs } from "./frames";
 import { Timeline } from "./timeline/Timeline";
 import { MEDIA_DRAG_TYPE } from "./timeline/TrackLane";
 import { AgentMode } from "./agent/AgentMode";
@@ -91,6 +91,7 @@ import {
 } from "./panels/importOptimize";
 import { AppDialog } from "./components/AppDialog";
 import { AppInput } from "./components/AppInput";
+import { AppTimecodeField } from "./components/AppTimecodeField";
 import { WindowControls } from "./components/WindowControls";
 import { Button } from "@/components/ui/button";
 import { ImportProxyDialog } from "./panels/ImportProxyDialog";
@@ -188,7 +189,7 @@ export function App({ onCloseProject }: AppProps) {
   const [logConsoleOpen, setLogConsoleOpen] = useState(false);
   const logConsoleRef = useRef<LogConsoleHandle | null>(null);
   const [motifPickerOpen, setMotifPickerOpen] = useState(false);
-  const [editingTimecode, setEditingTimecode] = useState<string | null>(null);
+  const [tcEditing, setTcEditing] = useState(false);
   // User shortcut overrides. Loaded once on mount; refreshed when the
   // Settings → Keyboard panel writes (it calls back via the
   // `onKeybindingsChanged` prop). The map is `Record<string, string[]>`
@@ -278,7 +279,6 @@ export function App({ onCloseProject }: AppProps) {
       cancelled = true;
     };
   }, []);
-  const timecodeInputRef = useRef<HTMLInputElement | null>(null);
 
   // Centralised playhead clamp — Q5 of the frame-anchor playhead spec.
   // Every UI seek funnels through here so callers can pass raw boundary
@@ -442,24 +442,6 @@ export function App({ onCloseProject }: AppProps) {
       setRevealedTrackId(null);
     }
   }, [selectedLayerId, summary, revealedTrackId]);
-
-  const commitTimecode = useCallback(() => {
-    if (editingTimecode === null) return;
-    const fpsNum = summary?.composition.fps_num ?? 30;
-    const fpsDen = summary?.composition.fps_den ?? 1;
-    const us = parseTimecode(editingTimecode, fpsNum, fpsDen);
-    setEditingTimecode(null);
-    if (us !== null) void seekTo(us);
-  }, [editingTimecode, seekTo, summary?.composition.fps_num, summary?.composition.fps_den]);
-
-  // Focus + select the timecode input the moment edit mode opens so the user
-  // can immediately type to replace the current value.
-  useEffect(() => {
-    if (editingTimecode !== null && timecodeInputRef.current) {
-      timecodeInputRef.current.focus();
-      timecodeInputRef.current.select();
-    }
-  }, [editingTimecode]);
 
   const togglePlay = useCallback(() => {
     const handle = previewRef.current;
@@ -1767,24 +1749,19 @@ export function App({ onCloseProject }: AppProps) {
             />
           </div>
           <div className="preview-transport" role="toolbar" aria-label="Preview transport">
-            {editingTimecode !== null ? (
-              <AppInput
-                ref={timecodeInputRef}
+            {tcEditing ? (
+              <AppTimecodeField
                 className="preview-timecode"
-                value={editingTimecode}
-                onValueChange={setEditingTimecode}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    commitTimecode();
-                  } else if (e.key === "Escape") {
-                    e.preventDefault();
-                    setEditingTimecode(null);
-                  }
-                }}
-                onBlur={commitTimecode}
+                valueUs={currentTimeUs}
+                fpsNum={summary?.composition.fps_num ?? 30}
+                fpsDen={summary?.composition.fps_den ?? 1}
+                autoFocus
                 ariaLabel={t("transport.timecode_label")}
-                spellCheck={false}
+                onCommit={(us) => {
+                  setTcEditing(false);
+                  void seekTo(us);
+                }}
+                onCancel={() => setTcEditing(false)}
               />
             ) : (
               <span
@@ -1793,11 +1770,11 @@ export function App({ onCloseProject }: AppProps) {
                 role="button"
                 tabIndex={0}
                 title={t("transport.timecode_edit_hint")}
-                onClick={() => setEditingTimecode(formatTimecode(currentTimeUs, summary?.composition.fps_num ?? 30, summary?.composition.fps_den ?? 1))}
+                onClick={() => setTcEditing(true)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
-                    setEditingTimecode(formatTimecode(currentTimeUs, summary?.composition.fps_num ?? 30, summary?.composition.fps_den ?? 1));
+                    setTcEditing(true);
                   }
                 }}
               >
