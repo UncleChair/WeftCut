@@ -12,7 +12,9 @@ describe("AppInput", () => {
     render(<AppInput value="" onValueChange={onValueChange} ariaLabel="name" />);
     await userEvent.type(screen.getByLabelText("name"), "ab");
     expect(onValueChange).toHaveBeenCalledTimes(2);
-    expect(onValueChange).toHaveBeenLastCalledWith("b"); // controlled value stays "" → last char only
+    // value is frozen at "" (parent never updates it), so Base UI emits each
+    // typed char against the frozen base → last call is "b", not "ab".
+    expect(onValueChange).toHaveBeenLastCalledWith("b");
   });
 
   it("applies the shared skin and modifier classes", () => {
