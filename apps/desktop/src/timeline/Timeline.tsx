@@ -12,6 +12,7 @@ import {
   groupsDissolve,
   separateAudioToNewTrack,
   splitLayerGrouped,
+  updateLayer,
   type GroupSummary,
   type KeybindingsMap,
   type LayerSummary,
@@ -368,6 +369,18 @@ export function Timeline({
     [],
   );
 
+  const onCommitLabel = useCallback(
+    async (layerId: string, label: string) => {
+      try {
+        await updateLayer(layerId, { label });
+        await onMutated();
+      } catch (e) {
+        console.warn("update_layer (label) failed:", e);
+      }
+    },
+    [onMutated],
+  );
+
   // Close the context menu when the timeline scrolls under it — the
   // popup is anchored to fixed cursor coordinates, so it would float
   // detached over moving content. Outside-click and Escape closing is
@@ -541,6 +554,7 @@ export function Timeline({
                 onSelectFromClick={selectFromClick}
                 onDragStart={(state) => setDrag(state)}
                 onContextMenu={onContextMenu}
+                onCommitLabel={onCommitLabel}
                 onMediaDrop={onMediaDrop}
                 isGroupStart={isGroupStart}
                 isRevealed={track.id === (revealedTrackId ?? null)}

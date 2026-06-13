@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { formatTimecode } from "../frames";
 import {
@@ -8,6 +8,7 @@ import {
 } from "./geometry";
 import { useLayerBakePhase } from "./motifBakeStatusStore";
 import type { LayerSummary } from "../ipc";
+import { useEditingLayerId, beginRename, endRename } from "./renameStore";
 
 export type DragKind = "move" | "trim-start" | "trim-end";
 
@@ -72,6 +73,7 @@ export function LayerBlock({
   onSelectFromClick,
   onDragStart,
   onContextMenu,
+  onCommitLabel,
   fpsNum,
   fpsDen,
 }: {
@@ -110,12 +112,34 @@ export function LayerBlock({
     layerId: string,
     layerKind: string,
   ) => void;
+  /// Persist an inline-rename edit. `label` may be empty (clears the custom
+  /// label → block falls back to the kind name). Wired by Timeline to
+  /// `updateLayer({label}) + onMutated`, matching the drag-commit pattern.
+  onCommitLabel: (layerId: string, label: string) => void;
   fpsNum: number;
   fpsDen: number;
 }) {
   const { t } = useTranslation();
   const isDragging = dragState?.layerId === layer.id;
   const isPendingPlacement = pendingPlacement?.layerId === layer.id;
+
+  const editingLayerId = useEditingLayerId();
+  const isEditing = editingLayerId === layer.id;
+  const [draft, setDraft] = useState("");
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    if (isEditing) {
+      setDraft(layer.label ?? "");
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }
+  }, [isEditing, layer.id, layer.label]);
+
+  const commitRename = () => {
+    const next = draft.trim();
+    if (next !== (layer.label ?? "")) onCommitLabel(layer.id, next);
+    endRename();
+  };
   let liveStart = isPendingPlacement
     ? pendingPlacement.tStartUs
     : layer.t_start_us;
@@ -149,7 +173,8 @@ export function LayerBlock({
   const kindLabel = t(`kinds.${layer.kind.toLowerCase()}`, {
     defaultValue: layer.kind,
   });
-  const label = layer.label ?? kindLabel;
+  const label =
+    layer.label && layer.label.trim() !== "" ? layer.label : kindLabel;
 
   // Source copies are normally filtered out for cross-track drag/pending
   // states. If one still renders during a transitional frame, keep it
@@ -325,6 +350,11 @@ export function LayerBlock({
           metaKey: e.metaKey,
         });
       }}
+      onDoubleClick={(e) => {
+        if (layer.locked || trackLocked || bladeMode) return;
+        e.stopPropagation();
+        beginRename(layer.id);
+      }}
       onPointerDown={onLayerPointerDown}
       onPointerMove={onPointerMoveHover}
       onPointerLeave={onPointerLeaveHover}
@@ -337,9 +367,32 @@ export function LayerBlock({
       }}
       title={`${layer.kind}: ${formatTimecode(liveStart, fpsNum, fpsDen)} → ${formatTimecode(liveEnd, fpsNum, fpsDen)}`}
     >
-      <span className="relative z-[1] flex-1 overflow-hidden text-ellipsis whitespace-nowrap [text-shadow:0_1px_0_rgba(255,255,255,0.4)]">
-        {label}
-      </span>
+      {isEditing ? (
+        <input
+          ref={inputRef}
+          className="relative z-[2] min-w-0 flex-1 rounded-sm border border-blue-400 bg-black/60 px-1 text-inherit outline-none"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onClick={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+          onBlur={commitRename}
+          onKeyDown={(e) => {
+            e.stopPropagation();
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commitRename();
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              endRename();
+            }
+          }}
+        />
+      ) : (
+        <span className="relative z-[1] flex-1 overflow-hidden text-ellipsis whitespace-nowrap [text-shadow:0_1px_0_rgba(255,255,255,0.4)]">
+          {label}
+        </span>
+      )}
       {layer.kind === "Motif" && <MotifBakeDot layerId={layer.id} />}
     </div>
   );
