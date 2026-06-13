@@ -328,7 +328,11 @@ const enUS = {
     reason_10bit: "{{codec}} 10-bit/HDR · needs optimizing",
     reason_bridged: "{{codec}} · usable now, optimizing scroll in background",
     failed: "Preparation failed — re-import to retry",
-    editable_note: "You can edit now; export will wait automatically.",
+    editable_note: "Usable clips can be edited now; export will wait automatically.",
+    waiting_note: "Preparing clips become draggable once a preview source is ready.",
+    mixed_note:
+      "Usable clips can be edited now; preparing clips become draggable once a preview source is ready.",
+    failed_note: "Failed clips need to be re-imported before they can be used.",
     dismiss: "Got it",
   },
   motif_stale: {

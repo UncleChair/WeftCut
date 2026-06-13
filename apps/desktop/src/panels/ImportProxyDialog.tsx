@@ -1,6 +1,10 @@
 import { useTranslation } from "react-i18next";
 import { CornerNotice } from "../components/CornerNotice";
-import { partitionImportItems, type ImportItem } from "./importOptimize";
+import {
+  importDialogNoteKey,
+  partitionImportItems,
+  type ImportItem,
+} from "./importOptimize";
 
 export function ImportProxyDialog({
   items,
@@ -11,6 +15,7 @@ export function ImportProxyDialog({
 }) {
   const { t } = useTranslation();
   const { listed, checkingCount } = partitionImportItems(items);
+  const noteKey = importDialogNoteKey(items);
 
   return (
     <CornerNotice
@@ -40,7 +45,7 @@ export function ImportProxyDialog({
           {t("import_proxy.checking", { n: checkingCount })}
         </p>
       )}
-      <p className="import-proxy-note">{t("import_proxy.editable_note")}</p>
+      <p className="import-proxy-note">{t(`import_proxy.${noteKey}`)}</p>
     </CornerNotice>
   );
 }
