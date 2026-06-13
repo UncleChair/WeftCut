@@ -38,6 +38,12 @@ export const DEFAULT_AUDIO_SETTINGS: AudioSettings = {
 };
 
 export interface ExportSettings {
+  /// Write a video stream. false + includeAudio ⇒ audio-only (.m4a/.mka);
+  /// both false is rejected by the dialog (nothing to export).
+  includeVideo: boolean;
+  /// Write an audio stream. Mirrored into `audio.include`, which the export
+  /// pipeline reads for the audio mux/gate.
+  includeAudio: boolean;
   /// Target output height in pixels; null = follow composition. Width is
   /// derived from the composition aspect ratio. Downscale-only.
   resolutionHeight: number | null;
@@ -68,6 +74,8 @@ export interface ExportSettings {
 }
 
 export const DEFAULT_EXPORT_SETTINGS: ExportSettings = {
+  includeVideo: true,
+  includeAudio: true,
   resolutionHeight: null,
   fps: null,
   codec: "h264",
@@ -203,10 +211,20 @@ export function mergeSettings(
     ...(saved ?? {}),
     audio: { ...DEFAULT_AUDIO_SETTINGS, ...(saved?.audio ?? {}) },
   };
+  // Back-compat: pre-checkbox blobs stored audio inclusion in `audio.include`
+  // and always wrote video. Map onto the include flags, then keep
+  // `audio.include` mirrored to `includeAudio` (the pipeline reads it).
+  if (saved?.includeAudio == null && saved?.audio?.include != null) {
+    merged.includeAudio = saved.audio.include;
+  }
+  merged.audio = { ...merged.audio, include: merged.includeAudio };
   // Defend against a stale/hand-edited blob whose audio codec the container
-  // can't hold (e.g. Opus in MP4) — the live dialog can't produce this, but a
-  // corrupted export.json would otherwise break the ffmpeg mux. Snap to AAC.
-  if (!isAudioCodecContainerValid(merged.audio.codec, merged.container)) {
+  // can't hold (e.g. Opus in MP4). Only matters when audio is muxed into the
+  // video container; audio-only writes .m4a/.mka regardless. Snap to AAC.
+  if (
+    merged.includeVideo &&
+    !isAudioCodecContainerValid(merged.audio.codec, merged.container)
+  ) {
     merged.audio = { ...merged.audio, codec: "aac" };
   }
   // Snap an invalid bit depth (e.g. 10 saved with H.264 from a future downgrade).
@@ -218,6 +236,25 @@ export function mergeSettings(
 
 export function containerExtension(c: Container): string {
   return c;
+}
+
+/// Stream-inclusion helpers.
+export function exportIncludesVideo(s: ExportSettings): boolean {
+  return s.includeVideo;
+}
+
+export function exportIncludesAudio(s: ExportSettings): boolean {
+  return s.includeAudio;
+}
+
+/// Output file extension. Audio-only (video off, audio on) writes .m4a (AAC) /
+/// .mka (Opus), independent of the (irrelevant) container; otherwise the
+/// chosen container's extension.
+export function exportOutputExtension(settings: ExportSettings): string {
+  if (!settings.includeVideo && settings.includeAudio) {
+    return settings.audio.codec === "opus" ? "mka" : "m4a";
+  }
+  return containerExtension(settings.container);
 }
 
 export function isBitDepthValid(codec: CodecId, d: BitDepth): boolean {

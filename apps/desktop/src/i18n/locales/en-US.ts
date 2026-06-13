@@ -277,6 +277,22 @@ const enUS = {
   },
   export_dialog: {
     title: "Export settings",
+    cat_general: "General",
+    cat_video: "Video",
+    cat_audio: "Audio",
+    cat_subtitle: "Subtitle",
+    subtitle_placeholder: "Subtitle export is coming soon.",
+    content: "Export content",
+    content_both: "Video + audio",
+    content_video: "Video only",
+    content_audio: "Audio only",
+    include_video: "Include video",
+    include_audio: "Include audio",
+    content_none: "Select at least video or audio to export.",
+    video_excluded:
+      "Video isn't included in this export. Change “Export content” under General to include it.",
+    audio_excluded:
+      "Audio isn't included in this export. Change “Export content” under General to include it.",
     resolution: "Resolution",
     fps: "Frame rate",
     follow_comp: "Follow composition",

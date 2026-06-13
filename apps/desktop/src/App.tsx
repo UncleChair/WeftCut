@@ -966,6 +966,77 @@ export function App({ onCloseProject }: AppProps) {
   // clear.
   const runExportWithSettings = useCallback(
     async (settings: ExportSettings, path: string, range?: { startUs: number; endUs: number }) => {
+    // ---- Audio-only export: skip every video stage -----------------------
+    // No decode/proxy gate, motif bake, encode, sink, or mux — just conform the
+    // audible layers and write the audio file straight to `path` (.m4a/.mka by
+    // the dialog's extension). Video-only is NOT handled here: it keeps the full
+    // video pipeline and simply omits the audio mux (settings.audio.include is
+    // false), which the existing code below already does.
+    if (settings.includeAudio && !settings.includeVideo) {
+      const store = useProjectStore.getState();
+      const proj = store.summary;
+      if (!proj) {
+        setExportState({ kind: "error", detail: "No project loaded." });
+        return;
+      }
+      const startUs = range?.startUs ?? 0;
+      const endUs = range?.endUs ?? proj.duration_us;
+      setExportState({ kind: "starting" });
+      const tracker = createConformTracker(listen);
+      try {
+        await tracker.ready; // listeners first — a fast job must not slip by
+        const conformWaiting = await ensureExportAudioConform({ startUs, endUs });
+        if (conformWaiting.length > 0) {
+          const ctrl = new AbortController();
+          setExportState({
+            kind: "preparing",
+            labels: conformWaiting.map(
+              (id) => store.mediaById.get(id)?.label ?? id,
+            ),
+            onCancel: () => ctrl.abort(),
+          });
+          await tracker.waitFor(conformWaiting, ctrl.signal);
+        }
+      } catch (e) {
+        if (e instanceof ExportCancelled) {
+          setExportState(null);
+          return;
+        }
+        const id = e instanceof ExportProxyFailed ? e.mediaId : "";
+        const label = store.mediaById.get(id)?.label ?? id;
+        setExportState({
+          kind: "error",
+          detail: t("export.failed_prepare", { labels: label }),
+        });
+        return;
+      } finally {
+        tracker.dispose();
+      }
+      try {
+        setExportState({ kind: "starting" });
+        await exportProjectAudioOnly(
+          path,
+          {
+            codec: settings.audio.codec,
+            bitrate: settings.audio.bitrate,
+            sampleRate: settings.audio.sampleRate,
+            channels: settings.audio.channels,
+          },
+          { startUs, endUs },
+        );
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error("[weftcut/pixi] audio-only export failed:", e);
+        setExportState({ kind: "error", detail: `Audio export failed: ${msg}` });
+        return;
+      }
+      setExportState({
+        kind: "complete",
+        payload: { outputPath: path, durationUs: endUs - startUs },
+      });
+      return;
+    }
+
     // ---- Export-readiness gate -------------------------------------------
     // Confirm every video source the export will decode is ready. Undecodable
     // DirectExport sources are route-corrected here; sources whose proxy is
