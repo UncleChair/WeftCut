@@ -98,6 +98,18 @@ async fn mix_and_encode(
     let target_sr = audio.sample_rate.unwrap_or(project.composition.sample_rate);
     let target_ch = audio.channels.unwrap_or(2).clamp(1, 2);
 
+    // Create the output's parent dir if missing. Audio-only export sends this
+    // straight to the dialog's location (defaults to `<workspace>/output`,
+    // which may not exist on first export) rather than a temp file. Without
+    // this, ffmpeg can't open the output and exits at once — surfacing only as
+    // a broken-pipe on the PCM stdin write. Mirrors `mux_export`.
+    if let Some(parent) = output.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("create output dir {}", parent.display()))?;
+        }
+    }
+
     let mut cmd = Command::new(ffmpeg_path());
     cmd.args(["-y", "-hide_banner", "-nostats"])
         .args(["-f", "f32le", "-ar", "48000", "-ac", "2", "-i", "-"])
@@ -609,7 +621,12 @@ mod tests {
             ],
         });
 
-        let out = tmp.path().join("mix.m4a");
+        // Output into a not-yet-created nested dir. Audio-only export targets
+        // the dialog's location (`<workspace>/output`), which may not exist on
+        // first export; mix_and_encode must create it. Regression guard: ffmpeg
+        // used to die with a broken-pipe on the PCM write when the dir was
+        // missing (it couldn't open the output file).
+        let out = tmp.path().join("nested").join("output").join("mix.m4a");
         let spec = super::AudioEncodeSpec {
             codec: "aac".into(),
             bitrate: 192_000,

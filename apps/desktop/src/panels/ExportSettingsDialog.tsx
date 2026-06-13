@@ -1,14 +1,14 @@
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { documentDir, join } from "@tauri-apps/api/path";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 
 import { exportSettingsGet, exportSettingsSet, workspaceDir } from "../ipc";
 import { AppDialog } from "../components/AppDialog";
 import { AppInput } from "../components/AppInput";
 import { AppNumberField } from "../components/AppNumberField";
+import { AppCheckbox } from "../components/AppCheckbox";
 import { AppSelect } from "../components/AppSelect";
-import { AppSwitch } from "../components/AppSwitch";
 import { AppTimecodeField } from "../components/AppTimecodeField";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,8 +22,10 @@ import {
   type ExportSettings,
   type QualityPreset,
   type RateMode,
-  containerExtension,
   containersForCodec,
+  exportIncludesVideo,
+  exportIncludesAudio,
+  exportOutputExtension,
   isBitDepthValid,
   isCodecContainerValid,
   downscaleFpsOptions,
@@ -39,6 +41,17 @@ import {
   audioCodecsForContainer,
   isAudioCodecContainerValid,
 } from "../render/exportSettings";
+
+type ExportCategory = "general" | "video" | "audio" | "subtitle";
+
+/// Sidebar order for the export dialog. Every pane stays mounted
+/// (toggled via `hidden`) so in-progress edits survive a tab switch.
+const EXPORT_CATEGORIES: ReadonlyArray<{ id: ExportCategory; labelKey: string }> = [
+  { id: "general", labelKey: "export_dialog.cat_general" },
+  { id: "video", labelKey: "export_dialog.cat_video" },
+  { id: "audio", labelKey: "export_dialog.cat_audio" },
+  { id: "subtitle", labelKey: "export_dialog.cat_subtitle" },
+];
 
 interface Comp {
   width: number;
@@ -87,6 +100,37 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
   /// dialog session. Suppresses the smart-default (auto-10 on 10-bit-capable
   /// codec change) after the first explicit choice.
   const userTouchedBitDepth = useRef(false);
+  const [category, setCategory] = useState<ExportCategory>("general");
+  const tabRefs = useRef<
+    Partial<Record<ExportCategory, HTMLButtonElement | null>>
+  >({});
+
+  /// Roving-tabindex keyboard nav for the vertical tablist (WAI-ARIA
+  /// tabs pattern): arrows move + activate, Home/End jump to the ends.
+  const onNavKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    const order = EXPORT_CATEGORIES.map((c) => c.id);
+    const idx = order.indexOf(category);
+    let next: ExportCategory | undefined;
+    if (e.key === "ArrowDown") next = order[(idx + 1) % order.length];
+    else if (e.key === "ArrowUp")
+      next = order[(idx - 1 + order.length) % order.length];
+    else if (e.key === "Home") next = order[0];
+    else if (e.key === "End") next = order[order.length - 1];
+    if (next) {
+      e.preventDefault();
+      setCategory(next);
+      tabRefs.current[next]?.focus();
+    }
+  };
+
+  /// A category whose stream the current `content` excludes is shown dimmed in
+  /// the nav (Video when audio-only, Audio when video-only).
+  const tabExcluded = (id: ExportCategory): boolean => {
+    if (!settings) return false;
+    if (id === "video") return !settings.includeVideo;
+    if (id === "audio") return !settings.includeAudio;
+    return false;
+  };
   // Keep the default "custom" end in sync if the project duration arrives late.
   useEffect(() => {
     setRangeEndUs((e) => (e === 0 ? durationUs : e));
@@ -171,7 +215,7 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
     if (submittingRef.current) return; // guard against double-fire
     submittingRef.current = true;
     try {
-      const ext = containerExtension(settings.container);
+      const ext = exportOutputExtension(settings);
       const out = await join(location, `${filename.trim()}.${ext}`);
       await exportSettingsSet(settings).catch(() => {});
       const range =
@@ -190,8 +234,9 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
     if (!settings || !location || !filename.trim()) return;
     // 10-bit export is experimental — gate it behind an explicit confirmation
     // (the on-screen preview can't be guaranteed to match the 10-bit output;
-    // see the inline warning). 8-bit export proceeds directly.
-    if (settings.bitDepth === 10) {
+    // see the inline warning). 8-bit export proceeds directly. Audio-only has
+    // no video, so the bit-depth gate doesn't apply.
+    if (exportIncludesVideo(settings) && settings.bitDepth === 10) {
       setConfirmExperimental(true);
       return;
     }
@@ -201,7 +246,9 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
   const canExport =
     !!location &&
     filename.trim().length > 0 &&
-    encodePath !== null &&
+    // Need at least one stream; video (if included) needs its encode-path probe.
+    !!(settings?.includeVideo || settings?.includeAudio) &&
+    (!settings?.includeVideo || encodePath !== null) &&
     (rangeMode === "full" || rangeStartUs < rangeEndUs);
 
   return (
@@ -210,14 +257,58 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
       title={t("export_dialog.title")}
       onClose={onCancel}
       closeLabel={t("export_dialog.cancel")}
-      panelClassName="settings-panel"
+      panelClassName="settings-panel settings-panel--nav"
     >
-        <div className="settings-body">
-          <div className="settings-card">
-            {!settings ? (
-              <p className="settings-blurb">…</p>
-            ) : (
-              <>
+      <div className="settings-layout">
+        <div
+          className="settings-nav"
+          role="tablist"
+          aria-orientation="vertical"
+          aria-label={t("export_dialog.title")}
+          onKeyDown={onNavKeyDown}
+        >
+          {EXPORT_CATEGORIES.map((c) => (
+            <button
+              key={c.id}
+              ref={(el) => {
+                tabRefs.current[c.id] = el;
+              }}
+              type="button"
+              role="tab"
+              id={`export-tab-${c.id}`}
+              aria-selected={category === c.id}
+              aria-controls={`export-panel-${c.id}`}
+              tabIndex={category === c.id ? 0 : -1}
+              className={[
+                "settings-nav-item",
+                category === c.id ? "is-active" : "",
+                tabExcluded(c.id) ? "is-dim" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+              onClick={() => setCategory(c.id)}
+            >
+              {t(c.labelKey)}
+            </button>
+          ))}
+        </div>
+
+        <div className="settings-content">
+          {!settings ? (
+            <p className="settings-blurb">…</p>
+          ) : (
+            <>
+              <div
+                role="tabpanel"
+                id="export-panel-general"
+                aria-labelledby="export-tab-general"
+                hidden={category !== "general"}
+                className="settings-pane"
+              >
+                <div className="settings-pane-title">
+                  {t("export_dialog.cat_general")}
+                </div>
+
                 <div className="export-row">
                   <span className="settings-toggle-label">
                     {t("export_dialog.filename")}
@@ -232,7 +323,7 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
                       ariaLabel={t("export_dialog.filename")}
                     />
                     <span className="settings-slider-unit">
-                      .{containerExtension(settings.container)}
+                      .{exportOutputExtension(settings)}
                     </span>
                   </span>
                 </div>
@@ -257,49 +348,31 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
                   </span>
                 </div>
 
-                <div className="export-row">
-                  <span className="settings-toggle-label">
-                    {t("export_dialog.resolution")}
-                  </span>
-                  <AppSelect
-                    className="export-select"
-                    value={String(settings.resolutionHeight ?? "")}
-                    onValueChange={(v) =>
-                      patch({ resolutionHeight: v ? Number(v) : null })
-                    }
-                    options={[
-                      {
-                        value: "",
-                        label: `${t("export_dialog.follow_comp")} (${comp.width}×${comp.height})`,
-                      },
-                      ...downscaleHeightOptions(comp.height).map((h) => ({
-                        value: String(h),
-                        label: `${h}p`,
-                      })),
-                    ]}
-                  />
-                </div>
-
-                <div className="export-row">
-                  <span className="settings-toggle-label">
-                    {t("export_dialog.fps")}
-                  </span>
-                  <AppSelect
-                    className="export-select"
-                    value={String(settings.fps ?? "")}
-                    onValueChange={(v) => patch({ fps: v ? Number(v) : null })}
-                    options={[
-                      {
-                        value: "",
-                        label: `${t("export_dialog.follow_comp")} (${compFps.toFixed(2)})`,
-                      },
-                      ...downscaleFpsOptions(compFps).map((f) => ({
-                        value: String(f),
-                        label: `${f} fps`,
-                      })),
-                    ]}
-                  />
-                </div>
+                {settings.includeVideo && (
+                  <div className="export-row">
+                    <span className="settings-toggle-label">
+                      {t("export_dialog.container")}
+                    </span>
+                    <AppSelect
+                      className="export-select"
+                      value={settings.container}
+                      onValueChange={(v) => {
+                        const container = v as Container;
+                        const audio = isAudioCodecContainerValid(
+                          settings.audio.codec,
+                          container,
+                        )
+                          ? settings.audio
+                          : { ...settings.audio, codec: "aac" as AudioCodecId };
+                        patch({ container, audio });
+                      }}
+                      options={containersForCodec(settings.codec).map((c) => ({
+                        value: c,
+                        label: c.toUpperCase(),
+                      }))}
+                    />
+                  </div>
+                )}
 
                 <div className="export-row">
                   <span className="settings-toggle-label">
@@ -361,6 +434,104 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
                     </div>
                   </>
                 )}
+
+                <div className="export-row">
+                  <span className="settings-toggle-label">
+                    {t("export_dialog.content")}
+                  </span>
+                  <span className="export-content-checks">
+                    <label className="export-check">
+                      <AppCheckbox
+                        checked={settings.includeVideo}
+                        ariaLabel={t("export_dialog.include_video")}
+                        onCheckedChange={(next) =>
+                          patch({ includeVideo: next })
+                        }
+                      />
+                      <span>{t("export_dialog.include_video")}</span>
+                    </label>
+                    <label className="export-check">
+                      <AppCheckbox
+                        checked={settings.includeAudio}
+                        ariaLabel={t("export_dialog.include_audio")}
+                        onCheckedChange={(next) =>
+                          patch({
+                            includeAudio: next,
+                            audio: { ...settings.audio, include: next },
+                          })
+                        }
+                      />
+                      <span>{t("export_dialog.include_audio")}</span>
+                    </label>
+                  </span>
+                </div>
+                {!settings.includeVideo && !settings.includeAudio && (
+                  <p className="settings-blurb">
+                    {t("export_dialog.content_none")}
+                  </p>
+                )}
+              </div>
+
+              <div
+                role="tabpanel"
+                id="export-panel-video"
+                aria-labelledby="export-tab-video"
+                hidden={category !== "video"}
+                className="settings-pane"
+              >
+                <div className="settings-pane-title">
+                  {t("export_dialog.cat_video")}
+                </div>
+
+                {!exportIncludesVideo(settings) ? (
+                  <p className="settings-blurb">
+                    {t("export_dialog.video_excluded")}
+                  </p>
+                ) : (
+                  <>
+                <div className="export-row">
+                  <span className="settings-toggle-label">
+                    {t("export_dialog.resolution")}
+                  </span>
+                  <AppSelect
+                    className="export-select"
+                    value={String(settings.resolutionHeight ?? "")}
+                    onValueChange={(v) =>
+                      patch({ resolutionHeight: v ? Number(v) : null })
+                    }
+                    options={[
+                      {
+                        value: "",
+                        label: `${t("export_dialog.follow_comp")} (${comp.width}×${comp.height})`,
+                      },
+                      ...downscaleHeightOptions(comp.height).map((h) => ({
+                        value: String(h),
+                        label: `${h}p`,
+                      })),
+                    ]}
+                  />
+                </div>
+
+                <div className="export-row">
+                  <span className="settings-toggle-label">
+                    {t("export_dialog.fps")}
+                  </span>
+                  <AppSelect
+                    className="export-select"
+                    value={String(settings.fps ?? "")}
+                    onValueChange={(v) => patch({ fps: v ? Number(v) : null })}
+                    options={[
+                      {
+                        value: "",
+                        label: `${t("export_dialog.follow_comp")} (${compFps.toFixed(2)})`,
+                      },
+                      ...downscaleFpsOptions(compFps).map((f) => ({
+                        value: String(f),
+                        label: `${f} fps`,
+                      })),
+                    ]}
+                  />
+                </div>
 
                 <div className="export-row">
                   <span className="settings-toggle-label">
@@ -436,30 +607,6 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
                     {t("export_dialog.bit_depth_experimental_warning")}
                   </p>
                 )}
-
-                <div className="export-row">
-                  <span className="settings-toggle-label">
-                    {t("export_dialog.container")}
-                  </span>
-                  <AppSelect
-                    className="export-select"
-                    value={settings.container}
-                    onValueChange={(v) => {
-                      const container = v as Container;
-                      const audio = isAudioCodecContainerValid(
-                        settings.audio.codec,
-                        container,
-                      )
-                        ? settings.audio
-                        : { ...settings.audio, codec: "aac" as AudioCodecId };
-                      patch({ container, audio });
-                    }}
-                    options={containersForCodec(settings.codec).map((c) => ({
-                      value: c,
-                      label: c.toUpperCase(),
-                    }))}
-                  />
-                </div>
 
                 <div className="export-row">
                   <span className="settings-toggle-label">
@@ -553,20 +700,26 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
                     ]}
                   />
                 </div>
+                  </>
+                )}
+              </div>
 
-                <div className="export-row">
-                  <span className="settings-toggle-label">
-                    {t("export_dialog.audio_include")}
-                  </span>
-                  <AppSwitch
-                    checked={settings.audio.include}
-                    ariaLabel={t("export_dialog.audio_include")}
-                    onCheckedChange={(next) =>
-                      patch({ audio: { ...settings.audio, include: next } })
-                    }
-                  />
+              <div
+                role="tabpanel"
+                id="export-panel-audio"
+                aria-labelledby="export-tab-audio"
+                hidden={category !== "audio"}
+                className="settings-pane"
+              >
+                <div className="settings-pane-title">
+                  {t("export_dialog.cat_audio")}
                 </div>
-                {settings.audio.include && (
+
+                {!exportIncludesAudio(settings) ? (
+                  <p className="settings-blurb">
+                    {t("export_dialog.audio_excluded")}
+                  </p>
+                ) : (
                   <>
                     <div className="export-row">
                       <span className="settings-toggle-label">
@@ -656,24 +809,40 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
                     </div>
                   </>
                 )}
+              </div>
 
-                <div className="export-actions">
-                  <Button size="lg" onClick={onCancel}>
-                    {t("export_dialog.cancel")}
-                  </Button>
-                  <Button
-                    variant="default"
-                    size="lg"
-                    disabled={!canExport}
-                    onClick={() => void onExport()}
-                  >
-                    {t("export_dialog.export")}
-                  </Button>
+              <div
+                role="tabpanel"
+                id="export-panel-subtitle"
+                aria-labelledby="export-tab-subtitle"
+                hidden={category !== "subtitle"}
+                className="settings-pane"
+              >
+                <div className="settings-pane-title">
+                  {t("export_dialog.cat_subtitle")}
                 </div>
-              </>
-            )}
-          </div>
+                <p className="settings-blurb">
+                  {t("export_dialog.subtitle_placeholder")}
+                </p>
+              </div>
+            </>
+          )}
         </div>
+      </div>
+
+      <div className="export-footer">
+        <Button size="lg" onClick={onCancel}>
+          {t("export_dialog.cancel")}
+        </Button>
+        <Button
+          variant="default"
+          size="lg"
+          disabled={!canExport}
+          onClick={() => void onExport()}
+        >
+          {t("export_dialog.export")}
+        </Button>
+      </div>
     </AppDialog>
     {confirmExperimental && (
       <AppDialog
