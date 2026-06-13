@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { formatTimecode } from "../frames";
 import {
+  HEADER_COL_PX,
   MIN_LAYER_DURATION_US,
   groupHue,
   type LayerSlice,
@@ -131,7 +132,9 @@ export function LayerBlock({
   useEffect(() => {
     if (isEditing) {
       setDraft(layer.label ?? "");
-      inputRef.current?.focus();
+      // preventScroll: the timeline is a scroll container, so a plain
+      // focus() would scroll the block into view and jolt the timeline.
+      inputRef.current?.focus({ preventScroll: true });
       inputRef.current?.select();
     }
   }, [isEditing, layer.id, layer.label]);
@@ -305,7 +308,7 @@ export function LayerBlock({
     <div
       className={[
         "timeline-layer", // retained as a JS hook for the blade-cursor rule; carries no styles after Task 12
-        "absolute flex items-center overflow-hidden rounded border border-white/15 px-2",
+        "absolute flex items-center rounded border border-white/15 px-2",
         "text-[11px] font-semibold text-background select-none cursor-grab",
         "shadow-[0_1px_2px_rgba(0,0,0,0.4)] transition-[outline,filter] duration-75",
         "hover:brightness-110",
@@ -371,7 +374,10 @@ export function LayerBlock({
       {isEditing ? (
         <input
           ref={inputRef}
-          className="relative z-[2] min-w-0 flex-1 rounded-sm border border-blue-400 bg-black/60 px-1 text-inherit outline-none"
+          // Sticky like the label so the editor appears at the clip's current
+          // visible left edge, not its (possibly scrolled-off) absolute start.
+          className="sticky z-[2] w-40 max-w-full rounded-sm border border-blue-400 bg-black/60 px-1 text-inherit outline-none"
+          style={{ left: HEADER_COL_PX + 4 }}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onClick={(e) => e.stopPropagation()}
@@ -390,7 +396,14 @@ export function LayerBlock({
           }}
         />
       ) : (
-        <span className="relative z-[1] flex-1 overflow-hidden text-ellipsis whitespace-nowrap [text-shadow:0_1px_0_rgba(255,255,255,0.4)]">
+        <span
+          // Sticky so the label stays readable while scrolling a long clip:
+          // it pins just past the sticky track-header column and slides along
+          // within the clip until the clip's tail scrolls past it. Content-
+          // width (capped) so it can actually slide; clips itself with ellipsis.
+          className="sticky z-[1] overflow-hidden text-ellipsis whitespace-nowrap [text-shadow:0_1px_0_rgba(255,255,255,0.4)]"
+          style={{ left: HEADER_COL_PX + 4, maxWidth: "min(100%, 240px)" }}
+        >
           {label}
         </span>
       )}
