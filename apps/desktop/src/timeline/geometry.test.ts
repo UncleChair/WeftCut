@@ -6,6 +6,7 @@ import {
   groupHue,
   indexGroups,
   layerOverlapClass,
+  trackHeaderControls,
   visualOrderedTracks,
 } from "./geometry";
 import type { LayerSummary, TrackSummary } from "../ipc";
@@ -151,5 +152,44 @@ describe("formatRulerLabel", () => {
   });
   it("formats centiseconds for sub-second steps", () => {
     expect(formatRulerLabel(1.25, 0.5)).toBe("0:01.25");
+  });
+});
+
+describe("trackHeaderControls", () => {
+  const audio = () =>
+    layer({ id: "a", kind: "Audio", params: { kind: "Audio" } as LayerSummary["params"] });
+  const video = () =>
+    layer({ id: "v", kind: "VideoClip", params: { kind: "VideoClip" } as LayerSummary["params"] });
+
+  it("pure visual track: eye only, no M/S", () => {
+    expect(trackHeaderControls(track({ layers: [video()] }))).toEqual({
+      showEye: true,
+      showMute: false,
+      showSolo: false,
+    });
+  });
+
+  it("combined row (visual + audio): eye + M + S", () => {
+    expect(trackHeaderControls(track({ layers: [video(), audio()] }))).toEqual({
+      showEye: true,
+      showMute: true,
+      showSolo: true,
+    });
+  });
+
+  it("pure audio lane: M + S, no eye", () => {
+    expect(trackHeaderControls(track({ layers: [audio()] }))).toEqual({
+      showEye: false,
+      showMute: true,
+      showSolo: true,
+    });
+  });
+
+  it("empty track: eye only", () => {
+    expect(trackHeaderControls(track({ layers: [] }))).toEqual({
+      showEye: true,
+      showMute: false,
+      showSolo: false,
+    });
   });
 });
