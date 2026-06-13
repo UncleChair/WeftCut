@@ -27,6 +27,7 @@ import { CircleIcon, FilmIcon, MusicIcon, TypeIcon } from "lucide-react";
 
 import { formatTimecode } from "../frames";
 import { type GroupSummary, type LayerSummary, type TrackSummary } from "../ipc";
+import { buildPeekItems, type PeekItem } from "./peek";
 import { PropertyPanel } from "../properties/PropertyPanel";
 import { useDeltaWindowUs, useDisplayMode } from "../settings/appSettingsStore";
 import { MediaThumbnail } from "./MediaThumbnail";
@@ -44,65 +45,6 @@ export interface RightPanelProps {
   /// dispatches the track id so the Timeline can temporarily inject
   /// that row into its rendered list. R.6 leaves this `undefined`.
   onRevealTrack?: (trackId: string, layerId: string) => void;
-}
-
-/// One row in the peek list. Carries enough state to render the row +
-/// drive selection / reveal on click.
-interface PeekItem {
-  layer: LayerSummary;
-  trackId: string;
-  trackLabel: string;
-  trackKind: string;
-  /// Microseconds from playhead to the *layer's nearest edge* —
-  /// negative when the layer ended in the past, positive when it
-  /// starts in the future, zero when it spans the playhead.
-  offsetUs: number;
-  /// True when `playhead ∈ [t_start, t_end]` — gets the LIVE badge.
-  spansPlayhead: boolean;
-}
-
-function buildPeekItems(
-  tracks: TrackSummary[],
-  currentTimeUs: number,
-  deltaUs: number,
-): PeekItem[] {
-  const lo = currentTimeUs - deltaUs;
-  const hi = currentTimeUs + deltaUs;
-  const items: PeekItem[] = [];
-  for (const t of tracks) {
-    if (t.role !== null) continue;
-    for (const layer of t.layers) {
-      // Window intersection: layer.t_end > lo AND layer.t_start < hi.
-      if (layer.t_end_us <= lo || layer.t_start_us >= hi) continue;
-      const spans =
-        layer.t_start_us <= currentTimeUs && layer.t_end_us >= currentTimeUs;
-      const offset = spans
-        ? 0
-        : layer.t_start_us > currentTimeUs
-          ? layer.t_start_us - currentTimeUs
-          : layer.t_end_us - currentTimeUs;
-      items.push({
-        layer,
-        trackId: t.id,
-        trackLabel: t.label ?? t.kind,
-        trackKind: t.kind,
-        offsetUs: offset,
-        spansPlayhead: spans,
-      });
-    }
-  }
-  // Order: spanning items first (LIVE bubble), then chronologically by
-  // t_start. Equal t_start ties break by track label (stable enough).
-  items.sort((a, b) => {
-    if (a.spansPlayhead !== b.spansPlayhead) {
-      return a.spansPlayhead ? -1 : 1;
-    }
-    if (a.layer.t_start_us !== b.layer.t_start_us) {
-      return a.layer.t_start_us - b.layer.t_start_us;
-    }
-    return a.trackLabel.localeCompare(b.trackLabel);
-  });
-  return items;
 }
 
 export function RightPanel({
