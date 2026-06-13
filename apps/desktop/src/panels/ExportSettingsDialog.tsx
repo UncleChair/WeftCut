@@ -9,6 +9,7 @@ import { AppInput } from "../components/AppInput";
 import { AppNumberField } from "../components/AppNumberField";
 import { AppSelect } from "../components/AppSelect";
 import { AppSwitch } from "../components/AppSwitch";
+import { AppTimecodeField } from "../components/AppTimecodeField";
 import { Button } from "@/components/ui/button";
 import {
   type EncodePath,
@@ -38,7 +39,6 @@ import {
   audioCodecsForContainer,
   isAudioCodecContainerValid,
 } from "../render/exportSettings";
-import { formatTimecode, parseTimecode } from "../frames";
 
 interface Comp {
   width: number;
@@ -322,17 +322,12 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
                         {t("export_dialog.range_in")}
                       </span>
                       <span className="export-range-field">
-                        <AppInput
-                          value={formatTimecode(rangeStartUs, comp.fps_num, comp.fps_den)}
-                          mono
-                          align="center"
-                          spellCheck={false}
-                          className="settings-input"
+                        <AppTimecodeField
+                          valueUs={rangeStartUs}
+                          fpsNum={comp.fps_num}
+                          fpsDen={comp.fps_den}
                           ariaLabel={t("export_dialog.range_in")}
-                          onValueChange={(v) => {
-                            const us = parseTimecode(v, comp.fps_num, comp.fps_den);
-                            if (us !== null) setRangeStartUs(us);
-                          }}
+                          onCommit={setRangeStartUs}
                         />
                         <button
                           onClick={() =>
@@ -348,17 +343,12 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
                         {t("export_dialog.range_out")}
                       </span>
                       <span className="export-range-field">
-                        <AppInput
-                          value={formatTimecode(rangeEndUs, comp.fps_num, comp.fps_den)}
-                          mono
-                          align="center"
-                          spellCheck={false}
-                          className="settings-input"
+                        <AppTimecodeField
+                          valueUs={rangeEndUs}
+                          fpsNum={comp.fps_num}
+                          fpsDen={comp.fps_den}
                           ariaLabel={t("export_dialog.range_out")}
-                          onValueChange={(v) => {
-                            const us = parseTimecode(v, comp.fps_num, comp.fps_den);
-                            if (us !== null) setRangeEndUs(us);
-                          }}
+                          onCommit={setRangeEndUs}
                         />
                         <button
                           onClick={() =>

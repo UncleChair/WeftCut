@@ -2,8 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { formatTimecode, parseTimecode } from "../frames";
+import { formatTimecode } from "../frames";
 import { AppColorField } from "../components/AppColorField";
+import { AppTimecodeField } from "../components/AppTimecodeField";
 import { AppDialog } from "../components/AppDialog";
 import { AppInput } from "../components/AppInput";
 import { AppNumberField } from "../components/AppNumberField";
@@ -325,9 +326,7 @@ function MotifForm({
   const [propValues, setPropValues] = useState<Record<string, unknown>>(() =>
     defaultPropsFor(motif),
   );
-  const [insertAtTc, setInsertAtTc] = useState<string>(
-    formatTimecode(currentTimeUs, fpsNum, fpsDen),
-  );
+  const [insertAtUs, setInsertAtUs] = useState<number>(currentTimeUs);
   // Default to auto-create. The backend spawns a fresh Overlay track
   // on every auto insert so consecutive motifs never collide on
   // the same track — picking an existing Overlay as the default would
@@ -345,7 +344,7 @@ function MotifForm({
   const submit = async () => {
     setBusy(true);
     try {
-      const tStartUs = Math.max(0, parseTimecode(insertAtTc, fpsNum, fpsDen) ?? 0);
+      const tStartUs = Math.max(0, insertAtUs);
       const trackId =
         trackChoice === AUTO_OVERLAY_SENTINEL ? undefined : trackChoice;
       await onSubmit({ tStartUs, props: propValues, trackId });
@@ -398,18 +397,12 @@ function MotifForm({
       <h3>{t("motif_picker.timing_heading")}</h3>
       <label className="motif-picker-field">
         <span>{t("motif_picker.insert_at")}</span>
-        <AppInput
-          value={insertAtTc}
-          onValueChange={setInsertAtTc}
+        <AppTimecodeField
+          valueUs={insertAtUs}
+          fpsNum={fpsNum}
+          fpsDen={fpsDen}
           ariaLabel={t("motif_picker.insert_at")}
-          onBlur={() => {
-            const us = parseTimecode(insertAtTc, fpsNum, fpsDen);
-            if (us !== null) {
-              setInsertAtTc(formatTimecode(us, fpsNum, fpsDen));
-            } else {
-              setInsertAtTc(formatTimecode(currentTimeUs, fpsNum, fpsDen));
-            }
-          }}
+          onCommit={setInsertAtUs}
         />
       </label>
       <label className="motif-picker-field">
