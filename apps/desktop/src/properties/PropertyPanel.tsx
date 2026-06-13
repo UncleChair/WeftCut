@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { Tooltip } from "@base-ui/react/tooltip";
 import { formatTimecode, parseTimecode } from "../frames";
+import { AppColorField } from "../components/AppColorField";
+import { AppInput } from "../components/AppInput";
 import { AppNumberField } from "../components/AppNumberField";
 import { AppSelect } from "../components/AppSelect";
 import { AppSlider } from "../components/AppSlider";
@@ -198,30 +200,30 @@ function TextFields({
         />
       </Field>
       <Field label={t("property_panel.color")}>
-        <input
-          type="color"
+        <AppColorField
           value={rgbaToHex(color)}
-          onChange={(e) => {
-            const next = hexToRgba(e.target.value, color.a);
+          ariaLabel={t("property_panel.color")}
+          onValueChange={(v) => {
+            const next = hexToRgba(v, color.a);
             setColor(next);
             debouncedCommit({ kind: "Text", color: next });
           }}
         />
       </Field>
       <Field label={t("property_panel.x")}>
-        <input
-          type="number"
+        <AppNumberField
           value={x}
-          onChange={(e) => setX(parseFloat(e.target.value) || 0)}
-          onBlur={() => commit({ kind: "Text", x })}
+          ariaLabel={t("property_panel.x")}
+          onValueChange={setX}
+          onCommit={(v) => commit({ kind: "Text", x: v })}
         />
       </Field>
       <Field label={t("property_panel.y")}>
-        <input
-          type="number"
+        <AppNumberField
           value={y}
-          onChange={(e) => setY(parseFloat(e.target.value) || 0)}
-          onBlur={() => commit({ kind: "Text", y })}
+          ariaLabel={t("property_panel.y")}
+          onValueChange={setY}
+          onCommit={(v) => commit({ kind: "Text", y: v })}
         />
       </Field>
       <Field label={t("property_panel.opacity")}>
@@ -295,55 +297,55 @@ function VideoClipFields({
         <span className="prop-range-value">{opacity.toFixed(2)}</span>
       </Field>
       <Field label={t("property_panel.scale_x")}>
-        <input
-          type="number"
+        <AppNumberField
           step={0.05}
           value={scaleX}
-          onChange={(e) => setScaleX(parseFloat(e.target.value) || 1)}
-          onBlur={() => commit({ kind: "VideoClip", scale_x: scaleX })}
+          ariaLabel={t("property_panel.scale_x")}
+          onValueChange={setScaleX}
+          onCommit={(v) => commit({ kind: "VideoClip", scale_x: v })}
         />
       </Field>
       <Field label={t("property_panel.scale_y")}>
-        <input
-          type="number"
+        <AppNumberField
           step={0.05}
           value={scaleY}
-          onChange={(e) => setScaleY(parseFloat(e.target.value) || 1)}
-          onBlur={() => commit({ kind: "VideoClip", scale_y: scaleY })}
+          ariaLabel={t("property_panel.scale_y")}
+          onValueChange={setScaleY}
+          onCommit={(v) => commit({ kind: "VideoClip", scale_y: v })}
         />
       </Field>
       <Field label={t("property_panel.x")}>
-        <input
-          type="number"
+        <AppNumberField
           value={x}
-          onChange={(e) => setX(parseFloat(e.target.value) || 0)}
-          onBlur={() => commit({ kind: "VideoClip", x })}
+          ariaLabel={t("property_panel.x")}
+          onValueChange={setX}
+          onCommit={(v) => commit({ kind: "VideoClip", x: v })}
         />
       </Field>
       <Field label={t("property_panel.y")}>
-        <input
-          type="number"
+        <AppNumberField
           value={y}
-          onChange={(e) => setY(parseFloat(e.target.value) || 0)}
-          onBlur={() => commit({ kind: "VideoClip", y })}
+          ariaLabel={t("property_panel.y")}
+          onValueChange={setY}
+          onCommit={(v) => commit({ kind: "VideoClip", y: v })}
         />
       </Field>
       <Field label={t("property_panel.speed")}>
-        <input
-          type="number"
+        <AppNumberField
           step={0.05}
           min={0.1}
           max={4}
           value={speed}
-          onChange={(e) => setSpeed(parseFloat(e.target.value) || 1)}
-          onBlur={() => commit({ kind: "VideoClip", speed })}
+          ariaLabel={t("property_panel.speed")}
+          onValueChange={setSpeed}
+          onCommit={(v) => commit({ kind: "VideoClip", speed: v })}
         />
       </Field>
       <Field label={t("property_panel.fade_in")}>
-        <input
-          type="text"
+        <AppInput
           value={fadeInTc}
-          onChange={(e) => setFadeInTc(e.target.value)}
+          ariaLabel={t("property_panel.fade_in")}
+          onValueChange={setFadeInTc}
           onBlur={() => {
             const us = parseTimecode(fadeInTc, fpsNum, fpsDen);
             if (us !== null) {
@@ -355,10 +357,10 @@ function VideoClipFields({
         />
       </Field>
       <Field label={t("property_panel.fade_out")}>
-        <input
-          type="text"
+        <AppInput
           value={fadeOutTc}
-          onChange={(e) => setFadeOutTc(e.target.value)}
+          ariaLabel={t("property_panel.fade_out")}
+          onValueChange={setFadeOutTc}
           onBlur={() => {
             const us = parseTimecode(fadeOutTc, fpsNum, fpsDen);
             if (us !== null) {
@@ -433,26 +435,26 @@ function ImageOverlayFields({
         <span className="prop-range-value">{opacity.toFixed(2)}</span>
       </Field>
       <Field label={t("property_panel.x")}>
-        <input
-          type="number"
+        <AppNumberField
           value={x}
-          onChange={(e) => setX(parseFloat(e.target.value) || 0)}
-          onBlur={() => commit({ kind: "ImageOverlay", x })}
+          ariaLabel={t("property_panel.x")}
+          onValueChange={setX}
+          onCommit={(v) => commit({ kind: "ImageOverlay", x: v })}
         />
       </Field>
       <Field label={t("property_panel.y")}>
-        <input
-          type="number"
+        <AppNumberField
           value={y}
-          onChange={(e) => setY(parseFloat(e.target.value) || 0)}
-          onBlur={() => commit({ kind: "ImageOverlay", y })}
+          ariaLabel={t("property_panel.y")}
+          onValueChange={setY}
+          onCommit={(v) => commit({ kind: "ImageOverlay", y: v })}
         />
       </Field>
       <Field label={t("property_panel.fade_in")}>
-        <input
-          type="text"
+        <AppInput
           value={fadeInTc}
-          onChange={(e) => setFadeInTc(e.target.value)}
+          ariaLabel={t("property_panel.fade_in")}
+          onValueChange={setFadeInTc}
           onBlur={() => {
             const us = parseTimecode(fadeInTc, fpsNum, fpsDen);
             if (us !== null) {
@@ -464,10 +466,10 @@ function ImageOverlayFields({
         />
       </Field>
       <Field label={t("property_panel.fade_out")}>
-        <input
-          type="text"
+        <AppInput
           value={fadeOutTc}
-          onChange={(e) => setFadeOutTc(e.target.value)}
+          ariaLabel={t("property_panel.fade_out")}
+          onValueChange={setFadeOutTc}
           onBlur={() => {
             const us = parseTimecode(fadeOutTc, fpsNum, fpsDen);
             if (us !== null) {
@@ -554,37 +556,37 @@ function MotifFields({
       <MotifSourcePanel motifId={v.motif_id} />
       <h4>{t("property_panel.transform")}</h4>
       <Field label={t("property_panel.x")}>
-        <input
-          type="number"
+        <AppNumberField
           value={x}
-          onChange={(e) => setX(parseFloat(e.target.value) || 0)}
-          onBlur={() => commit({ kind: "Motif", x })}
+          ariaLabel={t("property_panel.x")}
+          onValueChange={setX}
+          onCommit={(v) => commit({ kind: "Motif", x: v })}
         />
       </Field>
       <Field label={t("property_panel.y")}>
-        <input
-          type="number"
+        <AppNumberField
           value={y}
-          onChange={(e) => setY(parseFloat(e.target.value) || 0)}
-          onBlur={() => commit({ kind: "Motif", y })}
+          ariaLabel={t("property_panel.y")}
+          onValueChange={setY}
+          onCommit={(v) => commit({ kind: "Motif", y: v })}
         />
       </Field>
       <Field label={t("property_panel.scale_x")}>
-        <input
-          type="number"
+        <AppNumberField
           step={0.05}
           value={scaleX}
-          onChange={(e) => setScaleX(parseFloat(e.target.value) || 1)}
-          onBlur={() => commit({ kind: "Motif", scale_x: scaleX })}
+          ariaLabel={t("property_panel.scale_x")}
+          onValueChange={setScaleX}
+          onCommit={(v) => commit({ kind: "Motif", scale_x: v })}
         />
       </Field>
       <Field label={t("property_panel.scale_y")}>
-        <input
-          type="number"
+        <AppNumberField
           step={0.05}
           value={scaleY}
-          onChange={(e) => setScaleY(parseFloat(e.target.value) || 1)}
-          onBlur={() => commit({ kind: "Motif", scale_y: scaleY })}
+          ariaLabel={t("property_panel.scale_y")}
+          onValueChange={setScaleY}
+          onCommit={(v) => commit({ kind: "Motif", scale_y: v })}
         />
       </Field>
       <Field label={t("property_panel.opacity")}>
@@ -961,12 +963,12 @@ function ColorPropField({
   }, [value, spec.default]);
   return (
     <Field label={label}>
-      <input
-        type="color"
+      <AppColorField
         value={color}
-        onChange={(e) => {
-          setColor(e.target.value);
-          onCommit(e.target.value);
+        ariaLabel={label}
+        onValueChange={(v) => {
+          setColor(v);
+          onCommit(v);
         }}
       />
     </Field>
@@ -992,11 +994,11 @@ function StringPropField({
   }, [value, spec.default]);
   return (
     <Field label={label}>
-      <input
-        type="text"
+      <AppInput
         value={text}
+        ariaLabel={label}
         maxLength={spec.max_length}
-        onChange={(e) => setText(e.target.value)}
+        onValueChange={setText}
         onBlur={() => onCommit(text)}
       />
     </Field>
@@ -1022,20 +1024,18 @@ function NumberPropField({
   }, [value, spec.default]);
   return (
     <Field label={label}>
-      <input
-        type="number"
+      <AppNumberField
         value={num}
-        min={spec.min}
-        max={spec.max}
+        ariaLabel={label}
+        {...(spec.min !== undefined ? { min: spec.min } : {})}
+        {...(spec.max !== undefined ? { max: spec.max } : {})}
         // Step heuristic copied from the motif picker: small ranges
         // (≤10 wide) get a 0.1 step, everything else 1.
         step={
           spec.max !== undefined && spec.max - (spec.min ?? 0) <= 10 ? 0.1 : 1
         }
-        onChange={(e) => {
-          setNum(Number(e.target.value));
-        }}
-        onBlur={() => onCommit(num)}
+        onValueChange={setNum}
+        onCommit={(v) => onCommit(v)}
       />
     </Field>
   );
@@ -1053,30 +1053,26 @@ function ColorFields({
     <section className="prop-section">
       <h3>{t("property_panel.color")}</h3>
       <Field label={t("property_panel.color")}>
-        <input
-          type="color"
+        <AppColorField
           value={rgbaToHex(trackStatic(v.color, BLACK))}
-          onChange={(e) =>
-            commit({ kind: "Color", color: hexToRgba(e.target.value, trackStatic(v.color, BLACK).a) })
+          ariaLabel={t("property_panel.color")}
+          onValueChange={(hex) =>
+            commit({ kind: "Color", color: hexToRgba(hex, trackStatic(v.color, BLACK).a) })
           }
         />
       </Field>
       <Field label={t("property_panel.width")}>
-        <input
-          type="number"
+        <AppNumberField
           value={v.width}
-          onChange={(e) =>
-            commit({ kind: "Color", width: parseInt(e.target.value, 10) || v.width })
-          }
+          ariaLabel={t("property_panel.width")}
+          onValueChange={(n) => commit({ kind: "Color", width: n })}
         />
       </Field>
       <Field label={t("property_panel.height")}>
-        <input
-          type="number"
+        <AppNumberField
           value={v.height}
-          onChange={(e) =>
-            commit({ kind: "Color", height: parseInt(e.target.value, 10) || v.height })
-          }
+          ariaLabel={t("property_panel.height")}
+          onValueChange={(n) => commit({ kind: "Color", height: n })}
         />
       </Field>
     </section>
@@ -1097,18 +1093,13 @@ function AudioFields({
         {t("property_panel.media")}: {v.media_label}
       </h3>
       <Field label={t("property_panel.gain_db")}>
-        <input
-          type="number"
+        <AppNumberField
           step={0.5}
           min={-30}
           max={20}
           value={trackStatic(v.gain_db, 0)}
-          onChange={(e) =>
-            commit({
-              kind: "Audio",
-              gain_db: parseFloat(e.target.value) || 0,
-            })
-          }
+          ariaLabel={t("property_panel.gain_db")}
+          onValueChange={(n) => commit({ kind: "Audio", gain_db: n })}
         />
       </Field>
       <Field label={t("property_panel.pan")}>
