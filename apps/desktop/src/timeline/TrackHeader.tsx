@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
-import { Eye, EyeOff, Lock, LockOpen } from "lucide-react";
+import { Eye, EyeOff, Lock, LockOpen, Music } from "lucide-react";
 import { updateTrackFlags, type TrackSummary } from "../ipc";
+import { trackHeaderControls } from "./geometry";
 
 function FlagButton({ active, activeClass, label, onToggle, children }: {
   active: boolean;
@@ -47,6 +48,10 @@ export function TrackHeader({ track, height, isRevealed, isGroupStart, onMutated
       console.error("update_track_flags failed:", err);
     }
   };
+  const controls = trackHeaderControls(track);
+  // Pure-audio lane = has audio, no visual (eye hidden). Show a music
+  // glyph so the lane reads as audio at a glance.
+  const isAudioLane = controls.showMute && !controls.showEye;
   return (
     <div
       className={`flex items-center gap-1 border-b border-border-soft px-1.5 ${isGroupStart ? "border-t border-t-border" : ""}`}
@@ -54,6 +59,9 @@ export function TrackHeader({ track, height, isRevealed, isGroupStart, onMutated
       onPointerDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
     >
+      {isAudioLane && (
+        <Music size={11} aria-hidden className="shrink-0 text-muted-foreground/70" />
+      )}
       <span
         className="min-w-0 flex-1 truncate text-[10.5px] font-medium text-muted-foreground"
         title={track.label ?? kindLabel}
@@ -61,30 +69,36 @@ export function TrackHeader({ track, height, isRevealed, isGroupStart, onMutated
         {track.label ?? kindLabel}
         {isRevealed && <span className="font-medium text-blue-400/70"> (revealed)</span>}
       </span>
-      <FlagButton
-        active={!track.enabled}
-        activeClass="bg-secondary text-foreground"
-        label={t("timeline.track_eye_hint", { defaultValue: "Hide this track's output (affects export)" })}
-        onToggle={toggle({ enabled: !track.enabled })}
-      >
-        {track.enabled ? <Eye size={11} aria-hidden /> : <EyeOff size={11} aria-hidden />}
-      </FlagButton>
-      <FlagButton
-        active={track.muted}
-        activeClass="bg-red-500/20 text-red-300"
-        label={t("timeline.track_mute_hint", { defaultValue: "Mute this track's audio (affects export)" })}
-        onToggle={toggle({ muted: !track.muted })}
-      >
-        M
-      </FlagButton>
-      <FlagButton
-        active={track.solo}
-        activeClass="bg-amber-500/25 text-amber-300"
-        label={t("timeline.track_solo_hint", { defaultValue: "Solo this track's audio (affects export)" })}
-        onToggle={toggle({ solo: !track.solo })}
-      >
-        S
-      </FlagButton>
+      {controls.showEye && (
+        <FlagButton
+          active={!track.enabled}
+          activeClass="bg-secondary text-foreground"
+          label={t("timeline.track_eye_hint", { defaultValue: "Hide this track's output (affects export)" })}
+          onToggle={toggle({ enabled: !track.enabled })}
+        >
+          {track.enabled ? <Eye size={11} aria-hidden /> : <EyeOff size={11} aria-hidden />}
+        </FlagButton>
+      )}
+      {controls.showMute && (
+        <FlagButton
+          active={track.muted}
+          activeClass="bg-red-500/20 text-red-300"
+          label={t("timeline.track_mute_hint", { defaultValue: "Mute this track's audio (affects export)" })}
+          onToggle={toggle({ muted: !track.muted })}
+        >
+          M
+        </FlagButton>
+      )}
+      {controls.showSolo && (
+        <FlagButton
+          active={track.solo}
+          activeClass="bg-amber-500/25 text-amber-300"
+          label={t("timeline.track_solo_hint", { defaultValue: "Solo this track's audio (affects export)" })}
+          onToggle={toggle({ solo: !track.solo })}
+        >
+          S
+        </FlagButton>
+      )}
       <FlagButton
         active={track.locked}
         activeClass="bg-secondary text-foreground"
