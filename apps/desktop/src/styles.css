@@ -4875,27 +4875,8 @@ input.preview-timecode:focus {
   align-items: center;
 }
 .app-number-input {
-  /* leave room for the grip; steppers overlay so need no reserved width */
-  padding-left: 14px;
   /* aligned digits, matching the old .prop-field-control input[type=number] */
   font-variant-numeric: tabular-nums;
-}
-.app-number-scrub {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: ew-resize;
-}
-.app-number-grip {
-  width: 2px;
-  height: 12px;
-  border-left: 1px solid var(--border);
-  border-right: 1px solid var(--border);
 }
 .app-number-steppers {
   position: absolute;
