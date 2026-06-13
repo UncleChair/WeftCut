@@ -68,6 +68,12 @@ rules:
   it to isolate per-worktree work; commit instead.
 - `git worktree prune` clears admin metadata after a worktree dir is deleted by
   hand.
+- **After fast-forwarding / rebasing a worktree to new main, reconcile its
+  deps.** `git` only updates tracked files; `node_modules` is untracked and
+  per-worktree, so if the pulled commits changed `package.json` /
+  `package-lock.json` the worktree is now running against stale dependencies.
+  Run `npm install` in it (warm cache makes it a quick delta). Easy to forget
+  because the working tree looks clean.
 
 A 30-second health check across the pool — fetches once, then prints each
 worktree's branch, ahead/behind vs `origin/main`, and dirty state:
