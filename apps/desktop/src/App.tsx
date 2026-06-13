@@ -2362,6 +2362,7 @@ function MediaPool({
         <AppInput
           type="search"
           clearable
+          clearAriaLabel={t("media_pool.clear_search")}
           placeholder={t("media_pool.search_placeholder")}
           ariaLabel={t("media_pool.search_placeholder")}
           value={query}

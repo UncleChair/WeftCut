@@ -138,6 +138,7 @@ const enUS = {
     empty: "No media imported yet — click \"Import media…\" to add a file.",
     search_placeholder: "Search media…",
     no_matches: "No matches for “{{query}}”.",
+    clear_search: "Clear search",
     duration: "{{value}}",
     size_bytes: "{{bytes}} B",
     size_kib: "{{value}} KiB",
