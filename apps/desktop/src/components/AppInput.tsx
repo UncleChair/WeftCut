@@ -19,6 +19,9 @@ export interface AppInputProps extends NativeInputProps {
   align?: "center";
   /// search only: render a ✕ that clears to "" when the value is non-empty.
   clearable?: boolean;
+  /// Accessible label for the clear ✕ (clearable inputs). Defaults to "Clear";
+  /// pass a translated string at i18n call sites.
+  clearAriaLabel?: string;
   ariaLabel?: string;
   className?: string;
 }
@@ -30,7 +33,7 @@ export interface AppInputProps extends NativeInputProps {
 /// id, spellCheck…) so it is a drop-in for the rename/search/timecode sites.
 export const AppInput = forwardRef<HTMLInputElement, AppInputProps>(
   function AppInput(
-    { value, onValueChange, type = "text", invalid, mono, align, clearable, ariaLabel, className, ...rest },
+    { value, onValueChange, type = "text", invalid, mono, align, clearable, clearAriaLabel, ariaLabel, className, ...rest },
     ref,
   ) {
     const control = (
@@ -59,7 +62,7 @@ export const AppInput = forwardRef<HTMLInputElement, AppInputProps>(
           <button
             type="button"
             className="app-input-clear"
-            aria-label="Clear"
+            aria-label={clearAriaLabel ?? "Clear"}
             // Keep focus in the input after clearing (prevent the button's
             // mousedown from stealing focus and firing the input's onBlur).
             onMouseDown={(e) => e.preventDefault()}

@@ -172,6 +172,7 @@ function TextFields({
       <h3>{t("property_panel.text")}</h3>
       <Field label={t("property_panel.content")}>
         <textarea
+          className="app-input"
           value={content}
           rows={2}
           onChange={(e) => setContent(e.target.value)}
@@ -1065,9 +1066,10 @@ function ColorFields({
         <AppNumberField
           value={v.width}
           ariaLabel={t("property_panel.width")}
+          min={1}
           step={1}
-          // width is u32 on the Rust side — round so a manually-typed
-          // fraction can't fail serde (the old parseInt truncated likewise).
+          // width is u32 on the Rust side — min/round keep it a positive
+          // integer (the old `parseInt(...) || v.width` rejected 0 and fractions).
           onValueChange={(n) => commit({ kind: "Color", width: Math.round(n) })}
         />
       </Field>
@@ -1075,9 +1077,10 @@ function ColorFields({
         <AppNumberField
           value={v.height}
           ariaLabel={t("property_panel.height")}
+          min={1}
           step={1}
-          // height is u32 on the Rust side — round so a manually-typed
-          // fraction can't fail serde (the old parseInt truncated likewise).
+          // height is u32 on the Rust side — min/round keep it a positive
+          // integer (the old `parseInt(...) || v.height` rejected 0 and fractions).
           onValueChange={(n) => commit({ kind: "Color", height: Math.round(n) })}
         />
       </Field>

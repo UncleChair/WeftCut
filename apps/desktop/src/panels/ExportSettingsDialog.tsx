@@ -497,6 +497,7 @@ export function ExportSettingsDialog({ comp, currentTimeUs, durationUs, hasTenBi
                     <span className="export-bitrate">
                       <AppNumberField
                         value={settings.customBitrate ? settings.customBitrate / 1_000_000 : null}
+                        min={1}
                         step={1}
                         align="center"
                         className="settings-input-narrow"
