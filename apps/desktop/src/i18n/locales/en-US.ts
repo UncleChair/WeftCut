@@ -203,6 +203,12 @@ const enUS = {
     section_label: "Hidden-track layers near playhead",
     live: "LIVE",
     offset: "{{value}}",
+    filter_label: "Filter near-playhead items by kind",
+    filter_all: "All",
+    cat_video: "Video",
+    cat_audio: "Audio",
+    cat_text: "Text",
+    filter_empty: "Nothing of that kind near the playhead",
   },
   agent_mode: {
     client_label: "Agent: {{client}}",

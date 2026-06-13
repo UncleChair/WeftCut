@@ -201,6 +201,12 @@ const zhCN: Resources = {
     section_label: "播放头附近的隐藏轨内容",
     live: "正在播放",
     offset: "{{value}}",
+    filter_label: "按类别筛选播放头附近的内容",
+    filter_all: "全部",
+    cat_video: "视频",
+    cat_audio: "音频",
+    cat_text: "字幕",
+    filter_empty: "播放头附近没有该类别的内容",
   },
   agent_mode: {
     client_label: "代理：{{client}}",
