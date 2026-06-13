@@ -3431,6 +3431,126 @@ input.preview-timecode:focus {
   margin-bottom: 0;
 }
 
+/* --- Sidebar (nav) variant of the settings dialog -------------------- */
+/*
+ * Only SettingsPanel opts in, via `.settings-panel--nav`. The bare
+ * `.settings-panel` chrome (shared with Export / close-guard / progress)
+ * keeps its 560px width + single-column body untouched.
+ */
+.settings-panel--nav {
+  width: min(720px, calc(100vw - 32px));
+}
+
+.settings-layout {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+.settings-nav {
+  flex: 0 0 152px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-right: 1px solid var(--border-soft);
+}
+
+.settings-nav-item {
+  appearance: none;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+
+.settings-nav-item:hover {
+  color: var(--foreground);
+}
+
+.settings-nav-item.is-active {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.settings-nav-item:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+.settings-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px;
+  background: #0e1116;
+}
+
+.settings-pane > :first-child {
+  margin-top: 0;
+}
+
+.settings-pane-title {
+  margin: 0 0 14px;
+  padding-bottom: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--foreground);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.settings-scope-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  vertical-align: middle;
+  color: var(--muted-foreground);
+  background: rgba(156, 163, 175, 0.1);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+/*
+ * One spacing source per section. Each `.settings-section` is a flex
+ * column whose single `gap` sets BOTH the heading->content gap and the
+ * row->row gap, so they're identical everywhere; one margin separates
+ * sections. The row elements' own ad-hoc vertical padding/margins are
+ * zeroed so they can't reintroduce the old uneven rhythm.
+ */
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-section + .settings-section {
+  margin-top: 22px;
+}
+
+.settings-section > *,
+.settings-section > h3 {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.settings-section > .settings-toggle-row,
+.settings-section > .settings-slider-row,
+.settings-section > .settings-pin-row {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
 /* Export settings dialog — reuses the settings popup chrome
  * (.settings-panel / .settings-body / .settings-card inside AppDialog);
  * these rules style the per-field label/control rows + footer actions. */
