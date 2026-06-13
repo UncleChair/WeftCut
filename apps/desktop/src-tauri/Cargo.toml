@@ -159,3 +159,10 @@ custom-protocol = ["tauri/custom-protocol"]
 # affected; this keeps dev/e2e (--debug) transport honest.
 [profile.dev]
 opt-level = 1
+
+# Dependencies build without debug info in dev. Their .pdb files dominated
+# target/debug (measured ~194 GB, almost entirely dependency debug info).
+# `package."*"` applies to dependencies only, so weftcut/weftcut_lib keep the
+# [profile.dev] defaults above and stay fully debuggable (line/var backtraces).
+[profile.dev.package."*"]
+debug = false
