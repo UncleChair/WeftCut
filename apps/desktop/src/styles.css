@@ -652,6 +652,307 @@ textarea,
   backdrop-filter: blur(4px);
 }
 
+.perf-hud {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  width: min(520px, calc(100% - 24px));
+  max-height: min(58%, 360px);
+  padding: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 6px;
+  background: rgba(10, 12, 16, 0.84);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.38);
+  color: var(--foreground);
+  font: 11px ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+  overflow: hidden;
+  pointer-events: auto;
+  user-select: none;
+  backdrop-filter: blur(12px);
+}
+
+.perf-hud.has-details {
+  height: min(420px, calc(100% - 24px));
+}
+
+.perf-hud-window {
+  height: 100%;
+  padding: 12px;
+  overflow: hidden;
+  background: var(--background);
+}
+
+.perf-hud-detached {
+  position: relative;
+  left: auto;
+  top: auto;
+  bottom: auto;
+  width: 100%;
+  height: calc(100vh - 24px);
+  max-height: none;
+}
+
+.perf-hud-window-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: calc(100vh - 24px);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: rgba(10, 12, 16, 0.84);
+  color: var(--muted-foreground);
+  font: 12px ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+.perf-hud-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  cursor: grab;
+  touch-action: none;
+}
+
+.perf-hud.is-dragging .perf-hud-header {
+  cursor: grabbing;
+}
+
+.perf-hud-detached .perf-hud-header {
+  cursor: default;
+  touch-action: auto;
+}
+
+.perf-hud-heading {
+  min-width: 0;
+}
+
+.perf-hud-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-amber-300);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.perf-hud-live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-emerald-400);
+  box-shadow: 0 0 10px rgba(52, 211, 153, 0.5);
+}
+
+.perf-hud-subtitle {
+  margin-top: 2px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+}
+
+.perf-hud-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 4px;
+}
+
+.perf-hud-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+
+.perf-hud-icon-button:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--foreground);
+}
+
+.perf-hud-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.perf-hud-metric {
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid rgba(55, 65, 81, 0.78);
+  border-radius: 4px;
+  background: rgba(17, 24, 39, 0.66);
+}
+
+.perf-hud-metric-warn {
+  border-color: rgba(245, 158, 11, 0.45);
+  background: rgba(120, 53, 15, 0.22);
+}
+
+.perf-hud-metric-ok {
+  border-color: rgba(52, 211, 153, 0.36);
+}
+
+.perf-hud-metric-muted {
+  opacity: 0.72;
+}
+
+.perf-hud-label {
+  overflow: hidden;
+  color: var(--color-gray-500);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.perf-hud-value {
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.perf-hud-meta {
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.perf-hud-details {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: min(220px, 38vh);
+  margin-top: 8px;
+  padding-right: 2px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(55, 65, 81, 0.72);
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  overflow-y: auto;
+}
+
+.perf-hud.has-details .perf-hud-details,
+.perf-hud-details-detached {
+  max-height: none;
+}
+
+.perf-hud-section + .perf-hud-section {
+  margin-top: 8px;
+}
+
+.perf-hud-section-title {
+  margin-bottom: 3px;
+  color: var(--color-gray-500);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.perf-hud-row {
+  display: grid;
+  grid-template-columns: 50px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 18px;
+  color: var(--color-gray-300);
+}
+
+.perf-hud-clip-row {
+  grid-template-columns: 50px 32px minmax(0, 1fr) 18px;
+}
+
+.perf-hud-row-id {
+  overflow: hidden;
+  color: var(--color-slate-500);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.perf-hud-row-main {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.perf-hud-row-warn {
+  color: var(--color-amber-400);
+}
+
+.perf-hud-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 16px;
+  border: 1px solid rgba(75, 85, 99, 0.8);
+  border-radius: 3px;
+  color: var(--color-gray-500);
+  font-size: 9px;
+}
+
+.perf-hud-pill-warn {
+  border-color: rgba(245, 158, 11, 0.45);
+  color: var(--color-amber-400);
+}
+
+.perf-hud-alert-row,
+.perf-hud-inline-warn {
+  color: var(--color-amber-400);
+}
+
+.perf-hud-ok {
+  color: var(--color-emerald-400);
+}
+
+.perf-hud-muted,
+.perf-hud-inline-muted {
+  color: var(--muted-foreground);
+}
+
+.perf-hud-details::-webkit-scrollbar {
+  width: 6px;
+}
+
+.perf-hud-details::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.perf-hud-details::-webkit-scrollbar-thumb {
+  background: rgba(75, 85, 99, 0.72);
+  border-radius: 3px;
+}
+
+@media (max-width: 960px) {
+  .perf-hud {
+    width: min(360px, calc(100% - 24px));
+    max-height: min(64%, 340px);
+  }
+
+  .perf-hud-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 .preview-loading {
   display: flex;
   flex-direction: column;
@@ -1961,6 +2262,36 @@ input.preview-timecode:focus {
   border: 1px solid rgba(248, 113, 113, 0.3);
   border-radius: 4px;
   padding: 6px 10px;
+}
+
+/* Inline warning callout (amber, boxed) — louder than .settings-blurb but not
+   an error. Used for the experimental 10-bit export notice. */
+.settings-warn {
+  margin: 8px 0 12px;
+  font-size: 12px;
+  color: var(--foreground);
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 4px;
+  padding: 8px 10px;
+  line-height: 1.45;
+}
+
+/* Compact the reused settings-panel skin down to a confirmation size. */
+.export-experimental-confirm {
+  width: min(440px, calc(100vw - 32px));
+}
+
+.export-experimental-points {
+  margin: 0 0 12px;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  line-height: 1.5;
+}
+
+.export-experimental-points li {
+  margin: 4px 0;
 }
 
 .settings-key-row {
