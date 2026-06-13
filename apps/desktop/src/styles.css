@@ -4911,3 +4911,137 @@ input.preview-timecode:focus {
   resize: vertical;
   white-space: pre;
 }
+
+/* ── App input family ───────────────────────────────────────────────
+ * One skin for AppInput / AppNumberField / AppColorField, replacing the
+ * per-scope input rules (.settings-input, .media-pool-search-input,
+ * .prop-field-control input, .motif-picker-field input, .export-*-input,
+ * .new-project-row input, .log-search). Per-context width/quirks layer on
+ * top via the call site's own class. */
+.app-input {
+  width: 100%;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--foreground);
+  background: var(--card);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+}
+.app-input:focus {
+  outline: none;
+  border-color: var(--ring);
+}
+.app-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.app-input--invalid {
+  border-color: var(--destructive);
+}
+.app-input--mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.app-input--center {
+  text-align: center;
+}
+
+/* Clearable search: ✕ button overlaid on the right. */
+.app-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.app-input--clearable {
+  padding-right: 24px;
+}
+.app-input-clear {
+  position: absolute;
+  right: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  color: var(--muted-foreground);
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.app-input-clear:hover {
+  color: var(--foreground);
+}
+
+/* Number field: grip (scrub) on the left, hover-revealed steppers on the
+ * right. Steppers are absolutely positioned so they don't change layout
+ * width in the narrow property panel. */
+.app-number-field {
+  width: 100%;
+}
+.app-number-group {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.app-number-input {
+  /* leave room for the grip; steppers overlay so need no reserved width */
+  padding-left: 14px;
+}
+.app-number-scrub {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: ew-resize;
+}
+.app-number-grip {
+  width: 2px;
+  height: 12px;
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+}
+.app-number-steppers {
+  position: absolute;
+  right: 2px;
+  top: 1px;
+  bottom: 1px;
+  display: none;
+  flex-direction: column;
+}
+.app-number-group:hover .app-number-steppers {
+  display: flex;
+}
+.app-number-step {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  padding: 0;
+  color: var(--muted-foreground);
+  background: var(--card);
+  border: none;
+  cursor: pointer;
+}
+.app-number-step:hover {
+  color: var(--foreground);
+}
+
+/* Color swatch. */
+.app-color-swatch {
+  width: 32px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.app-color-swatch:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
