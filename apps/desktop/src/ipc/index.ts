@@ -585,6 +585,7 @@ export async function keybindingsImport(src: string): Promise<KeybindingsMap> {
 export interface ViewState {
   timeline_px_per_sec: number;
   track_heights: Record<string, number>;
+  expanded_tracks: string[];
 }
 
 export async function viewStateGet(): Promise<ViewState> {
