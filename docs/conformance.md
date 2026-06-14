@@ -173,6 +173,12 @@ ADR 0014.
 
 From `apps/desktop/e2e` (after `npm install`):
 
+> **Close any running WeftCut first.** The app is single-instance
+> (`tauri_plugin_single_instance`), so a dev build or a `tauri dev` you have open
+> — even from a different checkout — holds the global lock. Every instance the
+> harness launches then forwards-and-exits immediately, and wdio reports
+> `session not created: Chrome instance exited` for *every* spec.
+
 Specs are grouped into five suites — `smoke`, `ui`, `export`, `audio`, `motif` —
 so you can run just the area you are working on instead of the whole matrix.
 
