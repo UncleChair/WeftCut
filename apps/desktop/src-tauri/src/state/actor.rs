@@ -4044,8 +4044,6 @@ pub(crate) fn apply_split_layer(
     Ok((target_left, target_right))
 }
 
-/// Single-layer split helper — the part that doesn't know about groups.
-/// Returns `(left_id, right_id)`; left reuses the original LayerId.
 /// Partition one `Animated<T>` track for a split at clip-local `split_offset`.
 /// `right=false` (LEFT half): keep keys with `t_us <= split_offset`.
 /// `right=true`  (RIGHT half): keep keys with `t_us > split_offset`, rebased
@@ -4068,6 +4066,8 @@ fn split_track_half<T: Clone>(a: &mut Animated<T>, split_offset: TimeUs, right: 
     }
 }
 
+/// Single-layer split helper — the part that doesn't know about groups.
+/// Returns `(left_id, right_id)`; left reuses the original LayerId.
 fn split_single_layer(
     project: &mut Project,
     id: LayerId,
