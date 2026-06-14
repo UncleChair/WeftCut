@@ -5,10 +5,12 @@ import {
   formatRulerLabel,
   groupHue,
   indexGroups,
+  keyframeAbsoluteX,
   keyframeHitTest,
   keyframeXWithinClip,
   layerOverlapClass,
   trackHeaderControls,
+  trackKeyframeProperties,
   visualOrderedTracks,
 } from "./geometry";
 import type { LayerSummary, TrackSummary } from "../ipc";
@@ -225,5 +227,33 @@ describe("trackHeaderControls", () => {
       showMute: false,
       showSolo: false,
     });
+  });
+});
+
+describe("keyframeAbsoluteX", () => {
+  it("maps t_start+t_us to absolute px", () => {
+    // 50px/s: a key at t_us=2s on a clip starting at 1s → (1+2)s*50 = 150
+    expect(keyframeAbsoluteX(1_000_000, 2_000_000, 50)).toBe(150);
+  });
+  it("handles out-of-range (negative) t_us", () => {
+    expect(keyframeAbsoluteX(1_000_000, -2_000_000, 50)).toBe(-50);
+  });
+});
+
+describe("trackKeyframeProperties", () => {
+  const kfTrack = { mode: "Keyframed" as const, value: [{ id: "k", t_us: 0, value: 1, interp: { kind: "Linear" as const } }] };
+  const staticTrack = { mode: "Static" as const, value: 1 };
+  it("returns the union of keyframed params across the track's layers, in descriptor order", () => {
+    const track = {
+      kind: "Video", layers: [
+        { id: "a", kind: "VideoClip", params: { kind: "VideoClip", x: kfTrack, opacity: staticTrack } },
+        { id: "b", kind: "VideoClip", params: { kind: "VideoClip", opacity: kfTrack } },
+      ],
+    } as unknown as import("../ipc").TrackSummary;
+    expect(trackKeyframeProperties(track).map((d) => d.paramKey)).toEqual(["x", "opacity"]);
+  });
+  it("returns empty when no layer has a keyframed param", () => {
+    const track = { kind: "Video", layers: [{ id: "a", kind: "VideoClip", params: { kind: "VideoClip", opacity: staticTrack } }] } as unknown as import("../ipc").TrackSummary;
+    expect(trackKeyframeProperties(track)).toEqual([]);
   });
 });

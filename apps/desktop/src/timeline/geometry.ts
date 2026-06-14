@@ -1,4 +1,9 @@
 import type { GroupSummary, LayerSummary, TrackSummary } from "../ipc";
+import {
+  animatableParams,
+  readParamTrack,
+  type ParamDescriptor,
+} from "../keyframe/descriptors";
 
 // Zoom + height bounds. The default matches the pre-refactor constant so
 // projects that have never written `view.json` look identical to before.
@@ -188,6 +193,48 @@ export function keyframeXWithinClip(
   if (clipDurationUs <= 0) return 0;
   const u = clamp(kfTUs / clipDurationUs, 0, 1);
   return u * clipWidthPx;
+}
+
+/// Absolute x (px) of a keyframe on the timeline ruler: the clip start plus
+/// the layer-local keyframe time, scaled by zoom. Used by the expanded
+/// sub-lanes (which span the whole track, not one clip).
+export function keyframeAbsoluteX(
+  layerTStartUs: number,
+  kfTUs: number,
+  pxPerSec: number,
+): number {
+  return ((layerTStartUs + kfTUs) / 1_000_000) * pxPerSec;
+}
+
+/// The keyframed-property union across a track's layers, in descriptor order
+/// — one entry per property that at least one layer animates (Keyframed).
+/// Drives the expanded sub-lane rows.
+export function trackKeyframeProperties(track: TrackSummary): ParamDescriptor[] {
+  const out: ParamDescriptor[] = [];
+  // Stable, de-duped, descriptor-ordered: walk each layer's animatable params;
+  // include a param the first time any layer has it Keyframed.
+  const seen = new Set<string>();
+  for (const layer of track.layers) {
+    for (const desc of animatableParams(layer.kind)) {
+      if (seen.has(desc.paramKey)) continue;
+      const t = readParamTrack(layer.params, desc.paramKey);
+      if (t && t.mode === "Keyframed") {
+        seen.add(desc.paramKey);
+      }
+    }
+  }
+  // Emit in a stable global order (x,y,scale_x,scale_y,opacity,gain_db,pan)
+  // rather than first-seen order: collect from the canonical descriptor lists.
+  const ORDER = ["x", "y", "scale_x", "scale_y", "rotation_deg", "opacity", "gain_db", "pan"];
+  for (const key of ORDER) {
+    if (!seen.has(key)) continue;
+    // find the descriptor (label/fallback) from whichever kind defines it
+    for (const layer of track.layers) {
+      const d = animatableParams(layer.kind).find((x) => x.paramKey === key);
+      if (d) { out.push(d); break; }
+    }
+  }
+  return out;
 }
 
 /// Nearest diamond id within `radiusPx` of `pointerX`, else null.
