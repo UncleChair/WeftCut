@@ -6,6 +6,16 @@ const enUS = {
     core_status: "core: {{status}}",
     window_title: "WeftCut — {{name}}",
   },
+  keyframe: {
+    stopwatch_enable: "Animate this property (add a keyframe at the playhead)",
+    stopwatch_disable: "Stop animating (collapse to the value at the playhead)",
+    stopwatch_offscreen: "Move the playhead over the clip to keyframe",
+    interp_hold: "Hold",
+    interp_linear: "Linear",
+    interp_ease_in: "Ease In",
+    interp_ease_out: "Ease Out",
+    delete_keyframe: "Delete keyframe",
+  },
   startup: {
     subtitle: "Pick a project to open, or create a new one.",
     new_project: "New project",

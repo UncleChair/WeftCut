@@ -8,6 +8,16 @@ const zhCN: Resources = {
     core_status: "核心：{{status}}",
     window_title: "WeftCut — {{name}}",
   },
+  keyframe: {
+    stopwatch_enable: "为该属性添加动画（在播放头处打关键帧）",
+    stopwatch_disable: "停止动画（折叠为播放头处的值）",
+    stopwatch_offscreen: "把播放头移到 clip 上方才能打关键帧",
+    interp_hold: "保持",
+    interp_linear: "线性",
+    interp_ease_in: "缓入",
+    interp_ease_out: "缓出",
+    delete_keyframe: "删除关键帧",
+  },
   startup: {
     subtitle: "选择要打开的项目，或新建一个。",
     new_project: "新建项目",
