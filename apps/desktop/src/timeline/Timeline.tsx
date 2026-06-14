@@ -35,6 +35,7 @@ import {
   DEFAULT_TRACK_HEIGHT,
   HEADER_COL_PX,
   indexGroups,
+  trackKeyframeProperties,
   visualOrderedTracks,
 } from "./geometry";
 import { TimelineRuler } from "./TimelineRuler";
@@ -157,6 +158,7 @@ export function Timeline({
     setTrackHeights,
     trackHeightsRef,
     expandedTracks,
+    toggleExpanded,
   } = useTimelineView({ rootRef, tracks, durationUs });
 
   const totalSec = Math.max(durationUs / 1_000_000, 5);
@@ -554,6 +556,9 @@ export function Timeline({
               height={trackHeights[track.id] ?? DEFAULT_TRACK_HEIGHT}
               isRevealed={track.id === (revealedTrackId ?? null)}
               isGroupStart={isGroupStart}
+              isExpanded={expandedTracks.has(track.id)}
+              hasKeyframes={trackKeyframeProperties(track).length > 0}
+              onToggleExpand={() => toggleExpanded(track.id)}
               onMutated={onMutated}
             />
           ))}

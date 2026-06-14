@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { Eye, EyeOff, Lock, LockOpen, Music } from "lucide-react";
+import { ChevronDown, ChevronRight, Eye, EyeOff, Lock, LockOpen, Music } from "lucide-react";
 import { updateTrackFlags, type TrackSummary } from "../ipc";
 import { trackHeaderControls } from "./geometry";
 
@@ -30,12 +30,18 @@ function FlagButton({ active, activeClass, label, onToggle, children }: {
 /// toggles. Flag changes go through the unrecorded `update_track_flags`
 /// path (never enter undo history); `onMutated` re-fetches the summary.
 /// pointerdown must not bubble into the timeline root's seek path.
-export function TrackHeader({ track, height, isRevealed, isGroupStart, onMutated }: {
+export function TrackHeader({ track, height, isRevealed, isGroupStart, isExpanded, hasKeyframes, onToggleExpand, onMutated }: {
   track: TrackSummary;
   height: number;
   isRevealed: boolean;
   /// Mirrors the lane's section-divider border so it crosses the header column too.
   isGroupStart: boolean;
+  /// True when this track's keyframe sub-lanes are expanded (twirl points down).
+  isExpanded: boolean;
+  /// True when at least one layer on the track has a keyframed property —
+  /// the twirl is disabled (grayed) otherwise.
+  hasKeyframes: boolean;
+  onToggleExpand: () => void;
   onMutated: () => Promise<void>;
 }) {
   const { t } = useTranslation();
@@ -59,6 +65,16 @@ export function TrackHeader({ track, height, isRevealed, isGroupStart, onMutated
       onPointerDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
     >
+      <button
+        type="button"
+        className="inline-flex size-[14px] shrink-0 items-center justify-center text-muted-foreground/60 disabled:opacity-30"
+        disabled={!hasKeyframes}
+        aria-label={t("timeline.toggle_keyframe_lanes", { defaultValue: "Expand keyframe lanes" })}
+        aria-expanded={isExpanded}
+        onClick={onToggleExpand}
+      >
+        {isExpanded ? <ChevronDown size={12} aria-hidden /> : <ChevronRight size={12} aria-hidden />}
+      </button>
       {isAudioLane && (
         <Music size={11} aria-hidden className="shrink-0 text-muted-foreground/70" />
       )}
