@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { LayerBlock, type DragState, type PendingLayerPlacement } from "./LayerBlock";
 import { computeLayerSlices } from "./geometry";
-import type { LayerSummary, TrackSummary } from "../ipc";
+import type { AnimTrack, LayerSummary, TrackSummary } from "../ipc";
 
 export const MEDIA_DRAG_TYPE = "application/x-weftcut-media";
 
@@ -40,6 +40,7 @@ export function TrackLane({
   onMediaDrop,
   onContextMenu,
   onCommitLabel,
+  onCommitParamTrack,
   isGroupStart,
   isRevealed,
   isResizing,
@@ -80,6 +81,7 @@ export function TrackLane({
     layerEnabled: boolean,
   ) => void;
   onCommitLabel: (layerId: string, label: string) => void;
+  onCommitParamTrack: (layerId: string, paramKey: string, track: AnimTrack<number>) => void;
   isGroupStart: boolean;
   /// R.7 inline-reveal flag. The lane renders with extra chrome
   /// (dashed border / "hidden" badge) so the user knows this row is
@@ -243,6 +245,7 @@ export function TrackLane({
             onDragStart={onDragStart}
             onContextMenu={onContextMenu}
             onCommitLabel={onCommitLabel}
+            onCommitParamTrack={onCommitParamTrack}
             fpsNum={fpsNum}
             fpsDen={fpsDen}
           />
