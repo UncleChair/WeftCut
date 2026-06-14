@@ -5,7 +5,13 @@
   "scripts": {
     "drivers": "node scripts/fetch-msedgedriver.mjs",
     "fixtures": "node fixtures/generate-fixtures.mjs",
-    "test": "node scripts/fetch-msedgedriver.mjs && wdio run wdio.conf.mjs"
+    "test": "node scripts/fetch-msedgedriver.mjs && wdio run wdio.conf.mjs",
+    "e2e": "node scripts/fetch-msedgedriver.mjs && node scripts/run-suite.mjs all",
+    "e2e:smoke": "node scripts/fetch-msedgedriver.mjs && node scripts/run-suite.mjs smoke",
+    "e2e:ui": "node scripts/fetch-msedgedriver.mjs && node scripts/run-suite.mjs ui",
+    "e2e:export": "node scripts/fetch-msedgedriver.mjs && node scripts/run-suite.mjs export",
+    "e2e:audio": "node scripts/fetch-msedgedriver.mjs && node scripts/run-suite.mjs audio",
+    "e2e:motif": "node scripts/fetch-msedgedriver.mjs && node scripts/run-suite.mjs motif"
   },
   "devDependencies": {
     "@wdio/cli": "^9.19.0",
