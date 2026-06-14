@@ -58,10 +58,9 @@ export function KeyframeInterpMenu({
               <MenuPrimitive.Item
                 key={o.kind}
                 className="menu-item"
-                onClick={() => {
-                  onPick({ kind: o.kind });
-                  onClose();
-                }}
+                // Base UI closes the menu on item activation → onOpenChange
+                // fires onClose; no explicit onClose here (matches LayerContextMenu).
+                onClick={() => onPick({ kind: o.kind })}
               >
                 {t(o.labelKey)}
               </MenuPrimitive.Item>
