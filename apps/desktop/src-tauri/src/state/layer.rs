@@ -287,7 +287,14 @@ pub(crate) fn for_each_animated_rgba(
     match params {
         LayerParams::Text(p) => f(&mut p.color),
         LayerParams::Color(p) => f(&mut p.color),
-        _ => {}
+        // Exhaustive (no wildcard) so a future kind with an Animated<Rgba>
+        // field forces a compile error here rather than being silently skipped
+        // — same discipline as the f64 walk above.
+        LayerParams::VideoClip(_)
+        | LayerParams::ImageOverlay(_)
+        | LayerParams::Motif(_)
+        | LayerParams::Audio(_)
+        | LayerParams::Subtitles(_) => {}
     }
 }
 
@@ -352,7 +359,7 @@ mod kf_fields_tests {
     #[test]
     fn resolve_known_f64_keys_for_videoclip() {
         let mut p = videoclip();
-        for key in ["x", "y", "scale_x", "scale_y", "opacity"] {
+        for key in ["x", "y", "scale_x", "scale_y", "rotation_deg", "opacity"] {
             assert!(
                 resolve_animated_f64_mut(&mut p, key).is_some(),
                 "videoclip should resolve {key}"
@@ -379,5 +386,33 @@ mod kf_fields_tests {
         }
         let LayerParams::VideoClip(v) = &p else { panic!() };
         assert!(matches!(v.opacity, Animated::Static(x) if (x - 0.25).abs() < 1e-9));
+    }
+
+    fn audioclip() -> LayerParams {
+        LayerParams::Audio(AudioParams {
+            media: crate::state::ids::new_id(),
+            src_in_us: 0,
+            src_out_us: 1_000_000,
+            gain_db: Animated::Static(0.0),
+            pan: Animated::Static(0.0),
+            fade_in_us: 0,
+            fade_out_us: 0,
+            mute: false,
+        })
+    }
+
+    #[test]
+    fn resolve_and_walk_for_audio() {
+        let mut p = audioclip();
+        // Audio resolves only gain_db/pan (its own match arm, independent of
+        // transform_or_opacity); transform keys + opacity are None.
+        assert!(resolve_animated_f64_mut(&mut p, "gain_db").is_some());
+        assert!(resolve_animated_f64_mut(&mut p, "pan").is_some());
+        assert!(resolve_animated_f64_mut(&mut p, "opacity").is_none());
+        assert!(resolve_animated_f64_mut(&mut p, "x").is_none());
+        // The walk visits exactly gain_db + pan.
+        let mut n = 0;
+        for_each_animated_f64(&mut p, |_| n += 1);
+        assert_eq!(n, 2);
     }
 }
