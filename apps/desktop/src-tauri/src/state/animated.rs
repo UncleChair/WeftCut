@@ -68,6 +68,26 @@ impl<T: Clone> Animated<T> {
         }
     }
 
+    /// Value of the first keyframe (front of the sorted vector), or `None` for
+    /// `Static` / empty `Keyframed`. Split uses this to collapse an empty LEFT
+    /// half to the value the track clamps to before its first key.
+    pub fn first_keyframe_value(&self) -> Option<T> {
+        match self {
+            Animated::Keyframed(kfs) => kfs.front().map(|k| k.value.clone()),
+            Animated::Static(_) => None,
+        }
+    }
+
+    /// Value of the last keyframe (back of the sorted vector), or `None` for
+    /// `Static` / empty `Keyframed`. Split uses this to collapse an empty RIGHT
+    /// half to the value the track clamps to after its last key.
+    pub fn last_keyframe_value(&self) -> Option<T> {
+        match self {
+            Animated::Keyframed(kfs) => kfs.back().map(|k| k.value.clone()),
+            Animated::Static(_) => None,
+        }
+    }
+
     /// Keep only keyframes whose `t_us` satisfies `keep` (no-op on `Static`).
     /// Used by split to partition keyframes between the two halves. If `keep`
     /// filters out every keyframe, the result is an EMPTY `Keyframed` track —
@@ -456,6 +476,26 @@ mod tests {
         let Animated::Keyframed(kfs) = &a else { panic!("keyframed") };
         assert_eq!(kfs.len(), 2);
         assert_eq!(kfs[1].t_us, 2_000_000);
+    }
+
+    #[test]
+    fn first_last_keyframe_value() {
+        let a = keyframed(vec![
+            kf(0, 3.0, Interpolation::Linear),
+            kf(5_000_000, 7.0, Interpolation::Linear),
+        ]);
+        assert_eq!(a.first_keyframe_value(), Some(3.0));
+        assert_eq!(a.last_keyframe_value(), Some(7.0));
+    }
+
+    #[test]
+    fn first_last_keyframe_value_none_for_static_and_empty() {
+        let s: Animated<f64> = Animated::Static(1.0);
+        assert_eq!(s.first_keyframe_value(), None);
+        assert_eq!(s.last_keyframe_value(), None);
+        let e: Animated<f64> = Animated::Keyframed(imbl::Vector::new());
+        assert_eq!(e.first_keyframe_value(), None);
+        assert_eq!(e.last_keyframe_value(), None);
     }
 
     #[test]
