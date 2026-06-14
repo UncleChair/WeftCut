@@ -253,7 +253,7 @@ describe("export range + audio settings (real WebView2)", function () {
       console.warn(`[e2e] SKIP: tone fixtures not found under ${MEDIA_DIR}`);
       this.skip();
     }
-    const output = tmpOut("weftcut-e2e-range-conform.mp4");
+    const output = tmpOut("weftcut-e2e-range-conform.m4a");
     rmSync(output, { force: true });
 
     const projDir = await bootProject("e2e-range-conform-");
@@ -304,9 +304,15 @@ describe("export range + audio settings (real WebView2)", function () {
     }
     expect(conformsIn()).toHaveLength(0);
 
-    // Range export [0, 2s) — covers only the WAV.
+    // Audio-only range export [0, 2s) — covers only the WAV. The project has
+    // only Audio layers, so the export is audio-only (`includeVideo:false`); a
+    // video export would be correctly rejected by the no-material guard.
     const r = await driveExport(
-      { outputAbsPath: output, range: { startUs: 0, endUs: 2_000_000 } },
+      {
+        outputAbsPath: output,
+        range: { startUs: 0, endUs: 2_000_000 },
+        settings: { includeVideo: false, includeAudio: true },
+      },
       { hook: "exportTimeline" },
     );
     if (!r.done.ok) throw new Error(`range-conform export failed: ${r.done.error}`);

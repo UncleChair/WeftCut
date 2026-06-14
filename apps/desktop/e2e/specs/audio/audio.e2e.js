@@ -73,8 +73,11 @@ describe("audio conformance matrix (real WebView2)", function () {
 // ─── 2. Audio-only format matrix ─────────────────────────────────────────────
 // AUDIO-ONLY sources end-to-end, per format the import dialog offers: import
 // (probe + classify as Audio) → conform (ffmpeg → VCONF) → Audio layer →
-// export mix → AAC-in-mp4, verified by `media_conformance --audio` against
-// the per-second tone markers (F_k = 400 + 120k Hz) baked into the fixtures.
+// audio-only export mix → AAC `.m4a`, verified by `media_conformance --audio`
+// against the per-second tone markers (F_k = 400 + 120k Hz) baked into the
+// fixtures. The export is audio-only (`includeVideo:false`) because an
+// audio-only project has no visible video layer — a video export is correctly
+// rejected by the no-material guard (see export_content_modes.e2e.js).
 //
 // This is the pipeline gate; the FORMAT range itself is pinned cheaply by the
 // Rust unit matrix (jobs::conform::tests::conform_format_matrix_*). The mp3
@@ -91,9 +94,9 @@ describe("audio-only format matrix (real WebView2)", function () {
 
   for (const fmt of FORMATS) {
     const source = fixture(`test_tones_10s.${fmt}`);
-    const output = tmpOut(`weftcut-e2e-audiofmt-${fmt}.mp4`);
+    const output = tmpOut(`weftcut-e2e-audiofmt-${fmt}.m4a`);
 
-    it(`${fmt} source -> mp4 export stays aligned + faithful`, async function () {
+    it(`${fmt} source -> audio export stays aligned + faithful`, async function () {
       if (!existsSync(source)) {
         console.warn(`[e2e] SKIP: audio source not found at ${source}`);
         this.skip();
@@ -107,7 +110,11 @@ describe("audio-only format matrix (real WebView2)", function () {
       });
 
       const r = await driveExport(
-        { mediaAbsPath: source, outputAbsPath: output, settings: { container: "mp4" } },
+        {
+          mediaAbsPath: source,
+          outputAbsPath: output,
+          settings: { includeVideo: false, includeAudio: true },
+        },
         { timeout: 150000 },
       );
       if (!r.done.ok) {
