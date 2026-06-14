@@ -926,18 +926,21 @@ pub async fn add_demo_color_layer(handle: State<'_, ProjectHandle>) -> Result<St
     Ok(layer_id.to_string())
 }
 
-#[tauri::command]
-pub async fn add_text_layer(
-    handle: State<'_, ProjectHandle>,
-    track_id: String,
-    content: String,
+async fn add_text_layer_impl(
+    handle: &ProjectHandle,
+    track_id: Option<String>,
+    content: Option<String>,
     t_start_us: TimeUs,
-    duration_us: TimeUs,
+    duration_us: Option<TimeUs>,
 ) -> Result<String, String> {
-    let track = Uuid::parse_str(&track_id).map_err(|e| format!("track_id: {e}"))?;
-    let span = duration_us.max(100_000);
+    let span = duration_us.unwrap_or(DEFAULT_LAYER_DURATION_US).max(100_000);
+    let t_end = t_start_us + span;
+    let track = match track_id {
+        Some(s) => Uuid::parse_str(&s).map_err(|e| format!("track_id: {e}"))?,
+        None => resolve_overlay_track(handle, t_start_us, t_end).await?,
+    };
     let params = LayerParams::Text(state::layer::TextParams {
-        content,
+        content: content.unwrap_or_else(|| "Text".to_string()),
         font: state::layer::FontSpec {
             family: "Arial".to_string(),
             size_px: 72.0,
@@ -955,10 +958,24 @@ pub async fn add_text_layer(
         backend_hint: state::layer::TextBackend::DrawText,
     });
     handle
-        .add_layer(Actor::User, track, params, t_start_us, t_start_us + span)
+        .add_layer(Actor::User, track, params, t_start_us, t_end)
         .await
         .map(|id| id.to_string())
         .map_err(|e: CommandError| e.to_string())
+}
+
+/// UI: insert a Text layer. `track_id` omitted → smart Overlay placement;
+/// `content` omitted → "Text"; `duration_us` omitted → default duration.
+/// Returns the new layer id (the UI selects it for editing).
+#[tauri::command]
+pub async fn add_text_layer(
+    handle: State<'_, ProjectHandle>,
+    track_id: Option<String>,
+    content: Option<String>,
+    t_start_us: TimeUs,
+    duration_us: Option<TimeUs>,
+) -> Result<String, String> {
+    add_text_layer_impl(&handle, track_id, content, t_start_us, duration_us).await
 }
 
 #[tauri::command]
@@ -3081,5 +3098,48 @@ mod tests {
         }
         assert!(layer.t_start_us <= 1_000_000);
         assert!(layer.t_end_us - layer.t_start_us >= 4_900_000); // ~5s default
+    }
+
+    #[tokio::test]
+    async fn add_text_layer_defaults_content_and_duration() {
+        let h = crate::state::actor::spawn(crate::state::Project::new_blank("test"));
+        let id = add_text_layer_impl(&h, None, None, 0, None).await.unwrap();
+        let snap = h.snapshot().await;
+        let layer = snap
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .find(|l| l.id.to_string() == id)
+            .expect("inserted text layer");
+        match &layer.params {
+            LayerParams::Text(tp) => assert_eq!(tp.content, "Text"),
+            _ => panic!("expected Text layer"),
+        }
+        assert!(layer.t_end_us - layer.t_start_us >= 4_900_000); // ~5s default
+    }
+
+    #[tokio::test]
+    async fn add_text_layer_honors_explicit_track_and_content() {
+        let h = crate::state::actor::spawn(crate::state::Project::new_blank("test"));
+        let overlay = h
+            .add_track(Actor::User, Some("Overlay".into()))
+            .await
+            .unwrap();
+        let _ = add_text_layer_impl(
+            &h,
+            Some(overlay.to_string()),
+            Some("Hi".to_string()),
+            0,
+            Some(1_000_000),
+        )
+        .await
+        .unwrap();
+        let snap = h.snapshot().await;
+        let tr = snap.tracks.iter().find(|t| t.id == overlay).unwrap();
+        assert_eq!(tr.layers.len(), 1);
+        match &tr.layers[0].params {
+            LayerParams::Text(tp) => assert_eq!(tp.content, "Hi"),
+            _ => panic!("expected Text layer"),
+        }
     }
 }
