@@ -5,6 +5,13 @@
 > **Depends on Plan 1** (`2026-06-14-keyframe-authoring-1-write-path.md`): the
 > `updateLayerParamTrack(s)` IPC wrappers and the actor write path must be merged first.
 
+**Status: SHIPPED — all 12 tasks implemented and merged to main (`29c76f8f`).**
+Built subagent-driven in worktree wt2 (each task spec + code-quality reviewed; the
+reviews caught a HIGH bug where deleting a keyframe also deleted the layer — fixed
+via capture-phase `keydown` + `stopImmediatePropagation`). tsc 0 / vitest 547, and
+the export-sampling e2e passed in real WebView2. Checkboxes below were not
+back-ticked during execution; kept as the execution record.
+
 **Goal:** Make `Animated<f64>` properties authorable end-to-end — a per-property stopwatch + auto-key in the inspector, collapsed-mode keyframe diamonds on the clip with click/drag/delete/interp-menu, and the preview reflecting the animation — all driving Plan 1's `updateLayerParamTrack`.
 
 **Architecture:** A thin per-kind descriptor (`animatableParams(kind)`) enumerates each kind's animatable params (the frontend mirror of Plan 1's `resolve_animated_f64_mut`). Pure `AnimTrack` transforms (`keyframe/edits.ts`) implement lift/collapse/upsert/remove/retime/set-interp; components call them then `updateLayerParamTrack`. A shared `<AnimatableField>` wraps the existing inspector controls with a stopwatch and a playhead-evaluated display value. A `keyframeFocusStore` broadcasts the focused `{layerId, paramKey}`; `LayerBlock` renders that param's diamonds and handles their interactions, drilling a commit callback from `Timeline` (the `onCommitLabel` pattern).

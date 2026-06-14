@@ -15,22 +15,35 @@ lives in the topical doc — this is the index.
 
 ## Open work
 
-### Keyframes (`Animated<T>` goes live)
+### Keyframes — authoring shipped; sub-lanes + extras remain
 
-The schema and both interpolation engines already exist (Rust
-`state/animated.rs::value_at`, TS `render/animated.ts::resolveAnimated`,
-byte-identical); what's missing is transport and evaluation:
-`projectSummary` flattens every `Animated<T>` to a static scalar, so
-the renderer never sees keyframes. The work: ship `AnimTrack<T>`
-through the `LayerSummary` views, pre-resolve per frame in the
-Compositor (sprites stay schema-agnostic), exempt animated properties
-from sprite signature caches (text color via tint, not re-raster),
-add a cross-language golden-vector test over the engine copies before
-enabling, then the `add_keyframe` / `update_keyframe` /
-`remove_keyframe` actor surface + MCP tools. Export needs no extra
-work — the Worker clones the same summary and runs the same
-Compositor. Trim-vs-keyframe validation rules need defining. See
-[`data-model.md`](data-model.md).
+`Animated<T>` is live end-to-end. `AnimTrack<T>` flows through the
+`LayerSummary` views and resolves per frame in the shared Compositor
+(preview == export, golden-vector-locked engines), and **authoring
+shipped**: a per-property stopwatch + auto-key in the inspector,
+collapsed-mode diamonds on the clip (click-seek / drag-retime / delete /
+interpolation menu), and the `update_layer_param_track(s)` actor surface
+(normalized, recorded, undoable). Trim and split keep keyframes
+content-anchored — non-destructive, out-of-range keys retained (so the
+layer validator permits keyframe times outside `[0, duration]`). Verified
+by an export-sampling e2e. Design:
+[`superpowers/specs/2026-06-14-keyframe-authoring-design.md`](superpowers/specs/2026-06-14-keyframe-authoring-design.md).
+
+What remains:
+
+- **Expanded-mode per-property sub-lanes** (`KeyframeLane`; timeline-redesign
+  spec §5). Twirl a track open to AE-style per-property rows (union of
+  keyframed properties across the track's layers), with marquee box-select,
+  cross-property/cross-layer multi-drag (one undo via the batch
+  `update_layer_param_tracks`), and dimmed out-of-range keyframes.
+- **`Animated<Rgba>` + a color stopwatch** — needs a Rust `value_at` twin for
+  `Rgba` first (the dual-engine mirror rule forbids a TS-only interpolator).
+- **Bezier interpolation authoring** — the engine's Bezier arm is a linear
+  stub; needs a curve editor.
+- **MCP keyframe tools** (`add_keyframe` / `update_keyframe` / `remove_keyframe`)
+  on top of the `update_layer_param_track` surface.
+
+See [`data-model.md`](data-model.md).
 
 ### Effect subsystem on the PixiJS path
 
