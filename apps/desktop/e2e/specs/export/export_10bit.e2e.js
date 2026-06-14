@@ -1,24 +1,24 @@
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { newProject } from "../../helpers/app.mjs";
+import { driveExport } from "../../helpers/export.mjs";
+import { fixture, tmpOut, tmpProjectParent } from "../../helpers/media.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const MEDIA_DIR =
-  process.env.WEFTCUT_TEST_MEDIA || path.resolve(HERE, "..", "fixtures", "media");
-// apps/desktop/e2e/specs -> repo root (analyze.mjs uses the same shape from lib/).
-const REPO = path.resolve(HERE, "..", "..", "..", "..");
+// apps/desktop/e2e/specs/export -> repo root.
+const REPO = path.resolve(HERE, "..", "..", "..", "..", "..");
 
-const SOURCE_RAMP = path.resolve(MEDIA_DIR, "test_1080p_gradient10_h264.mp4");
-const SOURCE_BF = path.resolve(MEDIA_DIR, "test_1080p_gradient10_h264_bf.mp4");
-const SOURCE_AV1 = path.resolve(MEDIA_DIR, "test_1080p_gradient10_av1.mp4");
-const SOURCE_4K = path.resolve(MEDIA_DIR, "test_2160p_gradient10_h264.mp4");
-const OUTPUT_RAMP = path.resolve(os.tmpdir(), "weftcut-e2e-10bit-ramp.mp4");
-const OUTPUT_BF = path.resolve(os.tmpdir(), "weftcut-e2e-10bit-bf.mp4");
-const OUTPUT_AV1 = path.resolve(os.tmpdir(), "weftcut-e2e-10bit-av1.mp4");
-const OUTPUT_4K = path.resolve(os.tmpdir(), "weftcut-e2e-10bit-4k.mp4");
-const PROJECT_PARENT = path.resolve(os.tmpdir(), "weftcut-e2e-10bit-proj");
+const SOURCE_RAMP = fixture("test_1080p_gradient10_h264.mp4");
+const SOURCE_BF = fixture("test_1080p_gradient10_h264_bf.mp4");
+const SOURCE_AV1 = fixture("test_1080p_gradient10_av1.mp4");
+const SOURCE_4K = fixture("test_2160p_gradient10_h264.mp4");
+const OUTPUT_RAMP = tmpOut("weftcut-e2e-10bit-ramp.mp4");
+const OUTPUT_BF = tmpOut("weftcut-e2e-10bit-bf.mp4");
+const OUTPUT_AV1 = tmpOut("weftcut-e2e-10bit-av1.mp4");
+const OUTPUT_4K = tmpOut("weftcut-e2e-10bit-4k.mp4");
+const PROJECT_PARENT = tmpProjectParent("weftcut-e2e-10bit-proj");
 
 // 10-bit export settings: f16/WebGL2 composite -> yuv420p10le pack -> loopback
 // WS -> Rust ffmpeg sink (HEVC Main10). audio.include=false keeps the gate
@@ -87,94 +87,20 @@ function gradientReport(output, sample) {
 /// (the reorder-tail deadlock class pins the counter at a chunk boundary)
 /// instead of timing out blind. Returns the perf counters (or null).
 async function bootAndExport(source, output, name, canvas = { width: 1920, height: 1080 }) {
-  await browser.waitUntil(
-    async () =>
-      (await browser.execute(
-        () => typeof window.__weftcutTest?.newProjectAndEnter === "function",
-      )) === true,
-    { timeout: 30000, timeoutMsg: "newProjectAndEnter never mounted" },
+  await newProject({
+    parentFolder: PROJECT_PARENT,
+    name: name + Date.now(),
+    canvas: { width: canvas.width, height: canvas.height, fpsNum: 30, fpsDen: 1 },
+  });
+
+  // Clear perf before driving export (driveExport does not clear it).
+  await browser.execute(() => { window.__weftcutExportPerf = null; });
+
+  const r = await driveExport(
+    { mediaAbsPath: source, outputAbsPath: output, settings: TEN_BIT_SETTINGS },
+    { timeout: 560000, label: "export_10bit" },
   );
-
-  const r1 = await browser.executeAsync((parent, nm, cv, done) => {
-    window.__weftcutTest
-      .newProjectAndEnter({
-        parentFolder: parent,
-        name: nm + Date.now(),
-        canvas: { width: cv.width, height: cv.height, fpsNum: 30, fpsDen: 1 },
-      })
-      .then(() => done({ ok: true }))
-      .catch((e) => done({ ok: false, error: String(e) }));
-  }, PROJECT_PARENT, name, canvas);
-  if (!r1.ok) throw new Error("newProjectAndEnter failed: " + r1.error);
-
-  await browser.waitUntil(
-    async () =>
-      (await browser.execute(
-        () => typeof window.__weftcutTest?.exportClip === "function",
-      )) === true,
-    { timeout: 30000, timeoutMsg: "exportClip never mounted (editor didn't load?)" },
-  );
-
-  await browser.execute(
-    (media, out, settings) => {
-      window.__e2eExportDone = null;
-      window.__weftcutExportPerf = null;
-      window.__weftcutTest
-        .exportClip({ mediaAbsPath: media, outputAbsPath: out, settings })
-        .then(() => {
-          window.__e2eExportDone = { ok: true };
-        })
-        .catch((e) => {
-          window.__e2eExportDone = { ok: false, error: String(e) };
-        });
-    },
-    source,
-    output,
-    TEN_BIT_SETTINGS,
-  );
-
-  let lastFrame = -1;
-  let lastKind = null;
-  let settled = null;
-  try {
-    await browser.waitUntil(
-      async () => {
-        const snap = await browser.execute(() => {
-          const st = window.__weftcutExportState;
-          return {
-            done: window.__e2eExportDone,
-            kind: st?.kind ?? null,
-            phase: st?.progress?.phase ?? null,
-            frame: st?.progress?.frame ?? null,
-            detail: st?.detail ?? null,
-          };
-        });
-        if (snap.frame != null && snap.frame !== lastFrame) {
-          lastFrame = snap.frame;
-          console.log(
-            `[e2e] export ${snap.kind}/${snap.phase ?? "-"} frame=${snap.frame}`,
-          );
-        }
-        if (snap.kind && snap.kind !== lastKind) {
-          lastKind = snap.kind;
-          console.log(
-            `[e2e] export phase -> ${snap.kind}${snap.detail ? ` (${snap.detail})` : ""}`,
-          );
-        }
-        if (snap.done) {
-          settled = snap.done;
-          return true;
-        }
-        return false;
-      },
-      { timeout: 560000, interval: 1000 },
-    );
-  } catch (e) {
-    throw new Error(
-      `10-bit export never settled (last kind=${lastKind}, last frame=${lastFrame}): ${e.message}`,
-    );
-  }
-  if (!settled.ok) throw new Error("exportClip failed: " + settled.error);
+  if (!r.done.ok) throw new Error("exportClip failed: " + r.done.error);
 
   const perf = await browser.execute(() => window.__weftcutExportPerf ?? null);
   if (perf) {
