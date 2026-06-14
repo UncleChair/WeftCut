@@ -813,6 +813,27 @@ export async function updateLayerParams(
   return invoke<void>("update_layer_params", { layerId, patch });
 }
 
+/// Write a whole keyframe track to a named animatable param on a layer.
+/// `paramKey` is one of the layer kind's animatable f64 fields
+/// (x/y/scale_x/scale_y/opacity for visual kinds; gain_db/pan for audio).
+/// The actor normalizes (snap/sort/dedupe) and records the edit (one undo step).
+export async function updateLayerParamTrack(
+  layerId: string,
+  paramKey: string,
+  track: AnimTrack<number>,
+): Promise<void> {
+  return invoke<void>("update_layer_param_track", { layerId, paramKey, track });
+}
+
+/// Batch form — write several param tracks on one layer as a single undo step
+/// (used by multi-keyframe gestures like dragging a cross-property selection).
+export async function updateLayerParamTracks(
+  layerId: string,
+  entries: [string, AnimTrack<number>][],
+): Promise<void> {
+  return invoke<void>("update_layer_param_tracks", { layerId, entries });
+}
+
 export async function addSubtitlesLayer(
   mediaId: string,
   tStartUs: number,
