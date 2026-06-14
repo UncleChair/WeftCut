@@ -36,7 +36,9 @@ export function animatableParams(kind: string): ParamDescriptor[] {
 }
 
 /// Read the `AnimTrack<number>` for `paramKey` off the flattened params view.
-/// `null` if the kind doesn't carry that param.
+/// `null` if the kind doesn't carry that param. Call ONLY with keys from
+/// `animatableParams(kind)`: passing a non-f64 track key (e.g. `"color"`, which
+/// is `AnimTrack<Rgba>`) would return it mis-typed as `AnimTrack<number>`.
 export function readParamTrack(
   params: LayerSummary["params"],
   paramKey: string,
