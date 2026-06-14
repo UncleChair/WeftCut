@@ -142,7 +142,7 @@ The root behavior above is guarded by focused tests and diagnostics; see
   pan law, block-mixer placement/summing.
 - `media_conformance --audio`: frequency-based audio export diagnostics;
   `--audio-envelope` / `--audio-pan`: analytic RMS-envelope, limiter-ceiling,
-  and pan-law gates (`audio_envelope.e2e.js`).
+  and pan-law gates (`audio/audio.e2e.js`).
 
 ## Proxies
 
