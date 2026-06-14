@@ -1,8 +1,6 @@
-import os from "node:os";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
-import { analyzeSelf } from "../lib/analyze.mjs";
+import { analyzeSelf } from "../../lib/analyze.mjs";
+import { fixture, tmpOut, tmpProjectParent } from "../../helpers/media.mjs";
 
 // Keyframe authoring → export e2e gate.
 //
@@ -27,16 +25,13 @@ import { analyzeSelf } from "../lib/analyze.mjs";
 // directly because the e2e test-hook surface (window.__weftcutTest) does
 // not yet expose a keyframe-write method. This mirrors what
 // @tauri-apps/api/core's `invoke` does internally (core.js line 202).
-const MEDIA_DIR =
-  process.env.WEFTCUT_TEST_MEDIA ||
-  path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "media");
 
 // A plain H.264 720p-or-1080p 30fps video-only fixture — the simplest
 // non-trivial source (no audio complication, no special codec path).
 // test_1080p_30fps.mp4 is in the standard fixture matrix.
-const SOURCE = path.resolve(MEDIA_DIR, "test_1080p_30fps.mp4");
-const OUTPUT = path.resolve(os.tmpdir(), "weftcut-e2e-keyframe-opacity.mp4");
-const PROJECT_PARENT = path.resolve(os.tmpdir(), "weftcut-e2e-keyframe-proj");
+const SOURCE = fixture("test_1080p_30fps.mp4");
+const OUTPUT = tmpOut("weftcut-e2e-keyframe-opacity.mp4");
+const PROJECT_PARENT = tmpProjectParent("weftcut-e2e-keyframe-proj");
 
 // Composition: 3 s at 30 fps = 90 frames.
 // Opacity track: keyframe at t=0 (opacity=0.0) → keyframe at t=3s (opacity=1.0).
