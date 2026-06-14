@@ -48,7 +48,7 @@ else
                 -draw 'polygon 96,80 96,176 180,128' "$icon_path"
     else
         echo "warn: ImageMagick not found — generate icons manually with"
-        echo "  npm run tauri icon path/to/source.png --workspace apps/desktop"
+        echo "  npm --workspace apps/desktop run tauri -- icon path/to/source.png"
     fi
 fi
 
