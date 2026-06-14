@@ -19,10 +19,10 @@ use crate::motifs::catalog;
 use crate::state::{
     self, Actor, ColorParams, CommandError, LayerParams, MediaItem, MediaKind, ProjectHandle,
     MotifParams, ProjectSettings, ProjectSettingsPatch, Rgba, SubtitlesParams, SubtitlesSource,
-    TrackFlagsPatch, Transform,
+    Track, TrackFlagsPatch, Transform,
     actor::{CompositionPatch, LayerParamsPatch, LayerPatch},
     animated::Animated,
-    ids::new_id,
+    ids::{new_id, TrackId},
     time::{Rational, TimeUs},
     track::TrackRole,
 };
@@ -1006,6 +1006,32 @@ pub async fn add_demo_text_layer(handle: State<'_, ProjectHandle>) -> Result<Str
         .await
         .map(|id| id.to_string())
         .map_err(|e: CommandError| e.to_string())
+}
+
+/// Default span for a UI-inserted generator layer (color / text) when the
+/// caller doesn't specify one. `add_layer` re-snaps both edges to the frame
+/// grid, so this is a pre-snap nominal length.
+const DEFAULT_LAYER_DURATION_US: TimeUs = 5_000_000; // 5s
+
+/// Pure: choose a non-reserved ("Overlay"/general, `role == None`) track that is
+/// free for `[t_start_us, t_end_us)`, scanning top of z-stack → bottom. Returns
+/// `None` when no candidate is free, signalling the caller to spawn a new track.
+/// Uses the same half-open overlap semantic as `Layer::overlaps`.
+fn pick_free_overlay_track(
+    tracks: &imbl::Vector<Track>,
+    t_start_us: TimeUs,
+    t_end_us: TimeUs,
+) -> Option<TrackId> {
+    tracks
+        .iter()
+        .rev()
+        .filter(|t| t.role.is_none())
+        .find(|t| {
+            t.layers
+                .iter()
+                .all(|l| !(t_start_us < l.t_end_us && l.t_start_us < t_end_us))
+        })
+        .map(|t| t.id)
 }
 
 #[tauri::command]
@@ -2802,5 +2828,84 @@ mod tests {
         let d2 = out.iter().find(|v| v["id"] == "d2").unwrap();
         assert_eq!(d1.get("target_id").and_then(|v| v.as_str()), Some("lower-third"));
         assert!(d2.get("target_id").map_or(true, |v| v.is_null())); // from-scratch draft: no target
+    }
+
+    // --- add color/text layer: placement ---
+
+    fn test_track(id: u128, role: Option<TrackRole>, ranges: &[(TimeUs, TimeUs)]) -> Track {
+        let mut tr = Track::new();
+        tr.id = Uuid::from_u128(id);
+        tr.role = role;
+        tr.layers = ranges
+            .iter()
+            .map(|&(s, e)| crate::state::layer::Layer {
+                id: Uuid::now_v7(),
+                label: None,
+                t_start_us: s,
+                t_end_us: e,
+                enabled: true,
+                locked: false,
+                metadata: imbl::HashMap::new(),
+                params: LayerParams::Color(ColorParams {
+                    color: Animated::Static(Rgba::BLACK),
+                    width: 16,
+                    height: 16,
+                }),
+            })
+            .collect();
+        tr
+    }
+
+    #[test]
+    fn pick_returns_none_when_no_nonreserved_track() {
+        let tracks: imbl::Vector<Track> = imbl::vector![
+            test_track(1, Some(TrackRole::ARoll), &[]),
+            test_track(2, Some(TrackRole::BRoll), &[]),
+        ];
+        assert_eq!(pick_free_overlay_track(&tracks, 0, 1_000_000), None);
+    }
+
+    #[test]
+    fn pick_reuses_free_nonreserved_track() {
+        let tracks: imbl::Vector<Track> = imbl::vector![
+            test_track(1, Some(TrackRole::ARoll), &[]),
+            test_track(7, None, &[(0, 2_000_000)]),
+        ];
+        // [2s,3s) does not overlap [0,2s) (half-open) → reuse track 7.
+        assert_eq!(
+            pick_free_overlay_track(&tracks, 2_000_000, 3_000_000),
+            Some(Uuid::from_u128(7))
+        );
+    }
+
+    #[test]
+    fn pick_returns_none_when_only_candidate_is_occupied() {
+        let tracks: imbl::Vector<Track> = imbl::vector![test_track(7, None, &[(0, 2_000_000)])];
+        // [1s,3s) overlaps [0,2s) → no free candidate → caller must create one.
+        assert_eq!(pick_free_overlay_track(&tracks, 1_000_000, 3_000_000), None);
+    }
+
+    #[test]
+    fn pick_treats_adjacent_ranges_as_free() {
+        let tracks: imbl::Vector<Track> = imbl::vector![test_track(7, None, &[(0, 2_000_000)])];
+        // Edge-touching at 2_000_000 is NOT an overlap (half-open interval).
+        assert_eq!(
+            pick_free_overlay_track(&tracks, 2_000_000, 4_000_000),
+            Some(Uuid::from_u128(7))
+        );
+    }
+
+    #[test]
+    fn pick_prefers_top_of_zstack() {
+        // Both free; index 0 = bottom, last = top. Scan is top→bottom, so the
+        // last (id 9) wins.
+        let tracks: imbl::Vector<Track> = imbl::vector![
+            test_track(8, None, &[]),
+            test_track(9, None, &[]),
+        ];
+        assert_eq!(
+            pick_free_overlay_track(&tracks, 0, 1_000_000),
+            Some(Uuid::from_u128(9))
+        );
     }
 }
