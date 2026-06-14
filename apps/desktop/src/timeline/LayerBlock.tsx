@@ -309,7 +309,10 @@ export function LayerBlock({
         ? "rounded-t-none border-t border-t-white/10"
         : "";
 
-  const clipDurationUs = layer.t_end_us - layer.t_start_us;
+  // Derive from the LIVE edges (not the committed t_end/t_start) so diamond
+  // positions stay consistent with `layerWidthPx` during a trim drag; the
+  // actor re-bases keyframes on commit, so this is just the in-flight preview.
+  const clipDurationUs = liveEnd - liveStart;
   const diamonds = (() => {
     if (!focusedParam) return [] as { id: string; x: number }[];
     const track = readParamTrack(layer.params, focusedParam);
