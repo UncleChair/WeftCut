@@ -89,8 +89,8 @@ const enUS = {
   },
   actions: {
     add_track: "+ Track",
-    add_color_layer: "+ Color layer (2s)",
-    add_text_layer: "+ Text (3s)",
+    add_color_layer: "Color layer",
+    add_text_layer: "Text",
     toggle_blade_mode: "Blade tool",
     import_media: "Import media…",
     export: "Export…",
