@@ -2187,6 +2187,14 @@ input.preview-timecode:focus {
   font-family: inherit;
 }
 
+.anim-field { display: flex; align-items: center; gap: 6px; }
+.anim-field-label { flex: 0 0 auto; font-size: 11px; color: var(--muted-foreground); min-width: 56px; }
+.anim-field-control { flex: 1 1 auto; display: flex; align-items: center; gap: 6px; }
+.anim-stopwatch { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 4px; color: var(--color-gray-500); background: transparent; border: none; cursor: pointer; }
+.anim-stopwatch:hover:not(:disabled) { color: var(--muted-foreground); background: var(--secondary); }
+.anim-stopwatch.is-lit { color: #facc15; }
+.anim-stopwatch:disabled { opacity: 0.35; cursor: default; }
+
 /* Range inputs are gone — .app-slider's own flex: 1 1 0 / min-width: 0
  * base already lets the track shrink to the panel's available room. */
 
