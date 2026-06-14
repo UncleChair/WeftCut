@@ -1034,6 +1034,24 @@ fn pick_free_overlay_track(
         .map(|t| t.id)
 }
 
+/// Resolve the track a UI-inserted color/text layer should land on: reuse the
+/// first free non-reserved track for `[t_start_us, t_end_us)`, else create a new
+/// "Overlay" track (appended on top of the z-stack, same as `add_motif`).
+async fn resolve_overlay_track(
+    handle: &ProjectHandle,
+    t_start_us: TimeUs,
+    t_end_us: TimeUs,
+) -> Result<TrackId, String> {
+    let snap = handle.snapshot().await;
+    if let Some(id) = pick_free_overlay_track(&snap.tracks, t_start_us, t_end_us) {
+        return Ok(id);
+    }
+    handle
+        .add_track(Actor::User, Some("Overlay".into()))
+        .await
+        .map_err(|e: CommandError| e.to_string())
+}
+
 #[tauri::command]
 pub async fn project_undo(handle: State<'_, ProjectHandle>) -> Result<(), String> {
     handle
@@ -2921,5 +2939,72 @@ mod tests {
             pick_free_overlay_track(&tracks, 0, 1_000_000),
             Some(Uuid::from_u128(8))
         );
+    }
+
+    #[tokio::test]
+    async fn resolve_creates_overlay_track_on_fresh_project() {
+        // new_blank has only the reserved A/B pair (role = Some), so there is
+        // no candidate → resolve must create a new role-null Overlay track.
+        let h = crate::state::actor::spawn(crate::state::Project::new_blank("test"));
+        let before = h.snapshot().await.tracks.len();
+        let tid = resolve_overlay_track(&h, 0, 1_000_000).await.unwrap();
+        let snap = h.snapshot().await;
+        assert_eq!(snap.tracks.len(), before + 1);
+        let tr = snap.tracks.iter().find(|t| t.id == tid).unwrap();
+        assert!(tr.role.is_none());
+    }
+
+    #[tokio::test]
+    async fn resolve_reuses_free_overlay_track() {
+        let h = crate::state::actor::spawn(crate::state::Project::new_blank("test"));
+        let overlay = h
+            .add_track(Actor::User, Some("Overlay".into()))
+            .await
+            .unwrap();
+        h.add_layer(
+            Actor::User,
+            overlay,
+            LayerParams::Color(ColorParams {
+                color: Animated::Static(Rgba::BLACK),
+                width: 16,
+                height: 16,
+            }),
+            0,
+            2_000_000,
+        )
+        .await
+        .unwrap();
+        // Non-overlapping range → reuse the same overlay track, no new track.
+        let before = h.snapshot().await.tracks.len();
+        let got = resolve_overlay_track(&h, 2_500_000, 3_500_000).await.unwrap();
+        assert_eq!(got, overlay);
+        assert_eq!(h.snapshot().await.tracks.len(), before);
+    }
+
+    #[tokio::test]
+    async fn resolve_creates_new_track_on_overlap() {
+        let h = crate::state::actor::spawn(crate::state::Project::new_blank("test"));
+        let overlay = h
+            .add_track(Actor::User, Some("Overlay".into()))
+            .await
+            .unwrap();
+        h.add_layer(
+            Actor::User,
+            overlay,
+            LayerParams::Color(ColorParams {
+                color: Animated::Static(Rgba::BLACK),
+                width: 16,
+                height: 16,
+            }),
+            0,
+            2_000_000,
+        )
+        .await
+        .unwrap();
+        let before = h.snapshot().await.tracks.len();
+        // Overlapping range → can't reuse → new track.
+        let got = resolve_overlay_track(&h, 1_000_000, 3_000_000).await.unwrap();
+        assert_ne!(got, overlay);
+        assert_eq!(h.snapshot().await.tracks.len(), before + 1);
     }
 }
