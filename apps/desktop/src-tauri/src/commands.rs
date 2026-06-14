@@ -3141,5 +3141,12 @@ mod tests {
             LayerParams::Text(tp) => assert_eq!(tp.content, "Hi"),
             _ => panic!("expected Text layer"),
         }
+        // Explicit duration honored (not the 5s default); allow ±1 frame of
+        // frame-grid snap.
+        let dur = tr.layers[0].t_end_us - tr.layers[0].t_start_us;
+        assert!(
+            (900_000..=1_100_000).contains(&dur),
+            "explicit ~1s duration should be honored, got {dur}"
+        );
     }
 }
