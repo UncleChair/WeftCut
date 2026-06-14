@@ -5158,3 +5158,5 @@ input.preview-timecode:focus {
   color: var(--muted-foreground);
   user-select: none;
 }
+.kf-diamond-row { position: absolute; left: 0; right: 0; bottom: 1px; height: 8px; pointer-events: none; }
+.kf-diamond { position: absolute; width: 7px; height: 7px; transform: translateX(-50%) rotate(45deg); background: #fff; border: 1px solid rgba(0,0,0,0.5); }

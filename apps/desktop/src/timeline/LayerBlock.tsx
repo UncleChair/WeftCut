@@ -6,11 +6,14 @@ import {
   HEADER_COL_PX,
   MIN_LAYER_DURATION_US,
   groupHue,
+  keyframeXWithinClip,
   type LayerSlice,
 } from "./geometry";
 import { useLayerBakePhase } from "./motifBakeStatusStore";
 import type { LayerSummary } from "../ipc";
 import { useEditingLayerId, beginRename, endRename } from "./renameStore";
+import { useFocusedParamFor } from "../keyframe/focusStore";
+import { readParamTrack } from "../keyframe/descriptors";
 
 export type DragKind = "move" | "trim-start" | "trim-end";
 
@@ -128,6 +131,7 @@ export function LayerBlock({
 
   const editingLayerId = useEditingLayerId();
   const isEditing = editingLayerId === layer.id;
+  const focusedParam = useFocusedParamFor(layer.id);
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLInputElement | null>(null);
   useEffect(() => {
@@ -305,6 +309,17 @@ export function LayerBlock({
         ? "rounded-t-none border-t border-t-white/10"
         : "";
 
+  const clipDurationUs = layer.t_end_us - layer.t_start_us;
+  const diamonds = (() => {
+    if (!focusedParam) return [] as { id: string; x: number }[];
+    const track = readParamTrack(layer.params, focusedParam);
+    if (!track || track.mode !== "Keyframed") return [];
+    return track.value
+      // collapsed mode hides out-of-range keys (kept in data; shown dimmed in Phase 3)
+      .filter((k) => k.t_us >= 0 && k.t_us <= clipDurationUs)
+      .map((k) => ({ id: k.id, x: keyframeXWithinClip(k.t_us, clipDurationUs, layerWidthPx) }));
+  })();
+
   return (
     <div
       className={[
@@ -411,6 +426,13 @@ export function LayerBlock({
         </span>
       )}
       {layer.kind === "Motif" && <MotifBakeDot layerId={layer.id} />}
+      {diamonds.length > 0 && (
+        <div className="kf-diamond-row" aria-hidden>
+          {diamonds.map((d) => (
+            <span key={d.id} className="kf-diamond" style={{ left: d.x }} data-kf-id={d.id} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
