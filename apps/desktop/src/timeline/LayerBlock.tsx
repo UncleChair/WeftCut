@@ -15,7 +15,8 @@ import type { AnimTrack, LayerSummary } from "../ipc";
 import { useEditingLayerId, beginRename, endRename } from "./renameStore";
 import { useFocusedParamFor } from "../keyframe/focusStore";
 import { readParamTrack, animatableParams } from "../keyframe/descriptors";
-import { retimeKeyframe, removeKeyframe } from "../keyframe/edits";
+import { retimeKeyframe, removeKeyframe, setKeyframeInterp } from "../keyframe/edits";
+import { KeyframeInterpMenu } from "./KeyframeInterpMenu";
 import { transportSeek } from "../state/playbackStore";
 
 export type DragKind = "move" | "trim-start" | "trim-end";
@@ -141,6 +142,7 @@ export function LayerBlock({
   const focusedParam = useFocusedParamFor(layer.id);
   const [draft, setDraft] = useState("");
   const [selectedKfId, setSelectedKfId] = useState<string | null>(null);
+  const [interpMenu, setInterpMenu] = useState<{ x: number; y: number; kfId: string } | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const dragTUsRef = useRef<number | null>(null);
   useEffect(() => {
@@ -474,6 +476,17 @@ export function LayerBlock({
           className="kf-diamond-row"
           aria-hidden
           style={{ pointerEvents: "auto" }}
+          onContextMenu={(e) => {
+            if (!focusedParam) return;
+            const track = readParamTrack(layer.params, focusedParam);
+            if (!track || track.mode !== "Keyframed") return;
+            const rect = e.currentTarget.getBoundingClientRect();
+            const hitId = keyframeHitTest(diamonds, e.clientX - rect.left, 6);
+            if (!hitId) return;
+            e.preventDefault();
+            e.stopPropagation();
+            setInterpMenu({ x: e.clientX, y: e.clientY, kfId: hitId });
+          }}
           onPointerDown={(e) => {
             if (e.button !== 0) return;
             const paramTrack = readParamTrack(layer.params, focusedParam);
@@ -516,6 +529,19 @@ export function LayerBlock({
             />
           ))}
         </div>
+      )}
+      {interpMenu && focusedParam && (
+        <KeyframeInterpMenu
+          x={interpMenu.x}
+          y={interpMenu.y}
+          onClose={() => setInterpMenu(null)}
+          onPick={(interp) => {
+            if (!focusedParam) return;
+            const track = readParamTrack(layer.params, focusedParam);
+            if (!track || track.mode !== "Keyframed") return;
+            onCommitParamTrack(layer.id, focusedParam, setKeyframeInterp(track, interpMenu.kfId, interp));
+          }}
+        />
       )}
     </div>
   );
