@@ -3729,7 +3729,8 @@ pub(crate) fn apply_update_layer_param_track(
     )
     .ok_or_else(|| CommandError::UnknownKeyframeParam { layer: id, param_key: param_key.to_string() })?;
     *slot = track;
-    apply_duration_autofit(project);
+    // No `apply_duration_autofit`: writing a keyframe track to a param never
+    // changes a layer's t_start/t_end, so composition duration can't shift.
     Ok(())
 }
 
@@ -9548,15 +9549,24 @@ mod tests {
             .clone()
     }
 
-    fn assert_keyframed_sorted(layer: &crate::state::layer::Layer, key: &str, expected_ts: &[i64]) {
+    fn assert_keyframed_sorted(
+        layer: &crate::state::layer::Layer,
+        key: &str,
+        expected_ts: &[i64],
+        expected_values: &[f64],
+    ) {
         let mut params = layer.params.clone();
         let slot = crate::state::layer::resolve_animated_f64_mut(&mut params, key)
             .expect("param not animatable");
         let Animated::Keyframed(kfs) = slot else {
             panic!("expected Keyframed mode for param {key}");
         };
-        let actual: Vec<i64> = kfs.iter().map(|k| k.t_us).collect();
-        assert_eq!(actual, expected_ts, "keyframe times for {key} must be sorted and match");
+        let actual_ts: Vec<i64> = kfs.iter().map(|k| k.t_us).collect();
+        assert_eq!(actual_ts, expected_ts, "keyframe times for {key} must be sorted and match");
+        // Assert values too, so a bug that permutes values while sorting times
+        // (e.g. sorting a values vec separately) can't slip through.
+        let actual_vals: Vec<f64> = kfs.iter().map(|k| k.value).collect();
+        assert_eq!(actual_vals, expected_values, "keyframe values for {key} must track their times");
     }
 
     #[tokio::test]
@@ -9576,7 +9586,9 @@ mod tests {
             .expect("write opacity track");
         let snap = handle.snapshot().await;
         let layer = find_layer(&snap, layer_id);
-        assert_keyframed_sorted(&layer, "opacity", &[0, 2_000_000]);
+        // After normalize: sorted by t_us, and each value stays glued to its time
+        // (input was t=2_000_000→1.0, t=0→0.0).
+        assert_keyframed_sorted(&layer, "opacity", &[0, 2_000_000], &[0.0, 1.0]);
     }
 
     #[tokio::test]
