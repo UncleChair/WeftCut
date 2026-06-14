@@ -974,7 +974,12 @@ export function App({ onCloseProject }: AppProps) {
     // below via export_project_audio_only's `produced` flag, since a clip's
     // audio stream isn't visible from the project summary.)
     if (settings.includeVideo) {
-      const proj = useProjectStore.getState().summary;
+      // Read the project from Rust, not the event-driven store: the store summary
+      // can lag a just-added layer (its autofit `duration_us` arrives a tick
+      // later), so a stale `duration_us` of 0 windows the export to [0,0] and
+      // false-rejects a present layer. Same hazard the audio-only path below
+      // already guards against by reading fresh from Rust.
+      const proj = await projectSummary().catch(() => useProjectStore.getState().summary);
       if (proj) {
         const sUs = range?.startUs ?? 0;
         const eUs = range?.endUs ?? proj.duration_us;
@@ -1518,7 +1523,7 @@ export function App({ onCloseProject }: AppProps) {
   useEffect(() => {
     if (import.meta.env.VITE_WEFTCUT_E2E !== "1") return;
     void import("./testhook/e2eHook").then(({ installExportHook }) =>
-      installExportHook(runExportWithSettings),
+      installExportHook(runExportWithSettings, setPendingRevealLayerId),
     );
   }, [runExportWithSettings]);
 

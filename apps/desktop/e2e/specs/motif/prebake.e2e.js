@@ -1,5 +1,5 @@
-import os from "node:os";
-import path from "node:path";
+import { waitForHook, newProject } from "../../helpers/app.mjs";
+import { tmpProjectParent } from "../../helpers/media.mjs";
 
 // Real-WebView2 end-to-end gate for the L2 persisted motif pre-bake.
 //
@@ -20,7 +20,7 @@ import path from "node:path";
 // (installed only when VITE_WEFTCUT_E2E=1; see src/testhook/e2eHook.ts).
 // Workspace: created under os.tmpdir() and discarded on next OS reboot.
 
-const PROJECT_PARENT = path.resolve(os.tmpdir(), "weftcut-e2e-prebake-proj");
+const PROJECT_PARENT = tmpProjectParent("weftcut-e2e-prebake-proj");
 
 // Countdown motif: 480×480, 5 s at 30 fps → 150 content frames.
 // A full bake writes exactly `contentDurationFrames` PNGs.
@@ -33,17 +33,6 @@ describe("L2 motif pre-bake disk round-trip (real WebView2)", function () {
   let firstHashName = null;
 
   // ── helpers ───────────────────────────────────────────────────────────────
-
-  async function waitForHook(hookName) {
-    await browser.waitUntil(
-      async () =>
-        await browser.execute(
-          (n) => typeof window.__weftcutTest?.[n] === "function",
-          hookName,
-        ),
-      { timeout: 30000, timeoutMsg: `hook ${hookName} never installed` },
-    );
-  }
 
   async function waitForApp() {
     await browser.waitUntil(
@@ -60,17 +49,11 @@ describe("L2 motif pre-bake disk round-trip (real WebView2)", function () {
     await waitForApp();
 
     // 1) Create a 480×480 / 30 fps project (matches countdown's natural size).
-    const r1 = await browser.executeAsync((parent, done) => {
-      window.__weftcutTest
-        .newProjectAndEnter({
-          parentFolder: parent,
-          name: "e2e-prebake-" + Date.now(),
-          canvas: { width: 480, height: 480, fpsNum: 30, fpsDen: 1 },
-        })
-        .then(() => done({ ok: true }))
-        .catch((e) => done({ ok: false, error: String(e) }));
-    }, PROJECT_PARENT);
-    if (!r1.ok) throw new Error("newProjectAndEnter failed: " + r1.error);
+    await newProject({
+      parentFolder: PROJECT_PARENT,
+      name: "e2e-prebake-" + Date.now(),
+      canvas: { width: 480, height: 480, fpsNum: 30, fpsDen: 1 },
+    });
 
     // 2) Wait for the App-side hooks (installed after the editor mounts).
     await waitForHook("addMotifLayer");

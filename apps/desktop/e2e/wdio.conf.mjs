@@ -2,6 +2,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { ensureFixtures } from "./fixtures/generate-fixtures.mjs";
 
@@ -49,6 +50,13 @@ export const config = {
   hostname: "127.0.0.1",
   port: 4444,
   specs: ["./specs/**/*.e2e.js"],
+  suites: {
+    smoke: ["./specs/smoke/**/*.e2e.js"],
+    ui: ["./specs/ui/**/*.e2e.js"],
+    export: ["./specs/export/**/*.e2e.js"],
+    audio: ["./specs/audio/**/*.e2e.js"],
+    motif: ["./specs/motif/**/*.e2e.js"],
+  },
   maxInstances: 1,
   capabilities: [{ maxInstances: 1, "tauri:options": { application: APP } }],
   reporters: ["spec"],
@@ -62,6 +70,17 @@ export const config = {
   onPrepare: async () => {
     const mediaDir = process.env.WEFTCUT_TEST_MEDIA || path.resolve(HERE, "fixtures", "media");
     await ensureFixtures(mediaDir);
+    // Opt-in fast path: reuse an already-built debug binary. Explicit only —
+    // never auto-detect staleness (stale-binary trap). Default still rebuilds.
+    if (process.env.WEFTCUT_E2E_NO_BUILD) {
+      if (!existsSync(APP)) {
+        throw new Error(
+          `[e2e] WEFTCUT_E2E_NO_BUILD is set but the app binary is missing at ${APP} — run once without it to build first.`,
+        );
+      }
+      console.log(`[e2e] WEFTCUT_E2E_NO_BUILD set — skipping tauri build, reusing ${APP}`);
+      return;
+    }
     const r = spawnSync(
       "npm",
       ["--prefix", "apps/desktop", "run", "tauri", "--", "build", "--debug", "--no-bundle"],

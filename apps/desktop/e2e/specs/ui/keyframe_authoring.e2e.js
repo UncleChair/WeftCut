@@ -1,8 +1,8 @@
-import os from "node:os";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
-import { analyzeSelf } from "../lib/analyze.mjs";
+import { analyzeSelf } from "../../lib/analyze.mjs";
+import { fixture, tmpOut, tmpProjectParent } from "../../helpers/media.mjs";
+import { newProject } from "../../helpers/app.mjs";
+import { driveExport } from "../../helpers/export.mjs";
 
 // Keyframe authoring → export e2e gate.
 //
@@ -27,16 +27,13 @@ import { analyzeSelf } from "../lib/analyze.mjs";
 // directly because the e2e test-hook surface (window.__weftcutTest) does
 // not yet expose a keyframe-write method. This mirrors what
 // @tauri-apps/api/core's `invoke` does internally (core.js line 202).
-const MEDIA_DIR =
-  process.env.WEFTCUT_TEST_MEDIA ||
-  path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "media");
 
 // A plain H.264 720p-or-1080p 30fps video-only fixture — the simplest
 // non-trivial source (no audio complication, no special codec path).
 // test_1080p_30fps.mp4 is in the standard fixture matrix.
-const SOURCE = path.resolve(MEDIA_DIR, "test_1080p_30fps.mp4");
-const OUTPUT = path.resolve(os.tmpdir(), "weftcut-e2e-keyframe-opacity.mp4");
-const PROJECT_PARENT = path.resolve(os.tmpdir(), "weftcut-e2e-keyframe-proj");
+const SOURCE = fixture("test_1080p_30fps.mp4");
+const OUTPUT = tmpOut("weftcut-e2e-keyframe-opacity.mp4");
+const PROJECT_PARENT = tmpProjectParent("weftcut-e2e-keyframe-proj");
 
 // Composition: 3 s at 30 fps = 90 frames.
 // Opacity track: keyframe at t=0 (opacity=0.0) → keyframe at t=3s (opacity=1.0).
@@ -74,27 +71,12 @@ describe("keyframe authoring end-to-end (opacity ramp → export, real WebView2)
     // but the per-test override must use a non-arrow function.
     this.timeout(180000);
 
-    // ── 1. Wait for the bootstrap hook (mounted by main.tsx) ──────────────
-    await browser.waitUntil(
-      async () =>
-        (await browser.execute(
-          () => typeof window.__weftcutTest?.newProjectAndEnter === "function",
-        )) === true,
-      { timeout: 30000, timeoutMsg: "newProjectAndEnter never mounted" },
-    );
-
-    // ── 2. Create a blank 1080p 30fps project and enter the editor ─────────
-    const r1 = await browser.executeAsync((parent, durUs, fpsNum, fpsDen, done) => {
-      window.__weftcutTest
-        .newProjectAndEnter({
-          parentFolder: parent,
-          name: "e2e-kf-" + Date.now(),
-          canvas: { width: 1920, height: 1080, fpsNum, fpsDen },
-        })
-        .then(() => done({ ok: true }))
-        .catch((e) => done({ ok: false, error: String(e) }));
-    }, PROJECT_PARENT, COMP_DURATION_US, COMP_FPS_NUM, COMP_FPS_DEN);
-    if (!r1.ok) throw new Error("newProjectAndEnter failed: " + r1.error);
+    // ── 1+2. Create a blank 1080p 30fps project and enter the editor ───────
+    await newProject({
+      parentFolder: PROJECT_PARENT,
+      name: "e2e-kf-" + Date.now(),
+      canvas: { width: 1920, height: 1080, fpsNum: COMP_FPS_NUM, fpsDen: COMP_FPS_DEN },
+    });
 
     // ── 3. Wait for the App-side export hooks (editor mounted) ─────────────
     await browser.waitUntil(
@@ -165,51 +147,9 @@ describe("keyframe authoring end-to-end (opacity ramp → export, real WebView2)
     if (!r4.ok) throw new Error("update_layer_param_track failed: " + r4.error);
     console.log("[e2e] opacity track written: 0.0@t=0 → 1.0@t=3s (Linear)");
 
-    // ── 7. Fire-and-forget export; poll for settlement ─────────────────────
-    await browser.execute((out) => {
-      window.__e2eExportDone = null;
-      window.__weftcutTest
-        .exportTimeline({ outputAbsPath: out })
-        .then(() => { window.__e2eExportDone = { ok: true }; })
-        .catch((e) => { window.__e2eExportDone = { ok: false, error: String(e) }; });
-    }, OUTPUT);
-
-    let lastFrame = -1;
-    let lastKind = null;
-    let settled = null;
-    try {
-      await browser.waitUntil(
-        async () => {
-          const snap = await browser.execute(() => {
-            const st = window.__weftcutExportState;
-            return {
-              done: window.__e2eExportDone,
-              kind: st?.kind ?? null,
-              frame: st?.progress?.frame ?? null,
-            };
-          });
-          if (snap.frame != null && snap.frame !== lastFrame) {
-            lastFrame = snap.frame;
-            console.log(`[e2e] export ${snap.kind ?? "-"} frame=${snap.frame}`);
-          }
-          if (snap.kind != null && snap.kind !== lastKind) {
-            lastKind = snap.kind;
-            console.log(`[e2e] export phase -> ${snap.kind}`);
-          }
-          if (snap.done) {
-            settled = snap.done;
-            return true;
-          }
-          return false;
-        },
-        { timeout: 170000, interval: 1000 },
-      );
-    } catch (e) {
-      throw new Error(
-        `export never settled (last kind=${lastKind}, last frame=${lastFrame}): ${e.message}`,
-      );
-    }
-    if (!settled.ok) throw new Error("exportTimeline failed: " + settled.error);
+    // ── 7. Drive the timeline export and wait for settlement ───────────────
+    const exp = await driveExport({ outputAbsPath: OUTPUT }, { hook: "exportTimeline", label: "keyframe" });
+    if (!exp.done.ok) throw new Error("exportTimeline failed: " + exp.done.error);
     if (!existsSync(OUTPUT)) throw new Error(`no output file written at ${OUTPUT}`);
 
     // ── 8. Self-SSIM assertion: early frame (opacity~0) vs late (opacity~1) ─
