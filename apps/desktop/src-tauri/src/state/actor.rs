@@ -4241,6 +4241,17 @@ pub(crate) fn apply_trim_layer(
                     }
                     _ => {}
                 }
+                // Keep keyframes glued to content: the IN edge moved by
+                // `clamped_delta`, so every keyframe (layer-relative) shifts by
+                // the opposite amount. Keys that fall before the new start go
+                // negative and are kept in data (rendered out-of-range / hidden
+                // by the UI), so trimming is non-destructive and reversible.
+                crate::state::layer::for_each_animated_f64(&mut m.params, |a| {
+                    a.shift_keyframes(-clamped_delta);
+                });
+                crate::state::layer::for_each_animated_rgba(&mut m.params, |a| {
+                    a.shift_keyframes(-clamped_delta);
+                });
             }
             LayerEdge::Out => {
                 m.t_end_us += clamped_delta;
@@ -9608,5 +9619,28 @@ mod tests {
             .update_layer_param_track(Actor::User, layer_id, "bogus".into(), Animated::Static(1.0))
             .await;
         assert!(matches!(res, Err(CommandError::UnknownKeyframeParam { .. })));
+    }
+
+    #[tokio::test]
+    async fn trim_in_shifts_keyframes_to_stay_on_content() {
+        // Layer at t_start=0; opacity keyframes at 0 and 2_000_000 (layer-relative).
+        let (handle, layer_id) = single_motif_project().await;
+        let track = Animated::Keyframed(
+            vec![
+                Keyframe { id: crate::state::ids::new_id(), t_us: 0, value: 0.0, interp: Interpolation::Linear },
+                Keyframe { id: crate::state::ids::new_id(), t_us: 2_000_000, value: 1.0, interp: Interpolation::Linear },
+            ].into_iter().collect(),
+        );
+        handle.update_layer_param_track(Actor::User, layer_id, "opacity".into(), track)
+            .await.expect("seed keyframes");
+
+        // Trim the IN edge to t=1_000_000 (head trimmed inward by 1s).
+        handle.trim_layer(Actor::User, layer_id, LayerEdge::In, 1_000_000, false)
+            .await.expect("trim in");
+
+        // Key at 2_000_000 -> 1_000_000 (shifted -1s); key at 0 -> -1_000_000 (out-of-range, KEPT).
+        let snap = handle.snapshot().await;
+        let layer = find_layer(&snap, layer_id);
+        assert_keyframed_sorted(&layer, "opacity", &[-1_000_000, 1_000_000], &[0.0, 1.0]);
     }
 }
