@@ -13,6 +13,8 @@ import {
   separateAudioToNewTrack,
   splitLayerGrouped,
   updateLayer,
+  updateLayerParamTrack,
+  type AnimTrack,
   type GroupSummary,
   type KeybindingsMap,
   type LayerSummary,
@@ -389,6 +391,18 @@ export function Timeline({
     [onMutated],
   );
 
+  const onCommitParamTrack = useCallback(
+    async (layerId: string, paramKey: string, track: AnimTrack<number>) => {
+      try {
+        await updateLayerParamTrack(layerId, paramKey, track);
+        await onMutated();
+      } catch (e) {
+        console.warn("commit param track failed:", e);
+      }
+    },
+    [onMutated],
+  );
+
   const onRename = useCallback((layerId: string) => {
     setContextMenu(null);
     beginRename(layerId);
@@ -581,6 +595,7 @@ export function Timeline({
                 onDragStart={(state) => setDrag(state)}
                 onContextMenu={onContextMenu}
                 onCommitLabel={onCommitLabel}
+                onCommitParamTrack={onCommitParamTrack}
                 onMediaDrop={onMediaDrop}
                 isGroupStart={isGroupStart}
                 isRevealed={track.id === (revealedTrackId ?? null)}

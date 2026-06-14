@@ -6,14 +6,17 @@ import {
   HEADER_COL_PX,
   MIN_LAYER_DURATION_US,
   groupHue,
+  keyframeHitTest,
   keyframeXWithinClip,
   type LayerSlice,
 } from "./geometry";
 import { useLayerBakePhase } from "./motifBakeStatusStore";
-import type { LayerSummary } from "../ipc";
+import type { AnimTrack, LayerSummary } from "../ipc";
 import { useEditingLayerId, beginRename, endRename } from "./renameStore";
 import { useFocusedParamFor } from "../keyframe/focusStore";
-import { readParamTrack } from "../keyframe/descriptors";
+import { readParamTrack, animatableParams } from "../keyframe/descriptors";
+import { retimeKeyframe, removeKeyframe } from "../keyframe/edits";
+import { transportSeek } from "../state/playbackStore";
 
 export type DragKind = "move" | "trim-start" | "trim-end";
 
@@ -79,6 +82,7 @@ export function LayerBlock({
   onDragStart,
   onContextMenu,
   onCommitLabel,
+  onCommitParamTrack,
   fpsNum,
   fpsDen,
 }: {
@@ -122,6 +126,9 @@ export function LayerBlock({
   /// label → block falls back to the kind name). Wired by Timeline to
   /// `updateLayer({label}) + onMutated`, matching the drag-commit pattern.
   onCommitLabel: (layerId: string, label: string) => void;
+  /// Persist a keyframe track edit (retime or remove). Wired by Timeline to
+  /// `updateLayerParamTrack + onMutated`.
+  onCommitParamTrack: (layerId: string, paramKey: string, track: AnimTrack<number>) => void;
   fpsNum: number;
   fpsDen: number;
 }) {
@@ -133,7 +140,9 @@ export function LayerBlock({
   const isEditing = editingLayerId === layer.id;
   const focusedParam = useFocusedParamFor(layer.id);
   const [draft, setDraft] = useState("");
+  const [selectedKfId, setSelectedKfId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const dragTUsRef = useRef<number | null>(null);
   useEffect(() => {
     if (isEditing) {
       setDraft(layer.label ?? "");
@@ -143,6 +152,20 @@ export function LayerBlock({
       inputRef.current?.select();
     }
   }, [isEditing, layer.id, layer.label]);
+
+  useEffect(() => {
+    if (!selectedKfId || !focusedParam) return;
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key !== "Delete" && ev.key !== "Backspace") return;
+      const track = readParamTrack(layer.params, focusedParam);
+      if (!track) return;
+      const desc = animatableParams(layer.kind).find((d) => d.paramKey === focusedParam);
+      onCommitParamTrack(layer.id, focusedParam, removeKeyframe(track, selectedKfId, desc?.fallback ?? 0));
+      setSelectedKfId(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedKfId, focusedParam, layer.id, layer.kind, layer.params, onCommitParamTrack]);
 
   const commitRename = () => {
     const next = draft.trim();
@@ -429,10 +452,51 @@ export function LayerBlock({
         </span>
       )}
       {layer.kind === "Motif" && <MotifBakeDot layerId={layer.id} />}
-      {diamonds.length > 0 && (
-        <div className="kf-diamond-row" aria-hidden>
+      {diamonds.length > 0 && focusedParam && (
+        <div
+          className="kf-diamond-row"
+          aria-hidden
+          style={{ pointerEvents: "auto" }}
+          onPointerDown={(e) => {
+            if (e.button !== 0) return;
+            const paramTrack = readParamTrack(layer.params, focusedParam);
+            if (!paramTrack || paramTrack.mode !== "Keyframed") return;
+            const rect = e.currentTarget.getBoundingClientRect();
+            const hitId = keyframeHitTest(diamonds, e.clientX - rect.left, 6);
+            if (!hitId) return;
+            e.stopPropagation();
+            const key = paramTrack.value.find((k) => k.id === hitId);
+            if (!key) return;
+            setSelectedKfId(hitId);
+            transportSeek(layer.t_start_us + key.t_us);
+            // begin drag-retime
+            const startClientX = e.clientX;
+            const startTUs = key.t_us;
+            const onMove = (me: PointerEvent) => {
+              const dxUs = ((me.clientX - startClientX) / pxPerSec) * 1_000_000;
+              const nextTUs = Math.max(0, Math.min(clipDurationUs, startTUs + dxUs));
+              dragTUsRef.current = nextTUs;
+            };
+            const onUp = () => {
+              window.removeEventListener("pointermove", onMove);
+              window.removeEventListener("pointerup", onUp);
+              const nextTUs = dragTUsRef.current;
+              dragTUsRef.current = null;
+              if (nextTUs != null && nextTUs !== startTUs) {
+                onCommitParamTrack(layer.id, focusedParam, retimeKeyframe(paramTrack, hitId, nextTUs));
+              }
+            };
+            window.addEventListener("pointermove", onMove);
+            window.addEventListener("pointerup", onUp);
+          }}
+        >
           {diamonds.map((d) => (
-            <span key={d.id} className="kf-diamond" style={{ left: d.x }} data-kf-id={d.id} />
+            <span
+              key={d.id}
+              className={`kf-diamond${selectedKfId === d.id ? " is-selected" : ""}`}
+              style={{ left: d.x }}
+              data-kf-id={d.id}
+            />
           ))}
         </div>
       )}
