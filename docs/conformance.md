@@ -7,6 +7,10 @@ in `apps/desktop/fixtures/media`: these tests drive WebView2, import real
 media, export through the Pixi/WebCodecs + Rust ffmpeg pipeline, and analyze
 the resulting file.
 
+This doc covers the analyzer, fixtures, and per-gate behavior. For how the suite
+is organized into runnable groups and where a new test belongs, see the authoring
+guide at [`apps/desktop/e2e/README.md`](../apps/desktop/e2e/README.md).
+
 ## Layout
 
 ```text
