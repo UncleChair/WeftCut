@@ -67,6 +67,7 @@ export function TrackHeader({ track, height, isRevealed, isGroupStart, isExpande
     >
       <button
         type="button"
+        data-testid="kf-lane-twirl"
         className="inline-flex size-[14px] shrink-0 items-center justify-center text-muted-foreground/60 disabled:opacity-30"
         disabled={!hasKeyframes}
         aria-label={t("timeline.toggle_keyframe_lanes", { defaultValue: "Expand keyframe lanes" })}

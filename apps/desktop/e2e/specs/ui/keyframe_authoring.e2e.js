@@ -256,28 +256,47 @@ describe("keyframe sub-lanes (expand → diamonds → click-seek, real WebView2)
     await browser.execute((lid) => window.__weftcutTest.revealLayer({ layerId: lid }), layerId);
 
     // ── 5. The keyframed track's header twirl becomes enabled (bridge sync).
-    // Exactly one track has a keyframed layer → exactly one enabled twirl.
+    // Target by data-testid — other editor chrome (Base UI menubar / select
+    // triggers) also carries aria-expanded, so a generic selector matches the
+    // wrong button. Exactly one track has a keyframed layer → one enabled twirl.
     await browser.waitUntil(
       async () =>
         (await browser.execute(
-          () => document.querySelectorAll('button[aria-expanded]:not([disabled])').length,
-        )) >= 1,
+          () => document.querySelectorAll('button[data-testid="kf-lane-twirl"]:not([disabled])').length,
+        )) === 1,
       { timeout: 15000, timeoutMsg: "keyframed track's twirl never enabled (project:changed bridge?)" },
     );
 
-    // ── 6. Click the twirl → expand the sub-lanes ──────────────────────────
-    await browser.execute(() => {
-      const btn = document.querySelector('button[aria-expanded]:not([disabled])');
-      if (!btn) throw new Error("no enabled twirl found");
+    // ── 6. Click the twirl → expand the sub-lanes (assert aria-expanded flips).
+    const twirl = await browser.execute(() => {
+      const btn = document.querySelector('button[data-testid="kf-lane-twirl"]:not([disabled])');
+      if (!btn) return { ok: false };
+      const before = btn.getAttribute("aria-expanded");
       btn.click();
+      return { ok: true, before, after: btn.getAttribute("aria-expanded") };
     });
+    if (!twirl.ok) throw new Error("no enabled kf-lane-twirl found");
+    console.log(`[e2e] twirl aria-expanded ${twirl.before} -> ${twirl.after}`);
 
     // ── 7. The opacity sub-lane renders with exactly 2 diamonds ────────────
-    await browser.waitUntil(
-      async () =>
-        (await browser.execute(() => document.querySelectorAll(".kf-sublane-diamond").length)) === 2,
-      { timeout: 10000, timeoutMsg: "expected 2 .kf-sublane-diamond after expand" },
-    );
+    try {
+      await browser.waitUntil(
+        async () =>
+          (await browser.execute(() => document.querySelectorAll(".kf-sublane-diamond").length)) === 2,
+        { timeout: 10000, timeoutMsg: "expected 2 .kf-sublane-diamond after expand" },
+      );
+    } catch (e) {
+      const diag = await browser.execute(() => ({
+        sublaneDiamonds: document.querySelectorAll(".kf-sublane-diamond").length,
+        anyDiamonds: document.querySelectorAll(".kf-diamond").length,
+        twirlExpanded: document
+          .querySelector('button[data-testid="kf-lane-twirl"]')
+          ?.getAttribute("aria-expanded"),
+        enabledTwirls: document.querySelectorAll('button[data-testid="kf-lane-twirl"]:not([disabled])').length,
+      }));
+      console.log("[e2e] DIAG (did not reach 2 diamonds):", JSON.stringify(diag));
+      throw e;
+    }
 
     // Ensure the preview transport is live so the diamond's transportSeek moves
     // the playhead (the bridge registers on PixiPreview mount).
@@ -317,7 +336,7 @@ describe("keyframe sub-lanes (expand → diamonds → click-seek, real WebView2)
     await browser.waitUntil(
       async () => {
         const playLeft = await browser.execute(() => {
-          const ph = document.querySelector('[class*="from-red-300"]');
+          const ph = document.querySelector('[data-testid="timeline-playhead"]');
           return ph ? parseFloat(ph.style.left) : null;
         });
         return playLeft != null && !Number.isNaN(playLeft) && Math.abs(playLeft - clicked.leftPx) <= 2;

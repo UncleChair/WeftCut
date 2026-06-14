@@ -631,6 +631,7 @@ export function Timeline({
           </div>
           {currentTimeUs >= 0 && (
             <div
+              data-testid="timeline-playhead"
               className="pointer-events-none absolute bottom-0 top-0.5 z-[4] w-0.5 rounded-[1px] bg-gradient-to-b from-red-300 via-red-500 to-red-500 shadow-[0_0_0_0.5px_rgba(0,0,0,0.55),0_0_6px_rgba(239,68,68,0.35)]"
               style={{ left: playheadX }}
             >
