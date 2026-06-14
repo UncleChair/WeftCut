@@ -15,7 +15,7 @@ lives in the topical doc — this is the index.
 
 ## Open work
 
-### Keyframes — authoring shipped; sub-lanes + extras remain
+### Keyframes — authoring + sub-lanes shipped; multi-select + extras remain
 
 `Animated<T>` is live end-to-end. `AnimTrack<T>` flows through the
 `LayerSummary` views and resolves per frame in the shared Compositor
@@ -23,19 +23,24 @@ lives in the topical doc — this is the index.
 shipped**: a per-property stopwatch + auto-key in the inspector,
 collapsed-mode diamonds on the clip (click-seek / drag-retime / delete /
 interpolation menu), and the `update_layer_param_track(s)` actor surface
-(normalized, recorded, undoable). Trim and split keep keyframes
-content-anchored — non-destructive, out-of-range keys retained (so the
-layer validator permits keyframe times outside `[0, duration]`). Verified
-by an export-sampling e2e. Design:
-[`superpowers/specs/2026-06-14-keyframe-authoring-design.md`](superpowers/specs/2026-06-14-keyframe-authoring-design.md).
+(normalized, recorded, undoable). **Expanded-mode per-property sub-lanes
+shipped** too (`KeyframeLane`): twirl a track open on the header to
+AE-style per-property rows (union of the keyframed properties across the
+track's layers), each diamond click-seek / drag-retime / delete /
+interpolation-menu, with out-of-range keys dimmed. Trim and split keep
+keyframes content-anchored — non-destructive, out-of-range keys retained
+(so the layer validator permits keyframe times outside `[0, duration]`).
+Verified by an export-sampling e2e. Design:
+[`superpowers/specs/2026-06-14-keyframe-authoring-design.md`](superpowers/specs/2026-06-14-keyframe-authoring-design.md),
+[`superpowers/specs/2026-06-14-keyframe-sublanes-design.md`](superpowers/specs/2026-06-14-keyframe-sublanes-design.md).
 
 What remains:
 
-- **Expanded-mode per-property sub-lanes** (`KeyframeLane`; timeline-redesign
-  spec §5). Twirl a track open to AE-style per-property rows (union of
-  keyframed properties across the track's layers), with marquee box-select,
-  cross-property/cross-layer multi-drag (one undo via the batch
-  `update_layer_param_tracks`), and dimmed out-of-range keyframes.
+- **Multi-select keyframe editing in the sub-lanes** (timeline-redesign spec
+  §5). Sub-lane selection and drag are single-keyframe today; the batch
+  `update_layer_param_tracks` actor command exists but no UI rides it yet.
+  Add marquee box-select and cross-property/cross-layer multi-drag (one undo
+  via that batch surface).
 - **`Animated<Rgba>` + a color stopwatch** — needs a Rust `value_at` twin for
   `Rgba` first (the dual-engine mirror rule forbids a TS-only interpolator).
 - **Bezier interpolation authoring** — the engine's Bezier arm is a linear
