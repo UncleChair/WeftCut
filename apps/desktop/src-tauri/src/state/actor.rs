@@ -405,6 +405,10 @@ pub enum CommandError {
     HistoryLocked { reason: String },
     #[error("project invariant violated: {0}")]
     ValidationFailed(ValidationError),
+    #[error("keyframe track on layer {layer} param `{param_key}` is empty")]
+    EmptyKeyframeTrack { layer: LayerId, param_key: String },
+    #[error("param `{param_key}` is not animatable on layer {layer}")]
+    UnknownKeyframeParam { layer: LayerId, param_key: String },
 }
 
 impl From<ValidationError> for CommandError {
@@ -493,6 +497,19 @@ enum Command {
     UpdateLayerParams {
         id: LayerId,
         patch: LayerParamsPatch,
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
+    UpdateLayerParamTrack {
+        id: LayerId,
+        param_key: String,
+        track: Animated<f64>,
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
+    UpdateLayerParamTracks {
+        id: LayerId,
+        entries: Vec<(String, Animated<f64>)>,
         actor: Actor,
         reply: oneshot::Sender<Result<(), CommandError>>,
     },
@@ -1061,6 +1078,46 @@ impl ProjectHandle {
             .send(Command::UpdateLayerParams {
                 id,
                 patch,
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    pub async fn update_layer_param_track(
+        &self,
+        actor: Actor,
+        id: LayerId,
+        param_key: String,
+        track: Animated<f64>,
+    ) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::UpdateLayerParamTrack {
+                id,
+                param_key,
+                track,
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    pub async fn update_layer_param_tracks(
+        &self,
+        actor: Actor,
+        id: LayerId,
+        entries: Vec<(String, Animated<f64>)>,
+    ) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::UpdateLayerParamTracks {
+                id,
+                entries,
                 actor,
                 reply,
             })
@@ -1671,6 +1728,25 @@ impl ProjectActor {
                 let result = self.do_update_layer_params(id, patch, actor);
                 let _ = reply.send(result);
             }
+            Command::UpdateLayerParamTrack {
+                id,
+                param_key,
+                track,
+                actor,
+                reply,
+            } => {
+                let result = self.do_update_layer_param_track(id, param_key, track, actor);
+                let _ = reply.send(result);
+            }
+            Command::UpdateLayerParamTracks {
+                id,
+                entries,
+                actor,
+                reply,
+            } => {
+                let result = self.do_update_layer_param_tracks(id, entries, actor);
+                let _ = reply.send(result);
+            }
             Command::MoveLayer {
                 id,
                 new_track_id,
@@ -2206,6 +2282,45 @@ impl ProjectActor {
             next,
             actor,
             format!("Updated params on layer {id}"),
+            vec![EntityRef::Layer(id)],
+            DiffHint::Layer(id),
+        )?;
+        Ok(())
+    }
+
+    fn do_update_layer_param_track(
+        &mut self,
+        id: LayerId,
+        param_key: String,
+        track: Animated<f64>,
+        actor: Actor,
+    ) -> Result<(), CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+        apply_update_layer_param_track(&mut next, id, &param_key, track)?;
+        self.commit(
+            next,
+            actor,
+            format!("Keyframed layer {id} param {param_key}"),
+            vec![EntityRef::Layer(id)],
+            DiffHint::Layer(id),
+        )?;
+        Ok(())
+    }
+
+    fn do_update_layer_param_tracks(
+        &mut self,
+        id: LayerId,
+        entries: Vec<(String, Animated<f64>)>,
+        actor: Actor,
+    ) -> Result<(), CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+        for (param_key, track) in &entries {
+            apply_update_layer_param_track(&mut next, id, param_key, track.clone())?;
+        }
+        self.commit(
+            next,
+            actor,
+            format!("Keyframed layer {id} ({} params)", entries.len()),
             vec![EntityRef::Layer(id)],
             DiffHint::Layer(id),
         )?;
@@ -3588,6 +3703,33 @@ pub(crate) fn apply_update_layer_params(
     if geom_changed {
         apply_duration_autofit(project);
     }
+    Ok(())
+}
+
+pub(crate) fn apply_update_layer_param_track(
+    project: &mut Project,
+    id: LayerId,
+    param_key: &str,
+    mut track: Animated<f64>,
+) -> Result<(), CommandError> {
+    // Locked tracks reject writes — guard before any mutation.
+    check_track_lock(project, id)?;
+    let fps = project.composition.fps;
+    track.normalize_keyframes(|t| crate::state::time::snap_frame_round(t, fps))
+        .map_err(|()| CommandError::EmptyKeyframeTrack { layer: id, param_key: param_key.to_string() })?;
+    let (ti, li) = project
+        .tracks
+        .iter()
+        .enumerate()
+        .find_map(|(ti, t)| t.layers.iter().position(|l| l.id == id).map(|li| (ti, li)))
+        .ok_or(CommandError::LayerNotFound { layer: id })?;
+    let slot = crate::state::layer::resolve_animated_f64_mut(
+        &mut project.tracks[ti].layers[li].params,
+        param_key,
+    )
+    .ok_or_else(|| CommandError::UnknownKeyframeParam { layer: id, param_key: param_key.to_string() })?;
+    *slot = track;
+    apply_duration_autofit(project);
     Ok(())
 }
 
@@ -9375,5 +9517,84 @@ mod tests {
             matches!(p.color, Animated::Static(c) if c == Rgba::WHITE),
             "locked-track layer params must be untouched"
         );
+    }
+
+    // ---------------------------------------------------------------------------
+    // update_layer_param_track tests
+    // ---------------------------------------------------------------------------
+
+    use crate::state::animated::{Interpolation, Keyframe};
+
+    /// Returns an actor handle and a layer id for a single Motif layer on one
+    /// track. Motif layers expose `opacity` through `resolve_animated_f64_mut`.
+    async fn single_motif_project() -> (ProjectHandle, LayerId) {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        let mut props: imbl::HashMap<String, serde_json::Value> = imbl::HashMap::new();
+        props.insert("seconds".into(), serde_json::json!(5));
+        let layer_id = handle
+            .add_layer(Actor::User, track_id, motif_layer(props), 0, 5_000_000)
+            .await
+            .expect("add_layer");
+        (handle, layer_id)
+    }
+
+    fn find_layer(snap: &Arc<Project>, id: LayerId) -> crate::state::layer::Layer {
+        snap.tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .find(|l| l.id == id)
+            .expect("layer not found in snapshot")
+            .clone()
+    }
+
+    fn assert_keyframed_sorted(layer: &crate::state::layer::Layer, key: &str, expected_ts: &[i64]) {
+        let mut params = layer.params.clone();
+        let slot = crate::state::layer::resolve_animated_f64_mut(&mut params, key)
+            .expect("param not animatable");
+        let Animated::Keyframed(kfs) = slot else {
+            panic!("expected Keyframed mode for param {key}");
+        };
+        let actual: Vec<i64> = kfs.iter().map(|k| k.t_us).collect();
+        assert_eq!(actual, expected_ts, "keyframe times for {key} must be sorted and match");
+    }
+
+    #[tokio::test]
+    async fn update_layer_param_track_writes_and_normalizes() {
+        let (handle, layer_id) = single_motif_project().await;
+        let track = Animated::Keyframed(
+            vec![
+                Keyframe { id: crate::state::ids::new_id(), t_us: 2_000_000, value: 1.0, interp: Interpolation::Linear },
+                Keyframe { id: crate::state::ids::new_id(), t_us: 0, value: 0.0, interp: Interpolation::Linear },
+            ]
+            .into_iter()
+            .collect(),
+        );
+        handle
+            .update_layer_param_track(Actor::User, layer_id, "opacity".into(), track)
+            .await
+            .expect("write opacity track");
+        let snap = handle.snapshot().await;
+        let layer = find_layer(&snap, layer_id);
+        assert_keyframed_sorted(&layer, "opacity", &[0, 2_000_000]);
+    }
+
+    #[tokio::test]
+    async fn update_layer_param_track_rejects_empty_keyframed() {
+        let (handle, layer_id) = single_motif_project().await;
+        let empty = Animated::Keyframed(imbl::Vector::new());
+        let res = handle
+            .update_layer_param_track(Actor::User, layer_id, "opacity".into(), empty)
+            .await;
+        assert!(matches!(res, Err(CommandError::EmptyKeyframeTrack { .. })));
+    }
+
+    #[tokio::test]
+    async fn update_layer_param_track_rejects_unknown_param() {
+        let (handle, layer_id) = single_motif_project().await;
+        let res = handle
+            .update_layer_param_track(Actor::User, layer_id, "bogus".into(), Animated::Static(1.0))
+            .await;
+        assert!(matches!(res, Err(CommandError::UnknownKeyframeParam { .. })));
     }
 }
