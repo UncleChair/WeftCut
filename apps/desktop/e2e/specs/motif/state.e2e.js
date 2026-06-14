@@ -196,11 +196,20 @@ describe("motif bake-status dot (real WebView2)", function () {
   it("shows no dot before pre-bake, then a ready dot after baking", async () => {
     if (!layerId) throw new Error("setup: no layer id");
 
-    // Phase is idle → MotifBakeDot returns null → no span in the DOM.
+    // Before revealing, the motif sits on a COLLAPSED role-null Overlay track
+    // (A/B-roll): its LayerBlock — and the bake dot inside it — aren't mounted,
+    // so there's no span in the DOM regardless of bake phase. (This mirrors what
+    // a user sees until they peek the overlay.)
     const before = await browser.execute(
       () => document.querySelectorAll(".motif-bake-dot").length,
     );
     expect(before).toBe(0);
+
+    // Reveal the layer's overlay track (the right-panel peek-click action:
+    // revealTrack = set revealedTrackId + select; plain selection does NOT
+    // reveal). Only now does the LayerBlock — and its bake dot — mount.
+    await waitForHook("revealLayer");
+    await browser.execute((id) => window.__weftcutTest.revealLayer({ layerId: id }), layerId);
 
     // Trigger the bake and wait for all content PNGs to land on disk (≤ 90 s).
     const r = await browser.executeAsync((id, frames, done) => {

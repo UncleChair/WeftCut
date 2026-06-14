@@ -1523,7 +1523,7 @@ export function App({ onCloseProject }: AppProps) {
   useEffect(() => {
     if (import.meta.env.VITE_WEFTCUT_E2E !== "1") return;
     void import("./testhook/e2eHook").then(({ installExportHook }) =>
-      installExportHook(runExportWithSettings),
+      installExportHook(runExportWithSettings, setPendingRevealLayerId),
     );
   }, [runExportWithSettings]);
 
