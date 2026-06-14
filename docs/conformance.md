@@ -20,16 +20,34 @@ apps/desktop/e2e/
     media/                       # generated clips; can be overridden
       color_manifest.json        # patch layout for color-conformance (generated)
       .gitkeep
-  specs/
-    conformance.e2e.js           # video frame alignment + SSIM gate
-    audio_conformance.e2e.js     # audio matrix gate
-    audio_formats.e2e.js         # audio-ONLY source matrix gate
-    export_range_audio.e2e.js    # range + audio-settings gate
-    export_eos_tail.e2e.js       # end-of-stream drain + audio-overhang gate
-    export_overlap_same_source.e2e.js  # same-source overlap decode gate
-    color_conformance.e2e.js     # color patch gate
-    image_support.e2e.js         # still-image + gif support gate
-    export_10bit.e2e.js          # 10-bit export: tags + distinct-step + AV1-10 source + 4K ring cap + reorder-tail gate
+  scripts/run-suite.mjs          # Windows-safe per-suite runner (node -> wdio --suite)
+  helpers/                       # shared spec helpers wrapping the wdio `browser`
+    app.mjs                      # waitForHook / invokeCmd / newProject / summary / findLayer
+    preview.mjs                  # seekUs / sampleAt / waitPreviewBridge
+    export.mjs                   # driveExport (fire-and-forget + settle poll, per-hook)
+    media.mjs                    # MEDIA_DIR + fixture/tmp path helpers
+  specs/                         # grouped into selectable suites (see Running)
+    smoke/
+      launch.e2e.js              # boots as real WebView2 with the Tauri bridge
+    ui/
+      layers.e2e.js              # add color/text layer + still-image/gif support
+      keyframe_authoring.e2e.js  # keyframe opacity ramp -> export
+    export/
+      conformance.e2e.js         # video frame alignment + SSIM gate
+      color_conformance.e2e.js   # color patch gate
+      export_10bit.e2e.js        # 10-bit: tags + distinct-step + AV1-10 source + 4K ring cap + reorder-tail
+      export_range_audio.e2e.js  # range + audio-settings gate
+      export_overlap_same_source.e2e.js  # same-source overlap decode gate
+      export_eos_tail.e2e.js     # end-of-stream drain + audio-overhang gate
+      export_content_modes.e2e.js  # audio-only / no-audio / wrong-content error paths
+    audio/
+      audio.e2e.js               # audio conformance + format matrix + envelope
+    motif/
+      capture.e2e.js             # CDP capture determinism + lower-third + live preview
+      state.e2e.js               # staleness notice + bake-status dot + file-watch
+      export.e2e.js              # motif renders + animates in export
+      prebake.e2e.js             # L2 pre-bake disk round-trip + GC
+    helpers/userMotifFs.mjs      # user-Motif draft/install fs helper (motif specs)
   tools/
     perf_export_redundancy.e2e.js  # non-gating decode-dispatch measurement
     iso_tenbit_gl_parity.e2e.js    # f16 ingest/pack shaders vs yuv10.ts reference
@@ -54,15 +72,15 @@ clips before the suite runs. Requires `go` and `ffmpeg` on PATH.
 |---|---|---|
 | Counter-burned H.264 | `test_1080p_{30,60,120}fps.mp4`, `.mkv` | `conformance.e2e.js`, `export_overlap_same_source.e2e.js`, `tools/perf_export_redundancy.e2e.js` |
 | EOS-tail geometry | `test_1080p_30fps_eostail.mp4` (keys at 0 s/5 s only, audio 1 s longer than video) | `export_eos_tail.e2e.js` |
-| Tone-marker audio | `test_1080p_{30,60,120}fps_audio.mp4` | `audio_conformance.e2e.js`, `export_range_audio.e2e.js` |
+| Tone-marker audio | `test_1080p_{30,60,120}fps_audio.mp4` | `audio/audio.e2e.js`, `export/export_range_audio.e2e.js` |
 | Color patches | `test_1080p_color_{709ltd,601ltd,709full,601full}.mp4` + `color_manifest.json` | `color_conformance.e2e.js` |
 | 10-bit gradient (HEVC) | `test_1080p_gradient10.mp4` | gradient baseline / proxy-fidelity probes |
 | 10-bit gradient (Hi10P H.264) | `test_1080p_gradient10_h264.mp4`, `test_1080p_gradient10_h264_bf.mp4` (long-GOP + B-frames), `test_2160p_gradient10_h264.mp4` (4K ring-cap case) | `export_10bit.e2e.js`, `tools/iso_tenbit_gl_parity.e2e.js`, `tools/float16_probes.e2e.js` |
 | 10-bit gradient (AV1) | `test_1080p_gradient10_av1.mp4` (SVT-AV1) | `export_10bit.e2e.js` (AV1-10 source admission) |
 | ProRes MOV | `test_1080p_30fps_prores.mov` | import routing smoke (not a conformance gate) |
-| Still-image chart set | `test_chart_320x240.{png,jpg,webp,bmp,gif,tiff}` + `_manifest.json` | `image_support.e2e.js` |
-| Audio-only tone files | `test_tones_10s.{wav,mp3,flac,m4a,ogg}` (mp3 embeds cover art) | `audio_formats.e2e.js` |
-| Animated GIF | `test_1080p_10fps.gif` | `image_support.e2e.js` (Video-routing leg) |
+| Still-image chart set | `test_chart_320x240.{png,jpg,webp,bmp,gif,tiff}` + `_manifest.json` | `ui/layers.e2e.js` |
+| Audio-only tone files | `test_tones_10s.{wav,mp3,flac,m4a,ogg}` (mp3 embeds cover art) | `audio/audio.e2e.js` |
+| Animated GIF | `test_1080p_10fps.gif` | `ui/layers.e2e.js` (Video-routing leg) |
 
 The generator, matrix script, baselines, and `.gitkeep` are tracked. Generated
 media is written to the repo-local `apps/desktop/e2e/fixtures/media` directory
@@ -95,10 +113,11 @@ real app, and checks that sampled frames align exactly while meeting a loose
 SSIM floor. This gate caught the long-GOP export deadlocks and the rational
 frame-grid off-by-one that produced 301 frames from a 300-frame clip.
 
-`audio_conformance.e2e.js` runs a matrix over 30/60/120 fps audio-bearing MP4
-sources and `mp4`/`mkv`/`mov` export containers. It verifies per-second tone
-markers, drift slope, and offset through the complete video export, Rust audio,
-and mux pipeline.
+The audio conformance matrix in `audio/audio.e2e.js` runs over 30/60/120 fps
+audio-bearing MP4 sources and `mp4`/`mkv`/`mov` export containers. It verifies
+per-second tone markers, drift slope, and offset through the complete video
+export, Rust audio, and mux pipeline. (`audio/audio.e2e.js` also holds the
+audio-only format matrix and the envelope-shaping gate described below.)
 
 `export_range_audio.e2e.js` reuses the 30 fps tone-marker fixture to verify
 range export trims audio at the requested source time, exercises AAC/Opus and
@@ -124,15 +143,16 @@ decode dispatch against the inherent floor for single-clip, sequential
 re-use, different-phase overlap, and mid-GOP range-entry timelines via the
 worker's `__weftcutExportPerf` counters.
 
-`audio_formats.e2e.js` runs audio-ONLY sources (wav/mp3/flac/m4a/ogg tone
-files) through import → conform → Audio layer → export mix and verifies the
+The audio-only format matrix in `audio/audio.e2e.js` runs audio-ONLY sources
+(wav/mp3/flac/m4a/ogg tone files) through import → conform → Audio layer →
+export mix and verifies the
 same tone markers. The format RANGE itself is pinned cheaply by the Rust unit
 matrix (`jobs::conform::tests::conform_format_matrix_against_real_ffmpeg`);
 this gate proves the audio-only pipeline. The mp3 fixture embeds attached_pic
 cover art — the regression fixture for `probe::detect_kind`'s cover-art skip.
 
-`image_support.e2e.js` imports the color-patch chart in every dialog-offered
-still format, places ImageOverlays, and samples patch centers off the live
+The still-image leg of `ui/layers.e2e.js` imports the color-patch chart in every
+dialog-offered still format, places ImageOverlays, and samples patch centers off the live
 composite (the same `fetch` → `createImageBitmap` → Pixi texture path export
 uses). TIFF is asserted as the documented-unsupported negative (composites
 nothing); the animated GIF leg asserts multi-frame GIF classifies as Video and
@@ -153,18 +173,31 @@ ADR 0014.
 
 From `apps/desktop/e2e` (after `npm install`):
 
+Specs are grouped into five suites — `smoke`, `ui`, `export`, `audio`, `motif` —
+so you can run just the area you are working on instead of the whole matrix.
+
 ```bash
 # Full suite (builds debug app with VITE_WEFTCUT_E2E=1, generates fixtures)
-npx wdio run ./wdio.conf.mjs
+npm run e2e
+
+# One suite (fetches the driver, then runs only that group)
+npm run e2e:ui        # or: e2e:smoke | e2e:export | e2e:audio | e2e:motif
+
+# Reuse an already-built debug binary across runs (skip the tauri build).
+# Build once without it, then iterate fast. Errors out if the binary is absent.
+WEFTCUT_E2E_NO_BUILD=1 npm run e2e:ui            # bash
+$env:WEFTCUT_E2E_NO_BUILD=1; npm run e2e:ui      # PowerShell
 
 # One gate — call the wdio bin directly. On Windows, `npm run test -- --spec`
 # and `npx wdio ... --spec` BOTH silently drop the --spec filter (PowerShell
 # eats the bare `--`; npm/npx claim the flag as config) and run every spec.
-node node_modules/@wdio/cli/bin/wdio.js run wdio.conf.mjs --spec specs/conformance.e2e.js
+node node_modules/@wdio/cli/bin/wdio.js run wdio.conf.mjs --spec specs/export/conformance.e2e.js
 ```
 
-Verify the log opens with `Execution of 1 workers` when filtering — 18 means
-the filter was swallowed.
+The `e2e:*` scripts go through `scripts/run-suite.mjs`, which spawns the wdio bin
+directly so the `--suite` flag survives the same Windows `--`-swallowing trap that
+bites `--spec`. Verify the log opens with `Execution of 1 workers` when running a
+single-file suite (smoke/audio); a multi-file suite reports one worker per file.
 
 The harness builds `apps/desktop/src-tauri/target/debug/weftcut.exe` with the
 E2E hook (`window.__weftcutTest`) compiled in, starts `tauri-driver` against a
