@@ -179,6 +179,15 @@ export interface E2EHook {
     durationUs: number;
     props?: Record<string, unknown>;
   }): Promise<string>;
+  /// Reveal a layer's track AND select it — the same action as clicking a peek
+  /// item in the right panel (App's `revealTrack`, driven here via the deferred
+  /// `pendingRevealLayerId` so it fires once the summary contains the layer). In
+  /// A/B-roll mode a role-null Overlay track stays COLLAPSED — its timeline
+  /// LayerBlock, and the per-layer bake-status dot inside it, never mount — until
+  /// revealed. Plain selection does NOT reveal (revealedTrackId is separate
+  /// state), so the bake-status e2e must reveal before asserting `.motif-bake-dot`.
+  /// Dev/e2e only.
+  revealLayer(args: { layerId: string }): void;
   /// Patch a motif layer's props (merges field-wise). Used by the pre-bake
   /// e2e to change the `accent` prop and observe a new cacheKey / new hash dir.
   patchMotifLayerProps(args: {
@@ -623,7 +632,12 @@ function mediaFromStore(mediaId: string) {
 
 /// App-side: the real export. `runExport` is App's `runExportWithSettings`,
 /// which awaits the full encode + audio + mux to completion.
-export function installExportHook(runExport: RunExport): void {
+export function installExportHook(
+  runExport: RunExport,
+  revealLayer: (layerId: string) => void,
+): void {
+  hookSlot().revealLayer = ({ layerId }) => revealLayer(layerId);
+
   hookSlot().importAndPlaceMedia = async ({ mediaAbsPath, tStartUs }) => {
     const mediaId = await importMedia(mediaAbsPath);
     const trackId = await addTrack();
