@@ -309,6 +309,7 @@ describe("export range + audio settings (real WebView2)", function () {
       { outputAbsPath: output, range: { startUs: 0, endUs: 2_000_000 } },
       { hook: "exportTimeline" },
     );
+    if (!r.done.ok) throw new Error(`range-conform export failed: ${r.done.error}`);
     const kindsSeen = new Set();
     if (r.lastKind != null) kindsSeen.add(r.lastKind);
     console.log(
