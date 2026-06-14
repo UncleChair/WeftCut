@@ -166,6 +166,7 @@ export function RightPanel({
           onMutated={onMutated}
           fpsNum={fpsNum}
           fpsDen={fpsDen}
+          currentTimeUs={currentTimeUs}
         />
       </section>
     </aside>
