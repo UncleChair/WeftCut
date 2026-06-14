@@ -154,6 +154,11 @@ impl<T: Clone + PartialEq> Animated<T> {
     ///
     /// Static tracks and zero/one keyframe tracks return empty.
     ///
+    /// NOTE: out-of-range keyframes are now valid stored state (trim/split keep
+    /// keys outside `[0, duration]`), so returned intervals may fall outside the
+    /// layer span. Currently no consumer (the ffmpeg-IR gap fragmenter was
+    /// removed); re-audit against out-of-range keys before reviving one.
+    ///
     /// See `docs/data-model.md` §3.
     pub fn animating_runs(&self) -> Vec<(TimeUs, TimeUs)> {
         let Animated::Keyframed(kfs) = self else {
@@ -185,6 +190,9 @@ impl<T: Clone + PartialEq> Animated<T> {
     /// `kf[i+1].t_us` because `kf[i].interp == Hold` AND
     /// `kf[i].value != kf[i+1].value`. The gap fragmenter consults
     /// this so each fragmented static gap has a single held value.
+    ///
+    /// NOTE: like `animating_runs`, may now return times outside `[0, duration]`
+    /// (out-of-range keyframes are valid). No consumer today; re-audit if revived.
     ///
     /// See `docs/data-model.md` §4.
     pub fn hold_step_times(&self) -> Vec<TimeUs> {
