@@ -201,18 +201,11 @@ describe("still-image + gif media support (real WebView2)", function () {
     }
     const centers = patchCenters();
 
-    await waitForHook("newProjectAndEnter");
-    const r1 = await browser.executeAsync((parent, done) => {
-      window.__weftcutTest
-        .newProjectAndEnter({
-          parentFolder: parent,
-          name: "e2e-image-" + Date.now(),
-          canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
-        })
-        .then(() => done({ ok: true }))
-        .catch((e) => done({ ok: false, error: String(e) }));
-    }, PROJECT_PARENT_IMAGE);
-    if (!r1.ok) throw new Error("newProjectAndEnter failed: " + r1.error);
+    await newProject({
+      parentFolder: PROJECT_PARENT_IMAGE,
+      name: "e2e-image-" + Date.now(),
+      canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
+    });
     await waitForHook("importAndPlaceMedia");
     await waitForHook("weftcutSampleComposite");
 
