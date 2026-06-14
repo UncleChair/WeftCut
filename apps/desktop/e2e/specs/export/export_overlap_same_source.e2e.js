@@ -1,8 +1,8 @@
-import os from "node:os";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
-import { analyze } from "../lib/analyze.mjs";
+import { analyze } from "../../lib/analyze.mjs";
+import { newProject } from "../../helpers/app.mjs";
+import { driveExport } from "../../helpers/export.mjs";
+import { fixture, tmpOut, tmpProjectParent } from "../../helpers/media.mjs";
 
 // Same-source overlap export gate. Two enabled VideoClips of ONE mediaId
 // overlapping on the timeline used to freeze the export frame counter
@@ -12,6 +12,7 @@ import { analyze } from "../lib/analyze.mjs";
 //   - concurrent `decodeRange` calls per chunk interleaved their packet
 //     feeds (and a lower-pts range mid-feed reads as a backward jump →
 //     decoder reset under the other clip's in-flight dispatch loop), and
+//
 //   - the per-frame evict used each clip's OWN next-frame cutoff, so the
 //     clip ahead in source time evicted frames the clip behind still
 //     needed — its `waitForPts` then waited forever.
@@ -28,14 +29,11 @@ import { analyze } from "../lib/analyze.mjs";
 //      clips want source times 2 s apart, so their per-chunk ranges
 //      overlap but differ; both must decode their OWN frames (completion +
 //      shifted alignment in the offset clip's exclusive region).
-const MEDIA_DIR =
-  process.env.WEFTCUT_TEST_MEDIA ||
-  path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "media");
-const SOURCE = path.resolve(MEDIA_DIR, "test_1080p_30fps.mp4");
-const PROJECT_PARENT = path.resolve(os.tmpdir(), "weftcut-e2e-overlap-proj");
-const OUT_BASELINE = path.resolve(os.tmpdir(), "weftcut-e2e-overlap-baseline.mp4");
-const OUT_STACKED = path.resolve(os.tmpdir(), "weftcut-e2e-overlap-stacked.mp4");
-const OUT_OFFSET = path.resolve(os.tmpdir(), "weftcut-e2e-overlap-offset.mp4");
+const SOURCE = fixture("test_1080p_30fps.mp4");
+const PROJECT_PARENT = tmpProjectParent("weftcut-e2e-overlap-proj");
+const OUT_BASELINE = tmpOut("weftcut-e2e-overlap-baseline.mp4");
+const OUT_STACKED = tmpOut("weftcut-e2e-overlap-stacked.mp4");
+const OUT_OFFSET = tmpOut("weftcut-e2e-overlap-offset.mp4");
 
 const SSIM_FLOOR = 0.8;
 /// 2 s at the fixture's 30 fps — the offset scenario's placement shift.
@@ -45,26 +43,12 @@ const OFFSET_FRAMES = 60;
 /// Boot a fresh 1080p30 project under PROJECT_PARENT and wait for the editor
 /// hooks to mount.
 async function bootProject(namePrefix) {
-  await browser.waitUntil(
-    async () =>
-      (await browser.execute(
-        () => typeof window.__weftcutTest?.newProjectAndEnter === "function",
-      )) === true,
-    { timeout: 30000, timeoutMsg: "newProjectAndEnter never mounted" },
-  );
   const name = namePrefix + Date.now();
-  const r1 = await browser.executeAsync((parent, projName, done) => {
-    window.__weftcutTest
-      .newProjectAndEnter({
-        parentFolder: parent,
-        name: projName,
-        canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
-      })
-      .then(() => done({ ok: true }))
-      .catch((e) => done({ ok: false, error: String(e) }));
-  }, PROJECT_PARENT, name);
-  if (!r1.ok) throw new Error("newProjectAndEnter failed: " + r1.error);
-
+  await newProject({
+    parentFolder: PROJECT_PARENT,
+    name,
+    canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
+  });
   await browser.waitUntil(
     async () =>
       (await browser.execute(
@@ -104,51 +88,12 @@ async function placeSameSourceClips(extraStartsUs) {
 /// class pins the counter instead of erroring).
 async function runTimelineExport(output, timeout = 170000) {
   rmSync(output, { force: true });
-  await browser.execute((out) => {
-    window.__e2eExportDone = null;
-    window.__weftcutExportPerf = null;
-    window.__weftcutTest
-      .exportTimeline({ outputAbsPath: out })
-      .then(() => {
-        window.__e2eExportDone = { ok: true };
-      })
-      .catch((e) => {
-        window.__e2eExportDone = { ok: false, error: String(e) };
-      });
-  }, output);
 
-  let lastFrame = -1;
-  let lastKind = null;
-  let settled = null;
-  try {
-    await browser.waitUntil(
-      async () => {
-        const snap = await browser.execute(() => {
-          const st = window.__weftcutExportState;
-          return {
-            done: window.__e2eExportDone,
-            kind: st?.kind ?? null,
-            frame: st?.progress?.frame ?? null,
-          };
-        });
-        if (snap.frame != null && snap.frame !== lastFrame) {
-          lastFrame = snap.frame;
-        }
-        if (snap.kind != null) lastKind = snap.kind;
-        if (snap.done) {
-          settled = snap.done;
-          return true;
-        }
-        return false;
-      },
-      { timeout, interval: 1000 },
-    );
-  } catch (e) {
-    throw new Error(
-      `export never settled (last kind=${lastKind}, last frame=${lastFrame}): ${e.message}`,
-    );
-  }
-  if (!settled.ok) throw new Error("exportTimeline failed: " + settled.error);
+  const r = await driveExport(
+    { outputAbsPath: output },
+    { hook: "exportTimeline", timeout },
+  );
+  if (!r.done.ok) throw new Error("exportTimeline failed: " + r.done.error);
 
   const perf = await browser.execute(() => window.__weftcutExportPerf ?? null);
   if (!perf) throw new Error("export settled but __weftcutExportPerf is missing");
