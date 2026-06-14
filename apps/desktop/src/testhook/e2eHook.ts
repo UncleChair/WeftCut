@@ -355,7 +355,7 @@ export function installMotifTestHooks(): void {
         const bitmap = tex.source?.resource as ImageBitmap | undefined;
         if (!bitmap) throw new Error("sprite bound no bitmap resource");
         // Checksum the whole frame via a 2D canvas (createImageBitmap output
-        // is clean — getImageData won't taint; see motif_live_preview.e2e.js).
+        // is clean — getImageData won't taint; see motif/capture.e2e.js).
         const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
         const ctx = canvas.getContext("2d");
         if (!ctx) throw new Error("no 2d context");

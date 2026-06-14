@@ -13,7 +13,7 @@ import { MEDIA_DIR, fixture, tmpOut, tmpProjectParent } from "../../helpers/medi
 // output-second carries — the key to proving the audio trim.
 const PROJECT_PARENT = tmpProjectParent("weftcut-e2e-range-audio-proj");
 
-// The 30fps tone-marker fixture (shared with audio_conformance). Output fps
+// The 30fps tone-marker fixture (shared with audio/audio.e2e.js). Output fps
 // follows the 30fps composition, so source second k -> tone F_k = 400 + 120k.
 const SOURCE = fixture("test_1080p_30fps_audio.mp4");
 // Burned-in-counter video fixture (no audio) — used for the software-encode
