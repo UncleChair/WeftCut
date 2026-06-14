@@ -5,7 +5,7 @@
 Before bundling for distribution, regenerate the full icon set from a 1024×1024 source:
 
 ```sh
-npm run tauri icon path/to/source.png --workspace apps/desktop
+npm --workspace apps/desktop run tauri -- icon path/to/source.png
 ```
 
 That produces 32x32.png, 128x128.png, 128x128@2x.png, icon.icns, and icon.ico — at which point you can restore the multi-icon array in `tauri.conf.json`.

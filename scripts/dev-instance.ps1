@@ -77,7 +77,7 @@ Write-Host ""
 # Resolve the local tauri CLI shim directly (hoisted to the root node_modules by
 # npm workspaces, with a fallback to the package-local one). Calling the .cmd
 # shim with the call operator passes args cleanly — avoids the PowerShell/npx
-# `--` arg-dropping trap (see CLAUDE memory: wdii single-spec on Windows).
+# `--` arg-dropping trap (see CLAUDE memory: wdio single-spec on Windows).
 $tauriCmd = Join-Path $root "node_modules\.bin\tauri.cmd"
 if (-not (Test-Path $tauriCmd)) {
     $tauriCmd = Join-Path $desktop "node_modules\.bin\tauri.cmd"
