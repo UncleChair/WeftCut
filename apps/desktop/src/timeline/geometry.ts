@@ -177,6 +177,33 @@ export function indexGroups(groups: GroupSummary[]): Map<string, string> {
   return idx;
 }
 
+/// Map a layer-local keyframe time (µs) to an x offset (px) within a clip
+/// chip of `clipDurationUs` rendered `clipWidthPx` wide. Clamps out-of-range
+/// keyframes (kept in data after trims) to the clip bounds.
+export function keyframeXWithinClip(
+  kfTUs: number,
+  clipDurationUs: number,
+  clipWidthPx: number,
+): number {
+  if (clipDurationUs <= 0) return 0;
+  const u = clamp(kfTUs / clipDurationUs, 0, 1);
+  return u * clipWidthPx;
+}
+
+/// Nearest diamond id within `radiusPx` of `pointerX`, else null.
+export function keyframeHitTest(
+  diamonds: readonly { id: string; x: number }[],
+  pointerX: number,
+  radiusPx: number,
+): string | null {
+  let best: { id: string; d: number } | null = null;
+  for (const dia of diamonds) {
+    const d = Math.abs(dia.x - pointerX);
+    if (d <= radiusPx && (best === null || d < best.d)) best = { id: dia.id, d };
+  }
+  return best?.id ?? null;
+}
+
 /// `mm:ss` for second-grain steps, `mm:ss.cs` (centiseconds) for
 /// sub-second steps so the user sees a meaningful precision delta as
 /// they zoom in. Rounding is done in integer milliseconds to keep
