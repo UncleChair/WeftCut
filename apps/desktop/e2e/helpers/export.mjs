@@ -1,23 +1,28 @@
 import { waitForHook } from "./app.mjs";
 
-/// Drive window.__weftcutTest.exportClip(args) fire-and-forget and poll the
-/// mirrored export state until it settles. Returns { done, lastFrame, lastKind,
-/// lastDetail } WITHOUT throwing on export failure. `args` is forwarded verbatim
-/// to exportClip. Logs each frame/phase advance so a hang reports the exact
-/// stall frame instead of a blind timeout.
-export async function driveExport(args, { timeout = 170000, label = "" } = {}) {
-  await waitForHook("exportClip");
-  await browser.execute((a) => {
-    window.__e2eExportDone = null;
-    window.__weftcutTest
-      .exportClip(a)
-      .then(() => {
-        window.__e2eExportDone = { ok: true };
-      })
-      .catch((e) => {
-        window.__e2eExportDone = { ok: false, error: String(e) };
-      });
-  }, args);
+/// Drive an export hook fire-and-forget and poll the mirrored export state until
+/// it settles. Returns { done, lastFrame, lastKind, lastDetail } WITHOUT throwing
+/// on export failure. `args` is forwarded verbatim to the hook. The export hook
+/// is `exportClip` by default; pass `hook: "exportTimeline"` or
+/// `hook: "exportMotifClip"` for those entry points (all three mirror the same
+/// window.__weftcutExportState / __e2eExportDone state). Logs each frame/phase
+/// advance so a hang reports the exact stall frame instead of a blind timeout.
+export async function driveExport(args, { hook = "exportClip", timeout = 170000, label = "" } = {}) {
+  await waitForHook(hook);
+  await browser.execute(
+    (h, a) => {
+      window.__e2eExportDone = null;
+      window.__weftcutTest[h](a)
+        .then(() => {
+          window.__e2eExportDone = { ok: true };
+        })
+        .catch((e) => {
+          window.__e2eExportDone = { ok: false, error: String(e) };
+        });
+    },
+    hook,
+    args,
+  );
 
   const tag = label ? " " + label : "";
   let lastFrame = -1;
