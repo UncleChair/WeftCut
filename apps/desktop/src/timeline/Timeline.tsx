@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useCallback,
   useEffect,
   useMemo,
@@ -41,6 +42,7 @@ import {
 import { TimelineRuler } from "./TimelineRuler";
 import { TrackHeader } from "./TrackHeader";
 import { TrackLane, type MediaDragPayload } from "./TrackLane";
+import { KeyframeLane, KeyframeLaneHeaders } from "./KeyframeLane";
 import { LayerContextMenu } from "./LayerContextMenu";
 import { beginRename } from "./renameStore";
 import { useTimelineView } from "./hooks/useTimelineView";
@@ -550,17 +552,19 @@ export function Timeline({
             onClick={(e) => e.stopPropagation()}
           /> {/* ruler corner */}
           {orderedTracks.map(({ track, isGroupStart }) => (
-            <TrackHeader
-              key={track.id}
-              track={track}
-              height={trackHeights[track.id] ?? DEFAULT_TRACK_HEIGHT}
-              isRevealed={track.id === (revealedTrackId ?? null)}
-              isGroupStart={isGroupStart}
-              isExpanded={expandedTracks.has(track.id)}
-              hasKeyframes={trackKeyframeProperties(track).length > 0}
-              onToggleExpand={() => toggleExpanded(track.id)}
-              onMutated={onMutated}
-            />
+            <Fragment key={track.id}>
+              <TrackHeader
+                track={track}
+                height={trackHeights[track.id] ?? DEFAULT_TRACK_HEIGHT}
+                isRevealed={track.id === (revealedTrackId ?? null)}
+                isGroupStart={isGroupStart}
+                isExpanded={expandedTracks.has(track.id)}
+                hasKeyframes={trackKeyframeProperties(track).length > 0}
+                onToggleExpand={() => toggleExpanded(track.id)}
+                onMutated={onMutated}
+              />
+              {expandedTracks.has(track.id) && <KeyframeLaneHeaders track={track} />}
+            </Fragment>
           ))}
         </div>
         {/* scrolling body */}
@@ -586,8 +590,8 @@ export function Timeline({
               z-stack-reversed so the top of the group is the top of z-stack.
             */}
             {orderedTracks.map(({ track, isGroupStart }) => (
+              <Fragment key={track.id}>
               <TrackLane
-                key={track.id}
                 track={track}
                 pxPerSec={pxPerSec}
                 height={trackHeights[track.id] ?? DEFAULT_TRACK_HEIGHT}
@@ -615,6 +619,14 @@ export function Timeline({
                 fpsNum={fpsNum}
                 fpsDen={fpsDen}
               />
+              {expandedTracks.has(track.id) && (
+                <KeyframeLane
+                  track={track}
+                  pxPerSec={pxPerSec}
+                  onCommitParamTrack={onCommitParamTrack}
+                />
+              )}
+              </Fragment>
             ))}
           </div>
           {currentTimeUs >= 0 && (
