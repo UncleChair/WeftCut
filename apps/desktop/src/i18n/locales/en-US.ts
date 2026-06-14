@@ -194,6 +194,7 @@ const enUS = {
     track_mute_hint: "Mute this track's audio (affects export)",
     track_solo_hint: "Solo this track's audio (affects export)",
     track_lock_hint: "Lock this track against edits",
+    toggle_keyframe_lanes: "Expand keyframe lanes",
     mode_ab: "A/B",
     mode_all: "All",
     mode_ab_hint: "Showing A/B-roll tracks only. Click to show all.",
