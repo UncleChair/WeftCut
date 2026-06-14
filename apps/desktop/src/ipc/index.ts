@@ -815,7 +815,7 @@ export async function updateLayerParams(
 
 /// Write a whole keyframe track to a named animatable param on a layer.
 /// `paramKey` is one of the layer kind's animatable f64 fields
-/// (x/y/scale_x/scale_y/opacity for visual kinds; gain_db/pan for audio).
+/// (x/y/scale_x/scale_y/rotation_deg/opacity for visual kinds; gain_db/pan for audio).
 /// The actor normalizes (snap/sort/dedupe) and records the edit (one undo step).
 export async function updateLayerParamTrack(
   layerId: string,
