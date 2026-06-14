@@ -51,9 +51,7 @@ impl<T: Clone> Animated<T> {
             Animated::Keyframed(kfs) => kfs.len() > 1,
         }
     }
-}
 
-impl<T: Clone> Animated<T> {
     /// Shift every keyframe's `t_us` by `delta_us` (no-op on `Static`).
     /// Used by IN-edge trim and split to keep keyframes glued to content.
     pub fn shift_keyframes(&mut self, delta_us: TimeUs) {
@@ -71,7 +69,11 @@ impl<T: Clone> Animated<T> {
     }
 
     /// Keep only keyframes whose `t_us` satisfies `keep` (no-op on `Static`).
-    /// Used by split to partition keyframes between the two halves.
+    /// Used by split to partition keyframes between the two halves. If `keep`
+    /// filters out every keyframe, the result is an EMPTY `Keyframed` track —
+    /// the caller (e.g. split) is responsible for collapsing that to `Static`,
+    /// since an empty `Keyframed` is rejected by `normalize_keyframes` and
+    /// reads as the fallback in `value_at`.
     pub fn retain_keyframes(&mut self, keep: impl Fn(TimeUs) -> bool) {
         if let Animated::Keyframed(kfs) = self {
             *kfs = kfs.iter().filter(|k| keep(k.t_us)).cloned().collect();
@@ -79,11 +81,14 @@ impl<T: Clone> Animated<T> {
     }
 
     /// Canonicalize a `Keyframed` track for storage: snap each `t_us` via
-    /// `snap`, stable-sort by `t_us`, and dedupe same-time keys keeping the
-    /// LAST (write order is preserved by the stable sort, so the later input
-    /// keyframe wins). Returns `Err(())` for an empty `Keyframed` track (a
-    /// keyframed property must hold at least one key — the caller turns this
-    /// into a `CommandError`). `Static` is unchanged and always `Ok`.
+    /// `snap`, stable-sort by `t_us`, and dedupe same-snapped-time keys. The
+    /// stable sort preserves input order among equal keys, so the dedupe keeps
+    /// whichever key appears LAST in the input vector — the caller must supply
+    /// keys with the most-recent write last (the write path appends the edited
+    /// key, so a duplicate snapped time resolves last-write-wins). Returns
+    /// `Err(())` for an empty `Keyframed` track (a keyframed property must hold
+    /// at least one key — the caller turns this into a `CommandError`).
+    /// `Static` is unchanged and always `Ok`.
     pub fn normalize_keyframes(
         &mut self,
         snap: impl Fn(TimeUs) -> TimeUs,
