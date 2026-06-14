@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { viewStateGet, viewStateSet, type TrackSummary } from "../../ipc";
 import {
   DEFAULT_PX_PER_SEC,
@@ -21,10 +21,14 @@ export function useTimelineView(opts: {
   trackHeights: Record<string, number>;
   setTrackHeights: React.Dispatch<React.SetStateAction<Record<string, number>>>;
   trackHeightsRef: React.MutableRefObject<Record<string, number>>;
+  expandedTracks: Set<string>;
+  toggleExpanded: (id: string) => void;
 } {
   const { rootRef, tracks, durationUs } = opts;
   const [pxPerSec, setPxPerSec] = useState<number>(DEFAULT_PX_PER_SEC);
   const [trackHeights, setTrackHeights] = useState<Record<string, number>>({});
+  // Track ids whose keyframe sub-lanes are expanded. Persisted to view.json.
+  const [expandedTracks, setExpandedTracks] = useState<Set<string>>(new Set());
   // Suppress the initial post-load save: we don't want the first
   // load-then-set-state pair to immediately echo the same values back to
   // disk. Flipped to true only after the in-flight load completes.
@@ -47,6 +51,7 @@ export function useTimelineView(opts: {
           ),
         );
         setTrackHeights(state.track_heights ?? {});
+        setExpandedTracks(new Set(state.expanded_tracks ?? []));
       })
       .catch((e) => {
         console.warn("view_state load failed:", e);
@@ -63,6 +68,7 @@ export function useTimelineView(opts: {
   // need to restart with React's render cadence on every wheel tick.
   const pxPerSecRef = useRef(pxPerSec);
   const trackHeightsRef = useRef(trackHeights);
+  const expandedTracksRef = useRef(expandedTracks);
   // Latest project duration — the wheel handler reads this to compute
   // the "fit-to-viewport" min zoom each tick, so a project getting
   // longer (new clips added) immediately widens the wheel-out range.
@@ -73,6 +79,9 @@ export function useTimelineView(opts: {
   useEffect(() => {
     trackHeightsRef.current = trackHeights;
   }, [trackHeights]);
+  useEffect(() => {
+    expandedTracksRef.current = expandedTracks;
+  }, [expandedTracks]);
   useEffect(() => {
     durationUsRef.current = durationUs;
   }, [durationUs]);
@@ -88,15 +97,19 @@ export function useTimelineView(opts: {
       for (const [id, h] of Object.entries(trackHeightsRef.current)) {
         if (live.has(id)) pruned[id] = h;
       }
+      const liveExpanded = [...expandedTracksRef.current].filter((id) =>
+        live.has(id),
+      );
       viewStateSet({
         timeline_px_per_sec: pxPerSecRef.current,
         track_heights: pruned,
+        expanded_tracks: liveExpanded,
       }).catch((e) => console.warn("view_state save failed:", e));
     }, VIEW_SAVE_DEBOUNCE_MS);
     return () => clearTimeout(handle);
     // `tracks` participates so a track-deletion triggers a save that
     // prunes the stale id even if neither zoom nor height changed.
-  }, [pxPerSec, trackHeights, tracks]);
+  }, [pxPerSec, trackHeights, expandedTracks, tracks]);
 
   // -------- Ctrl+wheel zoom (cursor-anchored) --------
 
@@ -181,5 +194,22 @@ export function useTimelineView(opts: {
       pending.cursorXInViewport;
   }, [pxPerSec]);
 
-  return { pxPerSec, trackHeights, setTrackHeights, trackHeightsRef };
+  const toggleExpanded = useCallback(
+    (id: string) =>
+      setExpandedTracks((prev) => {
+        const next = new Set(prev);
+        next.has(id) ? next.delete(id) : next.add(id);
+        return next;
+      }),
+    [],
+  );
+
+  return {
+    pxPerSec,
+    trackHeights,
+    setTrackHeights,
+    trackHeightsRef,
+    expandedTracks,
+    toggleExpanded,
+  };
 }
