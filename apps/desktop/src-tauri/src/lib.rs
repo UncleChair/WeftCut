@@ -134,6 +134,8 @@ pub fn run() {
             commands::add_demo_text_layer,
             commands::update_layer,
             commands::update_layer_params,
+            commands::update_layer_param_track,
+            commands::update_layer_param_tracks,
             commands::add_subtitles_layer,
             commands::move_layer,
             commands::trim_layer,

@@ -1887,6 +1887,33 @@ pub async fn update_layer_params(
         .map_err(|e: CommandError| e.to_string())
 }
 
+#[tauri::command]
+pub async fn update_layer_param_track(
+    handle: State<'_, ProjectHandle>,
+    layer_id: String,
+    param_key: String,
+    track: Animated<f64>,
+) -> Result<(), String> {
+    let id = Uuid::parse_str(&layer_id).map_err(|e| format!("layer_id: {e}"))?;
+    handle
+        .update_layer_param_track(Actor::User, id, param_key, track)
+        .await
+        .map_err(|e: CommandError| e.to_string())
+}
+
+#[tauri::command]
+pub async fn update_layer_param_tracks(
+    handle: State<'_, ProjectHandle>,
+    layer_id: String,
+    entries: Vec<(String, Animated<f64>)>,
+) -> Result<(), String> {
+    let id = Uuid::parse_str(&layer_id).map_err(|e| format!("layer_id: {e}"))?;
+    handle
+        .update_layer_param_tracks(Actor::User, id, entries)
+        .await
+        .map_err(|e: CommandError| e.to_string())
+}
+
 /// Add a subtitles layer that burns a subtitle file (`.srt` / `.ass`) onto
 /// the timeline. The path must be absolute and point to an on-disk file —
 /// import the file via `import_media` first if it isn't already in the pool.

@@ -69,16 +69,6 @@ pub enum ValidationError {
         media_duration: TimeUs,
     },
 
-    #[error(
-        "layer {layer} keyframe {keyframe} at t={t}us is outside [0, duration={duration}us]"
-    )]
-    KeyframeOutOfRange {
-        layer: LayerId,
-        keyframe: KeyframeId,
-        t: TimeUs,
-        duration: TimeUs,
-    },
-
     #[error("duplicate layer id {layer}")]
     DuplicateLayerId { layer: LayerId },
 
@@ -506,23 +496,19 @@ fn check_src_range(
     Ok(())
 }
 
+/// Keyframe times are intentionally NOT range-checked against the layer
+/// duration. Trimming a clip deliberately pushes keyframes out of
+/// `[0, duration]` (head-trim → negative `t_us`, tail-trim → beyond
+/// `duration`) and KEEPS them in data so the trim is non-destructive and
+/// reversible (keyframe-authoring spec §6). `Animated::value_at` clamps
+/// out-of-range keys at eval and the UI hides/dims them, so an out-of-range
+/// `t_us` is valid stored state, not a defect. Kept as a typed seam for
+/// future keyframe invariants (the params still thread through unused).
 fn check_animated<T: Clone>(
-    layer: LayerId,
-    anim: &Animated<T>,
-    duration: TimeUs,
+    _layer: LayerId,
+    _anim: &Animated<T>,
+    _duration: TimeUs,
 ) -> Result<(), ValidationError> {
-    if let Animated::Keyframed(kfs) = anim {
-        for kf in kfs.iter() {
-            if kf.t_us < 0 || kf.t_us > duration {
-                return Err(ValidationError::KeyframeOutOfRange {
-                    layer,
-                    keyframe: kf.id,
-                    t: kf.t_us,
-                    duration,
-                });
-            }
-        }
-    }
     Ok(())
 }
 
@@ -842,12 +828,25 @@ mod tests {
     }
 
     #[test]
-    fn rejects_keyframe_outside_layer_duration() {
+    fn accepts_out_of_range_keyframe() {
+        // Out-of-range keyframe times are valid stored state by design:
+        // trimming keeps keyframes that fall outside [0, duration] (negative
+        // after a head-trim, beyond duration after a tail-trim) so the trim is
+        // non-destructive (keyframe-authoring spec §6). The validator must NOT
+        // reject them — value_at clamps at eval, the UI hides them.
         let mut p = blank();
         let mut track = Track::new();
         let mut layer = color_layer(0, 1_000_000);
-        // Keyframe at 5s on a 1s layer.
-        let bad_kf = Keyframe {
+        // Two out-of-range keys on a 1s layer: one before the start (negative,
+        // as a head-trim would produce) and one beyond the end (as a tail-trim
+        // would produce).
+        let before = Keyframe {
+            id: new_id(),
+            t_us: -2_000_000,
+            value: 0.0_f64,
+            interp: Interpolation::Linear,
+        };
+        let beyond = Keyframe {
             id: new_id(),
             t_us: 5_000_000,
             value: 1.0_f64,
@@ -855,24 +854,21 @@ mod tests {
         };
         layer.params = LayerParams::ImageOverlay(crate::state::layer::ImageOverlayParams {
             media: {
-                // Insert a media to not trigger MissingMedia first.
+                // Insert a media so MissingMedia / src-range checks don't fire first.
                 let m = dummy_video_media(10_000_000);
                 let id = m.id;
                 p.media_pool.insert(id, m);
                 id
             },
             transform: Transform::default(),
-            opacity: Animated::Keyframed(imbl::vector![bad_kf]),
+            opacity: Animated::Keyframed(imbl::vector![before, beyond]),
             blend_mode: Default::default(),
             fade_in_us: 0,
             fade_out_us: 0,
         });
         track.layers.push_back(layer);
         p.tracks.push_back(track);
-        assert!(matches!(
-            validate(&p),
-            Err(ValidationError::KeyframeOutOfRange { .. })
-        ));
+        assert!(validate(&p).is_ok(), "out-of-range keyframes must validate");
     }
 
     #[test]
