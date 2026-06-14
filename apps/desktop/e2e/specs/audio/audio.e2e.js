@@ -2,7 +2,7 @@ import { rmSync, existsSync, mkdirSync } from "node:fs";
 import { analyze, analyzeAudioEnvelope, analyzeAudioPan } from "../../lib/analyze.mjs";
 import { newProject } from "../../helpers/app.mjs";
 import { driveExport } from "../../helpers/export.mjs";
-import { MEDIA_DIR, fixture, tmpOut, tmpProjectParent } from "../../helpers/media.mjs";
+import { fixture, tmpOut, tmpProjectParent } from "../../helpers/media.mjs";
 
 // ─── Shared project-parent folders ───────────────────────────────────────────
 const PROJECT_PARENT_CONFORMANCE = tmpProjectParent("weftcut-e2e-audio-proj");
