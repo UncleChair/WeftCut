@@ -1,7 +1,13 @@
 # Keyframe Authoring (Timeline Redesign Phase 2): Stopwatch, Diamonds, Write Path
 
 **Date:** 2026-06-14
-**Status:** Approved design, pending implementation plan
+**Status:** Implemented and merged to main (`29c76f8f`). Both plans shipped
+subagent-driven — `2026-06-14-keyframe-authoring-1-write-path.md` (backend) and
+`-2-ui.md` (authoring UI); tsc + vitest green and **e2e-verified in real
+WebView2** (`e2e/specs/keyframe_authoring.e2e.js`: a 0→1 opacity track is
+reflected in the exported video). The Out-of-scope items below remain — Phase 3
+(expanded per-property sub-lanes), `Animated<Rgba>`, Bezier authoring, MCP
+keyframe tools.
 
 ## Goal
 

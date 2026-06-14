@@ -391,7 +391,7 @@ struct Keyframe<T> {
 }
 ```
 
-Keyframe times are **relative to the layer's start**. Otherwise moving a layer breaks its animation.
+Keyframe times are **relative to the layer's start**. Otherwise moving a layer breaks its animation. Trim and split keep keyframes content-anchored: an IN-edge trim shifts every key by the edge delta, split partitions keys at the cut (right half re-based, an emptied half collapses to `Static` at the boundary value), and keys pushed outside `[0, duration]` are **retained, not dropped** (so trims stay reversible) — `value_at` clamps out-of-range keys and the UI hides them.
 
 For MVP: only `opacity`, `position`, `scale`, `rotation`, `gain_db`, `pan` are animatable.
 
@@ -500,7 +500,7 @@ struct ChangeEvent {
 | `composition.duration_us ≥ max(layer.t_end_us)` while `duration_pinned == true` | overflow guard only — pinned value grows if a layer extends past it, never shrinks |
 | `composition.fps.den > 0`, `width/height > 0` | reject |
 | All references (`MediaId`/`LayerId`/`GroupId`/`TransitionId`) resolve | reject |
-| Keyframe times in `[0, layer.duration]` | reject |
+| Keyframe `t_us` outside `[0, layer.duration]` | **allowed** — trim/split intentionally keep out-of-range keys (non-destructive); `value_at` clamps and the UI hides them |
 | Motif props match the Motif manifest's `props_schema` | reject |
 | `Animated` with empty keyframes ⇔ `Static` | normalize |
 
