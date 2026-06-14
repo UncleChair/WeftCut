@@ -14,8 +14,8 @@ describe("liftToKeyframed", () => {
     expect(tr.mode).toBe("Keyframed");
     if (tr.mode !== "Keyframed") throw new Error();
     expect(tr.value).toHaveLength(1);
-    expect(tr.value[0].t_us).toBe(1_000_000);
-    expect(tr.value[0].value).toBe(0.5);
+    expect(tr.value[0]!.t_us).toBe(1_000_000);
+    expect(tr.value[0]!.value).toBe(0.5);
   });
 });
 
@@ -39,7 +39,7 @@ describe("upsertKeyframe", () => {
     const tr = upsertKeyframe(kf("a", 1_000_000, 0.1), 1_000_000, 0.7);
     if (tr.mode !== "Keyframed") throw new Error();
     expect(tr.value).toHaveLength(1);
-    expect(tr.value[0].value).toBe(0.7);
+    expect(tr.value[0]!.value).toBe(0.7);
   });
   it("inserts a new key sorted by t_us", () => {
     const tr = upsertKeyframe(kf("a", 2_000_000, 0.1), 1_000_000, 0.9);
@@ -79,6 +79,6 @@ describe("setKeyframeInterp", () => {
   it("changes a key's interpolation", () => {
     const out = setKeyframeInterp(kf("a", 0, 0), "a", { kind: "Hold" });
     if (out.mode !== "Keyframed") throw new Error();
-    expect(out.value[0].interp).toEqual({ kind: "Hold" });
+    expect(out.value[0]!.interp).toEqual({ kind: "Hold" });
   });
 });
