@@ -2908,4 +2908,18 @@ mod tests {
             Some(Uuid::from_u128(9))
         );
     }
+
+    #[test]
+    fn pick_skips_occupied_and_finds_next() {
+        let tracks: imbl::Vector<Track> = imbl::vector![
+            test_track(8, None, &[]),               // bottom, free
+            test_track(9, None, &[(0, 2_000_000)]), // top, occupied at 0–2s
+        ];
+        // Top track (9) is occupied [0,2s); the scan must continue to the
+        // bottom track (8), which is free.
+        assert_eq!(
+            pick_free_overlay_track(&tracks, 0, 1_000_000),
+            Some(Uuid::from_u128(8))
+        );
+    }
 }
