@@ -234,3 +234,150 @@ pub struct ColorParams {
     pub width: u32,
     pub height: u32,
 }
+
+/// Apply `f` to every `Animated<f64>` track on these params (transform x/y/
+/// scale_x/scale_y/rotation_deg + opacity for visual kinds; gain_db/pan for
+/// Audio). The Rust mirror of the frontend `animatableParams(kind)` descriptor.
+/// Used by trim/split keyframe transforms. Color/Subtitles have no f64 track.
+pub(crate) fn for_each_animated_f64(
+    params: &mut LayerParams,
+    mut f: impl FnMut(&mut Animated<f64>),
+) {
+    match params {
+        LayerParams::VideoClip(p) => {
+            visit_transform_f64(&mut p.transform, &mut f);
+            f(&mut p.opacity);
+        }
+        LayerParams::ImageOverlay(p) => {
+            visit_transform_f64(&mut p.transform, &mut f);
+            f(&mut p.opacity);
+        }
+        LayerParams::Text(p) => {
+            visit_transform_f64(&mut p.transform, &mut f);
+            f(&mut p.opacity);
+        }
+        LayerParams::Motif(p) => {
+            visit_transform_f64(&mut p.transform, &mut f);
+            f(&mut p.opacity);
+        }
+        LayerParams::Audio(p) => {
+            f(&mut p.gain_db);
+            f(&mut p.pan);
+        }
+        LayerParams::Subtitles(_) | LayerParams::Color(_) => {}
+    }
+}
+
+fn visit_transform_f64(t: &mut Transform, f: &mut impl FnMut(&mut Animated<f64>)) {
+    f(&mut t.x);
+    f(&mut t.y);
+    f(&mut t.scale_x);
+    f(&mut t.scale_y);
+    f(&mut t.rotation_deg);
+}
+
+/// Apply `f` to every `Animated<Rgba>` track on these params (Text color,
+/// Color color). Separate from the f64 walk because the inner type differs.
+/// v1 has no Rgba authoring UI, but trim/split must still carry color
+/// keyframes if any exist.
+pub(crate) fn for_each_animated_rgba(
+    params: &mut LayerParams,
+    mut f: impl FnMut(&mut Animated<Rgba>),
+) {
+    match params {
+        LayerParams::Text(p) => f(&mut p.color),
+        LayerParams::Color(p) => f(&mut p.color),
+        _ => {}
+    }
+}
+
+/// Resolve a `param_key` string to its `Animated<f64>` field for writing.
+/// `None` for an unknown key or a key not valid on this kind.
+pub(crate) fn resolve_animated_f64_mut<'a>(
+    params: &'a mut LayerParams,
+    key: &str,
+) -> Option<&'a mut Animated<f64>> {
+    match params {
+        LayerParams::VideoClip(p) => transform_or_opacity(&mut p.transform, &mut p.opacity, key),
+        LayerParams::ImageOverlay(p) => transform_or_opacity(&mut p.transform, &mut p.opacity, key),
+        LayerParams::Text(p) => transform_or_opacity(&mut p.transform, &mut p.opacity, key),
+        LayerParams::Motif(p) => transform_or_opacity(&mut p.transform, &mut p.opacity, key),
+        LayerParams::Audio(p) => match key {
+            "gain_db" => Some(&mut p.gain_db),
+            "pan" => Some(&mut p.pan),
+            _ => None,
+        },
+        LayerParams::Subtitles(_) | LayerParams::Color(_) => None,
+    }
+}
+
+fn transform_or_opacity<'a>(
+    t: &'a mut Transform,
+    opacity: &'a mut Animated<f64>,
+    key: &str,
+) -> Option<&'a mut Animated<f64>> {
+    match key {
+        "x" => Some(&mut t.x),
+        "y" => Some(&mut t.y),
+        "scale_x" => Some(&mut t.scale_x),
+        "scale_y" => Some(&mut t.scale_y),
+        "rotation_deg" => Some(&mut t.rotation_deg),
+        "opacity" => Some(opacity),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod kf_fields_tests {
+    use super::*;
+    use crate::state::animated::Animated;
+
+    fn videoclip() -> LayerParams {
+        LayerParams::VideoClip(VideoClipParams {
+            media: crate::state::ids::new_id(),
+            src_in_us: 0,
+            src_out_us: 1_000_000,
+            transform: Transform::default(),
+            opacity: Animated::Static(1.0),
+            crop: None,
+            flip_h: false,
+            flip_v: false,
+            blend_mode: BlendMode::default(),
+            speed: 1.0,
+            fade_in_us: 0,
+            fade_out_us: 0,
+        })
+    }
+
+    #[test]
+    fn resolve_known_f64_keys_for_videoclip() {
+        let mut p = videoclip();
+        for key in ["x", "y", "scale_x", "scale_y", "opacity"] {
+            assert!(
+                resolve_animated_f64_mut(&mut p, key).is_some(),
+                "videoclip should resolve {key}"
+            );
+        }
+        assert!(resolve_animated_f64_mut(&mut p, "gain_db").is_none());
+        assert!(resolve_animated_f64_mut(&mut p, "bogus").is_none());
+    }
+
+    #[test]
+    fn for_each_animated_f64_visits_six_videoclip_fields() {
+        let mut p = videoclip();
+        let mut n = 0;
+        for_each_animated_f64(&mut p, |_| n += 1);
+        // transform x/y/scale_x/scale_y/rotation_deg (5) + opacity (1) = 6.
+        assert_eq!(n, 6);
+    }
+
+    #[test]
+    fn resolve_writes_through_to_the_field() {
+        let mut p = videoclip();
+        if let Some(track) = resolve_animated_f64_mut(&mut p, "opacity") {
+            *track = Animated::Static(0.25);
+        }
+        let LayerParams::VideoClip(v) = &p else { panic!() };
+        assert!(matches!(v.opacity, Animated::Static(x) if (x - 0.25).abs() < 1e-9));
+    }
+}
