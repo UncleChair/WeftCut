@@ -182,9 +182,15 @@ destroyed:
   composition time. Keys whose `t_us` goes negative are out-of-range (kept, hidden).
 - **Split** at composition time P (clip-local offset `p = P − t_start`): the left
   clip keeps keys with `t_us ≤ p`; the right clip inherits keys with `t_us > p`,
-  re-based by `t_us -= p`. Every key stays on its content.
+  re-based by `t_us -= p`. Every key stays on its content. If a half ends up with
+  **zero** keys (all keys fell on the other side), it collapses to `Static` at the
+  clamp-boundary value (left → first-key value, right → last-key value) so the half
+  keeps the value the clip actually showed instead of the engine fallback.
 - **Out-of-range keyframes are never dropped**, so trimming is non-destructive and
-  reversible.
+  reversible. This requires the layer **validator to permit keyframe times outside
+  `[0, duration]`** (it previously rejected them as `KeyframeOutOfRange`); `value_at`
+  clamps out-of-range keys at eval and the UI hides them, so they are valid stored
+  state, not a defect.
 
 **Implementation:** extend Rust `apply_trim_layer` (IN edge) and `apply_split_layer`
 to transform every `Animated<T>` track on the affected layer's params. This is the

@@ -2,6 +2,16 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Status: SHIPPED — merged to local main (subagent-driven, 8 tasks).** Each task was
+implemented + spec + code-quality reviewed, plus a final holistic review; cargo 572 /
+vitest 527 / tsc all green; backend-only (zero UI/MCP drift). **Two additions surfaced
+during implementation** (beyond the task list below): (1) the layer validator was
+loosened to permit keyframe times outside `[0, duration]` — the `KeyframeOutOfRange`
+check was removed — because §6's "out-of-range keys kept" rule needs it; (2) `split`
+collapses an emptied half to `Static` at the clamp-boundary value (first/last-key
+value) instead of leaving an empty `Keyframed` that renders as the engine fallback.
+Plan 2 (authoring UI) builds on this.
+
 **Goal:** Land the Rust + IPC foundation that lets a keyframe track be written, normalized, persisted (recorded/undoable), and kept content-anchored across trim and split — with no UI yet (dormant infra, verified by `cargo test`).
 
 **Architecture:** A new actor op `update_layer_param_track` (+ batch `update_layer_param_tracks`) writes a whole `Animated<f64>` track to a named param on a layer, mirroring the existing `update_layer_params` wiring at every site. The actor normalizes the incoming track (sort / frame-snap / same-frame dedupe last-write-wins) and rejects empty `Keyframed` tracks, unknown params, and locked targets. A `param_key → &mut Animated<f64>` resolver (the Rust mirror of the frontend descriptor) maps `"x"/"y"/"scale_x"/"scale_y"/"opacity"/"gain_db"/"pan"` to the right field. Keyframe-preserving helpers on `Animated<T>` (`shift_keyframes`, `retain_keyframes`, `normalize_keyframes`) plus a per-kind field-walk (`for_each_animated_f64` / `_rgba`) are reused by `apply_trim_layer` (IN edge: shift all keyframes by `-Δ`) and `split_single_layer` (partition at the cut offset, rebase the right half).
