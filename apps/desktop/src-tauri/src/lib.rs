@@ -129,6 +129,7 @@ pub fn run() {
             commands::add_track,
             commands::separate_audio_to_new_track,
             commands::add_demo_color_layer,
+            commands::add_color_layer,
             commands::add_media_layer,
             commands::add_text_layer,
             commands::add_demo_text_layer,
