@@ -14,6 +14,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   AGENT_SESSION_EVENTS,
+  addColorLayer,
+  addTextLayer,
   agentSessionEnd,
   agentSessionGet,
   deleteLayer,
@@ -1778,11 +1780,22 @@ export function App({ onCloseProject }: AppProps) {
 
 
             <Menu label={t("menu.insert")}>
-              {/* R.10 + 2026-05-16 import revert: "Import Media" moved to
-                  the File menu (it's a file-operation, not a timeline
-                  insert). "Add Track" / "Add color layer" / "Add text
-                  layer" are gone. Only Motifs remain as a true
-                  timeline-insert affordance. */}
+              <MenuItem
+                label={t("actions.add_color_layer")}
+                onSelect={async () => {
+                  const layerId = await addColorLayer({ tStartUs: currentTimeUs });
+                  setPendingRevealLayerId(layerId);
+                  await refresh();
+                }}
+              />
+              <MenuItem
+                label={t("actions.add_text_layer")}
+                onSelect={async () => {
+                  const layerId = await addTextLayer({ tStartUs: currentTimeUs });
+                  setPendingRevealLayerId(layerId);
+                  await refresh();
+                }}
+              />
               <MenuItem
                 label={t("actions.motifs")}
                 hint={t("actions.motifs_hint")}
