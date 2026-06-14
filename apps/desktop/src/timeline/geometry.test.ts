@@ -5,6 +5,8 @@ import {
   formatRulerLabel,
   groupHue,
   indexGroups,
+  keyframeHitTest,
+  keyframeXWithinClip,
   layerOverlapClass,
   trackHeaderControls,
   visualOrderedTracks,
@@ -152,6 +154,38 @@ describe("formatRulerLabel", () => {
   });
   it("formats centiseconds for sub-second steps", () => {
     expect(formatRulerLabel(1.25, 0.5)).toBe("0:01.25");
+  });
+});
+
+describe("keyframeXWithinClip", () => {
+  it("maps a layer-local keyframe time to px within the clip width", () => {
+    expect(keyframeXWithinClip(0, 4_000_000, 200)).toBe(0);
+    expect(keyframeXWithinClip(2_000_000, 4_000_000, 200)).toBe(100);
+    expect(keyframeXWithinClip(4_000_000, 4_000_000, 200)).toBe(200);
+  });
+  it("clamps out-of-range keyframes to the clip bounds", () => {
+    expect(keyframeXWithinClip(-1_000_000, 4_000_000, 200)).toBe(0);
+    expect(keyframeXWithinClip(5_000_000, 4_000_000, 200)).toBe(200);
+  });
+  it("returns 0 for a zero-duration clip", () => {
+    expect(keyframeXWithinClip(1_000_000, 0, 200)).toBe(0);
+  });
+});
+
+describe("keyframeHitTest", () => {
+  const diamonds = [
+    { id: "a", x: 10 },
+    { id: "b", x: 100 },
+  ];
+  it("returns the id whose x is within the radius of pointerX", () => {
+    expect(keyframeHitTest(diamonds, 12, 6)).toBe("a");
+    expect(keyframeHitTest(diamonds, 103, 6)).toBe("b");
+  });
+  it("returns null when no diamond is within the radius", () => {
+    expect(keyframeHitTest(diamonds, 50, 6)).toBeNull();
+  });
+  it("returns the nearest when two are within the radius", () => {
+    expect(keyframeHitTest([{ id: "a", x: 10 }, { id: "b", x: 14 }], 11, 6)).toBe("a");
   });
 });
 
