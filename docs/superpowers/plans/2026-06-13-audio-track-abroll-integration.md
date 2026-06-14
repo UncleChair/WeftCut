@@ -2,6 +2,12 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Status: SHIPPED — all 6 tasks implemented and merged to main.** The
+checkboxes below were never back-ticked during execution; the work landed in
+commits `fc2eaa63` (Task 1), `502a441f` (Task 2), `dc56806e` (Task 3),
+`5ce38614` (Task 4), `4f3a8238` (Task 5), `022672a0` (Task 6). Verified against
+the live tree 2026-06-14. Kept as the execution record.
+
 **Goal:** Make Mute/Solo unambiguous on the kind-agnostic timeline by rendering header controls conditionally on each track's content, and let audio integrate with A/B-roll through an enhanced (filter + sections) peek list rather than new persistent track rows.
 
 **Architecture:** Frontend-only. Two pure, unit-tested classifiers drive the UI: `trackHeaderControls(track)` decides which of eye/M/S a track header shows (reusing the existing `layerOverlapClass`), and `peekCategory(layer)` + `groupPeekItems(items, filter)` drive the peek list's category filter and sections. The Rust mixer (`mix.rs`) and the `TrackSummary`/`LayerSummary` IPC contract are unchanged — `TrackSummary.layers` already carries everything the classifiers need.
