@@ -31,6 +31,10 @@ pub struct ViewState {
     /// back to the frontend default.
     #[serde(default)]
     pub track_heights: TrackHeights,
+    /// Track ids (UUID strings) whose keyframe sub-lanes are expanded.
+    /// Absent / unknown ids are treated as collapsed.
+    #[serde(default)]
+    pub expanded_tracks: Vec<String>,
 }
 
 fn default_px_per_sec() -> f32 {
@@ -42,6 +46,7 @@ impl Default for ViewState {
         Self {
             timeline_px_per_sec: default_px_per_sec(),
             track_heights: TrackHeights::new(),
+            expanded_tracks: Vec::new(),
         }
     }
 }
@@ -150,6 +155,19 @@ mod tests {
         let state = load(tmp.path());
         assert_eq!(state.timeline_px_per_sec, 80.0);
         assert!(state.track_heights.is_empty());
+    }
+
+    #[test]
+    fn expanded_tracks_round_trip_and_default() {
+        let tmp = TempDir::new().unwrap();
+        // missing field defaults to empty
+        fs::write(tmp.path().join(VIEW_FILE), "{}").unwrap();
+        assert!(load(tmp.path()).expanded_tracks.is_empty());
+        // round-trips
+        let mut s = ViewState::default();
+        s.expanded_tracks = vec!["t1".into(), "t2".into()];
+        save(tmp.path(), &s).unwrap();
+        assert_eq!(load(tmp.path()).expanded_tracks, vec!["t1".to_string(), "t2".to_string()]);
     }
 
     #[test]
