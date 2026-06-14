@@ -71,7 +71,7 @@ export function LayerBlock({
   pxPerSec,
   laneHeight,
   slice,
-  isPrimary: _isPrimary,
+  isPrimary,
   isSelected,
   groupId,
   dragState,
@@ -157,15 +157,28 @@ export function LayerBlock({
     if (!selectedKfId || !focusedParam) return;
     const onKey = (ev: KeyboardEvent) => {
       if (ev.key !== "Delete" && ev.key !== "Backspace") return;
+      // A diamond is selected → Delete removes the KEYFRAME, not the layer.
+      // Capture phase + stopImmediatePropagation run this before, and preempt,
+      // the app-level delete-selected-layer shortcut (also a bare-Delete window
+      // listener) so the two can't both fire on one keypress.
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
       const track = readParamTrack(layer.params, focusedParam);
       if (!track) return;
       const desc = animatableParams(layer.kind).find((d) => d.paramKey === focusedParam);
       onCommitParamTrack(layer.id, focusedParam, removeKeyframe(track, selectedKfId, desc?.fallback ?? 0));
       setSelectedKfId(null);
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [selectedKfId, focusedParam, layer.id, layer.kind, layer.params, onCommitParamTrack]);
+
+  // Drop the diamond selection when this layer is no longer the primary
+  // selection, so the capture-phase Delete handler above can't stay armed
+  // after the user moves on (Delete then reverts to deleting the layer).
+  useEffect(() => {
+    if (!isPrimary) setSelectedKfId(null);
+  }, [isPrimary]);
 
   const commitRename = () => {
     const next = draft.trim();
@@ -257,6 +270,10 @@ export function LayerBlock({
   const onLayerPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0 || layer.locked || trackLocked) return;
     e.stopPropagation();
+    // Clicking the clip body (diamond pointerdown stops propagation, so this
+    // only fires off-diamond) deselects any selected keyframe → Delete then
+    // targets the layer again.
+    setSelectedKfId(null);
     // Blade-tool mode hijacks every pointerdown on the layer surface:
     // the click is a cut request, not a select/drag.
     if (bladeMode) {
