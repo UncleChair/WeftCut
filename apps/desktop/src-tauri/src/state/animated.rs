@@ -53,6 +53,68 @@ impl<T: Clone> Animated<T> {
     }
 }
 
+impl<T: Clone> Animated<T> {
+    /// Shift every keyframe's `t_us` by `delta_us` (no-op on `Static`).
+    /// Used by IN-edge trim and split to keep keyframes glued to content.
+    pub fn shift_keyframes(&mut self, delta_us: TimeUs) {
+        if let Animated::Keyframed(kfs) = self {
+            *kfs = kfs
+                .iter()
+                .map(|k| Keyframe {
+                    id: k.id,
+                    t_us: k.t_us + delta_us,
+                    value: k.value.clone(),
+                    interp: k.interp,
+                })
+                .collect();
+        }
+    }
+
+    /// Keep only keyframes whose `t_us` satisfies `keep` (no-op on `Static`).
+    /// Used by split to partition keyframes between the two halves.
+    pub fn retain_keyframes(&mut self, keep: impl Fn(TimeUs) -> bool) {
+        if let Animated::Keyframed(kfs) = self {
+            *kfs = kfs.iter().filter(|k| keep(k.t_us)).cloned().collect();
+        }
+    }
+
+    /// Canonicalize a `Keyframed` track for storage: snap each `t_us` via
+    /// `snap`, stable-sort by `t_us`, and dedupe same-time keys keeping the
+    /// LAST (write order is preserved by the stable sort, so the later input
+    /// keyframe wins). Returns `Err(())` for an empty `Keyframed` track (a
+    /// keyframed property must hold at least one key — the caller turns this
+    /// into a `CommandError`). `Static` is unchanged and always `Ok`.
+    pub fn normalize_keyframes(
+        &mut self,
+        snap: impl Fn(TimeUs) -> TimeUs,
+    ) -> Result<(), ()> {
+        if let Animated::Keyframed(kfs) = self {
+            if kfs.is_empty() {
+                return Err(());
+            }
+            let mut v: Vec<Keyframe<T>> = kfs
+                .iter()
+                .map(|k| Keyframe {
+                    id: k.id,
+                    t_us: snap(k.t_us),
+                    value: k.value.clone(),
+                    interp: k.interp,
+                })
+                .collect();
+            v.sort_by_key(|k| k.t_us); // stable
+            let mut out: Vec<Keyframe<T>> = Vec::with_capacity(v.len());
+            for k in v {
+                match out.last_mut() {
+                    Some(last) if last.t_us == k.t_us => *last = k,
+                    _ => out.push(k),
+                }
+            }
+            *kfs = out.into_iter().collect();
+        }
+        Ok(())
+    }
+}
+
 impl<T: Clone + PartialEq> Animated<T> {
     /// Owner-local intervals where this track is *actually animating*
     /// — adjacent keyframe pairs with continuous-interp on the LEFT
@@ -357,6 +419,69 @@ mod tests {
             kf(10_000_000, 10.0, Interpolation::EaseIn),
         ]);
         assert!((a.value_at(5_000_000, 0.0) - 2.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn shift_keyframes_offsets_all_times() {
+        let mut a = keyframed(vec![
+            kf(1_000_000, 0.0, Interpolation::Linear),
+            kf(3_000_000, 1.0, Interpolation::Linear),
+        ]);
+        a.shift_keyframes(-1_000_000);
+        let Animated::Keyframed(kfs) = &a else { panic!("keyframed") };
+        assert_eq!(kfs[0].t_us, 0);
+        assert_eq!(kfs[1].t_us, 2_000_000);
+    }
+
+    #[test]
+    fn shift_keyframes_noop_on_static() {
+        let mut a: Animated<f64> = Animated::Static(5.0);
+        a.shift_keyframes(1_000_000);
+        assert!(matches!(a, Animated::Static(_)));
+    }
+
+    #[test]
+    fn retain_keyframes_filters_by_time() {
+        let mut a = keyframed(vec![
+            kf(0, 0.0, Interpolation::Linear),
+            kf(2_000_000, 1.0, Interpolation::Linear),
+            kf(5_000_000, 2.0, Interpolation::Linear),
+        ]);
+        a.retain_keyframes(|t| t <= 2_000_000);
+        let Animated::Keyframed(kfs) = &a else { panic!("keyframed") };
+        assert_eq!(kfs.len(), 2);
+        assert_eq!(kfs[1].t_us, 2_000_000);
+    }
+
+    #[test]
+    fn normalize_sorts_snaps_and_dedupes_last_wins() {
+        // Snap = round to 1_000_000 grid. Two keys land on the same snapped
+        // time (900_000 and 1_100_000 -> 1_000_000); last (by input order
+        // after a stable sort) wins.
+        let snap = |t: TimeUs| ((t + 500_000) / 1_000_000) * 1_000_000;
+        let mut a = keyframed(vec![
+            kf(3_000_000, 3.0, Interpolation::Linear),
+            kf(900_000, 1.0, Interpolation::Linear),
+            kf(1_100_000, 2.0, Interpolation::Linear),
+        ]);
+        a.normalize_keyframes(snap).expect("non-empty keyframed normalizes");
+        let Animated::Keyframed(kfs) = &a else { panic!("keyframed") };
+        assert_eq!(kfs.len(), 2, "900k & 1100k collapse to one at 1_000_000");
+        assert_eq!(kfs[0].t_us, 1_000_000);
+        assert_eq!(kfs[0].value, 2.0, "last-write-wins among same-frame keys");
+        assert_eq!(kfs[1].t_us, 3_000_000);
+    }
+
+    #[test]
+    fn normalize_rejects_empty_keyframed() {
+        let mut a: Animated<f64> = Animated::Keyframed(imbl::Vector::new());
+        assert!(a.normalize_keyframes(|t| t).is_err());
+    }
+
+    #[test]
+    fn normalize_noop_on_static() {
+        let mut a: Animated<f64> = Animated::Static(2.0);
+        assert!(a.normalize_keyframes(|t| t).is_ok());
     }
 
     /// Cross-language golden vectors. The SAME fixture is asserted by
