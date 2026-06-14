@@ -1,7 +1,12 @@
 # Audio Tracks × A/B-Roll: Clarifying Mute/Solo Without a Second Track Stack
 
 **Date:** 2026-06-13
-**Status:** Approved design, pending implementation plan
+**Status:** Implemented and merged to main. Plan:
+`docs/superpowers/plans/2026-06-13-audio-track-abroll-integration.md` (all 6
+tasks shipped — `trackHeaderControls` in `timeline/geometry.ts`, conditional
+header + audio glyph in `TrackHeader.tsx`, `panels/peek.ts`
+category/grouping, the `RightPanel.tsx` filter chips + sections, both
+locales). Out-of-scope items below remain deferred.
 
 ## Problem
 

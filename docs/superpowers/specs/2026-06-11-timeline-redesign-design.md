@@ -1,7 +1,14 @@
 # Timeline Redesign: Keyframes, Track Header, Visual Refresh
 
 **Date:** 2026-06-11
-**Status:** Approved design, pending implementation plan
+**Status:** Partially shipped. **Phase 1** (module decompose + neutral-gray
+visual refresh + track-header eye/M/S/lock, incl. Rust `muted`/`solo` +
+`update_track_flags`) is implemented and merged to main; the conditional
+header-control refinement landed alongside it (see the audio-track × A/B-roll
+spec). **Phases 2–3** — the keyframe write path + stopwatch + collapsed-mode
+diamonds (Phase 2) and the expanded-mode property sub-lanes (Phase 3) — are
+**not yet built** (no `update_layer_param_track`, no stopwatch, no
+`KeyframeLane` in the tree). They still need their own implementation plans.
 
 ## Goal
 
