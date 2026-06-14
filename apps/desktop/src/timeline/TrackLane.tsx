@@ -25,6 +25,7 @@ export function TrackLane({
   track,
   pxPerSec,
   height,
+  isExpanded,
   selectedLayerId,
   selectedLayerIds,
   groupByLayerId,
@@ -51,6 +52,9 @@ export function TrackLane({
   track: TrackSummary;
   pxPerSec: number;
   height: number;
+  /// True when this track's keyframe sub-lanes are expanded — collapsed
+  /// in-clip diamonds are hidden (the sub-lanes render them instead).
+  isExpanded: boolean;
   selectedLayerId: string | null;
   selectedLayerIds: Set<string>;
   groupByLayerId: Map<string, string>;
@@ -231,6 +235,7 @@ export function TrackLane({
             trackId={track.id}
             trackKind={track.kind}
             trackLocked={track.locked}
+            isTrackExpanded={isExpanded}
             pxPerSec={pxPerSec}
             laneHeight={height}
             slice={slices.get(layer.id) ?? "full"}

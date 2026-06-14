@@ -18,6 +18,11 @@ import { readParamTrack, animatableParams } from "../keyframe/descriptors";
 import { retimeKeyframe, removeKeyframe, setKeyframeInterp } from "../keyframe/edits";
 import { KeyframeInterpMenu } from "./KeyframeInterpMenu";
 import { transportSeek } from "../state/playbackStore";
+import {
+  selectKeyframe,
+  clearKeyframeSelection,
+  useKeyframeSelectionStore,
+} from "../keyframe/selectionStore";
 
 export type DragKind = "move" | "trim-start" | "trim-end";
 
@@ -69,6 +74,7 @@ export function LayerBlock({
   trackId,
   trackKind,
   trackLocked,
+  isTrackExpanded,
   pxPerSec,
   laneHeight,
   slice,
@@ -93,6 +99,9 @@ export function LayerBlock({
   /// Track-level lock — blocks move/trim/blade on every layer in the
   /// lane, same affordance as the per-layer lock.
   trackLocked: boolean;
+  /// True when this track's keyframe sub-lanes are expanded — collapsed
+  /// in-clip diamonds are hidden (the sub-lanes render them instead).
+  isTrackExpanded: boolean;
   pxPerSec: number;
   laneHeight: number;
   /// V.6 vertical slot. "full" = entire row; "top" = top half (visual
@@ -141,7 +150,13 @@ export function LayerBlock({
   const isEditing = editingLayerId === layer.id;
   const focusedParam = useFocusedParamFor(layer.id);
   const [draft, setDraft] = useState("");
-  const [selectedKfId, setSelectedKfId] = useState<string | null>(null);
+  // Which keyframe on THIS layer+param is selected (null = none). Reads the
+  // shared selection store so collapsed + expanded diamonds agree.
+  const selectedKfId = useKeyframeSelectionStore((s) =>
+    s.selected?.layerId === layer.id && s.selected?.paramKey === focusedParam
+      ? s.selected.kfId
+      : null,
+  );
   const [interpMenu, setInterpMenu] = useState<{ x: number; y: number; kfId: string } | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const dragTUsRef = useRef<number | null>(null);
@@ -169,7 +184,7 @@ export function LayerBlock({
       if (!track) return;
       const desc = animatableParams(layer.kind).find((d) => d.paramKey === focusedParam);
       onCommitParamTrack(layer.id, focusedParam, removeKeyframe(track, selectedKfId, desc?.fallback ?? 0));
-      setSelectedKfId(null);
+      clearKeyframeSelection();
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
@@ -179,7 +194,7 @@ export function LayerBlock({
   // selection, so the capture-phase Delete handler above can't stay armed
   // after the user moves on (Delete then reverts to deleting the layer).
   useEffect(() => {
-    if (!isPrimary) setSelectedKfId(null);
+    if (!isPrimary) clearKeyframeSelection();
   }, [isPrimary]);
 
   const commitRename = () => {
@@ -275,7 +290,7 @@ export function LayerBlock({
     // Clicking the clip body (diamond pointerdown stops propagation, so this
     // only fires off-diamond) deselects any selected keyframe → Delete then
     // targets the layer again.
-    setSelectedKfId(null);
+    clearKeyframeSelection();
     // Blade-tool mode hijacks every pointerdown on the layer surface:
     // the click is a cut request, not a select/drag.
     if (bladeMode) {
@@ -356,6 +371,9 @@ export function LayerBlock({
   // actor re-bases keyframes on commit, so this is just the in-flight preview.
   const clipDurationUs = liveEnd - liveStart;
   const diamonds = (() => {
+    // When the track is expanded the keyframes render in the sub-lanes
+    // below (KeyframeLane), so the collapsed in-clip diamonds are hidden.
+    if (isTrackExpanded) return [] as { id: string; x: number }[];
     if (!focusedParam) return [] as { id: string; x: number }[];
     const track = readParamTrack(layer.params, focusedParam);
     if (!track || track.mode !== "Keyframed") return [];
@@ -497,7 +515,7 @@ export function LayerBlock({
             e.stopPropagation();
             const key = paramTrack.value.find((k) => k.id === hitId);
             if (!key) return;
-            setSelectedKfId(hitId);
+            selectKeyframe({ layerId: layer.id, paramKey: focusedParam, kfId: hitId });
             transportSeek(layer.t_start_us + key.t_us);
             // begin drag-retime
             const startClientX = e.clientX;

@@ -151,8 +151,13 @@ export function Timeline({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
 
-  const { pxPerSec, trackHeights, setTrackHeights, trackHeightsRef } =
-    useTimelineView({ rootRef, tracks, durationUs });
+  const {
+    pxPerSec,
+    trackHeights,
+    setTrackHeights,
+    trackHeightsRef,
+    expandedTracks,
+  } = useTimelineView({ rootRef, tracks, durationUs });
 
   const totalSec = Math.max(durationUs / 1_000_000, 5);
   const widthPx = totalSec * pxPerSec;
@@ -581,6 +586,7 @@ export function Timeline({
                 track={track}
                 pxPerSec={pxPerSec}
                 height={trackHeights[track.id] ?? DEFAULT_TRACK_HEIGHT}
+                isExpanded={expandedTracks.has(track.id)}
                 selectedLayerId={selectedLayerId}
                 selectedLayerIds={selectedLayerIds}
                 groupByLayerId={groupByLayerId}
