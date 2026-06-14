@@ -426,17 +426,35 @@ export async function addMediaLayer(
   });
 }
 
-export async function addTextLayer(
-  trackId: string,
-  content: string,
-  tStartUs: number,
-  durationUs: number,
-): Promise<string> {
+export async function addColorLayer(opts: {
+  tStartUs: number;
+  durationUs?: number;
+  trackId?: string;
+  color?: Rgba;
+  width?: number;
+  height?: number;
+}): Promise<string> {
+  return invoke<string>("add_color_layer", {
+    trackId: opts.trackId,
+    color: opts.color,
+    width: opts.width,
+    height: opts.height,
+    tStartUs: opts.tStartUs,
+    durationUs: opts.durationUs,
+  });
+}
+
+export async function addTextLayer(opts: {
+  tStartUs: number;
+  durationUs?: number;
+  trackId?: string;
+  content?: string;
+}): Promise<string> {
   return invoke<string>("add_text_layer", {
-    trackId,
-    content,
-    tStartUs,
-    durationUs,
+    trackId: opts.trackId,
+    content: opts.content,
+    tStartUs: opts.tStartUs,
+    durationUs: opts.durationUs,
   });
 }
 
