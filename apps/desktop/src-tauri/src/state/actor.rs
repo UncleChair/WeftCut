@@ -4046,6 +4046,28 @@ pub(crate) fn apply_split_layer(
 
 /// Single-layer split helper — the part that doesn't know about groups.
 /// Returns `(left_id, right_id)`; left reuses the original LayerId.
+/// Partition one `Animated<T>` track for a split at clip-local `split_offset`.
+/// `right=false` (LEFT half): keep keys with `t_us <= split_offset`.
+/// `right=true`  (RIGHT half): keep keys with `t_us > split_offset`, rebased
+/// by `-split_offset`. If the half ends up an empty `Keyframed`, collapse it to
+/// `Static` at the clamp-boundary value (LEFT→first key, RIGHT→last key) so the
+/// half keeps the value the clip actually showed instead of the engine fallback.
+fn split_track_half<T: Clone>(a: &mut Animated<T>, split_offset: TimeUs, right: bool) {
+    let boundary = if right { a.last_keyframe_value() } else { a.first_keyframe_value() };
+    if right {
+        a.retain_keyframes(|t| t > split_offset);
+        a.shift_keyframes(-split_offset);
+    } else {
+        a.retain_keyframes(|t| t <= split_offset);
+    }
+    let emptied = matches!(a, Animated::Keyframed(kfs) if kfs.is_empty());
+    if emptied {
+        if let Some(v) = boundary {
+            *a = Animated::Static(v);
+        }
+    }
+}
+
 fn split_single_layer(
     project: &mut Project,
     id: LayerId,
@@ -4083,6 +4105,8 @@ fn split_single_layer(
         }
         _ => {}
     }
+    crate::state::layer::for_each_animated_f64(&mut right.params, |a| split_track_half(a, split_offset, true));
+    crate::state::layer::for_each_animated_rgba(&mut right.params, |a| split_track_half(a, split_offset, true));
     let mut left = original.clone();
     left.t_end_us = at_t_us;
     match &mut left.params {
@@ -4095,6 +4119,8 @@ fn split_single_layer(
         // Motif has no stored src_out (derived from layer width); left half needs no change.
         _ => {}
     }
+    crate::state::layer::for_each_animated_f64(&mut left.params, |a| split_track_half(a, split_offset, false));
+    crate::state::layer::for_each_animated_rgba(&mut left.params, |a| split_track_half(a, split_offset, false));
     let track = &mut project.tracks[ti];
     track.layers[li] = left;
     let insert_at = li + 1;
@@ -9560,6 +9586,21 @@ mod tests {
             .clone()
     }
 
+    fn assert_keyframe_times(
+        layer: &crate::state::layer::Layer,
+        key: &str,
+        expected_ts: &[i64],
+    ) {
+        let mut params = layer.params.clone();
+        let slot = crate::state::layer::resolve_animated_f64_mut(&mut params, key)
+            .expect("param not animatable");
+        let Animated::Keyframed(kfs) = slot else {
+            panic!("expected Keyframed mode for param {key}");
+        };
+        let actual_ts: Vec<i64> = kfs.iter().map(|k| k.t_us).collect();
+        assert_eq!(actual_ts, expected_ts, "keyframe times for {key}");
+    }
+
     fn assert_keyframed_sorted(
         layer: &crate::state::layer::Layer,
         key: &str,
@@ -9642,5 +9683,59 @@ mod tests {
         let snap = handle.snapshot().await;
         let layer = find_layer(&snap, layer_id);
         assert_keyframed_sorted(&layer, "opacity", &[-1_000_000, 1_000_000], &[0.0, 1.0]);
+    }
+
+    #[tokio::test]
+    async fn split_partitions_keyframes_and_rebases_right() {
+        // Motif [0, 5_000_000]; opacity keys at 0, 2_000_000, 3_000_000.
+        let (handle, layer_id) = single_motif_project().await;
+        let track = Animated::Keyframed(
+            vec![
+                Keyframe { id: crate::state::ids::new_id(), t_us: 0, value: 0.0, interp: Interpolation::Linear },
+                Keyframe { id: crate::state::ids::new_id(), t_us: 2_000_000, value: 0.5, interp: Interpolation::Linear },
+                Keyframe { id: crate::state::ids::new_id(), t_us: 3_000_000, value: 1.0, interp: Interpolation::Linear },
+            ].into_iter().collect(),
+        );
+        handle.update_layer_param_track(Actor::User, layer_id, "opacity".into(), track)
+            .await.expect("seed keyframes");
+
+        // Split at composition t=2_500_000 (clip-local offset = 2_500_000).
+        let (left_id, right_id) = handle.split_layer(Actor::User, layer_id, 2_500_000, false)
+            .await.expect("split");
+
+        let snap = handle.snapshot().await;
+        // Left keeps t_us <= 2_500_000 -> [0, 2_000_000].
+        assert_keyframe_times(&find_layer(&snap, left_id), "opacity", &[0, 2_000_000]);
+        // Right keeps t_us > 2_500_000, rebased -2_500_000 -> [500_000].
+        assert_keyframe_times(&find_layer(&snap, right_id), "opacity", &[500_000]);
+    }
+
+    #[tokio::test]
+    async fn split_collapses_empty_half_to_static_boundary_value() {
+        // All opacity keys in the first half; split AFTER them -> right half has
+        // no keys and must collapse to Static at the LAST key's value (0.8),
+        // not the engine fallback.
+        let (handle, layer_id) = single_motif_project().await;
+        let track = Animated::Keyframed(
+            vec![
+                Keyframe { id: crate::state::ids::new_id(), t_us: 0, value: 0.2, interp: Interpolation::Linear },
+                Keyframe { id: crate::state::ids::new_id(), t_us: 1_000_000, value: 0.8, interp: Interpolation::Linear },
+            ].into_iter().collect(),
+        );
+        handle.update_layer_param_track(Actor::User, layer_id, "opacity".into(), track)
+            .await.expect("seed keyframes");
+
+        let (_left_id, right_id) = handle.split_layer(Actor::User, layer_id, 3_000_000, false)
+            .await.expect("split");
+
+        let snap = handle.snapshot().await;
+        let right = find_layer(&snap, right_id);
+        let mut params = right.params.clone();
+        let slot = crate::state::layer::resolve_animated_f64_mut(&mut params, "opacity")
+            .expect("opacity animatable");
+        assert!(
+            matches!(slot, Animated::Static(v) if (*v - 0.8).abs() < 1e-9),
+            "empty right half must collapse to Static at the last key value 0.8, got {slot:?}"
+        );
     }
 }
