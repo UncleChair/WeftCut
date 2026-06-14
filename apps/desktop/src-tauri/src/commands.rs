@@ -1052,6 +1052,50 @@ async fn resolve_overlay_track(
         .map_err(|e: CommandError| e.to_string())
 }
 
+async fn add_color_layer_impl(
+    handle: &ProjectHandle,
+    track_id: Option<String>,
+    color: Option<Rgba>,
+    width: Option<u32>,
+    height: Option<u32>,
+    t_start_us: TimeUs,
+    duration_us: Option<TimeUs>,
+) -> Result<String, String> {
+    let span = duration_us.unwrap_or(DEFAULT_LAYER_DURATION_US).max(100_000);
+    let t_end = t_start_us + span;
+    let snap = handle.snapshot().await;
+    let track = match track_id {
+        Some(s) => Uuid::parse_str(&s).map_err(|e| format!("track_id: {e}"))?,
+        None => resolve_overlay_track(handle, t_start_us, t_end).await?,
+    };
+    let params = LayerParams::Color(ColorParams {
+        color: Animated::Static(color.unwrap_or(Rgba::BLACK)),
+        width: width.unwrap_or(snap.composition.width),
+        height: height.unwrap_or(snap.composition.height),
+    });
+    handle
+        .add_layer(Actor::User, track, params, t_start_us, t_end)
+        .await
+        .map(|id| id.to_string())
+        .map_err(|e: CommandError| e.to_string())
+}
+
+/// UI: insert a solid Color layer. `track_id` omitted → smart Overlay placement
+/// (`resolve_overlay_track`); defaults to a full-frame black matte for the
+/// default duration. Returns the new layer id (the UI selects it for editing).
+#[tauri::command]
+pub async fn add_color_layer(
+    handle: State<'_, ProjectHandle>,
+    track_id: Option<String>,
+    color: Option<Rgba>,
+    width: Option<u32>,
+    height: Option<u32>,
+    t_start_us: TimeUs,
+    duration_us: Option<TimeUs>,
+) -> Result<String, String> {
+    add_color_layer_impl(&handle, track_id, color, width, height, t_start_us, duration_us).await
+}
+
 #[tauri::command]
 pub async fn project_undo(handle: State<'_, ProjectHandle>) -> Result<(), String> {
     handle
@@ -3006,5 +3050,36 @@ mod tests {
         let got = resolve_overlay_track(&h, 1_000_000, 3_000_000).await.unwrap();
         assert_ne!(got, overlay);
         assert_eq!(h.snapshot().await.tracks.len(), before + 1);
+    }
+
+    #[tokio::test]
+    async fn add_color_layer_defaults_full_frame_black_at_playhead() {
+        let h = crate::state::actor::spawn(crate::state::Project::new_blank("test"));
+        let comp = h.snapshot().await.composition.clone();
+        let id = add_color_layer_impl(&h, None, None, None, None, 1_000_000, None)
+            .await
+            .unwrap();
+        let snap = h.snapshot().await;
+        let layer = snap
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .find(|l| l.id.to_string() == id)
+            .expect("inserted color layer");
+        match &layer.params {
+            LayerParams::Color(c) => {
+                assert_eq!(c.width, comp.width);
+                assert_eq!(c.height, comp.height);
+                match &c.color {
+                    Animated::Static(rgba) => {
+                        assert_eq!((rgba.r, rgba.g, rgba.b, rgba.a), (0, 0, 0, 255));
+                    }
+                    _ => panic!("expected static color"),
+                }
+            }
+            _ => panic!("expected Color layer"),
+        }
+        assert!(layer.t_start_us <= 1_000_000);
+        assert!(layer.t_end_us - layer.t_start_us >= 4_900_000); // ~5s default
     }
 }
