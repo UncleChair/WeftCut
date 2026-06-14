@@ -1,8 +1,9 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { analyzeSelf } from "../../lib/analyze.mjs";
 import { fixture, tmpOut, tmpProjectParent } from "../../helpers/media.mjs";
-import { newProject } from "../../helpers/app.mjs";
+import { newProject, waitForHook } from "../../helpers/app.mjs";
 import { driveExport } from "../../helpers/export.mjs";
+import { waitPreviewBridge } from "../../helpers/preview.mjs";
 
 // Keyframe authoring → export e2e gate.
 //
@@ -180,5 +181,150 @@ describe("keyframe authoring end-to-end (opacity ramp → export, real WebView2)
       );
     }
     expect(report.pass).toBe(true);
+  });
+});
+
+// Keyframe sub-lanes (Timeline Phase 3) — the view/interaction layer on top of
+// the same `update_layer_param_track` write path the authoring gate exercises.
+// Cheap (no export), so it joins the keyframe suite file per the README's
+// balanced-merge rule.
+//
+//   1. Place a VideoClip and write a 2-key opacity AnimTrack on it.
+//   2. Reveal its (role-null) track — A/B-roll hides overlay tracks until
+//      revealed, so the header twirl + sub-lane DOM only mount after reveal.
+//   3. The track's header twirl enables (it now has a keyframed property);
+//      clicking it expands a sub-lane with one .kf-sublane-diamond per keyframe.
+//   4. Clicking the late diamond selects it (amber `is-selected`) AND seeks the
+//      transport to t_start + kf.t_us — the red playhead moves to the diamond's
+//      absolute x (both are absolute-time * pxPerSec, so the two `left`s match).
+describe("keyframe sub-lanes (expand → diamonds → click-seek, real WebView2)", function () {
+  before(function () {
+    if (!existsSync(SOURCE)) {
+      console.warn(`[e2e] SKIP: source fixture not found at ${SOURCE} (set WEFTCUT_TEST_MEDIA)`);
+      this.skip();
+    }
+    mkdirSync(PROJECT_PARENT, { recursive: true });
+  });
+
+  it("twirl expands a keyframed track into a 2-diamond sub-lane; click selects + seeks", async function () {
+    this.timeout(120000);
+
+    // Two keyframes: 0.0 @ t=0 → 1.0 @ t=1s. Both well inside the ~3s clip, so
+    // neither is out-of-range and the late diamond's seek target (1s) stays
+    // within the composition (no playhead clamp at the boundary).
+    const KF_LATE_US = 1_000_000;
+
+    // ── 1. Create a blank 1080p 30fps project and enter the editor ─────────
+    await newProject({
+      parentFolder: PROJECT_PARENT,
+      name: "e2e-kf-sublanes-" + Date.now(),
+      canvas: { width: 1920, height: 1080, fpsNum: COMP_FPS_NUM, fpsDen: COMP_FPS_DEN },
+    });
+    await waitForHook("importAndPlaceMedia");
+    await waitForHook("revealLayer");
+
+    // ── 2. Import + place the clip; capture its layerId ────────────────────
+    const r2 = await browser.executeAsync((media, done) => {
+      window.__weftcutTest
+        .importAndPlaceMedia({ mediaAbsPath: media, tStartUs: 0 })
+        .then((result) => done({ ok: true, ...result }))
+        .catch((e) => done({ ok: false, error: String(e) }));
+    }, SOURCE);
+    if (!r2.ok) throw new Error("importAndPlaceMedia failed: " + r2.error);
+    const layerId = r2.layerId;
+    console.log(`[e2e] placed VideoClip layerId=${layerId}`);
+
+    // ── 3. Write a 2-key opacity track on the placed layer ─────────────────
+    const r3 = await browser.executeAsync((lid, lateUs, done) => {
+      const track = {
+        mode: "Keyframed",
+        value: [
+          { id: crypto.randomUUID(), t_us: 0, value: 0.0, interp: { kind: "Linear" } },
+          { id: crypto.randomUUID(), t_us: lateUs, value: 1.0, interp: { kind: "Linear" } },
+        ],
+      };
+      window.__TAURI_INTERNALS__
+        .invoke("update_layer_param_track", { layerId: lid, paramKey: "opacity", track })
+        .then(() => done({ ok: true }))
+        .catch((e) => done({ ok: false, error: String(e) }));
+    }, layerId, KF_LATE_US);
+    if (!r3.ok) throw new Error("update_layer_param_track failed: " + r3.error);
+    console.log("[e2e] opacity track written (0.0@0 → 1.0@1s)");
+
+    // ── 4. Reveal the imported clip's role-null track so its header twirl +
+    //       sub-lane DOM mount (hidden by default in the A/B-roll view) ──────
+    await browser.execute((lid) => window.__weftcutTest.revealLayer({ layerId: lid }), layerId);
+
+    // ── 5. The keyframed track's header twirl becomes enabled (bridge sync).
+    // Exactly one track has a keyframed layer → exactly one enabled twirl.
+    await browser.waitUntil(
+      async () =>
+        (await browser.execute(
+          () => document.querySelectorAll('button[aria-expanded]:not([disabled])').length,
+        )) >= 1,
+      { timeout: 15000, timeoutMsg: "keyframed track's twirl never enabled (project:changed bridge?)" },
+    );
+
+    // ── 6. Click the twirl → expand the sub-lanes ──────────────────────────
+    await browser.execute(() => {
+      const btn = document.querySelector('button[aria-expanded]:not([disabled])');
+      if (!btn) throw new Error("no enabled twirl found");
+      btn.click();
+    });
+
+    // ── 7. The opacity sub-lane renders with exactly 2 diamonds ────────────
+    await browser.waitUntil(
+      async () =>
+        (await browser.execute(() => document.querySelectorAll(".kf-sublane-diamond").length)) === 2,
+      { timeout: 10000, timeoutMsg: "expected 2 .kf-sublane-diamond after expand" },
+    );
+
+    // Ensure the preview transport is live so the diamond's transportSeek moves
+    // the playhead (the bridge registers on PixiPreview mount).
+    await waitPreviewBridge();
+
+    // ── 8. Click the LATE (rightmost) diamond → select + seek ──────────────
+    const clicked = await browser.execute(() => {
+      const diamonds = [...document.querySelectorAll(".kf-sublane-diamond")];
+      const late = diamonds
+        .map((el) => ({ el, left: parseFloat(el.style.left) || 0 }))
+        .sort((a, b) => b.left - a.left)[0].el;
+      const kfId = late.getAttribute("data-kf-id");
+      const leftPx = parseFloat(late.style.left);
+      const rect = late.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      // Single click (no movement) → select + seek, no retime drag.
+      late.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 1, clientX: cx, clientY: cy }));
+      window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, button: 0, pointerId: 1, clientX: cx, clientY: cy }));
+      return { kfId, leftPx };
+    });
+    console.log(`[e2e] clicked late diamond kfId=${clicked.kfId} leftPx=${clicked.leftPx}`);
+
+    // 8a. The clicked diamond is now selected (amber).
+    await browser.waitUntil(
+      async () =>
+        (await browser.execute(
+          (id) => !!document.querySelector(`.kf-sublane-diamond[data-kf-id="${id}"].is-selected`),
+          clicked.kfId,
+        )) === true,
+      { timeout: 5000, timeoutMsg: "clicked diamond never got .is-selected" },
+    );
+
+    // 8b. The playhead seeked to the diamond's absolute time → its `left`
+    // (currentTimeUs * pxPerSec) matches the diamond's `left`. The playhead
+    // line is the element with the red-gradient (`from-red-300`) class.
+    await browser.waitUntil(
+      async () => {
+        const playLeft = await browser.execute(() => {
+          const ph = document.querySelector('[class*="from-red-300"]');
+          return ph ? parseFloat(ph.style.left) : null;
+        });
+        return playLeft != null && !Number.isNaN(playLeft) && Math.abs(playLeft - clicked.leftPx) <= 2;
+      },
+      { timeout: 8000, timeoutMsg: `playhead never seeked to the diamond x (${clicked.leftPx}px)` },
+    );
+
+    console.log("[e2e] sub-lane: 2 diamonds rendered; click selected + seeked ✔");
   });
 });
