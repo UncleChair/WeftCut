@@ -1,27 +1,25 @@
-import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { analyze } from "../lib/analyze.mjs";
+import { analyze } from "../../lib/analyze.mjs";
+import { newProject, waitForHook } from "../../helpers/app.mjs";
+import { driveExport } from "../../helpers/export.mjs";
+import { MEDIA_DIR, fixture, tmpOut, tmpProjectParent } from "../../helpers/media.mjs";
 
 // Runtime smoke for the export-range + audio-settings feature, end-to-end
 // through the real WebView2 + real ffmpeg mux. Reuses the per-second
 // tone-marker audio fixture (F_k = 400 + 120k Hz at output second k) so the
 // `media_conformance --audio` Goertzel can read which source-second each
 // output-second carries — the key to proving the audio trim.
-const MEDIA_DIR =
-  process.env.WEFTCUT_TEST_MEDIA ||
-  path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "media");
-const PROJECT_PARENT = path.resolve(os.tmpdir(), "weftcut-e2e-range-audio-proj");
+const PROJECT_PARENT = tmpProjectParent("weftcut-e2e-range-audio-proj");
 
-// The 30fps tone-marker fixture (shared with audio_conformance). Output fps
+// The 30fps tone-marker fixture (shared with audio/audio.e2e.js). Output fps
 // follows the 30fps composition, so source second k -> tone F_k = 400 + 120k.
-const SOURCE = path.resolve(MEDIA_DIR, "test_1080p_30fps_audio.mp4");
+const SOURCE = fixture("test_1080p_30fps_audio.mp4");
 // Burned-in-counter video fixture (no audio) — used for the software-encode
 // case, where the check is video frame-alignment + SSIM (hwAccel only affects
 // the video encoder; audio is Rust-side and unaffected).
-const VIDEO_SOURCE = path.resolve(MEDIA_DIR, "test_1080p_30fps.mp4");
+const VIDEO_SOURCE = fixture("test_1080p_30fps.mp4");
 
 function toneHz(second) {
   return 400 + 120 * second;
@@ -30,104 +28,34 @@ function toneHz(second) {
 /// Boot a fresh 30fps project at `<PROJECT_PARENT>/<namePrefix><now>/` and
 /// wait for the editor hooks to mount. Returns the project directory.
 async function bootProject(namePrefix) {
-  await browser.waitUntil(
-    async () =>
-      (await browser.execute(
-        () => typeof window.__weftcutTest?.newProjectAndEnter === "function",
-      )) === true,
-    { timeout: 30000, timeoutMsg: "newProjectAndEnter never mounted" },
-  );
   const name = namePrefix + Date.now();
-  const r1 = await browser.executeAsync((parent, projName, done) => {
-    window.__weftcutTest
-      .newProjectAndEnter({
-        parentFolder: parent,
-        name: projName,
-        canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
-      })
-      .then(() => done({ ok: true }))
-      .catch((e) => done({ ok: false, error: String(e) }));
-  }, PROJECT_PARENT, name);
-  if (!r1.ok) throw new Error("newProjectAndEnter failed: " + r1.error);
-
-  await browser.waitUntil(
-    async () =>
-      (await browser.execute(
-        () => typeof window.__weftcutTest?.exportClip === "function",
-      )) === true,
-    { timeout: 30000, timeoutMsg: "exportClip never mounted" },
-  );
+  await newProject({
+    parentFolder: PROJECT_PARENT,
+    name,
+    canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
+  });
+  await waitForHook("exportClip");
   return path.join(PROJECT_PARENT, name);
 }
 
-/// Poll an export started via `window.__e2eExportDone` to settlement,
-/// surfacing the last export-state snapshot in any failure message.
-async function waitExportSettled(timeout = 170000) {
-  let lastFrame = -1;
-  let lastKind = null;
-  let lastDetail = null;
-  let settled = null;
-  const kindsSeen = new Set();
-  try {
-    await browser.waitUntil(
-      async () => {
-        const snap = await browser.execute(() => {
-          const st = window.__weftcutExportState;
-          return {
-            done: window.__e2eExportDone,
-            kind: st?.kind ?? null,
-            detail: st?.detail ?? null,
-            frame: st?.progress?.frame ?? null,
-          };
-        });
-        if (snap.frame != null && snap.frame !== lastFrame) lastFrame = snap.frame;
-        if (snap.kind != null) { lastKind = snap.kind; kindsSeen.add(snap.kind); }
-        if (snap.detail != null) lastDetail = snap.detail;
-        if (snap.done) { settled = snap.done; return true; }
-        return false;
-      },
-      { timeout, interval: 1000 },
-    );
-  } catch (e) {
-    throw new Error(
-      `export never settled (last frame=${lastFrame}, kind=${lastKind}, detail=${lastDetail}): ${e.message}`,
-    );
-  }
-  if (!settled.ok) {
-    throw new Error(
-      `export failed: ${settled.error} | exportState kind=${lastKind} detail=${lastDetail} (last frame=${lastFrame})`,
-    );
-  }
-  return { settled, lastKind, lastDetail, kindsSeen };
-}
-
 /// Boot a fresh 30fps project, then drive `exportClip` and wait for it to
-/// settle. Returns { settled, perf, lastKind, lastDetail }. `perf` is the
+/// settle. Returns { done, perf, lastKind, lastDetail }. `perf` is the
 /// worker's `window.__weftcutExportPerf` (E2E-only), carrying `totalFrames`.
 async function bootAndExport({ output, settings, range, source = SOURCE }) {
   await bootProject("e2e-range-audio-");
 
-  await browser.execute(
-    (media, out, s, rng) => {
-      window.__e2eExportDone = null;
-      window.__weftcutExportPerf = null;
-      const args = { mediaAbsPath: media, outputAbsPath: out };
-      if (s) args.settings = s;
-      if (rng) args.range = rng;
-      window.__weftcutTest
-        .exportClip(args)
-        .then(() => { window.__e2eExportDone = { ok: true }; })
-        .catch((e) => { window.__e2eExportDone = { ok: false, error: String(e) }; });
-    },
-    source,
-    output,
-    settings ?? null,
-    range ?? null,
-  );
+  const args = { mediaAbsPath: source, outputAbsPath: output };
+  if (settings) args.settings = settings;
+  if (range) args.range = range;
 
-  const { settled, lastKind, lastDetail } = await waitExportSettled();
+  const r = await driveExport(args);
+  if (!r.done.ok) {
+    throw new Error(
+      `export failed: ${r.done.error} | exportState kind=${r.lastKind} detail=${r.lastDetail} (last frame=${r.lastFrame})`,
+    );
+  }
   const perf = await browser.execute(() => window.__weftcutExportPerf ?? null);
-  return { settled, perf, lastKind, lastDetail };
+  return { settled: r.done, perf, lastKind: r.lastKind, lastDetail: r.lastDetail };
 }
 
 /// Decode a file's audio to mono s16le PCM and return it as a Float32Array in
@@ -227,7 +155,7 @@ describe("export range + audio settings (real WebView2)", function () {
     // output-second 0 should carry the source's 1 s tone (520 Hz), second 1 the
     // 2 s tone (640 Hz) — proving the audio was trimmed to the In point and
     // rebased to PTS 0, not exported from the start.
-    const output = path.resolve(os.tmpdir(), "weftcut-e2e-range.mp4");
+    const output = tmpOut("weftcut-e2e-range.mp4");
     rmSync(output, { force: true });
 
     const { perf } = await bootAndExport({
@@ -252,7 +180,7 @@ describe("export range + audio settings (real WebView2)", function () {
   it("Opus-in-MKV export is produced and stays audio-faithful", async function () {
     // Whole-clip export to MKV with the Opus audio codec: exercises the real
     // libopus encode -> .mka -> stream-copy into .mkv path end to end.
-    const output = path.resolve(os.tmpdir(), "weftcut-e2e-opus.mkv");
+    const output = tmpOut("weftcut-e2e-opus.mkv");
     rmSync(output, { force: true });
 
     await bootAndExport({
@@ -270,7 +198,7 @@ describe("export range + audio settings (real WebView2)", function () {
   });
 
   it("mute export produces a video file with no audio track", async function () {
-    const output = path.resolve(os.tmpdir(), "weftcut-e2e-mute.mp4");
+    const output = tmpOut("weftcut-e2e-mute.mp4");
     rmSync(output, { force: true });
 
     // bootAndExport asserts the file was written (the hook's exists() check).
@@ -292,7 +220,7 @@ describe("export range + audio settings (real WebView2)", function () {
     // a keyframe every round(fps×2) frames, so ffprobe should see keyframes
     // ~2 s apart — clearly not the 1 s default. Proves the setting reaches the
     // real encoder, not just the unit-level gopFrames math.
-    const output = path.resolve(os.tmpdir(), "weftcut-e2e-gop.mp4");
+    const output = tmpOut("weftcut-e2e-gop.mp4");
     rmSync(output, { force: true });
 
     await bootAndExport({ output, settings: { keyframeIntervalSec: 2 } });
@@ -319,13 +247,13 @@ describe("export range + audio settings (real WebView2)", function () {
     // store path), re-conform it, and hold the export until it lands; it must
     // NOT touch B — the Rust mix plan window-skips layers the export never
     // reads, where it previously hard-errored ConformMissing project-wide.
-    const WAV = path.resolve(MEDIA_DIR, "test_tones_10s.wav");
-    const MP3 = path.resolve(MEDIA_DIR, "test_tones_10s.mp3");
+    const WAV = fixture("test_tones_10s.wav");
+    const MP3 = fixture("test_tones_10s.mp3");
     if (!existsSync(WAV) || !existsSync(MP3)) {
       console.warn(`[e2e] SKIP: tone fixtures not found under ${MEDIA_DIR}`);
       this.skip();
     }
-    const output = path.resolve(os.tmpdir(), "weftcut-e2e-range-conform.mp4");
+    const output = tmpOut("weftcut-e2e-range-conform.m4a");
     rmSync(output, { force: true });
 
     const projDir = await bootProject("e2e-range-conform-");
@@ -376,19 +304,20 @@ describe("export range + audio settings (real WebView2)", function () {
     }
     expect(conformsIn()).toHaveLength(0);
 
-    // Range export [0, 2s) — covers only the WAV.
-    await browser.execute(
-      (out, rng) => {
-        window.__e2eExportDone = null;
-        window.__weftcutTest
-          .exportTimeline({ outputAbsPath: out, range: rng })
-          .then(() => { window.__e2eExportDone = { ok: true }; })
-          .catch((e) => { window.__e2eExportDone = { ok: false, error: String(e) }; });
+    // Audio-only range export [0, 2s) — covers only the WAV. The project has
+    // only Audio layers, so the export is audio-only (`includeVideo:false`); a
+    // video export would be correctly rejected by the no-material guard.
+    const r = await driveExport(
+      {
+        outputAbsPath: output,
+        range: { startUs: 0, endUs: 2_000_000 },
+        settings: { includeVideo: false, includeAudio: true },
       },
-      output,
-      { startUs: 0, endUs: 2_000_000 },
+      { hook: "exportTimeline" },
     );
-    const { kindsSeen } = await waitExportSettled();
+    if (!r.done.ok) throw new Error(`range-conform export failed: ${r.done.error}`);
+    const kindsSeen = new Set();
+    if (r.lastKind != null) kindsSeen.add(r.lastKind);
     console.log(
       `[e2e] export state kinds seen: ${JSON.stringify([...kindsSeen])}; ` +
         `conform files after export: ${JSON.stringify(conformsIn())}`,
@@ -418,7 +347,7 @@ describe("export range + audio settings (real WebView2)", function () {
       console.warn(`[e2e] SKIP: video source not found at ${VIDEO_SOURCE}`);
       this.skip();
     }
-    const output = path.resolve(os.tmpdir(), "weftcut-e2e-sw.mp4");
+    const output = tmpOut("weftcut-e2e-sw.mp4");
     rmSync(output, { force: true });
 
     await bootAndExport({ output, source: VIDEO_SOURCE, settings: { hwAccel: "software" } });

@@ -46,10 +46,10 @@ export const MATRIX = [
   // (resolution-derived ten-bit high-water clamps to its entry floor).
   { gradientH2644k: true },
   // still-image chart set (png/jpg/webp/bmp/gif/tiff + manifest, one flag) —
-  // image_support.e2e.js. The png is the canonical existence check; the
+  // ui/layers.e2e.js. The png is the canonical existence check; the
   // generator writes the whole set in one run.
   { imageset: true },
-  // audio-ONLY per-second tone files — audio_formats.e2e.js. The mp3 embeds
+  // audio-ONLY per-second tone files — audio/audio.e2e.js. The mp3 embeds
   // attached_pic cover art (regression for the still-image/cover-art
   // classification fix in probe::detect_kind).
   { audiotones: true, aformat: "wav" },
@@ -58,7 +58,7 @@ export const MATRIX = [
   { audiotones: true, aformat: "m4a" },
   { audiotones: true, aformat: "ogg" },
   // animated gif — classifies as VIDEO (multi-frame) and routes through the
-  // full-proxy pipeline; image_support.e2e.js asserts that routing.
+  // full-proxy pipeline; ui/layers.e2e.js asserts that routing.
   { fps: 10, format: "gif" },
 ];
 

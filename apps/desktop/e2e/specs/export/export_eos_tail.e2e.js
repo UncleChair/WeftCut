@@ -1,15 +1,12 @@
-import os from "node:os";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
-import { analyze } from "../lib/analyze.mjs";
+import { analyze } from "../../lib/analyze.mjs";
+import { newProject } from "../../helpers/app.mjs";
+import { driveExport } from "../../helpers/export.mjs";
+import { fixture, tmpOut, tmpProjectParent } from "../../helpers/media.mjs";
 
-const MEDIA_DIR =
-  process.env.WEFTCUT_TEST_MEDIA ||
-  path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "media");
-const SOURCE = path.resolve(MEDIA_DIR, "test_1080p_30fps_eostail.mp4");
-const OUTPUT = path.resolve(os.tmpdir(), "weftcut-e2e-eostail-out.mp4");
-const PROJECT_PARENT = path.resolve(os.tmpdir(), "weftcut-e2e-eostail-proj");
+const SOURCE = fixture("test_1080p_30fps_eostail.mp4");
+const OUTPUT = tmpOut("weftcut-e2e-eostail-out.mp4");
+const PROJECT_PARENT = tmpProjectParent("weftcut-e2e-eostail-proj");
 
 // Export EOS-tail gate. The plain conformance fixture can never catch the
 // end-of-stream deadlock class: its x264-default GOPs put the last keyframe
@@ -49,92 +46,20 @@ describe("EOS-tail export (final GOP spans chunks + audio overhang, real WebView
   });
 
   it("completes the export and keeps the drained tail frame-aligned", async () => {
-    await browser.waitUntil(
-      async () =>
-        (await browser.execute(
-          () => typeof window.__weftcutTest?.newProjectAndEnter === "function",
-        )) === true,
-      { timeout: 30000, timeoutMsg: "newProjectAndEnter never mounted" },
-    );
-
-    const r1 = await browser.executeAsync((parent, done) => {
-      window.__weftcutTest
-        .newProjectAndEnter({
-          parentFolder: parent,
-          name: "e2e-eostail-" + Date.now(),
-          canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
-        })
-        .then(() => done({ ok: true }))
-        .catch((e) => done({ ok: false, error: String(e) }));
-    }, PROJECT_PARENT);
-    if (!r1.ok) throw new Error("newProjectAndEnter failed: " + r1.error);
-
-    await browser.waitUntil(
-      async () =>
-        (await browser.execute(
-          () => typeof window.__weftcutTest?.exportClip === "function",
-        )) === true,
-      { timeout: 30000, timeoutMsg: "exportClip never mounted (editor didn't load?)" },
-    );
+    await newProject({
+      parentFolder: PROJECT_PARENT,
+      name: "e2e-eostail-" + Date.now(),
+      canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
+    });
 
     // Fire-and-forget export; poll the mirrored frame counter so a regression
     // hang reports its exact stall frame (the EOS deadlock class pins it at a
     // chunk boundary — frame 180 here — instead of timing out blind).
-    await browser.execute(
-      (media, output) => {
-        window.__e2eExportDone = null;
-        window.__weftcutTest
-          .exportClip({ mediaAbsPath: media, outputAbsPath: output })
-          .then(() => {
-            window.__e2eExportDone = { ok: true };
-          })
-          .catch((e) => {
-            window.__e2eExportDone = { ok: false, error: String(e) };
-          });
-      },
-      SOURCE,
-      OUTPUT,
+    const r = await driveExport(
+      { mediaAbsPath: SOURCE, outputAbsPath: OUTPUT },
+      { label: "export_eos_tail" },
     );
-
-    let lastFrame = -1;
-    let lastKind = null;
-    let settled = null;
-    try {
-      await browser.waitUntil(
-        async () => {
-          const snap = await browser.execute(() => {
-            const st = window.__weftcutExportState;
-            return {
-              done: window.__e2eExportDone,
-              kind: st?.kind ?? null,
-              phase: st?.progress?.phase ?? null,
-              frame: st?.progress?.frame ?? null,
-            };
-          });
-          if (snap.frame != null && snap.frame !== lastFrame) {
-            lastFrame = snap.frame;
-            console.log(
-              `[e2e] export ${snap.kind}/${snap.phase ?? "-"} frame=${snap.frame}`,
-            );
-          }
-          if (snap.kind && snap.kind !== lastKind) {
-            lastKind = snap.kind;
-            console.log(`[e2e] export phase -> ${snap.kind}`);
-          }
-          if (snap.done) {
-            settled = snap.done;
-            return true;
-          }
-          return false;
-        },
-        { timeout: 170000, interval: 1000 },
-      );
-    } catch (e) {
-      throw new Error(
-        `export never settled (last kind=${lastKind}, last frame=${lastFrame}): ${e.message}`,
-      );
-    }
-    if (!settled.ok) throw new Error("exportClip failed: " + settled.error);
+    if (!r.done.ok) throw new Error("exportClip failed: " + r.done.error);
 
     // The audio overhang must have armed: an 11s composition at 30fps plans
     // 330 output frames (300 video + 30 clamp-held). 300 here would mean the

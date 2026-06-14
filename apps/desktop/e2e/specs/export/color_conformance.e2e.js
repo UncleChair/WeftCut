@@ -1,17 +1,13 @@
-import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { existsSync, mkdirSync, rmSync, readFileSync } from "node:fs";
-import { analyzeColor } from "../lib/analyze.mjs";
+import { analyzeColor } from "../../lib/analyze.mjs";
+import { newProject } from "../../helpers/app.mjs";
+import { driveExport } from "../../helpers/export.mjs";
+import { MEDIA_DIR, fixture, tmpOut, tmpProjectParent } from "../../helpers/media.mjs";
 
-const MEDIA =
-  process.env.WEFTCUT_TEST_MEDIA ||
-  path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "media");
-const MANIFEST = path.resolve(MEDIA, "color_manifest.json");
-const BASELINE_PATH = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "color_baseline.json",
-);
-const PROJ = path.resolve(os.tmpdir(), "weftcut-e2e-color-proj");
+const MANIFEST = fixture("color_manifest.json");
+const BASELINE_PATH = path.resolve(MEDIA_DIR, "..", "color_baseline.json");
+const PROJ = tmpProjectParent("weftcut-e2e-color-proj");
 
 // Axis-A color conformance gate. Per encoding, export 1:1 and measure app-only
 // color loss under a PERCEPTUAL metric: the analyzer decodes the OUTPUT by its
@@ -59,8 +55,8 @@ describe("color round-trip conformance (real WebView2)", function () {
   });
 
   for (const enc of Object.keys(DECODE)) {
-    const source = path.resolve(MEDIA, `test_1080p_color_${enc}.mp4`);
-    const output = path.resolve(os.tmpdir(), `weftcut-e2e-color-${enc}.mp4`);
+    const source = fixture(`test_1080p_color_${enc}.mp4`);
+    const output = tmpOut(`weftcut-e2e-color-${enc}.mp4`);
 
     it(`${enc} color round-trip`, async function () {
       if (!existsSync(source)) {
@@ -76,75 +72,17 @@ describe("color round-trip conformance (real WebView2)", function () {
       }
       rmSync(output, { force: true });
 
-      await browser.waitUntil(
-        async () =>
-          (await browser.execute(
-            () => typeof window.__weftcutTest?.newProjectAndEnter === "function",
-          )) === true,
-        { timeout: 30000, timeoutMsg: "newProjectAndEnter never mounted" },
-      );
-      const r1 = await browser.executeAsync((parent, done) => {
-        window.__weftcutTest
-          .newProjectAndEnter({
-            parentFolder: parent,
-            name: "e2e-color-" + Date.now(),
-            canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
-          })
-          .then(() => done({ ok: true }))
-          .catch((e) => done({ ok: false, error: String(e) }));
-      }, PROJ);
-      if (!r1.ok) throw new Error("newProjectAndEnter failed: " + r1.error);
+      await newProject({
+        parentFolder: PROJ,
+        name: "e2e-color-" + Date.now(),
+        canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
+      });
 
-      await browser.waitUntil(
-        async () =>
-          (await browser.execute(
-            () => typeof window.__weftcutTest?.exportClip === "function",
-          )) === true,
-        { timeout: 30000, timeoutMsg: "exportClip never mounted" },
+      const r = await driveExport(
+        { mediaAbsPath: source, outputAbsPath: output },
+        { label: "color_conformance" },
       );
-
-      await browser.execute(
-        (media, out) => {
-          window.__e2eExportDone = null;
-          window.__weftcutTest
-            .exportClip({ mediaAbsPath: media, outputAbsPath: out })
-            .then(() => {
-              window.__e2eExportDone = { ok: true };
-            })
-            .catch((e) => {
-              window.__e2eExportDone = { ok: false, error: String(e) };
-            });
-        },
-        source,
-        output,
-      );
-
-      let lastFrame = -1;
-      let settled = null;
-      try {
-        await browser.waitUntil(
-          async () => {
-            const snap = await browser.execute(() => {
-              const st = window.__weftcutExportState;
-              return {
-                done: window.__e2eExportDone,
-                frame: st?.progress?.frame ?? null,
-                detail: st?.detail ?? null,
-              };
-            });
-            if (snap.frame != null && snap.frame !== lastFrame) lastFrame = snap.frame;
-            if (snap.done) {
-              settled = snap.done;
-              return true;
-            }
-            return false;
-          },
-          { timeout: 170000, interval: 1000 },
-        );
-      } catch (e) {
-        throw new Error(`export never settled (last frame=${lastFrame}): ${e.message}`);
-      }
-      if (!settled.ok) throw new Error(`exportClip failed (${enc}): ` + settled.error);
+      if (!r.done.ok) throw new Error(`exportClip failed (${enc}): ` + r.done.error);
 
       const [im, ir] = DECODE[enc];
       const report = analyzeColor({ output, source, manifest: MANIFEST, inMatrix: im, inRange: ir, sample: 10 });
