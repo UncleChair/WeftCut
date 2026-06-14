@@ -69,16 +69,6 @@ pub enum ValidationError {
         media_duration: TimeUs,
     },
 
-    #[error(
-        "layer {layer} keyframe {keyframe} at t={t}us is outside [0, duration={duration}us]"
-    )]
-    KeyframeOutOfRange {
-        layer: LayerId,
-        keyframe: KeyframeId,
-        t: TimeUs,
-        duration: TimeUs,
-    },
-
     #[error("duplicate layer id {layer}")]
     DuplicateLayerId { layer: LayerId },
 
