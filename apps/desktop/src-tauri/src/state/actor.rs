@@ -405,6 +405,10 @@ pub enum CommandError {
     HistoryLocked { reason: String },
     #[error("project invariant violated: {0}")]
     ValidationFailed(ValidationError),
+    #[error("keyframe track on layer {layer} param `{param_key}` is empty")]
+    EmptyKeyframeTrack { layer: LayerId, param_key: String },
+    #[error("param `{param_key}` is not animatable on layer {layer}")]
+    UnknownKeyframeParam { layer: LayerId, param_key: String },
 }
 
 impl From<ValidationError> for CommandError {
@@ -493,6 +497,19 @@ enum Command {
     UpdateLayerParams {
         id: LayerId,
         patch: LayerParamsPatch,
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
+    UpdateLayerParamTrack {
+        id: LayerId,
+        param_key: String,
+        track: Animated<f64>,
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
+    UpdateLayerParamTracks {
+        id: LayerId,
+        entries: Vec<(String, Animated<f64>)>,
         actor: Actor,
         reply: oneshot::Sender<Result<(), CommandError>>,
     },
@@ -1061,6 +1078,46 @@ impl ProjectHandle {
             .send(Command::UpdateLayerParams {
                 id,
                 patch,
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    pub async fn update_layer_param_track(
+        &self,
+        actor: Actor,
+        id: LayerId,
+        param_key: String,
+        track: Animated<f64>,
+    ) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::UpdateLayerParamTrack {
+                id,
+                param_key,
+                track,
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    pub async fn update_layer_param_tracks(
+        &self,
+        actor: Actor,
+        id: LayerId,
+        entries: Vec<(String, Animated<f64>)>,
+    ) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::UpdateLayerParamTracks {
+                id,
+                entries,
                 actor,
                 reply,
             })
@@ -1671,6 +1728,25 @@ impl ProjectActor {
                 let result = self.do_update_layer_params(id, patch, actor);
                 let _ = reply.send(result);
             }
+            Command::UpdateLayerParamTrack {
+                id,
+                param_key,
+                track,
+                actor,
+                reply,
+            } => {
+                let result = self.do_update_layer_param_track(id, param_key, track, actor);
+                let _ = reply.send(result);
+            }
+            Command::UpdateLayerParamTracks {
+                id,
+                entries,
+                actor,
+                reply,
+            } => {
+                let result = self.do_update_layer_param_tracks(id, entries, actor);
+                let _ = reply.send(result);
+            }
             Command::MoveLayer {
                 id,
                 new_track_id,
@@ -2206,6 +2282,45 @@ impl ProjectActor {
             next,
             actor,
             format!("Updated params on layer {id}"),
+            vec![EntityRef::Layer(id)],
+            DiffHint::Layer(id),
+        )?;
+        Ok(())
+    }
+
+    fn do_update_layer_param_track(
+        &mut self,
+        id: LayerId,
+        param_key: String,
+        track: Animated<f64>,
+        actor: Actor,
+    ) -> Result<(), CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+        apply_update_layer_param_track(&mut next, id, &param_key, track)?;
+        self.commit(
+            next,
+            actor,
+            format!("Keyframed layer {id} param {param_key}"),
+            vec![EntityRef::Layer(id)],
+            DiffHint::Layer(id),
+        )?;
+        Ok(())
+    }
+
+    fn do_update_layer_param_tracks(
+        &mut self,
+        id: LayerId,
+        entries: Vec<(String, Animated<f64>)>,
+        actor: Actor,
+    ) -> Result<(), CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+        for (param_key, track) in &entries {
+            apply_update_layer_param_track(&mut next, id, param_key, track.clone())?;
+        }
+        self.commit(
+            next,
+            actor,
+            format!("Keyframed layer {id} ({} params)", entries.len()),
             vec![EntityRef::Layer(id)],
             DiffHint::Layer(id),
         )?;
@@ -3591,6 +3706,34 @@ pub(crate) fn apply_update_layer_params(
     Ok(())
 }
 
+pub(crate) fn apply_update_layer_param_track(
+    project: &mut Project,
+    id: LayerId,
+    param_key: &str,
+    mut track: Animated<f64>,
+) -> Result<(), CommandError> {
+    // Locked tracks reject writes — guard before any mutation.
+    check_track_lock(project, id)?;
+    let fps = project.composition.fps;
+    track.normalize_keyframes(|t| crate::state::time::snap_frame_round(t, fps))
+        .map_err(|()| CommandError::EmptyKeyframeTrack { layer: id, param_key: param_key.to_string() })?;
+    let (ti, li) = project
+        .tracks
+        .iter()
+        .enumerate()
+        .find_map(|(ti, t)| t.layers.iter().position(|l| l.id == id).map(|li| (ti, li)))
+        .ok_or(CommandError::LayerNotFound { layer: id })?;
+    let slot = crate::state::layer::resolve_animated_f64_mut(
+        &mut project.tracks[ti].layers[li].params,
+        param_key,
+    )
+    .ok_or_else(|| CommandError::UnknownKeyframeParam { layer: id, param_key: param_key.to_string() })?;
+    *slot = track;
+    // No `apply_duration_autofit`: writing a keyframe track to a param never
+    // changes a layer's t_start/t_end, so composition duration can't shift.
+    Ok(())
+}
+
 /// Mutation half of `do_move_layer`. Removes layer from its current track,
 /// shifts its end time by the same delta as its start, inserts at the
 /// t-sorted position on the destination track, and auto-extends composition
@@ -3901,6 +4044,28 @@ pub(crate) fn apply_split_layer(
     Ok((target_left, target_right))
 }
 
+/// Partition one `Animated<T>` track for a split at clip-local `split_offset`.
+/// `right=false` (LEFT half): keep keys with `t_us <= split_offset`.
+/// `right=true`  (RIGHT half): keep keys with `t_us > split_offset`, rebased
+/// by `-split_offset`. If the half ends up an empty `Keyframed`, collapse it to
+/// `Static` at the clamp-boundary value (LEFT→first key, RIGHT→last key) so the
+/// half keeps the value the clip actually showed instead of the engine fallback.
+fn split_track_half<T: Clone>(a: &mut Animated<T>, split_offset: TimeUs, right: bool) {
+    let boundary = if right { a.last_keyframe_value() } else { a.first_keyframe_value() };
+    if right {
+        a.retain_keyframes(|t| t > split_offset);
+        a.shift_keyframes(-split_offset);
+    } else {
+        a.retain_keyframes(|t| t <= split_offset);
+    }
+    let emptied = matches!(a, Animated::Keyframed(kfs) if kfs.is_empty());
+    if emptied {
+        if let Some(v) = boundary {
+            *a = Animated::Static(v);
+        }
+    }
+}
+
 /// Single-layer split helper — the part that doesn't know about groups.
 /// Returns `(left_id, right_id)`; left reuses the original LayerId.
 fn split_single_layer(
@@ -3940,6 +4105,8 @@ fn split_single_layer(
         }
         _ => {}
     }
+    crate::state::layer::for_each_animated_f64(&mut right.params, |a| split_track_half(a, split_offset, true));
+    crate::state::layer::for_each_animated_rgba(&mut right.params, |a| split_track_half(a, split_offset, true));
     let mut left = original.clone();
     left.t_end_us = at_t_us;
     match &mut left.params {
@@ -3952,6 +4119,8 @@ fn split_single_layer(
         // Motif has no stored src_out (derived from layer width); left half needs no change.
         _ => {}
     }
+    crate::state::layer::for_each_animated_f64(&mut left.params, |a| split_track_half(a, split_offset, false));
+    crate::state::layer::for_each_animated_rgba(&mut left.params, |a| split_track_half(a, split_offset, false));
     let track = &mut project.tracks[ti];
     track.layers[li] = left;
     let insert_at = li + 1;
@@ -4098,6 +4267,17 @@ pub(crate) fn apply_trim_layer(
                     }
                     _ => {}
                 }
+                // Keep keyframes glued to content: the IN edge moved by
+                // `clamped_delta`, so every keyframe (layer-relative) shifts by
+                // the opposite amount. Keys that fall before the new start go
+                // negative and are kept in data (rendered out-of-range / hidden
+                // by the UI), so trimming is non-destructive and reversible.
+                crate::state::layer::for_each_animated_f64(&mut m.params, |a| {
+                    a.shift_keyframes(-clamped_delta);
+                });
+                crate::state::layer::for_each_animated_rgba(&mut m.params, |a| {
+                    a.shift_keyframes(-clamped_delta);
+                });
             }
             LayerEdge::Out => {
                 m.t_end_us += clamped_delta;
@@ -9374,6 +9554,188 @@ mod tests {
         assert!(
             matches!(p.color, Animated::Static(c) if c == Rgba::WHITE),
             "locked-track layer params must be untouched"
+        );
+    }
+
+    // ---------------------------------------------------------------------------
+    // update_layer_param_track tests
+    // ---------------------------------------------------------------------------
+
+    use crate::state::animated::{Interpolation, Keyframe};
+
+    /// Returns an actor handle and a layer id for a single Motif layer on one
+    /// track. Motif layers expose `opacity` through `resolve_animated_f64_mut`.
+    async fn single_motif_project() -> (ProjectHandle, LayerId) {
+        let (project, track_id) = project_with_video_track();
+        let handle = spawn(project);
+        let mut props: imbl::HashMap<String, serde_json::Value> = imbl::HashMap::new();
+        props.insert("seconds".into(), serde_json::json!(5));
+        let layer_id = handle
+            .add_layer(Actor::User, track_id, motif_layer(props), 0, 5_000_000)
+            .await
+            .expect("add_layer");
+        (handle, layer_id)
+    }
+
+    fn find_layer(snap: &Arc<Project>, id: LayerId) -> crate::state::layer::Layer {
+        snap.tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .find(|l| l.id == id)
+            .expect("layer not found in snapshot")
+            .clone()
+    }
+
+    fn assert_keyframe_times(
+        layer: &crate::state::layer::Layer,
+        key: &str,
+        expected_ts: &[i64],
+    ) {
+        let mut params = layer.params.clone();
+        let slot = crate::state::layer::resolve_animated_f64_mut(&mut params, key)
+            .expect("param not animatable");
+        let Animated::Keyframed(kfs) = slot else {
+            panic!("expected Keyframed mode for param {key}");
+        };
+        let actual_ts: Vec<i64> = kfs.iter().map(|k| k.t_us).collect();
+        assert_eq!(actual_ts, expected_ts, "keyframe times for {key}");
+    }
+
+    fn assert_keyframed_sorted(
+        layer: &crate::state::layer::Layer,
+        key: &str,
+        expected_ts: &[i64],
+        expected_values: &[f64],
+    ) {
+        let mut params = layer.params.clone();
+        let slot = crate::state::layer::resolve_animated_f64_mut(&mut params, key)
+            .expect("param not animatable");
+        let Animated::Keyframed(kfs) = slot else {
+            panic!("expected Keyframed mode for param {key}");
+        };
+        let actual_ts: Vec<i64> = kfs.iter().map(|k| k.t_us).collect();
+        assert_eq!(actual_ts, expected_ts, "keyframe times for {key} must be sorted and match");
+        // Assert values too, so a bug that permutes values while sorting times
+        // (e.g. sorting a values vec separately) can't slip through.
+        let actual_vals: Vec<f64> = kfs.iter().map(|k| k.value).collect();
+        assert_eq!(actual_vals, expected_values, "keyframe values for {key} must track their times");
+    }
+
+    #[tokio::test]
+    async fn update_layer_param_track_writes_and_normalizes() {
+        let (handle, layer_id) = single_motif_project().await;
+        let track = Animated::Keyframed(
+            vec![
+                Keyframe { id: crate::state::ids::new_id(), t_us: 2_000_000, value: 1.0, interp: Interpolation::Linear },
+                Keyframe { id: crate::state::ids::new_id(), t_us: 0, value: 0.0, interp: Interpolation::Linear },
+            ]
+            .into_iter()
+            .collect(),
+        );
+        handle
+            .update_layer_param_track(Actor::User, layer_id, "opacity".into(), track)
+            .await
+            .expect("write opacity track");
+        let snap = handle.snapshot().await;
+        let layer = find_layer(&snap, layer_id);
+        // After normalize: sorted by t_us, and each value stays glued to its time
+        // (input was t=2_000_000→1.0, t=0→0.0).
+        assert_keyframed_sorted(&layer, "opacity", &[0, 2_000_000], &[0.0, 1.0]);
+    }
+
+    #[tokio::test]
+    async fn update_layer_param_track_rejects_empty_keyframed() {
+        let (handle, layer_id) = single_motif_project().await;
+        let empty = Animated::Keyframed(imbl::Vector::new());
+        let res = handle
+            .update_layer_param_track(Actor::User, layer_id, "opacity".into(), empty)
+            .await;
+        assert!(matches!(res, Err(CommandError::EmptyKeyframeTrack { .. })));
+    }
+
+    #[tokio::test]
+    async fn update_layer_param_track_rejects_unknown_param() {
+        let (handle, layer_id) = single_motif_project().await;
+        let res = handle
+            .update_layer_param_track(Actor::User, layer_id, "bogus".into(), Animated::Static(1.0))
+            .await;
+        assert!(matches!(res, Err(CommandError::UnknownKeyframeParam { .. })));
+    }
+
+    #[tokio::test]
+    async fn trim_in_shifts_keyframes_to_stay_on_content() {
+        // Layer at t_start=0; opacity keyframes at 0 and 2_000_000 (layer-relative).
+        let (handle, layer_id) = single_motif_project().await;
+        let track = Animated::Keyframed(
+            vec![
+                Keyframe { id: crate::state::ids::new_id(), t_us: 0, value: 0.0, interp: Interpolation::Linear },
+                Keyframe { id: crate::state::ids::new_id(), t_us: 2_000_000, value: 1.0, interp: Interpolation::Linear },
+            ].into_iter().collect(),
+        );
+        handle.update_layer_param_track(Actor::User, layer_id, "opacity".into(), track)
+            .await.expect("seed keyframes");
+
+        // Trim the IN edge to t=1_000_000 (head trimmed inward by 1s).
+        handle.trim_layer(Actor::User, layer_id, LayerEdge::In, 1_000_000, false)
+            .await.expect("trim in");
+
+        // Key at 2_000_000 -> 1_000_000 (shifted -1s); key at 0 -> -1_000_000 (out-of-range, KEPT).
+        let snap = handle.snapshot().await;
+        let layer = find_layer(&snap, layer_id);
+        assert_keyframed_sorted(&layer, "opacity", &[-1_000_000, 1_000_000], &[0.0, 1.0]);
+    }
+
+    #[tokio::test]
+    async fn split_partitions_keyframes_and_rebases_right() {
+        // Motif [0, 5_000_000]; opacity keys at 0, 2_000_000, 3_000_000.
+        let (handle, layer_id) = single_motif_project().await;
+        let track = Animated::Keyframed(
+            vec![
+                Keyframe { id: crate::state::ids::new_id(), t_us: 0, value: 0.0, interp: Interpolation::Linear },
+                Keyframe { id: crate::state::ids::new_id(), t_us: 2_000_000, value: 0.5, interp: Interpolation::Linear },
+                Keyframe { id: crate::state::ids::new_id(), t_us: 3_000_000, value: 1.0, interp: Interpolation::Linear },
+            ].into_iter().collect(),
+        );
+        handle.update_layer_param_track(Actor::User, layer_id, "opacity".into(), track)
+            .await.expect("seed keyframes");
+
+        // Split at composition t=2_500_000 (clip-local offset = 2_500_000).
+        let (left_id, right_id) = handle.split_layer(Actor::User, layer_id, 2_500_000, false)
+            .await.expect("split");
+
+        let snap = handle.snapshot().await;
+        // Left keeps t_us <= 2_500_000 -> [0, 2_000_000].
+        assert_keyframe_times(&find_layer(&snap, left_id), "opacity", &[0, 2_000_000]);
+        // Right keeps t_us > 2_500_000, rebased -2_500_000 -> [500_000].
+        assert_keyframe_times(&find_layer(&snap, right_id), "opacity", &[500_000]);
+    }
+
+    #[tokio::test]
+    async fn split_collapses_empty_half_to_static_boundary_value() {
+        // All opacity keys in the first half; split AFTER them -> right half has
+        // no keys and must collapse to Static at the LAST key's value (0.8),
+        // not the engine fallback.
+        let (handle, layer_id) = single_motif_project().await;
+        let track = Animated::Keyframed(
+            vec![
+                Keyframe { id: crate::state::ids::new_id(), t_us: 0, value: 0.2, interp: Interpolation::Linear },
+                Keyframe { id: crate::state::ids::new_id(), t_us: 1_000_000, value: 0.8, interp: Interpolation::Linear },
+            ].into_iter().collect(),
+        );
+        handle.update_layer_param_track(Actor::User, layer_id, "opacity".into(), track)
+            .await.expect("seed keyframes");
+
+        let (_left_id, right_id) = handle.split_layer(Actor::User, layer_id, 3_000_000, false)
+            .await.expect("split");
+
+        let snap = handle.snapshot().await;
+        let right = find_layer(&snap, right_id);
+        let mut params = right.params.clone();
+        let slot = crate::state::layer::resolve_animated_f64_mut(&mut params, "opacity")
+            .expect("opacity animatable");
+        assert!(
+            matches!(slot, Animated::Static(v) if (*v - 0.8).abs() < 1e-9),
+            "empty right half must collapse to Static at the last key value 0.8, got {slot:?}"
         );
     }
 }
