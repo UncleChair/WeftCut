@@ -22,3 +22,10 @@ export function clearKeyframeFocus(): void {
 export function useFocusedParamFor(layerId: string): string | null {
   return useKeyframeFocusStore((s) => (s.layerId === layerId ? s.paramKey : null));
 }
+
+/// The focused paramKey IF the focused layer belongs to `layerIds`, else null.
+/// Atomic primitive return (string|null) — safe under useSyncExternalStore
+/// (per the zustand composite-selector rule). `layerIds` must be a stable Set.
+export function useFocusedParamKeyForTrackLayers(layerIds: Set<string>): string | null {
+  return useKeyframeFocusStore((s) => (s.layerId && layerIds.has(s.layerId) ? s.paramKey : null));
+}

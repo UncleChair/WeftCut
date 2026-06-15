@@ -1,20 +1,26 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { AnimTrack, TrackSummary } from "../ipc";
-import { trackKeyframeProperties, keyframeAbsoluteX } from "./geometry";
+import { trackKeyframeProperties } from "./geometry";
 import { readParamTrack, animatableParams } from "../keyframe/descriptors";
 import {
-  useIsKeyframeSelected,
   selectKeyframe,
   clearKeyframeSelection,
   getSelectedKeyframe,
   useKeyframeSelectionStore,
 } from "../keyframe/selectionStore";
-import { retimeKeyframe, removeKeyframe } from "../keyframe/edits";
+import { retimeKeyframe, removeKeyframe, setKeyframeInterp } from "../keyframe/edits";
 import { transportSeek } from "../state/playbackStore";
-import { EasingEditor } from "./EasingEditor";
+import {
+  setKeyframeFocus,
+  useFocusedParamKeyForTrackLayers,
+  useKeyframeFocusStore,
+} from "../keyframe/focusStore";
+import { KeyframeCurveGraph } from "./KeyframeCurveGraph";
+import { EasingMenu } from "./EasingMenu";
 
 export const KF_SUBLANE_H = 24;
+export const KF_SUBLANE_EXPANDED_H = 72;
 
 type OpenInterpMenu = (
   clientX: number,
@@ -29,13 +35,15 @@ type OpenInterpMenu = (
 export function KeyframeLaneHeaders({ track }: { track: TrackSummary }) {
   const { t } = useTranslation();
   const props = trackKeyframeProperties(track);
+  const layerIds = useMemo(() => new Set(track.layers.map((l) => l.id)), [track.layers]);
+  const focusedParamKey = useFocusedParamKeyForTrackLayers(layerIds);
   return (
     <>
       {props.map((d) => (
         <div
           key={d.paramKey}
           className="flex items-center justify-end border-b border-border-soft px-1.5 text-[10px] text-muted-foreground/80"
-          style={{ height: KF_SUBLANE_H }}
+          style={{ height: d.paramKey === focusedParamKey ? KF_SUBLANE_EXPANDED_H : KF_SUBLANE_H }}
         >
           {t(d.labelKey, { defaultValue: d.paramKey })}
         </div>
@@ -104,45 +112,49 @@ export function KeyframeLane({
     return () => window.removeEventListener("keydown", onKey, true);
   }, [armedKfId, layerIds, track.layers, onCommitParamTrack]);
 
+  const focusedParamKey = useFocusedParamKeyForTrackLayers(layerIds);
+  const focusedLayerId = useKeyframeFocusStore((s) => s.layerId);
+
   return (
     <>
-      {props.map((d) => (
-        <div
-          key={d.paramKey}
-          className="relative border-b border-border-soft"
-          style={{ height: KF_SUBLANE_H }}
-        >
-          {track.layers.map((layer) => {
-            const trk = readParamTrack(layer.params, d.paramKey);
-            if (!trk || trk.mode !== "Keyframed") return null;
-            const durUs = layer.t_end_us - layer.t_start_us;
-            return trk.value.map((kf) => (
-              <SubLaneDiamond
-                key={kf.id}
-                layerId={layer.id}
-                paramKey={d.paramKey}
-                kfId={kf.id}
-                x={keyframeAbsoluteX(layer.t_start_us, kf.t_us, pxPerSec)}
-                outOfRange={kf.t_us < 0 || kf.t_us > durUs}
-                layerTStartUs={layer.t_start_us}
-                kfTUs={kf.t_us}
-                clipDurationUs={durUs}
-                pxPerSec={pxPerSec}
-                paramTrack={trk}
-                onCommitParamTrack={onCommitParamTrack}
-                onOpenInterpMenu={openInterpMenu}
-              />
-            ));
-          })}
-        </div>
-      ))}
+      {props.map((d) => {
+        const expanded = d.paramKey === focusedParamKey;
+        return (
+          <div
+            key={d.paramKey}
+            className="relative border-b border-border-soft"
+            style={{ height: expanded ? KF_SUBLANE_EXPANDED_H : KF_SUBLANE_H }}
+          >
+            {track.layers.map((layer) => {
+              const trk = readParamTrack(layer.params, d.paramKey);
+              if (!trk || trk.mode !== "Keyframed") return null;
+              const durUs = layer.t_end_us - layer.t_start_us;
+              return (
+                <LayerCurveLane
+                  key={layer.id}
+                  layerId={layer.id}
+                  paramKey={d.paramKey}
+                  track={trk}
+                  layerTStartUs={layer.t_start_us}
+                  clipDurationUs={durUs}
+                  pxPerSec={pxPerSec}
+                  height={expanded ? KF_SUBLANE_EXPANDED_H : KF_SUBLANE_H}
+                  editable={expanded && focusedLayerId === layer.id}
+                  onCommitParamTrack={onCommitParamTrack}
+                  onOpenInterpMenu={openInterpMenu}
+                />
+              );
+            })}
+          </div>
+        );
+      })}
       {interpMenu && (() => {
         const layer = track.layers.find((l) => l.id === interpMenu.layerId);
         if (!layer) return null;
         const trk = readParamTrack(layer.params, interpMenu.paramKey);
         if (!trk || trk.mode !== "Keyframed") return null;
         return (
-          <EasingEditor
+          <EasingMenu
             x={interpMenu.x}
             y={interpMenu.y}
             track={trk}
@@ -156,70 +168,48 @@ export function KeyframeLane({
   );
 }
 
-function SubLaneDiamond({
-  layerId,
-  paramKey,
-  kfId,
-  x,
-  outOfRange,
-  layerTStartUs,
-  kfTUs,
-  clipDurationUs,
-  pxPerSec,
-  paramTrack,
-  onCommitParamTrack,
-  onOpenInterpMenu,
+function LayerCurveLane({
+  layerId, paramKey, track, layerTStartUs, clipDurationUs, pxPerSec, height,
+  editable, onCommitParamTrack, onOpenInterpMenu,
 }: {
   layerId: string;
   paramKey: string;
-  kfId: string;
-  x: number;
-  outOfRange: boolean;
+  track: Extract<AnimTrack<number>, { mode: "Keyframed" }>;
   layerTStartUs: number;
-  kfTUs: number;
   clipDurationUs: number;
   pxPerSec: number;
-  paramTrack: AnimTrack<number>;
+  height: number;
+  editable: boolean;
   onCommitParamTrack: (layerId: string, paramKey: string, t: AnimTrack<number>) => void;
   onOpenInterpMenu: OpenInterpMenu;
 }) {
-  const selected = useIsKeyframeSelected(layerId, paramKey, kfId);
+  const selectedKfId = useKeyframeSelectionStore((s) =>
+    s.selected && s.selected.layerId === layerId && s.selected.paramKey === paramKey
+      ? s.selected.kfId
+      : null,
+  );
   return (
-    <span
-      className={`kf-diamond kf-sublane-diamond${selected ? " is-selected" : ""}`}
-      style={{ left: x, opacity: outOfRange ? 0.4 : 1 }}
-      data-kf-id={kfId}
-      data-layer-id={layerId}
-      data-param={paramKey}
-      onPointerDown={(e) => {
-        if (e.button !== 0) return;
-        e.stopPropagation();
+    <KeyframeCurveGraph
+      track={track}
+      layerTStartUs={layerTStartUs}
+      clipDurationUs={clipDurationUs}
+      pxPerSec={pxPerSec}
+      height={height}
+      editable={editable}
+      selectedKfId={selectedKfId}
+      onSelectSeek={(kfId) => {
+        const kf = track.value.find((k) => k.id === kfId);
         selectKeyframe({ layerId, paramKey, kfId });
-        transportSeek(layerTStartUs + kfTUs);
-        // begin drag-retime — commit on release if the key actually moved.
-        const startClientX = e.clientX;
-        const startTUs = kfTUs;
-        let nextTUs: number | null = null;
-        const onMove = (me: PointerEvent) => {
-          const dxUs = ((me.clientX - startClientX) / pxPerSec) * 1_000_000;
-          nextTUs = Math.max(0, Math.min(clipDurationUs, startTUs + dxUs));
-        };
-        const onUp = () => {
-          window.removeEventListener("pointermove", onMove);
-          window.removeEventListener("pointerup", onUp);
-          if (nextTUs != null && nextTUs !== startTUs) {
-            onCommitParamTrack(layerId, paramKey, retimeKeyframe(paramTrack, kfId, nextTUs));
-          }
-        };
-        window.addEventListener("pointermove", onMove);
-        window.addEventListener("pointerup", onUp);
+        setKeyframeFocus(layerId, paramKey);
+        if (kf) transportSeek(layerTStartUs + kf.t_us);
       }}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        selectKeyframe({ layerId, paramKey, kfId });
-        onOpenInterpMenu(e.clientX, e.clientY, layerId, paramKey, kfId);
-      }}
+      onRetime={(kfId, newTUs) =>
+        onCommitParamTrack(layerId, paramKey, retimeKeyframe(track, kfId, newTUs))
+      }
+      onSetInterp={(kfId, interp) =>
+        onCommitParamTrack(layerId, paramKey, setKeyframeInterp(track, kfId, interp))
+      }
+      onOpenMenu={(cx, cy, kfId) => onOpenInterpMenu(cx, cy, layerId, paramKey, kfId)}
     />
   );
 }
