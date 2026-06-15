@@ -1,0 +1,95 @@
+{
+  "cases": [
+    {
+      "name": "upsert_insert_inherits_preceding",
+      "op": "upsert",
+      "args": { "t_us": 1000000, "value": 0.5 },
+      "input": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-0000-0000-000000000001", "t_us": 0, "value": 0.0, "interp": { "kind": "EaseIn" } },
+        { "id": "00000000-0000-0000-0000-000000000002", "t_us": 2000000, "value": 1.0, "interp": { "kind": "Linear" } }
+      ] },
+      "expect": { "mode": "Keyframed", "value": [
+        { "id": "ffffffff-ffff-ffff-ffff-ffffffffffff", "t_us": 0, "value": 0.0, "interp": { "kind": "EaseIn" } },
+        { "id": "ffffffff-ffff-ffff-ffff-ffffffffffff", "t_us": 1000000, "value": 0.5, "interp": { "kind": "EaseIn" } },
+        { "id": "ffffffff-ffff-ffff-ffff-ffffffffffff", "t_us": 2000000, "value": 1.0, "interp": { "kind": "Linear" } }
+      ] }
+    },
+    {
+      "name": "upsert_update_existing",
+      "op": "upsert",
+      "args": { "t_us": 0, "value": 0.7 },
+      "input": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-0000-0000-000000000001", "t_us": 0, "value": 0.0, "interp": { "kind": "Linear" } },
+        { "id": "00000000-0000-0000-0000-000000000002", "t_us": 2000000, "value": 1.0, "interp": { "kind": "Linear" } }
+      ] },
+      "expect": { "mode": "Keyframed", "value": [
+        { "id": "ffffffff-ffff-ffff-ffff-ffffffffffff", "t_us": 0, "value": 0.7, "interp": { "kind": "Linear" } },
+        { "id": "ffffffff-ffff-ffff-ffff-ffffffffffff", "t_us": 2000000, "value": 1.0, "interp": { "kind": "Linear" } }
+      ] }
+    },
+    {
+      "name": "remove_middle",
+      "op": "remove",
+      "args": { "id": "00000000-0000-0000-0000-000000000002", "fallback": 0.0 },
+      "input": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-0000-0000-000000000001", "t_us": 0, "value": 0.0, "interp": { "kind": "Linear" } },
+        { "id": "00000000-0000-0000-0000-000000000002", "t_us": 1000000, "value": 0.5, "interp": { "kind": "Linear" } },
+        { "id": "00000000-0000-0000-0000-000000000003", "t_us": 2000000, "value": 1.0, "interp": { "kind": "Linear" } }
+      ] },
+      "expect": { "mode": "Keyframed", "value": [
+        { "id": "ffffffff-ffff-ffff-ffff-ffffffffffff", "t_us": 0, "value": 0.0, "interp": { "kind": "Linear" } },
+        { "id": "ffffffff-ffff-ffff-ffff-ffffffffffff", "t_us": 2000000, "value": 1.0, "interp": { "kind": "Linear" } }
+      ] }
+    },
+    {
+      "name": "remove_last_collapses_to_static",
+      "op": "remove",
+      "args": { "id": "00000000-0000-0000-0000-000000000001", "fallback": 9.0 },
+      "input": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-0000-0000-000000000001", "t_us": 0, "value": 0.33, "interp": { "kind": "Linear" } }
+      ] },
+      "expect": { "mode": "Static", "value": 0.33 }
+    },
+    {
+      "name": "retime_resorts",
+      "op": "retime",
+      "args": { "id": "00000000-0000-0000-0000-000000000001", "new_t_us": 3000000 },
+      "input": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-0000-0000-000000000001", "t_us": 0, "value": 0.0, "interp": { "kind": "Linear" } },
+        { "id": "00000000-0000-0000-0000-000000000002", "t_us": 2000000, "value": 1.0, "interp": { "kind": "Linear" } }
+      ] },
+      "expect": { "mode": "Keyframed", "value": [
+        { "id": "ffffffff-ffff-ffff-ffff-ffffffffffff", "t_us": 2000000, "value": 1.0, "interp": { "kind": "Linear" } },
+        { "id": "ffffffff-ffff-ffff-ffff-ffffffffffff", "t_us": 3000000, "value": 0.0, "interp": { "kind": "Linear" } }
+      ] }
+    },
+    {
+      "name": "set_interp_ease_in",
+      "op": "set_interp",
+      "args": { "id": "00000000-0000-0000-0000-000000000001", "interp": { "kind": "EaseIn" } },
+      "input": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-0000-0000-000000000001", "t_us": 0, "value": 0.0, "interp": { "kind": "Linear" } },
+        { "id": "00000000-0000-0000-0000-000000000002", "t_us": 2000000, "value": 1.0, "interp": { "kind": "Linear" } }
+      ] },
+      "expect": { "mode": "Keyframed", "value": [
+        { "id": "ffffffff-ffff-ffff-ffff-ffffffffffff", "t_us": 0, "value": 0.0, "interp": { "kind": "EaseIn" } },
+        { "id": "ffffffff-ffff-ffff-ffff-ffffffffffff", "t_us": 2000000, "value": 1.0, "interp": { "kind": "Linear" } }
+      ] }
+    },
+    {
+      "name": "smooth_one_peak",
+      "op": "smooth_one",
+      "args": { "id": "00000000-0000-0000-0000-000000000002" },
+      "input": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-0000-0000-000000000001", "t_us": 0, "value": 0.0, "interp": { "kind": "Linear" } },
+        { "id": "00000000-0000-0000-0000-000000000002", "t_us": 1000000, "value": 1.0, "interp": { "kind": "Linear" } },
+        { "id": "00000000-0000-0000-0000-000000000003", "t_us": 2000000, "value": 0.0, "interp": { "kind": "Linear" } }
+      ] },
+      "expect": { "mode": "Keyframed", "value": [
+        { "id": "ffffffff-ffff-ffff-ffff-ffffffffffff", "t_us": 0, "value": 0.0, "interp": { "kind": "Bezier", "p1": [0.0, 0.0], "p2": [0.6666666666666666, 1.0] } },
+        { "id": "ffffffff-ffff-ffff-ffff-ffffffffffff", "t_us": 1000000, "value": 1.0, "interp": { "kind": "Bezier", "p1": [0.3333333333333333, 0.0], "p2": [1.0, 1.0] } },
+        { "id": "ffffffff-ffff-ffff-ffff-ffffffffffff", "t_us": 2000000, "value": 0.0, "interp": { "kind": "Linear" } }
+      ] }
+    }
+  ]
+}

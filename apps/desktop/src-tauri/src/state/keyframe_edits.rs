@@ -287,4 +287,80 @@ mod tests {
             assert_eq!(x.interp, y.interp);
         }
     }
+
+    use crate::state::animated::Interpolation as I;
+
+    #[derive(serde::Deserialize)]
+    struct GoldenArgs {
+        t_us: Option<i64>,
+        value: Option<f64>,
+        id: Option<String>,
+        fallback: Option<f64>,
+        new_t_us: Option<i64>,
+        interp: Option<Interpolation>,
+    }
+    #[derive(serde::Deserialize)]
+    struct GoldenCase {
+        name: String,
+        op: String,
+        args: GoldenArgs,
+        input: Animated<f64>,
+        expect: Animated<f64>,
+    }
+    #[derive(serde::Deserialize)]
+    struct GoldenFixture {
+        cases: Vec<GoldenCase>,
+    }
+
+    fn apply_op(track: &Animated<f64>, op: &str, args: &GoldenArgs) -> Animated<f64> {
+        let id = || uuid::Uuid::parse_str(args.id.as_ref().unwrap()).unwrap();
+        match op {
+            "upsert" => upsert(track, args.t_us.unwrap(), args.value.unwrap(), None),
+            "remove" => remove(track, id(), args.fallback.unwrap()),
+            "retime" => retime(track, id(), args.new_t_us.unwrap()),
+            "set_interp" => set_interp(track, id(), args.interp.unwrap()),
+            "smooth_one" => smooth_one(track, id()),
+            other => panic!("unknown op {other}"),
+        }
+    }
+
+    fn interp_eq(a: Interpolation, b: Interpolation) -> bool {
+        match (a, b) {
+            (I::Bezier { p1: a1, p2: a2 }, I::Bezier { p1: b1, p2: b2 }) => {
+                (a1.0 - b1.0).abs() < 1e-9
+                    && (a1.1 - b1.1).abs() < 1e-9
+                    && (a2.0 - b2.0).abs() < 1e-9
+                    && (a2.1 - b2.1).abs() < 1e-9
+            }
+            (x, y) => std::mem::discriminant(&x) == std::mem::discriminant(&y),
+        }
+    }
+
+    /// Same fixture as `keyframe/edits.golden.test.ts`; a change that passes one
+    /// language and fails the other is a Rust↔TS drift, which is what this catches.
+    #[test]
+    fn golden_vectors_match_fixture() {
+        let fixture: GoldenFixture = serde_json::from_str(include_str!(
+            "../../../src/keyframe/keyframeEditsGolden.fixture.json"
+        ))
+        .expect("fixture parses");
+        assert!(!fixture.cases.is_empty());
+        for c in &fixture.cases {
+            let got = apply_op(&c.input, &c.op, &c.args);
+            match (&got, &c.expect) {
+                (Animated::Static(g), Animated::Static(w)) => {
+                    assert!((g - w).abs() < 1e-9, "case `{}` static value", c.name);
+                }
+                (Animated::Keyframed(g), Animated::Keyframed(w)) => {
+                    assert_eq!(g.len(), w.len(), "case `{}` key count", c.name);
+                    for (gk, wk) in g.iter().zip(w.iter()) {
+                        assert_eq!(gk.t_us, wk.t_us, "case `{}` t_us", c.name);
+                        assert!((gk.value - wk.value).abs() < 1e-9, "case `{}` value", c.name);
+                        assert!(interp_eq(gk.interp, wk.interp), "case `{}` interp", c.name);
+                    }
+                }
+                _ => panic!("case `{}` mode mismatch", c.name),
+            }
+        }
+    }
 }
