@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { unitBezier } from "../render/animated";
 import { handleToCoeff, coeffToHandle } from "../keyframe/curve";
 
@@ -16,6 +16,10 @@ export function EasingCanvas({
   disabled?: boolean;
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
+  // Tear down an in-flight drag if the component unmounts mid-drag (e.g. the
+  // popover is dismissed via Escape) so the window listeners can't leak.
+  const teardownRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => teardownRef.current?.(), []);
   const [x1, y1, x2, y2] = coeffs;
 
   // Curve path: 40 sampled points through unitBezier (visualizes overshoot too).
@@ -40,7 +44,9 @@ export function EasingCanvas({
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      teardownRef.current = null;
     };
+    teardownRef.current = up;
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
   }
