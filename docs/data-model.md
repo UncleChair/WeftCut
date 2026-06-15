@@ -393,6 +393,8 @@ struct Keyframe<T> {
 
 Keyframe times are **relative to the layer's start**. Otherwise moving a layer breaks its animation. Trim and split keep keyframes content-anchored: an IN-edge trim shifts every key by the edge delta, split partitions keys at the cut (right half re-based, an emptied half collapses to `Static` at the boundary value), and keys pushed outside `[0, duration]` are **retained, not dropped** (so trims stay reversible) — `value_at` clamps out-of-range keys and the UI hides them.
 
+`Interpolation` is per-segment, stored on the segment's left keyframe (`kf[i].interp` governs `kf[i] → kf[i+1]`): `Hold` (left-stick step), `Linear`, `EaseIn`/`EaseOut` (the CSS cubics `cubic-bezier(.42,0,1,1)` / `cubic-bezier(0,0,.58,1)`), and `Bezier{p1,p2}` — an arbitrary `cubic-bezier(x1,y1,x2,y2)` timing function. There are no per-keyframe in/out handles; velocity continuity through a keyframe is produced by the authoring-side Smooth command, which bakes matching tangents into the two adjacent segments.
+
 For MVP: only `opacity`, `position`, `scale`, `rotation`, `gain_db`, `pan` are animatable.
 
 ## `Marker`
