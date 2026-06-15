@@ -54,7 +54,7 @@ export function yToValue(py: number, g: CurveGeom): number {
 export function computeValueRange(
   keys: Pick<Keyframe<number>, "t_us" | "value" | "interp">[],
   padFrac = 0.1,
-  samplesPerSeg = 16,
+  samplesPerSeg = 32,
 ): { vmin: number; vmax: number } {
   if (keys.length === 0) return { vmin: 0, vmax: 1 };
   let lo = Infinity;

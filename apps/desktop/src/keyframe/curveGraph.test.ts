@@ -14,7 +14,8 @@ describe("value/time mappings", () => {
   });
   it("xPxToTimeUs inverts timeToXPx", () => {
     expect(xPxToTimeUs(100, G)).toBeCloseTo(1_000_000, 3);
-    expect(xPxToTimeUs(0, { ...G, layerTStartUs: 2_000_000 })).toBeCloseTo(-2_000_000, 3);
+    const G3 = { ...G, layerTStartUs: 2_000_000 };
+    expect(xPxToTimeUs(timeToXPx(500_000, G3), G3)).toBeCloseTo(500_000, 3);
   });
   it("valueToY is y-down (vmax at top=0, vmin at bottom=height) and round-trips", () => {
     expect(valueToY(1, G)).toBeCloseTo(0, 6);
@@ -82,6 +83,14 @@ describe("segmentPolyline", () => {
     expect(pts[5]!.x).toBeCloseTo(50, 6);
     expect(pts[5]!.y).toBeGreaterThan(0);
     expect(pts[5]!.y).toBeLessThan(100);
+  });
+  it("flat-value Bezier (Δv==0) renders a horizontal line, no NaN", () => {
+    const flat: Seg = { aTUs: 0, aVal: 5, bTUs: 1_000_000, bVal: 5 };
+    const gFlat: CurveGeom = { pxPerSec: 100, layerTStartUs: 0, height: 100, vmin: 4, vmax: 6 };
+    const pts = segmentPolyline(flat, { kind: "Bezier", p1: [0.3, 0], p2: [0.7, 1] }, gFlat, 8);
+    expect(pts.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y))).toBe(true);
+    const y0 = pts[0]!.y;
+    expect(pts.every((p) => Math.abs(p.y - y0) < 1e-9)).toBe(true);
   });
 });
 
