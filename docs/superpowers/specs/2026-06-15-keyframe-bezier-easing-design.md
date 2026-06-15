@@ -1,7 +1,14 @@
 # Keyframe Bézier Easing: Real Cubic Presets, Custom Curve Editor, Smooth
 
 **Date:** 2026-06-15
-**Status:** Designed; not yet implemented.
+**Status:** Implemented and merged to local `main` (merge `e292f8b8`, unpushed).
+Built subagent-driven over 12 TDD tasks (implement + spec-compliance + code-quality
+review each); tsc clean / vitest 571 / cargo 590; e2e-verified in real WebView2
+(`e2e/specs/ui/keyframe_authoring.e2e.js` — a custom slow-start Bézier's exported
+mid-frame is ordinally closer to the black start than the full end). The
+Out-of-scope items below remain (Model A handles/graph editor, `Animated<Rgba>` +
+color stopwatch, MCP keyframe tools). Manual real-app visual acceptance of the
+editor (feel/look) still pending — the e2e covers only the functional path.
 
 ## Goal
 

@@ -1,5 +1,7 @@
 # Keyframe Bézier Easing Implementation Plan
 
+> **Status: SHIPPED** — all 12 tasks complete, merged to local `main` (merge `e292f8b8`, unpushed). tsc clean / vitest 571 / cargo 590 / e2e 3/3. The checkboxes below were the execution tracker; the work is done. Remaining (separate efforts): manual real-app visual acceptance, multi-select sub-lane editing, `Animated<Rgba>` + color stopwatch, MCP keyframe tools.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the crude quadratic eases + the Bézier linear-stub with a real cubic-Bézier easing engine, a monotone "Smooth" command (velocity-continuous through a keyframe), and a unified easing-editor popover (preset chips + draggable curve + motion preview).
