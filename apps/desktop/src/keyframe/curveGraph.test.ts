@@ -98,3 +98,30 @@ describe("segmentHandles", () => {
     expect(h.p2.y).toBeCloseTo(10, 6);  // value 0.9 → y = (1-0.9)*100
   });
 });
+
+import { handleDragToCoeff } from "./curveGraph";
+
+describe("handleDragToCoeff", () => {
+  const seg: Seg = { aTUs: 0, aVal: 0, bTUs: 1_000_000, bVal: 1 };
+  const g: CurveGeom = { pxPerSec: 100, layerTStartUs: 0, height: 100, vmin: 0, vmax: 1 };
+  const cur: [number, number, number, number] = [0.42, 0, 0.58, 1];
+
+  it("maps pointer px to p1 coeff (x in segment-progress, y in value)", () => {
+    // pointer at x=25px (=0.25 of the 100px wide segment), y=80px (=value 0.2)
+    const next = handleDragToCoeff("p1", 25, 80, seg, g, cur);
+    expect(next[0]).toBeCloseTo(0.25, 6);
+    expect(next[1]).toBeCloseTo(0.2, 6);
+    expect([next[2], next[3]]).toEqual([0.58, 1]); // p2 untouched
+  });
+  it("clamps x into [0,1] (keeps time monotone) but leaves y free (overshoot)", () => {
+    const next = handleDragToCoeff("p2", 150, -20, seg, g, cur); // x past end, y above top
+    expect(next[2]).toBe(1);             // clamped
+    expect(next[3]).toBeCloseTo(1.2, 6); // value 1.2 → overshoot allowed
+  });
+  it("flat segment (Δv==0) locks y to the current coeff, x still moves", () => {
+    const flatSeg: Seg = { aTUs: 0, aVal: 5, bTUs: 1_000_000, bVal: 5 };
+    const next = handleDragToCoeff("p1", 50, 10, flatSeg, { ...g, vmin: 4, vmax: 6 }, cur);
+    expect(next[0]).toBeCloseTo(0.5, 6); // x moved
+    expect(next[1]).toBe(cur[1]);        // y unchanged (0)
+  });
+});
