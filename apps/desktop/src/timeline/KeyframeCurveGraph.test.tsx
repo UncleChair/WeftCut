@@ -74,4 +74,12 @@ describe("KeyframeCurveGraph", () => {
     expect(container.querySelector('.kf-sublane-diamond[data-kf-id="k1"]')!.className)
       .toContain("is-selected");
   });
+  it("right-click on a segment opens the menu for that segment's owner keyframe", () => {
+    const onOpenMenu = vi.fn();
+    const { container } = renderGraph({ onOpenMenu });
+    const hit = container.querySelector('[data-testid="kf-segment-hit"]')!;
+    fireEvent.contextMenu(hit, { clientX: 5, clientY: 6 });
+    // the test track has keys k0 (owns the only segment) -> k1
+    expect(onOpenMenu).toHaveBeenCalledWith(5, 6, "k0");
+  });
 });
