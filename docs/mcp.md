@@ -112,6 +112,18 @@ Layers:
 - `delete_layer { layer_id }`
 - `duplicate_layer { layer_id, t_offset_us }` → `LayerId`
 
+Keyframes (animate `Animated<f64>` params; times are timeline-absolute µs):
+- `get_param_track { layer_id, param_key }` → `{ mode, value }` (Static) or `{ mode, keyframes: [{ id, t_us, t_local_us, value, interp }] }` (Keyframed). Read this to discover keyframe ids before editing.
+- `set_keyframe { layer_id, param_key, t_us, value, interp? }` — insert-or-update. Lifts a Static track; updates in place at the same frame; `interp` omitted inherits the preceding key's easing (or Linear).
+- `remove_keyframe { layer_id, param_key, keyframe_id }` — last key collapses to Static holding its value.
+- `retime_keyframe { layer_id, param_key, keyframe_id, t_us }` — move a key; re-sorts.
+- `set_keyframe_easing { layer_id, param_key, keyframe_id, interp }` — `interp` ∈ `Hold | Linear | EaseIn | EaseOut | Bezier{p1,p2}`.
+- `smooth_keyframes { layer_id, param_key, keyframe_id? }` — monotone auto-smooth one key, or the whole track when `keyframe_id` is omitted.
+- `clear_keyframes { layer_id, param_key, value? }` — collapse to Static (defaults to the first keyframe's value).
+- `set_param_track { layer_id, param_key, track }` — low-level: replace the whole `AnimTrack<f64>` (keyframe `t_us` timeline-absolute).
+
+Valid `param_key`: VideoClip/Motif → `x, y, scale_x, scale_y, rotation_deg, opacity`; ImageOverlay/Text → `x, y, rotation_deg, opacity`; Audio → `gain_db, pan`. Each write routes through the actor's `update_layer_param_track` (snap-to-frame, sort, dedupe, lock check). Unlike `update_layer_params`, these preserve/produce keyframes rather than wiping them.
+
 Groups (see [groups.md](groups.md)):
 - `groups_list` / `groups_get { group_id }`
 - `groups_create { layer_ids, label?, reassign? }` → `GroupId`
