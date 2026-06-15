@@ -18,9 +18,6 @@ const enUS = {
     interp_ease_in_out: "Ease In-Out",
     easing_title: "Easing",
     smooth: "Smooth",
-    smooth_all: "Smooth all",
-    custom: "Custom",
-    motion_preview: "Motion preview",
     delete_keyframe: "Delete keyframe",
   },
   startup: {
