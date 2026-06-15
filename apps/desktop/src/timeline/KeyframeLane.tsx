@@ -10,9 +10,9 @@ import {
   getSelectedKeyframe,
   useKeyframeSelectionStore,
 } from "../keyframe/selectionStore";
-import { retimeKeyframe, removeKeyframe, setKeyframeInterp } from "../keyframe/edits";
+import { retimeKeyframe, removeKeyframe } from "../keyframe/edits";
 import { transportSeek } from "../state/playbackStore";
-import { KeyframeInterpMenu } from "./KeyframeInterpMenu";
+import { EasingEditor } from "./EasingEditor";
 
 export const KF_SUBLANE_H = 24;
 
@@ -136,24 +136,22 @@ export function KeyframeLane({
           })}
         </div>
       ))}
-      {interpMenu && (
-        <KeyframeInterpMenu
-          x={interpMenu.x}
-          y={interpMenu.y}
-          onClose={() => setInterpMenu(null)}
-          onPick={(interp) => {
-            const layer = track.layers.find((l) => l.id === interpMenu.layerId);
-            if (!layer) return;
-            const trk = readParamTrack(layer.params, interpMenu.paramKey);
-            if (!trk || trk.mode !== "Keyframed") return;
-            onCommitParamTrack(
-              interpMenu.layerId,
-              interpMenu.paramKey,
-              setKeyframeInterp(trk, interpMenu.kfId, interp),
-            );
-          }}
-        />
-      )}
+      {interpMenu && (() => {
+        const layer = track.layers.find((l) => l.id === interpMenu.layerId);
+        if (!layer) return null;
+        const trk = readParamTrack(layer.params, interpMenu.paramKey);
+        if (!trk || trk.mode !== "Keyframed") return null;
+        return (
+          <EasingEditor
+            x={interpMenu.x}
+            y={interpMenu.y}
+            track={trk}
+            kfId={interpMenu.kfId}
+            onClose={() => setInterpMenu(null)}
+            onCommit={(next) => onCommitParamTrack(interpMenu.layerId, interpMenu.paramKey, next)}
+          />
+        );
+      })()}
     </>
   );
 }

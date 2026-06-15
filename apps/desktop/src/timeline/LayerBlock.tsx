@@ -15,8 +15,8 @@ import type { AnimTrack, LayerSummary } from "../ipc";
 import { useEditingLayerId, beginRename, endRename } from "./renameStore";
 import { useFocusedParamFor } from "../keyframe/focusStore";
 import { readParamTrack, animatableParams } from "../keyframe/descriptors";
-import { retimeKeyframe, removeKeyframe, setKeyframeInterp } from "../keyframe/edits";
-import { KeyframeInterpMenu } from "./KeyframeInterpMenu";
+import { retimeKeyframe, removeKeyframe } from "../keyframe/edits";
+import { EasingEditor } from "./EasingEditor";
 import { transportSeek } from "../state/playbackStore";
 import {
   selectKeyframe,
@@ -548,19 +548,20 @@ export function LayerBlock({
           ))}
         </div>
       )}
-      {interpMenu && focusedParam && (
-        <KeyframeInterpMenu
-          x={interpMenu.x}
-          y={interpMenu.y}
-          onClose={() => setInterpMenu(null)}
-          onPick={(interp) => {
-            if (!focusedParam) return;
-            const track = readParamTrack(layer.params, focusedParam);
-            if (!track || track.mode !== "Keyframed") return;
-            onCommitParamTrack(layer.id, focusedParam, setKeyframeInterp(track, interpMenu.kfId, interp));
-          }}
-        />
-      )}
+      {interpMenu && focusedParam && (() => {
+        const track = readParamTrack(layer.params, focusedParam);
+        if (!track || track.mode !== "Keyframed") return null;
+        return (
+          <EasingEditor
+            x={interpMenu.x}
+            y={interpMenu.y}
+            track={track}
+            kfId={interpMenu.kfId}
+            onClose={() => setInterpMenu(null)}
+            onCommit={(next) => onCommitParamTrack(layer.id, focusedParam, next)}
+          />
+        );
+      })()}
     </div>
   );
 }
