@@ -16,7 +16,6 @@ const enUS = {
     interp_ease_out: "Ease Out",
     interp_ease: "Ease",
     interp_ease_in_out: "Ease In-Out",
-    easing_title: "Easing",
     smooth: "Smooth",
     delete_keyframe: "Delete keyframe",
   },

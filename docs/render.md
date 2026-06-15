@@ -97,6 +97,16 @@ and the Rust test (`golden_vectors_match_fixture`) both assert it, so an
 interpolation change that lands on one side only fails the other side's
 gate.
 
+### Keyframe easing authoring
+
+Easing is shown and edited directly on the timeline. Each animated property's
+keyframe sub-lane draws its value over time as a curve; focusing a property
+expands its lane and exposes tangent handles on each keyframe (left = the
+previous segment's outgoing control point, right = this segment's). Dragging a
+handle edits that segment's `cubic-bezier`; right-clicking a keyframe or segment
+opens a preset / Smooth menu. The curve follows the value, so which segment an
+easing governs is read directly from the picture.
+
 ## Decoder pool
 
 `SourceDecoderPool` is two-tiered. Decoders + frame rings are keyed
