@@ -204,7 +204,14 @@ pub(super) async fn remove_keyframe(
 ) -> Result<(), KfError> {
     let (_t_start, track) = read_track(project, layer_id, param_key).await?;
     require_key(&track, layer_id, param_key, keyframe_id)?;
-    let new = keyframe_edits::remove(&track, keyframe_id, 0.0);
+    // `require_key` guarantees the id is in `track`, so `remove` reads the
+    // removed key's value and this fallback is unused — but derive it from the
+    // snapshot rather than a magic 0.0 so the intent is self-documenting.
+    let fallback = match &track {
+        Animated::Static(v) => *v,
+        Animated::Keyframed(kfs) => kfs.front().map(|k| k.value).unwrap_or(0.0),
+    };
+    let new = keyframe_edits::remove(&track, keyframe_id, fallback);
     project
         .update_layer_param_track(actor, layer_id, param_key.to_string(), new)
         .await?;
@@ -397,5 +404,41 @@ mod tests {
             res,
             Err(KfError::Command(CommandError::UnknownKeyframeParam { .. }))
         ));
+    }
+
+    #[tokio::test]
+    async fn set_param_track_converts_timeline_absolute_to_local() {
+        let (handle, layer_id) = motif_project().await;
+        // Two opacity keyframes given in TIMELINE-ABSOLUTE microseconds.
+        let track = Animated::Keyframed(
+            vec![
+                Keyframe {
+                    id: new_id(),
+                    t_us: 2_000_000,
+                    value: 0.0,
+                    interp: crate::state::animated::Interpolation::Linear,
+                },
+                Keyframe {
+                    id: new_id(),
+                    t_us: 5_000_000,
+                    value: 1.0,
+                    interp: crate::state::animated::Interpolation::Linear,
+                },
+            ]
+            .into_iter()
+            .collect(),
+        );
+        set_param_track(&handle, Actor::User, layer_id, "opacity", track)
+            .await
+            .unwrap();
+
+        // Stored layer-local (t - t_start = t - 2_000_000); read back as absolute.
+        let v = get_param_track(&handle, layer_id, "opacity").await.unwrap();
+        let kfs = v["keyframes"].as_array().unwrap();
+        assert_eq!(kfs.len(), 2);
+        assert_eq!(kfs[0]["t_local_us"], 0);
+        assert_eq!(kfs[0]["t_us"], 2_000_000);
+        assert_eq!(kfs[1]["t_local_us"], 3_000_000);
+        assert_eq!(kfs[1]["t_us"], 5_000_000);
     }
 }
