@@ -1177,6 +1177,168 @@ impl WeftCutServer {
     }
 
     // ============================================================
+    // Keyframe tools — author Animated<f64> params for an agent.
+    // Times are TIMELINE-ABSOLUTE microseconds. Valid param_key per kind:
+    //   VideoClip/Motif: x, y, scale_x, scale_y, rotation_deg, opacity
+    //   ImageOverlay/Text: x, y, rotation_deg, opacity
+    //   Audio: gain_db, pan
+    // ============================================================
+
+    #[tool(description = "Read a layer param's animation track, flattened for editing. Returns \
+                          {\"mode\":\"Static\",\"value\":n} or {\"mode\":\"Keyframed\",\"keyframes\":[{id, \
+                          t_us, t_local_us, value, interp}]}. `t_us` is timeline-absolute; `t_local_us` is \
+                          layer-local (the stored base). Use this to discover keyframe ids before editing.")]
+    async fn get_param_track(
+        &self,
+        #[tool(aggr)] args: keyframes::GetParamTrackArgs,
+    ) -> Result<CallToolResult, McpError> {
+        let layer_id = parse_uuid(&args.layer_id, "layer_id")?;
+        let value = keyframes::get_param_track(&self.project, layer_id, &args.param_key)
+            .await
+            .map_err(keyframes::kf_error_to_mcp)?;
+        ok_json(&value)
+    }
+
+    #[tool(description = "Insert or update a keyframe on a layer param. `t_us` is timeline-absolute. \
+                          A Static track is lifted to Keyframed. An existing key at the same frame is \
+                          updated in place. `interp` (optional) sets the easing for the segment leaving \
+                          this key (e.g. {\"kind\":\"Linear\"}, {\"kind\":\"EaseIn\"}, \
+                          {\"kind\":\"Bezier\",\"p1\":[x,y],\"p2\":[x,y]}); omit to inherit the preceding \
+                          key's easing (or Linear).")]
+    async fn set_keyframe(
+        &self,
+        #[tool(aggr)] args: keyframes::SetKeyframeArgs,
+    ) -> Result<CallToolResult, McpError> {
+        let layer_id = parse_uuid(&args.layer_id, "layer_id")?;
+        let interp = match args.interp {
+            Some(v) => Some(
+                serde_json::from_value::<crate::state::animated::Interpolation>(v)
+                    .map_err(|e| McpError::invalid_params(format!("invalid interp: {e}"), None))?,
+            ),
+            None => None,
+        };
+        keyframes::set_keyframe(
+            &self.project,
+            agent_actor(),
+            layer_id,
+            &args.param_key,
+            args.t_us,
+            args.value,
+            interp,
+        )
+        .await
+        .map_err(keyframes::kf_error_to_mcp)?;
+        Ok(ok_void())
+    }
+
+    #[tool(description = "Remove a keyframe by id from a layer param. Get the id from get_param_track. \
+                          When it was the last key, the track collapses to Static holding that key's value.")]
+    async fn remove_keyframe(
+        &self,
+        #[tool(aggr)] args: keyframes::RemoveKeyframeArgs,
+    ) -> Result<CallToolResult, McpError> {
+        let layer_id = parse_uuid(&args.layer_id, "layer_id")?;
+        let keyframe_id = parse_uuid(&args.keyframe_id, "keyframe_id")?;
+        keyframes::remove_keyframe(&self.project, agent_actor(), layer_id, &args.param_key, keyframe_id)
+            .await
+            .map_err(keyframes::kf_error_to_mcp)?;
+        Ok(ok_void())
+    }
+
+    #[tool(description = "Move a keyframe to a new timeline-absolute time. The track re-sorts.")]
+    async fn retime_keyframe(
+        &self,
+        #[tool(aggr)] args: keyframes::RetimeKeyframeArgs,
+    ) -> Result<CallToolResult, McpError> {
+        let layer_id = parse_uuid(&args.layer_id, "layer_id")?;
+        let keyframe_id = parse_uuid(&args.keyframe_id, "keyframe_id")?;
+        keyframes::retime_keyframe(
+            &self.project,
+            agent_actor(),
+            layer_id,
+            &args.param_key,
+            keyframe_id,
+            args.t_us,
+        )
+        .await
+        .map_err(keyframes::kf_error_to_mcp)?;
+        Ok(ok_void())
+    }
+
+    #[tool(description = "Set the easing of the segment leaving a keyframe. `interp`: {\"kind\":\"Hold\"} | \
+                          {\"kind\":\"Linear\"} | {\"kind\":\"EaseIn\"} | {\"kind\":\"EaseOut\"} | \
+                          {\"kind\":\"Bezier\",\"p1\":[x,y],\"p2\":[x,y]}.")]
+    async fn set_keyframe_easing(
+        &self,
+        #[tool(aggr)] args: keyframes::SetKeyframeEasingArgs,
+    ) -> Result<CallToolResult, McpError> {
+        let layer_id = parse_uuid(&args.layer_id, "layer_id")?;
+        let keyframe_id = parse_uuid(&args.keyframe_id, "keyframe_id")?;
+        let interp = serde_json::from_value::<crate::state::animated::Interpolation>(args.interp)
+            .map_err(|e| McpError::invalid_params(format!("invalid interp: {e}"), None))?;
+        keyframes::set_keyframe_easing(
+            &self.project,
+            agent_actor(),
+            layer_id,
+            &args.param_key,
+            keyframe_id,
+            interp,
+        )
+        .await
+        .map_err(keyframes::kf_error_to_mcp)?;
+        Ok(ok_void())
+    }
+
+    #[tool(description = "Bake monotone (no-overshoot) smooth tangents. With `keyframe_id`, smooths that \
+                          one key; without it, smooths the whole track.")]
+    async fn smooth_keyframes(
+        &self,
+        #[tool(aggr)] args: keyframes::SmoothKeyframesArgs,
+    ) -> Result<CallToolResult, McpError> {
+        let layer_id = parse_uuid(&args.layer_id, "layer_id")?;
+        let keyframe_id = match args.keyframe_id.as_deref() {
+            Some(s) => Some(parse_uuid(s, "keyframe_id")?),
+            None => None,
+        };
+        keyframes::smooth_keyframes(&self.project, agent_actor(), layer_id, &args.param_key, keyframe_id)
+            .await
+            .map_err(keyframes::kf_error_to_mcp)?;
+        Ok(ok_void())
+    }
+
+    #[tool(description = "Collapse a param's animation back to a single Static value. `value` (optional) \
+                          is the value to hold; when omitted, defaults to the first keyframe's value. \
+                          No-op on an already-Static track.")]
+    async fn clear_keyframes(
+        &self,
+        #[tool(aggr)] args: keyframes::ClearKeyframesArgs,
+    ) -> Result<CallToolResult, McpError> {
+        let layer_id = parse_uuid(&args.layer_id, "layer_id")?;
+        keyframes::clear_keyframes(&self.project, agent_actor(), layer_id, &args.param_key, args.value)
+            .await
+            .map_err(keyframes::kf_error_to_mcp)?;
+        Ok(ok_void())
+    }
+
+    #[tool(description = "Low-level: replace a layer param's whole animation track. `track` is an \
+                          AnimTrack<f64>: {\"mode\":\"Static\",\"value\":n} or \
+                          {\"mode\":\"Keyframed\",\"value\":[{id, t_us, value, interp}]} with keyframe \
+                          `t_us` timeline-absolute. Use the granular tools (set_keyframe etc.) unless you \
+                          need bulk authoring.")]
+    async fn set_param_track(
+        &self,
+        #[tool(aggr)] args: keyframes::SetParamTrackArgs,
+    ) -> Result<CallToolResult, McpError> {
+        let layer_id = parse_uuid(&args.layer_id, "layer_id")?;
+        let track = serde_json::from_value::<Animated<f64>>(args.track)
+            .map_err(|e| McpError::invalid_params(format!("invalid track: {e}"), None))?;
+        keyframes::set_param_track(&self.project, agent_actor(), layer_id, &args.param_key, track)
+            .await
+            .map_err(keyframes::kf_error_to_mcp)?;
+        Ok(ok_void())
+    }
+
+    // ============================================================
     // Motif tools (Phase 5 Stage H)
     // ============================================================
 
