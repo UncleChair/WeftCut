@@ -107,6 +107,26 @@ describe("smoothKeyframe", () => {
     }
   });
 
+  it("does not undershoot at a valley (symmetric to the peak case)", () => {
+    // values 10, 0, 10 — middle is a local min; smoothed curve must never drop below 0.
+    const track = {
+      mode: "Keyframed" as const,
+      value: [mkKf("a", 0, 10), mkKf("b", 1_000_000, 0), mkKf("c", 2_000_000, 10)],
+    };
+    const out = smoothTrack(track);
+    for (let t = 0; t <= 2_000_000; t += 50_000) {
+      expect(resolveAnimated(out, t, 0)).toBeGreaterThanOrEqual(-1e-6);
+      expect(resolveAnimated(out, t, 0)).toBeLessThanOrEqual(10 + 1e-6);
+    }
+  });
+
+  it("leaves a single-keyframe track's interp unchanged (no neighbours)", () => {
+    const track = { mode: "Keyframed" as const, value: [mkKf("a", 0, 4)] };
+    const out = smoothKeyframe(track, "a");
+    if (out.mode !== "Keyframed") throw new Error("expected keyframed");
+    expect(out.value).toEqual(track.value); // content unchanged: no segment to smooth
+  });
+
   it("keeps a flat (equal-value) segment Linear", () => {
     const track = {
       mode: "Keyframed" as const,

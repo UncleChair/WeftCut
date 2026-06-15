@@ -157,9 +157,9 @@ export function smoothKeyframe(track: AnimTrack<number>, id: string): AnimTrack<
 /// Smooth every interior keyframe (one whole-track result → one undo step).
 export function smoothTrack(track: AnimTrack<number>): AnimTrack<number> {
   if (track.mode === "Static") return track;
-  let t: AnimTrack<number> = track;
-  for (const k of track.value) t = smoothKeyframe(t, k.id);
-  return t;
+  let acc: AnimTrack<number> = track;
+  for (const k of track.value) acc = smoothKeyframe(acc, k.id);
+  return acc;
 }
 
 export type { Keyframe };
