@@ -4,6 +4,12 @@ import { cleanup, render, fireEvent } from "@testing-library/react";
 import type { AnimTrack } from "../ipc";
 import { KeyframeCurveGraph } from "./KeyframeCurveGraph";
 
+// jsdom 25 does not implement PointerEvent; polyfill it so fireEvent.pointerDown
+// creates a MouseEvent-compatible object with a usable .button property.
+if (typeof window !== "undefined" && !window.PointerEvent) {
+  (window as unknown as Record<string, unknown>).PointerEvent = window.MouseEvent;
+}
+
 afterEach(cleanup);
 
 const track: Extract<AnimTrack<number>, { mode: "Keyframed" }> = {
@@ -54,8 +60,14 @@ describe("KeyframeCurveGraph", () => {
   it("right-click on a dot opens the menu", () => {
     const onOpenMenu = vi.fn();
     const { container } = renderGraph({ onOpenMenu });
-    fireEvent.contextMenu(container.querySelector('.kf-sublane-diamond[data-kf-id="k0"]')!);
-    expect(onOpenMenu).toHaveBeenCalledWith(expect.any(Number), expect.any(Number), "k0");
+    fireEvent.contextMenu(container.querySelector('.kf-sublane-diamond[data-kf-id="k0"]')!, { clientX: 42, clientY: 17 });
+    expect(onOpenMenu).toHaveBeenCalledWith(42, 17, "k0");
+  });
+  it("left-click on a dot selects+seeks it", () => {
+    const onSelectSeek = vi.fn();
+    const { container } = renderGraph({ onSelectSeek });
+    fireEvent.pointerDown(container.querySelector('.kf-sublane-diamond[data-kf-id="k0"]')!, { button: 0 });
+    expect(onSelectSeek).toHaveBeenCalledWith("k0");
   });
   it("marks the selected keyframe", () => {
     const { container } = renderGraph({ selectedKfId: "k1" });
