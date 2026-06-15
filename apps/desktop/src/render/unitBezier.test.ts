@@ -17,5 +17,6 @@ describe("unitBezier", () => {
   it("ease-in is slow at the start", () => {
     expect(unitBezier(0.42, 0, 1, 1, 0.25)).toBeLessThan(0.25);
     expect(unitBezier(0.42, 0, 1, 1, 0.5)).toBeLessThan(0.5);
+    expect(unitBezier(0.42, 0, 1, 1, 0.75)).toBeLessThan(0.75); // matches the Rust twin's sample points
   });
 });
