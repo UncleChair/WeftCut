@@ -4,6 +4,7 @@
 // layer-local microseconds (the keyframe `t_us` base).
 import type { AnimTrack, Interpolation, Keyframe } from "../ipc";
 import { resolveAnimated } from "../render/animated";
+import { interpToCoeffs } from "./curve";
 
 function newId(): string {
   return crypto.randomUUID();
@@ -84,21 +85,9 @@ export function setKeyframeInterp(
 
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
-/// Current interp as cubic-bezier control coords [x1,y1,x2,y2]. Linear/Hold
-/// map to the identity diagonal so a single-sided smooth keeps the other side
-/// linear-ish. (Hold becomes a curve when smoothed — intended.)
-function toBezierCoeffs(interp: Interpolation): [number, number, number, number] {
-  switch (interp.kind) {
-    case "Bezier":
-      return [interp.p1[0], interp.p1[1], interp.p2[0], interp.p2[1]];
-    case "EaseIn":
-      return [0.42, 0, 1, 1];
-    case "EaseOut":
-      return [0, 0, 0.58, 1];
-    default:
-      return [0, 0, 1, 1]; // Linear / Hold → identity diagonal
-  }
-}
+// The "preserve the non-smoothed control point" reads use `interpToCoeffs`
+// (from ./curve) so Linear/Hold map to the identity diagonal [0,0,1,1] and the
+// named eases / Bezier map to their coords — one canonical interp→coeff table.
 
 /// Monotone-clamped tangent (value per microsecond) at interior key `i`.
 /// 0 at a local extremum (or when a neighbour delta is 0).
@@ -132,7 +121,7 @@ export function smoothKeyframe(track: AnimTrack<number>, id: string): AnimTrack<
     if (dv === 0 || dt <= 0) {
       out[i] = { ...keys[i]!, interp: { kind: "Linear" } };
     } else {
-      const [, , x2, y2] = toBezierCoeffs(keys[i]!.interp);
+      const [, , x2, y2] = interpToCoeffs(keys[i]!.interp);
       const y1 = clamp01((m * dt) / (3 * dv));
       out[i] = { ...keys[i]!, interp: { kind: "Bezier", p1: [1 / 3, y1], p2: [x2, y2] } };
     }
@@ -145,7 +134,7 @@ export function smoothKeyframe(track: AnimTrack<number>, id: string): AnimTrack<
     if (dv === 0 || dt <= 0) {
       out[i - 1] = { ...keys[i - 1]!, interp: { kind: "Linear" } };
     } else {
-      const [x1, y1] = toBezierCoeffs(out[i - 1]!.interp);
+      const [x1, y1] = interpToCoeffs(out[i - 1]!.interp);
       const y2 = clamp01(1 - (m * dt) / (3 * dv));
       out[i - 1] = { ...out[i - 1]!, interp: { kind: "Bezier", p1: [x1, y1], p2: [2 / 3, y2] } };
     }
