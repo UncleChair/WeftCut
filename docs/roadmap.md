@@ -43,8 +43,6 @@ What remains:
   via that batch surface).
 - **`Animated<Rgba>` + a color stopwatch** — needs a Rust `value_at` twin for
   `Rgba` first (the dual-engine mirror rule forbids a TS-only interpolator).
-- **Bezier interpolation authoring** — the engine's Bezier arm is a linear
-  stub; needs a curve editor.
 - **MCP keyframe tools** (`add_keyframe` / `update_keyframe` / `remove_keyframe`)
   on top of the `update_layer_param_track` surface.
 
