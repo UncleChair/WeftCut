@@ -1,6 +1,6 @@
 # Keyframe Bézier Easing Implementation Plan
 
-> **Status: SHIPPED** — all 12 tasks complete, merged to local `main` (merge `e292f8b8`, unpushed). tsc clean / vitest 571 / cargo 590 / e2e 3/3. The checkboxes below were the execution tracker; the work is done. Remaining (separate efforts): manual real-app visual acceptance, multi-select sub-lane editing, `Animated<Rgba>` + color stopwatch, MCP keyframe tools.
+> **Status: SHIPPED** — all 12 tasks complete, merged to local `main` (merge `e292f8b8`, unpushed). tsc clean / vitest 571 / cargo 590 / e2e 3/3. The checkboxes below were the execution tracker; the work is done. Remaining (separate efforts): manual real-app visual acceptance, multi-select sub-lane editing, `Animated<Rgba>` + color stopwatch, MCP keyframe tools. **Superseded UI:** the easing-editor popover this built (`EasingEditor`/`EasingCanvas`/`MotionPreview`) was later replaced by the inline value-curve graph (`2026-06-15-inline-keyframe-curve-graph.md`); those components are deleted. The cubic solver, presets, and Smooth from this work remain in use.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

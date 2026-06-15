@@ -1,5 +1,7 @@
 # Inline Keyframe Curve Graph Implementation Plan
 
+> **Status: SHIPPED** — all tasks complete, merged to local `main` (fast-forward `e2f46b61`). `tsc -b` clean / vitest 598 / e2e 3/3 (real WebView2, `keyframe_authoring`); manual visual smoke passed. The checkboxes below were the execution tracker; the work is done. This replaced the `EasingEditor` popover from the bezier-easing work — see `2026-06-15-keyframe-bezier-easing-design.md` §4 (superseded).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the detached cubic-bezier popup with an on-timeline value-curve graph — each animated property drawn as its value over time on its keyframe sub-lane, with AE-style tangent handles editable in place.

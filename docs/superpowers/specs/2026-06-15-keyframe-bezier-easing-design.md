@@ -137,6 +137,14 @@ explicitly avoiding.
 
 ## 4. UI — unified easing editor popover (replaces `KeyframeInterpMenu`)
 
+> **Superseded.** The popover UI in this section (`EasingEditor` / `EasingCanvas` /
+> `MotionPreview`) was replaced by an on-timeline value-curve editor — see
+> `2026-06-15-inline-keyframe-curve-graph-design.md`. Easing is now shown/edited
+> inline on each keyframe sub-lane (drag tangent handles; presets/Smooth via a
+> right-click `EasingMenu`); those three components are deleted. The engine, solver,
+> presets, and Smooth (§1–3, §5) are unchanged and remain current — only this
+> authoring UI changed.
+
 Opened from a keyframe's right-click / double-click on both entry points that today
 open `KeyframeInterpMenu` (collapsed-mode diamonds in `LayerBlock`, expanded-mode
 sub-lane diamonds in `KeyframeLane`). Anchored at the click; Base-UI popover, modal

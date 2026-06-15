@@ -1,7 +1,12 @@
 # Inline Keyframe Curve Graph: On-Timeline Value Curves with In-Place Tangent Handles
 
 **Date:** 2026-06-15
-**Status:** Designed (brainstorming complete). Not yet implemented.
+**Status:** Shipped — merged to local `main` (fast-forward `e2f46b61`). Built
+subagent-driven over the plan's tasks (fresh implementer + spec/quality review
+each); `tsc -b` clean, vitest 598, manual visual smoke passed, and e2e-verified in
+the real WebView2 (`e2e/specs/ui/keyframe_authoring.e2e.js` — the sub-lane spec
+renders the value-curve dots and click selects + seeks; the two export specs
+reconfirm the unchanged data/engine path).
 
 ## Goal
 
