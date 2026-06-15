@@ -35,7 +35,7 @@ apps/desktop/e2e/
       launch.e2e.js              # boots as real WebView2 with the Tauri bridge
     ui/
       layers.e2e.js              # add color/text layer + still-image/gif support
-      keyframe_authoring.e2e.js  # keyframe opacity ramp -> export
+      keyframe_authoring.e2e.js  # keyframe opacity ramp + sub-lanes + bézier easing -> export
     export/
       conformance.e2e.js         # video frame alignment + SSIM gate
       color_conformance.e2e.js   # color patch gate
