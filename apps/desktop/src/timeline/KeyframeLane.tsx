@@ -113,7 +113,9 @@ export function KeyframeLane({
   }, [armedKfId, layerIds, track.layers, onCommitParamTrack]);
 
   const focusedParamKey = useFocusedParamKeyForTrackLayers(layerIds);
-  const focusedLayerId = useKeyframeFocusStore((s) => s.layerId);
+  const focusedLayerId = useKeyframeFocusStore((s) =>
+    s.layerId && layerIds.has(s.layerId) ? s.layerId : null,
+  );
 
   return (
     <>
@@ -199,9 +201,10 @@ function LayerCurveLane({
       selectedKfId={selectedKfId}
       onSelectSeek={(kfId) => {
         const kf = track.value.find((k) => k.id === kfId);
+        if (!kf) return;
         selectKeyframe({ layerId, paramKey, kfId });
         setKeyframeFocus(layerId, paramKey);
-        if (kf) transportSeek(layerTStartUs + kf.t_us);
+        transportSeek(layerTStartUs + kf.t_us);
       }}
       onRetime={(kfId, newTUs) =>
         onCommitParamTrack(layerId, paramKey, retimeKeyframe(track, kfId, newTUs))
