@@ -53,3 +53,48 @@ describe("computeValueRange", () => {
     expect(r.vmax).toBeGreaterThan(r.vmin);
   });
 });
+
+import { segmentPolyline, segmentHandles, type Seg } from "./curveGraph";
+
+const SEG: Seg = { aTUs: 0, aVal: 0, bTUs: 1_000_000, bVal: 1 }; // 0→1 over 1s
+const G2: CurveGeom = { pxPerSec: 100, layerTStartUs: 0, height: 100, vmin: 0, vmax: 1 };
+
+describe("segmentPolyline", () => {
+  it("Linear → two points corner to corner", () => {
+    expect(segmentPolyline(SEG, { kind: "Linear" }, G2)).toEqual([
+      { x: 0, y: 100 }, // t0 v0 → bottom-left
+      { x: 100, y: 0 }, // t1 v1 → top-right
+    ]);
+  });
+  it("Hold → flat then vertical step", () => {
+    expect(segmentPolyline(SEG, { kind: "Hold" }, G2)).toEqual([
+      { x: 0, y: 100 },   // start
+      { x: 100, y: 100 }, // flat at start value
+      { x: 100, y: 0 },   // step up at next key
+    ]);
+  });
+  it("Bezier → sampled, endpoints anchored at the keyframes", () => {
+    const pts = segmentPolyline(SEG, { kind: "Bezier", p1: [0.42, 0], p2: [0.58, 1] }, G2, 10);
+    expect(pts.length).toBe(11);
+    expect(pts[0]).toEqual({ x: 0, y: 100 });
+    expect(pts[10]).toEqual({ x: 100, y: 0 });
+    // midpoint x is the time midpoint; y is between the endpoints
+    expect(pts[5]!.x).toBeCloseTo(50, 6);
+    expect(pts[5]!.y).toBeGreaterThan(0);
+    expect(pts[5]!.y).toBeLessThan(100);
+  });
+});
+
+describe("segmentHandles", () => {
+  it("returns null for Hold and Linear (no editable handles)", () => {
+    expect(segmentHandles(SEG, { kind: "Hold" }, G2)).toBeNull();
+    expect(segmentHandles(SEG, { kind: "Linear" }, G2)).toBeNull();
+  });
+  it("places p1/p2 control points in time/value px space", () => {
+    const h = segmentHandles(SEG, { kind: "Bezier", p1: [0.25, 0.1], p2: [0.75, 0.9] }, G2)!;
+    expect(h.p1.x).toBeCloseTo(25, 6);  // 0.25 of 100px width
+    expect(h.p1.y).toBeCloseTo(90, 6);  // value 0.1 → y = (1-0.1)*100
+    expect(h.p2.x).toBeCloseTo(75, 6);
+    expect(h.p2.y).toBeCloseTo(10, 6);  // value 0.9 → y = (1-0.9)*100
+  });
+});
