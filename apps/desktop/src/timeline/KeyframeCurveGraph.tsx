@@ -136,6 +136,19 @@ export function KeyframeCurveGraph({
               <polyline
                 points={pts}
                 fill="none"
+                stroke="transparent"
+                strokeWidth={12}
+                className="pointer-events-auto cursor-context-menu"
+                data-testid="kf-segment-hit"
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onOpenMenu(e.clientX, e.clientY, owner);
+                }}
+              />
+              <polyline
+                points={pts}
+                fill="none"
                 stroke="var(--ring, #9a9aff)"
                 strokeWidth={editable ? 2 : 1}
                 opacity={editable ? 1 : 0.5}
