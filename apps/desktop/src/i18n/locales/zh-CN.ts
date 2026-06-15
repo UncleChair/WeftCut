@@ -16,6 +16,13 @@ const zhCN: Resources = {
     interp_linear: "线性",
     interp_ease_in: "缓入",
     interp_ease_out: "缓出",
+    interp_ease: "缓动",
+    interp_ease_in_out: "缓入缓出",
+    easing_title: "缓动",
+    smooth: "平滑",
+    smooth_all: "全部平滑",
+    custom: "自定义",
+    motion_preview: "动效预览",
     delete_keyframe: "删除关键帧",
   },
   startup: {

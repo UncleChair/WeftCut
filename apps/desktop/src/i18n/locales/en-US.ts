@@ -14,6 +14,13 @@ const enUS = {
     interp_linear: "Linear",
     interp_ease_in: "Ease In",
     interp_ease_out: "Ease Out",
+    interp_ease: "Ease",
+    interp_ease_in_out: "Ease In-Out",
+    easing_title: "Easing",
+    smooth: "Smooth",
+    smooth_all: "Smooth all",
+    custom: "Custom",
+    motion_preview: "Motion preview",
     delete_keyframe: "Delete keyframe",
   },
   startup: {
