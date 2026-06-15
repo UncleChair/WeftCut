@@ -12,6 +12,64 @@ use serde::{Deserialize, Serialize};
 use super::ids::KeyframeId;
 use super::time::TimeUs;
 
+/// Evaluate a `cubic-bezier(x1,y1,x2,y2)` timing function at normalized
+/// progress `x` ∈ [0,1]. Control points are (0,0),(x1,y1),(x2,y2),(1,1):
+/// solve `X(s)=x` for the Bézier parameter `s` (Newton-Raphson, ≤8 iters,
+/// bisection fallback), then return `Y(s)`. `x1,x2` are assumed in [0,1]
+/// (enforced at authoring) so `X` is monotone and the solve single-valued.
+///
+/// MIRRORS `render/animated.ts::unitBezier` byte-for-byte (WebKit UnitBezier).
+/// Any edit here MUST be mirrored there + reflected in the golden fixture.
+pub fn unit_bezier(x1: f64, y1: f64, x2: f64, y2: f64, x: f64) -> f64 {
+    const EPS: f64 = 1e-7;
+    // Bézier → power-basis coefficients.
+    let cx = 3.0 * x1;
+    let bx = 3.0 * (x2 - x1) - cx;
+    let ax = 1.0 - cx - bx;
+    let cy = 3.0 * y1;
+    let by = 3.0 * (y2 - y1) - cy;
+    let ay = 1.0 - cy - by;
+    let sample_x = |t: f64| ((ax * t + bx) * t + cx) * t;
+    let sample_y = |t: f64| ((ay * t + by) * t + cy) * t;
+    let sample_dx = |t: f64| (3.0 * ax * t + 2.0 * bx) * t + cx;
+
+    // Newton-Raphson.
+    let mut t = x;
+    for _ in 0..8 {
+        let xt = sample_x(t) - x;
+        if xt.abs() < EPS {
+            return sample_y(t);
+        }
+        let d = sample_dx(t);
+        if d.abs() < 1e-6 {
+            break;
+        }
+        t -= xt / d;
+    }
+    // Bisection fallback.
+    let (mut lo, mut hi) = (0.0_f64, 1.0_f64);
+    t = x;
+    if t < lo {
+        return sample_y(lo);
+    }
+    if t > hi {
+        return sample_y(hi);
+    }
+    while lo < hi {
+        let xt = sample_x(t);
+        if (xt - x).abs() < EPS {
+            return sample_y(t);
+        }
+        if x > xt {
+            lo = t;
+        } else {
+            hi = t;
+        }
+        t = (hi - lo) * 0.5 + lo;
+    }
+    sample_y(t)
+}
+
 /// `T: Clone` is required because `imbl::Vector` uses structural sharing — the
 /// inner `Keyframe<T>` must be cloneable. Bounding the type is cleaner than
 /// repeating the bound at every use site.
@@ -223,11 +281,9 @@ impl Animated<f64> {
     /// - `t_us` before the first keyframe → first keyframe's value (clamp)
     /// - `t_us` at-or-after the last → last keyframe's value (clamp)
     /// - else: locate the segment via `kf[i].t_us <= t_us < kf[i+1].t_us`
-    ///   and apply `kf[i].interp` (Hold → `a.value`; Linear/Bezier →
-    ///   lerp; EaseIn → `u*u`; EaseOut → `1 - (1-u)*(1-u)`)
-    ///
-    /// Bezier currently treats as Linear — same shortcut as the
-    /// engine. Editor can grow a real cubic-bezier solver later.
+    ///   and apply `kf[i].interp` (Hold → `a.value`; Linear → lerp;
+    ///   EaseIn/EaseOut → CSS cubic eases via `unit_bezier`;
+    ///   Bezier → `unit_bezier(p1, p2)`)
     pub fn value_at(&self, t_us: TimeUs, default: f64) -> f64 {
         match self {
             Animated::Static(v) => *v,
@@ -259,12 +315,12 @@ impl Animated<f64> {
                 let mut u = (t_us - a.t_us) as f64 / span;
                 match a.interp {
                     Interpolation::Hold => return a.value,
-                    Interpolation::EaseIn => u = u * u,
-                    Interpolation::EaseOut => {
-                        let iu = 1.0 - u;
-                        u = 1.0 - iu * iu;
+                    Interpolation::Linear => {}
+                    Interpolation::EaseIn => u = unit_bezier(0.42, 0.0, 1.0, 1.0, u),
+                    Interpolation::EaseOut => u = unit_bezier(0.0, 0.0, 0.58, 1.0, u),
+                    Interpolation::Bezier { p1, p2 } => {
+                        u = unit_bezier(p1.0, p1.1, p2.0, p2.1, u);
                     }
-                    Interpolation::Linear | Interpolation::Bezier { .. } => {}
                 }
                 a.value + (b.value - a.value) * u
             }
@@ -444,14 +500,23 @@ mod tests {
     }
 
     #[test]
-    fn value_at_ease_in_quadratic() {
-        // EaseIn applies u*u to the parametric position. At u=0.5,
-        // result = 0 + (10-0) * 0.25 = 2.5
+    fn value_at_ease_in_uses_cubic_bezier() {
         let a = keyframed(vec![
             kf(0, 0.0, Interpolation::EaseIn),
             kf(10_000_000, 10.0, Interpolation::EaseIn),
         ]);
-        assert!((a.value_at(5_000_000, 0.0) - 2.5).abs() < 1e-6);
+        let expected = super::unit_bezier(0.42, 0.0, 1.0, 1.0, 0.5) * 10.0;
+        assert!((a.value_at(5_000_000, 0.0) - expected).abs() < 1e-9);
+    }
+
+    #[test]
+    fn value_at_ease_out_uses_cubic_bezier() {
+        let a = keyframed(vec![
+            kf(0, 0.0, Interpolation::EaseOut),
+            kf(10_000_000, 10.0, Interpolation::EaseOut),
+        ]);
+        let expected = super::unit_bezier(0.0, 0.0, 0.58, 1.0, 0.5) * 10.0;
+        assert!((a.value_at(5_000_000, 0.0) - expected).abs() < 1e-9);
     }
 
     #[test]
@@ -535,6 +600,35 @@ mod tests {
     fn normalize_noop_on_static() {
         let mut a: Animated<f64> = Animated::Static(2.0);
         assert!(a.normalize_keyframes(|t| t).is_ok());
+    }
+
+    #[test]
+    fn unit_bezier_identity_when_coords_equal() {
+        // cubic-bezier(0,0,1,1): x and y control coords equal → y(x) = x.
+        for &x in &[0.0, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0] {
+            assert!((super::unit_bezier(0.0, 0.0, 1.0, 1.0, x) - x).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn unit_bezier_endpoints() {
+        assert!((super::unit_bezier(0.42, 0.0, 0.58, 1.0, 0.0) - 0.0).abs() < 1e-9);
+        assert!((super::unit_bezier(0.42, 0.0, 0.58, 1.0, 1.0) - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn unit_bezier_symmetric_ease_in_out_midpoint_is_half() {
+        // cubic-bezier(0.42,0,0.58,1) is point-symmetric about (0.5,0.5).
+        assert!((super::unit_bezier(0.42, 0.0, 0.58, 1.0, 0.5) - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn unit_bezier_ease_in_is_slow_at_start() {
+        // Ease-in (0.42,0,1,1) stays below the diagonal for all x in (0,1) —
+        // slow start, late surge, flat arrival; never overtakes the diagonal.
+        assert!(super::unit_bezier(0.42, 0.0, 1.0, 1.0, 0.25) < 0.25);
+        assert!(super::unit_bezier(0.42, 0.0, 1.0, 1.0, 0.75) < 0.75);
+        assert!(super::unit_bezier(0.42, 0.0, 1.0, 1.0, 0.5) < 0.5);
     }
 
     /// Cross-language golden vectors. The SAME fixture is asserted by

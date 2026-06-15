@@ -87,10 +87,15 @@ layer-local time via `render/resolveView.ts` — numeric tracks through
 Rust `state/animated.rs::value_at`; color tracks statically until the
 Rgba engine twin lands — then hands the resolved scalar view to the
 sprite to update its texture / position / opacity / transform / blend
-mode. A shared golden-vector fixture
-(`render/animatedGolden.fixture.json`) locks the two engines together:
-both sides assert it in their unit suites, so an interpolation change
-that lands on one side only fails the other side's gate.
+mode. Both engines resolve `EaseIn`, `EaseOut`, and `Bezier{p1,p2}`
+through an identical WebKit-`UnitBezier` cubic solver (Newton–Raphson
+with binary-search fallback), so the named CSS eases and arbitrary
+per-segment timing functions produce the same output in Rust and TS. A
+shared golden-vector fixture (`render/animatedGolden.fixture.json`)
+locks the two engines together: the TS suite (`animated.golden.test.ts`)
+and the Rust test (`golden_vectors_match_fixture`) both assert it, so an
+interpolation change that lands on one side only fails the other side's
+gate.
 
 ## Decoder pool
 

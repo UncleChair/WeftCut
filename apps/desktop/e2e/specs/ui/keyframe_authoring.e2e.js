@@ -347,3 +347,171 @@ describe("keyframe sub-lanes (expand → diamonds → click-seek, real WebView2)
     console.log("[e2e] sub-lane: 2 diamonds rendered; click selected + seeked ✔");
   });
 });
+
+// Custom cubic-Bézier easing reaches exported frames.
+//
+// Proves that a slow-start Bézier curve `p1=[0.7,0] p2=[0.9,0.05]` measurably
+// shifts the animated opacity toward zero for most of the clip's duration,
+// producing a mid-clip frame that looks FAR more like the near-black start than
+// the fully-visible end.  This is an ORDINAL assertion — no hardcoded SSIM
+// threshold is needed:
+//
+//   ssim(mid, early) >> ssim(mid, late)   (mid is nearer to black than to full)
+//
+// For a LINEAR 0→1 ramp the mid-frame sits at ~0.5 opacity (halfway between
+// black and full content), so the two SSIM values are roughly symmetric.  For
+// the slow-start Bézier the mid-frame is at ~5% opacity, making it nearly
+// indistinguishable from the early (near-black) frame and very different from
+// the late (full-opacity) frame.  The ordinal gap is large enough to be
+// unmistakable even across encoding noise.
+//
+// `analyzeSelf` interprets `samples` as consecutive pairs [a0,b0, a1,b1, ...],
+// so one call with [MID,EARLY, MID,LATE] returns two pair entries whose `.ssim`
+// fields are compared directly — no separate helper needed.
+const OUTPUT_BEZ = tmpOut("weftcut-e2e-keyframe-bezier.mp4");
+const PROJECT_PARENT_BEZ = tmpProjectParent("weftcut-e2e-keyframe-bez-proj");
+
+// Composition: 3 s @ 30 fps = 90 frames (same as the linear suite).
+// Samples used in the ordinal assertion:
+//   EARLY = frame 3  → opacity ≈ 0.03   (near-black regardless of easing)
+//   MID   = frame 45 → opacity ≈ 0.05 under slow-start Bézier vs ~0.50 linear
+//   LATE  = frame 87 → opacity ≈ 0.97   (near-full regardless of easing)
+const BEZ_EARLY = 3;
+const BEZ_MID = 45;
+const BEZ_LATE = 87;
+
+describe("custom cubic-Bézier easing reaches exported frames (ordinal mid-frame check)", function () {
+  before(function () {
+    if (!existsSync(SOURCE)) {
+      console.warn(`[e2e] SKIP: source fixture not found at ${SOURCE} (set WEFTCUT_TEST_MEDIA)`);
+      this.skip();
+    }
+    mkdirSync(PROJECT_PARENT_BEZ, { recursive: true });
+    rmSync(OUTPUT_BEZ, { force: true });
+  });
+
+  it("slow-start Bézier mid-frame is closer to black-start than to full-end (ordinal SSIM)", async function () {
+    this.timeout(180000);
+
+    // ── 1+2. Create a blank 1080p 30fps project and enter the editor ──────────
+    await newProject({
+      parentFolder: PROJECT_PARENT_BEZ,
+      name: "e2e-kf-bez-" + Date.now(),
+      canvas: { width: 1920, height: 1080, fpsNum: COMP_FPS_NUM, fpsDen: COMP_FPS_DEN },
+    });
+
+    // ── 3. Wait for test hooks ────────────────────────────────────────────────
+    await browser.waitUntil(
+      async () =>
+        (await browser.execute(
+          () =>
+            typeof window.__weftcutTest?.importAndPlaceMedia === "function" &&
+            typeof window.__weftcutTest?.exportTimeline === "function",
+        )) === true,
+      { timeout: 30000, timeoutMsg: "importAndPlaceMedia / exportTimeline never mounted" },
+    );
+
+    // ── 4. Import fixture and capture layerId ─────────────────────────────────
+    const r2 = await browser.executeAsync((media, done) => {
+      window.__weftcutTest
+        .importAndPlaceMedia({ mediaAbsPath: media, tStartUs: 0 })
+        .then((result) => done({ ok: true, ...result }))
+        .catch((e) => done({ ok: false, error: String(e) }));
+    }, SOURCE);
+    if (!r2.ok) throw new Error("importAndPlaceMedia failed: " + r2.error);
+    const layerId = r2.layerId;
+    console.log(`[e2e] placed VideoClip layerId=${layerId}`);
+
+    // ── 5. Wait for export-readiness ──────────────────────────────────────────
+    const r3 = await browser.executeAsync((mediaId, done) => {
+      window.__weftcutTest
+        .waitMediaExportReady({ mediaId, timeoutMs: 60000 })
+        .then(() => done({ ok: true }))
+        .catch((e) => done({ ok: false, error: String(e) }));
+    }, r2.mediaId);
+    if (!r3.ok) throw new Error("waitMediaExportReady failed: " + r3.error);
+
+    // ── 6. Write the keyframe opacity track with a SLOW-START Bézier ─────────
+    //
+    // Bezier { p1: [0.7, 0.0], p2: [0.9, 0.05] } is a strongly eased slow-start
+    // curve: at the midpoint of the timeline (~t=1.5 s, frame 45) the curve has
+    // advanced only ~5% of the 0→1 opacity range, so the mid-frame is almost
+    // black.  The interp on the SECOND keyframe is unused (nothing follows it),
+    // but is set to Linear to keep the payload well-formed.
+    const r4 = await browser.executeAsync((lid, kfStartUs, kfEndUs, done) => {
+      const track = {
+        mode: "Keyframed",
+        value: [
+          {
+            id: crypto.randomUUID(),
+            t_us: kfStartUs,
+            value: 0.0,
+            interp: { kind: "Bezier", p1: [0.7, 0.0], p2: [0.9, 0.05] },
+          },
+          {
+            id: crypto.randomUUID(),
+            t_us: kfEndUs,
+            value: 1.0,
+            interp: { kind: "Linear" },
+          },
+        ],
+      };
+      window.__TAURI_INTERNALS__
+        .invoke("update_layer_param_track", { layerId: lid, paramKey: "opacity", track })
+        .then(() => done({ ok: true }))
+        .catch((e) => done({ ok: false, error: String(e) }));
+    }, layerId, KF_T_START_US, KF_T_END_US);
+    if (!r4.ok) throw new Error("update_layer_param_track (Bezier) failed: " + r4.error);
+    console.log("[e2e] opacity track written: Bezier slow-start p1=[0.7,0] p2=[0.9,0.05]");
+
+    // ── 7. Export ──────────────────────────────────────────────────────────────
+    const exp = await driveExport({ outputAbsPath: OUTPUT_BEZ }, { hook: "exportTimeline", label: "bezier-kf" });
+    if (!exp.done.ok) throw new Error("exportTimeline failed: " + exp.done.error);
+    if (!existsSync(OUTPUT_BEZ)) throw new Error(`no output file written at ${OUTPUT_BEZ}`);
+
+    // ── 8. Ordinal SSIM assertion: mid is closer to early (black) than to late ─
+    //
+    // `analyzeSelf` treats `samples` as consecutive pairs [a0,b0, a1,b1, ...].
+    // Pair 0: (MID=45, EARLY=3)  → how similar mid-frame is to near-black start.
+    // Pair 1: (MID=45, LATE=87)  → how similar mid-frame is to full-opacity end.
+    //
+    // With a slow-start Bézier the mid-frame is near-black (~5% opacity), so:
+    //   pair0.ssim  (mid vs black-start) is HIGH   — they look nearly the same
+    //   pair1.ssim  (mid vs full-end)    is LOW    — they look very different
+    //
+    // The ordinal assertion `pair0.ssim > pair1.ssim` holds irrespective of the
+    // specific SSIM values, encoding variance, or display background colour, as
+    // long as the Bézier easing has actually shifted the mid-frame opacity toward
+    // zero.  No hardcoded threshold is needed; the gap is typically >0.3.
+    //
+    // We pass a permissive ssimMax=0.9999 so analyzeSelf never marks pairs as
+    // "differing" based on the threshold — we only use the raw .ssim floats.
+    const report = analyzeSelf({
+      output: OUTPUT_BEZ,
+      samples: [BEZ_MID, BEZ_EARLY, BEZ_MID, BEZ_LATE],
+      ssimMax: 0.9999,
+    });
+    console.log("[e2e] bezier ordinal-ssim report:", JSON.stringify(report));
+
+    const pairMidEarly = report.pairs?.[0];
+    const pairMidLate  = report.pairs?.[1];
+    if (!pairMidEarly || !pairMidLate) {
+      throw new Error("analyzeSelf did not return 2 pairs: " + JSON.stringify(report));
+    }
+    console.log(
+      `[e2e] ssim(mid,early)=${pairMidEarly.ssim.toFixed(4)}  ssim(mid,late)=${pairMidLate.ssim.toFixed(4)}`,
+    );
+
+    if (!(pairMidEarly.ssim > pairMidLate.ssim)) {
+      throw new Error(
+        `slow-start Bézier easing NOT reflected in exported frames: ` +
+          `ssim(mid,early)=${pairMidEarly.ssim.toFixed(4)} should be > ` +
+          `ssim(mid,late)=${pairMidLate.ssim.toFixed(4)} ` +
+          `(mid-frame should look more like near-black start than full-opacity end ` +
+          `when p1=[0.7,0] p2=[0.9,0.05] — if equal, the Bézier curve is not being applied)`,
+      );
+    }
+    expect(pairMidEarly.ssim).toBeGreaterThan(pairMidLate.ssim);
+    console.log("[e2e] Bézier easing confirmed: mid-frame ordinal position correct ✔");
+  });
+});
