@@ -92,14 +92,11 @@ export function resolveAnimated<T extends number>(
   const span = b.t_us - a.t_us;
   if (span <= 0) return b.value;
   let u = (tCompUs - a.t_us) / span;
-  const kind = a.interp?.kind;
-  if (kind === "Hold") return a.value;
-  if (kind === "EaseIn") u = unitBezier(0.42, 0, 1, 1, u);
-  else if (kind === "EaseOut") u = unitBezier(0, 0, 0.58, 1, u);
-  else if (kind === "Bezier") {
-    const it = a.interp;
-    if (it.kind === "Bezier") u = unitBezier(it.p1[0], it.p1[1], it.p2[0], it.p2[1], u);
-  }
+  const it = a.interp;
+  if (it?.kind === "Hold") return a.value;
+  if (it?.kind === "EaseIn") u = unitBezier(0.42, 0, 1, 1, u);
+  else if (it?.kind === "EaseOut") u = unitBezier(0, 0, 0.58, 1, u);
+  else if (it?.kind === "Bezier") u = unitBezier(it.p1[0], it.p1[1], it.p2[0], it.p2[1], u);
   // Linear: u unchanged.
   return (a.value + (b.value - a.value) * u) as T;
 }
