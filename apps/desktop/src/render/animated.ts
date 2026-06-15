@@ -70,9 +70,8 @@ export function unitBezier(
 /// Resolve a track at a given composition time. Returns `defaultValue`
 /// when the track is missing or has no keyframes.
 ///
-/// Interpolation modes: Hold (left-stick), Linear, EaseIn (u²),
-/// EaseOut (1 − (1−u)²), Bezier (treated as Linear in v1 — solver
-/// follows when authoring demand makes it worth the math).
+/// Interpolation modes: Hold (left-stick), Linear, EaseIn/EaseOut/Bezier
+/// resolve via `unitBezier` (cubic).
 export function resolveAnimated<T extends number>(
   track: AnimTrack<T> | null | undefined,
   tCompUs: number,
@@ -95,11 +94,12 @@ export function resolveAnimated<T extends number>(
   let u = (tCompUs - a.t_us) / span;
   const kind = a.interp?.kind;
   if (kind === "Hold") return a.value;
-  if (kind === "EaseIn") u = u * u;
-  else if (kind === "EaseOut") {
-    const iu = 1 - u;
-    u = 1 - iu * iu;
+  if (kind === "EaseIn") u = unitBezier(0.42, 0, 1, 1, u);
+  else if (kind === "EaseOut") u = unitBezier(0, 0, 0.58, 1, u);
+  else if (kind === "Bezier") {
+    const it = a.interp;
+    if (it.kind === "Bezier") u = unitBezier(it.p1[0], it.p1[1], it.p2[0], it.p2[1], u);
   }
-  // Bezier: linear stub. See note above.
+  // Linear: u unchanged.
   return (a.value + (b.value - a.value) * u) as T;
 }
