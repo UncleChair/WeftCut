@@ -53,6 +53,11 @@ export function KeyframeCurveGraph({
     return { pxPerSec, layerTStartUs, height, vmin, vmax };
   }, [keys, pxPerSec, layerTStartUs, height]);
 
+  // Keep the latest geom reachable from drag closures created at pointerdown
+  // (the timeline can zoom/rescale mid-drag → captured geom would go stale).
+  const geomRef = useRef(geom);
+  geomRef.current = geom;
+
   // Segments: each owns keys[i].interp (p1 near keys[i], p2 near keys[i+1]).
   const segments = useMemo(() => {
     const out: { owner: string; seg: Seg; interp: Interpolation }[] = [];
@@ -82,7 +87,7 @@ export function KeyframeCurveGraph({
     ) as [number, number, number, number];
     const move = (me: PointerEvent) => {
       const p = svgPoint(me);
-      const [c0, c1, c2, c3] = handleDragToCoeff(which, p.x, p.y, seg, geom, current);
+      const [c0, c1, c2, c3] = handleDragToCoeff(which, p.x, p.y, seg, geomRef.current, current);
       onSetInterp(owner, { kind: "Bezier", p1: [c0, c1], p2: [c2, c3] });
     };
     const up = () => {
@@ -102,7 +107,7 @@ export function KeyframeCurveGraph({
     const startClientX = e.clientX;
     let nextTUs: number | null = null;
     const move = (me: PointerEvent) => {
-      const dxUs = ((me.clientX - startClientX) / pxPerSec) * 1_000_000;
+      const dxUs = ((me.clientX - startClientX) / geomRef.current.pxPerSec) * 1_000_000;
       nextTUs = Math.max(0, Math.min(clipDurationUs, startTUs + dxUs));
     };
     const up = () => {
