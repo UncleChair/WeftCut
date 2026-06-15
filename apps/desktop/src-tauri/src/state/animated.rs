@@ -617,7 +617,8 @@ mod tests {
 
     #[test]
     fn unit_bezier_ease_in_is_slow_at_start() {
-        // Ease-in (0.42,0,1,1): below the diagonal early, above late.
+        // Ease-in (0.42,0,1,1) stays below the diagonal for all x in (0,1) —
+        // slow start, late surge, flat arrival; never overtakes the diagonal.
         assert!(super::unit_bezier(0.42, 0.0, 1.0, 1.0, 0.25) < 0.25);
         assert!(super::unit_bezier(0.42, 0.0, 1.0, 1.0, 0.75) < 0.75);
         assert!(super::unit_bezier(0.42, 0.0, 1.0, 1.0, 0.5) < 0.5);
