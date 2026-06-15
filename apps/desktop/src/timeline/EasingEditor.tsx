@@ -134,8 +134,12 @@ export function EasingEditor({
                   border: "1px solid var(--border, #3f3f46)",
                   background: "var(--secondary, #27272a)",
                   color: "var(--foreground, #fafafa)",
-                  cursor: "pointer",
+                  cursor: isHold ? "not-allowed" : "pointer",
+                  opacity: isHold ? 0.4 : 1,
                 }}
+                // Smooth bakes tangents into a curve; meaningless on a Hold
+                // step and would silently turn it into Linear/Bezier.
+                disabled={isHold}
                 onClick={doSmooth}
                 data-testid="easing-smooth"
               >
