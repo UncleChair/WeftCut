@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   liftToKeyframed, collapseToStatic, upsertKeyframe, removeKeyframe,
-  retimeKeyframe, setKeyframeInterp,
+  retimeKeyframe, setKeyframeInterp, smoothKeyframe, smoothTrack,
 } from "./edits";
 import type { AnimTrack } from "../ipc";
+import { resolveAnimated } from "../render/animated";
 
 const kf = (id: string, t: number, value: number): AnimTrack<number> =>
   ({ mode: "Keyframed", value: [{ id, t_us: t, value, interp: { kind: "Linear" } }] });
@@ -80,5 +81,52 @@ describe("setKeyframeInterp", () => {
     const out = setKeyframeInterp(kf("a", 0, 0), "a", { kind: "Hold" });
     if (out.mode !== "Keyframed") throw new Error();
     expect(out.value[0]!.interp).toEqual({ kind: "Hold" });
+  });
+});
+
+function mkKf(id: string, t_us: number, value: number) {
+  return { id, t_us, value, interp: { kind: "Linear" as const } };
+}
+
+describe("smoothKeyframe", () => {
+  it("is a no-op on Static", () => {
+    const s = { mode: "Static" as const, value: 3 };
+    expect(smoothKeyframe(s, "x")).toBe(s);
+  });
+
+  it("does not overshoot at a peak (extremum → flat tangent)", () => {
+    // values 0, 10, 0 — middle is a local max; smoothed curve must never exceed 10.
+    const track = {
+      mode: "Keyframed" as const,
+      value: [mkKf("a", 0, 0), mkKf("b", 1_000_000, 10), mkKf("c", 2_000_000, 0)],
+    };
+    const out = smoothTrack(track);
+    for (let t = 0; t <= 2_000_000; t += 50_000) {
+      expect(resolveAnimated(out, t, 0)).toBeLessThanOrEqual(10 + 1e-6);
+      expect(resolveAnimated(out, t, 0)).toBeGreaterThanOrEqual(-1e-6);
+    }
+  });
+
+  it("keeps a flat (equal-value) segment Linear", () => {
+    const track = {
+      mode: "Keyframed" as const,
+      value: [mkKf("a", 0, 5), mkKf("b", 1_000_000, 5), mkKf("c", 2_000_000, 9)],
+    };
+    const out = smoothKeyframe(track, "a");
+    if (out.mode !== "Keyframed") throw new Error("expected keyframed");
+    expect(out.value[0]!.interp.kind).toBe("Linear"); // a→b is flat (Δv=0)
+  });
+
+  it("produces in-range control-point y on a monotone ramp", () => {
+    const track = {
+      mode: "Keyframed" as const,
+      value: [mkKf("a", 0, 0), mkKf("b", 1_000_000, 5), mkKf("c", 2_000_000, 10)],
+    };
+    const out = smoothKeyframe(track, "b");
+    if (out.mode !== "Keyframed") throw new Error("expected keyframed");
+    const seg = out.value[1]!.interp; // outgoing segment of b
+    if (seg.kind !== "Bezier") throw new Error("expected bezier");
+    expect(seg.p1[1]).toBeGreaterThanOrEqual(0);
+    expect(seg.p1[1]).toBeLessThanOrEqual(1);
   });
 });
