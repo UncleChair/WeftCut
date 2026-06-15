@@ -20,6 +20,7 @@
 pub mod actor;
 pub mod animated;
 pub mod color;
+pub mod keyframe_edits;
 pub mod composition;
 pub mod group;
 pub mod history;
