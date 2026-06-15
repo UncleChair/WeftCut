@@ -16,7 +16,7 @@ import { useEditingLayerId, beginRename, endRename } from "./renameStore";
 import { useFocusedParamFor } from "../keyframe/focusStore";
 import { readParamTrack, animatableParams } from "../keyframe/descriptors";
 import { retimeKeyframe, removeKeyframe } from "../keyframe/edits";
-import { EasingEditor } from "./EasingEditor";
+import { EasingMenu } from "./EasingMenu";
 import { transportSeek } from "../state/playbackStore";
 import {
   selectKeyframe,
@@ -552,7 +552,7 @@ export function LayerBlock({
         const track = readParamTrack(layer.params, focusedParam);
         if (!track || track.mode !== "Keyframed") return null;
         return (
-          <EasingEditor
+          <EasingMenu
             x={interpMenu.x}
             y={interpMenu.y}
             track={track}
