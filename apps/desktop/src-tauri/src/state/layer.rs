@@ -298,6 +298,42 @@ pub(crate) fn for_each_animated_rgba(
     }
 }
 
+/// Immutable sibling of `resolve_animated_f64_mut` — read a param's
+/// `Animated<f64>` for the MCP keyframe read path. Same key vocabulary.
+pub(crate) fn resolve_animated_f64<'a>(
+    params: &'a LayerParams,
+    key: &str,
+) -> Option<&'a Animated<f64>> {
+    match params {
+        LayerParams::VideoClip(p) => transform_or_opacity_ref(&p.transform, &p.opacity, key),
+        LayerParams::ImageOverlay(p) => transform_or_opacity_ref(&p.transform, &p.opacity, key),
+        LayerParams::Text(p) => transform_or_opacity_ref(&p.transform, &p.opacity, key),
+        LayerParams::Motif(p) => transform_or_opacity_ref(&p.transform, &p.opacity, key),
+        LayerParams::Audio(p) => match key {
+            "gain_db" => Some(&p.gain_db),
+            "pan" => Some(&p.pan),
+            _ => None,
+        },
+        LayerParams::Subtitles(_) | LayerParams::Color(_) => None,
+    }
+}
+
+fn transform_or_opacity_ref<'a>(
+    t: &'a Transform,
+    opacity: &'a Animated<f64>,
+    key: &str,
+) -> Option<&'a Animated<f64>> {
+    match key {
+        "x" => Some(&t.x),
+        "y" => Some(&t.y),
+        "scale_x" => Some(&t.scale_x),
+        "scale_y" => Some(&t.scale_y),
+        "rotation_deg" => Some(&t.rotation_deg),
+        "opacity" => Some(opacity),
+        _ => None,
+    }
+}
+
 /// Resolve a `param_key` string to its `Animated<f64>` field for writing.
 /// `None` for an unknown key or a key not valid on this kind.
 pub(crate) fn resolve_animated_f64_mut<'a>(
@@ -399,6 +435,16 @@ mod kf_fields_tests {
             fade_out_us: 0,
             mute: false,
         })
+    }
+
+    #[test]
+    fn immutable_resolver_matches_mut_keys() {
+        let p = videoclip();
+        for key in ["x", "y", "scale_x", "scale_y", "rotation_deg", "opacity"] {
+            assert!(resolve_animated_f64(&p, key).is_some(), "videoclip ref should resolve {key}");
+        }
+        assert!(resolve_animated_f64(&p, "gain_db").is_none());
+        assert!(resolve_animated_f64(&p, "bogus").is_none());
     }
 
     #[test]
