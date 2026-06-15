@@ -72,7 +72,16 @@ export function EasingEditor({
     );
   };
 
-  const doSmooth = () => onCommit(smoothKeyframe(track, kfId));
+  const doSmooth = () => {
+    const smoothed = smoothKeyframe(track, kfId);
+    onCommit(smoothed);
+    // Sync the canvas/readout/preview to the baked curve (else they show the
+    // pre-smooth shape until the popover is reopened).
+    if (smoothed.mode === "Keyframed") {
+      const kf = smoothed.value.find((k) => k.id === kfId);
+      if (kf) setCoeffs(interpToCoeffs(kf.interp));
+    }
+  };
 
   return (
     // Popover.Root with modal=false: stays open on interior interaction;
