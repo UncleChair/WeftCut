@@ -57,6 +57,14 @@ deferred; velocity continuity remains the one-shot `Smooth` command already ship
   handles on the timeline. `EasingEditor` / `EasingCanvas` / `MotionPreview` are
   removed. Presets / `Smooth` / `Hold` move to a lightweight right-click context
   menu.
+- **Graph lives only in the expanded sub-lanes.** The collapsed in-clip view
+  (`LayerBlock`) keeps its keyframe diamonds and shows **no curve** — the clip chip
+  displays keyframe *positions* only; its right-click just opens the same
+  preset/`Smooth`/`Hold` context menu. Curve + handle editing is reached by expanding
+  the track.
+- **No vertical value-drag.** Keyframe dots in the graph drag in X only (retime);
+  authoring a key's *value* stays in the inspector. Keeps the change scoped to the
+  easing-clarity problem.
 - **No data-model / engine / IPC / export change.** The stored `Interpolation`
   (Model B `Bezier{p1,p2}`) and the dual-engine `unitBezier` solver are untouched;
   the export e2e (custom Bézier reaching exported frames) must stay green.
@@ -147,13 +155,11 @@ handle lines + grab dots. Read-only and editable modes share one renderer.
     sub-lane heights, so one lane growing is absorbed by the existing expanded-height
     computation — *verify this sum-of-heights assumption in planning* and adjust the
     height source if the track height is computed from a fixed per-lane constant.
-- **Collapsed in-clip view (`LayerBlock.tsx`) — secondary.** Keep the existing
-  single row of `focusedParam` diamonds; overlay the **read-only** value sparkline
-  behind them (reusing `KeyframeCurveGraph` in non-editable mode, fit to the clip
-  chip). No handle editing here (the chip is height-constrained and shares space with
-  the label); right-click goes to the context menu (§4), and finesse happens after
-  expanding the track. This keeps the in-clip change minimal and avoids label
-  collisions.
+- **Collapsed in-clip view (`LayerBlock.tsx`) — unchanged visually.** Keep the
+  existing single row of `focusedParam` diamonds and draw **no curve** (the clip chip
+  shows keyframe *positions* only). The sole change here is swapping the right-click
+  target from the removed `EasingEditor` popup to the preset/`Smooth`/`Hold` context
+  menu (§4); curve + handle editing is reached by expanding the track.
 
 ## 4. Interaction
 
@@ -163,10 +169,9 @@ handle lines + grab dots. Read-only and editable modes share one renderer.
 - **Handle drag.** Pointer-drag a tangent grab-dot → live `setKeyframeInterp`
   (existing `edits.ts` pure transform) on the owning keyframe, mapped per §2. Same
   window-listener + teardown-on-unmount pattern as today's `EasingCanvas`.
-- **Keyframe drag (retime / value).** Horizontal drag of a keyframe dot retimes it
-  (existing `retimeKeyframe`). *Vertical* value-drag is **out of scope this round**
-  (value authoring lives in the inspector); dots are draggable in X only here, to
-  keep the change bounded. (Open question flagged below.)
+- **Keyframe drag (retime, X only).** Horizontal drag of a keyframe dot retimes it
+  (existing `retimeKeyframe`). Vertical value-drag is **not** included — value
+  authoring stays in the inspector; dots drag in X only.
 - **Preset / Smooth / Hold context menu.** Right-click a segment or a keyframe dot →
   compact menu: `Linear · Ease · In · Out · In-Out · Hold · Smooth`. These reuse the
   existing `PRESETS` table, `setKeyframeInterp`, and `smoothKeyframe`. This preserves
@@ -209,22 +214,15 @@ must stay green.
 ## Out of scope (this round) / future
 
 - **Vertical value-drag of keyframe dots** in the graph (author a key's value by
-  dragging it up/down). Natural next step; deferred to keep this change bounded to
-  the easing-clarity problem. Flagged as the main open question below.
+  dragging it up/down) — decided out: value authoring stays in the inspector.
+- **In-clip value sparkline** (a read-only curve behind the collapsed clip diamonds)
+  — decided out: the clip chip shows keyframe positions only.
 - **Speed graph** (velocity on Y instead of value). More abstract; value graph is
   the habitual default.
 - **Model A** (per-keyframe linked tangents + live C1 auto-smooth + schema change) —
   still deferred per the bezier-easing spec; this design deliberately stays on Model
   B and reaches the same on-screen feel without it.
 - **`Animated<Rgba>` / colour curves**, **MCP curve-editing tools** — orthogonal.
-
-## Open questions for spec review
-
-1. **Vertical value-drag**: include dragging a keyframe dot up/down to set its value
-   in this round, or keep value authoring in the inspector and X-only drag here?
-   (Spec currently assumes X-only / out of scope.)
-2. **In-clip sparkline**: worth the `LayerBlock` change now, or ship the rich graph
-   in the expanded sub-lanes first and add the in-clip sparkline as a follow-up?
 
 ## Related
 
