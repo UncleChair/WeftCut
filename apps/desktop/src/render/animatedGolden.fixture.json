@@ -20,19 +20,29 @@
         { "id": "00000000-0000-7000-8000-000000000002", "t_us": 10000000, "value": 8.0, "interp": { "kind": "Hold" } } ] },
       "samples": [ { "t_us": 5000000, "expect": 3.0 }, { "t_us": 9999999, "expect": 3.0 },
                    { "t_us": 10000000, "expect": 8.0 } ] },
-    { "name": "ease_in_quadratic", "track": { "mode": "Keyframed", "value": [
-        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": 0.0, "interp": { "kind": "EaseIn" } },
-        { "id": "00000000-0000-7000-8000-000000000002", "t_us": 10000000, "value": 10.0, "interp": { "kind": "EaseIn" } } ] },
-      "samples": [ { "t_us": 5000000, "expect": 2.5 } ] },
-    { "name": "ease_out_quadratic", "track": { "mode": "Keyframed", "value": [
-        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": 0.0, "interp": { "kind": "EaseOut" } },
-        { "id": "00000000-0000-7000-8000-000000000002", "t_us": 10000000, "value": 10.0, "interp": { "kind": "EaseOut" } } ] },
-      "samples": [ { "t_us": 5000000, "expect": 7.5 } ] },
-    { "name": "bezier_stubs_to_linear", "track": { "mode": "Keyframed", "value": [
+    { "name": "ease_in_out_symmetric_midpoint", "track": { "mode": "Keyframed", "value": [
         { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": 0.0,
-          "interp": { "kind": "Bezier", "p1": [0.4, 0.0], "p2": [0.6, 1.0] } },
+          "interp": { "kind": "Bezier", "p1": [0.42, 0.0], "p2": [0.58, 1.0] } },
         { "id": "00000000-0000-7000-8000-000000000002", "t_us": 10000000, "value": 10.0, "interp": { "kind": "Linear" } } ] },
       "samples": [ { "t_us": 5000000, "expect": 5.0 } ] },
+    { "name": "bezier_endpoints_exact", "track": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": 0.0,
+          "interp": { "kind": "Bezier", "p1": [0.25, 0.1], "p2": [0.25, 1.0] } },
+        { "id": "00000000-0000-7000-8000-000000000002", "t_us": 10000000, "value": 10.0, "interp": { "kind": "Linear" } } ] },
+      "samples": [ { "t_us": 0, "expect": 0.0 }, { "t_us": 10000000, "expect": 10.0 } ] },
+    { "name": "ease_in_cubic", "track": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": 0.0, "interp": { "kind": "EaseIn" } },
+        { "id": "00000000-0000-7000-8000-000000000002", "t_us": 10000000, "value": 10.0, "interp": { "kind": "Linear" } } ] },
+      "samples": [ { "t_us": 2500000, "expect": 0.934647 }, { "t_us": 5000000, "expect": 3.153568 } ] },
+    { "name": "ease_out_cubic", "track": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": 0.0, "interp": { "kind": "EaseOut" } },
+        { "id": "00000000-0000-7000-8000-000000000002", "t_us": 10000000, "value": 10.0, "interp": { "kind": "Linear" } } ] },
+      "samples": [ { "t_us": 5000000, "expect": 6.846432 }, { "t_us": 7500000, "expect": 9.065353 } ] },
+    { "name": "custom_bezier_interior", "track": { "mode": "Keyframed", "value": [
+        { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": 0.0,
+          "interp": { "kind": "Bezier", "p1": [0.2, 0.8], "p2": [0.8, 0.2] } },
+        { "id": "00000000-0000-7000-8000-000000000002", "t_us": 10000000, "value": 10.0, "interp": { "kind": "Linear" } } ] },
+      "samples": [ { "t_us": 2500000, "expect": 4.077037 }, { "t_us": 5000000, "expect": 5.0 }, { "t_us": 7500000, "expect": 5.922963 } ] },
     { "name": "multi_segment_picks_governing_left_kf", "track": { "mode": "Keyframed", "value": [
         { "id": "00000000-0000-7000-8000-000000000001", "t_us": 0, "value": 0.0, "interp": { "kind": "Linear" } },
         { "id": "00000000-0000-7000-8000-000000000002", "t_us": 4000000, "value": 8.0, "interp": { "kind": "Hold" } },

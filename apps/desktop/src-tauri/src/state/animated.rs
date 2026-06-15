@@ -281,11 +281,9 @@ impl Animated<f64> {
     /// - `t_us` before the first keyframe → first keyframe's value (clamp)
     /// - `t_us` at-or-after the last → last keyframe's value (clamp)
     /// - else: locate the segment via `kf[i].t_us <= t_us < kf[i+1].t_us`
-    ///   and apply `kf[i].interp` (Hold → `a.value`; Linear/Bezier →
-    ///   lerp; EaseIn → `u*u`; EaseOut → `1 - (1-u)*(1-u)`)
-    ///
-    /// Bezier currently treats as Linear — same shortcut as the
-    /// engine. Editor can grow a real cubic-bezier solver later.
+    ///   and apply `kf[i].interp` (Hold → `a.value`; Linear → lerp;
+    ///   EaseIn/EaseOut → CSS cubic eases via `unit_bezier`;
+    ///   Bezier → `unit_bezier(p1, p2)`)
     pub fn value_at(&self, t_us: TimeUs, default: f64) -> f64 {
         match self {
             Animated::Static(v) => *v,
@@ -317,12 +315,12 @@ impl Animated<f64> {
                 let mut u = (t_us - a.t_us) as f64 / span;
                 match a.interp {
                     Interpolation::Hold => return a.value,
-                    Interpolation::EaseIn => u = u * u,
-                    Interpolation::EaseOut => {
-                        let iu = 1.0 - u;
-                        u = 1.0 - iu * iu;
+                    Interpolation::Linear => {}
+                    Interpolation::EaseIn => u = unit_bezier(0.42, 0.0, 1.0, 1.0, u),
+                    Interpolation::EaseOut => u = unit_bezier(0.0, 0.0, 0.58, 1.0, u),
+                    Interpolation::Bezier { p1, p2 } => {
+                        u = unit_bezier(p1.0, p1.1, p2.0, p2.1, u);
                     }
-                    Interpolation::Linear | Interpolation::Bezier { .. } => {}
                 }
                 a.value + (b.value - a.value) * u
             }
@@ -502,14 +500,23 @@ mod tests {
     }
 
     #[test]
-    fn value_at_ease_in_quadratic() {
-        // EaseIn applies u*u to the parametric position. At u=0.5,
-        // result = 0 + (10-0) * 0.25 = 2.5
+    fn value_at_ease_in_uses_cubic_bezier() {
         let a = keyframed(vec![
             kf(0, 0.0, Interpolation::EaseIn),
             kf(10_000_000, 10.0, Interpolation::EaseIn),
         ]);
-        assert!((a.value_at(5_000_000, 0.0) - 2.5).abs() < 1e-6);
+        let expected = super::unit_bezier(0.42, 0.0, 1.0, 1.0, 0.5) * 10.0;
+        assert!((a.value_at(5_000_000, 0.0) - expected).abs() < 1e-9);
+    }
+
+    #[test]
+    fn value_at_ease_out_uses_cubic_bezier() {
+        let a = keyframed(vec![
+            kf(0, 0.0, Interpolation::EaseOut),
+            kf(10_000_000, 10.0, Interpolation::EaseOut),
+        ]);
+        let expected = super::unit_bezier(0.0, 0.0, 0.58, 1.0, 0.5) * 10.0;
+        assert!((a.value_at(5_000_000, 0.0) - expected).abs() < 1e-9);
     }
 
     #[test]
