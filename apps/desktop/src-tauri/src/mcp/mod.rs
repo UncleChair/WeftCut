@@ -55,6 +55,7 @@
 //! Design: `docs/mcp.md`.
 
 mod events;
+mod keyframes;
 mod prompts;
 
 use std::fs;
