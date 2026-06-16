@@ -49,7 +49,7 @@ export function KeyframeValueField({
   };
 
   return (
-    <div className="kf-value-row w-14 flex-none" onClick={stop} onPointerDown={stop}>
+    <div className="kf-value-row max-w-[7rem]" onClick={stop} onPointerDown={stop}>
       <KeyframeField
         layerId={layer.id}
         paramKey={desc.paramKey}
