@@ -6,6 +6,7 @@ import {
   type LayerSummary,
   type MediaSummary,
   type ProjectSummary,
+  type RoleMixView,
   type TrackSummary,
 } from "../ipc";
 
@@ -143,6 +144,9 @@ export const useProjectMedia = (): MediaSummary[] =>
 export const useProjectTracks = (): TrackSummary[] =>
   useProjectStore((s) => s.summary?.tracks ?? EMPTY_TRACKS);
 
+export const useAudioRoles = (): RoleMixView[] =>
+  useProjectStore((s) => s.summary?.audio_roles ?? EMPTY_ROLES);
+
 export const useProjectDurationUs = (): number =>
   useProjectStore((s) => s.summary?.duration_us ?? 0);
 
@@ -201,3 +205,4 @@ export function exportPlaybackPathFor(media: MediaSummary | undefined): string |
 // in any caller doing `useShallow` over derived combinations).
 const EMPTY_MEDIA: MediaSummary[] = [];
 const EMPTY_TRACKS: TrackSummary[] = [];
+const EMPTY_ROLES: RoleMixView[] = [];
