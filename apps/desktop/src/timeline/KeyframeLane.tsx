@@ -63,6 +63,7 @@ export function KeyframeLaneHeaders({
             style={{ height: expanded ? KF_SUBLANE_EXPANDED_H : KF_SUBLANE_H }}
           >
             <div className="flex items-center justify-between gap-1" style={{ height: KF_SUBLANE_H }}>
+              <span className="min-w-0 truncate">{t(d.labelKey, { defaultValue: d.paramKey })}</span>
               <KeyframeNavigator
                 track={track}
                 paramKey={d.paramKey}
@@ -72,7 +73,6 @@ export function KeyframeLaneHeaders({
                 fpsDen={fpsDen}
                 onCommitParamTrack={onCommitParamTrack}
               />
-              <span className="truncate">{t(d.labelKey, { defaultValue: d.paramKey })}</span>
             </div>
             {expanded && (
               <KeyframeValueField
