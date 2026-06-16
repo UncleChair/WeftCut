@@ -27,19 +27,14 @@ import { KeyframeField } from "../components/KeyframeField";
 import { readParamTrack, type ParamDescriptor, X, Y, SCALE_X, SCALE_Y, OPACITY, GAIN_DB, PAN } from "../keyframe/descriptors";
 
 // Animatable rows (transform/opacity for visual kinds, gain_db/pan for audio)
-// are wrapped in `<AnimatableField>`: the control shows `displayValue(track,
-// playhead)` and edits auto-key (`upsertKeyframe` when Keyframed, else a plain
-// Static write) through `updateLayerParamTrack`. Non-animatable rows
-// (fades/flip/mute/content/font, Text color, Motif props) keep the old
-// scalar `commit` → `updateLayerParams` path.
-//
-// Two behaviors worth knowing: (1) each `*Fields` shares ONE
-// `debouncedCommitTrack` timer — safe only because each component debounces
-// exactly one slider (opacity, or pan for audio); a second debounced slider in
-// the same component would clobber, so route extra sliders through their own
-// timer or commit them un-debounced. (2) auto-key uses the playhead time at
-// the moment the (debounced) commit's last edit fired, so dragging a slider
-// during live playback keys at the playhead-on-release, not drag-start.
+// render via `InspectorAnimField`, the inspector adapter over the shared
+// `KeyframeField` (components/KeyframeField.tsx): the field shows the value
+// evaluated at the playhead and edits auto-key through `updateLayerParamTrack`,
+// with each param's control (number/slider/readout), step, and bounds sourced
+// from its `ParamDescriptor` (keyframe/descriptors.ts). Non-animatable rows
+// (fades/flip/mute/content/font, Text color, Motif props) keep the scalar
+// `commit` -> `updateLayerParams` path. Slider commits are debounced inside
+// `KeyframeField`.
 const WHITE: Rgba = { r: 255, g: 255, b: 255, a: 255 };
 const BLACK: Rgba = { r: 0, g: 0, b: 0, a: 255 };
 import { getMotif, subscribeMotifCatalog, motifCatalogRevision, type PropSpec } from "../render/motifs/catalog";
