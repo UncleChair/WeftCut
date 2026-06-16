@@ -27,7 +27,7 @@ import {
 } from "../ipc";
 import { AnimatableField, displayValue } from "../components/AnimatableField";
 import { KeyframeField } from "../components/KeyframeField";
-import { readParamTrack, type ParamDescriptor } from "../keyframe/descriptors";
+import { readParamTrack, type ParamDescriptor, GAIN_DB, PAN } from "../keyframe/descriptors";
 import { upsertKeyframe } from "../keyframe/edits";
 
 // Animatable rows (transform/opacity for visual kinds, gain_db/pan for audio)
@@ -1363,67 +1363,13 @@ function AudioFields({
 }) {
   const { t } = useTranslation();
 
-  const commitTrack = (paramKey: string, track: AnimTrack<number>) =>
-    updateLayerParamTrack(layer.id, paramKey, track).then(onMutated).catch((e) => console.warn(e));
-  const debouncedCommitTrack = useDebouncedCommit<[string, AnimTrack<number>]>(
-    ([paramKey, track]) => commitTrack(paramKey, track),
-  );
-
   return (
     <section className="prop-section">
       <h3>
         {t("property_panel.media")}: {v.media_label}
       </h3>
-      {(() => {
-        const track = readParamTrack(v, "gain_db") ?? { mode: "Static" as const, value: 0 };
-        const shown = displayValue(track, tInLayerUs, 0);
-        return (
-          <AnimatableField
-            layerId={layer.id} paramKey="gain_db" label={t("property_panel.gain_db")}
-            track={track} fallback={0} tInLayerUs={tInLayerUs}
-            playheadInSpan={playheadInSpan} onMutated={onMutated}
-          >
-            <AppNumberField
-              step={0.5}
-              min={-30}
-              max={20}
-              value={shown}
-              ariaLabel={t("property_panel.gain_db")}
-              onValueChange={() => {}}
-              onCommit={(val) => {
-                const next = track.mode === "Keyframed"
-                  ? upsertKeyframe(track, tInLayerUs, val)
-                  : { mode: "Static" as const, value: val };
-                void commitTrack("gain_db", next);
-              }}
-            />
-          </AnimatableField>
-        );
-      })()}
-      {(() => {
-        const track = readParamTrack(v, "pan") ?? { mode: "Static" as const, value: 0 };
-        const shown = displayValue(track, tInLayerUs, 0);
-        return (
-          <AnimatableField
-            layerId={layer.id} paramKey="pan" label={t("property_panel.pan")}
-            track={track} fallback={0} tInLayerUs={tInLayerUs}
-            playheadInSpan={playheadInSpan} onMutated={onMutated}
-          >
-            <AppSlider
-              min={-1}
-              max={1}
-              step={0.05}
-              value={shown}
-              onValueChange={(val) => {
-                const next = track.mode === "Keyframed"
-                  ? upsertKeyframe(track, tInLayerUs, val)
-                  : { mode: "Static" as const, value: val };
-                debouncedCommitTrack(["pan", next]);
-              }}
-            />
-          </AnimatableField>
-        );
-      })()}
+      <InspectorAnimField layer={layer} desc={GAIN_DB} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
+      <InspectorAnimField layer={layer} desc={PAN} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
       <Field label={t("property_panel.mute")}>
         <AppSwitch
           checked={v.mute}
@@ -1516,23 +1462,21 @@ function Field({
 /// KeyframeField with the stopwatch + the inspector commit path. Replaces the
 /// hand-rolled value-field IIFEs; widgets/step/min/max come from the descriptor
 /// (keyframe/descriptors.ts).
-export function InspectorAnimField({
+function InspectorAnimField({
   layer,
-  params,
   desc,
   tInLayerUs,
   playheadInSpan,
   onMutated,
 }: {
   layer: LayerSummary;
-  params: LayerSummary["params"];
   desc: ParamDescriptor;
   tInLayerUs: number;
   playheadInSpan: boolean;
   onMutated: () => Promise<void>;
 }) {
   const { t } = useTranslation();
-  const track = readParamTrack(params, desc.paramKey) ?? { mode: "Static" as const, value: desc.fallback };
+  const track = readParamTrack(layer.params, desc.paramKey) ?? { mode: "Static" as const, value: desc.fallback };
   return (
     <KeyframeField
       layerId={layer.id}
