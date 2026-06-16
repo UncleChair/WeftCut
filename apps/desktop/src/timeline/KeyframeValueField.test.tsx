@@ -52,7 +52,40 @@ describe("KeyframeValueField", () => {
     const [layerId, paramKey, next] = onCommit.mock.calls[0]!;
     expect(layerId).toBe("L1");
     expect(paramKey).toBe("opacity");
-    expect(next.mode === "Keyframed" && next.value[0].value).toBe(0.8);
+    expect(next.mode).toBe("Keyframed");
+    expect(next.value[0].value).toBe(0.8);
+  });
+
+  it("places the key at the playhead's layer-local (t_start-relative, frame-snapped) time", async () => {
+    const track: AnimTrack<number> = {
+      mode: "Keyframed",
+      value: [{ id: "a", t_us: 0, value: 0.5, interp: { kind: "Linear" } }],
+    };
+    const tr = {
+      layers: [{ id: "L1", t_start_us: 1_000_000, t_end_us: 3_000_000, params: { opacity: track } }],
+    } as unknown as TrackSummary;
+    const onCommit = vi.fn();
+    render(
+      <KeyframeValueField
+        track={tr}
+        desc={OPACITY}
+        currentTimeUs={1_500_000}
+        fpsNum={30}
+        fpsDen={1}
+        onCommitParamTrack={onCommit}
+      />,
+    );
+    const el = screen.getByLabelText("Opacity");
+    await userEvent.clear(el);
+    await userEvent.type(el, "0.8");
+    await userEvent.click(document.body);
+    expect(onCommit).toHaveBeenCalledTimes(1);
+    const [, , next] = onCommit.mock.calls[0]!;
+    expect(next.mode).toBe("Keyframed");
+    // local time = 1_500_000 - 1_000_000 = 500_000us, which is exactly frame 15 @30fps,
+    // so a NEW key is upserted at t_us 500_000 (the original key at t_us 0 is kept).
+    expect(next.value.some((k: { t_us: number; value: number }) => k.t_us === 500_000 && k.value === 0.8)).toBe(true);
+    expect(next.value).toHaveLength(2);
   });
 
   it("disables the field off the clip span", () => {
