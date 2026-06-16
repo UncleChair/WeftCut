@@ -19,6 +19,7 @@
 
 pub mod actor;
 pub mod animated;
+pub mod audio_role;
 pub mod color;
 pub mod keyframe_edits;
 pub mod composition;
@@ -174,6 +175,7 @@ mod tests {
             markers: imbl::Vector::new(),
             transitions: imbl::Vector::new(),
             groups: imbl::Vector::new(),
+            audio_roles: imbl::HashMap::new(),
             settings: ProjectSettings::default(),
         }
     }

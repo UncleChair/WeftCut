@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::animated::Animated;
+use super::audio_role::AudioRole;
 use super::color::Rgba;
 use super::ids::{LayerId, MediaId};
 use super::time::TimeUs;
@@ -202,6 +203,11 @@ pub struct AudioParams {
     pub fade_out_us: u64,
     #[serde(default)]
     pub mute: bool,
+    /// Mixing role (`docs/audio.md`). Legacy `.vproj` audio layers (no
+    /// field) deserialize to `Dialogue`. The mixer groups by this, not by
+    /// track.
+    #[serde(default)]
+    pub role: AudioRole,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -434,6 +440,7 @@ mod kf_fields_tests {
             fade_in_us: 0,
             fade_out_us: 0,
             mute: false,
+            role: AudioRole::Dialogue,
         })
     }
 

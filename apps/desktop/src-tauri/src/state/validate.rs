@@ -656,6 +656,7 @@ mod tests {
         // at the same time slot on the same track. This enables the
         // AE-style combined-row rendering for AV pairs from import —
         // both layers live on one track, validation accepts it.
+        use crate::state::audio_role::AudioRole;
         use crate::state::layer::AudioParams;
         let mut p = blank();
         // Need a media item so the Audio layer's media_id resolves.
@@ -685,6 +686,7 @@ mod tests {
                 fade_in_us: 0,
                 fade_out_us: 0,
                 mute: false,
+                role: AudioRole::Dialogue,
             }),
         };
         track.layers.push_back(audio);
@@ -697,6 +699,7 @@ mod tests {
         // V.2 negative case: same-class overlap still rejected. Two
         // audio layers can't share a time slot on one track (one
         // waveform per audio bus position).
+        use crate::state::audio_role::AudioRole;
         use crate::state::layer::AudioParams;
         let mut p = blank();
         let media = dummy_video_media(5_000_000);
@@ -721,6 +724,7 @@ mod tests {
                 fade_in_us: 0,
                 fade_out_us: 0,
                 mute: false,
+                role: AudioRole::Dialogue,
             }),
         };
         track.layers.push_back(mk_audio(1, 0, 3_000_000));

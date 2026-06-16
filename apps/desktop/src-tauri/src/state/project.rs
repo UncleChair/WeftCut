@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use super::audio_role::{AudioRole, RoleMixSettings};
 use super::composition::Composition;
 use super::group::Group;
 use super::ids::{MediaId, new_id};
@@ -71,6 +72,11 @@ pub struct Project {
     /// makes v2 `.vproj` files load as v3 projects with no groups.
     #[serde(default)]
     pub groups: imbl::Vector<Group>,
+    /// Per-role mix-bus settings (`docs/audio.md`). Absent keys resolve to
+    /// `RoleMixSettings::default()` via `role_mix`. `#[serde(default)]`
+    /// makes pre-roles `.vproj` files load with every role at unity.
+    #[serde(default)]
+    pub audio_roles: imbl::HashMap<AudioRole, RoleMixSettings>,
     pub settings: ProjectSettings,
 }
 
@@ -116,8 +122,14 @@ impl Project {
             markers: imbl::Vector::new(),
             transitions: imbl::Vector::new(),
             groups: imbl::Vector::new(),
+            audio_roles: imbl::HashMap::new(),
             settings: ProjectSettings::default(),
         }
+    }
+
+    /// Mix settings for a role, defaulted when the table has no entry.
+    pub fn role_mix(&self, role: AudioRole) -> RoleMixSettings {
+        self.audio_roles.get(&role).cloned().unwrap_or_default()
     }
 }
 
@@ -191,5 +203,34 @@ impl Default for ProjectSettings {
             auto_pair_audio_on_import: true,
             auto_delete_empty_tracks: true,
         }
+    }
+}
+
+#[cfg(test)]
+mod role_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_project_without_audio_roles_defaults_to_unity() {
+        let p = Project::new_blank("t");
+        let mut v = serde_json::to_value(&p).unwrap();
+        v.as_object_mut().unwrap().remove("audio_roles");
+        let back: Project = serde_json::from_value(v).unwrap();
+        assert!(back.audio_roles.is_empty());
+        let m = back.role_mix(AudioRole::Music);
+        assert_eq!(m.gain_db, 0.0);
+        assert!(!m.muted && !m.solo);
+    }
+
+    #[test]
+    fn role_mix_reads_table_entry() {
+        let mut p = Project::new_blank("t");
+        p.audio_roles.insert(
+            AudioRole::Dialogue,
+            RoleMixSettings { gain_db: 6.0, muted: false, solo: true },
+        );
+        let m = p.role_mix(AudioRole::Dialogue);
+        assert_eq!(m.gain_db, 6.0);
+        assert!(m.solo);
     }
 }

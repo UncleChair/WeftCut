@@ -7018,6 +7018,7 @@ mod tests {
                     fade_in_us: 0,
                     fade_out_us: 0,
                     mute: false,
+                    role: crate::state::audio_role::AudioRole::Dialogue,
                 }),
                 0,
                 5_000_000,
@@ -8350,6 +8351,7 @@ mod tests {
         // requiring a non-overlapping layout post-follow), use
         // cross-class layers — a Visual + an Audio — so they can
         // coexist on the same track at the same time slot.
+        use crate::state::audio_role::AudioRole;
         use crate::state::layer::AudioParams;
         let (project, t1) = project_with_video_track();
         let handle = spawn(project);
@@ -8378,6 +8380,7 @@ mod tests {
                     fade_in_us: 0,
                     fade_out_us: 0,
                     mute: false,
+                    role: AudioRole::Dialogue,
                 }),
                 0,
                 1_000_000,
@@ -8410,6 +8413,7 @@ mod tests {
         // Setup A on t1, B on t2 (different classes so they can
         // co-exist on one track). Move A to t3 with a +500ms delta;
         // both A and B end up on t3 at the shifted time.
+        use crate::state::audio_role::AudioRole;
         use crate::state::layer::AudioParams;
         let (project, t1) = project_with_video_track();
         let handle = spawn(project);
@@ -8442,6 +8446,7 @@ mod tests {
                     fade_in_us: 0,
                     fade_out_us: 0,
                     mute: false,
+                    role: AudioRole::Dialogue,
                 }),
                 0,
                 1_000_000,
@@ -8785,6 +8790,7 @@ mod tests {
             AudioParams as AP, LayerParams as LP, VideoClipParams as VCP, MediaItem,
             MediaKind, MediaMetadata, AudioStreamMeta,
         };
+        use crate::state::audio_role::AudioRole;
         let (project, video_track) = project_with_video_track();
         let handle = spawn(project);
         let audio_track = handle
@@ -8861,6 +8867,7 @@ mod tests {
                     fade_in_us: 0,
                     fade_out_us: 0,
                     mute: false,
+                    role: AudioRole::Dialogue,
                 }),
                 0,
                 5_000_000,
