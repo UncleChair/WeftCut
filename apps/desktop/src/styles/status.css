@@ -1,0 +1,193 @@
+
+
+.progress-track {
+  height: 4px;
+  background: var(--secondary);
+  position: relative;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--color-blue-400);
+  transition: width 100ms linear;
+}
+
+.progress-track.is-error .progress-fill {
+  background: var(--destructive);
+}
+
+
+/* ===================================================================
+   Status bar (see docs/status-log.md).
+
+   Persistent ~28px strip pinned to the bottom of the editor view.
+   Phase 1 ships the bar; Phase 2 adds the expanded console overlay
+   that lifts above it.
+   =================================================================== */
+
+.status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 28px;
+  padding: 0 12px;
+  background: var(--color-slate-900);
+  border-top: 1px solid var(--color-slate-800);
+  color: var(--color-slate-300);
+  font-size: 12px;
+  font-family: var(--font-ui);
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.status-bar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.status-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.status-bar-empty {
+  color: var(--color-slate-500);
+  font-style: italic;
+}
+
+.status-bar-time {
+  color: var(--color-slate-500);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.status-bar-message {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1;
+}
+
+.status-bar-source {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--color-slate-400);
+  flex-shrink: 0;
+}
+
+.status-bar-source.source-user {
+  background: rgba(59, 130, 246, 0.12);
+  color: var(--color-blue-300);
+}
+
+.status-bar-source.source-agent {
+  background: rgba(168, 85, 247, 0.14);
+  color: var(--color-violet-300);
+}
+
+.status-bar-source.source-system {
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--color-slate-300);
+}
+
+.status-bar-level-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-bar-level-dot.level-trace,
+.status-bar-level-dot.level-debug {
+  background: var(--color-slate-600);
+}
+
+.status-bar-level-dot.level-info {
+  background: var(--color-blue-400);
+}
+
+.status-bar-level-dot.level-warn {
+  background: var(--color-amber-400);
+}
+
+.status-bar-level-dot.level-error {
+  background: var(--color-red-500);
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
+}
+
+.status-bar-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  color: inherit;
+}
+
+.status-bar-badge:hover {
+  background: rgba(148, 163, 184, 0.12);
+}
+
+.status-bar-badge-error {
+  background: rgba(239, 68, 68, 0.16);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: var(--color-red-300);
+  animation: status-bar-error-pulse 1.5s ease-in-out 1;
+}
+
+.status-bar-badge-running {
+  background: rgba(59, 130, 246, 0.12);
+  border-color: rgba(59, 130, 246, 0.3);
+  color: var(--color-blue-300);
+}
+
+@keyframes status-bar-error-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+  50% { box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.35); }
+}
+
+.status-bar-spinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: status-bar-spin 0.9s linear infinite;
+}
+
+@keyframes status-bar-spin {
+  to { transform: rotate(360deg); }
+}
+
+.status-bar-logs-toggle {
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--color-slate-700);
+  background: transparent;
+  color: var(--color-slate-300);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.status-bar-logs-toggle:hover:not(:disabled) {
+  background: rgba(148, 163, 184, 0.1);
+}
+
+.status-bar-logs-toggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

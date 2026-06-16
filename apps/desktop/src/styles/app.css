@@ -1,0 +1,53 @@
+
+
+.app {
+  display: grid;
+  /* Header (with inline menu-bar), main (1fr), status-bar */
+  grid-template-rows: auto 1fr auto;
+  /* `minmax(0, 1fr)` so the single implicit column does NOT grow to
+     `max-content` of its children — without this a nowrap line in the
+     status bar (a very long log message) pushes the column past the
+     viewport, and the inner `flex:1 / text-overflow: ellipsis` chain
+     has nothing to clip against. */
+  grid-template-columns: minmax(0, 1fr);
+  height: 100%;
+}
+
+.meta {
+  color: var(--muted-foreground);
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border-soft);
+  user-select: none;
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+/* A/B-roll redesign R.9 (`docs/data-model.md`): MediaPool moves
+   from a bottom grid cell to a left collapsible drawer. The drawer
+   column is a CSS variable so the M shortcut / View menu toggle can
+   animate the open/closed transition with a single value flip. */
+.app-main {
+  display: grid;
+  grid-template-columns: var(--mediapool-drawer-width, 0px) 1fr 280px;
+  grid-template-rows: 1fr 1fr;
+  grid-template-areas:
+    "mediapool preview properties"
+    "mediapool timeline properties";
+  min-height: 0;
+  transition: grid-template-columns 160ms ease-out;
+}
+
+.app-main.drawer-open {
+  --mediapool-drawer-width: 280px;
+}

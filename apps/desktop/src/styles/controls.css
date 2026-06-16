@@ -1,0 +1,332 @@
+
+
+/* ============================================================ */
+/* Shared form controls (AppSelect / AppSlider wrappers)         */
+/* ============================================================ */
+
+/* AppSelect trigger — the closed control. The open popup reuses the
+ * .menu-list / .menu-item dropdown chrome. */
+.app-select {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 5px 8px;
+  font-size: 12px;
+  text-align: left;
+  color: var(--foreground);
+  background: var(--popover);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.app-select:focus-visible,
+.app-select[data-popup-open] {
+  outline: none;
+  border-color: var(--ring);
+}
+
+.app-select[data-disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* AppSlider — track/thumb skin replacing the native range input. */
+.app-slider {
+  display: flex;
+  align-items: center;
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.app-slider-control {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 16px;
+  cursor: pointer;
+}
+
+.app-slider-track {
+  position: relative;
+  width: 100%;
+  height: 4px;
+  background: var(--accent);
+  border-radius: 2px;
+}
+
+.app-slider-indicator {
+  position: absolute;
+  height: 100%;
+  background: var(--ring);
+  border-radius: 2px;
+}
+
+.app-slider-thumb {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background: var(--foreground);
+  border-radius: 50%;
+  outline: none;
+}
+
+.app-slider-thumb:focus-visible {
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.5);
+}
+
+.app-slider[data-disabled] {
+  opacity: 0.5;
+}
+
+.app-slider[data-disabled] .app-slider-control {
+  cursor: not-allowed;
+}
+
+/* AppSwitch — the on/off pill replacing bare checkboxes. */
+.app-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  width: 30px;
+  height: 16px;
+  padding: 0;
+  background: var(--secondary);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.app-switch[data-checked] {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+
+.app-switch:focus-visible {
+  outline: none;
+  border-color: var(--ring);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.4);
+}
+
+.app-switch[data-disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.app-switch-thumb {
+  position: absolute;
+  left: 2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--muted-foreground);
+  transition: left 120ms ease, background 120ms ease;
+}
+
+.app-switch-thumb[data-checked] {
+  left: 16px;
+  background: #fff;
+}
+
+/* Square form checkbox (AppCheckbox / Base UI Checkbox). Mirrors the switch's
+ * accent + focus convention; used for the export "include video / audio" pair. */
+.app-checkbox {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--secondary);
+  cursor: pointer;
+}
+
+.app-checkbox[data-checked] {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+
+.app-checkbox:focus-visible {
+  outline: none;
+  border-color: var(--ring);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.4);
+}
+
+.app-checkbox[data-disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.app-checkbox-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+}
+
+/* ── App input family ───────────────────────────────────────────────
+ * One skin for AppInput / AppNumberField / AppColorField, replacing the
+ * per-scope input rules (.settings-input, .media-pool-search-input,
+ * .prop-field-control input, .motif-picker-field input, .export-*-input,
+ * .new-project-row input, .log-search). Per-context width/quirks layer on
+ * top via the call site's own class. */
+.app-input {
+  width: 100%;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--foreground);
+  background: var(--card);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+}
+.app-input:focus {
+  outline: none;
+  border-color: var(--ring);
+}
+.app-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.app-input--invalid {
+  border-color: var(--destructive);
+}
+.app-input--mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.app-input--center {
+  text-align: center;
+}
+
+/* Clearable search: ✕ button overlaid on the right. The wrap fills its
+ * container (block contexts) so the input inside still spans full width. */
+.app-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+.app-input--clearable {
+  padding-right: 24px;
+}
+.app-input-clear {
+  position: absolute;
+  right: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  color: var(--muted-foreground);
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.app-input-clear:hover {
+  color: var(--foreground);
+}
+
+/* Number field: grip (scrub) on the left, hover-revealed steppers on the
+ * right. Steppers are absolutely positioned so they don't change layout
+ * width in the narrow property panel. */
+.app-number-field {
+  width: 100%;
+}
+.app-number-group {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.app-number-input {
+  /* aligned digits, matching the old .prop-field-control input[type=number] */
+  font-variant-numeric: tabular-nums;
+}
+.app-number-steppers {
+  position: absolute;
+  right: 2px;
+  top: 1px;
+  bottom: 1px;
+  display: none;
+  flex-direction: column;
+}
+.app-number-group:hover .app-number-steppers {
+  display: flex;
+}
+.app-number-step {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  padding: 0;
+  color: var(--muted-foreground);
+  background: var(--card);
+  border: none;
+  cursor: pointer;
+}
+.app-number-step:hover {
+  color: var(--foreground);
+}
+
+/* Color swatch. */
+.app-color-swatch {
+  width: 32px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.app-color-swatch:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Timecode field: one .app-input-skinned box holding four borderless numeric
+ * segments with static ":" separators. Content-width (overrides .app-input's
+ * width:100%); the box shows the focus ring via :focus-within. */
+.app-timecode {
+  display: inline-flex;
+  align-items: center;
+  width: auto;
+  padding: 4px 6px;
+  cursor: text;
+}
+.app-timecode:focus-within {
+  border-color: var(--ring);
+}
+.app-timecode--disabled {
+  opacity: 0.5;
+}
+.app-timecode-seg-wrap {
+  display: inline-flex;
+  align-items: center;
+}
+.app-timecode-seg {
+  width: 2ch;
+  box-sizing: content-box;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  padding: 0;
+  outline: none;
+}
+.app-timecode-seg:disabled {
+  cursor: not-allowed;
+}
+.app-timecode-sep {
+  padding: 0 1px;
+  color: var(--muted-foreground);
+  user-select: none;
+}
