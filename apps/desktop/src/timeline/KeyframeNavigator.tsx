@@ -42,6 +42,8 @@ export function KeyframeNavigator({
   const trk = layer ? readParamTrack(layer.params, paramKey) : null;
   const keyed = trk && trk.mode === "Keyframed" ? trk : null;
 
+  // 0 is a safe dummy when there's no target layer — every query below guards
+  // on `keyed` (null whenever `layer` is null), so it's never actually read.
   const tLocalUs = layer ? snapFrameRound(currentTimeUs - layer.t_start_us, fpsNum, fpsDen) : 0;
   const inSpan = layer != null && tLocalUs >= 0 && tLocalUs <= layer.t_end_us - layer.t_start_us;
 
@@ -89,7 +91,9 @@ export function KeyframeNavigator({
       <button
         type="button"
         data-testid="kf-nav-set"
-        className="anim-stopwatch"
+        // is-lit (amber) marks "a key sits on the playhead" — same active-state
+        // convention as the inspector stopwatch (AnimatableField).
+        className={`anim-stopwatch${at ? " is-lit" : ""}`}
         disabled={!keyed || (!at && !inSpan)}
         aria-pressed={at != null}
         title={t("keyframe.nav_set")}
