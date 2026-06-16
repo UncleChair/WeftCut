@@ -365,88 +365,14 @@ function ImageOverlayFields({
     setFadeOutTc(formatTimecode(v.fade_out_us, fpsNum, fpsDen));
   }, [layer.id, v, fpsNum, fpsDen]);
 
-  const commitTrack = (paramKey: string, track: AnimTrack<number>) =>
-    updateLayerParamTrack(layer.id, paramKey, track).then(onMutated).catch((e) => console.warn(e));
-  const debouncedCommitTrack = useDebouncedCommit<[string, AnimTrack<number>]>(
-    ([paramKey, track]) => commitTrack(paramKey, track),
-  );
-
   return (
     <section className="prop-section">
       <h3>
         {t("property_panel.media")}: {v.media_label}
       </h3>
-      {(() => {
-        const track = readParamTrack(v, "opacity") ?? { mode: "Static" as const, value: 1 };
-        const shown = displayValue(track, tInLayerUs, 1);
-        return (
-          <AnimatableField
-            layerId={layer.id} paramKey="opacity" label={t("property_panel.opacity")}
-            track={track} fallback={1} tInLayerUs={tInLayerUs}
-            playheadInSpan={playheadInSpan} onMutated={onMutated}
-          >
-            <AppSlider
-              min={0}
-              max={1}
-              step={0.01}
-              value={shown}
-              onValueChange={(val) => {
-                const next = track.mode === "Keyframed"
-                  ? upsertKeyframe(track, tInLayerUs, val)
-                  : { mode: "Static" as const, value: val };
-                debouncedCommitTrack(["opacity", next]);
-              }}
-            />
-            <span className="prop-range-value">{shown.toFixed(2)}</span>
-          </AnimatableField>
-        );
-      })()}
-      {(() => {
-        const track = readParamTrack(v, "x") ?? { mode: "Static" as const, value: 0 };
-        const shown = displayValue(track, tInLayerUs, 0);
-        return (
-          <AnimatableField
-            layerId={layer.id} paramKey="x" label={t("property_panel.x")}
-            track={track} fallback={0} tInLayerUs={tInLayerUs}
-            playheadInSpan={playheadInSpan} onMutated={onMutated}
-          >
-            <AppNumberField
-              value={shown}
-              ariaLabel={t("property_panel.x")}
-              onValueChange={() => {}}
-              onCommit={(val) => {
-                const next = track.mode === "Keyframed"
-                  ? upsertKeyframe(track, tInLayerUs, val)
-                  : { mode: "Static" as const, value: val };
-                void commitTrack("x", next);
-              }}
-            />
-          </AnimatableField>
-        );
-      })()}
-      {(() => {
-        const track = readParamTrack(v, "y") ?? { mode: "Static" as const, value: 0 };
-        const shown = displayValue(track, tInLayerUs, 0);
-        return (
-          <AnimatableField
-            layerId={layer.id} paramKey="y" label={t("property_panel.y")}
-            track={track} fallback={0} tInLayerUs={tInLayerUs}
-            playheadInSpan={playheadInSpan} onMutated={onMutated}
-          >
-            <AppNumberField
-              value={shown}
-              ariaLabel={t("property_panel.y")}
-              onValueChange={() => {}}
-              onCommit={(val) => {
-                const next = track.mode === "Keyframed"
-                  ? upsertKeyframe(track, tInLayerUs, val)
-                  : { mode: "Static" as const, value: val };
-                void commitTrack("y", next);
-              }}
-            />
-          </AnimatableField>
-        );
-      })()}
+      <InspectorAnimField layer={layer} desc={OPACITY} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
+      <InspectorAnimField layer={layer} desc={X} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
+      <InspectorAnimField layer={layer} desc={Y} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
       <Field label={t("property_panel.fade_in")}>
         <AppInput
           value={fadeInTc}
