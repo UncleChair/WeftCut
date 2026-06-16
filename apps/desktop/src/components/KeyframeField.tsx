@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { AnimTrack } from "../ipc";
 import type { KfWidget } from "../keyframe/descriptors";
 import { autoKeyTrack } from "../keyframe/autoKey";
@@ -59,21 +59,20 @@ export function KeyframeField({
   // a number while a widget is mid-interaction. Every widget reads `value` and
   // writes the draft, so a slider drag and a sibling number field stay in sync.
   const [draft, setDraft] = useState<number | null>(null);
+  // Closure-stable timer slot for the slider debounce (mirrors the inspector's
+  // useDebouncedCommit; ref-free to avoid an extra import).
+  const slot = useRef<ReturnType<typeof setTimeout> | null>(null);
   // A new bound param/layer must not inherit the previous field's draft.
   useEffect(() => setDraft(null), [layerId, paramKey]);
+  // Clear any pending slider-commit timer on unmount so a debounced commit /
+  // setDraft can't fire against a now-unmounted (e.g. layer switched mid-drag) field.
+  useEffect(() => () => { if (slot.current) clearTimeout(slot.current); }, []);
   const value = draft ?? shown;
 
   const commit = (val: number) => {
     setDraft(null);
     void onCommitTrack(paramKey, autoKeyTrack(track, tInLayerUs, val));
   };
-
-  // Closure-stable timer slot for the slider debounce (mirrors the inspector's
-  // useDebouncedCommit; ref-free to avoid an extra import).
-  const slot = useMemo<{ current: ReturnType<typeof setTimeout> | null }>(
-    () => ({ current: null }),
-    [],
-  );
   const commitDebounced = (val: number) => {
     setDraft(val);
     if (slot.current) clearTimeout(slot.current);
@@ -103,7 +102,7 @@ export function KeyframeField({
       case "number":
         return (
           <AppNumberField
-            key={`num-${i}`}
+            key={`number-${i}`}
             value={value}
             {...numBounds}
             disabled={inputsDisabled}
@@ -118,7 +117,7 @@ export function KeyframeField({
       case "slider":
         return (
           <AppSlider
-            key={`sld-${i}`}
+            key={`slider-${i}`}
             value={value}
             min={min ?? 0}
             max={max ?? 1}
@@ -130,7 +129,7 @@ export function KeyframeField({
         );
       case "readout":
         return (
-          <span key={`ro-${i}`} className="prop-range-value">
+          <span key={`readout-${i}`} className="prop-range-value">
             {value.toFixed(2)}
           </span>
         );
