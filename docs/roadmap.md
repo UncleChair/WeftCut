@@ -15,7 +15,7 @@ lives in the topical doc — this is the index.
 
 ## Open work
 
-### Keyframes — authoring + sub-lanes shipped; multi-select + extras remain
+### Keyframes — authoring, sub-lanes, and MCP tools shipped; multi-select + extras remain
 
 `Animated<T>` is live end-to-end. `AnimTrack<T>` flows through the
 `LayerSummary` views and resolves per frame in the shared Compositor
@@ -30,7 +30,13 @@ track's layers), each diamond click-seek / drag-retime / delete /
 interpolation-menu, with out-of-range keys dimmed. Trim and split keep
 keyframes content-anchored — non-destructive, out-of-range keys retained
 (so the layer validator permits keyframe times outside `[0, duration]`).
-Verified by an export-sampling e2e. Design:
+Verified by an export-sampling e2e. The same authoring is exposed over
+MCP — `get_param_track`, `set_keyframe`, `remove_keyframe`,
+`retime_keyframe`, `set_keyframe_easing`, `smooth_keyframes`,
+`clear_keyframes`, and a low-level `set_param_track` — over the
+`update_layer_param_track` write path (timeline-absolute times), with a
+shared Rust↔TS golden fixture locking the transform math (see
+[`mcp.md`](mcp.md)). Design:
 [`superpowers/specs/2026-06-14-keyframe-authoring-design.md`](superpowers/specs/2026-06-14-keyframe-authoring-design.md),
 [`superpowers/specs/2026-06-14-keyframe-sublanes-design.md`](superpowers/specs/2026-06-14-keyframe-sublanes-design.md).
 
@@ -43,8 +49,6 @@ What remains:
   via that batch surface).
 - **`Animated<Rgba>` + a color stopwatch** — needs a Rust `value_at` twin for
   `Rgba` first (the dual-engine mirror rule forbids a TS-only interpolator).
-- **MCP keyframe tools** (`add_keyframe` / `update_keyframe` / `remove_keyframe`)
-  on top of the `update_layer_param_track` surface.
 
 See [`data-model.md`](data-model.md).
 

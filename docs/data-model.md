@@ -530,6 +530,7 @@ the UI uses the same actor via Tauri commands.
 | `duplicate_layer(layer_id, t_offset_us)` → `LayerId` | |
 | `update_layer(layer_id, patch)` | envelope-only patch (label, time range, enabled, locked) |
 | `update_layer_params(layer_id, patch)` | kind-specific params |
+| `update_layer_param_track(layer_id, param_key, track)` / `update_layer_param_tracks(layer_id, entries)` | replace one / several `Animated<f64>` tracks; normalized (frame-snap / sort / dedupe-last-wins), recorded, rejects empty-keyframed / unknown-param / locked-track |
 | `move_layer(layer_id, new_track_id, new_t_start_us, escape_group?)` | rejects on overlap; group-aware (see `groups.md`) |
 | `split_layer(layer_id, at_t_us, escape_group?)` → `(LayerId, LayerId)` | |
 | `trim_layer(layer_id, edge, new_t_us, escape_group?)` | `edge` ∈ `"in" | "out"` |
@@ -547,11 +548,16 @@ the UI uses the same actor via Tauri commands.
 | `dry_run(operations)` | applies the batch against a clone; halts at the first validation error; does not commit |
 | `replace_state(snapshot)` | for paste/template-instantiation; full validation; resets history |
 
-`add_keyframe` / `update_keyframe` / `remove_keyframe` are not yet
-implemented at the MCP surface — `Animated<T>` lowering is
-static-or-first-keyframe only, so exposing them now would succeed at
-the actor level but produce zero visual change. They land alongside
-the per-frame `Animated<T>` IR pass.
+Keyframe authoring is exposed to agents as a small family of MCP tools —
+`get_param_track`, `set_keyframe`, `remove_keyframe`, `retime_keyframe`,
+`set_keyframe_easing`, `smooth_keyframes`, `clear_keyframes`, and the
+low-level `set_param_track`. These are the one place the surface is **not**
+1:1 with a same-named command: they are handler-side helpers that read the
+layer, apply a pure transform, and write the whole track back through
+`update_layer_param_track`. Keyframe times in / out are timeline-absolute
+(converted to layer-local at the boundary). The transform math is shared
+with the timeline UI and locked Rust↔TS by a golden fixture. See
+[`mcp.md`](mcp.md).
 
 ## On-disk format: workspace folder
 
