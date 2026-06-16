@@ -40,6 +40,17 @@ the App-level `seekTo` so every UI seek path inherits it once; the
 PlaybackEngine's auto-pause parks at the same value so the displayed
 timecode and the painted frame agree at the end of the timeline.
 
+Seeking is the time ruler's job alone. A click or drag on the ruler
+strip scrubs the playhead, and the ruler is the only surface that does —
+clicks in the track body select or deselect clips and never move the
+playhead. Seeking and selection are therefore independent: scrubbing
+never clears the current selection, and selecting a clip never moves the
+playhead. `Timeline.tsx` routes the ruler's pointer gesture through
+`beginRulerScrub`; the timeline-root `onClick` is the single
+background-deselect, and clip and ruler clicks `stopPropagation` so they
+never reach it. (The ruler keeps scrubbing in blade mode — blade only
+governs clip clicks.)
+
 ### Identity: UUID v7 everywhere
 Stable, opaque, time-sortable. Never use array indices for identity — they shift on every insert and break agent-held references mid-conversation.
 
