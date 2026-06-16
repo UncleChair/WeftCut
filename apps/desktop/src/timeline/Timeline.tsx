@@ -560,7 +560,15 @@ export function Timeline({
                 onToggleExpand={() => toggleExpanded(track.id)}
                 onMutated={onMutated}
               />
-              {expandedTracks.has(track.id) && <KeyframeLaneHeaders track={track} />}
+              {expandedTracks.has(track.id) && (
+                <KeyframeLaneHeaders
+                  track={track}
+                  currentTimeUs={currentTimeUs}
+                  fpsNum={fpsNum}
+                  fpsDen={fpsDen}
+                  onCommitParamTrack={onCommitParamTrack}
+                />
+              )}
             </Fragment>
           ))}
         </div>
