@@ -189,6 +189,7 @@ export function TrackLane({
 
   return (
     <div
+      data-testid="track-lane"
       className={[
         "relative border-b border-border-soft bg-background",
         // Mutually exclusive so emit order never decides which state's
