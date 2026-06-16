@@ -2422,6 +2422,35 @@ pub async fn update_track_flags(
         .map_err(|e: CommandError| e.to_string())
 }
 
+/// Recorded edit (undoable): set a mixing role's mix-bus gain. The role is
+/// an enum on the wire, so there's no id to parse.
+#[tauri::command]
+pub async fn set_role_gain(
+    handle: State<'_, ProjectHandle>,
+    role: AudioRole,
+    gain_db: f64,
+) -> Result<(), String> {
+    handle
+        .set_role_gain(Actor::User, role, gain_db)
+        .await
+        .map_err(|e: CommandError| e.to_string())
+}
+
+/// Unrecorded toggle path (mirrors `update_track_flags`): the Mixer panel's
+/// per-role M/S toggles never enter undo history; the actor patches every
+/// history snapshot instead.
+#[tauri::command]
+pub async fn update_role_flags(
+    handle: State<'_, ProjectHandle>,
+    role: AudioRole,
+    patch: crate::state::audio_role::RoleFlagsPatch,
+) -> Result<(), String> {
+    handle
+        .update_role_flags(Actor::User, role, patch)
+        .await
+        .map_err(|e: CommandError| e.to_string())
+}
+
 #[tauri::command]
 pub async fn add_marker(
     handle: State<'_, ProjectHandle>,

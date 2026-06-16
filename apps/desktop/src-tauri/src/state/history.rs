@@ -291,6 +291,25 @@ impl History {
         }
     }
 
+    /// Patch one audio role's preference-shaped flags (mute/solo) into
+    /// EVERY snapshot (history + checkpoints) so undo/redo never flips
+    /// them — same contract as `replace_track_flags_everywhere`. Roles
+    /// always exist (absent keys resolve to `RoleMixSettings::default()`),
+    /// so unlike tracks there's no skip-when-absent branch: the patch
+    /// applies unconditionally to each snapshot.
+    pub fn replace_role_flags_everywhere(
+        &mut self,
+        role: crate::state::audio_role::AudioRole,
+        patch: &crate::state::audio_role::RoleFlagsPatch,
+    ) {
+        for entry in self.snapshots.iter_mut() {
+            entry.snapshot = Arc::new(apply_role_flags(&entry.snapshot, role, patch));
+        }
+        for cp in self.checkpoints.values_mut() {
+            cp.snapshot = Arc::new(apply_role_flags(&cp.snapshot, role, patch));
+        }
+    }
+
     /// Discard the existing stack and checkpoints, seeding a fresh history
     /// with `initial` as the sole entry. Used by `replace_state` when a
     /// different project is loaded — the old project's snapshots and
@@ -341,6 +360,28 @@ fn apply_track_flags(
     }
     p.tracks.set(idx, track);
     Some(p)
+}
+
+/// Apply `patch`'s mute/solo flags to `role`'s mix-bus settings inside a
+/// clone of `snapshot`, returning the patched project. Unlike
+/// `apply_track_flags`, roles always exist (defaulted on read), so this
+/// returns `Project` directly rather than `Option<Project>`. Used by
+/// `replace_role_flags_everywhere`.
+fn apply_role_flags(
+    snapshot: &Arc<Project>,
+    role: crate::state::audio_role::AudioRole,
+    patch: &crate::state::audio_role::RoleFlagsPatch,
+) -> Project {
+    let mut p = (**snapshot).clone();
+    let mut s = p.role_mix(role);
+    if let Some(v) = patch.muted {
+        s.muted = v;
+    }
+    if let Some(v) = patch.solo {
+        s.solo = v;
+    }
+    p.audio_roles.insert(role, s);
+    p
 }
 
 /// Copy the canvas-only fields (everything except `duration_us` and
@@ -470,5 +511,26 @@ mod tests {
         h.lock("busy".into());
         let locked = h.view(10);
         assert_eq!(locked.lock_reason.as_deref(), Some("busy"));
+    }
+
+    #[test]
+    fn role_flags_apply_to_every_snapshot() {
+        use crate::state::audio_role::{AudioRole, RoleFlagsPatch};
+        let mut h = fresh();
+        // A second snapshot so the everywhere-walk has more than one entry.
+        let p2 = (*h.current()).clone();
+        h.record(HistoryEntry {
+            op_id: new_id(),
+            actor: Actor::User,
+            timestamp: Utc::now(),
+            summary: "edit".into(),
+            affected: Vec::new(),
+            snapshot: Arc::new(p2),
+        });
+        h.replace_role_flags_everywhere(
+            AudioRole::Music,
+            &RoleFlagsPatch { muted: Some(true), solo: None },
+        );
+        assert!(h.current().role_mix(AudioRole::Music).muted);
     }
 }

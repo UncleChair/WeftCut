@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
+use super::audio_role::{AudioRole, RoleFlagsPatch};
 use super::color::{ColorSpace, Rgba};
 use super::animated::Animated;
 use super::history::{History, HistoryEntry, HistoryView, NamedCheckpoint};
@@ -235,6 +236,8 @@ pub struct AudioPatch {
     pub fade_out_us: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mute: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<AudioRole>,
 }
 
 
@@ -544,6 +547,18 @@ enum Command {
     UpdateTrackFlags {
         id: TrackId,
         patch: TrackFlagsPatch,
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
+    SetRoleGain {
+        role: AudioRole,
+        gain_db: f64,
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
+    UpdateRoleFlags {
+        role: AudioRole,
+        patch: RoleFlagsPatch,
         actor: Actor,
         reply: oneshot::Sender<Result<(), CommandError>>,
     },
@@ -1250,6 +1265,47 @@ impl ProjectHandle {
         rx.await.expect("project actor terminated")
     }
 
+    /// Set a role's mix-bus gain (recorded — undoable like a normal edit).
+    pub async fn set_role_gain(
+        &self,
+        actor: Actor,
+        role: AudioRole,
+        gain_db: f64,
+    ) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::SetRoleGain {
+                role,
+                gain_db,
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    /// Toggle a role's mute/solo (unrecorded — preference, never reverted
+    /// by Ctrl-Z; mirrors `update_track_flags`).
+    pub async fn update_role_flags(
+        &self,
+        actor: Actor,
+        role: AudioRole,
+        patch: RoleFlagsPatch,
+    ) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::UpdateRoleFlags {
+                role,
+                patch,
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
     pub async fn add_marker(
         &self,
         actor: Actor,
@@ -1795,6 +1851,24 @@ impl ProjectActor {
                 reply,
             } => {
                 let result = self.do_update_track_flags(id, patch, actor);
+                let _ = reply.send(result);
+            }
+            Command::SetRoleGain {
+                role,
+                gain_db,
+                actor,
+                reply,
+            } => {
+                let result = self.do_set_role_gain(role, gain_db, actor);
+                let _ = reply.send(result);
+            }
+            Command::UpdateRoleFlags {
+                role,
+                patch,
+                actor,
+                reply,
+            } => {
+                let result = self.do_update_role_flags(role, patch, actor);
                 let _ = reply.send(result);
             }
             Command::AddMarker {
@@ -3115,6 +3189,47 @@ impl ProjectActor {
         self.history.replace_track_flags_everywhere(id, &patch);
         let snapshot = self.history.current();
         self.broadcast_unrecorded(actor, format!("Updated track flags {id}"), snapshot);
+        Ok(())
+    }
+
+    /// Set a role's mix-bus gain — a RECORDED edit (mirrors
+    /// `do_update_layer_params`): it goes through `commit`, so Ctrl-Z
+    /// reverts it. The mutation is project-wide (the role table, not a
+    /// single layer), so it carries no `affected` entities and a coarse
+    /// `DiffHint`.
+    fn do_set_role_gain(
+        &mut self,
+        role: AudioRole,
+        gain_db: f64,
+        actor: Actor,
+    ) -> Result<(), CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+        let mut s = next.role_mix(role);
+        s.gain_db = gain_db;
+        next.audio_roles.insert(role, s);
+        self.commit(
+            next,
+            actor,
+            format!("Set {} role gain to {gain_db} dB", role.as_str()),
+            vec![],
+            DiffHint::Coarse,
+        )?;
+        Ok(())
+    }
+
+    /// Toggle a role's mute/solo — UNRECORDED (mirrors
+    /// `do_update_track_flags`): the patch is applied to every history
+    /// snapshot via `replace_role_flags_everywhere` and NOT recorded, so
+    /// Ctrl-Z never flips a mixer M/S toggle.
+    fn do_update_role_flags(
+        &mut self,
+        role: AudioRole,
+        patch: RoleFlagsPatch,
+        actor: Actor,
+    ) -> Result<(), CommandError> {
+        self.history.replace_role_flags_everywhere(role, &patch);
+        let snapshot = self.history.current();
+        self.broadcast_unrecorded(actor, format!("Updated {} role flags", role.as_str()), snapshot);
         Ok(())
     }
 
@@ -4648,6 +4763,9 @@ fn apply_params_patch(
             if let Some(m) = ap.mute {
                 p.mute = m;
             }
+            if let Some(r) = ap.role {
+                p.role = r;
+            }
             Ok(())
         }
         (actual, patch) => Err(CommandError::LayerParamsKindMismatch {
@@ -5005,6 +5123,48 @@ mod tests {
             )
             .await;
         assert!(matches!(err, Err(CommandError::TrackNotFound { .. })));
+    }
+
+    #[tokio::test]
+    async fn set_role_gain_is_recorded_and_undoable() {
+        let h = spawn(Project::new_blank("test"));
+        h.set_role_gain(Actor::User, AudioRole::Dialogue, 6.0)
+            .await
+            .expect("set_role_gain");
+        assert_eq!(
+            h.snapshot().await.role_mix(AudioRole::Dialogue).gain_db,
+            6.0
+        );
+        h.undo(Actor::User).await.expect("undo");
+        assert_eq!(
+            h.snapshot().await.role_mix(AudioRole::Dialogue).gain_db,
+            0.0,
+            "recorded gain reverts on undo"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_role_flags_is_unrecorded() {
+        let h = spawn(Project::new_blank("test"));
+        // A recorded op so undo has something to rewind toward.
+        h.set_role_gain(Actor::User, AudioRole::Music, 3.0)
+            .await
+            .expect("set_role_gain");
+        h.update_role_flags(
+            Actor::User,
+            AudioRole::Music,
+            RoleFlagsPatch {
+                muted: Some(true),
+                solo: None,
+            },
+        )
+        .await
+        .expect("update_role_flags");
+        h.undo(Actor::User).await.expect("undo");
+        assert!(
+            h.snapshot().await.role_mix(AudioRole::Music).muted,
+            "unrecorded flag survives undo"
+        );
     }
 
     #[tokio::test]
