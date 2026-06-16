@@ -46,6 +46,10 @@ pub struct ProjectSummary {
     /// tinted group indicator + lookup the membership for click-selects-
     /// whole-group behavior.
     pub groups: Vec<GroupSummary>,
+    /// Per-role mix-bus settings (`docs/audio.md`). Always all four roles
+    /// in canonical order (Dialogue, Music, Sfx, Voiceover) with defaults
+    /// filled, so the Mixer UI can render every bus without probing the map.
+    pub audio_roles: Vec<RoleMixView>,
 }
 
 #[derive(Serialize, Clone)]
@@ -215,6 +219,15 @@ pub struct AudioView {
     pub fade_in_us: u64,
     pub fade_out_us: u64,
     pub mute: bool,
+    pub role: String, // "dialogue" | "music" | "sfx" | "voiceover"
+}
+
+#[derive(Serialize, Clone)]
+pub struct RoleMixView {
+    pub role: String,
+    pub gain_db: f64,
+    pub muted: bool,
+    pub solo: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -395,6 +408,15 @@ pub async fn settings_test_provider(
 pub async fn project_summary(handle: State<'_, ProjectHandle>) -> Result<ProjectSummary, ()> {
     let snap = handle.snapshot().await;
     let history = handle.history_status().await;
+    Ok(build_project_summary(&snap, &history))
+}
+
+/// Pure builder for the project IPC view. Kept separate from the async
+/// `project_summary` command so it can be unit-tested without a live actor.
+fn build_project_summary(
+    snap: &state::Project,
+    history: &state::HistoryStatus,
+) -> ProjectSummary {
     let layer_count = snap.tracks.iter().map(|t| t.layers.len()).sum();
 
     let mut media: Vec<MediaSummary> = snap
@@ -511,7 +533,22 @@ pub async fn project_summary(handle: State<'_, ProjectHandle>) -> Result<Project
         })
         .collect();
 
-    Ok(ProjectSummary {
+    // Always emit all four roles in canonical order, defaults filled, so the
+    // Mixer UI never has to probe the sparse `audio_roles` map itself.
+    let audio_roles: Vec<RoleMixView> = crate::state::audio_role::AudioRole::ALL
+        .iter()
+        .map(|&r| {
+            let s = snap.role_mix(r);
+            RoleMixView {
+                role: r.as_str().to_string(),
+                gain_db: s.gain_db,
+                muted: s.muted,
+                solo: s.solo,
+            }
+        })
+        .collect();
+
+    ProjectSummary {
         project_id: snap.project_id.to_string(),
         name: snap.metadata.name.clone(),
         composition: CompositionSummary {
@@ -535,7 +572,8 @@ pub async fn project_summary(handle: State<'_, ProjectHandle>) -> Result<Project
         tracks,
         markers,
         groups,
-    })
+        audio_roles,
+    }
 }
 
 fn layer_params_view(
@@ -606,6 +644,7 @@ fn layer_params_view(
             fade_in_us: p.fade_in_us,
             fade_out_us: p.fade_out_us,
             mute: p.mute,
+            role: p.role.as_str().to_string(),
         }),
         LayerParams::Subtitles(p) => {
             let (kind, value) = match &p.source {
@@ -805,7 +844,8 @@ pub async fn add_media_layer(
                 fade_in_us: 0,
                 fade_out_us: 0,
                 mute: false,
-                role: AudioRole::Dialogue,
+                // Standalone audio import → Music bus (`docs/audio.md`).
+                role: AudioRole::Music,
             }),
             total_src,
         ),
@@ -1840,7 +1880,8 @@ async fn place_imported_media_on_fresh_tracks(
                 fade_in_us: 0,
                 fade_out_us: 0,
                 mute: false,
-                role: AudioRole::Dialogue,
+                // Standalone audio import → Music bus (`docs/audio.md`).
+                role: AudioRole::Music,
             }),
             total_src,
         ),
@@ -2854,6 +2895,21 @@ mod tests {
         assert_eq!(json["opacity"]["mode"], "Keyframed");
         assert_eq!(json["opacity"]["value"][0]["value"], 0.25);
         assert_eq!(json["x"]["mode"], "Static");
+    }
+
+    #[test]
+    fn project_summary_emits_four_roles_in_canonical_order() {
+        let p = crate::state::Project::new_blank("t");
+        let history = crate::state::HistoryStatus {
+            cursor: 0,
+            len: 0,
+            can_undo: false,
+            can_redo: false,
+            lock_reason: None,
+        };
+        let summary = build_project_summary(&p, &history);
+        let roles: Vec<&str> = summary.audio_roles.iter().map(|r| r.role.as_str()).collect();
+        assert_eq!(roles, ["dialogue", "music", "sfx", "voiceover"]);
     }
 
     #[test]
