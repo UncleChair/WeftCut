@@ -117,6 +117,17 @@ the sole keyframed clip when a track row spans several. Unlike the inspector
 stopwatch, which turns a property's animation on or off, the navigator only adds
 and removes keys on an already-animated property.
 
+The same expanded sub-lane header also exposes the property's value at the
+playhead as a compact, editable number field beside the navigator — on the
+focused row only; collapsed rows stay navigator-and-label. Typing a value, or
+stepping it with the arrows, writes a keyframe at the playhead (creating one if
+none sits there, updating it if one does) — the same auto-key the inspector
+performs — and the field is disabled when the playhead is off the clip. The
+inspector's value rows and this timeline field are one shared control,
+`KeyframeField`, driven by each property's descriptor (which widgets — number,
+slider, readout — plus step and bounds); the inspector wraps it with the
+stopwatch, the timeline renders it compact without one.
+
 ## Decoder pool
 
 `SourceDecoderPool` is two-tiered. Decoders + frame rings are keyed
