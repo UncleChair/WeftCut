@@ -4,7 +4,8 @@ import { cleanup, render, screen, fireEvent } from "@testing-library/react";
 import "../i18n"; // initialize i18next so t(key) resolves (mirrors EasingMenu.test)
 import type { AnimTrack, TrackSummary } from "../ipc";
 import { KeyframeNavigator } from "./KeyframeNavigator";
-import { clearKeyframeFocus } from "../keyframe/focusStore";
+import { setKeyframeFocus, clearKeyframeFocus, useKeyframeFocusStore } from "../keyframe/focusStore";
+import { getSelectedKeyframe, clearKeyframeSelection } from "../keyframe/selectionStore";
 
 vi.mock("../state/playbackStore", () => ({ transportSeek: vi.fn() }));
 import { transportSeek } from "../state/playbackStore";
@@ -17,6 +18,7 @@ if (typeof window !== "undefined" && !window.PointerEvent) {
 afterEach(() => {
   cleanup();
   clearKeyframeFocus();
+  clearKeyframeSelection();
   vi.clearAllMocks();
 });
 
@@ -91,6 +93,41 @@ describe("KeyframeNavigator ◄ ► arrows", () => {
     renderNav(0);
     fireEvent.click(nextBtn());
     expect(transportSeek).toHaveBeenCalledWith(1_000_000); // t_start 0 + key b at 1_000_000
+  });
+});
+
+describe("KeyframeNavigator focused-clip targeting (rule 1) + arrow side effects", () => {
+  it("targets the focused clip among several, then selects + focuses the landed key", () => {
+    const l2Track: AnimTrack<number> = {
+      mode: "Keyframed",
+      value: [{ id: "z", t_us: 1_800_000, value: 1, interp: { kind: "Linear" } }],
+    };
+    const tr = {
+      layers: [
+        { id: "L1", t_start_us: 0, t_end_us: 2_000_000, params: { opacity: opacityTrack } },
+        { id: "L2", t_start_us: 0, t_end_us: 2_000_000, params: { opacity: l2Track } },
+      ],
+    } as unknown as TrackSummary;
+    setKeyframeFocus("L2", "opacity"); // rule 1: focused clip wins over ambiguity
+    render(
+      <KeyframeNavigator
+        track={tr}
+        paramKey="opacity"
+        fallback={1}
+        currentTimeUs={0}
+        fpsNum={30}
+        fpsDen={1}
+        onCommitParamTrack={vi.fn()}
+      />,
+    );
+    // Active (not disabled like the ambiguous case) because L2 resolved.
+    expect(nextBtn().disabled).toBe(false);
+    fireEvent.click(nextBtn());
+    // ► lands on L2's key "z" → absolute seek (L2 t_start 0 + 1_800_000),
+    // plus the select + focus side effects, verified via real store state.
+    expect(transportSeek).toHaveBeenCalledWith(1_800_000);
+    expect(getSelectedKeyframe()).toEqual({ layerId: "L2", paramKey: "opacity", kfId: "z" });
+    expect(useKeyframeFocusStore.getState().layerId).toBe("L2");
   });
 });
 
