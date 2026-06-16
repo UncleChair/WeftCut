@@ -115,6 +115,7 @@ export function TimelineRuler({
          canvas width" below — this overflow clip is what actually
          clips it). */
     <div
+      data-testid="timeline-ruler"
       className="relative h-5 flex-none select-none overflow-hidden border-b border-border-soft bg-card text-[10px] text-muted-foreground"
       style={{ width: widthPx }}
     >
