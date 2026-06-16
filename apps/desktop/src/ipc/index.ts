@@ -173,6 +173,23 @@ export interface AudioView {
   fade_in_us: number;
   fade_out_us: number;
   mute: boolean;
+  role: AudioRole;
+}
+
+/// Audio role stamp (`docs/audio.md`). Serialized from the Rust role enum as
+/// kebab-case. Every audio layer carries exactly one; the four canonical roles
+/// also back the project-level role mixer (`ProjectSummary.audio_roles`).
+export type AudioRole = "dialogue" | "music" | "sfx" | "voiceover";
+
+/// Canonical role order — matches the Rust `RoleMixView` ordering so a role
+/// mixer can render rows index-aligned with `ProjectSummary.audio_roles`.
+export const AUDIO_ROLES: AudioRole[] = ["dialogue", "music", "sfx", "voiceover"];
+
+export interface RoleMixView {
+  role: AudioRole;
+  gain_db: number;
+  muted: boolean;
+  solo: boolean;
 }
 
 export interface SubtitlesView {
@@ -231,6 +248,9 @@ export interface ProjectSummary {
   /// render the tinted-border indicator and to resolve "what group is
   /// this layer in?" for click-selects-whole-group behavior.
   groups: GroupSummary[];
+  /// `docs/audio.md`. Always exactly 4 entries in canonical role order
+  /// (dialogue, music, sfx, voiceover) — the project-level role mixer.
+  audio_roles: RoleMixView[];
 }
 
 export interface GroupSummary {
@@ -360,6 +380,7 @@ export interface AudioPatch {
   fade_in_us?: number;
   fade_out_us?: number;
   mute?: boolean;
+  role?: AudioRole;
 }
 
 /// Tagged union mirroring `LayerParamsPatch` in state/actor.rs. Tauri/serde
@@ -830,6 +851,22 @@ export async function updateLayerParams(
   patch: LayerParamsPatch,
 ): Promise<void> {
   return invoke<void>("update_layer_params", { layerId, patch });
+}
+
+/// Set the project-level gain (dB) for one audio role. Like the track-flag
+/// mutators, role-mix edits never enter undo history (the actor patches every
+/// history snapshot instead).
+export async function setRoleGain(role: AudioRole, gainDb: number): Promise<void> {
+  return invoke<void>("set_role_gain", { role, gainDb });
+}
+
+/// Mute/solo one audio role at the project level. `muted`/`solo` are partial —
+/// omit a field to leave it unchanged.
+export async function updateRoleFlags(
+  role: AudioRole,
+  patch: { muted?: boolean; solo?: boolean },
+): Promise<void> {
+  return invoke<void>("update_role_flags", { role, patch });
 }
 
 /// Write a whole keyframe track to a named animatable param on a layer.
