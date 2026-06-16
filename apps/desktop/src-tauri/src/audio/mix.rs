@@ -62,9 +62,10 @@ pub enum PlanError {
     MissingMedia(String),
 }
 
-/// Every audible audio layer in track order: track gates (enabled, mute,
-/// solo — mute wins over solo, disabled tracks' solo flags don't gate),
-/// layer gates (enabled, unlocked, unmuted), and the half-open window
+/// Every audible audio layer in track order: whole-track disable gates
+/// (`track.enabled`); audio mute/solo gating lives on ROLES, not tracks
+/// (docs/audio.md) — role mute, the role solo set (mute wins over solo);
+/// plus layer gates (enabled, unlocked, unmuted) and the half-open window
 /// overlap. Shared by `plan_for_project` and `conform_waiting_media` so the
 /// export-readiness gate and the mix plan can never disagree on selection.
 fn audible_audio_layers<'a>(
@@ -72,12 +73,14 @@ fn audible_audio_layers<'a>(
     w_start_us: i64,
     w_end_us: i64,
 ) -> Vec<(&'a Layer, &'a AudioParams)> {
-    // Track-level solo set (timeline redesign spec §3): when any ENABLED
-    // track is soloed, only soloed tracks are audible.
-    let any_solo = project.tracks.iter().any(|t| t.enabled && t.solo);
+    // Role-level solo (docs/audio.md): when any role is soloed, only
+    // soloed roles are audible. Mute wins over solo.
+    let any_role_solo = project.audio_roles.values().any(|r| r.solo);
     let mut out = Vec::new();
     for track in project.tracks.iter() {
-        if !track.enabled || track.muted || (any_solo && !track.solo) {
+        // Whole-track disable still gates (rule 1). Track mute/solo no
+        // longer gate audio — that moved to roles.
+        if !track.enabled {
             continue;
         }
         for layer in track.layers.iter() {
@@ -88,6 +91,10 @@ fn audible_audio_layers<'a>(
                 continue;
             };
             if p.mute {
+                continue;
+            }
+            let role = project.role_mix(p.role);
+            if role.muted || (any_role_solo && !role.solo) {
                 continue;
             }
             // Window gate (half-open [w_start, w_end)): a layer the mix will
@@ -126,18 +133,16 @@ pub fn plan_for_project(
             .filter(|c| crate::cache::cached_ok(c))
             .ok_or_else(|| PlanError::ConformMissing(label.clone()))?;
         let span_us = p.src_out_us - p.src_in_us;
+        let role_gain = crate::audio::envelope::db_to_linear(project.role_mix(p.role).gain_db);
+        let mut gain = sample_gain(&p.gain_db, p.fade_in_us as i64, p.fade_out_us as i64, span_us);
+        gain.scale(role_gain);
         layers.push(MixLayer {
             label,
             conform_path,
             start_frame: us_to_frame(layer.t_start_us),
             src_in_frame: us_to_frame(p.src_in_us),
             src_out_frame: us_to_frame(p.src_out_us),
-            gain: sample_gain(
-                &p.gain_db,
-                p.fade_in_us as i64,
-                p.fade_out_us as i64,
-                span_us,
-            ),
+            gain,
             pan: sample_pan(&p.pan, span_us),
         });
     }
@@ -225,7 +230,7 @@ mod tests {
     use super::*;
     use crate::audio::conform_reader::{ConformReader, write_vconf};
     use crate::state::animated::Animated;
-    use crate::state::audio_role::AudioRole;
+    use crate::state::audio_role::{AudioRole, RoleMixSettings};
     use crate::state::layer::{AudioParams, Layer, LayerParams};
     use crate::state::media::{AudioStreamMeta, MediaItem, MediaKind, MediaMetadata};
     use crate::state::project::{Project, ProjectMetadata, ProjectSettings, SCHEMA_VERSION};
@@ -370,7 +375,7 @@ mod tests {
                 }
             };
 
-        let make_audio_layer = |media_id: uuid::Uuid| -> Layer {
+        let make_audio_layer = |media_id: uuid::Uuid, role: crate::state::audio_role::AudioRole| -> Layer {
             Layer {
                 id: uuid::Uuid::new_v4(),
                 label: None,
@@ -388,7 +393,7 @@ mod tests {
                     fade_in_us: 0,
                     fade_out_us: 0,
                     mute: false,
-                    role: AudioRole::Dialogue,
+                    role,
                 }),
             }
         };
@@ -404,7 +409,7 @@ mod tests {
             role: None,
             transient: false,
             height_px: 64,
-            layers: imbl::vector![make_audio_layer(media_id_a)],
+            layers: imbl::vector![make_audio_layer(media_id_a, crate::state::audio_role::AudioRole::Dialogue)],
         };
         let track_b = Track {
             id: uuid::Uuid::new_v4(),
@@ -417,7 +422,7 @@ mod tests {
             role: None,
             transient: false,
             height_px: 64,
-            layers: imbl::vector![make_audio_layer(media_id_b)],
+            layers: imbl::vector![make_audio_layer(media_id_b, crate::state::audio_role::AudioRole::Music)],
         };
 
         let mut media_pool = imbl::HashMap::new();
@@ -452,61 +457,61 @@ mod tests {
         }
     }
 
-    #[test]
-    fn muted_track_is_skipped() {
-        let tmp = TempDir::new().unwrap();
-        let mut project = two_audio_tracks_project(tmp.path());
-        // Mute track A
-        project.tracks[0].muted = true;
-        let plan = plan_for_project(&project, None).unwrap();
-        assert_eq!(plan.layers.len(), 1, "muted track A must be excluded");
-        assert_eq!(
-            plan.layers[0].conform_path,
-            tmp.path().join("b.conform"),
-            "track B (b.conform) must be the surviving layer"
-        );
+    fn set_role(p: &mut Project, role: AudioRole, s: RoleMixSettings) {
+        p.audio_roles.insert(role, s);
     }
 
     #[test]
-    fn solo_silences_non_solo_tracks() {
+    fn muted_role_is_skipped() {
         let tmp = TempDir::new().unwrap();
         let mut project = two_audio_tracks_project(tmp.path());
-        // Solo track A only
-        project.tracks[0].solo = true;
+        set_role(&mut project, AudioRole::Dialogue, RoleMixSettings { gain_db: 0.0, muted: true, solo: false });
         let plan = plan_for_project(&project, None).unwrap();
-        assert_eq!(plan.layers.len(), 1, "only soloed track A should play");
-        assert_eq!(
-            plan.layers[0].conform_path,
-            tmp.path().join("a.conform"),
-            "track A (a.conform) must be the surviving layer"
-        );
+        assert_eq!(plan.layers.len(), 1, "Dialogue role muted ⇒ only Music plays");
+        assert_eq!(plan.layers[0].conform_path, tmp.path().join("b.conform"));
     }
 
     #[test]
-    fn disabled_track_solo_does_not_gate() {
+    fn solo_silences_non_solo_roles() {
         let tmp = TempDir::new().unwrap();
         let mut project = two_audio_tracks_project(tmp.path());
-        // Disabled tracks' solo flags don't gate the mix.
-        project.tracks[0].enabled = false;
-        project.tracks[0].solo = true;
+        set_role(&mut project, AudioRole::Dialogue, RoleMixSettings { gain_db: 0.0, muted: false, solo: true });
         let plan = plan_for_project(&project, None).unwrap();
-        assert_eq!(
-            plan.layers.len(),
-            1,
-            "disabled track A's solo must not silence track B"
-        );
+        assert_eq!(plan.layers.len(), 1, "only soloed Dialogue plays");
+        assert_eq!(plan.layers[0].conform_path, tmp.path().join("a.conform"));
     }
 
     #[test]
-    fn mute_wins_over_solo() {
+    fn role_mute_wins_over_solo() {
         let tmp = TempDir::new().unwrap();
         let mut project = two_audio_tracks_project(tmp.path());
-        // Track A: solo AND muted — mute wins, A is excluded; B is silenced by
-        // the solo set ⇒ no layers at all.
-        project.tracks[0].solo = true;
-        project.tracks[0].muted = true;
+        set_role(&mut project, AudioRole::Dialogue, RoleMixSettings { gain_db: 0.0, muted: true, solo: true });
         let plan = plan_for_project(&project, None).unwrap();
-        assert_eq!(plan.layers.len(), 0, "mute wins over solo; nothing plays");
+        assert_eq!(plan.layers.len(), 0, "mute wins; Music silenced by the solo set");
+    }
+
+    #[test]
+    fn role_gain_scales_output() {
+        let tmp = TempDir::new().unwrap();
+        let mut project = two_audio_tracks_project(tmp.path());
+        // +6.0206 dB ≈ ×2 on Dialogue only.
+        set_role(&mut project, AudioRole::Dialogue, RoleMixSettings { gain_db: 6.0206, muted: false, solo: false });
+        let plan = plan_for_project(&project, None).unwrap();
+        let dialogue = plan.layers.iter().find(|l| l.conform_path == tmp.path().join("a.conform")).unwrap();
+        assert!((dialogue.gain.eval(0) - 2.0).abs() < 1e-2, "Dialogue folded ×2");
+        let music = plan.layers.iter().find(|l| l.conform_path == tmp.path().join("b.conform")).unwrap();
+        assert!((music.gain.eval(0) - 1.0).abs() < 1e-3, "Music unchanged");
+    }
+
+    #[test]
+    fn legacy_no_audio_roles_plays_both_at_unity() {
+        let tmp = TempDir::new().unwrap();
+        let project = two_audio_tracks_project(tmp.path()); // empty audio_roles
+        let plan = plan_for_project(&project, None).unwrap();
+        assert_eq!(plan.layers.len(), 2);
+        for l in &plan.layers {
+            assert!((l.gain.eval(0) - 1.0).abs() < 1e-3);
+        }
     }
 
     // ── conform_waiting_media ────────────────────────────────────────────────
@@ -546,16 +551,16 @@ mod tests {
         assert!(conform_waiting_media(&project, Some((0, 1_000_000))).is_empty());
         project.tracks[1].layers[0].t_start_us = 0;
         project.tracks[1].layers[0].t_end_us = 1_000_000;
-        // Muted track.
-        project.tracks[1].muted = true;
+        // Muted role (track B carries the Music role).
+        set_role(&mut project, AudioRole::Music, RoleMixSettings { gain_db: 0.0, muted: true, solo: false });
         assert!(conform_waiting_media(&project, None).is_empty());
-        project.tracks[1].muted = false;
+        set_role(&mut project, AudioRole::Music, RoleMixSettings { gain_db: 0.0, muted: false, solo: false });
         // Locked layer.
         project.tracks[1].layers[0].locked = true;
         assert!(conform_waiting_media(&project, None).is_empty());
         project.tracks[1].layers[0].locked = false;
-        // Solo'd out by track A.
-        project.tracks[0].solo = true;
+        // Solo'd out by the Dialogue role (track A).
+        set_role(&mut project, AudioRole::Dialogue, RoleMixSettings { gain_db: 0.0, muted: false, solo: true });
         assert!(conform_waiting_media(&project, None).is_empty());
     }
 

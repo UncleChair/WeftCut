@@ -57,6 +57,14 @@ impl Envelope {
             }
         }
     }
+
+    /// Multiply every control point by `factor`. Used to fold a role's
+    /// linear gain into a layer's gain envelope (v1 role-bus realization).
+    pub fn scale(&mut self, factor: f32) {
+        for v in self.values.iter_mut() {
+            *v *= factor;
+        }
+    }
 }
 
 pub fn db_to_linear(db: f64) -> f32 {
@@ -177,6 +185,16 @@ mod tests {
             value,
             interp: Interpolation::Linear,
         }
+    }
+
+    #[test]
+    fn scale_multiplies_every_point() {
+        let mut e = sample_gain(&Animated::Static(0.0), 0, 0, 1_000_000); // unity, 1 point
+        e.scale(0.5);
+        assert!((e.eval(0) - 0.5).abs() < 1e-6);
+        let mut k = sample_gain(&Animated::Static(0.0), 1_000_000, 0, 1_000_000); // fade-in ramp
+        k.scale(2.0);
+        assert!((k.eval(1_000_000) - 2.0).abs() < 1e-3);
     }
 
     #[test]
