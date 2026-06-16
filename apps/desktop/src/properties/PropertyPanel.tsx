@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { Tooltip } from "@base-ui/react/tooltip";
 import { formatTimecode, parseTimecode } from "../frames";
@@ -171,7 +171,11 @@ function TextFields({
   const [family, setFamily] = useState(v.font_family);
   const [size, setSize] = useState(v.font_size_px);
   const [color, setColor] = useState(trackStatic(v.color, WHITE));
+  // While the size field is being edited, suppress the prop→local resync so a
+  // mid-typing debounced commit's round-trip can't clobber the in-progress edit.
+  const editingSize = useRef(false);
   useEffect(() => {
+    if (editingSize.current) return;
     setContent(v.content);
     setFamily(v.font_family);
     setSize(v.font_size_px);
@@ -211,6 +215,8 @@ function TextFields({
           ariaLabel={t("property_panel.font_size_px")}
           onValueChange={setSize}
           onCommit={(v) => commit({ kind: "Text", font_size_px: v })}
+          onFocus={() => { editingSize.current = true; }}
+          onBlur={() => { editingSize.current = false; }}
         />
       </Field>
       <Field label={t("property_panel.color")}>
@@ -254,7 +260,11 @@ function VideoClipFields({
   const [speed, setSpeed] = useState(v.speed);
   const [fadeInTc, setFadeInTc] = useState(formatTimecode(v.fade_in_us, fpsNum, fpsDen));
   const [fadeOutTc, setFadeOutTc] = useState(formatTimecode(v.fade_out_us, fpsNum, fpsDen));
+  // While the speed field is being edited, suppress the prop→local resync so a
+  // mid-typing debounced commit's round-trip can't clobber the in-progress edit.
+  const editingSpeed = useRef(false);
   useEffect(() => {
+    if (editingSpeed.current) return;
     setSpeed(v.speed);
     setFadeInTc(formatTimecode(v.fade_in_us, fpsNum, fpsDen));
     setFadeOutTc(formatTimecode(v.fade_out_us, fpsNum, fpsDen));
@@ -279,6 +289,8 @@ function VideoClipFields({
           ariaLabel={t("property_panel.speed")}
           onValueChange={setSpeed}
           onCommit={(v) => commit({ kind: "VideoClip", speed: v })}
+          onFocus={() => { editingSpeed.current = true; }}
+          onBlur={() => { editingSpeed.current = false; }}
         />
       </Field>
       <Field label={t("property_panel.fade_in")}>
@@ -839,7 +851,7 @@ function ColorPropField({
   );
 }
 
-function StringPropField({
+export function StringPropField({
   label,
   spec,
   value,
@@ -864,12 +876,20 @@ function StringPropField({
         maxLength={spec.max_length}
         onValueChange={setText}
         onBlur={() => onCommit(text)}
+        // Enter = commit safeguard: blur the field so the single onBlur path
+        // commits (no separate commit call → no double undo entry).
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            e.currentTarget.blur();
+          }
+        }}
       />
     </Field>
   );
 }
 
-function NumberPropField({
+export function NumberPropField({
   label,
   spec,
   value,
@@ -883,7 +903,12 @@ function NumberPropField({
   const [num, setNum] = useState<number>(
     typeof value === "number" ? value : spec.default,
   );
+  // Don't resync from props while editing — the debounced auto-commit's
+  // round-trip would otherwise clobber an in-progress edit (see AppNumberField
+  // onFocus/onBlur). Resync resumes once focus leaves.
+  const focused = useRef(false);
   useEffect(() => {
+    if (focused.current) return;
     setNum(typeof value === "number" ? value : spec.default);
   }, [value, spec.default]);
   return (
@@ -900,6 +925,8 @@ function NumberPropField({
         }
         onValueChange={setNum}
         onCommit={(v) => onCommit(v)}
+        onFocus={() => { focused.current = true; }}
+        onBlur={() => { focused.current = false; }}
       />
     </Field>
   );
@@ -933,7 +960,10 @@ function ColorFields({
           step={1}
           // width is u32 on the Rust side — min/round keep it a positive
           // integer (the old `parseInt(...) || v.width` rejected 0 and fractions).
-          onValueChange={(n) => commit({ kind: "Color", width: Math.round(n) })}
+          // Commit on debounce/Enter/blur (not every keystroke) — Base UI
+          // self-buffers the typed text; onCommit avoids flooding the actor.
+          onValueChange={() => {}}
+          onCommit={(n) => commit({ kind: "Color", width: Math.round(n) })}
         />
       </Field>
       <Field label={t("property_panel.height")}>
@@ -944,7 +974,10 @@ function ColorFields({
           step={1}
           // height is u32 on the Rust side — min/round keep it a positive
           // integer (the old `parseInt(...) || v.height` rejected 0 and fractions).
-          onValueChange={(n) => commit({ kind: "Color", height: Math.round(n) })}
+          // Commit on debounce/Enter/blur (not every keystroke) — Base UI
+          // self-buffers the typed text; onCommit avoids flooding the actor.
+          onValueChange={() => {}}
+          onCommit={(n) => commit({ kind: "Color", height: Math.round(n) })}
         />
       </Field>
     </section>

@@ -1,6 +1,14 @@
+import { useEffect, useRef } from "react";
 import { NumberField } from "@base-ui/react/number-field";
 import { ChevronUpIcon, ChevronDownIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+// While typing, auto-commit the value once the user pauses, so the change
+// applies to the canvas without needing to blur. Enter / blur / step-end still
+// commit immediately (Base UI's onValueCommitted) as a safeguard. 300ms — a bit
+// longer than the 250ms slider debounce, since typing pauses run longer than
+// scrub micro-pauses (avoids committing mid-number).
+const NUMBER_COMMIT_DEBOUNCE_MS = 300;
 
 export interface AppNumberFieldProps {
   /// `null` renders an empty field — for optional values (e.g. an unset
@@ -23,6 +31,12 @@ export interface AppNumberFieldProps {
   disabled?: boolean;
   /// Left is the default (no class); pass "center" to center the value.
   align?: "center";
+  /// Optional focus/blur passthrough. Call sites that keep a local-state mirror
+  /// of `value` (e.g. font_size, speed) use these to gate their prop→local
+  /// resync while the field is focused — otherwise a mid-typing debounced
+  /// commit's round-trip can re-run the resync and clobber what's being typed.
+  onFocus?: () => void;
+  onBlur?: () => void;
   ariaLabel?: string;
   className?: string;
 }
@@ -47,9 +61,35 @@ export function AppNumberField({
   step,
   disabled,
   align,
+  onFocus,
+  onBlur,
   ariaLabel,
   className,
 }: AppNumberFieldProps) {
+  // Debounced auto-commit plumbing. `slot` is a closure-stable timer slot;
+  // `lastCommitted` tracks the value we last handed to onCommit so the
+  // blur/Enter commit can't fire a duplicate of what the debounce just sent
+  // (else one edit = two undo entries). The baseline is (re)captured on focus,
+  // NOT synced from `value` — call sites like font_size mirror the typed value
+  // into `value`, so a `value`-sync would make the debounce see its own typed
+  // value and skip the commit. Re-capturing on focus also resets the baseline
+  // across layer switches / external changes (each edit starts fresh).
+  const slot = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastCommitted = useRef<number | null>(value);
+  // Don't fire a debounced commit against a now-unmounted field.
+  useEffect(() => () => { if (slot.current) clearTimeout(slot.current); }, []);
+
+  const flushCommit = (next: number) => {
+    if (slot.current) {
+      clearTimeout(slot.current);
+      slot.current = null;
+    }
+    if (next !== lastCommitted.current) {
+      lastCommitted.current = next;
+      onCommit?.(next);
+    }
+  };
+
   return (
     <NumberField.Root
       value={value}
@@ -58,17 +98,33 @@ export function AppNumberField({
       step={step}
       disabled={disabled ?? false}
       onValueChange={(next) => {
-        if (next !== null) onValueChange(next);
-        else onClear?.();
+        if (next === null) {
+          onClear?.();
+          return;
+        }
+        onValueChange(next);
+        // Schedule a debounced commit only when the call site records commits.
+        if (onCommit) {
+          if (slot.current) clearTimeout(slot.current);
+          slot.current = setTimeout(() => flushCommit(next), NUMBER_COMMIT_DEBOUNCE_MS);
+        }
       }}
       onValueCommitted={(next) => {
-        if (next !== null) onCommit?.(next);
+        // Enter / blur / step-end: commit now (and cancel any pending debounce).
+        if (next !== null) flushCommit(next);
       }}
       className={cn("app-number-field", className)}
     >
       <NumberField.Group className="app-number-group">
         <NumberField.Input
           aria-label={ariaLabel}
+          // Capture the committed baseline at edit-start for the dedup guard,
+          // then notify the call site (focus-gated resync).
+          onFocus={() => {
+            lastCommitted.current = value;
+            onFocus?.();
+          }}
+          onBlur={() => onBlur?.()}
           className={cn("app-input", "app-number-input", align === "center" && "app-input--center")}
         />
         {/* Mouse-only affordance: hidden until hover (keyboard users change
