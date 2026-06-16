@@ -19,6 +19,7 @@ import {
 import { KeyframeCurveGraph } from "./KeyframeCurveGraph";
 import { EasingMenu } from "./EasingMenu";
 import { KeyframeNavigator } from "./KeyframeNavigator";
+import { KeyframeValueField } from "./KeyframeValueField";
 
 export const KF_SUBLANE_H = 24;
 export const KF_SUBLANE_EXPANDED_H = 72;
@@ -53,24 +54,39 @@ export function KeyframeLaneHeaders({
   const focusedParamKey = useFocusedParamKeyForTrackLayers(layerIds);
   return (
     <>
-      {props.map((d) => (
-        <div
-          key={d.paramKey}
-          className="flex items-center justify-between gap-1 border-b border-border-soft px-1.5 text-[10px] text-muted-foreground/80"
-          style={{ height: d.paramKey === focusedParamKey ? KF_SUBLANE_EXPANDED_H : KF_SUBLANE_H }}
-        >
-          <KeyframeNavigator
-            track={track}
-            paramKey={d.paramKey}
-            fallback={d.fallback}
-            currentTimeUs={currentTimeUs}
-            fpsNum={fpsNum}
-            fpsDen={fpsDen}
-            onCommitParamTrack={onCommitParamTrack}
-          />
-          <span className="truncate">{t(d.labelKey, { defaultValue: d.paramKey })}</span>
-        </div>
-      ))}
+      {props.map((d) => {
+        const expanded = d.paramKey === focusedParamKey;
+        return (
+          <div
+            key={d.paramKey}
+            className="border-b border-border-soft px-1.5 text-[10px] text-muted-foreground/80"
+            style={{ height: expanded ? KF_SUBLANE_EXPANDED_H : KF_SUBLANE_H }}
+          >
+            <div className="flex items-center justify-between gap-1" style={{ height: KF_SUBLANE_H }}>
+              <KeyframeNavigator
+                track={track}
+                paramKey={d.paramKey}
+                fallback={d.fallback}
+                currentTimeUs={currentTimeUs}
+                fpsNum={fpsNum}
+                fpsDen={fpsDen}
+                onCommitParamTrack={onCommitParamTrack}
+              />
+              <span className="truncate">{t(d.labelKey, { defaultValue: d.paramKey })}</span>
+            </div>
+            {expanded && (
+              <KeyframeValueField
+                track={track}
+                desc={d}
+                currentTimeUs={currentTimeUs}
+                fpsNum={fpsNum}
+                fpsDen={fpsDen}
+                onCommitParamTrack={onCommitParamTrack}
+              />
+            )}
+          </div>
+        );
+      })}
     </>
   );
 }
