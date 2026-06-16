@@ -14,6 +14,13 @@
 // - `repeatable`: key-repeat events (`e.repeat === true`) are dropped by
 //   default. Set `true` for bindings the user wants to hold (Undo /
 //   Redo) — every other v1 binding is a one-shot toggle or save.
+// - `captureGlobal`: dispatch this binding in the keydown *capture* phase so
+//   it wins over a focused chrome control that would otherwise consume the
+//   key (NLE-style transport: Space toggles playback even when focus is
+//   parked on a menubar trigger / toolbar button after a click). The
+//   dispatcher still yields to text editors and open transient widgets
+//   (menu / listbox / dialog), where the key belongs to the focused context.
+//   Reserve for bare single keys that read as global app commands.
 
 export type ActionId =
   | "save"
@@ -44,6 +51,7 @@ export interface ActionDef {
   labelKey: string;
   fireWhenEditing?: boolean;
   repeatable?: boolean;
+  captureGlobal?: boolean;
 }
 
 export const ACTION_DEFS: Record<ActionId, ActionDef> = {
@@ -52,7 +60,11 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   closeProject:    { defaultKeys: ["Mod+W"],               labelKey: "actions.save_and_close" },
   undo:            { defaultKeys: ["Mod+Z"],               labelKey: "actions.undo", repeatable: true },
   redo:            { defaultKeys: ["Mod+Shift+Z"],         labelKey: "actions.redo", repeatable: true },
-  togglePlay:      { defaultKeys: ["Space"],               labelKey: "actions.toggle_play" },
+  // Capture-phase global: Space toggles playback even when focus is parked on
+  // a menubar trigger / toolbar button after a click (a Base UI trigger would
+  // otherwise treat Space as "open the menu"). Yields inside text inputs and
+  // open menus/dialogs — see `captureGlobal` notes above.
+  togglePlay:      { defaultKeys: ["Space"],               labelKey: "actions.toggle_play", captureGlobal: true },
   deleteSelected:  { defaultKeys: ["Delete", "Backspace"], labelKey: "actions.delete_selected" },
   importMedia:     { defaultKeys: ["Mod+I"],               labelKey: "actions.import_media" },
   export:          { defaultKeys: ["Mod+E"],               labelKey: "actions.export" },

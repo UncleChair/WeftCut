@@ -18,6 +18,7 @@ interface ResolvedEntry {
   parsed: ParsedBinding;
   fireWhenEditing: boolean;
   repeatable: boolean;
+  captureGlobal: boolean;
 }
 
 function resolveEntries(overrides: OverrideMap): ResolvedEntry[] {
@@ -36,6 +37,7 @@ function resolveEntries(overrides: OverrideMap): ResolvedEntry[] {
           // per-action override (rare) wins when present.
           fireWhenEditing: def.fireWhenEditing ?? chord,
           repeatable: def.repeatable ?? false,
+          captureGlobal: def.captureGlobal ?? false,
         });
       } catch (e) {
         console.warn(
@@ -62,6 +64,19 @@ interface UseShortcutsOptions {
 
 const EMPTY_OVERRIDES: OverrideMap = {};
 
+/// Roles of open, transient widgets that own keyboard input while they're up:
+/// a key pressed inside one (Space to activate a menu item, arrows to walk a
+/// listbox, Enter on a dialog button) belongs to the widget, not to a global
+/// transport shortcut. Deliberately excludes `menubar` — a *collapsed* menubar
+/// trigger merely holding focus is exactly what `captureGlobal` must override.
+const TRANSIENT_WIDGET_SELECTOR =
+  '[role="menu"],[role="listbox"],[role="dialog"],[role="alertdialog"],[role="tree"],[role="grid"]';
+
+function isInTransientWidget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return target.closest(TRANSIENT_WIDGET_SELECTOR) !== null;
+}
+
 /// Mounts a `window` keydown listener that dispatches to the handlers
 /// passed in. Handler identities are read through a ref each event so
 /// React's render churn doesn't force the listener to reattach.
@@ -80,6 +95,17 @@ const EMPTY_OVERRIDES: OverrideMap = {};
 /// - Skip `e.repeat === true` unless the action declared `repeatable`.
 /// - When focus is inside an editable element, fire only if the action
 ///   declared `fireWhenEditing` (auto-derived: chord = yes, bare = no).
+///
+/// Two phases:
+/// - `captureGlobal` actions dispatch in the **capture** phase (on `window`,
+///   so they run before any focused control's own keydown). This is how
+///   Space → togglePlay wins over a Base UI menubar trigger that still holds
+///   focus after a click. They additionally yield when focus is inside an open
+///   transient widget (menu / listbox / dialog), where the key is the
+///   widget's.
+/// - Every other action dispatches in the **bubble** phase, unchanged — this
+///   keeps deeper capture-phase listeners (e.g. KeyframeLane's selected-
+///   keyframe Delete) ahead of the app-level handler, exactly as before.
 export function useShortcuts({
   handlers,
   overrides = EMPTY_OVERRIDES,
@@ -94,13 +120,21 @@ export function useShortcuts({
   const entries = useMemo(() => resolveEntries(overrides), [overrides]);
 
   useEffect(() => {
-    function onKey(e: KeyboardEvent) {
+    const captureEntries = entries.filter((e) => e.captureGlobal);
+    const bubbleEntries = entries.filter((e) => !e.captureGlobal);
+
+    function dispatch(e: KeyboardEvent, candidates: ResolvedEntry[]): void {
       if (disabledRef.current) return;
       const editing = isEditableTarget(e.target);
-      for (const entry of entries) {
+      const inWidget = isInTransientWidget(e.target);
+      for (const entry of candidates) {
         if (e.repeat && !entry.repeatable) continue;
         if (!matchEvent(entry.parsed, e)) continue;
+        // Yield to the focused context: text editors (unless the action opts
+        // into firing while editing) and open transient widgets that own the
+        // key. Returning without `preventDefault` lets the widget handle it.
         if (editing && !entry.fireWhenEditing) return;
+        if (entry.captureGlobal && inWidget) return;
         const fn = handlersRef.current[entry.id];
         if (!fn) return;
         e.preventDefault();
@@ -109,8 +143,15 @@ export function useShortcuts({
         return;
       }
     }
+
+    const onKeyCapture = (e: KeyboardEvent) => dispatch(e, captureEntries);
+    const onKey = (e: KeyboardEvent) => dispatch(e, bubbleEntries);
+    window.addEventListener("keydown", onKeyCapture, true);
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKeyCapture, true);
+      window.removeEventListener("keydown", onKey);
+    };
   }, [entries]);
 }
 
