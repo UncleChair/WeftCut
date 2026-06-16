@@ -27,7 +27,7 @@ import {
 } from "../ipc";
 import { AnimatableField, displayValue } from "../components/AnimatableField";
 import { KeyframeField } from "../components/KeyframeField";
-import { readParamTrack, type ParamDescriptor, GAIN_DB, PAN } from "../keyframe/descriptors";
+import { readParamTrack, type ParamDescriptor, X, Y, OPACITY, GAIN_DB, PAN } from "../keyframe/descriptors";
 import { upsertKeyframe } from "../keyframe/edits";
 
 // Animatable rows (transform/opacity for visual kinds, gain_db/pan for audio)
@@ -188,11 +188,6 @@ function TextFields({
   }, [layer.id, v]);
 
   const debouncedCommit = useDebouncedCommit<LayerParamsPatch>(commit);
-  const commitTrack = (paramKey: string, track: AnimTrack<number>) =>
-    updateLayerParamTrack(layer.id, paramKey, track).then(onMutated).catch((e) => console.warn(e));
-  const debouncedCommitTrack = useDebouncedCommit<[string, AnimTrack<number>]>(
-    ([paramKey, track]) => commitTrack(paramKey, track),
-  );
 
   return (
     <section className="prop-section">
@@ -238,77 +233,9 @@ function TextFields({
           }}
         />
       </Field>
-      {(() => {
-        const track = readParamTrack(v, "x") ?? { mode: "Static" as const, value: 0 };
-        const shown = displayValue(track, tInLayerUs, 0);
-        return (
-          <AnimatableField
-            layerId={layer.id} paramKey="x" label={t("property_panel.x")}
-            track={track} fallback={0} tInLayerUs={tInLayerUs}
-            playheadInSpan={playheadInSpan} onMutated={onMutated}
-          >
-            <AppNumberField
-              value={shown}
-              ariaLabel={t("property_panel.x")}
-              onValueChange={() => {}}
-              onCommit={(val) => {
-                const next = track.mode === "Keyframed"
-                  ? upsertKeyframe(track, tInLayerUs, val)
-                  : { mode: "Static" as const, value: val };
-                void commitTrack("x", next);
-              }}
-            />
-          </AnimatableField>
-        );
-      })()}
-      {(() => {
-        const track = readParamTrack(v, "y") ?? { mode: "Static" as const, value: 0 };
-        const shown = displayValue(track, tInLayerUs, 0);
-        return (
-          <AnimatableField
-            layerId={layer.id} paramKey="y" label={t("property_panel.y")}
-            track={track} fallback={0} tInLayerUs={tInLayerUs}
-            playheadInSpan={playheadInSpan} onMutated={onMutated}
-          >
-            <AppNumberField
-              value={shown}
-              ariaLabel={t("property_panel.y")}
-              onValueChange={() => {}}
-              onCommit={(val) => {
-                const next = track.mode === "Keyframed"
-                  ? upsertKeyframe(track, tInLayerUs, val)
-                  : { mode: "Static" as const, value: val };
-                void commitTrack("y", next);
-              }}
-            />
-          </AnimatableField>
-        );
-      })()}
-      {(() => {
-        const track = readParamTrack(v, "opacity") ?? { mode: "Static" as const, value: 1 };
-        const shown = displayValue(track, tInLayerUs, 1);
-        return (
-          <AnimatableField
-            layerId={layer.id} paramKey="opacity" label={t("property_panel.opacity")}
-            track={track} fallback={1} tInLayerUs={tInLayerUs}
-            playheadInSpan={playheadInSpan} onMutated={onMutated}
-          >
-            <AppSlider
-              min={0}
-              max={1}
-              step={0.01}
-              value={shown}
-              onValueChange={(val) => {
-                const next = track.mode === "Keyframed"
-                  ? upsertKeyframe(track, tInLayerUs, val)
-                  : { mode: "Static" as const, value: val };
-                debouncedCommitTrack(["opacity", next]);
-              }}
-            />
-            <span className="prop-range-value">{shown.toFixed(2)}</span>
-          </AnimatableField>
-        );
-      })()}
+      <InspectorAnimField layer={layer} desc={X} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
+      <InspectorAnimField layer={layer} desc={Y} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
+      <InspectorAnimField layer={layer} desc={OPACITY} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
     </section>
   );
 }
