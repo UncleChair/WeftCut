@@ -52,17 +52,17 @@ export function layerOverlapClass(layer: LayerSummary): LayerOverlapClass {
 }
 
 /// Which header controls a track shows, derived from its content. Mute
-/// and Solo are audio-only semantics (`mix.rs` gates only Audio layers),
-/// so they appear only on tracks that carry audio — this is what removes
-/// the "what do M/S act on" ambiguity from combined rows. A pure-audio
-/// lane hides the eye: `muted` is its single audio on/off and the
-/// whole-track `enabled` toggle would be redundant. Visual-only and
-/// empty tracks keep the eye. (Lock is unconditional and not modeled
-/// here.) See the audio-track × A/B-roll spec.
+/// and Solo are no longer header controls — they moved off the track
+/// header onto audio roles (see the Mixer panel), so the header now
+/// carries only the eye (+ an unconditional lock, not modeled here). A
+/// pure-audio lane hides the eye: `muted` is its single audio on/off and
+/// the whole-track `enabled` toggle would be redundant. Visual-only and
+/// empty tracks keep the eye. `hasAudio` is retained because a pure-audio
+/// lane (`hasAudio && !showEye`) drives the audio-lane music glyph. See
+/// the audio-track × A/B-roll spec.
 export interface TrackHeaderControls {
   showEye: boolean;
-  showMute: boolean;
-  showSolo: boolean;
+  hasAudio: boolean;
 }
 
 export function trackHeaderControls(track: TrackSummary): TrackHeaderControls {
@@ -70,8 +70,7 @@ export function trackHeaderControls(track: TrackSummary): TrackHeaderControls {
   const hasVisual = track.layers.some((l) => layerOverlapClass(l) === "visual");
   return {
     showEye: hasVisual || !hasAudio,
-    showMute: hasAudio,
-    showSolo: hasAudio,
+    hasAudio,
   };
 }
 

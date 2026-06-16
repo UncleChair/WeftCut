@@ -57,7 +57,7 @@ export function TrackHeader({ track, height, isRevealed, isGroupStart, isExpande
   const controls = trackHeaderControls(track);
   // Pure-audio lane = has audio, no visual (eye hidden). Show a music
   // glyph so the lane reads as audio at a glance.
-  const isAudioLane = controls.showMute && !controls.showEye;
+  const isAudioLane = controls.hasAudio && !controls.showEye;
   return (
     <div
       className={`flex items-center gap-1 border-b border-border-soft px-1.5 ${isGroupStart ? "border-t border-t-border" : ""}`}
