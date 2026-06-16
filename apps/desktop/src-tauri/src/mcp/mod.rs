@@ -886,7 +886,8 @@ impl WeftCutServer {
             fade_in_us: 0,
             fade_out_us: 0,
             mute: false,
-            role: AudioRole::Dialogue,
+            // TTS narration → Voiceover bus (`docs/audio.md`).
+            role: AudioRole::Voiceover,
         });
         let layer_id = self
             .project
