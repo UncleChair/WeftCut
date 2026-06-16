@@ -35,7 +35,6 @@ export function TrackLane({
   dragLayer,
   bladeMode,
   onBladeSplit,
-  onSelect,
   onSelectFromClick,
   onDragStart,
   onMediaDrop,
@@ -64,7 +63,6 @@ export function TrackLane({
   dragLayer: LayerSummary | null;
   bladeMode: boolean;
   onBladeSplit: (layer: LayerSummary, clientX: number) => void;
-  onSelect: (id: string | null) => void;
   onSelectFromClick: (
     layerId: string,
     e: { altKey: boolean; shiftKey: boolean; metaKey: boolean },
@@ -204,9 +202,6 @@ export function TrackLane({
         isGroupStart ? "border-t border-t-border" : "",
       ].join(" ")}
       style={{ height }}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onSelect(null);
-      }}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
