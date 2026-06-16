@@ -549,6 +549,7 @@ const enUS = {
     height: "Height",
     gain_db: "Gain (dB)",
     pan: "Pan",
+    role: "Role",
     mute: "Mute",
     subtitles: "Subtitles",
     subtitles_source: "Source",
@@ -578,6 +579,13 @@ const enUS = {
     motif_source_apply: "Apply",
     motif_source_applying: "Applying…",
     motif_source_hint: "Edit the Motif's HTML + manifest island, then Apply to update the preview.",
+  },
+  audio_roles: { dialogue: "Dialogue", music: "Music", sfx: "SFX", voiceover: "Voiceover" },
+  mixer: {
+    title: "Mixer",
+    gain_db: "{{role}} gain (dB)",
+    mute_hint: "Mute this role everywhere",
+    solo_hint: "Solo this role (mutes the others)",
   },
   motif_picker: {
     heading: "Motifs",

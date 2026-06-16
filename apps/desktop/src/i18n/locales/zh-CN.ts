@@ -534,6 +534,7 @@ const zhCN: Resources = {
     height: "高度",
     gain_db: "增益（dB）",
     pan: "声像",
+    role: "角色",
     mute: "静音",
     subtitles: "字幕",
     subtitles_source: "来源",
@@ -563,6 +564,13 @@ const zhCN: Resources = {
     motif_source_apply: "应用",
     motif_source_applying: "应用中…",
     motif_source_hint: "编辑 Motif 的 HTML 与清单岛，然后点击「应用」更新预览。",
+  },
+  audio_roles: { dialogue: "对白", music: "音乐", sfx: "音效", voiceover: "旁白" },
+  mixer: {
+    title: "混音",
+    gain_db: "{{role}} 增益 (dB)",
+    mute_hint: "静音此角色（全局）",
+    solo_hint: "独奏此角色（静音其余）",
   },
   motif_picker: {
     heading: "Motifs",

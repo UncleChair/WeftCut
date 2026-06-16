@@ -96,26 +96,9 @@ export function TrackHeader({ track, height, isRevealed, isGroupStart, isExpande
           {track.enabled ? <Eye size={11} aria-hidden /> : <EyeOff size={11} aria-hidden />}
         </FlagButton>
       )}
-      {controls.showMute && (
-        <FlagButton
-          active={track.muted}
-          activeClass="bg-red-500/20 text-red-300"
-          label={t("timeline.track_mute_hint", { defaultValue: "Mute this track's audio (affects export)" })}
-          onToggle={toggle({ muted: !track.muted })}
-        >
-          M
-        </FlagButton>
-      )}
-      {controls.showSolo && (
-        <FlagButton
-          active={track.solo}
-          activeClass="bg-amber-500/25 text-amber-300"
-          label={t("timeline.track_solo_hint", { defaultValue: "Solo this track's audio (affects export)" })}
-          onToggle={toggle({ solo: !track.solo })}
-        >
-          S
-        </FlagButton>
-      )}
+      {/* Mute / Solo moved off the track header onto audio roles (see the
+          Mixer panel). The header now only carries eye + lock; per-role
+          M/S live in MixerPanel, driven by `update_role_flags`. */}
       <FlagButton
         active={track.locked}
         activeClass="bg-secondary text-foreground"
