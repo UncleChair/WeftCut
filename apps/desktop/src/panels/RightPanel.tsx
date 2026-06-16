@@ -38,6 +38,7 @@ import {
 import { PropertyPanel } from "../properties/PropertyPanel";
 import { useDeltaWindowUs, useDisplayMode } from "../settings/appSettingsStore";
 import { MediaThumbnail } from "./MediaThumbnail";
+import { MixerPanel } from "./MixerPanel";
 
 /// Filter chips for the AB-mode peek list: "all" plus each category in
 /// render order. Static — defined at module scope so it isn't rebuilt
@@ -158,6 +159,9 @@ export function RightPanel({
           )}
         </section>
       )}
+      <section className="right-panel-mixer">
+        <MixerPanel onMutated={onMutated} />
+      </section>
       <section className="right-panel-inspector">
         <PropertyPanel
           tracks={tracks}

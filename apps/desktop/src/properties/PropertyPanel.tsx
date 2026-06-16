@@ -16,6 +16,8 @@ import {
   getMotifSource,
   amendMotifDraft,
   createEditDraft,
+  AUDIO_ROLES,
+  type AudioRole,
   type GroupSummary,
   type LayerParamsPatch,
   type LayerSummary,
@@ -1008,6 +1010,14 @@ function AudioFields({
       </h3>
       <InspectorAnimField layer={layer} desc={GAIN_DB} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
       <InspectorAnimField layer={layer} desc={PAN} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
+      <Field label={t("property_panel.role")}>
+        <AppSelect
+          value={v.role}
+          ariaLabel={t("property_panel.role")}
+          onValueChange={(next) => commit({ kind: "Audio", role: next as AudioRole })}
+          options={AUDIO_ROLES.map((r) => ({ value: r, label: t(`audio_roles.${r}`) }))}
+        />
+      </Field>
       <Field label={t("property_panel.mute")}>
         <AppSwitch
           checked={v.mute}
