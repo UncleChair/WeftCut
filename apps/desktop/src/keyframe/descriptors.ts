@@ -3,6 +3,8 @@
 // transform, so `params[paramKey]` is the `AnimTrack<number>`.
 import type { AnimTrack, LayerSummary } from "../ipc";
 
+export type KfWidget = "slider" | "number" | "readout";
+
 export interface ParamDescriptor {
   /// Wire key understood by `updateLayerParamTrack` and the Rust resolver.
   paramKey: string;
@@ -10,15 +12,23 @@ export interface ParamDescriptor {
   labelKey: string;
   /// Static fallback used when a Keyframed track is empty / before its first key.
   fallback: number;
+  /// Number-field / slider step (absent ⇒ default 1).
+  step?: number;
+  /// Optional domain bounds.
+  min?: number;
+  max?: number;
+  /// Default inspector presentation, rendered in order, all bound to one value.
+  /// Consumers (e.g. the timeline) may override per call.
+  widgets?: KfWidget[];
 }
 
-const X: ParamDescriptor = { paramKey: "x", labelKey: "property_panel.x", fallback: 0 };
-const Y: ParamDescriptor = { paramKey: "y", labelKey: "property_panel.y", fallback: 0 };
-const SCALE_X: ParamDescriptor = { paramKey: "scale_x", labelKey: "property_panel.scale_x", fallback: 1 };
-const SCALE_Y: ParamDescriptor = { paramKey: "scale_y", labelKey: "property_panel.scale_y", fallback: 1 };
-const OPACITY: ParamDescriptor = { paramKey: "opacity", labelKey: "property_panel.opacity", fallback: 1 };
-const GAIN_DB: ParamDescriptor = { paramKey: "gain_db", labelKey: "property_panel.gain_db", fallback: 0 };
-const PAN: ParamDescriptor = { paramKey: "pan", labelKey: "property_panel.pan", fallback: 0 };
+export const X: ParamDescriptor = { paramKey: "x", labelKey: "property_panel.x", fallback: 0, step: 1, widgets: ["number"] };
+export const Y: ParamDescriptor = { paramKey: "y", labelKey: "property_panel.y", fallback: 0, step: 1, widgets: ["number"] };
+export const SCALE_X: ParamDescriptor = { paramKey: "scale_x", labelKey: "property_panel.scale_x", fallback: 1, step: 0.05, widgets: ["number"] };
+export const SCALE_Y: ParamDescriptor = { paramKey: "scale_y", labelKey: "property_panel.scale_y", fallback: 1, step: 0.05, widgets: ["number"] };
+export const OPACITY: ParamDescriptor = { paramKey: "opacity", labelKey: "property_panel.opacity", fallback: 1, step: 0.01, min: 0, max: 1, widgets: ["slider", "readout"] };
+export const GAIN_DB: ParamDescriptor = { paramKey: "gain_db", labelKey: "property_panel.gain_db", fallback: 0, step: 0.5, min: -30, max: 20, widgets: ["number"] };
+export const PAN: ParamDescriptor = { paramKey: "pan", labelKey: "property_panel.pan", fallback: 0, step: 0.05, min: -1, max: 1, widgets: ["slider"] };
 
 export function animatableParams(kind: string): ParamDescriptor[] {
   switch (kind) {
