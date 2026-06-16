@@ -1,6 +1,6 @@
 import { rmSync, existsSync, mkdirSync } from "node:fs";
 import { analyze, analyzeAudioEnvelope, analyzeAudioPan } from "../../lib/analyze.mjs";
-import { newProject } from "../../helpers/app.mjs";
+import { invokeCmd, newProject, summary, waitForHook } from "../../helpers/app.mjs";
 import { driveExport } from "../../helpers/export.mjs";
 import { fixture, tmpOut, tmpProjectParent } from "../../helpers/media.mjs";
 
@@ -8,6 +8,7 @@ import { fixture, tmpOut, tmpProjectParent } from "../../helpers/media.mjs";
 const PROJECT_PARENT_CONFORMANCE = tmpProjectParent("weftcut-e2e-audio-proj");
 const PROJECT_PARENT_FORMATS = tmpProjectParent("weftcut-e2e-audiofmt-proj");
 const PROJECT_PARENT_ENVELOPE = tmpProjectParent("weftcut-e2e-audio-env-proj");
+const PROJECT_PARENT_ROLES = tmpProjectParent("weftcut-e2e-audio-roles-proj");
 
 // ─── Envelope suite: the 30fps tone-marker fixture (shared with conformance) ─
 const SOURCE = fixture("test_1080p_30fps_audio.mp4");
@@ -267,5 +268,223 @@ describe("audio envelope conformance (real WebView2)", function () {
     const report = analyzeAudioPan({ output, expectLrDb: 16.0 });
     console.log("[e2e] pan report:", JSON.stringify(report));
     expect(report.pass).toBe(true);
+  });
+});
+
+// ─── 4. Role-based mixing conformance ────────────────────────────────────────
+// Proves the audio-roles feature end-to-end: audio now mixes by per-layer ROLE
+// (Dialogue/Music/SFX/Voiceover), and ROLE mute/solo + role gain gate the mix —
+// track mute/solo no longer do (docs/audio.md §Roles, ADR 0023).
+//
+// The fixture is the single-tone-per-second source (one tone present at a time),
+// so two copies of it carry identical, correlated content — they can't be told
+// apart by frequency. We separate them in the STEREO FIELD instead and read the
+// per-channel RMS ratio with the existing `--audio-pan` analyzer: tag one copy
+// `dialogue` panned left and the other `music` panned right, and the channel a
+// role lands in becomes its observable "band".
+//
+// With the equal-power mono pan law (StereoPannerNode), a layer at pan x has
+// gainL = cos((x+1)·π/4), gainR = sin((x+1)·π/4). At x = ∓0.6 neither channel is
+// ever truly silent (no -inf / JSON null), so the ratio stays finite and exactly
+// computable whichever roles are audible:
+//   • both roles audible → L and R each carry one full layer of the SAME signal
+//     ⇒ L−R = 0 dB (symmetric);
+//   • music role muted → only the left-panned dialogue survives
+//     ⇒ L−R = 20·log10(cos18°/sin18°) = +9.77 dB.
+// The +9.77 dB flip is the proof the music layer's contribution is GONE while
+// dialogue remains — asserted on the analyzer's native ±1 dB pan tolerance, no
+// loosening. A Goertzel `--audio` pass on the same muted-music output confirms
+// dialogue's per-second tone content itself survived (not just the channel).
+//
+// Role flags/gain are driven by the real IPC the Mixer panel uses
+// (`update_role_flags` / `set_role_gain`); the per-layer role + pan are set with
+// `update_layer_params` (the `role` field on AudioPatch). Setup is composed
+// manually (import + place same source twice, then export the timeline) rather
+// than via the `exportClip` hook, because the role-flag mutation has to land
+// BETWEEN patching the layers and running the export.
+
+const ROLE_PAN = 0.6;
+// L−R for the lone left-panned (−0.6) dialogue layer after music is silenced.
+const DIALOGUE_ONLY_LR_DB =
+  20 *
+  Math.log10(
+    Math.cos(((-ROLE_PAN + 1) * Math.PI) / 4) / Math.sin(((-ROLE_PAN + 1) * Math.PI) / 4),
+  );
+
+/// The auto-paired Audio layer ids, in placement order, from the live project
+/// summary. Throws if fewer than `min` exist (auto-pair off, or the fixture
+/// lacks an audio stream) — the same guard the exportClip hook uses.
+async function audioLayerIds(min = 1) {
+  const sum = await summary();
+  const ids = [];
+  for (const tr of sum.tracks) {
+    for (const l of tr.layers) {
+      if (l.params.kind === "Audio") ids.push(l.id);
+    }
+  }
+  if (ids.length < min) {
+    throw new Error(
+      `expected ≥${min} auto-paired Audio layer(s), found ${ids.length} — is auto_pair_audio_on_import off, or does the fixture lack an audio stream?`,
+    );
+  }
+  return ids;
+}
+
+describe("audio role mixing conformance (real WebView2)", function () {
+  before(function () {
+    if (!existsSync(SOURCE)) {
+      console.warn(`[e2e] SKIP suite: source not found at ${SOURCE}`);
+      this.skip();
+    }
+    mkdirSync(PROJECT_PARENT_ROLES, { recursive: true });
+  });
+
+  it("muting the music role drops the music layer while dialogue remains", async function () {
+    const output = tmpOut("weftcut-e2e-role-mute.mp4");
+    rmSync(output, { force: true });
+
+    await newProject({
+      parentFolder: PROJECT_PARENT_ROLES,
+      name: "e2e-audio-roles-" + Date.now(),
+      canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
+    });
+    await waitForHook("exportTimeline");
+
+    // Import once, place the SAME media twice (one mediaId, two layers) so the
+    // two audio copies are byte-identical content separated only by role + pan.
+    const first = await browser.executeAsync((p, done) => {
+      window.__weftcutTest
+        .importAndPlaceMedia({ mediaAbsPath: p, tStartUs: 0 })
+        .then((x) => done({ ok: true, ...x }))
+        .catch((e) => done({ ok: false, error: String(e) }));
+    }, SOURCE);
+    if (!first.ok) throw new Error(`importAndPlaceMedia failed: ${first.error}`);
+    const mediaId = first.mediaId;
+
+    const second = await browser.executeAsync((id, done) => {
+      window.__weftcutTest
+        .placeMediaLayer({ mediaId: id, tStartUs: 0 })
+        .then((x) => done({ ok: true, ...x }))
+        .catch((e) => done({ ok: false, error: String(e) }));
+    }, mediaId);
+    if (!second.ok) throw new Error(`placeMediaLayer failed: ${second.error}`);
+
+    // Tag the two auto-paired Audio layers: dialogue hard-ish left, music
+    // hard-ish right (∓0.6 keeps both channels finite under either mix).
+    const [dialogueLayer, musicLayer] = await audioLayerIds(2);
+    await invokeCmd("update_layer_params", {
+      layerId: dialogueLayer,
+      patch: { kind: "Audio", role: "dialogue", pan: -ROLE_PAN },
+    });
+    await invokeCmd("update_layer_params", {
+      layerId: musicLayer,
+      patch: { kind: "Audio", role: "music", pan: ROLE_PAN },
+    });
+
+    // Sanity: both roles audible ⇒ symmetric stereo field (L−R ≈ 0 dB). This
+    // is the baseline the mute then has to break.
+    const baselineOut = tmpOut("weftcut-e2e-role-baseline.mp4");
+    rmSync(baselineOut, { force: true });
+    let r = await driveExport({ outputAbsPath: baselineOut }, { hook: "exportTimeline" });
+    if (!r.done.ok) throw new Error(`baseline export failed: ${r.done.error}`);
+    const baseline = analyzeAudioPan({ output: baselineOut, expectLrDb: 0.0 });
+    console.log("[e2e] role baseline pan report:", JSON.stringify(baseline));
+    expect(baseline.pass).toBe(true);
+
+    // Mute the MUSIC role (the right-panned layer). Track mute/solo no longer
+    // gate audio — this role flag is the only lever that silences the music.
+    await invokeCmd("update_role_flags", { role: "music", patch: { muted: true } });
+
+    r = await driveExport({ outputAbsPath: output }, { hook: "exportTimeline" });
+    if (!r.done.ok) {
+      throw new Error(
+        `role-mute export failed: ${r.done.error} | exportState kind=${r.lastKind} detail=${r.lastDetail}`,
+      );
+    }
+
+    // The right channel collapses to dialogue's small right-bleed: L−R jumps to
+    // the lone-left-panned-dialogue value (+9.77 dB), proving the music layer's
+    // contribution is gone. Native ±1 dB pan tolerance; no loosening.
+    const muted = analyzeAudioPan({ output, expectLrDb: DIALOGUE_ONLY_LR_DB });
+    console.log(
+      `[e2e] role-mute pan report (expect L−R≈${DIALOGUE_ONLY_LR_DB.toFixed(2)} dB):`,
+      JSON.stringify(muted),
+    );
+    expect(muted.pass).toBe(true);
+    // And it really moved off the symmetric baseline (defensive: a no-op mute
+    // would leave L−R ≈ 0).
+    expect(muted.lr_delta_db).toBeGreaterThan(baseline.lr_delta_db + 3);
+
+    // Dialogue's own per-second tone content survived the mix (the mono
+    // downmix still tracks the 400+120k Hz markers + stays aligned).
+    const tones = analyze({ output, source: SOURCE, samples: [0], audio: true });
+    console.log("[e2e] role-mute tone report:", JSON.stringify(tones));
+    expect(tones.samples.filter((s) => !s.aligned)).toHaveLength(0);
+    expect(tones.pass).toBe(true);
+  });
+
+  it("role gain trims the role's level by the analytic dB factor", async function () {
+    // A single dialogue layer (centered), exported at role gain 0 dB then at
+    // −12 dB. Role gain folds uniformly into the layer's gain envelope, so the
+    // file's absolute sample peak scales by the same factor: −12 dB ⇒ ×0.251.
+    // We read `peak_dbfs` from the envelope analyzer (absolute dBFS) across the
+    // two exports and assert the drop. Going DOWN keeps the −1 dB alimiter out
+    // of the picture, so the peak ratio is the clean gain ratio. ±1.5 dB is the
+    // envelope suite's own AAC bound — not loosened here.
+    const ROLE_GAIN_DB = -12;
+    const out0 = tmpOut("weftcut-e2e-role-gain-0.mp4");
+    const outDown = tmpOut("weftcut-e2e-role-gain-down.mp4");
+
+    // A trivial always-true expectation just to get a populated report; we only
+    // read `peak_dbfs` (the loudest window vs itself is 0 dB by construction).
+    const expects = [{ t_s: 5.0, expect_rms_db_delta: 0.0 }];
+
+    /// Boot a fresh single-dialogue-layer project, set the dialogue role gain,
+    /// export, and return the file's absolute peak dBFS.
+    const exportAtRoleGain = async (output, gainDb) => {
+      rmSync(output, { force: true });
+      await newProject({
+        parentFolder: PROJECT_PARENT_ROLES,
+        name: "e2e-audio-rolegain-" + Date.now(),
+        canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
+      });
+      await waitForHook("exportTimeline");
+
+      const placed = await browser.executeAsync((p, done) => {
+        window.__weftcutTest
+          .importAndPlaceMedia({ mediaAbsPath: p, tStartUs: 0 })
+          .then((x) => done({ ok: true, ...x }))
+          .catch((e) => done({ ok: false, error: String(e) }));
+      }, SOURCE);
+      if (!placed.ok) throw new Error(`importAndPlaceMedia failed: ${placed.error}`);
+
+      const [layer] = await audioLayerIds();
+      await invokeCmd("update_layer_params", {
+        layerId: layer,
+        patch: { kind: "Audio", role: "dialogue", pan: 0 },
+      });
+      await invokeCmd("set_role_gain", { role: "dialogue", gainDb });
+
+      const r = await driveExport({ outputAbsPath: output }, { hook: "exportTimeline" });
+      if (!r.done.ok) {
+        throw new Error(
+          `role-gain export failed (gain ${gainDb} dB): ${r.done.error} | kind=${r.lastKind} detail=${r.lastDetail}`,
+        );
+      }
+      const report = analyzeAudioEnvelope({ output, expects });
+      console.log(`[e2e] role-gain ${gainDb} dB envelope report:`, JSON.stringify(report));
+      return report.peak_dbfs;
+    };
+
+    const peakUnity = await exportAtRoleGain(out0, 0);
+    const peakDown = await exportAtRoleGain(outDown, ROLE_GAIN_DB);
+
+    // The peak fell by ~|ROLE_GAIN_DB|, proving role gain reached the export
+    // mixer and folded into the layer's level.
+    const drop = peakUnity - peakDown;
+    console.log(
+      `[e2e] role-gain peak drop: ${drop.toFixed(2)} dB (expect ≈ ${-ROLE_GAIN_DB} dB)`,
+    );
+    expect(Math.abs(drop - -ROLE_GAIN_DB)).toBeLessThanOrEqual(1.5);
   });
 });
