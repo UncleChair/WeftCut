@@ -107,6 +107,16 @@ handle edits that segment's `cubic-bezier`; right-clicking a keyframe or segment
 opens a preset / Smooth menu. The curve follows the value, so which segment an
 easing governs is read directly from the picture.
 
+Each expanded sub-lane header also carries an After Effects-style keyframe
+navigator — `◄ ◆ ►` — to the left of the property name. The arrows seek the
+playhead to the previous / next keyframe of that property and select it; the
+middle diamond toggles a keyframe at the playhead (filled when one sits there →
+click removes it; hollow → click adds one at the current value), and is disabled
+when the playhead is off the clip. The navigator acts on the focused clip, or
+the sole keyframed clip when a track row spans several. Unlike the inspector
+stopwatch, which turns a property's animation on or off, the navigator only adds
+and removes keys on an already-animated property.
+
 ## Decoder pool
 
 `SourceDecoderPool` is two-tiered. Decoders + frame rings are keyed
