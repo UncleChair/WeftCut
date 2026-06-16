@@ -91,9 +91,19 @@ struct Project {
     markers: imbl::Vector<Marker>,
     transitions: imbl::Vector<Transition>,
     groups: imbl::Vector<Group>,
+    audio_roles: imbl::HashMap<AudioRole, RoleMixSettings>,  // per-role mix buses
     settings: ProjectSettings,                    // proxy res, autosave, etc.
 }
 ```
+
+`audio_roles` holds one `RoleMixSettings { gain_db, muted, solo }` per
+mixing role. The map is sparse: an absent role resolves to defaults
+(0 dB, unmuted, unsoloed) through `Project::role_mix`, so a project that
+never opened the Mixer plays every role at unity. The field carries
+`#[serde(default)]`, so older `.vproj` files load with an empty table
+(every role at unity) without a schema bump. The mixing model itself —
+how the bus folds into layer envelopes, how mute/solo gate selection —
+is described in [docs/audio.md](audio.md) and [ADR 0023](adr/0023-audio-mixes-by-role-not-track.md).
 
 ## `Composition`
 
@@ -230,8 +240,8 @@ struct Track {
     id: TrackId,
     label: Option<String>,
     enabled: bool,                    // eye toggle: hides video + silences audio for the whole track
-    muted: bool,                      // M toggle: silences audio layers only; video unaffected
-    solo: bool,                       // S toggle: when any track is soloed, only soloed tracks are audible; mute wins over solo
+    muted: bool,                      // retained for back-compat load; no longer gates audio (mixing is per-role)
+    solo: bool,                       // retained for back-compat load; no longer gates audio (mixing is per-role)
     locked: bool,                     // lock toggle: UI prevents edits; actor rejects structural ops on locked tracks
     removable: bool,                  // false → delete_track refuses; default tracks set this
     transient: bool,                  // auto-prune candidate when emptied
@@ -245,17 +255,27 @@ Tracks are kind-agnostic — any `LayerParams` variant can live on any
 track. The dominant class on a track ("Video", "Audio", "Empty") is
 derived from the layers it actually contains.
 
-The four track-header controls map to fields as follows: the **eye**
-toggle sets `enabled` (hides video and silences audio); **M** sets
-`muted` (silences audio layers only, video is unaffected); **S** sets
-`solo` (when any track is soloed, only soloed tracks are audible; mute
-wins over solo — only enabled tracks' solo flags count); **lock** sets
-`locked` (the actor rejects `move_layer`, `trim_layer`, `split_layer`,
-`delete_layer`, `update_layer`, and `update_layer_params` on layers that
-belong to a locked track, including via group fan-out). All four flags
-are toggled through `update_track_flags`, an **unrecorded** mutation
-(same `replace_settings_everywhere` convention as `ProjectSettings`
-patches) so undo never flips a track control back.
+The live track-header controls are the **eye** and the **lock**. The
+eye sets `enabled` — the whole-track gate that hides the track's video
+and silences its audio together. The lock sets `locked` (the actor
+rejects `move_layer`, `trim_layer`, `split_layer`, `delete_layer`,
+`update_layer`, and `update_layer_params` on layers that belong to a
+locked track, including via group fan-out). Both are toggled through
+`update_track_flags`, an **unrecorded** mutation (same
+`replace_settings_everywhere` convention as `ProjectSettings` patches)
+so undo never flips a track control back.
+
+`muted` and `solo` are **retained on the struct for back-compat load**
+but no longer gate audio. Audio mute/solo is now a property of the
+mixing **role**, not the track: the per-role `{gain_db, muted, solo}`
+in `Project.audio_roles` decides what is audible (see
+[docs/audio.md](audio.md) and [ADR 0023](adr/0023-audio-mixes-by-role-not-track.md)).
+`update_track_flags` still accepts the two fields so old callers and
+projects round-trip, and they continue to deserialize, but the export
+and preview mixers ignore them. Audio control therefore stacks in three
+scopes: **clip mute** (`AudioParams.mute`, one layer), **role
+mute/solo/gain** (`audio_roles`, a whole category of sound), and **track
+`enabled`** (the eye — an entire track's picture and audio at once).
 
 A fresh project ships with non-removable tracks tagged with A-roll /
 B-roll / audio roles. They give every project a guaranteed drop
@@ -369,9 +389,16 @@ struct AudioParams {
     pan: Animated<f64>,               // -1 .. 1
     fade_in_us: u64,
     fade_out_us: u64,
-    mute: bool,
+    mute: bool,                       // per-clip mute
+    role: AudioRole,                  // dialogue | music | sfx | voiceover
 }
 ```
+
+`role` is the layer's **mix-bus tag** (kebab on the wire:
+`dialogue`/`music`/`sfx`/`voiceover`; default `dialogue` via
+`#[serde(default)]`). The mixer groups by this, not by track — every
+layer tagged `music` shares one bus, wherever its track sits. The bus
+settings live in `Project.audio_roles` (below); see [docs/audio.md](audio.md).
 
 ### `Transform`
 
@@ -533,7 +560,9 @@ the UI uses the same actor via Tauri commands.
 | `add_track(label?)` → `TrackId` | tracks are kind-agnostic — any layer kind can be placed on any track |
 | `remove_track(id, force?)` | rejects if non-empty unless `force` |
 | `move_track(id, new_position)` | |
-| `update_track_flags(id, patch)` | unrecorded; patch any subset of `{enabled, muted, solo, locked}`; undo never reverts these |
+| `update_track_flags(id, patch)` | unrecorded; patch any subset of `{enabled, muted, solo, locked}`; undo never reverts these. `muted`/`solo` round-trip but no longer gate audio (mixing is per-role) |
+| `set_role_gain(role, gain_db)` | **recorded** (undoable); sets a mixing role's bus gain, folded into that role's layers at mix time |
+| `update_role_flags(role, patch)` | unrecorded (like `update_track_flags`); patch `{muted?, solo?}` on a role's mix bus; undo never reverts these |
 | `add_color_layer(track_id, t_start_us, t_end_us, color, width?, height?)` → `LayerId` | rejects on overlap |
 | `add_video_layer(track_id, media_id, t_start_us, t_end_us, src_in_us, src_out_us)` → `LayerId` | rejects on overlap |
 | `add_motif(motif_id, t_start_us, t_end_us?, track_id?, props?)` → `LayerId` | `t_end_us` defaults to `default_duration_s`; `track_id` auto-creates an "Overlay" track when absent |
