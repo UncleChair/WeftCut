@@ -14,6 +14,7 @@ import { lastFrameAnchorUs as computeLastFrameStartUs, snapFrameFloor } from "..
 import type { LayerSummary, MediaSummary, ProjectSummary } from "../ipc";
 import { AudioGraph } from "./audio/AudioGraph";
 import { AudioMixer } from "./audio/AudioMixer";
+import { anyRoleSolo, roleAudible, roleGainLinear } from "./audio/roleGate";
 import type { ClockAnchor } from "./audio/chunkSchedule";
 import {
   resolveColorView,
@@ -228,6 +229,11 @@ interface ActiveAudio {
   /// the mixer's schedule when nothing audio-relevant actually changed.
   lastParamsRef: unknown;
   lastParamsJson: string;
+  /// Last role-bus linear gain folded into the mixer. A role-gain change
+  /// (or role mute/solo flip changing audibility) must re-derive the mixer
+  /// even when `layer.params` is reference-stable, so it joins the
+  /// change-detection guard. Sentinel `NaN` forces the first `updateView`.
+  lastRoleGain: number;
 }
 
 /// Schedule `cb` for an idle slice: `requestIdleCallback` when available
@@ -665,34 +671,43 @@ export class Compositor {
     // track. Treating the VideoClip as also audio-bearing here would
     // play the same audio twice — the audible doubling bug.
     if (this.audioGraph !== null) {
-      // Track-level audio gates — mirror audio/mix.rs plan_for_project
-      // semantics: mute wins over solo; only ENABLED tracks' solo flags
-      // count. Gated-out layers are skipped here, then swept below with a
-      // pause-shaped tick so their pre-scheduled chunks stop immediately.
-      const anySolo = this.projectSummary.tracks.some((t) => t.enabled && t.solo);
+      // Audio gates — mirror audio/mix.rs audible_audio_layers semantics:
+      // whole-track disable still gates, but audio mute/solo now lives on
+      // ROLES (mute wins over solo; an absent role defaults audible iff no
+      // role is soloed). Gated-out layers are skipped here, then swept below
+      // with a pause-shaped tick so their pre-scheduled chunks stop
+      // immediately. (Preview ignores `locked`, matching the live behavior.)
+      const roles = this.projectSummary.audio_roles ?? [];
+      const anySolo = anyRoleSolo(roles);
       const tickedAudio = new Set<string>();
       for (const track of this.projectSummary.tracks) {
-        if (!track.enabled) continue;
-        if (track.muted) continue;
-        if (anySolo && !track.solo) continue;
+        if (!track.enabled) continue; // whole-track disable still gates
         for (const layer of track.layers) {
           if (!layer.enabled) continue;
           if (layer.params.kind === "Audio") {
+            // Role gating moved off the track (M/S → roles).
+            if (!roleAudible(layer.params.role, roles, anySolo)) continue;
             const audio = this.ensureAudio(layer);
             if (audio) {
-              if (audio.lastParamsRef !== layer.params) {
+              const rGain = roleGainLinear(layer.params.role, roles);
+              if (
+                audio.lastParamsRef !== layer.params ||
+                audio.lastRoleGain !== rGain
+              ) {
                 const json =
                   JSON.stringify(layer.params) +
-                  `|${layer.t_start_us}|${layer.t_end_us}`;
+                  `|${layer.t_start_us}|${layer.t_end_us}|${rGain}`;
                 if (json !== audio.lastParamsJson) {
                   audio.mixer.updateView(
                     layer.params,
                     layer.t_start_us,
                     layer.t_end_us,
+                    rGain,
                   );
                   audio.lastParamsJson = json;
                 }
                 audio.lastParamsRef = layer.params;
+                audio.lastRoleGain = rGain;
               }
               tickedAudio.add(layer.id);
               audio.mixer.tick(
@@ -1806,6 +1821,9 @@ export class Compositor {
       lastParamsRef: layer.params,
       lastParamsJson:
         JSON.stringify(layer.params) + `|${layer.t_start_us}|${layer.t_end_us}`,
+      // Sentinel: the constructor derived the mixer at unity role gain, so
+      // the first selection-loop pass must re-derive with the real role gain.
+      lastRoleGain: NaN,
     };
     this.audios.set(layer.id, audio);
     // eslint-disable-next-line no-console

@@ -67,6 +67,10 @@ export class AudioMixer {
   private srcOutFrame = 0;
   private gainEnv: Envelope;
   private panEnv: Envelope;
+  /// Role-bus linear gain folded onto the gain envelope (v1 role-bus
+  /// realization — the preview twin of `plan_for_project`'s `role_gain`
+  /// fold; see roleGate.ts). Unity until the Compositor passes one.
+  private roleGainLinear = 1;
 
   /// The engine's clock anchor as of the last tick — by REFERENCE. The
   /// mixer never takes its own anchor: the playhead and every scheduled
@@ -128,6 +132,12 @@ export class AudioMixer {
       spanUs,
     );
     this.panEnv = samplePan(this.view.pan, spanUs);
+    // Fold the role bus gain (v1 role-bus realization — see roleGate.ts).
+    if (this.roleGainLinear !== 1) {
+      for (let i = 0; i < this.gainEnv.values.length; i++) {
+        this.gainEnv.values[i]! *= this.roleGainLinear;
+      }
+    }
     // Constant fast path: park the static value on the param; curves are
     // scheduled per chunk only for non-constant envelopes.
     if (this.gainEnv.values.length === 1) {
@@ -141,10 +151,16 @@ export class AudioMixer {
   /// Layer summary changed (trim, move, gain/pan/fade edit, mute). Re-derive
   /// envelopes and reschedule — `setValueCurveAtTime` forbids overlapping
   /// automation, so a fresh schedule is the only correct move.
-  updateView(view: AudioView, layerTStartUs: number, layerTEndUs: number): void {
+  updateView(
+    view: AudioView,
+    layerTStartUs: number,
+    layerTEndUs: number,
+    roleGainLinear: number,
+  ): void {
     this.view = view;
     this.layerTStartUs = layerTStartUs;
     this.layerTEndUs = layerTEndUs;
+    this.roleGainLinear = roleGainLinear;
     this.teardown(true);
     this.lastAnchor = null;
     this.deriveFromView();
