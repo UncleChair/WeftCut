@@ -62,18 +62,8 @@ export function KeyframeLaneHeaders({
             className="border-b border-border-soft px-1.5 text-[10px] text-muted-foreground/80"
             style={{ height: expanded ? KF_SUBLANE_EXPANDED_H : KF_SUBLANE_H }}
           >
-            <div className="flex items-center justify-between gap-1" style={{ minHeight: KF_SUBLANE_H }}>
+            <div className="flex items-center justify-between gap-1" style={{ height: KF_SUBLANE_H }}>
               <span className="min-w-0 truncate">{t(d.labelKey, { defaultValue: d.paramKey })}</span>
-              {expanded && (
-                <KeyframeValueField
-                  track={track}
-                  desc={d}
-                  currentTimeUs={currentTimeUs}
-                  fpsNum={fpsNum}
-                  fpsDen={fpsDen}
-                  onCommitParamTrack={onCommitParamTrack}
-                />
-              )}
               <KeyframeNavigator
                 track={track}
                 paramKey={d.paramKey}
@@ -84,6 +74,16 @@ export function KeyframeLaneHeaders({
                 onCommitParamTrack={onCommitParamTrack}
               />
             </div>
+            {expanded && (
+              <KeyframeValueField
+                track={track}
+                desc={d}
+                currentTimeUs={currentTimeUs}
+                fpsNum={fpsNum}
+                fpsDen={fpsDen}
+                onCommitParamTrack={onCommitParamTrack}
+              />
+            )}
           </div>
         );
       })}
