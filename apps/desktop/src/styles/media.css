@@ -1,0 +1,347 @@
+
+
+
+/* Import proxy notification — reuses .export-panel chrome but sits in the
+   opposite corner (top-right) so it never overlaps the export panel
+   (bottom-left) when both are open. */
+.import-proxy-dialog {
+  left: auto;
+  right: 16px;
+  bottom: auto;
+  top: 16px;
+  padding-bottom: 8px;
+}
+
+.import-proxy-heading {
+  margin: 0;
+  padding: 4px 12px 0;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+
+.import-proxy-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.import-proxy-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--foreground);
+}
+
+.import-proxy-list li.is-failed .import-proxy-reason {
+  color: var(--destructive);
+}
+
+.import-proxy-reason {
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+
+.import-proxy-checking,
+.import-proxy-note {
+  margin: 0;
+  padding: 2px 12px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+.media-pool {
+  grid-area: mediapool;
+  overflow-y: auto;
+  border-right: 1px solid var(--border-soft);
+  background: #0a0c10;
+  min-height: 0;
+  /* Anchor for the file-drop overlay. */
+  position: relative;
+}
+
+/* Shown while an Explorer file drag hovers the pool. pointer-events:
+ * none keeps dragleave from churning as the cursor crosses it. */
+.media-pool-drop-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(37, 99, 235, 0.12);
+  border: 2px dashed var(--primary);
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 500;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.media-pool::-webkit-scrollbar {
+  width: 8px;
+}
+
+.media-pool::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.media-pool::-webkit-scrollbar-thumb {
+  background-color: var(--accent);
+  border-radius: 4px;
+  background-clip: content-box;
+}
+
+.media-pool::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-gray-600);
+}
+
+.media-pool-inner {
+  padding: 8px 16px;
+}
+
+.media-pool-inner h2 {
+  margin: 0 0 6px 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.media-pool-search {
+  position: relative;
+  margin-bottom: 8px;
+}
+
+/* Search field + its ✕ now come from AppInput (.app-input / .app-input-clear);
+ * .media-pool-search just provides the bottom margin around the wrap. */
+
+/* 2026-05-16 MediaPool redesign: card grid. Thumbnail on top + name
+   strip at the bottom by default; details overlay fades in on hover.
+   Click to preview; HTML5 drag remains for drag-to-track. */
+.media-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.media-item {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  background: #131822;
+  border-radius: 4px;
+  overflow: hidden;
+  cursor: pointer;
+  font-size: 11px;
+  outline: 1px solid transparent;
+  transition: outline-color 80ms ease-out, background 80ms ease-out;
+  align-items: center;
+}
+
+.media-item-thumb {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #0a0c10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.media-thumbnail {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: var(--secondary);
+  display: block;
+}
+
+.media-thumbnail.is-placeholder {
+  /* keep the slot reserved when no thumbnail is available */
+  background: #0e131c;
+}
+
+.media-item-name {
+  padding: 5px 8px 6px;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+/* Hover-revealed detail overlay sits on top of the thumbnail and fades
+   in on card hover. Pointer-events:none so it doesn't intercept the
+   click → preview gesture. */
+.media-item-details {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to top,
+    rgba(11, 13, 17, 0.92) 70%,
+    rgba(11, 13, 17, 0.5)
+  );
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 3px;
+  padding: 8px;
+  opacity: 0;
+  transition: opacity 80ms ease-out;
+  pointer-events: none;
+}
+
+.media-item:hover .media-item-details {
+  opacity: 1;
+}
+
+.media-item:hover {
+  outline-color: rgba(96, 165, 250, 0.45);
+  background: #161c28;
+}
+
+.media-item[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+.media-kind {
+  align-self: flex-start;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-slate-300);
+  background: var(--secondary);
+  padding: 1px 6px;
+  border-radius: 3px;
+  text-align: center;
+}
+
+.media-meta {
+  color: var(--color-slate-300);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  font-size: 10px;
+}
+
+/* --------------------------------------------------------------------------
+ * Media-pool badges (Phase C.1 + C.2 — docs/data-model.md)
+ * -------------------------------------------------------------------------- */
+
+/* Shared not-ready treatment — the card is visually inert and the
+ * pointer reads as not-allowed. The cancel-import button overlay
+ * re-enables its own cursor + pointer-events below. */
+.media-item.is-importing,
+.media-item.is-missing,
+.media-item.is-proxy-pending,
+.media-item.is-proxy-failed {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.media-item.is-proxy-failed {
+  /* Failed state needs to stand out from the merely-pending one. */
+  outline: 1px solid rgba(248, 113, 113, 0.6);
+  outline-offset: -1px;
+}
+
+/* The importing / missing status indicators sit on top of the
+   thumbnail (inside .media-item-thumb) so the card's name strip stays
+   uncluttered. */
+.media-import-cancel {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: rgba(96, 165, 250, 0.85);
+  border: 1px solid rgba(96, 165, 250, 0.9);
+  color: #0a0c10;
+  border-radius: 3px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  z-index: 2;
+  pointer-events: auto;
+}
+
+.media-import-cancel:hover {
+  background: rgba(96, 165, 250, 1);
+}
+
+.media-missing-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: rgba(248, 113, 113, 0.85);
+  border: 1px solid rgba(248, 113, 113, 0.9);
+  color: #0a0c10;
+  border-radius: 3px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: default;
+  z-index: 2;
+}
+
+.media-proxy-pending-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: rgba(250, 204, 21, 0.85);
+  border: 1px solid rgba(250, 204, 21, 0.9);
+  color: #0a0c10;
+  border-radius: 3px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: not-allowed;
+  z-index: 2;
+}
+
+.media-proxy-failed-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: rgba(248, 113, 113, 0.9);
+  border: 1px solid rgba(248, 113, 113, 1);
+  color: #0a0c10;
+  border-radius: 3px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: help;
+  z-index: 2;
+}
+
+/* Status-bar pill: "Generating N derivatives…" (Phase C.3). */
+
+.derivatives-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: rgba(96, 165, 250, 0.12);
+  border: 1px solid rgba(96, 165, 250, 0.32);
+  color: var(--color-blue-200);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.derivatives-pill-spinner {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid rgba(191, 219, 254, 0.25);
+  border-top-color: var(--color-blue-300);
+  animation: preview-spin 0.9s linear infinite;
+}

@@ -1,0 +1,60 @@
+:root {
+  color-scheme: dark;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* Tailwind preflight sets `html { line-height: 1.5 }`; every legacy
+   * layout in this file was sized against the UA default (`normal`,
+   * ~1.2) — e.g. .startup-recent-list's fixed 140px = exactly 3 rows.
+   * Pin the pre-Tailwind metric here (unlayered, so it beats preflight's
+   * @layer base). New shadcn components are unaffected: their text-*
+   * utilities set their own line-height. */
+  line-height: normal;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; margin: 0; }
+
+/* Desktop-app selection model: nothing is selectable by default —
+ * pointer drags belong to the timeline, sliders, and the window drag
+ * region, not to text selection. Content the user legitimately edits
+ * or copies opts back in below. */
+body {
+  user-select: none;
+}
+
+input,
+textarea,
+[contenteditable] {
+  user-select: text;
+}
+
+span.preview-timecode {
+  user-select: none;
+  cursor: text;
+  outline: none;
+  border-radius: 3px;
+}
+
+span.preview-timecode:hover {
+  color: var(--foreground);
+}
+
+span.preview-timecode:focus-visible {
+  box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.6);
+}
+
+input.preview-timecode {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 3px;
+  color: var(--foreground);
+  padding: 1px 4px;
+  outline: none;
+  width: 13ch;
+}
+
+input.preview-timecode:focus {
+  border-color: var(--color-blue-400);
+}

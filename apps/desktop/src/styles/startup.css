@@ -1,0 +1,501 @@
+
+
+/* Caption buttons for the frameless window (WindowControls). Windows
+ * convention: square, flush to the top-right corner, full bar height,
+ * red close hover. The negative margins cancel .app-header's padding so
+ * the buttons truly reach the window edge. */
+.window-controls {
+  display: flex;
+  align-self: stretch;
+  margin: -8px -16px -8px 4px;
+}
+
+.window-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  background: transparent;
+  border: none;
+  color: var(--muted-foreground);
+  cursor: default;
+}
+
+.window-control:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--foreground);
+}
+
+.window-control-close:hover {
+  background: #e81123;
+  color: #fff;
+}
+
+.locale-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--secondary);
+  border: 1px solid var(--border);
+  color: var(--color-gray-300);
+  padding: 3px 10px;
+  font-size: 12px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.locale-toggle:hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.locale-toggle .globe-icon {
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+
+.locale-toggle-label {
+  line-height: 1;
+}
+
+
+
+
+/* --------------------------------------------------------------------------
+ * Startup screen (Phase B — docs/data-model.md Q7)
+ * -------------------------------------------------------------------------- */
+
+.startup-screen {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  /* Asymmetric top padding biases the (still-centered) panel downward by
+   * ~24px so the header + actions sit just below visual center. The panel
+   * itself is now fixed-height (recents pinned via min-height) so this
+   * doesn't reintroduce layout jitter. */
+  padding: 80px 32px 32px;
+  background: var(--background);
+}
+
+/* Frameless window: slim title strip across the top of the startup
+ * screen — drag region + locale toggle + caption buttons. */
+.startup-titlebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 34px;
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
+  gap: 8px;
+  user-select: none;
+  z-index: 10;
+}
+
+.startup-titlebar .window-controls {
+  margin: 0;
+}
+
+.startup-locale-toggle {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: transparent;
+  border: 1px solid var(--border-soft);
+  color: var(--muted-foreground);
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 120ms, color 120ms;
+}
+
+.startup-locale-toggle .globe-icon {
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+
+.startup-locale-toggle:hover {
+  border-color: var(--border);
+  color: var(--foreground);
+}
+
+.startup-panel {
+  width: min(640px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.startup-header h1 {
+  margin: 0 0 4px;
+  font-size: 28px;
+  font-weight: 600;
+}
+
+.startup-subtitle {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+
+.startup-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.startup-action {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--border-soft);
+  background: #0e131c;
+  color: var(--foreground);
+  cursor: pointer;
+  transition: border-color 120ms, background 120ms;
+}
+
+.startup-action:hover:not(:disabled) {
+  border-color: var(--border);
+  background: #131923;
+}
+
+.startup-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.startup-action.primary {
+  border-color: var(--primary);
+  background: rgba(37, 99, 235, 0.12);
+}
+
+.startup-action.primary:hover:not(:disabled) {
+  background: rgba(37, 99, 235, 0.22);
+}
+
+.startup-action-label {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.startup-error {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: rgba(248, 113, 113, 0.12);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  color: var(--color-red-200);
+  font-size: 12px;
+}
+
+/* Reserve the same vertical footprint whether recents is loading, empty, or
+ * populated. Without this, the centered panel re-centers as soon as the
+ * recents list arrives, visibly bumping the header + action buttons up or
+ * down depending on whether anything was returned. The value matches the
+ * heading row (~26px including margin-bottom) plus the fixed list height
+ * + a small breathing margin. */
+.startup-recent {
+  min-height: 170px;
+}
+
+.startup-recent-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.startup-recent-header h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted-foreground);
+}
+
+.startup-recent-empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-gray-500);
+}
+
+.startup-recent-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 4px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  /* Firefox: thin slim scrollbar. Webkit equivalents below. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+  /* Fixed height (not max-height) so the list region reserves the same
+   * footprint whether the user has collapsed it to 3 items or expanded it
+   * to MAX_RECENTS (10). Without this, the panel total height shifts when
+   * the toggle is clicked, and since the screen container centers the
+   * panel vertically, the header + action buttons visibly bump upward.
+   * Collapsed: 3 rows ≈ 142px at 110% display scaling (rows are pure
+   * line-box heights, so they accumulate fractional-DPI rounding) — the
+   * 144px includes that slack so the collapsed state never grows a
+   * scrollbar. Expanded: list scrolls internally. Sized to keep the whole
+   * panel under typical laptop viewport heights so the page never grows
+   * a scrollbar. */
+  height: 144px;
+  overflow-y: auto;
+}
+
+.startup-recent-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.startup-recent-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.startup-recent-list::-webkit-scrollbar-thumb {
+  background-color: var(--accent);
+  border-radius: 4px;
+  transition: background-color 180ms ease;
+}
+
+.startup-recent-list::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-gray-600);
+}
+
+.startup-recent-list li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: stretch;
+  border-radius: 6px;
+  border: 1px solid transparent;
+}
+
+.startup-recent-list li:hover {
+  border-color: var(--border-soft);
+  background: #0e131c;
+}
+
+.startup-recent-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto;
+  align-items: baseline;
+  gap: 1px 12px;
+  padding: 6px 12px;
+  background: transparent;
+  border: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.startup-recent-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.startup-recent-name {
+  grid-row: 1;
+  grid-column: 1;
+  font-size: 13px;
+  color: var(--foreground);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.startup-recent-meta {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  align-self: center;
+  font-size: 11px;
+  color: var(--color-gray-500);
+}
+
+.startup-recent-path {
+  grid-row: 2;
+  grid-column: 1;
+  font-size: 11px;
+  color: var(--color-gray-500);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.startup-recent-remove {
+  align-self: center;
+  margin-right: 6px;
+  background: transparent;
+  border: none;
+  color: var(--color-gray-500);
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 3px;
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms, background 120ms;
+}
+
+/* Hover row OR keyboard-focus inside the row reveals the ×. Using opacity
+ * (not display/visibility) so the button always occupies its grid cell —
+ * the card never reflows when the user mouses over it. */
+.startup-recent-list li:hover .startup-recent-remove,
+.startup-recent-list li:focus-within .startup-recent-remove {
+  opacity: 1;
+}
+
+.startup-recent-remove:hover {
+  color: var(--color-red-300);
+  background: rgba(248, 113, 113, 0.12);
+}
+
+.startup-recent-toggle {
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--color-gray-500);
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  transition: color 120ms;
+}
+
+.startup-recent-toggle:hover {
+  color: var(--foreground);
+}
+
+.startup-recent-toggle-chevron {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 4px;
+}
+
+/* --- New project modal --- */
+
+.new-project-panel {
+  width: min(440px, 100%);
+  padding: 20px;
+  background: #0e131c;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.new-project-panel h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.new-project-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+.new-project-row > span:first-child {
+  font-weight: 500;
+}
+
+/* The name input is now AppInput (.app-input skin); only .app-select keeps
+ * this per-row chrome so the two controls match in the dialog. */
+.new-project-row .app-select {
+  background: var(--background);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  color: var(--foreground);
+  padding: 6px 8px;
+  font-size: 13px;
+  outline: none;
+}
+
+.new-project-row .app-select:focus-visible,
+.new-project-row .app-select[data-popup-open] {
+  border-color: var(--color-blue-400);
+}
+
+.new-project-folder {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.new-project-folder-path {
+  flex: 1;
+  padding: 6px 8px;
+  background: var(--background);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--color-gray-300);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+
+
+.new-project-error {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: rgba(248, 113, 113, 0.12);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  color: var(--color-red-200);
+  font-size: 12px;
+}
+
+/* Inline validation message under the project-name input. Lives inside
+ * the .new-project-row label so it sits flush with the field. */
+.new-project-validation {
+  display: block;
+  margin-top: 2px;
+  color: var(--color-red-300);
+  font-size: 11px;
+}
+
+/* Computed full path preview between the two input rows. Single line,
+ * left-truncated with ellipsis when too wide — the end of the path is
+ * what matters (it carries the project name). */
+.new-project-preview {
+  margin: -6px 0 4px;
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 3px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  direction: rtl;
+  text-align: left;
+  unicode-bidi: plaintext;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.new-project-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

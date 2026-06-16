@@ -1,0 +1,607 @@
+
+
+.kind-video { background: #1e3a5f; color: var(--color-blue-300); }
+.kind-audio { background: var(--color-green-900); color: var(--color-green-300); }
+.kind-image { background: #581c87; color: #d8b4fe; }
+.kind-subtitle { background: #713f12; color: var(--color-amber-300); }
+
+.settings-panel {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.settings-panel header {
+  display: flex;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.settings-panel header h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.settings-close {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: var(--muted-foreground);
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.settings-close:hover {
+  color: var(--foreground);
+}
+
+.settings-panel h3 {
+  margin: 16px 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-gray-300);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.settings-blurb,
+.settings-status {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+.settings-error {
+  margin: 8px 0;
+  font-size: 12px;
+  color: var(--destructive);
+  background: rgba(248, 113, 113, 0.1);
+  border: 1px solid rgba(248, 113, 113, 0.3);
+  border-radius: 4px;
+  padding: 6px 10px;
+}
+
+/* Inline warning callout (amber, boxed) — louder than .settings-blurb but not
+   an error. Used for the experimental 10-bit export notice. */
+.settings-warn {
+  margin: 8px 0 12px;
+  font-size: 12px;
+  color: var(--foreground);
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 4px;
+  padding: 8px 10px;
+  line-height: 1.45;
+}
+
+.settings-key-row {
+  margin: 8px 0 16px;
+  padding: 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  background: var(--popover);
+}
+
+
+
+
+.settings-pin-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0 4px;
+}
+
+.settings-pin-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  /* Push the timecode input to the right edge of the row. */
+  flex: 1 1 auto;
+}
+
+.settings-pin-checkbox .settings-toggle-label {
+  margin: 0;
+}
+
+.settings-input {
+  width: 132px;
+}
+
+.settings-input-narrow {
+  width: 64px;
+}
+
+.settings-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 0 6px;
+}
+
+.settings-slider-row .app-slider {
+  flex: 1 1 auto;
+  min-width: 120px;
+}
+
+.settings-slider-label {
+  min-width: 92px;
+  font-size: 12px;
+  color: var(--color-gray-300);
+}
+
+.settings-slider-unit {
+  font-size: 11px;
+  color: var(--color-gray-500);
+}
+
+.settings-key-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.settings-key-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.settings-badge {
+  margin-left: auto;
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.settings-badge-on {
+  color: var(--color-emerald-400);
+  background: rgba(52, 211, 153, 0.12);
+  border: 1px solid rgba(52, 211, 153, 0.4);
+}
+
+.settings-badge-off {
+  color: var(--muted-foreground);
+  background: rgba(156, 163, 175, 0.08);
+  border: 1px solid var(--border);
+}
+
+.settings-test-ok {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--color-emerald-400);
+}
+
+.settings-test-err {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--destructive);
+  word-break: break-word;
+}
+
+.settings-key-input-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-key-input-row input {
+  flex: 1;
+}
+
+
+
+
+
+/* --- Settings toggle row (used by reopen-on-launch) --- */
+
+.settings-toggle-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 0 16px;
+  cursor: pointer;
+}
+
+.settings-toggle-row input[type="checkbox"] {
+  margin-top: 2px;
+}
+
+.settings-toggle-label {
+  display: block;
+  font-size: 13px;
+  color: var(--foreground);
+  font-weight: 500;
+}
+
+.settings-toggle-hint {
+  display: block;
+  font-size: 11px;
+  color: var(--color-gray-500);
+  margin-top: 2px;
+  max-width: 460px;
+  line-height: 1.45;
+}
+
+/* --- Settings panel body + card -------------------------------------- */
+/*
+ * The settings-panel root keeps `overflow: hidden` so the header stays
+ * pinned; the inner `.settings-body` wrapper carries the scroll.
+ * `min-height: 0` lets the flex item shrink below its content size —
+ * without it `overflow-y: auto` never engages because the body grows
+ * to fit its children. Same pattern as `.connect-agent-body`.
+ *
+ * `.settings-body` is a pure scroll container — no padding, no border.
+ * `.settings-card` fills the body edge-to-edge with a subtle bg shift
+ * and owns all the inner padding. Inner elements (`<h3>`,
+ * `.settings-blurb`, `.settings-toggle-row`, etc.) carry no horizontal
+ * margin of their own — vertical rhythm is the only thing they still
+ * control.
+ */
+
+.settings-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.settings-card {
+  background: #0e1116;
+  padding: 16px;
+}
+
+.settings-card > :first-child {
+  margin-top: 0;
+}
+
+.settings-card > :last-child {
+  margin-bottom: 0;
+}
+
+/* --- Sidebar (nav) variant of the settings dialog -------------------- */
+/*
+ * Only SettingsPanel opts in, via `.settings-panel--nav`. The bare
+ * `.settings-panel` chrome (shared with Export / close-guard / progress)
+ * keeps its 560px width + single-column body untouched.
+ */
+.settings-panel--nav {
+  width: min(720px, calc(100vw - 32px));
+}
+
+.settings-layout {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+.settings-nav {
+  flex: 0 0 152px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-right: 1px solid var(--border-soft);
+}
+
+.settings-nav-item {
+  appearance: none;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+
+.settings-nav-item:hover {
+  color: var(--foreground);
+}
+
+.settings-nav-item.is-active {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.settings-nav-item:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+/* Stream-excluded category (export dialog: Video when audio-only, Audio when
+ * video-only) — dimmed but still navigable; its pane shows an "excluded" note. */
+.settings-nav-item.is-dim {
+  opacity: 0.45;
+}
+
+.settings-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px;
+  background: #0e1116;
+}
+
+.settings-pane > :first-child {
+  margin-top: 0;
+}
+
+.settings-pane-title {
+  margin: 0 0 14px;
+  padding-bottom: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--foreground);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.settings-scope-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  vertical-align: middle;
+  color: var(--muted-foreground);
+  background: rgba(156, 163, 175, 0.1);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+/*
+ * One spacing source per section. Each `.settings-section` is a flex
+ * column whose single `gap` sets BOTH the heading->content gap and the
+ * row->row gap, so they're identical everywhere; one margin separates
+ * sections. The row elements' own ad-hoc vertical padding/margins are
+ * zeroed so they can't reintroduce the old uneven rhythm.
+ */
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-section + .settings-section {
+  margin-top: 22px;
+}
+
+.settings-section > *,
+.settings-section > h3 {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.settings-section > .settings-toggle-row,
+.settings-section > .settings-slider-row,
+.settings-section > .settings-pin-row {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.keybindings {
+  margin: 0 0 16px;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  padding: 8px;
+  background: var(--popover);
+}
+
+.keybindings-toolbar {
+  display: flex;
+  gap: 8px;
+  padding: 0 4px 8px;
+  border-bottom: 1px solid var(--border-soft);
+  margin-bottom: 8px;
+}
+
+
+
+.keybindings-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.keybindings-row > td {
+  padding: 4px 4px;
+  vertical-align: middle;
+}
+
+.keybindings-label {
+  color: var(--color-gray-300);
+  white-space: nowrap;
+  padding-right: 12px !important;
+  width: 1%;
+}
+
+.keybindings-chords {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.keybindings-empty {
+  color: var(--color-gray-500);
+  font-style: italic;
+}
+
+.keybindings-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--secondary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 2px 4px 2px 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.keybindings-chip-label {
+  font-size: 11px;
+  color: var(--foreground);
+}
+
+.keybindings-chip-remove {
+  background: transparent;
+  border: none;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 2px;
+}
+
+.keybindings-chip-remove:hover {
+  color: var(--destructive);
+}
+
+.keybindings-add {
+  background: transparent;
+  border: 1px dashed var(--border);
+  color: var(--muted-foreground);
+  border-radius: 3px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.keybindings-add:hover {
+  border-color: var(--color-blue-300);
+  color: var(--color-blue-300);
+}
+
+.keybindings-row-actions {
+  text-align: right;
+  width: 1%;
+  white-space: nowrap;
+}
+
+.keybindings-reset {
+  background: transparent;
+  border: none;
+  color: var(--color-blue-300);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.keybindings-reset:hover {
+  text-decoration: underline;
+}
+
+.kbd-capture {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 3px;
+  padding: 2px 8px;
+  font-size: 11px;
+  outline: none;
+}
+
+.kbd-capture-waiting {
+  background: rgba(147, 197, 253, 0.1);
+  border: 1px solid var(--ring);
+  color: var(--color-blue-300);
+  animation: kbd-capture-pulse 1.2s ease-in-out infinite;
+}
+
+.kbd-capture-conflict {
+  background: rgba(248, 113, 113, 0.12);
+  border: 1px solid var(--color-red-500);
+  color: var(--color-red-300);
+}
+
+@keyframes kbd-capture-pulse {
+  0%, 100% { border-color: var(--ring); }
+  50% { border-color: var(--color-blue-300); }
+}
+
+/* B4 — preview-engine section in the Settings panel. */
+.settings-preview-engine {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.settings-preview-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-preview-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+.settings-preview-option input[type="radio"] {
+  margin-top: 2px;
+}
+
+.settings-preview-status {
+  background: rgba(0, 0, 0, 0.2);
+  padding: 8px 10px;
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.settings-preview-status code {
+  background: rgba(0, 0, 0, 0.3);
+  padding: 0 4px;
+  border-radius: 3px;
+  font-family: ui-monospace, Menlo, monospace;
+}
+.field-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  background: #0a0d12;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+}
+.field-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.field-label {
+  font-size: 11px;
+  color: var(--color-slate-300);
+}
+.field-value {
+  background: var(--card);
+  border: 1px solid var(--border-soft);
+  color: var(--foreground);
+  padding: 2px 6px;
+  font-size: 12px;
+  border-radius: 3px;
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+}

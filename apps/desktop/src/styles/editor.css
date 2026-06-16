@@ -1,0 +1,674 @@
+
+
+.timeline-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 8px 16px;
+}
+
+.timeline-track {
+  background: var(--secondary);
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.timeline { grid-area: timeline; }
+.properties { grid-area: properties; }
+
+.timeline {
+  border-top: 1px solid var(--border-soft);
+  overflow: hidden;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Timeline blade-tool cursor. The only legacy timeline rule that
+   survives the Tailwind migration — a data-URI SVG cursor is kept as
+   CSS for readability. `.timeline-layer` is a bare JS hook class with
+   no other styles. Angled single-edge razor with the hotspot at the
+   bottom-left cutting tip so the cursor's "cut point" lines up with
+   the click X. Extended to chips + trim handles so the cursor doesn't
+   flicker back to `grab` / `ew-resize` while hovering content.
+   `crosshair` is the fallback for browsers that refuse SVG cursors. */
+.timeline-root-blade,
+.timeline-root-blade .timeline-layer {
+  cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'><polygon points='4,18 18,4 20,6 6,20' fill='%23e5e7eb' stroke='%23000' stroke-width='1' stroke-linejoin='round'/><line x1='5' y1='19' x2='19' y2='5' stroke='%23fbbf24' stroke-width='1' stroke-linecap='round'/></svg>") 4 18, crosshair;
+}
+
+.mini-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  height: 100%;
+  justify-content: center;
+}
+
+.mini-timeline-ticks {
+  position: relative;
+  height: 14px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.mini-tick {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  /* The tick is a 1-px vertical line on the bottom edge plus its
+     label hugging the left edge of that line. */
+  width: 1px;
+  background: var(--accent);
+}
+
+.mini-tick-label {
+  position: absolute;
+  left: 2px;
+  bottom: -1px;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  color: var(--color-gray-500);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.mini-timeline-strip-real {
+  position: relative;
+  height: 36px;
+  background: var(--popover);
+  border-radius: 4px;
+  cursor: pointer;
+  overflow: hidden;
+  user-select: none;
+}
+
+.mini-marker-pip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  pointer-events: none;
+  opacity: 0.85;
+}
+
+.mini-marker-region {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  opacity: 0.35;
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.mini-playhead {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  background: var(--color-red-500);
+  pointer-events: none;
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.55),
+    0 0 4px rgba(239, 68, 68, 0.45);
+  border-radius: 1px;
+  z-index: 2;
+}
+
+.mini-timeline-tc {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+  letter-spacing: 0.04em;
+  text-align: right;
+}
+
+.row-time {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-gray-500);
+  letter-spacing: 0.04em;
+}
+
+.row-icon {
+  font-size: 13px;
+  width: 14px;
+  text-align: center;
+}
+
+.row-icon.status-running {
+  color: var(--color-blue-400);
+  animation: agent-spin 1.4s linear infinite;
+}
+
+.row-icon.status-done {
+  color: var(--color-emerald-400);
+}
+
+.row-icon.status-error {
+  color: var(--destructive);
+}
+
+.row-body {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-gray-300);
+}
+
+.row-tool {
+  font-family:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+  color: #fafafa;
+}
+
+.checkpoint-row {
+  background: rgba(96, 165, 250, 0.06);
+  border-left-color: var(--color-blue-400);
+}
+
+.checkpoint-row .row-checkpoint-label {
+  color: #fafafa;
+  font-weight: 500;
+}
+
+.row-restore {
+  background: var(--secondary);
+  color: #fafafa;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 3px 8px;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.row-restore:hover:not(:disabled) {
+  background: var(--accent);
+  border-color: var(--color-gray-600);
+}
+
+.row-restore:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.properties {
+  border-left: 1px solid var(--border-soft);
+  background: #0a0c10;
+  overflow: auto;
+  padding: 0;
+}
+
+/* ============================================================
+   Right panel (`docs/data-model.md` R.6)
+   Replaces the standalone PropertyPanel section.
+   Peek list (top) + Inspector (bottom). Peek hides in Show-All
+   mode and collapses to zero-height when no hidden-track layers
+   fall in the ±Δ window (Q14 lock).
+   ============================================================ */
+.right-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.right-panel-peek {
+  flex: 0 0 auto;
+  max-height: 40%;
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--border-soft);
+  background: rgba(0, 0, 0, 0.15);
+  overflow: hidden;
+}
+
+.right-panel-peek-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.right-panel-peek-window {
+  color: var(--color-gray-500);
+  font-weight: 500;
+}
+
+.right-panel-peek-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  overflow-y: auto;
+  flex: 1 1 auto;
+}
+
+.right-panel-peek-list li {
+  margin: 0;
+  padding: 0;
+}
+
+/* Project-level role mixer (MixerPanel). Sits between the peek list and
+   the inspector; the bottom border separates it from the inspector below.
+   Padding mirrors .property-panel so the two stacked panels read as one
+   column. */
+.right-panel-mixer {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.mixer-panel {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mixer-panel h3 {
+  margin: 0 0 4px 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-gray-300);
+  letter-spacing: 0.02em;
+}
+
+.mixer-role-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mixer-row-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.right-panel-inspector {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  /* `overflow-y: auto` alone leaves the X axis at `visible`, so any
+     positioned descendant that extends past the inspector's right edge
+     (e.g. a property-panel hint bubble) would otherwise pull the column
+     wider and produce a horizontal scrollbar. Explicit `overflow-x:
+     hidden` clips X without disturbing the working vertical scroll. */
+  overflow-x: hidden;
+}
+
+.property-panel {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.property-panel h2 {
+  margin: 0 0 4px 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.property-panel h3 {
+  margin: 8px 0 4px 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-gray-300);
+  letter-spacing: 0.02em;
+}
+
+.property-panel hr {
+  border: none;
+  border-top: 1px solid var(--border-soft);
+  margin: 8px 0;
+}
+
+.prop-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.prop-field {
+  display: grid;
+  /* `minmax(0, 1fr)` (NOT plain `1fr`) so the control column can shrink
+     below its intrinsic min-content. Without this, a child like
+     `<input type="range">` — which carries a ~129 px intrinsic min
+     width — would push the column past the inspector's right padding
+     and overflow into the panel's edge. With `0` as the lower bound,
+     flex children inside `.prop-field-control` shrink to fit instead. */
+  grid-template-columns: 96px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--color-slate-300);
+}
+
+.prop-field-label {
+  color: var(--muted-foreground);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Small `?` icon next to a property label. Shows the hint bubble on
+   hover or keyboard focus. Pure-CSS — no popover library needed. The
+   bubble is positioned to the RIGHT of the icon so it doesn't overlap
+   the input (the right panel is narrow and an above/below bubble would
+   cover the value the user is reading). */
+.prop-field-hint {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--secondary);
+  color: var(--muted-foreground);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: help;
+  user-select: none;
+  outline: none;
+}
+
+.prop-field-hint:hover,
+.prop-field-hint:focus-visible,
+.prop-field-hint[data-popup-open] {
+  background: var(--color-slate-700);
+  color: var(--foreground);
+}
+
+/* Visual chrome only — the bubble is a portaled Base UI Tooltip popup
+ * now (Positioner owns placement and collision-flipping; show/hide is
+ * hover/focus-driven by the library). */
+.prop-field-hint-bubble {
+  max-width: 240px;
+  padding: 8px 10px;
+  background: var(--card);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  color: var(--foreground);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.45;
+  text-align: left;
+  white-space: normal;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.prop-field-control {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  /* Allow flex children (range inputs in particular) to shrink below
+     their intrinsic min-content. Pairs with `minmax(0, 1fr)` on the
+     parent grid: the column makes room, this flex container actually
+     uses it. */
+  min-width: 0;
+}
+
+.prop-field-control .app-select,
+.prop-field-control textarea {
+  background: var(--card);
+  border: 1px solid var(--border-soft);
+  color: var(--foreground);
+  padding: 2px 6px;
+  font-size: 12px;
+  border-radius: 3px;
+  width: 100%;
+  font-family: inherit;
+}
+
+.anim-field { display: flex; align-items: center; gap: 6px; }
+.anim-field-label { flex: 0 0 auto; font-size: 11px; color: var(--muted-foreground); min-width: 56px; }
+.anim-field-control { flex: 1 1 auto; display: flex; align-items: center; gap: 6px; }
+.anim-stopwatch { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 4px; color: var(--color-gray-500); background: transparent; border: none; cursor: pointer; }
+.anim-stopwatch:hover:not(:disabled) { color: var(--muted-foreground); background: var(--secondary); }
+.anim-stopwatch.is-lit { color: #facc15; }
+.anim-stopwatch:disabled { opacity: 0.35; cursor: default; }
+
+/* Range inputs are gone — .app-slider's own flex: 1 1 0 / min-width: 0
+ * base already lets the track shrink to the panel's available room. */
+
+.prop-range-value {
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  min-width: 32px;
+  /* Don't shrink the readout — opacity is 0.00–1.00, two digits past
+     the decimal need to stay readable even when the panel is narrow. */
+  flex: 0 0 auto;
+  text-align: right;
+}
+
+/* Phase A5: per-segment render status bar above the timeline. */
+.segment-status-bar {
+  position: relative;
+  width: 100%;
+  height: 4px;
+  margin: 0 0 2px 0;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.segment-status-cell {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border: none;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.segment-status-cell:hover {
+  filter: brightness(1.2);
+}
+
+.segment-status-ready {
+  background: rgba(255, 255, 255, 0.06);
+  cursor: default;
+}
+
+.segment-status-pending {
+  background: rgba(96, 165, 250, 0.42);
+}
+
+.segment-status-running {
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(96, 165, 250, 0.6) 0,
+    rgba(96, 165, 250, 0.6) 4px,
+    rgba(96, 165, 250, 0.35) 4px,
+    rgba(96, 165, 250, 0.35) 8px
+  );
+  animation: segmentStatusStripe 1s linear infinite;
+}
+
+.segment-status-failed {
+  background: rgba(248, 113, 113, 0.7);
+}
+
+@keyframes segmentStatusStripe {
+  from { background-position: 0 0; }
+  to   { background-position: 16px 0; }
+}
+.effects-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.effects-empty .placeholder {
+  color: var(--muted-foreground);
+  font-size: 11px;
+  margin: 0;
+  line-height: 1.4;
+}
+.effects-list {
+  list-style: none;
+  margin: 0 0 8px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.effect-card {
+  background: #0a0d12;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+.effect-card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.effect-card-header .effect-name {
+  flex: 1;
+  font-size: 11px;
+  color: var(--color-gray-300);
+  font-weight: 600;
+}
+.effect-enable {
+  display: flex;
+  align-items: center;
+}
+.add-effect {
+  position: relative;
+  display: inline-block;
+}
+.add-effect-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 10;
+  list-style: none;
+  margin: 4px 0 0 0;
+  padding: 4px 0;
+  background: var(--card);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  min-width: 140px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+.add-effect-menu li {
+  list-style: none;
+}
+.add-effect-menu button {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  color: var(--foreground);
+  padding: 4px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.add-effect-menu button:hover {
+  background: var(--secondary);
+}
+.keyframe-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.keyframe-list .placeholder {
+  margin: 0;
+  font-size: 10px;
+  color: var(--color-gray-500);
+  line-height: 1.4;
+}
+.keyframe-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.keyframe-list-header,
+.keyframe-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 18px;
+  gap: 4px;
+  align-items: center;
+}
+.keyframe-list-header {
+  font-size: 9px;
+  color: var(--color-gray-500);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0 2px;
+}
+.keyframe-row input[type="number"],
+.keyframe-row select {
+  background: var(--card);
+  border: 1px solid var(--border-soft);
+  color: var(--foreground);
+  padding: 1px 4px;
+  font-size: 11px;
+  border-radius: 3px;
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+}
+.kf-remove {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted-foreground);
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0;
+  height: 18px;
+  width: 18px;
+}
+.kf-remove:hover {
+  background: #be123c;
+  border-color: #be123c;
+  color: #fff;
+}
+.kf-add {
+  align-self: flex-start;
+}
+
+.prop-bake-status { margin: 0 0 8px; font-size: 12px; opacity: 0.8; }
+.prop-bake-status.is-error { color: #e5534b; }
+.prop-bake-status.is-warming { color: #f0a020; }
+.prop-bake-status.is-ready { color: #46c46a; }
+.prop-motif-lifecycle { display: flex; align-items: center; gap: 8px; margin: 6px 0; flex-wrap: wrap; }
+.prop-motif-source { margin: 8px 0; }
+.prop-motif-source-text {
+  width: 100%;
+  min-height: 160px;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11px;
+  resize: vertical;
+  white-space: pre;
+}
+.kf-diamond-row { position: absolute; left: 0; right: 0; bottom: 1px; height: 8px; pointer-events: none; }
+.kf-diamond { position: absolute; width: 7px; height: 7px; transform: translateX(-50%) rotate(45deg); background: #fff; border: 1px solid rgba(0,0,0,0.5); }
+.kf-diamond.is-selected { background: #facc15; box-shadow: 0 0 0 1.5px var(--ring); }
+/* Sub-lane diamonds (Phase 3) span the whole track row, vertically centered
+   in the 24px sub-lane (vs the Phase-2 in-clip diamonds, bottom-pinned in
+   .kf-diamond-row). The base .kf-diamond transform keeps the 45° rotation. */
+.kf-sublane-diamond { top: 50%; margin-top: -3.5px; pointer-events: auto; cursor: pointer; }

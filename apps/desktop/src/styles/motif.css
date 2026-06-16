@@ -1,0 +1,281 @@
+
+
+
+
+
+/* ============================================================ */
+/* Motif picker                      */
+/* ============================================================ */
+
+.motif-picker {
+  /* Widened from 880px to accommodate the iframe preview pane on the right. */
+  width: min(1040px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.motif-picker header {
+  display: flex;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.motif-picker header h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.motif-picker-body {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 0;
+  min-height: 360px;
+  max-height: calc(100vh - 160px);
+}
+
+/* ---- Still previews ----------------------------------------------------- */
+
+/* Fixed 16:9 box that fills its parent's width; the component caps it with an
+   inline `max-width`, so it can never overflow a narrower container (the
+   280px card column, or the form pane in a narrow window). Checkerboard
+   backdrop shows transparent regions for lower-thirds / callout / logo-bug. */
+.motif-preview-host {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: 4px;
+  border: 1px solid var(--border-soft);
+  background-color: var(--background);
+  background-image:
+    linear-gradient(45deg, var(--secondary) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--secondary) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--secondary) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--secondary) 75%);
+  background-size: 12px 12px;
+  background-position: 0 0, 0 6px, 6px -6px, -6px 0;
+  /* Input-transparent: the preview sits inside the card <button>; let clicks
+     and wheel events fall through to it and bubble to the scrollable list. */
+  pointer-events: none;
+}
+
+/* CDP-captured still at the motif's natural size; the browser contain-scales
+   and centers it, letterbox margins show the host checkerboard. */
+.motif-preview-host img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.motif-preview-large {
+  margin: 4px 0 8px;
+}
+
+/* Muted canvas-size tag next to the "Preview" heading — marks the canvas-mode
+   box as the composition canvas. Undoes the h3's uppercase/bold styling. */
+.motif-preview-canvas-size {
+  margin-left: 8px;
+  color: var(--color-gray-500);
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+/* Loading spinner shown in the preview box until the first frame is bound
+   (the harness mounts + rasters async). Replaces the brief blank/error flash
+   on first open. Centered over the host's checkerboard. */
+.motif-preview-loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 24px;
+  height: 24px;
+  margin: -12px 0 0 -12px;
+  border: 3px solid rgba(148, 163, 184, 0.25);
+  border-top-color: var(--color-slate-400);
+  border-radius: 50%;
+  animation: motif-preview-spin 0.8s linear infinite;
+}
+
+@keyframes motif-preview-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Preview FPS control — sits under the large animated preview. Compact row;
+   the number input is narrow since the value is 1–60. */
+.motif-preview-fps {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--color-slate-400);
+}
+
+.motif-preview-fps input[type='number'] {
+  width: 64px;
+  background: #0b1220;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  color: var(--foreground);
+  padding: 4px 6px;
+  font-size: 12px;
+}
+
+.motif-picker-list {
+  border-right: 1px solid var(--border-soft);
+  /* `max-height` here (instead of relying on the parent body's clip) makes
+     this element the scroll container — without it, the list grows to fit
+     all cards and `overflow-y: auto` never kicks in. The body above is
+     also `max-height`-capped but with grid rows defaulting to `auto`, the
+     grid track sizes to content, so the list inherits no height bound. */
+  max-height: calc(100vh - 160px);
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.motif-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 10px 12px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--color-gray-300);
+  cursor: pointer;
+  text-align: left;
+}
+
+.motif-card:hover {
+  background: var(--secondary);
+}
+
+.motif-card-selected {
+  background: rgba(30, 58, 138, 0.25);
+  border-color: var(--ring);
+}
+
+.motif-card-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.motif-card-meta {
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+
+.motif-card-id {
+  font-size: 10px;
+  color: var(--color-gray-500);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.motif-card-status { font-size: 11px; padding: 1px 6px; border-radius: 6px; }
+.motif-card-status.status-draft { background: #b8860b; color: #fff; }
+.motif-card-status.status-installed { background: #2a6; color: #fff; }
+.motif-card-status.status-builtin { background: #444; color: #ccc; }
+.motif-picker-new { margin-left: auto; }
+.motif-picker-new-form { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+
+.motif-picker-form {
+  padding: 8px 16px 16px;
+  /* Same reason as `.motif-picker-list` above — needs its own height cap
+     so its overflow-y scroll activates when props + large preview push the
+     form past the picker's visible area. */
+  max-height: calc(100vh - 160px);
+  overflow-y: auto;
+}
+
+.motif-picker-form h3 {
+  margin: 12px 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.motif-picker-field {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.motif-picker-field > span {
+  font-size: 12px;
+  color: var(--color-gray-300);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* Use the standard .app-select skin (matches selects app-wide and pairs with
+ * .app-input like the Settings/Export forms); only force full width to fill
+ * the field's grid column. */
+.motif-picker-field .app-select {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.motif-picker-color {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.motif-picker-color code {
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+
+.motif-picker-hint {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--color-gray-500);
+}
+
+.motif-picker-actions {
+  margin-top: 16px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.motif-bake-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  pointer-events: none;
+}
+.motif-bake-dot.is-warming { background: #f0a020; }
+.motif-bake-dot.is-ready { background: #46c46a; }
+.motif-bake-dot.is-error { background: #e5534b; }
+.motif-bake-dot.is-baking {
+  background: transparent;
+  border: 1.5px solid rgba(255, 255, 255, 0.85);
+  border-top-color: transparent;
+  animation: motif-bake-spin 0.8s linear infinite;
+}
+@keyframes motif-bake-spin { to { transform: rotate(360deg); } }

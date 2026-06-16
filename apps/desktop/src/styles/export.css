@@ -1,0 +1,192 @@
+
+
+/* Two side-by-side "include" checkboxes in the export dialog's General pane. */
+.export-content-checks {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.export-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--foreground);
+}
+
+
+
+
+
+
+
+
+.export-panel {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  width: min(520px, calc(100vw - 32px));
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.export-panel header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--foreground);
+}
+
+.export-preset-select {
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--foreground);
+  padding: 3px 8px;
+  font-size: 12px;
+  border-radius: 4px;
+  font-family: inherit;
+}
+
+/* Compact the reused settings-panel skin down to a confirmation size. */
+.export-experimental-confirm {
+  width: min(440px, calc(100vw - 32px));
+}
+
+.export-experimental-points {
+  margin: 0 0 12px;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  line-height: 1.5;
+}
+
+.export-experimental-points li {
+  margin: 4px 0;
+}
+
+/* Export settings dialog — reuses the settings popup chrome
+ * (.settings-panel / .settings-body / .settings-card inside AppDialog);
+ * these rules style the per-field label/control rows + footer actions. */
+.export-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+}
+
+/* Export-dialog context: AppSelect triggers here keep the wide field
+ * footprint native selects had (.app-select carries the shared skin). */
+.export-select {
+  min-width: 180px;
+}
+
+.export-bitrate {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.export-estimate {
+  margin: 14px 0 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-gray-300);
+}
+
+.export-path-row {
+  align-items: flex-start;
+}
+
+.export-path {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.export-path-input {
+  width: 220px;
+  text-align: left;
+  font-size: 11px;
+}
+
+.export-filename {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.export-filename-input {
+  width: 180px;
+  text-align: left;
+}
+
+
+
+.export-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-soft);
+}
+
+/* Pinned footer for the export dialog — sits below the scrolling
+ * `.settings-layout` (flex sibling, not inside it), so Cancel/Export stay
+ * reachable regardless of scroll position. */
+.export-footer {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-soft);
+}
+
+
+
+
+/* Export progress modal — reuses the settings popup chrome; these style the
+ * status line and a taller, more prominent progress bar. */
+.export-progress-status {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--foreground);
+  word-break: break-word;
+}
+
+.export-progress-status strong {
+  font-weight: 600;
+}
+
+.export-progress-detail {
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+.export-progress-status.error {
+  color: var(--destructive);
+}
+
+.export-progress-panel .progress-track {
+  height: 8px;
+  border-radius: 4px;
+  margin-top: 14px;
+  overflow: hidden;
+}
+
+.export-progress-panel .progress-fill {
+  border-radius: 4px;
+}

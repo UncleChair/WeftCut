@@ -1,0 +1,352 @@
+
+
+/* ===================================================================
+   Log console — Phase 2 expanded overlay that lifts above the editor.
+   The drag-to-resize handle is rendered as a CSS-only top border;
+   pointer events are forwarded to a resize handler when needed.
+   =================================================================== */
+
+.log-console {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 28px; /* sit on top of the status bar */
+  height: 40vh;
+  min-height: 200px;
+  max-height: 80vh;
+  background: rgba(15, 23, 42, 0.97);
+  border-top: 2px solid var(--color-slate-800);
+  box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  z-index: 80;
+  color: var(--color-slate-300);
+  font-size: 12px;
+  font-family: var(--font-ui);
+}
+
+.log-console::before {
+  /* Visual cue for "drag to resize" — not yet wired to an actual
+     pointer drag handler; the height defaults to 40vh and the user
+     can close + reopen with a different layout if needed. Wiring a
+     proper resize handler is deferred to a polish pass. */
+  content: "";
+  position: absolute;
+  top: -3px;
+  left: 0;
+  right: 0;
+  height: 6px;
+  cursor: ns-resize;
+  background: transparent;
+}
+
+.log-console-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-slate-800);
+  background: #0b1220;
+}
+
+.log-chip-group {
+  display: inline-flex;
+  gap: 4px;
+  padding: 2px;
+  border-radius: 6px;
+  background: rgba(148, 163, 184, 0.06);
+}
+
+.log-chip {
+  padding: 3px 10px;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-slate-400);
+  border: 1px solid transparent;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.log-chip:hover {
+  color: var(--color-slate-300);
+}
+
+.log-chip.active {
+  background: rgba(59, 130, 246, 0.18);
+  color: var(--color-blue-300);
+  border-color: rgba(59, 130, 246, 0.4);
+}
+
+/* Skin from .app-input; .log-search keeps only the toolbar layout. */
+.log-search {
+  flex: 1;
+  min-width: 160px;
+}
+
+.log-toolbar-actions {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.log-action {
+  padding: 3px 10px;
+  border-radius: 4px;
+  background: transparent;
+  border: 1px solid var(--color-slate-700);
+  color: var(--color-slate-300);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.log-action:hover:not(:disabled) {
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.log-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.log-action.is-off {
+  color: var(--color-slate-500);
+  border-style: dashed;
+}
+
+.log-action.log-close {
+  border-color: transparent;
+  display: inline-flex;
+  align-items: center;
+}
+
+.log-console-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.log-console-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.log-row {
+  padding: 4px 12px;
+  border-bottom: 1px solid rgba(30, 41, 59, 0.6);
+}
+
+.log-row:hover {
+  background: rgba(30, 41, 59, 0.35);
+}
+
+.log-row.level-error {
+  background: rgba(239, 68, 68, 0.06);
+}
+
+.log-row.level-warn {
+  background: rgba(251, 191, 36, 0.04);
+}
+
+.log-row-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.log-time {
+  color: var(--color-slate-500);
+  font-variant-numeric: tabular-nums;
+  width: 64px;
+  flex-shrink: 0;
+}
+
+.log-level-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.log-level-dot.level-trace,
+.log-level-dot.level-debug {
+  background: var(--color-slate-600);
+}
+.log-level-dot.level-info {
+  background: var(--color-blue-400);
+}
+.log-level-dot.level-warn {
+  background: var(--color-amber-400);
+}
+.log-level-dot.level-error {
+  background: var(--color-red-500);
+}
+
+.log-category-pill,
+.log-source-pill {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.log-category-pill {
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--color-slate-400);
+}
+
+.log-category-pill.category-shortcut { background: rgba(34, 197, 94, 0.14); color: var(--color-green-300); }
+.log-category-pill.category-mcp      { background: rgba(168, 85, 247, 0.14); color: var(--color-violet-300); }
+.log-category-pill.category-export   { background: rgba(59, 130, 246, 0.14); color: var(--color-blue-300); }
+.log-category-pill.category-import   { background: rgba(14, 165, 233, 0.14); color: #7dd3fc; }
+.log-category-pill.category-project  { background: rgba(244, 114, 182, 0.14); color: #f9a8d4; }
+.log-category-pill.category-system   { background: rgba(148, 163, 184, 0.14); color: var(--color-slate-300); }
+.log-category-pill.category-job      { background: rgba(251, 191, 36, 0.14); color: var(--color-amber-300); }
+.log-category-pill.category-agent    { background: rgba(168, 85, 247, 0.14); color: var(--color-violet-300); }
+
+.log-source-pill.source-user   { background: rgba(59, 130, 246, 0.12); color: var(--color-blue-300); }
+.log-source-pill.source-agent  { background: rgba(168, 85, 247, 0.14); color: var(--color-violet-300); }
+.log-source-pill.source-system { background: rgba(148, 163, 184, 0.12); color: var(--color-slate-300); }
+
+.log-message {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.log-op-state {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.log-op-state.state-started { background: rgba(59, 130, 246, 0.18); color: var(--color-blue-300); }
+.log-op-state.state-ok      { background: rgba(34, 197, 94, 0.18); color: var(--color-green-300); }
+.log-op-state.state-err     { background: rgba(239, 68, 68, 0.18); color: var(--color-red-300); }
+
+.log-op-state.progress {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 48px;
+  height: 14px;
+  background: rgba(148, 163, 184, 0.12);
+  overflow: hidden;
+}
+
+.log-op-progress-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: rgba(59, 130, 246, 0.45);
+}
+
+.log-op-progress-label {
+  position: relative;
+  z-index: 1;
+  color: var(--color-slate-200);
+}
+
+.log-op-counter {
+  font-size: 10px;
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--color-slate-300);
+  border: none;
+  border-radius: 8px;
+  padding: 1px 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.log-op-counter:hover {
+  background: rgba(148, 163, 184, 0.2);
+}
+
+.log-details-toggle {
+  background: transparent;
+  border: none;
+  color: var(--color-slate-400);
+  cursor: pointer;
+  padding: 0 6px;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.log-details-toggle:hover {
+  color: var(--color-slate-300);
+}
+
+.log-row-details {
+  margin-top: 4px;
+  padding: 8px 12px;
+  background: rgba(15, 23, 42, 0.65);
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.log-op-id {
+  color: var(--color-slate-500);
+  margin-bottom: 4px;
+}
+
+.log-op-id code {
+  background: rgba(148, 163, 184, 0.12);
+  padding: 0 4px;
+  border-radius: 3px;
+}
+
+.log-details-json {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: 11px;
+  color: var(--color-slate-300);
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.log-op-children {
+  margin-top: 4px !important;
+  padding-left: 24px !important;
+  border-left: 2px solid var(--color-slate-700);
+}
+
+.log-op-children li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  font-size: 11px;
+}
+
+.log-empty {
+  text-align: center;
+  padding: 24px;
+  color: var(--color-slate-500);
+  font-style: italic;
+}
+
+.log-console-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 12px;
+  border-top: 1px solid var(--color-slate-800);
+  background: #0b1220;
+  font-size: 11px;
+  color: var(--color-slate-500);
+}
+
+.log-footer-path {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 60%;
+}
