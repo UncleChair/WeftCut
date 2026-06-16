@@ -510,15 +510,13 @@ export function Timeline({
     return () => window.removeEventListener("keydown", onKey);
   }, [bladeMode, onExitBlade]);
 
-  // Click/drag on empty canvas (lane background, gap below tracks) to seek.
-  // Layer / trim-handle / resize-handle pointerdown stops propagation, so
-  // this never fires when interacting with an existing control. In blade
-  // mode the user is hunting for a layer to cut, not asking to scrub.
-  const onCanvasPointerDown = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      if (e.button !== 0) return;
-      if (bladeMode) return;
-      seekFromClientX(e.clientX);
+  // Ruler-only seek: the time ruler is the SOLE surface that moves the
+  // playhead. Begins a drag-scrub from the ruler's pointerdown. Decoupled
+  // from selection — seeking never clears the selected clip. See
+  // docs/superpowers/specs/2026-06-16-timeline-seek-selection-ux-design.md.
+  const beginRulerScrub = useCallback(
+    (clientX: number) => {
+      seekFromClientX(clientX);
       const onMove = (ev: PointerEvent) => seekFromClientX(ev.clientX);
       const onUp = () => {
         window.removeEventListener("pointermove", onMove);
@@ -527,7 +525,7 @@ export function Timeline({
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
     },
-    [seekFromClientX, bladeMode],
+    [seekFromClientX],
   );
 
   return (
@@ -541,7 +539,6 @@ export function Timeline({
         drag ? "cursor-grabbing select-none" : ""
       } ${heightDrag ? "cursor-ns-resize select-none" : ""} ${bladeMode ? "timeline-root-blade" : ""}`}
       onClick={() => onSelect(null)}
-      onPointerDown={onCanvasPointerDown}
     >
       <div className="flex min-w-max">
         {/* sticky header column */}
@@ -575,6 +572,7 @@ export function Timeline({
             widthPx={Math.max(widthPx, 200)}
             fpsNum={fpsNum}
             fpsDen={fpsDen}
+            onScrub={beginRulerScrub}
           />
           <div
             ref={canvasRef}
