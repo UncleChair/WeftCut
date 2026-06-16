@@ -65,6 +65,7 @@ pub use project::{
     TrackFlagsPatch,
 };
 pub use time::{Rational, TimeUs, US_PER_MS, US_PER_SEC, snap_frame_ceil, snap_frame_floor};
+pub use audio_role::{AudioRole, RoleFlagsPatch, RoleMixSettings};
 pub use track::{Track, TrackRole};
 pub use transform::{BlendMode, Rect, Transform};
 pub use transition::{Transition, TransitionKind};

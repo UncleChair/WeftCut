@@ -6930,6 +6930,7 @@ mod tests {
     /// promotion test needs to assert against.
     async fn project_with_hidden_av_pair(
     ) -> (ProjectHandle, TrackId, TrackId, LayerId, LayerId, MediaItem) {
+        use crate::state::audio_role::AudioRole;
         use crate::state::media::{AudioStreamMeta, MediaKind, MediaMetadata};
         use chrono::Utc;
 
@@ -7018,7 +7019,7 @@ mod tests {
                     fade_in_us: 0,
                     fade_out_us: 0,
                     mute: false,
-                    role: crate::state::audio_role::AudioRole::Dialogue,
+                    role: AudioRole::Dialogue,
                 }),
                 0,
                 5_000_000,
