@@ -2144,6 +2144,8 @@ pub struct UpdateLayerParamsArgs {
 pub struct SetRoleGainArgs {
     /// "dialogue" | "music" | "sfx" | "voiceover"
     pub role: AudioRole,
+    /// Mix-bus gain in decibels. 0.0 = unity; typical range -60..+12. Sets
+    /// the role's gain absolutely (replaces the current value, not additive).
     pub gain_db: f64,
 }
 
