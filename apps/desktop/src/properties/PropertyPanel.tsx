@@ -26,7 +26,8 @@ import {
   trackStatic,
 } from "../ipc";
 import { AnimatableField, displayValue } from "../components/AnimatableField";
-import { readParamTrack } from "../keyframe/descriptors";
+import { KeyframeField } from "../components/KeyframeField";
+import { readParamTrack, type ParamDescriptor } from "../keyframe/descriptors";
 import { upsertKeyframe } from "../keyframe/edits";
 
 // Animatable rows (transform/opacity for visual kinds, gain_db/pan for audio)
@@ -1508,6 +1509,48 @@ function Field({
       </span>
       <div className="prop-field-control">{children}</div>
     </label>
+  );
+}
+
+/// Inspector adapter: maps a (layer, ParamDescriptor) pair onto the shared
+/// KeyframeField with the stopwatch + the inspector commit path. Replaces the
+/// hand-rolled value-field IIFEs; widgets/step/min/max come from the descriptor
+/// (keyframe/descriptors.ts).
+export function InspectorAnimField({
+  layer,
+  params,
+  desc,
+  tInLayerUs,
+  playheadInSpan,
+  onMutated,
+}: {
+  layer: LayerSummary;
+  params: LayerSummary["params"];
+  desc: ParamDescriptor;
+  tInLayerUs: number;
+  playheadInSpan: boolean;
+  onMutated: () => Promise<void>;
+}) {
+  const { t } = useTranslation();
+  const track = readParamTrack(params, desc.paramKey) ?? { mode: "Static" as const, value: desc.fallback };
+  return (
+    <KeyframeField
+      layerId={layer.id}
+      paramKey={desc.paramKey}
+      label={t(desc.labelKey)}
+      track={track}
+      fallback={desc.fallback}
+      tInLayerUs={tInLayerUs}
+      playheadInSpan={playheadInSpan}
+      onCommitTrack={(k, next) =>
+        updateLayerParamTrack(layer.id, k, next).then(onMutated).catch((e) => console.warn(e))
+      }
+      onMutated={onMutated}
+      widgets={desc.widgets ?? ["number"]}
+      {...(desc.step !== undefined ? { step: desc.step } : {})}
+      {...(desc.min !== undefined ? { min: desc.min } : {})}
+      {...(desc.max !== undefined ? { max: desc.max } : {})}
+    />
   );
 }
 
