@@ -78,6 +78,23 @@ describe("KeyframeNavigator ◆ set button", () => {
     renderNav(3_000_000); // beyond t_end_us
     expect(setBtn().disabled).toBe(true);
   });
+  it("is disabled before the clip start (playhead earlier than t_start)", () => {
+    const tr = {
+      layers: [{ id: "L1", t_start_us: 1_000_000, t_end_us: 3_000_000, params: { opacity: opacityTrack } }],
+    } as unknown as TrackSummary;
+    render(
+      <KeyframeNavigator
+        track={tr}
+        paramKey="opacity"
+        fallback={1}
+        currentTimeUs={0} // tLocalUs = -1_000_000 → off-span before the clip
+        fpsNum={30}
+        fpsDen={1}
+        onCommitParamTrack={vi.fn()}
+      />,
+    );
+    expect(setBtn().disabled).toBe(true);
+  });
 });
 
 describe("KeyframeNavigator ◄ ► arrows", () => {
@@ -93,6 +110,12 @@ describe("KeyframeNavigator ◄ ► arrows", () => {
     renderNav(0);
     fireEvent.click(nextBtn());
     expect(transportSeek).toHaveBeenCalledWith(1_000_000); // t_start 0 + key b at 1_000_000
+  });
+  it("seeks to the previous key and selects it on ◄", () => {
+    renderNav(1_000_000); // playhead on key b → prev is key a at local 0
+    fireEvent.click(prevBtn());
+    expect(transportSeek).toHaveBeenCalledWith(0); // t_start 0 + key a at 0
+    expect(getSelectedKeyframe()).toEqual({ layerId: "L1", paramKey: "opacity", kfId: "a" });
   });
 });
 

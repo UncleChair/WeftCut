@@ -31,6 +31,7 @@ describe("nextKeyAt", () => {
   it("finds the earliest key strictly after", () => expect(nextKeyAt(track3, 500_000)?.id).toBe("b"));
   it("steps off a key sitting exactly on it", () => expect(nextKeyAt(track3, 1_000_000)?.id).toBe("c"));
   it("returns null after the last key", () => expect(nextKeyAt(track3, 2_000_000)).toBeNull());
+  it("returns the first key from before the first", () => expect(nextKeyAt(track3, -1_000_000)?.id).toBe("a"));
   it("returns null for a Static track", () => expect(nextKeyAt(staticTrack, 0)).toBeNull());
 });
 
