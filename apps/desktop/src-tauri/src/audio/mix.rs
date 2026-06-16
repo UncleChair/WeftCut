@@ -225,6 +225,7 @@ mod tests {
     use super::*;
     use crate::audio::conform_reader::{ConformReader, write_vconf};
     use crate::state::animated::Animated;
+    use crate::state::audio_role::AudioRole;
     use crate::state::layer::{AudioParams, Layer, LayerParams};
     use crate::state::media::{AudioStreamMeta, MediaItem, MediaKind, MediaMetadata};
     use crate::state::project::{Project, ProjectMetadata, ProjectSettings, SCHEMA_VERSION};
@@ -387,6 +388,7 @@ mod tests {
                     fade_in_us: 0,
                     fade_out_us: 0,
                     mute: false,
+                    role: AudioRole::Dialogue,
                 }),
             }
         };
@@ -445,6 +447,7 @@ mod tests {
             markers: imbl::Vector::new(),
             transitions: imbl::Vector::new(),
             groups: imbl::Vector::new(),
+            audio_roles: imbl::HashMap::new(),
             settings: ProjectSettings::default(),
         }
     }

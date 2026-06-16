@@ -22,6 +22,7 @@ use crate::state::{
     Track, TrackFlagsPatch, Transform,
     actor::{CompositionPatch, LayerParamsPatch, LayerPatch},
     animated::Animated,
+    audio_role::AudioRole,
     ids::{new_id, TrackId},
     time::{Rational, TimeUs},
     track::TrackRole,
@@ -804,6 +805,7 @@ pub async fn add_media_layer(
                 fade_in_us: 0,
                 fade_out_us: 0,
                 mute: false,
+                role: AudioRole::Dialogue,
             }),
             total_src,
         ),
@@ -865,6 +867,7 @@ pub async fn add_media_layer(
             fade_in_us: 0,
             fade_out_us: 0,
             mute: false,
+            role: AudioRole::Dialogue,
         });
         let audio_layer_id = handle
             .add_layer(
@@ -1837,6 +1840,7 @@ async fn place_imported_media_on_fresh_tracks(
                 fade_in_us: 0,
                 fade_out_us: 0,
                 mute: false,
+                role: AudioRole::Dialogue,
             }),
             total_src,
         ),
@@ -1898,6 +1902,7 @@ async fn place_imported_media_on_fresh_tracks(
                 fade_in_us: 0,
                 fade_out_us: 0,
                 mute: false,
+                role: AudioRole::Dialogue,
             });
             let audio_layer_id = handle
                 .add_layer(

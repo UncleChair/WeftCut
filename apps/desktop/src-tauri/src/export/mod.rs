@@ -523,6 +523,7 @@ mod tests {
         use crate::audio::conform_reader::write_vconf;
         use crate::state::{
             animated::Animated,
+            audio_role::AudioRole,
             layer::{AudioParams, Layer, LayerParams},
             media::{MediaItem, MediaKind, MediaMetadata},
             project::Project,
@@ -589,6 +590,7 @@ mod tests {
                 fade_in_us: 0,
                 fade_out_us: 0,
                 mute: false,
+                role: AudioRole::Dialogue,
             }),
         };
 

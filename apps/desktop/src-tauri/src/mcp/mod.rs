@@ -96,6 +96,7 @@ use crate::state::{
     MotifParams, SubtitlesParams, SubtitlesSource, TrackId, Transform,
     ValidationError, VideoClipParams, new_id,
 };
+use crate::state::audio_role::AudioRole;
 
 const URI_PROJECT: &str = "project://current";
 const URI_COMPOSITION: &str = "project://composition";
@@ -460,6 +461,7 @@ impl WeftCutServer {
                 fade_in_us: 0,
                 fade_out_us: 0,
                 mute: false,
+                role: AudioRole::Dialogue,
             });
             let audio_layer_id = self
                 .project
@@ -884,6 +886,7 @@ impl WeftCutServer {
             fade_in_us: 0,
             fade_out_us: 0,
             mute: false,
+            role: AudioRole::Dialogue,
         });
         let layer_id = self
             .project
@@ -3760,6 +3763,7 @@ mod tests {
                 fade_in_us: 0,
                 fade_out_us: 0,
                 mute: false,
+                role: AudioRole::Dialogue,
             }),
         }
     }
