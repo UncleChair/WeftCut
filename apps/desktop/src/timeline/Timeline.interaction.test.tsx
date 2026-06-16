@@ -101,7 +101,7 @@ describe("Timeline seek/selection coupling", () => {
     fireEvent.pointerUp(window, { clientX: 200 });
     fireEvent.click(ruler);
     expect(onSeek).toHaveBeenCalled();
-    expect(onSelect).not.toHaveBeenCalledWith(null);
+    expect(onSelect).not.toHaveBeenCalled();
   });
 
   it("clicking empty lane background deselects and does NOT seek", () => {
@@ -127,5 +127,18 @@ describe("Timeline seek/selection coupling", () => {
     expect(onSelect).toHaveBeenCalledWith(layer.id);
     expect(onSeek).not.toHaveBeenCalled();
     expect(onSelect).not.toHaveBeenCalledWith(null);
+  });
+
+  it("dragging on the ruler scrubs the playhead repeatedly", () => {
+    const onSeek = vi.fn();
+    const onSelect = vi.fn();
+    const { container } = renderTimeline({ selectedLayerId: layer.id, onSeek, onSelect });
+    const ruler = container.querySelector('[data-testid="timeline-ruler"]')!;
+    fireEvent.pointerDown(ruler, { button: 0, clientX: 100 });
+    fireEvent.pointerMove(window, { clientX: 300 });
+    fireEvent.pointerUp(window, { clientX: 300 });
+    // pointerdown seeks once; the drag-scrub pointermove seeks again.
+    expect(onSeek.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(onSelect).not.toHaveBeenCalled();
   });
 });
