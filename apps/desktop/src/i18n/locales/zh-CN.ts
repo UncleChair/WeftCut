@@ -10,7 +10,7 @@ const zhCN: Resources = {
   },
   keyframe: {
     stopwatch_enable: "为该属性添加动画（在播放头处打关键帧）",
-    stopwatch_disable: "停止动画（折叠为播放头处的值）",
+    stopwatch_disable: "停止动画并删除所有关键帧（保留播放头处的值，可撤销）",
     stopwatch_offscreen: "把播放头移到 clip 上方才能打关键帧",
     interp_hold: "保持",
     interp_linear: "线性",

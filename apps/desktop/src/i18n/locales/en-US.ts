@@ -8,7 +8,7 @@ const enUS = {
   },
   keyframe: {
     stopwatch_enable: "Animate this property (add a keyframe at the playhead)",
-    stopwatch_disable: "Stop animating (collapse to the value at the playhead)",
+    stopwatch_disable: "Stop animating — removes all keyframes (keeps the value at the playhead; undoable)",
     stopwatch_offscreen: "Move the playhead over the clip to keyframe",
     interp_hold: "Hold",
     interp_linear: "Linear",
