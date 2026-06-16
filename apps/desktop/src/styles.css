@@ -2047,6 +2047,43 @@ input.preview-timecode:focus {
   color: var(--color-gray-500);
 }
 
+/* Project-level role mixer (MixerPanel). Sits between the peek list and
+   the inspector; the bottom border separates it from the inspector below.
+   Padding mirrors .property-panel so the two stacked panels read as one
+   column. */
+.right-panel-mixer {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.mixer-panel {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mixer-panel h3 {
+  margin: 0 0 4px 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-gray-300);
+  letter-spacing: 0.02em;
+}
+
+.mixer-role-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mixer-row-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .right-panel-inspector {
   flex: 1 1 auto;
   min-height: 0;

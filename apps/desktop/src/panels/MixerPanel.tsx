@@ -3,8 +3,10 @@
 // drag-scrub field only ever scrubs up; AppNumberField uses typing + arrow
 // keys + hover steppers) plus Mute / Solo toggles. Mute and Solo moved off
 // the track header onto roles, so this panel is now the single home for
-// per-role M/S. Edits route through `set_role_gain` / `update_role_flags`,
-// which never enter undo history; `onMutated` re-fetches the summary.
+// per-role M/S. Gain edits via `setRoleGain` are RECORDED (undoable) — a
+// debounced commit can produce one undo entry per pause; mute/solo via
+// `updateRoleFlags` are UNRECORDED (never enter undo history). `onMutated`
+// re-fetches the project summary.
 
 import { useTranslation } from "react-i18next";
 import { AppNumberField } from "../components/AppNumberField";

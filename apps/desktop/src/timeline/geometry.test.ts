@@ -197,35 +197,31 @@ describe("trackHeaderControls", () => {
   const video = () =>
     layer({ id: "v", kind: "VideoClip", params: { kind: "VideoClip" } as LayerSummary["params"] });
 
-  it("pure visual track: eye only, no M/S", () => {
+  it("pure visual track: eye only, no audio", () => {
     expect(trackHeaderControls(track({ layers: [video()] }))).toEqual({
       showEye: true,
-      showMute: false,
-      showSolo: false,
+      hasAudio: false,
     });
   });
 
-  it("combined row (visual + audio): eye + M + S", () => {
+  it("combined row (visual + audio): eye + audio", () => {
     expect(trackHeaderControls(track({ layers: [video(), audio()] }))).toEqual({
       showEye: true,
-      showMute: true,
-      showSolo: true,
+      hasAudio: true,
     });
   });
 
-  it("pure audio lane: M + S, no eye", () => {
+  it("pure audio lane: audio, no eye", () => {
     expect(trackHeaderControls(track({ layers: [audio()] }))).toEqual({
       showEye: false,
-      showMute: true,
-      showSolo: true,
+      hasAudio: true,
     });
   });
 
   it("empty track: eye only", () => {
     expect(trackHeaderControls(track({ layers: [] }))).toEqual({
       showEye: true,
-      showMute: false,
-      showSolo: false,
+      hasAudio: false,
     });
   });
 });

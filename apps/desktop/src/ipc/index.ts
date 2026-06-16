@@ -853,15 +853,17 @@ export async function updateLayerParams(
   return invoke<void>("update_layer_params", { layerId, patch });
 }
 
-/// Set the project-level gain (dB) for one audio role. Like the track-flag
-/// mutators, role-mix edits never enter undo history (the actor patches every
-/// history snapshot instead).
+/// Set the project-level gain (dB) for one audio role. Unlike the flag
+/// mutators, role-gain edits are RECORDED (undoable) — the actor commits each
+/// one, so a debounced edit can produce one undo entry per pause.
 export async function setRoleGain(role: AudioRole, gainDb: number): Promise<void> {
   return invoke<void>("set_role_gain", { role, gainDb });
 }
 
 /// Mute/solo one audio role at the project level. `muted`/`solo` are partial —
-/// omit a field to leave it unchanged.
+/// omit a field to leave it unchanged. UNRECORDED: like the track-flag
+/// mutators, these never enter undo history (the actor patches every history
+/// snapshot instead).
 export async function updateRoleFlags(
   role: AudioRole,
   patch: { muted?: boolean; solo?: boolean },
