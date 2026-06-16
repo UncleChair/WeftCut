@@ -18,6 +18,7 @@ import {
 } from "../keyframe/focusStore";
 import { KeyframeCurveGraph } from "./KeyframeCurveGraph";
 import { EasingMenu } from "./EasingMenu";
+import { KeyframeNavigator } from "./KeyframeNavigator";
 
 export const KF_SUBLANE_H = 24;
 export const KF_SUBLANE_EXPANDED_H = 72;
@@ -30,9 +31,22 @@ type OpenInterpMenu = (
   kfId: string,
 ) => void;
 
-/// Header-column rows: one property-name label per sub-lane (kept row-aligned
-/// with the body rows below by sharing trackKeyframeProperties + KF_SUBLANE_H).
-export function KeyframeLaneHeaders({ track }: { track: TrackSummary }) {
+/// Header-column rows: each property's keyframe navigator (◄ ◆ ►) on the left,
+/// the property-name label right-aligned. Row-aligned with the body rows below
+/// by sharing trackKeyframeProperties + KF_SUBLANE_H.
+export function KeyframeLaneHeaders({
+  track,
+  currentTimeUs,
+  fpsNum,
+  fpsDen,
+  onCommitParamTrack,
+}: {
+  track: TrackSummary;
+  currentTimeUs: number;
+  fpsNum: number;
+  fpsDen: number;
+  onCommitParamTrack: (layerId: string, paramKey: string, t: AnimTrack<number>) => void;
+}) {
   const { t } = useTranslation();
   const props = trackKeyframeProperties(track);
   const layerIds = useMemo(() => new Set(track.layers.map((l) => l.id)), [track.layers]);
@@ -42,10 +56,19 @@ export function KeyframeLaneHeaders({ track }: { track: TrackSummary }) {
       {props.map((d) => (
         <div
           key={d.paramKey}
-          className="flex items-center justify-end border-b border-border-soft px-1.5 text-[10px] text-muted-foreground/80"
+          className="flex items-center justify-between gap-1 border-b border-border-soft px-1.5 text-[10px] text-muted-foreground/80"
           style={{ height: d.paramKey === focusedParamKey ? KF_SUBLANE_EXPANDED_H : KF_SUBLANE_H }}
         >
-          {t(d.labelKey, { defaultValue: d.paramKey })}
+          <KeyframeNavigator
+            track={track}
+            paramKey={d.paramKey}
+            fallback={d.fallback}
+            currentTimeUs={currentTimeUs}
+            fpsNum={fpsNum}
+            fpsDen={fpsDen}
+            onCommitParamTrack={onCommitParamTrack}
+          />
+          <span className="truncate">{t(d.labelKey, { defaultValue: d.paramKey })}</span>
         </div>
       ))}
     </>
