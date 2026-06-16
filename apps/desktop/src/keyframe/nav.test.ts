@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { keyAt, prevKeyAt, nextKeyAt } from "./nav";
+import { resolveNavLayer } from "./nav";
 import type { AnimTrack } from "../ipc";
+import type { LayerSummary, TrackSummary } from "../ipc";
 
 const track3: AnimTrack<number> = {
   mode: "Keyframed",
@@ -22,10 +24,49 @@ describe("prevKeyAt", () => {
   it("finds the latest key strictly before", () => expect(prevKeyAt(track3, 1_500_000)?.id).toBe("b"));
   it("steps off a key sitting exactly on it", () => expect(prevKeyAt(track3, 1_000_000)?.id).toBe("a"));
   it("returns null before the first key", () => expect(prevKeyAt(track3, 0)).toBeNull());
+  it("returns null for a Static track", () => expect(prevKeyAt(staticTrack, 0)).toBeNull());
 });
 
 describe("nextKeyAt", () => {
   it("finds the earliest key strictly after", () => expect(nextKeyAt(track3, 500_000)?.id).toBe("b"));
   it("steps off a key sitting exactly on it", () => expect(nextKeyAt(track3, 1_000_000)?.id).toBe("c"));
   it("returns null after the last key", () => expect(nextKeyAt(track3, 2_000_000)).toBeNull());
+  it("returns null for a Static track", () => expect(nextKeyAt(staticTrack, 0)).toBeNull());
+});
+
+const layer = (id: string, opacityMode: "Static" | "Keyframed"): LayerSummary =>
+  ({
+    id,
+    params: {
+      opacity:
+        opacityMode === "Keyframed"
+          ? { mode: "Keyframed", value: [{ id: `${id}k`, t_us: 0, value: 1, interp: { kind: "Linear" } }] }
+          : { mode: "Static", value: 1 },
+    },
+  }) as unknown as LayerSummary;
+
+const trackOf = (...layers: LayerSummary[]): TrackSummary =>
+  ({ layers }) as unknown as TrackSummary;
+
+describe("resolveNavLayer", () => {
+  it("returns the sole keyframed clip when only one has the param", () => {
+    const tr = trackOf(layer("L1", "Keyframed"), layer("L2", "Static"));
+    expect(resolveNavLayer(tr, "opacity", null)?.id).toBe("L1");
+  });
+  it("returns the focused clip when several are keyframed", () => {
+    const tr = trackOf(layer("L1", "Keyframed"), layer("L2", "Keyframed"));
+    expect(resolveNavLayer(tr, "opacity", "L2")?.id).toBe("L2");
+  });
+  it("returns null when several are keyframed and none is focused", () => {
+    const tr = trackOf(layer("L1", "Keyframed"), layer("L2", "Keyframed"));
+    expect(resolveNavLayer(tr, "opacity", null)).toBeNull();
+  });
+  it("ignores a focused id outside the candidate set", () => {
+    const tr = trackOf(layer("L1", "Keyframed"));
+    expect(resolveNavLayer(tr, "opacity", "OTHER")?.id).toBe("L1");
+  });
+  it("returns null when no clip has the param keyframed", () => {
+    const tr = trackOf(layer("L1", "Static"));
+    expect(resolveNavLayer(tr, "opacity", "L1")).toBeNull();
+  });
 });
