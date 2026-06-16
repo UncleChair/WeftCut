@@ -421,17 +421,13 @@ export function LayerBlock({
         ...groupStyle,
       }}
       onClick={(e) => {
+        // Selection happens on pointerdown (onLayerPointerDown, which also
+        // arms the drag). This handler exists only to stop the click from
+        // bubbling to the timeline-root background-deselect — without it,
+        // selecting a clip would immediately clear the selection. Ruler-only
+        // seek decoupling: see
+        // docs/superpowers/specs/2026-06-16-timeline-seek-selection-ux-design.md.
         e.stopPropagation();
-        // In blade mode the pointerdown already handled the cut; the
-        // synthesised click that follows should not flip the selection.
-        if (bladeMode) return;
-        // Spec §3: locked layers are unselectable (per-layer or track lock).
-        if (layer.locked || trackLocked) return;
-        onSelectFromClick(layer.id, {
-          altKey: e.altKey,
-          shiftKey: e.shiftKey,
-          metaKey: e.metaKey,
-        });
       }}
       onDoubleClick={(e) => {
         if (layer.locked || trackLocked || bladeMode) return;

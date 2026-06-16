@@ -603,7 +603,6 @@ export function Timeline({
                 dragLayer={dragLayer}
                 bladeMode={bladeMode}
                 onBladeSplit={splitFromClientX}
-                onSelect={onSelect}
                 onSelectFromClick={selectFromClick}
                 onDragStart={(state) => setDrag(state)}
                 onContextMenu={onContextMenu}
