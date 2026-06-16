@@ -1,6 +1,6 @@
 import type { SyntheticEvent } from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronLeft, ChevronRight, Diamond } from "lucide-react";
+import { StepBack, StepForward, CircleSmall } from "lucide-react";
 import type { AnimTrack, Keyframe, TrackSummary } from "../ipc";
 import { readParamTrack } from "../keyframe/descriptors";
 import { keyAt, prevKeyAt, nextKeyAt, resolveNavLayer } from "../keyframe/nav";
@@ -11,10 +11,11 @@ import { transportSeek } from "../state/playbackStore";
 import { selectKeyframe } from "../keyframe/selectionStore";
 import { setKeyframeFocus, useKeyframeFocusStore } from "../keyframe/focusStore";
 
-/// AE-style per-property keyframe navigator (◄ ◆ ►) for one sub-lane row.
-/// Acts on a single resolved clip (focused clip → sole keyframed clip →
-/// disabled, per `resolveNavLayer`): ◄/► seek the playhead to the prev/next
-/// key (and select+focus it); ◆ toggles a key at the frame-snapped playhead.
+/// AE-style per-property keyframe navigator (prev / set / next) for one
+/// sub-lane row. Acts on a single resolved clip (focused clip → sole keyframed
+/// clip → disabled, per `resolveNavLayer`): the prev/next buttons seek the
+/// playhead to the adjacent key (and select+focus it); the middle button
+/// toggles a key at the frame-snapped playhead.
 /// Pure-frontend — every mutation goes through `onCommitParamTrack`
 /// (→ updateLayerParamTrack), one click = one undo step.
 export function KeyframeNavigator({
@@ -86,7 +87,7 @@ export function KeyframeNavigator({
         aria-label={t("keyframe.nav_prev")}
         onClick={() => prev && seekTo(prev)}
       >
-        <ChevronLeft size={12} aria-hidden />
+        <StepBack size={12} aria-hidden />
       </button>
       <button
         type="button"
@@ -100,7 +101,7 @@ export function KeyframeNavigator({
         aria-label={t("keyframe.nav_set")}
         onClick={onToggle}
       >
-        <Diamond size={11} fill={at ? "currentColor" : "none"} aria-hidden />
+        <CircleSmall size={16} fill={at ? "currentColor" : "none"} aria-hidden />
       </button>
       <button
         type="button"
@@ -111,7 +112,7 @@ export function KeyframeNavigator({
         aria-label={t("keyframe.nav_next")}
         onClick={() => next && seekTo(next)}
       >
-        <ChevronRight size={12} aria-hidden />
+        <StepForward size={12} aria-hidden />
       </button>
     </div>
   );
