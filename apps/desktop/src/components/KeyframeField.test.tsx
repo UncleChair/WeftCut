@@ -23,7 +23,9 @@ describe("KeyframeField (no stopwatch / timeline mode)", () => {
         widgets={["number"]} step={1} showStopwatch={false}
       />,
     );
-    await userEvent.type(screen.getByLabelText("x"), "120");
+    const el = screen.getByLabelText("x");
+    await userEvent.clear(el);
+    await userEvent.type(el, "120");
     await userEvent.click(document.body); // blur → commit
     expect(onCommitTrack).toHaveBeenCalledTimes(1);
     const [paramKey, next] = onCommitTrack.mock.calls[0]!;
