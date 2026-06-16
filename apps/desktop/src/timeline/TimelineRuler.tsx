@@ -35,12 +35,17 @@ export function TimelineRuler({
   widthPx,
   fpsNum,
   fpsDen,
+  onScrub,
 }: {
   pxPerSec: number;
   totalSec: number;
   widthPx: number;
   fpsNum: number;
   fpsDen: number;
+  /// Begin a playhead scrub at the given client X. The ruler is the sole
+  /// scrub surface (ruler-only seek); Timeline.tsx installs the drag-scrub
+  /// loop via this callback.
+  onScrub: (clientX: number) => void;
 }) {
   const { items, majorSec, isFrameMode } = useMemo(() => {
     const fDur = frameDurUs(fpsNum, fpsDen);
@@ -116,8 +121,12 @@ export function TimelineRuler({
          clips it). */
     <div
       data-testid="timeline-ruler"
-      className="relative h-5 flex-none select-none overflow-hidden border-b border-border-soft bg-card text-[10px] text-muted-foreground"
+      className="relative h-5 flex-none cursor-ew-resize select-none overflow-hidden border-b border-border-soft bg-card text-[10px] text-muted-foreground"
       style={{ width: widthPx }}
+      onPointerDown={(e) => {
+        if (e.button === 0) onScrub(e.clientX);
+      }}
+      onClick={(e) => e.stopPropagation()}
     >
       {items.map((tk) => (
         <div
