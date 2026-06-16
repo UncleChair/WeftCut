@@ -150,6 +150,8 @@ pub fn run() {
             commands::get_project_settings,
             commands::update_project_settings,
             commands::update_track_flags,
+            commands::set_role_gain,
+            commands::update_role_flags,
             commands::add_marker,
             commands::project_undo,
             commands::project_redo,

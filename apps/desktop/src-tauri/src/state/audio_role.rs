@@ -5,11 +5,12 @@
 //! bus is realized by folding role gain into each layer's gain envelope
 //! and filtering the audible set by role mute/solo.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Fixed v1 role set. Custom / sub-roles are deferred. Kebab-case on the
 /// wire (matches `TrackRole`'s convention and the TS `AudioRole` union).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum AudioRole {
     #[default]
