@@ -1,5 +1,13 @@
 # Audio Tracks × A/B-Roll: Clarifying Mute/Solo Without a Second Track Stack
 
+> **Superseded** by the role-based mixing model ([ADR 0023](../../adr/0023-audio-mixes-by-role-not-track.md),
+> [`docs/audio.md`](../../audio.md)). The conditional combined-row Mute/Solo this
+> spec introduced has been replaced: audio mute/solo left the track header
+> entirely and now live in a Mixer panel keyed by mixing **role**, not by track.
+> The problem framing below (the Final-Cut-visual / Premiere-control seam) still
+> reads true, but its resolution is the per-role mix bus, not row-conditional
+> track controls. Retained for context only.
+
 **Date:** 2026-06-13
 **Status:** Implemented and merged to main. Plan:
 `docs/superpowers/plans/2026-06-13-audio-track-abroll-integration.md` (all 6

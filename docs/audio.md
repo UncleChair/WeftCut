@@ -159,19 +159,64 @@ out-of-window layers simply don't schedule.
 **Layer skip rules (preview and export share rules 1–6):**
 
 1. `Track.enabled == false` — the whole track is off; skip all its audio layers.
-2. `Track.muted == true` — audio layers on this track are silenced; video is unaffected.
-3. Solo set non-empty — any track with `solo == true` exists; skip audio layers on tracks where `solo == false`. (Only enabled tracks' `solo` flag counts; an empty solo set → normal path.)
-4. `mute wins over solo` — a track that is both muted and soloed is silent.
-5. `Layer.enabled == false` — the individual layer is off; skip it regardless of track flags.
-6. `AudioParams.mute == true` — the layer's own mute; skip it.
+   This is the one whole-track gate left: track `muted`/`solo` no longer gate
+   audio (audio mute/solo moved to roles — see Roles below).
+2. The layer's role is muted (`RoleMixSettings.muted == true`) — every layer
+   tagged with that role is silenced.
+3. A role-solo set is non-empty — any role with `solo == true` exists; skip
+   layers whose role is not soloed. (An empty solo set → normal path.)
+4. `mute wins over solo` — a role that is both muted and soloed is silent, and a
+   muted role inside a solo set never reopens.
+5. `Layer.enabled == false` — the individual layer is off; skip it regardless of
+   role flags.
+6. `AudioParams.mute == true` — the layer's own clip mute; skip it.
 7. `Layer.locked == true` — **export-side only**: the export planner drops locked
    layers' audio; the preview mixer does not apply this rule, so a locked layer
    still plays back. The divergence is inherited, not designed — locking is an
    edit guard, and silencing on lock is arguably wrong on both sides.
 
-The master meter (RMS + peak per channel) is engine plumbing in this
-slice: surfaced to the dev PerfHUD and over MCP, with no product UI.
-Mixer UI belongs to the UX redesign.
+The mute/solo half of these rules is evaluated against the project's `audio_roles`
+table, so it is consistent whatever track a layer lives on. The export planner
+(`audible_audio_layers`) and the preview gate (`roleGate.ts`) apply the same
+predicate; keep them byte-for-byte in step (there is no cross-language test, the
+same discipline as the envelope twins).
+
+The master meter (RMS + peak per channel) is surfaced to the dev
+PerfHUD and over MCP for level checks.
+
+## Roles
+
+Audio mixing groups by **role**, not by track. A role is a per-layer
+tag on `AudioParams` — Dialogue (the default), Music, SFX, or
+Voiceover — and each role is a mix bus. The buses live project-level in
+`Project.audio_roles`, one `RoleMixSettings { gain_db, muted, solo }`
+per role; an absent entry resolves to defaults (0 dB, unmuted,
+unsoloed) via `role_mix`, so a project that never touched the mixer
+plays every role at unity. Decision record: [ADR 0023](adr/0023-audio-mixes-by-role-not-track.md).
+
+v1 realizes the bus by **folding**: the role's `gain_db` is converted
+to linear and multiplied into every member layer's gain envelope before
+the block loop, and role mute/solo simply filter which layers enter the
+plan. There is no separate summing stage per role — the per-block
+accumulator loop is unchanged from a track-less mix. A future per-role
+effect insert (`RoleMixSettings.effects`) is the deferred extension
+point that would turn the fold into a real bus with its own DSP; it is
+named in the data model and does nothing yet.
+
+Three control levels stack, each owning a different scope:
+
+- **Clip mute** (`AudioParams.mute`, per layer) — silence one layer.
+- **Role mute / solo / gain** (`audio_roles`, the mix) — silence,
+  isolate, or trim a whole category of sound at once ("all dialogue",
+  "just the music").
+- **Track `enabled`** (the eye toggle, whole track) — turn an entire
+  track's picture *and* audio off together.
+
+Role gain is a **recorded** edit — `set_role_gain` lands on the undo
+stack like any parameter change. Role mute and solo (`update_role_flags`)
+are **unrecorded** preferences applied to every history snapshot, so
+Ctrl-Z never flips a mixer toggle — the same convention as the track
+eye/lock flags. The Mixer panel is the surface that drives these.
 
 ## Export mixer
 
@@ -179,9 +224,11 @@ Mixer UI belongs to the UX redesign.
 graph; it produces a **MixPlan**: per audible layer, the conform path
 + channel count, source span, timeline placement, and the two
 envelopes (or scalars). The plan applies the same layer skip rules as
-the preview (see above) — track `enabled`/`muted`/`solo` gates and
-`Layer.enabled`/`AudioParams.mute` all take effect in export. Layers
-whose conform is missing fail readiness before any work starts.
+the preview (see above) — the `Track.enabled` whole-track gate, the
+role mute/solo gates, and `Layer.enabled`/`AudioParams.mute` all take
+effect in export, and each role's gain is folded into its layers'
+envelopes. Layers whose conform is missing fail readiness before any
+work starts.
 
 The mixer (`export::mix`) is a block-pull loop, deterministic and
 allocation-flat:
@@ -280,6 +327,7 @@ checks.
 - **Retime / speed** — needs A/V group-coupling semantics first;
   component direction is signalsmith-stretch (same MIT algorithm
   available as Rust crate and AudioWorklet).
+- **Per-role DSP effects** — the `RoleMixSettings.effects` insert that
+  would make each role a true processing bus; v1 folds role gain only.
 - **True-peak (oversampled) limiting**, loudness-normalize export
-  option, track-level gain / buses / mixer UI, >stereo output,
-  scrub audio.
+  option, >stereo output, scrub audio.
