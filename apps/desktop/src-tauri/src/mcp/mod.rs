@@ -924,7 +924,8 @@ impl WeftCutServer {
                           Audio fields take real effect in both preview and export: `gain_db` (dB; this \
                           patch sets a STATIC value, replacing any existing keyframes on the track), \
                           `pan` (-1..1 equal-power, same static-replace semantics), \
-                          `fade_in_us`/`fade_out_us` (linear edge fades), `mute`.")]
+                          `fade_in_us`/`fade_out_us` (linear edge fades), `mute`, and \
+                          `role` (one of dialogue/music/sfx/voiceover) to reassign the clip's mixing role.")]
     async fn update_layer_params(
         &self,
         #[tool(aggr)] args: UpdateLayerParamsArgs,
@@ -1951,6 +1952,44 @@ impl WeftCutServer {
         let results = self.project.dry_run(ops).await;
         ok_json(&DryRunResponse::from_results(results))
     }
+
+    /// Set an audio role's mix gain in dB (recorded — undoable). Roles:
+    /// dialogue, music, sfx, voiceover. Boosting dialogue raises every
+    /// dialogue-role layer at once.
+    #[tool(description = "Set an audio role's mix gain (dB). role ∈ {dialogue,music,sfx,voiceover}. \
+                          Recorded (undoable). Folds into every layer of that role at mix time.")]
+    async fn set_role_gain(
+        &self,
+        #[tool(aggr)] args: SetRoleGainArgs,
+    ) -> Result<CallToolResult, McpError> {
+        self.project
+            .set_role_gain(agent_actor(), args.role, args.gain_db)
+            .await
+            .map_err(map_command_error)?;
+        Ok(ok_void())
+    }
+
+    /// Mute / solo an audio role (unrecorded — not undoable). Mute wins
+    /// over solo; when any role is soloed only soloed roles are audible.
+    #[tool(description = "Mute/solo an audio role. role ∈ {dialogue,music,sfx,voiceover}. \
+                          Unrecorded (not undoable). Mute wins over solo; any solo silences non-soloed roles.")]
+    async fn set_role_flags(
+        &self,
+        #[tool(aggr)] args: SetRoleFlagsArgs,
+    ) -> Result<CallToolResult, McpError> {
+        self.project
+            .update_role_flags(
+                agent_actor(),
+                args.role,
+                crate::state::audio_role::RoleFlagsPatch {
+                    muted: args.muted,
+                    solo: args.solo,
+                },
+            )
+            .await
+            .map_err(map_command_error)?;
+        Ok(ok_void())
+    }
 }
 
 // ============================================================
@@ -2099,6 +2138,23 @@ pub struct UpdateLayerArgs {
 pub struct UpdateLayerParamsArgs {
     pub layer_id: String,
     pub patch: LayerParamsPatch,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SetRoleGainArgs {
+    /// "dialogue" | "music" | "sfx" | "voiceover"
+    pub role: AudioRole,
+    pub gain_db: f64,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SetRoleFlagsArgs {
+    /// "dialogue" | "music" | "sfx" | "voiceover"
+    pub role: AudioRole,
+    #[serde(default)]
+    pub muted: Option<bool>,
+    #[serde(default)]
+    pub solo: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -4136,4 +4192,67 @@ mod tests {
         );
     }
 
+    // ============================================================
+    // Audio-role tools: set_role_gain / set_role_flags
+    //
+    // The `#[tool]` methods need a `WeftCutServer`, which carries an
+    // `AppHandle` that isn't constructible without the `tauri/test` feature
+    // (not enabled, and enabling it would touch Cargo.toml). So these smoke
+    // tests exercise BOTH halves of the tool the same way the macro does:
+    // (1) deserialize the args struct from the JSON shape rmcp feeds it, and
+    // (2) drive the exact `ProjectHandle` call the tool body makes against a
+    // real actor, then assert the change through a project snapshot — not a
+    // mock. (Mirrors the actor-level coverage in `state::actor`.)
+    // ============================================================
+
+    #[tokio::test]
+    async fn set_role_gain_tool_changes_project() {
+        // The rmcp macro deserializes `args` from the tool-call JSON; assert
+        // the kebab role + gain wire shape lands in the args struct.
+        let args: SetRoleGainArgs =
+            serde_json::from_value(serde_json::json!({ "role": "dialogue", "gain_db": 6.0 }))
+                .expect("SetRoleGainArgs deserializes from the tool-call shape");
+        assert_eq!(args.role, AudioRole::Dialogue);
+
+        // Then run the tool body's effect against a real project actor.
+        let project = crate::state::actor::spawn(Project::new_blank("test"));
+        project
+            .set_role_gain(agent_actor(), args.role, args.gain_db)
+            .await
+            .expect("set_role_gain");
+
+        assert_eq!(
+            project.snapshot().await.role_mix(AudioRole::Dialogue).gain_db,
+            6.0,
+        );
+    }
+
+    #[tokio::test]
+    async fn set_role_flags_tool_changes_project() {
+        // `muted`/`solo` are optional (serde default); a partial patch (mute
+        // only) must deserialize and apply just that field.
+        let args: SetRoleFlagsArgs =
+            serde_json::from_value(serde_json::json!({ "role": "music", "muted": true }))
+                .expect("SetRoleFlagsArgs deserializes from the tool-call shape");
+        assert_eq!(args.role, AudioRole::Music);
+        assert_eq!(args.muted, Some(true));
+        assert_eq!(args.solo, None);
+
+        let project = crate::state::actor::spawn(Project::new_blank("test"));
+        project
+            .update_role_flags(
+                agent_actor(),
+                args.role,
+                crate::state::audio_role::RoleFlagsPatch {
+                    muted: args.muted,
+                    solo: args.solo,
+                },
+            )
+            .await
+            .expect("update_role_flags");
+
+        let mix = project.snapshot().await.role_mix(AudioRole::Music);
+        assert!(mix.muted, "mute flag applied");
+        assert!(!mix.solo, "solo untouched by a mute-only patch");
+    }
 }
