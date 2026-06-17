@@ -392,6 +392,21 @@ mod tests {
     use super::*;
     use crate::events::VecEventSink;
 
+    /// Poll `sink.names()` until `name` appears or `timeout_ms` elapses.
+    /// Returns `true` as soon as the event is seen, `false` on timeout.
+    /// Polls every 5 ms so the test exits early on fast machines and only
+    /// reaches the ceiling on genuine failure.
+    async fn wait_for_event(sink: &VecEventSink, name: &str, timeout_ms: u64) -> bool {
+        let start = std::time::Instant::now();
+        while start.elapsed() < std::time::Duration::from_millis(timeout_ms) {
+            if sink.names().iter().any(|n| n == name) {
+                return true;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        sink.names().iter().any(|n| n == name)
+    }
+
     #[tokio::test]
     async fn project_summary_on_blank_project() {
         let sink = VecEventSink::new();
@@ -426,11 +441,15 @@ mod tests {
         let sink = VecEventSink::new();
         let b = Backend::new_for_test(Arc::new(sink.clone()));
         b.init().await.unwrap();
+        // Yield to let the bridge task run and call subscribe() before we
+        // dispatch add_track. The subscribe() call is inside the spawned
+        // future and must execute before the broadcast event is sent, or
+        // the event lands with no receivers and is silently dropped.
+        tokio::task::yield_now().await;
         let track_id_json = b.dispatch("add_track", "{}").await.unwrap();
         assert!(!track_id_json.is_empty());
-        // small delay for the broadcast bridge task to run
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        assert!(sink.names().iter().any(|n| n == "project:changed"));
+        // poll until the broadcast bridge task fires (or 2 s timeout on genuine failure)
+        assert!(wait_for_event(&sink, "project:changed", 2000).await);
         let summary = b.dispatch("project_summary", "{}").await.unwrap();
         // blank project has 2 reserved tracks (A roll + B roll); add_track appends a 3rd
         assert!(summary.contains("\"track_count\":3") || summary.contains("\"track_count\": 3"));
