@@ -16,9 +16,11 @@
     "test:watch": "vitest --exclude '**/*.browser.test.ts'",
     "electron:dev": "electron-vite dev",
     "electron:build": "electron-vite build",
-    "electron:preview": "electron-vite preview"
+    "electron:preview": "electron-vite preview",
+    "napi:build": "napi build --platform --release --manifest-path src-tauri/Cargo.toml --output-dir src-tauri"
   },
   "dependencies": {
+    "@weftcut/core": "file:src-tauri",
     "@base-ui/react": "^1.5.0",
     "@pixi/react": "^8.0.5",
     "@tailwindcss/vite": "^4.3.0",
@@ -45,6 +47,7 @@
     "zustand": "^5.0.13"
   },
   "devDependencies": {
+    "@napi-rs/cli": "^3.6.2",
     "@tauri-apps/cli": "^2.11.2",
     "electron": "^42.0.0",
     "electron-vite": "6.0.0-beta.1",
