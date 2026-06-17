@@ -182,10 +182,98 @@ impl Backend {
         build_backend(events, config_dir, cache_dir)
     }
 
-    pub async fn dispatch(&self, cmd: &str, _args: &str) -> std::result::Result<String, String> {
+    pub async fn dispatch(&self, cmd: &str, args: &str) -> std::result::Result<String, String> {
         match cmd {
             "ping" => Ok(serde_json::to_string("pong").unwrap()),
             "project_summary" => ser(crate::commands::query::project_summary(self).await),
+            "add_track" => ser(crate::commands::mutations::add_track(self).await),
+            "separate_audio_to_new_track" => {
+                let a: crate::commands::SeparateAudioToNewTrackArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::mutations::separate_audio_to_new_track(self, a.layer_id).await)
+            }
+            "add_demo_color_layer" => ser(crate::commands::mutations::add_demo_color_layer(self).await),
+            "add_color_layer" => {
+                let a: crate::commands::AddColorLayerArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::mutations::add_color_layer(self, a.track_id, a.color, a.width, a.height, a.t_start_us, a.duration_us).await)
+            }
+            "add_media_layer" => {
+                let a: crate::commands::AddMediaLayerArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::mutations::add_media_layer(self, a.track_id, a.media_id, a.t_start_us).await)
+            }
+            "add_text_layer" => {
+                let a: crate::commands::AddTextLayerArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::mutations::add_text_layer(self, a.track_id, a.content, a.t_start_us, a.duration_us).await)
+            }
+            "add_demo_text_layer" => ser(crate::commands::mutations::add_demo_text_layer(self).await),
+            "add_subtitles_layer" => {
+                let a: crate::commands::AddSubtitlesLayerArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::mutations::add_subtitles_layer(self, a.media_id, a.t_start_us, a.duration_us).await)
+            }
+            "update_layer" => {
+                let a: crate::commands::UpdateLayerArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::mutations::update_layer(self, a.layer_id, a.patch).await)
+            }
+            "update_layer_params" => {
+                let a: crate::commands::UpdateLayerParamsArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::mutations::update_layer_params(self, a.layer_id, a.patch).await)
+            }
+            "update_layer_param_track" => {
+                let a: crate::commands::UpdateLayerParamTrackArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::mutations::update_layer_param_track(self, a.layer_id, a.param_key, a.track).await)
+            }
+            "update_layer_param_tracks" => {
+                let a: crate::commands::UpdateLayerParamTracksArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::mutations::update_layer_param_tracks(self, a.layer_id, a.entries).await)
+            }
+            "move_layer" => {
+                let a: crate::commands::MoveLayerArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::mutations::move_layer(self, a.layer_id, a.new_track_id, a.new_t_start_us, a.escape_group).await)
+            }
+            "trim_layer" => {
+                let a: crate::commands::TrimLayerArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::mutations::trim_layer(self, a.layer_id, a.edge, a.new_t_us, a.escape_group).await)
+            }
+            "split_layer_grouped" => {
+                let a: crate::commands::SplitLayerGroupedArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::mutations::split_layer_grouped(self, a.layer_id, a.at_t_us, a.escape_group).await)
+            }
+            "groups_create" => {
+                let a: crate::commands::GroupsCreateArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::mutations::groups_create(self, a.layer_ids, a.label, a.reassign).await)
+            }
+            "groups_dissolve" => {
+                let a: crate::commands::GroupsDissolveArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::mutations::groups_dissolve(self, a.group_id).await)
+            }
+            "duplicate_layer" => {
+                let a: crate::commands::DuplicateLayerArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::mutations::duplicate_layer(self, a.layer_id, a.t_offset_us).await)
+            }
+            "delete_layer" => {
+                let a: crate::commands::DeleteLayerArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::mutations::delete_layer(self, a.layer_id).await)
+            }
+            "set_composition" => {
+                let a: crate::commands::SetCompositionArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::mutations::set_composition(self, a.patch).await)
+            }
+            "fit_composition_to_layers" => ser(crate::commands::mutations::fit_composition_to_layers(self).await),
+            "add_marker" => {
+                let a: crate::commands::AddMarkerArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::mutations::add_marker(self, a.t_us, a.end_t_us, a.label, a.color).await)
+            }
+            "update_track_flags" => {
+                let a: crate::commands::UpdateTrackFlagsArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::mutations::update_track_flags(self, a.track_id, a.patch).await)
+            }
+            "set_role_gain" => {
+                let a: crate::commands::SetRoleGainArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::mutations::set_role_gain(self, a.role, a.gain_db).await)
+            }
+            "update_role_flags" => {
+                let a: crate::commands::UpdateRoleFlagsArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::mutations::update_role_flags(self, a.role, a.patch).await)
+            }
             other => Err(format!("unavailable: '{other}' is wired in a later stage (S3/S4/S5)")),
         }
     }
@@ -208,5 +296,19 @@ mod tests {
         b.init().await.unwrap();
         let json = b.dispatch("project_summary", "{}").await.unwrap();
         assert!(json.contains("\"track_count\""));
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn add_track_then_summary_grows_and_emits() {
+        let sink = VecEventSink::new();
+        let b = Backend::new_for_test(Arc::new(sink.clone()));
+        b.init().await.unwrap();
+        let track_id_json = b.dispatch("add_track", "{}").await.unwrap();
+        assert!(!track_id_json.is_empty());
+        // small delay for the broadcast bridge task to run
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(sink.names().iter().any(|n| n == "project:changed"));
+        let summary = b.dispatch("project_summary", "{}").await.unwrap();
+        // blank project has 2 reserved tracks (A roll + B roll); add_track appends a 3rd
+        assert!(summary.contains("\"track_count\":3") || summary.contains("\"track_count\": 3"));
     }
 }
