@@ -12,6 +12,7 @@ export default defineConfig({
     build: {
       outDir: 'out/main',
       lib: { entry: 'electron/main/index.ts' },
+      rollupOptions: { external: ['@weftcut/core'] },
     },
   },
   preload: {
