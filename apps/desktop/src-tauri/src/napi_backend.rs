@@ -158,6 +158,19 @@ impl Backend {
         let autosave = AutosaveController::spawn(handle, self.workspace.clone());
         let _ = self.autosave.set(autosave);
 
+        // S3: warm up ffmpeg-sidecar (resolve / auto-download the binary) off
+        // the init path so the first media job doesn't pay the download.
+        #[cfg(any(feature = "jobs", feature = "export"))]
+        tokio::spawn(async {
+            match crate::ffmpeg::bootstrap().await {
+                Ok(crate::ffmpeg::BootstrapStatus::Ready(v)) => tracing::info!("ffmpeg ready: {v}"),
+                Ok(crate::ffmpeg::BootstrapStatus::Unavailable(m)) => {
+                    tracing::warn!("ffmpeg unavailable: {m}")
+                }
+                Err(e) => tracing::warn!("ffmpeg bootstrap error: {e:#}"),
+            }
+        });
+
         Ok(())
     }
 

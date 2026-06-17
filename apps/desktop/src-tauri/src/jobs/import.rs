@@ -33,7 +33,8 @@ use std::time::UNIX_EPOCH;
 
 use anyhow::{Context, Result};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+use crate::events::EventSink;
+use crate::logs::LogBusSlot;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{info, warn};
 
@@ -76,7 +77,8 @@ pub struct ImportEntry {
 #[derive(Clone)]
 pub struct ImportQueue {
     inner: Arc<Mutex<ImportQueueInner>>,
-    app: AppHandle,
+    events: Arc<dyn EventSink>,
+    log_slot: LogBusSlot,
 }
 
 struct ImportQueueInner {
@@ -101,7 +103,7 @@ struct RunningImport {
 }
 
 impl ImportQueue {
-    pub fn new(app: AppHandle) -> Self {
+    pub fn new(events: Arc<dyn EventSink>, log_slot: LogBusSlot) -> Self {
         Self {
             inner: Arc::new(Mutex::new(ImportQueueInner {
                 pending: VecDeque::new(),
@@ -109,7 +111,8 @@ impl ImportQueue {
                 history: Vec::new(),
                 worker_alive: false,
             })),
-            app,
+            events,
+            log_slot,
         }
     }
 
@@ -147,7 +150,7 @@ impl ImportQueue {
         self.emit_queue();
         if need_worker {
             let me = self.clone();
-            tauri::async_runtime::spawn(async move { me.worker_loop().await });
+            tokio::spawn(async move { me.worker_loop().await });
         }
     }
 
@@ -196,9 +199,8 @@ impl ImportQueue {
 
     fn emit_queue(&self) {
         let snapshot = self.list();
-        if let Err(e) = self.app.emit(events::QUEUE, snapshot) {
-            warn!("emit {}: {e}", events::QUEUE);
-        }
+        self.events
+            .emit(events::QUEUE, serde_json::to_value(snapshot).unwrap_or(serde_json::Value::Null));
     }
 
     async fn worker_loop(self) {
@@ -231,31 +233,26 @@ impl ImportQueue {
                     entry.status = ImportStatus::Copying;
                 }
             }
-            if let Err(e) = self
-                .app
-                .emit(events::STARTED, serde_json::json!({ "mediaId": media_id.to_string() }))
-            {
-                warn!("emit import:started: {e}");
-            }
+            self.events.emit(
+                events::STARTED,
+                serde_json::json!({ "mediaId": media_id.to_string() }),
+            );
             // Status-log producer: pair Started/Ok-Err on the same
             // op_id so the console collapses the lifecycle.
             let log_op_id = uuid::Uuid::now_v7();
-            logs::emit_via_app(
-                &self.app,
-                logs::LogEntryInput {
-                    level: logs::LogLevel::Info,
-                    category: logs::LogCategory::Import,
-                    source: logs::LogSource::User,
-                    message: format!("Importing {}", next.source.display()),
-                    op_id: Some(log_op_id),
-                    op_state: Some(logs::OpState::Started),
-                    details: Some(serde_json::json!({
-                        "mediaId": media_id.to_string(),
-                        "source": next.source.to_string_lossy(),
-                    })),
-                    ..Default::default()
-                },
-            );
+            self.log_slot.emit(logs::LogEntryInput {
+                level: logs::LogLevel::Info,
+                category: logs::LogCategory::Import,
+                source: logs::LogSource::User,
+                message: format!("Importing {}", next.source.display()),
+                op_id: Some(log_op_id),
+                op_state: Some(logs::OpState::Started),
+                details: Some(serde_json::json!({
+                    "mediaId": media_id.to_string(),
+                    "source": next.source.to_string_lossy(),
+                })),
+                ..Default::default()
+            });
             self.emit_queue();
 
             let outcome = copy_to_workspace(
@@ -291,25 +288,22 @@ impl ImportQueue {
                         self.finalize(media_id, ImportStatus::Failed {
                             detail: e.to_string(),
                         });
-                        let _ = self.app.emit(
+                        self.events.emit(
                             events::ERROR,
                             serde_json::json!({
                                 "mediaId": media_id.to_string(),
                                 "detail": e.to_string(),
                             }),
                         );
-                        logs::emit_via_app(
-                            &self.app,
-                            logs::LogEntryInput {
-                                level: logs::LogLevel::Error,
-                                category: logs::LogCategory::Import,
-                                source: logs::LogSource::User,
-                                message: format!("Import failed: {e}"),
-                                op_id: Some(log_op_id),
-                                op_state: Some(logs::OpState::Err),
-                                ..Default::default()
-                            },
-                        );
+                        self.log_slot.emit(logs::LogEntryInput {
+                            level: logs::LogLevel::Error,
+                            category: logs::LogCategory::Import,
+                            source: logs::LogSource::User,
+                            message: format!("Import failed: {e}"),
+                            op_id: Some(log_op_id),
+                            op_state: Some(logs::OpState::Err),
+                            ..Default::default()
+                        });
                     } else {
                         patch_derivative_paths_after_hash_migration(
                             &next.handle,
@@ -329,29 +323,26 @@ impl ImportQueue {
                             ImportStatus::Completed,
                             Some(copy.dest_rel.to_string_lossy().to_string()),
                         );
-                        let _ = self.app.emit(
+                        self.events.emit(
                             events::COMPLETE,
                             serde_json::json!({
                                 "mediaId": media_id.to_string(),
                                 "pathRel": copy.dest_rel.to_string_lossy(),
                             }),
                         );
-                        logs::emit_via_app(
-                            &self.app,
-                            logs::LogEntryInput {
-                                level: logs::LogLevel::Info,
-                                category: logs::LogCategory::Import,
-                                source: logs::LogSource::User,
-                                message: format!(
-                                    "Imported {} → {}",
-                                    next.source.display(),
-                                    copy.dest_rel.display()
-                                ),
-                                op_id: Some(log_op_id),
-                                op_state: Some(logs::OpState::Ok),
-                                ..Default::default()
-                            },
-                        );
+                        self.log_slot.emit(logs::LogEntryInput {
+                            level: logs::LogLevel::Info,
+                            category: logs::LogCategory::Import,
+                            source: logs::LogSource::User,
+                            message: format!(
+                                "Imported {} → {}",
+                                next.source.display(),
+                                copy.dest_rel.display()
+                            ),
+                            op_id: Some(log_op_id),
+                            op_state: Some(logs::OpState::Ok),
+                            ..Default::default()
+                        });
                     }
                 }
                 Ok(None) => {
@@ -363,25 +354,22 @@ impl ImportQueue {
                     self.finalize(media_id, ImportStatus::Failed {
                         detail: format!("{e:#}"),
                     });
-                    let _ = self.app.emit(
+                    self.events.emit(
                         events::ERROR,
                         serde_json::json!({
                             "mediaId": media_id.to_string(),
                             "detail": format!("{e:#}"),
                         }),
                     );
-                    logs::emit_via_app(
-                        &self.app,
-                        logs::LogEntryInput {
-                            level: logs::LogLevel::Error,
-                            category: logs::LogCategory::Import,
-                            source: logs::LogSource::User,
-                            message: format!("Import copy failed: {e:#}"),
-                            op_id: Some(log_op_id),
-                            op_state: Some(logs::OpState::Err),
-                            ..Default::default()
-                        },
-                    );
+                    self.log_slot.emit(logs::LogEntryInput {
+                        level: logs::LogLevel::Error,
+                        category: logs::LogCategory::Import,
+                        source: logs::LogSource::User,
+                        message: format!("Import copy failed: {e:#}"),
+                        op_id: Some(log_op_id),
+                        op_state: Some(logs::OpState::Err),
+                        ..Default::default()
+                    });
                 }
             }
         }
