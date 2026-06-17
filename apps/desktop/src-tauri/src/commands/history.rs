@@ -3,6 +3,7 @@
 //! changes (Backend replaces Tauri State + AppHandle).
 
 use uuid::Uuid;
+#[cfg(debug_assertions)]
 use chrono::Utc;
 
 use crate::napi_backend::Backend;

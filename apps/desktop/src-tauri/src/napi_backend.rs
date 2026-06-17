@@ -630,4 +630,42 @@ mod tests {
             sink.names()
         );
     }
+
+    /// S2 deferred cleanup: a `log_emit` dispatch after a workspace is installed
+    /// must reach the EventSink as a `log:entry` event. The LogBus bridge is
+    /// async (broadcast → sink), so we poll until the event appears.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn logged_action_after_workspace_emits_log_entry() {
+        let sink = VecEventSink::new();
+        let b = Backend::new_for_test(Arc::new(sink.clone()));
+        b.init().await.unwrap();
+        // Install a workspace (save_as) so the LogBus slot is live, then emit a log.
+        let dir = tempfile::tempdir().unwrap();
+        let proj = dir.path().join("p.vproj");
+        b.dispatch(
+            "project_save_as",
+            &serde_json::json!({ "path": proj.to_string_lossy() }).to_string(),
+        )
+        .await
+        .unwrap();
+        // LogCategory::System serializes as {"kind":"System"} (adjacently-tagged, unit variant).
+        // LogSource::User serializes as {"kind":"User"} (internally-tagged, unit variant).
+        // LogLevel::Info serializes as "info" (rename_all = "lowercase").
+        let entry = serde_json::json!({
+            "input": {
+                "level": "info",
+                "category": { "kind": "System" },
+                "source": { "kind": "User" },
+                "message": "hi"
+            }
+        })
+        .to_string();
+        b.dispatch("log_emit", &entry).await.unwrap();
+        // poll-until-timeout (broadcast bridge is async)
+        assert!(
+            wait_for_event(&sink, crate::logs::EVENT_LOG_ENTRY, 2000).await,
+            "log:entry must reach the sink; saw {:?}",
+            sink.names()
+        );
+    }
 }
