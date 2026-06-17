@@ -14,8 +14,7 @@ mod app_settings;
 #[cfg(any(feature = "jobs", feature = "export"))]
 mod audio;
 mod cache;
-// `commands` is re-enabled in Task 3 once the command groups exist.
-// mod commands;
+mod commands;
 mod events;
 mod napi_backend;
 
