@@ -94,7 +94,6 @@ use base64::Engine;
 /// Peaks payload for the timeline waveform. `peaks_per_second` maps a layer's
 /// src window onto a slice of `peaks`.
 #[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct WaveformPeaks {
     pub peaks: Vec<f32>,
     pub peaks_per_second: u32,

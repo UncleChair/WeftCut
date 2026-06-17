@@ -29,8 +29,9 @@ Tests added in S3a include:
   bridge reaches the sink end-to-end.
 
 **Playwright S3a gate (`s3a-import.spec.ts`):** import gate green — launches the
-built Electron app, imports a real video file, polls `import_queue_list` until the
-item transitions to `Ready`, and asserts the returned media ID is non-empty.
+built Electron app, imports a PNG image fixture (`test_chart_320x240.png`, no
+ffmpeg dependency), polls `import_queue_list` until the item transitions to
+`Ready`, and asserts the returned media ID is non-empty.
 
 **Playwright protocol + handler specs:** `weftcut-media://` Range + CORS spec and
 dialog/path handler spec both pass.
@@ -39,16 +40,20 @@ dialog/path handler spec both pass.
 
 ### F1 — `jobs` feature enabled
 
-`Cargo.toml` `[features]` default now includes `jobs`; the napi
-`build_backend` assembles `ImportQueue::new(events, log_slot)` when the
-feature is active.
+`Cargo.toml` `[features]` keeps `default = []`; `jobs` is NOT in the default
+feature set. It is enabled explicitly via the `napi:build` script's
+`--features jobs` flag (keeping `export`, `cloud`, `mcp`, and `motifs` OFF).
+When the feature is active `build_backend` assembles
+`ImportQueue::new(events, log_slot)`.
 
 ### F2 — Jobs + import decoupled to EventSink / LogBusSlot
 
 `ImportQueue::new` takes `Arc<dyn EventSink>` + `LogBusSlot`. No
-`tauri::AppHandle` dependency. Events (`media:import:progress`,
-`media:import:ready`, `media:import:error`) reach the Electron renderer through
-the same napi TSFN bridge as all other backend events.
+`tauri::AppHandle` dependency. Import lifecycle events (`import:queue`,
+`import:started`, `import:complete`, `import:error`) and derivative job events
+(`media:job_started`, `media:job_complete`, `media:job_error`) reach the
+Electron renderer through the same napi TSFN bridge as all other backend
+events.
 
 ### F3 — ffmpeg bootstrap
 
