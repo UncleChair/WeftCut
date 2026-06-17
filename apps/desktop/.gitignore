@@ -1,0 +1,4 @@
+# napi-rs addon build output (rebuilt locally / in CI)
+src-tauri/*.node
+src-tauri/index.js
+src-tauri/index.d.ts
