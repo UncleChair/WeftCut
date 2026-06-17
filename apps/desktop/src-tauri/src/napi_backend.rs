@@ -199,7 +199,7 @@ impl Backend {
 
     pub async fn dispatch(&self, cmd: &str, args: &str) -> std::result::Result<String, String> {
         match cmd {
-            "ping" => Ok(serde_json::to_string("pong").unwrap()),
+            "ping" => Ok(serde_json::to_string(crate::commands::prefs::ping()).unwrap()),
             "project_summary" => ser(crate::commands::query::project_summary(self).await),
             "add_track" => ser(crate::commands::mutations::add_track(self).await),
             "separate_audio_to_new_track" => {
@@ -320,6 +320,63 @@ impl Backend {
                 let a: crate::commands::DebugSimulateAgentSessionArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
                 ser(crate::commands::history::debug_simulate_agent_session(self, a.reason).await)
             }
+            // ---- prefs / settings / recents / keybindings / logs / agent ----
+            "get_project_settings" => ser(crate::commands::prefs::get_project_settings(self).await),
+            "update_project_settings" => {
+                let a: crate::commands::prefs::UpdateProjectSettingsArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::prefs::update_project_settings(self, a.patch).await)
+            }
+            "app_settings_get" => ser(crate::commands::prefs::app_settings_get(self).await),
+            "app_settings_set" => {
+                let a: crate::commands::prefs::AppSettingsSetArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::prefs::app_settings_set(self, a.patch).await)
+            }
+            "view_state_get" => ser(crate::commands::prefs::view_state_get(self).await),
+            "view_state_set" => {
+                let a: crate::commands::prefs::ViewStateSetArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::prefs::view_state_set(self, a.state).await)
+            }
+            "export_settings_get" => ser(crate::commands::prefs::export_settings_get(self).await),
+            "export_settings_set" => {
+                let a: crate::commands::prefs::ExportSettingsSetArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::prefs::export_settings_set(self, a.settings).await)
+            }
+            "workspace_dir" => ser(crate::commands::prefs::workspace_dir(self).await),
+            "recents_list" => ser(crate::commands::prefs::recents_list(self).await),
+            "recents_remove" => {
+                let a: crate::commands::prefs::RecentsRemoveArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::prefs::recents_remove(self, a.path).await)
+            }
+            "recents_get_reopen_on_launch" => ser(crate::commands::prefs::recents_get_reopen_on_launch(self).await),
+            "recents_set_reopen_on_launch" => {
+                let a: crate::commands::prefs::RecentsSetReopenOnLaunchArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::prefs::recents_set_reopen_on_launch(self, a.value).await)
+            }
+            "recents_most_recent" => ser(crate::commands::prefs::recents_most_recent(self).await),
+            "recents_last_new_project_parent" => ser(crate::commands::prefs::recents_last_new_project_parent(self).await),
+            "keybindings_get" => ser(crate::commands::prefs::keybindings_get(self).await),
+            "keybindings_set" => {
+                let a: crate::commands::prefs::KeybindingsSetArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::prefs::keybindings_set(self, a.action, a.keys).await)
+            }
+            "keybindings_reset_all" => ser(crate::commands::prefs::keybindings_reset_all(self).await),
+            "keybindings_export" => {
+                let a: crate::commands::prefs::KeybindingsExportArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::prefs::keybindings_export(self, a.dest).await)
+            }
+            "keybindings_import" => {
+                let a: crate::commands::prefs::KeybindingsImportArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::prefs::keybindings_import(self, a.src).await)
+            }
+            "agent_session_get" => ser(crate::commands::prefs::agent_session_get(self).await),
+            "agent_session_end" => ser(crate::commands::prefs::agent_session_end(self).await),
+            "log_list" => ser(crate::commands::prefs::log_list(self).await),
+            "log_clear" => ser(crate::commands::prefs::log_clear(self).await),
+            "log_emit" => {
+                let a: crate::commands::prefs::LogEmitArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::prefs::log_emit(self, a.input).await)
+            }
+            "log_dir_path" => ser(crate::commands::prefs::log_dir_path(self).await),
             other => Err(format!("unavailable: '{other}' is wired in a later stage (S3/S4/S5)")),
         }
     }
@@ -423,5 +480,26 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// S2 prefs: `app_settings_set` must fire `app_settings:changed`.
+    /// An empty patch `{}` is a valid `AppSettingsPatch` (all fields optional)
+    /// and is enough to exercise the emit path.
+    #[tokio::test]
+    async fn app_settings_set_emits_changed() {
+        let sink = VecEventSink::new();
+        let b = Backend::new_for_test(Arc::new(sink.clone()));
+        b.init().await.unwrap();
+        let cur = b.dispatch("app_settings_get", "{}").await.unwrap();
+        assert!(!cur.is_empty());
+        // Empty patch — all fields optional, so `{}` deserializes fine.
+        b.dispatch("app_settings_set", r#"{"patch":{}}"#)
+            .await
+            .expect("app_settings_set must succeed");
+        assert!(
+            sink.names().iter().any(|n| n == "app_settings:changed"),
+            "app_settings:changed must be emitted; got: {:?}",
+            sink.names()
+        );
     }
 }
