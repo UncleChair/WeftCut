@@ -17,6 +17,7 @@ pub mod query;
 pub mod mutations;
 pub mod history;
 pub mod persistence;
+pub mod prefs;
 
 #[derive(Serialize, Clone)]
 pub struct ProjectSummary {
