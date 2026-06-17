@@ -274,6 +274,24 @@ impl Backend {
                 let a: crate::commands::UpdateRoleFlagsArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
                 ser(crate::commands::mutations::update_role_flags(self, a.role, a.patch).await)
             }
+            "project_undo" => ser(crate::commands::history::project_undo(self).await),
+            "project_redo" => ser(crate::commands::history::project_redo(self).await),
+            "project_restore_checkpoint" => {
+                let a: crate::commands::RestoreCheckpointArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::history::project_restore_checkpoint(self, a.checkpoint_id).await)
+            }
+            #[cfg(debug_assertions)]
+            "debug_lock_history" => {
+                let a: crate::commands::DebugLockHistoryArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::history::debug_lock_history(self, a.reason).await)
+            }
+            #[cfg(debug_assertions)]
+            "debug_unlock_history" => ser(crate::commands::history::debug_unlock_history(self).await),
+            #[cfg(debug_assertions)]
+            "debug_simulate_agent_session" => {
+                let a: crate::commands::DebugSimulateAgentSessionArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::history::debug_simulate_agent_session(self, a.reason).await)
+            }
             other => Err(format!("unavailable: '{other}' is wired in a later stage (S3/S4/S5)")),
         }
     }
@@ -297,6 +315,27 @@ mod tests {
         let json = b.dispatch("project_summary", "{}").await.unwrap();
         assert!(json.contains("\"track_count\""));
     }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn undo_after_add_track_restores_baseline() {
+        let sink = VecEventSink::new();
+        let b = Backend::new_for_test(Arc::new(sink));
+        b.init().await.unwrap();
+        // Capture baseline track count (blank project = 2 reserved A/B-roll tracks).
+        let before_json = b.dispatch("project_summary", "{}").await.unwrap();
+        let before: serde_json::Value = serde_json::from_str(&before_json).unwrap();
+        let baseline = before["track_count"].as_u64().expect("track_count must be present") as usize;
+        // Add one track → baseline + 1.
+        b.dispatch("add_track", "{}").await.unwrap();
+        let after_json = b.dispatch("project_summary", "{}").await.unwrap();
+        let after: serde_json::Value = serde_json::from_str(&after_json).unwrap();
+        assert_eq!(after["track_count"].as_u64().unwrap() as usize, baseline + 1);
+        // Undo → back to baseline.
+        b.dispatch("project_undo", "{}").await.unwrap();
+        let undone_json = b.dispatch("project_summary", "{}").await.unwrap();
+        let undone: serde_json::Value = serde_json::from_str(&undone_json).unwrap();
+        assert_eq!(undone["track_count"].as_u64().unwrap() as usize, baseline);
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn add_track_then_summary_grows_and_emits() {
         let sink = VecEventSink::new();
