@@ -13,32 +13,34 @@ export function getCurrentWindow() {
   return {
     minimize: ctl('minimize'),
     toggleMaximize: ctl('toggleMaximize'),
-    maximize: ctl('maximize'),
-    unmaximize: ctl('unmaximize'),
+    // No direct maximize/unmaximize handlers in S2 main; safe no-ops.
+    maximize: () => Promise.resolve(),
+    unmaximize: () => Promise.resolve(),
     close: ctl('close'),
     // show() is called in main.tsx's requestAnimationFrame on boot.
     // The Electron main already shows the window via ready-to-show; this
     // no-ops so the renderer's call is harmless.
     show: () => Promise.resolve(),
-    setProgressBar: (_progress: number, _opts?: unknown) =>
-      window.api.invoke('window:setProgressBar', { _progress, _opts }),
     // WindowControls.tsx calls isMaximized() on mount to sync the glyph.
-    // S1 stub: always returns false (not maximized).
-    isMaximized: () => Promise.resolve(false),
+    // Real call to the main window:isMaximized handler.
+    isMaximized: () => window.api.invoke('window:isMaximized') as Promise<boolean>,
     // WindowControls.tsx calls onResized(cb) to keep the glyph in sync.
-    // S1 stub: registers nothing, returns a no-op unlisten.
+    // No backend subscription in S2; returns a no-op unlisten.
     onResized: (_cb: () => void) => Promise.resolve(() => undefined),
-    // App.tsx calls setProgressBar via Tauri's ProgressBarStatus API.
-    // S1 stub: no-op.
-    setTitle: (_title: string) => Promise.resolve(),
+    // App.tsx calls setTitle(string).
+    setTitle: (title: string) => window.api.invoke('window:setTitle', title) as Promise<void>,
     // App.tsx checks isFocused() in a drag-drop handler.
+    // No backend handler in S2; always returns true (safe default).
     isFocused: () => Promise.resolve(true),
     // App.tsx calls destroy() on emergency close confirmation.
-    destroy: () => window.api.invoke('window:destroy'),
+    // No backend handler in S2; no-op.
+    destroy: () => Promise.resolve(),
     // PerfHUD.tsx calls onCloseRequested.
+    // No backend subscription in S2; returns a no-op unlisten.
     onCloseRequested: (_cb: (event: { preventDefault: () => void }) => void | Promise<void>) =>
       Promise.resolve(() => undefined),
     // App.tsx calls setProgressBar({ status, progress }).
+    // No backend handler in S2; no-op.
     setProgressBar: (_opts: unknown) => Promise.resolve(),
   }
 }

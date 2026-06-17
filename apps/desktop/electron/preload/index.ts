@@ -2,12 +2,9 @@ import { contextBridge, ipcRenderer } from 'electron'
 
 type Listener = (payload: unknown) => void
 
-// S1 stub: invoke rejects with a clear message so callers hit their
-// error/empty paths instead of white-screening.
-// S2 will replace this with real ipcRenderer.invoke -> main -> Backend dispatch.
 const api = {
-  invoke(channel: string, _args?: unknown): Promise<never> {
-    return Promise.reject(new Error(`[stub] backend not wired in S1: ${channel}`))
+  invoke(channel: string, args?: unknown): Promise<unknown> {
+    return ipcRenderer.invoke('backend:invoke', { channel, args })
   },
   // Event subscription: real wiring lands in S2 (TSFN -> main -> webContents.send).
   on(event: string, cb: Listener): () => void {
