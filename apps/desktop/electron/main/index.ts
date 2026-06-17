@@ -1,7 +1,15 @@
 import path from 'node:path'
 import fs from 'node:fs'
+import { Readable } from 'node:stream'
 import { createRequire } from 'node:module'
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, protocol } from 'electron'
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'weftcut-media',
+    privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true },
+  },
+])
 
 const require_ = createRequire(import.meta.url)
 const { Backend } = require_('@weftcut/core') as typeof import('@weftcut/core')
@@ -70,6 +78,59 @@ app.whenReady().then(async () => {
   ipcMain.handle('window:isMaximized', () => !!mainWindow?.isMaximized())
   ipcMain.handle('window:setTitle', (_e, title: string) => mainWindow?.setTitle(title))
   ipcMain.handle('path:documentDir', () => app.getPath('documents'))
+
+  protocol.handle('weftcut-media', async (request) => {
+    // URL form: weftcut-media://localhost/<encodeURIComponent(absPath)>
+    const u = new URL(request.url)
+    const abs = decodeURIComponent(u.pathname.replace(/^\//, ''))
+    if (!path.isAbsolute(abs)) {
+      return new Response('bad path', { status: 403 })
+    }
+    let stat: fs.Stats
+    try {
+      stat = fs.statSync(abs)
+    } catch {
+      return new Response('not found', { status: 404 })
+    }
+    if (!stat.isFile()) return new Response('not a file', { status: 404 })
+
+    const total = stat.size
+    const range = request.headers.get('Range')
+    const headersBase: Record<string, string> = {
+      'Accept-Ranges': 'bytes',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Expose-Headers': 'Content-Range, Content-Length',
+    }
+
+    if (range) {
+      const m = /^bytes=(\d*)-(\d*)$/.exec(range.trim())
+      if (!m) return new Response('bad range', { status: 416 })
+      let start = m[1] === '' ? 0 : parseInt(m[1], 10)
+      let end = m[2] === '' ? total - 1 : parseInt(m[2], 10)
+      if (Number.isNaN(start) || Number.isNaN(end) || start > end || start >= total) {
+        return new Response('range not satisfiable', {
+          status: 416,
+          headers: { 'Content-Range': `bytes */${total}` },
+        })
+      }
+      if (end >= total) end = total - 1
+      const stream = fs.createReadStream(abs, { start, end })
+      return new Response(Readable.toWeb(stream) as unknown as ReadableStream, {
+        status: 206,
+        headers: {
+          ...headersBase,
+          'Content-Range': `bytes ${start}-${end}/${total}`,
+          'Content-Length': String(end - start + 1),
+        },
+      })
+    }
+
+    const stream = fs.createReadStream(abs)
+    return new Response(Readable.toWeb(stream) as unknown as ReadableStream, {
+      status: 200,
+      headers: { ...headersBase, 'Content-Length': String(total) },
+    })
+  })
 
   const win = await createWindow()
 
