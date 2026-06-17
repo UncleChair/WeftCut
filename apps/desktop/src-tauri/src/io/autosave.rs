@@ -55,7 +55,7 @@ impl AutosaveController {
     /// broadcast channel closes).
     pub fn spawn(handle: ProjectHandle, workspace: WorkspaceSlot) -> Self {
         let (force_tx, force_rx) = mpsc::channel(8);
-        tauri::async_runtime::spawn(autosave_loop(handle, workspace, force_rx));
+        tokio::spawn(autosave_loop(handle, workspace, force_rx));
         Self { force: force_tx }
     }
 

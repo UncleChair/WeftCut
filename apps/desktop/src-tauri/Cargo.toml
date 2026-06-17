@@ -6,35 +6,18 @@ description = "WeftCut desktop app"
 authors = ["WeftCut"]
 publish = false
 rust-version = "1.77"
-default-run = "weftcut"
 
 [lib]
 name = "weftcut_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
-
-[[bin]]
-name = "weftcut"
-path = "src/main.rs"
+crate-type = ["cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+napi-build = "2"
 
 [dependencies]
-# Tauri shell
-tauri = { version = "2", features = ["webview-data-url", "protocol-asset"] }
-tauri-plugin-dialog = "2"
-tauri-plugin-fs = "2"
-tauri-plugin-shell = "2"
-# Desktop polish: one running instance (second launch focuses the first),
-# and window size/position/maximized persistence across launches.
-tauri-plugin-single-instance = "2"
-tauri-plugin-window-state = "2"
-# Native toasts for export completed/failed while the window is unfocused.
-tauri-plugin-notification = "2"
-# Dev-only: drives the running webview from the tauri-mcp-server for in-app
-# testing. Registered behind `#[cfg(debug_assertions)]` in lib.rs so it never
-# activates in release builds.
-tauri-plugin-mcp-bridge = "0.11"
+# napi-rs: WeftCut's domain core is exposed to Electron as a native addon.
+napi = { version = "3", default-features = false, features = ["napi6", "tokio_rt"] }
+napi-derive = "3"
 
 # Async + serialization
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "fs", "io-util", "signal", "process"] }
@@ -145,7 +128,14 @@ insta = { version = "1", features = ["json", "yaml"] }
 
 [features]
 default = []
-custom-protocol = ["tauri/custom-protocol"]
+# Deferred subsystems — OFF in S2, each turned on in its own stage.
+jobs = []        # import/proxy/conform/thumbnails/waveform + io::probe + ffmpeg (S3)
+export = []      # video export + WS videosink (S3)
+cloud = []       # transcription/TTS + keyring (S4)
+mcp = []         # MCP server (S4)
+motifs = []      # Motif capture (S5)
+media_drop = []  # webview drag-drop path recovery (S3)
+sysmon = []      # dev PerfHUD sampler
 
 # The 10-bit export's WS video sink (export/videosink.rs) reads ~6 MB/frame
 # through tungstenite; at opt-level 0 its read loop tops out at ~107 MB/s on

@@ -22,8 +22,13 @@ pub use entry::{LogCategory, LogEntry, LogEntryInput, LogLevel, LogSource, OpSta
 pub use tracing_layer::LogBusLayer;
 
 /// Convenience: emit a log entry through an `AppHandle`. Used by
-/// producers (jobs, export, MCP server) that hold an `AppHandle` but
+/// producers (jobs, MCP server, motifs) that hold an `AppHandle` but
 /// don't manage their own `LogBusSlot` clone. No-op pre-workspace.
+///
+/// Gated on the feature set of its only callers (all deferred): once those
+/// stages migrate off `tauri::AppHandle`, this helper is replaced by a
+/// `&dyn EventSink`-shaped path. Ungated `logs` carries no `tauri` reference.
+#[cfg(any(feature = "jobs", feature = "mcp", feature = "motifs"))]
 pub fn emit_via_app(app: &tauri::AppHandle, input: LogEntryInput) {
     use tauri::Manager;
     if let Some(slot) = app.try_state::<LogBusSlot>() {

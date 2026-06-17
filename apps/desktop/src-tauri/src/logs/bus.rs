@@ -27,9 +27,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use parking_lot::RwLock;
-use tauri::AppHandle;
-use tauri::Emitter;
 use tokio::sync::{broadcast, mpsc};
+
+use crate::events::EventSink;
 
 use super::entry::{LogEntry, LogEntryInput};
 use super::redact::redact_in_place;
@@ -71,7 +71,7 @@ impl LogBus {
     /// if needed. Returns immediately; the writer task runs in the
     /// background. Old session files (>20) are pruned by the writer on
     /// startup.
-    pub fn spawn(workspace: &PathBuf, app_handle: AppHandle) -> Self {
+    pub fn spawn(workspace: &PathBuf, events: Arc<dyn EventSink>) -> Self {
         let logs_dir = workspace.join("Logs");
         let (broadcast_tx, _) = broadcast::channel(BROADCAST_CAPACITY);
         let (writer_tx, writer_rx) = mpsc::channel(WRITER_CAPACITY);
@@ -80,28 +80,23 @@ impl LogBus {
         // session files; prunes oldest. Owns its own file handle and
         // is the only writer. Exits when the mpsc closes (last bus
         // clone dropped).
-        tauri::async_runtime::spawn(writer::run(logs_dir, writer_rx));
+        tokio::spawn(writer::run(logs_dir, writer_rx));
 
-        // Broadcast → Tauri-event bridge. One subscriber, fan-out into
+        // Broadcast → UI-event bridge. One subscriber, fan-out into
         // the webview as `log:entry` events. Spawned on the bus's own
         // lifetime — when the bus is replaced, this task's broadcast
         // receiver returns Closed and the loop exits.
         let mut bridge_rx = broadcast_tx.subscribe();
-        let app_for_bridge = app_handle.clone();
-        tauri::async_runtime::spawn(async move {
+        let events_for_bridge = events.clone();
+        tokio::spawn(async move {
             use tokio::sync::broadcast::error::RecvError;
             loop {
                 match bridge_rx.recv().await {
                     Ok(entry) => {
-                        // Fire-and-forget; if the webview is closed
-                        // the emit just errors and we continue.
-                        let _ = app_for_bridge.emit(EVENT_LOG_ENTRY, &entry);
+                        let payload = serde_json::to_value(&entry).unwrap_or(serde_json::Value::Null);
+                        events_for_bridge.emit(EVENT_LOG_ENTRY, payload);
                     }
-                    Err(RecvError::Lagged(_)) => {
-                        // Webview can't keep up. Skip; the ring buffer
-                        // still has the entries for any catch-up read.
-                        continue;
-                    }
+                    Err(RecvError::Lagged(_)) => continue,
                     Err(RecvError::Closed) => break,
                 }
             }
@@ -208,9 +203,4 @@ mod tests {
         // Emit on empty slot is a quiet no-op.
         slot.emit(input("ignored"));
     }
-
-    // Note: full bus tests require a `tauri::AppHandle`, which can't be
-    // constructed in unit-test scope. Bus-level tests run via the
-    // integration smoke test that spins a full tauri runtime in Phase
-    // 1's exit-criteria step.
 }
