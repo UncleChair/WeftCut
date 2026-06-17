@@ -113,9 +113,14 @@ a `media:job_error` (no crash).
     `Accept-Ranges: bytes`.
   - **No artificial body cap** — this lifts the WebView2 ~1 MB 206 ceiling. `AssetRangeSource`'s
     short-read loop still works (it fills in one pass).
-  - **Path safety**: serve only files under an allow-list of roots (the open workspace's media +
-    cache directories, supplied by `Backend`); reject traversal/out-of-root with `403`, missing
-    with `404`, unsatisfiable range with `416`.
+  - **Path safety**: the renderer is first-party (contextIsolation, `webSecurity:true`, no remote
+    content) — the same trust level Tauri's `asset://` had, and a media item's `path_abs` can
+    legitimately be anywhere on disk (a DirectExport original, or a source before its workspace copy
+    lands), so a workspace/cache root allow-list would wrongly reject valid media. S3a serves any
+    **existing regular file by absolute path**: reject a non-absolute / undecodable path with `403`,
+    a missing file or non-regular file with `404`, an unsatisfiable range with `416`. Tightening to
+    a per-project media-path allow-list (the snapshot's `path_abs`/`proxy_path`/… set) is future
+    hardening, not S3a.
 - `convertFileSrc(path)` (in `electron-compat/tauri-core.ts`, an allowed compat-layer edit) returns
   `weftcut-media://localhost/<encodeURIComponent(absPath)>`. No `src/**` app edits.
 
@@ -251,7 +256,8 @@ Exact arg structs for the multi-field commands (`export_project_audio_only`, `mu
 ## Error handling
 
 - ffmpeg unavailable / bootstrap failure → `media:job_error` → existing UI error state.
-- `protocol.handle` → `403` (out-of-root / traversal), `404` (missing), `416` (unsatisfiable range).
+- `protocol.handle` → `403` (non-absolute / undecodable path), `404` (missing / non-regular file),
+  `416` (unsatisfiable range).
 - Job failure → `media:job_error` with the failing kind; the actor is not patched; UI keeps the
   pre-job derivative state.
 - WS sink connection drop → export surfaces an error to the renderer orchestrator (existing
