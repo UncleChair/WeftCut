@@ -35,5 +35,26 @@ export async function runBoundary1(): Promise<Boundary1Result> {
   const p50Ms = samples[Math.floor(N * 0.5)]
   const p99Ms = samples[Math.floor(N * 0.99)]
 
-  return { p50Ms, p99Ms, payloadBytes, tickRatio: NaN, eventsReceived: -1 }
+  // Non-blocking: a JS-thread timer must keep ticking while a heavy native op runs.
+  let ticks = 0
+  const intervalMs = 10
+  const timer = setInterval(() => { ticks++ }, intervalMs)
+  const tStart = performance.now()
+  await native.heavyMutation(800) // tune so elapsed >= ~500ms on this machine
+  const elapsedMs = performance.now() - tStart
+  clearInterval(timer)
+  const expectedTicks = elapsedMs / intervalMs
+  const tickRatio = ticks / expectedTicks // ~1.0 == event loop never blocked
+
+  // ThreadsafeFunction: expect 5 events delivered to the JS callback.
+  const events: string[] = []
+  await new Promise<void>((resolve) => {
+    const done = setTimeout(resolve, 3000)
+    native.subscribeAndFire((_err, msg) => {
+      events.push(msg)
+      if (events.length >= 5) { clearTimeout(done); resolve() }
+    })
+  })
+
+  return { p50Ms, p99Ms, payloadBytes, tickRatio, eventsReceived: events.length }
 }
