@@ -14,6 +14,7 @@ use crate::state::{
 };
 
 pub mod query;
+pub mod mutations;
 
 #[derive(Serialize, Clone)]
 pub struct ProjectSummary {
@@ -651,4 +652,167 @@ fn hsl_to_hex(h: f32, s: f32, l: f32) -> String {
         ((g + m) * 255.0).round().clamp(0.0, 255.0) as u8,
         ((b + m) * 255.0).round().clamp(0.0, 255.0) as u8,
     )
+}
+
+
+// ---- Mutation command Args structs ----
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SeparateAudioToNewTrackArgs {
+    pub layer_id: String,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddColorLayerArgs {
+    pub track_id: Option<String>,
+    pub color: Option<crate::state::Rgba>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub t_start_us: crate::state::time::TimeUs,
+    pub duration_us: Option<crate::state::time::TimeUs>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddMediaLayerArgs {
+    pub track_id: String,
+    pub media_id: String,
+    pub t_start_us: crate::state::time::TimeUs,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddTextLayerArgs {
+    pub track_id: Option<String>,
+    pub content: Option<String>,
+    pub t_start_us: crate::state::time::TimeUs,
+    pub duration_us: Option<crate::state::time::TimeUs>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddSubtitlesLayerArgs {
+    pub media_id: String,
+    pub t_start_us: crate::state::time::TimeUs,
+    pub duration_us: crate::state::time::TimeUs,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateLayerArgs {
+    pub layer_id: String,
+    pub patch: crate::state::actor::LayerPatch,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateLayerParamsArgs {
+    pub layer_id: String,
+    pub patch: crate::state::actor::LayerParamsPatch,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateLayerParamTrackArgs {
+    pub layer_id: String,
+    pub param_key: String,
+    pub track: crate::state::animated::Animated<f64>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateLayerParamTracksArgs {
+    pub layer_id: String,
+    pub entries: Vec<(String, crate::state::animated::Animated<f64>)>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MoveLayerArgs {
+    pub layer_id: String,
+    pub new_track_id: String,
+    pub new_t_start_us: crate::state::time::TimeUs,
+    pub escape_group: Option<bool>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrimLayerArgs {
+    pub layer_id: String,
+    pub edge: String,
+    pub new_t_us: crate::state::time::TimeUs,
+    pub escape_group: Option<bool>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SplitLayerGroupedArgs {
+    pub layer_id: String,
+    pub at_t_us: crate::state::time::TimeUs,
+    pub escape_group: Option<bool>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupsCreateArgs {
+    pub layer_ids: Vec<String>,
+    pub label: Option<String>,
+    pub reassign: Option<bool>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupsDissolveArgs {
+    pub group_id: String,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DuplicateLayerArgs {
+    pub layer_id: String,
+    pub t_offset_us: crate::state::time::TimeUs,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteLayerArgs {
+    pub layer_id: String,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetCompositionArgs {
+    pub patch: crate::state::actor::CompositionPatch,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddMarkerArgs {
+    pub t_us: crate::state::time::TimeUs,
+    pub end_t_us: Option<crate::state::time::TimeUs>,
+    pub label: String,
+    pub color: crate::state::Rgba,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateTrackFlagsArgs {
+    pub track_id: String,
+    pub patch: crate::state::TrackFlagsPatch,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetRoleGainArgs {
+    pub role: crate::state::audio_role::AudioRole,
+    pub gain_db: f64,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateRoleFlagsArgs {
+    pub role: crate::state::audio_role::AudioRole,
+    pub patch: crate::state::audio_role::RoleFlagsPatch,
 }
