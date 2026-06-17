@@ -32,6 +32,8 @@ pub struct Backend {
     pub(crate) keybindings: KeybindingsStore,
     pub(crate) app_settings: AppSettingsStore,
     pub(crate) cache: CacheLayout,
+    #[cfg(feature = "jobs")]
+    pub(crate) import_queue: crate::jobs::import::ImportQueue,
     pub(crate) workspace: WorkspaceSlot,
     pub(crate) agent_session: AgentSessionSlot,
     pub(crate) log_slot: LogBusSlot,
@@ -52,6 +54,8 @@ fn build_backend(events: Arc<dyn EventSink>, config_dir: String, cache_dir: Stri
         tracing::warn!("cache dir setup failed: {e:#}");
     }
     let log_slot = LogBusSlot::new();
+    #[cfg(feature = "jobs")]
+    let import_queue = crate::jobs::import::ImportQueue::new(events.clone(), log_slot.clone());
 
     // Forward our crate's `tracing` events into whichever LogBus is current.
     // `try_init` (vs `init`) so constructing multiple Backends — e.g. in the
@@ -74,6 +78,8 @@ fn build_backend(events: Arc<dyn EventSink>, config_dir: String, cache_dir: Stri
         keybindings: KeybindingsStore::new(config_path.clone()),
         app_settings: AppSettingsStore::new(config_path),
         cache,
+        #[cfg(feature = "jobs")]
+        import_queue,
         workspace: WorkspaceSlot::new(),
         agent_session: AgentSessionSlot::new(),
         log_slot,
@@ -392,6 +398,18 @@ impl Backend {
                 ser(crate::commands::prefs::log_emit(self, a.input).await)
             }
             "log_dir_path" => ser(crate::commands::prefs::log_dir_path(self).await),
+            #[cfg(feature = "jobs")]
+            "import_media" => {
+                let a: crate::commands::PathArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::media::import_media(self, a.path).await)
+            }
+            #[cfg(feature = "jobs")]
+            "import_cancel" => {
+                let a: crate::commands::MediaIdArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::media::import_cancel(self, a.media_id).await)
+            }
+            #[cfg(feature = "jobs")]
+            "import_queue_list" => ser(crate::commands::media::import_queue_list(self).await),
             other => Err(format!("unavailable: '{other}' is wired in a later stage (S3/S4/S5)")),
         }
     }
@@ -509,6 +527,36 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A 1×1 PNG (67 bytes) — imports as MediaKind::Image, so no ffmpeg job runs.
+    #[cfg(feature = "jobs")]
+    const TINY_PNG: &[u8] = &[
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+        0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x62, 0x00, 0x01, 0x00, 0x00,
+        0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
+        0x42, 0x60, 0x82,
+    ];
+
+    #[cfg(feature = "jobs")]
+    #[tokio::test]
+    async fn import_media_adds_to_pool_and_returns_id() {
+        let sink = crate::events::VecEventSink::new();
+        let b = Backend::new_for_test(std::sync::Arc::new(sink.clone()));
+        b.init().await.unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let png = dir.path().join("pixel.png");
+        std::fs::write(&png, TINY_PNG).unwrap();
+
+        let args = serde_json::json!({ "path": png.to_string_lossy() }).to_string();
+        let id_json = b.dispatch("import_media", &args).await.unwrap();
+        let media_id: String = serde_json::from_str(&id_json).unwrap();
+        assert!(!media_id.is_empty(), "import_media returns a media id");
+
+        let summary = b.dispatch("project_summary", "{}").await.unwrap();
+        assert!(summary.contains(&media_id), "the new media id appears in project_summary");
     }
 
     /// S2 prefs: `app_settings_set` must fire `app_settings:changed`.

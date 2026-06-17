@@ -100,13 +100,21 @@ pub async fn project_open(backend: &Backend, path: String) -> Result<(), String>
         .map_err(|e: CommandError| e.to_string())?;
     backend.recents.push(path, display_name);
 
-    // NOTE (S2): the legacy body fanned out background derivative jobs here
-    // (`jobs::enqueue_for_media` per media item, to regenerate proxies/
-    // thumbnails/waveforms missing or stale after `load_from_dir`). That path
-    // is deferred: the `jobs` module is feature-gated off in the napi build
-    // and `enqueue_for_media` takes a `tauri::AppHandle` the napi `Backend`
-    // does not hold. Re-wire it to a Backend-shaped enqueue when the jobs
-    // feature lands in a later stage.
+    // S3a: re-fan-out background derivative jobs for every media item, to
+    // regenerate proxies / thumbnails / waveforms missing or stale after
+    // `load_from_dir`. Mirrors the legacy Tauri `project_open` tail.
+    #[cfg(feature = "jobs")]
+    {
+        let snap = handle.snapshot().await;
+        for item in snap.media_pool.values() {
+            crate::jobs::enqueue_for_media(
+                backend.events.clone(),
+                backend.cache.clone(),
+                handle.clone(),
+                item.clone(),
+            );
+        }
+    }
 
     Ok(())
 }

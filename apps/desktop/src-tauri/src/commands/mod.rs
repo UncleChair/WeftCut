@@ -18,6 +18,8 @@ pub mod mutations;
 pub mod history;
 pub mod persistence;
 pub mod prefs;
+#[cfg(feature = "jobs")]
+pub mod media;
 
 #[derive(Serialize, Clone)]
 pub struct ProjectSummary {
@@ -847,6 +849,13 @@ pub struct DebugLockHistoryArgs {
 #[serde(rename_all = "camelCase")]
 pub struct PathArgs {
     pub path: String,
+}
+
+#[cfg(feature = "jobs")]
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaIdArgs {
+    pub media_id: String,
 }
 
 /// `project_new_workspace`: keys mirror `ipc/index.ts` (`parentFolder`,
