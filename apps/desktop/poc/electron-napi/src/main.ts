@@ -2,7 +2,8 @@ import { app } from 'electron'
 import * as fs from 'node:fs'
 import { runBoundary1 } from './boundary1'
 import { registerMotifSchemePrivileged, registerMotifProtocol } from './protocol'
-import { createHost, captureFrame } from './capture'
+import { createHost } from './capture'
+import { runBoundary2 } from './boundary2'
 
 const useSoftware = process.argv.includes('--software')
 if (useSoftware) app.disableHardwareAcceleration()
@@ -15,9 +16,8 @@ app.whenReady().then(async () => {
   console.log('[boundary1]', JSON.stringify(b1, null, 2))
 
   const host = await createHost()
-  const png = await captureFrame(host, 0.35)
-  fs.writeFileSync('frame-0.35.png', png)
-  console.log('[capture] wrote frame-0.35.png', png.length, 'bytes')
+  const b2 = await runBoundary2(host)
+  console.log('[boundary2]', JSON.stringify(b2, null, 2))
 
   app.quit()
 })
