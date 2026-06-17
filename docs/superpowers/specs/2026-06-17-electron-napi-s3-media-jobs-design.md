@@ -80,13 +80,16 @@ dialog, fs-append, path, resize forwarder), and the EventSink decoupling inside 
 
 ### Shared foundation (lands in S3a; both sub-stages depend on it)
 
-**F1 — Flip the feature gates.** The addon is built with `jobs` and `export` enabled (which
-transitively pull `audio`, `ffmpeg`, `io::probe`). This is the addon build's feature set, not a
-source edit to call sites. Enabling them re-introduces the jobs/export/audio **Rust unit tests**
-(currently not compiled) into the build; they must pass. `cloud`/`mcp`/`motifs` stay OFF.
+**F1 — Flip the feature gates.** S3a enables **`jobs`** in the addon build, which transitively
+pulls `audio`, `ffmpeg`, `io::probe` (all gated `any(jobs,export)`). `export` is enabled in S3b
+(B1), so S3a's decouple work (F2) touches only `jobs` + `audio`; export's decouple is B1. This is
+the addon build's feature set, not a source edit to call sites. Enabling `jobs` re-introduces the
+jobs/audio **Rust unit tests** (currently not compiled) into the build; they must pass.
+`cloud`/`mcp`/`motifs` stay OFF.
 
-**F2 — EventSink decoupling.** Replace every `app.emit(name, payload)` in `jobs/mod.rs` and
-`export/mod.rs` with `sink.emit(name, serde_json::to_value(payload)?)`, where `sink:
+**F2 — EventSink decoupling.** (Applied to `jobs` in S3a per F1; to `export` in S3b per B1.)
+Replace every `app.emit(name, payload)` in `jobs/mod.rs` (and later `export/mod.rs`) with
+`sink.emit(name, serde_json::to_value(payload)?)`, where `sink:
 Arc<dyn EventSink>` is threaded down from `Backend.events`. Job/export entry functions change their
 first parameter from `&AppHandle` (or `AppHandle`) to `Arc<dyn EventSink>` (or `&dyn EventSink`).
 **Event names are unchanged** (`media:job_*`, `export:transcode_progress`), so the renderer's
@@ -149,7 +152,9 @@ preview code; S3a's job is to feed it real media URLs + real derivatives.
 2. The media-pool shows derivative state; scrub-preview decodes and renders frames from the
    protocol-served proxy/original.
 3. Re-enabled jobs/audio Rust unit tests pass on the addon build.
-4. Playwright-for-Electron **media-conformance + import** gates pass.
+4. Playwright-for-Electron **import + preview** gate passes (import a fixture → job events →
+   derivative paths populated in `project_summary`). Full media-conformance (export-output
+   comparison) is an S3b gate, since it needs export.
 
 ### S3b — Export
 
@@ -186,10 +191,13 @@ paths: `fs:remove`, `fs:exists`, `fs:readDir`, `fs:readFile`, `fs:writeTextFile`
 
 S2 stood up the Playwright-for-Electron harness (`_electron.launch('out/main/index.js')`, ESM
 `__dirname` polyfill). S3 extends it:
-- Port the **media-conformance** specs: the Rust analyzer (video frame-align + audio Goertzel) runs
-  unchanged against `WEFTCUT_TEST_MEDIA` fixtures; only the driver wrapper (tauri-driver +
-  WebdriverIO + msedgedriver → Playwright `_electron`) and the app-launch/selector layer change.
-- Port the **import** specs (S3a gate) and **export** specs incl. eos-tail + overlap (S3b gate).
+- **S3a**: a new **import + preview** spec (import a fixture → poll `project_summary` until job
+  events populate derivative paths). This is the S3a gate.
+- **S3b**: port the **export** specs (incl. eos-tail + overlap) AND the **media-conformance** specs
+  — the Rust analyzer (video frame-align + audio Goertzel) runs unchanged against
+  `WEFTCUT_TEST_MEDIA` fixtures; only the driver wrapper (tauri-driver + WebdriverIO + msedgedriver
+  → Playwright `_electron`) and the app-launch/selector layer change. Media-conformance is an S3b
+  gate because it compares export output to source.
 - The `window.__weftcutTest` `e2eHook` injection surface is preserved (already compiled behind
   `VITE_WEFTCUT_E2E=1`).
 - Motif and UI specs stay on S5 / their own passes.
@@ -253,7 +261,7 @@ Exact arg structs for the multi-field commands (`export_project_audio_only`, `mu
 
 - **Rust unit tests** in `jobs` / `export` / `audio` (compiled once F1 flips the gates) must pass —
   the bulk of the ~300+ tests not currently built.
-- **Playwright-for-Electron gates**: S3a = media-conformance + import; S3b = export.
+- **Playwright-for-Electron gates**: S3a = import + preview; S3b = export + media-conformance.
 - **Parity** = the conformance analyzer's perceptual frame-align + audio-Goertzel checks on
   `WEFTCUT_TEST_MEDIA` fixtures, plus import-derivative correctness.
 
