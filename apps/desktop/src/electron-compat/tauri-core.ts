@@ -18,6 +18,7 @@ export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<
 }
 
 export function convertFileSrc(filePath: string, _protocol?: string): string {
-  // S1 stub: return the path unchanged; S3 wires protocol.handle.
-  return filePath
+  // Electron custom protocol served by protocol.handle('weftcut-media') in main,
+  // with HTTP Range support (lifts the WebView2 asset:// ~1 MB ceiling).
+  return `weftcut-media://localhost/${encodeURIComponent(filePath)}`
 }
