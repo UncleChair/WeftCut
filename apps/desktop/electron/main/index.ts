@@ -1,6 +1,13 @@
 import path from 'node:path'
 import fs from 'node:fs'
-import { app, BrowserWindow } from 'electron'
+import { createRequire } from 'node:module'
+import { app, BrowserWindow, ipcMain } from 'electron'
+
+const require_ = createRequire(import.meta.url)
+const { Backend } = require_('@weftcut/core') as typeof import('@weftcut/core')
+
+let backend: import('@weftcut/core').Backend | null = null
+let mainWindow: BrowserWindow | null = null
 
 const isDev = !!process.env['ELECTRON_RENDERER_URL']
 
@@ -19,6 +26,8 @@ async function createWindow(): Promise<BrowserWindow> {
     },
   })
 
+  mainWindow = win
+
   // Capture renderer console messages to stdout for diagnostics
   win.webContents.on('console-message', (_e, level, message, line, sourceId) => {
     const lvl = ['verbose', 'info', 'warning', 'error'][level] ?? 'log'
@@ -35,6 +44,33 @@ async function createWindow(): Promise<BrowserWindow> {
 }
 
 app.whenReady().then(async () => {
+  // Construct + init the Backend before creating the window
+  backend = new Backend(
+    app.getPath('userData'),
+    path.join(app.getPath('userData'), 'Cache'),
+    (_err: Error | null, msg: string) => {
+      if (!msg) return
+      const { event, payload } = JSON.parse(msg)
+      mainWindow?.webContents.send('evt:' + event, payload)
+    },
+  )
+  await backend.init()
+  console.log('[main] backend init OK')
+
+  ipcMain.handle('backend:invoke', async (_e, { channel, args }) => {
+    const json = await backend!.invoke(channel, JSON.stringify(args ?? {}))
+    return JSON.parse(json)
+  })
+
+  ipcMain.handle('window:minimize', () => mainWindow?.minimize())
+  ipcMain.handle('window:toggleMaximize', () =>
+    mainWindow?.isMaximized() ? mainWindow?.unmaximize() : mainWindow?.maximize(),
+  )
+  ipcMain.handle('window:close', () => mainWindow?.close())
+  ipcMain.handle('window:isMaximized', () => !!mainWindow?.isMaximized())
+  ipcMain.handle('window:setTitle', (_e, title: string) => mainWindow?.setTitle(title))
+  ipcMain.handle('path:documentDir', () => app.getPath('documents'))
+
   const win = await createWindow()
 
   // S1 boot screenshot: when S1_SHOT env is set, capture the window after
