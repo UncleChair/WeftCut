@@ -502,12 +502,22 @@ git commit -m "poc(electron-napi): boundary-1 non-blocking + TSFN event checks"
 import { protocol, net } from 'electron'
 import { pathToFileURL } from 'node:url'
 import * as path from 'node:path'
+import * as fs from 'node:fs'
 
-// The real built-in lower-third, served as motif://lower-third/<path>
+// The real built-in lower-third, served as motif://lower-third/<path>.
+// NOTE: this file is bundled into `main.cjs` at the poc root, so at runtime
+// `__dirname` is the poc root (apps/desktop/poc/electron-napi) — hence `../../`
+// reaches apps/desktop/src-tauri (NOT `../../../`).
 const LOWER_THIRD_DIR = path.resolve(
   __dirname,
-  '../../../src-tauri/src/motifs/catalog/lower-third',
+  '../../src-tauri/src/motifs/catalog/lower-third',
 )
+
+// Fail loudly if the path is wrong, instead of serving 404s that read as a
+// blank capture.
+if (!fs.existsSync(path.join(LOWER_THIRD_DIR, 'index.html'))) {
+  throw new Error(`lower-third not found at ${LOWER_THIRD_DIR} (check the relative path / cwd)`)
+}
 
 export function registerMotifSchemePrivileged(): void {
   protocol.registerSchemesAsPrivileged([
