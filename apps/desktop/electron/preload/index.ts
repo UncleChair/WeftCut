@@ -4,6 +4,11 @@ type Listener = (payload: unknown) => void
 
 const api = {
   invoke(channel: string, args?: unknown): Promise<unknown> {
+    // window:* and path:* are served by direct ipcMain handlers in the main
+    // process, not the napi backend dispatcher. Route them straight through.
+    if (channel.startsWith('window:') || channel.startsWith('path:')) {
+      return ipcRenderer.invoke(channel, args)
+    }
     return ipcRenderer.invoke('backend:invoke', { channel, args })
   },
   // Event subscription: real wiring lands in S2 (TSFN -> main -> webContents.send).
