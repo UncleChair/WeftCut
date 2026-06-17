@@ -34,6 +34,8 @@ pub struct Backend {
     pub(crate) cache: CacheLayout,
     #[cfg(feature = "jobs")]
     pub(crate) import_queue: crate::jobs::import::ImportQueue,
+    #[cfg(feature = "jobs")]
+    pub(crate) audio_meter: crate::commands::media::AudioMeterState,
     pub(crate) workspace: WorkspaceSlot,
     pub(crate) agent_session: AgentSessionSlot,
     pub(crate) log_slot: LogBusSlot,
@@ -80,6 +82,8 @@ fn build_backend(events: Arc<dyn EventSink>, config_dir: String, cache_dir: Stri
         cache,
         #[cfg(feature = "jobs")]
         import_queue,
+        #[cfg(feature = "jobs")]
+        audio_meter: crate::commands::media::AudioMeterState::default(),
         workspace: WorkspaceSlot::new(),
         agent_session: AgentSessionSlot::new(),
         log_slot,
@@ -410,6 +414,33 @@ impl Backend {
             }
             #[cfg(feature = "jobs")]
             "import_queue_list" => ser(crate::commands::media::import_queue_list(self).await),
+            #[cfg(feature = "jobs")]
+            "get_media_thumbnail" => {
+                let a: crate::commands::MediaIdArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::media::get_media_thumbnail(self, a.media_id).await)
+            }
+            #[cfg(feature = "jobs")]
+            "get_waveform_peaks" => {
+                let a: crate::commands::MediaIdArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::media::get_waveform_peaks(self, a.media_id).await)
+            }
+            #[cfg(feature = "jobs")]
+            "ensure_full_proxy" => {
+                let a: crate::commands::MediaIdArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::media::ensure_full_proxy(self, a.media_id).await)
+            }
+            #[cfg(feature = "jobs")]
+            "ensure_conform" => {
+                let a: crate::commands::MediaIdArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::media::ensure_conform(self, a.media_id).await)
+            }
+            #[cfg(feature = "jobs")]
+            "report_audio_meter" => {
+                #[derive(serde::Deserialize)]
+                struct A { report: crate::commands::media::AudioMeterReport }
+                let a: A = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::media::report_audio_meter(self, a.report).await)
+            }
             other => Err(format!("unavailable: '{other}' is wired in a later stage (S3/S4/S5)")),
         }
     }
@@ -557,6 +588,26 @@ mod tests {
 
         let summary = b.dispatch("project_summary", "{}").await.unwrap();
         assert!(summary.contains(&media_id), "the new media id appears in project_summary");
+    }
+
+    #[cfg(feature = "jobs")]
+    #[tokio::test]
+    async fn get_waveform_peaks_unknown_media_errors() {
+        let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
+        b.init().await.unwrap();
+        let args = serde_json::json!({ "mediaId": uuid::Uuid::new_v4().to_string() }).to_string();
+        let err = b.dispatch("get_waveform_peaks", &args).await.unwrap_err();
+        assert!(err.contains("not found"), "unknown media → not found, got: {err}");
+    }
+
+    #[cfg(feature = "jobs")]
+    #[tokio::test]
+    async fn report_audio_meter_stores_snapshot() {
+        let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
+        b.init().await.unwrap();
+        let args = r#"{"report":{"rmsDb":-12.0,"peakDb":-3.0}}"#;
+        let out = b.dispatch("report_audio_meter", args).await.unwrap();
+        assert_eq!(out, "null", "report_audio_meter returns unit/null");
     }
 
     /// S2 prefs: `app_settings_set` must fire `app_settings:changed`.

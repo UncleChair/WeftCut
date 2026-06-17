@@ -88,3 +88,98 @@ pub async fn import_cancel(backend: &Backend, media_id: String) -> Result<bool, 
 pub async fn import_queue_list(backend: &Backend) -> Result<Vec<ImportEntry>, String> {
     Ok(backend.import_queue.list())
 }
+
+use base64::Engine;
+
+/// Peaks payload for the timeline waveform. `peaks_per_second` maps a layer's
+/// src window onto a slice of `peaks`.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WaveformPeaks {
+    pub peaks: Vec<f32>,
+    pub peaks_per_second: u32,
+}
+
+/// Master-bus meter reading pushed by the webview (~2 Hz while playing).
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioMeterReport {
+    pub rms_db: f64,
+    pub peak_db: f64,
+}
+
+/// Latest meter report + arrival instant. Staleness (>2 s) reads as "not playing".
+#[derive(Clone, Default)]
+pub struct AudioMeterState(
+    pub std::sync::Arc<std::sync::Mutex<Option<(std::time::Instant, AudioMeterReport)>>>,
+);
+
+pub async fn get_media_thumbnail(backend: &Backend, media_id: String) -> Result<String, String> {
+    let id = uuid::Uuid::parse_str(&media_id).map_err(|e| format!("invalid media_id: {e}"))?;
+    let handle = backend.project()?;
+    let snap = handle.snapshot().await;
+    let media = snap.media_pool.get(&id).ok_or_else(|| format!("media {media_id} not found"))?;
+    let dir = media.thumbnails_dir.clone().ok_or_else(|| "not_ready".to_string())?;
+    let path = dir.join("004.jpg");
+    let bytes = tokio::fs::read(&path).await.map_err(|e| format!("read thumbnail: {e}"))?;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(format!("data:image/jpeg;base64,{b64}"))
+}
+
+pub async fn get_waveform_peaks(backend: &Backend, media_id: String) -> Result<WaveformPeaks, String> {
+    let id = uuid::Uuid::parse_str(&media_id).map_err(|e| format!("invalid media_id: {e}"))?;
+    let handle = backend.project()?;
+    let snap = handle.snapshot().await;
+    let media = snap.media_pool.get(&id).ok_or_else(|| format!("media {media_id} not found"))?;
+    let path = media.waveform_path.clone().ok_or_else(|| "not_ready".to_string())?;
+    let peaks = tokio::task::spawn_blocking(move || crate::jobs::waveform::read_peaks_file(&path))
+        .await
+        .map_err(|e| format!("join error: {e}"))?
+        .map_err(|e| format!("read peaks: {e:#}"))?;
+    Ok(WaveformPeaks { peaks, peaks_per_second: crate::jobs::waveform::PEAKS_PER_SECOND })
+}
+
+pub async fn ensure_full_proxy(backend: &Backend, media_id: String) -> Result<(), String> {
+    let id = uuid::Uuid::parse_str(&media_id).map_err(|e| format!("invalid media_id: {e}"))?;
+    let handle = backend.project()?;
+    let snap = handle.snapshot().await;
+    let Some(item) = snap.media_pool.get(&id).cloned() else {
+        return Err(format!("no media {media_id}"));
+    };
+    if item.proxy_path.as_ref().map(|p| p.is_file()).unwrap_or(false) {
+        return Ok(());
+    }
+    handle
+        .set_media_derivatives(
+            Actor::Agent { client: "jobs".to_string() },
+            id,
+            state::MediaDerivativesPatch { export_uses_original: Some(false), ..Default::default() },
+        )
+        .await
+        .map_err(|e| format!("route-correct {media_id}: {e}"))?;
+    crate::jobs::enqueue_full_proxy(backend.events.clone(), backend.cache.clone(), handle.clone(), item);
+    Ok(())
+}
+
+pub async fn ensure_conform(backend: &Backend, media_id: String) -> Result<(), String> {
+    let id = uuid::Uuid::parse_str(&media_id).map_err(|e| format!("invalid media_id: {e}"))?;
+    let handle = backend.project()?;
+    let snap = handle.snapshot().await;
+    let Some(item) = snap.media_pool.get(&id).cloned() else {
+        return Err(format!("no media {media_id}"));
+    };
+    if item.metadata.audio.is_none() {
+        return Ok(());
+    }
+    if crate::cache::cached_ok(&backend.cache.audio_conform(&item.file_hash_blake3)) {
+        return Ok(());
+    }
+    crate::jobs::enqueue_conform(backend.events.clone(), backend.cache.clone(), handle.clone(), item);
+    Ok(())
+}
+
+pub async fn report_audio_meter(backend: &Backend, report: AudioMeterReport) -> Result<(), String> {
+    *backend.audio_meter.0.lock().map_err(|_| "meter lock poisoned".to_string())? =
+        Some((std::time::Instant::now(), report));
+    Ok(())
+}
