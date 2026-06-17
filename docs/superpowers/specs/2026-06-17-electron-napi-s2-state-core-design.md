@@ -114,7 +114,7 @@ TSFN onEvent({event,payload})  ◀─EventSink─   ├─ AutosaveController
   `napi::Error`. Gated commands are absent from the `match` arm under their
   feature and fall through to a default `Err("unavailable: wired in S3/S4/S5")`.
 - **Electron `main` — `electron/main/index.ts` (modified).**
-  - Load the addon: `const { Backend } = createRequire(import.meta.url)('weftcut')`
+  - Load the addon: `const { Backend } = createRequire(import.meta.url)('@weftcut/core')`
     (the `.node` is marked `external` in the electron-vite main build).
   - Construct: `new Backend(app.getPath('userData'), app.getPath('userData') +
     '/Cache', (msg) => win?.webContents.send('evt:' + msg.event, msg.payload))`.
@@ -176,10 +176,11 @@ stub-reject contract produces error banners, not white screens).
 
 ## Build integration
 
-- `@napi-rs/cli` builds the addon: `napi build --platform --release` produces
-  `weftcut.node` + an `index.js`/`index.d.ts` loader. The `apps/desktop`
-  `package.json` gains a `napi:build` script and depends on the addon by package
-  name so `createRequire('weftcut')` resolves it.
+- `@napi-rs/cli` builds the addon into a local npm package **`@weftcut/core`**:
+  `napi build --platform --release` produces `<pkg>.node` + an
+  `index.js`/`index.d.ts` loader. The `apps/desktop` `package.json` gains a
+  `napi:build` script and depends on `@weftcut/core` (file/workspace ref) so
+  `createRequire('@weftcut/core')` resolves it.
 - The electron-vite **main** build marks the addon `external` (Vite must not try
   to bundle a `.node`). Dev: build the addon once (and on Rust change) before
   `electron-vite dev`; the master plan's later stages can add a watch.
