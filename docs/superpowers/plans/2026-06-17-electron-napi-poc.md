@@ -62,6 +62,9 @@ Responsibilities: `native/` is the addon (Boundary 1 subject). `capture.ts` is t
   "version": "0.0.0",
   "private": true,
   "description": "Throwaway PoC: Electron + napi-rs boundary validation",
+  "dependencies": {
+    "poc_native": "file:./native"
+  },
   "devDependencies": {
     "electron": "^40.0.0",
     "esbuild": "^0.24.0",
@@ -69,12 +72,19 @@ Responsibilities: `native/` is the addon (Boundary 1 subject). `capture.ts` is t
   },
   "scripts": {
     "build:native": "cd native && npm run build",
-    "build:main": "esbuild src/main.ts --bundle --platform=node --format=cjs --external:electron --external:../native --outfile=main.cjs",
+    "build:main": "esbuild src/main.ts --bundle --platform=node --format=cjs --external:electron --external:poc_native --outfile=main.cjs",
     "poc": "npm run build:native && npm run build:main && electron main.cjs",
     "poc:sw": "npm run build:main && electron main.cjs --software"
   }
 }
 ```
+
+> The native addon is depended on **by package name** (`file:./native`), not by a
+> relative path. esbuild keeps `require('poc_native')` verbatim (it is external)
+> and Node resolves it from `node_modules/poc_native` → `native/index.js` at
+> runtime, regardless of where `main.cjs` sits. A relative `require('../native')`
+> would break, because esbuild does not rewrite an external path for the output
+> file's location.
 
 - [ ] **Step 2: Create `.gitignore`**
 
@@ -340,10 +350,11 @@ git commit -m "poc(electron-napi): napi addon with state-slice mutation, heavy o
 
 ```ts
 import { performance } from 'node:perf_hooks'
-import { createRequire } from 'node:module'
 
-const require = createRequire(import.meta.url)
-const native = require('../native') as {
+// CJS output (esbuild --format=cjs): the global `require` is available; the
+// addon is external and resolved by package name from node_modules/poc_native.
+declare const require: (id: string) => any
+const native = require('poc_native') as {
   applyMutation(payload: string): Promise<string>
   heavyMutation(rounds: number): Promise<number>
   subscribeAndFire(cb: (err: unknown, msg: string) => void): void
