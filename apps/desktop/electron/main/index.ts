@@ -36,6 +36,12 @@ async function createWindow(): Promise<BrowserWindow> {
 
   mainWindow = win
 
+  const sendResized = () =>
+    win.webContents.send('evt:window:resized', { isMaximized: win.isMaximized() })
+  win.on('resize', sendResized)
+  win.on('maximize', sendResized)
+  win.on('unmaximize', sendResized)
+
   // Capture renderer console messages to stdout for diagnostics
   win.webContents.on('console-message', (_e, level, message, line, sourceId) => {
     const lvl = ['verbose', 'info', 'warning', 'error'][level] ?? 'log'
@@ -78,6 +84,39 @@ app.whenReady().then(async () => {
   ipcMain.handle('window:isMaximized', () => !!mainWindow?.isMaximized())
   ipcMain.handle('window:setTitle', (_e, title: string) => mainWindow?.setTitle(title))
   ipcMain.handle('path:documentDir', () => app.getPath('documents'))
+  ipcMain.handle('path:join', (_e, { parts }: { parts: string[] }) => path.join(...parts))
+  ipcMain.handle('path:tempDir', () => app.getPath('temp'))
+
+  const { dialog } = require('electron') as typeof import('electron')
+  ipcMain.handle('dialog:open', async (_e, opts) => {
+    const o = (opts ?? {}) as {
+      title?: string
+      multiple?: boolean
+      filters?: { name: string; extensions: string[] }[]
+      defaultPath?: string
+    }
+    const res = await dialog.showOpenDialog(mainWindow!, {
+      title: o.title,
+      defaultPath: o.defaultPath,
+      filters: o.filters,
+      properties: o.multiple ? ['openFile', 'multiSelections'] : ['openFile'],
+    })
+    if (res.canceled || res.filePaths.length === 0) return null
+    return o.multiple ? res.filePaths : res.filePaths[0]
+  })
+  ipcMain.handle('dialog:save', async (_e, opts) => {
+    const o = (opts ?? {}) as {
+      title?: string
+      defaultPath?: string
+      filters?: { name: string; extensions: string[] }[]
+    }
+    const res = await dialog.showSaveDialog(mainWindow!, {
+      title: o.title,
+      defaultPath: o.defaultPath,
+      filters: o.filters,
+    })
+    return res.canceled || !res.filePath ? null : res.filePath
+  })
 
   protocol.handle('weftcut-media', async (request) => {
     // URL form: weftcut-media://localhost/<encodeURIComponent(absPath)>

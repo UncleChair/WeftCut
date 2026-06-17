@@ -6,7 +6,11 @@ const api = {
   invoke(channel: string, args?: unknown): Promise<unknown> {
     // window:* and path:* are served by direct ipcMain handlers in the main
     // process, not the napi backend dispatcher. Route them straight through.
-    if (channel.startsWith('window:') || channel.startsWith('path:')) {
+    if (
+      channel.startsWith('window:') ||
+      channel.startsWith('path:') ||
+      channel.startsWith('dialog:')
+    ) {
       return ipcRenderer.invoke(channel, args)
     }
     return ipcRenderer.invoke('backend:invoke', { channel, args })
