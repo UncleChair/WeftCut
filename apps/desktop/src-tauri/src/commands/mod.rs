@@ -15,6 +15,7 @@ use crate::state::{
 
 pub mod query;
 pub mod mutations;
+pub mod history;
 
 #[derive(Serialize, Clone)]
 pub struct ProjectSummary {
@@ -815,4 +816,24 @@ pub struct SetRoleGainArgs {
 pub struct UpdateRoleFlagsArgs {
     pub role: crate::state::audio_role::AudioRole,
     pub patch: crate::state::audio_role::RoleFlagsPatch,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RestoreCheckpointArgs {
+    pub checkpoint_id: String,
+}
+
+#[cfg(debug_assertions)]
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DebugSimulateAgentSessionArgs {
+    pub reason: String,
+}
+
+#[cfg(debug_assertions)]
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DebugLockHistoryArgs {
+    pub reason: String,
 }
