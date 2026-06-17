@@ -4,6 +4,8 @@
 
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::ThreadsafeFunction;
@@ -171,12 +173,25 @@ impl Backend {
         self.project.get().ok_or_else(|| "backend not initialized".to_string())
     }
 
-    /// Plain (non-napi) constructor for tests: roots config + cache in a
-    /// process-unique temp dir and runs the identical store/tracing setup as
+    /// The autosave controller installed by `init`. `project_save` force-flushes
+    /// through it; pre-`init` it's absent (the unreachable blank-boot window).
+    pub(crate) fn autosave(&self) -> std::result::Result<&AutosaveController, String> {
+        self.autosave.get().ok_or_else(|| "backend not initialized".to_string())
+    }
+
+    /// Plain (non-napi) constructor for tests: roots config + cache in an
+    /// instance-unique temp dir and runs the identical store/tracing setup as
     /// the napi `new`. No `ThreadsafeFunction` / napi env required.
+    ///
+    /// Each call appends a process-wide monotonic counter to the temp-dir name
+    /// (`weftcut-test-<pid>-<n>`) so two backends in one test binary — e.g. a
+    /// save-in-A / open-in-B round-trip — never share a config + cache root.
     #[cfg(test)]
     pub fn new_for_test(events: Arc<dyn EventSink>) -> Self {
-        let base = std::env::temp_dir().join(format!("weftcut-test-{}", std::process::id()));
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let base = std::env::temp_dir()
+            .join(format!("weftcut-test-{}-{}", std::process::id(), n));
         let config_dir = base.join("config").to_string_lossy().to_string();
         let cache_dir = base.join("cache").to_string_lossy().to_string();
         build_backend(events, config_dir, cache_dir)
@@ -287,6 +302,19 @@ impl Backend {
             }
             #[cfg(debug_assertions)]
             "debug_unlock_history" => ser(crate::commands::history::debug_unlock_history(self).await),
+            "project_save" => ser(crate::commands::persistence::project_save(self).await),
+            "project_save_as" => {
+                let a: crate::commands::PathArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::persistence::project_save_as(self, a.path).await)
+            }
+            "project_open" => {
+                let a: crate::commands::PathArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::persistence::project_open(self, a.path).await)
+            }
+            "project_new_workspace" => {
+                let a: crate::commands::NewWorkspaceArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::persistence::project_new_workspace(self, a.parent_folder, a.name, a.width, a.height, a.fps_num, a.fps_den).await)
+            }
             #[cfg(debug_assertions)]
             "debug_simulate_agent_session" => {
                 let a: crate::commands::DebugSimulateAgentSessionArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
@@ -349,5 +377,51 @@ mod tests {
         let summary = b.dispatch("project_summary", "{}").await.unwrap();
         // blank project has 2 reserved tracks (A roll + B roll); add_track appends a 3rd
         assert!(summary.contains("\"track_count\":3") || summary.contains("\"track_count\": 3"));
+    }
+
+    /// S2 persistence round-trip: backend A adds a track and `save_as` to a
+    /// `.vproj` dir; a FRESH backend B `open`s it and must observe the same
+    /// post-add track count. Multi-thread flavor so the actor→UI bridge +
+    /// LogBus writer tasks can run on a worker while we await dispatches.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn save_as_then_open_round_trips_and_logs() {
+        let dir = std::env::temp_dir()
+            .join(format!("weftcut-s2-{}-{}", std::process::id(), "roundtrip"));
+        std::fs::remove_dir_all(&dir).ok();
+        let proj = dir.join("proj.vproj");
+
+        // Backend A: add a track, capture the count, then save-as.
+        let sink = VecEventSink::new();
+        let b = Backend::new_for_test(Arc::new(sink.clone()));
+        b.init().await.unwrap();
+        b.dispatch("add_track", "{}").await.unwrap();
+        let a_summary = b.dispatch("project_summary", "{}").await.unwrap();
+        let a: serde_json::Value = serde_json::from_str(&a_summary).unwrap();
+        let a_count = a["track_count"].as_u64().expect("track_count present");
+        b.dispatch(
+            "project_save_as",
+            &format!("{{\"path\":{:?}}}", proj.to_string_lossy()),
+        )
+        .await
+        .unwrap();
+
+        // A fresh backend B opens it and must match A's post-add count.
+        let b2 = Backend::new_for_test(Arc::new(VecEventSink::new()));
+        b2.init().await.unwrap();
+        b2.dispatch(
+            "project_open",
+            &format!("{{\"path\":{:?}}}", proj.to_string_lossy()),
+        )
+        .await
+        .unwrap();
+        let summary = b2.dispatch("project_summary", "{}").await.unwrap();
+        let s: serde_json::Value = serde_json::from_str(&summary).unwrap();
+        assert_eq!(
+            s["track_count"].as_u64().expect("track_count present"),
+            a_count,
+            "opened project must have the same track count as the saved one",
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
