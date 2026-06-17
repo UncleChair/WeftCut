@@ -1,8 +1,11 @@
 import { app } from 'electron'
+import { runBoundary1 } from './boundary1'
 
-app.disableHardwareAcceleration() // overridden per-run in later tasks
+const useSoftware = process.argv.includes('--software')
+if (useSoftware) app.disableHardwareAcceleration()
 
 app.whenReady().then(async () => {
-  console.log('[poc] electron ready')
+  const b1 = await runBoundary1()
+  console.log('[boundary1]', JSON.stringify(b1, null, 2))
   app.quit()
 })
