@@ -36,9 +36,15 @@ A large fraction of the project's accumulated pain is also WebView2-specific
   rewritten in Node. It is hosted **in-process** via **napi-rs** (Node-API
   native addon). Only the Tauri shell/glue is replaced.
 - **Capture via Electron's own runtime** (no separate bundled Chromium): a
-  hidden **offscreen BrowserWindow with the software output device** (for
-  determinism), driven over CDP through `webContents.debugger`. Per-window
-  software rendering leaves the main UI GPU-accelerated.
+  hidden **offscreen BrowserWindow** driven over CDP through
+  `webContents.debugger`. The Phase 0 PoC found offscreen capture is **already
+  byte-deterministic in GPU mode** (the WebView2 AA jitter did not reproduce —
+  offscreen surface compositing ≠ the live on-screen GPU compositor), so the
+  software output device is **not** required for within-machine determinism;
+  the main UI keeps hardware acceleration with no per-window isolation needed.
+  (Software rendering remains the cross-machine-byte-identity lever if S6 ever
+  needs it; `app.disableHardwareAcceleration()` is process-wide, so it would be
+  a separate capture process, not in-process.)
 
 ### Scope
 
@@ -122,6 +128,33 @@ one that exhibits the AA jitter), inject the clock-takeover runtime, drive
 alpha preserved + main UI unaffected. **NO-GO fallback** = capture approach B
 (separate Chromium driven by puppeteer-core), or keep GPU offscreen + the
 perceptual gate (loses byte-identity but still unifies the engine cross-platform).
+
+### Phase 0 outcome (2026-06-17) — both boundaries GO
+
+Executed on Windows (Electron 40.10.4, napi 3.9.2, i5-13400 / RTX 3050).
+Full data: `apps/desktop/poc/electron-napi/results.md`.
+
+- **Boundary 1: GO.** napi round-trip p50 0.05 ms / p99 ≤ 0.34 ms (budget ≤1/≤5);
+  TSFN events delivered 5/5; non-blocking confirmed (71 timer ticks spread
+  evenly across the full 1112 ms heavy op — the raw `tickRatio 0.63` is Windows'
+  ~15.6 ms `setInterval` floor, a harness-formula artifact, not blocking).
+- **Boundary 2: GO.** Capture of the real lower-third is **byte-identical
+  (maxChannelDiff = 0) in BOTH GPU and software modes**, alpha preserved,
+  ~67–71 ms/frame (beats WebView2's ~92 ms, far under the 300 ms gate).
+  Isolation OK — GPU-mode capture is already deterministic while a normal window
+  keeps real hardware, so **no software rendering and no separate capture
+  process are needed** (R4 not triggered).
+- **Design impact:** the software-render-for-determinism premise is relaxed
+  (offscreen GPU is already deterministic within a machine).
+- **Migration gotcha banked:** offscreen `webContents.debugger` `Page.enable`/
+  `Runtime.enable` **hang until a renderer context exists** → load `about:blank`
+  first, then attach + enable + `addScriptToEvaluateOnNewDocument`, then navigate
+  to the `motif:` URL.
+- **Caveats carried to S6:** no negative control (the jitter never reproduced, so
+  the test's sensitivity to jitter is unproven) and no cross-platform /
+  cross-machine identity test yet (Windows-only, one GPU). Within-machine
+  run-to-run determinism is what is proven — that is what removes the re-bake /
+  preview-vs-export concern. Cross-OS byte-identity is the S6 gate.
 
 ## Target architecture
 
@@ -323,9 +356,9 @@ not a cross-build one. Do not gate Tauri-vs-Electron on byte-identity.
 | # | Risk | Mitigation / fallback |
 |---|---|---|
 | R1 | napi serialization cost on hot paths (per-frame resolveView) | PoC Boundary 1 measures; JSON-first + selective native/Buffer upgrade; fallback: keep per-frame resolve in Rust, push deltas |
-| R2 | Offscreen software rendering too slow for bake/export | PoC Boundary 2 measures; L1 prewarm + L2 persist absorb; fallback: capture approach B (separate Chromium, possibly GPU + perceptual gate) |
-| R3 | Software rendering doesn't fully kill AA jitter | PoC is the test; if residual, retain the perceptual gate (determinism story still holds, now cross-platform) |
-| R4 | Per-window GPU isolation fails (software tanks main-UI PixiJS) | PoC validates; if coupled, run capture in a separate process (approach B / second Electron process) so GPU flags don't cross |
+| R2 | Offscreen rendering too slow for bake/export | **Retired (PoC):** ~70 ms/frame, beats WebView2 ~92 ms, far under 300 ms. L1 prewarm + L2 persist remain. |
+| R3 | GPU compositor AA jitter breaks determinism | **Retired within-machine (PoC):** offscreen GPU capture is byte-identical (maxChannelDiff 0); jitter did not reproduce. Cross-machine/OS identity still open → S6 gate (+ add a negative control there). |
+| R4 | Per-window GPU isolation fails (software tanks main-UI PixiJS) | **Moot (PoC):** software rendering not needed; GPU-mode capture is deterministic while the main UI keeps hardware. In-process coexistence works. |
 | R5 | Test-driver migration drag (the whole oracle depends on it) | First-class cross-cutting workstream, starts at S2 |
 | R6 | Rust `!Send` / tokio runtime coexistence with napi | napi `tokio_rt` owns one runtime; we use ffmpeg-sidecar (subprocess) not ffmpeg-next, so the `!Send` risk is largely moot |
 | R7 | MCP external-client compat after rmcp → TS SDK (transport change) | S4 verifies each connecting client; TS SDK supports SSE + streamable-HTTP (a superset) |
