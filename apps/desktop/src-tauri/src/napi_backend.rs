@@ -102,12 +102,14 @@ impl Backend {
         // frozen until the user interacts. The payload is a tiny summary — the
         // UI just re-fetches `project_summary` on any signal. Each event also
         // feeds the status-log bus (no-op until a workspace installs a bus).
-        let bridge_handle = handle.clone();
+        //
+        // Subscribe BEFORE spawning so that any broadcast sent after init()
+        // returns is buffered for this receiver — not dropped to zero receivers.
+        let mut rx = handle.subscribe();
         let events = self.events.clone();
         let log_slot = self.log_slot.clone();
         tokio::spawn(async move {
             use tokio::sync::broadcast::error::RecvError;
-            let mut rx = bridge_handle.subscribe();
             loop {
                 match rx.recv().await {
                     Ok(event) => {
@@ -441,11 +443,6 @@ mod tests {
         let sink = VecEventSink::new();
         let b = Backend::new_for_test(Arc::new(sink.clone()));
         b.init().await.unwrap();
-        // Yield to let the bridge task run and call subscribe() before we
-        // dispatch add_track. The subscribe() call is inside the spawned
-        // future and must execute before the broadcast event is sent, or
-        // the event lands with no receivers and is silently dropped.
-        tokio::task::yield_now().await;
         let track_id_json = b.dispatch("add_track", "{}").await.unwrap();
         assert!(!track_id_json.is_empty());
         // poll until the broadcast bridge task fires (or 2 s timeout on genuine failure)
