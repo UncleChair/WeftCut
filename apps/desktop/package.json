@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "main": "out/main/index.js",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -12,7 +13,10 @@
     "tauri:build": "tauri build",
     "typecheck": "tsc -b",
     "test": "vitest run --exclude '**/*.browser.test.ts'",
-    "test:watch": "vitest --exclude '**/*.browser.test.ts'"
+    "test:watch": "vitest --exclude '**/*.browser.test.ts'",
+    "electron:dev": "electron-vite dev",
+    "electron:build": "electron-vite build",
+    "electron:preview": "electron-vite preview"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",
@@ -42,6 +46,9 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.2",
+    "electron": "^42.0.0",
+    "electron-vite": "6.0.0-beta.1",
+    "electron-builder": "^26.0.0",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
     "@types/node": "^22.19.19",

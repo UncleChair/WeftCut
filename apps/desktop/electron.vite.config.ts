@@ -1,0 +1,49 @@
+import path from 'node:path'
+import { defineConfig } from 'electron-vite'
+import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
+
+const HERE = path.resolve(path.dirname(new URL(import.meta.url).pathname))
+const compat = (m: string) => path.resolve(HERE, 'src/electron-compat', m)
+
+export default defineConfig({
+  main: {
+    build: {
+      outDir: 'out/main',
+      lib: { entry: 'electron/main/index.ts' },
+    },
+  },
+  preload: {
+    build: {
+      outDir: 'out/preload',
+      lib: { entry: 'electron/preload/index.ts' },
+    },
+  },
+  renderer: {
+    root: HERE,
+    plugins: [react(), tailwindcss()],
+    resolve: {
+      alias: {
+        '@': path.resolve(HERE, 'src'),
+        // Redirect every @tauri-apps/* surface to a compat shim.
+        // The renderer keeps importing @tauri-apps/* verbatim; Vite rewrites
+        // at bundle time to the matching src/electron-compat/* file.
+        '@tauri-apps/api/core': compat('tauri-core.ts'),
+        '@tauri-apps/api/event': compat('tauri-event.ts'),
+        '@tauri-apps/api/path': compat('tauri-path.ts'),
+        '@tauri-apps/api/window': compat('tauri-window.ts'),
+        '@tauri-apps/api/webviewWindow': compat('tauri-webview-window.ts'),
+        '@tauri-apps/plugin-dialog': compat('plugin-dialog.ts'),
+        '@tauri-apps/plugin-fs': compat('plugin-fs.ts'),
+        '@tauri-apps/plugin-notification': compat('plugin-notification.ts'),
+        '@tauri-apps/plugin-shell': compat('plugin-shell.ts'),
+      },
+    },
+    build: {
+      target: 'chrome120',
+      outDir: 'out/renderer',
+      rollupOptions: { input: path.resolve(HERE, 'index.html') },
+    },
+    server: { port: 1420, strictPort: true },
+  },
+})
