@@ -1,9 +1,10 @@
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
-const HERE = path.resolve(path.dirname(new URL(import.meta.url).pathname))
+const HERE = path.dirname(fileURLToPath(import.meta.url))
 const compat = (m: string) => path.resolve(HERE, 'src/electron-compat', m)
 
 export default defineConfig({
@@ -16,7 +17,8 @@ export default defineConfig({
   preload: {
     build: {
       outDir: 'out/preload',
-      lib: { entry: 'electron/preload/index.ts' },
+      lib: { entry: 'electron/preload/index.ts', formats: ['cjs'] },
+      rollupOptions: { output: { entryFileNames: '[name].js' } },
     },
   },
   renderer: {

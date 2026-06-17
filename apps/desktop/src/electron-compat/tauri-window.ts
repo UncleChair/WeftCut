@@ -22,6 +22,24 @@ export function getCurrentWindow() {
     show: () => Promise.resolve(),
     setProgressBar: (_progress: number, _opts?: unknown) =>
       window.api.invoke('window:setProgressBar', { _progress, _opts }),
+    // WindowControls.tsx calls isMaximized() on mount to sync the glyph.
+    // S1 stub: always returns false (not maximized).
+    isMaximized: () => Promise.resolve(false),
+    // WindowControls.tsx calls onResized(cb) to keep the glyph in sync.
+    // S1 stub: registers nothing, returns a no-op unlisten.
+    onResized: (_cb: () => void) => Promise.resolve(() => undefined),
+    // App.tsx calls setProgressBar via Tauri's ProgressBarStatus API.
+    // S1 stub: no-op.
+    setTitle: (_title: string) => Promise.resolve(),
+    // App.tsx checks isFocused() in a drag-drop handler.
+    isFocused: () => Promise.resolve(true),
+    // App.tsx calls destroy() on emergency close confirmation.
+    destroy: () => window.api.invoke('window:destroy'),
+    // PerfHUD.tsx calls onCloseRequested.
+    onCloseRequested: (_cb: (event: { preventDefault: () => void }) => void | Promise<void>) =>
+      Promise.resolve(() => undefined),
+    // App.tsx calls setProgressBar({ status, progress }).
+    setProgressBar: (_opts: unknown) => Promise.resolve(),
   }
 }
 
