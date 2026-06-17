@@ -16,6 +16,7 @@ use crate::state::{
 pub mod query;
 pub mod mutations;
 pub mod history;
+pub mod persistence;
 
 #[derive(Serialize, Clone)]
 pub struct ProjectSummary {
@@ -836,4 +837,26 @@ pub struct DebugSimulateAgentSessionArgs {
 #[serde(rename_all = "camelCase")]
 pub struct DebugLockHistoryArgs {
     pub reason: String,
+}
+
+// ---- Persistence command Args structs ----
+
+/// `project_save_as` / `project_open`: a single workspace `.vproj` path.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PathArgs {
+    pub path: String,
+}
+
+/// `project_new_workspace`: keys mirror `ipc/index.ts` (`parentFolder`,
+/// `name`, `width`, `height`, `fpsNum`, `fpsDen`).
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewWorkspaceArgs {
+    pub parent_folder: String,
+    pub name: String,
+    pub width: u32,
+    pub height: u32,
+    pub fps_num: u32,
+    pub fps_den: u32,
 }
