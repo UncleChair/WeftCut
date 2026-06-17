@@ -1,0 +1,9 @@
+{
+  "name": "poc_native",
+  "version": "0.0.0",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "napi": { "binaryName": "poc_native" },
+  "devDependencies": { "@napi-rs/cli": "^3.6.2" },
+  "scripts": { "build": "napi build --platform --release" }
+}
