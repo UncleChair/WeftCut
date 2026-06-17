@@ -19,6 +19,12 @@ async function createWindow(): Promise<BrowserWindow> {
     },
   })
 
+  // Capture renderer console messages to stdout for diagnostics
+  win.webContents.on('console-message', (_e, level, message, line, sourceId) => {
+    const lvl = ['verbose', 'info', 'warning', 'error'][level] ?? 'log'
+    console.log(`[renderer:${lvl}] ${message} (${sourceId}:${line})`)
+  })
+
   if (isDev) {
     await win.loadURL(process.env['ELECTRON_RENDERER_URL']!)
   } else {
