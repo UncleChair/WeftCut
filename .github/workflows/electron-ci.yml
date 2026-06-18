@@ -53,6 +53,19 @@ jobs:
       - name: Fetch ffmpeg
         run: npm run fetch-ffmpeg
 
+      - name: Put bundled ffmpeg on PATH
+        # CI runners have no system ffmpeg; the Rust integration tests + the
+        # e2e app resolve "ffmpeg" via PATH. fetch-ffmpeg put it in resources/.
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cygpath -w "$PWD/resources/ffmpeg/win" >> "$GITHUB_PATH"
+          elif [ "$RUNNER_OS" = "Linux" ]; then
+            echo "$PWD/resources/ffmpeg/linux" >> "$GITHUB_PATH"
+          else
+            echo "$PWD/resources/ffmpeg/mac" >> "$GITHUB_PATH"
+          fi
+
       # Build the renderer + main bundles with the E2E hook env var set.
       # Must use bash shell so the inline env-var prefix works on Windows.
       - name: Build app (E2E mode)
