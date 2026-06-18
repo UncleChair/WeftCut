@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 type Listener = (payload: unknown) => void
 
@@ -12,7 +12,8 @@ const api = {
       channel.startsWith('dialog:') ||
       channel.startsWith('fs:') ||
       channel === 'get_mcp_info' ||
-      channel === 'reset_mcp_token'
+      channel === 'reset_mcp_token' ||
+      channel === 'media:dropped'
     ) {
       return ipcRenderer.invoke(channel, args)
     }
@@ -26,6 +27,12 @@ const api = {
   },
   off(event: string): void {
     ipcRenderer.removeAllListeners(`evt:${event}`)
+  },
+  // Electron drops give File objects, not paths. webUtils.getPathForFile is the
+  // sanctioned API (File.path was removed). Per-File (not FileList) is reliable
+  // across the contextBridge boundary.
+  getPathForFile(file: File): string {
+    try { return webUtils.getPathForFile(file) } catch { return '' }
   },
 }
 

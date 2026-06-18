@@ -2375,6 +2375,16 @@ function MediaDropZone({ children }: { children: React.ReactNode }) {
         e.preventDefault();
         depth.current = 0;
         setActive(false);
+        // Electron: no WebView2 postMessage bridge. Resolve real paths via the
+        // preload webUtils shim and feed the same media:external-drop pipeline.
+        const eapi = (window as unknown as { api?: { getPathForFile?: (f: File) => string; invoke: (c: string, a?: unknown) => Promise<unknown> } }).api
+        if (eapi?.getPathForFile && e.dataTransfer.files.length > 0) {
+          const paths = Array.from(e.dataTransfer.files)
+            .map((f) => eapi.getPathForFile!(f))
+            .filter((p) => p.length > 0)
+          if (paths.length > 0) void eapi.invoke('media:dropped', paths)
+          return
+        }
         const webview = (
           window as unknown as {
             chrome?: {

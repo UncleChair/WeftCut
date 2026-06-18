@@ -164,6 +164,15 @@ app.whenReady().then(async () => {
     return JSON.parse(json)
   })
 
+  // Drag-drop import: the renderer resolves real paths via webUtils and posts
+  // them here; we re-emit the SAME event the Tauri media_drop.rs path emitted,
+  // so the renderer's existing media:external-drop listener handles them.
+  ipcMain.handle('media:dropped', (_e, paths: string[]) => {
+    if (Array.isArray(paths) && paths.length > 0) {
+      mainWindow?.webContents.send('evt:media:external-drop', paths)
+    }
+  })
+
   ipcMain.handle('window:minimize', () => mainWindow?.minimize())
   ipcMain.handle('window:toggleMaximize', () =>
     mainWindow?.isMaximized() ? mainWindow?.unmaximize() : mainWindow?.maximize(),
