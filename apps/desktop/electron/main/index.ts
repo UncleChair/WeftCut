@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import { Readable } from 'node:stream'
 import { createRequire } from 'node:module'
 import { app, BrowserWindow, ipcMain, protocol } from 'electron'
+import { loadAllKeys, setKey, clearKey } from './keys.js'
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -91,6 +92,12 @@ app.whenReady().then(async () => {
   await backend.init()
   console.log('[main] backend init OK')
 
+  // Push any safeStorage-persisted cloud API keys into the backend cache so
+  // reqwest providers + settings_test_provider see them without a renderer round-trip.
+  for (const [provider, key] of Object.entries(loadAllKeys())) {
+    backend.setCloudKey(provider, key)
+  }
+
   // Start the MCP host (streamable HTTP + bearer) and expose its info IPC.
   const { startMcpHost } = await import('./mcp/index.js')
   const mcpHost = await startMcpHost(backend)
@@ -99,6 +106,20 @@ app.whenReady().then(async () => {
   ipcMain.handle('reset_mcp_token', () => mcpHost.resetToken())
 
   ipcMain.handle('backend:invoke', async (_e, { channel, args }) => {
+    // API-key writes need safeStorage (main-only) + a push into the backend
+    // cache. Intercept here; status/test fall through to the Rust dispatcher.
+    if (channel === 'settings_set_api_key') {
+      const { provider, key } = (args ?? {}) as { provider: string; key: string }
+      setKey(provider, key)
+      backend!.setCloudKey(provider, (key ?? '').trim())
+      return null
+    }
+    if (channel === 'settings_clear_api_key') {
+      const { provider } = (args ?? {}) as { provider: string }
+      clearKey(provider)
+      backend!.clearCloudKey(provider)
+      return null
+    }
     const json = await backend!.invoke(channel, JSON.stringify(args ?? {}))
     return JSON.parse(json)
   })
