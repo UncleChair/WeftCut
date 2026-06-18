@@ -17,6 +17,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
+#[cfg(feature = "cloud")]
+use crate::cloud;
+
 #[cfg(feature = "jobs")]
 use crate::cache::cached_ok;
 #[cfg(feature = "jobs")]
@@ -2036,4 +2039,488 @@ mod tests {
         let after = b.project().unwrap().snapshot().await.tracks.len();
         assert_eq!(after, before + 1);
     }
+}
+
+// ============================================================
+// Cloud tools: transcribe_clip + synthesize_speech
+// Recovered from 97e3c7f2:apps/desktop/src-tauri/src/mcp/mod.rs
+// and ported under the S4b transform (self.project → b.project()?,
+// self.cache → &b.cache, emit_via_app → b.log_slot.emit,
+// ok_text/ok_json → ToolResult::text/json, McpError → McpToolError).
+// ============================================================
+
+#[cfg(feature = "cloud")]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub(super) struct TranscribeClipArgs {
+    /// Target VideoClip or Audio layer id.
+    pub layer_id: String,
+    /// Optional transcription window start in timeline microseconds.
+    /// Defaults to the layer's `t_start_us`. Must lie within the layer.
+    #[serde(default)]
+    pub t_start_us: Option<i64>,
+    /// Optional transcription window end in timeline microseconds.
+    /// Defaults to the layer's `t_end_us`. Must lie within the layer.
+    #[serde(default)]
+    pub t_end_us: Option<i64>,
+    /// Optional ISO-639-1 language hint (`"en"`, `"zh"`). Auto-detect when omitted.
+    #[serde(default)]
+    pub language: Option<String>,
+}
+
+#[cfg(feature = "cloud")]
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(super) struct SynthesizeSpeechArgs {
+    /// Text to synthesize. tts-1 caps at 4096 characters.
+    pub text: String,
+    /// Voice identifier. tts-1 accepts: alloy, echo, fable, onyx, nova, shimmer.
+    pub voice: String,
+    /// 0.25..4.0 for tts-1. Omit to use the provider default (~1.0).
+    #[serde(default)]
+    pub speed: Option<f32>,
+    /// Optional Audio track id. If omitted, lands on the first existing Audio
+    /// track or auto-creates one labeled "Voiceover".
+    #[serde(default)]
+    pub target_track_id: Option<String>,
+    /// Optional timeline start in microseconds. Defaults to the composition's
+    /// current `duration_us` so the voiceover appends at the end.
+    #[serde(default)]
+    pub t_start_us: Option<i64>,
+}
+
+#[cfg(feature = "cloud")]
+#[derive(Debug, Serialize, JsonSchema)]
+pub(super) struct SynthesizeSpeechResult {
+    pub layer_id: String,
+    pub media_id: String,
+    pub t_start_us: i64,
+    pub t_end_us: i64,
+    /// True when the result came from the content-addressed cache and no API
+    /// call was made. Surfaced so the agent knows whether to expect any
+    /// provider-side billing.
+    pub cached: bool,
+}
+
+/// Resolved source-audio coordinates for a `transcribe_clip` call.
+#[cfg(feature = "cloud")]
+#[derive(Debug)]
+struct ResolvedClipAudio {
+    source_path: std::path::PathBuf,
+    source_hash: String,
+    /// Source-relative microseconds: where to start the ffmpeg slice.
+    source_in_us: i64,
+    /// Source-relative microseconds: where to end the ffmpeg slice.
+    source_out_us: i64,
+    /// Timeline-absolute microseconds of the slice's start — what we shift
+    /// the SRT cue timestamps by so they land on the timeline.
+    timeline_start_us: i64,
+}
+
+/// Find a layer with audio attached (VideoClip or Audio), validate the
+/// requested timeline window lies inside it, and map that window onto the
+/// source media's coordinate space.
+#[cfg(feature = "cloud")]
+fn resolve_clip_audio_source(
+    snap: &crate::state::Project,
+    layer_id: LayerId,
+    t_start_arg: Option<i64>,
+    t_end_arg: Option<i64>,
+) -> Result<ResolvedClipAudio, McpToolError> {
+    use crate::state::{AudioParams, VideoClipParams};
+
+    let layer = snap
+        .tracks
+        .iter()
+        .flat_map(|t| t.layers.iter())
+        .find(|l| l.id == layer_id)
+        .ok_or_else(|| {
+            McpToolError::invalid_params(
+                format!("layer {layer_id} not found"),
+                None,
+            )
+        })?;
+
+    let (media_id, src_in_us, src_out_us) = match &layer.params {
+        LayerParams::VideoClip(VideoClipParams {
+            media,
+            src_in_us,
+            src_out_us,
+            speed,
+            ..
+        }) => {
+            if (*speed - 1.0).abs() > f64::EPSILON {
+                return Err(McpToolError::invalid_params(
+                    format!(
+                        "transcribe_clip does not yet support speed != 1.0 (layer speed={speed}); \
+                         split off a speed-1 segment first",
+                    ),
+                    None,
+                ));
+            }
+            (*media, *src_in_us, *src_out_us)
+        }
+        LayerParams::Audio(AudioParams { media, src_in_us, src_out_us, .. }) => {
+            (*media, *src_in_us, *src_out_us)
+        }
+        _ => {
+            return Err(McpToolError::invalid_params(
+                format!(
+                    "layer {layer_id} kind is not transcribable — pass a VideoClip or Audio layer",
+                ),
+                None,
+            ));
+        }
+    };
+
+    let media = snap.media_pool.get(&media_id).ok_or_else(|| {
+        McpToolError::invalid_params(
+            format!(
+                "layer {layer_id} references missing media {media_id} (project state is inconsistent)",
+            ),
+            None,
+        )
+    })?;
+    if media.metadata.audio.is_none() {
+        return Err(McpToolError::invalid_params(
+            format!(
+                "media {media_id} has no audio stream — transcription needs audio",
+            ),
+            None,
+        ));
+    }
+
+    let t_start = t_start_arg.unwrap_or(layer.t_start_us);
+    let t_end = t_end_arg.unwrap_or(layer.t_end_us);
+    if t_end <= t_start {
+        return Err(McpToolError::invalid_params(
+            format!(
+                "transcription window must have positive duration (t_start_us={t_start}, t_end_us={t_end})",
+            ),
+            None,
+        ));
+    }
+    if t_start < layer.t_start_us || t_end > layer.t_end_us {
+        return Err(McpToolError::invalid_params(
+            format!(
+                "transcription window [{t_start}, {t_end}] is outside layer range [{}, {}]",
+                layer.t_start_us, layer.t_end_us,
+            ),
+            None,
+        ));
+    }
+
+    let offset_in = t_start - layer.t_start_us;
+    let offset_out = t_end - layer.t_start_us;
+    let source_in = src_in_us + offset_in;
+    let source_out = src_in_us + offset_out;
+    if source_out > src_out_us {
+        return Err(McpToolError::invalid_params(
+            format!(
+                "transcription window maps past the layer's source range (source_out={source_out} > src_out_us={src_out_us})",
+            ),
+            None,
+        ));
+    }
+
+    Ok(ResolvedClipAudio {
+        source_path: media.path_abs.clone(),
+        source_hash: media.file_hash_blake3.clone(),
+        source_in_us: source_in,
+        source_out_us: source_out,
+        timeline_start_us: t_start,
+    })
+}
+
+/// Write synthesized audio bytes atomically to the cache. Mirrors the
+/// `<dest>.tmp → promote_temp` pattern from the jobs module so an interrupted
+/// write never leaves a zero-byte file that `cached_ok` would happily skip.
+#[cfg(feature = "cloud")]
+async fn write_voiceover_atomic(
+    dest: &std::path::Path,
+    bytes: &[u8],
+) -> Result<(), anyhow::Error> {
+    use crate::cache::{cached_ok, discard_temp, promote_temp, temp_path};
+    use anyhow::Context;
+    if let Some(parent) = dest.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .with_context(|| format!("ensure {}", parent.display()))?;
+    }
+    let tmp = temp_path(dest);
+    let _ = tokio::fs::remove_file(&tmp).await;
+    tokio::fs::write(&tmp, bytes)
+        .await
+        .with_context(|| format!("write {}", tmp.display()))?;
+    if !cached_ok(&tmp) {
+        discard_temp(dest);
+        anyhow::bail!("synthesized audio is empty after write");
+    }
+    promote_temp(dest)?;
+    Ok(())
+}
+
+/// Map a `cloud::CloudError` to an `McpToolError` so the agent sees a structured
+/// failure (missing key, invalid key, rate-limited, too-large payload) with
+/// actionable recovery steps in the message.
+#[cfg(feature = "cloud")]
+fn map_cloud_error(e: cloud::CloudError) -> McpToolError {
+    use cloud::CloudError as E;
+    let message = e.to_string();
+    match e {
+        E::MissingKey { .. } | E::InvalidKey { .. } => {
+            McpToolError::invalid_request(message, None)
+        }
+        E::PayloadTooLarge { .. } => McpToolError::invalid_params(message, None),
+        E::RateLimited { .. } | E::Provider { .. } | E::Network(_) => {
+            McpToolError::internal_error(message, None)
+        }
+        E::Io(_) | E::AudioExtract(_) => McpToolError::internal_error(message, None),
+    }
+}
+
+#[cfg(feature = "cloud")]
+pub(super) async fn transcribe_clip(
+    b: &Backend,
+    args: TranscribeClipArgs,
+) -> Result<ToolResult, McpToolError> {
+    let log_op_id = uuid::Uuid::now_v7();
+    let log_args = serde_json::to_value(&args).ok();
+    b.log_slot.emit(crate::logs::LogEntryInput {
+        level: crate::logs::LogLevel::Info,
+        category: crate::logs::LogCategory::Mcp,
+        source: crate::logs::LogSource::Agent { client: "mcp".into() },
+        message: "MCP: transcribe_clip started".into(),
+        op_id: Some(log_op_id),
+        op_state: Some(crate::logs::OpState::Started),
+        details: log_args,
+        ..Default::default()
+    });
+    let result = transcribe_clip_inner(b, args).await;
+    match &result {
+        Ok(_) => b.log_slot.emit(crate::logs::LogEntryInput {
+            level: crate::logs::LogLevel::Info,
+            category: crate::logs::LogCategory::Mcp,
+            source: crate::logs::LogSource::Agent { client: "mcp".into() },
+            message: "MCP: transcribe_clip done".into(),
+            op_id: Some(log_op_id),
+            op_state: Some(crate::logs::OpState::Ok),
+            ..Default::default()
+        }),
+        Err(e) => b.log_slot.emit(crate::logs::LogEntryInput {
+            level: crate::logs::LogLevel::Error,
+            category: crate::logs::LogCategory::Mcp,
+            source: crate::logs::LogSource::Agent { client: "mcp".into() },
+            message: format!("MCP: transcribe_clip failed: {e}"),
+            op_id: Some(log_op_id),
+            op_state: Some(crate::logs::OpState::Err),
+            ..Default::default()
+        }),
+    }
+    result
+}
+
+#[cfg(feature = "cloud")]
+async fn transcribe_clip_inner(
+    b: &Backend,
+    args: TranscribeClipArgs,
+) -> Result<ToolResult, McpToolError> {
+    let layer_id = parse_uuid(&args.layer_id, "layer_id")?;
+    let snap = b.project()?.snapshot().await;
+    let resolved = resolve_clip_audio_source(
+        &snap,
+        layer_id,
+        args.t_start_us,
+        args.t_end_us,
+    )?;
+
+    let transcriber = {
+        let keys = b.cloud_keys.lock().expect("cloud_keys poisoned");
+        cloud::pick_transcriber(&keys)
+    }
+    .ok_or_else(|| {
+        McpToolError::invalid_request(
+            "no transcription provider configured — open Settings → API keys and add an OpenAI API key",
+            None,
+        )
+    })?;
+
+    let audio_path = cloud::audio_extract::extract_audio_window(
+        &b.cache,
+        &resolved.source_path,
+        &resolved.source_hash,
+        resolved.source_in_us,
+        resolved.source_out_us,
+    )
+    .await
+    .map_err(|e| McpToolError::internal_error(format!("audio extract: {e:#}"), None))?;
+
+    let resp = transcriber
+        .transcribe(cloud::TranscribeRequest {
+            audio_path,
+            language: args.language,
+        })
+        .await
+        .map_err(map_cloud_error)?;
+
+    let shifted = cloud::srt::shift_srt(&resp.srt_body, resolved.timeline_start_us);
+    Ok(ToolResult::text(shifted))
+}
+
+#[cfg(feature = "cloud")]
+pub(super) async fn synthesize_speech(
+    b: &Backend,
+    args: SynthesizeSpeechArgs,
+) -> Result<ToolResult, McpToolError> {
+    use crate::cache::cached_ok;
+    use crate::state::{MediaItem, MediaKind, new_id};
+    use crate::io::probe;
+
+    if args.text.trim().is_empty() {
+        return Err(McpToolError::invalid_params(
+            "text is empty",
+            None,
+        ));
+    }
+
+    let synthesizer = {
+        let keys = b.cloud_keys.lock().expect("cloud_keys poisoned");
+        cloud::pick_synthesizer(&keys)
+    }
+    .ok_or_else(|| {
+        McpToolError::invalid_request(
+            "no TTS provider configured — open Settings → API keys and add an OpenAI API key",
+            None,
+        )
+    })?;
+
+    let cache_key = cloud::providers::openai::tts_cache_key(
+        &args.text,
+        &args.voice,
+        args.speed,
+    );
+    // Cache extension hardcoded as "mp3" because the only Stage 6 provider
+    // (OpenAiTts) pins `response_format=mp3`. The `debug_assert!` below
+    // trips in dev the first time a future provider returns a different
+    // format and forces the format-extension-from-response fix here.
+    // TODO(future-provider): pull extension from `resp.format` so cache
+    // file naming matches provider output once a second TTS provider lands.
+    let dest = b.cache.voiceover(&cache_key, "mp3");
+    let cached = cached_ok(&dest);
+    if !cached {
+        let resp = synthesizer
+            .synthesize(cloud::SynthesizeRequest {
+                text: args.text.clone(),
+                voice: args.voice.clone(),
+                speed: args.speed,
+            })
+            .await
+            .map_err(map_cloud_error)?;
+        debug_assert_eq!(
+            resp.format,
+            cloud::AudioFormat::Mp3,
+            "Stage 6 v1 assumes mp3 output; update cache extension before adding non-mp3 providers",
+        );
+        write_voiceover_atomic(&dest, &resp.audio)
+            .await
+            .map_err(|e| {
+                McpToolError::internal_error(format!("write voiceover: {e:#}"), None)
+            })?;
+    }
+
+    // Probe the (now-existing) file on a blocking thread to get duration.
+    // ffprobe is required here — without duration we can't size the
+    // Audio layer correctly.
+    let probe_path = dest.clone();
+    let cache_key_clone = cache_key.clone();
+    let media_item = tokio::task::spawn_blocking(move || -> Result<MediaItem, String> {
+        let metadata = probe::probe_metadata(&probe_path);
+        if metadata.duration_us.is_none() {
+            return Err(
+                "ffprobe could not determine duration of synthesized audio — \
+                 install ffprobe (ships with ffmpeg) and retry"
+                    .to_string(),
+            );
+        }
+        let stat = std::fs::metadata(&probe_path)
+            .map_err(|e| format!("stat voiceover: {e}"))?;
+        Ok(MediaItem {
+            id: new_id(),
+            label: Some(format!("voiceover-{}", &cache_key_clone[..8])),
+            path_abs: probe_path,
+            path_rel: None,
+            kind: MediaKind::Audio,
+            metadata,
+            proxy_path: None,
+            proxy_format_version: 0,
+            quick_proxy_path: None,
+            proxy_bypassed: false,
+            export_uses_original: false,
+            waveform_path: None,
+            conform_path: None,
+            thumbnails_dir: None,
+            file_hash_blake3: cache_key_clone,
+            file_size: stat.len(),
+            file_mtime: stat
+                .modified()
+                .ok()
+                .and_then(|t| {
+                    t.duration_since(std::time::UNIX_EPOCH).ok()
+                })
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+            imported_at: Utc::now(),
+        })
+    })
+    .await
+    .map_err(|e| McpToolError::internal_error(format!("probe join: {e}"), None))?
+    .map_err(|e| McpToolError::internal_error(e, None))?;
+
+    let duration_us = media_item.metadata.duration_us.unwrap_or(0);
+    let media_item_for_jobs = media_item.clone();
+    let media_id = b
+        .project()?
+        .add_media_item(agent_actor(), media_item)
+        .await
+        .map_err(map_command_error)?;
+    // Fan out background jobs (waveform; thumbnails skip on audio-only).
+    crate::jobs::enqueue_for_media(
+        b.events.clone(),
+        b.cache.clone(),
+        b.project()?.clone(),
+        media_item_for_jobs,
+    );
+
+    let snap = b.project()?.snapshot().await;
+    let t_start_us = args.t_start_us.unwrap_or(snap.composition.duration_us);
+    let t_end_us = t_start_us + duration_us;
+
+    let track_id = match args.target_track_id.as_deref() {
+        Some(s) => parse_uuid(s, "target_track_id")?,
+        None => ensure_audio_track(b).await?,
+    };
+
+    let params = LayerParams::Audio(AudioParams {
+        media: media_id,
+        src_in_us: 0,
+        src_out_us: duration_us,
+        gain_db: Animated::Static(0.0),
+        pan: Animated::Static(0.0),
+        fade_in_us: 0,
+        fade_out_us: 0,
+        mute: false,
+        // TTS narration → Voiceover bus (`docs/audio.md`).
+        role: AudioRole::Voiceover,
+    });
+    let layer_id = b
+        .project()?
+        .add_layer(agent_actor(), track_id, params, t_start_us, t_end_us)
+        .await
+        .map_err(map_command_error)?;
+
+    ToolResult::json(&SynthesizeSpeechResult {
+        layer_id: layer_id.to_string(),
+        media_id: media_id.to_string(),
+        t_start_us,
+        t_end_us,
+        cached,
+    })
 }

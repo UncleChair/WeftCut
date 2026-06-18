@@ -926,4 +926,20 @@ mod tests {
             sink.names()
         );
     }
+
+    #[cfg(feature = "cloud")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn transcribe_clip_without_key_is_clean_error() {
+        let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
+        b.init().await.unwrap();
+        // Bogus layer id, but the no-provider check fires before layer lookup
+        // resolves to a transcribe — either way the reply is ok:false.
+        let reply: serde_json::Value = serde_json::from_str(
+            &b.mcp_call_tool("transcribe_clip".into(), r#"{"layer_id":"00000000-0000-0000-0000-000000000000"}"#.into())
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(reply["ok"], false);
+    }
 }
