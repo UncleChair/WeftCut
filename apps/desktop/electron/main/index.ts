@@ -108,6 +108,16 @@ app.whenReady().then(async () => {
   await backend.init()
   console.log('[main] backend init OK')
 
+  const { encryptionAvailable } = await import('./keys.js')
+  if (!encryptionAvailable()) {
+    console.warn('[main] OS keyring unavailable — cloud API keys persist in PLAINTEXT (cloud_keys.json). Secure your userData dir or install a keyring (libsecret/kwallet).')
+    // One-time UI notice (renderer shows it via the existing notice path).
+    mainWindow?.webContents.send('evt:app:notice', {
+      level: 'warn',
+      code: 'keyring_unavailable',
+    })
+  }
+
   // Push any safeStorage-persisted cloud API keys into the backend cache so
   // reqwest providers + settings_test_provider see them without a renderer round-trip.
   for (const [provider, key] of Object.entries(loadAllKeys())) {
