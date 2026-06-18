@@ -9,7 +9,7 @@
 //! a concurrent UI edit — acceptable (every MCP edit tool is the same, and
 //! agent-mode puts the human UI in record-only).
 
-use rmcp::Error as McpError;
+use super::wire::McpToolError as McpError;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -100,7 +100,7 @@ impl From<CommandError> for KfError {
 
 pub(super) fn kf_error_to_mcp(e: KfError) -> McpError {
     match e {
-        KfError::Command(c) => super::map_command_error(c),
+        KfError::Command(c) => super::tools::map_command_error(c),
         KfError::KeyframeNotFound { layer, param, keyframe_id } => McpError::invalid_params(
             format!("keyframe {keyframe_id} not found on layer {layer} param '{param}'"),
             None,

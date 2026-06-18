@@ -28,7 +28,12 @@ pub use tracing_layer::LogBusLayer;
 /// Gated on the feature set of its only callers (all deferred): once those
 /// stages migrate off `tauri::AppHandle`, this helper is replaced by a
 /// `&dyn EventSink`-shaped path. Ungated `logs` carries no `tauri` reference.
-#[cfg(any(feature = "mcp", feature = "motifs"))]
+///
+/// S4a migrated the MCP module off `emit_via_app` (it now emits through
+/// `Backend::log_slot`), so the `mcp` gate is gone — `motifs` (S5, still
+/// `tauri::AppHandle`-based via `motifs/staleness.rs`) is the sole remaining
+/// caller. Re-add a gate only when another `tauri`-holding caller appears.
+#[cfg(feature = "motifs")]
 pub fn emit_via_app(app: &tauri::AppHandle, input: LogEntryInput) {
     use tauri::Manager;
     if let Some(slot) = app.try_state::<LogBusSlot>() {
