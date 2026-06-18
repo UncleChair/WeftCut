@@ -377,12 +377,11 @@ git commit -m "migrate(s6): Electron drag-drop import via webUtils.getPathForFil
 
 **Interfaces:**
 - Consumes: the renderer's `WebviewWindow` class usage (`new WebviewWindow(label, options)` + `show/hide/close/center`, `WebviewWindow.getByLabel`).
-- Produces: `win:create/show/hide/close/center` IPC channels backed by a real `BrowserWindow` keyed by label; loads the renderer with a `?window=<label>` query so the React app renders the PerfHUD route.
+- Produces: `win:create/win:act/win:exists` IPC channels backed by a real `BrowserWindow` keyed by label; loads the renderer at the **caller-provided `url`** (PerfHUD passes `url:'/?perfHud=1'`, which `main.tsx` detects to render `<PerfHUDWindow/>`).
 
-- [ ] **Step 1: Inspect how the renderer opens + renders the PerfHUD window**
+- [ ] **Step 1: The renderer's window discrimination (verified 2026-06-18)**
 
-Run: `rg "WebviewWindow|perf-hud|PerfHUD|window=" apps/desktop/src/App.tsx apps/desktop/src/**/PerfHUD*.tsx`
-Expected: learn the label string used and how the renderer decides to render the HUD route (e.g. a URL query / hash). The secondary window must load the renderer with that same discriminator. (Implementer reconciles the exact label + route param from this output before writing Step 3.)
+`main.tsx:21` renders the HUD when the URL query has `perfHud=1`: `new URLSearchParams(window.location.search).get('perfHud') === '1'` → `{isPerfHudWindow ? <PerfHUDWindow/> : <Root/>}`. The PerfHUD is opened by `src/render/PerfHUD.tsx:885 openPerfHudWindow` → `new WebviewWindow(PERF_HUD_WINDOW_LABEL, { url: '/?perfHud=1', width, height, ... })`. So the shim must **pass the caller's `url` through** to the secondary window — do NOT invent a `?window=<label>` discriminator. (A second consumer, `App.tsx:1552 openRenderPlayPopup`, passes `url:'/render-play.html#...'`; `render-play.html` is NOT a built vite entry, so render-play is a separate pre-existing gap — OUT of this task's scope; the generic url pass-through is correct for it too if/when that entry is added.) Confirm `PERF_HUD_WINDOW_LABEL`'s value and the `WebviewWindow` instance methods the renderer calls (`new`, `.once('tauri://error', cb)`, `getByLabel`) so the shim covers them.
 
 - [ ] **Step 2: Create the window manager `apps/desktop/electron/main/windows.ts`**
 
@@ -393,12 +392,14 @@ import { BrowserWindow } from 'electron'
 const wins = new Map<string, BrowserWindow>()
 const isDev = !!process.env['ELECTRON_RENDERER_URL']
 
-export function createSecondary(label: string, opts?: { width?: number; height?: number }): void {
+type SecondaryOpts = { url?: string; width?: number; height?: number; title?: string }
+export function createSecondary(label: string, opts?: SecondaryOpts): void {
   let win = wins.get(label)
   if (win && !win.isDestroyed()) { win.show(); return }
   win = new BrowserWindow({
     width: opts?.width ?? 480,
     height: opts?.height ?? 320,
+    title: opts?.title,
     show: false,
     frame: false,
     backgroundColor: '#0a0a0a',
@@ -409,9 +410,20 @@ export function createSecondary(label: string, opts?: { width?: number; height?:
   })
   wins.set(label, win)
   win.on('closed', () => wins.delete(label))
-  const q = `?window=${encodeURIComponent(label)}`
-  if (isDev) void win.loadURL(process.env['ELECTRON_RENDERER_URL']! + q)
-  else void win.loadFile(path.join(__dirname, '../renderer/index.html'), { search: q })
+  // Pass the caller's renderer-relative url straight through (e.g. '/?perfHud=1').
+  const rel = opts?.url ?? '/'
+  if (isDev) {
+    void win.loadURL(process.env['ELECTRON_RENDERER_URL']! + rel)
+  } else {
+    const u = new URL(rel, 'http://x') // parse path/search/hash of the relative url
+    const file = u.pathname === '/' ? 'index.html' : u.pathname.replace(/^\/+/, '')
+    // Reconcile loadFile's option semantics against the installed Electron 42:
+    // `search` is the query string (sans leading '?'), `hash` the fragment (sans '#').
+    void win.loadFile(path.join(__dirname, '../renderer', file), {
+      search: u.search ? u.search.slice(1) : undefined,
+      hash: u.hash ? u.hash.slice(1) : undefined,
+    })
+  }
   win.once('ready-to-show', () => win!.show())
 }
 export function actOnSecondary(label: string, action: 'show' | 'hide' | 'close' | 'center'): void {
@@ -432,7 +444,7 @@ export function secondaryExists(label: string): boolean {
 
 ```ts
 const { createSecondary, actOnSecondary, secondaryExists } = await import('./windows.js')
-ipcMain.handle('win:create', (_e, { label, options }: { label: string; options?: { width?: number; height?: number } }) => createSecondary(label, options))
+ipcMain.handle('win:create', (_e, { label, options }: { label: string; options?: { url?: string; width?: number; height?: number; title?: string } }) => createSecondary(label, options))
 ipcMain.handle('win:act', (_e, { label, action }: { label: string; action: 'show' | 'hide' | 'close' | 'center' }) => actOnSecondary(label, action))
 ipcMain.handle('win:exists', (_e, { label }: { label: string }) => secondaryExists(label))
 ```
@@ -465,6 +477,10 @@ export class WebviewWindow {
   async hide(): Promise<void> { await window.api.invoke('win:act', { label: this.label, action: 'hide' }) }
   async close(): Promise<void> { await window.api.invoke('win:act', { label: this.label, action: 'close' }) }
   async center(): Promise<void> { await window.api.invoke('win:act', { label: this.label, action: 'center' }) }
+  // The renderer calls win.once('tauri://error', cb) to surface create failures;
+  // Electron secondary-window errors aren't bridged here, so this is a no-op
+  // (any load failure logs in main). Keep the signature so callers don't throw.
+  once(_event: string, _cb: (...a: unknown[]) => void): void { /* no-op */ }
   static getByLabel(_label: string): WebviewWindow | null { return null }
 }
 ```
@@ -480,7 +496,7 @@ import path from 'node:path'
 test('a secondary window opens and closes via win:* IPC', async () => {
   const app = await electron.launch({ args: [path.join(__dirname, '../../out/main/index.js')] })
   const main = await app.firstWindow()
-  await main.evaluate(() => (window as any).api.invoke('win:create', { label: 'perf-hud' }))
+  await main.evaluate(() => (window as any).api.invoke('win:create', { label: 'perf-hud', options: { url: '/?perfHud=1' } }))
   await main.evaluate(() => (window as any).api.invoke('win:act', { label: 'perf-hud', action: 'show' }))
   await expect.poll(() => app.windows().length).toBe(2)
   const exists = await main.evaluate(() => (window as any).api.invoke('win:exists', { label: 'perf-hud' }))
