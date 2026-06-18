@@ -27,6 +27,10 @@ const OUTPUT = path.resolve(os.tmpdir(), 'weftcut-e2e-s5-motif-out.mp4')
 const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-s5-motif-proj')
 
 test('S5 motif export: countdown animates in output (frames differ across seconds)', async () => {
+  test.skip(
+    process.env.WEFTCUT_E2E_NO_EXPORT === '1',
+    'WebCodecs H.264 encode needs a GPU not available on headless CI runners; motif export is verified locally',
+  )
   test.setTimeout(300_000)
   mkdirSync(PROJECT_PARENT, { recursive: true })
   rmSync(OUTPUT, { force: true })
