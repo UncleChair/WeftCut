@@ -1,8 +1,6 @@
 // Replaces @tauri-apps/api/webviewWindow. Backed by a real Electron secondary
 // BrowserWindow via win:* IPC (electron/main/windows.ts).
-declare global {
-  interface Window { api: { invoke(c: string, a?: unknown): Promise<unknown> } }
-}
+// Window.api is declared with the full shape in tauri-core.ts; no re-declaration here.
 
 // Flag used to suppress win:create from the internal no-op constructor path.
 let _suppressCreate = false
