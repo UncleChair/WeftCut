@@ -14,6 +14,13 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+/// schemars 0.8 renders `serde_json::Value` as the boolean schema `true`, which
+/// the MCP TS-SDK Zod validator rejects (it requires object schemas). Emit `{}`
+/// (an unconstrained OBJECT schema) so `client.listTools()` accepts the catalog.
+pub(crate) fn any_object_schema(_gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+    schemars::schema::Schema::Object(schemars::schema::SchemaObject::default())
+}
+
 use crate::state::animated::{Animated, Keyframe};
 use crate::state::ids::KeyframeId;
 use crate::state::keyframe_edits;
@@ -37,6 +44,7 @@ pub(super) struct SetKeyframeArgs {
     pub param_key: String,
     pub t_us: i64,
     pub value: f64,
+    #[schemars(schema_with = "any_object_schema")]
     pub interp: Option<Value>,
 }
 
@@ -60,6 +68,7 @@ pub(super) struct SetKeyframeEasingArgs {
     pub layer_id: String,
     pub param_key: String,
     pub keyframe_id: String,
+    #[schemars(schema_with = "any_object_schema")]
     pub interp: Value,
 }
 
@@ -81,6 +90,7 @@ pub(super) struct ClearKeyframesArgs {
 pub(super) struct SetParamTrackArgs {
     pub layer_id: String,
     pub param_key: String,
+    #[schemars(schema_with = "any_object_schema")]
     pub track: Value,
 }
 

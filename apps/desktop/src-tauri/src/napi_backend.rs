@@ -765,6 +765,29 @@ mod tests {
 
     #[cfg(feature = "mcp")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn mcp_catalog_property_schemas_are_objects() {
+        let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
+        b.init().await.unwrap();
+        let cat: serde_json::Value = serde_json::from_str(&b.mcp_catalog().await.unwrap()).unwrap();
+        // Every value under any `properties` map must be an object (the MCP SDK
+        // rejects boolean property schemas, e.g. schemars' `true` for serde Value).
+        fn check(v: &serde_json::Value, tool: &str) {
+            if let Some(obj) = v.as_object() {
+                if let Some(props) = obj.get("properties").and_then(|p| p.as_object()) {
+                    for (k, sub) in props {
+                        assert!(sub.is_object(), "tool '{tool}': property '{k}' schema is {sub}, not an object — MCP SDK rejects boolean schemas");
+                    }
+                }
+                for sub in obj.values() { check(sub, tool); }
+            }
+        }
+        for t in cat["tools"].as_array().unwrap() {
+            check(&t["inputSchema"], t["name"].as_str().unwrap_or("?"));
+        }
+    }
+
+    #[cfg(feature = "mcp")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn mcp_call_tool_add_track_grows_summary() {
         let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
         b.init().await.unwrap();
