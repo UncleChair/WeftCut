@@ -15,7 +15,7 @@
 - **Renderer contracts preserved verbatim:** `get_mcp_info → McpInfoView {bind, sse_url, message_url, events_url, bearer_token}` and `reset_mcp_token → string`. These are answered by the Electron **main** process (the server lives in Node now).
 - **Spec:** `docs/superpowers/specs/2026-06-18-s4a-mcp-server-design.md`. Streamable-HTTP only; bearer **enforced**; change feed via in-protocol MCP notifications (no separate `/events`); cloud + motif tools deferred (S4b/S5).
 - **napi addon package name:** `@weftcut/core` (`src-tauri/`); built via `npm run napi:build`. The addon outputs `src-tauri/index.js` + `index.d.ts` + `index.<triple>.node`.
-- **Feature gating:** the `mcp` Cargo feature is OFF in today's addon build. The default/addon build (`--features jobs,export`) must stay green at every commit. The refactor is validated with `--features mcp` (which implies the mcp module compiles standalone over the non-feature-gated domain code).
+- **Feature gating:** the `mcp` Cargo feature is OFF in today's addon build (`napi:build … --features jobs,export`), and `mcp/mod.rs` is currently **uncompilable** — it still imports `tauri` (removed in S2) and `crate::jobs`/`crate::cloud`. So there is no green `--features mcp` baseline before Task 2; Task 2 is the first commit where mcp compiles again. The S4a-active MCP surface calls `crate::jobs`/`crate::commands::media` (import_media, detect_silences, audio-meter, media resources), so **all mcp build/test commands use `--features jobs,export,mcp`** (the canonical addon set + mcp), NOT bare `--features mcp`. The addon build `--features jobs,export` (mcp OFF) must stay green at every commit.
 - **PowerShell note (Windows):** the project's shell is PowerShell; run e2e single-specs as `npx playwright test e2e/electron/<spec>.spec.ts` (Playwright honors the path arg, unlike the wdio `--spec` gotcha).
 
 ---
@@ -530,9 +530,9 @@ pub(crate) use prompts::{catalog as list_prompts, expand as get_prompt};
 Run:
 ```
 cd apps/desktop/src-tauri
-cargo build                              # default/addon features — must stay green
-cargo build --features mcp
-cargo test  --features mcp --lib         # ported mcp tests + wire tests
+cargo build --features jobs,export          # addon build (mcp OFF) — must stay green
+cargo build --features jobs,export,mcp      # new mcp code — first mcp compile since S2
+cargo test  --features jobs,export,mcp --lib   # ported mcp tests + wire::tests
 ```
 Expected: all green. The pre-S4a `#[cfg(test)]` tests that lived in `mcp/mod.rs` move with their functions (into `tools.rs`/`resources.rs`); adjust their call sites to the new free-fn signatures (e.g. `WeftCutServer::new(...).add_track(...)` → build a `Backend::new_for_test` and call `tools::add_track(&b, args)`). If a test depended on a deleted cloud/motif tool, delete that test (its tool moved to S4b/S5).
 
@@ -662,8 +662,8 @@ async fn mcp_call_tool_unknown_is_not_found() {
 
 - [ ] **Step 4: Run the tests**
 
-Run: `cd apps/desktop/src-tauri && cargo test --features mcp --lib mcp_`
-Expected: the 3 `mcp_*` tests PASS (plus `wire::tests`). Also re-run `cargo build` (default) to confirm the `#[cfg(feature="mcp")]` gates keep the addon build green.
+Run: `cd apps/desktop/src-tauri && cargo test --features jobs,export,mcp --lib mcp_`
+Expected: the 3 `mcp_*` tests PASS (plus `wire::tests`). Also re-run `cargo build --features jobs,export` to confirm the `#[cfg(feature="mcp")]` gates keep the addon build (mcp OFF) green.
 
 - [ ] **Step 5: Commit**
 
@@ -1059,10 +1059,10 @@ git commit -m "migrate(s4a): e2e gate — external MCP client (ping/add_track/re
 
 Run (PowerShell):
 ```
-cd apps/desktop/src-tauri; cargo build; cargo test --features mcp --lib
+cd apps/desktop/src-tauri; cargo build --features jobs,export; cargo test --features jobs,export,mcp --lib
 cd ..; npx playwright test e2e/electron/s2-smoke.spec.ts e2e/electron/s4a-mcp.spec.ts
 ```
-Expected: Rust default build green; `--features mcp` tests green; both specs pass (s2-smoke proves the addon-feature flip didn't regress the base bridge).
+Expected: addon build (mcp OFF) green; `--features jobs,export,mcp` tests green; both specs pass (s2-smoke proves the addon-feature flip didn't regress the base bridge).
 
 - [ ] **Step 2: Write `S4a-NOTES.md`**
 
