@@ -4,12 +4,14 @@ import { Readable } from 'node:stream'
 import { createRequire } from 'node:module'
 import { app, BrowserWindow, ipcMain, protocol } from 'electron'
 import { loadAllKeys, setKey, clearKey } from './keys.js'
+import { MOTIF_SCHEME_ENTRY, registerMotifProtocol } from './motif/protocol.js'
 
 protocol.registerSchemesAsPrivileged([
   {
     scheme: 'weftcut-media',
     privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true },
   },
+  MOTIF_SCHEME_ENTRY,
 ])
 
 const require_ = createRequire(import.meta.url)
@@ -195,6 +197,8 @@ app.whenReady().then(async () => {
       isSymlink: d.isSymbolicLink(),
     })),
   )
+
+  registerMotifProtocol(backend!)
 
   protocol.handle('weftcut-media', async (request) => {
     // URL form: weftcut-media://localhost/<encodeURIComponent(absPath)>
