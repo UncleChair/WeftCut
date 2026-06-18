@@ -1817,8 +1817,7 @@ pub(super) struct AddMotifArgs {
     /// Layer end in timeline microseconds. Defaults to
     /// `t_start_us + default_duration_s * 1_000_000` when omitted.
     pub t_end_us: Option<i64>,
-    /// Target Video track id. If omitted, the first existing Video track is used,
-    /// or a new one labeled "Motifs" is created.
+    /// Target track id. If omitted, a fresh track labeled "Overlay" is created.
     pub track_id: Option<String>,
     /// Motif props as a JSON object. Keys must match the motif's
     /// `props_schema`; unknown keys reject; missing keys fill from defaults.

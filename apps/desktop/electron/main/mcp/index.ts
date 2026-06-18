@@ -4,7 +4,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
-import { randomUUID } from 'node:crypto'
+import { randomUUID, timingSafeEqual } from 'node:crypto'
 import { buildMcpServer } from './server.js'
 import { loadOrInitAuth, saveAuth, rotateToken, type McpAuth } from './auth.js'
 
@@ -34,8 +34,16 @@ export async function startMcpHost(backend: Backend): Promise<McpHost> {
   appExpress.use(express.json({ limit: '50mb' }))
 
   // Bearer enforcement (we own the middleware now — unlike rmcp 0.1.x).
+  // Constant-time compare: a plain `!==` leaks timing. Not a real attack surface
+  // for a 256-bit localhost token, but timingSafeEqual is the correct form.
+  const bearerOk = (header: string | undefined): boolean => {
+    if (typeof header !== 'string') return false
+    const got = Buffer.from(header)
+    const want = Buffer.from(`Bearer ${auth.token}`)
+    return got.length === want.length && timingSafeEqual(got, want)
+  }
   appExpress.use('/mcp', (req, res, next) => {
-    if (req.headers.authorization !== `Bearer ${auth.token}`) {
+    if (!bearerOk(req.headers.authorization)) {
       res
         .status(401)
         .json({ jsonrpc: '2.0', error: { code: -32001, message: 'unauthorized' }, id: null })

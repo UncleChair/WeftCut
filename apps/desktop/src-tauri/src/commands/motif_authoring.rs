@@ -5,6 +5,9 @@
 use crate::napi_backend::Backend;
 use crate::motifs::authoring_commands as ac;
 use crate::motifs::catalog::builtins;
+use crate::motifs::staleness as st;
+use crate::state::{Actor, LayerParams};
+use crate::state::ids::LayerId;
 
 fn emit_changed(b: &Backend) {
     b.events.emit(ac::MOTIFS_CHANGED_EVENT, serde_json::json!({}));
@@ -52,10 +55,6 @@ pub async fn delete_motif(b: &Backend, id: String) -> Result<(), String> {
 }
 
 // ---- S5: staleness report + acknowledge ----
-
-use crate::motifs::staleness as st;
-use crate::state::{Actor, LayerParams};
-use crate::state::ids::LayerId;
 
 pub async fn motif_staleness_report(b: &Backend) -> Result<Vec<st::MotifStaleEntry>, String> {
     let current = st::current_versions(&b.motif_store);
