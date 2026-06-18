@@ -20,6 +20,8 @@ pub mod persistence;
 pub mod prefs;
 #[cfg(feature = "jobs")]
 pub mod media;
+#[cfg(feature = "export")]
+pub mod export;
 
 #[derive(Serialize, Clone)]
 pub struct ProjectSummary {
@@ -856,6 +858,34 @@ pub struct PathArgs {
 #[serde(rename_all = "camelCase")]
 pub struct MediaIdArgs {
     pub media_id: String,
+}
+
+#[cfg(feature = "export")]
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportAudioOnlyArgs {
+    pub output_path: String,
+    pub audio: crate::export::AudioEncodeSpec,
+    pub start_us: Option<i64>,
+    pub end_us: Option<i64>,
+}
+
+#[cfg(feature = "export")]
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MuxExportArgs {
+    pub video_path: String,
+    pub audio_path: String,
+    pub output_path: String,
+    pub transcode: Option<crate::commands::export::TranscodeSpec>,
+}
+
+#[cfg(feature = "export")]
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportConformArgs {
+    pub start_us: Option<i64>,
+    pub end_us: Option<i64>,
 }
 
 /// `project_new_workspace`: keys mirror `ipc/index.ts` (`parentFolder`,
