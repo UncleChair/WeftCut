@@ -209,8 +209,9 @@ tool_table! {
     "set_role_flags" => ("Mute/solo an audio role. role ∈ {dialogue,music,sfx,voiceover}. \
                           Unrecorded (not undoable). Mute wins over solo; any solo silences non-soloed roles.", tools::SetRoleFlagsArgs, tools::set_role_flags),
     #[cfg(feature = "cloud")]
-    "transcribe_clip" => ("Transcribe a VideoClip or Audio layer to SRT using the configured cloud provider (OpenAI Whisper today). \
-                          Returns the SRT body with cue timestamps shifted to timeline-absolute values so the output feeds directly into \
+    "transcribe_clip" => ("Transcribe a VideoClip or Audio layer through the configured cloud transcription \
+                          provider (OpenAI Whisper today) and return the SRT body with timestamps already \
+                          shifted to timeline-absolute microseconds. Pipe the returned body straight into \
                           `apply_subtitles` (omit `t_start_us` so the layer activates from 0 — the cues \
                           self-position via their internal timestamps). Optional `t_start_us`/`t_end_us` \
                           narrow the transcription window inside the layer's time range; both default to \
