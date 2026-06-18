@@ -5,6 +5,7 @@ import { createRequire } from 'node:module'
 import { app, BrowserWindow, ipcMain, protocol } from 'electron'
 import { loadAllKeys, setKey, clearKey } from './keys.js'
 import { MOTIF_SCHEME_ENTRY, registerMotifProtocol } from './motif/protocol.js'
+import { setRuntimeSource, captureMotifFrameB64 } from './motif/capture.js'
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -108,6 +109,20 @@ app.whenReady().then(async () => {
   ipcMain.handle('reset_mcp_token', () => mcpHost.resetToken())
 
   ipcMain.handle('backend:invoke', async (_e, { channel, args }) => {
+    // Motif runtime registration: renderer sends its clock-takeover source once
+    // at boot; main injects it into the offscreen capture host via CDP.
+    if (channel === 'motif_register_runtime') {
+      setRuntimeSource((args as { source: string }).source)
+      return null
+    }
+    // Motif frame capture: offscreen CDP path — never falls through to Rust.
+    if (channel === 'motif_capture_frame') {
+      const a = args as {
+        motifId: string; tSec: number; propsJson: string
+        width: number; height: number; settleRafs: number | null; contentHash: string
+      }
+      return await captureMotifFrameB64(backend!, a)
+    }
     // API-key writes need safeStorage (main-only) + a push into the backend
     // cache. Intercept here; status/test fall through to the Rust dispatcher.
     if (channel === 'settings_set_api_key') {
