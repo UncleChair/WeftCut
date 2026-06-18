@@ -1,6 +1,8 @@
 {
   "name": "@weftcut/desktop",
   "version": "0.0.0",
+  "description": "WeftCut video editor desktop app",
+  "author": "WeftCut",
   "private": true,
   "type": "module",
   "main": "out/main/index.js",
@@ -18,7 +20,8 @@
     "electron:build": "electron-vite build",
     "electron:preview": "electron-vite preview",
     "napi:build": "napi build --platform --release --manifest-path src-tauri/Cargo.toml --output-dir src-tauri --features jobs,export,mcp,cloud,motifs",
-    "e2e:electron": "playwright test -c playwright.config.ts"
+    "e2e:electron": "playwright test -c playwright.config.ts",
+    "package": "npm run napi:build && npm run electron:build && electron-builder --publish never"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",
@@ -60,8 +63,8 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
-    "electron": "^42.0.0",
-    "electron-builder": "^26.0.0",
+    "electron": "42.4.1",
+    "electron-builder": "26.15.3",
     "electron-vite": "6.0.0-beta.1",
     "esbuild": "^0.28.0",
     "jsdom": "^25.0.1",
