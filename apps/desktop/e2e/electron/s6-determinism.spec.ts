@@ -22,13 +22,13 @@
 //   lower-third   1280×320  t in [0,5]
 // Brief's "lower-third-simple" and "title-card" do not exist.
 
-import { test, _electron as electron } from '@playwright/test'
+import { test } from '@playwright/test'
 import path from 'node:path'
 import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { launchApp } from './helpers/driver'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const MAIN = path.resolve(__dirname, '../../out/main/index.js')
 
 // Positive cases — built-in motifs only. Dimensions match each motif's declared size.
 const POSITIVE = [
@@ -45,12 +45,42 @@ test('capture fixed motif frames for cross-OS comparison', async () => {
   // NOTE: swiftshader (--disable-gpu --use-gl=swiftshader --in-process-gpu)
   // hangs the offscreen CDP capture on Windows 11 — see file header for details.
   // Running without forced-GPU-disable on Windows; Task 8 / CI must address this.
-  const app = await electron.launch({ args: [MAIN] })
+  // launchApp() waits for domcontentloaded (after main.tsx runs) so the motif
+  // runtime is registered before we issue any capture calls.
+  const { app, page } = await launchApp()
+
+  // Retry-until-registered guard: on slow CI the motif runtime may not be
+  // registered immediately after domcontentloaded.  We retry up to ~10 s.
+  const capWithRetry = async (motifId: string, tSec: number, w: number, h: number, propsJson = '{}'): Promise<string> => {
+    const MAX = 40
+    for (let i = 0; i < MAX; i++) {
+      try {
+        const result = (await page.evaluate(
+          ([id, t, props, width, height]) =>
+            (window as any).api.invoke('motif_capture_frame', {
+              motifId: id,
+              tSec: t,
+              propsJson: props,
+              width,
+              height,
+              settleRafs: 3,
+              contentHash: 'det',
+            }) as Promise<string>,
+          [motifId, tSec, propsJson, w, h] as const,
+        )) as string
+        return result
+      } catch (e: any) {
+        if (typeof e?.message === 'string' && e.message.includes('runtime not registered') && i < MAX - 1) {
+          await new Promise((r) => setTimeout(r, 250))
+          continue
+        }
+        throw e
+      }
+    }
+    throw new Error('motif runtime never registered after 10 s')
+  }
 
   try {
-    const page = await app.firstWindow()
-    await page.waitForFunction(() => typeof (window as any).api?.invoke === 'function')
-
     const cap = async (motifId: string, tSec: number, w: number, h: number, propsJson = '{}') =>
       (await page.evaluate(
         ([id, t, props, width, height]) =>
@@ -67,8 +97,13 @@ test('capture fixed motif frames for cross-OS comparison', async () => {
       )) as string
 
     // ── Positive cases ─────────────────────────────────────────────────────────
+    // First capture uses capWithRetry to absorb any runtime-registration delay.
+    let firstPositive = true
     for (const c of POSITIVE) {
-      const b64 = await cap(c.id, c.t, c.w, c.h)
+      const b64 = firstPositive
+        ? await capWithRetry(c.id, c.t, c.w, c.h)
+        : await cap(c.id, c.t, c.w, c.h)
+      firstPositive = false
       if (!b64 || b64.length < 1000) {
         throw new Error(`motif_capture_frame returned an empty/short result for ${c.id}: length=${b64?.length}`)
       }

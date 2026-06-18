@@ -99,6 +99,8 @@ jobs:
       # cross-OS SSIM margins are — threshold will be tuned after run #1.
       - name: E2E tests (includes determinism capture)
         shell: bash
+        env:
+          WEFTCUT_E2E_NO_EXPORT: '1'
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
             xvfb-run -a npm run e2e:electron
