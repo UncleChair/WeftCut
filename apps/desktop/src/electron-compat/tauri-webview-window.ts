@@ -1,32 +1,46 @@
-// Replaces @tauri-apps/api/webviewWindow.
-// Imports seen in src/: WebviewWindow
-// Used in App.tsx and PerfHUD.tsx for creating secondary windows (PerfHUD popup).
-// In S1 this is a stub class that no-ops; the PerfHUD feature degrades gracefully.
+// Replaces @tauri-apps/api/webviewWindow. Backed by a real Electron secondary
+// BrowserWindow via win:* IPC (electron/main/windows.ts).
+declare global {
+  interface Window { api: { invoke(c: string, a?: unknown): Promise<unknown> } }
+}
+
+// Flag used to suppress win:create from the internal no-op constructor path.
+let _suppressCreate = false
 
 export class WebviewWindow {
-  constructor(
-    public readonly label: string,
-    _options?: Record<string, unknown>,
-  ) {}
+  public readonly label: string
 
-  async show(): Promise<void> {
-    // stub
+  constructor(label: string, options?: Record<string, unknown>) {
+    this.label = label
+    if (!_suppressCreate) {
+      void window.api.invoke('win:create', { label, options })
+    }
   }
 
-  async hide(): Promise<void> {
-    // stub
-  }
+  async show(): Promise<void> { await window.api.invoke('win:act', { label: this.label, action: 'show' }) }
+  async hide(): Promise<void> { await window.api.invoke('win:act', { label: this.label, action: 'hide' }) }
+  async close(): Promise<void> { await window.api.invoke('win:act', { label: this.label, action: 'close' }) }
+  async center(): Promise<void> { await window.api.invoke('win:act', { label: this.label, action: 'center' }) }
+  async setFocus(): Promise<void> { await window.api.invoke('win:act', { label: this.label, action: 'focus' }) }
 
-  async close(): Promise<void> {
-    // stub
-  }
+  // The renderer calls win.once('tauri://created', cb) and win.once('tauri://error', cb)
+  // to surface create/failure events. Electron secondary-window lifecycle isn't
+  // bridged here, so both are no-ops (load failures log in main). Keep the
+  // signature so callers don't throw.
+  once(_event: string, _cb: (...a: unknown[]) => void): void { /* no-op */ }
 
-  async center(): Promise<void> {
-    // stub
-  }
-
-  // Static helper used in some Tauri patterns
-  static getByLabel(_label: string): WebviewWindow | null {
-    return null
+  // getByLabel mirrors the Tauri API which returns a Promise<WebviewWindow | null>.
+  // PerfHUD calls .then() on the result. We check win:exists on main and return
+  // a handle instance (truthy) if found, or null if not.
+  static async getByLabel(label: string): Promise<WebviewWindow | null> {
+    const exists = await window.api.invoke('win:exists', { label })
+    if (!exists) return null
+    // Construct a handle without firing win:create (window already exists).
+    _suppressCreate = true
+    try {
+      return new WebviewWindow(label)
+    } finally {
+      _suppressCreate = false
+    }
   }
 }

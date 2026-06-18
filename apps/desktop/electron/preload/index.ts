@@ -4,10 +4,11 @@ type Listener = (payload: unknown) => void
 
 const api = {
   invoke(channel: string, args?: unknown): Promise<unknown> {
-    // window:* and path:* are served by direct ipcMain handlers in the main
-    // process, not the napi backend dispatcher. Route them straight through.
+    // window:*, win:*, path:* etc. are served by direct ipcMain handlers in the
+    // main process, not the napi backend dispatcher. Route them straight through.
     if (
       channel.startsWith('window:') ||
+      channel.startsWith('win:') ||
       channel.startsWith('path:') ||
       channel.startsWith('dialog:') ||
       channel.startsWith('fs:') ||

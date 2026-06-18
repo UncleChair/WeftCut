@@ -164,6 +164,12 @@ app.whenReady().then(async () => {
     return JSON.parse(json)
   })
 
+  // Secondary windows (PerfHUD popup etc.) via win:* IPC.
+  const { createSecondary, actOnSecondary, secondaryExists } = await import('./windows.js')
+  ipcMain.handle('win:create', (_e, { label, options }: { label: string; options?: { url?: string; width?: number; height?: number; title?: string } }) => createSecondary(label, options))
+  ipcMain.handle('win:act', (_e, { label, action }: { label: string; action: 'show' | 'hide' | 'close' | 'center' | 'focus' }) => actOnSecondary(label, action))
+  ipcMain.handle('win:exists', (_e, { label }: { label: string }) => secondaryExists(label))
+
   // Drag-drop import: the renderer resolves real paths via webUtils and posts
   // them here; we re-emit the SAME event the Tauri media_drop.rs path emitted,
   // so the renderer's existing media:external-drop listener handles them.
