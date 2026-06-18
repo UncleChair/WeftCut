@@ -36,6 +36,10 @@ pub struct Backend {
     pub(crate) import_queue: crate::jobs::import::ImportQueue,
     #[cfg(feature = "jobs")]
     pub(crate) audio_meter: crate::commands::media::AudioMeterState,
+    #[cfg(feature = "export")]
+    pub(crate) video_sink: crate::export::videosink::VideoSinkState,
+    #[cfg(feature = "export")]
+    pub(crate) hw_encoder: crate::export::HwEncoderCache,
     pub(crate) workspace: WorkspaceSlot,
     pub(crate) agent_session: AgentSessionSlot,
     pub(crate) log_slot: LogBusSlot,
@@ -84,6 +88,10 @@ fn build_backend(events: Arc<dyn EventSink>, config_dir: String, cache_dir: Stri
         import_queue,
         #[cfg(feature = "jobs")]
         audio_meter: crate::commands::media::AudioMeterState::default(),
+        #[cfg(feature = "export")]
+        video_sink: crate::export::videosink::VideoSinkState::default(),
+        #[cfg(feature = "export")]
+        hw_encoder: crate::export::HwEncoderCache::default(),
         workspace: WorkspaceSlot::new(),
         agent_session: AgentSessionSlot::new(),
         log_slot,
