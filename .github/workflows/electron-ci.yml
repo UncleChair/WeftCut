@@ -74,7 +74,17 @@ jobs:
 
       # Rust unit tests.  No xvfb needed (headless library tests, no display).
       - name: Rust tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml --lib --features jobs,export,mcp,cloud,motifs
+        shell: bash
+        run: |
+          # napi crate references Node-API symbols (napi_*) the host Node provides at
+          # addon-load time. A cargo-test binary has no host → the linker errors on Linux/
+          # macOS (Windows resolves via an import lib). The tests never call these symbols
+          # at runtime, so allow them undefined at link.
+          case "$RUNNER_OS" in
+            Linux) export RUSTFLAGS="-C link-arg=-Wl,--unresolved-symbols=ignore-all" ;;
+            macOS) export RUSTFLAGS="-C link-arg=-Wl,-undefined,dynamic_lookup" ;;
+          esac
+          cargo test --manifest-path src-tauri/Cargo.toml --lib --features jobs,export,mcp,cloud,motifs
 
       # Full e2e suite via Playwright — includes s6-determinism.spec.ts which
       # writes PNGs to determinism-artifacts/<process.platform>/ (win32/linux/darwin).
