@@ -26,6 +26,8 @@ pub mod export;
 pub mod cloud;
 #[cfg(feature = "motifs")]
 pub mod motifs;
+#[cfg(feature = "motifs")]
+pub mod motif_authoring;
 
 #[cfg(feature = "cloud")]
 #[derive(Serialize, Clone)]
