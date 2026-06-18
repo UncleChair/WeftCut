@@ -49,7 +49,7 @@ test('capture fixed motif frames for cross-OS comparison', async () => {
 
   try {
     const page = await app.firstWindow()
-    await page.waitForLoadState('domcontentloaded')
+    await page.waitForFunction(() => typeof (window as any).api?.invoke === 'function')
 
     const cap = async (motifId: string, tSec: number, w: number, h: number, propsJson = '{}') =>
       (await page.evaluate(
@@ -60,7 +60,7 @@ test('capture fixed motif frames for cross-OS comparison', async () => {
             propsJson: props,
             width,
             height,
-            settleRafs: 1,
+            settleRafs: 3,
             contentHash: 'det',
           }) as Promise<string>,
         [motifId, tSec, propsJson, w, h] as const,
@@ -131,6 +131,17 @@ motif.define({
     }
     fs.writeFileSync(path.join(outDir, 'NEG-det-jitter.png'), Buffer.from(jb64, 'base64'))
     console.log(`[s6-det] captured NEG-det-jitter.png (b64 len=${jb64.length})`)
+
+    // Clean up jitter motif to avoid accumulation across repeated local/CI runs.
+    try {
+      await page.evaluate(
+        ([ch, a]) => (window as any).api.invoke(ch, a),
+        ['delete_motif', { id: publishedId }] as const,
+      )
+      console.log('[s6-det] jitter motif deleted:', publishedId)
+    } catch (e) {
+      console.warn('[s6-det] delete_motif failed (non-fatal):', e)
+    }
 
     // Confirm all expected files exist.
     const expected = [...POSITIVE.map((c) => `${c.id}.png`), 'NEG-det-jitter.png']
