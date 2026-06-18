@@ -201,6 +201,20 @@ impl Backend {
         let autosave = AutosaveController::spawn(handle, self.workspace.clone());
         let _ = self.autosave.set(autosave);
 
+        // S5: watch <config_dir>/motifs/ so external edits + agent writes resync
+        // the renderer catalog (motifs:changed → syncCatalog → ?v= host buster).
+        #[cfg(feature = "motifs")]
+        {
+            let events = self.events.clone();
+            let root = std::path::PathBuf::from(&self.config_dir).join("motifs");
+            match crate::motifs::watcher::spawn(root, move || {
+                events.emit("motifs:changed", serde_json::json!({}));
+            }) {
+                Ok(w) => { let _ = self.motif_watcher.set(w); }
+                Err(e) => tracing::warn!("motif watcher failed to start: {e:#}"),
+            }
+        }
+
         // S3: warm up ffmpeg-sidecar (resolve / auto-download the binary) off
         // the init path so the first media job doesn't pay the download.
         #[cfg(any(feature = "jobs", feature = "export"))]
@@ -662,6 +676,10 @@ impl Backend {
                 let a: A = serde_json::from_str(args).map_err(|e| e.to_string())?;
                 ser(crate::commands::motif_authoring::delete_motif(self, a.id).await)
             }
+            #[cfg(feature = "motifs")]
+            "motif_staleness_report" => ser(crate::commands::motif_authoring::motif_staleness_report(self).await),
+            #[cfg(feature = "motifs")]
+            "acknowledge_motif_staleness" => ser(crate::commands::motif_authoring::acknowledge_motif_staleness(self).await),
             other => Err(format!("unavailable: '{other}' is wired in a later stage (S3/S4/S5)")),
         }
     }
@@ -1046,6 +1064,15 @@ mod tests {
             "log:entry must reach the sink; saw {:?}",
             sink.names()
         );
+    }
+
+    #[cfg(feature = "motifs")]
+    #[tokio::test]
+    async fn staleness_report_arm_is_empty_on_blank_project() {
+        let b = Backend::new_for_test(Arc::new(VecEventSink::new()));
+        b.init().await.unwrap();
+        let json = b.dispatch("motif_staleness_report", "{}").await.unwrap();
+        assert_eq!(json, "[]"); // no motif layers placed → empty report
     }
 
     #[cfg(feature = "motifs")]
