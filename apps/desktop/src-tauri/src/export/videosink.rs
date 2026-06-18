@@ -13,7 +13,6 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use tauri::State;
 use tracing::{info, warn};
 
 fn message_kind(m: tungstenite::Message) -> &'static str {
@@ -332,10 +331,9 @@ fn reclaim_stale_sink(state: &Mutex<Option<ActiveSink>>) {
     }
 }
 
-#[tauri::command]
 pub async fn export_video_sink_start(
-    state: State<'_, VideoSinkState>,
-    hw: State<'_, super::hwencoder::HwEncoderCache>,
+    state: &VideoSinkState,
+    hw: &super::hwencoder::HwEncoderCache,
     args: VideoSinkStartArgs,
 ) -> Result<VideoSinkStartReply, String> {
     if args.mode != "discard" && args.mode != "ws" {
@@ -472,9 +470,8 @@ pub async fn export_video_sink_start(
     Ok(VideoSinkStartReply { port, token })
 }
 
-#[tauri::command]
 pub async fn export_video_sink_finish(
-    state: State<'_, VideoSinkState>,
+    state: &VideoSinkState,
 ) -> Result<SinkStats, String> {
     // --- C1: set finishing; only steal stdin if WS hasn't connected yet ---
     {
@@ -495,7 +492,7 @@ pub async fn export_video_sink_finish(
         let join = sink.join.take().ok_or("sink already finished")?;
         (join, sink.shared.clone())
     };
-    let join_result = tauri::async_runtime::spawn_blocking(move || {
+    let join_result = tokio::task::spawn_blocking(move || {
         join.join().unwrap_or_else(|_| Err("sink thread panicked".into()))
     })
     .await;
@@ -508,9 +505,8 @@ pub async fn export_video_sink_finish(
     join_result.map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
 pub async fn export_video_sink_cancel(
-    state: State<'_, VideoSinkState>,
+    state: &VideoSinkState,
 ) -> Result<(), String> {
     let mut guard = state.0.lock().unwrap();
     if let Some(sink) = guard.take() {
@@ -522,47 +518,6 @@ pub async fn export_video_sink_cancel(
         warn!("video sink cancelled");
     }
     Ok(())
-}
-
-/// IPC fallback: raw-invoke body straight into ffmpeg stdin. Used only when
-/// the WS connect fails in the worker (the export still completes, slower).
-#[tauri::command]
-pub fn export_video_sink_write(
-    request: tauri::ipc::Request<'_>,
-    state: State<'_, VideoSinkState>,
-) -> Result<(), String> {
-    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
-        return Err("expected raw body".into());
-    };
-    let shared = {
-        let guard = state.0.lock().unwrap();
-        let sink = guard.as_ref().ok_or("no active video sink")?;
-        sink.shared.clone()
-    };
-    let mut stdin = shared.stdin.lock().unwrap();
-    match stdin.as_mut() {
-        Some(s) => {
-            s.write_all(bytes).map_err(|e| {
-                format!("ffmpeg stdin: {e}{}", tail_suffix(&shared))
-            })?;
-            // --- M2: update liveness + IPC counters on every successful write. ---
-            shared.last_write_ms.store(shared.t0.elapsed().as_millis() as u64, Ordering::Relaxed);
-            shared.ipc_bytes.fetch_add(bytes.len() as u64, Ordering::Relaxed);
-            shared.ipc_frames.fetch_add(1, Ordering::Relaxed);
-            Ok(())
-        }
-        None => {
-            // --- M3: distinguish finishing (error) from discard mode (ok) ---
-            if shared.finishing.load(Ordering::Relaxed) {
-                Err("video sink already finishing".into())
-            } else {
-                // discard mode: stdin is None by design; update liveness so the
-                // accept loop knows the IPC stream is alive.
-                shared.last_write_ms.store(shared.t0.elapsed().as_millis() as u64, Ordering::Relaxed);
-                Ok(())
-            }
-        }
-    }
 }
 
 #[cfg(test)]
