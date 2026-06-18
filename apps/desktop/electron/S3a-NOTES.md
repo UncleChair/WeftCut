@@ -122,3 +122,8 @@ is still owed — see Deferred below.
 - **ffmpeg bundling** — production signing + sidecar packaging for distribution;
   S6.
 - **`fs:*` handlers** — file-system read/write from the renderer; S3b per the spec.
+
+## Acceptance (2026-06-18)
+- **Manual preview (S3a exit #2): PASSED** — user confirmed frames render on scrub in the built app. The `weftcut-media://` protocol → WebCodecs decode → Pixi composite chain works end-to-end.
+- Added window-visibility regression test: `e2e/electron/s3a-window-visible.spec.ts` (launches the built `out/main/index.js`, asserts `BrowserWindow.getAllWindows()[0].isVisible()===true`).
+- DEV-LAUNCH NOTE: `npm run electron:dev` (electron-vite 6.0.0-beta.1) does NOT surface a window on Windows. For visual/manual checks use the built app: `npm run electron:build` then `npx electron out/main/index.js`. Revisit when electron-vite reaches stable (pending version decision).
