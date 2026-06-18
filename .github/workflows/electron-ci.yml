@@ -102,10 +102,12 @@ jobs:
           name: test-results-${{ matrix.os }}
           path: apps/desktop/test-results/**
 
-      # Sign-free packaging (electron-builder --publish never is already set in
-      # the package script).
+      # Sign-free packaging. napi:build already ran above (its .node artefact
+      # persists in node_modules/@weftcut/core); skip re-compiling Rust by
+      # running electron:build (clean non-E2E renderer bundle, no
+      # VITE_WEFTCUT_E2E) then electron-builder directly.
       - name: Package (unsigned)
-        run: npm run package
+        run: npm run electron:build && npx electron-builder --publish never
 
       - name: Upload installer
         if: always()
