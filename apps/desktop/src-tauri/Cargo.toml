@@ -49,25 +49,13 @@ regex = "1"
 
 # --- Phase 0 spike deps. Pin/upgrade once verified to compile. ---
 ffmpeg-sidecar = "2"
-# Anthropic Rust MCP SDK. Pinned to 0.1.x: 1.x dropped the
-# `transport-sse-server` feature in favor of streamable-HTTP only. Our
-# `mcp/mod.rs::serve` uses `rmcp::transport::sse_server::SseServer`,
-# which is gone in 1.x. Migrating means swapping the server type AND
-# verifying every connecting client (Claude Desktop, Cursor, custom
-# integrations) speaks streamable-HTTP. Tracked as separate work; see
-# [[feedback_rmcp_migration_blocked]].
-rmcp = { version = "0.1", features = ["server", "macros", "transport-sse-server"] }
-# Phase 4 Stage 5 ships an MCP-side change-feed on a separate /events SSE
-# endpoint so it doesn't compete with rmcp's notification surface (which
-# 0.1.x doesn't expose anyway). Both crates land via rmcp's transitive
-# dependency tree; pinning here so we can use them directly.
-axum = "0.8"
-tokio-stream = { version = "0.1", features = ["sync"] }
-futures = "0.3"
+# S4a: the MCP core is transport-free (the HTTP/streamable server lives in the
+# Electron main process; see `src/mcp/` + `docs/mcp.md`). rmcp/axum/tokio-stream/
+# futures are gone — the old SSE transport + axum change-feed were deleted in the
+# napi migration. The wire types in `src/mcp/wire.rs` serialize to the exact JSON
+# the `@modelcontextprotocol/sdk` low-level Server expects.
 # Phase 1.x Stage 6 base64-encodes media bytes (JPG thumbnails, peaks file)
-# into rmcp's BlobResourceContents.blob String field for the media://*
-# resources. Already transitively present via tauri/rmcp; pinning for direct
-# use.
+# into the media://* resources' blob field. Pinning for direct use.
 base64 = "0.22"
 # Phase 6 cloud transcription stores per-provider API keys in the OS native
 # keyring (Windows Credential Manager, macOS Keychain, Linux Secret Service).
