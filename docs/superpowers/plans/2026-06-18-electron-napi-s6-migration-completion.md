@@ -19,7 +19,7 @@
 - **Node:** v22.20.0 (fnm default). Do not install Node any other way.
 - **Determinism gate:** force software rendering on every OS (`--disable-gpu --use-gl=swiftshader`); perceptual SSIM, seed threshold **0.98**, tune from the first CI run; a negative control must fall below threshold.
 - **Cut-over is the LAST task**, gated on all prior tasks green.
-- **`src/**` edits are forbidden except where a task explicitly sanctions one** (only Task 4).
+- **`src/**` edits are forbidden except where a task explicitly sanctions one** (Task 4 drag-drop branch; Task 6 ConnectAgentPanel + ipc type + locales). `electron-compat/` shim code is migration code, not `src/**` app code, and is always in scope.
 
 ---
 
