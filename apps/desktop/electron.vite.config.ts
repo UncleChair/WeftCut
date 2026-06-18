@@ -12,7 +12,13 @@ export default defineConfig({
     build: {
       outDir: 'out/main',
       lib: { entry: 'electron/main/index.ts' },
-      rollupOptions: { external: ['@weftcut/core'] },
+      // Externalize native + node-resolved deps. `@modelcontextprotocol/sdk`
+      // ships ESM with subpath `.js` imports (e.g. `…/sdk/server/index.js`);
+      // the regex keeps those subpaths external too, so Node resolves them from
+      // node_modules at runtime rather than the bundler choking on the subpaths.
+      rollupOptions: {
+        external: ['@weftcut/core', 'express', /^@modelcontextprotocol\/sdk(\/.*)?$/],
+      },
     },
   },
   preload: {

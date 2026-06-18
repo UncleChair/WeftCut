@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@pixi/react": "^8.0.5",
     "@tailwindcss/vite": "^4.3.0",
     "@tauri-apps/api": "^2.11.0",
@@ -32,6 +33,7 @@
     "@weftcut/core": "file:src-tauri",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "express": "^5.2.1",
     "i18next": "^26.2.0",
     "i18next-browser-languagedetector": "^8.2.1",
     "jassub": "^2.5.1",
@@ -53,6 +55,7 @@
     "@tauri-apps/cli": "^2.11.2",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
+    "@types/express": "^5.0.6",
     "@types/node": "^22.19.19",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",

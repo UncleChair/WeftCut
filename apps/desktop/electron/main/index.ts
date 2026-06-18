@@ -16,6 +16,11 @@ const { Backend } = require_('@weftcut/core') as typeof import('@weftcut/core')
 
 let backend: import('@weftcut/core').Backend | null = null
 let mainWindow: BrowserWindow | null = null
+// The MCP host is started after `backend.init()`, but the `onEvent` closure
+// (which taps `mcp:change`) is constructed in the `new Backend(...)` call
+// BEFORE the host exists. Hold it module-scoped and set it right after
+// `startMcpHost` resolves.
+let mcpHostRef: import('./mcp/index.js').McpHost | null = null
 
 const isDev = !!process.env['ELECTRON_RENDERER_URL']
 
@@ -74,11 +79,24 @@ app.whenReady().then(async () => {
     (_err: Error | null, msg: string) => {
       if (!msg) return
       const { event, payload } = JSON.parse(msg)
+      // `mcp:change` is consumed by the MCP host (relayed as an SSE notification
+      // to connected agents), NOT forwarded to the renderer.
+      if (event === 'mcp:change') {
+        mcpHostRef?.notifyChange(payload)
+        return
+      }
       mainWindow?.webContents.send('evt:' + event, payload)
     },
   )
   await backend.init()
   console.log('[main] backend init OK')
+
+  // Start the MCP host (streamable HTTP + bearer) and expose its info IPC.
+  const { startMcpHost } = await import('./mcp/index.js')
+  const mcpHost = await startMcpHost(backend)
+  mcpHostRef = mcpHost
+  ipcMain.handle('get_mcp_info', () => mcpHost.getInfo())
+  ipcMain.handle('reset_mcp_token', () => mcpHost.resetToken())
 
   ipcMain.handle('backend:invoke', async (_e, { channel, args }) => {
     const json = await backend!.invoke(channel, JSON.stringify(args ?? {}))
