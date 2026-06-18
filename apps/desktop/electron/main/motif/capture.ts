@@ -96,7 +96,7 @@ async function waitReady(h: Host, motifId: string): Promise<void> {
     if (r?.result?.value === true) { h.readyFor = motifId; return }
     await delay(READY_POLL_MS)
   }
-  throw new Error(`motif '${motifId}' never became ready (window.__motifRender undefined)`)
+  throw new Error(`motif '${motifId}' never became ready (window.__motifRender undefined, document not complete, or wrong host page loaded)`)
 }
 
 async function doCapture(backend: Backend, a: CaptureArgs): Promise<string> {
@@ -113,16 +113,16 @@ async function doCapture(backend: Backend, a: CaptureArgs): Promise<string> {
   const meta = { duration, width: a.width, height: a.height, fps: 30, settleRafs: a.settleRafs }
   const expr = `window.__motifRender(${JSON.stringify(a.tSec)}, ${JSON.stringify(props)}, ${JSON.stringify(meta)})`
   try {
-    const ev = await withTimeout(
-      h.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }),
-      CAPTURE_TIMEOUT_MS, '__motifRender',
-    )
-    if (ev?.exceptionDetails) throw new Error('__motifRender threw: ' + JSON.stringify(ev.exceptionDetails))
     if (h.lastSize?.w !== a.width || h.lastSize?.h !== a.height) {
       await h.send('Emulation.setDeviceMetricsOverride', { width: a.width, height: a.height, deviceScaleFactor: 1, mobile: false })
       await h.send('Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: 0 } })
       h.lastSize = { w: a.width, h: a.height }
     }
+    const ev = await withTimeout(
+      h.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }),
+      CAPTURE_TIMEOUT_MS, '__motifRender',
+    )
+    if (ev?.exceptionDetails) throw new Error('__motifRender threw: ' + JSON.stringify(ev.exceptionDetails))
     const shot = await withTimeout(h.send('Page.captureScreenshot', { format: 'png' }), CAPTURE_TIMEOUT_MS, 'captureScreenshot')
     if (!shot?.data) throw new Error('captureScreenshot returned no data')
     return shot.data as string // base64 PNG, no data: prefix
