@@ -3,6 +3,7 @@ import type { Server as HttpServer } from 'node:http'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
+import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 import { randomUUID } from 'node:crypto'
 import { buildMcpServer } from './server.js'
 import { loadOrInitAuth, saveAuth, rotateToken, type McpAuth } from './auth.js'
@@ -46,7 +47,14 @@ export async function startMcpHost(backend: Backend): Promise<McpHost> {
   appExpress.all('/mcp', async (req, res) => {
     const sid = req.headers['mcp-session-id'] as string | undefined
     let transport = sid ? transports.get(sid) : undefined
-    if (!transport) {
+    if (transport) {
+      // Existing session — route straight through.
+      await transport.handleRequest(req, res, req.body)
+      return
+    }
+    // No usable existing transport: only allow a fresh initialize request.
+    if (!sid && isInitializeRequest(req.body)) {
+      let newServer: Server | undefined
       transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
         onsessioninitialized: (id) => {
@@ -55,16 +63,22 @@ export async function startMcpHost(backend: Backend): Promise<McpHost> {
       })
       transport.onclose = () => {
         if (transport!.sessionId) transports.delete(transport!.sessionId)
+        if (newServer) servers.delete(newServer)
       }
-      const server = buildMcpServer(backend)
-      servers.add(server)
+      newServer = buildMcpServer(backend)
+      servers.add(newServer)
       // Cast: the SDK declares Transport.onclose as a getter typed
       // `(() => void) | undefined`, which TS won't accept against the optional
       // `onclose?: () => void` of the `Transport` interface under
       // `exactOptionalPropertyTypes`. Runtime-compatible; narrow to Transport.
-      await server.connect(transport as Transport)
+      await newServer.connect(transport as Transport)
+      await transport.handleRequest(req, res, req.body)
+      return
     }
-    await transport.handleRequest(req, res, req.body)
+    // Non-init request with no/stale session — reject without allocating.
+    res
+      .status(400)
+      .json({ jsonrpc: '2.0', error: { code: -32000, message: 'Bad Request: no valid session ID' }, id: null })
   })
 
   // Bind, with OS-pick fallback on collision.

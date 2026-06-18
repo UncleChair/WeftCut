@@ -7,14 +7,14 @@
 The Rust `mcp` crate is now entirely transport-free.  All MCP surface is exposed as plain `&Backend` async functions:
 
 - `catalog.rs` — `schemars`-derived JSON catalog (tools + resources + prompts) produced by the `tool_table!` macro; `any_object_schema` helper fixes the boolean `true` schema defect that the MCP SDK 1.29.0 `AssertObjectSchema` validator was rejecting on keyframe-arg `serde_json::Value` fields.
-- `wire.rs` — MCP wire types (`ToolEntry`, `ResourceEntry`, `PromptEntry`, the `reply`/`fail` envelope helpers).
+- `wire.rs` — MCP wire types (`ToolDef`, `ResourceDef`, `PromptDef`, the `reply` envelope helper).
 - `dispatch_tool`, `read_resource`, `list_prompts`, `get_prompt` — thin dispatch fans out to individual tool handlers; returns `{ok, result|error}` JSON strings.
 
 Cloud tools (`transcribe_clip`, `synthesize_speech`) and motif tools are **absent from the catalog** — deferred to S4b and S5 respectively (see below).
 
 ### napi `Backend` MCP methods
 
-Five dedicated napi methods on `Backend` (not invoice-dispatch arms):
+Five dedicated napi methods on `Backend` (not invoke-dispatch arms):
 
 ```
 mcpCatalog()         → string (JSON catalog)
@@ -97,7 +97,7 @@ Interim bridge: the `[mcp] connect:` startup log line in the main process provid
 
 ### S6 — Packaging
 
-`electron-builder` (or equivalent packager) must bundle `express`, `@modelcontextprotocol/sdk`, and the transitive `@hono/node-server` in `extraResources` / `files` / `asar` exclusions as appropriate for the target platform.
+`electron-builder` (or equivalent packager) must bundle `express` and `@modelcontextprotocol/sdk` in `extraResources` / `files` / `asar` exclusions as appropriate for the target platform.
 
 ---
 
