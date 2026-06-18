@@ -12,3 +12,6 @@ resources/ffmpeg/*/ffmpeg*
 
 # electron-builder output (transient build artifacts)
 release/
+
+# determinism-artifacts/ — per-OS PNG captures; compared in CI (Task 8), never committed
+determinism-artifacts/
