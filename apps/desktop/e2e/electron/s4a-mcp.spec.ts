@@ -3,7 +3,7 @@ import { launchApp } from './helpers/driver'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 
-interface Info { sse_url: string; bearer_token: string }
+interface Info { url: string; bearer_token: string }
 
 async function connect(url: string, token?: string): Promise<Client> {
   const transport = new StreamableHTTPClientTransport(new URL(url), {
@@ -19,14 +19,20 @@ test('S4a: external MCP client connects, calls tools, and bearer is enforced', a
 
   // Discover the live server URL + token from the main process (panel is deferred).
   const info = (await page.evaluate(() => (window as any).api.invoke('get_mcp_info', {}))) as Info
-  expect(info.sse_url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/)
+
+  // Field-shape assertion: streamable-HTTP url present, SSE fields gone.
+  expect(info).toHaveProperty('url')
+  expect(info).not.toHaveProperty('sse_url')
+  expect(info.url).toMatch(/\/mcp$/)
+
+  expect(info.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/)
   expect(info.bearer_token).toHaveLength(64)
 
   // 401 without the token.
-  await expect(connect(info.sse_url)).rejects.toThrow()
+  await expect(connect(info.url)).rejects.toThrow()
 
   // With the token: ping + add_track parity + resource read.
-  const client = await connect(info.sse_url, info.bearer_token)
+  const client = await connect(info.url, info.bearer_token)
 
   // Real SDK client.listTools() — exercises the Zod inputSchema validator.
   // Previously this was a rawListToolNames() raw-fetch workaround because

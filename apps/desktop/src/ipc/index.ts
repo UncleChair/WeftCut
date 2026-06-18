@@ -1036,9 +1036,7 @@ export async function updateProjectSettings(
 
 export interface McpInfoView {
   bind: string;
-  sse_url: string;
-  message_url: string;
-  events_url: string;
+  url: string;
   bearer_token: string;
 }
 
