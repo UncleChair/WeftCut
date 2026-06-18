@@ -127,6 +127,11 @@ app.whenReady().then(async () => {
     return res.canceled || !res.filePath ? null : res.filePath
   })
 
+  // fs:* — direct main-process filesystem access for the renderer (write/append/
+  // read/remove/readDir). No path validation by design: the renderer is
+  // first-party (contextIsolation+sandbox, no remote content / no <webview>), so
+  // this matches the trust level of the Tauri fs capabilities it replaces. If a
+  // future stage loads remote content or plugins, this surface MUST be re-scoped.
   ipcMain.handle(
     'fs:writeFile',
     (_e, { path: p, data, append }: { path: string; data: Uint8Array; append?: boolean }) => {

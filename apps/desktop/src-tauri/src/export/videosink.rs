@@ -479,7 +479,7 @@ pub async fn export_video_sink_finish(
         if let Some(s) = guard.as_ref() {
             s.shared.finishing.store(true, Ordering::Relaxed);
             if !s.shared.ws_connected.load(Ordering::Relaxed) {
-                // IPC path or pre-handshake: EOF stdin to let ffmpeg finish.
+                // Pre-handshake: EOF stdin to let ffmpeg finish.
                 drop(s.shared.stdin.lock().unwrap().take());
             }
             // WS path: the sink thread drops stdin itself after processing Close;

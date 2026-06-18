@@ -130,7 +130,7 @@ insta = { version = "1", features = ["json", "yaml"] }
 default = []
 # Deferred subsystems — OFF in S2, each turned on in its own stage.
 jobs = []        # import/proxy/conform/thumbnails/waveform + io::probe + ffmpeg (S3)
-export = []      # video export + WS videosink (S3)
+export = ["jobs"]  # video export + WS videosink (S3); needs jobs for enqueue_conform/io::probe
 cloud = []       # transcription/TTS + keyring (S4)
 mcp = []         # MCP server (S4)
 motifs = []      # Motif capture (S5)
