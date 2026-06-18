@@ -82,16 +82,25 @@ test('capture fixed motif frames for cross-OS comparison', async () => {
     // The motif HTML uses window.__motifRender (the raw function signature the
     // capture host calls directly, not the motif.define() SDK path which is for
     // user-authored motifs with the full runtime).
+    // Checkerboard of random colors using CSS custom properties — each capture
+    // produces a different pattern because each cell gets a fresh Math.random()
+    // color. Two captures differ in ALL cells → global SSIM well below 0.98.
+    // Uses motif.define() so the runtime's native-RAF settle runs after frame().
     const jitterHtml = `<!doctype html><html><head><meta charset="utf-8"><style>
-html,body{margin:0;padding:0;overflow:hidden}canvas{display:block}
-</style></head><body><canvas id="c" width="480" height="480"></canvas><script>
-window.__motifRender=function(t,props,meta){
-  var cv=document.getElementById('c'),ctx=cv.getContext('2d');
-  var id=ctx.createImageData(480,480),d=id.data;
-  for(var i=0;i<d.length;i+=4){d[i]=Math.random()*255|0;d[i+1]=Math.random()*255|0;d[i+2]=Math.random()*255|0;d[i+3]=255;}
-  ctx.putImageData(id,0,0);
-  return true;
-};
+html,body{margin:0;padding:0;overflow:hidden}
+#board{width:480px;height:480px;display:flex;flex-wrap:wrap}
+.cell{width:60px;height:60px;flex-shrink:0}
+</style></head><body>
+<div id="board">${Array.from({ length: 64 }, (_, i) => `<div class="cell" id="c${i}"></div>`).join('')}</div>
+<script>
+motif.define({
+  frame(t, ctx) {
+    for(var i=0;i<64;i++){
+      var r=Math.random()*255|0,g=Math.random()*255|0,b=Math.random()*255|0;
+      document.getElementById('c'+i).style.background='rgb('+r+','+g+','+b+')';
+    }
+  }
+});
 <\/script></body></html>`
 
     // write_motif_draft — napi expects { args: { manifest, html } }
