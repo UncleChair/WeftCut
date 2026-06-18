@@ -127,6 +127,31 @@ app.whenReady().then(async () => {
     return res.canceled || !res.filePath ? null : res.filePath
   })
 
+  ipcMain.handle(
+    'fs:writeFile',
+    (_e, { path: p, data, append }: { path: string; data: Uint8Array; append?: boolean }) => {
+      const buf = Buffer.from(data)
+      if (append) fs.appendFileSync(p, buf)
+      else fs.writeFileSync(p, buf)
+    },
+  )
+  ipcMain.handle('fs:writeTextFile', (_e, { path: p, data }: { path: string; data: string }) => {
+    fs.writeFileSync(p, data, 'utf8')
+  })
+  ipcMain.handle('fs:readFile', (_e, { path: p }: { path: string }) => fs.readFileSync(p))
+  ipcMain.handle('fs:remove', (_e, { path: p }: { path: string }) => {
+    fs.rmSync(p, { force: true, recursive: true })
+  })
+  ipcMain.handle('fs:exists', (_e, { path: p }: { path: string }) => fs.existsSync(p))
+  ipcMain.handle('fs:readDir', (_e, { path: p }: { path: string }) =>
+    fs.readdirSync(p, { withFileTypes: true }).map((d) => ({
+      name: d.name,
+      isDirectory: d.isDirectory(),
+      isFile: d.isFile(),
+      isSymlink: d.isSymbolicLink(),
+    })),
+  )
+
   protocol.handle('weftcut-media', async (request) => {
     // URL form: weftcut-media://localhost/<encodeURIComponent(absPath)>
     const u = new URL(request.url)

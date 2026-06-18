@@ -9,7 +9,8 @@ const api = {
     if (
       channel.startsWith('window:') ||
       channel.startsWith('path:') ||
-      channel.startsWith('dialog:')
+      channel.startsWith('dialog:') ||
+      channel.startsWith('fs:')
     ) {
       return ipcRenderer.invoke(channel, args)
     }
