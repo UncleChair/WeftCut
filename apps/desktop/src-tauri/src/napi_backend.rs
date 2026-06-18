@@ -45,6 +45,12 @@ pub struct Backend {
     pub(crate) log_slot: LogBusSlot,
     pub(crate) config_dir: String,
     pub(crate) cache_dir: String,
+    /// Plaintext cloud-provider API keys, keyed by provider tag ("openai").
+    /// Pushed in by Electron main (decrypted from safeStorage) via
+    /// `set_cloud_key`; read synchronously by the cloud reqwest providers.
+    /// Always compiled (cache is feature-independent) so main can push keys
+    /// regardless of the addon's feature set.
+    pub(crate) cloud_keys: std::sync::Mutex<std::collections::HashMap<String, String>>,
 }
 
 /// Build the config-dir-rooted stores + cache layout + log slot, install the
@@ -97,6 +103,7 @@ fn build_backend(events: Arc<dyn EventSink>, config_dir: String, cache_dir: Stri
         log_slot,
         config_dir,
         cache_dir,
+        cloud_keys: std::sync::Mutex::new(std::collections::HashMap::new()),
     }
 }
 
@@ -203,6 +210,20 @@ impl Backend {
     #[napi]
     pub async fn invoke(&self, cmd: String, args_json: String) -> napi::Result<String> {
         self.dispatch(&cmd, &args_json).await.map_err(Error::from_reason)
+    }
+
+    /// Push a decrypted cloud API key into the in-memory cache. Called by
+    /// Electron main after reading safeStorage; never a renderer-invoke arm
+    /// (key material stays off the webview).
+    #[napi]
+    pub fn set_cloud_key(&self, provider: String, key: String) {
+        self.cloud_keys.lock().expect("cloud_keys poisoned").insert(provider, key);
+    }
+
+    /// Remove a cloud API key from the cache (key cleared in Settings).
+    #[napi]
+    pub fn clear_cloud_key(&self, provider: String) {
+        self.cloud_keys.lock().expect("cloud_keys poisoned").remove(&provider);
     }
 }
 
@@ -811,6 +832,20 @@ mod tests {
             serde_json::from_str(&b.mcp_call_tool("no_such_tool".into(), "{}".into()).await.unwrap()).unwrap();
         assert_eq!(reply["ok"], false);
         assert_eq!(reply["error"]["code"], "not_found");
+    }
+
+    #[tokio::test]
+    async fn cloud_key_cache_set_and_clear() {
+        let b = Backend::new_for_test(Arc::new(VecEventSink::new()));
+        b.init().await.unwrap();
+        assert!(!b.cloud_keys.lock().unwrap().contains_key("openai"));
+        b.set_cloud_key("openai".into(), "sk-abc".into());
+        assert_eq!(
+            b.cloud_keys.lock().unwrap().get("openai").map(String::as_str),
+            Some("sk-abc"),
+        );
+        b.clear_cloud_key("openai".into());
+        assert!(!b.cloud_keys.lock().unwrap().contains_key("openai"));
     }
 
     /// S2 deferred cleanup: a `log_emit` dispatch after a workspace is installed
