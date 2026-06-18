@@ -34,9 +34,8 @@ test('EOS-tail export completes and keeps the drained tail frame-aligned (Electr
     const perf = (await page.evaluate(() => (window as any).__weftcutExportPerf ?? null)) as
       | { totalFrames: number; totalDispatched: number }
       | null
-    if (perf) {
-      expect(perf.totalFrames, 'audio-extended 11s composition plans 330 frames').toBe(330)
-    }
+    expect(perf, '__weftcutExportPerf must be set after export (E2E build)').not.toBeNull()
+    expect(perf!.totalFrames, 'audio-extended 11s composition plans 330 frames').toBe(330)
 
     // Samples 200 + 270 sit inside the EOS drain region; keep below 300 (the
     // clamp-held overhang frames are last-frame dups by design).
