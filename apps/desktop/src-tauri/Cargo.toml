@@ -57,14 +57,6 @@ ffmpeg-sidecar = "2"
 # Phase 1.x Stage 6 base64-encodes media bytes (JPG thumbnails, peaks file)
 # into the media://* resources' blob field. Pinning for direct use.
 base64 = "0.22"
-# Phase 6 cloud transcription stores per-provider API keys in the OS native
-# keyring (Windows Credential Manager, macOS Keychain, Linux Secret Service).
-# Linux needs a Secret-Service daemon at runtime — fine for desktop, gate
-# tests behind a flag if CI ever lands.
-# keyring 4 split into a router (`keyring` + `keyring-core`) with explicit
-# store selection (`use_named_store`). Migration is a real piece of work,
-# not a casual bump — keep `keyring = "3"` until that's scoped.
-keyring = "3"
 # HTTP client for Whisper / Deepgram / future cloud providers. Pinning rustls
 # features explicitly avoids pulling in a second native-tls stack alongside
 # the one tauri already brings in via its plugin transitives.
@@ -119,7 +111,7 @@ default = []
 # Deferred subsystems — OFF in S2, each turned on in its own stage.
 jobs = []        # import/proxy/conform/thumbnails/waveform + io::probe + ffmpeg (S3)
 export = ["jobs"]  # video export + WS videosink (S3); needs jobs for enqueue_conform/io::probe
-cloud = []       # transcription/TTS + keyring (S4)
+cloud = ["jobs"]  # transcription/TTS (S4b); needs jobs for audio_extract's ffmpeg_sem
 mcp = []         # MCP server (S4)
 motifs = []      # Motif capture (S5)
 media_drop = []  # webview drag-drop path recovery (S3)
