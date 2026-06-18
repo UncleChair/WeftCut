@@ -333,6 +333,13 @@ impl Backend {
     /// Each call appends a process-wide monotonic counter to the temp-dir name
     /// (`weftcut-test-<pid>-<n>`) so two backends in one test binary — e.g. a
     /// save-in-A / open-in-B round-trip — never share a config + cache root.
+    /// Convenience variant that accepts a typed `Arc<VecEventSink>` and retains
+    /// a clone for the caller (used by tests that need to assert on emitted events).
+    #[cfg(test)]
+    pub fn new_for_test_with_sink(sink: Arc<crate::events::VecEventSink>) -> Self {
+        Self::new_for_test(sink as Arc<dyn EventSink>)
+    }
+
     #[cfg(test)]
     pub fn new_for_test(events: Arc<dyn EventSink>) -> Self {
         static COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -612,6 +619,48 @@ impl Backend {
                 let a: crate::commands::motifs::AddMotifArgs =
                     serde_json::from_str(args).map_err(|e| e.to_string())?;
                 ser(crate::commands::motifs::add_motif(self, a).await)
+            }
+            #[cfg(feature = "motifs")]
+            "get_motif_source" => {
+                #[derive(serde::Deserialize)] struct A { id: String }
+                let a: A = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::motif_authoring::get_motif_source(self, a.id).await)
+            }
+            #[cfg(feature = "motifs")]
+            "write_motif_draft" => {
+                #[derive(serde::Deserialize)] struct A { args: crate::motifs::authoring_commands::WriteDraftArgs }
+                let a: A = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::motif_authoring::write_motif_draft(self, a.args).await)
+            }
+            #[cfg(feature = "motifs")]
+            "amend_motif_draft" => {
+                #[derive(serde::Deserialize)] #[serde(rename_all = "camelCase")] struct A { draft_id: String, source: String }
+                let a: A = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::motif_authoring::amend_motif_draft(self, a.draft_id, a.source).await)
+            }
+            #[cfg(feature = "motifs")]
+            "create_edit_draft" => {
+                #[derive(serde::Deserialize)] #[serde(rename_all = "camelCase")] struct A { source_id: String }
+                let a: A = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::motif_authoring::create_edit_draft(self, a.source_id).await)
+            }
+            #[cfg(feature = "motifs")]
+            "import_motif" => {
+                #[derive(serde::Deserialize)] struct A { path: String }
+                let a: A = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::motif_authoring::import_motif(self, a.path).await)
+            }
+            #[cfg(feature = "motifs")]
+            "install_motif" => {
+                #[derive(serde::Deserialize)] struct A { args: crate::motifs::authoring_commands::InstallArgs }
+                let a: A = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::motif_authoring::install_motif(self, a.args).await)
+            }
+            #[cfg(feature = "motifs")]
+            "delete_motif" => {
+                #[derive(serde::Deserialize)] struct A { id: String }
+                let a: A = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::motif_authoring::delete_motif(self, a.id).await)
             }
             other => Err(format!("unavailable: '{other}' is wired in a later stage (S3/S4/S5)")),
         }
@@ -1019,6 +1068,20 @@ mod tests {
             .await
             .unwrap();
         assert!(!out.is_empty()); // returns the new layer id
+    }
+
+    #[cfg(feature = "motifs")]
+    #[tokio::test]
+    async fn write_draft_arm_returns_id_and_emits_changed() {
+        let sink = std::sync::Arc::new(crate::events::VecEventSink::default());
+        let b = Backend::new_for_test_with_sink(sink.clone());
+        b.init().await.unwrap();
+        let manifest = r#"{"id":"x","name":"My Draft","version":1,"size":[200,80],"default_duration_s":2,"props_schema":{}}"#;
+        let body = r#"<head></head><body><script>motif.define({setup(){}})</script></body>"#;
+        let arg = format!(r#"{{"args":{{"manifest":{manifest},"html":{}}}}}"#, serde_json::to_string(body).unwrap());
+        let id = b.dispatch("write_motif_draft", &arg).await.unwrap();
+        assert!(!id.is_empty());
+        assert!(sink.names().iter().any(|n| n == "motifs:changed"));
     }
 
     #[cfg(feature = "cloud")]
