@@ -57,6 +57,8 @@
 mod events;
 mod keyframes;
 mod prompts;
+mod wire;
+pub(crate) use wire::*;
 
 use std::fs;
 use std::net::SocketAddr;
