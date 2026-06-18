@@ -147,6 +147,14 @@ impl Backend {
                             }),
                         );
 
+                        #[cfg(feature = "mcp")]
+                        {
+                            let summary = crate::mcp::ChangeEventSummary::from(&event);
+                            if let Ok(v) = serde_json::to_value(&summary) {
+                                events.emit("mcp:change", v);
+                            }
+                        }
+
                         let source = match &event.actor {
                             state::Actor::User => logs::LogSource::User,
                             state::Actor::Agent { client } => logs::LogSource::Agent {
@@ -195,6 +203,36 @@ impl Backend {
     #[napi]
     pub async fn invoke(&self, cmd: String, args_json: String) -> napi::Result<String> {
         self.dispatch(&cmd, &args_json).await.map_err(Error::from_reason)
+    }
+}
+
+#[cfg(feature = "mcp")]
+#[napi]
+impl Backend {
+    #[napi]
+    pub async fn mcp_catalog(&self) -> napi::Result<String> {
+        Ok(serde_json::to_string(&crate::mcp::catalog()).unwrap())
+    }
+
+    #[napi]
+    pub async fn mcp_call_tool(&self, name: String, args_json: String) -> napi::Result<String> {
+        Ok(crate::mcp::reply(crate::mcp::dispatch_tool(self, &name, &args_json).await))
+    }
+
+    #[napi]
+    pub async fn mcp_read_resource(&self, uri: String) -> napi::Result<String> {
+        Ok(crate::mcp::reply(crate::mcp::read_resource(self, &uri).await))
+    }
+
+    #[napi]
+    pub async fn mcp_list_prompts(&self) -> napi::Result<String> {
+        Ok(serde_json::to_string(&crate::mcp::list_prompts()).unwrap())
+    }
+
+    #[napi]
+    pub async fn mcp_get_prompt(&self, name: String, args_json: String) -> napi::Result<String> {
+        let args: serde_json::Value = serde_json::from_str(&args_json).unwrap_or(serde_json::json!({}));
+        Ok(crate::mcp::reply(crate::mcp::get_prompt(&name, args.as_object())))
     }
 }
 
@@ -708,6 +746,48 @@ mod tests {
         assert!(!v["token"].as_str().unwrap().is_empty(), "discard sink returns a token");
         let cancel = b.dispatch("export_video_sink_cancel", "{}").await.unwrap();
         assert_eq!(cancel, "null", "cancel returns unit/null");
+    }
+
+    #[cfg(feature = "mcp")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn mcp_catalog_lists_ping_and_add_track() {
+        let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
+        b.init().await.unwrap();
+        let cat = b.mcp_catalog().await.unwrap();
+        assert!(cat.contains("\"ping\""));
+        assert!(cat.contains("\"add_track\""));
+        // every tool advertises an object inputSchema
+        let v: serde_json::Value = serde_json::from_str(&cat).unwrap();
+        for t in v["tools"].as_array().unwrap() {
+            assert!(t["inputSchema"].is_object(), "tool {} has no inputSchema", t["name"]);
+        }
+    }
+
+    #[cfg(feature = "mcp")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn mcp_call_tool_add_track_grows_summary() {
+        let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
+        b.init().await.unwrap();
+        let before: serde_json::Value =
+            serde_json::from_str(&b.dispatch("project_summary", "{}").await.unwrap()).unwrap();
+        let baseline = before["track_count"].as_u64().unwrap();
+        let reply: serde_json::Value =
+            serde_json::from_str(&b.mcp_call_tool("add_track".into(), "{}".into()).await.unwrap()).unwrap();
+        assert_eq!(reply["ok"], true, "got {reply}");
+        let after: serde_json::Value =
+            serde_json::from_str(&b.dispatch("project_summary", "{}").await.unwrap()).unwrap();
+        assert_eq!(after["track_count"].as_u64().unwrap(), baseline + 1);
+    }
+
+    #[cfg(feature = "mcp")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn mcp_call_tool_unknown_is_not_found() {
+        let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
+        b.init().await.unwrap();
+        let reply: serde_json::Value =
+            serde_json::from_str(&b.mcp_call_tool("no_such_tool".into(), "{}".into()).await.unwrap()).unwrap();
+        assert_eq!(reply["ok"], false);
+        assert_eq!(reply["error"]["code"], "not_found");
     }
 
     /// S2 deferred cleanup: a `log_emit` dispatch after a workspace is installed
