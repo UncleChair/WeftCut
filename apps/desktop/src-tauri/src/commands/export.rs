@@ -45,10 +45,12 @@ pub async fn export_project_audio_only(
         .map_err(|e| format!("{e:#}"))
 }
 
-/// Mux `video_path` (+ optional `audio_path`) into `output_path`. With no
-/// `transcode`, stream-copies (`-c copy`); with one, re-encodes the video to
-/// the target codec (HW-first via the cached probe, software fallback) and
-/// emits `export:transcode_progress`. Container = the output extension.
+/// Mux `video_path` (+ `audio_path` if it exists on disk) into `output_path`.
+/// `audio_path` is always passed by the caller; a nonexistent file means
+/// video-only (no audio track). With no `transcode`, stream-copies (`-c copy`);
+/// with one, re-encodes the video to the target codec (HW-first via the cached
+/// probe, software fallback) and emits `export:transcode_progress`. Container =
+/// the output extension.
 pub async fn mux_export(
     backend: &Backend,
     video_path: String,

@@ -13,10 +13,10 @@ pub mod videosink;
 
 use std::path::Path;
 use std::process::Stdio;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use ffmpeg_sidecar::{command::ffmpeg_is_installed, paths::ffmpeg_path};
-use std::sync::Arc;
 
 use crate::events::EventSink;
 use tokio::io::{AsyncBufReadExt, BufReader};
