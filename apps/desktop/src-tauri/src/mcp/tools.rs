@@ -1790,6 +1790,293 @@ fn push_if_long_enough(
 }
 
 // ============================================================
+// Motif tools (S5 — recovered from 97e3c7f2, transport-free transform)
+// ============================================================
+
+/// Parse the canonical JSON string from `Motif::canonicalize_props` into
+/// the `imbl::HashMap<String, Value>` shape that `MotifParams` stores.
+#[cfg(feature = "motifs")]
+fn parse_canonical_props(
+    canonical_json: &str,
+) -> Result<imbl::HashMap<String, Value>, McpToolError> {
+    let parsed: Value = serde_json::from_str(canonical_json)
+        .map_err(|e| McpToolError::internal_error(format!("canonical props parse: {e}"), None))?;
+    let obj = parsed.as_object().ok_or_else(|| {
+        McpToolError::internal_error("canonical props is not a JSON object".to_string(), None)
+    })?;
+    Ok(obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+}
+
+#[cfg(feature = "motifs")]
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(super) struct AddMotifArgs {
+    /// Motif id from `list_motifs` (e.g. "lower-third-simple", "title-card").
+    pub motif_id: String,
+    /// Layer start in timeline microseconds.
+    pub t_start_us: i64,
+    /// Layer end in timeline microseconds. Defaults to
+    /// `t_start_us + default_duration_s * 1_000_000` when omitted.
+    pub t_end_us: Option<i64>,
+    /// Target Video track id. If omitted, the first existing Video track is used,
+    /// or a new one labeled "Motifs" is created.
+    pub track_id: Option<String>,
+    /// Motif props as a JSON object. Keys must match the motif's
+    /// `props_schema`; unknown keys reject; missing keys fill from defaults.
+    #[schemars(schema_with = "crate::mcp::keyframes::any_object_schema")]
+    pub props: Option<Value>,
+}
+
+/// Shared single-id arg for `get_motif_source` + `delete_motif`.
+#[cfg(feature = "motifs")]
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(super) struct MotifIdArgs {
+    /// The Motif id (from `list_motifs`).
+    pub id: String,
+}
+
+#[cfg(feature = "motifs")]
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(super) struct WriteMotifDraftArgs {
+    /// Optional id of an existing Motif this draft will UPDATE on install (records
+    /// it as the draft's target). Omit for a brand-new Motif (installs as new).
+    pub from: Option<String>,
+    /// The manifest as a JSON object (its `id`/`version` are ignored — app-assigned).
+    /// Shape: `{ name, size:[w,h], default_duration_s, props_schema, ... }` — inspect
+    /// a built-in via `get_motif_source` for an exact example. Rejected if malformed.
+    #[schemars(schema_with = "crate::mcp::keyframes::any_object_schema")]
+    pub manifest: Value,
+    /// The HTML body. The manifest island is injected by the app; a
+    /// `<script>motif.define({...})</script>` drives the render.
+    pub html: String,
+}
+
+#[cfg(feature = "motifs")]
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(super) struct InstallMotifArgs {
+    /// The draft id (from `write_motif_draft`).
+    pub draft_id: String,
+    /// "new" (publish under the draft's own id) or "update" (republish over the
+    /// draft's recorded target; fails if the draft has no target).
+    pub mode: String,
+}
+
+#[cfg(feature = "motifs")]
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(super) struct PreviewMotifDraftArgs {
+    /// Motif id (draft / installed / built-in).
+    pub id: String,
+    /// Content time in seconds to render (e.g. 0 = first frame).
+    pub t_sec: f64,
+    /// Optional render width (default = the motif's manifest width).
+    pub width: Option<u32>,
+    /// Optional render height (default = the motif's manifest height).
+    pub height: Option<u32>,
+    /// Optional props (JSON object); defaults to the manifest defaults.
+    #[schemars(schema_with = "crate::mcp::keyframes::any_object_schema")]
+    pub props: Option<Value>,
+}
+
+#[cfg(feature = "motifs")]
+pub(super) async fn list_motifs(
+    b: &Backend,
+    _args: super::EmptyArgs,
+) -> Result<ToolResult, McpToolError> {
+    let payload: Vec<Value> = crate::commands::motifs::list_motifs_inner(&b.motif_store)
+        .into_iter()
+        .map(|mut entry| {
+            if let Some(obj) = entry.as_object_mut() {
+                obj.remove("html");
+            }
+            entry
+        })
+        .collect();
+    ToolResult::json(&payload)
+}
+
+#[cfg(feature = "motifs")]
+pub(super) async fn get_motif_source(
+    b: &Backend,
+    args: MotifIdArgs,
+) -> Result<ToolResult, McpToolError> {
+    let source = crate::motifs::authoring_commands::get_motif_source_core(&b.motif_store, &args.id)
+        .map_err(|e| McpToolError::invalid_params(e, None))?;
+    ToolResult::json(&serde_json::json!({ "manifest": source.manifest, "html": source.html }))
+}
+
+#[cfg(feature = "motifs")]
+pub(super) async fn write_motif_draft(
+    b: &Backend,
+    args: WriteMotifDraftArgs,
+) -> Result<ToolResult, McpToolError> {
+    let manifest: crate::motifs::catalog::Manifest = serde_json::from_value(args.manifest)
+        .map_err(|e| McpToolError::invalid_params(format!("invalid manifest: {e}"), None))?;
+    let id = crate::motifs::authoring_commands::write_motif_draft_core(
+        &b.motif_store,
+        manifest,
+        &args.html,
+        args.from.as_deref(),
+    )
+    .map_err(|e| McpToolError::invalid_params(e, None))?;
+    b.events.emit(
+        crate::motifs::authoring_commands::MOTIFS_CHANGED_EVENT,
+        serde_json::json!({}),
+    );
+    Ok(ToolResult::text(id))
+}
+
+/// `preview_motif_draft` Rust handler is a stub — capture lives in the JS host.
+/// The schema is still advertised so `listTools` includes the tool; the JS
+/// server intercepts the call before dispatch reaches this handler.
+#[cfg(feature = "motifs")]
+pub(super) async fn preview_motif_draft(
+    _b: &Backend,
+    _args: PreviewMotifDraftArgs,
+) -> Result<ToolResult, McpToolError> {
+    Err(McpToolError::internal_error(
+        "preview_motif_draft is handled by the host process".to_string(),
+        None,
+    ))
+}
+
+#[cfg(feature = "motifs")]
+pub(super) async fn install_motif(
+    b: &Backend,
+    args: InstallMotifArgs,
+) -> Result<ToolResult, McpToolError> {
+    let mode = match args.mode.as_str() {
+        "new" => crate::motifs::authoring_commands::InstallMode::New,
+        "update" => {
+            let target = b.motif_store.read_draft_target(&args.draft_id).ok_or_else(|| {
+                McpToolError::invalid_params(
+                    format!(
+                        "draft '{}' has no UPDATE target — install with mode 'new', or write it with `from`",
+                        args.draft_id
+                    ),
+                    None,
+                )
+            })?;
+            crate::motifs::authoring_commands::InstallMode::Update { target_id: target }
+        }
+        other => {
+            return Err(McpToolError::invalid_params(
+                format!("mode must be 'new' or 'update', got '{other}'"),
+                None,
+            ));
+        }
+    };
+    let install_args = crate::motifs::authoring_commands::InstallArgs {
+        draft_id: args.draft_id,
+        mode,
+    };
+    let published = crate::motifs::authoring_commands::install_motif_core(
+        &b.motif_store,
+        b.project()?,
+        &install_args,
+    )
+    .await
+    .map_err(|e| McpToolError::internal_error(e, None))?;
+    b.events.emit(
+        crate::motifs::authoring_commands::MOTIFS_CHANGED_EVENT,
+        serde_json::json!({}),
+    );
+    Ok(ToolResult::text(published))
+}
+
+#[cfg(feature = "motifs")]
+pub(super) async fn delete_motif(
+    b: &Backend,
+    args: MotifIdArgs,
+) -> Result<ToolResult, McpToolError> {
+    if crate::motifs::catalog::BUILTIN_IDS.contains(&args.id.as_str()) {
+        return Err(McpToolError::invalid_params(
+            format!("cannot delete the built-in Motif '{}'", args.id),
+            None,
+        ));
+    }
+    crate::motifs::authoring_commands::delete_motif_core(&b.motif_store, &args.id)
+        .map_err(|e| McpToolError::internal_error(e, None))?;
+    b.events.emit(
+        crate::motifs::authoring_commands::MOTIFS_CHANGED_EVENT,
+        serde_json::json!({}),
+    );
+    Ok(ToolResult::empty())
+}
+
+#[cfg(feature = "motifs")]
+pub(super) async fn add_motif(
+    b: &Backend,
+    args: AddMotifArgs,
+) -> Result<ToolResult, McpToolError> {
+    use crate::motifs::catalog;
+    use crate::state::{LayerParams, MotifParams, Transform, animated::Animated};
+    use crate::commands::motifs::resolve_motif_t_end_us;
+
+    let motif = catalog::builtins()
+        .into_iter()
+        .find(|t| t.id() == args.motif_id)
+        .or_else(|| b.motif_store.get_motif(&args.motif_id))
+        .ok_or_else(|| {
+            McpToolError::invalid_params(
+                format!(
+                    "unknown motif_id '{}' — call list_motifs for the catalog",
+                    args.motif_id
+                ),
+                None,
+            )
+        })?;
+
+    let provided = args
+        .props
+        .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
+    let canonical = motif
+        .canonicalize_props(&provided)
+        .map_err(|e| McpToolError::invalid_params(format!("invalid props: {e}"), None))?;
+    let props_map = parse_canonical_props(&canonical)?;
+
+    let t_end_us = resolve_motif_t_end_us(
+        args.t_start_us,
+        args.t_end_us,
+        motif.manifest.default_duration_s,
+        catalog::resolve_motif_max_dur_us(&motif.manifest, &props_map),
+    );
+    if t_end_us <= args.t_start_us {
+        return Err(McpToolError::invalid_params(
+            format!(
+                "t_end_us {t_end_us} must be greater than t_start_us {}",
+                args.t_start_us,
+            ),
+            None,
+        ));
+    }
+
+    let track_id = match args.track_id.as_deref() {
+        Some(s) => parse_uuid(s, "track_id")?,
+        None => b
+            .project()?
+            .add_track(agent_actor(), Some("Overlay".into()))
+            .await
+            .map_err(map_command_error)?,
+    };
+
+    let params = LayerParams::Motif(MotifParams {
+        motif_id: motif.id().to_string(),
+        motif_version: motif.manifest.version,
+        props: props_map,
+        src_in_us: 0,
+        transform: Transform::default(),
+        opacity: Animated::Static(1.0),
+    });
+
+    let layer_id = b
+        .project()?
+        .add_layer(agent_actor(), track_id, params, args.t_start_us, t_end_us)
+        .await
+        .map_err(map_command_error)?;
+
+    Ok(ToolResult::text(layer_id.to_string()))
+}
+
+// ============================================================
 // Tests — ported from the pre-S4a `mcp/mod.rs` #[cfg(test)] block,
 // adapted to the free-fn signatures. Tests that exercised deleted
 // cloud/motif tools are dropped (their tools moved to S4b/S5).
