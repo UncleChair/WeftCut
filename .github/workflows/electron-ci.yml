@@ -23,7 +23,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.20.0'
+          node-version: '24.15.0'
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -81,7 +81,7 @@ jobs:
           # macOS (Windows resolves via an import lib). The tests never call these symbols
           # at runtime, so allow them undefined at link.
           case "$RUNNER_OS" in
-            Linux) export RUSTFLAGS="-C link-arg=-Wl,--unresolved-symbols=ignore-all" ;;
+            Linux) export RUSTFLAGS="-C link-arg=-Wl,--unresolved-symbols=ignore-all -C relro-level=partial" ;;
             macOS) export RUSTFLAGS="-C link-arg=-Wl,-undefined,dynamic_lookup" ;;
           esac
           cargo test --manifest-path src-tauri/Cargo.toml --lib --features jobs,export,mcp,cloud,motifs
@@ -155,7 +155,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.20.0'
+          node-version: '24.15.0'
 
       - name: Install dependencies
         working-directory: .
