@@ -605,6 +605,14 @@ impl Backend {
                     serde_json::from_str(args).map_err(|e| e.to_string())?;
                 ser(crate::commands::cloud::settings_test_provider(self, a.provider).await)
             }
+            #[cfg(feature = "motifs")]
+            "list_motifs" => ser(crate::commands::motifs::list_motifs(self).await),
+            #[cfg(feature = "motifs")]
+            "add_motif" => {
+                let a: crate::commands::motifs::AddMotifArgs =
+                    serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::motifs::add_motif(self, a).await)
+            }
             other => Err(format!("unavailable: '{other}' is wired in a later stage (S3/S4/S5)")),
         }
     }
@@ -989,6 +997,28 @@ mod tests {
             "log:entry must reach the sink; saw {:?}",
             sink.names()
         );
+    }
+
+    #[cfg(feature = "motifs")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_motifs_arm_returns_builtins() {
+        let b = Backend::new_for_test(Arc::new(VecEventSink::new()));
+        b.init().await.unwrap();
+        let json = b.invoke("list_motifs".into(), "{}".into()).await.unwrap();
+        assert!(json.contains("countdown"));
+        assert!(json.contains("lower-third"));
+    }
+
+    #[cfg(feature = "motifs")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn add_motif_arm_places_a_layer() {
+        let b = Backend::new_for_test(Arc::new(VecEventSink::new()));
+        b.init().await.unwrap();
+        let out = b
+            .invoke("add_motif".into(), r#"{"motifId":"countdown","tStartUs":0}"#.into())
+            .await
+            .unwrap();
+        assert!(!out.is_empty()); // returns the new layer id
     }
 
     #[cfg(feature = "cloud")]
