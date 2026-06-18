@@ -2,3 +2,7 @@
 src-tauri/*.node
 src-tauri/index.js
 src-tauri/index.d.ts
+
+# Playwright-for-Electron e2e output (transient; S3b+)
+test-results/
+playwright-report/
