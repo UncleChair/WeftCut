@@ -1,4 +1,4 @@
-//! MCP prompts surface — `cut-silences`.
+//! MCP prompts surface — `cut-silences`, `auto-caption`, `voiceover`.
 //!
 //! Prompts in MCP are user-invokable templates: when the user runs
 //! `/cut-silences` in their MCP client, the agent receives the messages
@@ -6,8 +6,8 @@
 //! around the `detect_silences` + `split_layer` + `delete_layer` tools — the
 //! value is the recipe, not new capability.
 //!
-//! The `auto-caption` / `voiceover` prompts referenced the deferred cloud
-//! tools; they're dropped here and recoverable from git for S4b.
+//! The `auto-caption` / `voiceover` prompts reference cloud tools and are
+//! enabled under `#[cfg(feature = "cloud")]`.
 //!
 //! Argument schemas declared in `catalog()` flow back to clients via
 //! `prompts/list`; the per-call interpolation happens in `expand_*`.
@@ -20,10 +20,14 @@ use super::wire::{
 };
 
 pub const NAME_CUT_SILENCES: &str = "cut-silences";
+#[cfg(feature = "cloud")]
+pub const NAME_AUTO_CAPTION: &str = "auto-caption";
+#[cfg(feature = "cloud")]
+pub const NAME_VOICEOVER: &str = "voiceover";
 
 /// Static prompt catalog. Mirrored 1:1 in `list_prompts`.
 pub(crate) fn catalog() -> Vec<PromptDef> {
-    vec![PromptDef {
+    let mut prompts = vec![PromptDef {
         name: NAME_CUT_SILENCES.into(),
         description: Some(
             "Find silent regions in a clip and tighten it up by splitting + deleting the dead air."
@@ -51,7 +55,72 @@ pub(crate) fn catalog() -> Vec<PromptDef> {
                 required: false,
             },
         ],
-    }]
+    }];
+    #[cfg(feature = "cloud")]
+    {
+        prompts.push(PromptDef {
+            name: NAME_AUTO_CAPTION.into(),
+            description: Some(
+                "Transcribe a video or audio layer with cloud Whisper, then apply the SRT as subtitles."
+                    .into(),
+            ),
+            arguments: vec![
+                PromptArgDef {
+                    name: "layer_id".into(),
+                    description: Some("Target VideoClip or Audio layer id.".into()),
+                    required: true,
+                },
+                PromptArgDef {
+                    name: "language".into(),
+                    description: Some(
+                        "Optional ISO-639-1 language hint (en, zh, etc.). Auto-detect when omitted."
+                            .into(),
+                    ),
+                    required: false,
+                },
+            ],
+        });
+        prompts.push(PromptDef {
+            name: NAME_VOICEOVER.into(),
+            description: Some(
+                "Generate cloud TTS for a script and attach it as an Audio layer.".into(),
+            ),
+            arguments: vec![
+                PromptArgDef {
+                    name: "script".into(),
+                    description: Some(
+                        "Text to speak. tts-1 caps a single call at 4096 chars; for longer scripts split into paragraphs."
+                            .into(),
+                    ),
+                    required: true,
+                },
+                PromptArgDef {
+                    name: "voice".into(),
+                    description: Some(
+                        "OpenAI voice: alloy, echo, fable, onyx, nova, or shimmer.".into(),
+                    ),
+                    required: false,
+                },
+                PromptArgDef {
+                    name: "speed".into(),
+                    description: Some(
+                        "Optional speech speed in [0.25, 4.0]. Omit for the provider default."
+                            .into(),
+                    ),
+                    required: false,
+                },
+                PromptArgDef {
+                    name: "target_track_id".into(),
+                    description: Some(
+                        "Optional Audio track id. Defaults to the first existing Audio track or a new 'Voiceover' track."
+                            .into(),
+                    ),
+                    required: false,
+                },
+            ],
+        });
+    }
+    prompts
 }
 
 /// Resolve a prompt name + arguments to a `PromptResult` ready for the client.
@@ -63,8 +132,12 @@ pub(crate) fn expand(
 ) -> Result<PromptResult, McpToolError> {
     match name {
         NAME_CUT_SILENCES => expand_cut_silences(args),
+        #[cfg(feature = "cloud")]
+        NAME_AUTO_CAPTION => expand_auto_caption(args),
+        #[cfg(feature = "cloud")]
+        NAME_VOICEOVER => expand_voiceover(args),
         other => Err(McpToolError::invalid_params(
-            format!("unknown prompt '{other}'; available: cut-silences"),
+            format!("unknown prompt '{other}'; available: cut-silences, auto-caption, voiceover"),
             None,
         )),
     }
@@ -109,6 +182,89 @@ Defaults if the agent leaves args off: threshold_amp ≈ 0.02 (-34 dBFS), min_si
     })
 }
 
+#[cfg(feature = "cloud")]
+fn expand_auto_caption(
+    args: Option<&Map<String, Value>>,
+) -> Result<PromptResult, McpToolError> {
+    let layer_id = require_str(args, "layer_id")?;
+    let language = optional_str(args, "language");
+    let language_clause = match language {
+        Some(lang) => format!(", `language: \"{lang}\"`"),
+        None => String::new(),
+    };
+    let text = format!(
+"Auto-caption the clip on layer `{layer_id}` using cloud transcription.
+
+Steps:
+1. Call `transcribe_clip` with `layer_id: \"{layer_id}\"`{language_clause}. The tool extracts the layer's audio (mono 16 kHz WAV), uploads it to Whisper, and returns SRT with cue timestamps already shifted to timeline-absolute microseconds.
+2. Inspect the returned SRT. Fix obvious mistakes you can spot — proper nouns, technical terms, on-screen text that should match exactly. Don't rewrite the prose.
+3. Call `apply_subtitles` with the (possibly edited) body. **Omit `t_start_us`** so the Subtitles layer activates from timeline 0; the cues self-position via their internal timestamps. Set `t_end_us` to the composition's `duration_us` (read from `project://composition`) so the layer covers the whole timeline.
+
+If `transcribe_clip` errors with `MissingKey` or `InvalidKey`, tell the user to configure their OpenAI API key under Settings → API keys. If `PayloadTooLarge`, narrow the window with `t_start_us`/`t_end_us` and call again — Whisper's per-request cap is ~13 minutes of mono 16 kHz audio."
+    );
+    Ok(PromptResult {
+        description: Some(
+            "Auto-caption a clip via cloud Whisper + apply_subtitles.".into(),
+        ),
+        messages: vec![PromptMessage {
+            role: PromptRole::User,
+            content: ContentBlock::Text { text },
+        }],
+    })
+}
+
+#[cfg(feature = "cloud")]
+fn expand_voiceover(
+    args: Option<&Map<String, Value>>,
+) -> Result<PromptResult, McpToolError> {
+    let script = require_str(args, "script")?;
+    let voice = optional_str(args, "voice");
+    let speed = optional_str(args, "speed");
+    let target_track = optional_str(args, "target_track_id");
+
+    let voice_clause = match &voice {
+        Some(v) => format!("`{v}`"),
+        None => "the default voice".to_string(),
+    };
+
+    let mut extra = String::new();
+    if let Some(v) = &voice {
+        extra.push_str(&format!(", `voice: \"{v}\"`"));
+    }
+    if let Some(s) = &speed {
+        extra.push_str(&format!(", `speed: {s}`"));
+    }
+    if let Some(t) = &target_track {
+        extra.push_str(&format!(", `target_track_id: \"{t}\"`"));
+    }
+
+    let text = format!(
+"Generate voiceover audio for the script below using the {voice_clause} voice.
+
+Script:
+\"\"\"
+{script}
+\"\"\"
+
+Steps:
+1. Call `synthesize_speech` with `text: <the script>`{extra}. The tool content-addresses by `(model, voice, speed, text)`, so an identical earlier call returns the cached audio without re-billing.
+2. Report the resulting `layer_id`, `media_id`, `t_start_us`, `t_end_us`, and whether the result was `cached`.
+
+If the script exceeds 4096 characters, split it at paragraph boundaries and synthesize each chunk separately. Each call's `t_start_us` defaults to the current `composition.duration_us`, so successive chunks chain at the end of the timeline.
+
+If `synthesize_speech` errors with `MissingKey` or `InvalidKey`, tell the user to configure their OpenAI API key under Settings → API keys."
+    );
+    Ok(PromptResult {
+        description: Some(
+            "Generate cloud TTS and attach it as an Audio layer.".into(),
+        ),
+        messages: vec![PromptMessage {
+            role: PromptRole::User,
+            content: ContentBlock::Text { text },
+        }],
+    })
+}
+
 fn require_str(
     args: Option<&Map<String, Value>>,
     key: &str,
@@ -143,7 +299,10 @@ mod tests {
     #[test]
     fn catalog_lists_cut_silences_with_required_args_marked() {
         let cat = catalog();
+        #[cfg(not(feature = "cloud"))]
         assert_eq!(cat.len(), 1);
+        #[cfg(feature = "cloud")]
+        assert_eq!(cat.len(), 3);
 
         let cs = cat.iter().find(|p| p.name == NAME_CUT_SILENCES).unwrap();
         let layer = cs.arguments.iter().find(|a| a.name == "layer_id").unwrap();
@@ -188,6 +347,23 @@ mod tests {
     fn cut_silences_requires_layer_id() {
         let err = expand(NAME_CUT_SILENCES, None).expect_err("missing layer_id");
         assert!(format!("{err}").contains("layer_id"));
+    }
+
+    #[cfg(feature = "cloud")]
+    #[test]
+    fn catalog_includes_cloud_prompts() {
+        let names: Vec<_> = catalog().into_iter().map(|p| p.name).collect();
+        assert!(names.iter().any(|n| n == "auto-caption"));
+        assert!(names.iter().any(|n| n == "voiceover"));
+    }
+
+    #[cfg(feature = "cloud")]
+    #[test]
+    fn voiceover_expands_with_script() {
+        let a = args(&[("script", json!("hello there"))]);
+        let r = expand("voiceover", Some(&a)).expect("expand voiceover");
+        let body = message_text(&r.messages[0]);
+        assert!(body.contains("hello there"));
     }
 
     fn message_text(msg: &PromptMessage) -> &str {
