@@ -464,6 +464,23 @@ impl Backend {
                 let a: crate::commands::ExportConformArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
                 ser(crate::commands::export::ensure_export_audio_conform(self, a.start_us, a.end_us).await)
             }
+            #[cfg(feature = "export")]
+            "export_video_sink_start" => {
+                #[derive(serde::Deserialize)]
+                struct A {
+                    args: crate::export::videosink::VideoSinkStartArgs,
+                }
+                let a: A = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::export::videosink::export_video_sink_start(&self.video_sink, &self.hw_encoder, a.args).await)
+            }
+            #[cfg(feature = "export")]
+            "export_video_sink_finish" => {
+                ser(crate::export::videosink::export_video_sink_finish(&self.video_sink).await)
+            }
+            #[cfg(feature = "export")]
+            "export_video_sink_cancel" => {
+                ser(crate::export::videosink::export_video_sink_cancel(&self.video_sink).await)
+            }
             other => Err(format!("unavailable: '{other}' is wired in a later stage (S3/S4/S5)")),
         }
     }
@@ -666,6 +683,31 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(out, "[]", "blank project has no audio layers to conform");
+    }
+
+    /// "discard" mode binds the loopback listener WITHOUT spawning ffmpeg, so
+    /// this exercises the decoupled sink end-to-end through dispatch with no
+    /// ffmpeg dependency: start returns a bound port + token, cancel clears it.
+    #[cfg(feature = "export")]
+    #[tokio::test]
+    async fn video_sink_discard_start_returns_port_then_cancel() {
+        let b = Backend::new_for_test(Arc::new(VecEventSink::new()));
+        b.init().await.unwrap();
+        let start_args = serde_json::json!({
+            "args": {
+                "mode": "discard", "width": 64, "height": 64,
+                "fpsNum": 30, "fpsDen": 1, "codec": "hevc",
+                "bitrate": 1_000_000, "cbr": false, "gop": 30,
+                "software": false, "outputPath": ""
+            }
+        })
+        .to_string();
+        let reply = b.dispatch("export_video_sink_start", &start_args).await.unwrap();
+        let v: serde_json::Value = serde_json::from_str(&reply).unwrap();
+        assert!(v["port"].as_u64().unwrap() > 0, "discard sink returns a bound port, got {reply}");
+        assert!(!v["token"].as_str().unwrap().is_empty(), "discard sink returns a token");
+        let cancel = b.dispatch("export_video_sink_cancel", "{}").await.unwrap();
+        assert_eq!(cancel, "null", "cancel returns unit/null");
     }
 
     /// S2 deferred cleanup: a `log_emit` dispatch after a workspace is installed
