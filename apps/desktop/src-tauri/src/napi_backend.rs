@@ -51,6 +51,10 @@ pub struct Backend {
     /// Always compiled (cache is feature-independent) so main can push keys
     /// regardless of the addon's feature set.
     pub(crate) cloud_keys: std::sync::Mutex<std::collections::HashMap<String, String>>,
+    #[cfg(feature = "motifs")]
+    pub(crate) motif_store: crate::motifs::store::UserMotifStore,
+    #[cfg(feature = "motifs")]
+    pub(crate) motif_watcher: OnceLock<crate::motifs::watcher::MotifWatcher>,
 }
 
 /// Build the config-dir-rooted stores + cache layout + log slot, install the
@@ -68,6 +72,8 @@ fn build_backend(events: Arc<dyn EventSink>, config_dir: String, cache_dir: Stri
     let log_slot = LogBusSlot::new();
     #[cfg(feature = "jobs")]
     let import_queue = crate::jobs::import::ImportQueue::new(events.clone(), log_slot.clone());
+    #[cfg(feature = "motifs")]
+    let motif_store = crate::motifs::store::UserMotifStore::new(config_path.clone().join("motifs"));
 
     // Forward our crate's `tracing` events into whichever LogBus is current.
     // `try_init` (vs `init`) so constructing multiple Backends — e.g. in the
@@ -104,6 +110,10 @@ fn build_backend(events: Arc<dyn EventSink>, config_dir: String, cache_dir: Stri
         config_dir,
         cache_dir,
         cloud_keys: std::sync::Mutex::new(std::collections::HashMap::new()),
+        #[cfg(feature = "motifs")]
+        motif_store,
+        #[cfg(feature = "motifs")]
+        motif_watcher: OnceLock::new(),
     }
 }
 
@@ -254,6 +264,51 @@ impl Backend {
     pub async fn mcp_get_prompt(&self, name: String, args_json: String) -> napi::Result<String> {
         let args: serde_json::Value = serde_json::from_str(&args_json).unwrap_or(serde_json::json!({}));
         Ok(crate::mcp::reply(crate::mcp::get_prompt(&name, args.as_object())))
+    }
+}
+
+/// A `motif:` file resolved for the Electron `protocol.handle('motif')` handler.
+#[cfg(feature = "motifs")]
+#[napi(object)]
+pub struct MotifFile {
+    pub bytes: napi::bindgen_prelude::Buffer,
+    pub content_type: String,
+}
+
+#[cfg(feature = "motifs")]
+#[napi]
+impl Backend {
+    /// Resolve a `motif://<id>/<rest>` file to bytes + content-type for the main
+    /// process's `protocol.handle`. Built-ins first, then the on-disk user store.
+    /// `None` → main returns 404.
+    #[napi]
+    pub fn motif_resolve_file(&self, id: String, rest: String) -> Option<MotifFile> {
+        let bytes = crate::motifs::builtin::resolve_bytes(Some(&self.motif_store), &id, &rest)?;
+        Some(MotifFile {
+            content_type: crate::motifs::builtin::content_type_for(&rest).to_string(),
+            bytes: bytes.into(),
+        })
+    }
+
+    /// Resolve the capture `ctx.duration` (seconds) for a Motif + instance props.
+    /// Backs the JS capture orchestrator's `meta.duration` (the frozen renderer
+    /// shim can't pass it). Built-ins resolve without touching disk.
+    #[napi]
+    pub fn motif_ctx_duration_s(&self, id: String, props_json: String) -> f64 {
+        let props: serde_json::Value =
+            serde_json::from_str(&props_json).unwrap_or(serde_json::Value::Null);
+        crate::motifs::resolve_capture_duration(
+            &id,
+            &crate::motifs::catalog::builtins(),
+            || {
+                self.motif_store
+                    .get_motif(&id)
+                    .into_iter()
+                    .map(|m| m.manifest)
+                    .collect()
+            },
+            &props,
+        )
     }
 }
 
@@ -862,6 +917,15 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.contains("Settings"), "missing-key error should hint Settings, got: {err}");
+    }
+
+    #[cfg(feature = "motifs")]
+    #[test]
+    fn motif_store_resolves_builtin_bytes() {
+        let b = Backend::new_for_test(Arc::new(VecEventSink::new()));
+        let bytes = crate::motifs::builtin::resolve_bytes(Some(&b.motif_store), "countdown", "index.html")
+            .expect("countdown index resolves");
+        assert!(std::str::from_utf8(&bytes).unwrap().contains("motif.define"));
     }
 
     #[cfg(feature = "mcp")]
