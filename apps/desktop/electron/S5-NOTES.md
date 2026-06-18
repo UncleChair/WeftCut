@@ -163,10 +163,16 @@ The `motif-bake-dot` dot is gated on the overlay track being revealed
 wdio spec (not ported to Playwright) covers this.  Port is deferred until the
 `prebakeLayerAndWait` / `revealLayer` hooks are exercised in a full UX-path spec.
 
+### Final whole-stage review carry-forwards (opus, Ready to accept: YES — 0 Critical/0 Important)
+
+- **`tools.rs` `AddMotifArgs.track_id` field doc is stale + agent-facing** — the `///` doc says "first existing Video track / 'Motifs'" but the code (and the authoritative tool-level description, which agents read first) always spawns a fresh "Overlay" track. schemars surfaces field docs into the advertised MCP schema, so fix this in the doc sweep (highest-value cosmetic). 1-line edit.
+- **`capture.ts` `buildHost()` orphans the offscreen window if it throws mid-build** — PoC-inherited; reachable only on a pathological CDP-init failure (about:blank / Page.enable / Runtime.enable / addScript timeout), bounded to ≤1 orphan (captures are serialized), never observed in the green suite. Wrap the post-`new BrowserWindow()` steps in `try { … } catch (e) { win.destroy(); throw e }`. Fix opportunistically in S6 (cross-platform work touches `capture.ts`).
+
 ### Minor doc / style sweeps
 
 Tracked in the S5 progress ledger (task notes):
 
-- Evergreen docs audit for S5-era additions.
+- Evergreen docs audit for S5-era additions (incl. this file's "cdp/ / host/ / commands/capture.rs" phrasing — they were single `.rs` files: `cdp.rs` / `host.rs` / `commands.rs`).
 - The `ConnectAgentPanel` UI string update.
+- Per-task cosmetics: `staleness.rs:10` stale prose; `motif_authoring.rs` mid-file `use`; `napi_backend.rs:1056` invoke-vs-dispatch; `protocol.ts` decode-before-strip.
 - Any remaining `src/` motif-related component renames from "Template" → "Motif".
