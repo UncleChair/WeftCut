@@ -16,7 +16,7 @@ S4b extends the Rust feature set to `jobs,export,mcp,cloud`.  The `cloud` featur
 `keyring` is **removed** from `Cargo.toml`.  Cloud API keys are now stored by Electron main via Chromium `safeStorage` (OS-credential-store-backed AES encryption on Windows/macOS; `basic_text` plaintext fallback on Linux — see caveat below):
 
 - `apps/desktop/electron/main/keys.ts` — `loadKeys()` / `saveKeys()` manage a `cloud_keys.json` file in `app.getPath('userData')`; values are `safeStorage.encryptString` / `decryptString` round-tripped.
-- On app boot and after every `set_api_key` / `clear_api_key` IPC call, Electron main calls `backend.setCloudKeys(json)` to push the decrypted key map into `Backend.cloud_keys` (a `Mutex<HashMap<String,String>>`).
+- On app boot and after every `set_api_key` / `clear_api_key` IPC call, Electron main loops over the decrypted entries and calls `backend.setCloudKey(provider, key)` for each, pushing individual keys into `Backend.cloud_keys` (a `Mutex<HashMap<String,String>>`).
 - Rust never touches the filesystem for key storage; it only reads from `cloud_keys` at tool-call time.
 - The napi getter for `cloud_keys` is deliberately absent — key material never flows back to the renderer.
 

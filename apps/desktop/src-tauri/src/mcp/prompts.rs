@@ -137,7 +137,10 @@ pub(crate) fn expand(
         #[cfg(feature = "cloud")]
         NAME_VOICEOVER => expand_voiceover(args),
         other => Err(McpToolError::invalid_params(
-            format!("unknown prompt '{other}'; available: cut-silences, auto-caption, voiceover"),
+            format!(
+                "unknown prompt '{other}'; available: cut-silences{}",
+                if cfg!(feature = "cloud") { ", auto-caption, voiceover" } else { "" }
+            ),
             None,
         )),
     }
