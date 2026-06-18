@@ -11,9 +11,9 @@ export async function readFile(path: string, _opts?: unknown): Promise<Uint8Arra
 export async function writeFile(
   path: string,
   data: Uint8Array,
-  _opts?: unknown,
+  opts?: { append?: boolean },
 ): Promise<void> {
-  await window.api.invoke('fs:writeFile', { path, data })
+  await window.api.invoke('fs:writeFile', { path, data, append: opts?.append ?? false })
 }
 
 export async function writeTextFile(
