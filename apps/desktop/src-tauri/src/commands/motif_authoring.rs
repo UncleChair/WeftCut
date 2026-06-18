@@ -50,3 +50,49 @@ pub async fn delete_motif(b: &Backend, id: String) -> Result<(), String> {
     emit_changed(b);
     Ok(())
 }
+
+// ---- S5: staleness report + acknowledge ----
+
+use crate::motifs::staleness as st;
+use crate::state::{Actor, LayerParams};
+use crate::state::ids::LayerId;
+
+pub async fn motif_staleness_report(b: &Backend) -> Result<Vec<st::MotifStaleEntry>, String> {
+    let current = st::current_versions(&b.motif_store);
+    let snap = b.project()?.snapshot().await;
+    let layers: Vec<(String, u32)> = snap.tracks.iter().flat_map(|t| t.layers.iter())
+        .filter_map(|l| match &l.params {
+            LayerParams::Motif(p) => Some((p.motif_id.clone(), p.motif_version)),
+            _ => None,
+        }).collect();
+    let report = st::build_staleness_report(&layers, &current);
+    if !report.is_empty() {
+        let summary = report.iter()
+            .map(|e| format!("{} v{}→v{} ({} layer(s))", e.motif_id, e.placed_version, e.current_version, e.layer_count))
+            .collect::<Vec<_>>().join(", ");
+        b.log_slot.emit(crate::logs::LogEntryInput {
+            level: crate::logs::LogLevel::Warn,
+            category: crate::logs::LogCategory::Project,
+            source: crate::logs::LogSource::System,
+            message: format!("Motifs changed since placement: {summary}"),
+            ..Default::default()
+        });
+    }
+    Ok(report)
+}
+
+pub async fn acknowledge_motif_staleness(b: &Backend) -> Result<usize, String> {
+    let current = st::current_versions(&b.motif_store);
+    let snap = b.project()?.snapshot().await;
+    let layers: Vec<(LayerId, String, u32, imbl::HashMap<String, serde_json::Value>)> = snap.tracks.iter()
+        .flat_map(|t| t.layers.iter())
+        .filter_map(|l| match &l.params {
+            LayerParams::Motif(p) => Some((l.id, p.motif_id.clone(), p.motif_version, p.props.clone())),
+            _ => None,
+        }).collect();
+    let updates = st::build_ack_entries(&layers, &current);
+    if updates.is_empty() { return Ok(0); }
+    let n = updates.len();
+    b.project()?.rebind_motif(Actor::User, updates).await.map_err(|e| e.to_string())?;
+    Ok(n)
+}
