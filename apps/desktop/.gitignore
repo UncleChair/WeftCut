@@ -6,3 +6,9 @@ src-tauri/index.d.ts
 # Playwright-for-Electron e2e output (transient; S3b+)
 test-results/
 playwright-report/
+
+# ffmpeg binaries (fetched in CI / Task 2; not committed)
+resources/ffmpeg/*/ffmpeg*
+
+# electron-builder output (transient build artifacts)
+release/
