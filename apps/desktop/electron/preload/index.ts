@@ -27,4 +27,24 @@ const api = {
 }
 
 contextBridge.exposeInMainWorld('api', api)
+
+// Frameless-window drag regions. The renderer marks its titlebars with Tauri's
+// `data-tauri-drag-region` attribute; Electron doesn't honor that — it uses the
+// CSS `-webkit-app-region` property. Bridge the two by injecting a stylesheet
+// (interactive descendants get `no-drag` so window controls / buttons stay
+// clickable). Injected from preload to respect the no-`src/**`-edit fence.
+function injectDragRegionStyles(): void {
+  const style = document.createElement('style')
+  style.textContent = `
+    [data-tauri-drag-region] { -webkit-app-region: drag; }
+    [data-tauri-drag-region] :where(button, a, input, select, textarea, [role="button"], [contenteditable]) { -webkit-app-region: no-drag; }
+  `
+  document.head.appendChild(style)
+}
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', injectDragRegionStyles)
+} else {
+  injectDragRegionStyles()
+}
+
 export type Api = typeof api

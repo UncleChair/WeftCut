@@ -23,7 +23,16 @@ async function createWindow(): Promise<BrowserWindow> {
   const win = new BrowserWindow({
     width: 1440,
     height: 900,
-    show: false,
+    // Show immediately. A frameless (`frame:false`) window combined with
+    // `show:false` + a deferred `ready-to-show` show does NOT reliably surface
+    // on Windows (ready-to-show may not fire) — the window stays hidden. With a
+    // set backgroundColor there's no white flash, so show on create.
+    show: true,
+    // Frameless to match Tauri's `decorations: false` — the renderer draws its
+    // own titlebar (app-header / startup-titlebar / agent-titlebar) with custom
+    // window controls. (macOS traffic-light styling is an S6 cross-platform
+    // refinement.)
+    frame: false,
     backgroundColor: '#0a0a0a',
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
