@@ -8,7 +8,7 @@
 //! current in ONE undo entry via the existing `rebind_motif`.
 //!
 //! Pure cores (`build_staleness_report` / `build_ack_entries`) are split
-//! from the Tauri commands so they unit-test without an actor or disk.
+//! from the command layer so they unit-test without an actor or disk.
 
 use std::collections::{BTreeMap, HashMap};
 

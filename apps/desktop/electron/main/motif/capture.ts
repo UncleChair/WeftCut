@@ -51,14 +51,21 @@ async function buildHost(): Promise<Host> {
     show: false,
     webPreferences: { offscreen: true, contextIsolation: true, nodeIntegration: false },
   })
-  await withTimeout(win.loadURL('about:blank'), CAPTURE_TIMEOUT_MS, 'about:blank')
-  const dbg = win.webContents.debugger
-  dbg.attach('1.3')
-  const send = (method: string, params: object = {}) => dbg.sendCommand(method, params)
-  await withTimeout(send('Page.enable'), CAPTURE_TIMEOUT_MS, 'Page.enable')
-  await withTimeout(send('Runtime.enable'), CAPTURE_TIMEOUT_MS, 'Runtime.enable')
-  await withTimeout(send('Page.addScriptToEvaluateOnNewDocument', { source: runtimeSource }), CAPTURE_TIMEOUT_MS, 'addScript')
-  return { win, send, loadedId: null, loadedV: null, readyFor: null, lastSize: null }
+  // Destroy the offscreen window if CDP init throws mid-build, else it orphans.
+  // Bounded to ≤1 (captures are serialized) but still a leak; never observed green.
+  try {
+    await withTimeout(win.loadURL('about:blank'), CAPTURE_TIMEOUT_MS, 'about:blank')
+    const dbg = win.webContents.debugger
+    dbg.attach('1.3')
+    const send = (method: string, params: object = {}) => dbg.sendCommand(method, params)
+    await withTimeout(send('Page.enable'), CAPTURE_TIMEOUT_MS, 'Page.enable')
+    await withTimeout(send('Runtime.enable'), CAPTURE_TIMEOUT_MS, 'Runtime.enable')
+    await withTimeout(send('Page.addScriptToEvaluateOnNewDocument', { source: runtimeSource }), CAPTURE_TIMEOUT_MS, 'addScript')
+    return { win, send, loadedId: null, loadedV: null, readyFor: null, lastSize: null }
+  } catch (e) {
+    try { win.destroy() } catch { /* already gone */ }
+    throw e
+  }
 }
 
 function teardownHost(): void {

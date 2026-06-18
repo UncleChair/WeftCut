@@ -26,7 +26,7 @@ export function registerMotifProtocol(backend: Backend): void {
   protocol.handle('motif', async (request) => {
     const url = new URL(request.url) // motif://<id>/<rest>
     const id = url.hostname
-    const rest = decodeURIComponent(url.pathname).replace(/^\/+/, '') || 'index.html'
+    const rest = decodeURIComponent(url.pathname.replace(/^\/+/, '')) || 'index.html'
     const file = backend.motifResolveFile(id, rest)
     if (!file) return new Response('not found: ' + id + '/' + rest, { status: 404 })
     return new Response(Buffer.from(file.bytes), {

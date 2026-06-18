@@ -28,11 +28,11 @@ this: capture is driven entirely from the Node.js/main-process side.
 
 The following Rust code was deleted in Task 1:
 
-- `src-tauri/src/motifs/cdp/` — the full CDP command shim (`DevTools`, `Page.*`,
+- `src-tauri/src/motifs/cdp.rs` — the full CDP command shim (`DevTools`, `Page.*`,
   `Runtime.*`, `Emulation.*`, `Page.captureScreenshot`).
-- `src-tauri/src/motifs/host/` — the hidden `WebView2` host-window lifecycle
+- `src-tauri/src/motifs/host.rs` — the hidden `WebView2` host-window lifecycle
   (`create_host`, `navigate`, `inject_runtime`, `capture_frame`).
-- `src-tauri/src/motifs/commands/capture.rs` — the Tauri `motif_capture_frame`
+- `src-tauri/src/motifs/commands.rs` — the Tauri `motif_capture_frame`
   command.
 
 Dropped crate dependencies (no longer in `Cargo.toml`):
@@ -170,9 +170,20 @@ wdio spec (not ported to Playwright) covers this.  Port is deferred until the
 
 ### Minor doc / style sweeps
 
-Tracked in the S5 progress ledger (task notes):
+Cleared in the pre-S6 cleanup pass:
 
-- Evergreen docs audit for S5-era additions (incl. this file's "cdp/ / host/ / commands/capture.rs" phrasing — they were single `.rs` files: `cdp.rs` / `host.rs` / `commands.rs`).
-- The `ConnectAgentPanel` UI string update.
-- Per-task cosmetics: `staleness.rs:10` stale prose; `motif_authoring.rs` mid-file `use`; `napi_backend.rs:1056` invoke-vs-dispatch; `protocol.ts` decode-before-strip.
-- Any remaining `src/` motif-related component renames from "Template" → "Motif".
+- This file's deleted-module phrasing corrected to the single `.rs` files
+  (`cdp.rs` / `host.rs` / `commands.rs`).
+- Per-task cosmetics: `staleness.rs` "Tauri commands" prose; `motif_authoring.rs`
+  mid-file `use` hoisted to the top block; `protocol.ts` strip-before-decode.
+- `src/` motif component renames "Template" → "Motif": already clean (the only
+  match is an incidental "template" word in a `render/motifs/runtime.ts` comment).
+
+Still open:
+
+- The `ConnectAgentPanel` SSE → streamable-HTTP UI rework (the deliberate post-S5
+  UI-gap pass — see "ConnectAgentPanel streamable-HTTP UI gap" above).
+- `napi_backend.rs` invoke-vs-dispatch wording: the originally-noted line drifted
+  and the current `invoke` (public napi) / `dispatch` (internal match) naming reads
+  consistent — left as-is pending a concrete spot.
+- A broader evergreen-docs audit of S5-era additions.
