@@ -93,7 +93,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('window:isMaximized', () => !!mainWindow?.isMaximized())
   ipcMain.handle('window:setTitle', (_e, title: string) => mainWindow?.setTitle(title))
   ipcMain.handle('path:documentDir', () => app.getPath('documents'))
-  ipcMain.handle('path:join', (_e, { parts }: { parts: string[] }) => path.join(...parts))
+  ipcMain.handle('path:join', (_e, payload: { parts?: string[]; paths?: string[] }) => path.join(...(payload.parts ?? payload.paths ?? [])))
   ipcMain.handle('path:tempDir', () => app.getPath('temp'))
 
   const { dialog } = require('electron') as typeof import('electron')
