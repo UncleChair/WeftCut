@@ -3,7 +3,7 @@ import { launchApp } from './helpers/driver'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 
-interface Info { sse_url: string; bearer_token: string }
+interface Info { url: string; bearer_token: string }
 type Status = { provider: string; label: string; configured: boolean }
 
 async function connect(url: string, token: string): Promise<Client> {
@@ -43,7 +43,7 @@ test('S4b: safeStorage key round-trip + cloud tools advertised', async () => {
 
   // The cloud MCP tools are now advertised to an external client.
   const info = (await invoke('get_mcp_info', {})) as Info
-  const client = await connect(info.sse_url, info.bearer_token)
+  const client = await connect(info.url, info.bearer_token)
   const names = (await client.listTools()).tools.map((t) => t.name)
   expect(names).toContain('transcribe_clip')
   expect(names).toContain('synthesize_speech')

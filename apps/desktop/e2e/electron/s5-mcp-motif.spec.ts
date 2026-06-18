@@ -3,7 +3,7 @@ import { launchApp } from './helpers/driver'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 
-interface Info { sse_url: string; bearer_token: string }
+interface Info { url: string; bearer_token: string }
 
 async function connect(url: string, token: string): Promise<Client> {
   const transport = new StreamableHTTPClientTransport(new URL(url), {
@@ -18,7 +18,7 @@ test('S5: MCP motif tools are advertised and callable', async () => {
   const { app, page } = await launchApp()
 
   const info = (await page.evaluate(() => (window as any).api.invoke('get_mcp_info', {}))) as Info
-  const client = await connect(info.sse_url, info.bearer_token)
+  const client = await connect(info.url, info.bearer_token)
 
   // list_motifs, add_motif, preview_motif_draft must appear in listTools
   const toolsResult = await client.listTools()
