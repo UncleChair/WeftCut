@@ -449,6 +449,21 @@ impl Backend {
                 let a: A = serde_json::from_str(args).map_err(|e| e.to_string())?;
                 ser(crate::commands::media::report_audio_meter(self, a.report).await)
             }
+            #[cfg(feature = "export")]
+            "export_project_audio_only" => {
+                let a: crate::commands::ExportAudioOnlyArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::export::export_project_audio_only(self, a.output_path, a.audio, a.start_us, a.end_us).await)
+            }
+            #[cfg(feature = "export")]
+            "mux_export" => {
+                let a: crate::commands::MuxExportArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::export::mux_export(self, a.video_path, a.audio_path, a.output_path, a.transcode).await)
+            }
+            #[cfg(feature = "export")]
+            "ensure_export_audio_conform" => {
+                let a: crate::commands::ExportConformArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::export::ensure_export_audio_conform(self, a.start_us, a.end_us).await)
+            }
             other => Err(format!("unavailable: '{other}' is wired in a later stage (S3/S4/S5)")),
         }
     }
@@ -637,6 +652,20 @@ mod tests {
             "app_settings:changed must be emitted; got: {:?}",
             sink.names()
         );
+    }
+
+    /// Blank project has no audio layers, so the export-audio gate returns an
+    /// empty waiting list with no ffmpeg involvement — proves the arm is wired.
+    #[cfg(feature = "export")]
+    #[tokio::test]
+    async fn ensure_export_audio_conform_blank_is_empty() {
+        let b = Backend::new_for_test(Arc::new(VecEventSink::new()));
+        b.init().await.unwrap();
+        let out = b
+            .dispatch("ensure_export_audio_conform", r#"{"startUs":0,"endUs":1000000}"#)
+            .await
+            .unwrap();
+        assert_eq!(out, "[]", "blank project has no audio layers to conform");
     }
 
     /// S2 deferred cleanup: a `log_emit` dispatch after a workspace is installed
