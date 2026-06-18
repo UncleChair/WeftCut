@@ -7,6 +7,19 @@ files:
   - out/**
   - package.json
   - "!**/*.map"
+  - "!**/node_modules/@weftcut/core/target/**"
+  - "!**/node_modules/@weftcut/core/target-check/**"
+  - "!**/node_modules/@weftcut/core/target-test/**"
+  - "!**/node_modules/@weftcut/core/src/**"
+  - "!**/node_modules/@weftcut/core/vendor/**"
+  - "!**/node_modules/@weftcut/core/gen/**"
+  - "!**/node_modules/@weftcut/core/icons/**"
+  - "!**/node_modules/@weftcut/core/schemas/**"
+  - "!**/node_modules/@weftcut/core/capabilities/**"
+  - "!**/node_modules/@weftcut/core/build.rs"
+  - "!**/node_modules/@weftcut/core/Cargo.lock"
+  - "!**/node_modules/@weftcut/core/Cargo.toml"
+  - "!**/node_modules/@weftcut/core/tauri.conf.json"
 asarUnpack:
   - "**/*.node"
 extraResources:
