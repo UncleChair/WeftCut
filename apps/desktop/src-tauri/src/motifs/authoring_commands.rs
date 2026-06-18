@@ -1,9 +1,8 @@
-//! Tauri commands for the user-Motif authoring lifecycle: read a Motif's
+//! Core functions for the user-Motif authoring lifecycle: read a Motif's
 //! source, write a draft, install (publish-new / update-in-place), delete.
 //! UI-agnostic; the Stage-3 UI and the Stage-4 MCP tools both call these.
 
 use serde::Deserialize;
-use tauri::{AppHandle, Emitter, State};
 
 use super::authoring::{assign_unique_id, compose_motif_html, validate_manifest};
 use super::catalog::{builtins, parse_manifest_island, Manifest, BUILTIN_IDS};
@@ -15,31 +14,20 @@ use super::store::UserMotifStore;
 /// picker refreshes.
 pub const MOTIFS_CHANGED_EVENT: &str = "motifs:changed";
 
-/// Emit the app-wide `motifs:changed` event so the frontend re-pulls the
-/// catalog. `pub` so the MCP authoring tools (which mutate the same store) can
-/// signal the UI to refresh, mirroring the human commands.
-pub fn emit_motifs_changed(app: &AppHandle) {
-    // Best-effort: a failed emit shouldn't fail the lifecycle op.
-    let _ = app.emit(MOTIFS_CHANGED_EVENT, ());
-}
-
-/// `{ manifest, html }` of a Motif's source. Returned by `get_motif_source`.
+/// `{ manifest, html }` of a Motif's source. Returned by `get_motif_source_core`.
 #[derive(serde::Serialize)]
 pub struct MotifSource {
     pub manifest: Manifest,
     pub html: String,
 }
 
-/// Read any built-in or user Motif's source (for the "edit" seed).
-#[tauri::command]
-pub async fn get_motif_source(
-    store: State<'_, UserMotifStore>,
-    id: String,
-) -> Result<MotifSource, String> {
+/// Read any built-in or user Motif's source (for the "edit" seed). Core of the
+/// former `get_motif_source` command; no `State` so the dispatch arm + tests can call it.
+pub fn get_motif_source_core(store: &UserMotifStore, id: &str) -> Result<MotifSource, String> {
     if let Some(m) = builtins().into_iter().find(|m| m.id() == id) {
         return Ok(MotifSource { manifest: m.manifest, html: m.html });
     }
-    if let Some(m) = store.get_motif(&id) {
+    if let Some(m) = store.get_motif(id) {
         return Ok(MotifSource { manifest: m.manifest, html: m.html });
     }
     Err(format!("unknown motif id '{id}'"))
@@ -86,20 +74,6 @@ pub fn write_motif_draft_core(
     Ok(draft_id)
 }
 
-/// Validate + compose + write a draft. Returns the assigned draft id. Every call
-/// mints a NEW draft id; the iterative edit UI reuses an existing draft_id via
-/// `amend_motif_draft` instead.
-#[tauri::command]
-pub async fn write_motif_draft(
-    app: AppHandle,
-    store: State<'_, UserMotifStore>,
-    args: WriteDraftArgs,
-) -> Result<String, String> {
-    let draft_id = write_motif_draft_core(&store, args.manifest, &args.html, None)?;
-    emit_motifs_changed(&app);
-    Ok(draft_id)
-}
-
 /// Core of `amend_motif_draft`: parse the manifest island out of an edited
 /// full-source document, force the draft's stable identity (id + draft version 1
 /// — id/version are app-assigned, never author-controlled), re-validate, and
@@ -122,23 +96,6 @@ pub fn amend_draft_html(
     // `manifest`; the body is preserved verbatim and round-trips.
     let html = compose_motif_html(&manifest, source);
     store.write_draft(draft_id, &html).map_err(|e| e.to_string())
-}
-
-/// Overwrite an existing draft from its full edited source (the in-app source
-/// panel calls this). Distinct from `write_motif_draft`, which MINTS a new id;
-/// amend keeps the id stable so a placed draft layer keeps resolving while you
-/// edit. Emits `motifs:changed` so the catalog resyncs (new content_hash) and
-/// the preview re-captures.
-#[tauri::command]
-pub async fn amend_motif_draft(
-    app: AppHandle,
-    store: State<'_, UserMotifStore>,
-    draft_id: String,
-    source: String,
-) -> Result<(), String> {
-    amend_draft_html(&store, &draft_id, &source)?;
-    emit_motifs_changed(&app);
-    Ok(())
 }
 
 /// Core of `create_edit_draft`: seed a NEW working draft from `source_id`'s
@@ -171,19 +128,6 @@ pub fn create_edit_draft_core(
     Ok(draft_id)
 }
 
-/// Open a working draft to edit an existing Motif. Built-in → forced fork
-/// (no Update target). Returns the working draft id. Emits `motifs:changed`.
-#[tauri::command]
-pub async fn create_edit_draft(
-    app: AppHandle,
-    store: State<'_, UserMotifStore>,
-    source_id: String,
-) -> Result<String, String> {
-    let draft_id = create_edit_draft_core(&store, &builtins(), &source_id)?;
-    emit_motifs_changed(&app);
-    Ok(draft_id)
-}
-
 /// Core of `import_motif`: parse + validate the manifest island from an external
 /// `.html` source, mint a FRESH unique draft id (ignoring any id/version the file
 /// claims — identity is app-owned), and write it as a from-scratch draft (no
@@ -202,22 +146,6 @@ pub fn import_motif_from_source(store: &UserMotifStore, source: &str) -> Result<
     validate_manifest(&manifest).map_err(|e| e.to_string())?;
     let html = compose_motif_html(&manifest, source);
     store.write_draft(&draft_id, &html).map_err(|e| e.to_string())?;
-    Ok(draft_id)
-}
-
-/// Import an external `.html` Motif file (picked via the OS dialog) as a draft.
-/// Reads the user-chosen path directly (the user authorized it). Returns the new
-/// draft id. Emits `motifs:changed`.
-#[tauri::command]
-pub async fn import_motif(
-    app: AppHandle,
-    store: State<'_, UserMotifStore>,
-    path: String,
-) -> Result<String, String> {
-    let source =
-        std::fs::read_to_string(&path).map_err(|e| format!("read '{path}': {e}"))?;
-    let draft_id = import_motif_from_source(&store, &source)?;
-    emit_motifs_changed(&app);
     Ok(draft_id)
 }
 
@@ -333,19 +261,6 @@ pub async fn install_motif_core(
     Ok(final_id)
 }
 
-/// Promote a draft to a published user Motif. Returns the published id.
-#[tauri::command]
-pub async fn install_motif(
-    app: AppHandle,
-    store: State<'_, UserMotifStore>,
-    handle: State<'_, crate::state::ProjectHandle>,
-    args: InstallArgs,
-) -> Result<String, String> {
-    let final_id = install_motif_core(&store, &handle, &args).await?;
-    emit_motifs_changed(&app);
-    Ok(final_id)
-}
-
 /// Build per-layer rebind updates for an Update: every layer whose `motif_id`
 /// is the working draft id OR the target id ends up on the target id, at the new
 /// version, with props lenient-migrated to the new schema (drop unknown keys,
@@ -383,19 +298,13 @@ pub fn build_rebind_updates(
         .collect()
 }
 
-/// Delete a published user Motif. Built-ins are rejected.
-#[tauri::command]
-pub async fn delete_motif(
-    app: AppHandle,
-    store: State<'_, UserMotifStore>,
-    id: String,
-) -> Result<(), String> {
-    if BUILTIN_IDS.contains(&id.as_str()) {
+/// Delete a published user Motif (built-ins rejected). Core of the former
+/// `delete_motif` command; no `State`/no emit.
+pub fn delete_motif_core(store: &UserMotifStore, id: &str) -> Result<(), String> {
+    if BUILTIN_IDS.contains(&id) {
         return Err(format!("cannot delete the built-in Motif '{id}'"));
     }
-    store.delete_user_motif(&id).map_err(|e| e.to_string())?;
-    emit_motifs_changed(&app);
-    Ok(())
+    store.delete_user_motif(id).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

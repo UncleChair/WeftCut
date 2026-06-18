@@ -17,7 +17,7 @@
     "electron:dev": "electron-vite dev",
     "electron:build": "electron-vite build",
     "electron:preview": "electron-vite preview",
-    "napi:build": "napi build --platform --release --manifest-path src-tauri/Cargo.toml --output-dir src-tauri --features jobs,export,mcp,cloud",
+    "napi:build": "napi build --platform --release --manifest-path src-tauri/Cargo.toml --output-dir src-tauri --features jobs,export,mcp,cloud,motifs",
     "e2e:electron": "playwright test -c playwright.config.ts"
   },
   "dependencies": {

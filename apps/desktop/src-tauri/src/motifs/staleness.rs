@@ -13,12 +13,10 @@
 use std::collections::{BTreeMap, HashMap};
 
 use serde::Serialize;
-use tauri::{AppHandle, State};
 
 use super::store::UserMotifStore;
 use crate::state::actor::MotifRebindEntry;
 use crate::state::ids::LayerId;
-use crate::state::{Actor, LayerParams, ProjectHandle};
 
 /// One row of the on-open staleness report, grouped by motif id.
 #[derive(Clone, Debug, Serialize)]
@@ -107,87 +105,6 @@ pub fn build_ack_entries(
             })
         })
         .collect()
-}
-
-/// Pull-based §7-B check. The App calls this once on mount — which is exactly
-/// once per successful project open (all open paths remount App). A non-empty
-/// report also logs one Warn entry so the console keeps a record.
-#[tauri::command]
-pub async fn motif_staleness_report(
-    app: AppHandle,
-    handle: State<'_, ProjectHandle>,
-    store: State<'_, UserMotifStore>,
-) -> Result<Vec<MotifStaleEntry>, String> {
-    let current = current_versions(&store);
-    let snap = handle.snapshot().await;
-    let layers: Vec<(String, u32)> = snap
-        .tracks
-        .iter()
-        .flat_map(|t| t.layers.iter())
-        .filter_map(|l| match &l.params {
-            LayerParams::Motif(p) => Some((p.motif_id.clone(), p.motif_version)),
-            _ => None,
-        })
-        .collect();
-    let report = build_staleness_report(&layers, &current);
-    if !report.is_empty() {
-        let summary = report
-            .iter()
-            .map(|e| {
-                format!(
-                    "{} v{}→v{} ({} layer(s))",
-                    e.motif_id, e.placed_version, e.current_version, e.layer_count
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        crate::logs::emit_via_app(
-            &app,
-            crate::logs::LogEntryInput {
-                level: crate::logs::LogLevel::Warn,
-                category: crate::logs::LogCategory::Project,
-                source: crate::logs::LogSource::System,
-                message: format!("Motifs changed since placement: {summary}"),
-                ..Default::default()
-            },
-        );
-    }
-    Ok(report)
-}
-
-/// Dismiss-=-acknowledge: bump every stale layer's seen-at marker to the
-/// current catalog version (same id, same props) in ONE undo entry. The
-/// mismatch set is recomputed from the CURRENT snapshot — layers captured at
-/// open time may have been deleted/edited since. Returns the number of layers
-/// bumped (0 = nothing to do; the actor is not touched).
-#[tauri::command]
-pub async fn acknowledge_motif_staleness(
-    handle: State<'_, ProjectHandle>,
-    store: State<'_, UserMotifStore>,
-) -> Result<usize, String> {
-    let current = current_versions(&store);
-    let snap = handle.snapshot().await;
-    let layers: Vec<(LayerId, String, u32, imbl::HashMap<String, serde_json::Value>)> = snap
-        .tracks
-        .iter()
-        .flat_map(|t| t.layers.iter())
-        .filter_map(|l| match &l.params {
-            LayerParams::Motif(p) => {
-                Some((l.id, p.motif_id.clone(), p.motif_version, p.props.clone()))
-            }
-            _ => None,
-        })
-        .collect();
-    let updates = build_ack_entries(&layers, &current);
-    if updates.is_empty() {
-        return Ok(0);
-    }
-    let n = updates.len();
-    handle
-        .rebind_motif(Actor::User, updates)
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(n)
 }
 
 #[cfg(test)]
