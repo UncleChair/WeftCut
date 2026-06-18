@@ -8,6 +8,7 @@ import {
   GetPromptRequestSchema,
   type ServerResult,
 } from '@modelcontextprotocol/sdk/types.js'
+import { captureMotifFrameB64 } from '../motif/capture.js'
 
 type Backend = import('@weftcut/core').Backend
 
@@ -46,6 +47,27 @@ export function buildMcpServer(backend: Backend): Server {
     return { tools: cat.tools } as unknown as ServerResult
   })
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
+    if (req.params.name === 'preview_motif_draft') {
+      const a = (req.params.arguments ?? {}) as {
+        id?: string
+        motif_id?: string
+        t_sec?: number
+        props?: unknown
+        width?: number
+        height?: number
+      }
+      const motifId = a.id ?? a.motif_id ?? ''
+      const b64 = await captureMotifFrameB64(backend, {
+        motifId,
+        tSec: a.t_sec ?? 0,
+        propsJson: JSON.stringify(a.props ?? {}),
+        width: a.width ?? 480,
+        height: a.height ?? 480,
+        settleRafs: null,
+        contentHash: '',
+      })
+      return { content: [{ type: 'image', data: b64, mimeType: 'image/png' }] } as unknown as ServerResult
+    }
     return unwrap(
       await backend.mcpCallTool(req.params.name, JSON.stringify(req.params.arguments ?? {})),
     ) as ServerResult
