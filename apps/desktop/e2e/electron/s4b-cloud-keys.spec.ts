@@ -23,6 +23,12 @@ test('S4b: safeStorage key round-trip + cloud tools advertised', async () => {
 
   // Resolve userData path from the main process (no require/import needed here).
   const userData = (await app.evaluate(({ app }) => app.getPath('userData'))) as string
+
+  // Skip when the OS keyring is absent (headless Linux CI) — the round-trip
+  // calls safeStorage.encryptString which throws "Encryption is not available".
+  const encryptionAvailable = (await app.evaluate(({ safeStorage }) => safeStorage.isEncryptionAvailable())) as boolean
+  test.skip(!encryptionAvailable, 'safeStorage encryption unavailable (no OS keyring) — round-trip is verified where a keyring exists (Windows/macOS/Linux-desktop)')
+
   const keysPath = await invoke('path:join', { parts: [userData, 'cloud_keys.json'] }) as string
 
   // Clean slate.

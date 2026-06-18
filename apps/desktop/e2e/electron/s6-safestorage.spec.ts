@@ -10,7 +10,12 @@ test('startup logs a keyring warning when encryption is unavailable', async () =
   // On Windows/macOS dev runners encryption IS available → no warning (pass).
   // On Linux CI without a keyring → warning present. Assert the code path is
   // wired: either available (no warn) or unavailable (warn present).
-  await new Promise((r) => setTimeout(r, 1500))
+
+  // Wait until the backend finished init (the safeStorage keyring check + any
+  // warning fire immediately after). Robust on slow CI vs a fixed sleep.
+  const page = await app.firstWindow()
+  await expect.poll(() => logs.join('').includes('[main] backend init OK'), { timeout: 60_000, intervals: [250] }).toBe(true)
+  await page.waitForTimeout(500) // let the warn line (emitted just after) flush
   const warned = logs.join('').includes('OS keyring unavailable')
   const { available } = await app.evaluate(async ({ safeStorage }) => ({
     available: safeStorage.isEncryptionAvailable(),
