@@ -22,6 +22,16 @@ pub mod prefs;
 pub mod media;
 #[cfg(feature = "export")]
 pub mod export;
+#[cfg(feature = "cloud")]
+pub mod cloud;
+
+#[cfg(feature = "cloud")]
+#[derive(Serialize, Clone)]
+pub struct ApiKeyStatus {
+    pub provider: String,
+    pub label: String,
+    pub configured: bool,
+}
 
 #[derive(Serialize, Clone)]
 pub struct ProjectSummary {

@@ -540,6 +540,16 @@ impl Backend {
             "export_video_sink_cancel" => {
                 ser(crate::export::videosink::export_video_sink_cancel(&self.video_sink).await)
             }
+            #[cfg(feature = "cloud")]
+            "settings_get_api_key_status" => {
+                ser(crate::commands::cloud::settings_get_api_key_status(self).await)
+            }
+            #[cfg(feature = "cloud")]
+            "settings_test_provider" => {
+                let a: crate::commands::cloud::SettingsTestProviderArgs =
+                    serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::cloud::settings_test_provider(self, a.provider).await)
+            }
             other => Err(format!("unavailable: '{other}' is wired in a later stage (S3/S4/S5)")),
         }
     }
@@ -821,6 +831,37 @@ mod tests {
         let after: serde_json::Value =
             serde_json::from_str(&b.dispatch("project_summary", "{}").await.unwrap()).unwrap();
         assert_eq!(after["track_count"].as_u64().unwrap(), baseline + 1);
+    }
+
+    #[cfg(feature = "cloud")]
+    #[tokio::test]
+    async fn settings_status_reflects_cache() {
+        let b = Backend::new_for_test(Arc::new(VecEventSink::new()));
+        b.init().await.unwrap();
+        // Unconfigured: openai present in the list, configured=false.
+        let out = b.dispatch("settings_get_api_key_status", "{}").await.unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let openai = v.as_array().unwrap().iter().find(|e| e["provider"] == "openai").unwrap();
+        assert_eq!(openai["configured"], false);
+        assert!(openai["label"].as_str().unwrap().contains("OpenAI"));
+        // After a push: configured=true.
+        b.set_cloud_key("openai".into(), "sk-x".into());
+        let out = b.dispatch("settings_get_api_key_status", "{}").await.unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let openai = v.as_array().unwrap().iter().find(|e| e["provider"] == "openai").unwrap();
+        assert_eq!(openai["configured"], true);
+    }
+
+    #[cfg(feature = "cloud")]
+    #[tokio::test]
+    async fn settings_test_provider_missing_key_is_clean_error() {
+        let b = Backend::new_for_test(Arc::new(VecEventSink::new()));
+        b.init().await.unwrap();
+        let err = b
+            .dispatch("settings_test_provider", r#"{"provider":"openai"}"#)
+            .await
+            .unwrap_err();
+        assert!(err.contains("Settings"), "missing-key error should hint Settings, got: {err}");
     }
 
     #[cfg(feature = "mcp")]
