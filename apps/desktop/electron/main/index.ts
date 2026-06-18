@@ -76,6 +76,19 @@ async function createWindow(): Promise<BrowserWindow> {
 }
 
 app.whenReady().then(async () => {
+  // Bundled ffmpeg: ffmpeg-sidecar resolves "ffmpeg" via PATH when no binary sits
+  // adjacent to the exe (paths.rs::ffmpeg_path). Prepend the packaged dir so the
+  // in-process addon spawns OUR static build, not a system one. Dev (unpackaged)
+  // has no bundled dir → falls back to system/auto-download as before.
+  const ffmpegDir = app.isPackaged
+    ? path.join(process.resourcesPath, 'ffmpeg')
+    : path.join(__dirname, '../../resources/ffmpeg', process.platform === 'win32' ? 'win' : process.platform === 'darwin' ? 'mac' : 'linux')
+  const ffmpegBin = path.join(ffmpegDir, process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg')
+  if (fs.existsSync(ffmpegBin)) {
+    process.env.PATH = ffmpegDir + path.delimiter + (process.env.PATH ?? '')
+    console.log(`[main] bundled ffmpeg on PATH: ${ffmpegBin}`)
+  }
+
   // Construct + init the Backend before creating the window
   backend = new Backend(
     app.getPath('userData'),
