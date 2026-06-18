@@ -208,6 +208,27 @@ tool_table! {
                           Recorded (undoable). Folds into every layer of that role at mix time.", tools::SetRoleGainArgs, tools::set_role_gain),
     "set_role_flags" => ("Mute/solo an audio role. role ∈ {dialogue,music,sfx,voiceover}. \
                           Unrecorded (not undoable). Mute wins over solo; any solo silences non-soloed roles.", tools::SetRoleFlagsArgs, tools::set_role_flags),
+    #[cfg(feature = "cloud")]
+    "transcribe_clip" => ("Transcribe a VideoClip or Audio layer to SRT using the configured cloud provider (OpenAI Whisper today). \
+                          Returns the SRT body with cue timestamps shifted to timeline-absolute values so the output feeds directly into \
+                          `apply_subtitles` (omit `t_start_us` so the layer activates from 0 — the cues \
+                          self-position via their internal timestamps). Optional `t_start_us`/`t_end_us` \
+                          narrow the transcription window inside the layer's time range; both default to \
+                          the layer endpoints. VideoClip layers with speed != 1.0 are rejected — split off \
+                          a speed-1 segment first. Errors with structured messages if no API key is \
+                          configured, the audio slice exceeds the provider cap (~13 min for Whisper at \
+                          25 MB), or the provider rate-limits / rejects auth.", tools::TranscribeClipArgs, tools::transcribe_clip),
+    #[cfg(feature = "cloud")]
+    "synthesize_speech" => ("Synthesize speech via the configured cloud TTS provider (OpenAI tts-1 today) \
+                          and attach the result as an Audio layer. The MP3 is content-addressed in cache \
+                          by `(model, voice, speed, text)`, so a repeat call with the same args reuses \
+                          the cached file without burning another API request. \
+                          Args: `text` (≤4096 chars for tts-1), `voice` (one of alloy/echo/fable/onyx/nova/shimmer), \
+                          optional `speed` (0.25..4.0; default = provider default ≈1.0), \
+                          optional `target_track_id` (defaults to first existing Audio track or a new \
+                          'Voiceover' track), optional `t_start_us` (defaults to the composition's \
+                          current duration so the voiceover appends at the end). Returns \
+                          `{ layer_id, media_id, t_start_us, t_end_us, cached }`.", tools::SynthesizeSpeechArgs, tools::synthesize_speech),
 }
 
 pub(crate) fn resource_catalog() -> Vec<ResourceDef> {
@@ -256,5 +277,17 @@ mod tests {
         assert!(cat.tools.iter().any(|t| t.name == "add_track"));
         assert!(cat.resources.iter().any(|r| r.uri == "project://current"));
         assert!(cat.prompts.iter().any(|p| p.name == "cut-silences"));
+    }
+
+    #[cfg(feature = "cloud")]
+    #[test]
+    fn catalog_advertises_cloud_tools() {
+        let cat = catalog();
+        assert!(cat.tools.iter().any(|t| t.name == "transcribe_clip"));
+        assert!(cat.tools.iter().any(|t| t.name == "synthesize_speech"));
+        // every advertised tool must dispatch — schema is an object.
+        for t in &cat.tools {
+            assert!(t.input_schema.is_object(), "{} schema not an object", t.name);
+        }
     }
 }
