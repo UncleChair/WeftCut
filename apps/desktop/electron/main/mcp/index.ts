@@ -12,9 +12,7 @@ type Backend = import('@weftcut/core').Backend
 
 export interface McpInfoView {
   bind: string
-  sse_url: string
-  message_url: string
-  events_url: string
+  url: string
   bearer_token: string
 }
 
@@ -118,13 +116,7 @@ export async function startMcpHost(backend: Backend): Promise<McpHost> {
 
   return {
     getInfo(): McpInfoView {
-      return {
-        bind: `127.0.0.1:${port}`,
-        sse_url: url,
-        message_url: url,
-        events_url: '',
-        bearer_token: auth.token,
-      }
+      return { bind: `127.0.0.1:${port}`, url, bearer_token: auth.token }
     },
     resetToken(): string {
       auth = rotateToken(auth)
