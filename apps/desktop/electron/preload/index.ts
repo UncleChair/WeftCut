@@ -10,7 +10,9 @@ const api = {
       channel.startsWith('window:') ||
       channel.startsWith('path:') ||
       channel.startsWith('dialog:') ||
-      channel.startsWith('fs:')
+      channel.startsWith('fs:') ||
+      channel === 'get_mcp_info' ||
+      channel === 'reset_mcp_token'
     ) {
       return ipcRenderer.invoke(channel, args)
     }
