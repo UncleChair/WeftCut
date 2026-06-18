@@ -25,6 +25,11 @@ export default defineConfig({
   renderer: {
     root: HERE,
     plugins: [react(), tailwindcss()],
+    define: {
+      'import.meta.env.VITE_WEFTCUT_E2E': JSON.stringify(
+        process.env.VITE_WEFTCUT_E2E === '1' ? '1' : '0',
+      ),
+    },
     resolve: {
       alias: {
         '@': path.resolve(HERE, 'src'),
