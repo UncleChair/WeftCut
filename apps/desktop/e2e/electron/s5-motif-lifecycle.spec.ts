@@ -20,6 +20,7 @@
 // dev build uses `%APPDATA%\Electron`, NOT `%APPDATA%\@weftcut\desktop`.
 
 import { test, expect, _electron as electron } from '@playwright/test'
+import type { ElectronApplication } from '@playwright/test'
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -27,6 +28,17 @@ import { fileURLToPath } from 'node:url'
 import { launchApp, newProject, waitForHook, MAIN } from './helpers/driver'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+
+/// Playwright's electronApp.close() can hang on macOS (darwin window-all-closed
+/// doesn't quit the app + lingering handles). Race it with a timeout, then
+/// force-kill the process so teardown is bounded.
+async function closeAppRobustly(app: ElectronApplication): Promise<void> {
+  const proc = app.process()
+  try {
+    await Promise.race([app.close(), new Promise((r) => setTimeout(r, 8000))])
+  } catch { /* close may reject if the process is already gone */ }
+  try { if (proc && proc.pid && proc.exitCode === null) proc.kill('SIGKILL') } catch { /* already dead */ }
+}
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -140,7 +152,7 @@ test('S5 motif authoring: write_motif_draft → install → list → delete', as
     expect(catalogAfter.find((m) => m.id === publishedId)).toBeUndefined()
     console.log('[s5-lifecycle] deleted; catalog size:', catalogAfter.length)
   } finally {
-    await app.close()
+    await closeAppRobustly(app)
   }
 })
 
@@ -247,8 +259,8 @@ test('S5 motif staleness: v1→v2 reopen surfaces a row; acknowledge clears it',
     console.log('[s5-stale] ack count:', ackCount)
     expect(ackCount).toBeGreaterThanOrEqual(1)
   } finally {
+    await closeAppRobustly(appHandle)
     removeUserMotifAt(motifsRoot, STALE_ID)
-    await appHandle.close()
   }
 })
 
@@ -350,7 +362,7 @@ test('S5 motif file-watch: disk-placed Motif renders; external rewrite hot-reloa
     expect(green.g).toBeGreaterThan(120)
     expect(green.r).toBeLessThan(100)
   } finally {
+    await closeAppRobustly(appHandle)
     removeUserMotifAt(motifsRoot, WATCH_ID)
-    await appHandle.close()
   }
 })
