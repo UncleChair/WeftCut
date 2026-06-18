@@ -129,7 +129,7 @@ test('S5 motif authoring: write_motif_draft → install → list → delete', as
     expect(Array.isArray(catalog)).toBe(true)
     const found = catalog.find((m) => m.id === publishedId)
     expect(found).toBeDefined()
-    expect(found!.status).not.toBe('builtin')
+    expect(found!.status).toBe('installed')
     console.log('[s5-lifecycle] list_motifs found installed motif:', found!.id)
 
     // delete_motif — napi expects { id }
@@ -215,16 +215,26 @@ test('S5 motif staleness: v1→v2 reopen surfaces a row; acknowledge clears it',
     )
     if (!rr.ok) throw new Error('motifReopenProject failed: ' + rr.error)
     await waitForHook(page, 'addMotifLayer')
-    // Give the on-open staleness scan a beat.
-    await page.waitForTimeout(1000)
-
-    // motif_staleness_report must now show the stale row.
-    const reportAfter = (await invoke(page, 'motif_staleness_report', {})) as Array<{
+    // Poll motif_staleness_report until it returns a non-empty array (or ~10s deadline).
+    // The report is pull-based (computes from current snapshot + disk catalog on each call),
+    // so polling is safe and idempotent — no race condition from a fixed wall-clock wait.
+    let reportAfter: Array<{
       motif_id: string
       placed_version: number
       current_version: number
       layer_count: number
-    }>
+    }> = []
+    {
+      const deadline = Date.now() + 10_000
+      while (Date.now() < deadline) {
+        reportAfter = (await invoke(page, 'motif_staleness_report', {})) as typeof reportAfter
+        if (reportAfter.length > 0) break
+        await page.waitForTimeout(300)
+      }
+      // If still empty after deadline, fall through so the existing assertion fails with context.
+    }
+
+    // motif_staleness_report must now show the stale row.
     console.log('[s5-stale] report after reopen:', JSON.stringify(reportAfter))
     const row = reportAfter.find((e) => e.motif_id === STALE_ID)
     expect(row).toBeDefined()
