@@ -74,10 +74,10 @@ async function exportTo(
 }
 
 // ---------------------------------------------------------------------------
-// ffprobe helper: probe first video stream. Returns key→value map or null when
-// ffprobe is not on PATH (soft-skip the probe assertions in that case).
+// ffprobe helper: probe first video stream. Throws when ffprobe is not on PATH
+// or exits non-zero — codec-identity assertions must not be silently skipped.
 // ---------------------------------------------------------------------------
-function probeVideoStream(file: string, entries: string): Record<string, string> | null {
+function probeVideoStream(file: string, entries: string): Record<string, string> {
   const r = spawnSync(
     'ffprobe',
     [
@@ -87,7 +87,12 @@ function probeVideoStream(file: string, entries: string): Record<string, string>
     ],
     { encoding: 'utf8' },
   )
-  if (r.error || r.status !== 0) return null
+  if (r.error) {
+    throw new Error('ffprobe not available on PATH (required for codec verification): ' + r.error.message)
+  }
+  if (r.status !== 0) {
+    throw new Error('ffprobe failed (status ' + r.status + ') on ' + file + ': ' + r.stderr)
+  }
   const out: Record<string, string> = {}
   for (const line of r.stdout.trim().split(/\r?\n/)) {
     const i = line.indexOf('=')
@@ -128,12 +133,10 @@ test.describe('multi-codec export smoke (Electron)', () => {
       )
       expect(existsSync(OUTPUT), 'AV1 output file must exist').toBe(true)
 
-      // Codec-shape smoke: verify the output is actually AV1 when ffprobe is available.
+      // Codec-shape smoke: verify the output is actually AV1.
       const st = probeVideoStream(OUTPUT, 'codec_name')
-      if (st) {
-        console.log('[e2e] AV1 output stream:', JSON.stringify(st))
-        expect(st.codec_name).toBe('av1')
-      }
+      console.log('[e2e] AV1 output stream:', JSON.stringify(st))
+      expect(st.codec_name).toBe('av1')
 
       // Frame alignment + SSIM floor. AV1 sw encode is lossy; 0.6 is a loose floor
       // that still catches a gross decode/composite regression (colour-matrix mismatch
@@ -175,13 +178,11 @@ test.describe('multi-codec export smoke (Electron)', () => {
       expect(existsSync(OUTPUT), 'HEVC output file must exist').toBe(true)
 
       const st = probeVideoStream(OUTPUT, 'codec_name,profile,pix_fmt')
-      if (st) {
-        console.log('[e2e] HEVC output stream:', JSON.stringify(st))
-        expect(st.codec_name).toBe('hevc')
-        // 8-bit HEVC — pixel format must NOT be a 10-bit format.
-        if (st.pix_fmt) {
-          expect(['p010le', 'yuv420p10le']).not.toContain(st.pix_fmt)
-        }
+      console.log('[e2e] HEVC output stream:', JSON.stringify(st))
+      expect(st.codec_name).toBe('hevc')
+      // 8-bit HEVC — pixel format must NOT be a 10-bit format.
+      if (st.pix_fmt) {
+        expect(['p010le', 'yuv420p10le']).not.toContain(st.pix_fmt)
       }
 
       const SSIM_FLOOR = 0.6
@@ -236,16 +237,14 @@ test.describe('multi-codec export smoke (Electron)', () => {
         OUTPUT,
         'codec_name,profile,pix_fmt,color_space,color_transfer,color_primaries,color_range',
       )
-      if (st) {
-        console.log('[e2e] 10-bit output stream:', JSON.stringify(st))
-        expect(st.codec_name).toBe('hevc')
-        expect(['yuv420p10le', 'p010le']).toContain(st.pix_fmt)
-        expect(st.profile).toContain('Main 10')
-        expect(st.color_space).toBe('bt709')
-        expect(st.color_transfer).toBe('bt709')
-        expect(st.color_primaries).toBe('bt709')
-        expect(st.color_range).toBe('tv')
-      }
+      console.log('[e2e] 10-bit output stream:', JSON.stringify(st))
+      expect(st.codec_name).toBe('hevc')
+      expect(['yuv420p10le', 'p010le']).toContain(st.pix_fmt)
+      expect(st.profile).toContain('Main 10')
+      expect(st.color_space).toBe('bt709')
+      expect(st.color_transfer).toBe('bt709')
+      expect(st.color_primaries).toBe('bt709')
+      expect(st.color_range).toBe('tv')
 
       // The source spec (export_10bit.e2e.js) asserts via `gradientReport`
       // (media_conformance --gradient-row, distinct luma levels > 600) which is
