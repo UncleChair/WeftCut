@@ -1,22 +1,18 @@
-//! OS keyring-backed storage for cloud-provider API keys.
+//! In-memory key cache helpers for cloud-provider API keys.
 //!
-//! Service name `"weftcut"`, username = the [`Provider`] tag (lowercase, kebab).
-//! - Windows: Credential Manager (Generic Credential)
-//! - macOS: Keychain (Generic Password)
-//! - Linux: Secret Service (libsecret) — needs a daemon at runtime; on a
-//!   headless box keyring calls fail and the tools that need a key surface
-//!   an "unavailable" hint to the agent.
+//! Keys are stored in `Backend.cloud_keys: Mutex<HashMap<String,String>>`,
+//! keyed by the provider tag (lowercase, e.g. `"openai"`). Electron main
+//! populates the cache via `safeStorage` — no OS keyring dependency.
 //!
 //! The Tauri command surface only exposes presence/absence, not the key
 //! material. Internal callers (e.g., the Whisper client) use [`get_key`].
 
-use keyring::Entry;
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
-const SERVICE: &str = "weftcut";
-
 /// Cloud providers we know how to talk to. Keep the serde tag stable — it's
-/// the keyring username and travels over the IPC wire.
+/// the cache key and travels over the IPC wire.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Provider {
@@ -66,56 +62,19 @@ pub struct Capabilities {
     pub tts: bool,
 }
 
-fn entry(p: Provider) -> Result<Entry, keyring::Error> {
-    Entry::new(SERVICE, p.as_str())
+/// Presence check against the in-memory key cache (keyed by provider tag).
+pub fn has_key(keys: &HashMap<String, String>, p: Provider) -> bool {
+    keys.contains_key(p.as_str())
 }
 
-pub fn set_key(p: Provider, key: &str) -> Result<(), keyring::Error> {
-    entry(p)?.set_password(key)
-}
-
-/// `Ok(None)` when no entry exists; `Err` only on platform failures.
-pub fn get_key(p: Provider) -> Result<Option<String>, keyring::Error> {
-    match entry(p)?.get_password() {
-        Ok(s) => Ok(Some(s)),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(e),
-    }
-}
-
-pub fn has_key(p: Provider) -> bool {
-    matches!(get_key(p), Ok(Some(_)))
-}
-
-/// Idempotent: clearing a missing entry is a no-op.
-pub fn clear_key(p: Provider) -> Result<(), keyring::Error> {
-    match entry(p)?.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(e),
-    }
+/// Read a provider's key from the in-memory cache, cloned for owned use.
+pub fn get_key(keys: &HashMap<String, String>, p: Provider) -> Option<String> {
+    keys.get(p.as_str()).cloned()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // Keyring tests touch the real OS keystore. They're skipped by default —
-    // run with `--ignored` when you actively want to exercise the platform
-    // backend. Each test uses a unique pseudo-provider key via a separate
-    // entry to avoid clobbering the user's real OpenAI key.
-    fn test_entry(name: &str) -> Entry {
-        Entry::new(SERVICE, &format!("test-{name}")).unwrap()
-    }
-
-    #[test]
-    #[ignore]
-    fn roundtrip() {
-        let e = test_entry("roundtrip");
-        let _ = e.delete_credential();
-        e.set_password("hunter2").unwrap();
-        assert_eq!(e.get_password().unwrap(), "hunter2");
-        e.delete_credential().unwrap();
-    }
 
     #[test]
     fn provider_tags_are_stable() {
@@ -127,5 +86,14 @@ mod tests {
         let caps = Provider::OpenAi.capabilities();
         assert!(caps.transcription);
         assert!(caps.tts);
+    }
+
+    #[test]
+    fn has_and_get_key_read_the_cache() {
+        let mut keys = HashMap::new();
+        assert!(!has_key(&keys, Provider::OpenAi));
+        keys.insert("openai".to_string(), "sk-x".to_string());
+        assert!(has_key(&keys, Provider::OpenAi));
+        assert_eq!(get_key(&keys, Provider::OpenAi).as_deref(), Some("sk-x"));
     }
 }

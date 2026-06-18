@@ -17,9 +17,6 @@ use std::time::Duration;
 
 use reqwest::{Client, StatusCode};
 
-use super::errors::CloudError;
-use super::keys::{self, Provider};
-
 /// Default timeout cap for any single cloud request. Whisper on a 13-minute
 /// 25 MB upload takes ~60s end-to-end; 180s is comfortable headroom without
 /// letting a wedged provider freeze the MCP tool indefinitely. Stage 8 may
@@ -39,19 +36,11 @@ pub fn shared_client() -> &'static Client {
     })
 }
 
-/// Build the `Authorization: Bearer <key>` value for a provider. Returns
-/// [`CloudError::MissingKey`] cleanly when no key is configured so the
-/// caller (eventually the MCP tool) can surface a structured "configure
-/// your API key" hint instead of crashing.
-pub fn bearer_auth(provider: Provider) -> Result<String, CloudError> {
-    match keys::get_key(provider) {
-        Ok(Some(k)) => Ok(format!("Bearer {k}")),
-        Ok(None) => Err(CloudError::MissingKey { provider }),
-        Err(e) => Err(CloudError::Provider {
-            provider,
-            message: format!("keyring failure: {e}"),
-        }),
-    }
+/// Build the `Authorization: Bearer <key>` header value. The caller resolves
+/// the key from the in-memory cache (missing-key handling lives at the call
+/// site / picker, which returns `CloudError::MissingKey` cleanly).
+pub fn bearer_auth(key: &str) -> String {
+    format!("Bearer {key}")
 }
 
 /// Maximum retry attempts per request (1 initial + 2 retries = up to 3 sends).
@@ -111,6 +100,8 @@ fn is_transient_status(status: StatusCode) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cloud::errors::CloudError;
+    use crate::cloud::keys::Provider;
 
     #[test]
     fn shared_client_is_a_singleton() {
