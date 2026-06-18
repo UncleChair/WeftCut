@@ -6,20 +6,13 @@ test('startup logs a keyring warning when encryption is unavailable', async () =
   const app = await electron.launch({ args: [MAIN] })
   app.process().stdout?.on('data', (d) => logs.push(String(d)))
   app.process().stderr?.on('data', (d) => logs.push(String(d)))
-  await app.firstWindow()
-  // On Windows/macOS dev runners encryption IS available → no warning (pass).
-  // On Linux CI without a keyring → warning present. Assert the code path is
-  // wired: either available (no warn) or unavailable (warn present).
-
-  // Wait until the backend finished init (the safeStorage keyring check + any
-  // warning fire immediately after). Robust on slow CI vs a fixed sleep.
-  const page = await app.firstWindow()
-  await expect.poll(() => logs.join('').includes('[main] backend init OK'), { timeout: 60_000, intervals: [250] }).toBe(true)
-  await page.waitForTimeout(500) // let the warn line (emitted just after) flush
+  // firstWindow resolves only after main's whenReady → backend.init → the
+  // safeStorage keyring check (+ warning) → createWindow. So once the window
+  // exists, the warning (if any) has already been emitted into the captured logs.
+  await app.firstWindow({ timeout: 60_000 })
+  await new Promise((r) => setTimeout(r, 500)) // flush the streams
   const warned = logs.join('').includes('OS keyring unavailable')
-  const { available } = await app.evaluate(async ({ safeStorage }) => ({
-    available: safeStorage.isEncryptionAvailable(),
-  }))
+  const { available } = await app.evaluate(async ({ safeStorage }) => ({ available: safeStorage.isEncryptionAvailable() }))
   expect(warned).toBe(!available)
   await app.close()
 })
