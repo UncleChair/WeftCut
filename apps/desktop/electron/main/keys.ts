@@ -2,6 +2,13 @@ import { app, safeStorage } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 
+/// True when the OS keyring backs safeStorage. False on Linux without a
+/// keyring (headless CI, minimal containers) → key material persists in
+/// plaintext. Callers should warn + degrade, never hard-fail.
+export function encryptionAvailable(): boolean {
+  try { return safeStorage.isEncryptionAvailable() } catch { return false }
+}
+
 const KEYS_FILE = () => path.join(app.getPath('userData'), 'cloud_keys.json')
 
 /// On-disk shape: { "<provider>": "<base64(safeStorage.encryptString)>" }.
