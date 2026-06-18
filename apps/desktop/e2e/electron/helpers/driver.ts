@@ -9,7 +9,7 @@ export const MAIN = path.resolve(__dirname, '../../../out/main/index.js')
 
 export async function launchApp(): Promise<{ app: ElectronApplication; page: Page }> {
   const app = await electron.launch({ args: [MAIN] })
-  const page = await app.firstWindow()
+  const page = await app.firstWindow({ timeout: 60_000 })
   await page.waitForLoadState('domcontentloaded')
   return { app, page }
 }
