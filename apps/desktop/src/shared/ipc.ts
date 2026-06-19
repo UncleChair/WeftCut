@@ -68,6 +68,5 @@ export interface WeftcutApi {
   media: { dropped(paths: string[]): Promise<void> }
   on(event: string, cb: (payload: unknown) => void): () => void
   off(event: string): void
-  getPathForFile(file: File): string
   videoSinkWrite(bytes: ArrayBuffer | ArrayBufferView): Promise<void>
 }
