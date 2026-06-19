@@ -1,5 +1,6 @@
 appId: dev.weftcut.desktop
 productName: WeftCut
+executableName: WeftCut
 directories:
   output: release
   buildResources: build
