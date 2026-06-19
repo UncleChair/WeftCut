@@ -1,4 +1,5 @@
 import express from 'express'
+import { app } from 'electron'
 import type { Server as HttpServer } from 'node:http'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
@@ -66,6 +67,12 @@ export async function startMcpHost(backend: Backend): Promise<McpHost> {
         onsessioninitialized: (id) => {
           transports.set(id, transport!)
         },
+        // DNS-rebinding defense-in-depth: a malicious web page the user visits
+        // can POST to our loopback port, so reject requests whose Host header
+        // isn't our bind. The 256-bit bearer is still the primary gate; Origin
+        // is left unrestricted so non-browser MCP clients (no/odd Origin) work.
+        enableDnsRebindingProtection: true,
+        allowedHosts: [`127.0.0.1:${port}`, `localhost:${port}`],
       })
       transport.onclose = () => {
         if (transport!.sessionId) transports.delete(transport!.sessionId)
@@ -107,12 +114,18 @@ export async function startMcpHost(backend: Backend): Promise<McpHost> {
   }
 
   const url = `http://127.0.0.1:${port}/mcp`
-  // Interim bridge for the deferred ConnectAgentPanel: a copy-pasteable config.
-  console.log(
-    `[mcp] listening ${url}\n[mcp] connect: ${JSON.stringify({
-      mcpServers: { weftcut: { url, headers: { Authorization: `Bearer ${auth.token}` } } },
-    })}`,
-  )
+  console.log(`[mcp] listening ${url}`)
+  // The connect snippet embeds the bearer token. Print it ONLY in unpackaged
+  // (dev / e2e) runs — never in a packaged build, where stdout/log capture on a
+  // shared machine could leak the token. The token is always available to the
+  // UI via the get_mcp_info IPC.
+  if (!app.isPackaged) {
+    console.log(
+      `[mcp] connect: ${JSON.stringify({
+        mcpServers: { weftcut: { url, headers: { Authorization: `Bearer ${auth.token}` } } },
+      })}`,
+    )
+  }
 
   return {
     getInfo(): McpInfoView {

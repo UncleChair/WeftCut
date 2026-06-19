@@ -1,3 +1,10 @@
+// MUST be first: PixiJS uses `new Function()` for shader/uniform codegen, which
+// the packaged renderer's Content-Security-Policy (no `unsafe-eval`; see
+// electron.vite.config.ts) blocks — the live Pixi preview would fail to init.
+// This side-effect import installs static no-eval polyfills and must run before
+// any renderer is created (@pixi/react Application). The export worker isn't
+// under the document CSP, so it doesn't need this.
+import "pixi.js/unsafe-eval";
 import React, { useCallback, useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
