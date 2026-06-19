@@ -140,16 +140,17 @@ function wireFileDrop(): void {
 }
 wireFileDrop()
 
-// Frameless-window drag regions. The renderer marks its titlebars with Tauri's
-// `data-tauri-drag-region` attribute; Electron doesn't honor that — it uses the
-// CSS `-webkit-app-region` property. Bridge the two by injecting a stylesheet
+// Frameless-window drag regions. The renderer marks its titlebars with the
+// `data-drag-region` attribute; Electron doesn't treat it as draggable on its
+// own — it uses the CSS `-webkit-app-region` property. Bridge the two by
+// injecting a stylesheet
 // (interactive descendants get `no-drag` so window controls / buttons stay
 // clickable).
 function injectDragRegionStyles(): void {
   const style = document.createElement('style')
   style.textContent = `
-    [data-tauri-drag-region] { -webkit-app-region: drag; }
-    [data-tauri-drag-region] :where(button, a, input, select, textarea, [role="button"], [contenteditable]) { -webkit-app-region: no-drag; }
+    [data-drag-region] { -webkit-app-region: drag; }
+    [data-drag-region] :where(button, a, input, select, textarea, [role="button"], [contenteditable]) { -webkit-app-region: no-drag; }
   `
   document.head.appendChild(style)
 }

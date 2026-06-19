@@ -3,9 +3,9 @@
   Free stale WeftCut dev-server ports by killing orphaned vite processes.
 
 .DESCRIPTION
-  `tauri dev` runs vite (port 1420 / 1430 / 1440 per instance) as a child
+  `npm run dev` runs vite (port 1420 / 1430 / 1440 per instance) as a child
   process. On Windows, quitting by closing the app window often leaves that
-  vite orphaned — it keeps holding the port, so the next `tauri dev` fails with
+  vite orphaned — it keeps holding the port, so the next `npm run dev` fails with
   a strict-port collision. Stopping dev with Ctrl-C in its terminal avoids this;
   this script cleans up after the times you forgot.
 

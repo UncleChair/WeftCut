@@ -186,7 +186,7 @@ Motif authoring (see [motifs.md](motifs.md) "Agent surface"):
 
 ### Render
 
-Export is UI-driven through Tauri commands + the `export:*` event stream
+Export is UI-driven through backend commands + the `export:*` event stream
 — there are intentionally no `render_export` / `cancel_render` MCP
 tools. Agents that need a render either ask the user, or read
 `project://compiled` to inspect what the audio export would produce.

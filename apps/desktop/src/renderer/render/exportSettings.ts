@@ -1,4 +1,4 @@
-// Pure logic for the export settings dialog. No React, no Tauri — every
+// Pure logic for the export settings dialog. No React, no DOM — every
 // function here is unit-tested in exportSettings.test.ts. The renderer owns
 // this schema end to end; Rust persists it as an opaque JSON blob.
 

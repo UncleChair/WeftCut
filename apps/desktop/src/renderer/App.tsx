@@ -1717,9 +1717,9 @@ export function App({ onCloseProject }: AppProps) {
           drag-region attribute only fires when the mousedown target IS
           the carrying element, so it sits on the header AND its
           non-interactive children — menus and buttons stay clickable. */}
-      <header className="app-header" data-tauri-drag-region>
-        <div className="header-left" data-tauri-drag-region>
-          <h1 data-tauri-drag-region>{t("app.title")}</h1>
+      <header className="app-header" data-drag-region>
+        <div className="header-left" data-drag-region>
+          <h1 data-drag-region>{t("app.title")}</h1>
           <MenuBar>
             <Menu label={t("menu.file")}>
               <MenuItem
@@ -1828,9 +1828,9 @@ export function App({ onCloseProject }: AppProps) {
             </Menu>
           </MenuBar>
         </div>
-        <div className="header-right" data-tauri-drag-region>
+        <div className="header-right" data-drag-region>
           {pong !== "ok" && pong !== "…" && (
-            <span className="ping" data-tauri-drag-region>
+            <span className="ping" data-drag-region>
               {t("app.core_status", { status: pong })}
             </span>
           )}
