@@ -1,6 +1,6 @@
 //! Persistence commands — save / save-as / open / new-workspace, re-signed
 //! from `commands_legacy.rs`. Bodies are copied verbatim; only the signature
-//! changes (Backend replaces Tauri State + AppHandle) and the managed-state
+//! changes (the napi `Backend` carries the managed state) and the managed-state
 //! side effects are re-pointed at the matching `Backend` fields.
 //!
 //! These are the heaviest commands in the surface: a workspace change installs
@@ -102,7 +102,7 @@ pub async fn project_open(backend: &Backend, path: String) -> Result<(), String>
 
     // S3a: re-fan-out background derivative jobs for every media item, to
     // regenerate proxies / thumbnails / waveforms missing or stale after
-    // `load_from_dir`. Mirrors the legacy Tauri `project_open` tail.
+    // `load_from_dir`. Mirrors the legacy `project_open` tail.
     #[cfg(feature = "jobs")]
     {
         let snap = handle.snapshot().await;

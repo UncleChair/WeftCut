@@ -36,4 +36,4 @@ blocking editability, since the quick proxy lands first.
   regenerate at source res via `QuickThenFull` (a transient blank-preview window
   until the regenerated quick proxy lands).
 - The 4K-H.264-master WebCodecs decode on the export path is smoke-verified
-  (`tauri:dev` 4K export), not unit-tested — it lives in the webview.
+  (Electron dev 4K export), not unit-tested — it lives in the renderer.

@@ -38,7 +38,7 @@ use super::writer;
 /// In-memory ring capacity. ~500 bytes/entry on average → ~500 KB.
 const RING_CAPACITY: usize = 1000;
 
-/// Broadcast channel slack. Each Tauri-event bridge subscriber drains at
+/// Broadcast channel slack. Each napi-event bridge subscriber drains at
 /// the speed of `app_handle.emit`, which is fast; 256 covers bursty MCP
 /// agent activity without coercing the bus into blocking.
 const BROADCAST_CAPACITY: usize = 256;
@@ -47,7 +47,7 @@ const BROADCAST_CAPACITY: usize = 256;
 /// counter the writer task surfaces on its next flush.
 const WRITER_CAPACITY: usize = 4096;
 
-/// Tauri event name carrying each new `LogEntry`. The frontend
+/// napi event name carrying each new `LogEntry`. The frontend
 /// `useLogStore` listener fans these into the Zustand store.
 pub const EVENT_LOG_ENTRY: &str = "log:entry";
 

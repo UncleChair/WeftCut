@@ -224,7 +224,7 @@ extension fallback recognizes them plus `tif`/`tiff`:
 | Subtitle | srt, ass, vtt | Preview-only (JASSUB); not burned into exports. |
 
 TIFF classifies as `Image` when it arrives anyway (drag-drop / MCP take any
-path) but WebView2's `createImageBitmap` cannot decode it — the layer
+path) but Electron/Chromium's `createImageBitmap` cannot decode it — the layer
 composites nothing — so the dialog doesn't offer it. SVG and AVIF are
 unsupported: unlisted extensions default to `Video` and won't produce a
 usable layer.
@@ -493,7 +493,7 @@ struct ProjectActor {
 ```
 
 ```
-   UI command (Tauri)            MCP tool call
+   UI command (IPC)              MCP tool call
          │                              │
          └──────────► inbox ◄───────────┘
                        │
@@ -551,7 +551,7 @@ A failed invariant returns a structured error to the caller (UI shows toast; MCP
 Every command maps directly to one MCP tool with the same name. Patches are **strongly typed**, not JSON Patch.
 
 The MCP surface mirrors this 1:1 (same names, schemars-derived schemas);
-the UI uses the same actor via Tauri commands.
+the UI uses the same actor via backend commands.
 
 | Command | Notes |
 |---|---|

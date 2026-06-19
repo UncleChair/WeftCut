@@ -1174,7 +1174,7 @@ function hexToRgba(hex: string, a: number): Rgba {
 
 /**
  * Hook: returns a debounced commit function. Continuous-input controls
- * (sliders, color pickers) call this so we don't fire a Tauri command on
+ * (sliders, color pickers) call this so we don't fire a backend command on
  * every pixel of slider movement; the actor would queue up and the UI
  * would feel laggy.
  */

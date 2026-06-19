@@ -1,4 +1,4 @@
-// TS twin of src-tauri/src/audio/envelope.rs — the sampled envelope
+// TS twin of native/src/audio/envelope.rs — the sampled envelope
 // contract (docs/audio.md §The envelope contract). Keep BOTH sides + the
 // golden fixture (audioEnvelopeGolden.fixture.json) in lockstep; the
 // cross-language test exists to catch drift.

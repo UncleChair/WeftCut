@@ -11,7 +11,7 @@ import {
 } from "../ipc";
 
 /// Frontend mirror of the Rust `Project` actor's state, kept in sync via
-/// `project:changed` Tauri events. The DOM preview engine consumes this
+/// `project:changed` backend events. The DOM preview engine consumes this
 /// directly (no `emit_dom` IR target per `docs/preview.md` Q6).
 ///
 /// Atomic selectors only — composite-object selectors infinite-loop

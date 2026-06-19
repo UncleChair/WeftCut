@@ -34,7 +34,11 @@ bitmap in WebView2 (Chromium):
   `copyExternalImageToTexture` all throw `SecurityError`. This is deliberate,
   long-standing Chromium behaviour — foreignObject can render visited-link
   styling and cross-origin content, so the surface is poisoned for read-back —
-  and it is not configurable away.
+  and it is not configurable away. (This was a WebView2-specific constraint: on
+  Electron/Chromium, an inline `<foreignObject>` raster does *not* taint —
+  `getImageData` and `toDataURL` both succeed — so the prohibition is no longer
+  binding for inline content; the external-resource case is unverified. The live
+  approach is the Motif/CDP path in ADR 0017, not in-webview foreignObject.)
 - The taint breaks the approach in *both* directions at once: pixels cannot be
   read (so a frame cannot be baked or encoded) and the bitmap cannot be uploaded
   to the GPU compositor (so it cannot even be drawn). The renderer composites

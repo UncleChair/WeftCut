@@ -1,7 +1,7 @@
 // App-level settings store (`docs/data-model.md`).
 //
 // Strict app-level scope: one value across every project. The Rust
-// backend owns persistence (`apps/desktop/src-tauri/src/app_settings.rs`);
+// backend owns persistence (`apps/desktop/native/src/app_settings.rs`);
 // this store mirrors the current value into React. Mutations go through
 // `appSettingsSet` IPC; the backend emits `app_settings:changed` which
 // `wireAppSettingsStream` listens for and writes back into the store.

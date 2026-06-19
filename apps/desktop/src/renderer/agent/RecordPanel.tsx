@@ -31,7 +31,7 @@ import { useLogStore } from "../logs/store";
 ///
 /// Lock badge (Q8): rendered above the row list when the project's
 /// HistoryView reports a non-null lock_reason. Restore buttons on
-/// checkpoint rows are disabled while the lock is held (the Tauri
+/// checkpoint rows are disabled while the lock is held (the backend
 /// command would reject anyway, but disabling the click is friendlier
 /// UX).
 

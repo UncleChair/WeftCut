@@ -8,8 +8,9 @@ the export.
 
 A Motif is **a real web page** — arbitrary HTML/CSS/SVG/canvas/WebGL and animation
 libraries. There is exactly one rendering path, internally called **webcap**: the
-page is driven to a precise time `t` and captured to a bitmap via the WebView2
-DevTools Protocol (CDP). No per-engine backends, no engine-selection field.
+page is driven to a precise time `t` and captured to a bitmap via the Chromium
+DevTools Protocol (CDP), driven over `webContents.debugger` against an offscreen
+Electron window. No per-engine backends, no engine-selection field.
 
 This doc covers how a Motif instance becomes pixels. For the data model
 (`MotifParams`, validation, the `add_motif` surface) see
@@ -19,21 +20,23 @@ This doc covers how a Motif instance becomes pixels. For the data model
 ## The principle, and the obstacle
 
 The renderer's load-bearing principle is *preview pixels equal export pixels by
-construction* — a single capture path feeds both surfaces. Two hard platform walls
-shape the design:
+construction* — a single capture path feeds both surfaces. The hard platform wall
+that shapes the design:
 
-- **The export Worker has no DOM.** Preview runs in the webview; export runs in a
+- **The export Worker has no DOM.** Preview runs in the renderer; export runs in a
   Web Worker against an `OffscreenCanvas` with no `document`/`<iframe>`/`Image`. It
   cannot run a Motif. So whatever produces preview pixels must produce export
   pixels through a path the Worker can consume — the **main process rasterizes,
   the Worker receives bitmaps**.
-- **HTML→SVG `<foreignObject>` raster is cross-origin-tainted in WebView2** —
-  unreadable, un-encodable, un-uploadable to the GPU. That rules out the obvious
-  "rasterize the DOM" approaches.
 
-webcap clears both: a **CDP `Page.captureScreenshot` is a real browser raster, not
-a canvas read-back**, so it is *not* tainted; and capture happens on the main
-process, handing bitmaps to the Worker for export.
+webcap clears it: capture happens on the main process, handing bitmaps to the
+Worker for export. CDP `Page.captureScreenshot` is a real browser raster (not a
+canvas read-back), so it sidesteps DOM-rasterization read-back hazards entirely —
+the obvious "rasterize the DOM via an SVG `<foreignObject>`" route. (That route was
+specifically a WebView2-era taint constraint; on Electron/Chromium an inline
+`<foreignObject>` raster does not taint — measured, though external-resource cases
+are unverified — so it is no longer the binding reason. The Motif path uses CDP
+capture regardless.)
 
 The price of full web freedom is that a web page has its own clock and animates on
 its own — nondeterministic, incompatible with a frame-exact editor (scrubbing,
@@ -59,7 +62,7 @@ Everything else (capture, cache, export) is mechanism around this contract.
 
 A Motif is a directory of `manifest.json` + `index.html` (plus an optional
 `assets/` for fonts and images), embedded in the binary via `include_bytes!` and
-served to the hidden capture host over a `motif:` URI scheme. `index.html` is a
+served to the offscreen capture host over a `motif:` URI scheme. `index.html` is a
 normal web document.
 
 ### The lifecycle: `motif.define`
@@ -205,39 +208,43 @@ that caches a `Date`/`performance` reference before that, or uses a time source 
 harness does not hijack, is out of contract.
 
 **The seek must stay re-seekable.** `seek()` only pauses and sets `currentTime` — it
-never cancels or commits animations. Removing a completed animation would make a
-single held frame byte-stable but would break seeking *back* to an earlier time
-(the animation would be gone from `getAnimations()`), violating the pure-function-of-`t`
-contract. Determinism is therefore enforced *perceptually*, not byte-for-byte (see
-below).
+never cancels or commits animations. Removing a completed animation would break
+seeking *back* to an earlier time (the animation would be gone from
+`getAnimations()`), violating the pure-function-of-`t` contract.
 
-**A note on byte-for-byte vs perceptual determinism.** Text in a loaded font and most
-SVG/canvas content captures byte-identically at a fixed `t`. But an element on a live
-GPU compositor layer (e.g. an `opacity` animation with `fill: both`) has antialiased
-edges that jitter by a sub-unit alpha value between successive CDP screenshots of the
-same frame — a WebView2 compositor reality. So conformance checks compare captures
-*perceptually* (a tight tolerance), not as exact bytes. The product is unaffected: the
+**Byte-identical determinism.** On Electron the offscreen-CDP capture is
+**byte-identical across runs and across operating systems** at a fixed `t` — the
+clock takeover freezes the frame, so two captures of the same Motif at the same `t`
+produce the same bytes (verified across Windows, Linux, and macOS). Conformance
+checks therefore assert exact-byte equality, not just a perceptual tolerance. The
 cache captures each frame index once and reuses it.
+
+(This overturns the earlier WebView2-era verdict, which held that an element on a
+live GPU compositor layer — e.g. an `opacity` animation with `fill: both` — jittered
+its antialiased edges by a sub-unit alpha value between successive screenshots,
+making byte-identical capture unachievable and forcing perceptual-only conformance.
+That jitter was a WebView2 compositor artifact; it does not occur on Electron's
+Chromium offscreen capture.)
 
 ## Capture harness
 
-- **One reused hidden WebView2 host.** A single offscreen WebView2 window is created
-  lazily on first capture and reused across Motifs, frames, and layers. The footprint
-  is one extra browser process tree, not one per layer.
+- **One reused offscreen Electron BrowserWindow host.** A single offscreen
+  `BrowserWindow` (driven over `webContents.debugger` / CDP) is created lazily on first
+  capture and reused across Motifs, frames, and layers. The footprint is one extra
+  browser process tree, not one per layer.
 - **Window-as-isolation.** The Motif is loaded as the host window's **top-level
-  document**, served by the `motif:` scheme. Isolation comes from: a dedicated hidden
-  WebView2 (separate from the editor shell), **capability denial** on the `motif:`
-  origin (Tauri 2.11 cannot suppress IPC script injection from Rust, so rejection is
-  the operative guard), and a strict CSP (`default-src 'none'` plus only what capture
-  needs) so the page is **fully offline** and can make no network request. The
-  clock-takeover runtime is injected via the window's `initialization_script` (runs at
-  document-start, before the Motif's `motif.define(...)`).
+  document**, served by the `motif:` scheme. Isolation comes from: a dedicated
+  offscreen BrowserWindow (separate from the editor shell), no preload / disabled
+  Node integration on the `motif:` origin, and a strict CSP (`default-src 'none'` plus
+  only what capture needs) so the page is **fully offline** and can make no network
+  request. The clock-takeover runtime is injected at document-start (before the
+  Motif's `motif.define(...)`).
 - **Multi-Motif navigation.** When a capture requests a different Motif than the one the
   host currently holds, the host **navigates** to the new `motif:` URL (reusing the
-  window and CDP session; WebView2 re-runs the init script, re-injecting the runtime),
-  and the capture state is reset so the readiness probe re-confirms the new page and the
-  render metrics re-apply.
-- **Capture via CDP, driven from Rust.** The host drives
+  window and CDP session; the init runtime is re-injected on the new document), and the
+  capture state is reset so the readiness probe re-confirms the new page and the render
+  metrics re-apply.
+- **Capture via CDP, over `webContents.debugger`.** The host drives
   `Emulation.setDeviceMetricsOverride` (arbitrary resolution, independent of the physical
   screen), `Emulation.setDefaultBackgroundColorOverride` (alpha 0, so a Motif's
   `background: transparent` is preserved as real alpha instead of being flattened onto
@@ -396,12 +403,13 @@ Agents observe and author; they never drive the renderer directly.
 ## Security
 
 User Motifs are untrusted web documents (an agent or a human authored them), so the
-capture host is the trust boundary. A **single reused hidden WebView2** (`motif-host`)
-navigates between Motif ids/content hashes; isolation comes from a dedicated window
-(separate from the editor), **capability denial** on the `motif:` origin (IPC scripts
-may be present but all bridge calls are rejected), and CSP `default-src 'none'` — fully
-offline (no `connect-src` → no fetch/XHR/WebSocket). That window-as-sandbox carries
-both trusted built-ins and untrusted user Motifs. On top of it:
+capture host is the trust boundary. A **single reused offscreen Electron
+BrowserWindow** (driven over `webContents.debugger` / CDP) navigates between Motif
+ids/content hashes; isolation comes from a dedicated window (separate from the
+editor), no preload / disabled Node integration on the `motif:` origin, and CSP
+`default-src 'none'` — fully offline (no `connect-src` → no fetch/XHR/WebSocket).
+That window-as-sandbox carries both trusted built-ins and untrusted user Motifs. On
+top of it:
 
 - **Import-time validation** — the manifest island is parsed + validated against the
   `Manifest`/`PropSpec` schema (sane `size` bounds, well-formed `props_schema`,
@@ -415,6 +423,6 @@ both trusted built-ins and untrusted user Motifs. On top of it:
   `lower-third`) or the reserved `drafts/` segment; the manifest's own `id`/`version` are
   ignored (app-assigned).
 
-Residual accepted risk: a renderer-level WebView2 exploit is out of our control (mitigated by
-the isolated, offline host with capability-denied bridge access); a determinism-violating Motif
-renders wrong but harmlessly (surfaced by the perceptual-determinism story).
+Residual accepted risk: a renderer-level Chromium exploit is out of our control (mitigated by
+the isolated, offline host with no preload / Node integration); a determinism-violating Motif
+renders wrong but harmlessly (surfaced by the determinism story).

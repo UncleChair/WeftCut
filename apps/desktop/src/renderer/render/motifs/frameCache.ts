@@ -204,8 +204,8 @@ export class MotifFrameCache {
   // `<workspace>/Cache/raster/...` succeed once a project is open. These methods
   // are implemented against the real fs plugin (no faking): a genuine not-found
   // yields null/no-op; an unexpected IO/permission error surfaces as a thrown
-  // error rather than being masked. The Tauri imports are loaded lazily so the
-  // L0 path never pulls Tauri (keeps `frameCache.ts` Node-loadable for the unit
+  // error rather than being masked. The fs-bridge imports are loaded lazily so the
+  // L0 path never pulls the Electron bridge (keeps `frameCache.ts` Node-loadable for the unit
   // test).
   // ----------------------------------------------------------------
 

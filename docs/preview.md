@@ -91,8 +91,8 @@ the pump frontier that decoding through the gap would burn
 seconds. See [ADR 0003](adr/0003-forward-gop-crossing-no-decoder-reset.md).
 
 The source is never fully resident in memory. mediabunny reads through
-an `asset://` Range `CustomSource` (`AssetRangeSource`), pulling only
-the bytes a packet needs; the `PacketPump`'s `getKeyPacket` /
+a `weftcut-media://` HTTP Range `CustomSource` (`AssetRangeSource`),
+pulling only the bytes a packet needs; the `PacketPump`'s `getKeyPacket` /
 `getNextPacket` calls await those uncached Range reads natively. See
 [`render.md`](render.md#byte-handling) for the byte contract.
 
@@ -151,8 +151,8 @@ its own animation state internally.
 ## Motifs
 
 `MotifSprite` binds a Motif's captured PNG frame as a Pixi texture. The Motif's
-page is driven to the playhead's layer-relative time in a hidden WebView2 host
-and grabbed as a taint-free PNG via the DevTools Protocol
+page is driven to the playhead's layer-relative time in an offscreen Electron
+window and grabbed as a taint-free PNG via the DevTools Protocol
 (`Page.captureScreenshot`) — unlike an SVG `<foreignObject>`, that real browser
 raster is not cross-origin-tainted (the wall that ruled out HTML/CSS rasterizing
 before). In preview the frame is captured on demand, with a RAM lookahead ring
@@ -178,7 +178,7 @@ displays:
   fired without the ring being ready (possible initial-frame
   stutter).
 - **heap** — Chromium's `performance.memory.usedJSHeapSize /
-  totalJSHeapSize`. WebView2 exposes this.
+  totalJSHeapSize`. Chromium/Electron exposes this.
 - **per-clip** — `decodeQueueSize`, ring entry count, ring's latest
   PTS for every active clip (clips with disposed handles are
   filtered out).
@@ -192,6 +192,6 @@ chrome popovers / settings dialogs so it doesn't obscure them.
 
 The "Render & Play" affordance kicks off the same Pixi+WebCodecs
 pipeline used for export, writes the result to an OS temp MP4, and
-opens a Tauri webview popup playing the file. It's the WYSIWYG
+opens an Electron window playing the file. It's the WYSIWYG
 verification path when the user wants to see exactly what the export
 will produce. The popup HTML lives at `/render-play.html`.

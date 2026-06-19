@@ -10,7 +10,7 @@ The full preview proxy uses a short fixed GOP (`PROXY_GOP_FRAMES`, currently 6 f
 
 The renderer seeks by decoding from a target's keyframe forward to the target frame. With a ~1 s GOP, a mid-GOP scrub target had to decode up to ~30 frames (~1.2 s at the measured decode rate) before `frameAt(target)` could be satisfied. Scrubbing *within* a GOP therefore showed a static frame until the user paused long enough for the decode to finish — and a naive "decode during drag" timer made it worse: it re-targeted the decoder ~10× faster than one seek's decode completed, flushing every in-flight decode (churn) and never landing a frame.
 
-Instrumentation isolated the bottleneck: during a scrub burst the decoder sustains realtime throughput, the `asset://` reads are cache-served (no I/O stall), and `createImageBitmap` is negligible. The only thing setting per-seek latency is **decode-from-keyframe depth**, which is set by GOP size. So the fix lives in the proxy recipe, not the frontend.
+Instrumentation isolated the bottleneck: during a scrub burst the decoder sustains realtime throughput, the `weftcut-media://` reads are cache-served (no I/O stall), and `createImageBitmap` is negligible. The only thing setting per-seek latency is **decode-from-keyframe depth**, which is set by GOP size. So the fix lives in the proxy recipe, not the frontend.
 
 ## Decision
 

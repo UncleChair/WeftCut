@@ -46,7 +46,7 @@ async function createWindow(): Promise<BrowserWindow> {
     // on Windows (ready-to-show may not fire) — the window stays hidden. With a
     // set backgroundColor there's no white flash, so show on create.
     show: true,
-    // Frameless to match Tauri's `decorations: false` — the renderer draws its
+    // Frameless window — the renderer draws its
     // own titlebar (app-header / startup-titlebar / agent-titlebar) with custom
     // window controls. (macOS traffic-light styling is a future cross-platform
     // refinement.)
@@ -144,8 +144,8 @@ app.whenReady().then(async () => {
     (_err: Error | null, msg: string) => {
       if (!msg) return
       const { event, payload } = JSON.parse(msg)
-      // `mcp:change` is consumed by the MCP host (relayed as an SSE notification
-      // to connected agents), NOT forwarded to the renderer.
+      // `mcp:change` is consumed by the MCP host (relayed as an in-protocol
+      // streamable-HTTP notification to connected agents), NOT forwarded to the renderer.
       if (event === 'mcp:change') {
         mcpHostRef?.notifyChange(payload)
         return
@@ -216,8 +216,8 @@ app.whenReady().then(async () => {
   ipcMain.handle('win:exists', (_e, { label }: { label: string }) => secondaryExists(label))
 
   // Drag-drop import: the renderer resolves real paths via webUtils and posts
-  // them here; we re-emit the SAME event the Tauri media_drop.rs path emitted,
-  // so the renderer's existing media:external-drop listener handles them.
+  // them here; we re-emit the SAME `media:external-drop` event the renderer's
+  // existing listener already handles.
   ipcMain.handle('media:dropped', (_e, paths: string[]) => {
     if (Array.isArray(paths) && paths.length > 0) {
       mainWindow?.webContents.send('evt:media:external-drop', paths)

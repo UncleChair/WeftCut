@@ -95,8 +95,8 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
   const startUs = init.startUs ?? 0;
   const endUs = init.endUs ?? summary.duration_us;
 
-  // 1. Pre-resolve asset URLs for every media item. The Worker has no Tauri
-  // runtime so it can't call `convertFileSrc` itself. Only REFERENCED video
+  // 1. Pre-resolve asset URLs for every media item. The Worker has no renderer
+  // bridge so it can't call `convertFileSrc` itself. Only REFERENCED video
   // sources must have a ready export path — the export-readiness gate in App
   // (decodability probe + route-correction + auto-wait) guarantees that before
   // calling here; the throw below is a defensive assertion, not the
@@ -158,7 +158,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     { type: "module" },
   );
 
-  // 5. Build the tenBitMedia map: sources whose originals WebView2 can decode
+  // 5. Build the tenBitMedia map: sources whose originals Chromium/Electron can decode
   // to I420P10 (H.264 Hi10P + AV1 10-bit — `tenBitExportCapable`). Only
   // populated on the 10-bit path; the Worker uses this to route those
   // sources through the 10-bit lane.

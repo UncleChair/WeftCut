@@ -115,7 +115,7 @@ pub struct AppSettingsPatch {
     pub prebake_motifs: Option<bool>,
 }
 
-/// Tauri-managed store. JSON-backed, lock-protected path. Loosely
+/// napi-managed store. JSON-backed, lock-protected path. Loosely
 /// modelled on `KeybindingsStore` — same single-writer / atomic-rename
 /// discipline.
 #[derive(Clone)]

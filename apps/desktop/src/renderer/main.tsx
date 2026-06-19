@@ -47,7 +47,7 @@ if (!isPerfHudWindow) {
 const root = document.getElementById("root");
 if (!root) throw new Error("#root missing from index.html");
 
-// Production: suppress the WebView2 default context menu (reload / print /
+// Production: suppress the Chromium/Electron default context menu (reload / print /
 // inspect) except over editable or copyable content, where the native
 // cut/copy/paste menu stays useful. The app's own context menus (timeline
 // layers) preventDefault on their targets either way. Dev keeps the default
@@ -129,10 +129,11 @@ function Root() {
     );
   }, []);
 
-  // Flash-free startup: the window is created hidden (`visible: false` in
-  // tauri.conf.json) and revealed on the first painted frame after the boot
-  // stage resolves — the user never sees an unpainted surface. show() on an
-  // already-visible window is a no-op, so later stage flips don't matter.
+  // Flash-free startup: the Electron main window is created hidden (the main
+  // process withholds show until the renderer signals ready) and revealed on
+  // the first painted frame after the boot stage resolves — the user never
+  // sees an unpainted surface. show() on an already-visible window is a no-op,
+  // so later stage flips don't matter.
   useEffect(() => {
     if (stage === "boot") return;
     const id = requestAnimationFrame(() => {
