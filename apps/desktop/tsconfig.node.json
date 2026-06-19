@@ -2,18 +2,25 @@
   "compilerOptions": {
     "composite": true,
     "target": "ES2022",
-    "lib": ["ES2023"],
+    // DOM is here because the preload (src/preload) runs in the renderer's
+    // DOM context — it wires drag-drop and injects the drag-region stylesheet.
+    // The main process shares this project; the tradeoff is that accidental DOM
+    // use in main/ won't be flagged (acceptable for this combined node project).
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "module": "ESNext",
-    "skipLibCheck": true,
     "moduleResolution": "Bundler",
+    "skipLibCheck": true,
     "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
     "strict": true,
-    // `composite: true` requires emit to stay on (project references can't
-    // depend on a no-emit project — TS6310). We only need the .d.ts to
-    // satisfy the reference, so emit declarations only — no .js lands on
-    // disk.
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    // `composite: true` requires emit (referenced projects can't be no-emit —
+    // TS6310). We only need the .d.ts to satisfy the reference, redirected out
+    // of the source tree so no stray declarations land beside main/preload.
     "emitDeclarationOnly": true,
+    "declarationDir": "node_modules/.cache/tsc/node",
     "types": ["node"]
   },
-  "include": ["vite.config.ts"]
+  "include": ["electron.vite.config.ts", "src/main/**/*.ts", "src/preload/**/*.ts"]
 }

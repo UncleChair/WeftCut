@@ -1,7 +1,7 @@
 # napi-rs addon build output (rebuilt locally / in CI)
-src-tauri/*.node
-src-tauri/index.js
-src-tauri/index.d.ts
+native/*.node
+native/index.js
+native/index.d.ts
 
 # Playwright-for-Electron e2e output (transient; S3b+)
 test-results/
@@ -23,3 +23,9 @@ build/*
 
 # determinism-artifacts/ — per-OS PNG captures; compared in CI (Task 8), never committed
 determinism-artifacts/
+
+# tsc -b declaration output for composite project refs (type-check only)
+node_modules/.cache/tsc/
+
+# dead plain-Vite output (build system removed)
+dist/
