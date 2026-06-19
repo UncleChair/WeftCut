@@ -6,6 +6,7 @@ import { app, BrowserWindow, ipcMain, protocol } from 'electron'
 import { loadAllKeys, setKey, clearKey } from './keys.js'
 import { MOTIF_SCHEME_ENTRY, registerMotifProtocol } from './motif/protocol.js'
 import { setRuntimeSource, captureMotifFrameB64 } from './motif/capture.js'
+import { createSecondary, actOnSecondary, secondaryExists, hardenWindow } from './windows.js'
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -53,6 +54,7 @@ async function createWindow(): Promise<BrowserWindow> {
   })
 
   mainWindow = win
+  hardenWindow(win)
 
   const sendResized = () =>
     win.webContents.send('evt:window:resized', { isMaximized: win.isMaximized() })
@@ -165,7 +167,6 @@ app.whenReady().then(async () => {
   })
 
   // Secondary windows (PerfHUD popup etc.) via win:* IPC.
-  const { createSecondary, actOnSecondary, secondaryExists } = await import('./windows.js')
   ipcMain.handle('win:create', (_e, { label, options }: { label: string; options?: { url?: string; width?: number; height?: number; title?: string } }) => createSecondary(label, options))
   ipcMain.handle('win:act', (_e, { label, action }: { label: string; action: 'show' | 'hide' | 'close' | 'center' | 'focus' }) => actOnSecondary(label, action))
   ipcMain.handle('win:exists', (_e, { label }: { label: string }) => secondaryExists(label))
