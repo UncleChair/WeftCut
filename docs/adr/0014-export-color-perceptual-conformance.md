@@ -43,7 +43,7 @@ canvas, and re-encodes. The color outcome depends on two conversions:
    uploads `createImageBitmap` output (also matrix-honoring); only export bound
    the raw `VideoFrame`.
 
-2. **RGB→YUV at encode.** WebView2's WebCodecs H.264 encoder — hardware **and**
+2. **RGB→YUV at encode.** Chromium's WebCodecs H.264 encoder — hardware **and**
    software — **ignores the input frame's `colorSpace` and writes a
    resolution-based default tag** (BT.709 for HD). There is no `colorSpace` field
    on `VideoEncoderConfig`, and tagging the captured frame has no effect. So the

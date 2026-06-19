@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { createMotifRuntime, MOTIF_RUNTIME_SOURCE } from "../runtime";
 
 describe("MOTIF_RUNTIME_SOURCE settle", () => {
-  it("contains a meta.settleRafs read (branch behavior verified in real WebView2)", () => {
+  it("contains a meta.settleRafs read (branch behavior verified in real Chromium/Electron)", () => {
     // The render entry must consult meta.settleRafs to choose the settle depth.
     // This is a presence smoke check — the source lives in a String.raw literal
     // that vitest can't execute; the 0/1/2-rAF branching is exercised in the app.

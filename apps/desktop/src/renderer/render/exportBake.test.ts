@@ -2,7 +2,7 @@
 // `bakeContentFrameFor`) is fully Node-testable. The bake LOOP
 // (`exportBakeMotifs`) is covered here too by mocking its CDP producer
 // (`bakeMotifFrame`); the real CDP capture + encode is exercised end-to-end by
-// the real-WebView2 e2e (`motif/export.e2e.js`).
+// the real-Chromium/Electron e2e (`motif/export.e2e.js`).
 //
 // The load-bearing invariant: a layer's baked frame range is computed on the
 // COMPOSITION fps with the SAME `motifDurationFrames` / `frameIndexInLayer`

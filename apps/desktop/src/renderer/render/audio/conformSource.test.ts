@@ -1,4 +1,4 @@
-// ConformSource over a mocked asset:// fetch — header parse, exact-byte
+// ConformSource over a mocked weftcut-media:// fetch — header parse, exact-byte
 // loop-read discipline (short 206 responses), de-interleave, and silence
 // padding outside the file.
 

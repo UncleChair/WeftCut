@@ -35,7 +35,7 @@ opaque JSON. Audio settings are persisted:
 H.264 and HEVC can target `mp4`, `mov`, and `mkv`. AV1 can target `mp4` and
 `mkv`; `mov` is rejected because ffmpeg's MOV muxer does not accept AV1. AAC is
 valid in every supported container. Opus is restricted to `mkv` because
-Opus-in-MP4/MOV playback is unreliable in WebView2. `mergeSettings` backfills
+Opus-in-MP4/MOV playback is unreliable in Chromium/Electron. `mergeSettings` backfills
 missing audio fields from `DEFAULT_AUDIO_SETTINGS` and snaps stale saved blobs
 back to AAC if the selected container cannot hold the saved audio codec.
 
@@ -188,5 +188,5 @@ All ffmpeg-driven derivatives live under `jobs/`:
 | `import.rs` | source bytes copied into `<workspace>/Media/` | User import action |
 
 Each job runs in a single-worker FIFO so disk I/O doesn't thrash.
-Progress is surfaced over Tauri events (`media:job_started`,
+Progress is surfaced over backend events (`media:job_started`,
 `media:job_complete`, `media:job_error`).

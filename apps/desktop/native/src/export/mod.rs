@@ -26,7 +26,7 @@ use tracing::{info, warn};
 use crate::state::Project;
 
 /// Audio encode parameters passed from the webview. `sample_rate`/`channels`
-/// are `None` to follow the composition. A serde struct so the Tauri command
+/// are `None` to follow the composition. A serde struct so the backend command
 /// can take it directly.
 #[derive(serde::Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -281,7 +281,7 @@ pub async fn mux_to_file(
     Ok(())
 }
 
-/// Tauri event emitted while ffmpeg transcodes the video (ffmpeg-path codecs
+/// napi event emitted while ffmpeg transcodes the video (ffmpeg-path codecs
 /// like HEVC). Payload: an `f64` percent in 0.0..=1.0.
 pub const EVENT_TRANSCODE_PROGRESS: &str = "export:transcode_progress";
 
@@ -314,7 +314,7 @@ pub async fn transcode_and_mux(
         cmd.arg(arg);
     }
     // HEVC in MP4/MOV must carry the `hvc1` fourcc; ffmpeg defaults to `hev1`,
-    // which Apple/Premiere/WebView2 refuse to play.
+    // which Apple/Premiere/Chromium/Electron refuse to play.
     for arg in hvc1_tag_args(codec, output) {
         cmd.arg(arg);
     }
@@ -381,7 +381,7 @@ pub async fn transcode_and_mux(
 }
 
 /// HEVC in MP4/MOV needs the `hvc1` fourcc tag; ffmpeg defaults to `hev1`
-/// which Apple/Premiere/WebView2 won't play. MKV uses no such tag, and other
+/// which Apple/Premiere/Chromium/Electron won't play. MKV uses no such tag, and other
 /// codecs (H.264 `avc1`, AV1 `av01`) already get correct defaults.
 pub(crate) fn hvc1_tag_args(codec: TargetCodec, output: &Path) -> Vec<std::ffi::OsString> {
     let ext = output

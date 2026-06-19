@@ -1560,11 +1560,11 @@
         assert_eq!(track.layers.len(), 0);
     }
 
-    /// agent_session_end's auto-unlock guarantee: the Tauri command
+    /// agent_session_end's auto-unlock guarantee: the napi Backend
     /// for "Exit to editor" calls unlock_history so the human's
     /// editor-mode Undo / Restore re-enables on the next paint, even
-    /// if the agent left a lock taken. We can't call the Tauri
-    /// command directly from a lib test, but the load-bearing path is
+    /// if the agent left a lock taken. We can't call the napi Backend
+    /// directly from a lib test, but the load-bearing path is
     /// `ProjectHandle::unlock_history` — verify that path leaves the
     /// revert surface usable.
     #[tokio::test]
@@ -1588,7 +1588,7 @@
             handle.undo(Actor::User).await.unwrap_err(),
             CommandError::HistoryLocked { .. }
         ));
-        // User clicks Exit-to-editor; the Tauri command calls this.
+        // User clicks Exit-to-editor; the napi Backend calls this.
         handle.unlock_history().await;
         // Now undo succeeds.
         handle.undo(Actor::User).await.expect("undo after exit");

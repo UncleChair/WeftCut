@@ -1,10 +1,10 @@
 // Main-thread Motif pre-capture for export.
 //
-// The export Worker has no DOM and no Tauri `invoke`, so it can't capture
+// The export Worker has no DOM and no backend `invoke`, so it can't capture
 // Motif frames itself. Instead the MAIN thread captures EVERY frame of each
 // Motif layer in the export range to an `ImageBitmap[]` (indexed by
 // composition-frame) via the SAME CDP path the preview uses (`bakeMotifFrame`
-// → `captureMotifFrame` → the hidden Motif host), and the bitmaps are
+// → `captureMotifFrame` → the offscreen Motif host window), and the bitmaps are
 // TRANSFERRED into the Worker, where `MotifSprite` binds them by index
 // synchronously. Export pixels are therefore identical to preview (one
 // producer) and carry the Motif's transparent backdrop.
@@ -193,7 +193,7 @@ export type BakeProgress = (baked: number, total: number) => void;
 /// range), so the array's `length` is `lastFrame + 1` and `frames[idx]` is the
 /// capture for comp-frame `idx`. The Worker binds `frames[clamp(idx)]`.
 ///
-/// MUST run on the MAIN thread (Tauri `invoke` / CDP is not available in the
+/// MUST run on the MAIN thread (backend `invoke` / CDP is not available in the
 /// Worker). `fpsNum/fpsDen` are the COMPOSITION fps. Captures fresh bitmaps via
 /// the CDP path (NOT the shared preview cache — see the module header).
 export async function exportBakeMotifs(

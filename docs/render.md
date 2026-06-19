@@ -30,7 +30,7 @@ apps/desktop/src/render/
   PlaybackEngine.ts          — transport (play/pause/seek/scrub)
   decoder/
     SourceDecoderPool.ts     — per-clip VideoDecoder + ring; refcounted shared mediabunny Input per source; idle-dispose
-    mediaInput.ts            — opens a mediabunny Input over an asset:// Range CustomSource (AssetRangeSource)
+    mediaInput.ts            — opens a mediabunny Input over a weftcut-media:// Range CustomSource (AssetRangeSource)
     PacketPump.ts            — single-flight async packet→decoder loop (getKeyPacket/getNextPacket)
     probeSourceDecodable.ts  — export pre-flight: can this machine's WebCodecs decode the original?
     FrameRing.ts             — 1 s lookahead / 0.5 s lookbehind per clip; stores ImageBitmap snapshots
@@ -174,16 +174,16 @@ released.
 ### Byte handling
 
 The source is never fully resident in memory. The mediabunny `Input`
-reads through an `asset://` Range `CustomSource` (`AssetRangeSource`):
+reads through a `weftcut-media://` Range `CustomSource` (`AssetRangeSource`):
 each read issues an HTTP `Range` request and returns exactly the
-requested bytes. Tauri's asset handler honors Range — the same path
-HTML5 `<video>` seeks through — whereas a plain `fetch(url)` buffers
-the whole body before exposing `body.getReader()`, defeating streaming.
+requested bytes. The `weftcut-media:` custom protocol handler (registered
+in the main process) honors Range — the same path HTML5 `<video>` seeks
+through — whereas a plain `fetch(url)` buffers the whole body before
+exposing `body.getReader()`, defeating streaming.
 
-One Range caveat: the asset handler caps each `206` body at ~1 MB, so
-`AssetRangeSource.read` loops, re-issuing Range requests until it has
-the exact byte count mediabunny asked for — a single short read would
-hand the decoder truncated data and wedge it.
+One Range caveat: `AssetRangeSource.read` loops, re-issuing Range
+requests until it has the exact byte count mediabunny asked for — a
+single short read would hand the decoder truncated data and wedge it.
 
 mediabunny owns the demux and byte cache; there is no resident sample
 table and no manual block LRU (the prior mp4box era's `sampleAt` /
@@ -310,15 +310,16 @@ feeds preview and export and preview-equals-export holds.
 `MotifSprite` obtains the frame for the playhead's layer-relative time
 (captured on demand, from a RAM lookahead ring, or from a persisted PNG
 sequence) and binds it as a texture; the layer transform and opacity are
-applied to the sprite. Capture drives the Motif's page to time `t` in a hidden
-WebView2 host and grabs a taint-free PNG via the DevTools Protocol
-(`Page.captureScreenshot`) — a real browser raster, so unlike an SVG
-`<foreignObject>` it is not cross-origin-tainted.
+applied to the sprite. Capture drives the Motif's page to time `t` in an
+offscreen Electron window and grabs a PNG via the DevTools Protocol
+(`webContents.debugger`, `Page.captureScreenshot`) — a real browser raster.
+The frame is byte-identical across runs and across OS at a fixed `t`, so the
+cache holds one capture per frame index.
 
 A Motif's `index.html` + manifest (+ optional `assets/`) are embedded in the
 Rust binary and served to the host over the `motif:` URI scheme; see
-`crate::motifs` (`src-tauri/src/motifs/`). The catalog is surfaced to the
-webview via the `list_motifs` Tauri command and the MCP `list_motifs` tool.
+`crate::motifs` (`native/src/motifs/`). The catalog is surfaced to the
+renderer via the `list_motifs` command and the MCP `list_motifs` tool.
 
 See [`motifs.md`](motifs.md) for the authoring contract, the capture harness,
 and the raster cache.
@@ -333,7 +334,8 @@ be refreshed every render — there's no static-vs-animated short
 cut.
 
 For media-backed subtitles (`SubtitlesParams::Media(media_id)`), the
-sprite reads the file via `convertFileSrc(path)` and passes the
+sprite `fetch`es the file over its `weftcut-media://` URL (the same
+custom-protocol Range path the decoder pool uses) and passes the
 contents to JASSUB. For inline subtitles (`InlineSrt(body)`), the
 body is fed directly.
 
@@ -546,7 +548,7 @@ Worker re-configures with `'prefer-software'` and logs a warning.
 ## Render & Play
 
 A user-triggered affordance ("Render & Play") runs the export
-pipeline into an OS temp `.mp4` and opens a Tauri webview popup
+pipeline into an OS temp `.mp4` and opens an Electron window
 playing the file. The popup HTML lives at `/render-play.html`; the
 URL hash carries the asset src + display path. Each invocation
 allocates a unique window label so multiple plays coexist.

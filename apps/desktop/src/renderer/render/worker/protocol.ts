@@ -28,8 +28,8 @@ export interface ExportProjectSnapshot {
   /// opaque and forwards to its own Compositor instance.
   summary: unknown;
   /// `media_id → asset URL` resolved on the main thread before the
-  /// Worker request is posted. The Worker can't call Tauri's
-  /// `convertFileSrc()` (no Tauri runtime inside the Worker), so
+  /// Worker request is posted. The Worker can't call the renderer's
+  /// `convertFileSrc()` (no renderer bridge inside the Worker), so
   /// the main thread pre-resolves every URL the renderer might
   /// need.
   proxyAssetUrls: Record<string, string>;

@@ -310,7 +310,7 @@ function validateProjectName(raw: string): string | null {
 
 /// Join a parent folder + project name into a full path. Picks the
 /// separator from whatever the parent uses (`\` if it contains one,
-/// else `/`); defaults to `\` since Tauri's primary target is Windows.
+/// else `/`); defaults to `\` since the primary target is Windows.
 function joinPath(parent: string, name: string): string {
   const sep = parent.includes("\\") ? "\\" : parent.includes("/") ? "/" : "\\";
   const trimmed = parent.replace(/[\\/]+$/, "");

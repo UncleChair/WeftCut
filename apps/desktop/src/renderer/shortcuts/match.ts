@@ -23,7 +23,7 @@ export interface ParsedBinding {
 }
 
 // Best-effort macOS detection. `navigator.platform` is deprecated but
-// still populated in Tauri's WebView2 / WKWebView; the userAgent
+// still populated in Electron's Chromium engine; the userAgent
 // fallback catches the rest. The result is cached at module load —
 // users don't migrate OS mid-session.
 const isMac: boolean = (() => {

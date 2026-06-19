@@ -383,8 +383,8 @@ export interface AudioPatch {
   role?: AudioRole;
 }
 
-/// Tagged union mirroring `LayerParamsPatch` in state/actor.rs. Tauri/serde
-/// expects the discriminant in `kind` to match the layer's current
+/// Tagged union mirroring `LayerParamsPatch` in state/actor.rs. The napi/serde
+/// boundary expects the discriminant in `kind` to match the layer's current
 /// LayerParams kind; mismatches return `LayerParamsKindMismatch`.
 export type LayerParamsPatch =
   | ({ kind: "Text" } & TextPatch)
@@ -398,8 +398,8 @@ export async function ping(): Promise<string> {
   return invoke<string>("ping");
 }
 
-/// Dev-only system-resource snapshot (see `src-tauri/src/sysmon.rs`).
-/// Covers the app's WebView2 process tree, not the whole machine. The
+/// Dev-only system-resource snapshot from the native backend.
+/// Covers the app's process tree, not the whole machine. The
 /// `get_system_stats` command only exists in debug builds; calling it in
 /// a release build rejects, so guard callers with `import.meta.env.DEV`.
 export interface SystemStats {
@@ -407,7 +407,7 @@ export interface SystemStats {
   cpu_percent: number;
   /// Summed resident memory of the process tree, in bytes.
   rss_bytes: number;
-  /// Processes in the tree (main + WebView2 children + export Worker).
+  /// Processes in the tree (main + Electron/Chromium children + export Worker).
   process_count: number;
   /// Logical core count — context for the normalized cpu_percent.
   logical_cores: number;
@@ -807,7 +807,7 @@ export interface TranscodeSpec {
   software: boolean;
 }
 
-/// Tauri event emitted (0.0..=1.0) while ffmpeg transcodes the video.
+/// Backend event emitted (0.0..=1.0) while ffmpeg transcodes the video.
 export const EXPORT_TRANSCODE_PROGRESS = "export:transcode_progress";
 
 /// Mux `video` + `audio` into `output`. With `transcode`, re-encodes the
@@ -1230,7 +1230,7 @@ export async function addMotif(args: {
 // Motif lifecycle IPC wrappers (Stage 3b)
 // ============================================================
 
-/// The Tauri event the backend emits after a user-Motif lifecycle mutation.
+/// The event the backend emits after a user-Motif lifecycle mutation.
 /// Mirrors Rust `MOTIFS_CHANGED_EVENT`.
 export const MOTIFS_CHANGED_EVENT = "motifs:changed";
 

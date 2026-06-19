@@ -53,7 +53,7 @@ struct KeybindingsFile {
     overrides: KeybindingsMap,
 }
 
-/// Tauri-managed store. Holds the path to `keybindings.json` and
+/// napi-managed store. Holds the path to `keybindings.json` and
 /// serialises reads/writes through an `RwLock`. Reads are cheap (one
 /// `fs::read_to_string` + `serde_json::from_str` per call); we don't
 /// cache in memory because the panel writes are infrequent and a

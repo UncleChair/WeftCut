@@ -1,6 +1,6 @@
 //! Prefs/settings/recents/keybindings/logs/agent commands — re-signed
 //! from `commands_legacy.rs`. Bodies are copied verbatim; only the signature
-//! changes (Backend replaces Tauri State + AppHandle) and the managed-state
+//! changes (the napi `Backend` carries the managed state) and the managed-state
 //! side effects are re-pointed at the matching `Backend` fields.
 
 use std::path::PathBuf;

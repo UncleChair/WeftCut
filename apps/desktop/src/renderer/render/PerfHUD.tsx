@@ -48,7 +48,7 @@ interface Props {
   engineRef: React.RefObject<PlaybackEngine | null>;
 }
 
-/// Chromium-private `performance.memory` reading (WebView2 exposes it).
+/// Chromium-private `performance.memory` reading (Electron's Chromium exposes it).
 /// `null` when the runtime doesn't have it (e.g. non-Chromium).
 export interface PerfMemory {
   usedJSHeapSize: number;
@@ -61,7 +61,7 @@ function readMemory(): PerfMemory | null {
   const m = p.memory;
   // Copy into a plain object: `performance.memory`'s fields are prototype
   // getters, not own enumerable properties, so the live object serializes to
-  // `{}` when the sample crosses the Tauri event boundary to the popup —
+  // `{}` when the sample crosses the IPC event boundary to the popup —
   // which rendered the heap tile as "NaN MB".
   return m
     ? {
@@ -464,7 +464,7 @@ function PerfDashboard({
             value={<>{sys.cpu_percent.toFixed(0)}<span className="perf-tile-unit">%</span></>}
             meta={`${formatMb(sys.rss_bytes)} MB RSS · ${sys.process_count}p · ${sys.logical_cores}c`}
             warn={sys.cpu_percent > 80}
-            title={`${sys.process_count} processes across the WebView2 tree · ${sys.logical_cores} logical cores`}
+            title={`${sys.process_count} processes across the Electron/Chromium tree · ${sys.logical_cores} logical cores`}
           />
         ) : null}
       </div>
@@ -654,7 +654,7 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
     return () => cancelAnimationFrame(rafHandle);
   }, []);
 
-  // When the tab is hidden/blurred, WebView2 pauses rAF. On unhide,
+  // When the tab is hidden/blurred, Chromium pauses rAF. On unhide,
   // the first tick computes a multi-second interval from the
   // pre-hide timestamp and dumps that bogus number into the P50/P99
   // ring for the next ~120 frames, making the HUD look like preview
@@ -1032,7 +1032,7 @@ export function PerfHUDWindow() {
 
   // Tell the main window we're closing so it can restore the inline overlay,
   // then complete the close ourselves. `preventDefault` must come before the
-  // first await so Tauri sees it; the global emit reaches the main window.
+  // first await so the window manager sees it; the global emit reaches the main window.
   useEffect(() => {
     const win = getCurrentWindow();
     const unlistenPromise = win.onCloseRequested(async (event) => {

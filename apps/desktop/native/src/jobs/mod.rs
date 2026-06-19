@@ -11,7 +11,7 @@
 //! killed ffmpeg leaves a `<dest>.tmp` that the next run discards, never a
 //! zero-byte `<dest>` that fools skip-if-cached.
 //!
-//! Tauri events for UI:
+//! Events for UI:
 //! - `media:job_started`  — `{ media_id, kind }`
 //! - `media:job_complete` — `{ media_id, kind, path? }`
 //! - `media:job_error`    — `{ media_id, kind, error }`

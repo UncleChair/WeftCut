@@ -1,6 +1,6 @@
 // Test helper: serves HTTP Range requests against an in-memory buffer, so
 // AssetRangeSource / mediabunny can read a fixture lazily in node vitest
-// without a real asset:// server. Tracks total bytes served for laziness
+// without a real weftcut-media:// server. Tracks total bytes served for laziness
 // assertions.
 
 export interface RangeFetchMock {
@@ -19,8 +19,8 @@ export interface RangeFetchMock {
 }
 
 export interface RangeFetchMockOptions {
-  /// Per-206-response body cap in bytes. Models the Tauri `asset://` /
-  /// WebView2 Range handler, which truncates each partial response to a
+  /// Per-206-response body cap in bytes. Models the `weftcut-media://`
+  /// Range handler, which truncates each partial response to a
   /// fixed ceiling (~1 MB observed) regardless of how many bytes the
   /// `Range` header asked for. When set, a request spanning more than
   /// `cap` bytes gets a SHORT 206 (only `cap` bytes, with a matching

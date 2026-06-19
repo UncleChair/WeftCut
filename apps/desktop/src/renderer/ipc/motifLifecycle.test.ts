@@ -7,7 +7,7 @@ vi.mock("@/bridge/events", () => ({ listen: vi.fn() }));
 import { installMotif, deleteMotif, writeMotifDraft, getMotifSource, amendMotifDraft, createEditDraft, importMotif } from "./index";
 
 describe("motif lifecycle IPC wrappers", () => {
-  it("installMotif sends the snake_case nested args Tauri's serde expects", async () => {
+  it("installMotif sends the snake_case nested args the backend's serde expects", async () => {
     invoke.mockResolvedValue("foo");
     await installMotif("d1", { kind: "update", target_id: "foo" });
     expect(invoke).toHaveBeenCalledWith("install_motif", {

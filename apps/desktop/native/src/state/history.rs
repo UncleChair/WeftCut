@@ -56,8 +56,8 @@ pub struct History {
     /// checkpoint) reject with `CommandError::HistoryLocked`. The agent
     /// takes this lock via `lock_history(reason)` and drops it via
     /// `unlock_history()`. Not persisted to disk — released on workspace
-    /// change (via `reset`) and on agent-session end (via the Tauri
-    /// command).
+    /// change (via `reset`) and on agent-session end (via the napi
+    /// Backend).
     lock: Option<String>,
 }
 

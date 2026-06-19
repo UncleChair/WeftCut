@@ -1,6 +1,6 @@
 // Global playback transport registry. The active preview's PlaybackEngine
 // is reachable only through the React ref chain (PixiPreview → PreviewSurface
-// → App.tsx), so nothing outside that chain — Tauri event handlers, MCP-driven
+// → App.tsx), so nothing outside that chain — backend event handlers, MCP-driven
 // mutation paths, dialogs, deep components — can stop playback. This store is
 // the module-importable escape hatch: `PixiPreview` registers the live engine
 // on mount, anyone can call `transportPause()` (etc.) without threading a ref.

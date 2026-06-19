@@ -61,11 +61,11 @@ export function sourcesNeedingPreviewProbe(
 export interface PrepareDeps {
   /// Decode one key frame; true = decodable on this machine.
   probe: (assetUrl: string) => Promise<boolean>;
-  /// Route-correct + enqueue the full proxy (Tauri `ensure_full_proxy`).
+  /// Route-correct + enqueue the full proxy (`ensure_full_proxy` backend command).
   ensureFullProxy: (mediaId: string) => Promise<void>;
   /// Session proxy-job state for a media id (App `proxyState`).
   proxyStateOf: (mediaId: string) => ProxyJobState | undefined;
-  /// asset:// URL for a source's ORIGINAL file.
+  /// weftcut-media:// URL for a source's ORIGINAL file.
   urlForOriginal: (m: MediaSummary) => string;
   /// Shared session probe memo (App-owned ref).
   memo: Map<string, ProbeState>;

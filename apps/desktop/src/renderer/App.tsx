@@ -356,7 +356,7 @@ export function App({ onCloseProject }: AppProps) {
   }, []);
 
   // Taskbar progress mirrors the export lifecycle (ITaskbarList3 on
-  // Windows, via Tauri): indeterminate pulse while starting/preparing,
+  // Windows, via Electron): indeterminate pulse while starting/preparing,
   // percent while encoding, error-red on failure, cleared on dismiss or
   // completion. Best-effort — a failed call never blocks the export.
   useEffect(() => {
@@ -918,7 +918,7 @@ export function App({ onCloseProject }: AppProps) {
         {
           name: t("dialogs.media_filter"),
           // Mirrors the backend's extension fallback (io/probe.rs detect_kind)
-          // EXCEPT tif/tiff: WebView2's createImageBitmap can't decode TIFF,
+          // EXCEPT tif/tiff: Electron/Chromium's createImageBitmap can't decode TIFF,
           // so offering it would import a layer that composites nothing.
           extensions: [
             "mp4", "mov", "mkv", "webm", "avi", "m4v",
@@ -937,9 +937,9 @@ export function App({ onCloseProject }: AppProps) {
     await importPaths(paths);
   }, [importPaths, t]);
 
-  // Media-pool drag-to-import: the Rust side recovers real filesystem
-  // paths from HTML5 file drops (src-tauri/src/media_drop.rs) and emits
-  // them here — same pipeline as the picker from this point on.
+  // Media-pool drag-to-import: the preload bridge recovers real filesystem
+  // paths from HTML5 file drops (webUtils.getPathForFile → media:dropped) and
+  // emits them here — same pipeline as the picker from this point on.
   useEffect(() => {
     const un = listen<string[]>("media:external-drop", (e) => {
       void importPaths(e.payload);
@@ -1326,7 +1326,7 @@ export function App({ onCloseProject }: AppProps) {
     // On the ffmpeg path the worker only makes a throwaway H.264 mezzanine —
     // keep that hardware-fast; the HW/SW choice flows to ffmpeg via the
     // transcode spec instead. Auto keeps today's behavior: H.264 forces
-    // prefer-hardware (WebView2 treats it as mandatory, so AV1/HEVC omit it and
+    // prefer-hardware (Electron's Chromium engine treats it as mandatory, so AV1/HEVC omit it and
     // let the browser fall back to software).
     let hwHint: VideoEncoderConfig["hardwareAcceleration"] | undefined;
     if (encodePath !== "ffmpeg" && settings.hwAccel === "software") {
@@ -1531,8 +1531,8 @@ export function App({ onCloseProject }: AppProps) {
       exportState;
   }, [exportState]);
 
-  // Render & Play: open a Tauri webview popup pointing at the
-  // exported MP4 via the asset protocol. The popup HTML lives at
+  // Render & Play: open an Electron window pointing at the
+  // exported MP4 via the weftcut-media:// protocol. The popup HTML lives at
   // /render-play.html (vite copies from public/); URL hash carries
   // the asset URL + display path. Each invocation gets a unique
   // label so multiple plays can coexist (and so the capability
@@ -2330,12 +2330,12 @@ function ExportPanel({
 }
 
 /// The media-pool column doubles as the drop target for Explorer file
-/// drags. HTML5 drag events fire because Tauri's drop interception is
-/// off (`dragDropEnabled: false`, load-bearing for the timeline's
-/// internal DnD); the dropped Files go to Rust via WebView2's
-/// `postMessageWithAdditionalObjects`, the one channel that surfaces
-/// their real filesystem paths (`media_drop.rs`). Internal media-item
-/// drags carry a custom MIME type, not "Files", and are ignored here.
+/// drags. HTML5 drag events fire because the OS-level drop interception is
+/// off (the legacy `dragDropEnabled: false` rationale, load-bearing for the
+/// timeline's internal DnD); under Electron the dropped Files' real
+/// filesystem paths are surfaced through the main-process drop handler.
+/// Internal media-item drags carry a custom MIME type, not "Files", and are
+/// ignored here.
 function MediaDropZone({ children }: { children: React.ReactNode }) {
   const { t } = useTranslation();
   const [active, setActive] = useState(false);

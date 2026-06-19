@@ -48,7 +48,7 @@
 //      catches). A 2D-canvas `drawImage(videoFrame)` performs the
 //      YUV→RGB conversion HONORING the frame's matrix/range, so binding
 //      the resulting RGBA canvas hands Pixi already-correct pixels.
-//      (Verified in WebView2: `drawImage` distinguishes 601 vs 709; the
+//      (Verified in Chromium/Electron: `drawImage` distinguishes 601 vs 709; the
 //      raw-VideoFrame upload does not.)
 //
 // Cost: a per-frame 2D `drawImage` (a GPU blit) the old export path

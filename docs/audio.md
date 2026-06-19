@@ -13,7 +13,7 @@ Decision record: [ADR 0019](adr/0019-audio-mixes-in-rust-over-conform-pcm.md).
 Both paths read the same bytes: a **conform cache** holds every
 audio-bearing source as canonical PCM, produced once at import. The
 preview never decodes audio; the export never decodes audio; decode
-variance between WebView2 and ffmpeg is out of the picture entirely.
+variance between Chromium/Electron and ffmpeg is out of the picture entirely.
 
 ## The conform cache
 
@@ -39,7 +39,8 @@ capped at 2, interleaved.**
   >2-channel sources downmix to stereo at conform. Consumers up-mix
   mono via the pan law (below).
 - **Interleaved** because the preview reads time-windows over
-  `asset://` Range requests — one window, one contiguous byte range.
+  `weftcut-media://` HTTP Range requests — one window, one contiguous
+  byte range.
 
 File layout (little-endian, sibling of the `.peaks` format):
 
@@ -123,9 +124,9 @@ master:     input → analyser (meter) → DynamicsCompressor
 ```
 
 **Feeding:** chunks are read straight from the conform file over
-`asset://` Range requests (loop-read until the exact byte count, the
-established Range discipline) and de-interleaved into `AudioBuffer`s —
-**no decode in the webview, ever**. Chunk length 1 s, lookahead 3 s,
+`weftcut-media://` HTTP Range requests (loop-read until the exact byte
+count, the established Range discipline) and de-interleaved into
+`AudioBuffer`s — **no decode in the renderer, ever**. Chunk length 1 s, lookahead 3 s,
 at most 8 live chunks per layer (~3 MB). Mono conform produces mono
 buffers; the panner up-mixes.
 

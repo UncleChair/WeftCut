@@ -1,6 +1,6 @@
 // Per-layer buffer-scheduled audio playback (docs/audio.md §Preview mixer).
 // Replaces the element-based mixer: chunks of conform PCM are read over
-// asset:// Range (zero decode), wrapped as AudioBuffers, and scheduled
+// weftcut-media:// Range (zero decode), wrapped as AudioBuffers, and scheduled
 // sample-accurately on the AudioContext clock against a play anchor.
 //
 // Node chain per layer:
@@ -39,7 +39,7 @@ import {
 
 export interface AudioMixerInit {
   layerId: string;
-  /// asset:// URL of the layer's conform file.
+  /// weftcut-media:// URL of the layer's conform file.
   conformUrl: string;
   /// The layer's audio view (gain/pan tracks, fades, src trims, mute).
   view: AudioView;

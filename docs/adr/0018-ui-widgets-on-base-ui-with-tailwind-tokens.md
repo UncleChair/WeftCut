@@ -61,7 +61,7 @@ widget chrome; the rest is editor-specific layout no library replaces.
 - **Packaged component libraries** (MUI, Ant Design, Mantine, Chakra): a
   bespoke dark editor skin means fighting their theme systems indefinitely,
   for complex widgets (data grids, form frameworks) this app doesn't use.
-- **Keeping native form controls**: WebView2 renders selects/sliders with OS
+- **Keeping native form controls**: Chromium/Electron renders selects/sliders with OS
   popups that can't be styled to match, and they carry none of the shared
   keyboard/typeahead conventions; `color-scheme: dark` only goes so far.
 - **Headless-only (no registry)**: workable but discards the shadcn

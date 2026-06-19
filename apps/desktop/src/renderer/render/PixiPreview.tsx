@@ -179,7 +179,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       engineRef.current = engine;
 
       // Global transport: expose this engine to code outside the React ref
-      // chain (Tauri event handlers, MCP-driven mutations, dialogs) via the
+      // chain (backend event handlers, MCP-driven mutations, dialogs) via the
       // playback store. Mirror the play state so store subscribers track
       // play/pause without polling.
       engine.onPlayStateChange(setTransportPlaying);
@@ -318,7 +318,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
 
   // A draft edit / install / delete updates the runtime Motif catalog (via the
   // async motifs:changed → syncUserMotifsFromBackend → setUserMotifs chain). We
-  // subscribe to the catalog CHANGE-NOTIFIER rather than the raw Tauri event so
+  // subscribe to the catalog CHANGE-NOTIFIER rather than the raw backend event so
   // we refresh only AFTER `merged` actually carries the new content_hash —
   // subscribing to the raw event races the async re-sync and re-captures stale
   // source. Refresh the live Motif sprites against the fresh catalog + recapture
@@ -386,7 +386,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         background={0x000000}
         antialias
         // Prefer WebGPU; PixiJS auto-falls back to WebGL when the
-        // runtime doesn't expose `navigator.gpu` (older WebView2,
+        // runtime doesn't expose `navigator.gpu` (older Chromium,
         // restricted contexts). `app.renderer.type` in the init log
         // reads 2 for WebGPU, 1 for WebGL — useful sanity check.
         preference="webgpu"

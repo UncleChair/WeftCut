@@ -33,7 +33,7 @@ pub fn get_motif_source_core(store: &UserMotifStore, id: &str) -> Result<MotifSo
     Err(format!("unknown motif id '{id}'"))
 }
 
-/// NOTE: Tauri camelCases only the TOP-LEVEL command argument names; these
+/// NOTE: napi/serde camelCases only the TOP-LEVEL command argument names; these
 /// nested struct fields are deserialized by serde directly, so the frontend
 /// sends them as-is (snake_case): `{ args: { draft_id, mode: { kind, target_id } } }`.
 /// (A camelCase rename can be added in Stage 3 alongside the UI if preferred.)
@@ -156,7 +156,7 @@ pub enum InstallMode {
     Update { target_id: String },
 }
 
-/// NOTE: Tauri camelCases only the TOP-LEVEL command argument names; these
+/// NOTE: napi/serde camelCases only the TOP-LEVEL command argument names; these
 /// nested struct fields are deserialized by serde directly, so the frontend
 /// sends them as-is (snake_case): `{ args: { draft_id, mode: { kind, target_id } } }`.
 /// (A camelCase rename can be added in Stage 3 alongside the UI if preferred.)

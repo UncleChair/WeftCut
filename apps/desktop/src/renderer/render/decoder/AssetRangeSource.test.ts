@@ -22,7 +22,7 @@ describe("AssetRangeSource", () => {
   });
 
   it("read fulfills a window larger than the server's per-response cap", async () => {
-    // The Tauri asset:// / WebView2 Range handler caps each 206 body at a
+    // The weftcut-media:// Range handler caps each 206 body at a
     // fixed ceiling (~1 MB in production). mediabunny's "network" prefetch
     // asks for larger windows, so `read` must loop across follow-up Range
     // requests; otherwise it returns a short buffer and mediabunny throws

@@ -59,7 +59,7 @@ export class EncoderSink {
     // into the user's chosen container, so it's an invisible intermediate.
     // Batch the muxer's many small box-level writes into ~8 MB slices before
     // posting to the main thread — far fewer worker→main→disk round-trips on
-    // long exports (each `onChunk` is a postMessage + Tauri writeFile).
+    // long exports (each `onChunk` is a postMessage + main-process writeFile).
     const FLUSH_BYTES = 8 * 1024 * 1024;
     let batch: Uint8Array[] = [];
     let batched = 0;

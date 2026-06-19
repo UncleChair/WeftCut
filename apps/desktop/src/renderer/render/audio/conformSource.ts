@@ -1,6 +1,6 @@
-// Range-reads over a VCONF conform file served via asset://. No decode —
+// Range-reads over a VCONF conform file served via weftcut-media://. No decode —
 // the file IS the samples (48 kHz f32le interleaved; header per
-// `src-tauri/src/jobs/conform.rs`). Loop-read discipline per the asset://
+// `native/src/jobs/conform.rs`). Loop-read discipline per the weftcut-media://
 // ~1 MB 206 cap: a single Range response may come back short, so reads
 // re-issue until the exact byte count arrives (same rule as
 // `AssetRangeSource`).
@@ -75,7 +75,7 @@ export class ConformSource {
   }
 }
 
-/// Loop until exactly `len` bytes arrive — a single asset:// 206 caps at
+/// Loop until exactly `len` bytes arrive — a single weftcut-media:// 206 caps at
 /// ~1 MB and a short read would otherwise hand consumers truncated data.
 async function rangeRead(
   url: string,

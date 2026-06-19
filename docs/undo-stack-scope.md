@@ -84,13 +84,13 @@ automation becomes heavy enough that stack-flooding hurts UX.
 
 | Concern | Location |
 |---|---|
-| History stack, `reset`, out-of-band pool/canvas patching | `apps/desktop/src-tauri/src/state/history.rs` |
-| Per-op record vs `broadcast_unrecorded` routing | `apps/desktop/src-tauri/src/state/actor.rs` — `do_*` handlers |
+| History stack, `reset`, out-of-band pool/canvas patching | `apps/desktop/native/src/state/history.rs` |
+| Per-op record vs `broadcast_unrecorded` routing | `apps/desktop/native/src/state/actor.rs` — `do_*` handlers |
 | `replace_state` → `history.reset` + unrecorded broadcast | `do_replace_state` |
 | No-ref `remove_media` → `replace_media_pool_everywhere` | `do_remove_media` |
 | Canvas/duration/fps split on `set_composition` | `do_set_composition` |
-| MCP `undo` tool description (out-of-stack exclusions) | `apps/desktop/src-tauri/src/mcp/mod.rs` |
-| Open / new project call paths | `apps/desktop/src-tauri/src/commands.rs` |
+| MCP `undo` tool description (out-of-stack exclusions) | `apps/desktop/native/src/mcp/mod.rs` |
+| Open / new project call paths | `apps/desktop/native/src/commands/` |
 
 Tests in `actor.rs`: `replace_state_resets_history_to_fresh_stack`,
 `replace_state_does_not_touch_modified_at`,

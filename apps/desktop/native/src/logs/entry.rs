@@ -3,7 +3,7 @@
 //! system (ring buffer, JSONL writer, frontend bridge, MCP transcript)
 //! reads from.
 //!
-//! `LogEntry` is `serde::Serialize` for the wire (Tauri events + JSONL).
+//! `LogEntry` is `serde::Serialize` for the wire (napi events + JSONL).
 //! IDs are UUIDv7 — monotonic + time-sortable, same role as the ULID the
 //! design talks about; we already depend on `uuid::Uuid::now_v7` and
 //! adding a `ulid` crate just for naming wasn't worth it.

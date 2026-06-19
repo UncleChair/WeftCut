@@ -11,7 +11,7 @@
 //!
 //! Lifecycle:
 //!  - `begin(...)` creates / replaces the session (last writer wins).
-//!  - `end()` clears it. Called by the user-exit Tauri command, by
+//!  - `end()` clears it. Called by the user-exit napi command, by
 //!    workspace open/save_as/new, and by MCP-client disconnect.
 //!  - Not persisted to disk. App restart always boots into editor mode.
 //!
@@ -40,7 +40,7 @@ pub struct AgentSession {
     pub started_at: DateTime<Utc>,
 }
 
-/// Tauri-managed slot. Process-global; reset on workspace change.
+/// napi-managed slot. Process-global; reset on workspace change.
 #[derive(Clone, Default)]
 pub struct AgentSessionSlot {
     inner: Arc<RwLock<Option<AgentSession>>>,
