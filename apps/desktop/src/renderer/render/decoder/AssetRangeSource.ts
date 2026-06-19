@@ -1,4 +1,4 @@
-// mediabunny CustomSource adapter over the Tauri `asset://` protocol. Maps
+// mediabunny CustomSource adapter over the `weftcut-media://` Range protocol. Maps
 // mediabunny's read(start,end) / getSize() onto HTTP Range requests so the
 // whole file is never loaded — preserving the long-video heap budget. Owns an
 // AbortController so disposing the Input cancels in-flight reads.
@@ -24,7 +24,7 @@ export class AssetRangeSource {
       read: (start, end) => this.read(start, end),
       dispose: () => this.dispose(),
       // Match the resident budget of the legacy GOP-block LRU (~a few source
-      // seconds). Network-style prefetch suits asset:// latency.
+      // seconds). Network-style prefetch suits weftcut-media:// latency.
       maxCacheSize: 16 * 1024 * 1024,
       prefetchProfile: "network",
     };
@@ -50,7 +50,7 @@ export class AssetRangeSource {
 
   private async read(start: number, end: number): Promise<Uint8Array> {
     // mediabunny's CustomSource contract requires `read` to return EXACTLY
-    // `end - start` bytes. The Tauri asset:// / WebView2 Range handler caps
+    // `end - start` bytes. The weftcut-media:// Range handler caps
     // each 206 body at a fixed ceiling (~1 MB observed), so a single request
     // for a larger window comes back short — and mediabunny throws
     // "Requested N bytes, but got M", wedging the decoder. Loop across

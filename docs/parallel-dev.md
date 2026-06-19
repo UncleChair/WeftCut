@@ -16,18 +16,19 @@ artifacts do not carry over**:
 | Asset | Size here | Shared across worktrees? |
 | --- | --- | --- |
 | `node_modules` (root + `apps/desktop`) | ~0.45 GB | No — installed per worktree |
-| `apps/desktop/src-tauri/target/` | very large (10s–100s of GB) | No — built per worktree |
+| `apps/desktop/native/target/` | very large (10s–100s of GB) | No — built per worktree |
 
 The npm side is cheap: a fresh worktree's `npm install` re-links from the warm
 npm cache (no network re-download). The Rust side is the real cost — the first
-`tauri dev` in a new worktree cold-compiles the whole dependency tree. Because
-these worktrees are **persistent** (created once, reused for many features),
-that cold compile is paid once and then the `target/` stays warm.
+`npm run dev` (or `napi build`) in a new worktree cold-compiles the whole
+dependency tree. Because these worktrees are **persistent** (created once,
+reused for many features), that cold compile is paid once and then the
+`target/` stays warm.
 
 > Do **not** point worktrees at one shared `CARGO_TARGET_DIR`. On Windows the
-> final `weftcut.exe` can't be relinked while another instance is running it,
-> and branches with differing Rust churn the shared fingerprint cache. Separate
-> per-worktree `target/` is correct for concurrent live dev.
+> `@weftcut/core` `.node` addon can't be relinked while another instance has it
+> loaded, and branches with differing Rust churn the shared fingerprint cache.
+> Separate per-worktree `target/` is correct for concurrent live dev.
 
 ## The pool
 
@@ -82,43 +83,45 @@ worktree's branch, ahead/behind vs `origin/main`, and dirty state:
 pwsh scripts/worktree-sync.ps1
 ```
 
-## Running concurrent `tauri dev` instances
+## Running concurrent dev instances
 
-`vite` hardcodes port 1420 (`strictPort`) and the app identifier is the static
-`dev.weftcut.desktop`, so two plain `tauri dev` runs collide. Use the launcher,
-which injects an isolated port + identifier per instance at launch (no committed
-config change):
+The renderer's Vite server hardcodes port 1420 (`strictPort: true` in
+`apps/desktop/electron.vite.config.ts`), so two plain `npm run dev` runs collide
+on that port. Electron has no app-identifier singleton (the old Tauri
+single-instance lock is gone), so the **only** thing two instances fight over is
+the Vite port and the shared `userData` directory.
 
-```powershell
-# from inside a worktree — instance auto-derived from the folder name
-pwsh scripts/dev-instance.ps1
-# or force one explicitly
-pwsh scripts/dev-instance.ps1 -Instance 2
-```
+To run a second instance from another worktree, give it a distinct Vite port and
+its own `userData` dir:
 
-| Instance | vite port | app identifier | app data dir |
-| --- | --- | --- | --- |
-| 0 (primary) | 1420 | `dev.weftcut.desktop` | `%APPDATA%\dev.weftcut.desktop` |
-| 1 (wt1) | 1430 | `dev.weftcut.desktop.wt1` | `…\dev.weftcut.desktop.wt1` |
-| 2 (wt2) | 1440 | `dev.weftcut.desktop.wt2` | `…\dev.weftcut.desktop.wt2` |
+1. **Port** — change the renderer's `server.port` in the second worktree's
+   `apps/desktop/electron.vite.config.ts` to a free port (e.g. `1430`). It's a
+   tracked file, but the edit lives only in that worktree's branch; don't commit
+   it. `strictPort` then keeps the collision loud if you forget.
+2. **State** — pass Electron's built-in `--user-data-dir` switch so the instance
+   gets its own `userData` (electron-vite forwards extra args after `--` to the
+   Electron binary):
 
-A distinct identifier gives each instance its own `app_config_dir`, so
-`mcp_auth.json`, `app_settings.json`, `recents.json`, the user-Motif store,
-WebView2 user-data **and** the single-instance lock are all isolated — the
-instances never race each other's state. The instance-0 primary still launches
-the normal way with `npm run dev` / `tauri dev`.
+   ```powershell
+   # in the second worktree, after bumping server.port to 1430
+   npm run dev -- --user-data-dir="$env:APPDATA\dev.weftcut.desktop.wt1"
+   ```
 
-> The MCP SSE port and events port auto-pick a free socket at startup, and with
-> identifier isolation each instance writes its own `mcp_auth.json`. Query
-> `get_mcp_info` (or read that file) per instance to connect an external agent.
+Isolating `userData` keeps each instance's `mcp_auth.json`, `cloud_keys.json`,
+settings, recents and the user-Motif store from racing the other's — they share
+nothing. The primary worktree runs the normal way with `npm run dev` on 1420.
+
+> The MCP and events ports auto-pick a free socket at startup, and with isolated
+> `userData` each instance writes its own `mcp_auth.json`. Query `get_mcp_info`
+> (or read that file) per instance to connect an external agent.
 
 ## Stopping dev & freeing stuck ports
 
 Stop a dev session with **Ctrl-C in its terminal**, not by closing the app
-window. On Windows, closing the window only exits the Rust app — `tauri dev`'s
-vite child is frequently orphaned and keeps holding its strict port, so the
-next launch fails with a port collision. (Dev-only: a packaged build has no
-vite and binds no port, so it never hits this.)
+window. On Windows, closing the window only exits the Electron app — the Vite
+dev-server child is frequently orphaned and keeps holding its strict port, so
+the next launch fails with a port collision. (Dev-only: a packaged build has no
+Vite and binds no port, so it never hits this.)
 
 When a port is stuck, free it:
 
@@ -127,8 +130,9 @@ pwsh scripts/dev-clean-ports.ps1               # frees 1420/1430/1440 (+5173)
 pwsh scripts/dev-clean-ports.ps1 -Ports 1430   # just one
 ```
 
-It kills only Node/vite listeners (plus their npm parent); a non-vite process
-on a port is reported and left alone.
+It kills only Node/Vite listeners (plus their npm parent); a non-Vite process
+on a port is reported and left alone. (If you moved a second instance off 1430
+onto another port, pass it explicitly with `-Ports`.)
 
 ## Adding / removing a worktree
 
@@ -149,7 +153,7 @@ one-time measurement of the primary found a ~356 GB `target/`, of which
 was `debug/incremental`. Two levers stop it growing back, ordered by payoff:
 
 1. **Dependencies carry no debug info** — already set in
-   `apps/desktop/src-tauri/Cargo.toml`:
+   `apps/desktop/native/Cargo.toml`:
 
    ```toml
    [profile.dev.package."*"]
@@ -174,7 +178,7 @@ was `debug/incremental`. Two levers stop it growing back, ordered by payoff:
    ```
 
    The trade is per-crate incremental rebuilds for shared dependency caching —
-   worth it here, where the dependency tree (tauri, ffmpeg-next, …) dwarfs our
+   worth it here, where the dependency tree (napi, ffmpeg-next, …) dwarfs our
    own crates.
 
 3. **Periodic GC with `cargo-sweep`** — cargo never collects stale fingerprints
@@ -188,8 +192,8 @@ was `debug/incremental`. Two levers stop it growing back, ordered by payoff:
    ```
 
 To reclaim a bloated existing `target/`, run `cargo clean` from
-`apps/desktop/src-tauri` while no `tauri dev` is running (a live instance locks
-its own `weftcut.exe`/`.dll`, so those few files survive until it stops). Don't
-build `--release` in a dev worktree unless you're testing release; designate one
-worktree as the "Rust-heavy" one and keep the rest lean. Two worktrees is
-usually enough for you plus one agent.
+`apps/desktop/native` while no dev instance is running (a live instance keeps the
+`@weftcut/core` `.node` addon loaded, so that file survives until it stops).
+Don't build `--release` in a dev worktree unless you're testing release;
+designate one worktree as the "Rust-heavy" one and keep the rest lean. Two
+worktrees is usually enough for you plus one agent.

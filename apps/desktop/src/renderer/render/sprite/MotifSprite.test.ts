@@ -3,7 +3,7 @@
 // sprite itself constructs a Pixi Sprite + touches `createImageBitmap`, so it
 // can't run in Node — these helpers are extracted so the arithmetic is
 // testable without the browser surface. The async capture/bind chain is
-// exercised end-to-end by the real-WebView2 e2e (`motif/capture.e2e.js`).
+// exercised end-to-end by the real-Chromium/Electron e2e (`motif/capture.e2e.js`).
 //
 // `refreshMotif` is exercised against a mocked Pixi surface + a controllable
 // `getMotif` / `sharedMotifFrameCache` (see `vi.mock` blocks below): the live

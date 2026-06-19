@@ -108,7 +108,7 @@ pub fn tenbit_encode_args(encoder: &str) -> Vec<std::ffi::OsString> {
 }
 
 /// Per-codec cache of the chosen ffmpeg encoder name (HW if probed-good,
-/// else the software encoder). Held in Tauri state so each export reads from
+/// else the software encoder). Held in `Backend` state so each export reads from
 /// memory.
 pub struct HwEncoderCache {
     inner: Mutex<HashMap<TargetCodec, Arc<String>>>,

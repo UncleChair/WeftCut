@@ -1,5 +1,5 @@
 //! S3b export commands — audio-only mix/encode, final mux/transcode, and the
-//! export-audio conform gate. Re-homed from the Tauri `commands.rs` onto the
+//! export-audio conform gate. Re-homed from the legacy `commands.rs` onto the
 //! napi `Backend`. Gated behind `export`. The WS video-sink commands live in
 //! `export::videosink` and are dispatched directly (they need only the two
 //! Backend stores, not a project snapshot).

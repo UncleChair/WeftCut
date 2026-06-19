@@ -1,5 +1,5 @@
 // Cross-language golden vectors for the sampled envelope contract. The SAME
-// fixture is asserted by `src-tauri/src/audio/envelope.rs`; a change that
+// fixture is asserted by `native/src/audio/envelope.rs`; a change that
 // passes one side and fails the other is engine drift — exactly what this
 // test exists to catch.
 

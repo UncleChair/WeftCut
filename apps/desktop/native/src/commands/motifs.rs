@@ -63,8 +63,8 @@ fn motif_to_payload(
     Ok(v)
 }
 
-/// Sync core of `list_motifs`. Extracted so tests can call it without a Tauri
-/// `State` wrapper. Skips entries that fail `motif_to_payload` (parse error /
+/// Sync core of `list_motifs`. Extracted so tests can call it without a
+/// `Backend` wrapper. Skips entries that fail `motif_to_payload` (parse error /
 /// bad on-disk state) rather than aborting the whole list — picker resilience.
 pub(crate) fn list_motifs_inner(
     store: &crate::motifs::store::UserMotifStore,

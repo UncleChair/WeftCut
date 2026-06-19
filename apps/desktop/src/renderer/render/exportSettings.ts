@@ -261,9 +261,9 @@ export function isBitDepthValid(codec: CodecId, d: BitDepth): boolean {
   return d === 8 || codec !== "h264";
 }
 
-/// Sources whose ORIGINALS WebView2 decodes to copyTo-able I420P10, so the
+/// Sources whose ORIGINALS Chromium/Electron decodes to copyTo-able I420P10, so the
 /// 10-bit export lane can read them at full precision: H.264 Hi10P (probe P1)
-/// and AV1 10-bit (probed in real WebView2: dav1d under prefer-software gives
+/// and AV1 10-bit (probed in real Chromium/Electron: dav1d under prefer-software gives
 /// I420P10 with a clean 875-step ramp; the default/HW path "succeeds" but
 /// yields format=null OPAQUE frames — so the lane's preferSoftware flag is a
 /// correctness requirement for AV1, not just a fallback shortcut). HEVC
@@ -290,7 +290,7 @@ export function containersForCodec(codec: CodecId): Container[] {
   return CONTAINERS.filter((c) => isCodecContainerValid(codec, c));
 }
 
-/// AAC muxes into mp4/mov/mkv. Opus is restricted to MKV — WebView2's Opus-in-
+/// AAC muxes into mp4/mov/mkv. Opus is restricted to MKV — Chromium/Electron's Opus-in-
 /// MP4/MOV playback is unreliable and WebM is deferred.
 export function isAudioCodecContainerValid(
   codec: AudioCodecId,

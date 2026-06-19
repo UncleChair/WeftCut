@@ -5,7 +5,7 @@ import { raceFirstDecode } from "./probeSourceDecodable";
 // shape that raceFirstDecode drives. `behavior` decides what the fake does.
 //   "needs-flush" models a B-frame stream: a lone keyframe stays parked in the
 //   reorder buffer (decode() emits nothing) and only drains on flush() — the
-//   real-WebView2 behavior that made the import probe falsely reject decodable
+//   real-Chromium/Electron behavior that made the import probe falsely reject decodable
 //   H.264.
 function makeFake(
   behavior: "output" | "error" | "silent" | "throw-configure" | "throw-decode" | "needs-flush",

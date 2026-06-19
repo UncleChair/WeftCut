@@ -43,9 +43,11 @@ export interface AppNumberFieldProps {
 
 /// The one numeric input for every WeftCut form. Wraps Base UI NumberField:
 /// type a value, use ↑/↓ arrow keys, or the hover-revealed +/- steppers.
-/// (Drag-scrub was dropped: Base UI's ScrubArea needs the Pointer Lock API,
-/// which doesn't engage in WebView2 — the bounded cursor only ever scrubbed
-/// the value up, never down.)
+/// (Drag-scrub was dropped as a legacy workaround: Base UI's ScrubArea needs
+/// the Pointer Lock API, which under the old WebView2 host didn't engage — the
+/// bounded cursor only ever scrubbed the value up, never down. Pointer Lock
+/// works on Electron/Chromium, so that limit no longer applies and drag-scrub
+/// could be revisited.)
 /// `value` may go null mid-edit (empty field): without `onClear` we drop the
 /// null so the call site keeps its last good number (matching the old
 /// `|| prev` guard); with `onClear` the call site learns the field is unset.

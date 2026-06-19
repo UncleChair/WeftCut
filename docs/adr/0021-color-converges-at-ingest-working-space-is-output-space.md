@@ -57,7 +57,7 @@ color math. Two known offenders are fenced off:
 - Chromium's implicit HDR→SDR tone map (an HLG/PQ frame drawn into an
   sRGB canvas). This is currently the only path HDR sources take — a
   tolerated gap, not an endorsement: it is unconfigurable, its look is
-  nobody's creative decision, and it can drift across WebView2
+  nobody's creative decision, and it can drift across Chromium/Electron
   auto-updates with no gate to catch it. The candidate fix is a
   controlled proxy-time tone map (`zscale` linear → `tonemap`
   (bt2390/hable) → 709 + dither), which would also collect the
@@ -76,7 +76,7 @@ cache-friendly:
 
 ## Why a collapsed working space is correct (today)
 
-- The output end is hard-capped: WebView2's WebCodecs encoder emits
+- The output end is hard-capped: Chromium's WebCodecs encoder emits
   8-bit only and tags by resolution (ADR 0014). A wide working space
   would be quantized down to 8-bit 709 at the exit anyway.
 - preview-equals-export: both surfaces share one Compositor. A single

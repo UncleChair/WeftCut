@@ -4,7 +4,7 @@ import { LOG_EVENTS, logList, type LogEntry } from "../ipc";
 
 /// Frontend mirror of the backend log ring. Capped at 1000 entries to
 /// match the Rust ring. Seeded on mount via `log_list`; live-updated via
-/// the `log:entry` Tauri event.
+/// the `log:entry` backend event.
 ///
 /// Selectors:
 ///   * bar — `{ latest, errorCount, runningCount }`

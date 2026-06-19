@@ -47,7 +47,7 @@ export interface SourceHandleInit {
   /// own. The preview pool keys by `layerId` and ignores it.
   handleKey?: string;
   mediaId: string;
-  /// `asset://` URL of the source's 1080p master proxy.
+  /// `weftcut-media://` URL of the source's 1080p master proxy.
   proxyAssetUrl: string;
   /// Source color tags mapped from ffprobe (matrix/range/primaries/transfer),
   /// applied to ANY decode target for this media — the original trivially,

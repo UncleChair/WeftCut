@@ -17,7 +17,7 @@ Export decodes the source's original inside a **Web Worker**
 capability there is not guaranteed to match the main thread:
 
 - H.264 and AV1 are verified to **hardware-decode in Worker scope** on Windows
-  WebView2 — by a real `VideoDecoder.decode()` test (30/30 frames, NV12) and by
+  Chromium/Electron — by a real `VideoDecoder.decode()` test (30/30 frames, NV12) and by
   a full in-app AV1 export that completes end to end.
 - HEVC needs the OS "HEVC Video Extensions", which are absent on the reference
   machine (decode errors / stalls). VP9 Worker decode is unverified. Both route

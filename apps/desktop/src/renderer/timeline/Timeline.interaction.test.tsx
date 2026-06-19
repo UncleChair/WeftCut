@@ -13,8 +13,8 @@ if (typeof window !== "undefined" && !window.PointerEvent) {
   (window as unknown as Record<string, unknown>).PointerEvent = window.MouseEvent;
 }
 
-// useTimelineView loads/saves view.json over Tauri IPC on mount. There is no
-// Tauri runtime under jsdom, so stub just those two calls; keep every other
+// useTimelineView loads/saves view.json over the backend IPC on mount. There is no
+// backend runtime under jsdom, so stub just those two calls; keep every other
 // ipc export real (types, helpers).
 vi.mock("../ipc", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../ipc")>();

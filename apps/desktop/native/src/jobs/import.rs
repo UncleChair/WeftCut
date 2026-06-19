@@ -2,7 +2,7 @@
 //!
 //! Per `docs/data-model.md` Q6 the import flow is:
 //!
-//!   1. Tauri command `import_media` probes + hashes the source synchronously
+//!   1. napi command `import_media` probes + hashes the source synchronously
 //!      (fast), inserts a MediaItem with `path_abs = original source`, kicks
 //!      derivative jobs (proxy / thumbnails / waveform — they're content-
 //!      addressed by hash, so they don't care whether they read from the
@@ -13,7 +13,7 @@
 //!      shared in spirit with `io::migrate`), then calls
 //!      `ProjectHandle::set_media_workspace_paths` to flip the MediaItem's
 //!      `path_abs` to the workspace copy and populate `path_rel`.
-//!   3. Tauri events surface progress to the UI:
+//!   3. napi events surface progress to the UI:
 //!      - `import:queue`   → full list, fires on every state change
 //!      - `import:started` → media_id, fires when copy begins
 //!      - `import:complete`→ media_id + path_rel, fires on success
@@ -72,7 +72,7 @@ pub struct ImportEntry {
     pub status: ImportStatus,
 }
 
-/// Tauri-managed queue. Cloneable handle (Arc-shared inner) so the worker
+/// napi-managed queue. Cloneable handle (Arc-shared inner) so the worker
 /// and the UI command surface both hold the same backing list.
 #[derive(Clone)]
 pub struct ImportQueue {

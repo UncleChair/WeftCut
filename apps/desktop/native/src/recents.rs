@@ -44,7 +44,7 @@ struct RecentsFile {
     last_new_project_parent: Option<PathBuf>,
 }
 
-/// Tauri-managed recents store. Holds the path to `recents.json` and
+/// napi-managed recents store. Holds the path to `recents.json` and
 /// serialises reads/writes through an RwLock; per-startup-screen access
 /// cost is one file read + JSON parse, so caching isn't worth the
 /// invalidation complexity.

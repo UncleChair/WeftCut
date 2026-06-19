@@ -3,9 +3,9 @@ import { invoke } from "@/bridge/ipc";
 /**
  * Render a Motif to a single frame and return the raw PNG as a `Blob`.
  *
- * Drives the Rust `motif_capture_frame` command (Approach A: hidden WebView2
- * host window + `motif:` scheme + CDP `Page.captureScreenshot`). The PNG is
- * taint-free (CDP screenshot, not a canvas readback).
+ * Drives the `motif_capture_frame` command (offscreen Electron window
+ * + `motif:` scheme + CDP `Page.captureScreenshot` via webContents.debugger).
+ * The PNG is taint-free (CDP screenshot, not a canvas readback).
  *
  * @param motifId    built-in Motif id (e.g. "countdown")
  * @param tSec       content time in SECONDS

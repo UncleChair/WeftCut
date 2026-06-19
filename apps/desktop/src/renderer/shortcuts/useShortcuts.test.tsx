@@ -4,7 +4,7 @@ import { cleanup, render } from "@testing-library/react";
 import { useShortcuts, type HandlerMap } from "./useShortcuts";
 
 // useShortcuts only reaches `logEmit` for activity-log breadcrumbs; stub the
-// whole ipc surface so the dispatcher runs without a Tauri host (and keeps the
+// whole ipc surface so the dispatcher runs without a backend host (and keeps the
 // test output free of unhandled `invoke` rejections).
 vi.mock("../ipc", () => ({ logEmit: vi.fn(() => Promise.resolve()) }));
 

@@ -247,7 +247,7 @@ function runWithLogging(actionId: ActionId, fn: () => void | Promise<void>) {
 /// RFC 4122 UUID. Required because the backend's `LogEntryInput.op_id`
 /// deserializes as `Option<Uuid>`; a non-UUID string would fail
 /// `log_emit` and silently lose the async-path Started/Ok entries.
-/// WebView2 ships `crypto.randomUUID`, so no polyfill is needed.
+/// Chromium/Electron ships `crypto.randomUUID`, so no polyfill is needed.
 function makeOpId(): string {
   return crypto.randomUUID();
 }
