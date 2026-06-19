@@ -1544,17 +1544,14 @@ export function App({ onCloseProject }: AppProps) {
       `/render-play.html#src=${encodeURIComponent(src)}` +
       `&path=${encodeURIComponent(path)}`;
     try {
-      const win = new WebviewWindow(label, {
+      // Window load failures surface in the main-process console (win:* IPC is
+      // fire-and-forget; the secondary-window lifecycle isn't bridged back).
+      new WebviewWindow(label, {
         url,
         title: "WeftCut — Render & Play",
         width: 960,
         height: 600,
         resizable: true,
-      });
-      // Surface webview-create errors so silent failures (CSP /
-      // capability misconfig) don't look like a no-op click.
-      win.once("tauri://error", (e) => {
-        console.error("[weftcut/render-play] webview error:", e);
       });
     } catch (e) {
       console.error("[weftcut/render-play] failed to open popup:", e);
