@@ -1,22 +1,10 @@
-//! Proxy generation. Transcodes a video to a source-resolution (<=4K)
-//! H.264/AAC mp4 used as the EXPORT master for sources WebCodecs can't
-//! decode directly. Preview reads the lighter quick proxy (see ADR 0011),
-//! not this. Output sits at `<cache>/proxies/<file_hash>.mp4`.
+//! Proxy generation. Transcodes a source to an H.264/AAC mp4 — the EXPORT
+//! master for codecs WebCodecs can't decode directly. Preview reads the
+//! lighter quick proxy, not this. Output at `<cache>/proxies/<file_hash>.mp4`.
+//! See ADR 0011.
 //!
-//! Encoder: libx264 -preset fast -crf 18 + AAC 128k, capped at 2160p
-//! height (sources shorter stay native; never upscale). Software
-//! encode is intentional — proxies should be portable across machines,
-//! and the real HW-encoder selection is reserved for the user's
-//! exports.
-//!
-//! GOP is a short fixed frame count (`PROXY_GOP_FRAMES`) so any scrub
-//! target decodes at most a few frames from its keyframe — the enabler
-//! for frame-accurate live scrubbing. This shortens the WebCodecs
-//! decoder's seek-to-IDR-then-decode-forward tail from ~1 s (the prior
-//! `round(source_fps)` GOP) to a few frames. See ADR 0008, which
-//! revisits the 1 s-GOP rationale in ADR 0003 (whose no-reset-on-
-//! forward-GOP-crossing behavior is retained, and more load-bearing
-//! now that crossings are more frequent).
+//! Encode is always software (libx264): proxies must be portable across
+//! machines, so HW-encoder selection is reserved for the user's exports.
 
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -33,63 +21,25 @@ use crate::state::MediaItem;
 /// the worst-case 8K encode); sources shorter stay native (no upscaling).
 const PROXY_HEIGHT_CAP: u32 = 2160;
 
-/// Keyframe spacing (frames) for the full proxy. Short + fixed so any
-/// scrub target decodes at most `PROXY_GOP_FRAMES - 1` frames from its
-/// keyframe, bounding seek latency to a handful of frames regardless of
-/// source fps — the enabler for frame-accurate live scrubbing. Replaces
-/// the prior `round(source_fps)` (~1 s) GOP. `-bf 0` is retained, so
-/// PTS=DTS holds and the auto-pause last-frame snap is unaffected.
-/// Cost: a denser-keyframe proxy is ~50% larger, but proxies are
-/// local-only cache and export re-encodes (so exported files are
-/// unaffected). See ADR 0008. Shared with the quick (scrub) proxy.
+/// Keyframe spacing (frames) for the full proxy. Short and fixed so any scrub
+/// target decodes at most `PROXY_GOP_FRAMES - 1` frames from its keyframe,
+/// bounding seek latency regardless of source fps — the enabler for
+/// frame-accurate live scrubbing. `-bf 0` is kept so PTS=DTS holds: re-enabling
+/// B-frames would push the proxy's last PTS past the source duration and the
+/// auto-pause last-frame snap would land two frames early. A denser-keyframe
+/// proxy is ~50% larger, but proxies are local-only and export re-encodes. See
+/// ADR 0008.
+/// Shared with the quick (scrub) proxy.
 pub const PROXY_GOP_FRAMES: u32 = 6;
 
-/// Bump whenever the proxy ffmpeg args change in a way that affects
-/// playback / scrub behavior. `io::load_from_dir` compares each
-/// `MediaItem.proxy_format_version` against this constant on open
-/// and invalidates older proxies so the existing background job
-/// re-encodes them. See `docs/render.md` (P1).
+/// Bump whenever the proxy ffmpeg args change in a way that affects playback,
+/// scrub, or color: `io::load_from_dir` invalidates any proxy whose stored
+/// `proxy_format_version` is older, and the background job re-encodes it.
 ///
-/// Versions:
-///   0 — pre-versioning / legacy. ~8 s GOP from libx264 defaults.
-///   1 — `-g 30 -keyint_min 30` for ~1 s keyframe spacing; 540p cap.
-///   2 — 1080p cap (replaces 540p) for the PixiJS + WebCodecs renderer
-///       which uses the proxy as the master decode source for preview
-///       AND export. High profile / Level 4.2 / yuv420p so WebCodecs'
-///       `avc1.640028` config decodes universally.
-///   3 — GOP scales with source fps (`-g <round(fps)>`) so 60 fps
-///       source proxies stay at 1 s GOP, not 0.5 s. See ADR 0003.
-///   4 — `-bf 0` disables B-frames in the proxy. Preset-fast's default
-///       3 B-frames carries a 2-frame CTS reorder offset through to
-///       the proxy: the proxy's last frame's PTS lands ~67 ms past
-///       the source's mvhd duration (which is what ffprobe reports
-///       as `format.duration` and what `MediaItem.duration_us` /
-///       layer `t_end_us` are sized to). The renderer's auto-pause
-///       snap then targets the source-time corresponding to
-///       `t_end_us − 1 µs`, which falls in the THIRD-to-last frame's
-///       interval because the trailing two frames sit past the
-///       clip's playable range. Disabling B-frames in the proxy
-///       eliminates the reorder offset entirely — every frame's
-///       PTS equals its DTS, the proxy's last frame lands inside
-///       `t_end_us`, and the snap correctly paints it. Proxies are
-///       local-only preview artifacts so the ~10–20 % size hit is
-///       acceptable.
-///   5 — short fixed GOP (`-g {PROXY_GOP_FRAMES} -keyint_min …`)
-///       replacing the `round(fps)` ~1 s GOP, so any scrub target
-///       decodes at most a few frames from its keyframe — frame-
-///       accurate live scrubbing. `-bf 0` retained. ~50% larger
-///       proxy; export unaffected (re-encodes). See ADR 0008.
-///   6 — export master: cap raised 1080p->2160p (source-resolution export,
-///       no longer downscaled to 1080p for 4K projects), `-level:v` dropped
-///       so 4K H.264 gets a valid auto level (L5.1, `avc1.640033`), CRF
-///       22->18 (the proxy is now a pure export intermediate, not also a
-///       preview artifact). Preview reads the quick proxy instead. See
-///       ADR 0011.
-///   7 — source color tags asserted on the encode (`source_color_args`) +
-///       `+write_colr`, so the proxy mp4 carries a colr atom. Without it
-///       mediabunny (colr-only, no VUI parsing) returned a null colorSpace
-///       and every proxy decode fell back to bt709/limited — full-range and
-///       601 proxies were misread (ADR 0014's full-range follow-up).
+/// Current format: export master, source-resolution H.264 capped at 2160p,
+/// High profile, `-bf 0` (PTS=DTS), short fixed GOP (`PROXY_GOP_FRAMES`), and
+/// source color tags asserted with `+write_colr` so mediabunny reads a `colr`
+/// atom. See ADR 0008, 0011, 0014.
 pub const PROXY_FORMAT_VERSION: u32 = 7;
 
 /// Output-side ffmpeg args asserting the SOURCE's ffprobe color tags on a
@@ -133,15 +83,11 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     // Wipe any prior interrupted attempt.
     let _ = tokio::fs::remove_file(&tmp).await;
 
-    // -vf scale=-2:'min(ih,N)' caps height at PROXY_HEIGHT_CAP without
-    // upscaling sources that are already smaller; width auto-rounded to
-    // even (libx264 requires even dims). High profile + Level 4.2 +
-    // yuv420p gives WebCodecs a universally-decodable `avc1.640028`
-    // stream. GOP = PROXY_GOP_FRAMES (short, fixed) keeps a keyframe
-    // every few frames so any scrub target decodes at most a handful of
-    // frames from its IDR — frame-accurate live scrubbing (ADR 0008).
-    // -movflags +faststart puts the moov atom up front so the renderer
-    // can parse the file before it's fully written.
+    // `scale=-2:'min(ih,N)'` caps height without upscaling; the `-2` rounds
+    // width to even (libx264 requires even dims). High profile + yuv420p give
+    // WebCodecs a universally-decodable `avc1.640028` stream; `+faststart`
+    // puts the moov atom up front so the renderer can parse before the write
+    // completes. Height-cap / GOP / `-bf 0` rationale: see the constants above.
     let scale_filter = format!("scale=-2:'min(ih,{PROXY_HEIGHT_CAP})'");
     let gop = PROXY_GOP_FRAMES.to_string();
     let input = media.path_abs.clone();
