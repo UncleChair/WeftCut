@@ -82,8 +82,8 @@ that carry one (mkv).
 Export decode dispatch sits ON the inherent floor across the timeline
 shapes that used to thrash (single clip, sequential source re-use,
 different-phase overlap, mid-GOP range entry) — measured via the
-`__weftcutExportPerf` counters with
-`e2e/tools/perf_export_redundancy.e2e.js`. The phase-keyed pipeline
+worker's `__weftcutExportPerf` counters during development. The
+phase-keyed pipeline
 grouping in [`render.md`](render.md) collected the old "up to ~4.35×"
 lever; what remains is inherent cost, not waste: a different-phase
 overlap decodes one pass per phase (sharing would need a ring deeper
@@ -123,8 +123,8 @@ If profiling ever justifies it, the staged plan:
    `colorSpace` is bt709/limited, keep the snapshot for everything
    else. One branch plus one analyzer run; no custom shaders, the
    conformance gate stays untouched.
-2. **`importExternalTexture` as last resort.** A standalone POC
-   (`apps/desktop/e2e/tools/iso_importexternaltexture.e2e.js`) confirms
+2. **`importExternalTexture` as last resort.** A standalone POC (run
+   during development via a since-retired diagnostic) confirmed
    Chromium/Electron HONORS the matrix through `importExternalTexture` +
    `textureSampleBaseClampToEdge` (601 and 709 sample to distinct RGB),
    so full zero-copy is *possible* without losing color correctness.

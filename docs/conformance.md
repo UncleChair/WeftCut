@@ -42,7 +42,6 @@ apps/desktop/
         color_manifest.json        # patch layout for color-conformance (generated)
         .gitkeep
     scripts/                       # standalone color diagnostics (color-*.mjs)
-    tools/                         # one-shot probes/experiments (*.e2e.js)
   native/src/bin/
     media_conformance.rs           # ffmpeg-backed analyzer binary
 ```
@@ -66,12 +65,12 @@ Requires `go` and `ffmpeg` on PATH.
 
 | Clip family | Examples | Used by |
 |---|---|---|
-| Counter-burned H.264 | `test_1080p_{30,60,120}fps.mp4`, `.mkv` | `conformance.e2e.js`, `export_overlap_same_source.e2e.js`, `tools/perf_export_redundancy.e2e.js` |
+| Counter-burned H.264 | `test_1080p_{30,60,120}fps.mp4`, `.mkv` | `conformance.e2e.js`, `export_overlap_same_source.e2e.js` |
 | EOS-tail geometry | `test_1080p_30fps_eostail.mp4` (keys at 0 s/5 s only, audio 1 s longer than video) | `export_eos_tail.e2e.js` |
 | Tone-marker audio | `test_1080p_{30,60,120}fps_audio.mp4` | `audio.spec.ts`, `export/export_range_audio.e2e.js` |
 | Color patches | `test_1080p_color_{709ltd,601ltd,709full,601full}.mp4` + `color_manifest.json` | `color_conformance.e2e.js` |
 | 10-bit gradient (HEVC) | `test_1080p_gradient10.mp4` | gradient baseline / proxy-fidelity probes |
-| 10-bit gradient (Hi10P H.264) | `test_1080p_gradient10_h264.mp4`, `test_1080p_gradient10_h264_bf.mp4` (long-GOP + B-frames), `test_2160p_gradient10_h264.mp4` (4K ring-cap case) | `export_10bit.e2e.js`, `tools/iso_tenbit_gl_parity.e2e.js`, `tools/float16_probes.e2e.js` |
+| 10-bit gradient (Hi10P H.264) | `test_1080p_gradient10_h264.mp4`, `test_1080p_gradient10_h264_bf.mp4` (long-GOP + B-frames), `test_2160p_gradient10_h264.mp4` (4K ring-cap case) | `export_10bit.e2e.js` |
 | 10-bit gradient (AV1) | `test_1080p_gradient10_av1.mp4` (SVT-AV1) | `export_10bit.e2e.js` (AV1-10 source admission) |
 | ProRes MOV | `test_1080p_30fps_prores.mov` | import routing smoke (not a conformance gate) |
 | Still-image chart set | `test_chart_320x240.{png,jpg,webp,bmp,gif,tiff}` + `_manifest.json` | `ui/layers.e2e.js` |
@@ -133,11 +132,6 @@ share a merged-range pipeline — see [`render.md`](render.md)); a 2 s-offset
 copy must complete with each clip on its own source frames (the overlap
 region best-matches the shifted index). The pre-fix failure was a frame
 counter frozen mid-export.
-
-`tools/perf_export_redundancy.e2e.js` is a non-gating companion: it reports
-decode dispatch against the inherent floor for single-clip, sequential
-re-use, different-phase overlap, and mid-GOP range-entry timelines via the
-worker's `__weftcutExportPerf` counters.
 
 The audio-only format matrix in `audio.spec.ts` runs audio-ONLY sources
 (wav/mp3/flac/m4a/ogg tone files) through import → conform → Audio layer →

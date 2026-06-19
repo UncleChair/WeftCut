@@ -61,11 +61,6 @@ export class WebviewWindow {
   async center(): Promise<void> { await window.api.win.act(this.label, 'center') }
   async setFocus(): Promise<void> { await window.api.win.act(this.label, 'focus') }
 
-  // Callers pass a lifecycle event name to be notified of create/failure. The
-  // Electron secondary-window lifecycle isn't bridged here, so this is a no-op
-  // that keeps the signature (load failures log in main).
-  once(_event: string, _cb: (...a: unknown[]) => void): void { /* no-op */ }
-
   // Returns a handle if the labelled window exists, else null. Mirrors the
   // shape PerfHUD consumes (it calls .then() on the result).
   static async getByLabel(label: string): Promise<WebviewWindow | null> {
