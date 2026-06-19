@@ -36,12 +36,17 @@ S6 exit criteria (spec §9): CI matrix (Tasks 1–9) + cut-over (Task 10). Cut-o
   loopback WebSocket — merged from `wt1`, see `docs/export-ipc-transport.md`.)
 - **Drag-drop import: DEFERRED BUG** — see below.
 
-## DEFERRED BUG: Windows drag-drop file import does not work
+## ROOT CAUSE FOUND: Windows drag-drop blocked by UIPI when Electron runs elevated
 
-**Status:** open, deferred (decided 2026-06-19). NOT cut-over-blocking — the
-"Import media…" dialog is a working import path. Drag-drop was the Tauri build's
-convenience path (`media_drop.rs` + WebView2 `postMessageWithAdditionalObjects`);
-on Electron it does not yet work on Windows.
+**Status:** ROOT CAUSE CONFIRMED 2026-06-19 — **NOT a code bug.** The drag-drop
+code is correct; the OS was blocking the drag because the Electron process ran
+**elevated (High integrity / "Run as administrator")** while Explorer runs at
+Medium integrity. Windows **UIPI (User Interface Privilege Isolation)** silently
+drops drag-drop messages from a lower-integrity source to a higher-integrity
+target before they reach Blink. **Fix: launch from a non-elevated terminal.**
+(The "Import media…" dialog was always a working alternate import path; on the
+Tauri build the convenience path was `media_drop.rs` + WebView2
+`postMessageWithAdditionalObjects`.)
 
 ### Symptom
 Dragging a file from Explorer onto the media pool does nothing. During the drag
@@ -51,7 +56,30 @@ in the renderer at all** — instrumented `dragenter`/`dragover`/`drop` at the
 drag is not reaching the web contents; this is NOT a path-resolution or import
 bug (the import chain itself works — see below).
 
-### Ruled out (each tested by building + a real manual drop on Windows 11)
+### Confirmed root cause (2026-06-19): UIPI / elevated process
+Measured the live processes' integrity levels (token `TokenIntegrityLevel` SID):
+- electron main process: `S-1-16-12288` = **HIGH (elevated / Administrator)**
+- explorer.exe: `S-1-16-8192` = MEDIUM (normal user)
+
+The dev terminal that ran `npx electron .` was elevated, so the Electron window
+ran at High integrity. Windows UIPI blocks drag-drop from Medium-integrity
+Explorer to the High-integrity window → forbidden cursor + zero drag events. Every
+prior manual test was UIPI-blocked while the code was correct. Verified: launching
+from a NON-elevated terminal makes drag-drop work end-to-end (probe shows
+`dragenter`/`dragover`/`drop` firing with `types=["Files"]`, highlight appears,
+import succeeds).
+
+**Fix (dev):** run the dev app from a non-elevated terminal (`cd apps/desktop;
+npx electron .`). If VS Code / Windows Terminal was opened "as administrator", its
+integrated terminal inherits elevation — use a fresh normal shell.
+
+**Product risk:** a shipped user who uses "Run as administrator" hits the same
+break. Default install/launch is Medium (no `requireAdministrator` manifest), so
+most users are unaffected. To survive an elevated launch, call
+`ChangeWindowMessageFilterEx` on the window HWND to allow `WM_DROPFILES` (0x0233),
+`WM_COPYDATA` (0x004A), and `WM_COPYGLOBALDATA` (0x0049) through UIPI.
+
+### Previously ruled out (all correct — none was the cause; the cause was UIPI above)
 - **`-webkit-app-region: drag` drag region** — disabling the preload's drag-region
   CSS injection entirely did NOT restore drops. (It's titlebar-scoped anyway:
   `app-header`/`agent-titlebar`/`startup-titlebar`, not the media pool.)
@@ -78,12 +106,11 @@ fixed / at any future `src/**` pass.)
   asserts media count grows) — green in CI. Only the OS-drop → drag-event step is
   broken.
 
-### Next steps when picking this up
-1. Find why NO drag events reach the renderer on this Windows + Electron 42 setup
-   (not drag-region, not DevTools, not frameless). Candidates: build-run vs
-   packaged-app difference; a minimal-repro Electron window to bisect window
-   options (`sandbox`, `webSecurity`, the custom protocols); whether the OLE drop
-   target is registered on the right HWND (Win32 `RegisterDragDrop`).
-2. Once events fire, `wireFileDrop()` should resolve + import correctly (the
-   #44600 fix is already there).
-3. Then delete the dead `onDrop` getPathForFile branch in `src/App.tsx`.
+### Remaining cleanup (root cause is found — see above)
+1. ~~Find why NO drag events reach the renderer~~ **DONE: UIPI / elevated launch**
+   (see "Confirmed root cause" above). No code change needed for the dev fix —
+   launch non-elevated. `wireFileDrop()` resolves + imports correctly once events
+   fire (the #44600 fix is already there).
+2. Delete the dead `onDrop` getPathForFile branch in `src/renderer/App.tsx`.
+3. Optional (only if elevated launch must be supported): `ChangeWindowMessageFilterEx`
+   on the window HWND to whitelist the drag-drop window messages past UIPI.
