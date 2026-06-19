@@ -3,7 +3,7 @@
 // `native/src/jobs/conform.rs`). Loop-read discipline per the weftcut-media://
 // ~1 MB 206 cap: a single Range response may come back short, so reads
 // re-issue until the exact byte count arrives (same rule as
-// `AssetRangeSource`).
+// `MediaRangeSource`).
 
 export interface ConformHeader {
   version: number;

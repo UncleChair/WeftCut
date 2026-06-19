@@ -404,9 +404,10 @@ dispatch vs the single-clip baseline, and offset completion + shifted
 frame alignment in the offset clip's exclusive region.
 
 With this grouping, dispatch sits on the inherent floor for every
-forward-marching timeline shape (`e2e/tools/perf_export_redundancy.e2e.js`
-measures single-clip, sequential re-use, different-phase overlap, and
-mid-GOP range entry against their floors via `__weftcutExportPerf`).
+forward-marching timeline shape — single-clip, sequential re-use,
+different-phase overlap, and mid-GOP range entry, each measured against
+its floor via the worker's `__weftcutExportPerf` counters during
+development.
 Source time per pipeline is `t + phase`, monotonic in `t`, so backward
 re-seeks never fire in normal export; the residual costs — one decode
 pass per phase, and the GOP-key prefix at a mid-GOP entry — are
@@ -513,10 +514,12 @@ composite. The encode exit diverges at three points:
   libsvtav1 software fallbacks). Raw-invoke IPC is the fallback
   transport if the loopback WebSocket cannot be established.
 
-The parity gate (`iso_tenbit_gl_parity.e2e.js`) validates that the
-WebGL2 f16 ingest and pack fragment passes agree with the CPU
-`yuv10.ts` reference on pixel values within the rounding margin for
-known inputs. The end-to-end gate (`export_10bit.e2e.js`) exports a
+The CPU `yuv10.ts` reference (the BT.709/601 matrix constants, the
+sample packing, and the round-trip rounding margin) is pinned by the
+colocated unit test `yuv10.test.ts`; the WebGL2 f16 ingest and pack
+fragment passes were checked against it on known inputs during
+development via a since-retired diagnostic. The standing guard is the
+end-to-end gate (`export_10bit.e2e.js`), which exports a
 Hi10P H.264 source, an AV1 10-bit source, and a 4K Hi10P source (the
 ring cap's entry-floor case) through the full 10-bit path and confirms
 distinct-step counts above the 8-bit ceiling at the analyzer's

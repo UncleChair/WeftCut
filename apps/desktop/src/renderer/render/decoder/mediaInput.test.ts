@@ -29,7 +29,7 @@ describe.each([["tiny.mp4"], ["tiny.mkv"]])("openMediaInput(%s)", (name) => {
     expect(first!.data.byteLength).toBeGreaterThan(0);
 
     // Laziness mechanism: every read went through a bounded Range request —
-    // AssetRangeSource never issued an unranged full-file fetch (the access
+    // MediaRangeSource never issued an unranged full-file fetch (the access
     // pattern that would blow the heap). The heap-flat-regardless-of-duration
     // invariant itself is the runtime PerfHUD soak (see the plan); a
     // sub-cache-size fixture is read whole either way, so byte-count can't
