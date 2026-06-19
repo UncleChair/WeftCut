@@ -7,7 +7,7 @@ import { openMediaInput } from "./mediaInput";
 
 function fixture(name: string): Uint8Array {
   const p = fileURLToPath(
-    new URL(`../../../fixtures/media/${name}`, import.meta.url),
+    new URL(`../../../../fixtures/media/${name}`, import.meta.url),
   );
   return new Uint8Array(readFileSync(p));
 }
