@@ -5,7 +5,7 @@
 // the WebCodecs decoder then picks an implementation-defined matrix — which can
 // disagree with how ffmpeg and other players interpret the SAME bytes. The
 // media-conformance harness caught exactly this: an untagged BT.601 clip that
-// WeftCut's WebView2 decoder read as BT.709, shifting every color, while ffmpeg
+// WeftCut's Chromium/Electron decoder read as BT.709, shifting every color, while ffmpeg
 // read it as 601. Filling an explicit, resolution-keyed default makes decode
 // deterministic and aligned with the rest of the ecosystem (the same heuristic
 // ffmpeg/libavcodec use): BT.709 for HD (>=720 lines), BT.601 (smpte170m) for
@@ -22,7 +22,7 @@
 //   3. The resolution-keyed default (HD→bt709, SD→smpte170m, limited range).
 // Only the fields each layer omits fall through to the next, so a partial tag
 // keeps what it has and only fills what is missing. NOTE: the WebCodecs
-// decoder follows this config over the bitstream VUI (verified in WebView2),
+// decoder follows this config over the bitstream VUI (verified in Chromium/Electron),
 // so getting these layers right is load-bearing, not cosmetic — see ADR 0014.
 
 /// Return `config` with `colorSpace` fields filled from `sourceColor` (ffprobe)

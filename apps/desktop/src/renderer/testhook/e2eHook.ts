@@ -3,7 +3,7 @@
 // absent from normal production bundles (the dynamic import behind that static
 // check is dead-code-eliminated). Lets the WebDriver spec drive a real
 // new-project -> import -> place -> export through the SAME code paths the UI
-// uses, in the real WebView2.
+// uses, in the real Electron renderer.
 //
 // Two-part because the editor (App, where the export lives) only mounts AFTER a
 // project is open: main.tsx installs `newProjectAndEnter` (create workspace +
@@ -124,7 +124,7 @@ export interface E2EHook {
   }): Promise<void>;
   /// Drive the REAL `MotifSprite` (Task A) over a built-in motif at two
   /// layer-relative times and read back the interior pixel of each bound
-  /// raster. Exercises the full sprite chain in real WebView2:
+  /// raster. Exercises the full sprite chain in real Electron renderer:
   /// `update(view, tInLayerUs, durationUs)` → frame index → `frameTimeSec` →
   /// `resolveMotifFrame` → `rasterMotifFrame` (CDP) → bound `Texture`. The spec
   /// asserts the two frames differ (the motif animated across the
@@ -173,7 +173,7 @@ export interface E2EHook {
   cacheKeyForLayer(layerId: string): Promise<string | null>;
   /// Add a motif layer at t=0 with the given duration and return its layerId.
   /// Thin wrapper over the `add_motif` IPC so e2e specs don't need raw
-  /// Tauri invoke access. Only available after the editor mounts.
+  /// backend invoke access. Only available after the editor mounts.
   addMotifLayer(args: {
     motifId: string;
     durationUs: number;
@@ -522,8 +522,8 @@ function waitForMediaExportReady(mediaId: string, timeoutMs: number): Promise<vo
 
 /// Root-side: expose the Motifs capture pipeline to WebDriver specs.
 /// Installs `window.__weftcutTest.captureMotifFrame(...)` which drives the
-/// Rust `motif_capture_frame` IPC command (Approach A: hidden WebView2 host
-/// window + `motif:` scheme + CDP `Page.captureScreenshot`). Returns the raw
+/// `motif_capture_frame` IPC command (offscreen Electron window
+/// + `motif:` scheme + CDP `Page.captureScreenshot` via webContents.debugger). Returns the raw
 /// base64 PNG string so the spec can compare, hash, and decode without
 /// importing bundled modules (browser.execute is closed-world).
 ///

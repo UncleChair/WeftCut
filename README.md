@@ -10,13 +10,13 @@ Most editors bolt AI on as features. WeftCut exposes the editor *as* a tool surf
 
 | Layer | Choice |
 |---|---|
-| Shell | Tauri 2 (Rust core, system webview UI) |
-| UI | React 19 + `@pixi/react` in the webview |
+| Shell | Electron (Rust core via a napi addon, Chromium UI) |
+| UI | React 19 + `@pixi/react` in the renderer |
 | Renderer | PixiJS v8 + WebCodecs (preview on `<canvas>`, export in a Worker on `OffscreenCanvas`) |
 | Audio export + final mux | ffmpeg via `ffmpeg-sidecar` |
 | Container demux/mux | `mediabunny` (WebCodecs pipeline; MP4/MOV + Matroska/WebM) |
 | Subtitles | `jassub` (libass-wasm) |
-| Agent protocol | MCP over SSE (`rmcp` 0.1.x) |
+| Agent protocol | MCP over streamable-HTTP (`@modelcontextprotocol/sdk`, hosted in the Electron main) |
 | UI i18n | `i18next` + `react-i18next` (en-US, zh-CN) |
 | Optional cloud | OpenAI (Whisper transcription, tts-1 TTS) — user-supplied key |
 
@@ -44,9 +44,10 @@ No local AI models. No bundled Chromium. No server backend.
 Prerequisites — see [docs/setup.md](docs/setup.md) for per-OS install commands:
 
 - **Rust** (stable, via `rustup`)
-- **MSVC Build Tools** (Windows) / **Xcode CLT** (macOS) / **webkit2gtk-4.1** + build tools (Linux)
+- **MSVC Build Tools** (Windows) / **Xcode CLT** (macOS) / build tools (Linux)
 - **Node 20+**
-- **WebView2** runtime (preinstalled on Windows 11)
+
+Electron bundles its own Chromium, so there is no per-OS webview runtime to install.
 
 After installing prerequisites, from the repo root (run `init-dev` once after
 cloning — it checks the toolchain and generates placeholder icons not stored
@@ -68,7 +69,7 @@ npm install
 npm run dev
 ```
 
-`npm run dev` builds the Rust core, starts Vite, and opens the Tauri window.
+`npm run dev` builds the Rust core, starts Vite, and opens the Electron window.
 ffmpeg is auto-downloaded on first run via `ffmpeg-sidecar`; if that fails
 behind a SOCKS proxy, see the ffmpeg section in [setup.md](docs/setup.md).
 

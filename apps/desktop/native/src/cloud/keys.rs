@@ -4,7 +4,7 @@
 //! keyed by the provider tag (lowercase, e.g. `"openai"`). Electron main
 //! populates the cache via `safeStorage` — no OS keyring dependency.
 //!
-//! The Tauri command surface only exposes presence/absence, not the key
+//! The napi command surface only exposes presence/absence, not the key
 //! material. Internal callers (e.g., the Whisper client) use [`get_key`].
 
 use std::collections::HashMap;

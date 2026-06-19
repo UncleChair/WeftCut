@@ -164,7 +164,7 @@ Mirror the actor 1:1:
 Read paths: `Project.groups` is returned as-is in `get_project`. There
 is no per-`Layer` `group_id` field on the wire — agents call
 `groups_list` once and build their own index, mirroring how
-`transitions` are surfaced. The existing `project:changed` Tauri event
+`transitions` are surfaced. The existing `project:changed` event
 covers group mutations.
 
 ## Import auto-pair

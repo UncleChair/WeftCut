@@ -3,7 +3,7 @@
 //! A Motif is a `manifest.json`-island + `index.html` (+ `assets/`) bundle. The
 //! brain — catalog, on-disk user store, authoring lifecycle, cross-project
 //! staleness, and the file watcher — lives here and is exposed via napi. The
-//! capture *driver* lives in the Electron main process (`electron/main/motif/`):
+//! capture *driver* lives in the Electron main process (`src/main/motif/`):
 //! an offscreen `BrowserWindow` + `webContents.debugger` CDP renders + screenshots
 //! a Motif, with bytes served by `motif_resolve_file` over `protocol.handle`.
 

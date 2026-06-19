@@ -4,46 +4,73 @@ WeftCut exposes itself as an MCP server. External agents (Claude Desktop, Cursor
 
 ## Transport & deployment
 
-- **SSE on `127.0.0.1:<auto-port>`** via rmcp 0.1.x's `SseServer`. Not stdio — the app isn't a child process of the agent. rmcp 1.x dropped SSE in favor of streamable-HTTP, but Claude Desktop is SSE-only for local servers, so 0.1.x is pinned deliberately.
-- Bearer token + auto-picked port are persisted to `<app_config_dir>/mcp_auth.json` on first launch and reused on every subsequent start so the Claude Desktop / Cursor snippet stays valid across restarts. If the saved port is occupied at bind time, the server falls back to a fresh OS-picked port and rewrites the file.
-- The change feed lives on a separate axum-backed `/events` SSE endpoint — rmcp 0.1.x has no per-session notification surface.
-- One server per running WeftCut instance. Multi-instance = multi-port; surfaced in the connection UI.
+- **Streamable-HTTP on `127.0.0.1:<auto-port>/mcp`**, hosted in the Electron
+  main process: an `express` app fronts the `@modelcontextprotocol/sdk`
+  `StreamableHTTPServerTransport`. Not stdio — the app isn't a child process of
+  the agent. Each `initialize` request mints a session (UUID in the
+  `Mcp-Session-Id` header); subsequent requests on that session route back to
+  the same transport. In-protocol notifications (the change feed below) ride the
+  same connection, so there is no separate event endpoint.
+- The Rust core is **transport-free**: it provides the tool catalog, resource
+  readers, prompts, and wire types, and the main process bridges to it over
+  dedicated napi methods (`mcpCatalog`, `mcpCallTool`, `mcpReadResource`,
+  `mcpListPrompts`, `mcpGetPrompt`). The Rust wire types serialize to exactly
+  the JSON shapes the SDK's low-level `Server` expects, so the main process
+  forwards Rust output verbatim.
+- Bearer token + auto-picked port are persisted to `<userData>/mcp_auth.json`
+  on first launch and reused on every subsequent start so the Claude Desktop /
+  Cursor snippet stays valid across restarts. If the saved port is occupied at
+  bind time, the server falls back to a fresh OS-picked port and rewrites the
+  file.
+- One server per running WeftCut instance. Multi-instance = multi-port;
+  surfaced in the connection UI.
 - For remote access (Tailscale, ngrok, codespace): out of scope. Localhost only.
 
 ## Authentication
 
-- Random 32-byte hex token generated on first launch, stored in `<app_config_dir>/mcp_auth.json` alongside the auto-picked port.
-- Token is **surfaced but not enforced** on inbound requests. rmcp 0.1.x's `SseServer` exposes no middleware hook (only `serve` / `serve_with_config` / `with_service` / `cancel` / `next_transport`), so localhost-only binding is the real isolation. Enforcement could ship via an axum reverse-proxy in front of rmcp's SSE server, but is deferred until the threat model justifies it; flipping the bind to `0.0.0.0` needs enforcement first.
-- No token visible in UI until the user opens the **Connect agent** panel — defends against video tutorials accidentally leaking it on stream.
-- A **Refresh** button in the Connect-agent panel rotates the bearer in place: the server stays bound on the same port and `mcp_auth.json` is rewritten with the new token.
+- Random 32-byte hex token generated on first launch, stored in
+  `<userData>/mcp_auth.json` alongside the auto-picked port.
+- The token is **enforced** on every `/mcp` request: the main process owns the
+  express middleware, so each request must carry `Authorization: Bearer <token>`
+  or it's rejected with `401`. The compare is constant-time (`timingSafeEqual`)
+  — not a meaningful attack surface for a 256-bit localhost token, but the
+  correct form.
+- **DNS-rebinding protection** is on: the transport rejects requests whose
+  `Host` header isn't the loopback bind (`allowedHosts` = `127.0.0.1:<port>` /
+  `localhost:<port>`), so a malicious web page the user visits can't POST to the
+  loopback port and drive the editor. The bearer is the primary gate; `Origin`
+  is left unrestricted so non-browser MCP clients still work.
+- No token visible in UI until the user opens the **Connect agent** panel —
+  defends against video tutorials accidentally leaking it on stream.
+- A **Refresh** button in the Connect-agent panel rotates the bearer in place:
+  the server stays bound on the same port and `mcp_auth.json` is rewritten with
+  the new token.
 
 ## Connection UX
 
 The app's **Connect agent** panel:
-- Shows SSE URL, change-feed `/events` URL, and bearer token (revealable by click).
+- Shows the server URL (`http://127.0.0.1:<port>/mcp`) and bearer token
+  (revealable by click).
 - One-click copy of:
-  - Just the SSE URL (for clients with their own auth UI).
+  - Just the URL (for clients with their own auth UI).
   - A complete Claude Desktop `claude_desktop_config.json` snippet.
   - A complete Cursor `mcp.json` snippet.
-  - A `curl -N` line for sanity-checking the SSE stream and the change feed.
-- Renders "starting…" while the server is still binding its port; polls `get_mcp_info` until the bind completes.
+- Renders "starting…" while the server is still binding its port; polls
+  `get_mcp_info` until the bind completes.
 
 Snippet example for Claude Desktop:
 ```json
 {
   "mcpServers": {
     "weftcut": {
-      "url": "http://127.0.0.1:50831/sse",
-      "transport": "sse",
+      "url": "http://127.0.0.1:50831/mcp",
       "headers": { "Authorization": "Bearer 8f3a..." }
     }
   }
 }
 ```
 
-The Cursor snippet uses `"type": "sse"` in place of `"transport"`. A
-`curl -N -H "Authorization: Bearer …" <sse_url>` line is also offered for
-sanity-checking the connection.
+The Cursor snippet has the same shape.
 
 ## Multi-agent semantics
 
@@ -52,15 +79,17 @@ Multiple agents may connect simultaneously. The single-writer actor (see [data-m
 Rules:
 - Tool calls are atomic: each call either commits or rejects; no half-applied edits.
 - Operations carry an `Actor` tag (`User` or `Agent { client }`) — surfaced in change events and the status-log console.
-- Agents may subscribe to the `/events` SSE change feed to see edits from other agents and the user.
+- Connected agents receive change notifications in-protocol (see the change feed below) to see edits from other agents and the user.
 - No edit-locks, no per-agent state. If two agents step on each other, the second to commit may fail invariants — expected, agents should retry or back off.
 - `lock_history(reason)` is the explicit cooperative pen: one client holds the undo pen during a batch and any other client (UI or agent) that touches the actor sees a `HistoryLocked` error until the lock releases.
 
 ## Tool surface
 
-The MCP tool surface is the same set of actor commands the UI calls,
-exposed through rmcp's `#[tool]` macros. Don't expose 100 tools;
-agents get confused. The current set is around 40, organised below.
+The MCP tool surface is the same set of actor commands the UI calls.
+A single declarative `tool_table!` macro in the Rust core single-sources
+both the advertised schemas and the name→handler dispatch, so a tool can
+never appear in one without the other. Don't expose 100 tools; agents
+get confused. The current set is around 40, organised below.
 
 ### Read (resources, not tools)
 
@@ -80,7 +109,7 @@ agents get confused. The current set is around 40, organised below.
 | `motifs://current` | full motif catalog (built-ins, installed, drafts) — same payload as `list_motifs`; `html` stripped |
 
 `media://*` reads return `404` with a hint pointing at the
-`media:job_complete` Tauri event when derivatives haven't been generated
+`media:job_complete` event when derivatives haven't been generated
 yet, so agents know to wait + retry rather than give up.
 
 ### Analysis tools
@@ -212,21 +241,27 @@ Tool errors carry structured detail:
 
 Give the agent something to act on, not a brick wall.
 
-## Change feed (SSE)
+## Change feed
 
-Subscribed agents receive a stream of compact events on the separate
-`/events` endpoint:
+Connected agents receive change notifications **in-protocol**, over the same
+streamable-HTTP connection — there is no separate event endpoint. The Rust core
+emits an `mcp:change` event when the project mutates; the Electron main process
+relays it to every live session as a `notifications/weftcut/change` MCP
+notification whose params are the compact change summary:
 
+```json
+{
+  "op_id": "...",
+  "actor": { "kind": "User" },
+  "summary": "Moved 'intro' to 4.20s",
+  "affected": [{ "kind": "Layer", "id": "7f3a..." }],
+  "timestamp": "...",
+  "diff_hint": { "kind": "Layer", "id": "7f3a..." }
+}
 ```
-event: change
-data: {"op_id":"...","actor":{"kind":"User"},"summary":"Moved 'intro' to 4.20s","affected":[{"kind":"Layer","id":"7f3a..."}],"timestamp":"...","diff_hint":{"kind":"Layer","id":"7f3a..."}}
-```
 
-Only one event type (`change`) flows over `/events` today. The stream
-sends a 15 s keep-alive and emits a `lagged` hint if the broadcast
-channel falls behind a subscriber. Agents can fetch the full new state
-by reading `project://current` after a change event arrives — events
-are a notification, not a sync protocol.
+Agents can fetch the full new state by reading `project://current` after a
+change notification arrives — the notification is a hint, not a sync protocol.
 
 ## Cloud APIs (optional, user-supplied)
 
@@ -247,11 +282,11 @@ serve the surface.
 providers (one row per `Provider` enum variant), not surfaces — so the
 user thinks in terms of "configure OpenAI" once.
 
-**Tool gating:** rmcp 0.1.x's `tool_box` macro registers tools at
-compile time with no per-session filter hook, so unconfigured cloud
-tools are always listed and fail with a structured `MissingKey` error
-that names the Settings panel. Revisit when rmcp gains per-session
-filtering.
+**Tool gating:** the `tool_table!` macro registers tools at compile
+time, and the catalog has no per-session filter today, so unconfigured
+cloud tools are always listed and fail with a structured `MissingKey`
+error that names the Settings panel. Hiding unsupported cloud tools
+from the catalog entirely is a possible refinement.
 
 These are MCP tools like any other; the agent doesn't see "cloud vs local" — just "this tool exists or doesn't."
 
@@ -265,12 +300,12 @@ filters by category (`Mcp`) and source (`Agent { client }`).
 
 ## Concurrency policy
 
-- Inbound SSE handler accepts concurrent requests; tool calls funnel into the project actor's single-writer inbox.
+- The express `/mcp` handler accepts concurrent requests across sessions; tool calls funnel into the project actor's single-writer inbox.
 - `lock_history(reason)` / `unlock_history()` lets a long batch hold the history pen so the UI doesn't show partial state as separate undo entries.
 - `dry_run` does not commit; it clones state and walks ops, halting at the first validation error.
 
 ## Security
 
-- Localhost-only binding. Flipping the bind to `0.0.0.0` is gated behind a confirmation dialog and needs token enforcement first.
-- Token surfaced in the connect panel; never logged in plaintext.
+- Localhost-only binding, bearer-enforced on every request, with DNS-rebinding protection on. Flipping the bind to `0.0.0.0` is gated behind a confirmation dialog.
+- Token surfaced in the connect panel; the connect snippet (which embeds the token) is printed to stdout only in unpackaged dev / e2e runs, never in a packaged build.
 - Cloud-API keys live in the OS keyring, not in project files.

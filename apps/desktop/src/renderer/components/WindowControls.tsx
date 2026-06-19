@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@/bridge/window";
 import { useTranslation } from "react-i18next";
 
-/// Caption buttons for the frameless window (`decorations: false`):
+/// Caption buttons for the frameless window (`frame: false`):
 /// minimize / maximize-restore / close, Windows-styled (square, flush to
 /// the corner, red close hover). Lives at the right end of whichever bar
 /// is acting as the title bar (app header, startup strip, agent strip).

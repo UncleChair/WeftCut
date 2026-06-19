@@ -97,8 +97,8 @@ export function subtitleBodyFromFile(
 }
 
 function extensionOf(path: string): string {
-  // Strip query / fragment defensively (asset URLs in Tauri may carry
-  // a port-token query string), then take the last `.`-tail and
+  // Strip query / fragment defensively (asset URLs may carry
+  // a query string), then take the last `.`-tail and
   // normalize to lowercase.
   const cleaned = path.replace(/[?#].*$/, "");
   const idx = cleaned.lastIndexOf(".");

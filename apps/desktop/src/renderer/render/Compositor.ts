@@ -747,7 +747,7 @@ export class Compositor {
           if (!clip) continue;
           this.updateClip(clip, layer, tUsSnapped, z++);
           // Skip empty-texture sprites — PixiJS v8's batched
-          // renderer crashes on the placeholder in some WebView2
+          // renderer crashes on the placeholder in some Chromium
           // configs. Once the first VideoFrame lands, updateClip
           // swaps to a real texture and the sprite pops in.
           if (clip.sprite.sprite.texture !== Texture.EMPTY) {

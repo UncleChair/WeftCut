@@ -1,6 +1,6 @@
 /// Frame-math primitives shared between the timeline UI, the preview
 /// overlay, and the playback engine. Mirrors
-/// `apps/desktop/src-tauri/src/state/time.rs`'s snap helpers — the math
+/// `apps/desktop/native/src/state/time.rs`'s snap helpers — the math
 /// must match byte-for-byte so the actor's commit-side snap and the
 /// UI's drag-preview snap produce identical results.
 

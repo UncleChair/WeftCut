@@ -27,8 +27,8 @@ session on 2026-05-14; sections map 1:1 to the questions resolved there.
 A new `LogBus` actor owns the system.
 
 - Ring buffer: in-memory `VecDeque<LogEntry>` capped at **1000 entries**.
-- Broadcast: `tokio::sync::broadcast` channel; the Tauri bridge
-  forwards each entry as a Tauri event (`log:entry`).
+- Broadcast: `tokio::sync::broadcast` channel; the Electron bridge
+  forwards each entry as an IPC event (`log:entry`).
 - Persistence: bounded `tokio::mpsc` channel feeds a dedicated writer
   task that appends to `<workspace>/Logs/session-<YYYYMMDD-HHMMSS>.jsonl`.
   Channel saturation emits a single `log_persist_lagged` error and
@@ -47,7 +47,7 @@ A new `LogBus` actor owns the system.
   by the workspace-open path and torn down by the workspace-close
   path, mirroring the rest of the workspace-scoped state.
 
-### Tauri surface
+### Backend surface
 
 Commands:
 - `log_list() -> Vec<LogEntry>` — seeds the frontend mirror on mount.
@@ -95,7 +95,7 @@ Notes:
 |---|---|---|---|
 | Shortcuts | `Shortcut` | `Info` on success, `Error` on failure | Start logged only when handler is async AND runs > 250 ms. No-ops (e.g. `deleteSelected` with nothing selected) at `Debug`. |
 | Import | `Import` | `Info`/`Error` | Started → Progress (byte copy) → Ok/Err. Grouped by `op_id`. |
-| Export | `Export` | `Info`/`Error` | Started → Progress(%) → Ok/Err. Existing Tauri events stay; `LogBus` is an additional sink. |
+| Export | `Export` | `Info`/`Error` | Started → Progress(%) → Ok/Err. Existing backend events stay; `LogBus` is an additional sink. |
 | Derivative jobs (proxy, thumbnails, waveform) | `Job` | `Info`/`Error` | Started → Ok/Err. Progress omitted for thumbnails. |
 | Cloud calls (transcribe, TTS) | `Job` | `Info`/`Error` | Started → Progress (provider events) → Ok/Err. |
 | Preview rebuild | `Job` | `Debug` | Fires on every commit — hidden by default. |
@@ -196,7 +196,7 @@ Deferred until agent-mode lands:
 
 ## Phasing
 
-1. **`LogBus` core.** Ring buffer + JSONL writer + Tauri commands +
+1. **`LogBus` core.** Ring buffer + JSONL writer + backend commands +
    `log:entry` event + tracing-subscriber bridge + project-mutation
    producer + minimal status bar (latest + error count, no expanded
    console).

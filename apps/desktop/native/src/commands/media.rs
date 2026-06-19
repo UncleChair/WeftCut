@@ -1,5 +1,5 @@
 //! S3 media commands — import lifecycle + derivative queries. Re-homed from the
-//! Tauri `commands.rs` onto the napi `Backend`. Gated behind `jobs`.
+//! legacy `commands.rs` onto the napi `Backend`. Gated behind `jobs`.
 
 use std::path::PathBuf;
 

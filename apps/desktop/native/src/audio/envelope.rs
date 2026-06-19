@@ -142,7 +142,7 @@ pub fn sample_pan(pan: &Animated<f64>, span_us: i64) -> Envelope {
 }
 
 /// Web Audio StereoPannerNode equal-power pan law. Verified branch-for-branch
-/// against Chromium's implementation (the engine WebView2 actually runs):
+/// against Chromium's implementation (the engine Electron actually runs):
 /// third_party/blink/renderer/platform/audio/stereo_panner.cc — mono
 /// pan_radian=(pan·0.5+0.5)·π/2; stereo pan≤0 pan_radian=(pan+1)·π/2 with
 /// out_l = l + r·gain_l; stereo pan>0 pan_radian=pan·π/2 with

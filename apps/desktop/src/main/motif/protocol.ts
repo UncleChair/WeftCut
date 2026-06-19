@@ -2,7 +2,7 @@ import { protocol } from 'electron'
 
 type Backend = import('@weftcut/core').Backend
 
-/// CSP served with every Motif document — identical to the Tauri `builtin::csp()`.
+/// CSP served with every Motif document.
 /// `default-src 'none'` denies network (no connect-src); inline script/style for
 /// self-contained Motifs; data: + motif: images/fonts.
 const MOTIF_CSP =

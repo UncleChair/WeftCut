@@ -28,7 +28,7 @@ settled the shape:
   WebSocket to a Rust sink sustains ~80–100 MB/s on the dev machine —
   below realtime but acceptable for offline export, and far past a
   raw-invoke IPC fallback.
-- **WebView2 has no hardware Hi10P decode**, only software. 10-bit pixels
+- **Chromium/Electron has no hardware Hi10P decode**, only software. 10-bit pixels
   do reach our memory via `VideoFrame.copyTo` of software-decoded I420P10
   frames; opaque hardware-decoded frames (HEVC Main10) cannot `copyTo`.
 - **HDR preview is blocked on the web platform.** WebGL cannot present

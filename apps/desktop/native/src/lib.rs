@@ -10,7 +10,7 @@
 mod app_settings;
 // `audio::{conform_reader, mix}` read the VCONF conform format produced by
 // `jobs`, and the `export` mixer consumes `audio`. With both deferred features
-// off there is no consumer, so gate the whole module to keep S2 `tauri`-free.
+// off there is no consumer, so gate the whole module to keep the base build lean.
 #[cfg(any(feature = "jobs", feature = "export"))]
 mod audio;
 mod cache;
@@ -35,7 +35,7 @@ mod mcp;
 #[cfg(feature = "motifs")]
 mod motifs;
 // The Motif *catalog* (manifest schema + built-ins) is pure serde data with no
-// `tauri`/capture dependency, and the core `state` actor reaches it to clamp
+// capture dependency, and the core `state` actor reaches it to clamp
 // Motif-layer content windows. Keep it reachable as `crate::motifs::catalog`
 // even when the capture subsystem (the rest of `motifs`) is gated off.
 #[cfg(not(feature = "motifs"))]

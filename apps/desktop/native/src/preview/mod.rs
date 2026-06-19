@@ -9,8 +9,8 @@
 //!
 //! Everything else that used to live here — `PreviewRenderer`,
 //! segmented cache (`segmented.rs`), encoder + manifest +
-//! queue + codec + failure machinery, the `preview:render_*` and
-//! `preview:segment_*` Tauri events — was deleted at cutover.
+//! queue + codec + failure machinery, and the per-render/per-segment
+//! progress events it emitted — was deleted at cutover.
 //! See `docs/preview.md` (now archival) for the
 //! prior design.
 

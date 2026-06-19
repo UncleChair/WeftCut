@@ -14,7 +14,7 @@ mute; the preview played per-layer `<audio>` elements with OS mixing
 and a 100 ms drift-snap. Three structural problems followed: the
 model fields were a silent no-op trap (worst for MCP agents, which get
 no signal that a accepted parameter is dead); preview and export were
-two unrelated audio engines fed by two independent decoders (WebView2
+two unrelated audio engines fed by two independent decoders (Chromium/Electron
 vs ffmpeg) with no shared evaluation of anything; and
 `amix=normalize=0` hard-clips at encode when overlapping layers sum
 past full scale.
@@ -38,8 +38,8 @@ clipping answer.
   to canonical PCM — 48 kHz, f32, interleaved, source channels capped
   at 2 (mono stays mono) — under `Cache/audio/{blake3}.conform` with a
   VPEAKS-style header. Both preview and export read conform and only
-  conform: the preview over `asset://` Range windows with zero decode
-  in the webview, the export mixer by direct frame-offset reads.
+  conform: the preview over `weftcut-media://` Range windows with zero decode
+  in the renderer, the export mixer by direct frame-offset reads.
   48 kHz makes the dominant source class (video audio) a
   decode-without-resample; f32 makes the cache format identical to
   both consumers' working format; resampling is paid once at import

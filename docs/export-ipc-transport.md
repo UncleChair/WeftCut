@@ -2,7 +2,7 @@
 
 The 10-bit export path (HEVC Main10 / AV1 10-bit) composites in a Web Worker, packs
 each frame to `yuv420p10le`, and streams it to a native `ffmpeg` encode over Electron
-IPC. The 8-bit path is separate (WebCodecs → mediabunny → fragmented-MP4 to disk) and
+main↔renderer IPC. The 8-bit path is separate (WebCodecs → mediabunny → fragmented-MP4 to disk) and
 does not use this transport.
 
 ## How a frame reaches ffmpeg

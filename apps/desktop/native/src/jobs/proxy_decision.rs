@@ -97,7 +97,7 @@ pub fn job_for(route: ProxyRoute) -> ProxyJob {
 /// **H.264 or AV1**.
 ///
 /// Export decodes the original inside a Web Worker. H.264 and AV1 are both
-/// verified to hardware-decode in Worker scope on Windows WebView2 (real
+/// verified to hardware-decode in Worker scope on Electron/Chromium (real
 /// `decode()` test + a full in-app AV1 export). HEVC and VP9 are NOT admitted:
 /// HEVC needs the OS "HEVC Video Extensions" (absent on the dev machine) and
 /// VP9 Worker decode is unverified — both route to an H.264 full proxy for

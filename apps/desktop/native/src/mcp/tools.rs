@@ -2329,7 +2329,7 @@ mod tests {
 
 // ============================================================
 // Cloud tools: transcribe_clip + synthesize_speech
-// Recovered from 97e3c7f2:apps/desktop/src-tauri/src/mcp/mod.rs
+// Recovered from 97e3c7f2:apps/desktop/native/src/mcp/mod.rs
 // and ported under the S4b transform (self.project → b.project()?,
 // self.cache → &b.cache, emit_via_app → b.log_slot.emit,
 // ok_text/ok_json → ToolResult::text/json, McpError → McpToolError).

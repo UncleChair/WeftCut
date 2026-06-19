@@ -1,4 +1,4 @@
-// Runtime encoder feasibility. WebView2's VideoEncoder.isConfigSupported is
+// Runtime encoder feasibility. Chromium/Electron's VideoEncoder.isConfigSupported is
 // optimistic (it can report `supported: true` for codecs that then fail or
 // stall at real encode — same hazard documented for decode in
 // reference_webcodecs_hi10p). So the dropdown is populated by
@@ -36,7 +36,7 @@ export async function probeEncoderSupported(
 /// One-frame real-encode smoke. Configures a VideoEncoder, encodes a single
 /// blank frame, and resolves true iff an encoded chunk arrives before the
 /// deadline or an error. Mirrors raceFirstDecode (probeSourceDecodable.ts).
-/// Catches WebView2's "isConfigSupported lied" case for AV1/HEVC.
+/// Catches Chromium/Electron's "isConfigSupported lied" case for AV1/HEVC.
 export async function smokeEncode(
   codec: CodecId,
   width: number,
@@ -75,7 +75,7 @@ export async function smokeEncode(
         height,
         bitrate: 2_000_000,
         framerate: fps,
-        // No hardwareAcceleration hint. WebView2/Edge treats "prefer-hardware"
+        // No hardwareAcceleration hint. Chromium/Electron treats "prefer-hardware"
         // as MANDATORY (a documented Chromium-on-Windows quirk) and rejects
         // codecs with no HW encoder — e.g. AV1, which then fails here even
         // though the libaom SOFTWARE encoder works. Letting the browser pick

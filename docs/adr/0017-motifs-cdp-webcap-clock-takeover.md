@@ -15,20 +15,23 @@ DOM-to-bitmap path that grants full web fidelity *and* clean pixels.
 ## Decision
 
 - **One capture path for every Motif.** A Motif is a normal HTML/CSS/JS page,
-  loaded as the **top-level document of a single reused hidden WebView2
-  window** and captured from Rust over the DevTools Protocol
-  (`Page.captureScreenshot` — a real browser raster, not a canvas read-back,
-  so taint never applies). There is no per-Motif engine field and no tiering.
+  loaded as the **top-level document of a single reused offscreen Electron
+  `BrowserWindow`** and captured over the DevTools Protocol via
+  `webContents.debugger` (`Page.captureScreenshot` — a real browser raster, not
+  a canvas read-back, so taint never applies). There is no per-Motif engine
+  field and no tiering.
 - **Determinism by clock takeover, not cooperation.** The harness stubs
   `performance.now`/`Date.now`/timers/`requestAnimationFrame`, seeks
   CSS/WAAPI animations via `getAnimations()` + `currentTime`, and drives the
   page to each composition frame: a Motif renders as a **pure function of
   `t`** and never advances itself. The seek stays re-seekable (pause + set,
-  never cancel/commit), and the gate is **perceptual** — live GPU-compositor
-  layers jitter antialiased edges sub-unit between captures of the same
-  frozen frame, so byte-identical is unachievable by construction.
-- **Window-as-isolation.** Isolation comes from the dedicated hidden WebView2,
-  capability denial on the `motif:` origin, and a `default-src 'none'` CSP
+  never cancel/commit). With the clock frozen and capture confined to the
+  `webContents.debugger` screenshot, the result is **byte-identical** — across
+  repeated runs *and* across operating systems (verified on a 3-OS
+  Windows/Linux/macOS matrix). Determinism is exact, not merely perceptual.
+- **Window-as-isolation.** Isolation comes from the dedicated offscreen
+  `BrowserWindow`, capability denial on the `motif:` origin, and a
+  `default-src 'none'` CSP
   (fully offline) — not from an inner sandboxed iframe.
 
 ## Alternatives considered and rejected

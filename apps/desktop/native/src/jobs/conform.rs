@@ -1,6 +1,6 @@
 //! Canonical audio conform — decodes any audio-bearing source once, at
 //! import, into 48 kHz f32le interleaved PCM (`VCONF` header + raw frames).
-//! Both the preview mixer (asset:// Range windows) and the export mixer
+//! Both the preview mixer (weftcut-media:// Range windows) and the export mixer
 //! (direct frame-offset reads) consume this file and never decode audio
 //! themselves. Spec: docs/audio.md §The conform cache.
 //!

@@ -71,7 +71,7 @@ interface RingEntry {
 /// Surfaced through the export `done` perf message (`window.__weftcutExportPerf`)
 /// so a test can see, without Worker console access, what colorSpace we asked
 /// the decoder for vs what the decoder actually stamped on its output frames —
-/// the crux of whether WebView2's VideoDecoder propagates config.colorSpace.
+/// the crux of whether Chromium/Electron's VideoDecoder propagates config.colorSpace.
 export interface ExportColorDiag {
   mediaId: string;
   /// `config.colorSpace` handed to `decoder.configure` (post-withDefaultColorSpace).
@@ -461,7 +461,7 @@ export class ExportSourceHandle implements DecoderHandle {
     if (!config) {
       throw new Error(`[weftcut/export] ${this.mediaId}: no decoder config`);
     }
-    // Untagged sources get a resolution-keyed default matrix so WebView2's
+    // Untagged sources get a resolution-keyed default matrix so Chromium/Electron's
     // decode matches the rest of the toolchain (see colorSpaceDefault).
     // `sourceColor` carries the source's ffprobe tags as the middle-priority
     // layer (below the decode target's own mediabunny colr tag, above the

@@ -6,9 +6,10 @@ audio IR + ffmpeg export + final mux, PixiJS + WebCodecs renderer
 (preview and export share one compositor), the Motif catalog
 (built-in + user-authored, with an agent authoring loop over MCP),
 cloud transcription + TTS
-behind a provider-agnostic trait surface, the MCP server with its
-edit / workflow / cloud tools and the `/events` change feed, the
-status-bar `LogBus` console, the i18n stack (en-US + zh-CN).
+behind a provider-agnostic trait surface, the MCP server (streamable-HTTP,
+hosted in the Electron main) with its edit / workflow / cloud tools and
+its in-protocol change feed, the status-bar `LogBus` console, the i18n
+stack (en-US + zh-CN).
 
 This doc tracks what's left between here and v1. Detail per area
 lives in the topical doc — this is the index.
@@ -124,7 +125,7 @@ If profiling ever justifies it, the staged plan:
    conformance gate stays untouched.
 2. **`importExternalTexture` as last resort.** A standalone POC
    (`apps/desktop/e2e/tools/iso_importexternaltexture.e2e.js`) confirms
-   WebView2 HONORS the matrix through `importExternalTexture` +
+   Chromium/Electron HONORS the matrix through `importExternalTexture` +
    `textureSampleBaseClampToEdge` (601 and 709 sample to distinct RGB),
    so full zero-copy is *possible* without losing color correctness.
    The design work it defers:
@@ -149,9 +150,9 @@ If profiling ever justifies it, the staged plan:
 
 ### macOS and Linux verification
 
-The PixiJS + WebCodecs path runs in WebView2 today; WKWebView and
-WebKitGTK both ship WebCodecs but neither has been exercised against
-the live app. The platform-specific work is:
+The PixiJS + WebCodecs path runs in Electron's bundled Chromium, the same
+engine on every OS, so browser behavior no longer diverges per platform.
+The platform-specific work that remains is:
 
 - Build + run the dev shell on each OS.
 - Confirm the WebCodecs / PixiJS / mediabunny / JASSUB stack decodes
@@ -159,21 +160,6 @@ the live app. The platform-specific work is:
 - Confirm `ffmpeg-sidecar`'s auto-download works on each platform
   (and that the proxy SOCKS fallback in [`setup.md`](setup.md) is the
   only required workaround).
-
-### MCP token enforcement
-
-The bearer token is generated and surfaced today but not enforced —
-rmcp 0.1.x's `SseServer` exposes no middleware hook. The realistic
-paths are:
-
-- **axum reverse-proxy** in front of rmcp's SSE server (~100-200 LoC,
-  must own the `/sse` stream + `/message` POST forwarding). Lands
-  today; defers until threat model justifies it.
-- **rmcp 1.x** with `tower::Layer`. Blocked on Claude Desktop adopting
-  streamable-HTTP for local servers.
-
-Flipping the bind from `127.0.0.1` to `0.0.0.0` needs enforcement
-first.
 
 ### Polish
 
@@ -202,11 +188,11 @@ folder" becomes a feature.
 
 ### MCP tool gating
 
-rmcp 0.1.x's `tool_box` macro registers tools at compile time with no
-per-session filter hook. Unconfigured cloud tools are listed and
-return `MissingKey` errors instead of being hidden. Revisit when rmcp
-gains per-session filtering — the alternative is omitting
-unsupported cloud tools from `list_tools` entirely.
+The `tool_table!` macro registers tools at compile time, and the
+catalog has no per-session filter. Unconfigured cloud tools are listed
+and return `MissingKey` errors instead of being hidden. The refinement
+is to omit unsupported cloud tools from the advertised catalog
+entirely, keyed on which providers are configured.
 
 ### Frame analysis for agents (`analyze_clip` / `compare_frames`) — unscheduled
 
@@ -240,7 +226,7 @@ validator. Additional types (wipe, slide, push) land as new
 - [ ] Linux: feature-complete or documented degraded mode.
 - [ ] CI green: build + lint + unit + integration on all platforms.
 - [ ] Code signing on Windows + macOS.
-- [ ] Auto-update wired (`tauri-plugin-updater`).
+- [ ] Auto-update wired (`electron-updater`).
 - [ ] Docs site live with Getting Started + agent connection guides.
 - [ ] At least one third-party MCP client tested (Cursor or Cline
       alongside Claude Desktop).
@@ -252,13 +238,13 @@ validator. Additional types (wipe, slide, push) land as new
 - Marketplace / remote sharing for user Motifs (the current feature is
   deliberately local-only — no registry).
 - Multi-window timelines.
-- Mobile companion (Tauri mobile or React Native).
+- Mobile companion (React Native or similar).
 - Remote-server MCP variant (Tailscale-friendly) with proper auth.
 - Plugin system for third-party effects via WebAssembly.
 - Collaboration (CRDT-based shared editing).
 - **HDR preview sink and wider-gamut working space.**
   The native encode exit exists: the 10-bit pipeline's Rust video sink
-  (`export/videosink.rs`, loopback WebSocket → ffmpeg rawvideo → Main10
+  (`export/videosink.rs`, native IPC → ffmpeg rawvideo → Main10
   encoder) ships the ffmpeg encoder surface that was the main prize of the
   old "native Rust export backend" item. What remains gated on the HDR-
   deliverable trigger is: (a) the **HDR preview sink** — `rgba16float`
