@@ -341,7 +341,7 @@ mod tests {
     #[test]
     fn golden_vectors_match_fixture() {
         let fixture: GoldenFixture = serde_json::from_str(include_str!(
-            "../../../src/keyframe/keyframeEditsGolden.fixture.json"
+            "../../../src/renderer/keyframe/keyframeEditsGolden.fixture.json"
         ))
         .expect("fixture parses");
         assert!(!fixture.cases.is_empty());
