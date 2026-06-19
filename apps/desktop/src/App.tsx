@@ -2371,6 +2371,7 @@ function MediaDropZone({ children }: { children: React.ReactNode }) {
         }
       }}
       onDrop={(e) => {
+        console.log('[drop-dbg] React onDrop fired', { types: Array.from(e.dataTransfer.types), files: e.dataTransfer.files.length });
         if (!isFileDrag(e)) return;
         e.preventDefault();
         depth.current = 0;
