@@ -1,0 +1,34 @@
+appId: dev.weftcut.desktop
+productName: WeftCut
+executableName: WeftCut
+directories:
+  output: release
+  buildResources: build
+files:
+  - out/**
+  - package.json
+  - "!**/*.map"
+  - "!**/node_modules/@weftcut/core/**"
+  - "**/node_modules/@weftcut/core/index.js"
+  - "**/node_modules/@weftcut/core/index.d.ts"
+  - "**/node_modules/@weftcut/core/*.node"
+asarUnpack:
+  - "**/*.node"
+extraResources:
+  - from: resources/ffmpeg/${os}
+    to: ffmpeg
+    filter: ["**/*"]
+win:
+  target: [nsis]
+  artifactName: ${productName}-${version}-${arch}.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+linux:
+  target: [AppImage, deb]
+  category: AudioVideo
+  artifactName: ${productName}-${version}-${arch}.${ext}
+mac:
+  target: [dmg]
+  category: public.app-category.video
+  identity: null   # unsigned in S6; ad-hoc

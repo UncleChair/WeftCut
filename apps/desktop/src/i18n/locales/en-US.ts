@@ -415,16 +415,12 @@ const enUS = {
     token_note:
       "Token enforcement isn't on yet — localhost-only binding is the active isolation. Don't expose the port to other machines until proper auth ships.",
     field: {
-      sse_url: "SSE URL",
-      events_url: "Change-feed URL",
+      url: "Server URL",
       bearer: "Bearer token",
     },
     snippets_heading: "Config snippets",
     snippet: {
-      claude: "Claude Desktop (claude_desktop_config.json)",
-      cursor: "Cursor (mcp.json)",
-      curl: "curl — MCP transport",
-      events_curl: "curl — change feed",
+      config: "MCP config (Claude Desktop / Cursor / any streamable-HTTP client)",
     },
   },
   settings: {

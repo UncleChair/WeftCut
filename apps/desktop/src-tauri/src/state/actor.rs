@@ -1671,7 +1671,7 @@ pub fn spawn(initial: Project) -> ProjectHandle {
         inbox: cmd_rx,
         events: event_tx.clone(),
     };
-    tauri::async_runtime::spawn(actor.run());
+    tokio::spawn(actor.run());
     ProjectHandle {
         tx: cmd_tx,
         events: event_tx,

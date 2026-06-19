@@ -1,0 +1,10 @@
+{
+  "name": "@weftcut/core",
+  "version": "0.0.0",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "files": ["index.js", "index.d.ts", "*.node"],
+  "napi": { "binaryName": "weftcut-core" },
+  "devDependencies": { "@napi-rs/cli": "^3.6.2" },
+  "scripts": { "build": "napi build --platform --release" }
+}

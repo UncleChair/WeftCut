@@ -84,11 +84,6 @@ export type ExportRequest =
       /// pack to yuv420p10le, stream to the Rust video sink. Absent/8 ⇒ the
       /// existing WebCodecs pipeline, untouched.
       bitDepth?: 8 | 10;
-      /// Rust sink endpoint (bitDepth 10 only). The worker WS-connects directly;
-      /// on connect failure it falls back to posting `chunk` events (raw
-      /// yuv420p10le frames) which the main thread routes to
-      /// export_video_sink_write.
-      videoSink?: { port: number; token: string };
       /// mediaIds whose ORIGINAL decodes 10-bit in-webview; these acquire
       /// originalAssetUrls + tenBitLane + preferSoftware.
       tenBitMedia?: Record<string, boolean>;
@@ -121,11 +116,10 @@ export type ExportEvent =
   | { type: "ready" }
   | { type: "progress"; framesEncoded: number; totalFrames: number }
   /// One sequential slice of the output file (fMP4, append-only) in the 8-bit
-  /// WebCodecs path, or a raw yuv420p10le frame in the 10-bit IPC fallback
-  /// (when the worker's WS connect to the Rust sink fails). The main thread
-  /// appends fMP4 slices to the temp file and routes 10-bit frames to
-  /// export_video_sink_write. Replies with `chunk-ack` in both cases;
-  /// backpressure semantics are identical.
+  /// WebCodecs path, or one raw yuv420p10le frame in the 10-bit native-encode
+  /// path. The main thread appends fMP4 slices to the temp file and forwards
+  /// 10-bit frames to export_video_sink_write. Replies with chunk-ack in both
+  /// cases.
   | { type: "chunk"; data: ArrayBuffer }
   /// Encode + mux complete; the temp file is fully written on the main side.
   /// `perf` carries aggregate decode/timing counters for the E2E harness.

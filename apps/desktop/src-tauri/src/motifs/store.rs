@@ -19,7 +19,7 @@ use super::catalog::{parse_manifest_island, Manifest, Motif};
 pub const DRAFTS_DIR: &str = "drafts";
 
 /// The global user-Motif store.
-/// Accessed by reference via `tauri::State<UserMotifStore>` — no `Clone`/`Arc` needed.
+/// Accessed by reference via the napi `Backend` state — no `Clone`/`Arc` needed.
 pub struct UserMotifStore {
     root: PathBuf,
 }

@@ -21,12 +21,3 @@ pub use bus::{EVENT_LOG_ENTRY, LogBus, LogBusSlot};
 pub use entry::{LogCategory, LogEntry, LogEntryInput, LogLevel, LogSource, OpState};
 pub use tracing_layer::LogBusLayer;
 
-/// Convenience: emit a log entry through an `AppHandle`. Used by
-/// producers (jobs, export, MCP server) that hold an `AppHandle` but
-/// don't manage their own `LogBusSlot` clone. No-op pre-workspace.
-pub fn emit_via_app(app: &tauri::AppHandle, input: LogEntryInput) {
-    use tauri::Manager;
-    if let Some(slot) = app.try_state::<LogBusSlot>() {
-        slot.emit(input);
-    }
-}

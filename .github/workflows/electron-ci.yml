@@ -1,0 +1,194 @@
+name: electron-ci
+
+on:
+  push:
+    branches: [migration/electron-napi]
+  pull_request:
+    branches: [migration/electron-napi]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: apps/desktop
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.20.0'
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+
+      # xvfb is required on Linux so the Electron app can open a display for
+      # offscreen CDP capture (no real display on GitHub runners).
+      - name: Linux deps (xvfb)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+
+      # npm ci at the workspace root: root package-lock.json covers all
+      # workspaces including apps/desktop. Running at apps/desktop would fail
+      # because there is no apps/desktop/package-lock.json.
+      - name: Install dependencies
+        working-directory: .
+        run: npm ci
+
+      - name: Build napi addon
+        run: npm run napi:build
+
+      # Fetch the platform-appropriate static ffmpeg binary into
+      # resources/ffmpeg/<os>/. This DRY script handles win/linux/mac and
+      # exercises the Linux + macOS branches for the first time in CI.
+      - name: Fetch ffmpeg
+        run: npm run fetch-ffmpeg
+
+      - name: Put bundled ffmpeg on PATH
+        # CI runners have no system ffmpeg; the Rust integration tests + the
+        # e2e app resolve "ffmpeg" via PATH. fetch-ffmpeg put it in resources/.
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cygpath -w "$PWD/resources/ffmpeg/win" >> "$GITHUB_PATH"
+          elif [ "$RUNNER_OS" = "Linux" ]; then
+            echo "$PWD/resources/ffmpeg/linux" >> "$GITHUB_PATH"
+          else
+            echo "$PWD/resources/ffmpeg/mac" >> "$GITHUB_PATH"
+          fi
+
+      # Build the renderer + main bundles with the E2E hook env var set.
+      # Must use bash shell so the inline env-var prefix works on Windows.
+      - name: Build app (E2E mode)
+        shell: bash
+        run: VITE_WEFTCUT_E2E=1 npm run electron:build
+
+      # Rust unit tests.  No xvfb needed (headless library tests, no display).
+      # Skipped on Linux — napi's Node-API symbols can't resolve in a standalone test binary
+      # there (Windows uses an import lib, macOS dynamic_lookup; Linux's loader fails at
+      # startup). The 587 tests are platform-independent and run on Windows + macOS; Linux
+      # still verifies the addon compiles (napi:build) and the cross-OS capture (e2e).
+      - name: Rust tests
+        if: runner.os != 'Linux'
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            macOS) export RUSTFLAGS="-C link-arg=-Wl,-undefined,dynamic_lookup" ;;
+          esac
+          cargo test --manifest-path src-tauri/Cargo.toml --lib --features jobs,export,mcp,cloud,motifs
+
+      # Full e2e suite via Playwright — includes s6-determinism.spec.ts which
+      # writes PNGs to determinism-artifacts/<process.platform>/ (win32/linux/darwin).
+      #
+      # SOFTWARE RENDERING EXPERIMENT (Task 8, run #1):
+      # Task 7 found --use-gl=swiftshader HANGS the offscreen CDP capture on
+      # Windows 11.  s6-determinism.spec.ts intentionally launches without any
+      # forced-swiftshader flags (see spec header).  On Linux we wrap with
+      # xvfb-run -a for a virtual framebuffer; on Windows/macOS the runner's
+      # native GPU stack is used.  This first CI run is an experiment to learn
+      # whether headless capture works on Linux/macOS runners and what the
+      # cross-OS SSIM margins are — threshold will be tuned after run #1.
+      - name: E2E tests (includes determinism capture)
+        shell: bash
+        env:
+          WEFTCUT_E2E_NO_EXPORT: '1'
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a npm run e2e:electron
+          else
+            npm run e2e:electron
+          fi
+
+      # Upload determinism PNGs so the compare job can fetch all three OSes.
+      # if: always() so a partial capture or test failure still uploads whatever
+      # PNGs were written — essential for diagnosing the first run.
+      - name: Upload determinism artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: determinism-${{ matrix.os }}
+          # process.platform values: win32 / linux / darwin
+          path: apps/desktop/determinism-artifacts/**
+
+      # Upload Playwright traces/reports for any failing specs.
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.os }}
+          path: apps/desktop/test-results/**
+
+      # Sign-free packaging. napi:build already ran above (its .node artefact
+      # persists in node_modules/@weftcut/core); skip re-compiling Rust by
+      # running electron:build (clean non-E2E renderer bundle, no
+      # VITE_WEFTCUT_E2E) then electron-builder directly.
+      - name: Package (unsigned)
+        run: npm run electron:build && npx electron-builder --publish never
+
+      - name: Upload installer
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.os }}
+          path: apps/desktop/release/*
+
+  # Cross-OS SSIM comparison.  Runs after all three build jobs finish
+  # (needs: build + fail-fast: false means all three attempt even if one fails).
+  compare:
+    needs: build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/desktop
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.20.0'
+
+      - name: Install dependencies
+        working-directory: .
+        run: npm ci
+
+      # Download all three per-OS determinism artifact bundles into dl/.
+      # The upload paths are apps/desktop/determinism-artifacts/<platform>/,
+      # which get stored by upload-artifact v4 without the leading path prefix;
+      # each artifact name is determinism-<os>  (e.g. determinism-windows-latest).
+      # After download-artifact v4 with merge-multiple: false, the layout is:
+      #   dl/determinism-windows-latest/<platform>/...
+      #   dl/determinism-ubuntu-latest/<platform>/...
+      #   dl/determinism-macos-latest/<platform>/...
+      # where <platform> is win32, linux, darwin from process.platform.
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: determinism-*
+          path: apps/desktop/dl
+          merge-multiple: false
+
+      # THRESHOLD NOTE (Task 8, CI run #13 GREEN):
+      # Tuned to 0.98 from the measured byte-identical result (SSIM = 1.0000
+      # across all cross-OS pairs win/linux, win/darwin, linux/darwin for the
+      # positive motif captures countdown + lower-third).  No forced SwiftShader
+      # was used — each OS uses its CI-default renderer under xvfb (Linux); the
+      # captures are still byte-identical, exceeding the perceptual expectation.
+      # Negative control diverges to ≤ 0.1566, proving the gate's teeth.
+      # 0.98 leaves headroom for future minor cross-OS drift while still
+      # catching real divergence (NEG floor ~0.16 is far below 0.98).
+      - name: Cross-OS SSIM compare
+        run: |
+          node e2e/lib/compare-determinism.mjs \
+            dl/determinism-windows-latest/win32 \
+            dl/determinism-ubuntu-latest/linux \
+            dl/determinism-macos-latest/darwin \
+            --threshold 0.98

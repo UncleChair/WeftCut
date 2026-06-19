@@ -28,20 +28,15 @@ pub const WHISPER_MAX_UPLOAD_BYTES: u64 = 25 * 1024 * 1024;
 const WHISPER_ENDPOINT: &str = "https://api.openai.com/v1/audio/transcriptions";
 const WHISPER_MODEL: &str = "whisper-1";
 
-/// Whisper transcription client. Construction is free — credentials are
-/// fetched per request via `http::bearer_auth` so a key change in Settings
-/// doesn't require restarting anything.
-pub struct OpenAiWhisper;
-
-impl OpenAiWhisper {
-    pub fn new() -> Self {
-        Self
-    }
+/// Whisper transcription client. Carries the API key resolved from the
+/// in-memory cache at construction time.
+pub struct OpenAiWhisper {
+    key: String,
 }
 
-impl Default for OpenAiWhisper {
-    fn default() -> Self {
-        Self::new()
+impl OpenAiWhisper {
+    pub fn new(key: String) -> Self {
+        Self { key }
     }
 }
 
@@ -67,7 +62,7 @@ impl Transcriber for OpenAiWhisper {
             .unwrap_or("audio.wav")
             .to_string();
 
-        let auth = bearer_auth(Provider::OpenAi)?;
+        let auth = bearer_auth(&self.key);
         let started = Instant::now();
         let mut attempt: u32 = 0;
         let response = loop {
@@ -153,19 +148,15 @@ pub const TTS_MAX_INPUT_CHARS: usize = 4096;
 pub const TTS_VOICES: &[&str] =
     &["alloy", "echo", "fable", "onyx", "nova", "shimmer"];
 
-/// OpenAI tts-1 client. Like `OpenAiWhisper`, construction is free —
-/// credentials are pulled per request via `http::bearer_auth`.
-pub struct OpenAiTts;
-
-impl OpenAiTts {
-    pub fn new() -> Self {
-        Self
-    }
+/// OpenAI tts-1 client. Carries the API key resolved from the in-memory cache
+/// at construction time.
+pub struct OpenAiTts {
+    key: String,
 }
 
-impl Default for OpenAiTts {
-    fn default() -> Self {
-        Self::new()
+impl OpenAiTts {
+    pub fn new(key: String) -> Self {
+        Self { key }
     }
 }
 
@@ -225,7 +216,7 @@ impl Synthesizer for OpenAiTts {
             response_format: "mp3",
             speed: req.speed,
         };
-        let auth = bearer_auth(Provider::OpenAi)?;
+        let auth = bearer_auth(&self.key);
         let started = Instant::now();
         let mut attempt: u32 = 0;
         let response = loop {
@@ -305,12 +296,12 @@ pub struct OpenAiConnectionInfo {
     pub model_count: usize,
 }
 
-/// Validate the configured OpenAI API key with a cheap GET /v1/models call.
+/// Validate the given OpenAI API key with a cheap GET /v1/models call.
 /// Returns model count on success; surfaces InvalidKey / RateLimited /
 /// network errors per the shared mapping. Used by the Settings → "Test"
 /// button so users learn about a bad key BEFORE the first agent call.
-pub async fn test_connection() -> Result<OpenAiConnectionInfo, CloudError> {
-    let auth = bearer_auth(Provider::OpenAi)?;
+pub async fn test_connection(key: &str) -> Result<OpenAiConnectionInfo, CloudError> {
+    let auth = bearer_auth(key);
     let response = shared_client()
         .get(MODELS_ENDPOINT)
         .header("Authorization", auth)
@@ -451,7 +442,7 @@ mod tests {
 
     #[tokio::test]
     async fn tts_rejects_empty_text() {
-        let tts = OpenAiTts::new();
+        let tts = OpenAiTts::new("test-key".into());
         let err = tts
             .synthesize(SynthesizeRequest {
                 text: String::new(),
@@ -465,7 +456,7 @@ mod tests {
 
     #[tokio::test]
     async fn tts_rejects_text_exceeding_cap() {
-        let tts = OpenAiTts::new();
+        let tts = OpenAiTts::new("test-key".into());
         let too_long = "a".repeat(TTS_MAX_INPUT_CHARS + 1);
         let err = tts
             .synthesize(SynthesizeRequest {
@@ -485,7 +476,7 @@ mod tests {
 
     #[tokio::test]
     async fn tts_rejects_unknown_voice() {
-        let tts = OpenAiTts::new();
+        let tts = OpenAiTts::new("test-key".into());
         let err = tts
             .synthesize(SynthesizeRequest {
                 text: "hello".into(),
@@ -499,7 +490,7 @@ mod tests {
 
     #[tokio::test]
     async fn tts_rejects_speed_outside_supported_range() {
-        let tts = OpenAiTts::new();
+        let tts = OpenAiTts::new("test-key".into());
         let err = tts
             .synthesize(SynthesizeRequest {
                 text: "hello".into(),

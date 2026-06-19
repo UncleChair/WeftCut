@@ -59,10 +59,6 @@ export interface RunExportInit {
   /// Output bit depth (8 = existing pipeline; 10 = f16/WebGL2 + native-encode).
   /// Absent ⇒ 8.
   bitDepth?: 8 | 10;
-  /// Native-encode sink connection details (port + token). Required when
-  /// `bitDepth === 10`; the Worker connects to this sink to stream encoded
-  /// frames instead of writing fMP4 chunks via `writeChunk`.
-  videoSink?: { port: number; token: string };
 }
 
 export interface RunExportResult {
@@ -189,7 +185,6 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     canvas: offscreen,
     motifFrames,
     bitDepth: init.bitDepth ?? 8,
-    ...(init.videoSink ? { videoSink: init.videoSink } : {}),
     ...(Object.keys(tenBitMedia).length > 0 ? { tenBitMedia } : {}),
   };
 

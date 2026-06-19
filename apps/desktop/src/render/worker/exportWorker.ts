@@ -44,7 +44,6 @@ import { EncoderSink } from "./encoder";
 import { exportFrameCount, frameTimeUs as gridFrameTimeUs } from "./frameGrid";
 import type { ExportEvent, ExportRequest } from "./protocol";
 import { PackYuv420p10 } from "../tenbit/PackYuv420p10";
-import { VideoSinkClient } from "./videoSinkClient";
 
 // PixiJS defaults to `BrowserAdapter`, which calls `document.*`
 // and `new Image()`. In a Worker neither exists, so any renderer
@@ -212,7 +211,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
 
   // 4. Encoder pipeline. Dims/fps come from the encoder config + output fps.
   // For the 10-bit path, encoding rides the Rust ffmpeg sink (PackYuv420p10
-  // + VideoSinkClient), so the WebCodecs EncoderSink is not created.
+  // + IPC write), so the WebCodecs EncoderSink is not created.
   const encoder = tenBit
     ? null
     : new EncoderSink({
@@ -224,13 +223,11 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
         onChunk: postChunk,
       });
 
-  // 4b. 10-bit-path resources: composite render target (rgba16float),
-  // YUV packer, and the loopback WS connection to the Rust sink.
-  // pack() ctor throws on odd-ish dims — that propagates out of runExport as
-  // an `error` event (desired; don't catch it here).
+  // 4b. 10-bit-path resources: composite render target (rgba16float) and
+  // YUV packer. pack() ctor throws on odd-ish dims — that propagates out of
+  // runExport as an `error` event (desired; don't catch it here).
   let compositeRT: RenderTexture | null = null;
   let pack: PackYuv420p10 | null = null;
-  let sinkClient: VideoSinkClient | null = null;
   if (tenBit) {
     compositeRT = RenderTexture.create({
       width: req.project.width,
@@ -238,14 +235,6 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
       format: "rgba16float",
     });
     pack = new PackYuv420p10(app.renderer as WebGLRenderer, outWidth, outHeight);
-    if (req.videoSink) {
-      try {
-        sinkClient = await VideoSinkClient.connect(req.videoSink.port, req.videoSink.token);
-      } catch (e) {
-        // eslint-disable-next-line no-console
-        console.warn("[weftcut/export] WS sink connect failed, falling back to IPC:", e);
-      }
-    }
   }
 
   // 5. Frame grid — driven by OUTPUT fps. The grid is time-based, so a lower
@@ -302,7 +291,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     if (cancelled) {
       // eslint-disable-next-line no-console
       console.log("[weftcut/export] cancelled");
-      cleanup({ encoder, compositor, pool: exportPool, app, sinkClient, pack, compositeRT });
+      cleanup({ encoder, compositor, pool: exportPool, app, pack, compositeRT });
       return;
     }
     const chunkEnd = Math.min(chunkStart + CHUNK_FRAMES, totalFrames);
@@ -372,7 +361,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     let waitMs = 0;
     for (let i = chunkStart; i < chunkEnd; i++) {
       if (cancelled) {
-        cleanup({ encoder, compositor, pool: exportPool, app, sinkClient, pack, compositeRT });
+        cleanup({ encoder, compositor, pool: exportPool, app, pack, compositeRT });
         return;
       }
       const tUs = frameTimeUs(i);
@@ -398,7 +387,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
 
       if (tenBit) {
         // 10-bit path: render into the rgba16float RenderTexture, pack to
-        // yuv420p10le, then stream to the Rust sink (WS) or fall back to IPC.
+        // yuv420p10le, then stream to the Rust sink over the chunk/ack IPC channel.
         app.renderer.render({ container: app.stage, target: compositeRT! });
         compositeMs += performance.now() - compT0;
 
@@ -407,16 +396,10 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
         captureMs += performance.now() - capT0;
 
         const encT0 = performance.now();
-        if (sinkClient) {
-          // WS.send() copies synchronously, so pack()'s reused buffer is safe
-          // to overwrite next iteration without an explicit copy here.
-          await sinkClient.write(bytes);
-        } else {
-          // IPC fallback: reuse the chunk/ack backpressure path; the main
-          // thread routes these bytes to export_video_sink_write. Must copy
-          // because postChunk transfers the buffer and pack() reuses its output.
-          await postChunk(bytes.slice());
-        }
+        // 10-bit frames go to the main thread over the chunk/ack channel, which
+        // forwards them to export_video_sink_write. Copy because postChunk
+        // transfers the buffer and pack() reuses its output.
+        await postChunk(bytes.slice());
         encodeMs += performance.now() - encT0;
       } else {
         // 8-bit path: render to the OffscreenCanvas, capture as a VideoFrame,
@@ -540,13 +523,11 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   );
 
   // 7. Finalize.
-  // 10-bit: drain + Normal-close the WS so the Rust sink signals EOF to
-  // ffmpeg and lets it write its trailing headers.
+  // 10-bit: all frames already streamed via the chunk/ack channel; the main
+  // thread calls exportVideoSinkFinish after receiving `done`.
   // 8-bit: flush the WebCodecs encoder and finalize the mediabunny mux
   // (flushes trailing fMP4 fragments through the same onChunk path).
-  if (tenBit) {
-    await sinkClient?.finish();
-  } else {
+  if (!tenBit) {
     await encoder!.finalize();
   }
   post({ type: "progress", framesEncoded: totalFrames, totalFrames });
@@ -571,7 +552,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   });
 
   // 8. Cleanup.
-  cleanup({ encoder, compositor, pool: exportPool, app, sinkClient, pack, compositeRT });
+  cleanup({ encoder, compositor, pool: exportPool, app, pack, compositeRT });
 }
 
 interface CleanupArgs {
@@ -579,7 +560,6 @@ interface CleanupArgs {
   compositor: Compositor;
   pool: ExportDecoderPool;
   app: Application;
-  sinkClient: VideoSinkClient | null;
   pack: PackYuv420p10 | null;
   compositeRT: RenderTexture | null;
 }
@@ -589,13 +569,9 @@ function cleanup({
   compositor,
   pool,
   app,
-  sinkClient,
   pack,
   compositeRT,
 }: CleanupArgs): void {
-  // Signal the sink (abort) before tearing down GL resources so that any
-  // in-flight write() throws immediately rather than touching a dead renderer.
-  sinkClient?.abort();
   pack?.dispose();
   compositeRT?.destroy(true);
   encoder?.dispose();

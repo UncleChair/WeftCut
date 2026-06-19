@@ -5,6 +5,7 @@
 
 pub mod autosave;
 pub mod migrate;
+#[cfg(feature = "jobs")]
 pub mod probe;
 
 use std::fs;
@@ -90,6 +91,9 @@ pub async fn load_from_dir(dir: &Path) -> Result<Project> {
     // job enqueueing picks them up for re-encoding. The
     // `proxy_format_version` stays as-recorded; the job's success patch
     // will bump it to the current version once regeneration completes.
+    // Proxy generation lives in `jobs`; with that subsystem gated off there
+    // is no proxy format to invalidate against.
+    #[cfg(feature = "jobs")]
     invalidate_stale_proxies(&mut project).await;
     clear_session_quick_proxies(&mut project).await;
 
@@ -143,6 +147,7 @@ async fn clear_session_quick_proxies(project: &mut crate::state::Project) {
 /// proxies; failure to delete is logged-only (the path is already
 /// unreferenced, so a leak is bounded and the next user-triggered
 /// "clear cache" sweeps it).
+#[cfg(feature = "jobs")]
 async fn invalidate_stale_proxies(project: &mut crate::state::Project) {
     use crate::jobs::proxy::PROXY_FORMAT_VERSION;
     let stale: Vec<crate::state::ids::MediaId> = project
@@ -359,6 +364,7 @@ mod tests {
     /// must be cleared on load so the post-load job-enqueue pass picks
     /// them up. The cached file is best-effort deleted; we just verify
     /// the in-memory path is None.
+    #[cfg(feature = "jobs")]
     #[tokio::test]
     async fn stale_proxy_format_invalidated_on_load() {
         use crate::jobs::proxy::PROXY_FORMAT_VERSION;
@@ -405,6 +411,7 @@ mod tests {
         assert!(!stale_proxy.exists(), "stale proxy file should be deleted");
     }
 
+    #[cfg(feature = "jobs")]
     #[tokio::test]
     async fn fresh_proxy_format_preserved_on_load() {
         use crate::jobs::proxy::PROXY_FORMAT_VERSION;

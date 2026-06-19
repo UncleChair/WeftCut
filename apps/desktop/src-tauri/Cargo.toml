@@ -6,35 +6,18 @@ description = "WeftCut desktop app"
 authors = ["WeftCut"]
 publish = false
 rust-version = "1.77"
-default-run = "weftcut"
 
 [lib]
 name = "weftcut_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
-
-[[bin]]
-name = "weftcut"
-path = "src/main.rs"
+crate-type = ["cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+napi-build = "2"
 
 [dependencies]
-# Tauri shell
-tauri = { version = "2", features = ["webview-data-url", "protocol-asset"] }
-tauri-plugin-dialog = "2"
-tauri-plugin-fs = "2"
-tauri-plugin-shell = "2"
-# Desktop polish: one running instance (second launch focuses the first),
-# and window size/position/maximized persistence across launches.
-tauri-plugin-single-instance = "2"
-tauri-plugin-window-state = "2"
-# Native toasts for export completed/failed while the window is unfocused.
-tauri-plugin-notification = "2"
-# Dev-only: drives the running webview from the tauri-mcp-server for in-app
-# testing. Registered behind `#[cfg(debug_assertions)]` in lib.rs so it never
-# activates in release builds.
-tauri-plugin-mcp-bridge = "0.11"
+# napi-rs: WeftCut's domain core is exposed to Electron as a native addon.
+napi = { version = "3", default-features = false, features = ["napi6", "tokio_rt"] }
+napi-derive = "3"
 
 # Async + serialization
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "fs", "io-util", "signal", "process"] }
@@ -59,41 +42,19 @@ thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # `regex` is used by the status/log redactor (`logs::redact`) to strip
-# api-key/bearer-token patterns from `details` payloads. It's already in
-# the build graph transitively via `tauri-plugin-shell` / `tauri-utils`,
-# so adding it as a direct dep is essentially free.
+# api-key/bearer-token patterns from `details` payloads.
 regex = "1"
 
 # --- Phase 0 spike deps. Pin/upgrade once verified to compile. ---
 ffmpeg-sidecar = "2"
-# Anthropic Rust MCP SDK. Pinned to 0.1.x: 1.x dropped the
-# `transport-sse-server` feature in favor of streamable-HTTP only. Our
-# `mcp/mod.rs::serve` uses `rmcp::transport::sse_server::SseServer`,
-# which is gone in 1.x. Migrating means swapping the server type AND
-# verifying every connecting client (Claude Desktop, Cursor, custom
-# integrations) speaks streamable-HTTP. Tracked as separate work; see
-# [[feedback_rmcp_migration_blocked]].
-rmcp = { version = "0.1", features = ["server", "macros", "transport-sse-server"] }
-# Phase 4 Stage 5 ships an MCP-side change-feed on a separate /events SSE
-# endpoint so it doesn't compete with rmcp's notification surface (which
-# 0.1.x doesn't expose anyway). Both crates land via rmcp's transitive
-# dependency tree; pinning here so we can use them directly.
-axum = "0.8"
-tokio-stream = { version = "0.1", features = ["sync"] }
-futures = "0.3"
+# S4a: the MCP core is transport-free (the HTTP/streamable server lives in the
+# Electron main process; see `src/mcp/` + `docs/mcp.md`). rmcp/axum/tokio-stream/
+# futures are gone — the old SSE transport + axum change-feed were deleted in the
+# napi migration. The wire types in `src/mcp/wire.rs` serialize to the exact JSON
+# the `@modelcontextprotocol/sdk` low-level Server expects.
 # Phase 1.x Stage 6 base64-encodes media bytes (JPG thumbnails, peaks file)
-# into rmcp's BlobResourceContents.blob String field for the media://*
-# resources. Already transitively present via tauri/rmcp; pinning for direct
-# use.
+# into the media://* resources' blob field. Pinning for direct use.
 base64 = "0.22"
-# Phase 6 cloud transcription stores per-provider API keys in the OS native
-# keyring (Windows Credential Manager, macOS Keychain, Linux Secret Service).
-# Linux needs a Secret-Service daemon at runtime — fine for desktop, gate
-# tests behind a flag if CI ever lands.
-# keyring 4 split into a router (`keyring` + `keyring-core`) with explicit
-# store selection (`use_named_store`). Migration is a real piece of work,
-# not a casual bump — keep `keyring = "3"` until that's scoped.
-keyring = "3"
 # HTTP client for Whisper / Deepgram / future cloud providers. Pinning rustls
 # features explicitly avoids pulling in a second native-tls stack alongside
 # the one tauri already brings in via its plugin transitives.
@@ -107,9 +68,6 @@ async-trait = "0.1"
 # decoded-frame probes. RAII drop on `NamedTempFile` cleans temps automatically.
 # Already a dev-dep; promoted to production.
 tempfile = "3"
-# Task 1 (10-bit export): loopback WebSocket transport — webview streams raw
-# yuv420p10le frames into the Rust video sink for ffmpeg encode.
-tungstenite = "0.24"
 # P10b: `commands::compare_fixture_frame` SSIM-compares an actual PNG
 # (from `extract_video_frame`) against a committed baseline. We use
 # `image-compare`'s `rgb_similarity_structure` with `MSSIMSimple` —
@@ -120,43 +78,21 @@ tungstenite = "0.24"
 # decodes the PNG bytes; both libs together add ~150 KB to the binary.
 image = { version = "0.25", default-features = false, features = ["png"] }
 image-compare = "0.5"
-# Dev-only system-resource sampler (`sysmon.rs`) for the PerfHUD: per-process
-# CPU% + RSS of the app's WebView2 process tree. Only the `system` feature is
-# needed (cpu/memory/process); disk/network/component/user are off. Used solely
-# behind `#[cfg(debug_assertions)]`, so it never runs in release (the crate
-# still compiles into the binary — a small, accepted cost for a dev tool).
-sysinfo = { version = "0.33", default-features = false, features = ["system"] }
-
-# --- Motifs (web-page → video-frame capture) ---
-# Windows-only. The capture path drives the WebView2 DevTools Protocol
-# (`Emulation.setDeviceMetricsOverride` + `Page.captureScreenshot`) from Rust
-# via `CallDevToolsProtocolMethod`. `webview2-com` 0.38 / `windows` 0.61 are
-# already in Tauri's (wry's) dependency graph on Windows, so adding them as
-# direct deps reuses the already-compiled artifacts rather than pulling a new
-# version. See `apps/desktop/src-tauri/src/motifs/cdp.rs`.
-[target.'cfg(windows)'.dependencies]
-webview2-com = "0.38"
-# Win32_System_Com: CoTaskMemFree for the PWSTRs returned by
-# ICoreWebView2File::Path (media_drop).
-windows = { version = "0.61", features = ["Win32_System_Com"] }
 
 [dev-dependencies]
 insta = { version = "1", features = ["json", "yaml"] }
 
 [features]
 default = []
-custom-protocol = ["tauri/custom-protocol"]
+# Deferred subsystems — OFF in S2, each turned on in its own stage.
+jobs = []        # import/proxy/conform/thumbnails/waveform + io::probe + ffmpeg (S3)
+export = ["jobs"]  # video export + IPC videosink (S3); needs jobs for enqueue_conform/io::probe
+cloud = ["jobs"]  # transcription/TTS (S4b); needs jobs for audio_extract's ffmpeg_sem
+mcp = []         # MCP server (S4)
+motifs = []      # Motif capture (S5)
 
-# The 10-bit export's WS video sink (export/videosink.rs) reads ~6 MB/frame
-# through tungstenite; at opt-level 0 its read loop tops out at ~107 MB/s on
-# loopback (measured), capping dev-build 10-bit exports at ~71 MB/s end-to-end
-# — well under the ~190 MB/s a 1080p30 yuv420p10le stream needs. At opt-level
-# 1 the same loop sustains ~340 MB/s and the webview→Rust transport reaches
-# ~312 MB/s (the webview send path becomes the ceiling). A per-package
-# override on tungstenite does NOT work: the entire read path is generic over
-# the stream and monomorphizes into THIS crate at THIS crate's opt-level. So
-# the whole dev profile runs at opt-level 1 — release builds were never
-# affected; this keeps dev/e2e (--debug) transport honest.
+# opt-level 1 keeps dev-build transport throughput honest; release was never affected.
+# (see memory feedback_rust_optlevel_monomorphization: generics monomorphize at the caller's opt-level).
 [profile.dev]
 opt-level = 1
 
