@@ -63,7 +63,7 @@ export const AgentMode = forwardRef(function AgentMode(
     <div className="agent-mode-shell">
       {/* Frameless window: agent mode replaces the whole app layout, so
           it carries its own slim drag strip + caption buttons. */}
-      <div className="agent-titlebar" data-tauri-drag-region>
+      <div className="agent-titlebar" data-drag-region>
         <WindowControls />
       </div>
       <section className="agent-preview">

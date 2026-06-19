@@ -141,7 +141,7 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
       {/* Frameless window: the startup screen has no app header, so a
           slim strip along the top carries the drag region + caption
           buttons (and the locale toggle, which used to float here). */}
-      <div className="startup-titlebar" data-tauri-drag-region>
+      <div className="startup-titlebar" data-drag-region>
         <button
           className="startup-locale-toggle"
           onClick={cycleLocale}
