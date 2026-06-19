@@ -1,4 +1,5 @@
 import { BrowserWindow } from 'electron'
+import { hardenWindow } from '../windows'
 
 type Backend = import('@weftcut/core').Backend
 
@@ -49,8 +50,17 @@ async function buildHost(): Promise<Host> {
   if (!runtimeSource) throw new Error('motif runtime not registered yet (call motif_register_runtime)')
   const win = new BrowserWindow({
     show: false,
-    webPreferences: { offscreen: true, contextIsolation: true, nodeIntegration: false },
+    // The capture host renders untrusted, user-authored Motif content, so it runs
+    // at the same isolation baseline as every other window: OS sandbox on, no Node,
+    // context isolation, web security. The complementary egress half (no network /
+    // no remote code) is the per-document CSP served by `motif://`; see docs/security.md.
+    webPreferences: { offscreen: true, contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true },
   })
+  // Navigation lockdown for the untrusted Motif page: deny every `window.open`
+  // OUTRIGHT (allowExternalOpen:false — a Motif must not be able to pop the user's
+  // browser) and block any page-initiated navigation off the app's content. The
+  // main-process `loadURL` calls below are programmatic and don't trip will-navigate.
+  hardenWindow(win, { allowExternalOpen: false })
   // Destroy the offscreen window if CDP init throws mid-build, else it orphans.
   // Bounded to ≤1 (captures are serialized) but still a leak; never observed green.
   try {

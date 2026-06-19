@@ -6,13 +6,18 @@ const isDev = !!process.env['ELECTRON_RENDERER_URL']
 
 // Lock down navigation + window creation on a window. The renderer only ever
 // loads local content (the dev server in dev, file:// in prod), so: deny every
-// renderer-initiated `window.open` (routing vetted https to the OS browser),
-// and block any navigation that would leave the app origin. Defense-in-depth
-// beneath the powerful fs:* / backend:invoke IPC surface (Electron security
-// checklist). Apply to EVERY BrowserWindow.
-export function hardenWindow(win: BrowserWindow): void {
+// renderer-initiated `window.open`, and block any navigation that would leave
+// the app origin. Defense-in-depth beneath the powerful fs:* / backend:invoke
+// IPC surface (Electron security checklist). Apply to EVERY BrowserWindow.
+//
+// `allowExternalOpen` (default true) routes a vetted https `window.open` to the
+// OS browser — right for the trusted app shell. Windows hosting UNTRUSTED content
+// (the Motif capture host) MUST pass `false`: a malicious Motif could otherwise
+// pop the user's browser to an arbitrary https URL via `window.open`.
+export function hardenWindow(win: BrowserWindow, opts?: { allowExternalOpen?: boolean }): void {
+  const allowExternalOpen = opts?.allowExternalOpen ?? true
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https:\/\//i.test(url)) void shell.openExternal(url)
+    if (allowExternalOpen && /^https:\/\//i.test(url)) void shell.openExternal(url)
     return { action: 'deny' }
   })
   win.webContents.on('will-navigate', (e, url) => {
