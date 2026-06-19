@@ -13,10 +13,12 @@ pub mod videosink;
 
 use std::path::Path;
 use std::process::Stdio;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use ffmpeg_sidecar::{command::ffmpeg_is_installed, paths::ffmpeg_path};
-use tauri::AppHandle;
+
+use crate::events::EventSink;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tracing::{info, warn};
@@ -54,12 +56,7 @@ fn audio_encode_args(codec: &str, bitrate_bps: u64) -> Vec<std::ffi::OsString> {
 /// reduced to the encode tail — `alimiter` ceiling + AAC/Opus encode. The
 /// PixiJS export Worker streams the temp video file; `mux_to_file` /
 /// `transcode_and_mux` combine them. ADR 0019.
-///
-/// `_app` is taken to keep the call-site signature stable with the
-/// Tauri command; this routine emits no events of its own — the JS
-/// orchestrator drives the ExportPanel state.
 pub async fn export_audio_only(
-    _app: AppHandle,
     project: &Project,
     output: &Path,
     audio: &AudioEncodeSpec,
@@ -292,7 +289,7 @@ pub const EVENT_TRANSCODE_PROGRESS: &str = "export:transcode_progress";
 /// mux with `audio_path` into `output` (container = output extension). Parses
 /// `-progress pipe:1` and emits `EVENT_TRANSCODE_PROGRESS` against `duration_us`.
 pub async fn transcode_and_mux(
-    app: &AppHandle,
+    events: &Arc<dyn EventSink>,
     encoder: &str,
     codec: TargetCodec,
     bitrate: u64,
@@ -303,7 +300,6 @@ pub async fn transcode_and_mux(
     audio_path: &Path,
     output: &Path,
 ) -> Result<()> {
-    use tauri::Emitter;
     if !ffmpeg_is_installed() {
         anyhow::bail!("ffmpeg is not installed");
     }
@@ -343,7 +339,7 @@ pub async fn transcode_and_mux(
 
     // Parse `-progress` key=value lines from stdout; emit percent.
     let stdout = child.stdout.take().context("take ffmpeg stdout")?;
-    let app_for_progress = app.clone();
+    let events_for_progress = events.clone();
     let total_us = duration_us.max(1) as f64;
     let progress_task = tokio::spawn(async move {
         let mut reader = BufReader::new(stdout).lines();
@@ -351,7 +347,7 @@ pub async fn transcode_and_mux(
             if let Some(v) = line.strip_prefix("out_time_us=") {
                 if let Ok(us) = v.trim().parse::<f64>() {
                     let pct = (us / total_us).clamp(0.0, 1.0);
-                    let _ = app_for_progress.emit(EVENT_TRANSCODE_PROGRESS, pct);
+                    events_for_progress.emit(EVENT_TRANSCODE_PROGRESS, serde_json::json!(pct));
                 }
             }
         }
@@ -380,7 +376,7 @@ pub async fn transcode_and_mux(
             stderr_tail.lines().rev().take(8).collect::<Vec<_>>().join("\n")
         );
     }
-    let _ = app.emit(EVENT_TRANSCODE_PROGRESS, 1.0_f64);
+    events.emit(EVENT_TRANSCODE_PROGRESS, serde_json::json!(1.0));
     Ok(())
 }
 

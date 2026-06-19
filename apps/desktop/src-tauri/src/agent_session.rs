@@ -15,17 +15,18 @@
 //!    workspace open/save_as/new, and by MCP-client disconnect.
 //!  - Not persisted to disk. App restart always boots into editor mode.
 //!
-//! Event surface (when paired with an `AppHandle`):
-//!  - Tauri event `agent_session:changed` with payload `Option<AgentSession>`.
+//! Event surface (when paired with an `EventSink`):
+//!  - Event `agent_session:changed` with payload `Option<AgentSession>`.
 //!    Fires on every begin/end. The UI's `App.tsx` listens.
 
 use std::sync::{Arc, RwLock};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use tauri::Emitter;
 
-/// Tauri event name. Frontend listens for `Option<AgentSession>` payloads.
+use crate::events::EventSink;
+
+/// Event name. Frontend listens for `Option<AgentSession>` payloads.
 pub const EVENT_AGENT_SESSION_CHANGED: &str = "agent_session:changed";
 
 /// What an active agent session carries. Frontend reads `reason` for the
@@ -76,23 +77,20 @@ impl AgentSessionSlot {
 /// UI updates immediately. Returns the previous session for caller
 /// bookkeeping.
 pub fn begin_and_emit(
-    app: &tauri::AppHandle,
+    events: &dyn EventSink,
     slot: &AgentSessionSlot,
     session: AgentSession,
 ) -> Option<AgentSession> {
     let prior = slot.begin(session.clone());
-    let _ = app.emit(EVENT_AGENT_SESSION_CHANGED, Some(session));
+    events.emit(EVENT_AGENT_SESSION_CHANGED, serde_json::to_value(Some(session)).unwrap_or(serde_json::Value::Null));
     prior
 }
 
 /// Convenience: end the current session AND emit. Returns the prior
 /// session for caller bookkeeping.
-pub fn end_and_emit(
-    app: &tauri::AppHandle,
-    slot: &AgentSessionSlot,
-) -> Option<AgentSession> {
+pub fn end_and_emit(events: &dyn EventSink, slot: &AgentSessionSlot) -> Option<AgentSession> {
     let prior = slot.end();
-    let _ = app.emit::<Option<AgentSession>>(EVENT_AGENT_SESSION_CHANGED, None);
+    events.emit(EVENT_AGENT_SESSION_CHANGED, serde_json::Value::Null);
     prior
 }
 

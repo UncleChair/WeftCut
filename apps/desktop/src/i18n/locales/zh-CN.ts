@@ -403,16 +403,12 @@ const zhCN: Resources = {
     token_note:
       "尚未启用令牌校验 — 仅本地回环绑定提供隔离。在正式认证就绪前，请勿对其它机器开放此端口。",
     field: {
-      sse_url: "SSE URL",
-      events_url: "变更通知 URL",
+      url: "服务器地址",
       bearer: "Bearer 令牌",
     },
     snippets_heading: "配置片段",
     snippet: {
-      claude: "Claude Desktop（claude_desktop_config.json）",
-      cursor: "Cursor（mcp.json）",
-      curl: "curl — MCP 通道",
-      events_curl: "curl — 变更通知",
+      config: "MCP 配置（Claude Desktop / Cursor / 任何 streamable-HTTP 客户端）",
     },
   },
   settings: {

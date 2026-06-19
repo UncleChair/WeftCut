@@ -1274,16 +1274,13 @@ export function App({ onCloseProject }: AppProps) {
     const outFps = fpsNum / fpsDen;
     // `path` already carries the chosen container extension (set by the dialog).
 
-    // 10-bit path: open the native-encode video sink before the Worker starts.
-    // The sink accepts frames over WebSocket, encodes them natively (HEVC Main10
-    // / AV1 10-bit), and writes the result to tempVideoPath. On the 8-bit path
-    // videoSink stays undefined and the existing fMP4 streaming path is used.
+    // 10-bit path: start the native-encode video sink (ffmpeg HEVC Main10 /
+    // AV1 10-bit, frames streamed over IPC) before the Worker starts. On the
+    // 8-bit path the existing fMP4 streaming path is used.
     const tenBit = settings.bitDepth === 10 && settings.codec !== "h264";
-    let videoSink: { port: number; token: string } | undefined;
     if (tenBit) {
       try {
-        videoSink = await exportVideoSinkStart({
-          mode: "ws",
+        await exportVideoSinkStart({
           width: dims.width,
           height: dims.height,
           fpsNum,
@@ -1376,9 +1373,8 @@ export function App({ onCloseProject }: AppProps) {
     // with `append` is used instead of an open FileHandle because `fs:allow-open`
     // isn't in the app's capabilities (`fs:allow-write-file` is). The temp path
     // is a fresh UUID, so the first append creates it (create defaults true).
-    // On the 10-bit path the Worker streams raw yuv420p10le frames to the Rust
-    // sink over WebSocket; any overflow chunks (WS connect failure fallback) are
-    // forwarded via the IPC write command.
+    // On the 10-bit path the Worker streams raw yuv420p10le frames via the
+    // chunk/ack channel; the main thread forwards them to export_video_sink_write.
     const writeChunk = tenBit
       ? async (data: ArrayBuffer): Promise<void> => {
           await exportVideoSinkWrite(new Uint8Array(data));
@@ -1400,7 +1396,6 @@ export function App({ onCloseProject }: AppProps) {
         writeChunk,
         motifFrames,
         bitDepth: tenBit ? 10 : 8,
-        ...(videoSink ? { videoSink } : {}),
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -2375,6 +2370,16 @@ function MediaDropZone({ children }: { children: React.ReactNode }) {
         e.preventDefault();
         depth.current = 0;
         setActive(false);
+        // Electron: no WebView2 postMessage bridge. Resolve real paths via the
+        // preload webUtils shim and feed the same media:external-drop pipeline.
+        const eapi = (window as unknown as { api?: { getPathForFile?: (f: File) => string; invoke: (c: string, a?: unknown) => Promise<unknown> } }).api
+        if (eapi?.getPathForFile && e.dataTransfer.files.length > 0) {
+          const paths = Array.from(e.dataTransfer.files)
+            .map((f) => eapi.getPathForFile!(f))
+            .filter((p) => p.length > 0)
+          if (paths.length > 0) void eapi.invoke('media:dropped', paths)
+          return
+        }
         const webview = (
           window as unknown as {
             chrome?: {

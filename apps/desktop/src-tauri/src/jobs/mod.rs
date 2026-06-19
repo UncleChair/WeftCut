@@ -38,7 +38,9 @@ pub use waveform::{read_peaks_file, run as run_waveform};
 use std::sync::OnceLock;
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+use std::sync::Arc;
+
+use crate::events::EventSink;
 use tokio::sync::Semaphore;
 use tracing::{info, warn};
 
@@ -130,18 +132,18 @@ struct JobError {
 /// command) when a DirectExport original turns out to be undecodable on this
 /// machine. Returns immediately; the job runs on tokio::spawn.
 pub fn enqueue_full_proxy(
-    app: AppHandle,
+    events: Arc<dyn EventSink>,
     cache: CacheLayout,
     project: ProjectHandle,
     media: MediaItem,
 ) {
-    spawn_proxy(app, cache, project, media);
+    spawn_proxy(events, cache, project, media);
 }
 
 /// Look at a freshly imported `MediaItem` and fan out the appropriate
 /// background jobs. Returns immediately; jobs run on tokio::spawn.
 pub fn enqueue_for_media(
-    app: AppHandle,
+    events: Arc<dyn EventSink>,
     cache: CacheLayout,
     project: ProjectHandle,
     media: MediaItem,
@@ -154,14 +156,14 @@ pub fn enqueue_for_media(
                 .map(|p| p.is_file())
                 .unwrap_or(false);
             if proxy_ready || media.proxy_bypassed {
-                spawn_decorations(app, cache, project, media);
+                spawn_decorations(events, cache, project, media);
             } else {
-                spawn_proxy_decision(app, cache, project, media);
+                spawn_proxy_decision(events, cache, project, media);
             }
         }
         MediaKind::Audio => {
-            spawn_waveform(app.clone(), cache.clone(), project.clone(), media.clone());
-            spawn_conform(app, cache, project, media);
+            spawn_waveform(events.clone(), cache.clone(), project.clone(), media.clone());
+            spawn_conform(events, cache, project, media);
         }
         MediaKind::Image | MediaKind::Subtitle => {
             // No derivatives needed.
@@ -169,28 +171,28 @@ pub fn enqueue_for_media(
     }
 }
 
-fn spawn_decorations(app: AppHandle, cache: CacheLayout, project: ProjectHandle, media: MediaItem) {
+fn spawn_decorations(events: Arc<dyn EventSink>, cache: CacheLayout, project: ProjectHandle, media: MediaItem) {
     if matches!(media.kind, MediaKind::Video) {
-        spawn_thumbnails(app.clone(), cache.clone(), project.clone(), media.clone());
+        spawn_thumbnails(events.clone(), cache.clone(), project.clone(), media.clone());
     }
     if media.metadata.audio.is_some() {
-        spawn_waveform(app.clone(), cache.clone(), project.clone(), media.clone());
-        spawn_conform(app, cache, project, media);
+        spawn_waveform(events.clone(), cache.clone(), project.clone(), media.clone());
+        spawn_conform(events, cache, project, media);
     }
 }
 
 /// Enqueue ONLY the conform job (export readiness gate / pre-conform-era
 /// backfill via the `ensure_conform` command). Returns immediately.
 pub fn enqueue_conform(
-    app: AppHandle,
+    events: Arc<dyn EventSink>,
     cache: CacheLayout,
     project: ProjectHandle,
     media: MediaItem,
 ) {
-    spawn_conform(app, cache, project, media);
+    spawn_conform(events, cache, project, media);
 }
 
-fn spawn_conform(app: AppHandle, cache: CacheLayout, project: ProjectHandle, media: MediaItem) {
+fn spawn_conform(events: Arc<dyn EventSink>, cache: CacheLayout, project: ProjectHandle, media: MediaItem) {
     if !try_begin_conform(media.id) {
         // Already conforming — that job's complete/error event serves this
         // caller's wait too.
@@ -200,7 +202,7 @@ fn spawn_conform(app: AppHandle, cache: CacheLayout, project: ProjectHandle, med
         let media_id = media.id;
         let _guard = ConformGuard(media_id);
         emit(
-            &app,
+            &events,
             EVENT_STARTED,
             &JobStarted {
                 media_id: media_id.to_string(),
@@ -230,7 +232,7 @@ fn spawn_conform(app: AppHandle, cache: CacheLayout, project: ProjectHandle, med
                 {
                     warn!("conform commit failed for {media_id}: {e}");
                     emit(
-                        &app,
+                        &events,
                         EVENT_ERROR,
                         &JobError {
                             media_id: media_id.to_string(),
@@ -242,7 +244,7 @@ fn spawn_conform(app: AppHandle, cache: CacheLayout, project: ProjectHandle, med
                 }
                 info!("conform ready for {media_id}");
                 emit(
-                    &app,
+                    &events,
                     EVENT_COMPLETE,
                     &JobComplete {
                         media_id: media_id.to_string(),
@@ -254,7 +256,7 @@ fn spawn_conform(app: AppHandle, cache: CacheLayout, project: ProjectHandle, med
             Err(e) => {
                 warn!("conform job failed for {media_id}: {e:#}");
                 emit(
-                    &app,
+                    &events,
                     EVENT_ERROR,
                     &JobError {
                         media_id: media_id.to_string(),
@@ -268,7 +270,7 @@ fn spawn_conform(app: AppHandle, cache: CacheLayout, project: ProjectHandle, med
 }
 
 fn spawn_proxy_decision(
-    app: AppHandle,
+    events: Arc<dyn EventSink>,
     cache: CacheLayout,
     project: ProjectHandle,
     media: MediaItem,
@@ -291,7 +293,7 @@ fn spawn_proxy_decision(
         match proxy_decision::job_for(route) {
             proxy_decision::ProxyJob::None => {
                 emit(
-                    &app,
+                    &events,
                     EVENT_STARTED,
                     &JobStarted {
                         media_id: media_id.to_string(),
@@ -310,7 +312,7 @@ fn spawn_proxy_decision(
                 {
                     warn!("proxy bypass commit failed for {media_id}: {e}");
                     emit(
-                        &app,
+                        &events,
                         EVENT_ERROR,
                         &JobError {
                             media_id: media_id.to_string(),
@@ -322,7 +324,7 @@ fn spawn_proxy_decision(
                 }
                 info!("proxy bypass accepted for {media_id}");
                 emit(
-                    &app,
+                    &events,
                     EVENT_COMPLETE,
                     &JobComplete {
                         media_id: media_id.to_string(),
@@ -330,11 +332,11 @@ fn spawn_proxy_decision(
                         path: Some(media.path_abs.display().to_string()),
                     },
                 );
-                spawn_decorations(app, cache, project, media);
+                spawn_decorations(events, cache, project, media);
             }
             proxy_decision::ProxyJob::QuickOnly => {
                 emit(
-                    &app,
+                    &events,
                     EVENT_STARTED,
                     &JobStarted {
                         media_id: media_id.to_string(),
@@ -353,7 +355,7 @@ fn spawn_proxy_decision(
                 {
                     warn!("direct-export commit failed for {media_id}: {e}");
                     emit(
-                        &app,
+                        &events,
                         EVENT_ERROR,
                         &JobError {
                             media_id: media_id.to_string(),
@@ -365,7 +367,7 @@ fn spawn_proxy_decision(
                 }
                 info!("direct-export accepted for {media_id}; preview proxy queued");
                 emit(
-                    &app,
+                    &events,
                     EVENT_COMPLETE,
                     &JobComplete {
                         media_id: media_id.to_string(),
@@ -375,21 +377,21 @@ fn spawn_proxy_decision(
                 );
                 // Thumbnails + waveform off the original; preview proxy in the
                 // background WITHOUT chaining a full proxy.
-                spawn_decorations(app.clone(), cache.clone(), project.clone(), media.clone());
-                spawn_quick_proxy(app, cache, project, media, false, source_gop_secs);
+                spawn_decorations(events.clone(), cache.clone(), project.clone(), media.clone());
+                spawn_quick_proxy(events, cache, project, media, false, source_gop_secs);
             }
             proxy_decision::ProxyJob::QuickThenFull => {
-                spawn_quick_proxy(app, cache, project, media, true, source_gop_secs);
+                spawn_quick_proxy(events, cache, project, media, true, source_gop_secs);
             }
         }
     });
 }
 
-fn spawn_thumbnails(app: AppHandle, cache: CacheLayout, project: ProjectHandle, media: MediaItem) {
+fn spawn_thumbnails(events: Arc<dyn EventSink>, cache: CacheLayout, project: ProjectHandle, media: MediaItem) {
     tokio::spawn(async move {
         let media_id = media.id;
         emit(
-            &app,
+            &events,
             EVENT_STARTED,
             &JobStarted {
                 media_id: media_id.to_string(),
@@ -418,7 +420,7 @@ fn spawn_thumbnails(app: AppHandle, cache: CacheLayout, project: ProjectHandle, 
                 {
                     warn!("thumbnail commit failed for {media_id}: {e}");
                     emit(
-                        &app,
+                        &events,
                         EVENT_ERROR,
                         &JobError {
                             media_id: media_id.to_string(),
@@ -430,7 +432,7 @@ fn spawn_thumbnails(app: AppHandle, cache: CacheLayout, project: ProjectHandle, 
                 }
                 info!("thumbnails ready for {media_id}");
                 emit(
-                    &app,
+                    &events,
                     EVENT_COMPLETE,
                     &JobComplete {
                         media_id: media_id.to_string(),
@@ -442,7 +444,7 @@ fn spawn_thumbnails(app: AppHandle, cache: CacheLayout, project: ProjectHandle, 
             Err(e) => {
                 warn!("thumbnail job failed for {media_id}: {e:#}");
                 emit(
-                    &app,
+                    &events,
                     EVENT_ERROR,
                     &JobError {
                         media_id: media_id.to_string(),
@@ -456,7 +458,7 @@ fn spawn_thumbnails(app: AppHandle, cache: CacheLayout, project: ProjectHandle, 
 }
 
 fn spawn_quick_proxy(
-    app: AppHandle,
+    events: Arc<dyn EventSink>,
     cache: CacheLayout,
     project: ProjectHandle,
     media: MediaItem,
@@ -466,7 +468,7 @@ fn spawn_quick_proxy(
     tokio::spawn(async move {
         let media_id = media.id;
         emit(
-            &app,
+            &events,
             EVENT_STARTED,
             &JobStarted {
                 media_id: media_id.to_string(),
@@ -497,7 +499,7 @@ fn spawn_quick_proxy(
                 {
                     warn!("quick proxy commit failed for {media_id}: {e}");
                     emit(
-                        &app,
+                        &events,
                         EVENT_ERROR,
                         &JobError {
                             media_id: media_id.to_string(),
@@ -508,7 +510,7 @@ fn spawn_quick_proxy(
                 } else {
                     info!("quick proxy ready for {media_id}");
                     emit(
-                        &app,
+                        &events,
                         EVENT_COMPLETE,
                         &JobComplete {
                             media_id: media_id.to_string(),
@@ -521,7 +523,7 @@ fn spawn_quick_proxy(
             Err(e) => {
                 warn!("quick proxy job failed for {media_id}: {e:#}");
                 emit(
-                    &app,
+                    &events,
                     EVENT_ERROR,
                     &JobError {
                         media_id: media_id.to_string(),
@@ -536,16 +538,16 @@ fn spawn_quick_proxy(
             // Full proxy chains after the quick proxy; refresh hash/paths in
             // case the workspace copy + blake3 landed while Phase 1 was queued.
             let media = fresh_media_item(&project, media_id, media).await;
-            spawn_proxy(app, cache, project, media);
+            spawn_proxy(events, cache, project, media);
         }
     });
 }
 
-fn spawn_proxy(app: AppHandle, cache: CacheLayout, project: ProjectHandle, media: MediaItem) {
+fn spawn_proxy(events: Arc<dyn EventSink>, cache: CacheLayout, project: ProjectHandle, media: MediaItem) {
     tokio::spawn(async move {
         let media_id = media.id;
         emit(
-            &app,
+            &events,
             EVENT_STARTED,
             &JobStarted {
                 media_id: media_id.to_string(),
@@ -585,7 +587,7 @@ fn spawn_proxy(app: AppHandle, cache: CacheLayout, project: ProjectHandle, media
                 {
                     warn!("proxy commit failed for {media_id}: {e}");
                     emit(
-                        &app,
+                        &events,
                         EVENT_ERROR,
                         &JobError {
                             media_id: media_id.to_string(),
@@ -597,7 +599,7 @@ fn spawn_proxy(app: AppHandle, cache: CacheLayout, project: ProjectHandle, media
                 }
                 info!("proxy ready for {media_id}");
                 emit(
-                    &app,
+                    &events,
                     EVENT_COMPLETE,
                     &JobComplete {
                         media_id: media_id.to_string(),
@@ -605,12 +607,12 @@ fn spawn_proxy(app: AppHandle, cache: CacheLayout, project: ProjectHandle, media
                         path: Some(path_str),
                     },
                 );
-                spawn_decorations(app, cache, project, thumbnail_media);
+                spawn_decorations(events, cache, project, thumbnail_media);
             }
             Err(e) => {
                 warn!("proxy job failed for {media_id}: {e:#}");
                 emit(
-                    &app,
+                    &events,
                     EVENT_ERROR,
                     &JobError {
                         media_id: media_id.to_string(),
@@ -623,11 +625,11 @@ fn spawn_proxy(app: AppHandle, cache: CacheLayout, project: ProjectHandle, media
     });
 }
 
-fn spawn_waveform(app: AppHandle, cache: CacheLayout, project: ProjectHandle, media: MediaItem) {
+fn spawn_waveform(events: Arc<dyn EventSink>, cache: CacheLayout, project: ProjectHandle, media: MediaItem) {
     tokio::spawn(async move {
         let media_id = media.id;
         emit(
-            &app,
+            &events,
             EVENT_STARTED,
             &JobStarted {
                 media_id: media_id.to_string(),
@@ -656,7 +658,7 @@ fn spawn_waveform(app: AppHandle, cache: CacheLayout, project: ProjectHandle, me
                 {
                     warn!("waveform commit failed for {media_id}: {e}");
                     emit(
-                        &app,
+                        &events,
                         EVENT_ERROR,
                         &JobError {
                             media_id: media_id.to_string(),
@@ -668,7 +670,7 @@ fn spawn_waveform(app: AppHandle, cache: CacheLayout, project: ProjectHandle, me
                 }
                 info!("waveform ready for {media_id}");
                 emit(
-                    &app,
+                    &events,
                     EVENT_COMPLETE,
                     &JobComplete {
                         media_id: media_id.to_string(),
@@ -680,7 +682,7 @@ fn spawn_waveform(app: AppHandle, cache: CacheLayout, project: ProjectHandle, me
             Err(e) => {
                 warn!("waveform job failed for {media_id}: {e:#}");
                 emit(
-                    &app,
+                    &events,
                     EVENT_ERROR,
                     &JobError {
                         media_id: media_id.to_string(),
@@ -693,8 +695,8 @@ fn spawn_waveform(app: AppHandle, cache: CacheLayout, project: ProjectHandle, me
     });
 }
 
-fn emit<T: Serialize + Clone>(app: &AppHandle, event: &str, payload: &T) {
-    let _ = app.emit(event, payload);
+fn emit<T: Serialize>(events: &Arc<dyn EventSink>, event: &str, payload: &T) {
+    events.emit(event, serde_json::to_value(payload).unwrap_or(serde_json::Value::Null));
 }
 
 /// Re-read the latest `MediaItem` before ffmpeg starts so a background

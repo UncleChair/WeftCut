@@ -43,14 +43,13 @@ export function ConnectAgentPanel({ onClose }: Props) {
     };
   }, []);
 
-  const claudeSnippet = useMemo(() => {
+  const snippet = useMemo(() => {
     if (!info) return "";
     return JSON.stringify(
       {
         mcpServers: {
           weftcut: {
-            url: info.sse_url,
-            transport: "sse",
+            url: info.url,
             headers: { Authorization: `Bearer ${info.bearer_token}` },
           },
         },
@@ -58,33 +57,6 @@ export function ConnectAgentPanel({ onClose }: Props) {
       null,
       2,
     );
-  }, [info]);
-
-  const cursorSnippet = useMemo(() => {
-    if (!info) return "";
-    return JSON.stringify(
-      {
-        mcpServers: {
-          weftcut: {
-            url: info.sse_url,
-            type: "sse",
-            headers: { Authorization: `Bearer ${info.bearer_token}` },
-          },
-        },
-      },
-      null,
-      2,
-    );
-  }, [info]);
-
-  const curlLine = useMemo(() => {
-    if (!info) return "";
-    return `curl -N -H "Authorization: Bearer ${info.bearer_token}" ${info.sse_url}`;
-  }, [info]);
-
-  const eventsCurlLine = useMemo(() => {
-    if (!info) return "";
-    return `curl -N ${info.events_url}`;
   }, [info]);
 
   const copy = async (key: string, value: string) => {
@@ -131,18 +103,10 @@ export function ConnectAgentPanel({ onClose }: Props) {
             <p className="connect-blurb">{t("connect.blurb")}</p>
 
             <ConnectField
-              label={t("connect.field.sse_url")}
-              value={info.sse_url}
-              onCopy={() => copy("sse", info.sse_url)}
-              copied={copied === "sse"}
-              copyLabel={t("connect.copy")}
-              copiedLabel={t("connect.copied")}
-            />
-            <ConnectField
-              label={t("connect.field.events_url")}
-              value={info.events_url}
-              onCopy={() => copy("events", info.events_url)}
-              copied={copied === "events"}
+              label={t("connect.field.url")}
+              value={info.url}
+              onCopy={() => copy("url", info.url)}
+              copied={copied === "url"}
               copyLabel={t("connect.copy")}
               copiedLabel={t("connect.copied")}
             />
@@ -173,34 +137,10 @@ export function ConnectAgentPanel({ onClose }: Props) {
             <h3>{t("connect.snippets_heading")}</h3>
 
             <ConnectSnippet
-              label={t("connect.snippet.claude")}
-              value={claudeSnippet}
-              onCopy={() => copy("claude", claudeSnippet)}
-              copied={copied === "claude"}
-              copyLabel={t("connect.copy")}
-              copiedLabel={t("connect.copied")}
-            />
-            <ConnectSnippet
-              label={t("connect.snippet.cursor")}
-              value={cursorSnippet}
-              onCopy={() => copy("cursor", cursorSnippet)}
-              copied={copied === "cursor"}
-              copyLabel={t("connect.copy")}
-              copiedLabel={t("connect.copied")}
-            />
-            <ConnectSnippet
-              label={t("connect.snippet.curl")}
-              value={curlLine}
-              onCopy={() => copy("curl", curlLine)}
-              copied={copied === "curl"}
-              copyLabel={t("connect.copy")}
-              copiedLabel={t("connect.copied")}
-            />
-            <ConnectSnippet
-              label={t("connect.snippet.events_curl")}
-              value={eventsCurlLine}
-              onCopy={() => copy("events_curl", eventsCurlLine)}
-              copied={copied === "events_curl"}
+              label={t("connect.snippet.config")}
+              value={snippet}
+              onCopy={() => copy("config", snippet)}
+              copied={copied === "config"}
               copyLabel={t("connect.copy")}
               copiedLabel={t("connect.copied")}
             />

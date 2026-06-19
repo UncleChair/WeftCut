@@ -1,0 +1,19 @@
+# napi-rs addon build output (rebuilt locally / in CI)
+src-tauri/*.node
+src-tauri/index.js
+src-tauri/index.d.ts
+
+# Playwright-for-Electron e2e output (transient; S3b+)
+test-results/
+playwright-report/
+
+# ffmpeg binaries (fetched in CI / Task 2; not committed)
+resources/ffmpeg/*/ffmpeg*
+resources/ffmpeg/*/ffprobe*
+resources/ffmpeg/*/ffplay*
+
+# electron-builder output (transient build artifacts)
+release/
+
+# determinism-artifacts/ — per-OS PNG captures; compared in CI (Task 8), never committed
+determinism-artifacts/
