@@ -7,8 +7,23 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Least-privilege token: this workflow only reads the repo, builds, tests, and
+# uploads artifacts (the artifact API uses its own runtime token) — it never
+# writes repo contents, so read-only is enough.
+permissions:
+  contents: read
+
+# Collapse redundant runs: a newer push to a branch/PR cancels the in-flight
+# 3-OS matrix instead of stacking another full build + e2e + package.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
+    # A wedged offscreen capture / Electron has hung before (the swiftshader
+    # case); cap the job instead of letting it run to the 6h default.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -145,6 +160,7 @@ jobs:
   # (needs: build + fail-fast: false means all three attempt even if one fails).
   compare:
     needs: build
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -165,9 +181,9 @@ jobs:
 
       # Download all three per-OS determinism artifact bundles into dl/.
       # The upload paths are apps/desktop/determinism-artifacts/<platform>/,
-      # which get stored by upload-artifact v4 without the leading path prefix;
+      # which get stored by upload-artifact v7 without the leading path prefix;
       # each artifact name is determinism-<os>  (e.g. determinism-windows-latest).
-      # After download-artifact v4 with merge-multiple: false, the layout is:
+      # After download-artifact v8 with merge-multiple: false, the layout is:
       #   dl/determinism-windows-latest/<platform>/...
       #   dl/determinism-ubuntu-latest/<platform>/...
       #   dl/determinism-macos-latest/<platform>/...
