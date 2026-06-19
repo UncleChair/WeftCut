@@ -98,7 +98,7 @@ function makeHandle(extra?: Partial<SourceHandleInit>): ExportSourceHandle {
   const init: SourceHandleInit = {
     layerId: "layer-1",
     mediaId: "media-1",
-    proxyAssetUrl: "asset://localhost/test.mp4",
+    proxyAssetUrl: "weftcut-media://localhost/test.mp4",
     ...extra,
   };
   return new ExportSourceHandle(init);

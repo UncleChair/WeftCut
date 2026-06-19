@@ -18,7 +18,7 @@ describe.each([["tiny.mp4"], ["tiny.mkv"]])("openMediaInput(%s)", (name) => {
     const mock = makeRangeFetchMock(buf);
     vi.stubGlobal("fetch", mock.fetch);
 
-    const opened = await openMediaInput("asset://clip");
+    const opened = await openMediaInput("weftcut-media://clip");
     const config = await opened.videoTrack.getDecoderConfig();
     expect(config).not.toBeNull();
     expect(config!.codec).toMatch(/^avc1\./); // H.264 in both containers
@@ -45,7 +45,7 @@ describe.each([["tiny.mp4"], ["tiny.mkv"]])("openMediaInput(%s)", (name) => {
 describe("openMediaInput error handling", () => {
   it("throws when the source has no video track", async () => {
     vi.stubGlobal("fetch", makeRangeFetchMock(new Uint8Array([1, 2, 3, 4])).fetch);
-    await expect(openMediaInput("asset://bad")).rejects.toThrow();
+    await expect(openMediaInput("weftcut-media://bad")).rejects.toThrow();
     vi.unstubAllGlobals();
   });
 });

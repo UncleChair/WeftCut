@@ -50,7 +50,7 @@ afterEach(() => {
 describe("ConformSource", () => {
   it("parses the header", async () => {
     vi.stubGlobal("fetch", mockFetch(buildVconf(2, [0.1, -0.1, 0.2, -0.2])));
-    const src = await ConformSource.open("asset://x.conform");
+    const src = await ConformSource.open("weftcut-media://x.conform");
     expect(src.header).toEqual({
       version: 1,
       sampleRate: 48000,
@@ -63,7 +63,7 @@ describe("ConformSource", () => {
     const junk = buildVconf(1, [0.5]);
     junk[0] = 0x58; // 'X'
     vi.stubGlobal("fetch", mockFetch(junk));
-    await expect(ConformSource.open("asset://x.conform")).rejects.toThrow(
+    await expect(ConformSource.open("weftcut-media://x.conform")).rejects.toThrow(
       /bad conform magic/,
     );
   });
@@ -73,7 +73,7 @@ describe("ConformSource", () => {
       "fetch",
       mockFetch(buildVconf(2, [0.1, -0.1, 0.2, -0.2, 0.3, -0.3])),
     );
-    const src = await ConformSource.open("asset://x.conform");
+    const src = await ConformSource.open("weftcut-media://x.conform");
     const [l, r] = await src.readWindow(1, 2);
     expect(Array.from(l!)).toEqual([
       expect.closeTo(0.2, 5),
@@ -87,7 +87,7 @@ describe("ConformSource", () => {
 
   it("zero-fills before start and past EOF", async () => {
     vi.stubGlobal("fetch", mockFetch(buildVconf(1, [0.5, 0.6])));
-    const src = await ConformSource.open("asset://x.conform");
+    const src = await ConformSource.open("weftcut-media://x.conform");
     const [m] = await src.readWindow(-1, 4);
     expect(Array.from(m!)).toEqual([
       0,
@@ -103,7 +103,7 @@ describe("ConformSource", () => {
     const samples = Array.from({ length: 1000 }, (_, i) => i / 1000);
     const fetchMock = mockFetch(buildVconf(1, samples), 256);
     vi.stubGlobal("fetch", fetchMock);
-    const src = await ConformSource.open("asset://x.conform");
+    const src = await ConformSource.open("weftcut-media://x.conform");
     const [m] = await src.readWindow(0, 1000);
     expect(m!.length).toBe(1000);
     expect(m![999]).toBeCloseTo(0.999, 5);
