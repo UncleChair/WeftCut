@@ -259,7 +259,11 @@ impl Backend {
         &self,
         bytes: napi::bindgen_prelude::Buffer,
     ) -> napi::Result<()> {
-        crate::export::videosink::video_sink_write(&self.video_sink, bytes.to_vec())
+        // Time the per-frame copy (deferred-opt signal — see docs/export-ipc-transport.md).
+        let t = std::time::Instant::now();
+        let data = bytes.to_vec();
+        let copy_ns = t.elapsed().as_nanos() as u64;
+        crate::export::videosink::video_sink_write(&self.video_sink, data, copy_ns)
             .await
             .map_err(napi::Error::from_reason)
     }

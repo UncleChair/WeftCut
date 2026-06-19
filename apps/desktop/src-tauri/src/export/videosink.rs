@@ -28,6 +28,12 @@ pub struct SinkShared {
     /// IPC-path counters reported as SinkStats.
     pub ipc_bytes: AtomicU64,
     pub ipc_frames: AtomicU64,
+    /// Deferred-optimization instrumentation (see docs/export-ipc-transport.md):
+    /// nanos spent copying the napi Buffer (`to_vec`) and writing to ffmpeg stdin,
+    /// summed across frames; logged at finish to judge whether the per-frame copy
+    /// is worth eliminating. Measurement only — does not affect output.
+    pub copy_ns: AtomicU64,
+    pub write_ns: AtomicU64,
     /// Rolling tail of ffmpeg stderr (bounded to 8192 chars), appended to errors.
     pub stderr_tail: Mutex<String>,
 }
@@ -163,6 +169,8 @@ pub async fn export_video_sink_start(
         t0: Instant::now(),
         ipc_bytes: AtomicU64::new(0),
         ipc_frames: AtomicU64::new(0),
+        copy_ns: AtomicU64::new(0),
+        write_ns: AtomicU64::new(0),
         stderr_tail: Mutex::new(String::new()),
     });
 
@@ -201,13 +209,19 @@ pub async fn export_video_sink_start(
 /// Write one raw yuv420p10le frame to the active sink's ffmpeg stdin (None =>
 /// byte-count only) and bump the counters reported by finish. The blocking pipe
 /// write runs on a blocking thread; awaiting it is the renderer's backpressure.
-pub async fn video_sink_write(state: &VideoSinkState, data: Vec<u8>) -> Result<(), String> {
+pub async fn video_sink_write(
+    state: &VideoSinkState,
+    data: Vec<u8>,
+    copy_ns: u64,
+) -> Result<(), String> {
     let shared = {
         let guard = state.0.lock().unwrap();
         let sink = guard.as_ref().ok_or("no active video sink")?;
         sink.shared.clone()
     };
+    shared.copy_ns.fetch_add(copy_ns, Ordering::Relaxed);
     tokio::task::spawn_blocking(move || -> Result<(), String> {
+        let w0 = Instant::now();
         {
             let mut stdin = shared.stdin.lock().unwrap();
             if let Some(s) = stdin.as_mut() {
@@ -215,6 +229,9 @@ pub async fn video_sink_write(state: &VideoSinkState, data: Vec<u8>) -> Result<(
                     .map_err(|e| format!("ffmpeg stdin: {e}{}", tail_suffix(&shared)))?;
             }
         }
+        shared
+            .write_ns
+            .fetch_add(w0.elapsed().as_nanos() as u64, Ordering::Relaxed);
         shared.ipc_bytes.fetch_add(data.len() as u64, Ordering::Relaxed);
         shared.ipc_frames.fetch_add(1, Ordering::Relaxed);
         Ok(())
@@ -246,9 +263,20 @@ pub async fn export_video_sink_finish(state: &VideoSinkState) -> Result<SinkStat
             return Err(format!("ffmpeg exited {st}{}", tail_suffix(&shared)));
         }
     }
+    let bytes = shared.ipc_bytes.load(Ordering::Relaxed);
+    let frames = shared.ipc_frames.load(Ordering::Relaxed);
+    // Deferred-optimization signal (docs/export-ipc-transport.md): is the per-frame
+    // Buffer copy worth eliminating? Compares copy vs stdin-write time across the export.
+    let copy_ms = shared.copy_ns.load(Ordering::Relaxed) / 1_000_000;
+    let write_ms = shared.write_ns.load(Ordering::Relaxed) / 1_000_000;
+    let mb = bytes / 1_048_576;
+    let write_mbps = if write_ms > 0 { mb * 1000 / write_ms } else { 0 };
+    info!(
+        "video sink finished: {frames} frames, {mb} MB; copy {copy_ms} ms, write {write_ms} ms ({write_mbps} MB/s stdin)"
+    );
     Ok(SinkStats {
-        bytes: shared.ipc_bytes.load(Ordering::Relaxed),
-        frames: shared.ipc_frames.load(Ordering::Relaxed),
+        bytes,
+        frames,
         elapsed_ms: shared.t0.elapsed().as_millis() as u64,
     })
 }
@@ -275,6 +303,8 @@ mod tests {
             t0: Instant::now(),
             ipc_bytes: AtomicU64::new(0),
             ipc_frames: AtomicU64::new(0),
+            copy_ns: AtomicU64::new(0),
+            write_ns: AtomicU64::new(0),
             stderr_tail: Mutex::new(String::new()),
         })
     }
@@ -324,7 +354,7 @@ mod tests {
 
         let frame = vec![7u8; 64 * 64 * 3];
         for _ in 0..5 {
-            video_sink_write(&state, frame.clone()).await.expect("write");
+            video_sink_write(&state, frame.clone(), 0).await.expect("write");
         }
 
         let stats = export_video_sink_finish(&state).await.expect("finish");
