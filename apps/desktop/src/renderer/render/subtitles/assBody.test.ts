@@ -129,7 +129,7 @@ describe("subtitleBodyFromFile", () => {
 
   test("query-string or fragment on the path doesn't break extension probe", () => {
     expect(
-      subtitleBodyFromFile("asset://localhost/cap.ass?p=1", "[ass]"),
+      subtitleBodyFromFile("weftcut-media://localhost/cap.ass?p=1", "[ass]"),
     ).toBe("[ass]");
   });
 });

@@ -79,7 +79,7 @@ describe("prepareExportMedia", () => {
     probe: vi.fn().mockResolvedValue(true),
     ensureFullProxy: vi.fn().mockResolvedValue(undefined),
     proxyStateOf: () => undefined,
-    urlForOriginal: (m: any) => `asset://${m.id}`,
+    urlForOriginal: (m: any) => `weftcut-media://${m.id}`,
     memo: new Map<string, ProbeState>(),
     ...over,
   });
