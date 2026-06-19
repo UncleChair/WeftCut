@@ -13,7 +13,7 @@ const REPO = path.resolve(HERE, "..", "..", "..", "..");
 // only throw when there's no parseable report.
 export function analyze({ output, source, samples, ssimMin, audio, window }) {
   const args = [
-    "run", "--manifest-path", "apps/desktop/src-tauri/Cargo.toml",
+    "run", "--manifest-path", "apps/desktop/native/Cargo.toml",
     "--bin", "media_conformance", "--features", "jobs,export", "--quiet", "--",
     "--output", output, "--source", source, "--samples", samples.join(","),
   ];
@@ -37,7 +37,7 @@ export function analyze({ output, source, samples, ssimMin, audio, window }) {
 // skipped motif would render static black → near-identical → fail).
 export function analyzeSelf({ output, samples, ssimMax }) {
   const args = [
-    "run", "--manifest-path", "apps/desktop/src-tauri/Cargo.toml",
+    "run", "--manifest-path", "apps/desktop/native/Cargo.toml",
     "--bin", "media_conformance", "--features", "jobs,export", "--quiet", "--",
     "--self-ssim", "--output", output, "--samples", samples.join(","),
   ];
@@ -59,7 +59,7 @@ export function analyzeSelf({ output, samples, ssimMax }) {
 // stays at/below the given dBFS (the alimiter ceiling check).
 export function analyzeAudioEnvelope({ output, expects, peakMaxDb }) {
   const args = [
-    "run", "--manifest-path", "apps/desktop/src-tauri/Cargo.toml",
+    "run", "--manifest-path", "apps/desktop/native/Cargo.toml",
     "--bin", "media_conformance", "--features", "jobs,export", "--quiet", "--",
     "--audio-envelope", JSON.stringify(expects), "--output", output,
   ];
@@ -77,7 +77,7 @@ export function analyzeAudioEnvelope({ output, expects, peakMaxDb }) {
 // Whole-file per-channel RMS ratio vs the expected L−R dB delta (pan law).
 export function analyzeAudioPan({ output, expectLrDb }) {
   const args = [
-    "run", "--manifest-path", "apps/desktop/src-tauri/Cargo.toml",
+    "run", "--manifest-path", "apps/desktop/native/Cargo.toml",
     "--bin", "media_conformance", "--features", "jobs,export", "--quiet", "--",
     "--audio-pan", "--expect-lr-db", String(expectLrDb), "--output", output,
   ];
@@ -93,7 +93,7 @@ export function analyzeAudioPan({ output, expectLrDb }) {
 
 export function analyzeColor({ output, source, manifest, inMatrix, inRange, sample }) {
   const args = [
-    "run", "--manifest-path", "apps/desktop/src-tauri/Cargo.toml",
+    "run", "--manifest-path", "apps/desktop/native/Cargo.toml",
     "--bin", "media_conformance", "--features", "jobs,export", "--quiet", "--",
     "--color", "--output", output, "--source", source,
     "--manifest", manifest, "--in-matrix", inMatrix, "--in-range", inRange,

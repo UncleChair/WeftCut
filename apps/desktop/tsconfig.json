@@ -1,37 +1,10 @@
 {
-  "compilerOptions": {
-    "target": "ES2022",
-    "useDefineForClassFields": true,
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "module": "ESNext",
-    "skipLibCheck": true,
-
-    "moduleResolution": "Bundler",
-    "paths": {
-      "@/*": ["./src/*"],
-      "@tauri-apps/api/core": ["./src/electron-compat/tauri-core.ts"],
-      "@tauri-apps/api/event": ["./src/electron-compat/tauri-event.ts"],
-      "@tauri-apps/api/path": ["./src/electron-compat/tauri-path.ts"],
-      "@tauri-apps/api/window": ["./src/electron-compat/tauri-window.ts"],
-      "@tauri-apps/api/webviewWindow": ["./src/electron-compat/tauri-webview-window.ts"],
-      "@tauri-apps/plugin-dialog": ["./src/electron-compat/plugin-dialog.ts"],
-      "@tauri-apps/plugin-fs": ["./src/electron-compat/plugin-fs.ts"],
-      "@tauri-apps/plugin-notification": ["./src/electron-compat/plugin-notification.ts"],
-      "@tauri-apps/plugin-shell": ["./src/electron-compat/plugin-shell.ts"]
-    },
-    "allowImportingTsExtensions": true,
-    "resolveJsonModule": true,
-    "isolatedModules": true,
-    "noEmit": true,
-    "jsx": "react-jsx",
-
-    "strict": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true,
-    "exactOptionalPropertyTypes": true,
-    "noUncheckedIndexedAccess": true
-  },
-  "include": ["src", "fixtures/**/*.json"],
-  "references": [{ "path": "./tsconfig.node.json" }]
+  // Orchestrator only — owns no files. `tsc -b` builds the referenced
+  // node-side and web-side projects. See tsconfig.node.json (Electron main +
+  // preload + the electron-vite config) and tsconfig.web.json (renderer).
+  "files": [],
+  "references": [
+    { "path": "./tsconfig.node.json" },
+    { "path": "./tsconfig.web.json" }
+  ]
 }

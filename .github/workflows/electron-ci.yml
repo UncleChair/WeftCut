@@ -29,7 +29,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: apps/desktop/src-tauri
+          workspaces: apps/desktop/native
 
       # xvfb is required on Linux so the Electron app can open a display for
       # offscreen CDP capture (no real display on GitHub runners).
@@ -70,7 +70,7 @@ jobs:
       # Must use bash shell so the inline env-var prefix works on Windows.
       - name: Build app (E2E mode)
         shell: bash
-        run: VITE_WEFTCUT_E2E=1 npm run electron:build
+        run: VITE_WEFTCUT_E2E=1 npm run build
 
       # Rust unit tests.  No xvfb needed (headless library tests, no display).
       # Skipped on Linux — napi's Node-API symbols can't resolve in a standalone test binary
@@ -84,7 +84,7 @@ jobs:
           case "$RUNNER_OS" in
             macOS) export RUSTFLAGS="-C link-arg=-Wl,-undefined,dynamic_lookup" ;;
           esac
-          cargo test --manifest-path src-tauri/Cargo.toml --lib --features jobs,export,mcp,cloud,motifs
+          cargo test --manifest-path native/Cargo.toml --lib --features jobs,export,mcp,cloud,motifs
 
       # Full e2e suite via Playwright — includes s6-determinism.spec.ts which
       # writes PNGs to determinism-artifacts/<process.platform>/ (win32/linux/darwin).
@@ -132,7 +132,7 @@ jobs:
       # running electron:build (clean non-E2E renderer bundle, no
       # VITE_WEFTCUT_E2E) then electron-builder directly.
       - name: Package (unsigned)
-        run: npm run electron:build && npx electron-builder --publish never
+        run: npm run build && npx electron-builder --publish never
 
       - name: Upload installer
         if: always()
