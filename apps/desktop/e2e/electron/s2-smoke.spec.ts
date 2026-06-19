@@ -18,16 +18,16 @@ test('boots, creates a project, add_track round-trips through the bridge', async
 
   // Capture baseline track_count (blank project boots with 2 reserved A/B-roll
   // tracks; do NOT hardcode a literal count here).
-  const summary0 = await page.evaluate(() => (window as any).api.invoke('project_summary', {}))
+  const summary0 = await page.evaluate(() => (window as any).api.backend.invoke('project_summary', {}))
   const baseline: number = summary0.track_count
   expect(typeof baseline).toBe('number')
 
   // Invoke add_track — must return a string track-id.
-  const addTrackResult = await page.evaluate(() => (window as any).api.invoke('add_track', {}))
+  const addTrackResult = await page.evaluate(() => (window as any).api.backend.invoke('add_track', {}))
   expect(typeof addTrackResult).toBe('string')
 
   // After add_track, track_count must have grown by exactly 1.
-  const summary1 = await page.evaluate(() => (window as any).api.invoke('project_summary', {}))
+  const summary1 = await page.evaluate(() => (window as any).api.backend.invoke('project_summary', {}))
   expect(summary1.track_count).toBe(baseline + 1)
 
   await app.close()

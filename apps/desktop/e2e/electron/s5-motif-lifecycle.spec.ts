@@ -76,7 +76,7 @@ function removeUserMotifAt(motifsRoot: string, id: string): void {
 
 function invoke(page: import('@playwright/test').Page, channel: string, args: unknown) {
   return page.evaluate(
-    ([c, a]) => (window as any).api.invoke(c, a),
+    ([c, a]) => (window as any).api.backend.invoke(c, a),
     [channel, args] as const,
   )
 }

@@ -15,17 +15,17 @@ test('fs:writeFile honors append vs truncate through the bridge', async () => {
   const page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')
 
-  // Truncate-write [1,2,3], then append [4,5] — through window.api.invoke.
+  // Truncate-write [1,2,3], then append [4,5] — through the named fs API.
   await page.evaluate(async (p) => {
-    await (window as any).api.invoke('fs:writeFile', { path: p, data: new Uint8Array([1, 2, 3]), append: false })
-    await (window as any).api.invoke('fs:writeFile', { path: p, data: new Uint8Array([4, 5]), append: true })
+    await (window as any).api.fs.writeFile(p, new Uint8Array([1, 2, 3]), false)
+    await (window as any).api.fs.writeFile(p, new Uint8Array([4, 5]), true)
   }, tmp)
   expect(Array.from(fs.readFileSync(tmp))).toEqual([1, 2, 3, 4, 5])
 
   // exists → true; remove → exists false.
-  const existsBefore = await page.evaluate((p) => (window as any).api.invoke('fs:exists', { path: p }), tmp)
+  const existsBefore = await page.evaluate((p) => (window as any).api.fs.exists(p), tmp)
   expect(existsBefore).toBe(true)
-  await page.evaluate((p) => (window as any).api.invoke('fs:remove', { path: p }), tmp)
+  await page.evaluate((p) => (window as any).api.fs.remove(p), tmp)
   expect(fs.existsSync(tmp)).toBe(false)
 
   await app.close()
@@ -45,7 +45,7 @@ test('fs:* denies paths outside the allowed roots', async () => {
 
   const outcome = await page.evaluate(async (p) => {
     try {
-      await (window as any).api.invoke('fs:writeFile', { path: p, data: new Uint8Array([9]), append: false })
+      await (window as any).api.fs.writeFile(p, new Uint8Array([9]), false)
       return 'allowed'
     } catch (e) {
       return `denied: ${String((e as Error)?.message ?? e)}`

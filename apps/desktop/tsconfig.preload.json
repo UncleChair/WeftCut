@@ -1,0 +1,24 @@
+{
+  // Electron PRELOAD scripts. DOM is included because the preload runs in the
+  // renderer's DOM context — it wires drag-drop and injects the drag-region
+  // stylesheet. Kept separate from tsconfig.main.json so the main process does
+  // NOT inherit DOM types (see that file).
+  "compilerOptions": {
+    "composite": true,
+    "target": "ES2022",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "skipLibCheck": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    // composite requires emit; redirect .d.ts out of source (TS6310).
+    "emitDeclarationOnly": true,
+    "declarationDir": "node_modules/.cache/tsc/preload",
+    "types": ["node"]
+  },
+  "include": ["src/preload/**/*.ts"]
+}

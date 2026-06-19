@@ -33,12 +33,12 @@ test('a media file dropped on the pool imports via media:external-drop', async (
     await page.waitForFunction(() => typeof (window as any).api?.getPathForFile === 'function')
 
     // Snapshot media pool size before the drop.
-    const before = await page.evaluate(() => (window as any).api.invoke('project_summary', {}))
+    const before = await page.evaluate(() => (window as any).api.backend.invoke('project_summary', {}))
     const beforeCount: number = ((before as any).media ?? []).length
 
     // Simulate the resolved-path leg of the Electron drop branch directly:
     // the renderer's media:external-drop listener imports the file.
-    await page.evaluate((p) => (window as any).api.invoke('media:dropped', [p]), MEDIA_PATH)
+    await page.evaluate((p) => (window as any).api.media.dropped([p]), MEDIA_PATH)
 
     // Poll project_summary until media count grows (import is async: probe +
     // MediaItem insert happens in a blocking task then the actor processes it).
@@ -47,7 +47,7 @@ test('a media file dropped on the pool imports via media:external-drop', async (
     await expect
       .poll(
         async () => {
-          const s = await page.evaluate(() => (window as any).api.invoke('project_summary', {}))
+          const s = await page.evaluate(() => (window as any).api.backend.invoke('project_summary', {}))
           return ((s as any).media ?? []).length
         },
         { timeout: 20_000, intervals: [500, 1000, 2000] },

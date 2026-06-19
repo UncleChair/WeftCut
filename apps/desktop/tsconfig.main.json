@@ -1,0 +1,26 @@
+{
+  // Electron MAIN process + the electron-vite config. Deliberately NO `DOM`
+  // lib: the main process has no document/window, so accidental DOM use here is
+  // now a type error (preload, which DOES run in the renderer's DOM context, has
+  // its own tsconfig.preload.json). Web-platform globals the main process does
+  // use legitimately (Response/ReadableStream/URL for the weftcut-media
+  // protocol) come from @types/node, not DOM.
+  "compilerOptions": {
+    "composite": true,
+    "target": "ES2022",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "skipLibCheck": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    // composite requires emit; redirect .d.ts out of source (TS6310).
+    "emitDeclarationOnly": true,
+    "declarationDir": "node_modules/.cache/tsc/main",
+    "types": ["node"]
+  },
+  "include": ["electron.vite.config.ts", "src/main/**/*.ts"]
+}

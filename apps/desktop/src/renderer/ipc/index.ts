@@ -1043,7 +1043,8 @@ export interface McpInfoView {
 /// Returns the live MCP server connection details, or `null` if the server is
 /// still starting. Used by the connect-agent panel.
 export async function getMcpInfo(): Promise<McpInfoView | null> {
-  return invoke<McpInfoView | null>("get_mcp_info");
+  // Main-process handler (not a Rust command) — named API, not backend.invoke.
+  return (await window.api.mcp.getInfo()) as McpInfoView | null;
 }
 
 /// Regenerate the bearer token. The server stays bound on the same port —
@@ -1051,7 +1052,8 @@ export async function getMcpInfo(): Promise<McpInfoView | null> {
 /// reuses the new token. Returns the fresh token so the panel can update
 /// without a follow-up `getMcpInfo` call.
 export async function resetMcpToken(): Promise<string> {
-  return invoke<string>("reset_mcp_token");
+  // Main-process handler (not a Rust command) — named API, not backend.invoke.
+  return (await window.api.mcp.resetToken()) as string;
 }
 
 export interface ApiKeyStatus {

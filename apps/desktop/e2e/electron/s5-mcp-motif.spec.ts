@@ -17,7 +17,7 @@ async function connect(url: string, token: string): Promise<Client> {
 test('S5: MCP motif tools are advertised and callable', async () => {
   const { app, page } = await launchApp()
 
-  const info = (await page.evaluate(() => (window as any).api.invoke('get_mcp_info', {}))) as Info
+  const info = (await page.evaluate(() => (window as any).api.mcp.getInfo())) as Info
   const client = await connect(info.url, info.bearer_token)
 
   // list_motifs, add_motif, preview_motif_draft must appear in listTools

@@ -197,14 +197,20 @@ app.whenReady().then(async () => {
     const o = (opts ?? {}) as {
       title?: string
       multiple?: boolean
+      directory?: boolean
       filters?: { name: string; extensions: string[] }[]
       defaultPath?: string
     }
+    const properties: Array<'openFile' | 'openDirectory' | 'multiSelections'> = o.directory
+      ? ['openDirectory']
+      : ['openFile']
+    if (o.multiple) properties.push('multiSelections')
     const res = await dialog.showOpenDialog(mainWindow!, {
       title: o.title,
       defaultPath: o.defaultPath,
-      filters: o.filters,
-      properties: o.multiple ? ['openFile', 'multiSelections'] : ['openFile'],
+      // Filters are meaningless for a directory picker.
+      filters: o.directory ? undefined : o.filters,
+      properties,
     })
     if (res.canceled || res.filePaths.length === 0) return null
     return o.multiple ? res.filePaths : res.filePaths[0]
