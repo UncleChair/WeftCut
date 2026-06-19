@@ -18,8 +18,14 @@ async function connect(url: string, token: string): Promise<Client> {
 test('safeStorage key round-trip + cloud tools advertised', async () => {
   const { app, page } = await launchApp()
 
+  // `api.backend.invoke` is ONLY for Rust dispatcher commands (incl. the
+  // settings_* channels main intercepts before the Rust fall-through). Main-process
+  // IPC handlers (`fs:*`, `path:*`, `get_mcp_info`) have their own `api.*` methods —
+  // routing them through backend.invoke hits the dispatcher's "unavailable" error.
   const invoke = (cmd: string, args: unknown) =>
     page.evaluate(([c, a]) => (window as any).api.backend.invoke(c, a), [cmd, args] as const)
+  const readJson = (path: string) =>
+    page.evaluate(async (p) => new TextDecoder().decode(await (window as any).api.fs.readFile(p)), path)
 
   // Resolve userData path from the main process (no require/import needed here).
   const userData = (await app.evaluate(({ app }) => app.getPath('userData'))) as string
@@ -29,7 +35,10 @@ test('safeStorage key round-trip + cloud tools advertised', async () => {
   const encryptionAvailable = (await app.evaluate(({ safeStorage }) => safeStorage.isEncryptionAvailable())) as boolean
   test.skip(!encryptionAvailable, 'safeStorage encryption unavailable (no OS keyring) — round-trip is verified where a keyring exists (Windows/macOS/Linux-desktop)')
 
-  const keysPath = await invoke('path:join', { parts: [userData, 'cloud_keys.json'] }) as string
+  const keysPath = (await page.evaluate(
+    ([u]) => (window as any).api.path.join([u, 'cloud_keys.json']),
+    [userData],
+  )) as string
 
   // Clean slate.
   await invoke('settings_clear_api_key', { provider: 'openai' })
@@ -40,15 +49,14 @@ test('safeStorage key round-trip + cloud tools advertised', async () => {
   const openai = status.find((s) => s.provider === 'openai')!
   expect(openai.configured).toBe(true)
 
-  // Read cloud_keys.json via the existing fs:readFile IPC and confirm the stored
-  // value is an encrypted blob (base64), not the plaintext key.
-  const rawBytes = (await invoke('fs:readFile', { path: keysPath })) as Uint8Array
-  const stored = JSON.parse(Buffer.from(rawBytes).toString('utf8')) as Record<string, string>
+  // Read cloud_keys.json via the fs:readFile IPC and confirm the stored value is
+  // an encrypted blob (base64), not the plaintext key.
+  const stored = JSON.parse(await readJson(keysPath)) as Record<string, string>
   expect(typeof stored.openai).toBe('string')
   expect(stored.openai).not.toContain('sk-test-dummy') // encrypted, not plaintext
 
   // The cloud MCP tools are now advertised to an external client.
-  const info = (await invoke('get_mcp_info', {})) as Info
+  const info = (await page.evaluate(() => (window as any).api.mcp.getInfo())) as Info
   const client = await connect(info.url, info.bearer_token)
   const names = (await client.listTools()).tools.map((t) => t.name)
   expect(names).toContain('transcribe_clip')
@@ -59,10 +67,9 @@ test('safeStorage key round-trip + cloud tools advertised', async () => {
   await invoke('settings_clear_api_key', { provider: 'openai' })
   status = (await invoke('settings_get_api_key_status', {})) as Status[]
   expect(status.find((s) => s.provider === 'openai')!.configured).toBe(false)
-  const exists = (await invoke('fs:exists', { path: keysPath })) as boolean
+  const exists = (await page.evaluate((p) => (window as any).api.fs.exists(p), keysPath)) as boolean
   if (exists) {
-    const afterBytes = (await invoke('fs:readFile', { path: keysPath })) as Uint8Array
-    const after = JSON.parse(Buffer.from(afterBytes).toString('utf8')) as Record<string, string>
+    const after = JSON.parse(await readJson(keysPath)) as Record<string, string>
     expect(after.openai).toBeUndefined()
   }
   // If the file doesn't exist at all after clear, the entry is definitely gone.
