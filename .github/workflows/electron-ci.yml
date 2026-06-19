@@ -71,6 +71,20 @@ jobs:
       - name: Build napi addon
         run: npm run napi:build
 
+      # Typecheck + unit tests are OS-independent, so run them once on the Linux
+      # leg (which already skips the napi cargo tests) rather than 3x. Neither was
+      # gated by CI before — the esbuild build does no type-checking and vitest
+      # wasn't run at all — so TS-type and unit regressions could slip through
+      # green. Placed after napi:build (needs its generated .d.ts/.node) and before
+      # the heavier ffmpeg/build/e2e/package so a failure fails fast.
+      - name: Typecheck (tsc -b)
+        if: runner.os == 'Linux'
+        run: npm run typecheck
+
+      - name: Unit tests (vitest)
+        if: runner.os == 'Linux'
+        run: npm test
+
       # Fetch the platform-appropriate static ffmpeg binary into
       # resources/ffmpeg/<os>/. This DRY script handles win/linux/mac and
       # exercises the Linux + macOS branches for the first time in CI.
