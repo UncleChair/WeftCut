@@ -12,7 +12,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const FALLBACK = path.resolve(__dirname, '../../e2e/fixtures/media/test_1080p_30fps.mp4')
 const MEDIA_PATH = process.env['WEFTCUT_TEST_MEDIA'] ?? FALLBACK
 
-const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-s6-dragdrop-proj')
+const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-dragdrop-proj')
 
 test('a media file dropped on the pool imports via media:external-drop', async () => {
   test.skip(!fs.existsSync(MEDIA_PATH), `media fixture missing: ${MEDIA_PATH}`)
@@ -25,7 +25,7 @@ test('a media file dropped on the pool imports via media:external-drop', async (
     // Enter the editor so the media:external-drop listener is mounted.
     await newProject(page, {
       parentFolder: PROJECT_PARENT,
-      name: 'e2e-s6-drag-' + Date.now(),
+      name: 'e2e-drag-' + Date.now(),
       canvas: { width: 1280, height: 720, fpsNum: 30, fpsDen: 1 },
     })
 

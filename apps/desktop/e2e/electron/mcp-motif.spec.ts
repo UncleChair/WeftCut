@@ -14,7 +14,7 @@ async function connect(url: string, token: string): Promise<Client> {
   return client
 }
 
-test('S5: MCP motif tools are advertised and callable', async () => {
+test('MCP motif tools are advertised and callable', async () => {
   const { app, page } = await launchApp()
 
   const info = (await page.evaluate(() => (window as any).api.mcp.getInfo())) as Info

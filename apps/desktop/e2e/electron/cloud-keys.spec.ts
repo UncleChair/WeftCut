@@ -10,12 +10,12 @@ async function connect(url: string, token: string): Promise<Client> {
   const transport = new StreamableHTTPClientTransport(new URL(url), {
     requestInit: { headers: { Authorization: `Bearer ${token}` } },
   })
-  const client = new Client({ name: 'e2e-s4b', version: '0.0.0' }, { capabilities: {} })
+  const client = new Client({ name: 'e2e-cloud-keys', version: '0.0.0' }, { capabilities: {} })
   await client.connect(transport)
   return client
 }
 
-test('S4b: safeStorage key round-trip + cloud tools advertised', async () => {
+test('safeStorage key round-trip + cloud tools advertised', async () => {
   const { app, page } = await launchApp()
 
   const invoke = (cmd: string, args: unknown) =>
