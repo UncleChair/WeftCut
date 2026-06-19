@@ -9,6 +9,7 @@ declare global {
       invoke(channel: string, args?: unknown): Promise<unknown>
       on(event: string, cb: (payload: unknown) => void): () => void
       off(event: string): void
+      videoSinkWrite(bytes: ArrayBuffer | ArrayBufferView): Promise<void>
     }
   }
 }
