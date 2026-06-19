@@ -99,17 +99,6 @@ const api: WeftcutApi = {
     ipcRenderer.removeAllListeners(`evt:${event}`)
   },
 
-  // Electron drops give File objects, not paths. webUtils.getPathForFile is the
-  // sanctioned API (File.path was removed). Per-File (not FileList) is reliable
-  // across the contextBridge boundary.
-  getPathForFile(file: File): string {
-    try {
-      return webUtils.getPathForFile(file)
-    } catch {
-      return ''
-    }
-  },
-
   // Stream one raw frame to the native video sink over IPC (the Electron-native
   // alternative to the loopback WebSocket transport).
   videoSinkWrite(bytes: ArrayBuffer | ArrayBufferView): Promise<void> {
