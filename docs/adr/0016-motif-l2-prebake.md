@@ -9,12 +9,12 @@ status: accepted
 L1 (in-RAM lookahead) can't keep up when raster throughput is the bottleneck
 (stacked motifs / 4K / weak GPU): playback stutters and reopening a project
 re-rasters every frame. The L2 disk layer existed in `frameCache.ts` but was
-unwired and runtime-blocked (the fs scope excluded the user-chosen workspace).
+unwired — nothing read or wrote it.
 
 ## Decision
 
-- Grant the fs plugin the workspace dir at project-open
-  (`app.fs_scope().allow_directory(ws, true)`) plus the `fs:allow-*` perms.
+- Enable the on-disk layer under `<workspace>/Cache/raster/`, read and written
+  via the fs bridge (`@/bridge/fs`) once a project is open.
 - `resolveMotifFrame` is a read-only disk-first path shared by the sprite and
   prewarmer; a `MotifBaker` is the sole writer (centralized → no
   fire-and-forget LRU-eviction race).

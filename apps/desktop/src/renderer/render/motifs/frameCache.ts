@@ -192,21 +192,14 @@ export class MotifFrameCache {
   // Layout: `<workspace>/Cache/raster/<hash>/<i>.png`, where `<hash>` is
   // a stable hash of `cacheKey` (FNV-1a 32-bit, hex — see `hashCacheKey`).
   //
-  // RUNTIME-ENABLED. The six fs perms L2 needs — `fs:allow-mkdir`,
-  // `fs:allow-write-file`, `fs:allow-read-file`, `fs:allow-read-dir`,
-  // `fs:allow-remove`, `fs:allow-exists` — are granted in
-  // `capabilities/default.json`, and the dynamic workspace scope is opened at
-  // runtime via Rust `app.fs_scope().allow_directory(ws, true)` at each of the
-  // three workspace-activation sites (the workspace is a USER-CHOSEN folder, so
-  // `default.json` alone can't express its path the way
-  // `allow-temp-write-recursive` ships a static `$TEMP/**` scope). So
-  // `mkdir`/`writeFile`/`readDir`/`remove`/`exists` against
-  // `<workspace>/Cache/raster/...` succeed once a project is open. These methods
-  // are implemented against the real fs plugin (no faking): a genuine not-found
-  // yields null/no-op; an unexpected IO/permission error surfaces as a thrown
-  // error rather than being masked. The fs-bridge imports are loaded lazily so the
-  // L0 path never pulls the Electron bridge (keeps `frameCache.ts` Node-loadable for the unit
-  // test).
+  // Disk I/O goes through `@/bridge/fs` (`window.api.fs.*` → the Electron main
+  // process), so `mkdir`/`writeFile`/`readDir`/`remove`/`exists` against
+  // `<workspace>/Cache/raster/...` work whenever a project is open; there is no
+  // capability gating. The methods run against the real fs: a genuine not-found
+  // yields null/no-op, but an unexpected IO error surfaces as a thrown error
+  // rather than being masked. The fs-bridge imports are loaded lazily so the L0
+  // path never pulls the bridge — keeps `frameCache.ts` Node-loadable for the
+  // unit test.
   // ----------------------------------------------------------------
 
   /// Read a persisted PNG frame, or null if it isn't on disk (or no
