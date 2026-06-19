@@ -249,6 +249,20 @@ impl Backend {
     pub fn clear_cloud_key(&self, provider: String) {
         self.cloud_keys.lock().expect("cloud_keys poisoned").remove(&provider);
     }
+
+    /// Stream one raw encoded frame to the active 10-bit video sink over native
+    /// IPC (PoC: the Electron-native alternative to the loopback WebSocket).
+    /// Binary in, no JSON — bypasses the `invoke` dispatcher.
+    #[cfg(feature = "export")]
+    #[napi]
+    pub async fn export_video_sink_write(
+        &self,
+        bytes: napi::bindgen_prelude::Buffer,
+    ) -> napi::Result<()> {
+        crate::export::videosink::video_sink_write(&self.video_sink, bytes.to_vec())
+            .await
+            .map_err(napi::Error::from_reason)
+    }
 }
 
 #[cfg(feature = "mcp")]

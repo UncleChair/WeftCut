@@ -336,7 +336,7 @@ pub async fn export_video_sink_start(
     hw: &super::hwencoder::HwEncoderCache,
     args: VideoSinkStartArgs,
 ) -> Result<VideoSinkStartReply, String> {
-    if args.mode != "discard" && args.mode != "ws" {
+    if args.mode != "discard" && args.mode != "ws" && args.mode != "ipc" {
         return Err(format!("unknown sink mode {}", args.mode));
     }
     // Reclaim any orphaned sink rather than refusing: an active sink here is
@@ -350,7 +350,10 @@ pub async fn export_video_sink_start(
     // thread after the SinkShared Arc is constructed.
     let mut stderr_temp: Option<std::process::ChildStderr> = None;
 
-    if args.mode != "discard" {
+    // Spawn ffmpeg for: "ws" (always), and "ipc" with a real output path.
+    // "discard" and "ipc"+empty-path skip ffmpeg (pure transport / byte-count).
+    let spawn_ffmpeg = args.mode == "ws" || (args.mode == "ipc" && !args.output_path.is_empty());
+    if spawn_ffmpeg {
         let codec = super::hwencoder::TargetCodec::parse(&args.codec)
             .ok_or_else(|| format!("unknown codec {}", args.codec))?;
         // --- M5: reject codecs unsupported for 10-bit ---
@@ -520,6 +523,37 @@ pub async fn export_video_sink_cancel(
     Ok(())
 }
 
+/// IPC write path (re-added for the Electron-native transport PoC). Writes one
+/// raw `yuv420p10le` frame to the active sink's ffmpeg stdin (None => discard,
+/// byte-count only) and bumps the `ipc_*` counters that `run_ws_sink`'s reap
+/// branch reports as `SinkStats`. Runs the blocking pipe write on a blocking
+/// thread so it never stalls the addon's async executor; awaiting it is the
+/// renderer's backpressure.
+pub async fn video_sink_write(state: &VideoSinkState, data: Vec<u8>) -> Result<(), String> {
+    let shared = {
+        let guard = state.0.lock().unwrap();
+        let sink = guard.as_ref().ok_or("no active video sink")?;
+        sink.shared.clone()
+    };
+    tokio::task::spawn_blocking(move || -> Result<(), String> {
+        {
+            let mut stdin = shared.stdin.lock().unwrap();
+            if let Some(s) = stdin.as_mut() {
+                s.write_all(&data).map_err(|e| format!("ffmpeg stdin: {e}"))?;
+            }
+        }
+        let n = data.len() as u64;
+        shared.ipc_bytes.fetch_add(n, Ordering::Relaxed);
+        shared.ipc_frames.fetch_add(1, Ordering::Relaxed);
+        shared
+            .last_write_ms
+            .store(shared.t0.elapsed().as_millis() as u64, Ordering::Relaxed);
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("write join: {e}"))?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -567,5 +601,44 @@ mod tests {
         let state: Mutex<Option<ActiveSink>> = Mutex::new(None);
         reclaim_stale_sink(&state);
         assert!(state.lock().unwrap().is_none());
+    }
+
+    // The "ipc" + empty-output (discard) path: start a sink with no ffmpeg,
+    // push frames through the re-added write command, finish, and confirm the
+    // SinkStats counters reflect exactly what was written. Exercises the same
+    // accept-loop reap branch (I1) the production IPC fallback relied on.
+    #[tokio::test]
+    async fn ipc_discard_write_counts_bytes_and_frames() {
+        let state = VideoSinkState::default();
+        let hw = super::super::hwencoder::HwEncoderCache::default();
+        let reply = export_video_sink_start(
+            &state,
+            &hw,
+            VideoSinkStartArgs {
+                mode: "ipc".into(),
+                width: 64,
+                height: 64,
+                fps_num: 30,
+                fps_den: 1,
+                codec: "hevc".into(),
+                bitrate: 0,
+                cbr: false,
+                gop: 30,
+                software: false,
+                output_path: String::new(), // empty => no ffmpeg (discard)
+            },
+        )
+        .await
+        .expect("ipc start");
+        assert!(reply.port > 0, "sink still binds an (idle) listener in the PoC");
+
+        let frame = vec![7u8; 64 * 64 * 3];
+        for _ in 0..5 {
+            video_sink_write(&state, frame.clone()).await.expect("write");
+        }
+
+        let stats = export_video_sink_finish(&state).await.expect("finish");
+        assert_eq!(stats.frames, 5, "five IPC writes => five frames");
+        assert_eq!(stats.bytes, 5 * (64 * 64 * 3) as u64, "byte count matches");
     }
 }
