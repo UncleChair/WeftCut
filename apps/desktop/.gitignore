@@ -23,3 +23,6 @@ build/*
 
 # determinism-artifacts/ — per-OS PNG captures; compared in CI (Task 8), never committed
 determinism-artifacts/
+
+# tsc -b declaration output for composite project refs (type-check only)
+node_modules/.cache/tsc/
