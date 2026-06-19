@@ -1,6 +1,10 @@
 // Filesystem helpers (read/write/mkdir/remove/exists/readDir) via the Electron
 // main process. All are invoke wrappers; callers guard with try/catch.
 
+import type { DirEntry } from '../../shared/ipc'
+
+export type { DirEntry }
+
 export async function readFile(path: string, _opts?: unknown): Promise<Uint8Array<ArrayBuffer>> {
   // The IPC payload is a Node Buffer → a plain ArrayBuffer-backed Uint8Array in
   // the renderer (never SharedArrayBuffer). Type it concretely so callers can
@@ -37,13 +41,6 @@ export async function remove(path: string, _opts?: unknown): Promise<void> {
 
 export async function exists(path: string, _opts?: unknown): Promise<boolean> {
   return window.api.fs.exists(path)
-}
-
-export interface DirEntry {
-  name: string
-  isDirectory: boolean
-  isFile: boolean
-  isSymlink: boolean
 }
 
 export async function readDir(path: string, _opts?: unknown): Promise<DirEntry[]> {

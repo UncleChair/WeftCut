@@ -24,5 +24,6 @@
     "emitDeclarationOnly": true,
     "declarationDir": "node_modules/.cache/tsc/web"
   },
-  "include": ["src/renderer", "fixtures/**/*.json"]
+  "include": ["src/renderer", "fixtures/**/*.json"],
+  "references": [{ "path": "./tsconfig.shared.json" }]
 }

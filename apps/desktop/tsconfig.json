@@ -1,10 +1,12 @@
 {
   // Orchestrator only — owns no files. `tsc -b` builds the referenced projects:
+  //   tsconfig.shared.json  IPC contract types (preload <-> renderer)
   //   tsconfig.main.json    Electron main process + electron-vite config (no DOM)
   //   tsconfig.preload.json Electron preload (DOM — runs in the renderer context)
   //   tsconfig.web.json     renderer
   "files": [],
   "references": [
+    { "path": "./tsconfig.shared.json" },
     { "path": "./tsconfig.main.json" },
     { "path": "./tsconfig.preload.json" },
     { "path": "./tsconfig.web.json" }

@@ -20,5 +20,6 @@
     "declarationDir": "node_modules/.cache/tsc/preload",
     "types": ["node"]
   },
-  "include": ["src/preload/**/*.ts"]
+  "include": ["src/preload/**/*.ts"],
+  "references": [{ "path": "./tsconfig.shared.json" }]
 }
