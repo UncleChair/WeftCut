@@ -249,6 +249,20 @@ impl Backend {
     pub fn clear_cloud_key(&self, provider: String) {
         self.cloud_keys.lock().expect("cloud_keys poisoned").remove(&provider);
     }
+
+    /// Stream one raw encoded frame to the active 10-bit video sink over native
+    /// IPC (PoC: the Electron-native alternative to the loopback WebSocket).
+    /// Binary in, no JSON — bypasses the `invoke` dispatcher.
+    #[cfg(feature = "export")]
+    #[napi]
+    pub async fn export_video_sink_write(
+        &self,
+        bytes: napi::bindgen_prelude::Buffer,
+    ) -> napi::Result<()> {
+        crate::export::videosink::video_sink_write(&self.video_sink, bytes.to_vec())
+            .await
+            .map_err(napi::Error::from_reason)
+    }
 }
 
 #[cfg(feature = "mcp")]
@@ -884,27 +898,24 @@ mod tests {
         assert_eq!(out, "[]", "blank project has no audio layers to conform");
     }
 
-    /// "discard" mode binds the loopback listener WITHOUT spawning ffmpeg, so
-    /// this exercises the decoupled sink end-to-end through dispatch with no
-    /// ffmpeg dependency: start returns a bound port + token, cancel clears it.
+    /// IPC-only sink (empty outputPath = no ffmpeg / byte-count only): start
+    /// returns null (unit), then cancel clears the active sink.
     #[cfg(feature = "export")]
     #[tokio::test]
-    async fn video_sink_discard_start_returns_port_then_cancel() {
+    async fn video_sink_ipc_start_then_cancel() {
         let b = Backend::new_for_test(Arc::new(VecEventSink::new()));
         b.init().await.unwrap();
         let start_args = serde_json::json!({
             "args": {
-                "mode": "discard", "width": 64, "height": 64,
+                "width": 64, "height": 64,
                 "fpsNum": 30, "fpsDen": 1, "codec": "hevc",
-                "bitrate": 1_000_000, "cbr": false, "gop": 30,
+                "bitrate": 0, "cbr": false, "gop": 30,
                 "software": false, "outputPath": ""
             }
         })
         .to_string();
         let reply = b.dispatch("export_video_sink_start", &start_args).await.unwrap();
-        let v: serde_json::Value = serde_json::from_str(&reply).unwrap();
-        assert!(v["port"].as_u64().unwrap() > 0, "discard sink returns a bound port, got {reply}");
-        assert!(!v["token"].as_str().unwrap().is_empty(), "discard sink returns a token");
+        assert_eq!(reply, "null", "IPC start returns unit/null, got {reply}");
         let cancel = b.dispatch("export_video_sink_cancel", "{}").await.unwrap();
         assert_eq!(cancel, "null", "cancel returns unit/null");
     }

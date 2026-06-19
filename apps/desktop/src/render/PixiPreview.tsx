@@ -435,8 +435,6 @@ async function handlePixiExport(
     motifFrames?: Record<string, ImageBitmap[]>;
     /// Output bit depth (8 = existing pipeline; 10 = f16/WebGL2 + native-encode).
     bitDepth?: 8 | 10;
-    /// Native-encode sink endpoint for the 10-bit path.
-    videoSink?: { port: number; token: string };
   },
   compositor: Compositor | null,
   engine: PlaybackEngine | null,
@@ -472,7 +470,6 @@ async function handlePixiExport(
         : {}),
       ...(opts.motifFrames ? { motifFrames: opts.motifFrames } : {}),
       ...(opts.bitDepth != null ? { bitDepth: opts.bitDepth } : {}),
-      ...(opts.videoSink ? { videoSink: opts.videoSink } : {}),
     });
     const outFpsNum = opts.outputFps?.num ?? summary.composition.fps_num;
     const outFpsDen = opts.outputFps?.den ?? summary.composition.fps_den;
