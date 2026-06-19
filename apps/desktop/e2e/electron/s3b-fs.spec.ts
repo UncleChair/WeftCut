@@ -30,3 +30,30 @@ test('fs:writeFile honors append vs truncate through the bridge', async () => {
 
   await app.close()
 })
+
+test('fs:* denies paths outside the allowed roots', async () => {
+  // A home-dir path that is OUTSIDE temp + userData (userData lives under home,
+  // but home itself is its parent, not a descendant) and outside any workspace
+  // (none is open in this launch). Writable if the guard were absent, so a
+  // created file would prove a bypass.
+  const escape = path.join(os.homedir(), `wc-guard-escape-${process.pid}.bin`)
+  fs.rmSync(escape, { force: true })
+
+  const app = await electron.launch({ args: [MAIN] })
+  const page = await app.firstWindow()
+  await page.waitForLoadState('domcontentloaded')
+
+  const outcome = await page.evaluate(async (p) => {
+    try {
+      await (window as any).api.invoke('fs:writeFile', { path: p, data: new Uint8Array([9]), append: false })
+      return 'allowed'
+    } catch (e) {
+      return `denied: ${String((e as Error)?.message ?? e)}`
+    }
+  }, escape)
+
+  expect(outcome).toContain('denied')
+  expect(fs.existsSync(escape)).toBe(false)
+
+  await app.close()
+})
