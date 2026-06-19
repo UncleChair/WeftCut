@@ -2,7 +2,8 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { Readable } from 'node:stream'
 import { createRequire } from 'node:module'
-import { app, BrowserWindow, ipcMain, protocol } from 'electron'
+import { execFile } from 'node:child_process'
+import { app, BrowserWindow, dialog, ipcMain, protocol } from 'electron'
 import { loadAllKeys, setKey, clearKey } from './keys.js'
 import { MOTIF_SCHEME_ENTRY, registerMotifProtocol } from './motif/protocol.js'
 import { setRuntimeSource, captureMotifFrameB64 } from './motif/capture.js'
@@ -75,7 +76,45 @@ async function createWindow(): Promise<BrowserWindow> {
     await win.loadFile(path.join(__dirname, '../renderer/index.html'))
   }
 
+  void warnIfElevatedWindows(win)
+
   return win
+}
+
+/// Whether THIS process runs at Windows High integrity (i.e. "Run as
+/// administrator"). The High Mandatory Level integrity SID (S-1-16-12288) appears
+/// in the token's group list only when elevated, and the SID — unlike the group's
+/// display name — is locale-independent. Uses `whoami` (always on PATH) rather
+/// than a native Win32 dependency.
+function isElevatedWindows(): Promise<boolean> {
+  return new Promise((resolve) => {
+    execFile('whoami', ['/groups'], { windowsHide: true }, (err, stdout) => {
+      resolve(!err && stdout.includes('S-1-16-12288'))
+    })
+  })
+}
+
+/// One-shot startup notice: when WeftCut runs elevated on Windows, Windows UIPI
+/// blocks file drag-drop from the (Medium-integrity) Explorer into this
+/// (High-integrity) process — the drag never reaches the renderer, so drop-import
+/// silently dies. Surface it instead of leaving a confusing no-op. The dialog is
+/// suppressed under e2e/CI (which often run elevated) so it can't block automation.
+async function warnIfElevatedWindows(win: BrowserWindow): Promise<void> {
+  if (process.platform !== 'win32') return
+  if (process.env['WEFTCUT_SUPPRESS_ELEVATION_NOTICE']) return
+  if (!(await isElevatedWindows())) return
+  if (win.isDestroyed()) return
+  const zh = app.getLocale().toLowerCase().startsWith('zh')
+  await dialog.showMessageBox(win, {
+    type: 'info',
+    noLink: true,
+    buttons: ['OK'],
+    title: zh ? '正在以管理员身份运行' : 'Running as administrator',
+    message: zh ? '拖放导入已被禁用' : 'Drag-and-drop import is disabled',
+    detail: zh
+      ? 'Windows 会阻止把文件从资源管理器拖放到以管理员身份运行的应用。要启用拖放,请以普通方式(不要"以管理员身份运行")重新启动 WeftCut。你仍可使用"导入媒体…"按钮导入。'
+      : 'Windows blocks dragging files from File Explorer into an app that runs as administrator. To enable drag-and-drop, relaunch WeftCut normally (not "Run as administrator"). You can still import with the "Import media…" button.',
+  })
 }
 
 app.whenReady().then(async () => {

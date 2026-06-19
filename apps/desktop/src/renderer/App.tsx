@@ -2369,42 +2369,11 @@ function MediaDropZone({ children }: { children: React.ReactNode }) {
         e.preventDefault();
         depth.current = 0;
         setActive(false);
-        // Electron: no WebView2 postMessage bridge. Resolve real paths via the
-        // preload webUtils shim and feed the same media:external-drop pipeline.
-        const eapi = (window as unknown as { api?: { getPathForFile?: (f: File) => string; media?: { dropped: (p: string[]) => Promise<void> } } }).api
-        if (eapi?.getPathForFile && e.dataTransfer.files.length > 0) {
-          const paths = Array.from(e.dataTransfer.files)
-            .map((f) => eapi.getPathForFile!(f))
-            .filter((p) => p.length > 0)
-          if (paths.length > 0) void eapi.media?.dropped(paths)
-          return
-        }
-        const webview = (
-          window as unknown as {
-            chrome?: {
-              webview?: {
-                postMessageWithAdditionalObjects?: (
-                  message: string,
-                  objects: FileList,
-                ) => void;
-              };
-            };
-          }
-        ).chrome?.webview;
-        if (
-          webview?.postMessageWithAdditionalObjects &&
-          e.dataTransfer.files.length > 0
-        ) {
-          try {
-            webview.postMessageWithAdditionalObjects(
-              JSON.stringify({ kind: "weftcut:media-drop" }),
-              e.dataTransfer.files,
-            );
-          } catch {
-            // The runtime throws for Files not backed by disk (e.g. an
-            // image dragged out of a browser). Nothing importable there.
-          }
-        }
+        // Path resolution + import are handled in the preload's own `wireFileDrop`
+        // window-level drop listener: there the dropped File objects are still
+        // native-backed so `webUtils.getPathForFile` returns the real path (across
+        // the contextBridge it returns '' — electron#44600). This handler only
+        // clears the drop-highlight; it intentionally does no path work.
       }}
     >
       {children}

@@ -8,7 +8,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 export const MAIN = path.resolve(__dirname, '../../../out/main/index.js')
 
 export async function launchApp(): Promise<{ app: ElectronApplication; page: Page }> {
-  const app = await electron.launch({ args: [MAIN] })
+  const app = await electron.launch({
+    args: [MAIN],
+    // The elevated-run notice is a modal dialog; suppress it so it can't block the
+    // (often elevated) e2e/CI Electron process. `env` replaces process.env, so
+    // spread it to keep PATH etc. that the app needs.
+    env: { ...process.env, WEFTCUT_SUPPRESS_ELEVATION_NOTICE: '1' } as Record<string, string>,
+  })
   const page = await app.firstWindow({ timeout: 60_000 })
   await page.waitForLoadState('domcontentloaded')
   return { app, page }
