@@ -79,8 +79,8 @@ Other root scripts: `npm run typecheck` (TypeScript project references),
 Project layout follows the [architecture doc](docs/architecture.md):
 
 ```
-apps/desktop/        Tauri 2 app
-  src-tauri/         Rust core (state actor, ir, export, ffmpeg, jobs, cache,
+apps/desktop/        Electron app
+  native/            Rust core (state actor, ir, export, ffmpeg, jobs, cache,
                      mcp, cloud, io, logs, motifs, …)
   src/               React UI + PixiJS/WebCodecs renderer (+ export Worker)
 docs/                design + architecture

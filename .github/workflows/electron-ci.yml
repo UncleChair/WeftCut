@@ -29,7 +29,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: apps/desktop/src-tauri
+          workspaces: apps/desktop/native
 
       # xvfb is required on Linux so the Electron app can open a display for
       # offscreen CDP capture (no real display on GitHub runners).
@@ -84,7 +84,7 @@ jobs:
           case "$RUNNER_OS" in
             macOS) export RUSTFLAGS="-C link-arg=-Wl,-undefined,dynamic_lookup" ;;
           esac
-          cargo test --manifest-path src-tauri/Cargo.toml --lib --features jobs,export,mcp,cloud,motifs
+          cargo test --manifest-path native/Cargo.toml --lib --features jobs,export,mcp,cloud,motifs
 
       # Full e2e suite via Playwright — includes s6-determinism.spec.ts which
       # writes PNGs to determinism-artifacts/<process.platform>/ (win32/linux/darwin).

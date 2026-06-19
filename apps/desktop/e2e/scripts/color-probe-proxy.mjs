@@ -1,5 +1,5 @@
 // Axis-B Stage-0 probe (one-shot diagnostic, NOT a gate). Runs the proxy's exact
-// ffmpeg args (apps/desktop/src-tauri/src/jobs/proxy.rs) on the 10-bit gradient
+// ffmpeg args (apps/desktop/native/src/jobs/proxy.rs) on the 10-bit gradient
 // and reports what the 10->8 reduction does: proxy tags, pix_fmt, dither
 // (distinct-level recovery + noise), banding (plateau widening), and the 10->16
 // decode scaling. Findings feed the axis-B baseline (gradient_baseline.json).
@@ -44,7 +44,7 @@ console.log("=== PROXY TAGS ===\n" + tag(PROXY));
 const grad = (f) =>
   spawnSync(
     "cargo",
-    ["run", "--manifest-path", "apps/desktop/src-tauri/Cargo.toml", "--bin", "media_conformance",
+    ["run", "--manifest-path", "apps/desktop/native/Cargo.toml", "--bin", "media_conformance",
       "--quiet", "--", "--gradient-row", "--output", f, "--source", f,
       "--in-matrix", "bt709", "--in-range", "tv", "--sample", "10"],
     { cwd: REPO, encoding: "utf8" },

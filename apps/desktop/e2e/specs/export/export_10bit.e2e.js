@@ -65,7 +65,7 @@ function gradientReport(output, sample) {
   const r = spawnSync(
     "cargo",
     [
-      "run", "--manifest-path", "apps/desktop/src-tauri/Cargo.toml",
+      "run", "--manifest-path", "apps/desktop/native/Cargo.toml",
       "--bin", "media_conformance", "--quiet", "--",
       "--gradient-row", "--output", output, "--source", output,
       "--in-matrix", "bt709", "--in-range", "tv", "--sample", String(sample),
