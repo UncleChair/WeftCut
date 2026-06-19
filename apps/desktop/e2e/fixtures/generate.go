@@ -103,7 +103,7 @@ func writeChartPNG(name string, width, height int) error {
 
 // Still-image fixture set: the color-patch chart in every format the import
 // dialog offers (png/jpg/webp/gif) plus bmp (drag-drop reachable) and tiff
-// (the documented-UNSUPPORTED negative — WebView2's createImageBitmap cannot
+// (the documented-UNSUPPORTED negative — Chromium's createImageBitmap cannot
 // decode TIFF). 320x240 so the chart sits inside the canvas top-left and the
 // e2e can sample patch centers directly. webp is encoded LOSSLESS and jpg at
 // high quality so flat patches survive within tight tolerances.
@@ -209,7 +209,7 @@ func main() {
 	eosTail := flag.Bool("eostail", false, "EOS-tail geometry: keyframes every 5s only (final GOP spans multiple 60-frame export chunks) + tone track 1s LONGER than the video; names output *_eostail.mp4")
 	colorEnc := flag.String("color", "", "color chart encoding: 709ltd|601ltd|709full|601full (draws chart + manifest, ignores --fps content)")
 	gradient := flag.Bool("gradient", false, "emit a 10-bit BT.709 grayscale gradient ramp (HEVC Main10) for axis B")
-	gradientH264 := flag.Bool("gradient-h264", false, "emit the 10-bit gradient ramp as H.264 High10 (the one 10-bit shape WebView2 software-decodes) — the 10-bit export gate's static fixture")
+	gradientH264 := flag.Bool("gradient-h264", false, "emit the 10-bit gradient ramp as H.264 High10 (the one 10-bit shape Chromium software-decodes) — the 10-bit export gate's static fixture")
 	gradientH264BF := flag.Bool("gradient-h264-bf", false, "emit a 10s ANIMATED 10-bit ramp, H.264 High10 with keyint=120+bframes=3 — the 10-bit export reorder-tail regression fixture")
 	gradientAv1 := flag.Bool("gradient-av1", false, "emit the 10-bit gradient ramp as AV1 10-bit (SVT-AV1) — the AV1-10 source probe + export-gate fixture")
 	gradientH2644K := flag.Bool("gradient-h264-4k", false, "emit the 10-bit H.264 High10 gradient ramp at 3840x2160 — the 4K ring-cap export-gate fixture")
@@ -302,7 +302,7 @@ func main() {
 		out := fmt.Sprintf("test_%dp_gradient10_h264.mp4", height)
 		// Same true-10-bit ramp as --gradient (format=yuv420p10le BEFORE geq —
 		// see the crux comment there), but encoded H.264 High10: the one 10-bit
-		// shape WebView2 software-decodes to I420P10, so the 10-bit export can
+		// shape Chromium software-decodes to I420P10, so the 10-bit export can
 		// read the ORIGINAL (tenBitExportCapable) instead of an 8-bit proxy.
 		vf := "format=yuv420p10le,geq=lum='(X/(W-1))*1023':cb=512:cr=512,scale=out_color_matrix=bt709:out_range=tv"
 		args := []string{
@@ -359,7 +359,7 @@ func main() {
 		out := fmt.Sprintf("test_%dp_gradient10_av1.mp4", height)
 		// Same true-10-bit ramp as --gradient (format=yuv420p10le BEFORE geq —
 		// see the crux comment there), encoded AV1 10-bit via SVT-AV1. Probes
-		// whether WebView2 decodes AV1-10 to copyTo-able I420P10 (dav1d SW path)
+		// whether Chromium decodes AV1-10 to copyTo-able I420P10 (dav1d SW path)
 		// the way Hi10P H.264 does — the tenBitExportCapable admission test.
 		vf := "format=yuv420p10le,geq=lum='(X/(W-1))*1023':cb=512:cr=512,scale=out_color_matrix=bt709:out_range=tv"
 		args := []string{

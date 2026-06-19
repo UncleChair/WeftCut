@@ -1789,7 +1789,7 @@ export class Compositor {
     if (existing) return existing;
     const mediaId = layer.params.media_id;
     // The mixer Range-reads the media's conform PCM — no decode in the
-    // webview. `null` until the conform job lands: the layer stays
+    // renderer. `null` until the conform job lands: the layer stays
     // silent and we retry on a later tick (the media summary updates
     // when the job completes).
     const url = this.conformAssetUrl(mediaId);

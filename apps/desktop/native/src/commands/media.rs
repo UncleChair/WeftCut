@@ -99,7 +99,7 @@ pub struct WaveformPeaks {
     pub peaks_per_second: u32,
 }
 
-/// Master-bus meter reading pushed by the webview (~2 Hz while playing).
+/// Master-bus meter reading pushed by the renderer (~2 Hz while playing).
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AudioMeterReport {

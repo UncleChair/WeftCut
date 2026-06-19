@@ -205,7 +205,7 @@ To regenerate fixtures without running tests, `npm run fixtures` from
 ## Decode Color Tags
 
 The product-side color fix is in the decode path, not in the analyzer.
-`io/probe.rs` extracts ffprobe color tags into `MediaSummary`; the webview maps
+`io/probe.rs` extracts ffprobe color tags into `MediaSummary`; the renderer maps
 them via `ffprobeColorToWebCodecs`; `withDefaultColorSpace` fills missing
 fields with this priority:
 

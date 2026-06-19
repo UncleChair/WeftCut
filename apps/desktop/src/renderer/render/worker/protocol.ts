@@ -84,7 +84,7 @@ export type ExportRequest =
       /// pack to yuv420p10le, stream to the Rust video sink. Absent/8 ⇒ the
       /// existing WebCodecs pipeline, untouched.
       bitDepth?: 8 | 10;
-      /// mediaIds whose ORIGINAL decodes 10-bit in-webview; these acquire
+      /// mediaIds whose ORIGINAL decodes 10-bit in the renderer; these acquire
       /// originalAssetUrls + tenBitLane + preferSoftware.
       tenBitMedia?: Record<string, boolean>;
     }

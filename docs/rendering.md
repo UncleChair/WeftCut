@@ -21,7 +21,7 @@ engine itself see [`audio.md`](audio.md).
 
 ## Export settings and range
 
-The webview owns the `ExportSettings` schema in
+The renderer owns the `ExportSettings` schema in
 `apps/desktop/src/render/exportSettings.ts`; Rust persists the saved blob as
 opaque JSON. Audio settings are persisted:
 
@@ -69,7 +69,7 @@ the single entry point. It delegates to the audio engine
    half-open export window — a layer entirely outside `[start, end)` is
    neither planned nor required to have a conform cache. An audible
    in-window layer whose conform cache is missing fails the plan loudly
-   with the media named (the webview's readiness gate normally prevents
+   with the media named (the renderer's readiness gate normally prevents
    reaching that state).
 2. If the plan has no layers (or the window is empty): log a warning and
    return `Ok(())`. The mux step downstream tolerates a missing audio file.
@@ -89,7 +89,7 @@ the single entry point. It delegates to the audio engine
 
 The JS orchestrator chooses the temp audio extension from the selected codec:
 AAC writes `.m4a`; Opus writes `.mka`. No `export:*` events are emitted from
-this path; the webview owns ExportPanel state.
+this path; the renderer owns ExportPanel state.
 
 When `settings.audio.include` is false, `App.tsx` skips
 `exportProjectAudioOnly` entirely. When it's true, the export readiness

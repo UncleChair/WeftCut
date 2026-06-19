@@ -175,7 +175,7 @@ impl CacheLayout {
     /// implicitly by `set_workspace`; the boot fallback also calls it once.
     ///
     /// `Cache/preview/` and `Cache/raster/` are intentionally NOT created —
-    /// the cached + segmented preview paths and the offscreen-webview
+    /// the cached + segmented preview paths and the offscreen
     /// rasterizer were deleted in preview-dom Phase F and pixi-renderer
     /// P12-c respectively. Existing workspaces may have orphan trees from
     /// a prior version; they're left in place rather than auto-deleted so

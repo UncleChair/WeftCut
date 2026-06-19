@@ -1,4 +1,4 @@
-//! Native-IPC video sink for the 10-bit export. The webview composites in a
+//! Native-IPC video sink for the 10-bit export. The renderer composites in a
 //! Worker, packs each frame to yuv420p10le, and posts it over the export
 //! `chunk` channel; the main process forwards each frame to `video_sink_write`,
 //! which pipes it into an ffmpeg encode. `finish` drops stdin (EOF) and reaps
@@ -91,12 +91,12 @@ fn abort_child(shared: &SinkShared) {
 
 /// Tear down a sink left in `state`, if any. The app runs at most one export at
 /// a time, so a sink still present when a NEW export starts is always an orphan
-/// (its webview-side finish/cancel never ran — typically a webview reload/crash
+/// (its renderer-side finish/cancel never ran — typically a renderer reload/crash
 /// mid-export). Kill its ffmpeg and drop the handle so the next export proceeds.
 fn reclaim_stale_sink(state: &Mutex<Option<ActiveSink>>) {
     let stale = state.lock().unwrap().take();
     if let Some(sink) = stale {
-        warn!("video sink already active at start — reclaiming orphaned sink (prior export's teardown never ran, e.g. a webview reload mid-export)");
+        warn!("video sink already active at start — reclaiming orphaned sink (prior export's teardown never ran, e.g. a renderer reload mid-export)");
         abort_child(&sink.shared);
         drop(sink.shared.stdin.lock().unwrap().take());
     }
@@ -309,7 +309,7 @@ mod tests {
         })
     }
 
-    // A leaked/orphaned sink (webview reloaded mid-export) must be reclaimed
+    // A leaked/orphaned sink (renderer reloaded mid-export) must be reclaimed
     // by the next start instead of wedging future exports.
     #[test]
     fn reclaim_clears_orphaned_sink() {

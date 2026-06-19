@@ -29,7 +29,7 @@ import {
   type ReactNode,
 } from "react";
 import { listen, emit, type UnlistenFn } from "@/bridge/events";
-import { WebviewWindow, getCurrentWindow } from "@/bridge/window";
+import { SecondaryWindow, getCurrentWindow } from "@/bridge/window";
 import { PanelTopOpenIcon, RotateCcwIcon } from "lucide-react";
 
 import { getSystemStats, type SystemStats } from "../ipc";
@@ -726,7 +726,7 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
 
   // Ctrl+Shift+P toggles ONLY the inline overlay. Captured at the window
   // level so the user doesn't need to focus the HUD to dismiss it; the popup
-  // window (a separate webview) has no such binding by design.
+  // window (a separate renderer) has no such binding by design.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.ctrlKey && e.shiftKey && e.code === "KeyP") {
@@ -753,7 +753,7 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
       }
       unlisten = off;
     });
-    void WebviewWindow.getByLabel(PERF_HUD_WINDOW_LABEL).then((w) => {
+    void SecondaryWindow.getByLabel(PERF_HUD_WINDOW_LABEL).then((w) => {
       if (!cancelled) setPoppedOut(w !== null);
     });
     return () => {
@@ -883,7 +883,7 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
 
   const openPerfHudWindow = useCallback(async (): Promise<void> => {
     try {
-      const existing = await WebviewWindow.getByLabel(PERF_HUD_WINDOW_LABEL);
+      const existing = await SecondaryWindow.getByLabel(PERF_HUD_WINDOW_LABEL);
       if (existing) {
         setPoppedOut(true);
         await existing.show().catch(() => {});
@@ -891,7 +891,7 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
         await emit(PERF_HUD_SNAPSHOT_EVENT, sample).catch(() => {});
         return;
       }
-      new WebviewWindow(PERF_HUD_WINDOW_LABEL, {
+      new SecondaryWindow(PERF_HUD_WINDOW_LABEL, {
         url: "/?perfHud=1",
         title: "WeftCut — Performance",
         width: 640,

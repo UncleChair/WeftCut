@@ -150,7 +150,7 @@ pub struct MotifView {
     pub motif_id: String,
     /// Canvas-space pixel offset. Animated fields ship the FULL track
     /// (`{mode, value}` wire shape — TS mirror `AnimTrack<T>`); resolution
-    /// to a scalar happens per frame in the webview (`render/resolveView.ts`),
+    /// to a scalar happens per frame in the renderer (`render/resolveView.ts`),
     /// never at this boundary.
     pub x: Animated<f64>,
     pub y: Animated<f64>,

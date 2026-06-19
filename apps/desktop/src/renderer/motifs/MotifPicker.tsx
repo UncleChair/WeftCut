@@ -100,7 +100,7 @@ export function MotifPicker({
     let cleaned = false;
     void listen(MOTIFS_CHANGED_EVENT, reload).then((u) => {
       // If the effect already cleaned up before listen() resolved, unlisten now
-      // (otherwise the listener leaks for the webview's lifetime).
+      // (otherwise the listener leaks for the renderer's lifetime).
       if (cleaned) u();
       else un = u;
     });
