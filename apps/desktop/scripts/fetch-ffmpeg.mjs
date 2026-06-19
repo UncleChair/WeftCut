@@ -2,13 +2,20 @@
 // Sources: Windows = gyan.dev essentials; Linux = BtbN/FFmpeg-Builds (GitHub CDN); macOS = evermeet.
 // Used locally and in CI to populate extraResources before packaging.
 // CI may inline equivalent commands; this script mirrors them for local use.
-import { existsSync, mkdirSync, chmodSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, chmodSync, rmSync, statSync, readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 
 const FFMPEG_VERSION = '7.1.1'
+// SHA-256 of the version-pinned Windows archive (gyan 7.1.1 essentials build) —
+// verified, rejects a tampered/corrupt download. Linux (BtbN `latest`) and macOS
+// (evermeet `getrelease`) are ROLLING sources, so a pinned hash there would break
+// on every upstream rebuild; they stay size-validated only until their URLs are
+// version-pinned (the rest of supply-chain item B3; see docs/security.md).
+const FFMPEG_WIN_SHA256 = '04861d3339c5ebe38b56c19a15cf2c0cc97f5de4fa8910e4d47e5e6404e4a2d4'
 const MIN_ARCHIVE_BYTES = 1 * 1024 * 1024   // 1 MB — corrupt/truncated guard
 const MIN_BINARY_BYTES  = 1 * 1024 * 1024   // 1 MB — incomplete-extract guard
 const MAX_ATTEMPTS = 3
@@ -29,9 +36,10 @@ if (existsSync(bin) && existsSync(probeBin)) {
 
 const tmp = tmpdir()
 
-/** Download `url` to `outPath`, retrying up to MAX_ATTEMPTS times.
- *  Validates that the resulting file is > MIN_ARCHIVE_BYTES before returning. */
-function downloadWithRetry(url, outPath, label) {
+/** Download `url` to `outPath`, retrying up to MAX_ATTEMPTS times. Validates the
+ *  result is > MIN_ARCHIVE_BYTES and, when `expectedSha256` is given, that its
+ *  SHA-256 matches — a tampered/corrupt CDN download is rejected then retried. */
+function downloadWithRetry(url, outPath, label, expectedSha256) {
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     if (attempt > 1) {
       console.log(`Retry ${attempt}/${MAX_ATTEMPTS} for ${label}...`)
@@ -47,10 +55,24 @@ function downloadWithRetry(url, outPath, label) {
     // Validate size
     let size = 0
     try { size = statSync(outPath).size } catch (_) { /* file may not exist */ }
-    if (size >= MIN_ARCHIVE_BYTES) return   // success
-    const msg = `download invalid (got ${size} bytes) from ${url}`
-    if (attempt === MAX_ATTEMPTS) throw new Error(msg)
-    console.warn(`Warning: ${msg} — will retry`)
+    if (size < MIN_ARCHIVE_BYTES) {
+      const msg = `download invalid (got ${size} bytes) from ${url}`
+      if (attempt === MAX_ATTEMPTS) throw new Error(msg)
+      console.warn(`Warning: ${msg} — will retry`)
+      continue
+    }
+    // Verify checksum when a hash is pinned (Windows only — see FFMPEG_WIN_SHA256)
+    if (expectedSha256) {
+      const got = createHash('sha256').update(readFileSync(outPath)).digest('hex')
+      if (got !== expectedSha256) {
+        const msg = `checksum mismatch for ${label}: expected ${expectedSha256}, got ${got}`
+        if (attempt === MAX_ATTEMPTS) throw new Error(msg)
+        console.warn(`Warning: ${msg} — will retry`)
+        continue
+      }
+      console.log(`checksum verified for ${label} (sha256 ${got.slice(0, 12)}…)`)
+    }
+    return   // success
   }
 }
 
@@ -77,7 +99,7 @@ if (plat === 'win32') {
   const extractDir = join(tmp, `ffmpeg-${FFMPEG_VERSION}-essentials_build`)
 
   console.log(`Downloading ffmpeg ${FFMPEG_VERSION} (Windows essentials) from gyan.dev/GitHub...`)
-  downloadWithRetry(url, zipPath, 'Windows gyan.dev')
+  downloadWithRetry(url, zipPath, 'Windows gyan.dev', FFMPEG_WIN_SHA256)
 
   mkdirSync(extractDir, { recursive: true })
 
