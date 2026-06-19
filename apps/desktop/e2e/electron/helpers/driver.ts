@@ -45,6 +45,70 @@ export async function newProject(
   if (!r.ok) throw new Error('newProjectAndEnter failed: ' + r.error)
 }
 
+/// Invoke a backend command through the renderer bridge and return its result.
+/// The Electron equivalent of the retired wdio helper's `window.__TAURI__.core
+/// .invoke` — `api.backend.invoke` is the one generic command channel the
+/// renderer + every ported spec already use. Rejects (failing the test) when
+/// the backend command errors.
+export async function invokeCmd<T = unknown>(
+  page: Page,
+  cmd: string,
+  args: Record<string, unknown> = {},
+): Promise<T> {
+  return (await page.evaluate(
+    ([c, a]) => (window as any).api.backend.invoke(c, a),
+    [cmd, args] as const,
+  )) as T
+}
+
+/// The current project summary (tracks → layers + composition). Loosely typed;
+/// callers narrow the fields they read.
+export interface ProjectSummary {
+  composition: { fps_num: number; fps_den: number }
+  tracks: Array<{ id: string; layers: Array<{ id: string; params: { kind: string } }> }>
+}
+export const summary = (page: Page) => invokeCmd<ProjectSummary>(page, 'project_summary', {})
+
+/// Import `mediaAbsPath` and place it 1:1 at `tStartUs` (default 0) on a fresh
+/// track — the `importAndPlaceMedia` hook (same IPC chain the UI uses), without
+/// exporting. Returns the new ids + the media's classified kind.
+export async function importAndPlaceMedia(
+  page: Page,
+  args: { mediaAbsPath: string; tStartUs?: number },
+): Promise<{ mediaId: string; layerId: string; kind: string }> {
+  await waitForHook(page, 'importAndPlaceMedia')
+  const r = (await page.evaluate(
+    (a) =>
+      (window as any).__weftcutTest
+        .importAndPlaceMedia(a)
+        .then((x: unknown) => ({ ok: true, ...(x as object) }))
+        .catch((e: unknown) => ({ ok: false, error: String(e) })),
+    args,
+  )) as { ok: boolean; error?: string; mediaId: string; layerId: string; kind: string }
+  if (!r.ok) throw new Error('importAndPlaceMedia failed: ' + r.error)
+  return r
+}
+
+/// Place an ALREADY-imported media 1:1 at `tStartUs` (default 0) on a fresh
+/// track — the placement half of `importAndPlaceMedia`. Lets a spec put N
+/// copies of ONE mediaId on the timeline (shared-source scenarios).
+export async function placeMediaLayer(
+  page: Page,
+  args: { mediaId: string; tStartUs?: number },
+): Promise<{ layerId: string }> {
+  await waitForHook(page, 'placeMediaLayer')
+  const r = (await page.evaluate(
+    (a) =>
+      (window as any).__weftcutTest
+        .placeMediaLayer(a)
+        .then((x: unknown) => ({ ok: true, ...(x as object) }))
+        .catch((e: unknown) => ({ ok: false, error: String(e) })),
+    args,
+  )) as { ok: boolean; error?: string; layerId: string }
+  if (!r.ok) throw new Error('placeMediaLayer failed: ' + r.error)
+  return r
+}
+
 export interface DriveResult {
   done: { ok: boolean; error?: string }
   lastKind: string | null
