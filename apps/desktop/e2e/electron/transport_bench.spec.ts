@@ -55,6 +55,36 @@ async function pushInvoke(page: import('@playwright/test').Page, frameBytes: num
   )
 }
 
+// Push N frames over a loopback WebSocket against a discard-mode sink, timed
+// first-send -> bufferedAmount==0. Mirrors the shipping VideoSinkClient protocol
+// (token text frame first, then binary frames, close 1000).
+async function pushWs(
+  page: import('@playwright/test').Page,
+  port: number, token: string, frameBytes: number, n: number,
+) {
+  return page.evaluate(
+    async ({ port, token, frameBytes, n }) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}`)
+      ws.binaryType = 'arraybuffer'
+      await new Promise<void>((res, rej) => { ws.onopen = () => res(); ws.onerror = () => rej(new Error('ws connect')) })
+      ws.send(token)
+      const payload = new Uint8Array(frameBytes)
+      for (let i = 0; i < payload.length; i += 4096) payload[i] = i & 0xff
+      const HIGH_WATER = 32 * 1024 * 1024
+      const t0 = performance.now()
+      for (let i = 0; i < n; i++) {
+        while (ws.bufferedAmount > HIGH_WATER) await new Promise((r) => setTimeout(r, 2))
+        ws.send(payload)
+      }
+      while (ws.bufferedAmount > 0) await new Promise((r) => setTimeout(r, 2))
+      const ms = Math.round(performance.now() - t0)
+      ws.close(1000)
+      return { ms }
+    },
+    { port, token, frameBytes, n },
+  )
+}
+
 const startArgs = (mode: string, outputPath: string, software: boolean) => ({
   mode, width: DIMS.w, height: DIMS.h, fpsNum: 30, fpsDen: 1,
   codec: 'hevc', bitrate: 0, cbr: false, gop: 30, software, outputPath,
@@ -93,15 +123,53 @@ test.describe('10-bit export transport bench (diagnostic)', () => {
         (window as any).api.invoke('export_video_sink_finish'),
       ) as { bytes: number; frames: number; elapsedMs: number }
       expect(finB.frames).toBe(N_ENCODE)
+      expect(finB.bytes).toBe(FRAME_BYTES * N_ENCODE)
       console.log(`[bench] invoke/encode ${RES}: send ${pb.ms}ms, sink ${finB.elapsedMs}ms`)
 
       // Correctness: the IPC byte path produced a valid 10-bit HEVC file.
-      const st = probe(out, 'codec_name,pix_fmt,profile')
-      console.log('[bench] invoke/encode output stream:', JSON.stringify(st))
-      expect(st.codec_name).toBe('hevc')
-      expect(['yuv420p10le', 'p010le']).toContain(st.pix_fmt)
-      expect(st.profile).toContain('Main 10')
-      fs.rmSync(out, { force: true })
+      try {
+        const st = probe(out, 'codec_name,pix_fmt,profile')
+        console.log('[bench] invoke/encode output stream:', JSON.stringify(st))
+        expect(st.codec_name).toBe('hevc')
+        expect(['yuv420p10le', 'p010le']).toContain(st.pix_fmt)
+        expect(st.profile).toContain('Main 10')
+      } finally {
+        fs.rmSync(out, { force: true })
+      }
+    } finally {
+      await app.close()
+    }
+  })
+
+  test('compare: invoke vs WebSocket (discard throughput)', async () => {
+    const { app, page } = await launchApp()
+    try {
+      // invoke/discard
+      await page.evaluate((args) => (window as any).api.invoke('export_video_sink_start', { args }), startArgs('ipc', '', false))
+      const invoke = await pushInvoke(page, FRAME_BYTES, N_THROUGHPUT)
+      const invokeFin = await page.evaluate(() => (window as any).api.invoke('export_video_sink_finish')) as { frames: number }
+      expect(invokeFin.frames).toBe(N_THROUGHPUT)
+      const invokeMbps = mbps(FRAME_BYTES * N_THROUGHPUT, invoke.ms)
+
+      // WS/discard (existing "discard" mode = WS transport, no ffmpeg)
+      const wsStart = await page.evaluate((args) => (window as any).api.invoke('export_video_sink_start', { args }), startArgs('discard', '', false)) as { port: number; token: string }
+      const ws = await pushWs(page, wsStart.port, wsStart.token, FRAME_BYTES, N_THROUGHPUT)
+      const wsFin = await page.evaluate(() => (window as any).api.invoke('export_video_sink_finish')) as { frames: number }
+      expect(wsFin.frames).toBe(N_THROUGHPUT)
+      const wsMbps = mbps(FRAME_BYTES * N_THROUGHPUT, ws.ms)
+
+      const ratio = (invokeMbps / wsMbps).toFixed(2)
+      console.log('\n===== 10-bit transport bench (' + RES + ', ' + N_THROUGHPUT + ' frames, ' + (FRAME_BYTES / 1048576).toFixed(1) + ' MB/frame) =====')
+      console.log('  invoke (ipc) : ' + invokeMbps + ' MB/s  (' + invoke.ms + ' ms)')
+      console.log('  websocket    : ' + wsMbps + ' MB/s  (' + ws.ms + ' ms)')
+      console.log('  invoke/WS    : ' + ratio + '×')
+      const floorFps = invokeMbps / (FRAME_BYTES / 1048576)
+      console.log('  invoke supports ~' + Math.round(floorFps) + ' fps @ ' + RES)
+      console.log('  GO if invoke >= WS or invoke >= offline need (~' + Math.round(wsMbps / (FRAME_BYTES / 1048576)) + ' fps reference)')
+      console.log('================================================================\n')
+      // Diagnostic only: never fail on the comparison itself.
+      expect(invokeMbps).toBeGreaterThan(0)
+      expect(wsMbps).toBeGreaterThan(0)
     } finally {
       await app.close()
     }

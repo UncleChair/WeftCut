@@ -162,6 +162,24 @@ multi-component joins. Fixed to `path.join(...args.paths)`.
   automated path; a manual scrub-and-export session in the built app confirms
   the full UI flow (export settings dialog, progress bar, output playback).
 
+## PoC: native IPC transport (2026-06-18)
+
+### Bench: invoke vs WebSocket discard throughput (1080p, 90 frames, 5.9 MB/frame)
+
+| Transport    | MB/s | ms   | ratio vs WS |
+|---|---|---|---|
+| invoke (ipc) | 373  | 1433 | 3.22×       |
+| websocket    | 116  | 4614 | 1.00×       |
+
+- invoke supports ~63 fps @ 1080p (5.9 MB/frame)
+- WS reference: ~20 fps @ 1080p
+- 4K run: not needed — 1080p already separates clearly (3.22×)
+
+**Verdict: GO on native Electron IPC (invoke) transport.**
+invoke is 3.22× faster than the loopback WebSocket at 1080p. The invoke path comfortably exceeds the offline throughput need (63 fps vs ~20 fps reference). Task 5 (further WS optimisation) is not needed. The chosen transport for the S6 cut-over is `videoSinkWrite` (invoke/IPC) with `mode:"ipc"` sink.
+
+---
+
 ## Acceptance (2026-06-18)
 
 - Rust suite: 451 passed, 0 failed (`--features jobs,export`).
