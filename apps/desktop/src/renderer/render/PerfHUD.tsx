@@ -28,9 +28,8 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { listen, emit, type UnlistenFn } from "@tauri-apps/api/event";
-import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen, emit, type UnlistenFn } from "@/bridge/events";
+import { WebviewWindow, getCurrentWindow } from "@/bridge/window";
 import { PanelTopOpenIcon, RotateCcwIcon } from "lucide-react";
 
 import { getSystemStats, type SystemStats } from "../ipc";

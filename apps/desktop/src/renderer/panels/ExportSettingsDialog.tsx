@@ -1,5 +1,5 @@
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { documentDir, join } from "@tauri-apps/api/path";
+import { open as openDialog } from "@/bridge/dialog";
+import { documentDir, join } from "@/bridge/path";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 

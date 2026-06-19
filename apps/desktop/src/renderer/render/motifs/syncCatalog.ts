@@ -4,7 +4,7 @@
 // sees user Motifs. Built-ins are seeded statically in catalog.ts and stay
 // authoritative; this only adds the user layer. Called once at boot (main.tsx)
 // and re-callable whenever the catalog changes (later stages).
-import { listen } from "@tauri-apps/api/event";
+import { listen } from "@/bridge/events";
 import { listMotifs as ipcListMotifs, MOTIFS_CHANGED_EVENT } from "../../ipc";
 import { setUserMotifs, type MotifManifest } from "./catalog";
 

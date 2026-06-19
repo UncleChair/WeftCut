@@ -1,6 +1,5 @@
-// Replaces @tauri-apps/plugin-notification.
-// Imports seen in src/: isPermissionGranted, requestPermission, sendNotification
-// In S1 permission is trivially granted; sendNotification is a no-op.
+// Desktop notifications. Permission is trivially granted; sendNotification is
+// currently a no-op.
 
 export async function isPermissionGranted(): Promise<boolean> {
   return true

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { listen } from "@tauri-apps/api/event";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { listen } from "@/bridge/events";
+import { open as openDialog } from "@/bridge/dialog";
 import { formatTimecode } from "../frames";
 import { AppColorField } from "../components/AppColorField";
 import { AppTimecodeField } from "../components/AppTimecodeField";

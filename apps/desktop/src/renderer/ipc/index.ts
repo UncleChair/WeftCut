@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "@/bridge/ipc";
 
 import type { ExportSettings } from "../render/exportSettings";
 import type { MotifManifest } from "../render/motifs/catalog";
@@ -549,7 +549,7 @@ export async function recentsMostRecent(): Promise<RecentEntry | null> {
 
 /// Parent folder of the last project the user created via "+ New project".
 /// `null` on first launch — the UI falls back to the OS Documents
-/// directory via `@tauri-apps/api/path::documentDir`.
+/// directory via `documentDir` (src/renderer/bridge/path).
 export async function recentsLastNewProjectParent(): Promise<string | null> {
   return invoke<string | null>("recents_last_new_project_parent");
 }

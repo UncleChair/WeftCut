@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { listen, type UnlistenFn } from "@/bridge/events";
 
 import {
   projectSummary,

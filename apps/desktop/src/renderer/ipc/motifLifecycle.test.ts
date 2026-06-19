@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 
 const invoke = vi.fn();
-vi.mock("@tauri-apps/api/core", () => ({ invoke: (...a: unknown[]) => invoke(...a) }));
-vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
+vi.mock("@/bridge/ipc", () => ({ invoke: (...a: unknown[]) => invoke(...a) }));
+vi.mock("@/bridge/events", () => ({ listen: vi.fn() }));
 
 import { installMotif, deleteMotif, writeMotifDraft, getMotifSource, amendMotifDraft, createEditDraft, importMotif } from "./index";
 

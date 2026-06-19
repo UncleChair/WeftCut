@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { listen, type UnlistenFn } from "@/bridge/events";
 import { LOG_EVENTS, logList, type LogEntry } from "../ipc";
 
 /// Frontend mirror of the backend log ring. Capped at 1000 entries to

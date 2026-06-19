@@ -1,9 +1,5 @@
-// Replaces @tauri-apps/plugin-fs.
-// Imports seen in src/:
-//   App.tsx:        remove, writeFile
-//   e2eHook.ts:     exists, readDir
-//   frameCache.ts:  mkdir, writeFile, readFile, readDir, remove, exists (motif L2 cache)
-// All are invoke wrappers; callers guard with try/catch.
+// Filesystem helpers (read/write/mkdir/remove/exists/readDir) via the Electron
+// main process. All are invoke wrappers; callers guard with try/catch.
 
 export async function readFile(path: string, _opts?: unknown): Promise<Uint8Array<ArrayBuffer>> {
   // The IPC payload is a Node Buffer → a plain ArrayBuffer-backed Uint8Array in

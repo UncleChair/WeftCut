@@ -1,8 +1,7 @@
-// Replaces @tauri-apps/api/core for the renderer.
-// The ~70 callers in src/ipc/index.ts import { invoke } from here unchanged
-// (via Vite alias in electron.vite.config.ts).
-// convertFileSrc: in Tauri this rewrites a fs path to an asset:// URL.
-// In S1 we return the path as-is; S3 will replace with a protocol.handle URL.
+// Core IPC bridge to the Electron main process (window.api). The renderer's
+// backend calls in src/renderer/ipc/index.ts import { invoke } from here.
+// convertFileSrc maps a filesystem path to a URL the renderer can load
+// (the weftcut-media:// protocol served by main).
 declare global {
   interface Window {
     api: {

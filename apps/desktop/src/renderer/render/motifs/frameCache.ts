@@ -215,8 +215,8 @@ export class MotifFrameCache {
   async readPng(cacheKey: string, frameIndex: number): Promise<Blob | null> {
     const dir = await rasterDirFor(cacheKey);
     if (dir === null) return null;
-    const { join } = await import("@tauri-apps/api/path");
-    const { readFile, exists } = await import("@tauri-apps/plugin-fs");
+    const { join } = await import("@/bridge/path");
+    const { readFile, exists } = await import("@/bridge/fs");
     const path = await join(dir, `${frameIndex}.png`);
     if (!(await exists(path))) return null;
     const bytes = await readFile(path);
@@ -229,8 +229,8 @@ export class MotifFrameCache {
   async hasPng(cacheKey: string, frameIndex: number): Promise<boolean> {
     const dir = await rasterDirFor(cacheKey);
     if (dir === null) return false;
-    const { join } = await import("@tauri-apps/api/path");
-    const { exists } = await import("@tauri-apps/plugin-fs");
+    const { join } = await import("@/bridge/path");
+    const { exists } = await import("@/bridge/fs");
     const path = await join(dir, `${frameIndex}.png`);
     return exists(path);
   }
@@ -240,8 +240,8 @@ export class MotifFrameCache {
   async writePng(cacheKey: string, frameIndex: number, png: Blob): Promise<void> {
     const dir = await rasterDirFor(cacheKey);
     if (dir === null) return;
-    const { join } = await import("@tauri-apps/api/path");
-    const { mkdir, writeFile } = await import("@tauri-apps/plugin-fs");
+    const { join } = await import("@/bridge/path");
+    const { mkdir, writeFile } = await import("@/bridge/fs");
     await mkdir(dir, { recursive: true });
     const path = await join(dir, `${frameIndex}.png`);
     const bytes = new Uint8Array(await png.arrayBuffer());
@@ -256,8 +256,8 @@ export class MotifFrameCache {
   async gcUnreferenced(activeCacheKeys: string[]): Promise<void> {
     const root = await rasterRootDir();
     if (root === null) return;
-    const { readDir, remove, exists } = await import("@tauri-apps/plugin-fs");
-    const { join } = await import("@tauri-apps/api/path");
+    const { readDir, remove, exists } = await import("@/bridge/fs");
+    const { join } = await import("@/bridge/path");
     if (!(await exists(root))) return;
     const live = new Set(activeCacheKeys.map(hashCacheKey));
     const entries = await readDir(root);
@@ -275,7 +275,7 @@ export class MotifFrameCache {
   async listBakedHashes(): Promise<Set<string>> {
     const root = await rasterRootDir();
     if (root === null) return new Set();
-    const { readDir, exists } = await import("@tauri-apps/plugin-fs");
+    const { readDir, exists } = await import("@/bridge/fs");
     if (!(await exists(root))) return new Set();
     const entries = await readDir(root);
     const out = new Set<string>();
@@ -289,7 +289,7 @@ async function rasterRootDir(): Promise<string | null> {
   const { workspaceDir } = await import("../../ipc");
   const ws = await workspaceDir();
   if (!ws) return null;
-  const { join } = await import("@tauri-apps/api/path");
+  const { join } = await import("@/bridge/path");
   return join(ws, "Cache", "raster");
 }
 
@@ -298,7 +298,7 @@ async function rasterRootDir(): Promise<string | null> {
 async function rasterDirFor(cacheKey: string): Promise<string | null> {
   const root = await rasterRootDir();
   if (root === null) return null;
-  const { join } = await import("@tauri-apps/api/path");
+  const { join } = await import("@/bridge/path");
   return join(root, hashCacheKey(cacheKey));
 }
 

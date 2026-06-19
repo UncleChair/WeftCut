@@ -9,7 +9,7 @@
 // frame counters. Audio export and mux/transcode run on the Rust side after
 // this resolves.
 
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { convertFileSrc } from "@/bridge/ipc";
 
 import type { MediaSummary, ProjectSummary } from "../../ipc";
 import { exportPlaybackPathFor } from "../../state/projectStore";
