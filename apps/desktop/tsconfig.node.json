@@ -13,7 +13,8 @@
     // satisfy the reference, so emit declarations only — no .js lands on
     // disk.
     "emitDeclarationOnly": true,
+    "declarationDir": "node_modules/.cache/tsc/node",
     "types": ["node"]
   },
-  "include": ["vite.config.ts"]
+  "include": ["electron.vite.config.ts"]
 }
