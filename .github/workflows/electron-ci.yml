@@ -19,11 +19,11 @@ jobs:
         working-directory: apps/desktop
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
-          node-version: '22.20.0'
+          node-version: '22.23.0'
           cache: 'npm'
           cache-dependency-path: package-lock.json
 
@@ -113,7 +113,7 @@ jobs:
       # PNGs were written — essential for diagnosing the first run.
       - name: Upload determinism artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: determinism-${{ matrix.os }}
           # process.platform values: win32 / linux / darwin
@@ -122,7 +122,7 @@ jobs:
       # Upload Playwright traces/reports for any failing specs.
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: test-results-${{ matrix.os }}
           path: apps/desktop/test-results/**
@@ -136,7 +136,7 @@ jobs:
 
       - name: Upload installer
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: installer-${{ matrix.os }}
           path: apps/desktop/release/*
@@ -151,11 +151,11 @@ jobs:
         working-directory: apps/desktop
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
-          node-version: '22.20.0'
+          node-version: '22.23.0'
           cache: 'npm'
           cache-dependency-path: package-lock.json
 
@@ -172,7 +172,7 @@ jobs:
       #   dl/determinism-ubuntu-latest/<platform>/...
       #   dl/determinism-macos-latest/<platform>/...
       # where <platform> is win32, linux, darwin from process.platform.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: determinism-*
           path: apps/desktop/dl
