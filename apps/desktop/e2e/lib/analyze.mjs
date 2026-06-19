@@ -14,7 +14,7 @@ const REPO = path.resolve(HERE, "..", "..", "..", "..");
 export function analyze({ output, source, samples, ssimMin, audio, window }) {
   const args = [
     "run", "--manifest-path", "apps/desktop/src-tauri/Cargo.toml",
-    "--bin", "media_conformance", "--quiet", "--",
+    "--bin", "media_conformance", "--features", "jobs,export", "--quiet", "--",
     "--output", output, "--source", source, "--samples", samples.join(","),
   ];
   if (ssimMin != null) args.push("--ssim-min", String(ssimMin));
@@ -38,7 +38,7 @@ export function analyze({ output, source, samples, ssimMin, audio, window }) {
 export function analyzeSelf({ output, samples, ssimMax }) {
   const args = [
     "run", "--manifest-path", "apps/desktop/src-tauri/Cargo.toml",
-    "--bin", "media_conformance", "--quiet", "--",
+    "--bin", "media_conformance", "--features", "jobs,export", "--quiet", "--",
     "--self-ssim", "--output", output, "--samples", samples.join(","),
   ];
   if (ssimMax != null) args.push("--ssim-max", String(ssimMax));
@@ -60,7 +60,7 @@ export function analyzeSelf({ output, samples, ssimMax }) {
 export function analyzeAudioEnvelope({ output, expects, peakMaxDb }) {
   const args = [
     "run", "--manifest-path", "apps/desktop/src-tauri/Cargo.toml",
-    "--bin", "media_conformance", "--quiet", "--",
+    "--bin", "media_conformance", "--features", "jobs,export", "--quiet", "--",
     "--audio-envelope", JSON.stringify(expects), "--output", output,
   ];
   if (peakMaxDb != null) args.push("--peak-max", String(peakMaxDb));
@@ -78,7 +78,7 @@ export function analyzeAudioEnvelope({ output, expects, peakMaxDb }) {
 export function analyzeAudioPan({ output, expectLrDb }) {
   const args = [
     "run", "--manifest-path", "apps/desktop/src-tauri/Cargo.toml",
-    "--bin", "media_conformance", "--quiet", "--",
+    "--bin", "media_conformance", "--features", "jobs,export", "--quiet", "--",
     "--audio-pan", "--expect-lr-db", String(expectLrDb), "--output", output,
   ];
   const r = spawnSync("cargo", args, { cwd: REPO, encoding: "utf8" });
@@ -94,7 +94,7 @@ export function analyzeAudioPan({ output, expectLrDb }) {
 export function analyzeColor({ output, source, manifest, inMatrix, inRange, sample }) {
   const args = [
     "run", "--manifest-path", "apps/desktop/src-tauri/Cargo.toml",
-    "--bin", "media_conformance", "--quiet", "--",
+    "--bin", "media_conformance", "--features", "jobs,export", "--quiet", "--",
     "--color", "--output", output, "--source", source,
     "--manifest", manifest, "--in-matrix", inMatrix, "--in-range", inRange,
     "--sample", String(sample ?? 10),
