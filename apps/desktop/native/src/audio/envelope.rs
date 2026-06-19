@@ -297,7 +297,7 @@ mod tests {
         }
 
         let fixture: Fixture = serde_json::from_str(include_str!(
-            "../../../src/render/audio/audioEnvelopeGolden.fixture.json"
+            "../../../src/renderer/render/audio/audioEnvelopeGolden.fixture.json"
         ))
         .expect("fixture parses as Animated<f64> wire shape");
         assert!(!fixture.cases.is_empty());
