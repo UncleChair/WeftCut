@@ -24,6 +24,10 @@ jobs:
     # A wedged offscreen capture / Electron has hung before (the swiftshader
     # case); cap the job instead of letting it run to the 6h default.
     timeout-minutes: 60
+    # Better Rust test logs in CI: full-colour cargo output + backtraces on panic.
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: '1'
     strategy:
       fail-fast: false
       matrix:
@@ -84,6 +88,17 @@ jobs:
       - name: Unit tests (vitest)
         if: runner.os == 'Linux'
         run: npm test
+
+      # Cache the fetched ffmpeg/ffprobe so repeat runs skip the CDN download —
+      # fetch-ffmpeg no-ops when the binaries already exist. Keyed on the OS and
+      # the fetch script (which pins FFMPEG_VERSION), so a version/source change
+      # busts the cache. (path is repo-root-relative; cache ignores the job's
+      # working-directory default.)
+      - name: Cache ffmpeg
+        uses: actions/cache@v5
+        with:
+          path: apps/desktop/resources/ffmpeg
+          key: ffmpeg-${{ runner.os }}-${{ hashFiles('apps/desktop/scripts/fetch-ffmpeg.mjs') }}
 
       # Fetch the platform-appropriate static ffmpeg binary into
       # resources/ffmpeg/<os>/. This DRY script handles win/linux/mac and
@@ -152,6 +167,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: determinism-${{ matrix.os }}
+          retention-days: 14
           # process.platform values: win32 / linux / darwin
           path: apps/desktop/determinism-artifacts/**
 
@@ -161,6 +177,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: test-results-${{ matrix.os }}
+          retention-days: 14
           path: apps/desktop/test-results/**
 
       # Sign-free packaging. napi:build already ran above (its .node artefact
@@ -171,10 +188,11 @@ jobs:
         run: npm run build && npx electron-builder --publish never
 
       - name: Upload installer
-        if: always()
+        if: success()
         uses: actions/upload-artifact@v7
         with:
           name: installer-${{ matrix.os }}
+          retention-days: 14
           path: apps/desktop/release/*
 
   # Cross-OS SSIM comparison.  Runs after all three build jobs finish
