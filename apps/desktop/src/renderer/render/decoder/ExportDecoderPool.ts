@@ -29,25 +29,15 @@ import { openMediaInput, type OpenedMedia } from "./mediaInput";
 import { copyToTenBit, isTenBitDecoderFormat, isTenBitFrame, type TenBitFrame } from "./tenBitFrame";
 
 /// SW 10-bit decoders hold a reorder tail internally and the chunked model
-/// never mid-flushes (see the reverted 2026-06-04 10-bit DirectExport).
-/// Feeding a bounded lead-in past the stop key pushes the tail out; H.264's
-/// max DPB is 16.
+/// never mid-flushes, so feed a bounded lead-in past the stop key to push the
+/// tail out; H.264's max DPB is 16.
 const TENBIT_REORDER_MARGIN = 16;
 
-/// 10-bit lane ring cap, derived from RESOLUTION: the per-ring entry
-/// high-water is a byte target divided by the actual frame size (constant
-/// within one ring — one source, one coded size), clamped to [MIN, MAX].
-/// 1080p (6.2 MB) hits the 48 ceiling — today's behavior unchanged at
-/// ~300 MB; 4K (24.9 MB) clamps to the 20 floor ≈ 500 MB (vs 1.2 GB when
-/// the cap was a flat 48 entries). The MIN floor is the deadlock guard:
-/// decoder output is presentation-ordered, so an unsatisfied waiter implies
-/// everything held is at/below its target and evictable — but the floor
-/// keeps comfortable headroom over the DPB-16 reorder window anyway. No live
-/// byte accounting and no cross-ring global budget (N simultaneous 10-bit
-/// sources stack N × the per-ring bound — known limitation).
-/// Bounds the CPU-plane ring; SW decoders don't self-throttle on held frames
-/// (no HW pool slots), so in-flight chain links beyond the ring are bounded by
-/// the dispatch window (chunk/GOP + TENBIT_REORDER_MARGIN) instead.
+/// 10-bit ring cap, derived from coded frame size: a byte target / frame bytes,
+/// clamped to [MIN, MAX]. The MIN floor is the deadlock guard — output is
+/// presentation-ordered, so an unsatisfied waiter implies everything held is
+/// evictable, but the floor keeps headroom over the DPB-16 reorder window.
+/// No cross-ring budget: N simultaneous 10-bit sources stack N× this bound.
 const TENBIT_RING_TARGET_BYTES = 320 << 20;
 const TENBIT_RING_MIN_ENTRIES = 20;
 const TENBIT_RING_MAX_ENTRIES = 48;

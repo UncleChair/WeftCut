@@ -4,21 +4,11 @@
 // reference the same source pay the open + parse cost once but each get
 // their own decoder pipeline (a per-clip `PacketPump` driving WebCodecs).
 //
-// Earlier design pooled VideoDecoders by mediaId on the assumption that
-// only one clip of a source was active at any tUs (the normal cut case).
-// That broke as soon as multiple clips of the same source overlapped on
-// the timeline: `Compositor.setAnchorTime` fired N conflicting
-// `requestFrameAt(srcTUs_i)` per tick into the single shared ring, the
-// anchor thrashed across disjoint source regions, and the decoder reset
-// once per overlapping clip per tick — `[weftcut/pixi] decoder reset:`
-// would flood the console and no clip ever stabilised on its own frame.
-//
-// Per-clip decoders trade memory + decode slots for correctness under
-// overlap. Modern Windows H.264/HEVC stacks allow 8–32 concurrent
-// hardware sessions, so a handful of overlapping clips is well within
-// budget. Future optimisation if it ever matters: detect "same source,
-// contiguous source-time, sequential timeline-time" pairs and share a
-// decoder for them (warm cut-to-cut). v1 doesn't need that.
+// Per-CLIP (not per-source) decoders: overlapping clips of one source need
+// independent anchors — a shared ring thrashes its anchor across disjoint
+// source regions and resets every clip per tick (nothing stabilises). The
+// cost is memory + decode slots, but modern H.264/HEVC stacks allow 8–32
+// concurrent HW sessions, so a handful of overlapping clips is within budget.
 //
 // Plan: docs/render.md (8b.2 + 8c.2 + P1; robustness in P9.5)
 
@@ -386,13 +376,8 @@ export class SourceHandle {
               this.onFirstFrameCb?.();
               this.onFirstFrameCb = null;
             }
-            // Throughput diagnostic: log decoder fps once per second.
-            // Lives inside the `.then` so its `ring=…@…ms` field
-            // reflects the post-push state and `total=` matches the
-            // `outputFrameCount` we just incremented. The first log
-            // line also reads as a one-shot warm-up summary since
-            // `windowStartMs` is captured at first output and only
-            // reset when this log fires.
+            // Throughput diagnostic: log decoder fps once per second (inside
+            // the `.then`, so the ring/total fields reflect post-push state).
             const nowMs = performance.now();
             if (this.windowStartMs === 0) this.windowStartMs = nowMs;
             this.outputsInWindow += 1;

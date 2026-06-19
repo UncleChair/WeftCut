@@ -6,8 +6,8 @@
 // PTS order. `frameAt(tUs)` returns the frame whose presentation
 // interval contains `tUs`, or `null` if not yet decoded. `setAnchor(tUs)`
 // evicts frames older than `tUs - lookbehindUs` and rejects pushes for
-// PTS more than `lookaheadUs` ahead — the caller's decode loop can
-// pause when push() returns false.
+// PTS more than `lookaheadUs` ahead — the caller's decode loop pauses
+// when the lookahead window is full.
 
 const DEFAULT_LOOKAHEAD_US = 1_000_000;
 const DEFAULT_LOOKBEHIND_US = 500_000;
@@ -123,15 +123,10 @@ export class FrameRing {
   /// entry with `ptsUs <= tUs` (correct UX during play-time decode
   /// latency — paint latest decoded while waiting for next).
   ///
-  /// Implementation: locate the latest entry whose PTS is `<= tUs`,
-  /// without relying on `VideoFrame.duration`. WebCodecs allows
-  /// `duration` to be null even when the input chunk had it set,
-  /// and a previous version of this search used `duration ||
-  /// POSITIVE_INFINITY` as the upper-bound predicate — which made
-  /// the binary search land on whichever mid happened to satisfy
-  /// `ptsUs <= tUs` first, not the latest such entry. With 33 frames
-  /// in the ring, asking for frame 9 deterministically returned
-  /// frame 7. The "stuck on frame N" symptom.
+  /// Implementation: locate the latest entry whose PTS is `<= tUs`, WITHOUT
+  /// relying on `VideoFrame.duration` — WebCodecs may report it null even when
+  /// the input chunk set it, and a duration-based upper bound mis-selects
+  /// (lands on an earlier entry, not the latest `ptsUs <= tUs`).
   frameAt(tUs: number): ImageBitmap | null {
     if (this.entries.length === 0) return null;
     const firstPts = this.entries[0]!.ptsUs;

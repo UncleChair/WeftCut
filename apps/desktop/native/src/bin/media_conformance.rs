@@ -156,8 +156,7 @@ fn channel_error(a: &[Rgb16], b: &[Rgb16]) -> ChannelError {
 }
 
 /// Average the center inset of a patch rect from a 16-bit image, returning one
-/// representative Rgb16. Center sampling avoids 4:2:0 edge bleed. (Wired into
-/// the CLI in a later task.)
+/// representative Rgb16. Center sampling avoids 4:2:0 edge bleed.
 #[allow(dead_code)]
 fn sample_patch(img: &image::ImageBuffer<image::Rgb<u16>, Vec<u16>>, p: &Patch) -> Rgb16 {
     let inset_w = p.w / 5;

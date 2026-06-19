@@ -54,9 +54,9 @@ export interface RightPanelProps {
   onMutated: () => Promise<void>;
   fpsNum: number;
   fpsDen: number;
-  /// R.7 inline-reveal hook. When provided, clicking a peek item
-  /// dispatches the track id so the Timeline can temporarily inject
-  /// that row into its rendered list. R.6 leaves this `undefined`.
+  /// Optional inline-reveal hook. When provided, clicking a peek item
+  /// dispatches the track id so the Timeline can temporarily inject that row
+  /// into its rendered list.
   onRevealTrack?: (trackId: string, layerId: string) => void;
 }
 
