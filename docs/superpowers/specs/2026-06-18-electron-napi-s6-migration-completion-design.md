@@ -38,8 +38,8 @@ The reason this migration exists: preview / export / **capture** should run on o
 | Platforms in determinism matrix | All 3 (Win, Linux, mac) | Deferring release removed the only mac blocker (notarization); free CI runners + no certs needed make the full original goal achievable now. |
 | Signing | None in S6 (unsigned artifacts) | Release machinery deferred to post-MVP; no scaffolding left behind to avoid unused config. |
 | Cut-over timing | Last task of S6, after parity + determinism are green | Keep Tauri as a fallback through all packaging/CI work. |
-| Render mode for the gate | **Force software rendering (SwiftShader) on all 3 OSes** | Removes GPU-vendor variance so the cross-OS comparison measures the engine, not the driver. Real-GPU render is what *ships*; the gate is a controlled measurement. |
-| SSIM threshold | Seed at **0.98**, tune from the first CI run | The negative control guards against an over-loose threshold. |
+| Render mode for the gate | **CI-default renderer per OS** (SwiftShader abandoned — it hangs the offscreen-CDP capture on Windows) | xvfb on Linux provides a virtual framebuffer; Windows + macOS use their runner-native GPU stack. CI run #13 proved this still yields byte-identical captures. |
+| SSIM threshold | **0.98** (tuned from CI run #13 measured result) | POS = 1.0000 (byte-identical); NEG ≤ 0.1566 — huge margin. 0.98 leaves headroom for future drift while keeping the gate's teeth. |
 
 ## 5. Components
 
@@ -64,10 +64,10 @@ The reason this migration exists: preview / export / **capture** should run on o
 - `main` checks at startup; if false, logs a warning and surfaces a one-time UI notice via the existing status-log/notice path. Degrade gracefully — never hard-fail. Document the caveat (secure `userData` yourself / install a keyring).
 
 ### 5.5 Determinism harness
-- **Capture spec** — `apps/desktop/e2e/electron/s6-determinism.spec.ts`. Drives `motif_capture_frame` for a fixed motif set at fixed `t`, frozen clock, fixed viewport (reuses the production offscreen-CDP path). Writes each PNG + a content hash to an artifacts dir. Launches Electron with software rendering forced (`--disable-gpu`, `--use-gl=swiftshader` / `--in-process-gpu` as needed).
+- **Capture spec** — `apps/desktop/e2e/electron/s6-determinism.spec.ts`. Drives `motif_capture_frame` for a fixed motif set at fixed `t`, frozen clock, fixed viewport (reuses the production offscreen-CDP path). Writes each PNG + a content hash to an artifacts dir. Launches Electron without forced software rendering (SwiftShader hung the offscreen-CDP capture on Windows and was abandoned).
 - **Cross-OS compare** — a small Node comparison tool (reuse the existing SSIM helper used by the export/motif gates). For each `(motif, t)`, compute SSIM across the OS pairs; assert ≥ threshold.
 - **Negative control** — one capture configured to be intrinsically non-deterministic (e.g. a motif that reads wall-clock / `Math.random`, or randomized sub-pixel offset). Its cross-OS (or repeat-capture) SSIM is expected to fall **below** threshold; the gate asserts it does. Without this, a too-loose threshold would pass everything vacuously.
-- **Headless reality:** ubuntu/macos CI runners have no discrete GPU; forcing SwiftShader everywhere (including Windows) makes the comparison apples-to-apples. If macOS offscreen-CDP capture proves flaky in CI (the S5-NOTES expectation is "same Chromium → portable"), that flakiness is itself a finding to resolve here.
+- **Headless reality:** ubuntu CI runners use `xvfb-run -a` for a virtual framebuffer; Windows + macOS use the runner-native GPU stack. No forced SwiftShader — each OS uses its CI-default renderer. CI run #13 proved this still yields byte-identical captures across all three OSes.
 
 ### 5.6 Cut-over (final task)
 Delete, on the branch: `apps/desktop/src-tauri/tauri.conf.json`; the Tauri entry points (`lib.rs` / `main.rs` Tauri arms, `#[tauri::command]` wiring, `tauri-plugin-*`); `Cargo.toml` tauri/tauri-build deps + the `[lib]`/bin wiring that targeted Tauri (keep the napi `cdylib`); `package.json` `@tauri-apps/*` deps + `tauri*` scripts + `@tauri-apps/cli`; the throwaway `apps/desktop/poc/electron-napi/`. Consider renaming `src-tauri/` (now the napi crate, no longer Tauri) — but a rename touches many paths/configs, so it is **optional** and may be its own follow-up to keep the cut-over diff reviewable.
@@ -108,3 +108,12 @@ A single S6 stage, but the plan sequences it so the highest-risk / highest-value
 4. Linux safeStorage handling.
 5. Parity closure (drag-drop [blocker] → PerfHUD → ConnectAgentPanel → manual export verify).
 6. Cut-over (last; gated on 1–5 green).
+
+## 11. Determinism gate — proven result (CI run #13, 2026-06-19)
+
+The gate passed. Key findings:
+
+- **Forced software rendering (SwiftShader) was abandoned.** `--use-gl=swiftshader` hangs the offscreen-CDP capture on Windows. The spec launches Electron without any forced-renderer flags; Linux uses `xvfb-run -a` for a virtual framebuffer; Windows and macOS use their CI-default renderer stacks.
+- **Result: byte-identical across all OS pairs.** SSIM = 1.0000 for the positive motif captures (countdown, lower-third) across win/linux, win/darwin, and linux/darwin — exceeding the perceptual expectation. Each OS uses a different GPU/renderer stack and yet captures are byte-for-byte identical.
+- **Negative control diverges to ~0.** The jitter motif (intrinsically non-deterministic) scores ≤ 0.1566 SSIM, proving the gate has teeth.
+- **Threshold tuned to 0.98.** Updated from the initial 0.85 seed. POS floor of 1.0000 leaves substantial headroom for future minor cross-OS drift; NEG ceiling of ~0.16 is far below 0.98, keeping the gate's teeth intact.

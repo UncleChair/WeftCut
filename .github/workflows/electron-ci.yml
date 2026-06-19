@@ -176,15 +176,19 @@ jobs:
           path: apps/desktop/dl
           merge-multiple: false
 
-      # THRESHOLD NOTE (Task 8, correction #3):
-      # Seeded loose at 0.85 for run #1.  The negative control (~0.12 SSIM)
-      # proves the gate has teeth at any threshold > 0.12.  We don't yet know
-      # the cross-OS positive margins on GitHub runners (different GPU stacks /
-      # AA rounding).  Tighten toward 0.98 after observing run #1 POS values.
+      # THRESHOLD NOTE (Task 8, CI run #13 GREEN):
+      # Tuned to 0.98 from the measured byte-identical result (SSIM = 1.0000
+      # across all cross-OS pairs win/linux, win/darwin, linux/darwin for the
+      # positive motif captures countdown + lower-third).  No forced SwiftShader
+      # was used — each OS uses its CI-default renderer under xvfb (Linux); the
+      # captures are still byte-identical, exceeding the perceptual expectation.
+      # Negative control diverges to ≤ 0.1566, proving the gate's teeth.
+      # 0.98 leaves headroom for future minor cross-OS drift while still
+      # catching real divergence (NEG floor ~0.16 is far below 0.98).
       - name: Cross-OS SSIM compare
         run: |
           node e2e/lib/compare-determinism.mjs \
             dl/determinism-windows-latest/win32 \
             dl/determinism-ubuntu-latest/linux \
             dl/determinism-macos-latest/darwin \
-            --threshold 0.85
+            --threshold 0.98
