@@ -1,5 +1,5 @@
 // Pure logic for the export settings dialog. No React, no Tauri — every
-// function here is unit-tested in exportSettings.test.ts. The webview owns
+// function here is unit-tested in exportSettings.test.ts. The renderer owns
 // this schema end to end; Rust persists it as an opaque JSON blob.
 
 export type CodecId = "h264" | "av1" | "hevc";
@@ -202,7 +202,7 @@ export function formatBytes(n: number): string {
 }
 
 /// Overlay a (possibly partial / null) saved blob onto the defaults so old or
-/// missing fields fill in. The webview is the only schema authority.
+/// missing fields fill in. The renderer is the only schema authority.
 export function mergeSettings(
   saved: Partial<ExportSettings> | null,
 ): ExportSettings {

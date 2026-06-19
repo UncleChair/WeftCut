@@ -25,7 +25,7 @@ use tracing::{info, warn};
 
 use crate::state::Project;
 
-/// Audio encode parameters passed from the webview. `sample_rate`/`channels`
+/// Audio encode parameters passed from the renderer. `sample_rate`/`channels`
 /// are `None` to follow the composition. A serde struct so the backend command
 /// can take it directly.
 #[derive(serde::Deserialize, Clone, Debug)]
@@ -38,7 +38,7 @@ pub struct AudioEncodeSpec {
 }
 
 /// Build the `-c:a ... -b:a ...` audio-encode args. AAC is the default; "opus"
-/// maps to libopus (MKV-only, enforced webview-side).
+/// maps to libopus (MKV-only, enforced renderer-side).
 fn audio_encode_args(codec: &str, bitrate_bps: u64) -> Vec<std::ffi::OsString> {
     use std::ffi::OsString;
     let enc = if codec == "opus" { "libopus" } else { "aac" };

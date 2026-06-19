@@ -32,10 +32,9 @@ that shapes the design:
 webcap clears it: capture happens on the main process, handing bitmaps to the
 Worker for export. CDP `Page.captureScreenshot` is a real browser raster (not a
 canvas read-back), so it sidesteps DOM-rasterization read-back hazards entirely —
-the obvious "rasterize the DOM via an SVG `<foreignObject>`" route. (That route was
-specifically a WebView2-era taint constraint; on Electron/Chromium an inline
-`<foreignObject>` raster does not taint — measured, though external-resource cases
-are unverified — so it is no longer the binding reason. The Motif path uses CDP
+the obvious "rasterize the DOM via an SVG `<foreignObject>`" route. (On Chromium an
+inline `<foreignObject>` raster does not taint — measured, though external-resource
+cases are unverified — so taint is not the binding reason. The Motif path uses CDP
 capture regardless.)
 
 The price of full web freedom is that a web page has its own clock and animates on
@@ -219,13 +218,6 @@ produce the same bytes (verified across Windows, Linux, and macOS). Conformance
 checks therefore assert exact-byte equality, not just a perceptual tolerance. The
 cache captures each frame index once and reuses it.
 
-(This overturns the earlier WebView2-era verdict, which held that an element on a
-live GPU compositor layer — e.g. an `opacity` animation with `fill: both` — jittered
-its antialiased edges by a sub-unit alpha value between successive screenshots,
-making byte-identical capture unachievable and forcing perceptual-only conformance.
-That jitter was a WebView2 compositor artifact; it does not occur on Electron's
-Chromium offscreen capture.)
-
 ## Capture harness
 
 - **One reused offscreen Electron BrowserWindow host.** A single offscreen
@@ -329,7 +321,7 @@ apply to the sprite.
 
 ## Export
 
-The export Worker has no DOM and cannot drive a webview, so before the encode loop the
+The export Worker has no DOM and cannot drive a renderer, so before the encode loop the
 **main process** captures every Motif layer's frames — through the same host, at export
 resolution, on the composition fps grid — and hands the bitmaps to the Worker
 (transferred). This is surfaced through the export "preparing" wait. When a Motif is

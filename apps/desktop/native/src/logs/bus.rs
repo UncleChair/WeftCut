@@ -83,7 +83,7 @@ impl LogBus {
         tokio::spawn(writer::run(logs_dir, writer_rx));
 
         // Broadcast → UI-event bridge. One subscriber, fan-out into
-        // the webview as `log:entry` events. Spawned on the bus's own
+        // the renderer as `log:entry` events. Spawned on the bus's own
         // lifetime — when the bus is replaced, this task's broadcast
         // receiver returns Closed and the loop exits.
         let mut bridge_rx = broadcast_tx.subscribe();
@@ -127,7 +127,7 @@ impl LogBus {
             ring.push_back(entry.clone());
         }
         // Broadcast: ignore "no subscribers" — that's the normal state
-        // before the webview connects its listener.
+        // before the renderer connects its listener.
         let _ = self.inner.broadcast.send(entry.clone());
         // Persistence: try-send; drop the line on saturation. The
         // writer counts drops itself.

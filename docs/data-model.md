@@ -177,7 +177,7 @@ export readiness is `proxy_path || proxy_bypassed || export_uses_original`.
 
 The static import route is intentionally narrow. H.264 and AV1 8-bit,
 browser-friendly sources can be marked DirectExport; HEVC, VP9, ProRes, and
-10-bit/HDR sources route to a full export master. The webview still verifies
+10-bit/HDR sources route to a full export master. The renderer still verifies
 DirectExport sources with a real `probeSourceDecodable` key-frame decode before
 export. If the probe fails on the current machine, `ensure_full_proxy`
 route-corrects the media by clearing `export_uses_original` and enqueueing a

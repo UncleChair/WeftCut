@@ -207,7 +207,7 @@ histogram-difference scene scoring (the PySceneDetect approach), driven by
 the same ffmpeg CLI child + `ffmpeg_sem` as the other derivative jobs,
 lazy on the 720p proxy, content-addressed cache — behind a `SceneDetector`
 trait so a learned model (TransNetV2 via ONNX) can slot in later for
-gradual-transition accuracy. Deliberately *not* the webview/GPU path (keeps
+gradual-transition accuracy. Deliberately *not* the renderer/GPU path (keeps
 analysis off the compositor the user is driving) and *not* a vision model
 (semantic "what's in the frame" stays the multimodal agent's job). Full
 design in

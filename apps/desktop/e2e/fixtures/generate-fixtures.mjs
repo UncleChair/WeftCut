@@ -33,7 +33,7 @@ export const MATRIX = [
   { color: "601full" },
   // 10-bit BT.709 grayscale ramp (HEVC Main10) — axis B "proxy fidelity on gradients"
   { gradient: true },
-  // 10-bit ramps as H.264 High10 (the one 10-bit shape WebView2 software-
+  // 10-bit ramps as H.264 High10 (the one 10-bit shape Chromium software-
   // decodes) — the 10-bit export gates (export_10bit.e2e.js): a static 1s ramp
   // (end-to-end fidelity) + a 10s animated long-GOP/B-frame ramp (reorder-tail
   // regression).

@@ -2,7 +2,7 @@ import { convertFileSrc } from "@/bridge/ipc";
 import { listen } from "@/bridge/events";
 import { open as openDialog, save as saveDialog } from "@/bridge/dialog";
 import { join, tempDir } from "@/bridge/path";
-import { WebviewWindow, getCurrentWindow, ProgressBarStatus } from "@/bridge/window";
+import { SecondaryWindow, getCurrentWindow, ProgressBarStatus } from "@/bridge/window";
 import {
   isPermissionGranted,
   requestPermission,
@@ -1546,7 +1546,7 @@ export function App({ onCloseProject }: AppProps) {
     try {
       // Window load failures surface in the main-process console (win:* IPC is
       // fire-and-forget; the secondary-window lifecycle isn't bridged back).
-      new WebviewWindow(label, {
+      new SecondaryWindow(label, {
         url,
         title: "WeftCut — Render & Play",
         width: 960,

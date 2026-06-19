@@ -1,7 +1,7 @@
 // Window controls + secondary-window handle, backed by the Electron main
 // process over window.api (window:* / win:* IPC). getCurrentWindow() mirrors
 // the small surface the renderer uses (titlebar controls, taskbar progress);
-// WebviewWindow is the secondary-window handle (PerfHUD / Render&Play).
+// SecondaryWindow is the secondary-window handle (PerfHUD / Render&Play).
 
 export function getCurrentWindow() {
   return {
@@ -45,7 +45,7 @@ export type ProgressBarStatus = (typeof ProgressBarStatus)[keyof typeof Progress
 // IPC (src/main/windows.ts). window.api is declared in ./ipc.
 let _suppressCreate = false
 
-export class WebviewWindow {
+export class SecondaryWindow {
   public readonly label: string
 
   constructor(label: string, options?: Record<string, unknown>) {
@@ -63,13 +63,13 @@ export class WebviewWindow {
 
   // Returns a handle if the labelled window exists, else null. Mirrors the
   // shape PerfHUD consumes (it calls .then() on the result).
-  static async getByLabel(label: string): Promise<WebviewWindow | null> {
+  static async getByLabel(label: string): Promise<SecondaryWindow | null> {
     const exists = await window.api.win.exists(label)
     if (!exists) return null
     // Construct a handle without firing win:create (window already exists).
     _suppressCreate = true
     try {
-      return new WebviewWindow(label)
+      return new SecondaryWindow(label)
     } finally {
       _suppressCreate = false
     }

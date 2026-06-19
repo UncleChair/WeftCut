@@ -238,7 +238,7 @@ impl Backend {
 
     /// Push a decrypted cloud API key into the in-memory cache. Called by
     /// Electron main after reading safeStorage; never a renderer-invoke arm
-    /// (key material stays off the webview).
+    /// (key material stays off the renderer).
     #[napi]
     pub fn set_cloud_key(&self, provider: String, key: String) {
         self.cloud_keys.lock().expect("cloud_keys poisoned").insert(provider, key);

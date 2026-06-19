@@ -1,8 +1,8 @@
 //! Per-workspace export settings persisted as `<workspace>/export.json`.
 //!
-//! Opaque to Rust: the webview owns the schema (codec/resolution/quality/etc).
+//! Opaque to Rust: the renderer owns the schema (codec/resolution/quality/etc).
 //! This is a dumb typed key/value — the encoder config is assembled in the
-//! webview and never round-trips through here. Kept in a SEPARATE file from
+//! renderer and never round-trips through here. Kept in a SEPARATE file from
 //! `view.json` so the timeline's whole-file view-state writer can never
 //! clobber export settings (two independent writers, one file = data loss).
 //!
@@ -16,7 +16,7 @@ use anyhow::{Context, Result};
 const EXPORT_FILE: &str = "export.json";
 
 /// Read export settings from `<workspace>/export.json`. Returns `None` if the
-/// file is missing, empty, or unreadable — the webview falls back to defaults.
+/// file is missing, empty, or unreadable — the renderer falls back to defaults.
 pub fn load(workspace: &Path) -> Option<serde_json::Value> {
     let path = workspace.join(EXPORT_FILE);
     if !path.exists() {
