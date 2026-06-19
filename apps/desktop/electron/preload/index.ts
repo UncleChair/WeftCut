@@ -45,18 +45,35 @@ contextBridge.exposeInMainWorld('api', api)
 // renderer side (electron/electron#44600). The fix is to intercept drop events
 // here in the preload where the File objects are still native-backed.
 function wireFileDrop(): void {
+  const tgt = (e: Event) =>
+    e.target instanceof Element
+      ? e.target.tagName + '.' + (typeof e.target.className === 'string' ? e.target.className : '')
+      : String(e.target)
+  console.log('[drop-dbg] wireFileDrop registered on window')
+  window.addEventListener('dragenter', (e) => {
+    const dt = (e as DragEvent).dataTransfer
+    console.log('[drop-dbg] dragenter', { types: dt ? Array.from(dt.types) : null, target: tgt(e) })
+  })
   window.addEventListener('dragover', (e) => {
-    if (e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files')) e.preventDefault()
+    const dt = (e as DragEvent).dataTransfer
+    if (dt && Array.from(dt.types).includes('Files')) e.preventDefault()
   })
   window.addEventListener('drop', (e) => {
-    if (!e.dataTransfer || !Array.from(e.dataTransfer.types).includes('Files')) return
+    const dt = (e as DragEvent).dataTransfer
     const onPool = e.target instanceof Element && !!e.target.closest('.media-pool')
+    console.log('[drop-dbg] drop', {
+      types: dt ? Array.from(dt.types) : null,
+      files: dt ? dt.files.length : null,
+      target: tgt(e),
+      onPool,
+    })
+    if (!dt || !Array.from(dt.types).includes('Files')) return
     if (!onPool) return
     e.preventDefault()
-    const paths = Array.from(e.dataTransfer.files)
+    const paths = Array.from(dt.files)
       .map((f) => { try { return webUtils.getPathForFile(f) } catch { return '' } })
       .filter((p) => p.length > 0)
-    console.log('[drop] media-pool drop', { fileCount: e.dataTransfer.files.length, paths })
+    console.log('[drop-dbg] resolved paths', paths)
     if (paths.length > 0) void ipcRenderer.invoke('media:dropped', paths)
   })
 }
