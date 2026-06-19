@@ -2,9 +2,9 @@ name: electron-ci
 
 on:
   push:
-    branches: [migration/electron-napi]
+    branches: [main]
   pull_request:
-    branches: [migration/electron-napi]
+    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -24,6 +24,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22.20.0'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -89,14 +91,12 @@ jobs:
       # Full e2e suite via Playwright — includes s6-determinism.spec.ts which
       # writes PNGs to determinism-artifacts/<process.platform>/ (win32/linux/darwin).
       #
-      # SOFTWARE RENDERING EXPERIMENT (Task 8, run #1):
-      # Task 7 found --use-gl=swiftshader HANGS the offscreen CDP capture on
-      # Windows 11.  s6-determinism.spec.ts intentionally launches without any
-      # forced-swiftshader flags (see spec header).  On Linux we wrap with
-      # xvfb-run -a for a virtual framebuffer; on Windows/macOS the runner's
-      # native GPU stack is used.  This first CI run is an experiment to learn
-      # whether headless capture works on Linux/macOS runners and what the
-      # cross-OS SSIM margins are — threshold will be tuned after run #1.
+      # RENDERER CHOICE: no forced --use-gl=swiftshader (it HANGS the offscreen
+      # CDP capture on Windows 11). s6-determinism.spec.ts launches with each
+      # OS's CI-default renderer; on Linux we wrap with xvfb-run -a for a virtual
+      # framebuffer; Windows/macOS use the runner's native GPU stack. Captures
+      # are byte-identical cross-OS regardless (see the threshold note on the
+      # compare job) — no software-rendering force is needed.
       - name: E2E tests (includes determinism capture)
         shell: bash
         env:
@@ -156,6 +156,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22.20.0'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         working-directory: .
