@@ -176,7 +176,7 @@ multi-component joins. Fixed to `path.join(...args.paths)`.
 - 4K run: not needed — 1080p already separates clearly (3.22×)
 
 **Verdict: GO on native Electron IPC (invoke) transport.**
-invoke is 3.22× faster than the loopback WebSocket at 1080p. The invoke path comfortably exceeds the offline throughput need (63 fps vs ~20 fps reference). Task 5 (further WS optimisation) is not needed. The chosen transport for the S6 cut-over is `videoSinkWrite` (invoke/IPC) with `mode:"ipc"` sink.
+invoke is 3.22× faster than the loopback WebSocket at 1080p. The invoke path comfortably exceeds the offline throughput need (63 fps vs ~20 fps reference). Task 5 (further WS optimisation) is not needed. The chosen transport for the S6 cut-over is `videoSinkWrite` (invoke/IPC) with the IPC sink.
 
 ---
 

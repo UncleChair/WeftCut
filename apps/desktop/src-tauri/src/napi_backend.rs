@@ -899,10 +899,10 @@ mod tests {
     }
 
     /// IPC-only sink (empty outputPath = no ffmpeg / byte-count only): start
-    /// returns null (unit), write five frames, finish returns stats, cancel clears.
+    /// returns null (unit), then cancel clears the active sink.
     #[cfg(feature = "export")]
     #[tokio::test]
-    async fn video_sink_ipc_start_write_finish_cancel() {
+    async fn video_sink_ipc_start_then_cancel() {
         let b = Backend::new_for_test(Arc::new(VecEventSink::new()));
         b.init().await.unwrap();
         let start_args = serde_json::json!({
