@@ -41,8 +41,7 @@ async function createWindow(): Promise<BrowserWindow> {
     // own titlebar (app-header / startup-titlebar / agent-titlebar) with custom
     // window controls. (macOS traffic-light styling is an S6 cross-platform
     // refinement.)
-    // TEMP test: frame:true to check if frameless breaks file drag-drop (revert after)
-    frame: true,
+    frame: false,
     backgroundColor: '#0a0a0a',
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
