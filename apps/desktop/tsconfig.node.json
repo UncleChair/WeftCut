@@ -2,7 +2,7 @@
   "compilerOptions": {
     "composite": true,
     "target": "ES2022",
-    // DOM is here because the preload (electron/preload) runs in the renderer's
+    // DOM is here because the preload (src/preload) runs in the renderer's
     // DOM context — it wires drag-drop and injects the drag-region stylesheet.
     // The main process shares this project; the tradeoff is that accidental DOM
     // use in main/ won't be flagged (acceptable for this combined node project).
@@ -22,5 +22,5 @@
     "declarationDir": "node_modules/.cache/tsc/node",
     "types": ["node"]
   },
-  "include": ["electron.vite.config.ts", "electron/**/*.ts"]
+  "include": ["electron.vite.config.ts", "src/main/**/*.ts", "src/preload/**/*.ts"]
 }
