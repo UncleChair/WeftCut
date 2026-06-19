@@ -1,5 +1,32 @@
 # S6 — Migration completion: acceptance notes
 
+## T10 — cut-over complete (2026-06-19)
+
+**Status: DONE.** The Tauri shell has been excised. The branch is now pure Electron.
+
+Deleted:
+- `src-tauri/src/sysmon.rs` (Tauri-gated PerfHUD sampler)
+- `src-tauri/src/media_drop.rs` (Tauri-gated drag-drop path)
+- `src-tauri/tauri.conf.json` (Tauri app manifest)
+- `poc/electron-napi/` (proof-of-concept directory, all files)
+- `@tauri-apps/api`, `@tauri-apps/plugin-{dialog,fs,notification,shell}` npm deps
+- `@tauri-apps/cli` devDep; `tauri`/`tauri:dev`/`tauri:build` npm scripts
+- `sysinfo` Cargo dep (only used in the deleted sysmon.rs)
+- `media_drop`, `sysmon` feature definitions from Cargo.toml
+
+Kept (load-bearing):
+- `electron.vite.config.ts` `@tauri-apps/*` → `src/electron-compat/*` aliases
+- All `src/electron-compat/*.ts` shim files
+- All `src/**` renderer `@tauri-apps/*` imports (resolve via Vite aliases to shims)
+
+Cut-over gate: all 4 checks PASS
+- `napi:build` → Finished release profile, exit 0 (Tauri-free)
+- `cargo test --lib --features jobs,export,mcp,cloud,motifs` → **588 passed**
+- `VITE_WEFTCUT_E2E=1 electron:build` → exit 0, renderer built with shims
+- `e2e:electron` → **28 passed** (all S1–S6 specs green, 3.1 min)
+
+S6 exit criteria (spec §9): CI matrix (Tasks 1–9) + cut-over (Task 10). Cut-over is done locally; CI green on 3 OSes is the remaining gate before merge to main.
+
 ## T9 — manual verification (2026-06-19)
 
 - **Export: PASS.** User ran the built Electron app (`npx electron out/main/index.js`),

@@ -1,5 +1,6 @@
-//! Event sink — replaces `tauri::AppHandle::emit`. The production impl wraps
-//! one napi `ThreadsafeFunction`; the test impl records emits.
+//! Event sink — bridges Rust domain events to the Electron main process via a
+//! napi `ThreadsafeFunction`. The production impl wraps one TSFN; the test
+//! impl records emits.
 
 use std::sync::{Arc, Mutex};
 
