@@ -1370,9 +1370,9 @@ export function App({ onCloseProject }: AppProps) {
     // Stream the worker's output to the temp file: it emits the MP4 in
     // sequential slices (fMP4) which we append here, so the whole file is never
     // held in one ArrayBuffer (V8's ~2GB cap OOM'd long exports). `writeFile`
-    // with `append` is used instead of an open FileHandle because `fs:allow-open`
-    // isn't in the app's capabilities (`fs:allow-write-file` is). The temp path
-    // is a fresh UUID, so the first append creates it (create defaults true).
+    // with `append` is used instead of an open FileHandle because the fs bridge
+    // exposes append-write but no open-handle API. The temp path is a fresh
+    // UUID, so the first append creates it (create defaults true).
     // On the 10-bit path the Worker streams raw yuv420p10le frames via the
     // chunk/ack channel; the main thread forwards them to export_video_sink_write.
     const writeChunk = tenBit
