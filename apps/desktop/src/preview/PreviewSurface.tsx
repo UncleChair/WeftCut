@@ -56,8 +56,6 @@ export interface PreviewSurfaceHandle {
     motifFrames?: Record<string, ImageBitmap[]>;
     /// Output bit depth (8 = existing pipeline; 10 = f16/WebGL2 + native-encode).
     bitDepth?: 8 | 10;
-    /// Native-encode sink endpoint for the 10-bit path.
-    videoSink?: { port: number; token: string };
   }): Promise<PixiExportResult>;
 }
 

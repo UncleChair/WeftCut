@@ -1371,7 +1371,6 @@ export async function logDirPath(): Promise<string | null> {
 /// Arguments for the native-encode video sink. Mirrors `VideoSinkStartArgs`
 /// in `export/videosink.rs` (serde camelCase).
 export interface VideoSinkStartArgs {
-  mode: "ws";
   width: number;
   height: number;
   fpsNum: number;
@@ -1384,11 +1383,8 @@ export interface VideoSinkStartArgs {
   outputPath: string;
 }
 
-/// Start a native-encode video sink. Returns the WebSocket port + bearer
-/// token the Worker connects to for streaming encoded frames.
-export function exportVideoSinkStart(
-  args: VideoSinkStartArgs,
-): Promise<{ port: number; token: string }> {
+/// Start a native-encode video sink.
+export function exportVideoSinkStart(args: VideoSinkStartArgs): Promise<void> {
   return invoke("export_video_sink_start", { args });
 }
 
@@ -1411,5 +1407,5 @@ export function exportVideoSinkCancel(): Promise<void> {
 /// Stream a raw encoded chunk to the native sink. The bytes are forwarded
 /// to ffmpeg's input pipe; call in sequence to preserve muxer order.
 export function exportVideoSinkWrite(bytes: Uint8Array): Promise<void> {
-  return invoke("export_video_sink_write", bytes);
+  return window.api.videoSinkWrite(bytes);
 }
