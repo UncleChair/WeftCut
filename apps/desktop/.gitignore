@@ -15,5 +15,11 @@ resources/ffmpeg/*/ffplay*
 # electron-builder output (transient build artifacts)
 release/
 
+# electron-builder buildResources: the root .gitignore ignores all build/ dirs,
+# but committed icon source assets live here. Re-include just those.
+!build/
+build/*
+!build/icon-256.png
+
 # determinism-artifacts/ — per-OS PNG captures; compared in CI (Task 8), never committed
 determinism-artifacts/
