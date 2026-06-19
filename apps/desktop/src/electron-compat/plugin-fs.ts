@@ -5,8 +5,11 @@
 //   frameCache.ts:  mkdir, writeFile, readFile, readDir, remove, exists (motif L2 cache)
 // All are invoke wrappers; callers guard with try/catch.
 
-export async function readFile(path: string, _opts?: unknown): Promise<Uint8Array> {
-  return (await window.api.invoke('fs:readFile', { path })) as Uint8Array
+export async function readFile(path: string, _opts?: unknown): Promise<Uint8Array<ArrayBuffer>> {
+  // The IPC payload is a Node Buffer → a plain ArrayBuffer-backed Uint8Array in
+  // the renderer (never SharedArrayBuffer). Type it concretely so callers can
+  // pass the result straight to Blob/BufferSource sinks (TS 5.7+ generic).
+  return (await window.api.invoke('fs:readFile', { path })) as Uint8Array<ArrayBuffer>
 }
 
 export async function mkdir(
