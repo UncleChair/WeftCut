@@ -238,6 +238,13 @@ app.whenReady().then(async () => {
     fs.writeFileSync(p, data, 'utf8')
   })
   ipcMain.handle('fs:readFile', (_e, { path: p }: { path: string }) => fs.readFileSync(p))
+
+  // PoC: native IPC video-sink write. Binary frame in (ArrayBuffer/typed array),
+  // forwarded straight to the napi backend's ffmpeg stdin. No JSON.
+  ipcMain.handle('export:videosink_write', async (_e, ab: ArrayBuffer | Uint8Array) => {
+    const buf = Buffer.isBuffer(ab) ? ab : Buffer.from(ab as ArrayBuffer)
+    await backend!.exportVideoSinkWrite(buf)
+  })
   ipcMain.handle('fs:remove', (_e, { path: p }: { path: string }) => {
     fs.rmSync(p, { force: true, recursive: true })
   })

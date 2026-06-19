@@ -35,6 +35,11 @@ const api = {
   getPathForFile(file: File): string {
     try { return webUtils.getPathForFile(file) } catch { return '' }
   },
+  // PoC: stream one raw frame to the native video sink over IPC (the
+  // Electron-native alternative to the loopback WebSocket transport).
+  videoSinkWrite(bytes: ArrayBuffer | ArrayBufferView): Promise<void> {
+    return ipcRenderer.invoke('export:videosink_write', bytes) as Promise<void>
+  },
 }
 
 contextBridge.exposeInMainWorld('api', api)
