@@ -1,10 +1,12 @@
 {
-  // Orchestrator only — owns no files. `tsc -b` builds the referenced
-  // node-side and web-side projects. See tsconfig.node.json (Electron main +
-  // preload + the electron-vite config) and tsconfig.web.json (renderer).
+  // Orchestrator only — owns no files. `tsc -b` builds the referenced projects:
+  //   tsconfig.main.json    Electron main process + electron-vite config (no DOM)
+  //   tsconfig.preload.json Electron preload (DOM — runs in the renderer context)
+  //   tsconfig.web.json     renderer
   "files": [],
   "references": [
-    { "path": "./tsconfig.node.json" },
+    { "path": "./tsconfig.main.json" },
+    { "path": "./tsconfig.preload.json" },
     { "path": "./tsconfig.web.json" }
   ]
 }

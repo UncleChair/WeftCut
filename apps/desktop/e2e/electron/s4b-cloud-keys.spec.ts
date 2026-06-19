@@ -19,7 +19,7 @@ test('S4b: safeStorage key round-trip + cloud tools advertised', async () => {
   const { app, page } = await launchApp()
 
   const invoke = (cmd: string, args: unknown) =>
-    page.evaluate(([c, a]) => (window as any).api.invoke(c, a), [cmd, args] as const)
+    page.evaluate(([c, a]) => (window as any).api.backend.invoke(c, a), [cmd, args] as const)
 
   // Resolve userData path from the main process (no require/import needed here).
   const userData = (await app.evaluate(({ app }) => app.getPath('userData'))) as string

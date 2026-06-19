@@ -8,7 +8,7 @@ test('motif_capture_frame: deterministic transparent PNG via offscreen CDP', asy
   const cap = (t: number) =>
     page.evaluate(
       (tSec) =>
-        (window as any).api.invoke('motif_capture_frame', {
+        (window as any).api.backend.invoke('motif_capture_frame', {
           motifId: 'countdown', tSec, propsJson: JSON.stringify({ seconds: 5, accent: '#ff4d4d' }),
           width: 480, height: 480, settleRafs: 1, contentHash: '',
         }) as Promise<string>,

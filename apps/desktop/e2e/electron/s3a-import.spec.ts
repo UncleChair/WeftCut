@@ -32,14 +32,14 @@ test('import_media adds media to the pool and registers job events', async () =>
 
   // invoke import_media — the dispatcher expects { path: string }
   const mediaId = await page.evaluate(
-    (f) => (window as any).api.invoke('import_media', { path: f }),
+    (f) => (window as any).api.backend.invoke('import_media', { path: f }),
     FIXTURE,
   )
   expect(typeof mediaId).toBe('string')
   expect((mediaId as string).length).toBeGreaterThan(0)
 
   // project_summary.media is Vec<MediaSummary> where each entry has .id
-  const summary = await page.evaluate(() => (window as any).api.invoke('project_summary', {}))
+  const summary = await page.evaluate(() => (window as any).api.backend.invoke('project_summary', {}))
   const ids: string[] = ((summary as any).media ?? []).map((m: any) => m.id)
   expect(ids).toContain(mediaId as string)
 

@@ -57,7 +57,7 @@ test('capture fixed motif frames for cross-OS comparison', async () => {
       try {
         const result = (await page.evaluate(
           ([id, t, props, width, height]) =>
-            (window as any).api.invoke('motif_capture_frame', {
+            (window as any).api.backend.invoke('motif_capture_frame', {
               motifId: id,
               tSec: t,
               propsJson: props,
@@ -84,7 +84,7 @@ test('capture fixed motif frames for cross-OS comparison', async () => {
     const cap = async (motifId: string, tSec: number, w: number, h: number, propsJson = '{}') =>
       (await page.evaluate(
         ([id, t, props, width, height]) =>
-          (window as any).api.invoke('motif_capture_frame', {
+          (window as any).api.backend.invoke('motif_capture_frame', {
             motifId: id,
             tSec: t,
             propsJson: props,
@@ -148,14 +148,14 @@ motif.define({
       props_schema: {},
     }
     const draftId = (await page.evaluate(
-      ([ch, a]) => (window as any).api.invoke(ch, a),
+      ([ch, a]) => (window as any).api.backend.invoke(ch, a),
       ['write_motif_draft', { args: { manifest, html: jitterHtml } }] as const,
     )) as string
     console.log('[s6-det] jitter draft id:', draftId)
 
     // install_motif — napi expects { args: { draft_id, mode: { kind: "new" } } }
     const publishedId = (await page.evaluate(
-      ([ch, a]) => (window as any).api.invoke(ch, a),
+      ([ch, a]) => (window as any).api.backend.invoke(ch, a),
       ['install_motif', { args: { draft_id: draftId, mode: { kind: 'new' } } }] as const,
     )) as string
     console.log('[s6-det] jitter published id:', publishedId)
@@ -170,7 +170,7 @@ motif.define({
     // Clean up jitter motif to avoid accumulation across repeated local/CI runs.
     try {
       await page.evaluate(
-        ([ch, a]) => (window as any).api.invoke(ch, a),
+        ([ch, a]) => (window as any).api.backend.invoke(ch, a),
         ['delete_motif', { id: publishedId }] as const,
       )
       console.log('[s6-det] jitter motif deleted:', publishedId)

@@ -5,14 +5,14 @@ export async function readFile(path: string, _opts?: unknown): Promise<Uint8Arra
   // The IPC payload is a Node Buffer → a plain ArrayBuffer-backed Uint8Array in
   // the renderer (never SharedArrayBuffer). Type it concretely so callers can
   // pass the result straight to Blob/BufferSource sinks (TS 5.7+ generic).
-  return (await window.api.invoke('fs:readFile', { path })) as Uint8Array<ArrayBuffer>
+  return window.api.fs.readFile(path)
 }
 
 export async function mkdir(
   path: string,
   opts?: { recursive?: boolean },
 ): Promise<void> {
-  await window.api.invoke('fs:mkdir', { path, recursive: opts?.recursive ?? false })
+  await window.api.fs.mkdir(path, opts?.recursive ?? false)
 }
 
 export async function writeFile(
@@ -20,7 +20,7 @@ export async function writeFile(
   data: Uint8Array,
   opts?: { append?: boolean },
 ): Promise<void> {
-  await window.api.invoke('fs:writeFile', { path, data, append: opts?.append ?? false })
+  await window.api.fs.writeFile(path, data, opts?.append ?? false)
 }
 
 export async function writeTextFile(
@@ -28,15 +28,15 @@ export async function writeTextFile(
   data: string,
   _opts?: unknown,
 ): Promise<void> {
-  await window.api.invoke('fs:writeTextFile', { path, data })
+  await window.api.fs.writeTextFile(path, data)
 }
 
 export async function remove(path: string, _opts?: unknown): Promise<void> {
-  await window.api.invoke('fs:remove', { path })
+  await window.api.fs.remove(path)
 }
 
 export async function exists(path: string, _opts?: unknown): Promise<boolean> {
-  return (await window.api.invoke('fs:exists', { path })) as boolean
+  return window.api.fs.exists(path)
 }
 
 export interface DirEntry {
@@ -47,5 +47,5 @@ export interface DirEntry {
 }
 
 export async function readDir(path: string, _opts?: unknown): Promise<DirEntry[]> {
-  return (await window.api.invoke('fs:readDir', { path })) as DirEntry[]
+  return window.api.fs.readDir(path)
 }

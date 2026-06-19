@@ -18,7 +18,7 @@ test('S4a: external MCP client connects, calls tools, and bearer is enforced', a
   const { app, page } = await launchApp()
 
   // Discover the live server URL + token from the main process (panel is deferred).
-  const info = (await page.evaluate(() => (window as any).api.invoke('get_mcp_info', {}))) as Info
+  const info = (await page.evaluate(() => (window as any).api.mcp.getInfo())) as Info
 
   // Field-shape assertion: streamable-HTTP url present, SSE fields gone.
   expect(info).toHaveProperty('url')
@@ -45,9 +45,9 @@ test('S4a: external MCP client connects, calls tools, and bearer is enforced', a
   const pong = await client.callTool({ name: 'ping', arguments: {} })
   expect(JSON.stringify(pong.content)).toContain('pong')
 
-  const before = (await page.evaluate(() => (window as any).api.invoke('project_summary', {}))) as { track_count: number }
+  const before = (await page.evaluate(() => (window as any).api.backend.invoke('project_summary', {}))) as { track_count: number }
   await client.callTool({ name: 'add_track', arguments: {} })
-  const after = (await page.evaluate(() => (window as any).api.invoke('project_summary', {}))) as { track_count: number }
+  const after = (await page.evaluate(() => (window as any).api.backend.invoke('project_summary', {}))) as { track_count: number }
   expect(after.track_count).toBe(before.track_count + 1)
 
   const proj = await client.readResource({ uri: 'project://current' })

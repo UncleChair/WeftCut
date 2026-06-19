@@ -20,7 +20,7 @@ export async function emit(event: string, payload?: unknown): Promise<void> {
   // In S1 this just calls the stub invoke and swallows the rejection —
   // emit is fire-and-forget from the renderer side.
   try {
-    await window.api.invoke(`emit:${event}`, payload as Record<string, unknown>)
+    await window.api.backend.invoke(`emit:${event}`, payload)
   } catch {
     // stub rejection — ignored
   }
