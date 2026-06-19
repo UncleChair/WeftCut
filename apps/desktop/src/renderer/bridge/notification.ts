@@ -10,8 +10,9 @@ export async function requestPermission(): Promise<'granted'> {
 }
 
 export function sendNotification(opts: unknown): void {
-  // S1 stub: no desktop notification in the stub shell.
+  // Best-effort: forward to the backend dispatcher; swallow rejections (no
+  // desktop-notification handler is wired yet).
   void window.api.backend.invoke('notification:send', opts).catch(() => {
-    // stub rejection — ignored
+    // ignored (best-effort)
   })
 }

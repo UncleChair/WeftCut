@@ -17,11 +17,11 @@ export async function listen<T>(
 }
 
 export async function emit(event: string, payload?: unknown): Promise<void> {
-  // In S1 this just calls the stub invoke and swallows the rejection —
-  // emit is fire-and-forget from the renderer side.
+  // Fire-and-forget from the renderer side: forward to the backend dispatcher
+  // and swallow any rejection.
   try {
     await window.api.backend.invoke(`emit:${event}`, payload)
   } catch {
-    // stub rejection — ignored
+    // ignored (fire-and-forget)
   }
 }
