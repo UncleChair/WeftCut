@@ -1,8 +1,26 @@
 import path from 'node:path'
-import { BrowserWindow } from 'electron'
+import { BrowserWindow, shell } from 'electron'
 
 const wins = new Map<string, BrowserWindow>()
 const isDev = !!process.env['ELECTRON_RENDERER_URL']
+
+// Lock down navigation + window creation on a window. The renderer only ever
+// loads local content (the dev server in dev, file:// in prod), so: deny every
+// renderer-initiated `window.open` (routing vetted https to the OS browser),
+// and block any navigation that would leave the app origin. Defense-in-depth
+// beneath the powerful fs:* / backend:invoke IPC surface (Electron security
+// checklist). Apply to EVERY BrowserWindow.
+export function hardenWindow(win: BrowserWindow): void {
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https:\/\//i.test(url)) void shell.openExternal(url)
+    return { action: 'deny' }
+  })
+  win.webContents.on('will-navigate', (e, url) => {
+    const dev = process.env['ELECTRON_RENDERER_URL']
+    const allowed = dev ? url.startsWith(dev) : url.startsWith('file://')
+    if (!allowed) e.preventDefault()
+  })
+}
 
 type SecondaryOpts = { url?: string; width?: number; height?: number; title?: string }
 export function createSecondary(label: string, opts?: SecondaryOpts): void {
@@ -25,6 +43,7 @@ export function createSecondary(label: string, opts?: SecondaryOpts): void {
     },
   })
   wins.set(label, win)
+  hardenWindow(win)
   win.on('closed', () => wins.delete(label))
   // Pass the caller's renderer-relative url straight through (e.g. '/?perfHud=1').
   const rel = opts?.url ?? '/'
