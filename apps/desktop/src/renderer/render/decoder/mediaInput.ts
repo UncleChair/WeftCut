@@ -13,7 +13,7 @@ import {
   WEBM,
   type InputVideoTrack,
 } from "mediabunny";
-import { AssetRangeSource } from "./AssetRangeSource";
+import { MediaRangeSource } from "./MediaRangeSource";
 
 export interface OpenedMedia {
   /// The primary video track; `getDecoderConfig()` gives the WebCodecs config.
@@ -25,10 +25,10 @@ export interface OpenedMedia {
 }
 
 export async function openMediaInput(assetUrl: string): Promise<OpenedMedia> {
-  const assetSource = new AssetRangeSource(assetUrl);
+  const mediaSource = new MediaRangeSource(assetUrl);
   const input = new Input({
     formats: [MP4, QTFF, MATROSKA, WEBM],
-    source: assetSource.source,
+    source: mediaSource.source,
   });
   const videoTrack = await input.getPrimaryVideoTrack();
   if (!videoTrack) {

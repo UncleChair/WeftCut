@@ -9,16 +9,16 @@
 
 import { CustomSource, type CustomSourceOptions } from "mediabunny";
 
-export class AssetRangeSource {
-  private readonly assetUrl: string;
+export class MediaRangeSource {
+  private readonly mediaUrl: string;
   private readonly abort = new AbortController();
   /// The mediabunny CustomSource — pass `.source` to `new Input({ source })`.
   readonly source: CustomSource;
   /// Exposed for unit tests; production code uses `.source`.
   readonly options: CustomSourceOptions;
 
-  constructor(assetUrl: string) {
-    this.assetUrl = assetUrl;
+  constructor(mediaUrl: string) {
+    this.mediaUrl = mediaUrl;
     this.options = {
       getSize: () => this.getSize(),
       read: (start, end) => this.read(start, end),
@@ -36,7 +36,7 @@ export class AssetRangeSource {
   }
 
   private async getSize(): Promise<number> {
-    const res = await fetch(this.assetUrl, {
+    const res = await fetch(this.mediaUrl, {
       headers: { Range: "bytes=0-0" },
       signal: this.abort.signal,
     });
@@ -45,7 +45,7 @@ export class AssetRangeSource {
     if (total && total !== "*") return Number.parseInt(total, 10);
     const cl = res.headers.get("Content-Length");
     if (cl) return Number.parseInt(cl, 10);
-    throw new Error(`AssetRangeSource: no size for ${this.assetUrl}`);
+    throw new Error(`MediaRangeSource: no size for ${this.mediaUrl}`);
   }
 
   private async read(start: number, end: number): Promise<Uint8Array> {
@@ -61,7 +61,7 @@ export class AssetRangeSource {
     const out = new Uint8Array(total);
     let filled = 0;
     while (filled < total) {
-      const res = await fetch(this.assetUrl, {
+      const res = await fetch(this.mediaUrl, {
         // inclusive HTTP range; re-anchored at the unfilled tail each pass
         headers: { Range: `bytes=${start + filled}-${end - 1}` },
         signal: this.abort.signal,
@@ -76,7 +76,7 @@ export class AssetRangeSource {
         // No progress possible — fail loudly rather than hand mediabunny a
         // short buffer (which surfaces as its opaque length-mismatch throw).
         throw new Error(
-          `AssetRangeSource: short read for ${this.assetUrl} ` +
+          `MediaRangeSource: short read for ${this.mediaUrl} ` +
             `bytes=${start}-${end - 1}: got ${filled} of ${total} bytes`,
         );
       }

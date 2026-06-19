@@ -1,5 +1,5 @@
 // Test helper: serves HTTP Range requests against an in-memory buffer, so
-// AssetRangeSource / mediabunny can read a fixture lazily in node vitest
+// MediaRangeSource / mediabunny can read a fixture lazily in node vitest
 // without a real weftcut-media:// server. Tracks total bytes served for laziness
 // assertions.
 

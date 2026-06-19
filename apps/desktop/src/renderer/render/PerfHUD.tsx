@@ -891,7 +891,7 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
         await emit(PERF_HUD_SNAPSHOT_EVENT, sample).catch(() => {});
         return;
       }
-      const win = new WebviewWindow(PERF_HUD_WINDOW_LABEL, {
+      new WebviewWindow(PERF_HUD_WINDOW_LABEL, {
         url: "/?perfHud=1",
         title: "WeftCut — Performance",
         width: 640,
@@ -901,15 +901,10 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
         resizable: true,
         decorations: true,
       });
-      // Optimistic: hide the inline overlay now; revert if creation errors.
+      // Hide the inline overlay now that the pop-out window is requested.
+      // (Dev-only: seeding the pop-out's first snapshot + create/error feedback
+      // aren't bridged from the secondary-window lifecycle yet.)
       setPoppedOut(true);
-      void win.once("tauri://created", () => {
-        void emit(PERF_HUD_SNAPSHOT_EVENT, sample).catch(() => {});
-      });
-      void win.once("tauri://error", (e) => {
-        console.error("[weftcut/perf-hud] webview error:", e);
-        setPoppedOut(false);
-      });
     } catch (e) {
       console.error("[weftcut/perf-hud] failed to open popup:", e);
       setPoppedOut(false);
