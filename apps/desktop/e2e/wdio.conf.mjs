@@ -8,7 +8,7 @@ import { ensureFixtures } from "./fixtures/generate-fixtures.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, "..", "..", ".."); // apps/desktop/e2e -> repo root
-const APP = path.resolve(REPO, "apps/desktop/src-tauri/target/debug/weftcut.exe");
+const APP = path.resolve(REPO, "apps/desktop/native/target/debug/weftcut.exe");
 const MSEDGEDRIVER = path.resolve(HERE, ".drivers", "msedgedriver.exe");
 const TAURI_DRIVER = path.resolve(os.homedir(), ".cargo", "bin", "tauri-driver.exe");
 const DRIVER_PORT = 4444;

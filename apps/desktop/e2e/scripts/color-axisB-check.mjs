@@ -33,7 +33,7 @@ const p = spawnSync("ffmpeg", [
 if (p.status !== 0) { console.error("proxy ffmpeg failed:\n" + p.stderr); process.exit(2); }
 
 const out = spawnSync("cargo", [
-  "run", "--manifest-path", "apps/desktop/src-tauri/Cargo.toml", "--bin", "media_conformance",
+  "run", "--manifest-path", "apps/desktop/native/Cargo.toml", "--bin", "media_conformance",
   "--quiet", "--", "--gradient-row", "--output", PROXY, "--source", PROXY,
   "--in-matrix", "bt709", "--in-range", "tv", "--sample", "10",
 ], { cwd: REPO, encoding: "utf8" });

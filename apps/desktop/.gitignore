@@ -1,7 +1,7 @@
 # napi-rs addon build output (rebuilt locally / in CI)
-src-tauri/*.node
-src-tauri/index.js
-src-tauri/index.d.ts
+native/*.node
+native/index.js
+native/index.d.ts
 
 # Playwright-for-Electron e2e output (transient; S3b+)
 test-results/
