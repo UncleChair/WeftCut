@@ -387,7 +387,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
 
       if (tenBit) {
         // 10-bit path: render into the rgba16float RenderTexture, pack to
-        // yuv420p10le, then stream to the Rust sink (WS) or fall back to IPC.
+        // yuv420p10le, then stream to the Rust sink over the chunk/ack IPC channel.
         app.renderer.render({ container: app.stage, target: compositeRT! });
         compositeMs += performance.now() - compT0;
 

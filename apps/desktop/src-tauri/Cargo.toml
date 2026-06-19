@@ -103,6 +103,7 @@ media_drop = []  # webview drag-drop path recovery (S3)
 sysmon = []      # dev PerfHUD sampler
 
 # opt-level 1 keeps dev-build transport throughput honest; release was never affected.
+# (see memory feedback_rust_optlevel_monomorphization: generics monomorphize at the caller's opt-level).
 [profile.dev]
 opt-level = 1
 
