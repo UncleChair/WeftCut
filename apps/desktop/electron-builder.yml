@@ -18,17 +18,24 @@ extraResources:
   - from: resources/ffmpeg/${os}
     to: ffmpeg
     filter: ["**/*"]
+# App icon. build/icon-256.png is a 256x256 source (electron-builder generates
+# the .ico for NSIS and uses the png directly on Linux). A deliberately
+# non-magic filename so it is NOT auto-fed to the mac .icns generator, which
+# requires >=512x512. RELEASE FOLLOW-UP: produce a >=512 (ideally 1024) master
+# + a mac icon, then add `mac.icon`.
 win:
   target: [nsis]
+  icon: build/icon-256.png
   artifactName: ${productName}-${version}-${arch}.${ext}
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
 linux:
   target: [AppImage, deb]
+  icon: build/icon-256.png
   category: AudioVideo
   artifactName: ${productName}-${version}-${arch}.${ext}
 mac:
   target: [dmg]
   category: public.app-category.video
-  identity: null   # unsigned in S6; ad-hoc
+  identity: null   # unsigned in S6; ad-hoc (default icon until a >=512 master exists)
