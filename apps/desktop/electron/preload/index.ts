@@ -92,10 +92,12 @@ function injectDragRegionStyles(): void {
   `
   document.head.appendChild(style)
 }
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', injectDragRegionStyles)
-} else {
-  injectDragRegionStyles()
-}
+// TEMP hypothesis test (drag-drop vs drag-region): disable drag regions to see
+// if file drops start working. REVERT after.
+// if (document.readyState === 'loading') {
+//   document.addEventListener('DOMContentLoaded', injectDragRegionStyles)
+// } else {
+//   injectDragRegionStyles()
+// }
 
 export type Api = typeof api
