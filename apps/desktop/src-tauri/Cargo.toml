@@ -55,9 +55,8 @@ ffmpeg-sidecar = "2"
 # Phase 1.x Stage 6 base64-encodes media bytes (JPG thumbnails, peaks file)
 # into the media://* resources' blob field. Pinning for direct use.
 base64 = "0.22"
-# HTTP client for Whisper / Deepgram / future cloud providers. Pinning rustls
-# features explicitly avoids pulling in a second native-tls stack alongside
-# the one tauri already brings in via its plugin transitives.
+# HTTP client for Whisper / Deepgram / future cloud providers. Pin rustls
+# explicitly to avoid pulling in a native-tls stack (single TLS backend).
 reqwest = { version = "0.13", default-features = false, features = ["json", "multipart", "rustls", "stream"] }
 # Phase 6 Stage 4 cloud-provider traits (`Transcriber`, `Synthesizer`) need
 # `dyn`-compatible async methods. Native async-fn-in-trait isn't dyn-safe yet
