@@ -39,6 +39,29 @@ const api = {
 
 contextBridge.exposeInMainWorld('api', api)
 
+// Resolve drag-drop file paths in the preload's own drop listener.
+// Background: in Electron 30+, a File passed across the contextBridge loses its
+// disk-backing, so webUtils.getPathForFile() returns '' when called from the
+// renderer side (electron/electron#44600). The fix is to intercept drop events
+// here in the preload where the File objects are still native-backed.
+function wireFileDrop(): void {
+  window.addEventListener('dragover', (e) => {
+    if (e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files')) e.preventDefault()
+  })
+  window.addEventListener('drop', (e) => {
+    if (!e.dataTransfer || !Array.from(e.dataTransfer.types).includes('Files')) return
+    const onPool = e.target instanceof Element && !!e.target.closest('.media-pool')
+    if (!onPool) return
+    e.preventDefault()
+    const paths = Array.from(e.dataTransfer.files)
+      .map((f) => { try { return webUtils.getPathForFile(f) } catch { return '' } })
+      .filter((p) => p.length > 0)
+    console.log('[drop] media-pool drop', { fileCount: e.dataTransfer.files.length, paths })
+    if (paths.length > 0) void ipcRenderer.invoke('media:dropped', paths)
+  })
+}
+wireFileDrop()
+
 // Frameless-window drag regions. The renderer marks its titlebars with Tauri's
 // `data-tauri-drag-region` attribute; Electron doesn't honor that — it uses the
 // CSS `-webkit-app-region` property. Bridge the two by injecting a stylesheet
