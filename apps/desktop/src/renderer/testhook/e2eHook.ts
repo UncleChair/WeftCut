@@ -30,8 +30,8 @@ import { getMotif } from "../render/motifs/catalog";
 import { requestPrebake } from "../render/motifs/prebakeBus";
 import { mergeSettings, type ExportSettings } from "../render/exportSettings";
 import { useProjectStore, exportPlaybackPathFor } from "../state/projectStore";
-import { exists, readDir } from "@tauri-apps/plugin-fs";
-import { join as pathJoin } from "@tauri-apps/api/path";
+import { exists, readDir } from "@/bridge/fs";
+import { join as pathJoin } from "@/bridge/path";
 import { MotifSprite } from "../render/sprite/MotifSprite";
 import type { ResolvedMotifView } from "../render/resolveView";
 

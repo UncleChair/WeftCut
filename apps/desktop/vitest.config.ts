@@ -5,13 +5,10 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
-const compat = (m: string) => path.resolve(HERE, 'src/renderer/electron-compat', m)
 
 // Vitest reads this config (the build is driven by electron.vite.config.ts).
-// The renderer keeps importing @tauri-apps/* verbatim; mirror the build's
-// alias table so tests resolve those imports to the electron-compat shims
-// instead of the real (Tauri) packages. Without these, every test file that
-// transitively imports an @tauri-apps surface fails to resolve at mock time.
+// The renderer's backend/platform calls go through src/renderer/bridge/* (the
+// Electron bridge), resolved via the @ alias just like the build.
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   // Unit tests live under src/renderer. The Playwright Electron specs in e2e/
@@ -23,15 +20,6 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(HERE, 'src/renderer'),
-      '@tauri-apps/api/core': compat('tauri-core.ts'),
-      '@tauri-apps/api/event': compat('tauri-event.ts'),
-      '@tauri-apps/api/path': compat('tauri-path.ts'),
-      '@tauri-apps/api/window': compat('tauri-window.ts'),
-      '@tauri-apps/api/webviewWindow': compat('tauri-webview-window.ts'),
-      '@tauri-apps/plugin-dialog': compat('plugin-dialog.ts'),
-      '@tauri-apps/plugin-fs': compat('plugin-fs.ts'),
-      '@tauri-apps/plugin-notification': compat('plugin-notification.ts'),
-      '@tauri-apps/plugin-shell': compat('plugin-shell.ts'),
     },
   },
 })

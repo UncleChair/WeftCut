@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { listen, type UnlistenFn } from "@/bridge/events";
 import { useLogStore, ERROR_STICKY_MS } from "./store";
 import { MEDIA_JOB_EVENTS, type LogEntry, type LogLevel } from "../ipc";
 

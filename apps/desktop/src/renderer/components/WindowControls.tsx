@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow } from "@/bridge/window";
 import { useTranslation } from "react-i18next";
 
 /// Caption buttons for the frameless window (`decorations: false`):

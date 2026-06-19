@@ -1,5 +1,5 @@
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { documentDir } from "@tauri-apps/api/path";
+import { open as openDialog } from "@/bridge/dialog";
+import { documentDir } from "@/bridge/path";
 import type { TFunction } from "i18next";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";

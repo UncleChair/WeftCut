@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "@/bridge/ipc";
 
 /**
  * Render a Motif to a single frame and return the raw PNG as a `Blob`.

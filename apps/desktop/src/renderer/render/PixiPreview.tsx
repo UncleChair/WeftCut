@@ -20,7 +20,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { convertFileSrc } from "@/bridge/ipc";
 import { Application as PixiApplication } from "@pixi/react";
 import { Rectangle, type Application } from "pixi.js";
 

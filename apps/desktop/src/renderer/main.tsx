@@ -7,8 +7,8 @@
 import "pixi.js/unsafe-eval";
 import React, { useCallback, useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
-import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { invoke } from "@/bridge/ipc";
+import { getCurrentWindow } from "@/bridge/window";
 import { App } from "./App";
 import { StartupScreen } from "./startup/StartupScreen";
 import { PerfHUDWindow } from "./render/PerfHUD";

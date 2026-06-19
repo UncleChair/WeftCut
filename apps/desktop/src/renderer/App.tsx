@@ -1,15 +1,14 @@
-import { convertFileSrc } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { join, tempDir } from "@tauri-apps/api/path";
-import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { getCurrentWindow, ProgressBarStatus } from "@tauri-apps/api/window";
+import { convertFileSrc } from "@/bridge/ipc";
+import { listen } from "@/bridge/events";
+import { open as openDialog, save as saveDialog } from "@/bridge/dialog";
+import { join, tempDir } from "@/bridge/path";
+import { WebviewWindow, getCurrentWindow, ProgressBarStatus } from "@/bridge/window";
 import {
   isPermissionGranted,
   requestPermission,
   sendNotification,
-} from "@tauri-apps/plugin-notification";
-import { remove, writeFile } from "@tauri-apps/plugin-fs";
+} from "@/bridge/notification";
+import { remove, writeFile } from "@/bridge/fs";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {

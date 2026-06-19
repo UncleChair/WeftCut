@@ -6,7 +6,6 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
-const compat = (m: string) => path.resolve(HERE, 'src/renderer/electron-compat', m)
 
 // Content-Security-Policy for the PACKAGED renderer. Injected at build time
 // only (`apply: 'build'`) so the Vite dev server / HMR (which needs inline +
@@ -77,18 +76,6 @@ export default defineConfig({
     resolve: {
       alias: {
         '@': path.resolve(HERE, 'src/renderer'),
-        // Redirect every @tauri-apps/* surface to a compat shim.
-        // The renderer keeps importing @tauri-apps/* verbatim; Vite rewrites
-        // at bundle time to the matching src/renderer/electron-compat/* file.
-        '@tauri-apps/api/core': compat('tauri-core.ts'),
-        '@tauri-apps/api/event': compat('tauri-event.ts'),
-        '@tauri-apps/api/path': compat('tauri-path.ts'),
-        '@tauri-apps/api/window': compat('tauri-window.ts'),
-        '@tauri-apps/api/webviewWindow': compat('tauri-webview-window.ts'),
-        '@tauri-apps/plugin-dialog': compat('plugin-dialog.ts'),
-        '@tauri-apps/plugin-fs': compat('plugin-fs.ts'),
-        '@tauri-apps/plugin-notification': compat('plugin-notification.ts'),
-        '@tauri-apps/plugin-shell': compat('plugin-shell.ts'),
       },
     },
     build: {

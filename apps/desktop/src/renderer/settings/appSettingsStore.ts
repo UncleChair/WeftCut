@@ -11,7 +11,7 @@
 // store object in a selector — that trips `useSyncExternalStore`'s
 // reference equality and infinite-loops.
 
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { listen, type UnlistenFn } from "@/bridge/events";
 import { create } from "zustand";
 
 import {

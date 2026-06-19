@@ -144,8 +144,8 @@ export interface WaitDeps {
   signal: AbortSignal;
 }
 
-/// Listener-shaped dependency: subscribe to a Tauri event, resolve to an
-/// unlisten fn. Matches `@tauri-apps/api/event`'s `listen`.
+/// Listener-shaped dependency: subscribe to an event, resolve to an
+/// unlisten fn. Matches the `listen` bridge in `@/bridge/events`.
 export type ListenLike = <T>(
   event: string,
   cb: (e: { payload: T }) => void,

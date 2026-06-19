@@ -8,7 +8,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { XIcon } from "lucide-react";
-import { open as openInShell } from "@tauri-apps/plugin-shell";
+import { open as openInShell } from "@/bridge/shell";
 import { AppInput } from "../components/AppInput";
 import {
   logClear,

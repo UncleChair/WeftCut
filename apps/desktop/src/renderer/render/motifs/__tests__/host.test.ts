@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const invokeMock = vi.fn();
-vi.mock("@tauri-apps/api/core", () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
+vi.mock("@/bridge/ipc", () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
 
 import { captureMotifFramePngBlob } from "../host";
 

@@ -1,6 +1,4 @@
-// Replaces @tauri-apps/api/path.
-// Imports seen in src/: documentDir, join, tempDir
-// In S1 these call the stub invoke and reject; callers fall back gracefully.
+// Path helpers (documentDir / join / tempDir) backed by the Electron main process.
 
 export async function documentDir(): Promise<string> {
   return (await window.api.invoke('path:documentDir')) as string

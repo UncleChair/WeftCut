@@ -1,6 +1,5 @@
-// Replaces @tauri-apps/api/event. Mirrors the Tauri signature:
-// listen returns a Promise<UnlistenFn>. In S1 events never fire (stub on());
-// S2 wires them via TSFN -> main -> webContents.send -> preload on().
+// Event subscription bridge: listen() returns a Promise<UnlistenFn>. Events are
+// delivered from the Rust core via main -> webContents.send -> preload on().
 export interface Event<T> { event: string; id: number; payload: T }
 export type UnlistenFn = () => void
 
