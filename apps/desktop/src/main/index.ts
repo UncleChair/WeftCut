@@ -7,6 +7,7 @@ import { loadAllKeys, setKey, clearKey } from './keys.js'
 import { MOTIF_SCHEME_ENTRY, registerMotifProtocol } from './motif/protocol.js'
 import { setRuntimeSource, captureMotifFrameB64 } from './motif/capture.js'
 import { createSecondary, actOnSecondary, secondaryExists, hardenWindow } from './windows.js'
+import { isAllowed } from './fsGuard.js'
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -223,25 +224,60 @@ app.whenReady().then(async () => {
   })
 
   // fs:* — direct main-process filesystem access for the renderer (write/append/
-  // read/remove/readDir). No path validation by design: the renderer is
-  // first-party (contextIsolation+sandbox, no remote content / no <webview>), so
-  // this matches the trust level of the Tauri fs capabilities it replaces. If a
-  // future stage loads remote content or plugins, this surface MUST be re-scoped.
+  // read/remove/readDir). Confined to APP-MANAGED roots: the OS temp dir (export
+  // scratch), userData (incl. the backend Cache), and the active workspace. The
+  // renderer is first-party (contextIsolation+sandbox, no remote content / no
+  // <webview>) and the final export files + project saves go through Rust (not
+  // this surface), so the whitelist breaks nothing — it just caps the blast
+  // radius of an XSS/CSP breach: a compromised renderer can no longer read,
+  // overwrite, or recursively delete arbitrary paths on disk. The workspace
+  // path is fetched from the BACKEND (the authority), so a compromised renderer
+  // can't widen its own scope by lying about which folder is "the workspace".
+  //
+  // NOTE: arbitrary user-imported MEDIA is served read-only by the separate
+  // weftcut-media:// protocol below (those paths come from the import dialog and
+  // can live anywhere), which is deliberately NOT confined here.
+  let cachedWorkspace: string | null = null
+  const refreshWorkspace = async (): Promise<void> => {
+    try {
+      cachedWorkspace = JSON.parse(await backend!.invoke('workspace_dir', '{}')) as string | null
+    } catch {
+      /* keep the last-known value on a query error */
+    }
+  }
+  const fsRoots = (): string[] => {
+    const roots = [app.getPath('temp'), app.getPath('userData')]
+    if (cachedWorkspace) roots.push(cachedWorkspace)
+    return roots
+  }
+  // Resolve `p` and assert it sits under an allowed root, else throw. Static
+  // roots (temp/userData) are checked first with no backend round-trip; only a
+  // miss re-queries the workspace (it may have just opened) and retries — so the
+  // hot path (export temp appends) never touches the backend.
+  const guardFsPath = async (p: string): Promise<string> => {
+    const abs = path.resolve(p)
+    if (isAllowed(abs, fsRoots())) return abs
+    await refreshWorkspace()
+    if (isAllowed(abs, fsRoots())) return abs
+    throw new Error(`fs access denied: ${abs} is outside the allowed roots (temp, userData, workspace)`)
+  }
+
   ipcMain.handle(
     'fs:writeFile',
-    (_e, { path: p, data, append }: { path: string; data: Uint8Array; append?: boolean }) => {
+    async (_e, { path: p, data, append }: { path: string; data: Uint8Array; append?: boolean }) => {
+      const abs = await guardFsPath(p)
       const buf = Buffer.from(data)
-      if (append) fs.appendFileSync(p, buf)
-      else fs.writeFileSync(p, buf)
+      if (append) fs.appendFileSync(abs, buf)
+      else fs.writeFileSync(abs, buf)
     },
   )
-  ipcMain.handle('fs:writeTextFile', (_e, { path: p, data }: { path: string; data: string }) => {
-    fs.writeFileSync(p, data, 'utf8')
+  ipcMain.handle('fs:writeTextFile', async (_e, { path: p, data }: { path: string; data: string }) => {
+    fs.writeFileSync(await guardFsPath(p), data, 'utf8')
   })
-  ipcMain.handle('fs:mkdir', (_e, { path: p, recursive }: { path: string; recursive?: boolean }) => {
-    fs.mkdirSync(p, { recursive: recursive ?? false })
+  ipcMain.handle('fs:mkdir', async (_e, { path: p, recursive }: { path: string; recursive?: boolean }) => {
+    fs.mkdirSync(await guardFsPath(p), { recursive: recursive ?? false })
   })
-  ipcMain.handle('fs:readFile', (_e, { path: p }: { path: string }) => fs.readFileSync(p))
+  ipcMain.handle('fs:readFile', async (_e, { path: p }: { path: string }) => fs.readFileSync(await guardFsPath(p)))
 
   // PoC: native IPC video-sink write. Binary frame in (ArrayBuffer/typed array),
   // forwarded straight to the napi backend's ffmpeg stdin. No JSON.
@@ -249,12 +285,12 @@ app.whenReady().then(async () => {
     const buf = Buffer.isBuffer(ab) ? ab : Buffer.from(ab as ArrayBuffer)
     await backend!.exportVideoSinkWrite(buf)
   })
-  ipcMain.handle('fs:remove', (_e, { path: p }: { path: string }) => {
-    fs.rmSync(p, { force: true, recursive: true })
+  ipcMain.handle('fs:remove', async (_e, { path: p }: { path: string }) => {
+    fs.rmSync(await guardFsPath(p), { force: true, recursive: true })
   })
-  ipcMain.handle('fs:exists', (_e, { path: p }: { path: string }) => fs.existsSync(p))
-  ipcMain.handle('fs:readDir', (_e, { path: p }: { path: string }) =>
-    fs.readdirSync(p, { withFileTypes: true }).map((d) => ({
+  ipcMain.handle('fs:exists', async (_e, { path: p }: { path: string }) => fs.existsSync(await guardFsPath(p)))
+  ipcMain.handle('fs:readDir', async (_e, { path: p }: { path: string }) =>
+    fs.readdirSync(await guardFsPath(p), { withFileTypes: true }).map((d) => ({
       name: d.name,
       isDirectory: d.isDirectory(),
       isFile: d.isFile(),
