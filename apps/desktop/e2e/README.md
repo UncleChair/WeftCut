@@ -92,3 +92,42 @@ before the retirement commit `e1321538`):
 Like `conformance.spec.ts`, the analyzer-backed gates run **locally** (they need
 `npm run fixtures` + a buildable `cargo media_conformance`) and skip in CI,
 which generates no fixtures.
+
+## Known flakes
+
+### `fs-guard.spec.ts` — "fs:writeFile honors append vs truncate" (Windows, under load)
+
+**Symptom.** Occasionally fails inside the *full* suite run on Windows; passes
+deterministically when run in isolation (`npm run e2e:electron -- fs-guard.spec.ts`).
+
+**Not a logic bug.** The write path is synchronous — `fs:writeFile` does
+`fs.appendFileSync`/`fs.writeFileSync` (`src/main/index.ts`), so the fd is closed
++ flushed before the IPC resolves; there is no write-then-read race to "wait out".
+The test then reads the file *cross-process* from the Playwright runner
+(`fs.readFileSync(tmp)` at `fs-guard.spec.ts:23`).
+
+**Hypothesised cause (unconfirmed — the exact failing assertion has not been
+captured).** A Windows external transient under the heavy I/O of the full run
+(many temp files from export/proxy/motif specs): Defender or the Search indexer
+briefly locks the temp file, surfacing as `EBUSY` on main's `appendFileSync` or a
+sharing violation on the runner's `readFileSync`.
+
+**CI impact — buffered, not immune.** `playwright.config.ts` sets
+`retries: process.env.CI ? 1 : 0`. GitHub Actions sets `CI=true`, so CI retries
+once and a single flake stays green; it would only go red on two consecutive
+failures (rare for a low-frequency flake). **Local `retries: 0`** is why it
+surfaces locally. **Decision: left as-is** (low-frequency, CI-buffered).
+
+**Fix approach if it recurs** (do this, NOT a fixed `sleep` — there is no async
+race to delay for, and a blind delay slows every run):
+
+1. First **capture the real failure** — re-run the full suite a few times until it
+   reproduces and note *which* assertion fails (`[1,2,3,4,5]` equality, `exists`,
+   or `remove`) and the error. Fix the actual cause, not the hypothesis.
+2. Make the cross-process read **condition-polled** instead of one-shot — replace
+   the single `expect(Array.from(fs.readFileSync(tmp)))` with an
+   `expect.poll(() => Array.from(fs.readFileSync(tmp)))` on a tight timeout so a
+   momentary lock/short-read is retried, not failed. (Condition-based waiting, not
+   an arbitrary timer.)
+3. Do **not** flip local `retries` to 1 — that masks *all* local flakes and hides
+   real regressions during development.
