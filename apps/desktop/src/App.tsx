@@ -2371,12 +2371,6 @@ function MediaDropZone({ children }: { children: React.ReactNode }) {
         }
       }}
       onDrop={(e) => {
-        console.log('[drop-dbg] onDrop fired', {
-          types: Array.from(e.dataTransfer.types),
-          fileCount: e.dataTransfer.files.length,
-          isFileDrag: Array.from(e.dataTransfer.types).includes('Files'),
-          hasApi: !!(window as unknown as { api?: { getPathForFile?: unknown } }).api?.getPathForFile,
-        });
         if (!isFileDrag(e)) return;
         e.preventDefault();
         depth.current = 0;
@@ -2388,12 +2382,6 @@ function MediaDropZone({ children }: { children: React.ReactNode }) {
           const paths = Array.from(e.dataTransfer.files)
             .map((f) => eapi.getPathForFile!(f))
             .filter((p) => p.length > 0)
-          console.log('[drop-dbg] electron branch', {
-            rawResults: Array.from(e.dataTransfer.files).map((f) => {
-              try { return eapi.getPathForFile!(f); } catch (err) { return 'THREW:' + String(err); }
-            }),
-            filteredPaths: paths,
-          });
           if (paths.length > 0) void eapi.invoke('media:dropped', paths)
           return
         }

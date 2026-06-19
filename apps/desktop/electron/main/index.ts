@@ -174,7 +174,6 @@ app.whenReady().then(async () => {
   // them here; we re-emit the SAME event the Tauri media_drop.rs path emitted,
   // so the renderer's existing media:external-drop listener handles them.
   ipcMain.handle('media:dropped', (_e, paths: string[]) => {
-    console.log('[main] media:dropped received:', JSON.stringify(paths))
     if (Array.isArray(paths) && paths.length > 0) {
       mainWindow?.webContents.send('evt:media:external-drop', paths)
     }
