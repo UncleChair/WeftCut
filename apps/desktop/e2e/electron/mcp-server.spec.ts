@@ -14,7 +14,7 @@ async function connect(url: string, token?: string): Promise<Client> {
   return client
 }
 
-test('S4a: external MCP client connects, calls tools, and bearer is enforced', async () => {
+test('external MCP client connects, calls tools, and bearer is enforced', async () => {
   const { app, page } = await launchApp()
 
   // Discover the live server URL + token from the main process (panel is deferred).

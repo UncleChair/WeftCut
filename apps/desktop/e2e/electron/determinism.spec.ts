@@ -1,4 +1,4 @@
-// S6 e2e gate: determinism capture harness.
+// e2e gate: determinism capture harness.
 //
 // Captures fixed frames from built-in motifs (positive cases) and a synthetic
 // "jitter" motif that uses Math.random (negative control) into
@@ -10,7 +10,7 @@
 // SOFTWARE RENDERING NOTE (Windows finding, Task 7):
 // Forcing --disable-gpu --use-gl=swiftshader --in-process-gpu causes the
 // offscreen BrowserWindow CDP capture to hang on Windows 11 (test times out at
-// 120s; s5-motif-capture without those flags passes in ~1s). Root cause: the
+// 120s; motif-capture without those flags passes in ~1s). Root cause: the
 // offscreen BrowserWindow + CDP path deadlocks under swiftshader on Windows.
 // This spec therefore runs without forced-swiftshader on the local capture step.
 // The cross-OS apples-to-apples consistency question for CI (Task 8) must address
@@ -108,7 +108,7 @@ test('capture fixed motif frames for cross-OS comparison', async () => {
         throw new Error(`motif_capture_frame returned an empty/short result for ${c.id}: length=${b64?.length}`)
       }
       fs.writeFileSync(path.join(outDir, `${c.id}.png`), Buffer.from(b64, 'base64'))
-      console.log(`[s6-det] captured ${c.id}.png (b64 len=${b64.length})`)
+      console.log(`[det] captured ${c.id}.png (b64 len=${b64.length})`)
     }
 
     // ── Negative control: jitter motif ─────────────────────────────────────────
@@ -151,21 +151,21 @@ motif.define({
       ([ch, a]) => (window as any).api.backend.invoke(ch, a),
       ['write_motif_draft', { args: { manifest, html: jitterHtml } }] as const,
     )) as string
-    console.log('[s6-det] jitter draft id:', draftId)
+    console.log('[det] jitter draft id:', draftId)
 
     // install_motif — napi expects { args: { draft_id, mode: { kind: "new" } } }
     const publishedId = (await page.evaluate(
       ([ch, a]) => (window as any).api.backend.invoke(ch, a),
       ['install_motif', { args: { draft_id: draftId, mode: { kind: 'new' } } }] as const,
     )) as string
-    console.log('[s6-det] jitter published id:', publishedId)
+    console.log('[det] jitter published id:', publishedId)
 
     const jb64 = await cap(publishedId, 0.5, 480, 480)
     if (!jb64 || jb64.length < 1000) {
       throw new Error(`motif_capture_frame returned an empty/short result for jitter: length=${jb64?.length}`)
     }
     fs.writeFileSync(path.join(outDir, 'NEG-det-jitter.png'), Buffer.from(jb64, 'base64'))
-    console.log(`[s6-det] captured NEG-det-jitter.png (b64 len=${jb64.length})`)
+    console.log(`[det] captured NEG-det-jitter.png (b64 len=${jb64.length})`)
 
     // Clean up jitter motif to avoid accumulation across repeated local/CI runs.
     try {
@@ -173,9 +173,9 @@ motif.define({
         ([ch, a]) => (window as any).api.backend.invoke(ch, a),
         ['delete_motif', { id: publishedId }] as const,
       )
-      console.log('[s6-det] jitter motif deleted:', publishedId)
+      console.log('[det] jitter motif deleted:', publishedId)
     } catch (e) {
-      console.warn('[s6-det] delete_motif failed (non-fatal):', e)
+      console.warn('[det] delete_motif failed (non-fatal):', e)
     }
 
     // Confirm all expected files exist.
@@ -184,7 +184,7 @@ motif.define({
       const p = path.join(outDir, name)
       if (!fs.existsSync(p)) throw new Error(`artifact missing: ${p}`)
     }
-    console.log('[s6-det] all artifacts written to', outDir)
+    console.log('[det] all artifacts written to', outDir)
   } finally {
     await app.close()
   }

@@ -1,4 +1,4 @@
-// S5 e2e gate: live motif preview via offscreen CDP into the Pixi compositor.
+// e2e gate: live motif preview via offscreen CDP into the Pixi compositor.
 //
 // Mirrors `e2e/specs/motif/capture.e2e.js` Describe 3 ("motif live preview").
 //
@@ -20,9 +20,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { launchApp, newProject, waitForHook } from './helpers/driver'
 
-const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-s5-preview-proj')
+const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-preview-proj')
 
-test('S5 motif live preview: accent pixels reach the Pixi compositor via CDP', async () => {
+test('motif live preview: accent pixels reach the Pixi compositor via CDP', async () => {
   test.setTimeout(120_000)
 
   const { app, page } = await launchApp()
@@ -31,7 +31,7 @@ test('S5 motif live preview: accent pixels reach the Pixi compositor via CDP', a
     //    center pixel lands inside the numeral / arc geometry).
     await newProject(page, {
       parentFolder: PROJECT_PARENT,
-      name: 'e2e-s5-prev-' + Date.now(),
+      name: 'e2e-prev-' + Date.now(),
       canvas: { width: 480, height: 480, fpsNum: 30, fpsDen: 1 },
     })
 
@@ -93,7 +93,7 @@ test('S5 motif live preview: accent pixels reach the Pixi compositor via CDP', a
       s = snap.p as typeof s
       renders = snap.renders as number
       console.log(
-        `[s5-preview] ${s!.w}x${s!.h} nonTransparent=${s!.nonTransparent}` +
+        `[preview] ${s!.w}x${s!.h} nonTransparent=${s!.nonTransparent}` +
           ` accentCount=${s!.accentCount} accent=(${s!.accentR},${s!.accentG},${s!.accentB}) renders=${renders}`,
       )
       if (s!.accentCount > 200) break
@@ -110,12 +110,12 @@ test('S5 motif live preview: accent pixels reach the Pixi compositor via CDP', a
     // 7. Overlay transparency: the countdown backdrop is transparent — only the
     //    numeral + arc are opaque. Guards the CDP transparent-screenshot fix.
     const totalPx = s.w * s.h
-    console.log(`[s5-preview] nonTransparent=${s.nonTransparent}/${totalPx}`)
+    console.log(`[preview] nonTransparent=${s.nonTransparent}/${totalPx}`)
     expect(s.nonTransparent).toBeGreaterThan(0) // content composited
     expect(s.nonTransparent).toBeLessThan(totalPx * 0.5) // not a white box
 
     // 8. At least one render came through the CDP producer.
-    console.log('[s5-preview] renders:', renders)
+    console.log('[preview] renders:', renders)
     expect(renders).toBeGreaterThan(0)
   } finally {
     await app.close()

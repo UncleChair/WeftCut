@@ -1,4 +1,4 @@
-// S5 e2e gate: motif authoring lifecycle + staleness + file-watch hot-reload.
+// e2e gate: motif authoring lifecycle + staleness + file-watch hot-reload.
 //
 // Mirrors `e2e/specs/motif/state.e2e.js` Describe 1 (staleness notice) and
 // Describe 3 (file watch hot-reload), adapted for the Playwright/Electron
@@ -100,7 +100,7 @@ async function waitForMotifInCatalog(
 
 // ── Section A: authoring lifecycle ─────────────────────────────────────────────
 
-test('S5 motif authoring: write_motif_draft → install → list → delete', async () => {
+test('motif authoring: write_motif_draft → install → list → delete', async () => {
   test.setTimeout(90_000)
   const { app, page } = await launchApp()
   try {
@@ -123,7 +123,7 @@ test('S5 motif authoring: write_motif_draft → install → list → delete', as
     const draftId = await invoke(page, 'write_motif_draft', { args: { manifest, html } })
     expect(typeof draftId).toBe('string')
     expect((draftId as string).length).toBeGreaterThan(0)
-    console.log('[s5-lifecycle] draft id:', draftId)
+    console.log('[lifecycle] draft id:', draftId)
 
     // install_motif (New mode) — napi expects { args: { draft_id, mode: { kind: "new" } } }
     const publishedId = await invoke(page, 'install_motif', {
@@ -131,7 +131,7 @@ test('S5 motif authoring: write_motif_draft → install → list → delete', as
     })
     expect(typeof publishedId).toBe('string')
     expect((publishedId as string).length).toBeGreaterThan(0)
-    console.log('[s5-lifecycle] published id:', publishedId)
+    console.log('[lifecycle] published id:', publishedId)
 
     // list_motifs — published Motif must appear with status "installed" (not "builtin")
     const catalog = (await invoke(page, 'list_motifs', {})) as Array<{
@@ -142,7 +142,7 @@ test('S5 motif authoring: write_motif_draft → install → list → delete', as
     const found = catalog.find((m) => m.id === publishedId)
     expect(found).toBeDefined()
     expect(found!.status).toBe('installed')
-    console.log('[s5-lifecycle] list_motifs found installed motif:', found!.id)
+    console.log('[lifecycle] list_motifs found installed motif:', found!.id)
 
     // delete_motif — napi expects { id }
     await invoke(page, 'delete_motif', { id: publishedId })
@@ -150,7 +150,7 @@ test('S5 motif authoring: write_motif_draft → install → list → delete', as
     // Confirm gone from catalog.
     const catalogAfter = (await invoke(page, 'list_motifs', {})) as Array<{ id: string }>
     expect(catalogAfter.find((m) => m.id === publishedId)).toBeUndefined()
-    console.log('[s5-lifecycle] deleted; catalog size:', catalogAfter.length)
+    console.log('[lifecycle] deleted; catalog size:', catalogAfter.length)
   } finally {
     await closeAppRobustly(app)
   }
@@ -158,10 +158,10 @@ test('S5 motif authoring: write_motif_draft → install → list → delete', as
 
 // ── Section B: staleness notice ─────────────────────────────────────────────────
 
-test('S5 motif staleness: v1→v2 reopen surfaces a row; acknowledge clears it', async () => {
+test('motif staleness: v1→v2 reopen surfaces a row; acknowledge clears it', async () => {
   test.setTimeout(120_000)
-  const STALE_ID = 'e2e-s5-stale-' + Date.now()
-  const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-s5-stale-proj')
+  const STALE_ID = 'e2e-stale-' + Date.now()
+  const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-stale-proj')
   mkdirSync(PROJECT_PARENT, { recursive: true })
 
   const appHandle = await electron.launch({ args: [MAIN] })
@@ -171,7 +171,7 @@ test('S5 motif staleness: v1→v2 reopen surfaces a row; acknowledge clears it',
   // Get the actual userData path from the running app.
   const userData = await appHandle.evaluate(({ app: electronApp }) => electronApp.getPath('userData'))
   const motifsRoot = path.join(userData, 'motifs')
-  console.log('[s5-stale] motifsRoot:', motifsRoot)
+  console.log('[stale] motifsRoot:', motifsRoot)
 
   try {
     // Write v1 of the user Motif directly to disk.
@@ -180,7 +180,7 @@ test('S5 motif staleness: v1→v2 reopen surfaces a row; acknowledge clears it',
     // Create a project + enter the editor.
     await newProject(page, {
       parentFolder: PROJECT_PARENT,
-      name: 'e2e-s5-stale-' + Date.now(),
+      name: 'e2e-stale-' + Date.now(),
       canvas: { width: 320, height: 320, fpsNum: 30, fpsDen: 1 },
     })
     await waitForHook(page, 'addMotifLayer')
@@ -188,7 +188,7 @@ test('S5 motif staleness: v1→v2 reopen surfaces a row; acknowledge clears it',
 
     // Retrieve the actual workspace path that the hook created.
     const projectPath = await invoke(page, 'workspace_dir', {})
-    console.log('[s5-stale] workspace dir:', projectPath)
+    console.log('[stale] workspace dir:', projectPath)
     expect(typeof projectPath).toBe('string')
 
     // Wait for the motif to appear in the catalog (Rust reads from disk directly).
@@ -247,7 +247,7 @@ test('S5 motif staleness: v1→v2 reopen surfaces a row; acknowledge clears it',
     }
 
     // motif_staleness_report must now show the stale row.
-    console.log('[s5-stale] report after reopen:', JSON.stringify(reportAfter))
+    console.log('[stale] report after reopen:', JSON.stringify(reportAfter))
     const row = reportAfter.find((e) => e.motif_id === STALE_ID)
     expect(row).toBeDefined()
     expect(row!.placed_version).toBe(1)
@@ -256,7 +256,7 @@ test('S5 motif staleness: v1→v2 reopen surfaces a row; acknowledge clears it',
 
     // acknowledge_motif_staleness returns the count of markers bumped (≥ 1).
     const ackCount = (await invoke(page, 'acknowledge_motif_staleness', {})) as number
-    console.log('[s5-stale] ack count:', ackCount)
+    console.log('[stale] ack count:', ackCount)
     expect(ackCount).toBeGreaterThanOrEqual(1)
   } finally {
     await closeAppRobustly(appHandle)
@@ -266,10 +266,10 @@ test('S5 motif staleness: v1→v2 reopen surfaces a row; acknowledge clears it',
 
 // ── Section C: file-watch hot-reload ───────────────────────────────────────────
 
-test('S5 motif file-watch: disk-placed Motif renders; external rewrite hot-reloads', async () => {
+test('motif file-watch: disk-placed Motif renders; external rewrite hot-reloads', async () => {
   test.setTimeout(180_000)
-  const WATCH_ID = 'e2e-s5-watch-' + Date.now()
-  const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-s5-watch-proj')
+  const WATCH_ID = 'e2e-watch-' + Date.now()
+  const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-watch-proj')
   const RED = '#e02424'
   const GREEN = '#1ea64a'
   mkdirSync(PROJECT_PARENT, { recursive: true })
@@ -281,7 +281,7 @@ test('S5 motif file-watch: disk-placed Motif renders; external rewrite hot-reloa
   // Get the actual userData path from the running app.
   const userData = await appHandle.evaluate(({ app: electronApp }) => electronApp.getPath('userData'))
   const motifsRoot = path.join(userData, 'motifs')
-  console.log('[s5-watch] motifsRoot:', motifsRoot)
+  console.log('[watch] motifsRoot:', motifsRoot)
 
   try {
     // 1. Write the Motif directly to disk WHILE the app is running.
@@ -290,7 +290,7 @@ test('S5 motif file-watch: disk-placed Motif renders; external rewrite hot-reloa
     // 2. Create a 320×320 project so the Motif fills the frame.
     await newProject(page, {
       parentFolder: PROJECT_PARENT,
-      name: 'e2e-s5-watch-' + Date.now(),
+      name: 'e2e-watch-' + Date.now(),
       canvas: { width: 320, height: 320, fpsNum: 30, fpsDen: 1 },
     })
     await waitForHook(page, 'addMotifLayer')
@@ -345,7 +345,7 @@ test('S5 motif file-watch: disk-placed Motif renders; external rewrite hot-reloa
       (p) => p.a > 200 && p.r > 150 && p.g < 100,
       'initial red render',
     )
-    console.log('[s5-watch] initial red pixel:', JSON.stringify(red))
+    console.log('[watch] initial red pixel:', JSON.stringify(red))
     expect(red.r).toBeGreaterThan(150)
     expect(red.g).toBeLessThan(100)
 
@@ -358,7 +358,7 @@ test('S5 motif file-watch: disk-placed Motif renders; external rewrite hot-reloa
       (p) => p.a > 200 && p.g > 120 && p.r < 100,
       'hot-reloaded green render',
     )
-    console.log('[s5-watch] hot-reload green pixel:', JSON.stringify(green))
+    console.log('[watch] hot-reload green pixel:', JSON.stringify(green))
     expect(green.g).toBeGreaterThan(120)
     expect(green.r).toBeLessThan(100)
   } finally {

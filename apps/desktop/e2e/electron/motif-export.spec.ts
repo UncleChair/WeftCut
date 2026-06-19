@@ -1,4 +1,4 @@
-// S5 e2e gate: motif export — countdown baked and present in the output file.
+// e2e gate: motif export — countdown baked and present in the output file.
 //
 // Mirrors `e2e/specs/motif/export.e2e.js`.
 //
@@ -23,10 +23,10 @@ import { launchApp, newProject, driveExport } from './helpers/driver'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-const OUTPUT = path.resolve(os.tmpdir(), 'weftcut-e2e-s5-motif-out.mp4')
-const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-s5-motif-proj')
+const OUTPUT = path.resolve(os.tmpdir(), 'weftcut-e2e-motif-out.mp4')
+const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-motif-proj')
 
-test('S5 motif export: countdown animates in output (frames differ across seconds)', async () => {
+test('motif export: countdown animates in output (frames differ across seconds)', async () => {
   test.skip(
     process.env.WEFTCUT_E2E_NO_EXPORT === '1',
     'WebCodecs H.264 encode needs a GPU not available on headless CI runners; motif export is verified locally',
@@ -41,7 +41,7 @@ test('S5 motif export: countdown animates in output (frames differ across second
     // so the self-SSIM threshold has a wide margin.
     await newProject(page, {
       parentFolder: PROJECT_PARENT,
-      name: 'e2e-s5-exp-' + Date.now(),
+      name: 'e2e-exp-' + Date.now(),
       canvas: { width: 480, height: 480, fpsNum: 30, fpsDen: 1 },
     })
 
@@ -63,7 +63,7 @@ test('S5 motif export: countdown animates in output (frames differ across second
     // Self-SSIM: frame 10 ≈ 0.33 s (numeral 2) vs frame 50 ≈ 1.67 s (numeral 1).
     // A static/skipped motif would score ~1.0; the animated countdown scores far lower.
     const report = analyzeSelf({ output: OUTPUT, samples: [10, 50], ssimMax: 0.99 })
-    console.log('[s5-export] motif self-ssim report:', JSON.stringify(report))
+    console.log('[export] motif self-ssim report:', JSON.stringify(report))
 
     const pair = report.pairs[0]
     if (!pair) throw new Error('no self-ssim pair returned: ' + JSON.stringify(report))
