@@ -12,7 +12,11 @@ export function createSecondary(label: string, opts?: SecondaryOpts): void {
     width: opts?.width ?? 480,
     height: opts?.height ?? 320,
     title: opts?.title,
-    show: false,
+    // Show immediately. A frameless (`frame:false`) window combined with
+    // `show:false` + a deferred `ready-to-show` show does NOT reliably surface
+    // on Windows (mirrors the main-window fix in index.ts). backgroundColor is
+    // set, so there's no white flash.
+    show: true,
     frame: false,
     backgroundColor: '#0a0a0a',
     webPreferences: {
@@ -36,7 +40,6 @@ export function createSecondary(label: string, opts?: SecondaryOpts): void {
       hash: u.hash ? u.hash.slice(1) : undefined,
     })
   }
-  win.once('ready-to-show', () => win!.show())
 }
 export function actOnSecondary(label: string, action: 'show' | 'hide' | 'close' | 'center' | 'focus'): void {
   const win = wins.get(label)

@@ -2,10 +2,18 @@
 // Imports seen in src/:
 //   App.tsx:        remove, writeFile
 //   e2eHook.ts:     exists, readDir
-// All are stub-invoke in S1; callers guard with try/catch.
+//   frameCache.ts:  mkdir, writeFile, readFile, readDir, remove, exists (motif L2 cache)
+// All are invoke wrappers; callers guard with try/catch.
 
 export async function readFile(path: string, _opts?: unknown): Promise<Uint8Array> {
   return (await window.api.invoke('fs:readFile', { path })) as Uint8Array
+}
+
+export async function mkdir(
+  path: string,
+  opts?: { recursive?: boolean },
+): Promise<void> {
+  await window.api.invoke('fs:mkdir', { path, recursive: opts?.recursive ?? false })
 }
 
 export async function writeFile(

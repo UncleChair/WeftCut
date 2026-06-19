@@ -237,6 +237,9 @@ app.whenReady().then(async () => {
   ipcMain.handle('fs:writeTextFile', (_e, { path: p, data }: { path: string; data: string }) => {
     fs.writeFileSync(p, data, 'utf8')
   })
+  ipcMain.handle('fs:mkdir', (_e, { path: p, recursive }: { path: string; recursive?: boolean }) => {
+    fs.mkdirSync(p, { recursive: recursive ?? false })
+  })
   ipcMain.handle('fs:readFile', (_e, { path: p }: { path: string }) => fs.readFileSync(p))
 
   // PoC: native IPC video-sink write. Binary frame in (ArrayBuffer/typed array),
