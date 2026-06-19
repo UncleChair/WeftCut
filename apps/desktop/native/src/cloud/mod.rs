@@ -1,12 +1,12 @@
 //! Optional cloud API integrations behind a provider-agnostic trait surface.
 //!
-//! Two capability surfaces (added in Phase 6, see `docs/roadmap.md`):
+//! Two capability surfaces (see `docs/roadmap.md`):
 //! - **Transcription** — [`Transcriber`] trait → `transcribe_clip` MCP tool.
 //!   v1 provider: OpenAI Whisper (`providers::openai::OpenAiWhisper`).
 //!   Future: Deepgram, AssemblyAI.
 //! - **Text-to-speech** — [`Synthesizer`] trait → `synthesize_speech` MCP
-//!   tool. v1 provider: OpenAI tts-1 (same key as Whisper; impl arrives in
-//!   Stage 6). Future: ElevenLabs, Deepgram Aura.
+//!   tool. v1 provider: OpenAI tts-1 (same key as Whisper). Future: ElevenLabs,
+//!   Deepgram Aura.
 //!
 //! Keys are stored in the in-memory cache (`Backend.cloud_keys`) populated by
 //! Electron main via `safeStorage`. One OpenAI key activates both surfaces.

@@ -901,9 +901,8 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
         resizable: true,
         decorations: true,
       });
-      // Hide the inline overlay now that the pop-out window is requested.
-      // (Dev-only: seeding the pop-out's first snapshot + create/error feedback
-      // aren't bridged from the secondary-window lifecycle yet.)
+      // Dev-only: first-snapshot seeding + create/error feedback aren't bridged
+      // from the secondary-window lifecycle yet.
       setPoppedOut(true);
     } catch (e) {
       console.error("[weftcut/perf-hud] failed to open popup:", e);

@@ -5,8 +5,8 @@ import {
   type ParamDescriptor,
 } from "../keyframe/descriptors";
 
-// Zoom + height bounds. The default matches the pre-refactor constant so
-// projects that have never written `view.json` look identical to before.
+// Zoom + height bounds. DEFAULT_PX_PER_SEC is the fallback for projects with
+// no `view.json`.
 // The lower bound is computed dynamically as `viewport / totalSec` so
 // Ctrl+wheel can always zoom out far enough to fit the entire timeline
 // in view, regardless of how long it is. `MIN_PX_PER_SEC_FLOOR` is a
@@ -15,9 +15,8 @@ import {
 export const DEFAULT_PX_PER_SEC = 80;
 export const MIN_PX_PER_SEC_FLOOR = 0.05;
 export const MAX_PX_PER_SEC = 800;
-// V.6 (A/B-roll v2): default row is taller so combined V+A rows have
-// room for a thumbnail strip (top half) + waveform strip (bottom half).
-// Single-class tracks still fit comfortably at this height.
+// Taller default row so combined V+A rows fit a thumbnail strip (top half)
+// + waveform strip (bottom half); single-class tracks still fit comfortably.
 export const DEFAULT_TRACK_HEIGHT = 56;
 export const MIN_TRACK_HEIGHT = 24;
 export const MAX_TRACK_HEIGHT = 200;
@@ -28,8 +27,7 @@ export const MIN_LAYER_DURATION_US = 100_000;
 // releasing the handle.
 export const VIEW_SAVE_DEBOUNCE_MS = 200;
 
-/// Width of the sticky track-header column introduced by the Phase-1
-/// redesign (spec section 1).
+/// Width of the sticky track-header column. See the timeline-redesign spec (§1).
 export const HEADER_COL_PX = 160;
 
 export interface VisualTrack {
@@ -40,7 +38,7 @@ export interface VisualTrack {
   isGroupStart: boolean;
 }
 
-/// V.6 layer-overlap class. Visual-class layers (VideoClip,
+/// Layer-overlap class. Visual-class layers (VideoClip,
 /// ImageOverlay, Color, Motif, Text, Subtitles) can't overlap each
 /// other on a track; Audio can't overlap Audio. Visual + Audio CAN
 /// coexist at the same time — that's the AE-style "combined row"
@@ -51,15 +49,13 @@ export function layerOverlapClass(layer: LayerSummary): LayerOverlapClass {
   return layer.params.kind === "Audio" ? "audio" : "visual";
 }
 
-/// Which header controls a track shows, derived from its content. Mute
-/// and Solo are no longer header controls — they moved off the track
-/// header onto audio roles (see the Mixer panel), so the header now
-/// carries only the eye (+ an unconditional lock, not modeled here). A
-/// pure-audio lane hides the eye: `muted` is its single audio on/off and
-/// the whole-track `enabled` toggle would be redundant. Visual-only and
-/// empty tracks keep the eye. `hasAudio` is retained because a pure-audio
-/// lane (`hasAudio && !showEye`) drives the audio-lane music glyph. See
-/// the audio-track × A/B-roll spec.
+/// Which header controls a track shows, derived from its content. The header
+/// carries the eye (lock is unconditional, unmodeled here); mute/solo live on
+/// audio roles (Mixer panel). A pure-audio lane hides the eye — `muted` is its
+/// single audio on/off, so the whole-track `enabled` toggle would be redundant;
+/// visual-only and empty tracks keep it. `hasAudio` is retained because a
+/// pure-audio lane (`hasAudio && !showEye`) drives the audio-lane music glyph.
+/// See the audio-track × A/B-roll spec.
 export interface TrackHeaderControls {
   showEye: boolean;
   hasAudio: boolean;
@@ -107,11 +103,10 @@ export function computeLayerSlices(
   return slices;
 }
 
-// V.8 (`docs/data-model.md` v2) — track rendering order is now a
-// simple reverse of the data-model. Data-model convention (idx 0 =
-// bottom of z-stack, last = top) maps directly to "last index renders
+// Track rendering order is a simple reverse of the data-model. Convention
+// (idx 0 = bottom of z-stack, last = top) maps directly to "last index renders
 // at the top of the screen", matching the editor convention that the
-// top-of-z-stack composites visually on top.
+// top-of-z-stack composites visually on top. See `docs/data-model.md`.
 //
 //   data-model (bottom → top of z-stack)        visual (top → bottom of screen)
 //   ┌─────────────────────────────────┐         ┌─────────────────────────────┐

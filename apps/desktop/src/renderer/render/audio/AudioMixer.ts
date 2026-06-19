@@ -67,9 +67,9 @@ export class AudioMixer {
   private srcOutFrame = 0;
   private gainEnv: Envelope;
   private panEnv: Envelope;
-  /// Role-bus linear gain folded onto the gain envelope (v1 role-bus
-  /// realization — the preview twin of `plan_for_project`'s `role_gain`
-  /// fold; see roleGate.ts). Unity until the Compositor passes one.
+  /// Role-bus linear gain folded onto the gain envelope — the preview twin of
+  /// `plan_for_project`'s `role_gain` fold; see roleGate.ts. Unity until the
+  /// Compositor passes one.
   private roleGainLinear = 1;
 
   /// The engine's clock anchor as of the last tick — by REFERENCE. The
@@ -132,7 +132,7 @@ export class AudioMixer {
       spanUs,
     );
     this.panEnv = samplePan(this.view.pan, spanUs);
-    // Fold the role bus gain (v1 role-bus realization — see roleGate.ts).
+    // Fold the role bus gain (preview twin — see roleGate.ts).
     if (this.roleGainLinear !== 1) {
       for (let i = 0; i < this.gainEnv.values.length; i++) {
         this.gainEnv.values[i]! *= this.roleGainLinear;

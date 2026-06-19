@@ -16,9 +16,7 @@
 //     spec's named race guard — without it, an in-flight getNextPacket
 //     continuation resurrects `cursor` to a delta packet after a rebuild
 //     nulled it, feeding the fresh decoder a delta → decode error →
-//     recovery never completes. (The legacy mp4box pump was immune only
-//     because it was synchronous; the async rewrite reintroduces the
-//     hazard, hence the guard.)
+//     recovery never completes.
 //   - The reset DECISION (decideReset) is synchronous and key-packet-free
 //     (see the design note in the plan). Only the reset ACTION fetches a
 //     key packet.
@@ -26,8 +24,7 @@
 /// Forward-seek threshold (µs). A target more than one lookahead window
 /// (≈1 s, matching FrameRing's DEFAULT_LOOKAHEAD_US) past the pump's
 /// decoded frontier triggers a reset+seek instead of a forward slog
-/// through the intervening delta packets. Replaces the legacy 60-sample
-/// `FORWARD_SEEK_RESET_THRESHOLD`. See ADR 0003.
+/// through the intervening delta packets. See ADR 0003.
 export const FORWARD_SEEK_RESET_US = 1_000_000;
 
 /// Decoder-queue backpressure cap. `VideoDecoder.decode()` queues

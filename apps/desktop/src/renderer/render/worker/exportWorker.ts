@@ -3,14 +3,12 @@
 // chunked decode → composite → encode loop, posts progress, posts
 // fMP4 chunks with backpressure, posts final counters, and exits.
 //
-// Plan: docs/render.md (P8 perf rewrite)
+// Plan: docs/render.md
 //
 // Why chunked + dedicated decoder driver:
 //   The preview-tuned SourceDecoderPool gates decoding on a small
-//   lookahead window with `setTimeout(8 ms)` poll-and-yield. In
-//   export that produced ~0.2 fps because every frame waited the
-//   full timeout while the decoder pump was throttled to keep
-//   preview latency low.
+//   lookahead window with `setTimeout(8 ms)` poll-and-yield — far too
+//   slow for export, which has no preview-latency budget to protect.
 //
 //   This Worker now drives an `ExportDecoderPool` directly: per
 //   ~2 s chunk we feed every needed sample for every active clip

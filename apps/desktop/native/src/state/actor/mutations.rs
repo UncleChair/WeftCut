@@ -125,10 +125,8 @@ pub(crate) fn apply_delete_layer(
         return Err(CommandError::LayerNotFound { layer: id });
     };
     drop_layer_from_groups(project, id);
-    // A/B-roll redesign R.4: a deletion can leave behind an empty hidden
-    // track (the import-created kind). Prune so the timeline graveyard
-    // doesn't accumulate. Reserved tracks are protected by their role
-    // stamp.
+    // A deletion can orphan an empty import-created hidden track; prune it.
+    // Reserved tracks survive via their role stamp.
     prune_empty_hidden_tracks(project);
     let pruned = prune_emptied_track(project, source_track);
     apply_duration_autofit(project);
@@ -568,13 +566,9 @@ pub(crate) fn apply_move_layer(
         .unwrap_or(dest.layers.len());
     dest.layers.insert(insert_at, layer);
 
-    // A/B-roll v2 (V.4): group siblings FOLLOW to the destination
-    // track AND shift by the same time delta. Replaces R.4's role-
-    // aware promotion path (which routed audio siblings to a paired
-    // audio role) — under v2 tracks are kind-agnostic, so the
-    // sibling just lives on whichever track the user dragged the
-    // anchor onto. Alt-escape (escape_group) skips this entirely;
-    // siblings stay put.
+    // Group siblings FOLLOW to the destination track and shift by the same
+    // delta — tracks are kind-agnostic, so a sibling lives on whichever track
+    // the anchor was dragged onto. escape_group skips this; siblings stay put.
     if !escape_group {
         for &sid in siblings.iter() {
             let Some((ti, li)) = locate_layer(project, sid) else {
@@ -630,23 +624,14 @@ pub(crate) fn apply_move_layer(
     Ok(())
 }
 
-/// Remove every track that:
-///   - is `transient` (created by R.3's "fresh hidden track per import"
-///     path), and
-///   - has zero layers.
+/// Remove every `transient` track (the "fresh hidden track per import" path)
+/// that has zero layers.
 ///
-/// Scope is deliberately narrow: only import-spawned holding tracks
-/// auto-prune. Reserved (role-stamped) tracks survive — they're the
-/// permanent skeleton. Tracks the user or an agent explicitly creates
-/// via `add_track` survive too — their authors own their lifecycle.
-///
-/// The Q17(c) recommendation phrased this as "any hidden empty track,"
-/// but in practice the only path that produces those is `import_media`
-/// (R.10 removes the user-facing "Add Track" menu, and the underlying
-/// command is now agent-only). Caller-managed auto-create paths like
-/// `ensure_audio_track` would also be falsely pruned without this
-/// narrowing. If an agent does call `add_track` and leaves the track
-/// empty, it persists — that's the agent's responsibility to clean up.
+/// Scope is deliberately narrow — only import-spawned transient holding tracks.
+/// Broadening to "any hidden empty track" would falsely prune caller-managed
+/// auto-create paths like `ensure_audio_track`. Reserved (role-stamped) tracks
+/// survive — the permanent skeleton; tracks a user or agent explicitly creates
+/// survive too — their author owns the lifecycle.
 pub(crate) fn prune_empty_hidden_tracks(project: &mut Project) {
     project.tracks.retain(|t| !(t.transient && t.layers.is_empty()));
 }

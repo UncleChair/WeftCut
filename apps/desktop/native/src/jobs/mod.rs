@@ -15,9 +15,6 @@
 //! - `media:job_started`  — `{ media_id, kind }`
 //! - `media:job_complete` — `{ media_id, kind, path? }`
 //! - `media:job_error`    — `{ media_id, kind, error }`
-//!
-//! Job kinds today: `thumbnails`, `proxy`, `quick_proxy`, `proxy_bypass`,
-//! `waveform`.
 
 pub mod conform;
 mod frame;

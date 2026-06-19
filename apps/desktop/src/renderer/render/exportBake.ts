@@ -15,8 +15,8 @@
 // frame index via `frameIndexInLayer(..., compFps)`, so the bake MUST be keyed
 // on comp fps or the indices diverge.
 //
-// CACHE HYGIENE: this bake produces FRESH bitmaps (a CDP capture, or — Task 2 —
-// a `createImageBitmap` of an on-disk L2 PNG) and never reads the in-RAM
+// CACHE HYGIENE: this bake produces FRESH bitmaps (a CDP capture, or a
+// `createImageBitmap` of an on-disk L2 PNG) and never reads the in-RAM
 // `sharedMotifFrameCache` (L0). Transfer NEUTERS the source ImageBitmap;
 // pulling L0 bitmaps would neuter preview's cached frames and break live
 // preview after an export. (L2 *disk* reads are safe — they decode to a fresh

@@ -1,8 +1,8 @@
 //! Time and rate primitives. Time is `i64` microseconds; never round-trip through
 //! `f64` seconds except at API boundaries — precision loss starts past the hour mark.
 
-// `US_PER_SEC`/`US_PER_MS` and the `FPS_*` presets are public scaffolding —
-// they'll be wired by Phase 2 UI / agent commands.
+// `US_PER_SEC`/`US_PER_MS` and the `FPS_*` presets are public API surface not
+// all consumed internally yet.
 #![allow(dead_code)]
 
 use schemars::JsonSchema;
