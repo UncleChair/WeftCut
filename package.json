@@ -13,8 +13,5 @@
   },
   "engines": {
     "node": ">=20"
-  },
-  "devDependencies": {
-    "@wdio/cli": "^9.28.0"
   }
 }
