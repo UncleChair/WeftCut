@@ -1,0 +1,23 @@
+{
+  // Cross-context types shared between preload + renderer (the IPC contract in
+  // src/shared/ipc.ts). DOM lib because the contract references DOM types (File)
+  // and both consumers run in a DOM context; `types: []` because it needs no
+  // ambient Node/Electron globals. Referenced by tsconfig.preload.json and
+  // tsconfig.web.json (NOT main — the main process doesn't consume the contract).
+  "compilerOptions": {
+    "composite": true,
+    "target": "ES2022",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "skipLibCheck": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    // composite requires emit; redirect .d.ts out of source (TS6310).
+    "emitDeclarationOnly": true,
+    "declarationDir": "node_modules/.cache/tsc/shared",
+    "types": []
+  },
+  "include": ["src/shared/**/*.ts"]
+}

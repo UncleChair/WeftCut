@@ -1,12 +1,11 @@
 // Native open / save file dialogs, via the Electron main process.
 
-type OpenOpts = { title?: string; multiple?: boolean; directory?: boolean; filters?: { name: string; extensions: string[] }[]; defaultPath?: string }
-type SaveOpts = { title?: string; defaultPath?: string; filters?: { name: string; extensions: string[] }[] }
+import type { DialogOpenOpts, DialogSaveOpts } from '../../shared/ipc'
 
-export async function open(opts?: OpenOpts): Promise<string | string[] | null> {
+export async function open(opts?: DialogOpenOpts): Promise<string | string[] | null> {
   return window.api.dialog.open(opts ?? {})
 }
 
-export async function save(opts?: SaveOpts): Promise<string | null> {
+export async function save(opts?: DialogSaveOpts): Promise<string | null> {
   return window.api.dialog.save(opts ?? {})
 }

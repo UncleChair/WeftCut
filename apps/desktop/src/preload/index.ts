@@ -1,18 +1,14 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import type {
+  WeftcutApi,
+  DialogOpenOpts,
+  DialogSaveOpts,
+  DirEntry,
+  WinCreateOpts,
+  WinAction,
+} from '../shared/ipc'
 
 type Listener = (payload: unknown) => void
-
-type DialogOpenOpts = {
-  title?: string
-  multiple?: boolean
-  directory?: boolean
-  filters?: { name: string; extensions: string[] }[]
-  defaultPath?: string
-}
-type DialogSaveOpts = { title?: string; defaultPath?: string; filters?: { name: string; extensions: string[] }[] }
-type DirEntry = { name: string; isDirectory: boolean; isFile: boolean; isSymlink: boolean }
-type WinCreateOpts = { url?: string; width?: number; height?: number; title?: string }
-type WinAction = 'show' | 'hide' | 'close' | 'center' | 'focus'
 
 // The contextBridge surface — the COMPLETE set of things the (untrusted)
 // renderer can ask the main process to do. Grouped, named methods rather than a
@@ -21,7 +17,7 @@ type WinAction = 'show' | 'hide' | 'close' | 'center' | 'focus'
 // (Electron security guidance: expose APIs, not channels). The one generic
 // channel is `backend.invoke`, which fronts the napi/Rust command dispatcher —
 // a single controlled capability that validates its own commands.
-const api = {
+const api: WeftcutApi = {
   backend: {
     invoke(channel: string, args?: unknown): Promise<unknown> {
       return ipcRenderer.invoke('backend:invoke', { channel, args })
@@ -38,8 +34,8 @@ const api = {
     mkdir(path: string, recursive?: boolean): Promise<void> {
       return ipcRenderer.invoke('fs:mkdir', { path, recursive }) as Promise<void>
     },
-    readFile(path: string): Promise<Uint8Array> {
-      return ipcRenderer.invoke('fs:readFile', { path }) as Promise<Uint8Array>
+    readFile(path: string): Promise<Uint8Array<ArrayBuffer>> {
+      return ipcRenderer.invoke('fs:readFile', { path }) as Promise<Uint8Array<ArrayBuffer>>
     },
     remove(path: string): Promise<void> {
       return ipcRenderer.invoke('fs:remove', { path }) as Promise<void>
@@ -168,5 +164,3 @@ if (document.readyState === 'loading') {
 } else {
   injectDragRegionStyles()
 }
-
-export type Api = typeof api
