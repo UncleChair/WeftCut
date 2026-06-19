@@ -366,6 +366,13 @@ const zhCN: Resources = {
       "部分素材（如 HEVC Main10 原始文件）会被转码，可靠性较低。",
     experimental_proceed: "仍要导出",
   },
+  app_notice: {
+    dismiss: "知道了",
+    keyring_unavailable: {
+      title: "云 API 密钥未加密",
+      body: "系统没有可用的密钥环，云 API 密钥将以未加密方式写入磁盘（cloud_keys.json）。请安装密钥环（如 GNOME Keyring / KWallet），或妥善保护你的用户数据目录。",
+    },
+  },
   import_proxy: {
     title: "部分素材需要优化",
     optimizing_heading: "导出优化中",

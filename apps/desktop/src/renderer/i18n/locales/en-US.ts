@@ -375,6 +375,13 @@ const enUS = {
       "Some sources (e.g. HEVC Main10 originals) get transcoded and may be less reliable.",
     experimental_proceed: "Export anyway",
   },
+  app_notice: {
+    dismiss: "Got it",
+    keyring_unavailable: {
+      title: "Cloud API keys aren't encrypted",
+      body: "No OS keyring is available, so cloud API keys are saved to disk without encryption (cloud_keys.json). Install a keyring (e.g. GNOME Keyring / KWallet), or protect your user-data folder.",
+    },
+  },
   import_proxy: {
     title: "Some clips need optimizing",
     optimizing_heading: "Optimizing for export",

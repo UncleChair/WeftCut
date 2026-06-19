@@ -31,6 +31,12 @@ let mcpHostRef: import('./mcp/index.js').McpHost | null = null
 
 const isDev = !!process.env['ELECTRON_RENDERER_URL']
 
+// App-level startup notices the renderer PULLS on mount via the `app:notices`
+// IPC (see AppNotice in src/shared/ipc.ts). Collected here at startup, fetched
+// when the renderer is ready — a pull model so a notice can't be lost to the
+// fire-once-before-subscribe race the old `evt:app:notice` send had.
+const startupNotices: { level: string; code: string }[] = []
+
 async function createWindow(): Promise<BrowserWindow> {
   const win = new BrowserWindow({
     width: 1440,
@@ -153,11 +159,8 @@ app.whenReady().then(async () => {
   const { encryptionAvailable } = await import('./keys.js')
   if (!encryptionAvailable()) {
     console.warn('[main] OS keyring unavailable — cloud API keys persist in PLAINTEXT (cloud_keys.json). Secure your userData dir or install a keyring (libsecret/kwallet).')
-    // One-time UI notice (renderer shows it via the existing notice path).
-    mainWindow?.webContents.send('evt:app:notice', {
-      level: 'warn',
-      code: 'keyring_unavailable',
-    })
+    // Surfaced to the user by the renderer's <AppNotices> (pulled via app:notices).
+    startupNotices.push({ level: 'warn', code: 'keyring_unavailable' })
   }
 
   // Push any safeStorage-persisted cloud API keys into the backend cache so
@@ -172,6 +175,7 @@ app.whenReady().then(async () => {
   mcpHostRef = mcpHost
   ipcMain.handle('get_mcp_info', () => mcpHost.getInfo())
   ipcMain.handle('reset_mcp_token', () => mcpHost.resetToken())
+  ipcMain.handle('app:notices', () => startupNotices)
 
   ipcMain.handle('backend:invoke', async (_e, { channel, args }) => {
     // Motif runtime registration: renderer sends its clock-takeover source once

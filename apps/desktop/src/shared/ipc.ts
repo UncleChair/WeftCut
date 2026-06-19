@@ -30,6 +30,13 @@ export type WinCreateOpts = { url?: string; width?: number; height?: number; tit
 
 export type WinAction = 'show' | 'hide' | 'close' | 'center' | 'focus'
 
+/// An app-level notice surfaced to the user (non-modal corner panel). `code`
+/// keys the i18n strings + the dismissable UI; main collects these at startup
+/// (e.g. keyring-unavailable → plaintext cloud keys) and the renderer PULLS them
+/// on mount via `app.notices()` — a pull model so a notice can't be lost to the
+/// fire-once-before-subscribe race a pushed event had.
+export type AppNotice = { level: 'info' | 'warn' | 'error'; code: string }
+
 export interface WeftcutApi {
   /** The napi/Rust command dispatcher — one controlled channel for the whole
    *  Rust command catalog. */
@@ -66,6 +73,8 @@ export interface WeftcutApi {
     exists(label: string): Promise<boolean>
   }
   media: { dropped(paths: string[]): Promise<void> }
+  /// Startup notices the renderer pulls on mount (see AppNotice).
+  app: { notices(): Promise<AppNotice[]> }
   on(event: string, cb: (payload: unknown) => void): () => void
   off(event: string): void
   videoSinkWrite(bytes: ArrayBuffer | ArrayBufferView): Promise<void>

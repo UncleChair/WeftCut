@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type {
   WeftcutApi,
+  AppNotice,
   DialogOpenOpts,
   DialogSaveOpts,
   DirEntry,
@@ -86,6 +87,10 @@ const api: WeftcutApi = {
 
   media: {
     dropped: (paths: string[]): Promise<void> => ipcRenderer.invoke('media:dropped', paths) as Promise<void>,
+  },
+
+  app: {
+    notices: (): Promise<AppNotice[]> => ipcRenderer.invoke('app:notices') as Promise<AppNotice[]>,
   },
 
   // Event subscription: main relays Rust core events via webContents.send →
