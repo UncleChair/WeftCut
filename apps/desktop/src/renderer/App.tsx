@@ -97,6 +97,7 @@ import { WindowControls } from "./components/WindowControls";
 import { Button } from "@/components/ui/button";
 import { ImportProxyDialog } from "./panels/ImportProxyDialog";
 import { MotifStaleDialog } from "./panels/MotifStaleDialog";
+import { AppNotices } from "./components/AppNotices";
 import { ExportSettingsDialog } from "./panels/ExportSettingsDialog";
 import {
   PreviewSurface,
@@ -2062,6 +2063,7 @@ export function App({ onCloseProject }: AppProps) {
           onDone={() => setStaleMotifs([])}
         />
       )}
+      <AppNotices />
       {connectOpen && (
         <ConnectAgentPanel onClose={() => setConnectOpen(false)} />
       )}
