@@ -70,9 +70,6 @@ async-trait = "0.1"
 # decoded-frame probes. RAII drop on `NamedTempFile` cleans temps automatically.
 # Already a dev-dep; promoted to production.
 tempfile = "3"
-# Task 1 (10-bit export): loopback WebSocket transport — webview streams raw
-# yuv420p10le frames into the Rust video sink for ffmpeg encode.
-tungstenite = "0.24"
 # P10b: `commands::compare_fixture_frame` SSIM-compares an actual PNG
 # (from `extract_video_frame`) against a committed baseline. We use
 # `image-compare`'s `rgb_similarity_structure` with `MSSIMSimple` —
@@ -98,23 +95,14 @@ insta = { version = "1", features = ["json", "yaml"] }
 default = []
 # Deferred subsystems — OFF in S2, each turned on in its own stage.
 jobs = []        # import/proxy/conform/thumbnails/waveform + io::probe + ffmpeg (S3)
-export = ["jobs"]  # video export + WS videosink (S3); needs jobs for enqueue_conform/io::probe
+export = ["jobs"]  # video export + IPC videosink (S3); needs jobs for enqueue_conform/io::probe
 cloud = ["jobs"]  # transcription/TTS (S4b); needs jobs for audio_extract's ffmpeg_sem
 mcp = []         # MCP server (S4)
 motifs = []      # Motif capture (S5)
 media_drop = []  # webview drag-drop path recovery (S3)
 sysmon = []      # dev PerfHUD sampler
 
-# The 10-bit export's WS video sink (export/videosink.rs) reads ~6 MB/frame
-# through tungstenite; at opt-level 0 its read loop tops out at ~107 MB/s on
-# loopback (measured), capping dev-build 10-bit exports at ~71 MB/s end-to-end
-# — well under the ~190 MB/s a 1080p30 yuv420p10le stream needs. At opt-level
-# 1 the same loop sustains ~340 MB/s and the webview→Rust transport reaches
-# ~312 MB/s (the webview send path becomes the ceiling). A per-package
-# override on tungstenite does NOT work: the entire read path is generic over
-# the stream and monomorphizes into THIS crate at THIS crate's opt-level. So
-# the whole dev profile runs at opt-level 1 — release builds were never
-# affected; this keeps dev/e2e (--debug) transport honest.
+# opt-level 1 keeps dev-build transport throughput honest; release was never affected.
 [profile.dev]
 opt-level = 1
 
