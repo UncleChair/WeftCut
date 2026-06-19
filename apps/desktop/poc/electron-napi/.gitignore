@@ -1,8 +1,0 @@
-node_modules/
-native/node_modules/
-native/target/
-native/*.node
-native/index.js
-native/index.d.ts
-main.cjs
-*.png

@@ -45,10 +45,6 @@ mod motifs {
     #[path = "catalog.rs"]
     pub mod catalog;
 }
-#[cfg(all(windows, feature = "media_drop"))]
-mod media_drop;
-#[cfg(all(debug_assertions, feature = "sysmon"))]
-mod sysmon;
 
 mod keybindings;
 mod logs;

@@ -42,9 +42,7 @@ thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # `regex` is used by the status/log redactor (`logs::redact`) to strip
-# api-key/bearer-token patterns from `details` payloads. It's already in
-# the build graph transitively via `tauri-plugin-shell` / `tauri-utils`,
-# so adding it as a direct dep is essentially free.
+# api-key/bearer-token patterns from `details` payloads.
 regex = "1"
 
 # --- Phase 0 spike deps. Pin/upgrade once verified to compile. ---
@@ -80,13 +78,6 @@ tempfile = "3"
 # decodes the PNG bytes; both libs together add ~150 KB to the binary.
 image = { version = "0.25", default-features = false, features = ["png"] }
 image-compare = "0.5"
-# Dev-only system-resource sampler (`sysmon.rs`) for the PerfHUD: per-process
-# CPU% + RSS of the app's WebView2 process tree. Only the `system` feature is
-# needed (cpu/memory/process); disk/network/component/user are off. Used solely
-# behind `#[cfg(debug_assertions)]`, so it never runs in release (the crate
-# still compiles into the binary — a small, accepted cost for a dev tool).
-sysinfo = { version = "0.33", default-features = false, features = ["system"] }
-
 
 [dev-dependencies]
 insta = { version = "1", features = ["json", "yaml"] }
@@ -99,8 +90,6 @@ export = ["jobs"]  # video export + IPC videosink (S3); needs jobs for enqueue_c
 cloud = ["jobs"]  # transcription/TTS (S4b); needs jobs for audio_extract's ffmpeg_sem
 mcp = []         # MCP server (S4)
 motifs = []      # Motif capture (S5)
-media_drop = []  # webview drag-drop path recovery (S3)
-sysmon = []      # dev PerfHUD sampler
 
 # opt-level 1 keeps dev-build transport throughput honest; release was never affected.
 # (see memory feedback_rust_optlevel_monomorphization: generics monomorphize at the caller's opt-level).
