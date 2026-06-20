@@ -222,7 +222,9 @@ weftcut/
           audio/              ←   buffer-scheduled preview mixer:
                               ←   AudioGraph (master bus), AudioMixer,
                               ←   conformSource, chunkSchedule, envelope
-                              ←   (the TS twin; docs/audio.md)
+                              ←   (sampler grid/fades in TS; dB + keyframe +
+                              ←   role-gate math via the eval wasm leaf;
+                              ←   docs/audio.md)
           fixtures/           ←   runFixture + browser-test fixtures
         bridge/               ← renderer-side IPC client over window.api
         timeline/

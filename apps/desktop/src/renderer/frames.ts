@@ -1,8 +1,10 @@
 /// Frame-math primitives shared between the timeline UI, the preview
-/// overlay, and the playback engine. Mirrors
-/// `apps/desktop/native/src/state/time.rs`'s snap helpers — the math
-/// must match byte-for-byte so the actor's commit-side snap and the
-/// UI's drag-preview snap produce identical results.
+/// overlay, and the playback engine. `snapFrameRound` is re-exported from the
+/// wasm `weftcut-eval` leaf — the SAME crate the Rust actor links — so the
+/// actor's commit-side snap and the UI's drag-preview snap run one
+/// implementation, not hand-mirrored copies (ADR 0025). The other helpers here
+/// (`snapFrameFloor` with its ring-lookup correction loop, `lastFrameAnchorUs`,
+/// `formatTimecode`, `parseTimecode`, …) are TS-only — no Rust twin.
 
 const US_PER_SEC = 1_000_000;
 const DEFAULT_FRAME_DUR_US = 33_333; // 30 fps fallback

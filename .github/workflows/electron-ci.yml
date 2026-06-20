@@ -54,6 +54,10 @@ jobs:
           # Once pinned to a SHA the @<ref> name no longer signals the channel
           # (that was the magic of @stable), so name the toolchain explicitly.
           toolchain: stable
+          # The renderer's shared "WYSIWYG math" compiles to wasm (weftcut-eval);
+          # build:wasm — run by predev/prebuild/pretest — needs this target. Every
+          # OS leg runs `npm run build` (prebuild → build:wasm), so all need it.
+          targets: wasm32-unknown-unknown
 
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
@@ -137,6 +141,11 @@ jobs:
           case "$RUNNER_OS" in
             macOS) export RUSTFLAGS="-C link-arg=-Wl,-undefined,dynamic_lookup" ;;
           esac
+          # weftcut-eval is the shared-math leaf; the snap cross-language golden
+          # lives here now (it moved off the napi crate). Pure Rust, no napi
+          # linkage, so it tests standalone. (Its wasm build is gated separately
+          # via the Linux `npm test` TS goldens, which run the same fixtures.)
+          cargo test -p weftcut-eval --manifest-path native/Cargo.toml
           cargo test --manifest-path native/Cargo.toml --lib --features jobs,export,mcp,cloud,motifs
 
       # Full e2e suite via Playwright — includes s6-determinism.spec.ts which

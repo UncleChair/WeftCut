@@ -55,7 +55,8 @@ apps/desktop/src/render/
     AudioMixer.ts            — per-layer buffer-scheduled playback
     conformSource.ts         — VCONF Range reader (zero decode)
     chunkSchedule.ts         — pure scheduling math
-    envelope.ts              — sampled-envelope contract (TS twin)
+    envelope.ts              — sampled-envelope contract (grid/fades in TS;
+                               dB + keyframe math via the eval wasm leaf)
 ```
 
 Audio architecture detail (conform cache, envelope contract, the Rust
@@ -83,19 +84,21 @@ track + within-track index that the project summary already carries.
 `render(tUs)` walks the mounted sprites in z-order. For each layer the
 Compositor first resolves the view's `AnimTrack<T>` properties at the
 layer-local time via `render/resolveView.ts` — numeric tracks through
-`render/animated.ts`'s `resolveAnimated`, the byte-for-byte mirror of
-Rust `state/animated.rs::value_at`; color tracks statically until the
-Rgba engine twin lands — then hands the resolved scalar view to the
-sprite to update its texture / position / opacity / transform / blend
-mode. Both engines resolve `EaseIn`, `EaseOut`, and `Bezier{p1,p2}`
-through an identical WebKit-`UnitBezier` cubic solver (Newton–Raphson
-with binary-search fallback), so the named CSS eases and arbitrary
-per-segment timing functions produce the same output in Rust and TS. A
-shared golden-vector fixture (`render/animatedGolden.fixture.json`)
-locks the two engines together: the TS suite (`animated.golden.test.ts`)
-and the Rust test (`golden_vectors_match_fixture`) both assert it, so an
-interpolation change that lands on one side only fails the other side's
-gate.
+`render/animated.ts`'s `resolveAnimated`, which calls the shared
+`weftcut-eval` wasm (the SAME crate Rust links natively, so there is one
+keyframe engine, not a hand-mirrored pair; [ADR 0025](adr/0025-shared-eval-wasm-leaf-crate.md));
+color tracks statically until `Animated<Rgba>` lands in the leaf — then
+hands the resolved scalar view to the sprite to update its texture /
+position / opacity / transform / blend mode. The leaf resolves `EaseIn`,
+`EaseOut`, and `Bezier{p1,p2}` through one WebKit-`UnitBezier` cubic
+solver (Newton–Raphson with binary-search fallback), so named CSS eases
+and arbitrary per-segment timing functions are identical in preview,
+export, and Rust by construction. The golden-vector fixture
+(`render/animatedGolden.fixture.json`) is now a single-source regression:
+the TS suite (`animated.golden.test.ts`, through wasm) and the Rust leaf
+test both assert the wasm/native engine reproduces it. (One JS
+`unitBezier` copy remains in `animated.ts` for the curve-graph editor
+overlay only.)
 
 ### Keyframe easing authoring
 

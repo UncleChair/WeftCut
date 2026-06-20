@@ -70,10 +70,11 @@ it onto conform output is a possible later simplification, not a goal.
 
 ## The envelope contract
 
-The heart of the design. For each audio layer, the shared animation
-engine (the Rust/TS twin pair locked by golden vectors, see
-[`render.md`](render.md)) resolves two envelopes over the layer's
-local time span:
+The heart of the design. For each audio layer, the shared keyframe engine
+(now the single `weftcut-eval` leaf — compiled natively for Rust and to
+wasm for the renderer, see [`render.md`](render.md) and
+[ADR 0025](adr/0025-shared-eval-wasm-leaf-crate.md)) resolves two
+envelopes over the layer's local time span:
 
 ```
 gain envelope  = lerp-sample(Animated gain_db, Δ = 10 ms)
@@ -98,11 +99,13 @@ Known quantization: a `Hold` keyframe's instant step becomes a ≤10 ms
 ramp between the two grid points that straddle it. Accepted; 10 ms is
 well under a frame.
 
-The envelope sampler is itself a twin pair
-(`audio envelope` in Rust and TS) with its own cross-language golden
-fixture: same control points in, same per-sample gains out, asserted
-in both unit suites. The engine-source drift discipline that applies
-to the animation twins applies here identically.
+The envelope sampler's drift-prone math is single-sourced: `db_to_linear`
+(`10^(dB/20)`) and the keyframe interpolation it samples both run the
+`weftcut-eval` leaf (native for Rust, wasm for the renderer). The sampler
+STRUCTURE around them — the 10 ms grid loop, the fade ramps, the
+per-sample lerp — is still parallel Rust/TS code; its golden fixture
+(`audioEnvelopeGolden.fixture.json`) is now a single-source check that the
+shared math reproduces it, and still guards the parallel sampling shape.
 
 Pan law: the Web Audio `StereoPannerNode` equal-power law (mono and
 stereo input variants, per spec). The Rust mixer implements the same
@@ -177,10 +180,12 @@ out-of-window layers simply don't schedule.
    edit guard, and silencing on lock is arguably wrong on both sides.
 
 The mute/solo half of these rules is evaluated against the project's `audio_roles`
-table, so it is consistent whatever track a layer lives on. The export planner
-(`audible_audio_layers`) and the preview gate (`roleGate.ts`) apply the same
-predicate; keep them byte-for-byte in step (there is no cross-language test, the
-same discipline as the envelope twins).
+table, so it is consistent whatever track a layer lives on. The mute/solo
+DECISION itself now runs the shared `weftcut-eval` leaf (`role_audible` — native
+in the export planner `audible_audio_layers`, wasm in the preview gate
+`roleGate.ts`; [ADR 0025](adr/0025-shared-eval-wasm-leaf-crate.md)) and is guarded
+by the `roleGateGolden.fixture.json` cross-language golden. The layer-selection
+loop around it (track + window gating) stays parallel on the two sides.
 
 The master meter (RMS + peak per channel) is surfaced to the dev
 PerfHUD and over MCP for level checks.

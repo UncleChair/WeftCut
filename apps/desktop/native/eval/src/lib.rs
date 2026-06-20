@@ -1,7 +1,7 @@
 //! weftcut-eval: the pure, dependency-light "WYSIWYG math" shared by the
 //! actor + export (native build) and the renderer (wasm32 build). No imbl /
 //! uuid / napi / tokio / serde / schemars in the shipped artifact.
-//! See docs/superpowers/plans/2026-06-20-weftcut-eval-leaf-crate.md
+//! See docs/adr/0025-shared-eval-wasm-leaf-crate.md
 //!
 //! `no_std` ONLY on wasm32: the wasm artifact must stay minimal and std-free,
 //! and the wasm build (run on every task) is what enforces the "core/libm only"
@@ -67,7 +67,11 @@ pub fn snap_frame_ceil(t_us: i64, num: u32, den: u32) -> i64 {
     let div = (US_PER_SEC as i128) * (den as i128);
     let frame_index = prod.div_euclid(div);
     let rem = prod.rem_euclid(div);
-    let frame_index = if rem > 0 { frame_index + 1 } else { frame_index };
+    let frame_index = if rem > 0 {
+        frame_index + 1
+    } else {
+        frame_index
+    };
     let snapped = frame_index * (US_PER_SEC as i128) * (den as i128) / (num as i128);
     snapped as i64
 }
@@ -122,7 +126,10 @@ pub enum Interpolation {
     Linear,
     EaseIn,
     EaseOut,
-    Bezier { p1: (f64, f64), p2: (f64, f64) },
+    Bezier {
+        p1: (f64, f64),
+        p2: (f64, f64),
+    },
 }
 
 /// POD keyframe — the input to `eval_f64`. The actor's imbl-backed
@@ -151,8 +158,11 @@ fn fabs(x: f64) -> f64 {
 /// bisection fallback), then return `Y(s)`. `x1,x2` are assumed in [0,1]
 /// (enforced at authoring) so `X` is monotone and the solve single-valued.
 ///
-/// MIRRORS `render/animated.ts::unitBezier` byte-for-byte (WebKit UnitBezier).
-/// Any edit here MUST be mirrored there + reflected in the golden fixture.
+/// CANONICAL WebKit UnitBezier: the renderer's keyframe eval calls this via
+/// wasm, the actor/export call it natively. One JS copy survives in
+/// `render/animated.ts::unitBezier` for the curve-graph editor overlay only —
+/// keep that copy in sync if you change this, and reflect any change in the
+/// animated golden fixture.
 pub fn unit_bezier(x1: f64, y1: f64, x2: f64, y2: f64, x: f64) -> f64 {
     const EPS: f64 = 1e-7;
     // Bézier → power-basis coefficients.
@@ -309,7 +319,11 @@ mod tests {
 
     // ---- keyframe eval (eval_f64) ----
     fn kf(t_us: i64, value: f64, interp: Interpolation) -> Kf {
-        Kf { t_us, value, interp }
+        Kf {
+            t_us,
+            value,
+            interp,
+        }
     }
 
     #[test]
