@@ -99,33 +99,40 @@ export const decodeAnimatedImage: DecodeFn = async (assetUrl, maxW, maxH) => {
   }
   const buf = await blob.arrayBuffer();
   const dec = new Decoder({ data: buf, type: blob.type });
-  await dec.tracks.ready;
-  const track = dec.tracks.selectedTrack;
-  if (!track) throw new Error("ImageDecoder: no selected track");
-  const count = track.frameCount;
   const frames: ImageBitmap[] = [];
   const durationsUs: number[] = [];
   let w = 0;
   let h = 0;
-  for (let i = 0; i < count; i++) {
-    // eslint-disable-next-line no-await-in-loop
-    const { image } = await dec.decode({ frameIndex: i });
-    const scale = Math.min(1, maxW / image.displayWidth, maxH / image.displayHeight);
-    const rw = Math.max(1, Math.round(image.displayWidth * scale));
-    const rh = Math.max(1, Math.round(image.displayHeight * scale));
-    // eslint-disable-next-line no-await-in-loop
-    const bmp = await createImageBitmap(image, {
-      resizeWidth: rw,
-      resizeHeight: rh,
-      resizeQuality: "high",
-    });
-    durationsUs.push(clampFrameDurationUs(image.duration));
-    image.close();
-    frames.push(bmp);
-    w = rw;
-    h = rh;
+  try {
+    await dec.tracks.ready;
+    const track = dec.tracks.selectedTrack;
+    if (!track) throw new Error("ImageDecoder: no selected track");
+    const count = track.frameCount;
+    for (let i = 0; i < count; i++) {
+      // eslint-disable-next-line no-await-in-loop
+      const { image } = await dec.decode({ frameIndex: i });
+      const scale = Math.min(1, maxW / image.displayWidth, maxH / image.displayHeight);
+      const rw = Math.max(1, Math.round(image.displayWidth * scale));
+      const rh = Math.max(1, Math.round(image.displayHeight * scale));
+      // eslint-disable-next-line no-await-in-loop
+      const bmp = await createImageBitmap(image, {
+        resizeWidth: rw,
+        resizeHeight: rh,
+        resizeQuality: "high",
+      });
+      durationsUs.push(clampFrameDurationUs(image.duration));
+      image.close();
+      frames.push(bmp);
+      if (i === 0) { w = rw; h = rh; }
+    }
+  } catch (err) {
+    for (const f of frames) {
+      try { f.close(); } catch { /* best-effort */ }
+    }
+    throw err;
+  } finally {
+    dec.close();
   }
-  dec.close();
   let total = 0;
   for (const d of durationsUs) total += d;
   return { frames, durationsUs, totalUs: total, width: w, height: h };
