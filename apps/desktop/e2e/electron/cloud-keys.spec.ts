@@ -21,7 +21,7 @@ test('safeStorage key round-trip + cloud tools advertised', async () => {
   // `api.backend.invoke` is ONLY for Rust dispatcher commands (incl. the
   // settings_* channels main intercepts before the Rust fall-through). Main-process
   // IPC handlers (`fs:*`, `path:*`, `get_mcp_info`) have their own `api.*` methods —
-  // routing them through backend.invoke hits the dispatcher's "unavailable" error.
+  // routing them through backend.invoke hits the dispatcher's "unknown command" error.
   const invoke = (cmd: string, args: unknown) =>
     page.evaluate(([c, a]) => (window as any).api.backend.invoke(c, a), [cmd, args] as const)
   const readJson = (path: string) =>
