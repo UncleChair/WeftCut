@@ -13,6 +13,7 @@ use uuid::Uuid;
 use crate::audio::conform_reader::ConformReader;
 use crate::audio::envelope::{Envelope, pan_frame, sample_gain, sample_pan};
 use crate::state::Project;
+use crate::state::audio_role::RoleMixSettings;
 use crate::state::layer::{AudioParams, Layer, LayerParams};
 
 pub const MIX_SAMPLE_RATE: i64 = 48_000;
@@ -62,6 +63,41 @@ pub enum PlanError {
     MissingMedia(String),
 }
 
+// ── Role-gate primitives ────────────────────────────────────────────────────
+// The canonical twin of `render/audio/roleGate.ts`. `audible_audio_layers`
+// (gate) and `plan_for_project` (gain fold) call these, so the logic the export
+// path runs IS the logic the cross-language golden locks
+// (`render/audio/roleGate.golden.test.ts` + `tests::golden_vectors_match_fixture`
+// share one fixture). Keep BYTE-FOR-BYTE in step with roleGate.ts.
+
+/// True iff any role in the table is soloed. Absent roles can't be soloed, so a
+/// partial/empty table answers correctly.
+pub fn any_role_solo<'a>(roles: impl IntoIterator<Item = &'a RoleMixSettings>) -> bool {
+    roles.into_iter().any(|r| r.solo)
+}
+
+/// A role is audible unless muted, or a solo set exists and it isn't soloed —
+/// mute wins over solo. `role` is the RESOLVED settings (present, or the
+/// `Project::role_mix` default for an absent role); resolving the absent case is
+/// the caller's job, matching `role_mix`.
+pub fn role_audible(role: &RoleMixSettings, any_solo: bool) -> bool {
+    if role.muted {
+        return false;
+    }
+    if any_solo && !role.solo {
+        return false;
+    }
+    true
+}
+
+/// Linear gain for a role's `gain_db`, folded into each audible layer's gain
+/// envelope (v1 has no per-role DSP). `f32` to match `db_to_linear` and
+/// `Envelope::scale`; the TS twin computes in `f64`, so the golden compares
+/// with an f32-width tolerance (same precision the envelope golden uses).
+pub fn role_gain_linear(role: &RoleMixSettings) -> f32 {
+    crate::audio::envelope::db_to_linear(role.gain_db)
+}
+
 /// Every audible audio layer in track order: whole-track disable gates
 /// (`track.enabled`); audio mute/solo gating lives on ROLES, not tracks
 /// (docs/audio.md) — role mute, the role solo set (mute wins over solo);
@@ -75,7 +111,7 @@ fn audible_audio_layers<'a>(
 ) -> Vec<(&'a Layer, &'a AudioParams)> {
     // Role-level solo (docs/audio.md): when any role is soloed, only
     // soloed roles are audible. Mute wins over solo.
-    let any_role_solo = project.audio_roles.values().any(|r| r.solo);
+    let any_solo = any_role_solo(project.audio_roles.values());
     let mut out = Vec::new();
     for track in project.tracks.iter() {
         // Whole-track disable still gates (rule 1). Track mute/solo no
@@ -94,7 +130,7 @@ fn audible_audio_layers<'a>(
                 continue;
             }
             let role = project.role_mix(p.role);
-            if role.muted || (any_role_solo && !role.solo) {
+            if !role_audible(&role, any_solo) {
                 continue;
             }
             // Window gate (half-open [w_start, w_end)): a layer the mix will
@@ -133,7 +169,7 @@ pub fn plan_for_project(
             .filter(|c| crate::cache::cached_ok(c))
             .ok_or_else(|| PlanError::ConformMissing(label.clone()))?;
         let span_us = p.src_out_us - p.src_in_us;
-        let role_gain = crate::audio::envelope::db_to_linear(project.role_mix(p.role).gain_db);
+        let role_gain = role_gain_linear(&project.role_mix(p.role));
         let mut gain = sample_gain(&p.gain_db, p.fade_in_us as i64, p.fade_out_us as i64, span_us);
         gain.scale(role_gain);
         layers.push(MixLayer {
@@ -657,5 +693,84 @@ mod tests {
             (mid - 0.5 * half).abs() < 2e-3,
             "midpoint ≈ half gain, got {mid}"
         );
+    }
+
+    /// Cross-language golden vectors for the role gate. The SAME fixture is
+    /// asserted by `render/audio/roleGate.golden.test.ts` against the TS
+    /// `roleGate.ts`; a verdict that passes one side and fails the other is
+    /// drift in the mute/solo/gain rules — exactly what this catches. Exercises
+    /// the SAME `any_role_solo`/`role_audible`/`role_gain_linear` the export path
+    /// runs, with absent roles resolved to `role_mix`'s default. Regenerate the
+    /// fixture only on an INTENTIONAL rule change, mirrored in roleGate.ts.
+    #[test]
+    fn golden_vectors_match_fixture() {
+        use std::collections::HashMap;
+
+        #[derive(serde::Deserialize)]
+        struct RoleEntry {
+            role: AudioRole,
+            gain_db: f64,
+            muted: bool,
+            solo: bool,
+        }
+        #[derive(serde::Deserialize)]
+        struct Query {
+            role: AudioRole,
+            audible: bool,
+            gain_linear: f64,
+        }
+        #[derive(serde::Deserialize)]
+        struct Case {
+            name: String,
+            roles: Vec<RoleEntry>,
+            any_solo: bool,
+            queries: Vec<Query>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Fixture {
+            cases: Vec<Case>,
+        }
+
+        let fixture: Fixture = serde_json::from_str(include_str!(
+            "../../../src/renderer/render/audio/roleGateGolden.fixture.json"
+        ))
+        .expect("roleGate golden fixture parses");
+        assert!(!fixture.cases.is_empty());
+
+        for case in &fixture.cases {
+            let table: HashMap<AudioRole, RoleMixSettings> = case
+                .roles
+                .iter()
+                .map(|r| {
+                    (
+                        r.role,
+                        RoleMixSettings { gain_db: r.gain_db, muted: r.muted, solo: r.solo },
+                    )
+                })
+                .collect();
+            let any_solo = any_role_solo(table.values());
+            assert_eq!(any_solo, case.any_solo, "case `{}` any_solo", case.name);
+            for q in &case.queries {
+                // Absent role ⇒ role_mix default (unmuted/unsoloed, unity gain).
+                let settings = table.get(&q.role).cloned().unwrap_or_default();
+                assert_eq!(
+                    role_audible(&settings, any_solo),
+                    q.audible,
+                    "case `{}` role {:?} audible",
+                    case.name,
+                    q.role
+                );
+                // f32 (Rust) vs f64 (TS/fixture): compare at f32 width, the
+                // same precision the envelope golden locks db_to_linear at.
+                let got = role_gain_linear(&settings) as f64;
+                assert!(
+                    (got - q.gain_linear).abs() < 1e-5,
+                    "case `{}` role {:?} gain: got {got}, expect {}",
+                    case.name,
+                    q.role,
+                    q.gain_linear
+                );
+            }
+        }
     }
 }

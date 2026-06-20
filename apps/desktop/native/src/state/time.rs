@@ -196,4 +196,47 @@ mod tests {
         let half_frame_us = 16_700_i64;
         assert!((snapped - one_hour).abs() <= half_frame_us);
     }
+
+    /// Cross-language golden vectors. The SAME fixture is asserted by
+    /// `apps/desktop/src/renderer/frames.golden.test.ts` against the TS
+    /// `snapFrameRound`; a value that passes one side and fails the other is
+    /// snap-math drift, which is exactly what this test exists to catch. On an
+    /// INTENTIONAL math change, recompute the affected `expect` values (i128
+    /// integer math) and mirror the edit in `frames.ts` the same turn.
+    #[test]
+    fn golden_vectors_match_fixture() {
+        #[derive(serde::Deserialize)]
+        struct Sample {
+            t_us: TimeUs,
+            expect: TimeUs,
+        }
+        #[derive(serde::Deserialize)]
+        struct Case {
+            name: String,
+            fps_num: u32,
+            fps_den: u32,
+            samples: Vec<Sample>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Fixture {
+            cases: Vec<Case>,
+        }
+
+        let fixture: Fixture = serde_json::from_str(include_str!(
+            "../../../src/renderer/snapFrameGolden.fixture.json"
+        ))
+        .expect("snap golden fixture parses");
+        assert!(!fixture.cases.is_empty());
+        for case in &fixture.cases {
+            let fps = Rational::new(case.fps_num, case.fps_den);
+            for s in &case.samples {
+                let got = snap_frame_round(s.t_us, fps);
+                assert_eq!(
+                    got, s.expect,
+                    "case `{}` t_us={}: got {got}, expect {}",
+                    case.name, s.t_us, s.expect
+                );
+            }
+        }
+    }
 }
