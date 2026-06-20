@@ -72,6 +72,13 @@ Preview pixels equal export pixels by construction; there's no
 "preview engine" to drift from export. See [`render.md`](render.md) for
 the renderer architecture.
 
+The deterministic "what-you-see/hear" MATH both the renderer and the Rust
+actor/export need — frame snap, keyframe interpolation, the audio envelope
+curve, the role mute/solo gate — lives once in the `weftcut-eval` leaf crate,
+compiled natively for the actor + export and to wasm for the renderer. One
+source of truth instead of hand-mirrored Rust + TS copies that could drift.
+See [ADR 0025](adr/0025-shared-eval-wasm-leaf-crate.md).
+
 ### 3. ffmpeg shrinks to audio + mux
 
 The Rust side runs ffmpeg only at:
@@ -141,6 +148,10 @@ weftcut/
   docs/                       ← documentation (this directory)
   apps/desktop/               ← the Electron app
     native/                   ← Rust core, built as a napi-rs addon (@weftcut/core)
+      eval/                   ← weftcut-eval leaf crate: the pure WYSIWYG math
+                              ←   (snap, keyframe eval, envelope, role gate),
+                              ←   linked natively here + compiled to wasm for
+                              ←   the renderer (ADR 0025)
       src/
         state/                ← project state types, actor, history, validation
         audio/                ← envelope contract + export block mixer
