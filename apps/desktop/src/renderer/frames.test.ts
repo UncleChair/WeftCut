@@ -1,4 +1,4 @@
-import { describe, expect, it, test } from "vitest";
+import { beforeAll, describe, expect, it, test } from "vitest";
 import {
   formatTimecode,
   frameDurUs,
@@ -7,6 +7,13 @@ import {
   snapFrameFloor,
   snapFrameRound,
 } from "./frames";
+import { initEval } from "./eval";
+
+// snapFrameRound is wasm-backed now; the other helpers here are pure JS but a
+// global init is harmless for them.
+beforeAll(async () => {
+  await initEval();
+});
 
 describe("snapFrameRound", () => {
   it("snaps to nearest at 30fps integer boundaries", () => {

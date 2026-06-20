@@ -15,30 +15,16 @@ export function frameDurUs(fpsNum: number, fpsDen: number): number {
 }
 
 /// Round `tUs` to the nearest composition-fps frame boundary (half-up).
-/// Same algorithm as Rust `snap_frame_round`:
-///   frame_index = floor((tUs * num + (US_PER_SEC * den) / 2) / (US_PER_SEC * den))
-///   snapped     = round(frame_index * US_PER_SEC * den / num)   ← half-up
 ///
-/// The OUTPUT is half-up rounded to match how a source frame's PTS is
-/// derived in µs (`Math.round(ptsSeconds * 1e6)`, half-up) — see the
-/// Rust `snap_frame_round` docstring for the bug this avoids. Both sides
-/// must use half-up output or the storage invariant for `t_start_us` /
-/// `src_in_us` lands 1 µs below the source frame's PTS at certain frame
-/// indices, breaking `FrameRing.frameAt` after a layer move.
-///
-/// Safe for tUs up to ~2^53 / fpsNum (≈ 150 years at 60000 fps), which
-/// covers every realistic timeline.
-export function snapFrameRound(
-  tUs: number,
-  fpsNum: number,
-  fpsDen: number,
-): number {
-  if (fpsNum <= 0 || fpsDen <= 0) return tUs;
-  const prod = tUs * fpsNum;
-  const div = US_PER_SEC * fpsDen;
-  const frameIndex = Math.floor((prod + div / 2) / div);
-  return Math.round((frameIndex * US_PER_SEC * fpsDen) / fpsNum);
-}
+/// SINGLE SOURCE OF TRUTH: this is the wasm-backed `weftcut-eval::snap_frame_round`
+/// (the SAME crate the Rust actor links natively), re-exported so the actor's
+/// commit-side snap and the UI's drag-preview snap can never drift. The
+/// degenerate-fps guard + the half-up OUTPUT rounding landmine (which keeps
+/// `t_start_us`/`src_in_us` aligned with the source PTS so `FrameRing.frameAt`
+/// doesn't fall a frame short after a move) live in the leaf — see
+/// `native/eval/src/lib.rs::snap_frame_round`. `initEval()` must have resolved
+/// (the renderer bootstrap awaits it before mount).
+export { snapFrameRound } from "./eval";
 
 /// Snap `tUs` to the start of the frame containing it, on the comp
 /// fps grid, using EXACT rational arithmetic and HALF-UP rounding for
