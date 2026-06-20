@@ -1,0 +1,159 @@
+{
+  "cases": [
+    {
+      "name": "no solo; music muted; dialogue +6dB, sfx -6dB",
+      "roles": [
+        {
+          "role": "dialogue",
+          "gain_db": 6.0206,
+          "muted": false,
+          "solo": false
+        },
+        {
+          "role": "music",
+          "gain_db": 0,
+          "muted": true,
+          "solo": false
+        },
+        {
+          "role": "sfx",
+          "gain_db": -6.0206,
+          "muted": false,
+          "solo": false
+        }
+      ],
+      "any_solo": false,
+      "queries": [
+        {
+          "role": "dialogue",
+          "audible": true,
+          "gain_linear": 2.0000000199681045
+        },
+        {
+          "role": "music",
+          "audible": false,
+          "gain_linear": 1
+        },
+        {
+          "role": "sfx",
+          "audible": true,
+          "gain_linear": 0.4999999950079739
+        },
+        {
+          "role": "voiceover",
+          "audible": true,
+          "gain_linear": 1
+        }
+      ]
+    },
+    {
+      "name": "solo set; mute wins over solo",
+      "roles": [
+        {
+          "role": "dialogue",
+          "gain_db": 0,
+          "muted": false,
+          "solo": true
+        },
+        {
+          "role": "music",
+          "gain_db": 0,
+          "muted": true,
+          "solo": true
+        },
+        {
+          "role": "sfx",
+          "gain_db": 3,
+          "muted": false,
+          "solo": false
+        }
+      ],
+      "any_solo": true,
+      "queries": [
+        {
+          "role": "dialogue",
+          "audible": true,
+          "gain_linear": 1
+        },
+        {
+          "role": "music",
+          "audible": false,
+          "gain_linear": 1
+        },
+        {
+          "role": "sfx",
+          "audible": false,
+          "gain_linear": 1.4125375446227544
+        },
+        {
+          "role": "voiceover",
+          "audible": false,
+          "gain_linear": 1
+        }
+      ]
+    },
+    {
+      "name": "legacy: empty role table plays everything at unity",
+      "roles": [],
+      "any_solo": false,
+      "queries": [
+        {
+          "role": "dialogue",
+          "audible": true,
+          "gain_linear": 1
+        },
+        {
+          "role": "music",
+          "audible": true,
+          "gain_linear": 1
+        }
+      ]
+    },
+    {
+      "name": "gains only, no mute/solo",
+      "roles": [
+        {
+          "role": "dialogue",
+          "gain_db": 0,
+          "muted": false,
+          "solo": false
+        },
+        {
+          "role": "music",
+          "gain_db": -12,
+          "muted": false,
+          "solo": false
+        },
+        {
+          "role": "voiceover",
+          "gain_db": 12,
+          "muted": false,
+          "solo": false
+        }
+      ],
+      "any_solo": false,
+      "queries": [
+        {
+          "role": "dialogue",
+          "audible": true,
+          "gain_linear": 1
+        },
+        {
+          "role": "music",
+          "audible": true,
+          "gain_linear": 0.251188643150958
+        },
+        {
+          "role": "voiceover",
+          "audible": true,
+          "gain_linear": 3.9810717055349722
+        },
+        {
+          "role": "sfx",
+          "audible": true,
+          "gain_linear": 1
+        }
+      ]
+    }
+  ]
+}
