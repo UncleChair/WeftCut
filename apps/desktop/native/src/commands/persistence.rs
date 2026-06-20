@@ -1,21 +1,10 @@
-//! Persistence commands — save / save-as / open / new-workspace, re-signed
-//! from `commands_legacy.rs`. Bodies are copied verbatim; only the signature
-//! changes (the napi `Backend` carries the managed state) and the managed-state
-//! side effects are re-pointed at the matching `Backend` fields.
+//! Persistence commands — save / save-as / open / new-workspace. The napi
+//! `Backend` carries the managed state these mutate.
 //!
 //! These are the heaviest commands in the surface: a workspace change installs
 //! (rotates) the per-workspace `LogBus`, re-points the cache at
 //! `<workspace>/Cache/`, pushes the recents entry, and resets any in-flight
 //! agent session.
-//!
-//! Signature deltas vs. the legacy bodies (S1/S2 refactors):
-//!   - `crate::logs::LogBus::spawn(&workspace, app)` →
-//!     `LogBus::spawn(&workspace, backend.events.clone())` (the bus is now
-//!     `EventSink`-shaped, not `AppHandle`-shaped).
-//!   - `agent_session::end_and_emit(&app, slot)` →
-//!     `end_and_emit(&*backend.events, &backend.agent_session)`.
-//!   - `workspace::allow_workspace_fs(&app, &path)` is DELETED — it granted the
-//!     Tauri fs-plugin scope, obsolete under Electron — so it's dropped here.
 
 use std::path::PathBuf;
 

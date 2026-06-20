@@ -65,7 +65,7 @@ pub async fn export_audio_only(
     mix_and_encode(project, output, audio, window_us).await
 }
 
-/// The AppHandle-free core of `export_audio_only`, separated for direct
+/// The EventSink-free core of `export_audio_only`, separated for direct
 /// integration testing.
 async fn mix_and_encode(
     project: &Project,

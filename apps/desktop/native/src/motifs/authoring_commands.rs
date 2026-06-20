@@ -48,7 +48,7 @@ pub struct WriteDraftArgs {
 /// write the draft. Identity is app-owned: the id is minted from the name and
 /// `version` is forced to 1 (any id/version in `manifest` is ignored). When
 /// `from` is `Some`, record it as the draft's Update target (`target` sidecar) so
-/// a later `install_motif {Update}` republishes over it. No `AppHandle` / no emit
+/// a later `install_motif {Update}` republishes over it. No `EventSink` / no emit
 /// — the command + the MCP tool wrap this and emit `motifs:changed` themselves.
 pub fn write_motif_draft_core(
     store: &UserMotifStore,
@@ -77,7 +77,7 @@ pub fn write_motif_draft_core(
 /// Core of `amend_motif_draft`: parse the manifest island out of an edited
 /// full-source document, force the draft's stable identity (id + draft version 1
 /// — id/version are app-assigned, never author-controlled), re-validate, and
-/// overwrite the SAME draft on disk. No `AppHandle` here so it's unit-testable.
+/// overwrite the SAME draft on disk. No `EventSink` here so it's unit-testable.
 pub fn amend_draft_html(
     store: &UserMotifStore,
     draft_id: &str,
@@ -102,7 +102,7 @@ pub fn amend_draft_html(
 /// source (built-in or installed), assign a unique working id, and — for an
 /// INSTALLED source — record it as the draft's Update target (built-ins can't be
 /// updated in place, so a built-in fork records no target → install offers only
-/// New). No `AppHandle` so it's unit-testable.
+/// New). No `EventSink` so it's unit-testable.
 pub fn create_edit_draft_core(
     store: &UserMotifStore,
     builtins: &[crate::motifs::catalog::Motif],
@@ -132,7 +132,7 @@ pub fn create_edit_draft_core(
 /// `.html` source, mint a FRESH unique draft id (ignoring any id/version the file
 /// claims — identity is app-owned), and write it as a from-scratch draft (no
 /// target sidecar → it installs as a new Motif, never Update-over-something). No
-/// `AppHandle` so it's unit-testable.
+/// `EventSink` so it's unit-testable.
 pub fn import_motif_from_source(store: &UserMotifStore, source: &str) -> Result<String, String> {
     let mut manifest = parse_manifest_island(source).map_err(|e| e.to_string())?;
     let taken: Vec<String> = store
@@ -169,7 +169,7 @@ pub struct InstallArgs {
 /// Core of `install_motif`: validate the draft, `install_draft` (rewrite island
 /// to the final id/version + move into the published slot), and for an in-place
 /// Update retarget+lenient-migrate current-project layers via `rebind_motif`.
-/// Returns the published id. No `AppHandle` / no emit — the command + the MCP
+/// Returns the published id. No `EventSink` / no emit — the command + the MCP
 /// tool wrap this and emit `motifs:changed` themselves.
 pub async fn install_motif_core(
     store: &UserMotifStore,
