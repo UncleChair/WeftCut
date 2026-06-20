@@ -966,5 +966,13 @@ mod text_view_tests {
         assert_eq!(v.anchor_y, 1.0);
         assert!(v.outline.is_some());
         assert!(v.shadow.is_some());
+
+        // Lock the wire key names so #[serde(rename_all)] drift is caught.
+        let json = serde_json::to_value(&v).unwrap();
+        assert_eq!(json["align"], "Center");
+        assert!(json["shadow"].as_object().unwrap().contains_key("offset_x"));
+        assert!(json["outline"].as_object().unwrap().contains_key("width"));
+        assert!(json.get("anchor_x").is_some());
+        assert_eq!(json["weight"], 700);
     }
 }
