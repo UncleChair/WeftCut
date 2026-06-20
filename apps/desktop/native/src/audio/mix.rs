@@ -70,10 +70,15 @@ pub enum PlanError {
 // (`render/audio/roleGate.golden.test.ts` + `tests::golden_vectors_match_fixture`
 // share one fixture). Keep BYTE-FOR-BYTE in step with roleGate.ts.
 
+// The mute/solo decision + dB→linear math live in the weftcut-eval leaf (shared
+// with the renderer's audio-preview gating via wasm). These wrappers keep the
+// `&RoleMixSettings`/iterator signatures so callers are untouched while the
+// rules stay single-sourced. `RoleMixSettings` stays in `state/audio_role.rs`.
+
 /// True iff any role in the table is soloed. Absent roles can't be soloed, so a
 /// partial/empty table answers correctly.
 pub fn any_role_solo<'a>(roles: impl IntoIterator<Item = &'a RoleMixSettings>) -> bool {
-    roles.into_iter().any(|r| r.solo)
+    weftcut_eval::any_role_solo(roles.into_iter().map(|r| r.solo))
 }
 
 /// A role is audible unless muted, or a solo set exists and it isn't soloed —
@@ -81,13 +86,7 @@ pub fn any_role_solo<'a>(roles: impl IntoIterator<Item = &'a RoleMixSettings>) -
 /// `Project::role_mix` default for an absent role); resolving the absent case is
 /// the caller's job, matching `role_mix`.
 pub fn role_audible(role: &RoleMixSettings, any_solo: bool) -> bool {
-    if role.muted {
-        return false;
-    }
-    if any_solo && !role.solo {
-        return false;
-    }
-    true
+    weftcut_eval::role_audible(role.muted, role.solo, any_solo)
 }
 
 /// Linear gain for a role's `gain_db`, folded into each audible layer's gain
@@ -95,7 +94,7 @@ pub fn role_audible(role: &RoleMixSettings, any_solo: bool) -> bool {
 /// `Envelope::scale`; the TS twin computes in `f64`, so the golden compares
 /// with an f32-width tolerance (same precision the envelope golden uses).
 pub fn role_gain_linear(role: &RoleMixSettings) -> f32 {
-    crate::audio::envelope::db_to_linear(role.gain_db)
+    weftcut_eval::role_gain_linear(role.gain_db)
 }
 
 /// Every audible audio layer in track order: whole-track disable gates
