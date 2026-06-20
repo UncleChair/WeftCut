@@ -1,5 +1,13 @@
-import { describe, it, expect, beforeAll } from 'vitest'
-import { initEval, snapFrameRound, dbToLinear, roleAudible, loadTrack, evalTrack } from './index'
+import { describe, it, expect, beforeAll, vi } from 'vitest'
+import {
+  initEval,
+  snapFrameRound,
+  dbToLinear,
+  roleAudible,
+  loadTrack,
+  evalTrack,
+  MAX_KEYFRAMES,
+} from './index'
 import snap from '../snapFrameGolden.fixture.json'
 
 beforeAll(async () => {
@@ -37,5 +45,22 @@ describe('eval wasm smoke', () => {
       { t_us: 1_000_000, value: 8, interp: { kind: 'Hold' } },
     ])
     expect(evalTrack(500_000, 0)).toBeCloseTo(3, 6)
+  })
+
+  it('truncates an over-capacity property to MAX_KEYFRAMES and warns once', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    // Linear 0..N-1 over 1ms steps; only the first MAX_KEYFRAMES are evaluated.
+    const big = Array.from({ length: MAX_KEYFRAMES + 50 }, (_, i) => ({
+      t_us: i * 1_000,
+      value: i,
+      interp: { kind: 'Linear' },
+    }))
+    loadTrack(100, big) // first oversized upload → warns
+    loadTrack(101, big) // second → no further warning (once per session)
+    expect(warn).toHaveBeenCalledTimes(1)
+    // Still evaluates without throwing (truncated to the first MAX_KEYFRAMES keys);
+    // at/after the last RESIDENT key it clamps to that key's value (= cap - 1).
+    expect(evalTrack(MAX_KEYFRAMES * 1_000, 0)).toBe(MAX_KEYFRAMES - 1)
+    warn.mockRestore()
   })
 })

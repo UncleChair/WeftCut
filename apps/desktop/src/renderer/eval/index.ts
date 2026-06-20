@@ -68,14 +68,34 @@ export interface Kf {
   interp: { kind: string; p1?: [number, number]; p2?: [number, number] }
 }
 
+/** Resident keyframe-buffer capacity — mirrors `MAXKF` in
+ * native/eval/src/wasm.rs. Bounds ONE animated property of ONE layer (an
+ * `AnimTrack` / Rust `Animated<T>` — e.g. a single clip's opacity or x), NOT a
+ * timeline track or a whole clip (each property is uploaded separately). A
+ * static-allocation backstop (the no_std wasm build has no heap), not a product
+ * limit: manual authoring never approaches it. Known limit: beyond this the wasm
+ * preview truncates while native export evaluates every keyframe, so they can
+ * diverge — see docs/render.md. */
+export const MAX_KEYFRAMES = 256
+
 let loadedHandle = -1
-/** Upload a track's keyframes into the resident wasm buffer ONCE, cached by a
+let warnedOverflow = false
+/** Upload a property's keyframes into the resident wasm buffer ONCE, cached by a
  * monotonically-assigned handle (see render/animated.ts). Re-uploads only when
  * the handle differs from the last-loaded — so per-frame eval pays no marshaling. */
 export function loadTrack(handle: number, kfs: Kf[]): void {
   if (handle === loadedHandle) return
   const e = E()
-  const n = Math.min(kfs.length, 256)
+  if (kfs.length > MAX_KEYFRAMES && !warnedOverflow) {
+    warnedOverflow = true
+    console.warn(
+      `weftcut-eval: an animated property has ${kfs.length} keyframes; only the ` +
+        `first ${MAX_KEYFRAMES} are evaluated in the wasm preview. Native export ` +
+        `uses all of them, so preview may diverge from export. Known limit — see ` +
+        `docs/render.md.`,
+    )
+  }
+  const n = Math.min(kfs.length, MAX_KEYFRAMES)
   for (let i = 0; i < n; i++) {
     const k = kfs[i]!
     const c = interpCode[k.interp.kind] ?? 1
