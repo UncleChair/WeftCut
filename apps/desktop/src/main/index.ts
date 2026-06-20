@@ -9,6 +9,7 @@ import { loadAllKeys, setKey, clearKey } from './keys.js'
 import { MOTIF_SCHEME_ENTRY, registerMotifProtocol } from './motif/protocol.js'
 import { setRuntimeSource, captureMotifFrameB64 } from './motif/capture.js'
 import { createSecondary, actOnSecondary, secondaryExists, hardenWindow } from './windows.js'
+import type { SecondaryWinOpts } from './windowConfig.js'
 import { broadcastEvent } from './broadcast.js'
 import { collectMetrics } from './metrics.js'
 import { isAllowed } from './fsGuard.js'
@@ -218,7 +219,7 @@ app.whenReady().then(async () => {
   })
 
   // Secondary windows (PerfHUD popup etc.) via win:* IPC.
-  ipcMain.handle('win:create', (_e, { label, options }: { label: string; options?: { url?: string; width?: number; height?: number; title?: string } }) => createSecondary(label, options))
+  ipcMain.handle('win:create', (_e, { label, options }: { label: string; options?: SecondaryWinOpts }) => createSecondary(label, options))
   ipcMain.handle('win:act', (_e, { label, action }: { label: string; action: 'show' | 'hide' | 'close' | 'center' | 'focus' }) => actOnSecondary(label, action))
   ipcMain.handle('win:exists', (_e, { label }: { label: string }) => secondaryExists(label))
 
@@ -231,13 +232,22 @@ app.whenReady().then(async () => {
     }
   })
 
-  ipcMain.handle('window:minimize', () => mainWindow?.minimize())
-  ipcMain.handle('window:toggleMaximize', () =>
-    mainWindow?.isMaximized() ? mainWindow?.unmaximize() : mainWindow?.maximize(),
-  )
-  ipcMain.handle('window:close', () => mainWindow?.close())
-  ipcMain.handle('window:isMaximized', () => !!mainWindow?.isMaximized())
-  ipcMain.handle('window:setTitle', (_e, title: string) => mainWindow?.setTitle(title))
+  // Caption-button controls act on the SENDER's window, not always mainWindow:
+  // secondary windows (the PerfHUD popup) render the same <WindowControls/>, so
+  // their close/min/max must target themselves — otherwise the popup's close
+  // button would close the main editor. fromWebContents resolves the window that
+  // invoked the IPC; mainWindow is the fallback if it can't (shouldn't happen).
+  const ctlWin = (e: Electron.IpcMainInvokeEvent): BrowserWindow | null =>
+    BrowserWindow.fromWebContents(e.sender) ?? mainWindow
+  ipcMain.handle('window:minimize', (e) => ctlWin(e)?.minimize())
+  ipcMain.handle('window:toggleMaximize', (e) => {
+    const w = ctlWin(e)
+    if (w?.isMaximized()) w.unmaximize()
+    else w?.maximize()
+  })
+  ipcMain.handle('window:close', (e) => ctlWin(e)?.close())
+  ipcMain.handle('window:isMaximized', (e) => !!ctlWin(e)?.isMaximized())
+  ipcMain.handle('window:setTitle', (e, title: string) => ctlWin(e)?.setTitle(title))
   ipcMain.handle('path:documentDir', () => app.getPath('documents'))
   ipcMain.handle('path:join', (_e, payload: { parts?: string[]; paths?: string[] }) => path.join(...(payload.parts ?? payload.paths ?? [])))
   ipcMain.handle('path:tempDir', () => app.getPath('temp'))

@@ -29,7 +29,8 @@ import {
   type ReactNode,
 } from "react";
 import { listen, emit, type UnlistenFn } from "@/bridge/events";
-import { SecondaryWindow, getCurrentWindow } from "@/bridge/window";
+import { SecondaryWindow } from "@/bridge/window";
+import { WindowControls } from "@/components/WindowControls";
 import { PanelTopOpenIcon, RotateCcwIcon } from "lucide-react";
 
 import { getSystemStats, type SystemStats } from "../ipc";
@@ -136,9 +137,11 @@ function fpsFromMs(ms: number): number {
 
 const HUD_EDGE_MARGIN = 12;
 export const PERF_HUD_SNAPSHOT_EVENT = "weftcut://perf-hud-snapshot";
-/// Emitted (globally) by the popup from its own close handler so the inline
-/// overlay can restore itself the instant the popup is dismissed.
-const PERF_HUD_WINDOW_CLOSED_EVENT = "weftcut://perf-hud-window-closed";
+/// Broadcast by main when a secondary window closes, carrying `{ label }`. The
+/// inline overlay restores itself when the popped-out HUD window goes away — on
+/// ANY close path (caption button, OS, crash). Twin of WIN_CLOSED_EVENT in
+/// main/windows.ts.
+const WIN_CLOSED_EVENT = "weftcut://win-closed";
 /// Emitted (globally) by the popup's reset button; the inline component owns
 /// the Compositor ref, so it does the actual peak reset.
 const PERF_HUD_RESET_EVENT = "weftcut://perf-hud-reset";
@@ -363,15 +366,12 @@ function PerfDashboard({
       : formatUsAsMs(Math.max(0, prewarm.nextStartUs - prewarm.anchorUs));
   const hasClips = (snap?.clips.length ?? 0) > 0;
   const hasPrewarm = (prewarm?.clips.length ?? 0) > 0;
-  const hot = sampleHot(sample);
 
   return (
     <div className="perf-dash" data-testid="perf-hud-window">
+      {/* The window title + health dot live in the titlebar (see PerfHUDWindow);
+          this row is just the live playhead + the peaks-reset action. */}
       <header className="perf-dash-head">
-        <div className="perf-dash-titlewrap">
-          <span className={`perf-dot${hot ? " is-hot" : ""}`} aria-hidden="true" />
-          <span className="perf-dash-title">Performance</span>
-        </div>
         <span className="perf-dash-sub">playhead {(playheadUs / 1000).toFixed(0)} ms</span>
         <span className="perf-dash-grow" />
         <button
@@ -736,15 +736,17 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // Pop-out lifecycle. The popup emits `PERF_HUD_WINDOW_CLOSED_EVENT` from its
-  // own close handler, restoring the inline overlay the moment it's dismissed
+  // Pop-out lifecycle. Main broadcasts WIN_CLOSED_EVENT when any secondary
+  // window closes; restore the inline overlay when it's OUR popup that went away
   // (focus-independent — a focus check misses closing the popup on a second
-  // monitor while this window stays focused). On mount we also reconcile
-  // against any popup that survived an HMR reload.
+  // monitor while this window stays focused). On mount we also reconcile against
+  // any popup that survived an HMR reload.
   useEffect(() => {
     let unlisten: UnlistenFn | null = null;
     let cancelled = false;
-    void listen(PERF_HUD_WINDOW_CLOSED_EVENT, () => setPoppedOut(false)).then((off) => {
+    void listen<{ label?: string }>(WIN_CLOSED_EVENT, (e) => {
+      if (e.payload?.label === PERF_HUD_WINDOW_LABEL) setPoppedOut(false);
+    }).then((off) => {
       if (cancelled) {
         off();
         return;
@@ -897,7 +899,9 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
         minWidth: 380,
         minHeight: 320,
         resizable: true,
-        decorations: true,
+        // Frameless: the popup draws its own titlebar + window controls
+        // (matching the main window), so suppress the native OS frame.
+        decorations: false,
       });
       // Dev-only: first-snapshot seeding + create/error feedback aren't bridged
       // from the secondary-window lifecycle yet.
@@ -1022,32 +1026,35 @@ export function PerfHUDWindow() {
     };
   }, []);
 
-  // Tell the main window we're closing so it can restore the inline overlay,
-  // then complete the close ourselves. `preventDefault` must come before the
-  // first await so the window manager sees it; the global emit reaches the main window.
-  useEffect(() => {
-    const win = getCurrentWindow();
-    const unlistenPromise = win.onCloseRequested(async (event) => {
-      event.preventDefault();
-      await emit(PERF_HUD_WINDOW_CLOSED_EVENT).catch(() => {});
-      await win.destroy().catch(() => {});
-    });
-    return () => {
-      void unlistenPromise.then((off) => off());
-    };
-  }, []);
+  // Closing the popup restores the inline overlay via main's WIN_CLOSED_EVENT
+  // broadcast (see windows.ts) — no renderer-side close handler needed. The
+  // caption close button (WindowControls) routes through window:close to THIS
+  // window (main resolves the sender), and main fires the broadcast on `closed`.
 
   const onReset = useCallback(() => {
     void emit(PERF_HUD_RESET_EVENT).catch(() => {});
   }, []);
 
+  const hot = sample ? sampleHot(sample) : false;
+
   return (
     <div className="perf-hud-window">
-      {sample ? (
-        <PerfDashboard sample={sample} history={history} onReset={onReset} />
-      ) : (
-        <div className="perf-hud-window-empty">Waiting for preview performance data…</div>
-      )}
+      {/* Self-drawn titlebar matching the main window: drag region + health dot
+          + title on the left, shared caption buttons (min/max/close) flush
+          right. The window is frameless (decorations:false), so this IS the bar. */}
+      <div className="perf-titlebar" data-drag-region data-testid="perf-hud-titlebar">
+        <span className={`perf-dot${hot ? " is-hot" : ""}`} aria-hidden="true" />
+        <span className="perf-titlebar-title">Performance</span>
+        <span className="perf-titlebar-grow" />
+        <WindowControls />
+      </div>
+      <div className="perf-hud-body">
+        {sample ? (
+          <PerfDashboard sample={sample} history={history} onReset={onReset} />
+        ) : (
+          <div className="perf-hud-window-empty">Waiting for preview performance data…</div>
+        )}
+      </div>
     </div>
   );
 }

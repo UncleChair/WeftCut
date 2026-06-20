@@ -1,8 +1,17 @@
 import path from 'node:path'
 import { BrowserWindow, shell } from 'electron'
+import { secondaryWindowConfig, type SecondaryWinOpts } from './windowConfig.js'
+import { broadcastEvent } from './broadcast.js'
 
 const wins = new Map<string, BrowserWindow>()
 const isDev = !!process.env['ELECTRON_RENDERER_URL']
+
+// Broadcast (to every window) when a labelled secondary window closes, so its
+// opener can reconcile UI state on ANY close path — caption button, OS, crash.
+// The PerfHUD inline overlay listens for this to un-suppress itself when its
+// popped-out window goes away (the Tauri-era onCloseRequested restore is a dead
+// no-op under Electron). Mirrors the renderer's listen('weftcut://win-closed').
+export const WIN_CLOSED_EVENT = 'weftcut://win-closed'
 
 // Lock down navigation + window creation on a window. The renderer only ever
 // loads local content (the dev server in dev, file:// in prod), so: deny every
@@ -27,21 +36,15 @@ export function hardenWindow(win: BrowserWindow, opts?: { allowExternalOpen?: bo
   })
 }
 
-type SecondaryOpts = { url?: string; width?: number; height?: number; title?: string }
-export function createSecondary(label: string, opts?: SecondaryOpts): void {
+export function createSecondary(label: string, opts?: SecondaryWinOpts): void {
   let win = wins.get(label)
   if (win && !win.isDestroyed()) { win.show(); return }
+  // secondaryWindowConfig decides the frame: a window passing `decorations:false`
+  // is frameless and draws its OWN titlebar + <WindowControls/> (the PerfHUD
+  // popup); everything else gets the native OS frame by default. See
+  // windowConfig.ts.
   win = new BrowserWindow({
-    width: opts?.width ?? 480,
-    height: opts?.height ?? 320,
-    title: opts?.title,
-    // Show immediately. A frameless (`frame:false`) window combined with
-    // `show:false` + a deferred `ready-to-show` show does NOT reliably surface
-    // on Windows (mirrors the main-window fix in index.ts). backgroundColor is
-    // set, so there's no white flash.
-    show: true,
-    frame: false,
-    backgroundColor: '#0a0a0a',
+    ...secondaryWindowConfig(opts),
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true,
@@ -49,7 +52,20 @@ export function createSecondary(label: string, opts?: SecondaryOpts): void {
   })
   wins.set(label, win)
   hardenWindow(win)
-  win.on('closed', () => wins.delete(label))
+  // Maximize-state feed for a frameless secondary window's own caption glyph —
+  // same payload the main window ships (index.ts). Sent only to THIS window, so
+  // each window's <WindowControls/> tracks its own state. No-op for OS-framed
+  // secondary windows (their renderer doesn't draw the glyph).
+  const sendMax = (): void => {
+    if (!win!.isDestroyed())
+      win!.webContents.send('evt:window:maximize-changed', { isMaximized: win!.isMaximized() })
+  }
+  win.on('maximize', sendMax)
+  win.on('unmaximize', sendMax)
+  win.on('closed', () => {
+    wins.delete(label)
+    broadcastEvent(BrowserWindow.getAllWindows(), WIN_CLOSED_EVENT, { label })
+  })
   // Pass the caller's renderer-relative url straight through (e.g. '/?perfHud=1').
   const rel = opts?.url ?? '/'
   if (isDev) {
