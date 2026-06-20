@@ -87,9 +87,8 @@ pwsh scripts/worktree-sync.ps1
 
 The renderer's Vite server hardcodes port 1420 (`strictPort: true` in
 `apps/desktop/electron.vite.config.ts`), so two plain `npm run dev` runs collide
-on that port. Electron has no app-identifier singleton (the old Tauri
-single-instance lock is gone), so the **only** thing two instances fight over is
-the Vite port and the shared `userData` directory.
+on that port. Electron has no app-identifier singleton, so the **only** thing two
+instances fight over is the Vite port and the shared `userData` directory.
 
 To run a second instance from another worktree, give it a distinct Vite port and
 its own `userData` dir:
