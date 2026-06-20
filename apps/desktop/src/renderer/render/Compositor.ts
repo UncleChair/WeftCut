@@ -263,6 +263,9 @@ export class Compositor {
   readonly pool: DecoderPool;
   private clips = new Map<string, ActiveClip>();
   private images = new Map<string, ActiveImage>();
+  /// In-flight loadFromAsset promises, keyed by layerId. Used by `preloadImages`
+  /// so the export Worker can await all image loads before the frame loop.
+  private imageLoadPromises = new Map<string, Promise<void>>();
   private colors = new Map<string, ActiveColor>();
   private texts = new Map<string, ActiveText>();
   private activeMotifs = new Map<string, ActiveMotif>();
@@ -1600,10 +1603,13 @@ export class Compositor {
       maxWidth: this.compositionWidth,
       maxHeight: this.compositionHeight,
     });
-    void sprite.loadFromAsset(url).then(() => {
+    const loadPromise = sprite.loadFromAsset(url).then(() => {
       // Trigger a repaint once the bitmap lands.
       this.scheduleRepaint();
+      this.imageLoadPromises.delete(layer.id);
     });
+    this.imageLoadPromises.set(layer.id, loadPromise);
+    void loadPromise;
     const image: ActiveImage = { layerId: layer.id, mediaId, sprite };
     this.images.set(layer.id, image);
     // eslint-disable-next-line no-console
@@ -1611,6 +1617,32 @@ export class Compositor {
       `[weftcut/pixi] image ${layer.id} → media ${mediaId} attached`,
     );
     return image;
+  }
+
+  /// Pre-trigger image loading for every ImageOverlay layer in the current
+  /// project and return a promise that resolves once ALL are loaded. Called by
+  /// the export Worker before the frame loop so that animated GIF frames are
+  /// available before compositing begins (ensureImage fires loadFromAsset as
+  /// fire-and-forget; without this wait the decoder races the frame loop and
+  /// all frames composite as transparent).
+  async preloadImages(): Promise<void> {
+    if (!this.projectSummary) return;
+    const imageLayerIds: string[] = [];
+    for (const track of this.projectSummary.tracks) {
+      for (const layer of track.layers) {
+        if (layer.params.kind === "ImageOverlay") imageLayerIds.push(layer.id);
+      }
+    }
+    // Force-create sprites for any not yet ensured (compositeFrame would do
+    // this lazily, but we want the load promises in flight immediately).
+    for (const layerId of imageLayerIds) {
+      const layer = this.layerById.get(layerId);
+      if (layer) this.ensureImage(layer);
+    }
+    const pending = imageLayerIds
+      .map((id) => this.imageLoadPromises.get(id))
+      .filter((p): p is Promise<void> => p !== undefined);
+    if (pending.length > 0) await Promise.all(pending);
   }
 
   private updateImage(

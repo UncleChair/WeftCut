@@ -194,6 +194,11 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   // capture harness can't run here. Empty for a video-only export (no-op).
   compositor.setMotifFrames(req.motifFrames);
   compositor.setMasterPlayState(false);
+  // Pre-load all ImageOverlay image data before the frame loop so that
+  // animated GIFs are fully decoded and every output frame sees a valid
+  // bitmap (ensureImage fires loadFromAsset fire-and-forget; without this
+  // wait the decoder races the frame loop and all frames composite black).
+  await compositor.preloadImages();
 
   // Output fps: caller override (resolution/fps dialog) or composition fps.
   const outFpsNum = req.outputFpsNum ?? req.project.fpsNum;
