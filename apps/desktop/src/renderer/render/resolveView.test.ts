@@ -34,9 +34,38 @@ describe("resolveView", () => {
   it("text color resolves statically until the Rgba engine twin exists", () => {
     const raw: TextView = {
       content: "hi", font_family: "Arial", font_size_px: 16,
+      weight: 400, italic: false, align: "Left",
+      anchor_x: 0, anchor_y: 0,
       color: { mode: "Static", value: white },
       x: stat(0), y: stat(0), opacity: stat(1),
+      outline: null, shadow: null,
     };
     expect(resolveTextView(raw, 0).color).toEqual(white);
+  });
+  it("passes weight/italic/align/anchor/outline/shadow through", () => {
+    const v = resolveTextView(
+      {
+        content: "x",
+        font_family: "Liberation Sans",
+        font_size_px: 54,
+        weight: 700,
+        italic: true,
+        align: "Center",
+        anchor_x: 0.5,
+        anchor_y: 1.0,
+        color: { mode: "Static", value: { r: 255, g: 255, b: 255, a: 255 } },
+        x: { mode: "Static", value: 100 },
+        y: { mode: "Static", value: 200 },
+        opacity: { mode: "Static", value: 1 },
+        outline: { color: { r: 0, g: 0, b: 0, a: 255 }, width: 3 },
+        shadow: { color: { r: 0, g: 0, b: 0, a: 255 }, offset_x: 2, offset_y: 2, blur: 2 },
+      },
+      0,
+    );
+    expect(v.weight).toBe(700);
+    expect(v.italic).toBe(true);
+    expect(v.anchor_y).toBe(1.0);
+    expect(v.outline?.width).toBe(3);
+    expect(v.shadow?.blur).toBe(2);
   });
 });

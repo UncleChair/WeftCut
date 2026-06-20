@@ -151,10 +151,17 @@ export interface TextView {
   content: string;
   font_family: string;
   font_size_px: number;
+  weight: number;
+  italic: boolean;
+  align: "Left" | "Center" | "Right";
+  anchor_x: number;
+  anchor_y: number;
   color: AnimTrack<Rgba>;
   x: AnimTrack<number>;
   y: AnimTrack<number>;
   opacity: AnimTrack<number>;
+  outline: { color: Rgba; width: number } | null;
+  shadow: { color: Rgba; offset_x: number; offset_y: number; blur: number } | null;
 }
 
 export interface ColorView {
