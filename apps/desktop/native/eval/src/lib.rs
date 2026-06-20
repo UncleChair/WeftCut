@@ -240,9 +240,67 @@ pub fn eval_f64(kfs: &[Kf], t_us: i64, default: f64) -> f64 {
     a.value + (b.value - a.value) * u
 }
 
+// ===========================================================================
+// Audio: dB→linear gain + role mute/solo gate. Primitive-typed — `RoleMixSettings`
+// stays in the napi crate (`state/audio_role.rs`); the mix.rs wrappers pass its
+// fields here. Shared with the renderer's audio-preview gating (wasm).
+// ===========================================================================
+
+/// Linear gain for a dB value: `10^(db/20)`. `f32` to match `Envelope::scale`.
+/// `libm::pow` (not `f64::powf`) so native + wasm compute bit-identically.
+pub fn db_to_linear(db: f64) -> f32 {
+    libm::pow(10.0, db / 20.0) as f32
+}
+
+/// True iff any role in the table is soloed (pass each role's `solo` flag).
+/// An empty iterator answers `false` correctly.
+pub fn any_role_solo(solos: impl IntoIterator<Item = bool>) -> bool {
+    solos.into_iter().any(|s| s)
+}
+
+/// A role is audible unless muted, or a solo set exists and it isn't soloed —
+/// mute wins over solo.
+pub fn role_audible(muted: bool, solo: bool, any_solo: bool) -> bool {
+    if muted {
+        return false;
+    }
+    if any_solo && !solo {
+        return false;
+    }
+    true
+}
+
+/// Linear gain for a role's `gain_db` (v1 has no per-role DSP).
+pub fn role_gain_linear(gain_db: f64) -> f32 {
+    db_to_linear(gain_db)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- audio: db_to_linear + role gate ----
+    #[test]
+    fn db_to_linear_unity_double_and_tenth() {
+        assert!((db_to_linear(0.0) - 1.0).abs() < 1e-9);
+        assert!((db_to_linear(6.0206) - 2.0).abs() < 1e-4);
+        assert!((db_to_linear(-20.0) - 0.1).abs() < 1e-6);
+    }
+
+    #[test]
+    fn role_gate_mute_wins_and_solo_gates() {
+        assert!(!role_audible(true, true, true)); // mute wins over solo
+        assert!(!role_audible(false, false, true)); // solo set exists, not soloed
+        assert!(role_audible(false, true, true)); // soloed
+        assert!(role_audible(false, false, false)); // no solo set, unmuted
+    }
+
+    #[test]
+    fn any_role_solo_detects_a_soloed_role() {
+        assert!(any_role_solo([false, true, false]));
+        assert!(!any_role_solo([false, false]));
+        assert!(!any_role_solo(core::iter::empty::<bool>()));
+    }
 
     // ---- keyframe eval (eval_f64) ----
     fn kf(t_us: i64, value: f64, interp: Interpolation) -> Kf {

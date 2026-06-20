@@ -67,9 +67,10 @@ impl Envelope {
     }
 }
 
-pub fn db_to_linear(db: f64) -> f32 {
-    10f64.powf(db / 20.0) as f32
-}
+// dB→linear lives in the weftcut-eval leaf (shared with the renderer's audio
+// preview via wasm). Re-exported so `crate::audio::envelope::db_to_linear` and
+// the golden tests keep resolving.
+pub use weftcut_eval::db_to_linear;
 
 /// Fade multiplier at layer-local `t_us`: linear 0→1 over fade_in from the
 /// layer start, 1→0 over fade_out into the layer end, multiplied when they
@@ -100,11 +101,22 @@ pub fn sample_gain(
     if !animated && fade_in_us == 0 && fade_out_us == 0 {
         return Envelope::constant(db_to_linear(gain_db.value_at(0, 0.0)), span_us);
     }
+    // Collect keyframes ONCE (not per sample): the per-sample `value_at` would
+    // re-materialize the Kf slice on every 10 ms step. `static_v` short-circuits
+    // the Static case (empty kfs ⇒ eval_f64 would return the default, not v).
+    let kfs = gain_db.eval_kfs();
+    let static_v = if let Animated::Static(v) = gain_db { Some(*v) } else { None };
+    let base = |t: i64| -> f64 {
+        match static_v {
+            Some(v) => v,
+            None => weftcut_eval::eval_f64(&kfs, t, 0.0),
+        }
+    };
     let mut values = Vec::with_capacity((span_us / ENVELOPE_STEP_US) as usize + 2);
     let mut k = 0i64;
     loop {
         let t = (k * ENVELOPE_STEP_US).min(span_us);
-        let g = db_to_linear(gain_db.value_at(t, 0.0))
+        let g = db_to_linear(base(t))
             * fade_multiplier(t, span_us, fade_in_us, fade_out_us) as f32;
         values.push(g);
         if t >= span_us {
@@ -124,11 +136,14 @@ pub fn sample_pan(pan: &Animated<f64>, span_us: i64) -> Envelope {
     if !pan.is_animated() {
         return Envelope::constant(pan.value_at(0, 0.0).clamp(-1.0, 1.0) as f32, span_us);
     }
+    // Animated ⇒ Keyframed with ≥2 keys, so collect once and eval the slice
+    // directly (no Static case to special-case here).
+    let kfs = pan.eval_kfs();
     let mut values = Vec::new();
     let mut k = 0i64;
     loop {
         let t = (k * ENVELOPE_STEP_US).min(span_us);
-        values.push(pan.value_at(t, 0.0).clamp(-1.0, 1.0) as f32);
+        values.push(weftcut_eval::eval_f64(&kfs, t, 0.0).clamp(-1.0, 1.0) as f32);
         if t >= span_us {
             break;
         }

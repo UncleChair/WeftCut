@@ -15,8 +15,11 @@ default = []
 serde = ["dep:serde"]
 
 [dependencies]
-# libm lands in the db_to_linear task. `Rational` (the only schemars-carrying
-# type) stays in the napi crate, so the leaf never needs schemars.
+# `db_to_linear` needs 10^(db/20); `f64::powf` is std-only, so the no_std wasm
+# build uses libm. Using it natively too keeps native + wasm bit-identical.
+libm = "0.2"
+# `Rational` (the only schemars-carrying type) stays in the napi crate, so the
+# leaf never needs schemars.
 serde = { version = "1", features = ["derive"], optional = true }
 
 # Test-only: the cross-language golden tests deserialize the shared fixtures.
