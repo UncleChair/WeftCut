@@ -20,8 +20,9 @@ crate-type = ["cdylib", "rlib"]
 napi-build = "2"
 
 [dependencies]
-# Shared "WYSIWYG math" leaf (snap, keyframe eval, envelope, role gate). One
-# source of truth; the renderer consumes the same crate compiled to wasm32.
+# Shared "WYSIWYG math" leaf (snap algorithm, keyframe eval, envelope, role
+# gate). One source of truth; the renderer consumes the same crate compiled to
+# wasm32. Primitive-typed API — `Rational` (serde/schemars) stays in state/time.rs.
 weftcut-eval = { path = "eval" }
 
 # napi-rs: WeftCut's domain core is exposed to Electron as a native addon.
