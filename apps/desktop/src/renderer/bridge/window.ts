@@ -14,10 +14,19 @@ export function getCurrentWindow() {
     // The Electron main already shows the window via ready-to-show; this
     // no-ops so the renderer's boot-time show() call is harmless.
     show: () => Promise.resolve(),
-    // WindowControls.tsx calls isMaximized() on mount to sync the glyph.
+    // WindowControls.tsx calls isMaximized() once on mount for the initial glyph.
     isMaximized: () => window.api.window.isMaximized(),
-    // No live resize subscription in main; returns a no-op unlisten.
-    onResized: (_cb: () => void) => Promise.resolve(() => undefined),
+    // Live maximize-state sync: main emits `evt:window:maximize-changed` carrying
+    // { isMaximized } on maximize/unmaximize (src/main/index.ts) — the external
+    // paths (drag-region double-click, Win+arrow, drag-to-top). Forward the flag
+    // so the caller updates the glyph straight from the payload, with no extra
+    // isMaximized() round-trip. Returns the subscription's unlisten.
+    onMaximizeChange: (cb: (isMaximized: boolean) => void) =>
+      Promise.resolve(
+        window.api.on('window:maximize-changed', (p) =>
+          cb(!!(p as { isMaximized?: boolean } | undefined)?.isMaximized),
+        ),
+      ),
     setTitle: (title: string) => window.api.window.setTitle(title),
     // No backend handler; safe default (used in a drag-drop guard).
     isFocused: () => Promise.resolve(true),

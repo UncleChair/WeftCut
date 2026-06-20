@@ -64,11 +64,15 @@ async function createWindow(): Promise<BrowserWindow> {
   mainWindow = win
   hardenWindow(win)
 
-  const sendResized = () =>
-    win.webContents.send('evt:window:resized', { isMaximized: win.isMaximized() })
-  win.on('resize', sendResized)
-  win.on('maximize', sendResized)
-  win.on('unmaximize', sendResized)
+  // The renderer draws its own caption buttons (frameless window); their
+  // maximize/restore glyph cares only about maximize-STATE transitions, not
+  // every resize tick. Emit on maximize/unmaximize only — the external paths
+  // (drag-region double-click, Win+arrow, drag-to-top) all funnel through these
+  // — and carry the state so the renderer needn't round-trip back to read it.
+  const sendMaximizeState = () =>
+    win.webContents.send('evt:window:maximize-changed', { isMaximized: win.isMaximized() })
+  win.on('maximize', sendMaximizeState)
+  win.on('unmaximize', sendMaximizeState)
 
   // Capture renderer console messages to stdout for diagnostics
   win.webContents.on('console-message', (_e, level, message, line, sourceId) => {
