@@ -1,26 +1,37 @@
-"""Tiny MCP-over-SSE probe for WeftCut.
+"""Tiny MCP probe for WeftCut (Streamable HTTP transport).
 
 Lives outside the Cargo / Vite trees so it doesn't get picked up by any
-build script. Run as:
+build script. Run against a live dev app as:
 
     python scripts/mcp_probe.py tools/list
     python scripts/mcp_probe.py tools/call begin_agent_session '{"reason":"smoke"}'
 
-Reads `<app_config_dir>/mcp_auth.json` for the bearer + port (so it
-stays in sync with the running app's persisted credentials).
+Reads `<userData>/mcp_auth.json` for the bearer token + port (so it stays in
+sync with the running app's persisted credentials).
+
+Transport: the app serves MCP over the SDK's Streamable HTTP transport — a
+single `POST /mcp` endpoint. The flow per session is:
+  1. POST `initialize`            -> server assigns an `mcp-session-id` header
+  2. POST `notifications/initialized` (carrying that session id)
+  3. POST the real request        (carrying that session id)
+The server replies to a request POST with an SSE body (`enableJsonResponse`
+is off), so each response arrives as one `event: message` / `data: {json}`
+frame which we parse out below.
 """
 
 import json
 import os
-import queue
 import sys
-import threading
-import time
+import urllib.error
 import urllib.request
 
 CONFIG_PATH = os.path.expandvars(
     r"%APPDATA%\dev.weftcut.desktop\mcp_auth.json"
 )
+
+# Proposed at initialize; the server echoes back a version it supports, which
+# we then send as the MCP-Protocol-Version header on every later request.
+PROTOCOL_VERSION = "2024-11-05"
 
 
 def read_config():
@@ -28,127 +39,148 @@ def read_config():
         return json.load(f)
 
 
-def open_sse(url, token, responses, ready):
-    """Open the SSE stream and pump events into `responses`. Sets
-    `ready` once the server has handed us the message endpoint."""
+def _parse_sse(text):
+    """Pull JSON-RPC payloads out of a text/event-stream body."""
+    msgs = []
+    event_type = None
+    data_lines = []
+
+    def flush():
+        if data_lines and event_type in (None, "message"):
+            data = "\n".join(data_lines)
+            try:
+                msgs.append(json.loads(data))
+            except Exception as e:  # noqa: BLE001 — surface, don't crash the probe
+                msgs.append({"_parse_error": str(e), "_raw": data})
+
+    for raw in text.split("\n"):
+        line = raw.rstrip("\r")
+        if line == "":
+            flush()
+            event_type = None
+            data_lines = []
+            continue
+        if line.startswith(":"):
+            continue  # SSE comment / keep-alive
+        if line.startswith("event:"):
+            event_type = line.split(":", 1)[1].strip()
+        elif line.startswith("data:"):
+            data_lines.append(line.split(":", 1)[1].lstrip())
+    flush()  # body may end without a trailing blank line
+    return msgs
+
+
+def _parse_body(content_type, body):
+    text = body.decode("utf-8", errors="replace")
+    if "text/event-stream" in content_type:
+        return _parse_sse(text)
+    text = text.strip()
+    if not text:
+        return []  # e.g. 202 Accepted for a notification
+    obj = json.loads(text)
+    return obj if isinstance(obj, list) else [obj]
+
+
+def _post(url, token, payload, *, session_id=None, protocol_version=None, timeout=8):
+    """POST one JSON-RPC message; return (status, headers, [messages])."""
+    headers = {
+        "Content-Type": "application/json",
+        # The transport requires BOTH for a request POST, else it 406s.
+        "Accept": "application/json, text/event-stream",
+        "Authorization": f"Bearer {token}",
+    }
+    if session_id:
+        headers["Mcp-Session-Id"] = session_id
+    if protocol_version:
+        headers["MCP-Protocol-Version"] = protocol_version
     req = urllib.request.Request(
         url,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "text/event-stream",
-        },
-    )
-    with urllib.request.urlopen(req) as resp:
-        event_type = None
-        for raw in resp:
-            line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
-            if not line:
-                event_type = None
-                continue
-            if line.startswith("event:"):
-                event_type = line.split(":", 1)[1].strip()
-            elif line.startswith("data:"):
-                data = line.split(":", 1)[1].lstrip()
-                if event_type == "endpoint":
-                    ready.put(data)
-                elif event_type == "message":
-                    try:
-                        responses.put(json.loads(data))
-                    except Exception as e:
-                        responses.put({"_parse_error": str(e), "_raw": data})
-
-
-def _post(message_url, token, payload):
-    req = urllib.request.Request(
-        message_url,
         data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {token}",
+        headers=headers,
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            ct = resp.headers.get("Content-Type", "")
+            return resp.status, resp.headers, _parse_body(ct, resp.read())
+    except urllib.error.HTTPError as e:
+        # Surface the error body (401/400 carry a JSON-RPC error) instead of raising.
+        ct = e.headers.get("Content-Type", "") if e.headers else ""
+        return e.code, e.headers, _parse_body(ct, e.read())
+
+
+def _find(msgs, request_id):
+    for m in msgs:
+        if isinstance(m, dict) and m.get("id") == request_id:
+            return m
+    return None
+
+
+def _handshake(url, token, *, timeout=8):
+    """initialize + initialized; returns (session_id, negotiated_version, init_result)."""
+    status, resp_headers, msgs = _post(
+        url,
+        token,
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": {"name": "mcp_probe.py", "version": "0.0.2"},
+            },
         },
+        timeout=timeout,
     )
-    with urllib.request.urlopen(req) as r:
-        return r.read().decode("utf-8", errors="replace")
-
-
-def _wait_for(responses, request_id, timeout):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            msg = responses.get(timeout=0.5)
-        except queue.Empty:
-            continue
-        if msg.get("id") == request_id:
-            return msg
-    raise SystemExit(f"timed out waiting for response to id={request_id}")
-
-
-def call(method, params, *, port, token, request_id=2, timeout=8, skip_init=False):
-    """Open SSE, do the MCP initialize handshake, then send `method`.
-
-    MCP requires the client to send `initialize`, await the server's
-    response, then send the `notifications/initialized` notification
-    before any other request will be answered. We do that in one
-    SSE session so the server's sessionId-bound state stays
-    consistent.
-    """
-    base = f"http://127.0.0.1:{port}"
-    responses: "queue.Queue[dict]" = queue.Queue()
-    ready: "queue.Queue[str]" = queue.Queue()
-    t = threading.Thread(
-        target=open_sse,
-        args=(f"{base}/sse", token, responses, ready),
-        daemon=True,
+    session_id = resp_headers.get("mcp-session-id") if resp_headers else None
+    init_result = _find(msgs, 1)
+    if init_result is None:
+        raise SystemExit(
+            f"initialize failed (HTTP {status}): {json.dumps(msgs, ensure_ascii=False)}"
+        )
+    negotiated = (
+        init_result.get("result", {}).get("protocolVersion") or PROTOCOL_VERSION
     )
-    t.start()
-    message_path = ready.get(timeout=5)
-    message_url = f"{base}{message_path}"
-
-    if not skip_init:
-        init_id = request_id - 1 if request_id > 0 else 0
+    if session_id:
         _post(
-            message_url,
+            url,
             token,
-            {
-                "jsonrpc": "2.0",
-                "id": init_id,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {},
-                    "clientInfo": {
-                        "name": "mcp_probe.py",
-                        "version": "0.0.1",
-                    },
-                },
-            },
+            {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+            session_id=session_id,
+            protocol_version=negotiated,
+            timeout=timeout,
         )
-        _wait_for(responses, init_id, timeout=timeout)
-        _post(
-            message_url,
-            token,
-            {
-                "jsonrpc": "2.0",
-                "method": "notifications/initialized",
-                "params": {},
-            },
-        )
+    return session_id, negotiated, init_result
 
-    payload = {
-        "jsonrpc": "2.0",
-        "id": request_id,
-        "method": method,
-        "params": params,
-    }
-    ack = _post(message_url, token, payload)
-    response = _wait_for(responses, request_id, timeout)
-    return {"ack": ack, "response": response}
+
+def call(method, params, *, port, token, request_id=2, timeout=8):
+    """Run the full session: handshake, then send `method`."""
+    url = f"http://127.0.0.1:{port}/mcp"
+    session_id, negotiated, init_result = _handshake(url, token, timeout=timeout)
+    if method == "initialize":
+        return {"session_id": session_id, "response": init_result}
+    status, _resp_headers, msgs = _post(
+        url,
+        token,
+        {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params},
+        session_id=session_id,
+        protocol_version=negotiated,
+        timeout=timeout,
+    )
+    response = _find(msgs, request_id)
+    if response is None:
+        raise SystemExit(
+            f"no response to id={request_id} (HTTP {status}): "
+            f"{json.dumps(msgs, ensure_ascii=False)}"
+        )
+    return {"session_id": session_id, "response": response}
 
 
 def main(argv):
     cfg = read_config()
     port = cfg["port"]
-    token = cfg["bearer_token"]
+    token = cfg["token"]
     if len(argv) < 2:
         print("usage: mcp_probe.py <method> [params-json or tool-name [args-json]]")
         sys.exit(2)
@@ -168,18 +200,7 @@ def main(argv):
             token=token,
         )
     elif method == "initialize":
-        out = call(
-            method,
-            {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {"name": "mcp_probe.py", "version": "0.0.1"},
-            },
-            port=port,
-            token=token,
-            request_id=1,
-            skip_init=True,
-        )
+        out = call(method, {}, port=port, token=token)
     else:
         params = json.loads(argv[2]) if len(argv) > 2 else {}
         out = call(method, params, port=port, token=token)
