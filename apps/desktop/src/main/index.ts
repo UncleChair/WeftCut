@@ -3,11 +3,12 @@ import fs from 'node:fs'
 import { Readable } from 'node:stream'
 import { createRequire } from 'node:module'
 import { execFile } from 'node:child_process'
-import { app, BrowserWindow, dialog, ipcMain, protocol } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Notification, protocol, shell } from 'electron'
 import { loadAllKeys, setKey, clearKey } from './keys.js'
 import { MOTIF_SCHEME_ENTRY, registerMotifProtocol } from './motif/protocol.js'
 import { setRuntimeSource, captureMotifFrameB64 } from './motif/capture.js'
 import { createSecondary, actOnSecondary, secondaryExists, hardenWindow } from './windows.js'
+import { broadcastEvent } from './broadcast.js'
 import { isAllowed } from './fsGuard.js'
 
 protocol.registerSchemesAsPrivileged([
@@ -238,6 +239,32 @@ app.whenReady().then(async () => {
   ipcMain.handle('path:documentDir', () => app.getPath('documents'))
   ipcMain.handle('path:join', (_e, payload: { parts?: string[]; paths?: string[] }) => path.join(...(payload.parts ?? payload.paths ?? [])))
   ipcMain.handle('path:tempDir', () => app.getPath('temp'))
+
+  // Open a path or URL in the OS default handler. Files/folders → the file
+  // manager; http(s) → the default browser (openExternal refuses non-web
+  // schemes, so a compromised renderer can't launch arbitrary protocols).
+  ipcMain.handle('shell:open', async (_e, { target }: { target: string }) => {
+    if (/^https?:\/\//i.test(target)) {
+      await shell.openExternal(target)
+    } else {
+      const err = await shell.openPath(target)
+      if (err) throw new Error(err)
+    }
+  })
+
+  // Best-effort desktop notification. Silently no-op where the OS reports no
+  // notification support (matches the renderer's fire-and-forget contract).
+  ipcMain.handle('notification:send', (_e, opts: { title?: string; body?: string }) => {
+    if (!Notification.isSupported()) return
+    new Notification({ title: opts?.title ?? '', body: opts?.body ?? '' }).show()
+  })
+
+  // Cross-window event broadcast: re-send to EVERY window (incl. the sender) as
+  // `evt:<event>`. Backs the renderer's `emit()` → `listen()` path (e.g. the
+  // main window streaming PerfHUD snapshots to the popped-out HUD window).
+  ipcMain.handle('app:emit', (_e, { event, payload }: { event: string; payload?: unknown }) => {
+    broadcastEvent(BrowserWindow.getAllWindows(), event, payload)
+  })
 
   const { dialog } = require('electron') as typeof import('electron')
   ipcMain.handle('dialog:open', async (_e, opts) => {

@@ -5,6 +5,7 @@ import type {
   DialogOpenOpts,
   DialogSaveOpts,
   DirEntry,
+  NotificationOpts,
   WinCreateOpts,
   WinAction,
 } from '../shared/ipc'
@@ -93,7 +94,17 @@ const api: WeftcutApi = {
     notices: (): Promise<AppNotice[]> => ipcRenderer.invoke('app:notices') as Promise<AppNotice[]>,
   },
 
-  // Event subscription: main relays Rust core events via webContents.send →
+  // OS shell + desktop notification — native main-process concerns, handled by
+  // Electron directly (no Rust round-trip; the Rust dispatcher owns project
+  // state, not the OS shell).
+  shell: {
+    open: (target: string): Promise<void> => ipcRenderer.invoke('shell:open', { target }) as Promise<void>,
+  },
+  notification: {
+    send: (opts: NotificationOpts): Promise<void> => ipcRenderer.invoke('notification:send', opts) as Promise<void>,
+  },
+
+  // Event subscription: main relays core events via webContents.send →
   // `evt:<event>` → here.
   on(event: string, cb: Listener): () => void {
     const handler = (_e: Electron.IpcRendererEvent, payload: unknown) => cb(payload)
@@ -102,6 +113,12 @@ const api: WeftcutApi = {
   },
   off(event: string): void {
     ipcRenderer.removeAllListeners(`evt:${event}`)
+  },
+
+  // Cross-window broadcast: forward an event to main, which re-sends it as
+  // `evt:<event>` to every window (delivered above via `on()`).
+  emit(event: string, payload?: unknown): Promise<void> {
+    return ipcRenderer.invoke('app:emit', { event, payload }) as Promise<void>
   },
 
   // Stream one raw frame to the native video sink over IPC (the Electron-native
