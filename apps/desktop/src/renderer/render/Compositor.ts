@@ -1594,7 +1594,12 @@ export class Compositor {
       );
       return null;
     }
-    const sprite = new ImageOverlaySprite({ layerId: layer.id, mediaId });
+    const sprite = new ImageOverlaySprite({
+      layerId: layer.id,
+      mediaId,
+      maxWidth: this.compositionWidth,
+      maxHeight: this.compositionHeight,
+    });
     void sprite.loadFromAsset(url).then(() => {
       // Trigger a repaint once the bitmap lands.
       this.scheduleRepaint();
