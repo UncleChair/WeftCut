@@ -2121,6 +2121,7 @@
                 duration_us: Some(1_000_000),
                 video: None,
                 audio: None,
+                ..Default::default()
             },
             proxy_path: None,
 
@@ -2286,6 +2287,7 @@
                     channels: 2,
                     codec: "aac".into(),
                 }),
+                ..Default::default()
             },
             proxy_path: None,
             proxy_format_version: 0,
@@ -2672,6 +2674,7 @@
                 duration_us: Some(5_000_000),
                 video: None,
                 audio: None,
+                ..Default::default()
             },
             proxy_path: None,
 
@@ -2732,6 +2735,7 @@
                 duration_us: Some(3_000_000),
                 video: None,
                 audio: None,
+                ..Default::default()
             },
             proxy_path: None,
 
@@ -2774,6 +2778,7 @@
                 duration_us: Some(duration_us),
                 video: None,
                 audio: None,
+                ..Default::default()
             },
             proxy_path: None,
 
@@ -4140,6 +4145,7 @@
                     channels: 2,
                     codec: "aac".into(),
                 }),
+                ..Default::default()
             },
             proxy_path: None,
 

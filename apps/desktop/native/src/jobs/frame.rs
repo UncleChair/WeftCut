@@ -168,6 +168,7 @@ mod tests {
                 duration_us: Some(2_000_000),
                 video: None,
                 audio: None,
+                ..Default::default()
             },
             proxy_path: None,
 

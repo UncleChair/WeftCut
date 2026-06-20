@@ -164,28 +164,62 @@ fn max_keyframe_gap_secs(timestamps: &[f64], window_secs: f64) -> Option<f64> {
     }
 }
 
-/// Codecs ffprobe also reports for plain still-image files. A SINGLE-frame
-/// stream of one of these is Image evidence, not Video (see `detect_kind`);
-/// multi-frame streams (animated GIF, motion-JPEG) stay Video.
-const STILL_IMAGE_CODECS: &[&str] = &["png", "mjpeg", "webp", "gif", "bmp", "tiff"];
+/// Codecs ffprobe reports for still-image files — single-frame OR multi-frame
+/// (animated GIF, animated WebP, APNG all classify as Image and are looped by
+/// the renderer with no proxy). `mjpeg` is the one ambiguous exception: it can
+/// be a still/sequence JPEG *or* motion-JPEG inside a movie container; the
+/// container check in `detect_kind` resolves the ambiguity.
+const STILL_IMAGE_CODECS: &[&str] = &["png", "apng", "mjpeg", "webp", "gif", "bmp", "tiff"];
+
+/// Container/demuxer names whose payload is a single (possibly animated) still
+/// image rather than a movie. Distinguishes an animated GIF/WebP/APNG/AVIF
+/// (→ Image, looped by the renderer) from a real video that merely uses an
+/// image codec (motion-JPEG in .avi → Video). ffprobe joins alternatives with
+/// commas ("mov,mp4,m4a,3gp,3g2,mj2"), so match any comma-separated part.
+const IMAGE_CONTAINERS: &[&str] = &[
+    "gif", "webp_pipe", "webp", "png_pipe", "apng", "image2", "image2pipe",
+    "bmp_pipe", "tiff_pipe", "avif",
+];
+
+fn container_is_image(format_name: Option<&str>) -> bool {
+    match format_name {
+        Some(fmt) => fmt.split(',').any(|p| IMAGE_CONTAINERS.contains(&p.trim())),
+        None => false,
+    }
+}
 
 pub fn detect_kind(path: &Path, metadata: &MediaMetadata) -> MediaKind {
     if let Some(v) = &metadata.video {
-        // ffprobe reports still images (png/jpg/webp/gif/bmp/tiff) as a video
-        // stream too, so "has a video stream" alone would misroute every
-        // imported image into the proxy/WebCodecs pipeline. Count the stream
-        // as Video evidence only when it actually moves: a non-image codec, a
-        // demuxed frame count > 1 (animated GIF — Video so it animates via the
-        // proxy), or a real duration (motion-JPEG; stills report none or one
-        // frame's worth).
-        let image_codec = STILL_IMAGE_CODECS.contains(&v.codec.as_str());
-        let animated = v.nb_frames.is_some_and(|n| n > 1)
-            || metadata.duration_us.is_some_and(|d| d >= 500_000);
-        return if image_codec && !animated {
-            MediaKind::Image
-        } else {
-            MediaKind::Video
-        };
+        let codec = v.codec.as_str();
+        let image_container = container_is_image(metadata.container_format.as_deref());
+        // Dedicated still-image codecs route to Image regardless of frame count:
+        // a multi-frame GIF/WebP/APNG is an *animated image*, looped from its
+        // decoded frames with no proxy. `mjpeg` is the one ambiguous codec —
+        // motion-JPEG inside a movie container is real video.
+        if STILL_IMAGE_CODECS.contains(&codec) {
+            if codec == "mjpeg" {
+                let animated = v.nb_frames.is_some_and(|n| n > 1)
+                    || metadata.duration_us.is_some_and(|d| d >= 500_000);
+                // LANDMINE: do NOT simplify to `!animated`. The `&& !image_container`
+                // guard is load-bearing: `image2`/`image2pipe` are in IMAGE_CONTAINERS,
+                // and a still or sequence JPEG probes as codec `mjpeg` + format `image2`
+                // (animated = false, image_container = true → Image). A motion-JPEG
+                // movie (.avi) has a non-image container, so only THAT path reaches
+                // Video. Removing the guard would misclassify .avi mjpeg as Image.
+                return if animated && !image_container {
+                    MediaKind::Video
+                } else {
+                    MediaKind::Image
+                };
+            }
+            return MediaKind::Image;
+        }
+        // AVIF (still or animated) carries an av1/hevc stream — the codec can't
+        // tell it from a movie, so key off the container.
+        if image_container {
+            return MediaKind::Image;
+        }
+        return MediaKind::Video;
     }
     if metadata.audio.is_some() {
         return MediaKind::Audio;
@@ -198,7 +232,9 @@ pub fn detect_kind(path: &Path, metadata: &MediaMetadata) -> MediaKind {
     match ext.as_str() {
         "mp4" | "mov" | "mkv" | "webm" | "avi" | "m4v" => MediaKind::Video,
         "wav" | "mp3" | "flac" | "aac" | "ogg" | "m4a" | "opus" => MediaKind::Audio,
-        "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "tif" | "tiff" => MediaKind::Image,
+        "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "tif" | "tiff" | "avif" | "apng" => {
+            MediaKind::Image
+        }
         "srt" | "ass" | "vtt" => MediaKind::Subtitle,
         _ => MediaKind::Video,
     }
@@ -215,6 +251,7 @@ struct RawProbe {
 #[derive(Deserialize, Default)]
 struct RawFormat {
     duration: Option<String>,
+    format_name: Option<String>,
 }
 
 /// Stream disposition flags — only `attached_pic` matters here (embedded
@@ -259,6 +296,7 @@ fn duration_seconds_to_us(s: &str) -> Option<i64> {
 
 impl RawProbe {
     fn into_metadata(self) -> MediaMetadata {
+        let container_format = self.format.format_name;
         let format_duration_us = self
             .format
             .duration
@@ -350,6 +388,7 @@ impl RawProbe {
             duration_us: max_duration_us,
             video,
             audio,
+            container_format,
         }
     }
 }
@@ -507,6 +546,7 @@ mod tests {
                 color_transfer: None,
             }),
             audio: None,
+            ..Default::default()
         };
         // Even with `.bin` extension the probe wins.
         assert_eq!(
@@ -661,26 +701,71 @@ mod tests {
         }
     }
 
-    /// A MULTI-frame gif is real motion: keep it Video so it routes through
-    /// the proxy pipeline and actually animates (ImageOverlay would freeze
-    /// it on the first frame).
+    /// Animated still-image formats are *animated images*: they classify as
+    /// Image (looped by the renderer, no proxy), NOT Video. Covers GIF, animated
+    /// WebP, APNG, and animated AVIF (whose stream codec is av1 — caught by the
+    /// container, not the codec).
     #[test]
-    fn animated_gif_classifies_as_video() {
+    fn animated_still_image_formats_classify_as_image() {
+        let cases: &[(&str, &str)] = &[
+            (
+                r#"{ "format": { "format_name": "gif", "duration": "2.0" },
+                     "streams": [{ "codec_type": "video", "codec_name": "gif",
+                       "width": 160, "height": 120, "pix_fmt": "bgra",
+                       "r_frame_rate": "5/1", "nb_frames": "10", "duration": "2.0",
+                       "disposition": { "attached_pic": 0 } }] }"#,
+                "/x/anim.gif",
+            ),
+            (
+                r#"{ "format": { "format_name": "webp_pipe", "duration": "1.2" },
+                     "streams": [{ "codec_type": "video", "codec_name": "webp",
+                       "width": 200, "height": 200, "pix_fmt": "argb",
+                       "r_frame_rate": "10/1", "nb_frames": "12", "duration": "1.2",
+                       "disposition": { "attached_pic": 0 } }] }"#,
+                "/x/anim.webp",
+            ),
+            (
+                r#"{ "format": { "format_name": "apng", "duration": "1.0" },
+                     "streams": [{ "codec_type": "video", "codec_name": "apng",
+                       "width": 64, "height": 64, "pix_fmt": "rgba",
+                       "r_frame_rate": "10/1", "nb_frames": "10", "duration": "1.0",
+                       "disposition": { "attached_pic": 0 } }] }"#,
+                "/x/anim.apng",
+            ),
+            (
+                r#"{ "format": { "format_name": "avif", "duration": "1.0" },
+                     "streams": [{ "codec_type": "video", "codec_name": "av1",
+                       "width": 320, "height": 240, "pix_fmt": "yuv420p",
+                       "r_frame_rate": "24/1", "nb_frames": "24", "duration": "1.0",
+                       "disposition": { "attached_pic": 0 } }] }"#,
+                "/x/anim.avif",
+            ),
+        ];
+        for (json, file) in cases {
+            let meta = meta_from_probe_json(json);
+            assert_eq!(
+                detect_kind(Path::new(file), &meta),
+                MediaKind::Image,
+                "{file} must classify as Image"
+            );
+        }
+    }
+
+    /// A real movie that uses an image codec stays Video. av1-in-mp4 is a normal
+    /// AV1 video (container is mov/mp4, not avif); motion-JPEG .avi is real video
+    /// (codec mjpeg but a movie container) — the `mjpeg_motion_video_stays_video`
+    /// test below pins that leg.
+    #[test]
+    fn av1_in_mp4_stays_video() {
         let json = r#"{
-            "format": { "format_name": "gif", "duration": "2.000000" },
-            "streams": [{
-                "codec_type": "video", "codec_name": "gif",
-                "width": 160, "height": 120, "pix_fmt": "bgra",
-                "r_frame_rate": "5/1", "nb_frames": "10",
-                "duration": "2.000000",
-                "disposition": { "attached_pic": 0 }
-            }]
+            "format": { "format_name": "mov,mp4,m4a,3gp,3g2,mj2", "duration": "10.0" },
+            "streams": [{ "codec_type": "video", "codec_name": "av1",
+              "width": 1920, "height": 1080, "pix_fmt": "yuv420p",
+              "r_frame_rate": "30/1", "nb_frames": "300", "duration": "10.0",
+              "disposition": { "attached_pic": 0 } }]
         }"#;
         let meta = meta_from_probe_json(json);
-        assert_eq!(
-            detect_kind(Path::new("/x/anim.gif"), &meta),
-            MediaKind::Video
-        );
+        assert_eq!(detect_kind(Path::new("/x/clip.mp4"), &meta), MediaKind::Video);
     }
 
     /// Motion-JPEG video (e.g. .avi capture): codec mjpeg like a still JPEG,
@@ -720,6 +805,8 @@ mod tests {
             ("/x/a.bmp", MediaKind::Image),
             ("/x/a.tiff", MediaKind::Image),
             ("/x/a.gif", MediaKind::Image),
+            ("/x/a.avif", MediaKind::Image),
+            ("/x/a.apng", MediaKind::Image),
             ("/x/a.ass", MediaKind::Subtitle),
             ("/x/a.vtt", MediaKind::Subtitle),
             ("/x/a.unknown-ext", MediaKind::Video),
@@ -776,7 +863,7 @@ mod tests {
             (
                 "anim.gif",
                 vec!["-f".into(), "lavfi".into(), "-i".into(), "testsrc2=size=64x48:rate=5:duration=2".into()],
-                MediaKind::Video,
+                MediaKind::Image,
                 true,
             ),
             (
