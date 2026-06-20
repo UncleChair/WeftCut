@@ -581,21 +581,6 @@ pub async fn fit_composition_to_layers(backend: &Backend) -> Result<(), String> 
         .map_err(|e: CommandError| e.to_string())
 }
 
-pub async fn add_marker(
-    backend: &Backend,
-    t_us: TimeUs,
-    end_t_us: Option<TimeUs>,
-    label: String,
-    color: Rgba,
-) -> Result<String, String> {
-    let handle = backend.project()?;
-    handle
-        .add_marker(Actor::User, t_us, end_t_us, label, color)
-        .await
-        .map(|id| id.to_string())
-        .map_err(|e: CommandError| e.to_string())
-}
-
 pub async fn update_track_flags(
     backend: &Backend,
     track_id: String,
