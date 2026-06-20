@@ -98,9 +98,205 @@ pub fn snap_frame_round(t_us: i64, num: u32, den: u32) -> i64 {
     snapped as i64
 }
 
+// ===========================================================================
+// Keyframe evaluation. `Interpolation` + `unit_bezier` + the slice-form
+// evaluator `eval_f64` are shared with the renderer (wasm) so preview, export,
+// and the actor all interpolate identically.
+// ===========================================================================
+
+/// Keyframe interpolation. Segment `[kf[i], kf[i+1])` is governed by
+/// `kf[i].interp`: Hold holds the left value; Linear/EaseIn/EaseOut/Bezier
+/// interpolate via `unit_bezier`. `Default = Linear`. The serde wire shape
+/// (`{kind: ...}`) is gated on the `serde` feature.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(tag = "kind"))]
+pub enum Interpolation {
+    Hold,
+    #[default]
+    Linear,
+    EaseIn,
+    EaseOut,
+    Bezier { p1: (f64, f64), p2: (f64, f64) },
+}
+
+/// POD keyframe — the input to `eval_f64`. The actor's imbl-backed
+/// `Keyframe<T>` collects into a `&[Kf]` before evaluating (`eval_kfs`).
+/// `Copy` so the wasm shim can stage a fixed-size `[Kf; N]` buffer.
+#[derive(Clone, Copy, Debug)]
+pub struct Kf {
+    pub t_us: i64,
+    pub value: f64,
+    pub interp: Interpolation,
+}
+
+/// `f64::abs` is std-only; the wasm (no_std) build needs a core-only abs.
+#[inline]
+fn fabs(x: f64) -> f64 {
+    if x < 0.0 {
+        -x
+    } else {
+        x
+    }
+}
+
+/// Evaluate a `cubic-bezier(x1,y1,x2,y2)` timing function at normalized
+/// progress `x` ∈ [0,1]. Control points are (0,0),(x1,y1),(x2,y2),(1,1):
+/// solve `X(s)=x` for the Bézier parameter `s` (Newton-Raphson, ≤8 iters,
+/// bisection fallback), then return `Y(s)`. `x1,x2` are assumed in [0,1]
+/// (enforced at authoring) so `X` is monotone and the solve single-valued.
+///
+/// MIRRORS `render/animated.ts::unitBezier` byte-for-byte (WebKit UnitBezier).
+/// Any edit here MUST be mirrored there + reflected in the golden fixture.
+pub fn unit_bezier(x1: f64, y1: f64, x2: f64, y2: f64, x: f64) -> f64 {
+    const EPS: f64 = 1e-7;
+    // Bézier → power-basis coefficients.
+    let cx = 3.0 * x1;
+    let bx = 3.0 * (x2 - x1) - cx;
+    let ax = 1.0 - cx - bx;
+    let cy = 3.0 * y1;
+    let by = 3.0 * (y2 - y1) - cy;
+    let ay = 1.0 - cy - by;
+    let sample_x = |t: f64| ((ax * t + bx) * t + cx) * t;
+    let sample_y = |t: f64| ((ay * t + by) * t + cy) * t;
+    let sample_dx = |t: f64| (3.0 * ax * t + 2.0 * bx) * t + cx;
+
+    // Newton-Raphson.
+    let mut t = x;
+    for _ in 0..8 {
+        let xt = sample_x(t) - x;
+        if fabs(xt) < EPS {
+            return sample_y(t);
+        }
+        let d = sample_dx(t);
+        if fabs(d) < 1e-6 {
+            break;
+        }
+        t -= xt / d;
+    }
+    // Bisection fallback.
+    let (mut lo, mut hi) = (0.0_f64, 1.0_f64);
+    t = x;
+    if t < lo {
+        return sample_y(lo);
+    }
+    if t > hi {
+        return sample_y(hi);
+    }
+    while lo < hi {
+        let xt = sample_x(t);
+        if fabs(xt - x) < EPS {
+            return sample_y(t);
+        }
+        if x > xt {
+            lo = t;
+        } else {
+            hi = t;
+        }
+        t = (hi - lo) * 0.5 + lo;
+    }
+    sample_y(t)
+}
+
+/// Slice form of `Animated<f64>::value_at`. Empty slice ⇒ `default`; one key ⇒
+/// that key's value; `t_us` before-first/after-last clamps to the end key; else
+/// locate the segment `kf[i].t_us <= t < kf[i+1].t_us` and apply `kf[i].interp`
+/// (Hold → left value; Linear → lerp; EaseIn/EaseOut → CSS cubic eases; Bezier →
+/// `unit_bezier(p1, p2)`). Keyframes must be sorted by `t_us` (the actor stores
+/// them normalized). MIRRORS `render/animated.ts::resolveAnimated`.
+pub fn eval_f64(kfs: &[Kf], t_us: i64, default: f64) -> f64 {
+    if kfs.is_empty() {
+        return default;
+    }
+    if kfs.len() == 1 {
+        return kfs[0].value;
+    }
+    let first = &kfs[0];
+    let last = &kfs[kfs.len() - 1];
+    if t_us <= first.t_us {
+        return first.value;
+    }
+    if t_us >= last.t_us {
+        return last.value;
+    }
+    let mut i = 0;
+    while i < kfs.len() - 1 && kfs[i + 1].t_us <= t_us {
+        i += 1;
+    }
+    let a = &kfs[i];
+    let b = &kfs[i + 1];
+    let span = (b.t_us - a.t_us) as f64;
+    if span <= 0.0 {
+        return b.value;
+    }
+    let mut u = (t_us - a.t_us) as f64 / span;
+    match a.interp {
+        Interpolation::Hold => return a.value,
+        Interpolation::Linear => {}
+        Interpolation::EaseIn => u = unit_bezier(0.42, 0.0, 1.0, 1.0, u),
+        Interpolation::EaseOut => u = unit_bezier(0.0, 0.0, 0.58, 1.0, u),
+        Interpolation::Bezier { p1, p2 } => u = unit_bezier(p1.0, p1.1, p2.0, p2.1, u),
+    }
+    a.value + (b.value - a.value) * u
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- keyframe eval (eval_f64) ----
+    fn kf(t_us: i64, value: f64, interp: Interpolation) -> Kf {
+        Kf { t_us, value, interp }
+    }
+
+    #[test]
+    fn eval_empty_returns_default() {
+        assert!((eval_f64(&[], 0, 4.2) - 4.2).abs() < 1e-9);
+    }
+
+    #[test]
+    fn eval_single_returns_value() {
+        let kfs = [kf(0, 3.0, Interpolation::Linear)];
+        assert!((eval_f64(&kfs, 100_000, 0.0) - 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn eval_clamps_before_first_and_after_last() {
+        let kfs = [
+            kf(5_000_000, 2.0, Interpolation::Linear),
+            kf(10_000_000, 8.0, Interpolation::Linear),
+        ];
+        assert!((eval_f64(&kfs, 0, 0.0) - 2.0).abs() < 1e-9);
+        assert!((eval_f64(&kfs, 15_000_000, 0.0) - 8.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn eval_linear_midpoint() {
+        let kfs = [
+            kf(0, 0.0, Interpolation::Linear),
+            kf(10_000_000, 10.0, Interpolation::Linear),
+        ];
+        assert!((eval_f64(&kfs, 5_000_000, 0.0) - 5.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn eval_hold_sticks_left() {
+        let kfs = [
+            kf(0, 3.0, Interpolation::Hold),
+            kf(10_000_000, 8.0, Interpolation::Hold),
+        ];
+        assert!((eval_f64(&kfs, 5_000_000, 0.0) - 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn eval_ease_in_matches_unit_bezier() {
+        let kfs = [
+            kf(0, 0.0, Interpolation::EaseIn),
+            kf(10_000_000, 10.0, Interpolation::EaseIn),
+        ];
+        let expected = unit_bezier(0.42, 0.0, 1.0, 1.0, 0.5) * 10.0;
+        assert!((eval_f64(&kfs, 5_000_000, 0.0) - expected).abs() < 1e-9);
+    }
 
     // 30 fps = (30, 1); 29.97 fps = (30_000, 1001).
     #[test]

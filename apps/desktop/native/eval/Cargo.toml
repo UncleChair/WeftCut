@@ -9,10 +9,15 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 default = []
+# `Interpolation`'s serde wire shape (`{kind: ...}`), enabled by the napi crate so
+# `Keyframe<T>` stays Serialize/Deserialize. The wasm build leaves it OFF (it
+# passes an i32 interp code across the boundary, not serde).
+serde = ["dep:serde"]
 
 [dependencies]
-# (none yet — libm lands in the db_to_linear task. No serde/schemars: the only
-# serde/schemars-carrying type, `Rational`, stays in the napi crate.)
+# libm lands in the db_to_linear task. `Rational` (the only schemars-carrying
+# type) stays in the napi crate, so the leaf never needs schemars.
+serde = { version = "1", features = ["derive"], optional = true }
 
 # Test-only: the cross-language golden tests deserialize the shared fixtures.
 # Not part of the shipped native/wasm artifact.
