@@ -88,17 +88,46 @@ export function createAnimatedImageCache(decode: DecodeFn): AnimatedImageCache {
 /// `min(originalDim, maxW/maxH)` so memory stays bounded (the composition never
 /// shows a GIF larger than itself). Throws on a missing/unsupported decoder so
 /// the caller can fall back to the static `createImageBitmap` path (bmp/tiff/svg).
+/// Map a bare file extension (no dot) to its canonical image MIME type. Used
+/// to recover the type when the weftcut-media:// protocol doesn't set
+/// Content-Type and `blob.type` arrives empty.
+const EXT_MIME: Record<string, string> = {
+  gif: "image/gif",
+  webp: "image/webp",
+  png: "image/png",
+  apng: "image/apng",
+  avif: "image/avif",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+};
+
+function mimeFromUrl(url: string): string {
+  try {
+    const raw = new URL(url).pathname;
+    const ext = raw.split(".").pop()?.toLowerCase() ?? "";
+    return EXT_MIME[ext] ?? "";
+  } catch {
+    return "";
+  }
+}
+
 export const decodeAnimatedImage: DecodeFn = async (assetUrl, maxW, maxH) => {
   const Decoder = (globalThis as { ImageDecoder?: typeof ImageDecoder }).ImageDecoder;
   if (!Decoder) throw new Error("ImageDecoder unavailable");
   const res = await fetch(assetUrl);
   if (!res.ok) throw new Error(`fetch ${assetUrl} -> ${res.status}`);
   const blob = await res.blob();
-  if (!(await Decoder.isTypeSupported(blob.type))) {
-    throw new Error(`ImageDecoder: unsupported type ${blob.type}`);
-  }
+  // The weftcut-media:// protocol handler doesn't set Content-Type; fall back
+  // to extension-based MIME detection so ImageDecoder can identify the format.
+  // Also guard against error-page HTML responses (e.g. Electron serving a
+  // diagnostic page when the protocol handler fails) — they are not image data.
+  const rawType = blob.type;
+  const type = (rawType && !rawType.startsWith("text/")) ? rawType : mimeFromUrl(assetUrl);
+  if (!type) throw new Error(`ImageDecoder: cannot determine MIME type (blob.type=${rawType}, url=${assetUrl})`);
+  // isTypeSupported may return false in some renderer contexts even for
+  // supported types; skip the pre-check and let the decoder fail at open time.
   const buf = await blob.arrayBuffer();
-  const dec = new Decoder({ data: buf, type: blob.type });
+  const dec = new Decoder({ data: buf, type });
   const frames: ImageBitmap[] = [];
   const durationsUs: number[] = [];
   let w = 0;
