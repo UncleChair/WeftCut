@@ -49,22 +49,9 @@ Prerequisites — see [docs/setup.md](docs/setup.md) for per-OS install commands
 
 Electron bundles its own Chromium, so there is no per-OS webview runtime to install.
 
-After installing prerequisites, from the repo root (run `init-dev` once after
-cloning — it checks the toolchain and generates placeholder icons not stored
-in git):
-
-**Windows**
-
-```powershell
-pwsh scripts/init-dev.ps1
-npm install
-npm run dev
-```
-
-**macOS / Linux**
+After installing prerequisites, from the repo root:
 
 ```sh
-bash scripts/init-dev.sh
 npm install
 npm run dev
 ```

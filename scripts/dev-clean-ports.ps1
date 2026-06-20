@@ -3,11 +3,12 @@
   Free stale WeftCut dev-server ports by killing orphaned vite processes.
 
 .DESCRIPTION
-  `npm run dev` runs vite (port 1420 / 1430 / 1440 per instance) as a child
-  process. On Windows, quitting by closing the app window often leaves that
-  vite orphaned — it keeps holding the port, so the next `npm run dev` fails with
-  a strict-port collision. Stopping dev with Ctrl-C in its terminal avoids this;
-  this script cleans up after the times you forgot.
+  `npm run dev` (electron-vite) starts a Vite dev server — port 1420 by default,
+  with secondary worktree instances manually moved to 1430 / 1440. On Windows,
+  quitting by closing the app window often leaves that Vite server orphaned — it
+  keeps holding the port, so the next `npm run dev` fails with a strict-port
+  collision. Stopping dev with Ctrl-C in its terminal avoids this; this script
+  cleans up after the times you forgot.
 
   Safety: a port's listener is only killed if it is a Node process running vite
   (its command line contains "vite"). Anything else squatting the port is
@@ -15,14 +16,14 @@
   orphan's npm/corepack parent is killed too when present.
 
 .PARAMETER Ports
-  Ports to clean. Default: 1420/1430/1440 (WeftCut instances) plus 5173
-  (vite's own default, where stray `npm run dev` runs land).
+  Ports to clean. Default: 1420/1430/1440 (the WeftCut dev-server ports —
+  1420 primary, 1430/1440 secondary worktree instances).
 
 .EXAMPLE
   pwsh scripts/dev-clean-ports.ps1
   pwsh scripts/dev-clean-ports.ps1 -Ports 1430
 #>
-param([int[]]$Ports = @(1420, 1430, 1440, 5173))
+param([int[]]$Ports = @(1420, 1430, 1440))
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
