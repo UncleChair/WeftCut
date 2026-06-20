@@ -1,7 +1,9 @@
-// TS twin of native/src/audio/envelope.rs — the sampled envelope
-// contract (docs/audio.md §The envelope contract). Keep BOTH sides + the
-// golden fixture (audioEnvelopeGolden.fixture.json) in lockstep; the
-// cross-language test exists to catch drift.
+// Sampled envelope contract (docs/audio.md §The envelope contract). The
+// drift-prone MATH — dB→linear and keyframe interpolation — now runs the shared
+// weftcut-eval wasm (dbToLinear below + resolveAnimated; ADR 0025), so it can't
+// diverge from Rust. The SAMPLER STRUCTURE here (the 10 ms grid loop, fade
+// ramps, evalEnvelope lerp) is still parallel to native/src/audio/envelope.rs —
+// keep those in step; the golden (audioEnvelopeGolden.fixture.json) guards them.
 
 import { type AnimTrack, resolveAnimated } from "../animated";
 import { dbToLinear } from "../../eval";
