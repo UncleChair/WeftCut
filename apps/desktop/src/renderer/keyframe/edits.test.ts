@@ -6,6 +6,9 @@ import {
 import type { AnimTrack } from "../ipc";
 import { resolveAnimated } from "../render/animated";
 
+// resolveAnimated is wasm-backed now; the wasm is loaded by the global test
+// setup (vitest.config.ts setupFiles).
+
 const kf = (id: string, t: number, value: number): AnimTrack<number> =>
   ({ mode: "Keyframed", value: [{ id, t_us: t, value, interp: { kind: "Linear" } }] });
 

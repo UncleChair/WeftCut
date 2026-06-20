@@ -3,6 +3,7 @@
 // throughout to match the Rust side; callers convert at the seconds boundary.
 //
 // Plan: docs/render.md
+import { loadTrack, evalTrack, type Kf } from "../eval";
 
 export type Interpolation =
   | { kind: "Hold" }
@@ -23,8 +24,12 @@ export type AnimTrack<T> =
   | { mode: "Keyframed"; value: Keyframe<T>[] };
 
 /// Evaluate `cubic-bezier(x1,y1,x2,y2)` at normalized progress `x` ∈ [0,1].
-/// MIRRORS Rust `state/animated.rs::unit_bezier` byte-for-byte (WebKit
-/// UnitBezier). Edit both sides + the golden fixture together.
+///
+/// INTENTIONAL JS copy — the ONLY remaining hand-mirror. The keyframe-eval path
+/// (`resolveAnimated`) now runs the wasm `weftcut-eval::unit_bezier`; this copy
+/// stays for the curve-graph editor overlay (`keyframe/curveGraph.ts`), a
+/// UI-only use with no Rust hot-path twin. It still mirrors the leaf
+/// (`native/eval/src/lib.rs::unit_bezier`); keep them in sync if either changes.
 export function unitBezier(
   x1: number,
   y1: number,
@@ -66,11 +71,32 @@ export function unitBezier(
   return sampleY(t);
 }
 
+// Per-track identity for the resident wasm cache. IPC re-materializes a track's
+// keyframe array whenever its data changes, so the array REFERENCE changes
+// exactly when the keyframes do — keying a WeakMap by it gives correct cache
+// invalidation for free (loadTrack re-uploads only when the handle differs from
+// the last-loaded). If the renderer ever mutated a keyframe array in place
+// instead of replacing it, this would go stale — bump to a (ref, length) key.
+const handles = new WeakMap<object, number>();
+let nextHandle = 1;
+function handleFor(kfs: object): number {
+  let h = handles.get(kfs);
+  if (h === undefined) {
+    h = nextHandle++;
+    handles.set(kfs, h);
+  }
+  return h;
+}
+
 /// Resolve a track at a given composition time. Returns `defaultValue`
 /// when the track is missing or has no keyframes.
 ///
-/// Interpolation modes: Hold (left-stick), Linear, EaseIn/EaseOut/Bezier
-/// resolve via `unitBezier` (cubic).
+/// Genuinely-keyframed tracks (≥2 keys) delegate to the wasm
+/// `weftcut-eval::eval_f64` — the SAME crate the actor + export run — so preview,
+/// export, and the Rust side interpolate identically (Hold / Linear /
+/// EaseIn/EaseOut/Bezier). Static / empty / single-key tracks short-circuit in
+/// JS to avoid a wasm call for the common case. `initEval()` must have resolved
+/// (the renderer bootstrap awaits it before mount).
 export function resolveAnimated<T extends number>(
   track: AnimTrack<T> | null | undefined,
   tCompUs: number,
@@ -81,21 +107,6 @@ export function resolveAnimated<T extends number>(
   const kfs = track.value;
   if (!kfs || kfs.length === 0) return defaultValue;
   if (kfs.length === 1) return kfs[0]!.value;
-  if (tCompUs <= kfs[0]!.t_us) return kfs[0]!.value;
-  const last = kfs[kfs.length - 1]!;
-  if (tCompUs >= last.t_us) return last.value;
-  let i = 0;
-  while (i < kfs.length - 1 && kfs[i + 1]!.t_us <= tCompUs) i++;
-  const a = kfs[i]!;
-  const b = kfs[i + 1]!;
-  const span = b.t_us - a.t_us;
-  if (span <= 0) return b.value;
-  let u = (tCompUs - a.t_us) / span;
-  const it = a.interp;
-  if (it?.kind === "Hold") return a.value;
-  if (it?.kind === "EaseIn") u = unitBezier(0.42, 0, 1, 1, u);
-  else if (it?.kind === "EaseOut") u = unitBezier(0, 0, 0.58, 1, u);
-  else if (it?.kind === "Bezier") u = unitBezier(it.p1[0], it.p1[1], it.p2[0], it.p2[1], u);
-  // Linear: u unchanged.
-  return (a.value + (b.value - a.value) * u) as T;
+  loadTrack(handleFor(kfs), kfs as unknown as Kf[]);
+  return evalTrack(tCompUs, 0) as T;
 }

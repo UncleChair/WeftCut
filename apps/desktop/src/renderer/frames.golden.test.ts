@@ -5,17 +5,13 @@
 // memory: snap_math_drift). Exact `toBe`: f64 (TS) and i128 (Rust) agree
 // bit-for-bit on the frame grid up to hour-scale timelines.
 
-import { beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import fixture from "./snapFrameGolden.fixture.json";
 import { snapFrameRound } from "./frames";
-import { initEval } from "./eval";
 
-// snapFrameRound is now wasm-backed (the shared weftcut-eval crate); load it
-// before asserting. The golden now verifies the wasm reproduces the fixture
-// (single source), not that two hand-mirrored copies agree.
-beforeAll(async () => {
-  await initEval();
-});
+// snapFrameRound is wasm-backed now (the shared weftcut-eval crate, loaded by
+// the global test setup). This golden verifies the wasm reproduces the fixture
+// (single source) — it no longer checks that two hand-mirrored copies agree.
 
 interface Case {
   name: string;
