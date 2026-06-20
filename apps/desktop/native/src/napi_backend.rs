@@ -459,10 +459,6 @@ impl Backend {
                 ser(crate::commands::mutations::set_composition(self, a.patch).await)
             }
             "fit_composition_to_layers" => ser(crate::commands::mutations::fit_composition_to_layers(self).await),
-            "add_marker" => {
-                let a: crate::commands::AddMarkerArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::mutations::add_marker(self, a.t_us, a.end_t_us, a.label, a.color).await)
-            }
             "update_track_flags" => {
                 let a: crate::commands::UpdateTrackFlagsArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
                 ser(crate::commands::mutations::update_track_flags(self, a.track_id, a.patch).await)

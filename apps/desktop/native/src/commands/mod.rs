@@ -804,15 +804,6 @@ pub struct SetCompositionArgs {
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AddMarkerArgs {
-    pub t_us: crate::state::time::TimeUs,
-    pub end_t_us: Option<crate::state::time::TimeUs>,
-    pub label: String,
-    pub color: crate::state::Rgba,
-}
-
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct UpdateTrackFlagsArgs {
     pub track_id: String,
     pub patch: crate::state::TrackFlagsPatch,
