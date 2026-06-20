@@ -56,6 +56,8 @@ import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { swapKeys } from "./swapKeys";
 import { isTenBitFrame } from "./decoder/tenBitFrame";
 import { TenBitIngest } from "./tenbit/TenBitIngest";
+import { loadBundledFontBytes } from "./fonts/registry";
+import { loadFontsIntoFaceSet } from "./fonts/loadFontsIntoFaceSet";
 
 /// Match the preview ring's default lookahead window. We only use
 /// this to warm the next clip boundary; the play() warm-up gate stays
@@ -437,6 +439,12 @@ export class Compositor {
     // DOM context" gate for JASSUB (see `ensureSubtitles`) — the export
     // Worker has neither `document` nor preview audio.
     if (this.mode === "preview" && typeof document !== "undefined") {
+      // Bundled fonts: same set as the export Worker, so preview matches the
+      // burned-in output. Awaited off the constructor; the first post-load
+      // redraw picks them up.
+      void loadBundledFontBytes().then((b) =>
+        loadFontsIntoFaceSet(document.fonts, b),
+      );
       this.audioHost = document.createElement("div");
       this.audioHost.setAttribute("data-pixi-audio-host", "");
       this.audioHost.style.display = "none";
