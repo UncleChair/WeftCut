@@ -22,8 +22,10 @@ napi-build = "2"
 [dependencies]
 # Shared "WYSIWYG math" leaf (snap algorithm, keyframe eval, envelope, role
 # gate). One source of truth; the renderer consumes the same crate compiled to
-# wasm32. Primitive-typed API — `Rational` (serde/schemars) stays in state/time.rs.
-weftcut-eval = { path = "eval" }
+# wasm32. `serde` gives the leaf's `Interpolation` its wire shape so the napi
+# `Keyframe<T>` stays Serialize/Deserialize. `Rational` (which also needs
+# schemars, forbidden in the leaf) stays in state/time.rs.
+weftcut-eval = { path = "eval", features = ["serde"] }
 
 # napi-rs: WeftCut's domain core is exposed to Electron as a native addon.
 napi = { version = "3", default-features = false, features = ["napi6", "tokio_rt"] }

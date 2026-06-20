@@ -12,63 +12,11 @@ use serde::{Deserialize, Serialize};
 use super::ids::KeyframeId;
 use super::time::TimeUs;
 
-/// Evaluate a `cubic-bezier(x1,y1,x2,y2)` timing function at normalized
-/// progress `x` ∈ [0,1]. Control points are (0,0),(x1,y1),(x2,y2),(1,1):
-/// solve `X(s)=x` for the Bézier parameter `s` (Newton-Raphson, ≤8 iters,
-/// bisection fallback), then return `Y(s)`. `x1,x2` are assumed in [0,1]
-/// (enforced at authoring) so `X` is monotone and the solve single-valued.
-///
-/// MIRRORS `render/animated.ts::unitBezier` byte-for-byte (WebKit UnitBezier).
-/// Any edit here MUST be mirrored there + reflected in the golden fixture.
-pub fn unit_bezier(x1: f64, y1: f64, x2: f64, y2: f64, x: f64) -> f64 {
-    const EPS: f64 = 1e-7;
-    // Bézier → power-basis coefficients.
-    let cx = 3.0 * x1;
-    let bx = 3.0 * (x2 - x1) - cx;
-    let ax = 1.0 - cx - bx;
-    let cy = 3.0 * y1;
-    let by = 3.0 * (y2 - y1) - cy;
-    let ay = 1.0 - cy - by;
-    let sample_x = |t: f64| ((ax * t + bx) * t + cx) * t;
-    let sample_y = |t: f64| ((ay * t + by) * t + cy) * t;
-    let sample_dx = |t: f64| (3.0 * ax * t + 2.0 * bx) * t + cx;
-
-    // Newton-Raphson.
-    let mut t = x;
-    for _ in 0..8 {
-        let xt = sample_x(t) - x;
-        if xt.abs() < EPS {
-            return sample_y(t);
-        }
-        let d = sample_dx(t);
-        if d.abs() < 1e-6 {
-            break;
-        }
-        t -= xt / d;
-    }
-    // Bisection fallback.
-    let (mut lo, mut hi) = (0.0_f64, 1.0_f64);
-    t = x;
-    if t < lo {
-        return sample_y(lo);
-    }
-    if t > hi {
-        return sample_y(hi);
-    }
-    while lo < hi {
-        let xt = sample_x(t);
-        if (xt - x).abs() < EPS {
-            return sample_y(t);
-        }
-        if x > xt {
-            lo = t;
-        } else {
-            hi = t;
-        }
-        t = (hi - lo) * 0.5 + lo;
-    }
-    sample_y(t)
-}
+// `Interpolation`, `unit_bezier`, and the slice-form keyframe evaluator now live
+// in the `weftcut-eval` leaf crate (one source of truth shared with the renderer
+// via wasm). `Animated<f64>::value_at` below delegates to `eval_f64` through a
+// POD `Kf` slice; `Animated<T>` itself (imbl-backed) stays here.
+pub use weftcut_eval::{unit_bezier, Interpolation};
 
 /// `T: Clone` is required because `imbl::Vector` uses structural sharing — the
 /// inner `Keyframe<T>` must be cloneable. Bounding the type is cleaner than
@@ -273,57 +221,33 @@ impl<T: Clone + PartialEq> Animated<T> {
 }
 
 impl Animated<f64> {
-    /// Resolve the value at owner-local `t_us`. Mirrors `render/animated.ts`
-    /// `resolveAnimated` byte-for-byte:
-    /// - `Static(v)` → `v`
-    /// - empty `Keyframed` → `default`
-    /// - one keyframe → that keyframe's value
-    /// - `t_us` before the first keyframe → first keyframe's value (clamp)
-    /// - `t_us` at-or-after the last → last keyframe's value (clamp)
-    /// - else: locate the segment via `kf[i].t_us <= t_us < kf[i+1].t_us`
-    ///   and apply `kf[i].interp` (Hold → `a.value`; Linear → lerp;
-    ///   EaseIn/EaseOut → CSS cubic eases via `unit_bezier`;
-    ///   Bezier → `unit_bezier(p1, p2)`)
+    /// Materialize the keyframes as POD `weftcut_eval::Kf` for slice evaluation
+    /// (empty for `Static`). HOIST this out of per-sample loops (e.g. the audio
+    /// envelope sampler) and call `weftcut_eval::eval_f64` on the slice directly,
+    /// rather than paying the collection on every sample.
+    pub fn eval_kfs(&self) -> Vec<weftcut_eval::Kf> {
+        match self {
+            Animated::Static(_) => Vec::new(),
+            Animated::Keyframed(kfs) => kfs
+                .iter()
+                .map(|k| weftcut_eval::Kf {
+                    t_us: k.t_us,
+                    value: k.value,
+                    interp: k.interp,
+                })
+                .collect(),
+        }
+    }
+
+    /// Resolve the value at owner-local `t_us`. `Static(v)` → `v`; otherwise
+    /// delegates to the shared `weftcut_eval::eval_f64` over a `Kf` slice, so
+    /// preview, export, and the renderer interpolate identically. See the leaf
+    /// for the empty/single/clamp/segment/interp semantics (mirrors
+    /// `render/animated.ts::resolveAnimated`).
     pub fn value_at(&self, t_us: TimeUs, default: f64) -> f64 {
         match self {
             Animated::Static(v) => *v,
-            Animated::Keyframed(kfs) => {
-                if kfs.is_empty() {
-                    return default;
-                }
-                if kfs.len() == 1 {
-                    return kfs[0].value;
-                }
-                let first = &kfs[0];
-                let last = &kfs[kfs.len() - 1];
-                if t_us <= first.t_us {
-                    return first.value;
-                }
-                if t_us >= last.t_us {
-                    return last.value;
-                }
-                let mut i = 0;
-                while i < kfs.len() - 1 && kfs[i + 1].t_us <= t_us {
-                    i += 1;
-                }
-                let a = &kfs[i];
-                let b = &kfs[i + 1];
-                let span = (b.t_us - a.t_us) as f64;
-                if span <= 0.0 {
-                    return b.value;
-                }
-                let mut u = (t_us - a.t_us) as f64 / span;
-                match a.interp {
-                    Interpolation::Hold => return a.value,
-                    Interpolation::Linear => {}
-                    Interpolation::EaseIn => u = unit_bezier(0.42, 0.0, 1.0, 1.0, u),
-                    Interpolation::EaseOut => u = unit_bezier(0.0, 0.0, 0.58, 1.0, u),
-                    Interpolation::Bezier { p1, p2 } => {
-                        u = unit_bezier(p1.0, p1.1, p2.0, p2.1, u);
-                    }
-                }
-                a.value + (b.value - a.value) * u
-            }
+            Animated::Keyframed(_) => weftcut_eval::eval_f64(&self.eval_kfs(), t_us, default),
         }
     }
 }
@@ -341,17 +265,6 @@ pub struct Keyframe<T: Clone> {
     pub t_us: TimeUs,
     pub value: T,
     pub interp: Interpolation,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, Default)]
-#[serde(tag = "kind")]
-pub enum Interpolation {
-    Hold,
-    #[default]
-    Linear,
-    EaseIn,
-    EaseOut,
-    Bezier { p1: (f64, f64), p2: (f64, f64) },
 }
 
 #[cfg(test)]
