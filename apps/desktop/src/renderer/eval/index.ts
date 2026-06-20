@@ -26,22 +26,26 @@ interface Exports {
 let ex: Exports | null = null
 const interpCode: Record<string, number> = { Hold: 0, Linear: 1, EaseIn: 2, EaseOut: 3, Bezier: 4 }
 
-function decodeBase64(b64: string): Uint8Array {
-  // Renderer (Chromium) + Node (vitest) both have `atob`; Buffer is the Node
-  // fallback if a future test env lacks it.
-  if (typeof atob !== 'undefined') {
-    const bin = atob(b64)
-    const bytes = new Uint8Array(bin.length)
-    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
-    return bytes
-  }
-  return Uint8Array.from(Buffer.from(b64, 'base64'))
+function decodeBase64(b64: string): Uint8Array<ArrayBuffer> {
+  // Back the view with an explicit `ArrayBuffer` so the type resolves to
+  // `Uint8Array<ArrayBuffer>` (a valid `BufferSource`); a bare `new
+  // Uint8Array(len)` widens to `<ArrayBufferLike>` under @types/node, which
+  // `WebAssembly.compile` rejects. The renderer (Chromium) + Node (vitest) both
+  // have `atob`; `Buffer` is the Node fallback if a future test env lacks it.
+  const bin =
+    typeof atob !== 'undefined' ? atob(b64) : Buffer.from(b64, 'base64').toString('latin1')
+  const bytes = new Uint8Array(new ArrayBuffer(bin.length))
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+  return bytes
 }
 
 export async function initEval(): Promise<void> {
   if (ex) return
   const bytes = decodeBase64(EVAL_WASM_BASE64)
-  const { instance } = await WebAssembly.instantiate(bytes, {})
+  // compile-then-instantiate (not the bytes overload of instantiate) keeps the
+  // result type unambiguous: instantiate(Module) returns a bare Instance.
+  const module = await WebAssembly.compile(bytes)
+  const instance = await WebAssembly.instantiate(module, {})
   ex = instance.exports as unknown as Exports
 }
 
