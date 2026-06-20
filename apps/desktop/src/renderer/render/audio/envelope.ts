@@ -4,6 +4,7 @@
 // cross-language test exists to catch drift.
 
 import { type AnimTrack, resolveAnimated } from "../animated";
+import { dbToLinear } from "../../eval";
 
 export const ENVELOPE_STEP_US = 10_000;
 
@@ -14,9 +15,11 @@ export interface Envelope {
   values: number[];
 }
 
-export function dbToLinear(db: number): number {
-  return Math.pow(10, db / 20);
-}
+// dbToLinear (10^(db/20)) now comes from the shared weftcut-eval wasm — ONE
+// formula across renderer preview, the actor, and export (was a hand-mirrored
+// Math.pow). Re-exported so the role-gate twin and docs/audio.md's envelope
+// contract keep a single source.
+export { dbToLinear };
 
 /// Fade multiplier at layer-local `tUs`: linear 0→1 over fadeIn from the
 /// layer start, 1→0 over fadeOut into the layer end, multiplied when they

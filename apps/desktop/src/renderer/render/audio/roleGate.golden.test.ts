@@ -28,7 +28,12 @@ describe("roleGate golden vectors (cross-language)", () => {
       expect(anySolo).toBe(c.any_solo);
       for (const q of c.queries) {
         expect(roleAudible(q.role, c.roles, anySolo)).toBe(q.audible);
-        expect(roleGainLinear(q.role, c.roles)).toBeCloseTo(q.gain_linear, 9);
+        // f32-width (1e-5), matching the Rust twin (mix.rs uses the same bound):
+        // roleGainLinear now runs the shared wasm db_to_linear, which returns f32
+        // — the gain the export mixer uses and what Web Audio quantizes to. Was 9
+        // digits only because this side was incidentally f64; both cross-language
+        // sides now assert the SAME f32 contract against the f64 fixture value.
+        expect(Math.abs(roleGainLinear(q.role, c.roles) - q.gain_linear)).toBeLessThan(1e-5);
       }
     });
   }
