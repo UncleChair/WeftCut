@@ -21,8 +21,9 @@ const FONT_URLS: Record<string, string> = {
 /// face set (document.fonts for preview, self.fonts for the export Worker).
 export async function loadBundledFontBytes(): Promise<Record<string, ArrayBuffer>> {
   const out: Record<string, ArrayBuffer> = {};
-  for (const family of BUNDLED_FONT_FAMILIES) {
-    const res = await fetch(FONT_URLS[family]);
+  for (const [family, url] of Object.entries(FONT_URLS)) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`failed to load bundled font ${family}: ${res.status}`);
     out[family] = await res.arrayBuffer();
   }
   return out;
