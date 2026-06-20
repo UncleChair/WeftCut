@@ -1139,13 +1139,16 @@ export async function reportAudioMeter(report: {
 // Motifs
 // ============================================================
 
-/// Discriminated union mirroring `motifs::catalog::PropSpec`. The picker
-/// switches on `type` to render the right input. New prop types must be
-/// added here AND in the picker's form generator.
+/// Discriminated union mirroring `motifs::catalog::PropSpec`. The picker and
+/// the property panel switch on `type` to render the right input. A new prop
+/// type must be added here, in `render/motifs/catalog.ts`, AND in both form
+/// generators (MotifPicker `PropField` + PropertyPanel `MotifPropField`).
+/// `enum` renders as a dropdown; `string.multiline` renders as a textarea.
 export type PropSpec =
-  | { type: "string"; default: string; max_length?: number }
+  | { type: "string"; default: string; max_length?: number; multiline?: boolean }
   | { type: "color"; default: string }
-  | { type: "number"; default: number; min?: number; max?: number };
+  | { type: "number"; default: number; min?: number; max?: number }
+  | { type: "enum"; default: string; options: string[] };
 
 /// One catalog entry from `list_motifs()`. Mirrors the MCP `list_motifs`
 /// manifest payload.

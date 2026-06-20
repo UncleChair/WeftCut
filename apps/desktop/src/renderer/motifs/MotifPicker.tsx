@@ -284,6 +284,7 @@ function defaultPropValue(spec: PropSpec): unknown {
   switch (spec.type) {
     case "string":
     case "color":
+    case "enum":
       return spec.default;
     case "number":
       return spec.default;
@@ -604,12 +605,25 @@ function PropField({
       return (
         <label className="motif-picker-field">
           <span>{propKey}</span>
-          <AppInput
-            value={typeof value === "string" ? value : ""}
-            maxLength={spec.max_length}
-            ariaLabel={propKey}
-            onValueChange={(v) => onChange(v)}
-          />
+          {spec.multiline ? (
+            // Multi-line strings (e.g. a text block split on \n) need a
+            // textarea; the single-line AppInput can't hold newlines.
+            <textarea
+              className="app-input"
+              rows={3}
+              value={typeof value === "string" ? value : ""}
+              maxLength={spec.max_length}
+              aria-label={propKey}
+              onChange={(e) => onChange(e.target.value)}
+            />
+          ) : (
+            <AppInput
+              value={typeof value === "string" ? value : ""}
+              maxLength={spec.max_length}
+              ariaLabel={propKey}
+              onValueChange={(v) => onChange(v)}
+            />
+          )}
         </label>
       );
     case "color":
@@ -641,6 +655,24 @@ function PropField({
           />
         </label>
       );
+    case "enum":
+      return (
+        <label className="motif-picker-field">
+          <span>{propKey}</span>
+          <AppSelect
+            value={typeof value === "string" ? value : spec.default}
+            ariaLabel={propKey}
+            onValueChange={(v) => onChange(v)}
+            options={spec.options.map((o) => ({ value: o, label: o }))}
+          />
+        </label>
+      );
+    default: {
+      // Exhaustiveness: a new PropSpec variant makes this a compile error until
+      // PropField renders it (the switch silently dropped unknown types before).
+      const _exhaustive: never = spec;
+      return _exhaustive;
+    }
   }
 }
 
