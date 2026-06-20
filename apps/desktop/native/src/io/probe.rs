@@ -164,10 +164,11 @@ fn max_keyframe_gap_secs(timestamps: &[f64], window_secs: f64) -> Option<f64> {
     }
 }
 
-/// Codecs ffprobe also reports for plain still-image files. A single-frame
-/// stream of one of these is Image evidence; animated GIF/WebP/APNG are also
-/// Image (looped by the renderer). `mjpeg` is the ambiguous case — motion-JPEG
-/// inside a movie container is real Video (see `detect_kind`).
+/// Codecs ffprobe reports for still-image files — single-frame OR multi-frame
+/// (animated GIF, animated WebP, APNG all classify as Image and are looped by
+/// the renderer with no proxy). `mjpeg` is the one ambiguous exception: it can
+/// be a still/sequence JPEG *or* motion-JPEG inside a movie container; the
+/// container check in `detect_kind` resolves the ambiguity.
 const STILL_IMAGE_CODECS: &[&str] = &["png", "apng", "mjpeg", "webp", "gif", "bmp", "tiff"];
 
 /// Container/demuxer names whose payload is a single (possibly animated) still
@@ -199,6 +200,12 @@ pub fn detect_kind(path: &Path, metadata: &MediaMetadata) -> MediaKind {
             if codec == "mjpeg" {
                 let animated = v.nb_frames.is_some_and(|n| n > 1)
                     || metadata.duration_us.is_some_and(|d| d >= 500_000);
+                // LANDMINE: do NOT simplify to `!animated`. The `&& !image_container`
+                // guard is load-bearing: `image2`/`image2pipe` are in IMAGE_CONTAINERS,
+                // and a still or sequence JPEG probes as codec `mjpeg` + format `image2`
+                // (animated = false, image_container = true → Image). A motion-JPEG
+                // movie (.avi) has a non-image container, so only THAT path reaches
+                // Video. Removing the guard would misclassify .avi mjpeg as Image.
                 return if animated && !image_container {
                     MediaKind::Video
                 } else {
@@ -289,7 +296,7 @@ fn duration_seconds_to_us(s: &str) -> Option<i64> {
 
 impl RawProbe {
     fn into_metadata(self) -> MediaMetadata {
-        let container_format = self.format.format_name.clone();
+        let container_format = self.format.format_name;
         let format_duration_us = self
             .format
             .duration
@@ -798,6 +805,8 @@ mod tests {
             ("/x/a.bmp", MediaKind::Image),
             ("/x/a.tiff", MediaKind::Image),
             ("/x/a.gif", MediaKind::Image),
+            ("/x/a.avif", MediaKind::Image),
+            ("/x/a.apng", MediaKind::Image),
             ("/x/a.ass", MediaKind::Subtitle),
             ("/x/a.vtt", MediaKind::Subtitle),
             ("/x/a.unknown-ext", MediaKind::Video),
