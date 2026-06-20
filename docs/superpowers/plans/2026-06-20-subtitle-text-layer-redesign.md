@@ -6,12 +6,12 @@
 
 **Architecture:** A new Rust parser (the single chokepoint for file import, MCP `apply_subtitles`, and Whisper transcribe) turns SRT/VTT/ASS text into `Cue`s, then one atomic mutation builds a `role: Caption` track of `Text` layers. The existing PixiJS `Text` render path — which already runs in both preview and the export Worker — renders them. A bundled-font set (incl. CJK) is loaded into the export Worker via `FontFace` so burned-in captions don't tofu; user-chosen fonts are resolved best-effort from the OS (no determinism guarantee). The old JASSUB chain, the `Subtitles` layer variant, and `MediaKind::Subtitle` pooling are deleted.
 
-**Tech Stack:** Rust (napi-rs, serde, schemars, tokio actor), TypeScript (PixiJS v8, React 19, Zustand, i18next, Vitest + testing-library), Electron main (Node `fs` / `ipcMain`), fonts (Noto Sans CJK SC + Liberation Sans, `FontFace` API, OffscreenCanvas).
+**Tech Stack:** Rust (napi-rs, serde, schemars, tokio actor), TypeScript (PixiJS v8, React 19, Zustand, i18next, Vitest + testing-library), Electron main (Node `fs` / `ipcMain`), fonts (Noto Sans SC + Liberation Sans, `FontFace` API, OffscreenCanvas).
 
 ## Global Constraints
 
 - **Determinism contract:** bundled fonts MUST load identically in preview and export Worker; they carry the cross-OS byte-identity guarantee (export SSIM gate, threshold 0.98). User-resolved OS fonts are explicitly OUTSIDE this contract — best-effort, may differ cross-machine.
-- **Fallback rule (never tofu):** any font that fails to resolve falls back to the bundled default chain `"Liberation Sans, Noto Sans CJK SC"`. A caption must never render as blank boxes.
+- **Fallback rule (never tofu):** any font that fails to resolve falls back to the bundled default chain `"Liberation Sans, Noto Sans SC"`. A caption must never render as blank boxes.
 - **Hard break:** no migration of old `.vproj` files containing `Subtitles` layers. Bump the project format version; old subtitle layers are unsupported.
 - **Single chokepoint:** file import, MCP `apply_subtitles`, and transcribe all flow through ONE parser (`subtitles::parse`) and ONE mutation (`add_caption_track_from_cues`). No second parsing path.
 - **Tier-3 ASS only:** map the V4+ Style table + the inline overrides `\an \pos \c/\1c \b \i \fs \fn \fad`. Drop karaoke `\k`, drawing `\p`, clip `\clip`, animated transform `\t`/`\move`, rotation `\frx/\fry/\frz`, blur — strip the tags, keep the text, set `ParsedSubtitles.simplified = true`.
@@ -37,7 +37,7 @@
 - `apps/desktop/src/renderer/render/fonts/loadFontsIntoFaceSet.ts` — `FontFace`-into-`self.fonts`/`document.fonts` loader (shared by worker + preview).
 - `apps/desktop/src/renderer/panels/CaptionsPanel.tsx` — the captions list + batch-style panel.
 - `apps/desktop/src/renderer/panels/CaptionsPanel.test.tsx` — component tests.
-- `apps/desktop/assets/fonts/NotoSansCJKsc-Regular.otf` — bundled CJK font (subset acceptable; see Task 1.1).
+- `apps/desktop/assets/fonts/NotoSansSC-VF.ttf` — bundled CJK font (subset acceptable; see Task 1.1).
 - `apps/desktop/assets/fonts/LiberationSans-Regular.woff2` — bundled Latin font (copy of the JASSUB-bundled face, now owned by us).
 - `docs/adr/0026-captions-as-text-layers.md` — the decision record.
 
@@ -76,14 +76,14 @@
 ### Task 1.1: Bundle fonts + a renderer-side font registry
 
 **Files:**
-- Create: `apps/desktop/assets/fonts/NotoSansCJKsc-Regular.otf`, `apps/desktop/assets/fonts/LiberationSans-Regular.woff2`
+- Create: `apps/desktop/assets/fonts/NotoSansSC-VF.ttf`, `apps/desktop/assets/fonts/LiberationSans-Regular.woff2`
 - Create: `apps/desktop/src/renderer/render/fonts/registry.ts`
 - Test: `apps/desktop/src/renderer/render/fonts/registry.test.ts`
 
 **Interfaces:**
-- Produces: `BUNDLED_FONT_FAMILIES: readonly string[]` (`["Liberation Sans", "Noto Sans CJK SC"]`), `DEFAULT_CAPTION_FONT_FAMILY = "Liberation Sans, Noto Sans CJK SC"`, `async loadBundledFontBytes(): Promise<Record<string, ArrayBuffer>>` (family → bytes).
+- Produces: `BUNDLED_FONT_FAMILIES: readonly string[]` (`["Liberation Sans", "Noto Sans SC"]`), `DEFAULT_CAPTION_FONT_FAMILY = "Liberation Sans, Noto Sans SC"`, `async loadBundledFontBytes(): Promise<Record<string, ArrayBuffer>>` (family → bytes).
 
-- [ ] **Step 1: Add the font binaries.** Download Noto Sans CJK SC Regular (`.otf`; a `pyftsubset` GB2312+Latin subset is acceptable to keep size down — document the subset command in a sibling `README.md`) into `apps/desktop/assets/fonts/`. Copy `node_modules/jassub/dist/default.woff2` to `apps/desktop/assets/fonts/LiberationSans-Regular.woff2` (we now own it; JASSUB is being deleted). Verify they exist:
+- [ ] **Step 1: Add the font binaries.** Download Noto Sans SC Regular (`.otf`; a `pyftsubset` GB2312+Latin subset is acceptable to keep size down — document the subset command in a sibling `README.md`) into `apps/desktop/assets/fonts/`. Copy `node_modules/jassub/dist/default.woff2` to `apps/desktop/assets/fonts/LiberationSans-Regular.woff2` (we now own it; JASSUB is being deleted). Verify they exist:
 
 Run: `ls -la apps/desktop/assets/fonts/`
 Expected: both files present, CJK file > 1MB.
@@ -101,8 +101,8 @@ import {
 describe("font registry", () => {
   it("advertises Liberation Sans + Noto CJK and a fallback-chain default", () => {
     expect(BUNDLED_FONT_FAMILIES).toContain("Liberation Sans");
-    expect(BUNDLED_FONT_FAMILIES).toContain("Noto Sans CJK SC");
-    expect(DEFAULT_CAPTION_FONT_FAMILY).toBe("Liberation Sans, Noto Sans CJK SC");
+    expect(BUNDLED_FONT_FAMILIES).toContain("Noto Sans SC");
+    expect(DEFAULT_CAPTION_FONT_FAMILY).toBe("Liberation Sans, Noto Sans SC");
   });
 });
 ```
@@ -120,19 +120,19 @@ Expected: FAIL — cannot resolve `./registry`.
 // document.fonts) and the export Worker (self.fonts) so burned-in captions
 // render identically — this carries the cross-OS determinism guarantee.
 // Vite `?url` resolves each asset to a same-origin URL at build time.
-import notoCjkUrl from "../../../../assets/fonts/NotoSansCJKsc-Regular.otf?url";
+import notoCjkUrl from "../../../../assets/fonts/NotoSansSC-VF.ttf?url";
 import liberationUrl from "../../../../assets/fonts/LiberationSans-Regular.woff2?url";
 
-export const BUNDLED_FONT_FAMILIES = ["Liberation Sans", "Noto Sans CJK SC"] as const;
+export const BUNDLED_FONT_FAMILIES = ["Liberation Sans", "Noto Sans SC"] as const;
 
 /// Default caption font: Latin glyphs from Liberation Sans, CJK from Noto.
 /// PixiJS passes this comma list straight to the canvas font shorthand, so
 /// the browser falls through to Noto for any glyph Liberation lacks.
-export const DEFAULT_CAPTION_FONT_FAMILY = "Liberation Sans, Noto Sans CJK SC";
+export const DEFAULT_CAPTION_FONT_FAMILY = "Liberation Sans, Noto Sans SC";
 
 const FONT_URLS: Record<string, string> = {
   "Liberation Sans": liberationUrl,
-  "Noto Sans CJK SC": notoCjkUrl,
+  "Noto Sans SC": notoCjkUrl,
 };
 
 /// Fetch every bundled font's bytes. Used to FontFace-register them into a
@@ -189,9 +189,9 @@ describe("loadFontsIntoFaceSet", () => {
     };
     await loadFontsIntoFaceSet(fakeSet, {
       "Liberation Sans": new ArrayBuffer(4),
-      "Noto Sans CJK SC": new ArrayBuffer(4),
+      "Noto Sans SC": new ArrayBuffer(4),
     });
-    expect(added.sort()).toEqual(["Liberation Sans", "Noto Sans CJK SC"]);
+    expect(added.sort()).toEqual(["Liberation Sans", "Noto Sans SC"]);
   });
 });
 ```
@@ -563,7 +563,7 @@ Expected: FAIL — fields not applied.
       const align = view.align.toLowerCase() as "left" | "center" | "right";
       this.text.text = view.content;
       this.text.style = new TextStyle({
-        fontFamily: view.font_family || "Liberation Sans, Noto Sans CJK SC",
+        fontFamily: view.font_family || "Liberation Sans, Noto Sans SC",
         fontSize: view.font_size_px,
         fontWeight: String(view.weight || 400) as TextStyleFontWeight,
         fontStyle: view.italic ? "italic" : "normal",
@@ -1111,7 +1111,7 @@ mod tests {
     #[test]
     fn styleless_cue_gets_bottom_center_default() {
         let p = cue_to_text_params(&cue(CueStyle::default()), 1920, 1080);
-        assert_eq!(p.font.family, "Liberation Sans, Noto Sans CJK SC");
+        assert_eq!(p.font.family, "Liberation Sans, Noto Sans SC");
         assert_eq!(p.font.size_px, 54.0); // round(1080 * 0.05)
         assert!(p.outline.is_some());
         assert!(p.shadow.is_some());
@@ -1150,7 +1150,7 @@ use crate::state::color::Rgba;
 use crate::state::layer::{FontSpec, Outline, Shadow, TextAlign, TextBackend, TextParams};
 use crate::state::transform::Transform;
 
-pub const DEFAULT_CAPTION_FONT: &str = "Liberation Sans, Noto Sans CJK SC";
+pub const DEFAULT_CAPTION_FONT: &str = "Liberation Sans, Noto Sans SC";
 
 /// Lay out one cue as a Text layer. Styleless cues (SRT/VTT) get the default
 /// caption look: white fill, black outline + soft shadow, size 5% of comp
@@ -1871,7 +1871,7 @@ describe("readFamilyName", () => {
     );
     // woff2 is compressed; for the unit test point at the raw OTF instead:
     const otf = fs.readFileSync(
-      path.resolve(__dirname, "../../../assets/fonts/NotoSansCJKsc-Regular.otf"),
+      path.resolve(__dirname, "../../../assets/fonts/NotoSansSC-VF.ttf"),
     );
     const name = readFamilyName(otf);
     expect(name?.toLowerCase()).toContain("noto");
