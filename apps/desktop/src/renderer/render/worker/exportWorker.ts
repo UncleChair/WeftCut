@@ -42,6 +42,7 @@ import { EncoderSink } from "./encoder";
 import { exportFrameCount, frameTimeUs as gridFrameTimeUs } from "./frameGrid";
 import type { ExportEvent, ExportRequest } from "./protocol";
 import { PackYuv420p10 } from "../tenbit/PackYuv420p10";
+import { loadFontsIntoFaceSet } from "../fonts/loadFontsIntoFaceSet";
 
 // PixiJS defaults to `BrowserAdapter`, which calls `document.*`
 // and `new Image()`. In a Worker neither exists, so any renderer
@@ -104,6 +105,16 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   const startedAtMs = performance.now();
 
   const tenBit = req.bitDepth === 10;
+
+  // Register bundled fonts into the Worker's font set BEFORE the renderer
+  // initializes. OffscreenCanvas has no system-font fallback chain, so
+  // unregistered families (e.g. CJK) would rasterize as blank boxes.
+  // Cast: TypeScript types `self` as Window in tsconfig lib, but inside a
+  // DedicatedWorker `self.fonts` (FontFaceSet) is available at runtime.
+  await loadFontsIntoFaceSet(
+    (self as unknown as { fonts: FontFaceSet }).fonts,
+    req.fonts,
+  );
 
   // 1. PixiJS Application against the transferred OffscreenCanvas.
   // For the 10-bit path we force WebGL2 (PackYuv420p10 needs a GL renderer

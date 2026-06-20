@@ -10,6 +10,7 @@
 // this resolves.
 
 import { convertFileSrc } from "@/bridge/ipc";
+import { loadBundledFontBytes } from "../fonts/registry";
 
 import type { MediaSummary, ProjectSummary } from "../../ipc";
 import { exportPlaybackPathFor } from "../../state/projectStore";
@@ -172,6 +173,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
 
   // 6. Wait for ready, then post start.
   const motifFrames = init.motifFrames ?? {};
+  const fontBytes = await loadBundledFontBytes();
   const startReq: Extract<ExportRequest, { type: "start" }> = {
     type: "start",
     project: snapshot,
@@ -185,6 +187,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     motifFrames,
     bitDepth: init.bitDepth ?? 8,
     ...(Object.keys(tenBitMedia).length > 0 ? { tenBitMedia } : {}),
+    fonts: fontBytes,
   };
 
   // ImageBitmaps are transferable; transferring them avoids a structured-clone
@@ -221,7 +224,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     worker.onmessage = (e: MessageEvent<ExportEvent>) => {
       const ev = e.data;
       if (ev.type === "ready") {
-        worker.postMessage(startReq, [offscreen, ...bitmapTransfers]);
+        worker.postMessage(startReq, [offscreen, ...bitmapTransfers, ...Object.values(fontBytes)]);
       } else if (ev.type === "progress") {
         framesEncoded = ev.framesEncoded;
         totalFrames = ev.totalFrames;

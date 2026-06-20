@@ -87,6 +87,10 @@ export type ExportRequest =
       /// mediaIds whose ORIGINAL decodes 10-bit in the renderer; these acquire
       /// originalAssetUrls + tenBitLane + preferSoftware.
       tenBitMedia?: Record<string, boolean>;
+      /// Bundled font bytes (family → ArrayBuffer), FontFace-loaded into the
+      /// Worker's `self.fonts` before renderer init so burned-in Text/captions
+      /// don't tofu. Transferred, not copied.
+      fonts: Record<string, ArrayBuffer>;
     }
   | { type: "cancel" }
   /// Backpressure ack: the main thread finished writing the most recent
