@@ -100,6 +100,16 @@ test both assert the wasm/native engine reproduces it. (One JS
 `unitBezier` copy remains in `animated.ts` for the curve-graph editor
 overlay only.)
 
+**Known limit:** the wasm preview holds at most 256 keyframes **per animated
+property** (one `AnimTrack` — e.g. a single layer's opacity or x, NOT a whole
+track or clip; mirrors `MAXKF` in `native/eval/src/wasm.rs`). It is a
+static-allocation backstop for the no_std wasm, not a product limit — manual
+authoring stays in the single digits. Beyond 256 the preview truncates while
+native export still evaluates every keyframe, so the two would diverge;
+`loadTrack` (`MAX_KEYFRAMES`) emits a one-time `console.warn` if a property ever
+exceeds it. Revisit (an upstream per-property cap, or a linear-memory upload
+path) only if dense/programmatic keyframes are ever generated.
+
 ### Keyframe easing authoring
 
 Easing is shown and edited directly on the timeline. Each animated property's

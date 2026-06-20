@@ -12,8 +12,13 @@ use crate::{
     snap_frame_round, Interpolation, Kf,
 };
 
-/// Max keyframes per track held resident. Tracks longer than this are clamped by
-/// `set_n` (the renderer never authors more than a handful per property).
+/// Max keyframes held resident for ONE animated property (an `Animated<T>` /
+/// the renderer's `AnimTrack` — e.g. one layer's opacity or x), NOT a whole
+/// timeline track or clip. Static buffers because the no_std wasm build has no
+/// heap; `set_n`/`set_kf` clamp longer inputs (the renderer authors at most a
+/// handful per property). LANDMINE: this caps the wasm PREVIEW only — native
+/// export's `value_at` evaluates the full keyframe vector, so a >MAXKF property
+/// would make preview diverge from export. TS `loadTrack` (MAX_KEYFRAMES) warns.
 const MAXKF: usize = 256;
 
 static mut T: [i64; MAXKF] = [0; MAXKF];
