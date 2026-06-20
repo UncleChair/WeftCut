@@ -66,9 +66,7 @@ if (!import.meta.env.DEV) {
   });
 }
 
-// Phase A.0 / H.0 dev-spike hatches removed in P12-e along with the
-// legacy DOM preview. The Pixi compositor is the only preview surface
-// now.
+// The Pixi compositor is the only preview surface.
 
 /// Top-level router per workspace-redesign Q7. The app boots into the
 /// StartupScreen by default; once the user picks Create / Open / Recent
@@ -112,7 +110,7 @@ function Root() {
     };
   }, []);
 
-  // E2E-only: expose `window.__weftcutTest.newProjectAndEnter` so the WebDriver
+  // E2E-only: expose `window.__weftcutTest.newProjectAndEnter` so the E2E
   // suite can create a project + enter the editor headlessly. The dynamic
   // import behind the static `VITE_WEFTCUT_E2E` check is stripped from prod.
   useEffect(() => {

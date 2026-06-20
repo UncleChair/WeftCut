@@ -5,9 +5,9 @@ import { useLogStore, ERROR_STICKY_MS } from "./store";
 import { MEDIA_JOB_EVENTS, type LogEntry, type LogLevel } from "../ipc";
 
 /// Persistent ~28px status bar pinned to the bottom of the editor view.
-/// Phase 1 shape: severity dot + time + truncated message + source pill
-/// on the left; error badge + running badge + (placeholder) Logs toggle
-/// on the right. Phase 2 fills in the toggle + expand overlay.
+/// Shows a severity dot + time + truncated message + source pill on the
+/// left; error badge + running badge + Logs toggle on the right. The
+/// toggle opens the expanded console overlay.
 ///
 /// Layout decision (Q5 hybrid C): always-visible left-aligned "latest
 /// message" line; right-aligned counters; errors stick for 10s before
@@ -196,9 +196,7 @@ function SourcePill({ entry }: { entry: LogEntry }) {
   );
 }
 
-/// HH:MM:SS in the user's locale. Lifted from `ActivityPanel`'s
-/// `formatTime` so they share a renderer when Phase 4 retires the
-/// modal.
+/// HH:MM:SS in the user's locale.
 function formatTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
@@ -210,7 +208,6 @@ function formatTime(iso: string): string {
   });
 }
 
-/// Sentinel re-export so a future "tick the error sticky timer at
-/// expiry" effect can read the same constant from one place. Phase 2
-/// uses this in the auto-clear effect once the expanded console exists.
+/// Re-export so a future "tick the error-sticky timer at expiry" effect
+/// can read the same constant from one place.
 export const _ERROR_STICKY_MS = ERROR_STICKY_MS;

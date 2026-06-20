@@ -24,7 +24,7 @@ export const MATRIX = [
   { fps: 60, format: "mp4", audio: true },
   { fps: 120, format: "mp4", audio: true },
   // EOS-tail geometry (keys at 0s/5s only + audio 1s longer than video) —
-  // the export tail-deadlock gate (export_eos_tail.e2e.js)
+  // the export tail-deadlock gate (export_eos_tail.spec.ts)
   { fps: 30, format: "mp4", eostail: true },
   // color charts (flat patches, tagged) — axis A fixtures
   { color: "709ltd" },
@@ -34,7 +34,7 @@ export const MATRIX = [
   // 10-bit BT.709 grayscale ramp (HEVC Main10) — axis B "proxy fidelity on gradients"
   { gradient: true },
   // 10-bit ramps as H.264 High10 (the one 10-bit shape Chromium software-
-  // decodes) — the 10-bit export gates (export_10bit.e2e.js): a static 1s ramp
+  // decodes) — the 10-bit export gates (export_codecs.spec.ts): a static 1s ramp
   // (end-to-end fidelity) + a 10s animated long-GOP/B-frame ramp (reorder-tail
   // regression).
   { gradientH264: true },
@@ -46,10 +46,10 @@ export const MATRIX = [
   // (resolution-derived ten-bit high-water clamps to its entry floor).
   { gradientH2644k: true },
   // still-image chart set (png/jpg/webp/bmp/gif/tiff + manifest, one flag) —
-  // ui/layers.e2e.js. The png is the canonical existence check; the
+  // media-import.spec.ts. The png is the canonical existence check; the
   // generator writes the whole set in one run.
   { imageset: true },
-  // audio-ONLY per-second tone files — audio/audio.e2e.js. The mp3 embeds
+  // audio-ONLY per-second tone files — audio.spec.ts. The mp3 embeds
   // attached_pic cover art (regression for the still-image/cover-art
   // classification fix in probe::detect_kind).
   { audiotones: true, aformat: "wav" },
@@ -58,7 +58,7 @@ export const MATRIX = [
   { audiotones: true, aformat: "m4a" },
   { audiotones: true, aformat: "ogg" },
   // animated gif — classifies as VIDEO (multi-frame) and routes through the
-  // full-proxy pipeline; ui/layers.e2e.js asserts that routing.
+  // full-proxy pipeline; media-import.spec.ts asserts that routing.
   { fps: 10, format: "gif" },
 ];
 

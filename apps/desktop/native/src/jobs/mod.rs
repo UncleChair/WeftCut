@@ -533,7 +533,7 @@ fn spawn_quick_proxy(
 
         if then_full {
             // Full proxy chains after the quick proxy; refresh hash/paths in
-            // case the workspace copy + blake3 landed while Phase 1 was queued.
+            // case the workspace copy + blake3 landed while the quick proxy was queued.
             let media = fresh_media_item(&project, media_id, media).await;
             spawn_proxy(events, cache, project, media);
         }

@@ -2,8 +2,8 @@
 //! commit when violated.
 //!
 //! Design: `docs/data-model.md` "Validation invariants". Motif-prop schema
-//! validation lives elsewhere (Phase 5, alongside the rasterizer manifest
-//! loader) and is intentionally not covered here.
+//! validation lives with the rasterizer manifest loader and is intentionally
+//! not covered here.
 
 use std::collections::{HashMap, HashSet};
 
@@ -188,12 +188,9 @@ fn validate_groups(
         }
     }
 
-    // The "html-mode group rejects CSS-incompatible effects" invariant
-    // went away 2026-05-17 with `Group.render_mode`. Validation of
-    // effect-class compatibility now lives at effect-add time (the
-    // planner only routes html-required effects to the html-cap
-    // path; ffmpeg-only effects continue as before). No commit-time
-    // check needed.
+    // Effect-class compatibility is not a commit-time invariant: the planner
+    // routes html-required effects to the html-capable path at effect-add
+    // time, so no overlap-style check is needed here.
 
     Ok(())
 }
@@ -317,8 +314,8 @@ fn validate_track(
     let mut sorted: Vec<&Layer> = track.layers.iter().collect();
     sorted.sort_by_key(|l| l.t_start_us);
 
-    // A/B-roll v2 (V.2): the overlap invariant is now per-class, not
-    // per-track. Visual-class layers (video / image / color / motif
+    // The within-track overlap invariant is per-class, not per-track:
+    // Visual-class layers (video / image / color / motif
     // / text / subtitle) can't overlap with each other on the same
     // track; Audio layers can't overlap with each other; but a Visual
     // layer and an Audio layer CAN coexist at the same time slot
@@ -441,7 +438,7 @@ fn validate_layer(project: &Project, layer: &Layer) -> Result<(), ValidationErro
         LayerParams::Motif(p) => {
             check_animated(layer.id, &p.opacity, duration)?;
             check_transform(layer.id, &p.transform, duration)?;
-            // motif_id / props_schema validation is Phase 5.
+            // motif_id / props_schema are not validated here (done with the manifest loader).
         }
         LayerParams::Audio(p) => {
             check_media_ref(project, layer.id, p.media)?;
@@ -892,7 +889,7 @@ mod tests {
     }
 
     // ============================================================
-    // Transitions (Phase 2 crossfade deferral)
+    // Transitions
     // ============================================================
 
     use crate::state::transition::{Transition, TransitionKind};
@@ -1138,7 +1135,7 @@ mod tests {
     }
 
     // ============================================================
-    // Groups (Phase G — `docs/groups.md`)
+    // Groups (`docs/groups.md`)
     // ============================================================
 
     use crate::state::group::Group;
@@ -1232,10 +1229,5 @@ mod tests {
         assert_eq!(idx.get(&c), Some(&g2));
     }
 
-    // The Phase H.1 html-mode validator tests went away 2026-05-17
-    // with the `render_mode` field. Effect-class validation is now a
-    // planner-time concern (route html-required effects to the
-    // html-cap segment; everything else through ffmpeg), not a
-    // commit-time invariant.
 }
 

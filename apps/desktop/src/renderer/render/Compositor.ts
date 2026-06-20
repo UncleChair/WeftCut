@@ -165,8 +165,8 @@ interface ActiveClip {
   source: DecoderHandle;
   sprite: VideoClipSprite;
   /// The `proxyAssetUrl` the current `source` was built from. When the
-  /// resolver later returns a different URL for this media — the Plan-2
-  /// bridge's instant original being replaced by a freshly-built proxy —
+  /// resolver later returns a different URL for this media — the instant
+  /// original (decodable-bridge path) being replaced by a freshly-built proxy —
   /// `ensureClip` starts a no-flash overlap-swap to the new URL.
   builtFromUrl: string;
   /// Diagnostic edge-trigger: true if the last `updateClip` call
@@ -1310,17 +1310,15 @@ export class Compositor {
     const existing = this.clips.get(layer.id);
     // `existing.source` can have been reclaimed by the pool's idle
     // sweeper (`SourceDecoderPool` disposes handles after
-    // `IDLE_DISPOSE_MS` of no `requestFrameAt` traffic). After my
-    // fix to `setAnchorTime`, only the SourceHandle for the currently
-    // active media gets its `lastUseMs` touched, so handles for other
-    // media on the timeline are now genuine sweep candidates. When
-    // the user returns to one of those clips, the cached `source`
-    // points at a disposed handle whose ring is empty and whose
-    // demuxer samples have been freed — a fresh `pool.acquire()` is
-    // needed to revive the source.
+    // `IDLE_DISPOSE_MS` of no `requestFrameAt` traffic). `setAnchorTime`
+    // only touches `lastUseMs` for the currently active media's handle,
+    // so handles for other media on the timeline are genuine sweep
+    // candidates. When the user returns to one of those clips, the cached
+    // `source` points at a disposed handle whose ring is empty and whose
+    // demuxer samples have been freed — a fresh `pool.acquire()` revives it.
     if (existing && !existing.source.disposed) {
       // No-flash bridge→proxy upgrade: once the resolver returns a different
-      // URL for this media (the Plan-2 instant original replaced by a freshly
+      // URL for this media (the instant original replaced by a freshly
       // built proxy), begin an overlap-swap — but keep returning the existing
       // clip so the original stays on screen until the proxy has the frame.
       if (this.mode === "preview") {

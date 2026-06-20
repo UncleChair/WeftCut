@@ -104,7 +104,7 @@
   color: var(--color-red-300);
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   word-break: break-word;
-  /* Keep stack traces / mpv error blobs from blowing out the surface. */
+  /* Keep long stack traces / error blobs from blowing out the surface. */
   max-height: 6em;
   overflow: auto;
 }

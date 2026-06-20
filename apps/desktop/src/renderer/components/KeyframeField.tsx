@@ -7,7 +7,7 @@ import { AppSlider } from "./AppSlider";
 import { AnimatableField, displayValue } from "./AnimatableField";
 
 // Sliders fire onValueChange continuously; debounce the recorded commit so a
-// drag doesn't flood the actor (same 250ms the inspector used pre-consolidation).
+// drag doesn't flood the actor. (Mirrors the inspector's debounce window.)
 const SLIDER_COMMIT_DEBOUNCE_MS = 250;
 
 export interface KeyframeFieldProps {

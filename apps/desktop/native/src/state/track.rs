@@ -12,7 +12,7 @@ pub struct Track {
     pub label: Option<String>,
     pub enabled: bool,
     pub locked: bool,
-    /// Track-level audio mute (timeline redesign spec, section 3).
+    /// Track-level audio mute.
     /// Silences this track's Audio layers in preview AND export; video
     /// output is unaffected. Toggled via the unrecorded
     /// `update_track_flags` path so undo never flips it. Defaults to

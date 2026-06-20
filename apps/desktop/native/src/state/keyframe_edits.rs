@@ -1,13 +1,13 @@
 //! Pure `Animated<f64>` keyframe transforms for the authoring surface.
 //!
-//! Behavioral mirror of `apps/desktop/src/keyframe/edits.ts`. Times are
+//! Behavioral mirror of `apps/desktop/src/renderer/keyframe/edits.ts`. Times are
 //! LAYER-LOCAL microseconds (the keyframe `t_us` base). Each fn returns a NEW
 //! track; the actor re-normalizes (snap/sort/dedupe) on write, so these need
 //! only stay self-consistent.
 //!
 //! Cross-language parity is locked by `keyframeEditsGolden.fixture.json`
 //! (asserted by `golden_vectors_match_fixture` here AND by
-//! `keyframe/edits.golden.test.ts`). Any edit here MUST be mirrored in the TS
+//! `apps/desktop/src/renderer/keyframe/edits.golden.test.ts`). Any edit here MUST be mirrored in the TS
 //! and reflected in the fixture — there is no other enforcing test (see memory
 //! `feedback_engine_source_drift`, `feedback_snap_math_drift`).
 

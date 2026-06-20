@@ -1,4 +1,4 @@
-//! §7-B cross-project staleness (Stage 5, upload-authoring spec §7).
+//! Cross-project staleness (upload-authoring spec §7-B).
 //!
 //! A placed Motif layer stores the `motif_version` it was created with as a
 //! **seen-at marker** — it does NOT pin rendering (the frame cache key is

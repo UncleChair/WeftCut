@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "kebab-case")]
 pub enum Provider {
     /// OpenAI API key. Activates both Whisper transcription and tts-1
-    /// synthesis (Phase 6). Same key works for any future OpenAI-hosted
+    /// synthesis. Same key works for any future OpenAI-hosted
     /// endpoint.
     OpenAi,
 }
@@ -39,8 +39,8 @@ impl Provider {
         &[Provider::OpenAi]
     }
 
-    /// Which Phase 6 capability surfaces this provider can serve. The default
-    /// provider picker (Stage 5) walks [`Provider::all`], filters by the
+    /// Which capability surfaces this provider can serve. The default
+    /// provider picker walks [`Provider::all`], filters by the
     /// requested capability, requires `has_key`, and returns the first match —
     /// so a single OpenAI key activates both transcription and TTS without
     /// any per-surface configuration on the user side.
@@ -54,7 +54,7 @@ impl Provider {
     }
 }
 
-/// Per-provider declaration of which Phase 6 surfaces are reachable through it.
+/// Per-provider declaration of which capability surfaces are reachable through it.
 /// Adding a provider that does TTS only is `transcription: false, tts: true`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Capabilities {

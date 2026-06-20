@@ -10,9 +10,9 @@ import { snapFrameRound } from "../../frames";
 import { MIN_LAYER_DURATION_US, type VisualTrack } from "../geometry";
 import { type DragState, type PendingLayerPlacement } from "../LayerBlock";
 
-/// V.10: tracks are kind-agnostic; any layer can land on any track.
-/// The cross-kind reject the function used to enforce is gone — the
-/// IR routes by LayerParams (V.5), not by track kind.
+/// Tracks are kind-agnostic: any layer can land on any track. This
+/// reject hook always accepts; routing is by LayerParams, not track
+/// kind. See docs/data-model.md (kind-agnostic tracks) / ADR 0023.
 function trackAcceptsForLayer(_target: TrackSummary, _drag: DragState): boolean {
   return true;
 }

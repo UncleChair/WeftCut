@@ -3,8 +3,8 @@
 //! Keyframe times are RELATIVE to the layer's `t_start_us`. Otherwise moving a
 //! layer breaks its animation.
 
-// `Animated::static` constructor is API for keyframe-aware mutators landing
-// with Phase 2 effects.
+// `Animated::static` is part of the keyframe-mutation API; not every caller
+// is wired up yet, so the dead-code lint is silenced module-wide.
 #![allow(dead_code)]
 
 use serde::{Deserialize, Serialize};
@@ -203,7 +203,7 @@ impl<T: Clone + PartialEq> Animated<T> {
     /// — adjacent keyframe pairs with continuous-interp on the LEFT
     /// keyframe AND distinct values.
     ///
-    /// Interp-direction convention (verified against `engine.ts:402-408`
+    /// Interp-direction convention (verified against `render/animated.ts`
     /// `resolveAnimated`): the segment `[kf[i].t_us, kf[i+1].t_us)` is
     /// governed by `kf[i].interp`. Hold on the left → no motion in the
     /// segment (value is constant `kf[i].value`); continuous interp
@@ -273,7 +273,7 @@ impl<T: Clone + PartialEq> Animated<T> {
 }
 
 impl Animated<f64> {
-    /// Resolve the value at owner-local `t_us`. Mirrors `engine.ts`
+    /// Resolve the value at owner-local `t_us`. Mirrors `render/animated.ts`
     /// `resolveAnimated` byte-for-byte:
     /// - `Static(v)` → `v`
     /// - empty `Keyframed` → `default`

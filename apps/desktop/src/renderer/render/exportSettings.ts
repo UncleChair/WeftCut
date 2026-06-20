@@ -64,7 +64,7 @@ export interface ExportSettings {
   /// color is governed by the colorspace tags + the conformance gate either way.
   hwAccel: "auto" | "software";
   /// Output bit depth. 10 runs the f16/WebGL2 + native-encode pipeline
-  /// (HEVC Main10 / AV1 10-bit); 8 is the existing pipeline, unchanged.
+  /// (HEVC Main10 / AV1 10-bit); 8 uses the standard 8-bit pipeline.
   /// H.264 output is always 8 (Hi10P output compatibility is poor).
   bitDepth: BitDepth;
   /// Output container. Audio is AAC (any container) or Opus (MKV only).
@@ -142,8 +142,8 @@ export function downscaleFpsOptions(compFps: number): number[] {
   return STANDARD_FPS.filter((f) => f < compFps);
 }
 
-// Base bits-per-pixel-per-frame tuned for H.264 so medium @ 1080p30 ≈ 8 Mbps
-// (matches today's hardcoded default). bitrate = width * height * fps * bpp.
+// Base bits-per-pixel-per-frame tuned for H.264 so medium @ 1080p30 ≈ 8 Mbps.
+// bitrate = width * height * fps * bpp.
 const BASE_BPP: Record<Exclude<QualityPreset, "custom">, number> = {
   low: 0.07,
   medium: 0.129,

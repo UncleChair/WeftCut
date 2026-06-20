@@ -4,7 +4,6 @@ import { MotifFrameCache, hashCacheKey, type Closeable } from "./frameCache";
 /// Stand-in for the browser `ImageBitmap`. The L0 store treats values
 /// opaquely except for the `close()` call on eviction / clear / dispose,
 /// so a `{ close: vi.fn() }` is enough to assert the close behavior.
-/// (Mirrors `fakeBitmap()` in Cache.test.ts.)
 function fakeBitmap(): ImageBitmap & { close: ReturnType<typeof vi.fn> } {
   return { close: vi.fn() } as unknown as ImageBitmap & {
     close: ReturnType<typeof vi.fn>;
@@ -37,11 +36,11 @@ describe("MotifFrameCache — L0 LRU", () => {
   });
 
   test("re-set of an existing entry keeps the existing bitmap, closes the incoming, and refreshes recency", () => {
-    // CHANGED from old behavior: setFrame is now IDEMPOTENT — the existing
-    // (possibly already-bound) bitmap is kept; the redundant incoming one is
-    // closed; the canonical (existing) bitmap is returned. This prevents
-    // "External Image has been detached" on WebGPU upload when concurrent
-    // cold-miss rasterizers race to setFrame the same (key, frame).
+    // setFrame is idempotent: on a same-(key,frame) re-set the existing
+    // (possibly already-bound) bitmap is kept and the redundant incoming one is
+    // closed; the canonical existing bitmap is returned. Prevents "External
+    // Image has been detached" on WebGPU upload when concurrent cold-miss
+    // rasterizers race to setFrame the same (key, frame).
     const c = new MotifFrameCache(3);
     const a = fakeBitmap();
     const a2 = fakeBitmap();
@@ -102,10 +101,9 @@ describe("MotifFrameCache — L0 LRU", () => {
     // Re-`setFrame` of an existing entry must move it to the MRU tail (same as
     // a get-hit), so the OTHER frame becomes the LRU eviction victim.
     //
-    // CHANGED from old behavior: setFrame is now IDEMPOTENT — on a re-set the
-    // existing bitmap (a) is KEPT and refreshed to MRU; the incoming bitmap
-    // (a2) is CLOSED as redundant. The key recency update (k#0 → MRU tail)
-    // is preserved, so k#1 remains the LRU victim as before.
+    // Idempotent re-set: the existing bitmap (a) is kept and refreshed to the
+    // MRU tail; the incoming a2 is closed as redundant. Because k#0 moves to
+    // MRU, k#1 remains the LRU eviction victim.
     const c = new MotifFrameCache(2);
     const a = fakeBitmap();
     const a2 = fakeBitmap();
@@ -136,8 +134,8 @@ describe("MotifFrameCache — L0 LRU", () => {
   });
 
   test("a NaN cap falls back to the default bound (eviction still fires)", () => {
-    // A NaN cap previously disabled eviction entirely (`size > NaN` is always
-    // false). It must clamp to the default (240) instead of growing unbounded.
+    // A NaN cap must clamp to the default (240): `size > NaN` is always false,
+    // so eviction would never fire and the cache would grow unbounded.
     const c = new MotifFrameCache(Number.NaN);
     for (let i = 0; i < 241; i++) c.setFrame("k", i, fakeBitmap());
     expect(c.size()).toBe(240);

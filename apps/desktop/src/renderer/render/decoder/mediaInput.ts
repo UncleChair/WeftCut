@@ -1,8 +1,6 @@
 // Opens a weftcut-media:// media file through mediabunny, lazily, and exposes the
 // primary video track + an EncodedPacketSink for it. Explicit format list
 // (MP4/MOV/Matroska/WebM) — NOT ALL_FORMATS — to keep the bundle lean.
-// Replaces the mp4box `Demuxer`'s open/read role in later phases; additive
-// for now.
 
 import {
   Input,
@@ -18,7 +16,7 @@ import { MediaRangeSource } from "./MediaRangeSource";
 export interface OpenedMedia {
   /// The primary video track; `getDecoderConfig()` gives the WebCodecs config.
   videoTrack: InputVideoTrack;
-  /// Packet source for seek + forward decode (Plan B/C consume this).
+  /// Packet source for seek + forward decode.
   packetSink: EncodedPacketSink;
   /// Release the Input + abort in-flight Range reads.
   dispose: () => void;

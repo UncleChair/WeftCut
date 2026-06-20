@@ -1,11 +1,11 @@
 //! `Transcriber` capability surface — audio file in, SRT body out.
 //!
-//! The trait is `Send + Sync + dyn`-compatible so the Stage 5 picker can
-//! hand back a `Box<dyn Transcriber>` regardless of which provider was
-//! configured. Owned `PathBuf` / `String` in the request struct (not
-//! borrows) keep the async-trait desugaring clean.
+//! The trait is `Send + Sync + dyn`-compatible so the picker can hand back a
+//! `Box<dyn Transcriber>` regardless of which provider was configured. Owned
+//! `PathBuf` / `String` in the request struct (not borrows) keep the
+//! async-trait desugaring clean.
 //!
-//! Provider impls (Stage 5: OpenAI Whisper, future: Deepgram, AssemblyAI)
+//! Provider impls (OpenAI Whisper today; Deepgram / AssemblyAI would slot in)
 //! live in sibling modules and `impl Transcriber for ...`. Adding a second
 //! provider is a single-file change as long as the new impl uses the shared
 //! [`super::http::shared_client`] and surfaces failures through
@@ -29,8 +29,8 @@ pub struct TranscribeRequest {
 pub struct TranscribeResponse {
     /// SRT body. Cue timestamps are **relative to the start of the supplied
     /// audio file** (i.e., 0 = the first sample of the slice). The caller —
-    /// the `transcribe_clip` MCP tool in Stage 5 — shifts these to timeline-
-    /// absolute before returning to the agent.
+    /// the `transcribe_clip` MCP tool — shifts these to timeline-absolute
+    /// before returning to the agent.
     pub srt_body: String,
     /// Detected language if the provider returns one, else `None`.
     pub language_detected: Option<String>,

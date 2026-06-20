@@ -34,11 +34,9 @@ test('external MCP client connects, calls tools, and bearer is enforced', async 
   // With the token: ping + add_track parity + resource read.
   const client = await connect(info.url, info.bearer_token)
 
-  // Real SDK client.listTools() — exercises the Zod inputSchema validator.
-  // Previously this was a rawListToolNames() raw-fetch workaround because
-  // schemars 0.8 emitted boolean `true` for serde_json::Value properties
-  // (interp/track on keyframe tools), which SDK 1.29.0 AssertObjectSchema
-  // rejects. Fixed by emitting `{}` via schema_with = "any_object_schema".
+  // Use the real SDK client.listTools() so the call goes through the Zod
+  // inputSchema validator: keyframe tools (interp/track props) must emit an
+  // object schema, not bare `true`, or AssertObjectSchema rejects them.
   const toolsResult = await client.listTools()
   expect(toolsResult.tools.map((t) => t.name)).toContain('add_track')
 

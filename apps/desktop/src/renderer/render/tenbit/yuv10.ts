@@ -56,7 +56,7 @@ export function yuv10ToRgb(
 }
 
 /// CPU reference of the pack shader's byte layout: two samples per RGBA8
-/// texel, u16LE each. Used by the GL-parity e2e (Task 5).
+/// texel, u16LE each.
 export function packTwoSamples(
   a10: number,
   b10: number,

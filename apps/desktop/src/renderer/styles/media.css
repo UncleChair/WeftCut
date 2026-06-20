@@ -118,9 +118,9 @@
 /* Search field + its ✕ now come from AppInput (.app-input / .app-input-clear);
  * .media-pool-search just provides the bottom margin around the wrap. */
 
-/* 2026-05-16 MediaPool redesign: card grid. Thumbnail on top + name
-   strip at the bottom by default; details overlay fades in on hover.
-   Click to preview; HTML5 drag remains for drag-to-track. */
+/* MediaPool card grid: thumbnail on top, name strip at the bottom by
+   default; details overlay fades in on hover. Click to preview; HTML5
+   drag handles drag-to-track. */
 .media-list {
   list-style: none;
   margin: 0;
@@ -230,7 +230,7 @@
 }
 
 /* --------------------------------------------------------------------------
- * Media-pool badges (Phase C.1 + C.2 — docs/data-model.md)
+ * Media-pool badges (see docs/data-model.md)
  * -------------------------------------------------------------------------- */
 
 /* Shared not-ready treatment — the card is visually inert and the
@@ -322,7 +322,7 @@
   z-index: 2;
 }
 
-/* Status-bar pill: "Generating N derivatives…" (Phase C.3). */
+/* Status-bar pill: "Generating N derivatives…". */
 
 .derivatives-pill {
   display: inline-flex;

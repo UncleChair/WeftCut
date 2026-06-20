@@ -73,7 +73,7 @@ export function TrackLane({
     payload: MediaDragPayload,
     e: React.DragEvent<HTMLDivElement>,
   ) => void;
-  /// V.7 context-menu hook. LayerBlock fires this on right-click; the
+  /// Context-menu hook. LayerBlock fires this on right-click; the
   /// Timeline shows a small floating menu and routes the chosen
   /// action.
   onContextMenu: (
@@ -85,7 +85,7 @@ export function TrackLane({
   onCommitLabel: (layerId: string, label: string) => void;
   onCommitParamTrack: (layerId: string, paramKey: string, track: AnimTrack<number>) => void;
   isGroupStart: boolean;
-  /// R.7 inline-reveal flag. The lane renders with extra chrome
+  /// Inline-reveal flag. The lane renders with extra chrome
   /// (dashed border / "hidden" badge) so the user knows this row is
   /// only here because they clicked a peek item.
   isRevealed: boolean;
@@ -219,7 +219,7 @@ export function TrackLane({
           lane's `relative` box — geometry identical in both states. */}
       <div className={track.enabled ? "contents" : "pointer-events-none opacity-40"}>
       {(() => {
-        // V.6: compute per-layer slice once per track render. Layers
+        // Compute per-layer slice once per track render. Layers
         // with a co-located opposite-class layer render half-height
         // (top for visual, bottom for audio) so the user sees both in
         // one row. Single-class layers fill the row at full height.

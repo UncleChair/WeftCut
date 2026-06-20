@@ -1,6 +1,6 @@
 // Per-layer buffer-scheduled audio playback (docs/audio.md §Preview mixer).
-// Replaces the element-based mixer: chunks of conform PCM are read over
-// weftcut-media:// Range (zero decode), wrapped as AudioBuffers, and scheduled
+// Chunks of conform PCM are read over weftcut-media:// Range (zero decode),
+// wrapped as AudioBuffers, and scheduled
 // sample-accurately on the AudioContext clock against a play anchor.
 //
 // Node chain per layer:

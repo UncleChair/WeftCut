@@ -8,7 +8,7 @@
 /* ============================================================ */
 
 .motif-picker {
-  /* Widened from 880px to accommodate the iframe preview pane on the right. */
+  /* Wide enough to seat the preview pane alongside the picker list/form. */
   width: min(1040px, calc(100vw - 32px));
   max-height: calc(100vh - 64px);
   background: var(--background);

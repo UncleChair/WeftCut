@@ -78,8 +78,8 @@ export function subtitlesViewToAssBody(view: SubtitlesView): string | null {
 /// is converted via `srtToAss`. Anything else (`.vtt`, unknown
 /// extensions) returns null — the caller surfaces the skip.
 ///
-/// Pure so chunk 2's file-fetch path stays testable in Node without
-/// real assets. The caller picks the path off `MediaItem.path`.
+/// Pure so the file-fetch path stays testable in Node without real
+/// assets. The caller picks the path off `MediaItem.path`.
 export function subtitleBodyFromFile(
   path: string,
   content: string,

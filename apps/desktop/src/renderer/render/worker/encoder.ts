@@ -5,7 +5,6 @@
 // backpressure) and hand only the CONTAINER to mediabunny: an
 // EncodedVideoPacketSource fed the encoder's output chunks, muxed by an
 // Output + fragmented Mp4OutputFormat into an AppendOnlyStreamTarget.
-// (Replaces the prior mp4box createFile/addTrack/addSample/write path.)
 //
 // The encoder's `output` callback is synchronous, but `source.add` is async
 // (it returns a backpressure Promise). We serialize adds through a promise

@@ -12,8 +12,7 @@ import {
 /// composite roving-focus stop and coordinates the Menus inside it:
 /// click opens, hovering an adjacent trigger while any menu is open
 /// switches to it, ArrowLeft/Right move between menus, and opening one
-/// menu closes the previous (the hand-rolled version let two dropdowns
-/// sit open at once).
+/// menu closes the previous (only one dropdown open at a time).
 export function MenuBar({ children }: { children: ReactNode }) {
   return <Menubar className="menu-bar">{children}</Menubar>;
 }
@@ -27,12 +26,10 @@ interface MenuProps {
   children: ReactNode;
 }
 
-/// One dropdown in the bar. Base UI supplies what the hand-rolled
-/// version lacked: portal + Floating UI positioning, outside-click and
+/// One dropdown in the bar. Base UI supplies portal + Floating UI positioning, outside-click and
 /// Escape close, ArrowDown/Up item navigation, and typeahead. The
-/// legacy .menu-* classes keep the visual identity; placement moved
-/// from .menu-list's absolute offsets to the Positioner (align start,
-/// 4px below the trigger — same spot).
+/// .menu-* classes carry the visual identity; placement is via the
+/// Positioner (align start, 4px below the trigger).
 export function Menu({ label, hint, children }: MenuProps) {
   return (
     <MenuPrimitive.Root>

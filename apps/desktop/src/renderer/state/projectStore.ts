@@ -11,8 +11,9 @@ import {
 } from "../ipc";
 
 /// Frontend mirror of the Rust `Project` actor's state, kept in sync via
-/// `project:changed` backend events. The DOM preview engine consumes this
-/// directly (no `emit_dom` IR target per `docs/preview.md` Q6).
+/// `project:changed` backend events. The PixiJS preview consumes this
+/// directly; there is no separate IR emit target for the preview
+/// (see `docs/preview.md`).
 ///
 /// Atomic selectors only — composite-object selectors infinite-loop
 /// `useSyncExternalStore` per `feedback_zustand_composite_selector`.
@@ -21,10 +22,9 @@ import {
 ///
 /// Pre-workspace: `summary` is `null`; consumers should guard.
 ///
-/// `App.tsx`'s existing local-state fetch coexists with this store for
-/// the duration of the `feat/preview-dom` branch — both subscribe to
-/// `project:changed`, both re-fetch, no cross-talk. App.tsx migrates to
-/// the store at Phase F cutover.
+/// `App.tsx` keeps a local-state fetch alongside this store: both
+/// subscribe to `project:changed` and re-fetch independently, with no
+/// cross-talk.
 
 export interface ProjectStoreState {
   summary: ProjectSummary | null;

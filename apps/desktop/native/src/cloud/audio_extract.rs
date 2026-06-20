@@ -5,7 +5,7 @@
 //!
 //! Output is content-addressed and reused across calls. Hash composition is
 //! `blake3([source_hash.as_bytes(), in_us.to_le_bytes(), out_us.to_le_bytes()].concat())` —
-//! pinned here so Stage 5+ never re-derives it differently. Files land in
+//! pinned here so callers never re-derive it differently. Files land in
 //! `<cache>/transcribe-audio/<hash>.wav` (see `cache::CacheLayout`).
 //!
 //! Atomic via the shared `temp_path / promote_temp / discard_temp` triad,
@@ -14,7 +14,7 @@
 //! unbounded parallelism on import-heavy moments.
 //!
 //! Size envelope at 16 kHz mono pcm_s16le: 32 KB/sec, so the Whisper 25 MB
-//! upload cap is ~13 minutes per single extract. Stage 5 (`transcribe_clip`)
+//! upload cap is ~13 minutes per single extract. `transcribe_clip`
 //! is the layer that surfaces `PayloadTooLarge` against that envelope; this
 //! module just produces the file.
 

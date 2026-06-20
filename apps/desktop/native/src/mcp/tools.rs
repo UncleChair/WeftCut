@@ -1,15 +1,11 @@
 //! MCP tool functions, transport-free. Each tool is a
 //! `pub(super) async fn <name>(b: &Backend, args: <Args>) -> Result<ToolResult, McpToolError>`.
-//! Bodies are ported verbatim from the pre-S4a `WeftCutServer` impl with the
-//! mechanical transform applied: `self.project` → `b.project()?`, `self.cache`
-//! → `&b.cache`, `crate::logs::emit_via_app(&self.app, e)` → `b.log_slot.emit(e)`,
-//! `ok_text`/`ok_json`/`ok_void` → `ToolResult::{text,json,empty}`, and
-//! `McpError` → `McpToolError` (constructors match 1:1).
+//! Each tool returns `ToolResult` / `McpToolError`. Errors map 1:1 onto the MCP
+//! error model in `wire.rs`.
 //!
 //! The keyframe tools are thin wrappers delegating to `super::keyframes::*`.
-//!
-//! Cloud tools (transcribe/synthesize) and motif tools are NOT here — they are
-//! deferred to S4b/S5 and recoverable from git.
+//! Cloud tools (transcribe/synthesize) are gated on `feature = "cloud"`; motif
+//! tools on `feature = "motifs"`.
 
 use chrono::Utc;
 use schemars::JsonSchema;
@@ -773,7 +769,7 @@ pub(super) async fn trim_layer(
 }
 
 // ============================================================
-// Group tools (Phase G.4 — `docs/groups.md`)
+// Group tools — `docs/groups.md`
 // ============================================================
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -1424,7 +1420,7 @@ pub(super) async fn restore_checkpoint(
 }
 
 // ============================================================
-// Dry run (Phase 4.x last gap)
+// Dry run
 // ============================================================
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -1790,7 +1786,7 @@ fn push_if_long_enough(
 }
 
 // ============================================================
-// Motif tools (S5 — recovered from 97e3c7f2, transport-free transform)
+// Motif tools
 // ============================================================
 
 /// Parse the canonical JSON string from `Motif::canonicalize_props` into
@@ -2076,9 +2072,7 @@ pub(super) async fn add_motif(
 }
 
 // ============================================================
-// Tests — ported from the pre-S4a `mcp/mod.rs` #[cfg(test)] block,
-// adapted to the free-fn signatures. Tests that exercised deleted
-// cloud/motif tools are dropped (their tools moved to S4b/S5).
+// Tests for the free-fn tool surface.
 // ============================================================
 
 #[cfg(test)]
@@ -2114,7 +2108,7 @@ mod tests {
     }
 
     // ============================================================
-    // detect_silences_in_peaks — Phase 4.x silence-cut helper
+    // detect_silences_in_peaks — silence-cut helper
     // ============================================================
 
     /// 100 peaks/sec means each peak covers 10_000us. Easier to think in
@@ -2328,11 +2322,7 @@ mod tests {
 }
 
 // ============================================================
-// Cloud tools: transcribe_clip + synthesize_speech
-// Recovered from 97e3c7f2:apps/desktop/native/src/mcp/mod.rs
-// and ported under the S4b transform (self.project → b.project()?,
-// self.cache → &b.cache, emit_via_app → b.log_slot.emit,
-// ok_text/ok_json → ToolResult::text/json, McpError → McpToolError).
+// Cloud tools: transcribe_clip + synthesize_speech. Gated on feature = "cloud".
 // ============================================================
 
 #[cfg(feature = "cloud")]
@@ -2683,12 +2673,10 @@ pub(super) async fn synthesize_speech(
         &args.voice,
         args.speed,
     );
-    // Cache extension hardcoded as "mp3" because the only Stage 6 provider
-    // (OpenAiTts) pins `response_format=mp3`. The `debug_assert!` below
-    // trips in dev the first time a future provider returns a different
-    // format and forces the format-extension-from-response fix here.
-    // TODO(future-provider): pull extension from `resp.format` so cache
-    // file naming matches provider output once a second TTS provider lands.
+    // Cache extension hardcoded "mp3": the only TTS provider pins
+    // `response_format=mp3`. The `debug_assert!` below trips in dev the first time
+    // a provider returns a different format — fix the extension-from-response here.
+    // TODO: pull extension from `resp.format` once a non-mp3 TTS provider lands.
     let dest = b.cache.voiceover(&cache_key, "mp3");
     let cached = cached_ok(&dest);
     if !cached {
@@ -2703,7 +2691,7 @@ pub(super) async fn synthesize_speech(
         debug_assert_eq!(
             resp.format,
             cloud::AudioFormat::Mp3,
-            "Stage 6 v1 assumes mp3 output; update cache extension before adding non-mp3 providers",
+            "TTS cache extension assumes mp3 output; update it before adding non-mp3 providers",
         );
         write_voiceover_atomic(&dest, &resp.audio)
             .await

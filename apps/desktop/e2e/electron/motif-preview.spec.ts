@@ -1,7 +1,5 @@
 // e2e gate: live motif preview via offscreen CDP into the Pixi compositor.
 //
-// Mirrors `e2e/specs/motif/capture.e2e.js` Describe 3 ("motif live preview").
-//
 // Chain under test:
 //   motifAddCountdown() → Compositor.compositeFrame → MotifSprite →
 //   resolveMotifFrame → rasterMotifFrame (captureMotifFrameB64 via CDP host) →

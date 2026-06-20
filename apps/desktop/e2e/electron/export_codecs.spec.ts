@@ -13,7 +13,7 @@ const MEDIA_DIR = process.env.WEFTCUT_TEST_MEDIA || path.resolve(__dirname, '../
 // Standard 1080p30 source for AV1 + HEVC 8-bit smoke.
 const SOURCE = path.resolve(MEDIA_DIR, 'test_1080p_30fps.mp4')
 // 10-bit H.264 gradient ramp source — proves >256 luma levels survive the
-// f16/WebGL2 + yuv420p10le pack + WS videosink + ffmpeg HEVC Main10 chain.
+// f16/WebGL2 + yuv420p10le pack + native IPC video sink + ffmpeg HEVC Main10 chain.
 const SOURCE_10BIT = path.resolve(MEDIA_DIR, 'test_1080p_gradient10_h264.mp4')
 
 const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-codecs-proj')
@@ -22,20 +22,15 @@ const PROJECT_PARENT = path.resolve(os.tmpdir(), 'weftcut-e2e-codecs-proj')
 const REPO = path.resolve(__dirname, '..', '..', '..', '..')
 
 // ---------------------------------------------------------------------------
-// Settings objects — copied from the source specs:
+// Export settings per codec. The `codec` field is the routing discriminator:
 //
-//   AV1 (8-bit, WebCodecs sw encode → ffmpeg mux):
-//     No single source spec exposes these fields; constructed verbatim from
-//     exportSettings.ts ExportSettings type. The key discriminator is
-//     `codec:'av1'` which routes through WebCodecs-AV1 → mux_export.
+//   AV1 (8-bit): `codec:'av1'` → WebCodecs sw encode → ffmpeg mux_export.
 //
-//   HEVC (8-bit, WebCodecs H.264 mezzanine → ffmpeg transcode_and_mux):
-//     Same type; `codec:'hevc'` routes through the ffmpeg transcode path,
+//   HEVC (8-bit): `codec:'hevc'` → ffmpeg transcode_and_mux (H.264 mezzanine),
 //     emitting `export:transcode_progress` events.
 //
-//   10-bit HEVC (WS videosink → ffmpeg HEVC Main10):
-//     Verbatim from export_10bit.e2e.js `TEN_BIT_SETTINGS`.
-//     Source: apps/desktop/e2e/specs/export/export_10bit.e2e.js lines 26-31.
+//   10-bit HEVC: `codec:'hevc'` + `bitDepth:10` → ffmpeg HEVC Main10.
+//     See ExportSettings in exportSettings.ts.
 // ---------------------------------------------------------------------------
 
 const AV1_SETTINGS = {
@@ -52,7 +47,7 @@ const HEVC_SETTINGS = {
   audio: { include: false },
 } as const
 
-// Verbatim from export_10bit.e2e.js TEN_BIT_SETTINGS (lines 26-31).
+// 10-bit HEVC Main10 settings (see ExportSettings in exportSettings.ts).
 const TEN_BIT_SETTINGS = {
   codec: 'hevc',
   bitDepth: 10,
@@ -196,8 +191,7 @@ test.describe('multi-codec export smoke (Electron)', () => {
   })
 
   // -------------------------------------------------------------------------
-  // 10-bit HEVC (WS videosink → ffmpeg HEVC Main10).
-  // Settings verbatim from export_10bit.e2e.js TEN_BIT_SETTINGS (lines 26-31):
+  // 10-bit HEVC (native IPC video sink → ffmpeg HEVC Main10).
   //   { codec:"hevc", bitDepth:10, container:"mp4", audio:{include:false} }
   // Source: test_1080p_gradient10_h264.mp4 (10-bit H.264 Hi10P gradient ramp).
   // Asserts: export completes, output is HEVC Main10 / 10-bit pix_fmt, file exists.
@@ -232,7 +226,6 @@ test.describe('multi-codec export smoke (Electron)', () => {
       expect(existsSync(OUTPUT), '10-bit output file must exist').toBe(true)
 
       // Container/codec shape: HEVC Main10, a 10-bit pixel format.
-      // Verbatim assertions from export_10bit.e2e.js lines 152-158.
       const st = probeVideoStream(
         OUTPUT,
         'codec_name,profile,pix_fmt,color_space,color_transfer,color_primaries,color_range',
@@ -246,19 +239,19 @@ test.describe('multi-codec export smoke (Electron)', () => {
       expect(st.color_primaries).toBe('bt709')
       expect(st.color_range).toBe('tv')
 
-      // The source spec (export_10bit.e2e.js) asserts via `gradientReport`
-      // (media_conformance --gradient-row, distinct luma levels > 600) which is
-      // not exposed in analyze.mjs. Instead we run a wide-window analyze() as a
+      // A strict gradient-row check (media_conformance --gradient-row, distinct
+      // luma levels > 600) is not exposed in analyze.mjs. Instead we run a
+      // wide-window analyze() as a
       // loose smoke: the 1s gradient ramp is 30 frames, so we use the window
       // parameter to tolerate minor frame-grid differences (the 10-bit path's
-      // Hi10P SW decode + WS-sink chunking can shift PTS by a frame or two).
+      // Hi10P SW decode + the chunked video-sink path can shift PTS by a frame or two).
       // The primary quality gate here is the codec-shape check above.
       const SSIM_FLOOR = 0.6
       const report = analyze({ output: OUTPUT, source: SOURCE_10BIT, samples: [10], ssimMin: SSIM_FLOOR, window: 5 })
       console.log('[e2e] 10-bit conformance report:', JSON.stringify(report))
       // Verify SSIM quality (the encode must produce a faithful 10-bit output,
       // not garbage). We do NOT gate on strict frame alignment here — the 30-frame
-      // gradient clip's PTS grid can shift by 1–2 frames through the WS path.
+      // gradient clip's PTS grid can shift by 1–2 frames through the video-sink path.
       const lowSsim = report.samples.filter((s: any) => s.ssim < SSIM_FLOOR)
       expect(lowSsim, 'SSIM must exceed ' + SSIM_FLOOR + ': ' + JSON.stringify(lowSsim)).toHaveLength(0)
     } finally {

@@ -1,8 +1,8 @@
 import type { MotifManifest } from "./catalog";
 
 /// The `{ manifest, html }` for a brand-new draft created from the picker's
-/// "New" action — a minimal, valid, animate-in title overlay the user then edits
-/// (Stage 3b-2). `id`/`version` are placeholders; the backend assigns the
+/// "New" action — a minimal, valid, animate-in title overlay the user then edits.
+/// `id`/`version` are placeholders; the backend assigns the
 /// final-ready id + version on write/install. No manifest island in the html
 /// (the backend injects the canonical one via `compose_motif_html`).
 export function newDraftSource(name: string): { manifest: MotifManifest; html: string } {

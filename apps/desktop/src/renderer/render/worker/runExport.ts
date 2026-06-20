@@ -3,7 +3,7 @@
 // project snapshot serialization, OffscreenCanvas transfer, progress
 // streaming, and chunk backpressure.
 //
-// Plan: docs/render.md (P9)
+// See docs/render.md — "Export Worker".
 //
 // Callers provide a writeChunk sink for the video-only fMP4 and get final
 // frame counters. Audio export and mux/transcode run on the Rust side after
@@ -70,8 +70,7 @@ export interface RunExportResult {
 /// Default 1080p H.264 encoder config used when the caller doesn't
 /// supply one. Matches the proxy spec we already have: High profile,
 /// Level 4.2, yuv420p — universally hardware-decodable downstream.
-/// Framerate follows the composition (the hardcoded 30 was a latent bug
-/// for non-30fps projects).
+/// Framerate must follow the composition fps (passed in), not a constant — a fixed value would mis-time non-30fps exports.
 function defaultEncoderConfig(
   width: number,
   height: number,

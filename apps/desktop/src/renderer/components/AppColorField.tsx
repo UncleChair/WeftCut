@@ -11,8 +11,8 @@ export interface AppColorFieldProps {
 
 /// The one color swatch for every WeftCut form. A skinned native
 /// `<input type="color">` — keeps the OS picker (no custom popover). Does NOT
-/// debounce: callers whose commit triggers an expensive re-render (PropertyPanel
-/// CDP re-capture) keep their own debounce, exactly as before.
+/// debounce: callers whose commit triggers an expensive re-render (e.g. PropertyPanel
+/// CDP re-capture) must keep their own debounce.
 export function AppColorField({
   value,
   onValueChange,

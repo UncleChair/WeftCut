@@ -23,7 +23,7 @@ import { useLogStore } from "./store";
 
 /// Expanded console overlay — lifts above the editor. See
 /// `docs/status-log.md` Q6 for the layout decision and Q15
-/// for what's in Phase 2 vs deferred.
+/// for the deferred-features list.
 ///
 /// Layout (top to bottom):
 ///   * toolbar — filter chips, search, Clear/Copy/Open-folder
@@ -34,7 +34,7 @@ import { useLogStore } from "./store";
 ///
 /// Non-virtualised — the ring is 1000 entries, which renders fine on
 /// any modern Chromium. If a future workload changes that, drop in
-/// `react-window` as a Phase 3 polish.
+/// `react-window`.
 
 const LEVEL_ORDER: Record<LogLevel, number> = {
   trace: 0,

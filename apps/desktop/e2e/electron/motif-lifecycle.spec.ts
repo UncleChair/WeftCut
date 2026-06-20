@@ -1,9 +1,5 @@
 // e2e gate: motif authoring lifecycle + staleness + file-watch hot-reload.
 //
-// Mirrors `e2e/specs/motif/state.e2e.js` Describe 1 (staleness notice) and
-// Describe 3 (file watch hot-reload), adapted for the Playwright/Electron
-// driver.
-//
 // Three sections:
 //   A. Authoring: write_motif_draft → install_motif → list_motifs shows it
 //      installed → delete_motif removes it.

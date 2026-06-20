@@ -104,10 +104,6 @@ pub fn job_for(route: ProxyRoute) -> ProxyJob {
 /// export. The frontend `probeSourceDecodable` gate is the cross-machine safety
 /// net: on a machine that can't decode an admitted codec, the probe fails and
 /// the export is route-corrected to a proxy.
-///
-/// (An earlier revision restricted this to H.264 on the theory that the Worker
-/// couldn't decode AV1. That was wrong — the real AV1-export hang was a PTS-grid
-/// deadlock in `ExportFrameStore.waitForPts`, since fixed. See ADR 0012.)
 fn export_decodable_statically(media: &MediaItem) -> bool {
     let Some(video) = media.metadata.video.as_ref() else {
         return false;
@@ -175,8 +171,7 @@ pub fn codec_is_vp9(codec: &str) -> bool {
 /// 8-bit 4:2:0 formats WebCodecs decodes on this pipeline. `yuvj420p` is
 /// ffprobe's legacy "J" alias for full-range yuv420p — the identical bitstream
 /// layout, just `color_range=pc` (the decode side honors that via the threaded
-/// ffprobe sourceColor; see ADR 0014). It was once excluded, which silently
-/// routed every full-range H.264 through a pointless proxy hop.
+/// ffprobe sourceColor; see ADR 0014).
 pub fn pix_fmt_is_browser_friendly(pix_fmt: &str) -> bool {
     let p = pix_fmt.to_ascii_lowercase();
     matches!(p.as_str(), "yuv420p" | "yuvj420p" | "nv12")
@@ -265,7 +260,7 @@ mod tests {
 
     #[test]
     fn unknown_gop_previews_from_proxy() {
-        // None-GOP fix (Piece A): unknown gap → preview proxy, export still original.
+        // Unknown gap → preview proxy, export still original.
         assert_eq!(decide(&video(|_| {}), None), EXPORT_ORIGINAL_PREVIEW_PROXY);
     }
 
@@ -297,8 +292,7 @@ mod tests {
     fn av1_8bit_exports_original_previews_proxy() {
         // 8-bit AV1: the export Worker hardware-decodes it (verified in-app), so
         // export reads the original (DirectExport). Preview still uses a quick
-        // proxy (bypass is H.264-only). The earlier "AV1 → full proxy" routing
-        // was a workaround for a since-fixed waitForPts deadlock. Long GOP here
+        // proxy (bypass is H.264-only). Long GOP here
         // (6 GB / 600 s) so it's not safe_to_bypass → preview proxy.
         let item = video(|m| {
             m.metadata.video.as_mut().unwrap().codec = "av01".into();
@@ -351,8 +345,7 @@ mod tests {
     #[test]
     fn full_range_h264_yuvj420p_routes_like_yuv420p() {
         // yuvj420p is the legacy "J" alias for full-range 8-bit 4:2:0 — the
-        // same stream WebCodecs already decodes (verified in-app: the v6-era
-        // full proxies WERE yuvj420p and exported through WebCodecs). The
+        // same stream WebCodecs already decodes (verified in-app). The
         // decode side reads the source's ffprobe range via sourceColor, so
         // full-range H.264 DirectExports faithfully (color gate). Excluding
         // it only bought a pointless proxy hop.

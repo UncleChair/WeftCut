@@ -189,8 +189,9 @@ async fn write_peaks_file(path: &std::path::Path, peaks: &[f32]) -> Result<()> {
     Ok(())
 }
 
-/// Read a peaks file and return the peaks array. Used by the future timeline
-/// renderer + the `media://{id}/waveform` MCP resource.
+/// Read a peaks file and return the peaks array. Consumed by the waveform media
+/// command, the `detect_silences` MCP tool, and the `media://{id}/waveform`
+/// MCP resource.
 pub fn read_peaks_file(path: &std::path::Path) -> Result<Vec<f32>> {
     use std::io::Read;
     let mut bytes = Vec::new();

@@ -1,6 +1,5 @@
-//! History commands — undo / redo / restore-checkpoint, re-signed from
-//! `commands_legacy.rs`. Bodies are copied verbatim; only the signature
-//! changes (the napi `Backend` carries the managed state).
+//! History commands — undo / redo / restore-checkpoint. Thin wrappers over the
+//! project actor; the napi `Backend` carries the managed state.
 
 use uuid::Uuid;
 #[cfg(debug_assertions)]

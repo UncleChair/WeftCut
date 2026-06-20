@@ -3,9 +3,9 @@
 //   - src/preload/index.ts   implements it: `const api: WeftcutApi = {…}`
 //                            (so the implementation is compile-checked here)
 //   - src/renderer/bridge/   consumes it: augments `Window` + wraps each method
-// Because both type-check against THIS definition, they can no longer drift
-// (the failure mode the old hand-mirrored copies risked). The main process does
-// not consume this contract, so it does not reference this project.
+// Because both type-check against THIS definition, the two sides cannot drift.
+// The main process does not consume this contract, so it does not reference
+// this project.
 //
 // Types only — no runtime. `File` etc. resolve from DOM (both consumers are DOM
 // contexts); this file is never imported by the non-DOM main process.

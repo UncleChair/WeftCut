@@ -698,7 +698,7 @@ impl Backend {
             "motif_staleness_report" => ser(crate::commands::motif_authoring::motif_staleness_report(self).await),
             #[cfg(feature = "motifs")]
             "acknowledge_motif_staleness" => ser(crate::commands::motif_authoring::acknowledge_motif_staleness(self).await),
-            other => Err(format!("unavailable: '{other}' is wired in a later stage (S3/S4/S5)")),
+            other => Err(format!("unknown command: '{other}'")),
         }
     }
 }

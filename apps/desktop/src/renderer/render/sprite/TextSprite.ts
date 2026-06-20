@@ -1,15 +1,14 @@
 // Text layer rendered via PixiJS native `Text`.
 //
-// Plan: docs/render.md (P4 — T1 decision: PixiJS Text
-// native canvas)
+// Rendered via PixiJS native `Text` (canvas-backed glyphs). See docs/render.md.
 //
 // Implementation: a single `Text` object with a cached style
 // signature. Per-frame `update(view)` checks whether the content /
 // font / color / size actually changed; if not, no redraw cost. If
 // changed, `text` reassigns the content + style.
 //
-// Limitations vs the legacy DOM TextHandle (parity TBD as needs
-// surface):
+// Fields not yet carried by TextView (plug in once they appear in
+// LayerSummary):
 //   - LayerSummary's TextView ships only flattened content, font,
 //     size, color, position, opacity. The Rust schema has
 //     additional `align`, `shadow`, `outline`, `intro`, `outro`

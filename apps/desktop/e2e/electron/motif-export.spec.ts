@@ -1,7 +1,5 @@
 // e2e gate: motif export — countdown baked and present in the output file.
 //
-// Mirrors `e2e/specs/motif/export.e2e.js`.
-//
 // Assertion: two output frames in DIFFERENT seconds differ (self-SSIM well
 // below 1.0). The countdown's numeral changes at 1-second boundaries AND its
 // progress arc sweeps every frame; a skipped/static motif scores ~1.0 (identical
@@ -9,7 +7,7 @@
 // (≈0.33 s, numeral 2) vs frame 50 (≈1.67 s, numeral 1).
 //
 // driveExport(hook:"exportMotifClip") fires the hook, polls __e2eExportDone,
-// and returns the settled state — same polling loop as the wdio helper.
+// and returns the settled state.
 
 import { test, expect } from '@playwright/test'
 import { existsSync, rmSync, mkdirSync } from 'node:fs'

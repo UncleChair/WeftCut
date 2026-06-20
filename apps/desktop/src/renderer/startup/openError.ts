@@ -1,7 +1,7 @@
 import type { TFunction } from "i18next";
 
 /// Sentinel error strings returned by `project_open`. Mirror the literals
-/// in commands.rs.
+/// in `commands/persistence.rs`.
 ///
 /// The workspace folder itself is gone — typically a recents entry whose
 /// folder was moved or deleted after the fact. Checked before the

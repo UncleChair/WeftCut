@@ -5,9 +5,10 @@
 // form (used in raster cache keys) is deterministic. It mirrors the Rust
 // `Motif::canonicalize_props` validator.
 //
-// The old foreignObject SVG rasterizer that lived here was removed with the
-// SVG render path (`harness.ts` + `svgRaster.ts` + `frameCache.ts`); only the
-// canonicalizer survives. Importers: `MotifSprite.ts`, `exportBake.ts`.
+// Only the prop canonicalizer lives here now; the old foreignObject SVG
+// rasterizer was removed with the SVG render path (`harness.ts`, `svgRaster.ts`).
+// Importers: `exportBake.ts` (and the canonicalizer twin-checks in catalog /
+// motifFrameDescriptor tests).
 
 import type { MotifManifest } from "./catalog";
 

@@ -4,23 +4,20 @@
 // "jitter" motif that uses Math.random (negative control) into
 // determinism-artifacts/<platform>/ as PNGs.
 //
-// This spec runs locally (Windows) to produce the per-OS artifact set. CI Task 8
-// runs it on Linux/macOS and then runs compare-determinism.mjs across the dirs.
+// This spec runs locally (Windows) to produce the per-OS artifact set; CI runs
+// it on Linux/macOS and then runs compare-determinism.mjs across the dirs.
 //
-// SOFTWARE RENDERING NOTE (Windows finding, Task 7):
+// SOFTWARE RENDERING NOTE:
 // Forcing --disable-gpu --use-gl=swiftshader --in-process-gpu causes the
 // offscreen BrowserWindow CDP capture to hang on Windows 11 (test times out at
 // 120s; motif-capture without those flags passes in ~1s). Root cause: the
 // offscreen BrowserWindow + CDP path deadlocks under swiftshader on Windows.
-// This spec therefore runs without forced-swiftshader on the local capture step.
-// The cross-OS apples-to-apples consistency question for CI (Task 8) must address
-// this — either accept that each OS uses its own GPU path, or find a per-OS
-// swiftshader workaround. This is documented as a CONCERN in the Task 7 report.
+// This spec therefore runs without forced-swiftshader; the cross-OS comparison
+// must accept that each OS uses its own GPU path.
 //
-// Real built-in motif IDs (from src/render/motifs/builtin/*/manifest.json):
+// Real built-in motif IDs (from src/renderer/render/motifs/builtin/*/manifest.json):
 //   countdown     480×480   t in [0,5]
 //   lower-third   1280×320  t in [0,5]
-// Brief's "lower-third-simple" and "title-card" do not exist.
 
 import { test } from '@playwright/test'
 import path from 'node:path'

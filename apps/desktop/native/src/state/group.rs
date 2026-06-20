@@ -6,9 +6,8 @@
 //! structural ops lives in `state::actor` and consults the derived
 //! `LayerId → GroupId` index built by `index_groups`.
 //!
-//! Group-level effects + html-cap routing were removed with the Pixi
-//! renderer migration (P12-b). Groups now carry only identity + label
-//! + membership.
+//! Groups carry only identity, an optional label, and flat membership
+//! (a layer is in at most one group). They have no rendering significance.
 
 #![allow(dead_code)]
 

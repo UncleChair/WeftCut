@@ -54,7 +54,7 @@ pub async fn delete_motif(b: &Backend, id: String) -> Result<(), String> {
     Ok(())
 }
 
-// ---- S5: staleness report + acknowledge ----
+// ---- staleness report + acknowledge ----
 
 pub async fn motif_staleness_report(b: &Backend) -> Result<Vec<st::MotifStaleEntry>, String> {
     let current = st::current_versions(&b.motif_store);

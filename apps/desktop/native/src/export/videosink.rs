@@ -2,8 +2,7 @@
 //! Worker, packs each frame to yuv420p10le, and posts it over the export
 //! `chunk` channel; the main process forwards each frame to `video_sink_write`,
 //! which pipes it into an ffmpeg encode. `finish` drops stdin (EOF) and reaps
-//! ffmpeg directly. The former loopback-WebSocket transport was retired (see
-//! docs/superpowers/specs/2026-06-18-electron-10bit-export-ws-removal-design.md).
+//! ffmpeg directly. See docs/export-ipc-transport.md.
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin};

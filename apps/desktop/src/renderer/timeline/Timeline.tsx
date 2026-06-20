@@ -49,22 +49,18 @@ import { useTimelineView } from "./hooks/useTimelineView";
 import { useHeightDrag } from "./hooks/useHeightDrag";
 import { useLayerDrag } from "./hooks/useLayerDrag";
 
-// V.10 (A/B-roll v2): any media drops on any track. The function is
-// kept as a stub returning true to minimise churn at call-sites; future
-// cleanup can inline it away. Kind-based rejection logic is gone — the
-// backend's V.2 overlap rule + V.5 kind-agnostic tracks accept any
-// layer kind on any track.
+// Any media kind drops on any track (tracks are kind-agnostic; the
+// backend enforces overlap rules). Kept as a stub returning true to
+// minimise call-site churn.
 function trackAcceptsMedia(_trackKind: string, _mediaKind: string): boolean {
   return true;
 }
 
 
-// Some media kinds (audio, subtitle) must live on a matching track kind for
-// V.10: under v2 every drop lands on its target track directly (no
-// auto-routing). The function was kept around for the few call-sites
-// that compose `trackAcceptsMedia || trackAcceptsMediaForAutoRoute`;
-// returning false here is a no-op since `trackAcceptsMedia` now
-// returns true unconditionally.
+// Auto-routing is gone — drops land on their target track directly.
+// Kept as a no-op stub (returns false) so the
+// `trackAcceptsMedia || trackAcceptsMediaForAutoRoute` call-sites still
+// compile.
 function trackAcceptsMediaForAutoRoute(_trackKind: string, _mediaKind: string): boolean {
   return false;
 }
@@ -76,7 +72,7 @@ interface TimelineProps {
   durationUs: number;
   currentTimeUs: number;
   selectedLayerId: string | null;
-  /// R.7 (`docs/data-model.md`): when set, this hidden track is
+  /// (`docs/data-model.md`): when set, this hidden track is
   /// included in the AB-mode ordered list at its natural accretion
   /// slot. Cleared by the App when the user selects a layer on a
   /// different track, presses Esc, or the peek list dispatches a new
@@ -137,7 +133,7 @@ export function Timeline({
   onSeek,
   onMutated,
 }: TimelineProps) {
-  // V.7: right-click context-menu state. `null` when closed; otherwise
+  // Right-click context-menu state. `null` when closed; otherwise
   // anchors the menu at the cursor and stores the target layer id.
   const [contextMenu, setContextMenu] = useState<{
     x: number;
@@ -180,7 +176,7 @@ export function Timeline({
   const orderedTracks = useMemo(() => {
     const all = visualOrderedTracks(tracks);
     if (displayMode === "ShowAll") return all;
-    // AB filter: keep role-stamped tracks. R.7 inline-reveal lets one
+    // AB filter: keep role-stamped tracks. Inline-reveal lets one
     // additional hidden track survive the filter at its natural
     // accretion slot — the visualOrderedTracks output already has the
     // slot computed, so we just need to keep that row alongside the
@@ -237,9 +233,9 @@ export function Timeline({
 
   /// `docs/groups.md` — Mod+G groups the current multi-selection;
   /// Mod+Shift+G dissolves every group represented in the selection.
-  /// Wired through the global `useShortcuts` registry (Phase H-followup
-  /// 2026-05-17) so the Keyboard Shortcuts settings panel exposes them
-  /// and they're rebindable. Handlers read state via refs to avoid the
+  /// Wired through the global `useShortcuts` registry so the Keyboard
+  /// Shortcuts settings panel exposes them and they're rebindable.
+  /// Handlers read state via refs to avoid the
   /// stale-closure trap of multi-key chord dispatch.
   const selectedLayerIdsRef = useRef(selectedLayerIds);
   selectedLayerIdsRef.current = selectedLayerIds;
@@ -368,8 +364,8 @@ export function Timeline({
     [importing, media, onMutated, previewDecodable, proxyState, pxPerSec],
   );
 
-  // V.7: context-menu open handler. Captures cursor position +
-  // target layer. Triggered by LayerBlock's onContextMenu (right-click).
+  // Context-menu open handler. Captures cursor position + target layer;
+  // triggered by LayerBlock's onContextMenu (right-click).
   const onContextMenu = useCallback(
     (
       e: React.MouseEvent,
@@ -512,8 +508,7 @@ export function Timeline({
 
   // Ruler-only seek: the time ruler is the SOLE surface that moves the
   // playhead. Begins a drag-scrub from the ruler's pointerdown. Decoupled
-  // from selection — seeking never clears the selected clip. See
-  // docs/superpowers/specs/2026-06-16-timeline-seek-selection-ux-design.md.
+  // from selection — seeking never clears the selected clip.
   const beginRulerScrub = useCallback(
     (clientX: number) => {
       seekFromClientX(clientX);
@@ -664,11 +659,11 @@ export function Timeline({
   );
 }
 
-/// `docs/data-model.md` R.5b. The pill IS the setting: a click
+/// `docs/data-model.md`. The pill IS the setting: a click
 /// flips the app-level `display_mode` (`appSettingsSet` round-trips
 /// through Rust which emits `app_settings:changed` so every
 /// subscriber syncs). Same surface the View menu and `T` shortcut
-/// (R.8) drive.
+/// drive.
 function DisplayModePill({ mode }: { mode: "AbRoll" | "ShowAll" }) {
   const { t } = useTranslation();
   const label = mode === "AbRoll" ? "A/B" : t("timeline.mode_all", { defaultValue: "All" });
@@ -701,9 +696,8 @@ function DisplayModePill({ mode }: { mode: "AbRoll" | "ShowAll" }) {
 
 function EmptyHint({ mode }: { mode?: "AbRoll" | "ShowAll" }) {
   const { t } = useTranslation();
-  // Legacy projects render here when the user is in AB mode but no
-  // track carries a role stamp — the user toggles to Show-All
-  // manually (Q3 of the redesign locked "no legacy handling").
+  // Rendered when the user is in AB mode but no track carries a role
+  // stamp; the user toggles to Show-All manually.
   const message =
     mode === "AbRoll"
       ? t("timeline.empty_ab_mode", {

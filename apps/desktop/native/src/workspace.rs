@@ -6,7 +6,7 @@
 //! `project_open` runs (Phase B's startup screen will make that window
 //! unreachable).
 //!
-//! The slot is updated by `project_save_as` / `project_open` in commands.rs
+//! The slot is updated by `project_save_as` / `project_open` in commands/persistence.rs
 //! and read wherever a job or command needs the workspace root (cache
 //! layout, import copies, fs-scope grants). Media paths themselves don't
 //! route through here: `io::load_from_dir` reconciles `MediaItem.path_abs`

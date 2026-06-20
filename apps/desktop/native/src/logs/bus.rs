@@ -39,8 +39,8 @@ use super::writer;
 const RING_CAPACITY: usize = 1000;
 
 /// Broadcast channel slack. Each napi-event bridge subscriber drains at
-/// the speed of `app_handle.emit`, which is fast; 256 covers bursty MCP
-/// agent activity without coercing the bus into blocking.
+/// the speed of the `EventSink::emit` napi bridge, which is fast; 256 covers
+/// bursty MCP agent activity without coercing the bus into blocking.
 const BROADCAST_CAPACITY: usize = 256;
 
 /// JSONL writer mpsc bound. Bursts beyond this drop the line with a

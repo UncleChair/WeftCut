@@ -5,7 +5,7 @@
 //! low-level Server expects, so the TS layer forwards Rust output verbatim.
 //!
 //! Module shape:
-//! - `wire`     — transport-agnostic result/error/catalog types (Task 1).
+//! - `wire`     — transport-agnostic result/error/catalog types.
 //! - `tools`    — every active tool as a `pub(super) async fn(&Backend, Args)`.
 //! - `resources`— the read-only `project://*` / `media://*` resource readers.
 //! - `prompts`  — user-invokable prompt templates (`cut-silences`).
@@ -40,9 +40,8 @@ use serde::Serialize;
 pub(crate) struct EmptyArgs {}
 
 /// Snapshot-free projection of a `ChangeEvent` — the wire shape for the
-/// `mcp:change` event the napi `Backend` emits (wired in Task 3). Moved here
-/// from the deleted `events.rs` (the axum SSE handler is gone; the event now
-/// rides the EventSink like every other notification).
+/// `mcp:change` event the napi `Backend` emits. The event rides the EventSink
+/// like every other notification.
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct ChangeEventSummary {
     pub op_id: crate::state::OpId,

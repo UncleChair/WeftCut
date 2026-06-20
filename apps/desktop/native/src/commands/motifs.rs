@@ -1,7 +1,6 @@
-//! State commands for placing + listing Motifs (`add_motif` / `list_motifs`),
-//! recovered from the pre-S2 monolith and adapted to `&Backend`. The lifecycle
-//! authoring commands live in `commands::motif_authoring`; both reuse the
-//! `motifs::` cores so the MCP + renderer surfaces can't drift.
+//! State commands for placing + listing Motifs (`add_motif` / `list_motifs`).
+//! The lifecycle authoring commands live in `commands::motif_authoring`; both
+//! reuse the `motifs::` cores so the MCP + renderer surfaces can't drift.
 
 use crate::motifs::catalog;
 use crate::napi_backend::Backend;
@@ -45,7 +44,8 @@ fn motif_to_payload(
     html: String,
     status: &str,
 ) -> Result<serde_json::Value, String> {
-    // Source-derived cache identity (upload-design §8.1): blake3 of manifest+html.
+    // Source-derived cache identity: blake3 of manifest+html (see docs/motifs.md,
+    // "Raster cache and escalation").
     // Surfaced so the TS frame cache re-captures when a draft's source changes
     // (its `version` stays 1, so version alone can't bust the key).
     let content_hash = crate::motifs::catalog::Motif {
@@ -110,9 +110,9 @@ pub(crate) fn list_motifs_inner(
     out
 }
 
-/// Stage F-Picker: the UI catalog. A superset of the MCP `list_motifs`
-/// payload — every manifest field plus the raw `html` document so the picker
-/// can render live previews client-side.
+/// The UI catalog: a superset of the MCP `list_motifs` payload — every
+/// manifest field plus the raw `html` document so the picker can render live
+/// previews client-side.
 pub async fn list_motifs(b: &Backend) -> Result<Vec<serde_json::Value>, String> {
     Ok(list_motifs_inner(&b.motif_store))
 }
@@ -128,8 +128,8 @@ pub struct AddMotifArgs {
     pub props: Option<serde_json::Value>,
 }
 
-/// Stage F-Picker: UI counterpart to the MCP `add_motif` tool. Mirrors
-/// the behavior 1:1 (canonicalize props through the catalog module,
+/// UI counterpart to the MCP `add_motif` tool. Mirrors the behavior 1:1
+/// (canonicalize props through the catalog module,
 /// default `t_end_us` from manifest duration; when `track_id` is
 /// omitted, always spawn a fresh "Overlay" track so consecutive
 /// inserts never collide with each other on the same track). Only

@@ -1,18 +1,18 @@
 //! `Synthesizer` capability surface — text in, audio bytes out.
 //!
-//! Bytes (not paths) on the way out: the Stage 6 `synthesize_speech` tool
+//! Bytes (not paths) on the way out: the `synthesize_speech` tool
 //! content-addresses the result, which means it needs the bytes in hand to
 //! hash. Letting providers write their own file would force a re-read just
 //! to hash, and require each provider to know our cache layout.
 //!
-//! Provider impls (Stage 6: OpenAI tts-1, future: ElevenLabs, Deepgram Aura)
+//! Provider impls (OpenAI tts-1 today; ElevenLabs / Deepgram Aura would slot in)
 //! live in sibling modules and `impl Synthesizer for ...`.
 
 use async_trait::async_trait;
 
 use super::errors::CloudError;
 
-/// Audio container/codec the provider returned. The Stage 6 tool uses this
+/// Audio container/codec the provider returned. The synthesize tool uses this
 /// to pick the cache-file extension and the lowering-side container hint
 /// (ffmpeg generally just sniffs, but the extension matters for OS file
 /// associations and for the agent inspecting the path).

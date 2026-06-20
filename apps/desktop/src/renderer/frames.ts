@@ -75,7 +75,8 @@ export function snapFrameFloor(
   let n = Math.floor((tUs * fpsNum) / div);
   if (n < 0) n = 0;
   while (Math.floor(((n + 1) * div) / fpsNum) <= tUs) n++;
-  // Half-up: matches the demuxer's source-PTS rounding so the ring
+  // Half-up: matches the source-PTS-to-µs rounding in
+  // render/decoder/PacketPump.ts (Math.round(pts * 1e6)) so the ring
   // lookup at this value hits the source sample for the same frame N.
   return Math.round((n * div) / fpsNum);
 }
@@ -84,8 +85,9 @@ export function snapFrameFloor(
 /// `durationUs` µs. The playhead's upper bound under the frame-anchor
 /// rule (see `docs/data-model.md`).
 ///
-/// Half-up rounded so the value aligns with the demuxer's source-PTS
-/// for the same frame (see `snapFrameFloor` for the long version).
+/// Half-up rounded so the value aligns with the source-PTS-to-µs
+/// rounding in render/decoder/PacketPump.ts for the same frame (see
+/// `snapFrameFloor` for the long version).
 ///
 /// Boundary entities — layer `t_end_us`, `composition.duration_us`,
 /// trim-end handles — are unaffected; they remain exclusive and may

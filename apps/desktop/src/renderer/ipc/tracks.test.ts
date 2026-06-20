@@ -5,7 +5,7 @@ describe("trackStatic", () => {
   it("returns the static value", () => {
     expect(trackStatic({ mode: "Static", value: 0.5 }, 1)).toBe(0.5);
   });
-  it("returns the first keyframe value (mirror of the old Rust static_or)", () => {
+  it("returns the first keyframe value when keyframes exist", () => {
     const t: AnimTrack<number> = {
       mode: "Keyframed",
       value: [

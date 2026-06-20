@@ -2,7 +2,7 @@
 // wraps it in an `ImageSource`-backed `Texture`, then applies the
 // LayerSummary's flattened static transforms each composite tick.
 //
-// Plan: docs/render.md (P3)
+// See docs/render.md (image-overlay layers).
 //
 // The bitmap stays GPU-resident for the lifetime of the sprite. If
 // the user replaces the image's underlying media, the layer's

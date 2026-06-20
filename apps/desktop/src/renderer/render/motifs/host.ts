@@ -3,7 +3,7 @@ import { invoke } from "@/bridge/ipc";
 /**
  * Render a Motif to a single frame and return the raw PNG as a `Blob`.
  *
- * Drives the `motif_capture_frame` command (offscreen Electron window
+ * Drives the `motif_capture_frame` IPC channel (offscreen Electron window
  * + `motif:` scheme + CDP `Page.captureScreenshot` via webContents.debugger).
  * The PNG is taint-free (CDP screenshot, not a canvas readback).
  *

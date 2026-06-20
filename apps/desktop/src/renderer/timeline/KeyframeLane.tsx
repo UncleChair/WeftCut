@@ -116,9 +116,9 @@ export function KeyframeLane({
   // Capture-phase Delete for the selected keyframe, gated on the selection
   // belonging to a layer in THIS track (any property — the sub-lanes can
   // select a key on a property other than the layer's focused param, which the
-  // LayerBlock effect, keyed on focusedParam, doesn't cover). Same
-  // capture+stopImmediatePropagation rationale as Phase 2: preempt the
-  // app-level delete-selected-layer shortcut. Subscribe to a primitive so the
+  // LayerBlock effect, keyed on focusedParam, doesn't cover). Capture phase +
+  // stopImmediatePropagation so this preempts the app-level
+  // delete-selected-layer shortcut. Subscribe to a primitive so the
   // effect re-arms on selection change (atomic selector).
   const layerIds = useMemo(
     () => new Set(track.layers.map((l) => l.id)),

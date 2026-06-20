@@ -1,12 +1,11 @@
 
 
 /* ============================================================
-   Agent mode shell — 3-pane layout (Q10 of agent-mode design):
+   Agent mode shell — 3-pane layout:
      preview top-left (expanding), mini timeline bottom-left
      (~80 px tall), record panel right (~360 px wide).
-   Replaces the entire editor body when an MCP-initiated agent
-   session is active. Phases 6 / 7 fill the mini timeline and
-   record panel with real content.
+   Replaces the entire editor body while an MCP-initiated agent
+   session is active.
    ============================================================ */
 
 .agent-mode-shell {
@@ -194,7 +193,7 @@
   animation: preview-spin 0.9s linear infinite;
 }
 
-/* B1 — WebCodecs smoke harness. Dev-mode only; not user-facing. */
+/* WebCodecs smoke harness. Dev-mode only; not user-facing. */
 .realtime-preview-smoke {
   display: flex;
   flex-direction: column;
@@ -354,7 +353,7 @@
   border-radius: 4px;
 }
 
-/* B5 — recipe playback section in the smoke harness. */
+/* Recipe playback section in the smoke harness. */
 .realtime-preview-playback {
   background: rgba(0, 0, 0, 0.25);
   border-radius: 6px;

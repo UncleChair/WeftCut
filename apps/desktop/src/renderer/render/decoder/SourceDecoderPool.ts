@@ -10,7 +10,7 @@
 // cost is memory + decode slots, but modern H.264/HEVC stacks allow 8–32
 // concurrent HW sessions, so a handful of overlapping clips is within budget.
 //
-// Plan: docs/render.md (8b.2 + 8c.2 + P1; robustness in P9.5)
+// See docs/render.md#decoder-pool (and #why-per-clip-decoders).
 
 import type { EncodedPacketSink } from "mediabunny";
 import { logEmit } from "../../ipc";
@@ -100,8 +100,8 @@ export interface DecoderHandle {
   /// Compositor (it `void`s the call). Preview returns `Promise<void>`;
   /// export still returns `Promise<VideoTrackMeta>` (consumed internally).
   /// Both are assignable to `Promise<unknown>`, so this stays compatible
-  /// with `ExportSourceHandle` without touching the export pool. Plan C
-  /// re-unifies the meta shapes.
+  /// with `ExportSourceHandle` without touching the export pool. (A future
+  /// cleanup could re-unify the two meta shapes.)
   ensureReady(): Promise<unknown>;
   /// Preview calls this every tick to nudge the decoder's lookahead;
   /// export ignores it and pre-stages frames via its own driver.
@@ -190,8 +190,8 @@ export class SourceMedia {
 
   /// Open the proxy through mediabunny and resolve the WebCodecs decoder
   /// config from the primary video track. Idempotent across concurrent
-  /// callers. Replaces the mp4box `Demuxer.open()` + manual avcC/hvcC
-  /// serialization — `getDecoderConfig()` produces `description` directly.
+  /// callers. `getDecoderConfig()` produces the WebCodecs `description`
+  /// directly.
   async ensureReady(): Promise<VideoDecoderConfig> {
     if (this.config) return this.config;
     if (this.readyP) return this.readyP;
@@ -483,8 +483,8 @@ export class SourceHandle {
   }
 
   /// Build the decoder config, honoring `downgraded`. Spreads the full
-  /// mediabunny config (preserving colorSpace etc. the mp4box path lacked)
-  /// and only overrides `hardwareAcceleration`.
+  /// mediabunny config (preserving colorSpace etc.) and only overrides
+  /// `hardwareAcceleration`.
   private buildConfig(): VideoDecoderConfig {
     if (!this.config) {
       throw new Error(`SourceHandle ${this.mediaId}: buildConfig before ready`);

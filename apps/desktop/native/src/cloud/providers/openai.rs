@@ -1,6 +1,6 @@
-//! OpenAI provider — Whisper transcription (Stage 5) and tts-1 synthesis
-//! (Stage 6). Both share the same API key pulled from `keys::Provider::OpenAi`
-//! so the user configures one credential.
+//! OpenAI provider — Whisper transcription and tts-1 synthesis. Both share the
+//! same API key pulled from `keys::Provider::OpenAi` so the user configures one
+//! credential.
 
 use std::time::Instant;
 
@@ -255,7 +255,7 @@ impl Synthesizer for OpenAiTts {
 }
 
 /// Cache key for a content-addressed tts result. Stable across calls so the
-/// Stage 6 `synthesize_speech` MCP tool can skip the API entirely on a repeat
+/// `synthesize_speech` MCP tool can skip the API entirely on a repeat
 /// request. Composition is `blake3(model || '\0' || lowercase(voice) || '\0'
 /// || speed-or-"default" || '\0' || text)`.
 ///

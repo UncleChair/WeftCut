@@ -366,9 +366,9 @@ mod tests {
             "proxy should have >= {expected_min} keyframes for 6s @ 30fps with -g {PROXY_GOP_FRAMES} \
              (got {i_frames}); the short scrub GOP isn't being applied.\n{stdout}"
         );
-        // PROXY_FORMAT_VERSION 4: `-bf 0` must produce a B-frame-free
-        // stream. Without it, libx264's preset-fast default of 3 B-
-        // frames pushes the proxy's last frame's PTS past mvhd duration,
+        // `-bf 0` must produce a B-frame-free stream. Without it,
+        // libx264's preset-fast default of 3 B-frames pushes the proxy's
+        // last frame's PTS past mvhd duration,
         // and the renderer's auto-pause snap lands on the third-to-last
         // frame.
         let b_frames = stdout.lines().filter(|l| l.trim() == "B").count();

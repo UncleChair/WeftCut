@@ -155,9 +155,9 @@ interface AppProps {
 
 export function App({ onCloseProject }: AppProps) {
   const { t, i18n } = useTranslation();
-  // R.9 — MediaPool drawer state lives in the app-pref store. Reading
-  // through the atomic selector so a flip doesn't re-render anything
-  // that doesn't depend on it.
+  // MediaPool drawer state lives in the app-pref store (docs/data-model.md R.9).
+  // Read through the atomic selector so a flip doesn't re-render anything that
+  // doesn't depend on it.
   const mediaPoolDrawerOpen = useMediaPoolDrawerOpen();
   const [pong, setPong] = useState<string>("…");
   const [summary, setSummary] = useState<ProjectSummary | null>(null);
@@ -206,11 +206,9 @@ export function App({ onCloseProject }: AppProps) {
   // get on mount so the UI never blinks through the wrong mode on
   // app start.
   const [agentSession, setAgentSession] = useState<AgentSession | null>(null);
-  // Phase D — docs/data-model.md Q10: the project preview is a DOM
-  // `<video>` element driven by `<PreviewSurface>`. The transport buttons
-  // here delegate to its imperative handle (play / pause / seek), and
-  // playhead state flows back up via callbacks. The previous
-  // libmpv-embed "previewInit" state machine is gone.
+  // The project preview is a DOM `<video>` driven by `<PreviewSurface>`
+  // (docs/data-model.md Q10). The transport buttons here delegate to its
+  // imperative handle (play / pause / seek); playhead state flows back up via callbacks.
   const previewRef = useRef<PreviewSurfaceHandle | null>(null);
   const [importQueue, setImportQueue] = useState<ImportEntry[]>([]);
 
@@ -546,11 +544,10 @@ export function App({ onCloseProject }: AppProps) {
     };
   }, []);
 
-  // Project state mirror for the DOM preview (`docs/preview.md` Phase A).
-  // Coexists with the local-state fetches further down — both subscribe to
-  // `project:changed`, both re-fetch, no cross-talk. The DOM preview engine
-  // reads from `useProjectStore`; App.tsx's existing fetches stay until
-  // Phase F cutover.
+  // Project state mirror for the DOM preview (docs/preview.md). Coexists
+  // with the local-state fetches below — both subscribe to `project:changed`
+  // and re-fetch, with no cross-talk. The DOM preview engine reads from
+  // `useProjectStore`; App.tsx's own fetches still drive the panels.
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     let cancelled = false;
@@ -590,7 +587,7 @@ export function App({ onCloseProject }: AppProps) {
     };
   }, []);
 
-  // Import queue subscription (Phase C.1 — docs/data-model.md Q6). The
+  // Import queue subscription (docs/data-model.md Q6). The
   // background-copy worker pushes a fresh history list on every state
   // change. MediaPool reads the in-flight set out of this so pool items
   // can show a "Copying…" badge while their bytes are being moved into
@@ -839,10 +836,9 @@ export function App({ onCloseProject }: AppProps) {
       } catch (e) {
         const msg = String(e);
         setError(msg);
-        // Phase 4 deletion of the inline menu-bar error span — the
-        // user-facing error path now lives in the status bar. Push
-        // every caught UI error into the log so the bar's error
-        // counter + sticky-latest behavior surfaces it.
+        // The user-facing error path is the status bar, not inline chrome. Push
+        // every caught UI error into the log so the bar's error counter +
+        // sticky-latest behavior surfaces it.
         void logEmit({
           level: "error",
           category: { kind: "System" },
@@ -1558,12 +1554,9 @@ export function App({ onCloseProject }: AppProps) {
     }
   }, []);
 
-  // Phase D: no React-side preview init step is needed. The Rust
-  // `preview::PreviewRenderer` task subscribes to actor commits and
-  // produces `<workspace>/Cache/preview/<hash>.mp4` on its own; the
-  // PreviewSurface component listens for the resulting events and swaps
-  // its `<video src>`. The transport buttons here just drive that
-  // element's play/pause/seek state.
+  // No React-side preview init: the Rust `preview::PreviewRenderer` task
+  // subscribes to actor commits and writes `<workspace>/Cache/preview/<hash>.mp4`;
+  // PreviewSurface listens for the resulting events and swaps its `<video src>`.
 
   // Delete the currently-selected layer. Previously a local keydown
   // effect inside `Timeline.tsx`; lifted here so the shortcuts
@@ -1690,9 +1683,9 @@ export function App({ onCloseProject }: AppProps) {
     // Agent mode swap: backend's `agent_session:changed` event flipped
     // the slot to Some(...). Render the simplified shell instead of the
     // editor body. ShortcutBindingsProvider stays so the agent-mode
-    // panel can still consume bound actions if it grows any (none in
-    // Phase 5). Floating editor panels (export, compile, settings,
-    // motif-picker) are deliberately suppressed — the user is
+    // panel can still consume bound actions if it grows any (it has none
+    // today). Floating editor panels (export, settings, motif-picker) are
+    // deliberately suppressed — the user is
     // watching the agent, not driving the editor.
     return (
       <ShortcutBindingsProvider overrides={shortcutOverrides}>

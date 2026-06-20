@@ -18,8 +18,7 @@ interface AppDialogProps {
   closeLabel?: string | undefined;
   /// Legacy panel skin: "settings-panel", "motif-picker",
   /// "connect-agent-panel", ... The popup carries only centering; the
-  /// panel class owns size/background/border/shadow, so the look is
-  /// byte-identical to the hand-rolled wrappers this replaces.
+  /// panel class owns size/background/border/shadow.
   panelClassName: string;
   /// Extra header controls between the title and ✕ (MotifPicker's
   /// new/import buttons).
@@ -27,11 +26,10 @@ interface AppDialogProps {
   children: ReactNode;
 }
 
-/// The one modal wrapper for every WeftCut dialog. Base UI supplies what
-/// the hand-rolled overlays lacked — portal, focus trap, Escape close,
-/// backdrop dismiss, aria wiring. Callers keep the previous pattern of
-/// conditionally rendering the whole dialog (mount == open), so `open` is
-/// always true here and closing happens by the parent unmounting us.
+/// The one modal wrapper for every WeftCut dialog. Base UI supplies the
+/// portal, focus trap, Escape close, backdrop dismiss, and aria wiring.
+/// Callers conditionally render the whole dialog (mount == open), so `open`
+/// is always true here and closing happens by the parent unmounting us.
 export function AppDialog({
   title,
   onClose,

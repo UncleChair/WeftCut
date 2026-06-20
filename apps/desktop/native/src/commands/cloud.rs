@@ -1,4 +1,4 @@
-//! Cloud-provider Settings commands (S4b). Key MATERIAL never crosses this
+//! Cloud-provider Settings commands. Key MATERIAL never crosses this
 //! surface — status reports presence only, and the key used by
 //! `settings_test_provider` is read from the in-memory cache (pushed in by
 //! Electron main from safeStorage), never returned. `set`/`clear` are handled

@@ -8,8 +8,9 @@
 // yet, and the engine-pair rule (state/animated.rs <-> render/animated.ts)
 // forbids a TS-only interpolator. Wire the Rust twin first, then upgrade.
 //
-// Fallback constants mirror the Rust builder's old `static_or` fallbacks
-// (x/y -> 0, scale -> 1, opacity -> 1, gain/pan -> 0, text WHITE, color BLACK).
+// Fallback constants mirror the Rust view builder's per-property defaults
+// when a track is absent (x/y -> 0, scale -> 1, opacity -> 1, gain/pan -> 0,
+// text WHITE, color BLACK).
 import type {
   AudioView,
   ColorView,

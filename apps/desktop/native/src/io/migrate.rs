@@ -1,4 +1,4 @@
-//! Schema migration (P11 cut-over).
+//! Schema migration: the schema-version gate.
 //!
 //! Pre-release: when the schema version moves we don't bother carrying
 //! forward old `.vproj` folders. `run()` accepts anything at the
@@ -6,11 +6,6 @@
 //! clear error. Higher versions are rejected upstream in
 //! `load_from_dir` (we only know how to load what this build was
 //! compiled for).
-//!
-//! The earlier multi-step migrator (v1→v7, with media-file copies and
-//! pre-migration backups) was deleted alongside this file's rewrite —
-//! the project hasn't shipped, so the cost of maintaining migration
-//! code for projects nobody has on disk is purely overhead.
 
 use std::path::Path;
 

@@ -1,12 +1,7 @@
-// Transport for the new PixiJS renderer. Owns the SyntheticClock,
-// wires the Compositor and AudioGraph, and exposes play/pause/seek/scrub.
-//
-// Plan: docs/render.md
-//
-// P0 stub — full implementation lands in P1 (decode + clock + scrub).
-// The shape here is intentionally close to the existing
-// `preview/dom/PlaybackEngine.ts` so the React mount layer (PreviewSurface)
-// can swap implementations with minimal churn when LiveLayers is replaced.
+// Playback transport for the PixiJS renderer. Owns the SyntheticClock,
+// wires the Compositor and AudioGraph, and exposes play/pause/seek/scrub
+// plus the warmup gate (defers the clock start until the decoder ring is
+// filled). Plan: docs/render.md
 
 import { UPDATE_PRIORITY, type Ticker } from "pixi.js";
 

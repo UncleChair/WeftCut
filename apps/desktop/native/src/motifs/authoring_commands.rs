@@ -36,7 +36,6 @@ pub fn get_motif_source_core(store: &UserMotifStore, id: &str) -> Result<MotifSo
 /// NOTE: napi/serde camelCases only the TOP-LEVEL command argument names; these
 /// nested struct fields are deserialized by serde directly, so the frontend
 /// sends them as-is (snake_case): `{ args: { draft_id, mode: { kind, target_id } } }`.
-/// (A camelCase rename can be added in Stage 3 alongside the UI if preferred.)
 #[derive(Deserialize)]
 pub struct WriteDraftArgs {
     pub manifest: Manifest,
@@ -159,7 +158,6 @@ pub enum InstallMode {
 /// NOTE: napi/serde camelCases only the TOP-LEVEL command argument names; these
 /// nested struct fields are deserialized by serde directly, so the frontend
 /// sends them as-is (snake_case): `{ args: { draft_id, mode: { kind, target_id } } }`.
-/// (A camelCase rename can be added in Stage 3 alongside the UI if preferred.)
 #[derive(Deserialize)]
 pub struct InstallArgs {
     pub draft_id: String,

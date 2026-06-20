@@ -1,13 +1,12 @@
 import { test, expect, _electron as electron } from '@playwright/test'
 import { MAIN } from './helpers/driver'
 
-// Task 3 requirement: when the OS keyring is unavailable (headless Linux CI,
+// When the OS keyring is unavailable (headless Linux CI,
 // minimal containers), safeStorage falls back to plaintext and main emits a
 // console.warn diagnostic — but it must DEGRADE, never hard-fail the boot.
 // We assert the robust, meaningful behavior: the app reaches a window regardless
 // of keyring availability, AND the plaintext-keys warning reaches the UI via a
-// pulled app notice (api.app.notices), not the old fire-once event with no
-// consumer.
+// pulled app notice (api.app.notices).
 test('app boots + degrades gracefully regardless of safeStorage keyring availability', async () => {
   const app = await electron.launch({
     args: [MAIN],

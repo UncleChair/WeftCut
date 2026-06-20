@@ -2,9 +2,8 @@ import { useMemo } from "react";
 import { formatTimecode, frameDurUs } from "../frames";
 import { formatRulerLabel } from "./geometry";
 
-/// Time ruler that lives at the top of the scrollable timeline root,
-/// replacing the legacy 18 px playhead-strip padding. Width matches the
-/// canvas so horizontal scroll keeps ticks aligned with the layers
+/// Time ruler at the top of the scrollable timeline root. Width matches
+/// the canvas so horizontal scroll keeps ticks aligned with the layers
 /// below, and tick density scales with `pxPerSec`.
 ///
 /// Two regimes:
@@ -105,7 +104,7 @@ export function TimelineRuler({
   }, [pxPerSec, totalSec, fpsNum, fpsDen]);
 
   return (
-    /* Sizing notes (migrated from the legacy `.timeline-ruler` CSS):
+    /* Sizing notes:
        - `h-5` (20 px) accommodates a 10 px label in the upper half and
          4–8 px tick marks at the bottom; the playhead's `top: 2px` knob
          (Timeline.tsx renders it `top-0.5`) still lands inside this
