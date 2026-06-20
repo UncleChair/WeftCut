@@ -719,4 +719,15 @@ mod image_span_tests {
         };
         assert_eq!(image_layer_span_us(&meta), 3_000_000);
     }
+
+    #[test]
+    fn single_frame_with_long_duration_uses_native_duration() {
+        let meta = MediaMetadata {
+            duration_us: Some(600_000),
+            video: Some(video_meta(Some(1))),
+            audio: None,
+            container_format: Some("avif".into()),
+        };
+        assert_eq!(image_layer_span_us(&meta), 600_000);
+    }
 }
