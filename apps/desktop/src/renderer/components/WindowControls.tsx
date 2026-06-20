@@ -6,7 +6,7 @@ import { useTranslation } from "react-i18next";
 /// minimize / maximize-restore / close, Windows-styled (square, flush to
 /// the corner, red close hover). Lives at the right end of whichever bar
 /// is acting as the title bar (app header, startup strip, agent strip).
-/// The maximize glyph tracks the real window state via onResized — the
+/// The maximize glyph tracks the real window state via onMaximizeChange — the
 /// drag-region double-click and Win+arrow paths change it outside our
 /// buttons.
 ///
@@ -21,13 +21,15 @@ export function WindowControls() {
   useEffect(() => {
     const win = getCurrentWindow();
     let cancelled = false;
-    const sync = () => {
-      void win.isMaximized().then((m) => {
-        if (!cancelled) setMaximized(m);
-      });
-    };
-    sync();
-    const unlisten = win.onResized(sync);
+    // Initial state: one query on mount (no event has fired yet).
+    void win.isMaximized().then((m) => {
+      if (!cancelled) setMaximized(m);
+    });
+    // Subsequent changes ride the event payload — main ships the maximize state
+    // on maximize/unmaximize, so there's no extra isMaximized() round-trip.
+    const unlisten = win.onMaximizeChange((m) => {
+      if (!cancelled) setMaximized(m);
+    });
     return () => {
       cancelled = true;
       void unlisten.then((f) => f());
