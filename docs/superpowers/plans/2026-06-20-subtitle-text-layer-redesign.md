@@ -1967,7 +1967,7 @@ export function readFamilyName(buf: Buffer): string | null {
     if (nameId !== 1) continue;
     // platform 3 (Windows) / 0 (Unicode) → UTF-16BE; platform 1 (Mac) → ascii.
     const val = platformId === 1 ? buf.toString("ascii", off, off + len)
-                                 : buf.toString("utf16le", off, off + len).replace(/ /g, "");
+                                 : buf.toString("utf16le", off, off + len).replace(//g, "");
     const cleaned = (platformId === 1 ? val : swap16(buf.subarray(off, off + len))).trim();
     if (cleaned) { if (platformId === 3) return cleaned; fallback ??= cleaned; }
   }
@@ -1977,7 +1977,7 @@ export function readFamilyName(buf: Buffer): string | null {
 function swap16(b: Buffer): string {
   const out = Buffer.from(b);
   for (let i = 0; i + 1 < out.length; i += 2) { const t = out[i]; out[i] = out[i + 1]; out[i + 1] = t; }
-  return out.toString("utf16le").replace(/ /g, "");
+  return out.toString("utf16le").replace(//g, "");
 }
 ```
 
