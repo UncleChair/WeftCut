@@ -88,6 +88,9 @@ they're closer to a rewrite than a port (originals recoverable from git history
 before the retirement commit `e1321538`):
 
 - **ui** — `keyframe_authoring`, `layers`, `shortcut_focus`
+- **image** — `image_support`'s still-image composite matrix (png/jpg/webp/bmp
+  sampled off the live preview + the tiff-stays-empty negative). Its gif=Video
+  full-proxy routing leg IS ported, as `media-gif-routing.spec.ts`.
 
 Like `conformance.spec.ts`, the analyzer-backed gates run **locally** (they need
 `npm run fixtures` + a buildable `cargo media_conformance`) and skip in CI,
