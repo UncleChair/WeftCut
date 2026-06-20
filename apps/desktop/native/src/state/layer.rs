@@ -219,9 +219,10 @@ pub struct SubtitlesParams {
 ///
 /// Inline variants carry the body in-state so projects round-trip cleanly
 /// through `.vproj` and so MCP tools (auto-caption, agent-authored cues)
-/// don't need to invent file paths. Inline bodies can be materialized to a
-/// blake3-addressed cache file when a path is needed (see
-/// `cache::Cache::inline_subs`); the in-state copy stays authoritative.
+/// don't need to invent file paths. At render time the inline body is fed
+/// directly to the JASSUB (libass-wasm) renderer (`SubtitlesSprite` /
+/// `render/subtitles/assBody.ts`): SRT is converted to ASS, ASS passes
+/// through verbatim, and nothing is written to disk.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "value")]
 pub enum SubtitlesSource {

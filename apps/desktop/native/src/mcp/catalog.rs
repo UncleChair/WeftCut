@@ -65,9 +65,9 @@ tool_table! {
                           two so they move/trim/split together. Returns either the video layer id \
                           (legacy mode) or `{ video_layer_id, audio_layer_id, group_id }` when a pair \
                           was created.", tools::AddVideoLayerArgs, tools::add_video_layer),
-    "apply_subtitles" => ("Add a Subtitles layer that burns an inline SRT or ASS body onto the timeline. \
+    "apply_subtitles" => ("Add a Subtitles layer that renders an inline SRT or ASS body onto the timeline. \
                           The body is stored in the project (so it round-trips through .vproj) and \
-                          materialized to a content-addressed file in the OS app cache before render. \
+                          rendered directly by the subtitle renderer (no separate cache file). \
                           `format` is 'srt' or 'ass'; if omitted it sniffs from the body. \
                           `track_id` is optional — if omitted, picks the first existing Subtitle track \
                           or creates one named 'Subtitles'. Returns the new layer id.", tools::ApplySubtitlesArgs, tools::apply_subtitles),
