@@ -56,12 +56,12 @@ See [`data-model.md`](data-model.md).
 ### Effect subsystem on the PixiJS path
 
 The IR-driven per-layer effects subsystem was deleted with the PixiJS
-migration. The redesign is per-sprite Pixi filter chains driven by
-`layer.effects` — the field already ships over IPC; the Compositor
-just never reads it. Animated effect parameters ride the keyframe
+migration. The redesign is per-sprite Pixi filter chains driven by a
+`layer.effects` field, (re)added when the subsystem is rebuilt.
+Animated effect parameters ride the keyframe
 work above (keyframes first, then effects). Schema cleanup on the way
-in: cull the HTML-era `HtmlTransform` variant; `Speed` is time
-remapping, not a filter, and needs its own design. Actor surface
+in: `Speed` is time remapping, not a filter, and needs its own
+design. Actor surface
 (`add_effect`, `update_effect`, `move_effect`, `remove_effect`) and
 the corresponding MCP tools follow. Filters break batching (one
 render-target switch per filtered sprite) — plan a preview-LOD flag

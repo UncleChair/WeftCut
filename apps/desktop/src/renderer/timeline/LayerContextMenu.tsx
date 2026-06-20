@@ -5,9 +5,7 @@ import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 /// Floating context menu (Base UI Menu) anchored to a zero-size virtual
 /// element at the right-click coordinates. The popup machinery (portal,
 /// outside-press + Escape close, arrow-key nav) comes from the library.
-/// Action items are scoped to the right-clicked layer's kind. Group HTML
-/// rendering is driven by an HtmlTransform effect on the group (authored
-/// via MCP / the effects panel), so there is no render-mode toggle here.
+/// Action items are scoped to the right-clicked layer's kind.
 export function LayerContextMenu({
   x,
   y,

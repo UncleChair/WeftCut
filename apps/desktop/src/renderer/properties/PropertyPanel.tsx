@@ -80,8 +80,9 @@ export function PropertyPanel({
     );
   }
 
-  // `groups` is unused but kept in the prop signature to avoid churn at
-  // the call site. Revisit once `layer.effects` / `group.effects` are gone.
+  // `groups` is currently unused (the group-effects UI was removed); kept in
+  // the prop signature to avoid call-site churn. Revisit when the effects
+  // subsystem is rebuilt — it may regain a use, or be dropped.
   void groups;
 
   return (

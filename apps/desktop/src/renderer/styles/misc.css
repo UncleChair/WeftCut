@@ -88,32 +88,3 @@
   white-space: nowrap;
   border: 0;
 }
-
-/* `properties/GroupEffectsSection.tsx` — author HtmlTransform on the
-   selected layer's group. See `docs/groups.md`. */
-.group-effects-section,
-.effects-section {
-  border-top: 1px solid var(--border-soft);
-  padding-top: 8px;
-  margin-top: 6px;
-}
-.group-effects-subhead {
-  color: var(--color-gray-500);
-  font-weight: 400;
-  font-size: 11px;
-  text-transform: none;
-}
-.mode-toggle {
-  background: var(--secondary);
-  border: 1px solid var(--border);
-  color: var(--foreground);
-  font-size: 10px;
-  padding: 1px 6px;
-  border-radius: 3px;
-  cursor: pointer;
-  text-transform: lowercase;
-  font-family: inherit;
-}
-.mode-toggle:hover {
-  background: #2d3748;
-}
