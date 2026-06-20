@@ -411,9 +411,10 @@ pub enum MotifError {
 
 // -- Built-in Motifs ---------------------------------------------------------
 //
-// Two built-ins (`countdown`, `lower-third`) are embedded via `include_str!`
-// so the desktop binary ships them without runtime file access. They live in
-// `motifs/catalog/countdown/` and `motifs/catalog/lower-third/`.
+// Built-ins (`countdown`, `lower-third`, `text-fx`) are embedded via
+// `include_str!` so the desktop binary ships them without runtime file access.
+// They live under `motifs/catalog/<id>/`. (The served files — index.html +
+// assets — are embedded separately in `builtin.rs`.)
 
 macro_rules! builtin_motif {
     ($fn_name:ident, $dir:literal) => {
@@ -432,15 +433,16 @@ macro_rules! builtin_motif {
 
 builtin_motif!(builtin_countdown, "catalog/countdown");
 builtin_motif!(builtin_lower_third, "catalog/lower-third");
+builtin_motif!(builtin_text_fx, "catalog/text-fx");
 
 /// The reserved built-in ids. A user/uploaded Motif may never take one of
 /// these. Kept in sync with `builtins()` by `builtin_ids_const_matches_builtins`.
-pub const BUILTIN_IDS: &[&str] = &["countdown", "lower-third"];
+pub const BUILTIN_IDS: &[&str] = &["countdown", "lower-third", "text-fx"];
 
 /// All built-in motifs, in display order. The picker UI iterates this list;
 /// agents see the same set via `list_motifs`.
 pub fn builtins() -> Vec<Motif> {
-    vec![builtin_countdown(), builtin_lower_third()]
+    vec![builtin_countdown(), builtin_lower_third(), builtin_text_fx()]
 }
 
 #[cfg(test)]
@@ -856,7 +858,14 @@ mod tests {
     #[test]
     fn builtins_cover_starter_set() {
         let actual: Vec<String> = builtins().iter().map(|t| t.id().to_string()).collect();
-        assert_eq!(actual, vec!["countdown".to_string(), "lower-third".to_string()]);
+        assert_eq!(
+            actual,
+            vec![
+                "countdown".to_string(),
+                "lower-third".to_string(),
+                "text-fx".to_string()
+            ]
+        );
     }
 
     /// `motif_ctx_duration_s` resolution order: `content_duration_s` →

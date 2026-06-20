@@ -248,4 +248,31 @@ Key implementation notes:
 8. [ ] Bundle fonts to `assets/`; measure CJK size; declare in manifest.
 9. [ ] Register: `builtin_motif!`, `BUILTIN_IDS`, `builtins()`, update starter-set tests.
 10. [ ] Layer-2 green (cargo + build) + real-Electron smoke (3 effects, export, fonts) + determinism.
+
+---
+
+## As built (v1) — deviations from the plan above
+
+- **Third registration site found:** built-in *served files* (index.html + assets)
+  are embedded in `native/src/motifs/builtin.rs` (`BuiltinMotif` registry,
+  `include_bytes!`), separate from `catalog.rs` (manifest+html via `include_str!`)
+  and the TS `builtin/<id>/manifest.json` glob. All three updated for `text-fx`.
+- **`motifs` is a cargo feature (default off).** `catalog.rs` is always compiled
+  (the state actor needs it); the rest of the subsystem (incl. `builtin.rs`) is
+  behind `--features motifs`. Test it with `cargo test --lib --features motifs`.
+- **Fonts: Inter only in v1.** `font` enum ships a single `sans-latin` option
+  (Inter, copied from lower-third). CJK is a fast-follow: drop a woff2 into
+  `catalog/text-fx/assets/`, add a `sans-cjk` option + a `fonts[]` entry + a
+  `builtin.rs` `BuiltinFile`. No schema-shape change (purely additive).
+- **Default effect = `karaoke`, not `typewriter`.** The picker captures its
+  poster still at `posterTSec` (= 0 here, since there's no `content_duration_s`),
+  and typewriter is blank at t=0 → an empty card. karaoke/color-shift show the
+  full text at t=0, so the card reads. karaoke also showcases the headline effect.
+- **Typewriter caret deferred.** v1 does a clean glyph reveal (no blinking caret).
+  A caret can be added as a blinking right-border on the last-revealed glyph
+  (deterministic `f(t)`, hidden once complete so the held tail still dedups).
+- **Status:** Rust green (84 motifs tests incl. `serves_text_fx_index_and_font`
+  + `every_builtin_parses_and_self_validates` covering text-fx); TS `tsc -b`
+  clean + render/motifs vitest green. **Still pending:** real-Electron smoke
+  (place, exercise 3 effects, scrub, export) and the determinism/conformance gate.
 ```
