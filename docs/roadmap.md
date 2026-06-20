@@ -217,12 +217,35 @@ analysis off the compositor the user is driving) and *not* a vision model
 design in
 [`superpowers/specs/2026-06-14-frame-analysis-mcp-design.md`](superpowers/specs/2026-06-14-frame-analysis-mcp-design.md).
 
-### Transitions beyond crossfade
+### Transitions
 
-`Transition` ships with crossfade / dissolve via ffmpeg's
-single-input `fade` filter and a transition-aware `LayerOverlap`
-validator. Additional types (wipe, slide, push) land as new
-`TransitionKind` variants + lowering arms + property-panel UI.
+**Backend skeleton only — not wired to rendering, UI, or the agent
+surface.** The data model (`Transition` with the single
+`TransitionKind::Crossfade`), the `add_transition` / `remove_transition`
+actor mutations (which auto-extend the outgoing layer to open the
+overlap window and pull source handles), and the overlap-authorizing
+validator exist and are unit-tested. Nothing else is connected:
+`transitions` is not surfaced to the renderer or the export IR, no napi
+command or MCP tool reaches the mutations (only Rust tests call them),
+and there is no timeline UI. So no transition is reachable or visible
+today, and an authorized overlap currently renders as a hard cut rather
+than a blend.
+
+Completing crossfade is small because the substrate already exists: the
+compositor draws every layer whose window contains the current time —
+overlapping same-track layers included — and applies each layer's own
+`opacity`, which is already keyframeable. The remaining work is to
+surface `transitions` to the per-frame eval and export paths, ramp the
+incoming layer's effective `opacity` 0 → 1 across the authorized overlap
+window, expose the mutations via a napi command + MCP tool, and add a
+create-at-cut authoring affordance.
+
+Other kinds (wipe, slide, push) are a separate, larger effort: they are
+two-input operations — each output pixel is a function of *both* clips at
+once — so they cannot ride the per-layer `opacity` path and need a
+dedicated two-input transition compositor node (both textures + a
+progress uniform + a shader per kind). Crossfade falls out of that node
+as the degenerate `mix()` case if it is ever built.
 
 ## v1 ship checklist
 
