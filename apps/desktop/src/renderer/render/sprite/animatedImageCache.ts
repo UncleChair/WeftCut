@@ -95,7 +95,7 @@ const EXT_MIME: Record<string, string> = {
   gif: "image/gif",
   webp: "image/webp",
   png: "image/png",
-  apng: "image/apng",
+  apng: "image/apng", // Rare; APNG's standard path is .png-named files → image/png
   avif: "image/avif",
   jpg: "image/jpeg",
   jpeg: "image/jpeg",

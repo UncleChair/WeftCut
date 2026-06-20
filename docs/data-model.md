@@ -211,7 +211,7 @@ extension fallback:
   they probe as multi-frame but their codec is an image codec (gif, webp, png,
   or av1 in an image container). `detect_kind` uses the `MediaMetadata.container_format`
   field (populated by ffprobe's `format_name`) to distinguish animated AVIF
-  (container `avif`/`heif`) from a true AV1 video stream (container `mp4`/`matroska`
+  (container `avif`) from a true AV1 video stream (container `mp4`/`matroska`
   etc.), and checks the codec name for the other three. All four classify as
   `Image`, not `Video`, so they land as `ImageOverlay` layers with no proxy or
   conform jobs. Motion-JPEG (codec `mjpeg`) in a movie container stays `Video`.
@@ -226,7 +226,7 @@ extension fallback recognizes them plus `tif`/`tiff`:
 | --- | --- | --- |
 | Video | mp4, mov, mkv, webm, avi, m4v | Decode routing per the proxy axes above. |
 | Audio | wav, mp3, flac, aac, m4a, ogg, opus | Anything ffmpeg decodes conforms; the VCONF cache is the only contract (docs/audio.md). |
-| Image | png, jpg/jpeg, gif, webp, bmp, avif | Rendered from the ORIGINAL with no derivatives. Still images use `createImageBitmap` (single frame, 3 s default duration). Animated formats (GIF, animated WebP, APNG, animated AVIF) decode all frames once via WebCodecs `ImageDecoder` (downscaled to composition size, cached per media) and loop at native speed to fill the layer; a freshly-placed animated image defaults to one native loop. |
+| Image | png, jpg/jpeg, gif, webp, bmp, avif | Rendered from the ORIGINAL with no derivatives. Still images use `createImageBitmap` (single frame, 3 s default duration). Animated formats (GIF, animated WebP, APNG, animated AVIF) decode all frames once via WebCodecs `ImageDecoder` (downscaled to composition size, cached per media) and loop at native speed to fill the layer; a freshly-placed animated image defaults to one native loop. APNG files are named with the `.png` extension. |
 | Subtitle | srt, ass, vtt | Preview-only (JASSUB); not burned into exports. |
 
 TIFF classifies as `Image` when it arrives anyway (drag-drop / MCP take any
