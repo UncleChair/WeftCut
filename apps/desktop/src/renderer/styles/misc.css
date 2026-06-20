@@ -90,8 +90,7 @@
 }
 
 /* `properties/GroupEffectsSection.tsx` — author HtmlTransform on the
-   selected layer's group. See `docs/groups.md` 2026-05-17
-   redesign. */
+   selected layer's group. See `docs/groups.md`. */
 .group-effects-section,
 .effects-section {
   border-top: 1px solid var(--border-soft);

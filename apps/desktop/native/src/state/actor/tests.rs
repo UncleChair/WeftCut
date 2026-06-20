@@ -566,8 +566,7 @@
     }
 
     // ============================================================
-    // Frame-alignment storage invariant (Task 4 of 2026-05-23
-    // frame-aligned-timeline plan). Every persisted layer t_start_us
+    // Frame-alignment storage invariant: every persisted layer t_start_us
     // and t_end_us must land on a composition-frame boundary. Each
     // mutator (move / trim / split / add) snap-rounds its TimeUs
     // parameters against project.composition.fps on entry, so any
@@ -1493,7 +1492,7 @@
     ///   4. Agent unlocks. User Restore succeeds.
     ///   5. After Restore the project is back at the auto-checkpoint state.
     ///
-    /// Walks every primitive Phase 1-4 added against the live actor.
+    /// Walks the primitive command surface end-to-end against the live actor.
     #[tokio::test]
     async fn agent_session_full_lifecycle() {
         let (project, track_id) = project_with_video_track();
@@ -2891,7 +2890,7 @@
 
     #[tokio::test]
     async fn move_track_reorders() {
-        // `docs/data-model.md`: blank project now has 4 reserved tracks
+        // `docs/data-model.md`: a blank project has 4 reserved tracks
         // (Audio B, Audio A, Video A, Video B). Find Video A / Video B by
         // role so this test stays robust against any future re-ordering of
         // the bootstrap skeleton.
@@ -3264,7 +3263,7 @@
     }
 
     // ============================================================
-    // dry_run — Phase 4.x last gap
+    // dry_run
     // ============================================================
 
     /// Dry-running a single AddLayer should report success but leave
@@ -3422,7 +3421,7 @@
     }
 
     // ============================================================
-    // Groups (Phase G.2 — `docs/groups.md`)
+    // Groups (`docs/groups.md`)
     // ============================================================
 
     async fn three_layers_on_video_track() -> (ProjectHandle, TrackId, LayerId, LayerId, LayerId) {
@@ -3612,11 +3611,8 @@
         assert_eq!(snap.groups[0].label.as_deref(), Some("new"));
     }
 
-    // Tests for `groups_set_render_mode` removed 2026-05-17 alongside
-    // the field itself. The strict CSS-only-effect-in-html-mode
-    // invariant moved into the new `HtmlTransform` effect model:
-    // groups that need html-cap rendering carry an `HtmlTransform`
-    // effect; there is no toggle between Native and Html.
+    // Group html-cap rendering is expressed via an `HtmlTransform` effect;
+    // there is no Native/Html mode toggle.
 
     #[tokio::test]
     async fn delete_layer_auto_removes_from_group_and_dissolves() {
@@ -3644,7 +3640,7 @@
     }
 
     // ============================================================
-    // Group-aware move / trim / split (Phase G.3 — `docs/groups.md`)
+    // Group-aware move / trim / split (`docs/groups.md`)
     // ============================================================
 
     /// Two tracks, A on track1 and B on track2, both at [0..1_000_000].
@@ -4259,12 +4255,8 @@
         assert!(matches!(err, CommandError::GroupLockedMember { .. }));
     }
 
-    // The Phase H.2 fan-out parity tests went away 2026-05-17 with the
-    // `render_mode` field. Fan-out logic never read the field — the
-    // tests existed to prove that. With the field gone (and the effect
-    // chain replacing it), fan-out is structurally indifferent to
-    // whether a group has effects; the existing fan-out tests above
-    // already cover the move/trim/split/locked-member surface.
+    // Fan-out logic is indifferent to whether a group carries effects; the
+    // move / trim / split / locked-member tests above cover the full surface.
 
     // ============================================================
     // ADR 0005: composition duration auto-fits to layers unless pinned.

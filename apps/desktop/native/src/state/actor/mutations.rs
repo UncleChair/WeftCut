@@ -698,8 +698,8 @@ fn check_group_lock<I: IntoIterator<Item = LayerId>>(
 ///
 /// When the layer is in a group and `escape_group=false`, every group
 /// member whose interval strictly contains `at_t_us` is also split at
-/// `at_t_us`, with both halves staying in the same group (`docs/group-
-/// system.md` — split spans, group survives). Locked spanning members
+/// `at_t_us`, with both halves staying in the same group (`docs/groups.md`
+/// — split spans, group survives). Locked spanning members
 /// reject the whole op.
 pub(crate) fn apply_split_layer(
     project: &mut Project,

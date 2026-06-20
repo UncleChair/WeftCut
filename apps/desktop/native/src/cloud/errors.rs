@@ -1,5 +1,5 @@
-//! Shared error type for cloud-provider calls (Phase 6 Transcriber /
-//! Synthesizer). Concrete providers map their HTTP responses onto these
+//! Shared error type for cloud-provider calls (transcription / synthesis).
+//! Concrete providers map their HTTP responses onto these
 //! variants so the MCP tool layer can render a single, agent-friendly error
 //! shape regardless of which provider served the request.
 //!

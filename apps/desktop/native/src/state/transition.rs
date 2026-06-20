@@ -1,15 +1,14 @@
-//! Transitions between adjacent layers on the same track (Phase 2 deferral).
+//! Transitions between adjacent layers on the same track.
 //!
 //! A `Transition` authorizes a specific timeline overlap between two layers
-//! that would otherwise be rejected by the no-overlap invariant. The overlap
-//! span MUST exactly match `duration_us` so validation can reason about it.
+//! that the no-overlap invariant would otherwise reject; the overlap span MUST
+//! equal `duration_us` so validation can reason about it.
 //!
-//! v1 ships only `TransitionKind::Crossfade`, lowered as an alpha fade-in on
-//! the incoming layer (the receiving layer's first `duration_us` get alpha
-//! ramped 0 → 1 over the overlap). The outgoing layer stays at full opacity
-//! and the existing `overlay` filter does the linear blend. Future kinds
-//! (slide, wipe, dissolve through other transitions) can either reuse this
-//! shape or switch to ffmpeg's `xfade` filter; that's a Phase 5+ decision.
+//! The only kind is `TransitionKind::Crossfade`, lowered as an alpha fade-in on
+//! the incoming layer (its first `duration_us` get alpha ramped 0 → 1); the
+//! outgoing layer stays at full opacity and the `overlay` filter does the linear
+//! blend. Other kinds (slide/wipe/dissolve) could reuse this shape or switch to
+//! ffmpeg's `xfade` filter.
 
 use serde::{Deserialize, Serialize};
 

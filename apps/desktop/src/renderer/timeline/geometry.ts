@@ -217,8 +217,8 @@ export function trackKeyframeProperties(track: TrackSummary): ParamDescriptor[] 
       }
     }
   }
-  // Emit in a stable global order (x,y,scale_x,scale_y,opacity,gain_db,pan)
-  // rather than first-seen order: collect from the canonical descriptor lists.
+  // Emit in the stable order defined by ORDER below (not first-seen order):
+  // collect from the canonical descriptor lists.
   const ORDER = ["x", "y", "scale_x", "scale_y", "rotation_deg", "opacity", "gain_db", "pan"];
   for (const key of ORDER) {
     if (!seen.has(key)) continue;

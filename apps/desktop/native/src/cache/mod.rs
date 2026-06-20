@@ -175,11 +175,10 @@ impl CacheLayout {
     /// implicitly by `set_workspace`; the boot fallback also calls it once.
     ///
     /// `Cache/preview/` and `Cache/raster/` are intentionally NOT created —
-    /// the cached + segmented preview paths and the offscreen
-    /// rasterizer were deleted in preview-dom Phase F and pixi-renderer
-    /// P12-c respectively. Existing workspaces may have orphan trees from
-    /// a prior version; they're left in place rather than auto-deleted so
-    /// a user reverting to an older build keeps their cache.
+    /// the cached + segmented preview paths and the offscreen rasterizer no
+    /// longer exist. Existing workspaces may have orphan trees from a prior
+    /// version; they're left in place rather than auto-deleted so a user
+    /// reverting to an older build keeps their cache.
     pub fn ensure_dirs(&self) -> Result<()> {
         let root = self.current_root();
         for p in [
@@ -374,11 +373,6 @@ mod tests {
         layout.set_workspace(ws.path()).unwrap();
         assert!(layout.proxies_dir().is_dir());
     }
-
-    // The preview/* paths (`preview_dir`, `preview`, `preview_segments_dir`,
-    // `preview_segment`, `preview_manifest`, `preview_init`, `preview_audio`)
-    // were deleted at the Phase F cutover (commit 5a4879d) alongside the
-    // cached + segmented + B.3 paths. Their tests are gone.
 
     #[test]
     fn inline_subs_path_includes_extension() {

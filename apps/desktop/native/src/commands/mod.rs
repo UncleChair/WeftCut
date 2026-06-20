@@ -83,13 +83,10 @@ pub struct MarkerSummary {
 #[derive(Serialize, Clone)]
 pub struct TrackSummary {
     pub id: String,
-    /// V.5 (A/B-roll v2): tracks are kind-agnostic. This field used to
-    /// expose `TrackKind` (Video / Audio / Subtitle). It's preserved
-    /// for transitional UI compatibility and now reports the dominant
-    /// layer-class on the track — `"Video"` when the track has any
-    /// visual-class layer, `"Audio"` when it's audio-only, `"Empty"`
-    /// when it has no layers at all. V.10 frontend cleanup removes
-    /// the field entirely from the wire.
+    /// Dominant layer-class label for the track (`"Video"` when any visual-class
+    /// layer is present, `"Audio"` when audio-only, `"Subtitle"` for subtitle-only,
+    /// `"Video"` when empty). Transitional: tracks are kind-agnostic, so this is
+    /// derived for the UI's kind-based styling, not a stored property.
     pub kind: String,
     pub label: Option<String>,
     pub enabled: bool,
@@ -106,8 +103,8 @@ pub struct TrackSummary {
     /// UI uses this to drive the AB display-mode filter and the role-aware
     /// AV promotion path.
     pub role: Option<String>,
-    /// True when this track was spawned by R.3's "fresh hidden track per
-    /// import" path and is therefore subject to auto-prune. The UI can
+    /// True when this track was spawned by the "fresh hidden track per import"
+    /// path and is therefore subject to auto-prune. The UI can
     /// use this to render the track-header chrome differently (it's
     /// going to disappear the moment its layer is dragged off).
     pub transient: bool,
@@ -158,13 +155,10 @@ pub struct MotifView {
     pub scale_y: Animated<f64>,
     pub opacity: Animated<f64>,
     pub src_in_us: i64,
-    /// Validated props the user set on this motif instance.
-    /// Keys match the motif manifest's `props_schema`; values
-    /// are whatever JSON shape that schema permits (string / number /
-    /// color-as-string). The DOM preview injects this verbatim as
-    /// `__props__` on the per-instance shadowed window-proxy inside
-    /// the motif host (`<div>` + Shadow DOM; see
-    /// `MotifHandle.ts`).
+    /// Validated props the user set on this motif instance. Keys match the
+    /// motif manifest's `props_schema`; values are whatever JSON shape that
+    /// schema permits (string / number / color-as-string). Serialized for the
+    /// capture host (see renderer `render/motifs/host.ts`).
     pub props: serde_json::Map<String, serde_json::Value>,
 }
 
@@ -382,8 +376,8 @@ pub(crate) fn build_project_summary(
         .iter()
         .map(|t| TrackSummary {
             id: t.id.to_string(),
-            // V.5: derive `kind` from the track's layers. Visual-class
-            // layers win; audio-only tracks report "Audio"; empty
+            // Derive `kind` from the track's layers: visual-class layers win;
+            // audio-only tracks report "Audio"; empty
             // tracks report "Video" so the existing UI still styles
             // the reserved A/B-roll rows as video lanes by default.
             kind: derive_track_kind_label(t),
@@ -598,9 +592,9 @@ fn layer_kind(params: &LayerParams) -> String {
     .to_string()
 }
 
-/// V.5 transitional helper. Derives a `TrackKind`-like label from the
-/// track's layers so the existing UI can keep its kind-based styling
-/// (`.kind-video`, `.kind-audio`) until V.10 cleans the frontend up.
+/// Transitional helper. Derives a `TrackKind`-like label from the track's
+/// layers so the UI can keep its kind-based styling (`.kind-video`,
+/// `.kind-audio`) while tracks are kind-agnostic.
 ///
 /// Rules:
 ///   - any visual-class layer present → "Video"

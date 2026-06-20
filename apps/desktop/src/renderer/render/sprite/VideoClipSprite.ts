@@ -4,7 +4,7 @@
 // contains the layer-local time, and update the sprite's persistent
 // texture source from it.
 //
-// Plan: docs/render.md (P2)
+// See docs/render.md (video-clip layers).
 //
 // Implementation per PixiJS v8 docs:
 //

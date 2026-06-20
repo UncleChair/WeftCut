@@ -5,8 +5,8 @@
 // midpoint (an exact box average). GL readback rows are bottom-up; rows are
 // flipped on the CPU copy (PACK_ROW_FLIP, pinned by the parity e2e).
 //
-// NOTE: VERT, FRAG_Y, and FRAG_C below are copied verbatim into
-// e2e/tools/iso_tenbit_gl_parity.e2e.js (the GL-parity gate) — keep both in sync.
+// NOTE: VERT, FRAG_Y, and FRAG_C below are duplicated by the 10-bit
+// GL-parity gate — keep both copies byte-identical.
 
 import { Mesh, MeshGeometry, RenderTexture, Shader } from "pixi.js";
 import type { TextureSource, WebGLRenderer } from "pixi.js";
@@ -15,7 +15,6 @@ import type { Texture } from "pixi.js";
 /// Pixi's GL renderer applies a Y-flip projection (y=0 = RT top), so
 /// gl_FragCoord.y=0.5 corresponds to visual row 0 (top). readPixels at y=0
 /// therefore gives the visual top row directly — no flip needed.
-/// Pinned false by iso_tenbit_gl_parity T2 (2026-06-12).
 const PACK_ROW_FLIP = false;
 
 const VERT = `#version 300 es

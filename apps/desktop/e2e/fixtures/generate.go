@@ -465,7 +465,7 @@ func main() {
 	switch *format {
 	case "mp4", "mkv", "mov":
 		if *eosTail {
-			// Export tail-deadlock gate fixture (see export_eos_tail.e2e.js).
+			// Export tail-deadlock gate fixture (see export_eos_tail.spec.ts).
 			// Two deliberate properties:
 			//   - Keyframes pinned to one per 5s (-g 5*fps, scenecut off): a 10s
 			//     clip has keys at 0s and 5s ONLY, so the export's 60-frame chunks

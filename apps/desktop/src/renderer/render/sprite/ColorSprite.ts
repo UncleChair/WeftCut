@@ -4,7 +4,7 @@
 // (`resolveColorView`) until the Rust `Animated<Rgba>::value_at` twin
 // exists to mirror per-frame color interpolation.
 //
-// Plan: docs/render.md (P3)
+// See docs/render.md (color layers).
 
 import { Graphics } from "pixi.js";
 

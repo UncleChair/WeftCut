@@ -41,8 +41,8 @@ export function createMotifRuntime(g: any = {}) {
  * String.raw template — the substitution below (createMotifRuntime.toString)
  * is resolved by TypeScript at module-evaluation time into a plain string.
  * ZERO raw backticks are present inside the body of this literal; the only
- * backtick characters are the outer delimiters. (Same build hazard as
- * ENGINE_SOURCE / HARNESS_FRAME — a stray backtick would close the literal early.)
+ * backtick characters are the outer delimiters. (A stray backtick anywhere
+ * inside the body would close the String.raw literal early and break the esbuild parse.)
  */
 export const MOTIF_RUNTIME_SOURCE: string = String.raw`
 (function () {

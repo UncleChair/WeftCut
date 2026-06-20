@@ -1,5 +1,5 @@
 //! WeftCut domain core, exposed to Electron via napi-rs (`Backend`).
-//! Architecture: see `docs/superpowers/specs/2026-06-17-electron-napi-s2-state-core-design.md`.
+//! Architecture: see `docs/architecture.md` and `docs/mcp.md`.
 
 // imbl's persistent collections have deep type chains (`Vector<T>` → internal
 // RRB nodes → Arc<Chunk<Node<T>>>); proving `Send`/`Sync` of the actor's future
@@ -26,7 +26,7 @@ mod jobs;
 #[cfg(feature = "export")]
 mod export;
 // Plain JSON store, no `export`/ffmpeg dependency — kept ungated so the prefs
-// command group (Task 7) can reach `export_settings_get/set` without `export`.
+// command group can reach `export_settings_get/set` without `export`.
 mod export_settings_store;
 #[cfg(feature = "cloud")]
 mod cloud;

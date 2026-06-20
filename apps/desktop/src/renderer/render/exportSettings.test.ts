@@ -144,7 +144,7 @@ describe("default-export baseline", () => {
       dims.height,
       30,
     );
-    // Today's hardcoded default was a flat 8 Mbps.
+    // Medium @ 1080p30 H.264 should land at ~8 Mbps.
     expect(Math.abs(bitrate - 8_000_000)).toBeLessThan(500_000);
     // VBR by default → bitrateMode "variable" (set in App; documented here).
     expect(DEFAULT_EXPORT_SETTINGS.rateMode).toBe("vbr");
@@ -188,7 +188,7 @@ describe("mezzanineBitrate", () => {
     const mezz = mezzanineBitrate(s, 1920, 1080, 30);
     // ≈ a normal H.264 export of the same quality → no worse memory than H.264.
     expect(mezz).toBe(computeBitrate({ ...s, codec: "h264" }, 1920, 1080, 30));
-    // Far below the old fixed 20Mbps mezzanine.
+    // A medium HEVC mezzanine stays well under 12 Mbps.
     expect(mezz).toBeLessThan(12_000_000);
   });
   it("keeps >=1.5x headroom over the final target for custom bitrate", () => {

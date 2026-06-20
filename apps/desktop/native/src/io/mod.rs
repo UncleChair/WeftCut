@@ -56,8 +56,8 @@ pub async fn load_from_dir(dir: &Path) -> Result<Project> {
 
     let mut project: Project = serde_json::from_str(&json).context("deserialize project")?;
 
-    // P11 cut-over: only `SCHEMA_VERSION` projects load. Pre-release,
-    // so we don't carry forward older `.vproj` folders — `migrate::run`
+    // Only `SCHEMA_VERSION` projects load. Pre-release, so we don't
+    // carry forward older `.vproj` folders — `migrate::run`
     // either passes through silently or returns a guidance error the
     // shell surfaces to the user. Higher versions also error (this
     // build doesn't know how to read them).

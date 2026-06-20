@@ -1,6 +1,6 @@
 // postMessage protocol between the main thread and the export Worker.
 //
-// Plan: docs/render.md (P8)
+// See docs/render.md — "Export Worker".
 //
 // The Worker is constructed once per export, receives one `start` request,
 // streams `progress` + `chunk` events, posts a final `done` with counters

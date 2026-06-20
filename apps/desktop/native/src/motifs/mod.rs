@@ -19,8 +19,8 @@ pub mod watcher;
 /// built-ins, then (lazily — only if not a built-in) the user manifests, then
 /// fall back to 5.0. `get_user_manifests` is only invoked when `motif_id` is
 /// not a built-in, so built-in captures never touch the disk. Pure (modulo the
-/// caller's closure) so it stays unit-testable. (Relocated from the deleted
-/// `commands.rs`; backs the `motif_ctx_duration_s` napi method.)
+/// caller's closure) so it stays unit-testable. Backs the `motif_ctx_duration_s`
+/// napi method.
 pub fn resolve_capture_duration(
     motif_id: &str,
     builtins: &[catalog::Motif],

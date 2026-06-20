@@ -52,10 +52,9 @@ export async function newProject(
 }
 
 /// Invoke a backend command through the renderer bridge and return its result.
-/// The Electron equivalent of the retired wdio helper's `window.__TAURI__.core
-/// .invoke` — `api.backend.invoke` is the one generic command channel the
-/// renderer + every ported spec already use. Rejects (failing the test) when
-/// the backend command errors.
+/// `api.backend.invoke` is the single generic command channel into the Rust
+/// dispatcher that the renderer and every e2e spec use. Rejects (failing the
+/// test) when the backend command errors.
 export async function invokeCmd<T = unknown>(
   page: Page,
   cmd: string,

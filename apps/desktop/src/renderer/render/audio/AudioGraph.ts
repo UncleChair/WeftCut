@@ -70,7 +70,7 @@ export class AudioGraph {
     this.inputNode.gain.value = muted ? 0 : 1;
   }
 
-  // Legacy stub API shape, kept for compatibility.
+  // Boolean-free aliases for setMasterMute(true/false).
   muteMaster(): void {
     this.setMasterMute(true);
   }

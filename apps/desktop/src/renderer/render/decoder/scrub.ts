@@ -1,6 +1,6 @@
 // Debounced scrub coalescer.
 //
-// Plan: docs/render.md (8d.2 — fresh WebCodecs-native)
+// See docs/render.md#scrub.
 //
 // Behavior: caller `requestSeek(tUs)` may fire at scroll-wheel speed
 // (hundreds of times per second). The coalescer batches into one

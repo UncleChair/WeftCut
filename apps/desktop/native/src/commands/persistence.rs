@@ -27,9 +27,9 @@ pub async fn project_save_as(backend: &Backend, path: String) -> Result<(), Stri
     io::save_to_dir(&snap, &path)
         .await
         .map_err(|e| format!("{e:#}"))?;
-    // Per workspace-redesign Q3, every save-as/open re-points the cache at
-    // `<workspace>/Cache/`. From here on, proxies/thumbnails/waveforms/
-    // preview renders land inside the workspace folder, not the OS app-cache.
+    // Every save-as/open re-points the cache at `<workspace>/Cache/`: from here
+    // on, proxies/thumbnails/waveforms/preview renders land inside the
+    // workspace folder, not the OS app-cache. See docs/data-model.md.
     backend
         .cache
         .set_workspace(&path)
@@ -89,9 +89,8 @@ pub async fn project_open(backend: &Backend, path: String) -> Result<(), String>
         .map_err(|e: CommandError| e.to_string())?;
     backend.recents.push(path, display_name);
 
-    // S3a: re-fan-out background derivative jobs for every media item, to
-    // regenerate proxies / thumbnails / waveforms missing or stale after
-    // `load_from_dir`. Mirrors the legacy `project_open` tail.
+    // Re-fan-out background derivative jobs for every media item, to regenerate
+    // proxies / thumbnails / waveforms missing or stale after `load_from_dir`.
     #[cfg(feature = "jobs")]
     {
         let snap = handle.snapshot().await;
@@ -111,8 +110,8 @@ pub async fn project_open(backend: &Backend, path: String) -> Result<(), String>
 /// Create a brand-new workspace at `<parent_folder>/<name>/` with the given
 /// composition preset, replace the actor's state with a fresh blank
 /// project, and write it to disk. Used by the startup screen's "+ New
-/// project" form. Per workspace-redesign Q7 this is the canonical way to
-/// start a new project.
+/// project" form. This is the canonical way to start a new project. See
+/// docs/data-model.md ("On-disk format: workspace folder").
 #[allow(clippy::too_many_arguments)]
 pub async fn project_new_workspace(
     backend: &Backend,

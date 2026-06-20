@@ -46,9 +46,9 @@ impl Rational {
 /// ```
 ///
 /// 29.97 fps (30000/1001) doesn't yield integer-us frame boundaries; the
-/// final divide truncates. Both Pass B branches snap with the same
-/// function so they agree regardless of the rounding direction. See
-/// `docs/data-model.md` §10.
+/// final divide truncates. The asymmetry is harmless as long as every
+/// caller snaps with the same function. See `docs/data-model.md` —
+/// Timeline-field alignment.
 pub fn snap_frame_floor(t_us: TimeUs, fps: Rational) -> TimeUs {
     let prod = (t_us as i128) * (fps.num as i128);
     let div = (US_PER_SEC as i128) * (fps.den as i128);
@@ -75,11 +75,11 @@ pub fn snap_frame_ceil(t_us: TimeUs, fps: Rational) -> TimeUs {
 ///
 /// Use this for round-to-nearest snap of timeline mutations (move,
 /// trim, split, seek). Floor/ceil exist for the rare cases where
-/// asymmetric snap is needed (Pass B effect routing).
+/// asymmetric snap is needed.
 ///
 /// The OUTPUT value is also half-up rounded, matching the demuxer's
-/// source-PTS rounding (`apps/desktop/src/render/decoder/Demuxer.ts`:
-/// `Math.round((cts/timescale)*1e6)`). Without this, per-frame splits
+/// source-PTS rounding (`apps/desktop/src/renderer/render/decoder/PacketPump.ts`:
+/// `Math.round(pts * 1e6)`). Without this, per-frame splits
 /// at frame indices where `N * 1_000_000 * den / num` has fractional
 /// > 0.5 (e.g. frames 2, 5, 8 at 30 fps) store `src_in_us` 1 µs below
 /// the demuxer's source PTS for the same frame, so `FrameRing.frameAt`
@@ -113,8 +113,8 @@ mod tests {
         //   * t=33332   → still in frame 0 (33332*30 < 1_000_000)
         //   * t=33333   → still in frame 0 (33333*30 = 999990 < 1e6)
         //   * t=33334   → snaps DOWN to frame 1's snapped start = 33333
-        // The asymmetry doesn't matter for Pass B as long as both
-        // branches snap with the same function (and they do).
+        // The asymmetry doesn't matter as long as every caller snaps
+        // with the same function (and they do).
         assert_eq!(snap_frame_floor(0, Rational::FPS_30), 0);
         assert_eq!(snap_frame_floor(33_332, Rational::FPS_30), 0);
         assert_eq!(snap_frame_floor(33_333, Rational::FPS_30), 0);
@@ -164,7 +164,7 @@ mod tests {
         assert_eq!(snap_frame_round(16_667, Rational::FPS_30), 33_333);
         assert_eq!(snap_frame_round(33_333, Rational::FPS_30), 33_333);
         assert_eq!(snap_frame_round(49_999, Rational::FPS_30), 33_333);
-        // Output is half-up rounded to match Demuxer.ts source-PTS rounding
+        // Output is half-up rounded to match PacketPump.ts source-PTS rounding
         // (frame 2 true µs = 66_666.667 → 66_667).
         assert_eq!(snap_frame_round(50_000, Rational::FPS_30), 66_667);
     }

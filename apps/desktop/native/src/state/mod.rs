@@ -1,16 +1,6 @@
-//! Project state, single-writer actor, history, persistence.
+//! Project state, single-writer actor, history, validation, persistence.
 //!
 //! Design: `docs/data-model.md`.
-//!
-//! Phase 1 build order (`docs/data-model.md` "Implementation footprint"):
-//!   1. Type definitions + JSON round-trip.        ← here
-//!   2. Single-writer actor with `add_layer` / `delete_layer` only.
-//!   3. History (snapshot ring + named checkpoints).
-//!   4. Validation invariants.
-//!   5. Full mutation surface.
-//!   6. Save/load with `schema_version: 1`.
-//!   7. MCP resource serialization + tool wiring.
-//!   8. UI bridge.
 
 // The `pub use` block below re-exports the state crate's whole surface for
 // consumers (commands, MCP, tests, future phases). Many are not yet wired

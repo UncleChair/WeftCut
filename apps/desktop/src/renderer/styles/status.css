@@ -21,8 +21,7 @@
    Status bar (see docs/status-log.md).
 
    Persistent ~28px strip pinned to the bottom of the editor view.
-   Phase 1 ships the bar; Phase 2 adds the expanded console overlay
-   that lifts above it.
+   The persistent bar; an expandable console overlay can lift above it.
    =================================================================== */
 
 .status-bar {

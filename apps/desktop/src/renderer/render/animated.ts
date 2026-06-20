@@ -1,9 +1,8 @@
-// Port of `engine.ts`'s `resolveAnimated` for the PixiJS-side renderer.
-// Wire-compatible with the Rust `Animated<T>` enum (serde tag "mode",
-// content "value"). Times are in microseconds throughout to match the
-// Rust side; callers convert at the seconds boundary.
+// PixiJS-side animation resolver. Wire-compatible with the Rust `Animated<T>`
+// enum (serde tag "mode", content "value"). Times are in microseconds
+// throughout to match the Rust side; callers convert at the seconds boundary.
 //
-// Plan: docs/render.md (P2)
+// Plan: docs/render.md
 
 export type Interpolation =
   | { kind: "Hold" }

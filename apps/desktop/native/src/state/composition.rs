@@ -15,7 +15,7 @@ pub struct Composition {
     /// `duration_us = 10_000_000` (the boundary AFTER frame 299, not frame
     /// 299's own anchor at 9_966_667). The playhead, being a frame anchor,
     /// can never sit at `duration_us`; its upper bound is
-    /// `lastFrameAnchorUs` in `apps/desktop/src/frames.ts`. See
+    /// `lastFrameAnchorUs` in `apps/desktop/src/renderer/frames.ts`. See
     /// `docs/data-model.md` for the boundary-vs-anchor distinction.
     ///
     /// Auto-fits to `max(layer.t_end_us)` while `duration_pinned` is false.

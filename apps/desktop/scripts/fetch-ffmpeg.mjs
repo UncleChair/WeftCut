@@ -14,7 +14,7 @@ const FFMPEG_VERSION = '7.1.1'
 // verified, rejects a tampered/corrupt download. Linux (BtbN `latest`) and macOS
 // (evermeet `getrelease`) are ROLLING sources, so a pinned hash there would break
 // on every upstream rebuild; they stay size-validated only until their URLs are
-// version-pinned (the rest of supply-chain item B3; see docs/security.md).
+// version-pinned (rolling upstream builds have no stable hash to pin against).
 const FFMPEG_WIN_SHA256 = '04861d3339c5ebe38b56c19a15cf2c0cc97f5de4fa8910e4d47e5e6404e4a2d4'
 const MIN_ARCHIVE_BYTES = 1 * 1024 * 1024   // 1 MB — corrupt/truncated guard
 const MIN_BINARY_BYTES  = 1 * 1024 * 1024   // 1 MB — incomplete-extract guard

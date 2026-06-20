@@ -1,7 +1,6 @@
-// The async packet pump for preview decode. Replaces the mp4box
-// SourceHandle's synchronous, sample-index-based pump with a
-// single-flight async loop driven by mediabunny's EncodedPacketSink
-// (getKeyPacket / getNextPacket). See docs/render.md#byte-handling.
+// The async packet pump for preview decode: a single-flight async loop
+// driven by mediabunny's EncodedPacketSink (getKeyPacket / getNextPacket).
+// See docs/render.md#byte-handling.
 //
 // Control-flow invariants (the spec's "dominant risk"):
 //   - SINGLE-FLIGHT: at most one runPump() loop is live at a time
@@ -98,8 +97,7 @@ export interface PumpPacket {
 /// Minimal view of a mediabunny `EncodedPacketSink`. `EncodedPacketSink`
 /// satisfies this structurally (its extra optional `options` params are
 /// compatible under TS method bivariance). If a strict-mode assignability
-/// error surfaces at the wiring site in Task 5, wrap the sink in a thin
-/// adapter there.
+/// error surfaces at the wiring site, wrap the sink in a thin adapter there.
 export interface PumpPacketSink {
   getKeyPacket(tsSeconds: number): Promise<PumpPacket | null>;
   getNextPacket(packet: PumpPacket): Promise<PumpPacket | null>;

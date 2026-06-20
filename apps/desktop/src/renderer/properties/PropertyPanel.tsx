@@ -42,7 +42,7 @@ const BLACK: Rgba = { r: 0, g: 0, b: 0, a: 255 };
 import { getMotif, subscribeMotifCatalog, motifCatalogRevision, type PropSpec } from "../render/motifs/catalog";
 import { useProjectStore } from "../state/projectStore";
 import { useLayerBakeStatus } from "../timeline/motifBakeStatusStore";
-// EffectsSection + effects-related ipc calls removed in P12-a.
+// No EffectsSection here — effect editing isn't part of this panel.
 
 interface Props {
   tracks: TrackSummary[];
@@ -80,9 +80,8 @@ export function PropertyPanel({
     );
   }
 
-  // `groups` is unused after the EffectsSection removal but kept in the
-  // prop signature to avoid churn at the call site. P12-b's IR cleanup
-  // can reconsider once `layer.effects` / `group.effects` are gone.
+  // `groups` is unused but kept in the prop signature to avoid churn at
+  // the call site. Revisit once `layer.effects` / `group.effects` are gone.
   void groups;
 
   return (

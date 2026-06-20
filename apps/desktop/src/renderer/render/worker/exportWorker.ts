@@ -16,7 +16,7 @@
 //   over the chunk with no per-frame waiting. After the chunk
 //   encodes we evict its consumed frames so memory stays bounded.
 //
-// Limitations (v1):
+// Limitations:
 //   - Audio is OUT. The Worker has no DOM and audio export rides
 //     the existing Rust ffmpeg compositor. Final mux/transcode combines
 //     this temp video with an optional temp audio file (.m4a/.mka).
@@ -300,8 +300,8 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     const chunkEndUs = frameTimeUs(chunkEnd) - 1;
 
     // 6a. Dispatch decode for every active VideoClip in this chunk.
-    // After the P8 wedge fix this is non-blocking: decodeRange feeds
-    // the decoder and returns immediately. No flush. The decoder
+    // This is non-blocking: decodeRange feeds the decoder and returns
+    // immediately. No flush. The decoder
     // emits frames asynchronously via its output callback; the
     // encode loop below pulls them via `ring.waitForPts`.
     //
@@ -349,9 +349,10 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     //   2. Compose + capture + encode the output frame.
     //   3. Evict source frames whose presentation interval ends at or
     //      before the next output frame's source PTS. This frees
-    //      VideoFrame pool slots so the decoder can produce more —
-    //      the missing piece that caused the original "wedge at
-    //      output #8" deadlock.
+    //      VideoFrame pool slots so the decoder can produce more.
+    //      Without this evict the pool saturates and the decoder
+    //      deadlocks (it can never release frames the encode loop
+    //      is still waiting on).
     let compositeMs = 0;
     let captureMs = 0;
     let encodeMs = 0;

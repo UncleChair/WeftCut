@@ -33,10 +33,9 @@
   letter-spacing: 0.04em;
 }
 
-/* A/B-roll redesign R.9 (`docs/data-model.md`): MediaPool moves
-   from a bottom grid cell to a left collapsible drawer. The drawer
-   column is a CSS variable so the M shortcut / View menu toggle can
-   animate the open/closed transition with a single value flip. */
+/* MediaPool lives in a left collapsible drawer (see `docs/data-model.md`).
+   The drawer column is a CSS variable so the M shortcut / View-menu toggle
+   animates open/closed with a single value flip. */
 .app-main {
   display: grid;
   grid-template-columns: var(--mediapool-drawer-width, 0px) 1fr 280px;

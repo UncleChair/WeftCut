@@ -1,24 +1,16 @@
 //! Slim preview helper module.
 //!
-//! Post DOM-preview cutover (`docs/preview.md` Phase F), the
-//! Rust-side preview renderer is gone. ffmpeg runs only at import
-//! (proxies) and export. This module survives as the home of
-//! [`with_proxies_substituted`], which both the export pipeline
-//! and the Render & Play path use to swap source paths for their
-//! 540p (or canvas-capped) proxy before lowering.
-//!
-//! Everything else that used to live here — `PreviewRenderer`,
-//! segmented cache (`segmented.rs`), encoder + manifest +
-//! queue + codec + failure machinery, and the per-render/per-segment
-//! progress events it emitted — was deleted at cutover.
-//! See `docs/preview.md` (now archival) for the
-//! prior design.
+//! The Rust side runs ffmpeg only at import (proxies) and export; preview
+//! rendering is done by the DOM/Pixi renderer. This module's sole remaining
+//! job is [`with_proxies_substituted`], used by both the export pipeline and
+//! the Render & Play path to swap source paths for their proxy before
+//! lowering. See `docs/preview.md`.
 
 use crate::state::Project;
 
 /// Clone the project with each `MediaItem.path_abs` replaced by its
 /// full `proxy_path` when that proxy exists on disk. Per-clip proxies are
-/// `jobs::proxy::PROXY_HEIGHT` H.264 + AAC; export's `Scale` node
+/// H.264 + AAC capped at `jobs::proxy::PROXY_HEIGHT_CAP`; export's `Scale` node
 /// upscales to canvas anyway, so resolution substitution is
 /// transparent. Quick proxies are preview-only TS-side artifacts and are
 /// deliberately ignored here.

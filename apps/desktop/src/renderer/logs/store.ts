@@ -18,7 +18,7 @@ const RING_CAP = 1000;
 
 /// Latest-error sticky window: once an Error lands, the bar's latest
 /// slot resists overwrite by lower-severity entries for this many ms.
-/// Acknowledged on toggleLog (Phase 2 wires the shortcut).
+/// Acknowledged when the log console is opened.
 export const ERROR_STICKY_MS = 10_000;
 
 export interface LogStoreState {

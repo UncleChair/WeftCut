@@ -1,6 +1,6 @@
-//! MCP keyframe authoring: arg structs + testable free helpers. The `#[tool]`
-//! wrapper methods live in `mcp/mod.rs` (the `#[tool(tool_box)]` macro requires
-//! them inside the `WeftCutServer` impl); they parse args and call these.
+//! MCP keyframe authoring: arg structs + testable free helpers. The thin tool
+//! wrappers that parse these arg structs and call these helpers live in
+//! `mcp/tools.rs`; the dispatch table in `mcp/catalog.rs` routes to them.
 //!
 //! All times are TIMELINE-ABSOLUTE microseconds; helpers convert to layer-local
 //! (`t - layer.t_start_us`) before the write. Each helper does snapshot → pure

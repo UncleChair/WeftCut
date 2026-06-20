@@ -1,5 +1,6 @@
-//! Layer/track/composition mutation commands -- re-signed from commands_legacy.rs.
-//! Bodies are copied verbatim; only the signature changes (the napi `Backend` carries the managed state).
+//! Layer/track/composition mutation commands invoked over IPC. Each parses
+//! its string args, resolves the project handle from the napi `Backend`, and
+//! delegates to the actor with `Actor::User`.
 
 use uuid::Uuid;
 
@@ -13,7 +14,8 @@ use crate::state::{
     time::TimeUs,
 };
 
-/// A/B-roll v2 V.7: right-click "Separate audio to new track".
+/// Right-click "Separate audio to new track": moves the layer's audio onto a
+/// fresh track. See docs/groups.md / the A/B-roll redesign note.
 pub async fn separate_audio_to_new_track(
     backend: &Backend,
     layer_id: String,

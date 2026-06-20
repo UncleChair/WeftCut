@@ -1,10 +1,10 @@
 // Converts TenBitFrames into per-clip RGBA16F textures through a Pixi
 // WebGL2 mesh pass. Planes upload as RG8 (r = low byte, g = high byte of the
 // u16LE sample) with NEAREST sampling — bilinear would interpolate the two
-// bytes independently and produce garbage. Chroma is upsampled nearest (v1).
+// bytes independently and produce garbage. Chroma is upsampled nearest.
 //
-// NOTE: VERT and FRAG below are copied verbatim into
-// e2e/tools/iso_tenbit_gl_parity.e2e.js (the GL-parity gate) — keep both in sync.
+// NOTE: VERT and FRAG below are duplicated verbatim in the 10-bit GL-parity
+// gate (see apps/desktop/e2e) — keep both copies in sync.
 
 import {
   BufferImageSource, Mesh, MeshGeometry, RenderTexture, Shader, Texture,

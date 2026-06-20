@@ -1,7 +1,5 @@
-// apps/desktop/src/timeline/EasingMenu.tsx
-// Small preset/Smooth popover anchored at a click point. Replaces the abstract
-// EasingEditor unit-square popup: curve editing now happens in-place on the
-// timeline (KeyframeCurveGraph); this menu only applies named presets / Smooth.
+// Small preset/Smooth popover anchored at a click point: applies named easing
+// presets / Smooth to one keyframe. In-place curve editing lives in KeyframeCurveGraph.
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Popover as PopoverPrimitive } from "@base-ui/react/popover";

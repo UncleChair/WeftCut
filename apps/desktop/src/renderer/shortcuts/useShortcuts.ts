@@ -103,9 +103,9 @@ function isInTransientWidget(target: EventTarget | null): boolean {
 ///   focus after a click. They additionally yield when focus is inside an open
 ///   transient widget (menu / listbox / dialog), where the key is the
 ///   widget's.
-/// - Every other action dispatches in the **bubble** phase, unchanged — this
-///   keeps deeper capture-phase listeners (e.g. KeyframeLane's selected-
-///   keyframe Delete) ahead of the app-level handler, exactly as before.
+/// - Every other action dispatches in the **bubble** phase, which keeps
+///   deeper capture-phase listeners (e.g. KeyframeLane's selected-keyframe
+///   Delete) ahead of the app-level handler.
 export function useShortcuts({
   handlers,
   overrides = EMPTY_OVERRIDES,

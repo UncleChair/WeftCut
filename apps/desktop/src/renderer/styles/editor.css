@@ -202,11 +202,9 @@
 }
 
 /* ============================================================
-   Right panel (`docs/data-model.md` R.6)
-   Replaces the standalone PropertyPanel section.
-   Peek list (top) + Inspector (bottom). Peek hides in Show-All
-   mode and collapses to zero-height when no hidden-track layers
-   fall in the ±Δ window (Q14 lock).
+   Right panel (see `docs/data-model.md`)
+   Peek list (top) + Inspector (bottom). Peek hides in Show-All mode and
+   collapses to zero-height when no hidden-track layers fall in the ±Δ window.
    ============================================================ */
 .right-panel {
   display: flex;
@@ -454,7 +452,7 @@
   text-align: right;
 }
 
-/* Phase A5: per-segment render status bar above the timeline. */
+/* Per-segment render status bar above the timeline. */
 .segment-status-bar {
   position: relative;
   width: 100%;
@@ -668,7 +666,7 @@
 .kf-diamond-row { position: absolute; left: 0; right: 0; bottom: 1px; height: 8px; pointer-events: none; }
 .kf-diamond { position: absolute; width: 7px; height: 7px; transform: translateX(-50%) rotate(45deg); background: #fff; border: 1px solid rgba(0,0,0,0.5); }
 .kf-diamond.is-selected { background: #facc15; box-shadow: 0 0 0 1.5px var(--ring); }
-/* Sub-lane diamonds (Phase 3) span the whole track row, vertically centered
-   in the 24px sub-lane (vs the Phase-2 in-clip diamonds, bottom-pinned in
+/* Sub-lane diamonds span the whole track row, vertically centered in the
+   24px sub-lane (vs the in-clip diamonds, which are bottom-pinned in
    .kf-diamond-row). The base .kf-diamond transform keeps the 45° rotation. */
 .kf-sublane-diamond { top: 50%; margin-top: -3.5px; pointer-events: auto; cursor: pointer; }

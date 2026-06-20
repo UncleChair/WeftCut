@@ -2,10 +2,9 @@
 //! the video temp file; Rust fills in an optional audio temp file and ffmpeg
 //! writes the user's output.
 //!
-//! Post P12-d — the legacy full-render ffmpeg-compositor pipeline (presets,
-//! HW encoder cache, export queue, progress events, `compile_project`
-//! debug view) was deleted with the IR visual half. Only the two paths
-//! the Pixi export orchestrator actually invokes survive.
+//! This module owns only the audio-only export and the final mux/transcode
+//! tail. Video composition + encode is the renderer's Pixi/WebCodecs worker;
+//! ffmpeg here never composites frames.
 
 mod hwencoder;
 pub use hwencoder::{HwEncoderCache, TargetCodec};

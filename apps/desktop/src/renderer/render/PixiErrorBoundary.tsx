@@ -4,7 +4,7 @@
 // unmount the entire editor. The boundary catches it and renders a
 // visible error so the rest of the UI stays alive.
 //
-// Plan: docs/render.md (P2)
+// Plan: docs/render.md
 
 import { Component, type ErrorInfo, type ReactNode } from "react";
 
@@ -55,9 +55,8 @@ export class PixiErrorBoundary extends Component<Props, State> {
               {error.name}: {error.message}
             </div>
             <div style={{ marginTop: 12, fontSize: 11, opacity: 0.5 }}>
-              Remove the <code>?pixi=1</code> flag (or{" "}
-              <code>localStorage.removeItem(&quot;weftcut.preview.pixi&quot;)</code>) to
-              return to the legacy preview.
+              Reload the editor to retry. If it keeps crashing, the error above
+              is the cause.
             </div>
           </div>
         </div>

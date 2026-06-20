@@ -1,7 +1,7 @@
 // Dev/E2E-only control surface. Installed ONLY when
 // import.meta.env.VITE_WEFTCUT_E2E === "1" (set by the e2e build), so it is
 // absent from normal production bundles (the dynamic import behind that static
-// check is dead-code-eliminated). Lets the WebDriver spec drive a real
+// check is dead-code-eliminated). Lets the e2e spec drive a real
 // new-project -> import -> place -> export through the SAME code paths the UI
 // uses, in the real Electron renderer.
 //
@@ -128,7 +128,7 @@ export interface E2EHook {
   /// `update(view, tInLayerUs, durationUs)` → frame index → `frameTimeSec` →
   /// `resolveMotifFrame` → `rasterMotifFrame` (CDP) → bound `Texture`. The spec
   /// asserts the two frames differ (the motif animated across the
-  /// timeline). `browser.execute` can't import the bundled `MotifSprite`,
+  /// timeline). The spec's page.evaluate can't import the bundled `MotifSprite`,
   /// so it's constructed here and the result reduced to plain numbers.
   ///
   /// Returns, per requested time: the bound bitmap dims + a content checksum
@@ -201,7 +201,7 @@ export interface E2EHook {
   bakedIndexHas(cacheKey: string): boolean;
   /// Render a Motif frame via the Rust `motif_capture_frame` command and
   /// return the raw base64 PNG string (no `data:` prefix). Dev/e2e only:
-  /// exposes the Motifs capture pipeline to WebDriver specs which cannot
+  /// exposes the Motifs capture pipeline to e2e specs which cannot
   /// import bundled modules. Requires the Motif runtime to have been
   /// registered by the frontend (motif_register_runtime).
   captureMotifFrame(args: {
@@ -364,7 +364,7 @@ export function installMotifTestHooks(): void {
         const bitmap = tex.source?.resource as ImageBitmap | undefined;
         if (!bitmap) throw new Error("sprite bound no bitmap resource");
         // Checksum the whole frame via a 2D canvas (createImageBitmap output
-        // is clean — getImageData won't taint; see motif/capture.e2e.js).
+        // is clean — getImageData won't taint; see apps/desktop/e2e/electron/motif-capture.spec.ts).
         const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
         const ctx = canvas.getContext("2d");
         if (!ctx) throw new Error("no 2d context");
@@ -520,12 +520,12 @@ function waitForMediaExportReady(mediaId: string, timeoutMs: number): Promise<vo
   });
 }
 
-/// Root-side: expose the Motifs capture pipeline to WebDriver specs.
+/// Root-side: expose the Motifs capture pipeline to e2e specs.
 /// Installs `window.__weftcutTest.captureMotifFrame(...)` which drives the
 /// `motif_capture_frame` IPC command (offscreen Electron window
 /// + `motif:` scheme + CDP `Page.captureScreenshot` via webContents.debugger). Returns the raw
 /// base64 PNG string so the spec can compare, hash, and decode without
-/// importing bundled modules (browser.execute is closed-world).
+/// importing bundled modules (the spec's page.evaluate is closed-world).
 ///
 /// Dev/e2e only — called from main.tsx's e2e branch after `motif_register_runtime`
 /// has been called (the frontend calls that at startup, so by the time the spec
@@ -533,10 +533,10 @@ function waitForMediaExportReady(mediaId: string, timeoutMs: number): Promise<vo
 export function installMotifHook(): void {
   hookSlot().captureMotifFrame = async ({ motifId, tSec, props, width, height }) => {
     const bitmap = await captureMotifFrame(motifId, tSec, props, width, height);
-    // Convert the ImageBitmap to a base64 PNG string so the WebDriver spec can
+    // Convert the ImageBitmap to a base64 PNG string so the e2e spec can
     // compare raw bytes without importing any bundled codec. The spec receives
-    // a plain string from browser.execute — transferring an ImageBitmap would
-    // require structured-clone support which WebDriver doesn't expose.
+    // a plain string from page.evaluate — transferring an ImageBitmap would
+    // require structured-clone support the evaluate boundary doesn't expose.
     const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
     const ctx = canvas.getContext("2d")!;
     ctx.drawImage(bitmap, 0, 0);
@@ -551,10 +551,10 @@ export function installMotifHook(): void {
 
   // Live-preview integration hooks. `motifAddCountdown` drops a 5 s countdown
   // Motif layer onto the timeline through the SAME `add_motif` IPC the
-  // MotifPicker uses — the legacy SVG catalog supplies the metadata (size
-  // 480×480 + props seconds/label/accent), which align with the Motif
-  // `countdown` so the compositor's resolveMotifFrame → rasterMotifFrame
-  // (CDP) path renders it live. `weftcutSeekUs` / `weftcutSampleComposite`
+  // MotifPicker uses — the countdown Motif's manifest supplies the metadata
+  // (size 480×480 + props seconds/label/accent) so the compositor's
+  // resolveMotifFrame → rasterMotifFrame (CDP) path renders it live.
+  // `weftcutSeekUs` / `weftcutSampleComposite`
   // delegate to the PreviewBridge registered by `PixiPreview`.
   hookSlot().motifAddCountdown = async () => {
     return addMotif({
@@ -580,7 +580,7 @@ let previewBridge: PreviewBridge | null = null;
 
 /// Called by `PixiPreview` (behind the e2e guard) once its Compositor +
 /// PlaybackEngine are wired. Hands the readback/seek hooks a live bridge to the
-/// active renderer + engine so the WebDriver spec can drive a real seek and
+/// active renderer + engine so the e2e spec can drive a real seek and
 /// read pixels straight off the composited canvas. Re-registering replaces the
 /// prior bridge (StrictMode re-mount / project swap).
 export function installPreviewBridge(bridge: PreviewBridge): void {

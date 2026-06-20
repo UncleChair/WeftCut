@@ -100,8 +100,8 @@ test.describe('audio conformance matrix (Electron)', () => {
 // (probe + classify as Audio) -> conform -> Audio layer -> audio-only export
 // mix -> AAC `.m4a`, verified by `media_conformance --audio` against the
 // per-second tone markers baked into the fixtures. The mp3 fixture carries
-// attached_pic cover art — the real-world mp3 shape that used to misclassify as
-// Video (probe::detect_kind regression).
+// attached_pic cover art — the real-world mp3 shape that detect_kind must
+// classify as Audio, not Video (the regression guard).
 const FORMATS = ['wav', 'mp3', 'flac', 'm4a', 'ogg']
 
 test.describe('audio-only format matrix (Electron)', () => {

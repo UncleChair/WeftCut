@@ -1,9 +1,9 @@
 
 
 /* ===================================================================
-   Log console — Phase 2 expanded overlay that lifts above the editor.
-   The drag-to-resize handle is rendered as a CSS-only top border;
-   pointer events are forwarded to a resize handler when needed.
+   Log console — expanded overlay that lifts above the editor. The
+   drag-to-resize handle is rendered as a CSS-only top border; pointer
+   events are forwarded to a resize handler when needed.
    =================================================================== */
 
 .log-console {

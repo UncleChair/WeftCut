@@ -1,11 +1,11 @@
 //! Shared `reqwest::Client` + auth helpers for cloud providers.
 //!
-//! Provider impls (Stage 5+) call `shared_client()` so connection pooling,
+//! Provider impls call `shared_client()` so connection pooling,
 //! TLS, and the User-Agent header are uniform across Whisper / TTS / any
 //! future Deepgram or ElevenLabs client. Per-request timeouts and routing
 //! stay the caller's job — this module never builds the request body.
 //!
-//! Stage 8 hardening adds [`retry_delay_for_status`] so providers retry
+//! [`retry_delay_for_status`] lets providers retry
 //! transient failures (429 / 5xx) with sensible backoff. The retry loop
 //! lives in each provider's `transcribe` / `synthesize` impl — we don't
 //! abstract the loop here because the request body needs to be rebuilt
@@ -19,8 +19,8 @@ use reqwest::{Client, StatusCode};
 
 /// Default timeout cap for any single cloud request. Whisper on a 13-minute
 /// 25 MB upload takes ~60s end-to-end; 180s is comfortable headroom without
-/// letting a wedged provider freeze the MCP tool indefinitely. Stage 8 may
-/// re-tune per surface.
+/// letting a wedged provider freeze the MCP tool indefinitely. May be
+/// re-tuned per surface later.
 const REQUEST_TIMEOUT_SECS: u64 = 180;
 
 /// Process-global HTTP client. `reqwest::Client` is cheap to clone and pools

@@ -37,9 +37,9 @@ struct BuiltinMotif {
 // --- The embedded built-in registry. Adding a new built-in is a small edit:
 //     embed its files and add a `BuiltinMotif` entry below. ---
 
-// NOTE: manifest.json is intentionally not embedded in v1 — props come from the
-// capture command, not from parsing the manifest. Embed it in Plan 2 when prop
-// canonicalization moves Rust-side.
+// NOTE: this registry embeds only the files served over `protocol.handle` to the
+// capture host (index.html + assets). The manifest is embedded separately by
+// `catalog.rs` (`builtin_motif!`) for Rust-side prop canonicalization.
 const COUNTDOWN: BuiltinMotif = BuiltinMotif {
     id: "countdown",
     files: &[BuiltinFile {

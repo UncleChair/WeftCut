@@ -1,16 +1,9 @@
-// React mount for the PixiJS-backed preview surface. Flag-gated parallel
-// to the existing DOM `LiveLayers` pipeline so we can A/B-compare during
-// the rewrite without breaking the live app.
+// React mount for the PixiJS-backed preview surface. Uses @pixi/react's
+// <Application> for the PIXI.Application lifecycle (StrictMode-safe,
+// async-init, ref-forwarded); the Compositor is driven imperatively from
+// onInit and does not own the Application itself.
 //
-// Uses `@pixi/react`'s `<Application>` for the PIXI.Application lifecycle
-// (StrictMode-safe, async-init, ref-forwarded). The Compositor is
-// imperatively driven from `onInit` and doesn't own the Application
-// itself.
-//
-// Activation: `?pixi=1` URL param or
-// `localStorage.setItem("weftcut.preview.pixi", "1")`.
-//
-// Plan: docs/render.md (P2)
+// Plan: docs/render.md
 
 import {
   forwardRef,

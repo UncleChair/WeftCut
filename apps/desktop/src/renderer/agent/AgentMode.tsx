@@ -23,18 +23,10 @@ import { WindowControls } from "../components/WindowControls";
 /// `agent_session.rs` in the Rust crate); exited via the persistent
 /// "Exit to editor" button in the record-panel header.
 ///
-/// Layout (Q10): preview top-left (expanding), mini timeline
-/// bottom-left (fixed ~80 px), record panel right (fixed ~360 px).
+/// Layout: preview top-left (expanding), mini timeline bottom-left
+/// (fixed ~80 px), record panel right (fixed ~360 px). See docs/mcp.md.
 /// Both the menu bar and editor-mode status bar are hidden — in
 /// agent mode the record panel IS the surface for activity.
-///
-/// Phase split (see `MEMORY.md`):
-///  - Phase 5 (this file): shell + Exit button + placeholders.
-///  - Phase 6 will replace `<MiniTimelinePlaceholder>` with the real
-///    scrub bar (ticks + project markers + timecode readout).
-///  - Phase 7 will replace `<RecordPanelPlaceholder>` with the
-///    filtered + op_id-grouped log stream + checkpoint rows + lock
-///    badge.
 interface AgentModeProps {
   session: AgentSession;
   summary: ProjectSummary | null;

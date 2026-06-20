@@ -125,7 +125,7 @@ async function warnIfElevatedWindows(win: BrowserWindow): Promise<void> {
 
 app.whenReady().then(async () => {
   // Bundled ffmpeg: ffmpeg-sidecar resolves "ffmpeg" via PATH when no binary sits
-  // adjacent to the exe (paths.rs::ffmpeg_path). Prepend the packaged dir so the
+  // adjacent to the exe (ffmpeg_sidecar::paths::ffmpeg_path). Prepend the packaged dir so the
   // in-process addon spawns OUR static build, not a system one. Dev (unpackaged)
   // has no bundled dir → falls back to system/auto-download as before.
   const ffmpegDir = app.isPackaged

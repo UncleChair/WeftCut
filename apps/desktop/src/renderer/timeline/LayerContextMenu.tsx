@@ -2,16 +2,12 @@ import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 
-/// V.7 floating context menu, rendered with Base UI Menu anchored to a
-/// zero-size virtual element at the right-click coordinates — the
-/// `contextMenu` state plumbing (and its coexistence with drag/blade
-/// pointer handling) is unchanged; only the popup machinery moved to
-/// the library (portal, outside-press + Escape close, arrow-key nav).
-/// Shows action items scoped to the right-clicked layer's kind.
-/// (The 2026-05-17 effect-redesign removed the H.6 render-mode toggle;
-/// group html-rendering is now driven by the presence of an
-/// HtmlTransform effect on the group, authored via MCP / a future
-/// effects panel.)
+/// Floating context menu (Base UI Menu) anchored to a zero-size virtual
+/// element at the right-click coordinates. The popup machinery (portal,
+/// outside-press + Escape close, arrow-key nav) comes from the library.
+/// Action items are scoped to the right-clicked layer's kind. Group HTML
+/// rendering is driven by an HtmlTransform effect on the group (authored
+/// via MCP / the effects panel), so there is no render-mode toggle here.
 export function LayerContextMenu({
   x,
   y,

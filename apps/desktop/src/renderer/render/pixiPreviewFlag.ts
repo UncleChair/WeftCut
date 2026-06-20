@@ -2,9 +2,8 @@
 // component module so Vite's React Fast Refresh doesn't bail on
 // `PixiPreview.tsx` ("component file exports non-component values").
 //
-// The `?pixi=1` opt-in flag is gone — the Pixi compositor is the only
-// preview surface after P12-e. Devtools hooks check
-// `window.__weftcut_*` directly and no longer need the flag.
+// The Pixi compositor is the only preview surface, so there is no opt-in
+// flag. Devtools hooks read the `window.__weftcut*` globals directly.
 
 /// Result of a successful Pixi export. The output bytes are streamed to disk
 /// via the caller's `writeChunk` during the run (not returned here) so the

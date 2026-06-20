@@ -15,11 +15,10 @@ export interface AppNumberFieldProps {
   /// custom bitrate). Required-value call sites just pass their number.
   value: number | null;
   /// Live value (every keystroke / scrub tick). Drives the call site's local
-  /// state, mirroring the old `parseFloat(e.target.value) || prev` onChange.
+  /// state.
   onValueChange: (value: number) => void;
-  /// Fires once per edit, on blur / Enter / scrub-end. Maps to the old
-  /// commit-on-blur so undo stays one entry per edit. Omit for live-commit
-  /// call sites (they use onValueChange only).
+  /// Fires once per edit, on blur / Enter / scrub-end so undo stays one entry
+  /// per edit. Omit for live-commit call sites (they use onValueChange only).
   onCommit?: (value: number) => void;
   /// Fires (live) when the field is cleared to empty. Without it, an empty
   /// field is dropped so the call site keeps its last good number; with it,
@@ -43,14 +42,12 @@ export interface AppNumberFieldProps {
 
 /// The one numeric input for every WeftCut form. Wraps Base UI NumberField:
 /// type a value, use ↑/↓ arrow keys, or the hover-revealed +/- steppers.
-/// (Drag-scrub was dropped as a legacy workaround: Base UI's ScrubArea needs
-/// the Pointer Lock API, which under the old host didn't engage — the
-/// bounded cursor only ever scrubbed the value up, never down. Pointer Lock
-/// works on Electron/Chromium, so that limit no longer applies and drag-scrub
-/// could be revisited.)
+/// (No drag-scrub: Base UI's ScrubArea needs Pointer Lock; it is simply not
+/// wired up here. Could be added — keyboard arrows and the +/- steppers cover
+/// the same edits.)
 /// `value` may go null mid-edit (empty field): without `onClear` we drop the
-/// null so the call site keeps its last good number (matching the old
-/// `|| prev` guard); with `onClear` the call site learns the field is unset.
+/// null so the call site keeps its last good number; with `onClear` the
+/// call site learns the field is unset.
 /// No ref forwarding: number fields aren't programmatically focused (unlike
 /// the rename/timecode AppInput sites).
 export function AppNumberField({

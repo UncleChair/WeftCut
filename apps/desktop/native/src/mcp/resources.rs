@@ -1,13 +1,10 @@
 //! MCP resource readers, transport-free. `read_resource(b, uri)` dispatches the
 //! `project://*` JSON resources and the binary `media://*` resources, returning
-//! the wire `ResourceResult`. Ported from the pre-S4a `WeftCutServer`
-//! `read_resource` + media helpers.
+//! the wire `ResourceResult`.
 //!
-//! JSON resources serialize the project snapshot (pretty-printed, matching the
-//! pre-S4a `to_string_pretty` shape) into a `ResourceContent::Text`. Binary
-//! resources base64-encode the bytes into `ResourceContent::Blob`.
-//!
-//! The `motifs://current` resource is dropped (deferred to S5).
+//! JSON resources serialize the project snapshot (pretty-printed) into a
+//! `ResourceContent::Text`. Binary resources base64-encode the bytes into a
+//! `ResourceContent::Blob`.
 
 use serde_json::Value;
 use uuid::Uuid;

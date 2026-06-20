@@ -536,7 +536,7 @@
   50% { border-color: var(--color-blue-300); }
 }
 
-/* B4 — preview-engine section in the Settings panel. */
+/* Preview-engine section in the Settings panel. */
 .settings-preview-engine {
   display: flex;
   flex-direction: column;

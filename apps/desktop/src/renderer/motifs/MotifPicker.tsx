@@ -52,7 +52,8 @@ interface Props {
 
 /// `<select>` value when the user wants the picker to find-or-create the
 /// shared "Overlay" track. Sent over IPC as `trackId: undefined` so the
-/// backend's `ensure_overlay_track` path runs.
+/// backend's `resolve_overlay_track` path runs (it picks a free Overlay
+/// track via `pick_free_overlay_track`).
 const AUTO_OVERLAY_SENTINEL = "__auto_overlay__";
 
 export function MotifPicker({
@@ -462,7 +463,7 @@ function posterTSec(motif: MotifSummary): number {
 }
 
 /// Static still of a Motif's first frame, captured via a single CDP screenshot
-/// (`captureMotifFramePngBlob`). Replaces the old SVG-harness + rAF loop —
+/// (`captureMotifFramePngBlob`).
 /// CDP cost (~80ms) makes continuous animation impractical here, and the
 /// picker's job is "show what this Motif looks like", not animate it.
 function MotifPreview({

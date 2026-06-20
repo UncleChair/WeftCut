@@ -1,9 +1,6 @@
 // Project-level role mixer (`docs/audio.md`). One row per canonical audio
 // role: a gain field (typed entry via AppNumberField — typing + arrow keys +
-// hover steppers; the drag-scrub field is a legacy workaround for a since-
-// overturned limit — Pointer Lock works on Electron/Chromium, so a drag-scrub
-// field could be revisited) plus Mute / Solo toggles. Mute and Solo moved off
-// the track header onto roles, so this panel is now the single home for
+// hover steppers) plus Mute / Solo toggles — this panel is the single home for
 // per-role M/S. Gain edits via `setRoleGain` are RECORDED (undoable) — a
 // debounced commit can produce one undo entry per pause; mute/solo via
 // `updateRoleFlags` are UNRECORDED (never enter undo history). `onMutated`

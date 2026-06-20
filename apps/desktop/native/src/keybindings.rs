@@ -11,9 +11,10 @@
 //!  - The frontend already owns `ACTION_DEFS` and parses bindings via
 //!    `match.ts`. Duplicating that in Rust would mean two sources of
 //!    truth for the chord DSL.
-//!  - The only writer is the Keyboard Shortcuts panel in
-//!    `SettingsPanel.tsx`, which performs the conflict check before
-//!    calling `keybindings_set`. The store trusts its caller.
+//!  - The only writer is the Keyboard Shortcuts panel
+//!    (`KeybindingPanel.tsx` / `KeybindingCapture.tsx`), which performs the
+//!    conflict check before calling `keybindings_set`. The store trusts its
+//!    caller.
 //!  - A hand-edited file with overlapping bindings is tolerated — the
 //!    dispatcher picks the first matching entry and the conflict
 //!    self-resolves when the user next opens the panel.

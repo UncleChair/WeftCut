@@ -1,8 +1,7 @@
-//! S3b export commands — audio-only mix/encode, final mux/transcode, and the
-//! export-audio conform gate. Re-homed from the legacy `commands.rs` onto the
-//! napi `Backend`. Gated behind `export`. The WS video-sink commands live in
-//! `export::videosink` and are dispatched directly (they need only the two
-//! Backend stores, not a project snapshot).
+//! Export commands — audio-only mix/encode, final mux/transcode, and the
+//! export-audio conform gate. Gated behind `export`. The video-sink commands
+//! live in `export::videosink` (native-IPC 10-bit frame path) and are dispatched
+//! directly — they need only the two Backend stores, not a project snapshot.
 
 use std::path::PathBuf;
 

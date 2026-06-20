@@ -1,7 +1,7 @@
 //! One declarative table feeds BOTH `tool_catalog()` (the advertised schemas)
 //! and `dispatch_tool()` (the name→handler match), so a tool can never appear
-//! in one without the other. Each entry's description is copied verbatim from
-//! the pre-S4a `#[tool(description = …)]` attribute.
+//! in one without the other. Each entry's description is the literal text the
+//! MCP catalog advertises to clients.
 
 use crate::napi_backend::Backend;
 use super::wire::{McpCatalog, McpToolError, PromptDef, ResourceDef, ToolDef, ToolResult};

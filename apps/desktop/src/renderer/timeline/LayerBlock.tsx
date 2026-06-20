@@ -104,7 +104,7 @@ export function LayerBlock({
   isTrackExpanded: boolean;
   pxPerSec: number;
   laneHeight: number;
-  /// V.6 vertical slot. "full" = entire row; "top" = top half (visual
+  /// Vertical slot. "full" = entire row; "top" = top half (visual
   /// layer paired with audio); "bottom" = bottom half (audio paired
   /// with visual). Determines the rendered height + top offset.
   slice: LayerSlice;
@@ -327,9 +327,9 @@ export function LayerBlock({
 
   const layerWidthPx = Math.max(width, 4);
 
-  // V.6 vertical slot. Each row has a 4px outer breathing room so the
+  // Vertical slot. Each row has a 4px outer breathing room so the
   // chip doesn't touch the row edges. Within that interior:
-  //   - "full"   → one block spans top:4 to bottom-4 (legacy behavior)
+  //   - "full"   → one block spans top:4 to bottom-4
   //   - "top"    → top half (4 → midline-1)
   //   - "bottom" → bottom half (midline+1 → height-4)
   // The 1px gap at the midline visually separates V from A in the
@@ -378,7 +378,7 @@ export function LayerBlock({
     const track = readParamTrack(layer.params, focusedParam);
     if (!track || track.mode !== "Keyframed") return [];
     return track.value
-      // collapsed mode hides out-of-range keys (kept in data; shown dimmed in Phase 3)
+      // collapsed mode hides out-of-range keys (kept in data)
       .filter((k) => k.t_us >= 0 && k.t_us <= clipDurationUs)
       .map((k) => ({ id: k.id, x: keyframeXWithinClip(k.t_us, clipDurationUs, layerWidthPx) }));
   })();
@@ -386,7 +386,7 @@ export function LayerBlock({
   return (
     <div
       className={[
-        "timeline-layer", // retained as a JS hook for the blade-cursor rule; carries no styles after Task 12
+        "timeline-layer", // JS hook for the blade-cursor rule; carries no styles itself.
         "absolute flex items-center rounded border border-white/15 px-2",
         "text-[11px] font-semibold text-background select-none cursor-grab",
         "shadow-[0_1px_2px_rgba(0,0,0,0.4)] transition-[outline,filter] duration-75",
@@ -425,8 +425,8 @@ export function LayerBlock({
         // arms the drag). This handler exists only to stop the click from
         // bubbling to the timeline-root background-deselect — without it,
         // selecting a clip would immediately clear the selection. Ruler-only
-        // seek decoupling: see
-        // docs/superpowers/specs/2026-06-16-timeline-seek-selection-ux-design.md.
+        // seek decoupling: selecting a clip must not bubble to the
+        // timeline-root background-deselect.
         e.stopPropagation();
       }}
       onDoubleClick={(e) => {

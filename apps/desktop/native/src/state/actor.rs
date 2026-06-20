@@ -1,8 +1,9 @@
 //! Single-writer project actor — all mutations funnel here.
 //!
-//! Phase 1.2 introduced two load-bearing commands (`add_layer`, `delete_layer`).
-//! Phase 1.3 layers undo/redo + named checkpoints on top via `History`.
-//! Future phases extend the mutation surface and add validation invariants.
+//! All project mutations funnel through this single-writer actor: an mpsc
+//! command inbox, an `History` undo/redo + named-checkpoint stack, and a
+//! `ChangeEvent` broadcast to UI + MCP. Pure mutation helpers live in the
+//! `mutations` submodule; validation invariants are enforced in `commit`.
 
 use std::sync::Arc;
 
@@ -658,11 +659,9 @@ enum Command {
         actor: Actor,
         reply: oneshot::Sender<Result<(), CommandError>>,
     },
-    // GroupsSetEffects / LayersSetEffects ops were removed in P12-a:
-    // the Pixi renderer doesn't read effects in v1, so the mutation
-    // surface for them is dead. The `effects` field on Layer / Group
-    // stays alive (P12-b sweeps it together with the IR visual half)
-    // but nothing can write to it from the UI / MCP layer anymore.
+    // No set-effects command exists: the Pixi renderer doesn't read `effects`
+    // in v1, so the mutation surface is intentionally absent. The `effects`
+    // field on Layer / Group is retained but cannot be written from UI / MCP.
     Undo {
         actor: Actor,
         reply: oneshot::Sender<Result<(), CommandError>>,

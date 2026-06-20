@@ -29,7 +29,7 @@ pub struct Layer {
     /// entire 10 s 30 fps comp, `t_end_us = 10_000_000` (the boundary
     /// after frame 299, NOT frame 299's own start at 9_966_667). The
     /// playhead, which IS a frame anchor, can never reach `t_end_us`;
-    /// see `apps/desktop/src/frames.ts::lastFrameAnchorUs` and
+    /// see `apps/desktop/src/renderer/frames.ts::lastFrameAnchorUs` and
     /// `docs/data-model.md` for the distinction.
     pub t_end_us: TimeUs,
     pub enabled: bool,
@@ -219,10 +219,9 @@ pub struct SubtitlesParams {
 ///
 /// Inline variants carry the body in-state so projects round-trip cleanly
 /// through `.vproj` and so MCP tools (auto-caption, agent-authored cues)
-/// don't need to invent file paths. ffmpeg's `subtitles=` filter only
-/// accepts a path — the IR pipeline runs `ir::materialize_inline_subtitles`
-/// before `lower()` to turn each inline body into a content-addressed file
-/// in the OS app cache. Persistence stays inline.
+/// don't need to invent file paths. Inline bodies can be materialized to a
+/// blake3-addressed cache file when a path is needed (see
+/// `cache::Cache::inline_subs`); the in-state copy stays authoritative.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "value")]
 pub enum SubtitlesSource {

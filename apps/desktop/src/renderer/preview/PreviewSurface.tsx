@@ -1,8 +1,8 @@
-/// Project preview surface — Pixi compositor only after P12-e. The
-/// legacy DOM `<video>`-per-layer + `LiveLayers` + `PlaybackEngine` +
-/// `AudioGraph` mount (the entire `preview/dom/*` tree) was deleted
-/// together with this rewrite. The pixi flag check (`?pixi=1`) is
-/// gone — the pixi compositor is the only path.
+/// Project preview surface. Renders the project through the Pixi
+/// compositor (the only preview path) inside a PixiErrorBoundary, or an
+/// empty-state / loading placeholder when there is no content or no
+/// composition yet. Forwards play/pause/seek/refresh/export to the
+/// underlying PixiPreview.
 
 import { forwardRef, useImperativeHandle, useRef } from "react";
 import { useTranslation } from "react-i18next";
@@ -22,8 +22,8 @@ interface Props {
   /// Master clock callback in microseconds. Engine throttles to
   /// ~30 Hz so this is safe to drop into React state directly.
   onTimeUpdate: (tUs: number) => void;
-  /// Mirror of `engine.isPlaying()` → inverted to match the legacy
-  /// "paused" convention the parent's transport button expects.
+  /// Mirror of `engine.isPlaying()`, inverted to the "paused" boolean the
+  /// parent's transport button expects.
   onPausedChange: (paused: boolean) => void;
   /// Live accessor for the session decodability verdict (App's
   /// decodeProbeMemo). When it returns true for a source, the preview

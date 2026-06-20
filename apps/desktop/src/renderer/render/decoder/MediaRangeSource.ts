@@ -23,8 +23,7 @@ export class MediaRangeSource {
       getSize: () => this.getSize(),
       read: (start, end) => this.read(start, end),
       dispose: () => this.dispose(),
-      // Match the resident budget of the legacy GOP-block LRU (~a few source
-      // seconds). Network-style prefetch suits weftcut-media:// latency.
+      // ~a few source seconds resident; network-style prefetch suits weftcut-media:// latency.
       maxCacheSize: 16 * 1024 * 1024,
       prefetchProfile: "network",
     };
@@ -55,8 +54,7 @@ export class MediaRangeSource {
     // for a larger window comes back short — and mediabunny throws
     // "Requested N bytes, but got M", wedging the decoder. Loop across
     // follow-up Range requests for the remaining tail until the window is
-    // filled. (The legacy mp4box demuxer never hit this because its GOP-block
-    // cache issued bounded sub-ceiling reads.)
+    // filled.
     const total = end - start;
     const out = new Uint8Array(total);
     let filled = 0;

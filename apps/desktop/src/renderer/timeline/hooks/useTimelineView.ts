@@ -90,8 +90,8 @@ export function useTimelineView(opts: {
     if (!viewLoadedRef.current) return;
     const handle = setTimeout(() => {
       // Prune dead track ids on save so view.json doesn't accumulate
-      // entries for tracks the user has deleted (see advisor note: state
-      // map keeps stale keys until we filter on the way out).
+      // entries for tracks the user has deleted (the state map keeps
+      // stale keys until we filter on the way out).
       const live = new Set(tracks.map((t) => t.id));
       const pruned: Record<string, number> = {};
       for (const [id, h] of Object.entries(trackHeightsRef.current)) {
@@ -117,7 +117,7 @@ export function useTimelineView(opts: {
   // wheel fires, kick off `setPxPerSec`, and apply the new scrollLeft
   // in a useLayoutEffect once React has re-rendered with the new
   // px/sec. Doing it inline in the handler reads stale state and
-  // produces a one-frame jitter (advisor note #2).
+  // produces a one-frame jitter.
   const wheelPendingRef = useRef<{
     scrollLeft: number;
     cursorXInViewport: number;
@@ -141,7 +141,7 @@ export function useTimelineView(opts: {
       // holds.
       const cursorXInViewport = e.clientX - rect.left - HEADER_COL_PX;
       // deltaMode varies by device — normalise lines/pages to pixels
-      // before computing the zoom factor (advisor note #3).
+      // before computing the zoom factor.
       const lineHeight = 16;
       const pageHeight = 100;
       const px =
