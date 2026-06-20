@@ -2581,6 +2581,14 @@ dependencies = [
  "tracing-subscriber",
  "ts-rs",
  "uuid",
+ "weftcut-eval",
+]
+
+[[package]]
+name = "weftcut-eval"
+version = "0.0.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
