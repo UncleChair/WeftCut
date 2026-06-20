@@ -200,15 +200,21 @@ the import copy finishes (ADR 0007).
 `kind` is decided at import by `io::probe::detect_kind`, ffprobe-first with an
 extension fallback:
 
-- A probed **video stream** means `Video` — except two ffprobe traps. Embedded
+- A probed **video stream** means `Video` — except three ffprobe traps. Embedded
   cover art (mp3/m4a/flac/ogg) probes as a video stream with
   `disposition.attached_pic`; those streams are skipped entirely (neither kind
-  evidence nor metadata). And still images (png/jpg/webp/gif/bmp/tiff) probe as
-  a single-frame video stream; an image-codec stream counts as `Video` only
-  when it actually moves (demuxed `nb_frames > 1`, or a real duration — think
-  motion-JPEG). A multi-frame GIF is therefore `Video` on purpose: it routes
-  through the proxy pipeline and animates, where `Image` would freeze its
-  first frame.
+  evidence nor metadata). Still images (png/jpg/webp/gif/bmp/tiff) probe as a
+  single-frame video stream; an image-codec stream counts as `Video` only when
+  it actually moves with a true video codec (demuxed `nb_frames > 1`, or a real
+  duration — think motion-JPEG in an AVI/MOV container). Animated still-image
+  formats — GIF, animated WebP, APNG, and animated AVIF — are the third trap:
+  they probe as multi-frame but their codec is an image codec (gif, webp, png,
+  or av1 in an image container). `detect_kind` uses the `MediaMetadata.container_format`
+  field (populated by ffprobe's `format_name`) to distinguish animated AVIF
+  (container `avif`) from a true AV1 video stream (container `mp4`/`matroska`
+  etc.), and checks the codec name for the other three. All four classify as
+  `Image`, not `Video`, so they land as `ImageOverlay` layers with no proxy or
+  conform jobs. Motion-JPEG (codec `mjpeg`) in a movie container stays `Video`.
 - A probed **audio stream** (and no counting video stream) means `Audio`.
 - No probe (ffprobe missing/unreadable) falls back to the extension lists
   below; anything unrecognized defaults to `Video`.
@@ -218,16 +224,15 @@ extension fallback recognizes them plus `tif`/`tiff`:
 
 | Kind | Dialog extensions | Notes |
 | --- | --- | --- |
-| Video | mp4, mov, mkv, webm, avi, m4v | Decode routing per the proxy axes above; animated GIF lands here via probe. |
+| Video | mp4, mov, mkv, webm, avi, m4v | Decode routing per the proxy axes above. |
 | Audio | wav, mp3, flac, aac, m4a, ogg, opus | Anything ffmpeg decodes conforms; the VCONF cache is the only contract (docs/audio.md). |
-| Image | png, jpg/jpeg, gif, webp, bmp | Rendered from the ORIGINAL via `createImageBitmap` (no derivatives). Single-frame GIF renders static. |
+| Image | png, jpg/jpeg, gif, webp, bmp, avif | Rendered from the ORIGINAL with no derivatives. Still images use `createImageBitmap` (single frame, 3 s default duration). Animated formats (GIF, animated WebP, APNG, animated AVIF) decode all frames once via WebCodecs `ImageDecoder` (downscaled to composition size, cached per media) and loop at native speed to fill the layer; a freshly-placed animated image defaults to one native loop. APNG files are named with the `.png` extension. |
 | Subtitle | srt, ass, vtt | Preview-only (JASSUB); not burned into exports. |
 
 TIFF classifies as `Image` when it arrives anyway (drag-drop / MCP take any
 path) but Electron/Chromium's `createImageBitmap` cannot decode it — the layer
-composites nothing — so the dialog doesn't offer it. SVG and AVIF are
-unsupported: unlisted extensions default to `Video` and won't produce a
-usable layer.
+composites nothing — so the dialog doesn't offer it. SVG is unsupported:
+unlisted extensions default to `Video` and won't produce a usable layer.
 
 Derivative jobs follow the kind: `Video` gets the proxy axes + waveform +
 conform + thumbnails; `Audio` gets waveform + conform only (ready as soon as

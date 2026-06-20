@@ -57,9 +57,9 @@ export const MATRIX = [
   { audiotones: true, aformat: "flac" },
   { audiotones: true, aformat: "m4a" },
   { audiotones: true, aformat: "ogg" },
-  // animated gif — multi-frame, so probe::detect_kind classifies it VIDEO,
-  // which routes it through the full-proxy pipeline; media-gif-routing.spec.ts
-  // asserts that routing (kind=Video + a generated proxy, no bypass).
+  // animated gif — multi-frame, so probe::detect_kind classifies it IMAGE (an
+  // animated image the renderer loops; no proxy); media-gif-animated.spec.ts
+  // asserts that routing plus the animate/loop/export behavior.
   { fps: 10, format: "gif" },
 ];
 

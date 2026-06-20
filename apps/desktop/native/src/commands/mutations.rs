@@ -97,7 +97,7 @@ pub async fn add_media_layer(
                 fade_in_us: 0,
                 fade_out_us: 0,
             }),
-            3_000_000,
+            image_layer_span_us(&media_item.metadata),
         ),
         MediaKind::Subtitle => (
             LayerParams::Subtitles(SubtitlesParams {
@@ -183,6 +183,24 @@ pub async fn add_demo_color_layer(backend: &Backend) -> Result<String, String> {
         .await
         .map_err(|e: CommandError| e.to_string())?;
     Ok(layer_id.to_string())
+}
+
+/// Default timeline span (µs) for a freshly-placed Image layer. An *animated*
+/// image (multi-frame GIF/WebP/APNG/AVIF) defaults to one native loop so the
+/// user sees the whole animation once, then stretches freely — it loops to
+/// fill. A still image keeps the 3 s default. "Animated" mirrors `detect_kind`'s
+/// signal: a multi-frame stream AND a known (>0) source duration.
+fn image_layer_span_us(metadata: &state::media::MediaMetadata) -> TimeUs {
+    const STILL_IMAGE_SPAN_US: TimeUs = 3_000_000;
+    let multi_frame = metadata
+        .video
+        .as_ref()
+        .and_then(|v| v.nb_frames)
+        .is_some_and(|n| n > 1);
+    match metadata.duration_us {
+        Some(d) if d > 0 && (multi_frame || d >= 500_000) => d,
+        _ => STILL_IMAGE_SPAN_US,
+    }
 }
 
 const DEFAULT_LAYER_DURATION_US: TimeUs = 5_000_000;
@@ -628,4 +646,73 @@ fn demo_color(idx: usize) -> Rgba {
         Rgba::rgb(248, 113, 113),
     ];
     PALETTE[idx % PALETTE.len()]
+}
+
+#[cfg(test)]
+mod image_span_tests {
+    use super::image_layer_span_us;
+    use crate::state::media::{MediaMetadata, VideoStreamMeta};
+
+    fn video_meta(nb_frames: Option<u64>) -> VideoStreamMeta {
+        VideoStreamMeta {
+            width: 100,
+            height: 100,
+            fps_num: 10,
+            fps_den: 1,
+            codec: "gif".into(),
+            pix_fmt: "bgra".into(),
+            nb_frames,
+            color_matrix: None,
+            color_range: None,
+            color_primaries: None,
+            color_transfer: None,
+        }
+    }
+
+    #[test]
+    fn animated_image_spans_one_native_loop() {
+        let meta = MediaMetadata {
+            duration_us: Some(2_000_000),
+            video: Some(video_meta(Some(10))),
+            audio: None,
+            container_format: Some("gif".into()),
+        };
+        assert_eq!(image_layer_span_us(&meta), 2_000_000);
+    }
+
+    #[test]
+    fn still_image_keeps_default_span() {
+        // No duration, single-frame-ish: a plain still image.
+        let meta = MediaMetadata {
+            duration_us: None,
+            video: Some(video_meta(Some(1))),
+            audio: None,
+            container_format: Some("png_pipe".into()),
+        };
+        assert_eq!(image_layer_span_us(&meta), 3_000_000);
+    }
+
+    #[test]
+    fn animated_without_duration_falls_back_to_default() {
+        // Multi-frame but the demuxer reported no duration — can't loop to an
+        // unknown length, so fall back to the still default.
+        let meta = MediaMetadata {
+            duration_us: None,
+            video: Some(video_meta(Some(8))),
+            audio: None,
+            container_format: Some("webp_pipe".into()),
+        };
+        assert_eq!(image_layer_span_us(&meta), 3_000_000);
+    }
+
+    #[test]
+    fn single_frame_with_long_duration_uses_native_duration() {
+        let meta = MediaMetadata {
+            duration_us: Some(600_000),
+            video: Some(video_meta(Some(1))),
+            audio: None,
+            container_format: Some("avif".into()),
+        };
+        assert_eq!(image_layer_span_us(&meta), 600_000);
+    }
 }

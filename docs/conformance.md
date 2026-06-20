@@ -75,7 +75,7 @@ Requires `go` and `ffmpeg` on PATH.
 | ProRes MOV | `test_1080p_30fps_prores.mov` | import routing smoke (not a conformance gate) |
 | Still-image chart set | `test_chart_320x240.{png,jpg,webp,bmp,gif,tiff}` + `_manifest.json` | `ui/layers.e2e.js` |
 | Audio-only tone files | `test_tones_10s.{wav,mp3,flac,m4a,ogg}` (mp3 embeds cover art) | `audio.spec.ts` |
-| Animated GIF | `test_1080p_10fps.gif` | `ui/layers.e2e.js` (Video-routing leg) |
+| Animated GIF | `test_1080p_10fps.gif` | `media-gif-animated.spec.ts` (Image classification, loop/frame-bind, export animation) |
 
 The generator, matrix script, baselines, and `.gitkeep` are tracked. Generated
 media is written to the repo-local `apps/desktop/e2e/fixtures/media` directory

@@ -64,6 +64,13 @@ pub struct MediaMetadata {
     pub duration_us: Option<TimeUs>,
     pub video: Option<VideoStreamMeta>,
     pub audio: Option<AudioStreamMeta>,
+    /// ffprobe `format.format_name` — the demuxer/container (e.g. "gif",
+    /// "webp_pipe", "mov,mp4,m4a,...", "avif"). `detect_kind` reads it to tell
+    /// an animated still-image container (→ Image) from a movie that merely
+    /// carries an image codec (motion-JPEG .avi → Video). `#[serde(default)]`
+    /// keeps older `.vproj` files loadable.
+    #[serde(default)]
+    pub container_format: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

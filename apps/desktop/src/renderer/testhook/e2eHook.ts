@@ -34,6 +34,10 @@ import { exists, readDir } from "@/bridge/fs";
 import { join as pathJoin } from "@/bridge/path";
 import { MotifSprite } from "../render/sprite/MotifSprite";
 import type { ResolvedMotifView } from "../render/resolveView";
+import { ImageOverlaySprite } from "../render/sprite/ImageOverlaySprite";
+import { decodeAnimatedImage } from "../render/sprite/animatedImageCache";
+import type { ResolvedImageOverlayView } from "../render/resolveView";
+import { convertFileSrc } from "@/bridge/ipc";
 
 type RunExport = (
   settings: ExportSettings,
@@ -151,6 +155,22 @@ export interface E2EHook {
       checksum: number;
     }>
   >;
+  /// Drive a real ImageOverlaySprite over an imported animated image at several
+  /// layer-local times and read back each bound frame's content checksum, plus
+  /// the decoded total duration + frame count. Lets the spec prove the image
+  /// ANIMATES (distinct checksums across frames) and LOOPS (checksum at t equals
+  /// checksum at t + totalUs) through the exact sprite + cache code export uses.
+  renderImageOverlaySpriteFrames(args: {
+    mediaId: string;
+    times: Array<{ tInLayerUs: number }>;
+    durationUs: number;
+    maxWidth: number;
+    maxHeight: number;
+  }): Promise<{
+    totalUs: number;
+    frameCount: number;
+    samples: Array<{ tInLayerUs: number; width: number; height: number; checksum: number }>;
+  }>;
   /// Trigger a persisted pre-bake of a motif layer (via the prebakeBus) and
   /// wait until at least `expectedFrames` PNG files appear under
   /// `<workspace>/Cache/raster/<hash>/`. Returns the absolute path to the hash
@@ -383,6 +403,64 @@ export function installMotifTestHooks(): void {
       sprite.dispose();
     }
     return out;
+  };
+
+  hookSlot().renderImageOverlaySpriteFrames = async ({
+    mediaId,
+    times,
+    durationUs,
+    maxWidth,
+    maxHeight,
+  }) => {
+    const media = useProjectStore.getState().mediaById.get(mediaId);
+    if (!media) throw new Error(`renderImageOverlaySpriteFrames: media ${mediaId} not in store`);
+    const url = convertFileSrc(media.path);
+    // Decode directly so any error surfaces (loadFromAsset silently catches
+    // decode failures and falls back to a 1-frame static bitmap, which would
+    // make the animation/loop assertions pass vacuously or fail confusingly).
+    const anim = await decodeAnimatedImage(url, maxWidth, maxHeight);
+    const sprite = new ImageOverlaySprite({ layerId: "e2e-image-sprite", mediaId, maxWidth, maxHeight });
+    try {
+      // Inject the decoded animation so sprite.update() picks the right frame.
+      (sprite as unknown as { anim: typeof anim; animKey: string | null }).anim = anim;
+      (sprite as unknown as { animKey: string | null }).animKey = null; // no cache release needed
+      // A static, fully-opaque view; only tInLayerUs drives the frame choice.
+      const view = {
+        media_id: mediaId,
+        x: 0,
+        y: 0,
+        scale_x: 1,
+        scale_y: 1,
+        opacity: 1,
+        fade_in_us: 0,
+        fade_out_us: 0,
+      } as unknown as ResolvedImageOverlayView;
+      const samples: Array<{ tInLayerUs: number; width: number; height: number; checksum: number }> = [];
+      for (const { tInLayerUs } of times) {
+        sprite.update(view, tInLayerUs, durationUs);
+        const bitmap = sprite.sprite.texture.source?.resource as ImageBitmap | undefined;
+        if (!bitmap) throw new Error("image sprite bound no bitmap");
+        const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+        const ctx = canvas.getContext("2d");
+        if (!ctx) throw new Error("no 2d context");
+        ctx.drawImage(bitmap, 0, 0);
+        const data = ctx.getImageData(0, 0, bitmap.width, bitmap.height).data;
+        let checksum = 0;
+        for (let i = 0; i < data.length; i++) checksum = (checksum + data[i]!) >>> 0;
+        samples.push({ tInLayerUs, width: bitmap.width, height: bitmap.height, checksum });
+      }
+      return {
+        totalUs: anim.totalUs,
+        frameCount: anim.frames.length,
+        samples,
+      };
+    } finally {
+      sprite.dispose();
+      // Close the directly-decoded frames (not cache-owned here).
+      for (const f of anim.frames) {
+        try { f.close(); } catch { /* best-effort */ }
+      }
+    }
   };
 
   // Trigger a full L2 pre-bake of a motif layer (via the prebakeBus) and

@@ -359,6 +359,7 @@ mod tests {
                             channels: 1,
                             codec: "pcm_f32le".into(),
                         }),
+                        ..Default::default()
                     },
                     proxy_path: None,
                     proxy_format_version: 0,
