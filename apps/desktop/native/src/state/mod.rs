@@ -97,6 +97,7 @@ mod tests {
                     channels: 2,
                     codec: "aac".into(),
                 }),
+                ..Default::default()
             },
             proxy_path: None,
 

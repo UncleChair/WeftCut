@@ -215,6 +215,7 @@ mod tests {
                     color_transfer: None,
                 }),
                 audio: None,
+                ..Default::default()
             },
             proxy_path: None,
             proxy_format_version: 0,

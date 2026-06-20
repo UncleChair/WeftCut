@@ -238,6 +238,7 @@ mod tests {
                     channels,
                     codec: "pcm_s16le".into(),
                 }),
+                ..Default::default()
             },
             proxy_path: None,
             proxy_format_version: 0,
