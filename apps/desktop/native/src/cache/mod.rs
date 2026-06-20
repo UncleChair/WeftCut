@@ -83,11 +83,13 @@ impl CacheLayout {
         self.current_root().join("frames")
     }
 
-    /// Materialized inline-subtitle bodies (`SubtitlesSource::InlineSrt` /
-    /// `InlineAss`). Hash-addressed by blake3 of the body so identical text
-    /// in two projects (or the same project across reloads) hits the same
-    /// file. Lifetime is the cache lifetime — never deleted by the
-    /// materialization pass; user can wipe via "Clear cache".
+    /// Reserved scaffolding for materializing inline-subtitle bodies
+    /// (`SubtitlesSource::InlineSrt` / `InlineAss`) to a blake3-addressed file
+    /// when a code path needs a real on-disk path. Currently UNUSED: the live
+    /// subtitle renderer (JASSUB / `SubtitlesSprite`) feeds inline bodies
+    /// directly and never reads from here, so nothing writes this tree.
+    /// `ensure_dirs` creates the directory; kept for a future ffmpeg
+    /// subtitle burn-in export path, where `subtitles=<file>` needs a filename.
     pub fn inline_subs_dir(&self) -> PathBuf {
         self.current_root().join("inline-subs")
     }
