@@ -1,5 +1,6 @@
 // Event subscription bridge: listen() returns a Promise<UnlistenFn>. Events are
-// delivered from the Rust core via main -> webContents.send -> preload on().
+// delivered from main -> webContents.send -> preload on() — both Rust core
+// events and renderer-originated cross-window broadcasts (see emit() below).
 export interface Event<T> { event: string; id: number; payload: T }
 export type UnlistenFn = () => void
 
@@ -17,10 +18,10 @@ export async function listen<T>(
 }
 
 export async function emit(event: string, payload?: unknown): Promise<void> {
-  // Fire-and-forget from the renderer side: forward to the backend dispatcher
-  // and swallow any rejection.
+  // Fire-and-forget from the renderer side: forward to main's cross-window
+  // broadcast and swallow any rejection.
   try {
-    await window.api.backend.invoke(`emit:${event}`, payload)
+    await window.api.emit(event, payload)
   } catch {
     // ignored (fire-and-forget)
   }

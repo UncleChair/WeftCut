@@ -30,6 +30,8 @@ export type WinCreateOpts = { url?: string; width?: number; height?: number; tit
 
 export type WinAction = 'show' | 'hide' | 'close' | 'center' | 'focus'
 
+export type NotificationOpts = { title?: string; body?: string }
+
 /// An app-level notice surfaced to the user (non-modal corner panel). `code`
 /// keys the i18n strings + the dismissable UI; main collects these at startup
 /// (e.g. keyring-unavailable → plaintext cloud keys) and the renderer PULLS them
@@ -75,7 +77,14 @@ export interface WeftcutApi {
   media: { dropped(paths: string[]): Promise<void> }
   /// Startup notices the renderer pulls on mount (see AppNotice).
   app: { notices(): Promise<AppNotice[]> }
+  /// Open a path or URL in the OS default handler (file manager / browser).
+  shell: { open(target: string): Promise<void> }
+  /// Post a desktop notification (best-effort; no-op where unsupported).
+  notification: { send(opts: NotificationOpts): Promise<void> }
   on(event: string, cb: (payload: unknown) => void): () => void
   off(event: string): void
+  /// Broadcast an event to every app window (delivered to `on()` subscribers as
+  /// `evt:<event>`). Backs the renderer's cross-window `emit()` (bridge/events.ts).
+  emit(event: string, payload?: unknown): Promise<void>
   videoSinkWrite(bytes: ArrayBuffer | ArrayBufferView): Promise<void>
 }

@@ -2,5 +2,5 @@
 // process.
 
 export async function open(target: string): Promise<void> {
-  await window.api.backend.invoke('shell:open', { target })
+  await window.api.shell.open(target)
 }
