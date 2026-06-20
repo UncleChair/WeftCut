@@ -4,20 +4,14 @@
 //
 // Implementation: a single `Text` object with a cached style
 // signature. Per-frame `update(view)` checks whether the content /
-// font / color / size actually changed; if not, no redraw cost. If
-// changed, `text` reassigns the content + style.
+// font / color / size / style actually changed; if not, no redraw
+// cost. If changed, `text` reassigns the content + style.
 //
-// Fields not yet carried by TextView (plug in once they appear in
-// LayerSummary):
-//   - LayerSummary's TextView ships only flattened content, font,
-//     size, color, position, opacity. The Rust schema has
-//     additional `align`, `shadow`, `outline`, `intro`, `outro`
-//     fields that aren't in the view today; once they appear in
-//     LayerSummary we'll plug them in (drop-shadow filter for
-//     `shadow`, `stroke` for `outline`, sprite-side keyframe for
-//     intros/outros).
+// Style fields rendered: fontWeight, fontStyle, align, fill, stroke
+// (from outline), dropShadow (from shadow). Anchor is set every
+// frame (cheap — no atlas rebuild).
 
-import { Text, TextStyle } from "pixi.js";
+import { Text, TextStyle, type TextStyleFontWeight } from "pixi.js";
 
 import type { ResolvedTextView } from "../resolveView";
 
@@ -46,25 +40,44 @@ export class TextSprite {
   }
 
   update(view: ResolvedTextView): void {
+    const o = view.outline, sh = view.shadow;
     const sig =
-      `${view.content}|${view.font_family}|${view.font_size_px}|` +
-      `${view.color.r},${view.color.g},${view.color.b},${view.color.a}`;
+      `${view.content}|${view.font_family}|${view.font_size_px}|${view.weight}|${view.italic}|${view.align}|` +
+      `${view.color.r},${view.color.g},${view.color.b},${view.color.a}|` +
+      `${o ? `${o.width}:${o.color.r},${o.color.g},${o.color.b}` : "-"}|` +
+      `${sh ? `${sh.offset_x},${sh.offset_y},${sh.blur}:${sh.color.r},${sh.color.g},${sh.color.b}` : "-"}`;
 
     if (sig !== this.appliedSig) {
       this.appliedSig = sig;
-      const fillColor =
-        (view.color.r << 16) | (view.color.g << 8) | view.color.b;
+      const fill = (view.color.r << 16) | (view.color.g << 8) | view.color.b;
+      const align = view.align.toLowerCase() as "left" | "center" | "right";
       // Re-create the style (TextStyle is mutable but Pixi recommends
       // re-assignment for predictable atlas invalidation).
       this.text.text = view.content;
       this.text.style = new TextStyle({
-        fontFamily: view.font_family || "Arial",
+        fontFamily: view.font_family || "Liberation Sans, Noto Sans SC",
         fontSize: view.font_size_px,
-        fill: fillColor,
+        fontWeight: String(view.weight || 400) as TextStyleFontWeight,
+        fontStyle: view.italic ? "italic" : "normal",
+        align,
+        fill,
+        ...(o ? { stroke: { color: (o.color.r << 16) | (o.color.g << 8) | o.color.b, width: o.width } } : {}),
+        ...(sh
+          ? {
+              dropShadow: {
+                color: (sh.color.r << 16) | (sh.color.g << 8) | sh.color.b,
+                blur: sh.blur,
+                distance: Math.hypot(sh.offset_x, sh.offset_y),
+                angle: Math.atan2(sh.offset_y, sh.offset_x),
+                alpha: sh.color.a / 255,
+              },
+            }
+          : {}),
       });
     }
 
-    // Per-frame: position + alpha (cheap — no atlas rebuild).
+    // Per-frame: anchor + position + alpha (cheap — no atlas rebuild).
+    this.text.anchor.set(view.anchor_x, view.anchor_y);
     this.text.position.set(view.x, view.y);
     // Color alpha (Rgba.a) multiplies the layer's `opacity` field.
     this.text.alpha = view.opacity * (view.color.a / 255);
