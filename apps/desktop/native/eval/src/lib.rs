@@ -20,6 +20,11 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
     loop {}
 }
 
+// Resident-ABI scalar exports for the renderer. wasm32 only (the native crate
+// links the leaf as an rlib and calls the functions below directly).
+#[cfg(target_arch = "wasm32")]
+mod wasm;
+
 // ===========================================================================
 // Frame snap. Time is `i64` microseconds (the napi crate aliases `TimeUs = i64`
 // and wraps these). Frame rate crosses as the primitive pair `(num, den)`: the
