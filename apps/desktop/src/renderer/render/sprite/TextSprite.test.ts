@@ -18,6 +18,7 @@ describe("TextSprite", () => {
     expect(s.text.style.fontStyle).toBe("italic");
     expect(s.text.style.stroke).toBeTruthy();
     expect(s.text.style.dropShadow).toBeTruthy();
+    expect(s.text.style.align).toBe("center");
     expect(s.text.anchor.y).toBe(1.0);
   });
 });

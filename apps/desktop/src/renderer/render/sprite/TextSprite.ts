@@ -45,7 +45,7 @@ export class TextSprite {
       `${view.content}|${view.font_family}|${view.font_size_px}|${view.weight}|${view.italic}|${view.align}|` +
       `${view.color.r},${view.color.g},${view.color.b},${view.color.a}|` +
       `${o ? `${o.width}:${o.color.r},${o.color.g},${o.color.b}` : "-"}|` +
-      `${sh ? `${sh.offset_x},${sh.offset_y},${sh.blur}:${sh.color.r},${sh.color.g},${sh.color.b}` : "-"}`;
+      `${sh ? `${sh.offset_x},${sh.offset_y},${sh.blur}:${sh.color.r},${sh.color.g},${sh.color.b},${sh.color.a}` : "-"}`;
 
     if (sig !== this.appliedSig) {
       this.appliedSig = sig;
