@@ -152,14 +152,28 @@ If profiling ever justifies it, the staged plan:
 
 The PixiJS + WebCodecs path runs in Electron's bundled Chromium, the same
 engine on every OS, so browser behavior no longer diverges per platform.
-The platform-specific work that remains is:
+The 3-OS CI matrix (`electron-ci.yml`) covers the structural cross-platform
+work: it builds the napi addon + renderer + main bundles, packages an
+unsigned installer, launches the app headlessly, fetches the platform's
+static ffmpeg, and gates cross-OS *motif-render* determinism (byte-identical
+captures, SSIM) on Windows + Linux + macOS.
 
-- Build + run the dev shell on each OS.
-- Confirm the WebCodecs / PixiJS / mediabunny / JASSUB stack decodes
-  the proxy and produces frame-identical output across platforms.
-- Confirm `ffmpeg-sidecar`'s auto-download works on each platform
-  (and that the proxy SOCKS fallback in [`setup.md`](setup.md) is the
-  only required workaround).
+What CI's headless, fixture-free runners do not exercise — and what remains
+to verify on real macOS + Linux hardware:
+
+- **Cross-platform video decode + export conformance.** The conformance and
+  export e2e specs self-skip in CI: no fixture media is generated there and the
+  export-disabling hook is set, so WebCodecs / mediabunny decode of real proxies
+  and the ffmpeg transcode/mux exit have only been gated on Windows. Run the
+  conformance + export suite (`npm run fixtures`, then the e2e) on macOS and
+  Linux to confirm frame-identical decode and conformant output.
+- **Hardware decode / encode + real-display color.** CI runners are headless
+  (xvfb on Linux) and lack a representative GPU, so they exercise the software
+  codec paths only. A human smoke pass on real hardware covers the hardware
+  WebCodecs paths and the display color the runners can't.
+- **Runtime `ffmpeg-sidecar` auto-download.** CI fetches ffmpeg through its own
+  build script; confirm the app's first-launch auto-download (and the proxy
+  SOCKS fallback in [`setup.md`](setup.md)) works on a clean machine.
 
 ### Polish
 
@@ -175,16 +189,6 @@ The platform-specific work that remains is:
   through the picker → export path).
 - Media-pool thumbnail strip and timeline waveform strip on audio
   layers (backend data already cached; both are React + canvas work).
-
-### Cache layout consolidation
-
-The derivative cache currently lives at the OS app-cache root
-(`<app-cache>/proxies|thumbnails|waveforms|frames|raster|voiceover`)
-rather than under each workspace's `Cache/` subdirectory as
-[`data-model.md`](data-model.md) describes. Cross-project hits keep
-the deviation cheap, but consolidating to per-workspace `Cache/`
-is the right shape when "everything for this project lives in the
-folder" becomes a feature.
 
 ### MCP tool gating
 
