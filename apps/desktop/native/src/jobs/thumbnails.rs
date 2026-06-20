@@ -202,6 +202,7 @@ mod tests {
                 duration_us: Some(1_000_000),
                 video: None,
                 audio: None,
+                ..Default::default()
             },
             proxy_path: None,
 
@@ -255,6 +256,7 @@ mod tests {
                 duration_us: Some(1_000_000),
                 video: None,
                 audio: None,
+                ..Default::default()
             },
             proxy_path: None,
 
@@ -291,6 +293,7 @@ mod tests {
                 duration_us: Some(50_000), // 50ms — below MIN_DURATION_US
                 video: None,
                 audio: None,
+                ..Default::default()
             },
             proxy_path: None,
 
