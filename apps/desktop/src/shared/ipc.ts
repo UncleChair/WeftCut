@@ -26,7 +26,20 @@ export type DialogSaveOpts = {
 
 export type DirEntry = { name: string; isDirectory: boolean; isFile: boolean; isSymlink: boolean }
 
-export type WinCreateOpts = { url?: string; width?: number; height?: number; title?: string }
+// `decorations` is the Tauri-era name kept at the IPC boundary: true (the
+// default in createSecondary) gives the window a native OS frame with a title
+// bar (move/close). Secondary windows draw no custom titlebar, so omit it (or
+// pass true) for everything except a window that paints its own caption.
+export type WinCreateOpts = {
+  url?: string
+  width?: number
+  height?: number
+  title?: string
+  decorations?: boolean
+  resizable?: boolean
+  minWidth?: number
+  minHeight?: number
+}
 
 export type WinAction = 'show' | 'hide' | 'close' | 'center' | 'focus'
 
