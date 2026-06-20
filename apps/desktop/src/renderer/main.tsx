@@ -19,6 +19,7 @@ import {
 } from "./ipc";
 import { MOTIF_RUNTIME_SOURCE } from "./render/motifs/runtime";
 import { syncUserMotifsFromBackend, installMotifsChangedListener } from "./render/motifs/syncCatalog";
+import { initEval } from "./eval";
 import "./i18n";
 // Tailwind entry first; styles.css stays unlayered so its legacy rules win
 // over Tailwind's layered output wherever both match (see app.css header).
@@ -162,8 +163,19 @@ function Root() {
   return <App onCloseProject={onCloseProject} />;
 }
 
-ReactDOM.createRoot(root).render(
-  <React.StrictMode>
-    {isPerfHudWindow ? <PerfHUDWindow /> : <Root />}
-  </React.StrictMode>,
-);
+function mount() {
+  ReactDOM.createRoot(root!).render(
+    <React.StrictMode>
+      {isPerfHudWindow ? <PerfHUDWindow /> : <Root />}
+    </React.StrictMode>,
+  );
+}
+
+// Load the shared weftcut-eval wasm before mounting so the first composite /
+// preview frame resolves snap + keyframes synchronously (the renderer's
+// frames.ts / render/animated.ts call it). Chained off the promise rather than a
+// top-level await to dodge the Vite production top-level-await gotcha. Mount even
+// if init fails, so the failure surfaces in the UI instead of a blank window.
+void initEval()
+  .catch((err) => console.error("eval wasm init failed; eval calls will throw until reload", err))
+  .finally(mount);
