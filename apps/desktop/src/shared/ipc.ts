@@ -32,6 +32,20 @@ export type WinAction = 'show' | 'hide' | 'close' | 'center' | 'focus'
 
 export type NotificationOpts = { title?: string; body?: string }
 
+/// Process-tree resource snapshot derived from Electron's app.getAppMetrics().
+/// Covers the whole app process tree (main + renderers + GPU + utility), not
+/// the host machine. See src/main/metrics.ts for the CPU-normalization landmine.
+export type SystemStats = {
+  /// Summed CPU across the process tree, as a % of the whole machine (0–100).
+  cpu_percent: number
+  /// Summed resident memory (working set) of the process tree, in bytes.
+  rss_bytes: number
+  /// Number of processes in the Electron tree.
+  process_count: number
+  /// Logical core count — context for cpu_percent.
+  logical_cores: number
+}
+
 /// An app-level notice surfaced to the user (non-modal corner panel). `code`
 /// keys the i18n strings + the dismissable UI; main collects these at startup
 /// (e.g. keyring-unavailable → plaintext cloud keys) and the renderer PULLS them
@@ -81,6 +95,8 @@ export interface WeftcutApi {
   shell: { open(target: string): Promise<void> }
   /// Post a desktop notification (best-effort; no-op where unsupported).
   notification: { send(opts: NotificationOpts): Promise<void> }
+  /// Process-tree resource snapshot (app.getAppMetrics(), main-side).
+  metrics: { get(): Promise<SystemStats> }
   on(event: string, cb: (payload: unknown) => void): () => void
   off(event: string): void
   /// Broadcast an event to every app window (delivered to `on()` subscribers as
