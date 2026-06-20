@@ -198,10 +198,17 @@ pub struct TextView {
     pub content: String,
     pub font_family: String,
     pub font_size_px: f32,
+    pub weight: u16,
+    pub italic: bool,
     pub color: Animated<Rgba>,
+    pub align: state::TextAlign,
     pub x: Animated<f64>,
     pub y: Animated<f64>,
+    pub anchor_x: f64,
+    pub anchor_y: f64,
     pub opacity: Animated<f64>,
+    pub shadow: Option<state::Shadow>,
+    pub outline: Option<state::Outline>,
 }
 
 #[derive(Serialize, Clone)]
@@ -524,10 +531,17 @@ fn layer_params_view(
             content: p.content.clone(),
             font_family: p.font.family.clone(),
             font_size_px: p.font.size_px,
+            weight: p.font.weight,
+            italic: p.font.italic,
             color: p.color.clone(),
+            align: p.align,
             x: p.transform.x.clone(),
             y: p.transform.y.clone(),
+            anchor_x: p.transform.anchor.0,
+            anchor_y: p.transform.anchor.1,
             opacity: p.opacity.clone(),
+            shadow: p.shadow.clone(),
+            outline: p.outline.clone(),
         }),
         LayerParams::Color(p) => LayerParamsView::Color(ColorView {
             color: p.color.clone(),
@@ -898,4 +912,59 @@ pub struct NewWorkspaceArgs {
     pub height: u32,
     pub fps_num: u32,
     pub fps_den: u32,
+}
+
+#[cfg(test)]
+mod text_view_tests {
+    use super::*;
+    use crate::state::{
+        Animated, FontSpec, Outline, Rgba, Shadow, TextAlign, TextBackend, TextParams, Transform,
+    };
+
+    fn make_styled_text() -> TextParams {
+        TextParams {
+            content: "hi".into(),
+            font: FontSpec {
+                family: "Liberation Sans".into(),
+                size_px: 54.0,
+                weight: 700,
+                italic: true,
+            },
+            color: Animated::Static(Rgba::WHITE),
+            align: TextAlign::Center,
+            transform: Transform {
+                anchor: (0.5, 1.0),
+                ..Default::default()
+            },
+            opacity: Animated::Static(1.0),
+            shadow: Some(Shadow {
+                color: Rgba::BLACK,
+                offset_x: 2.0,
+                offset_y: 2.0,
+                blur: 2.0,
+            }),
+            outline: Some(Outline {
+                color: Rgba::BLACK,
+                width: 3.0,
+            }),
+            intro: None,
+            outro: None,
+            backend_hint: TextBackend::DrawText,
+        }
+    }
+
+    #[test]
+    fn text_view_carries_outline_shadow_align_anchor() {
+        let params = LayerParams::Text(make_styled_text());
+        let pool: imbl::HashMap<state::MediaId, state::MediaItem> = imbl::HashMap::new();
+        let view = layer_params_view(&params, &pool);
+        let LayerParamsView::Text(v) = view else {
+            panic!("expected Text view");
+        };
+        assert_eq!(v.weight, 700);
+        assert!(v.italic);
+        assert_eq!(v.anchor_y, 1.0);
+        assert!(v.outline.is_some());
+        assert!(v.shadow.is_some());
+    }
 }
