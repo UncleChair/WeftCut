@@ -22,6 +22,10 @@ export default defineConfig({
       'src/renderer/**/*.{test,spec}.{ts,tsx}',
       'src/main/**/*.{test,spec}.{ts,tsx}',
     ],
+    // Loads the weftcut-eval wasm before every test file (snap/keyframe/audio
+    // math now runs through it). Requires the generated module — the `pretest`
+    // npm hook runs build:wasm first.
+    setupFiles: ['./src/renderer/testSetup.ts'],
   },
   resolve: {
     alias: {
