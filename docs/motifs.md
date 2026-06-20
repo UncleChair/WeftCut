@@ -341,7 +341,7 @@ The lifecycle is **draft → preview → install**:
 
 - **Create** — three entry points: the picker's **New** (a starter draft), **Import** of an
   external single-file `.html`, or an agent over MCP (`write_motif_draft`). A draft gets a
-  unique, final-ready id at birth (Model B → installing it needs no layer rebind).
+  unique, final-ready id at birth, so installing it needs no layer rebind.
 - **Preview** — a draft is a placeable layer; the compositor renders it **into the real
   project canvas** so the author sees it in context. A draft's frames are keyed by
   `content_hash`, so every source edit re-captures (see [Raster cache](#raster-cache-and-escalation)).

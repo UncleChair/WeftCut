@@ -43,7 +43,8 @@ pub struct WriteDraftArgs {
 }
 
 /// Core of `write_motif_draft`: validate + mint a final-ready unique id (vs
-/// published + existing drafts; Model B → no rebind on install-new) + compose +
+/// published + existing drafts) — the id a draft is born with is the one it keeps
+/// when published, so install-new needs no layer rebind — + compose +
 /// write the draft. Identity is app-owned: the id is minted from the name and
 /// `version` is forced to 1 (any id/version in `manifest` is ignored). When
 /// `from` is `Some`, record it as the draft's Update target (`target` sidecar) so

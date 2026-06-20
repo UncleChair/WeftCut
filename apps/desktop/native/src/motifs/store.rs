@@ -93,7 +93,7 @@ impl UserMotifStore {
     /// Read a file for Motif `id`, path-safely. Resolves the PUBLISHED copy
     /// (`<root>/<id>/<rel>`) first, then falls back to the DRAFT of the same id
     /// (`<root>/drafts/<id>/<rel>`) — so a final-ready draft id serves its draft
-    /// until it's installed, after which the published copy takes over (Model B).
+    /// until it's installed, after which the published copy takes over.
     /// The reserved `drafts` literal id is never served.
     pub fn read_file(&self, id: &str, rel: &str) -> Option<Vec<u8>> {
         if id == DRAFTS_DIR {
@@ -119,7 +119,7 @@ impl UserMotifStore {
     }
 
     /// Build a full `Motif` (manifest + html) for Motif `id`, resolving the
-    /// published copy then falling back to its draft (Model B). `None` if
+    /// published copy then falling back to its draft. `None` if
     /// absent / unreadable / not a valid island, or for the reserved `drafts` id.
     pub fn get_motif(&self, id: &str) -> Option<Motif> {
         if id == DRAFTS_DIR {
@@ -227,7 +227,7 @@ impl UserMotifStore {
     }
 
     /// Delete a user Motif by id: removes the published dir `<root>/<id>/` AND
-    /// the draft dir `<root>/drafts/<id>/` if either exists (Model B → at most
+    /// the draft dir `<root>/drafts/<id>/` if either exists (at most
     /// one exists for a given id). Idempotent. The caller rejects built-in ids.
     pub fn delete_user_motif(&self, id: &str) -> std::io::Result<()> {
         let safe_id = safe_seg(id)?;
