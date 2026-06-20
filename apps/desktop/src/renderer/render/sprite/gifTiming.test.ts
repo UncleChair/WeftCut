@@ -7,6 +7,7 @@ describe("clampFrameDurationUs", () => {
     expect(clampFrameDurationUs(undefined)).toBe(100_000);
     expect(clampFrameDurationUs(0)).toBe(100_000);
     expect(clampFrameDurationUs(5_000)).toBe(100_000); // 5ms ≤ 10ms threshold
+    expect(clampFrameDurationUs(10_000)).toBe(100_000); // exactly 10ms boundary
   });
   it("honors normal delays", () => {
     expect(clampFrameDurationUs(20_000)).toBe(20_000);

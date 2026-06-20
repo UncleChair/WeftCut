@@ -1,7 +1,7 @@
 // Pure loop frame-selection for animated still images (GIF/WebP/APNG/AVIF).
 // The renderer drives frame choice from composition time, NOT from any
 // autonomous ticker, so preview and export pick the same frame at the same
-// layer-local time. See docs/superpowers/plans/2026-06-20-gif-animated-image-loop.md.
+// layer-local time. See docs/render.md (animated image looping).
 
 /// Per-frame display duration in µs. Browsers clamp zero/sub-10ms GIF delays
 /// up to 100ms (the classic rule) so degenerate files don't play hyper-fast;
