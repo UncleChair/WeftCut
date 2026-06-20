@@ -812,7 +812,42 @@ function MotifPropField({
       return (
         <NumberPropField label={label} spec={spec} value={value} onCommit={onCommit} />
       );
+    case "enum":
+      return (
+        <EnumPropField label={label} spec={spec} value={value} onCommit={onCommit} />
+      );
+    default: {
+      // Exhaustiveness: a new PropSpec variant makes this a compile error until
+      // MotifPropField renders it.
+      const _exhaustive: never = spec;
+      return _exhaustive;
+    }
   }
+}
+
+/// Enum prop → dropdown. Commits immediately (a discrete pick = one re-capture),
+/// so it takes the undebounced `onCommit` like string/number.
+function EnumPropField({
+  label,
+  spec,
+  value,
+  onCommit,
+}: {
+  label: string;
+  spec: Extract<PropSpec, { type: "enum" }>;
+  value: unknown;
+  onCommit: (next: unknown) => void;
+}) {
+  return (
+    <Field label={label}>
+      <AppSelect
+        value={typeof value === "string" ? value : spec.default}
+        ariaLabel={label}
+        onValueChange={(v) => onCommit(v)}
+        options={spec.options.map((o) => ({ value: o, label: o }))}
+      />
+    </Field>
+  );
 }
 
 function ColorPropField({
@@ -872,21 +907,35 @@ export function StringPropField({
   }, [value, spec.default]);
   return (
     <Field label={label}>
-      <AppInput
-        value={text}
-        ariaLabel={label}
-        maxLength={spec.max_length}
-        onValueChange={setText}
-        onBlur={() => onCommit(text)}
-        // Enter = commit safeguard: blur the field so the single onBlur path
-        // commits (no separate commit call → no double undo entry).
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            e.currentTarget.blur();
-          }
-        }}
-      />
+      {spec.multiline ? (
+        // Multi-line strings (a text block split on \n) need a textarea. Enter
+        // inserts a newline (don't blur-commit on it); commit on blur only.
+        <textarea
+          className="app-input"
+          rows={3}
+          value={text}
+          aria-label={label}
+          maxLength={spec.max_length}
+          onChange={(e) => setText(e.target.value)}
+          onBlur={() => onCommit(text)}
+        />
+      ) : (
+        <AppInput
+          value={text}
+          ariaLabel={label}
+          maxLength={spec.max_length}
+          onValueChange={setText}
+          onBlur={() => onCommit(text)}
+          // Enter = commit safeguard: blur the field so the single onBlur path
+          // commits (no separate commit call → no double undo entry).
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              e.currentTarget.blur();
+            }
+          }}
+        />
+      )}
     </Field>
   );
 }

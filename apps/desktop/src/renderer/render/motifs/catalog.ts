@@ -5,9 +5,10 @@
 // Plan: docs/motifs.md
 
 export type PropSpec =
-  | { type: "string"; default: string; max_length?: number }
+  | { type: "string"; default: string; max_length?: number; multiline?: boolean }
   | { type: "color"; default: string }
-  | { type: "number"; default: number; min?: number; max?: number };
+  | { type: "number"; default: number; min?: number; max?: number }
+  | { type: "enum"; default: string; options: string[] };
 
 export interface MotifManifest {
   id: string;
@@ -159,6 +160,8 @@ function propValueValid(v: unknown, spec: PropSpec): boolean {
     case "number":
       return typeof v === "number" && Number.isFinite(v)
         && (spec.min == null || v >= spec.min) && (spec.max == null || v <= spec.max);
+    case "enum":
+      return typeof v === "string" && spec.options.includes(v);
     default: {
       // Exhaustiveness guard: a new PropSpec variant makes this a compile error
       // until propValueValid handles it (rather than silently failing validation).

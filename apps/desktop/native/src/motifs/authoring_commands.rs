@@ -421,7 +421,7 @@ mod tests {
         man.id = "foo".into();
         man.version = 2;
         man.props_schema
-            .insert("title".into(), PropSpec::String { default: "Hi".into(), max_length: None });
+            .insert("title".into(), PropSpec::String { default: "Hi".into(), max_length: None, multiline: None });
         let la: LayerId = new_id();
         let lb: LayerId = new_id();
         let layers = vec![

@@ -18,9 +18,10 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-/// Per-prop type contract from the manifest. Three types cover the starter
-/// motifs; richer types (enum, image, ...) can be added without changing the
-/// call sites.
+/// Per-prop type contract from the manifest. `string`/`color`/`number` cover
+/// the simple props; `enum` is a closed set of string values rendered as a
+/// dropdown, and `string.multiline` renders as a textarea. (Image/asset props
+/// can still be added without changing the call sites.)
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum PropSpec {
@@ -28,6 +29,11 @@ pub enum PropSpec {
         default: String,
         #[serde(default)]
         max_length: Option<usize>,
+        /// Display-only hint: render a multi-line textarea instead of a
+        /// single-line input. Ignored by validation (newlines are valid in any
+        /// string). Absent/`None` → single-line.
+        #[serde(default)]
+        multiline: Option<bool>,
     },
     Color {
         /// `#rrggbb` or `#rrggbbaa`.
@@ -39,6 +45,12 @@ pub enum PropSpec {
         min: Option<f64>,
         #[serde(default)]
         max: Option<f64>,
+    },
+    /// A closed set of string values, rendered as a dropdown. `default` must be
+    /// one of `options` (enforced by `validate_default_for` at import).
+    Enum {
+        default: String,
+        options: Vec<String>,
     },
 }
 
@@ -308,6 +320,7 @@ fn spec_default_json(spec: &PropSpec) -> serde_json::Value {
         PropSpec::String { default, .. } => serde_json::Value::String(default.clone()),
         PropSpec::Color { default } => serde_json::Value::String(default.clone()),
         PropSpec::Number { default, .. } => serde_json::json!(*default),
+        PropSpec::Enum { default, .. } => serde_json::Value::String(default.clone()),
     }
 }
 
@@ -350,6 +363,14 @@ fn validate_prop(
                 }
             }
         }
+        PropSpec::Enum { options, .. } => {
+            let s = value
+                .as_str()
+                .ok_or_else(|| MotifError::WrongType(key.to_string(), "enum string"))?;
+            if !options.iter().any(|o| o == s) {
+                return Err(MotifError::NotInEnum(key.to_string(), s.to_string()));
+            }
+        }
     }
     Ok(())
 }
@@ -376,6 +397,8 @@ pub enum MotifError {
     BadColor(String, String),
     #[error("prop `{0}` out of range [{1:?}, {2:?}]")]
     OutOfRange(String, Option<f64>, Option<f64>),
+    #[error("prop `{0}` value {1:?} is not one of the enum options")]
+    NotInEnum(String, String),
     #[error("manifest serialize failed: {0}")]
     Serialize(String),
     #[error("invalid manifest: {0}")]
@@ -424,6 +447,136 @@ pub fn builtins() -> Vec<Motif> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// Build a throwaway `Motif` with the given `props_schema` for validator
+    /// tests (mirrors the inline construction in the string-max-length test).
+    fn synthetic_motif(props_schema: BTreeMap<String, PropSpec>) -> Motif {
+        Motif {
+            manifest: Manifest {
+                id: "synthetic".into(),
+                name: "Synthetic".into(),
+                version: 1,
+                size: [100, 100],
+                default_duration_s: 1.0,
+                max_duration_s: None,
+                max_duration_prop: None,
+                content_duration_s: None,
+                fonts: vec![],
+                props_schema,
+            },
+            html: String::new(),
+        }
+    }
+
+    fn enum_schema() -> BTreeMap<String, PropSpec> {
+        let mut ps: BTreeMap<String, PropSpec> = BTreeMap::new();
+        ps.insert(
+            "effect".into(),
+            PropSpec::Enum {
+                default: "typewriter".into(),
+                options: vec![
+                    "typewriter".into(),
+                    "karaoke".into(),
+                    "color-shift".into(),
+                ],
+            },
+        );
+        ps
+    }
+
+    /// A listed value passes, an unlisted value is `NotInEnum`, a non-string is
+    /// `WrongType`. The three arms of the enum validator.
+    #[test]
+    fn enum_accepts_listed_rejects_unlisted_and_nonstring() {
+        let t = synthetic_motif(enum_schema());
+        assert!(t.canonicalize_props(&json!({ "effect": "karaoke" })).is_ok());
+        let err = t
+            .canonicalize_props(&json!({ "effect": "bogus" }))
+            .expect_err("unlisted enum value must reject");
+        assert!(matches!(err, MotifError::NotInEnum(k, v) if k == "effect" && v == "bogus"));
+        let wt = t
+            .canonicalize_props(&json!({ "effect": 7 }))
+            .expect_err("non-string enum value must reject");
+        assert!(matches!(wt, MotifError::WrongType(k, _) if k == "effect"));
+    }
+
+    /// Import validation: an enum whose `default` isn't one of its `options`
+    /// must be rejected (so a placed layer's default can never fail validation).
+    #[test]
+    fn enum_default_must_be_one_of_options() {
+        let bad = PropSpec::Enum {
+            default: "x".into(),
+            options: vec!["a".into(), "b".into()],
+        };
+        assert!(validate_default_for("e", &bad).is_err());
+        let good = PropSpec::Enum {
+            default: "a".into(),
+            options: vec!["a".into(), "b".into()],
+        };
+        assert!(validate_default_for("e", &good).is_ok());
+    }
+
+    #[test]
+    fn enum_fills_default_and_canonical_form_is_stable() {
+        let t = synthetic_motif(enum_schema());
+        let a = t.canonicalize_props(&json!({})).expect("defaults validate");
+        assert!(a.contains("\"effect\":\"typewriter\""));
+        let b = t.canonicalize_props(&json!({})).expect("again");
+        assert_eq!(a, b, "enum canonical form must be stable");
+    }
+
+    #[test]
+    fn enum_lenient_falls_back_on_unlisted() {
+        let t = synthetic_motif(enum_schema());
+        let out = t
+            .canonicalize_props_lenient(&json!({ "effect": "nope" }))
+            .expect("lenient never rejects");
+        assert!(out.contains("\"effect\":\"typewriter\""));
+    }
+
+    /// Cross-language PropSpec parity (golden). The SAME fixture is asserted by
+    /// the TS render path (`propSpecGolden.test.ts`); both sides must handle
+    /// every variant. An unknown variant fails serde here (→ panic), or makes
+    /// the TS lenient-fallback check fail there. Adding a PropSpec variant
+    /// REQUIRES adding it to the fixture, which forces both sides to support it.
+    #[test]
+    fn propspec_parity_golden() {
+        const FIXTURE: &str =
+            include_str!("../../../src/renderer/render/motifs/propSpecGolden.fixture.json");
+        let doc: serde_json::Value = serde_json::from_str(FIXTURE).expect("fixture parses");
+        let variants = doc["variants"].as_array().expect("variants is an array");
+        assert!(!variants.is_empty(), "fixture must list variants");
+        for entry in variants {
+            let key = entry["type"].as_str().expect("variant type");
+            let spec: PropSpec = serde_json::from_value(entry["spec"].clone())
+                .unwrap_or_else(|e| panic!("{key}: spec does not parse into PropSpec: {e}"));
+            // The declared default must self-validate (the import invariant).
+            validate_default_for(key, &spec)
+                .unwrap_or_else(|e| panic!("{key}: default must validate: {e}"));
+            for v in entry["valid"].as_array().expect("valid array") {
+                validate_prop(key, &spec, v)
+                    .unwrap_or_else(|e| panic!("{key}: {v} should be valid: {e}"));
+            }
+            for v in entry["invalid"].as_array().expect("invalid array") {
+                assert!(
+                    validate_prop(key, &spec, v).is_err(),
+                    "{key}: {v} should be rejected"
+                );
+            }
+        }
+    }
+
+    /// The `multiline` display flag round-trips through serde and defaults to
+    /// `None` when absent (existing string manifests keep parsing).
+    #[test]
+    fn string_multiline_flag_roundtrips() {
+        let with: PropSpec =
+            serde_json::from_str(r#"{"type":"string","default":"hi","multiline":true}"#).unwrap();
+        assert!(matches!(with, PropSpec::String { multiline: Some(true), .. }));
+        let without: PropSpec =
+            serde_json::from_str(r#"{"type":"string","default":"hi"}"#).unwrap();
+        assert!(matches!(without, PropSpec::String { multiline: None, .. }));
+    }
 
     #[test]
     fn builtin_motif_parses() {
@@ -535,6 +688,7 @@ mod tests {
             PropSpec::String {
                 default: "hi".to_string(),
                 max_length: Some(3),
+                multiline: None,
             },
         );
         let t = Motif {
