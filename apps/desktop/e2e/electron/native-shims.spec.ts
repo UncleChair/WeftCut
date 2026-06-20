@@ -75,3 +75,25 @@ test('shell:open and notification:send are wired (no missing-handler error)', as
 
   await app.close()
 })
+
+test('metrics.get() returns a live process-tree snapshot from app.getAppMetrics()', async () => {
+  const app = await electron.launch({
+    args: [MAIN],
+    env: { ...process.env, WEFTCUT_SUPPRESS_ELEVATION_NOTICE: '1' } as Record<string, string>,
+  })
+  const page = await app.firstWindow()
+  await page.waitForLoadState('domcontentloaded')
+
+  const stats = (await page.evaluate(() => (window as any).api.metrics.get())) as {
+    cpu_percent: number; rss_bytes: number; process_count: number; logical_cores: number
+  }
+  // A running Electron app always has >=1 process and a real RSS — no 1s warmup,
+  // no null (unlike the dropped Rust command). cpu_percent is whole-machine %.
+  expect(stats.process_count).toBeGreaterThanOrEqual(1)
+  expect(stats.rss_bytes).toBeGreaterThan(0)
+  expect(stats.logical_cores).toBeGreaterThan(0)
+  expect(stats.cpu_percent).toBeGreaterThanOrEqual(0)
+  expect(stats.cpu_percent).toBeLessThanOrEqual(100 * stats.logical_cores)
+
+  await app.close()
+})

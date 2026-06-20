@@ -614,9 +614,8 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
   // dropped automatically (the ref map is rebuilt from the live clips).
   const [fpsByLayer, setFpsByLayer] = useState<Map<string, number>>(new Map());
   const prevSamplesRef = useRef<Map<string, ThroughputSample>>(new Map());
-  // System-resource snapshot from the Rust sysmon sampler (process-tree
-  // CPU%/RSS). Null until its first tick, or in a release build where the
-  // command doesn't exist.
+  // Process-tree resource snapshot (CPU%/RSS) from Electron's app.getAppMetrics()
+  // via the main process. Null only until the first poll resolves.
   const [sys, setSys] = useState<SystemStats | null>(null);
   // Master audio bus meter (rms/peak dBFS). Null in export mode or before
   // the graph exists.
@@ -705,10 +704,9 @@ export function PerfHUD({ compositorRef, engineRef }: Props) {
     return () => clearInterval(id);
   }, [compositorRef, engineRef]);
 
-  // System-resource poll (Rust sysmon), on a slower 1 s cadence: CPU/RSS
-  // move slowly and the sampler itself only updates once a second.
-  // `get_system_stats` is dev-only — swallow rejection so a release build
-  // (no such command) doesn't spam the console.
+  // Process-tree resource poll (app.getAppMetrics() via main), on a slower 1 s
+  // cadence: CPU/RSS move slowly. Available in dev AND release; the .catch is
+  // defensive only.
   useEffect(() => {
     let cancelled = false;
     const id = setInterval(() => {

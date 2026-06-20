@@ -398,25 +398,10 @@ export async function ping(): Promise<string> {
   return invoke<string>("ping");
 }
 
-/// Dev-only system-resource snapshot from the native backend.
-/// Covers the app's process tree, not the whole machine. The
-/// `get_system_stats` command only exists in debug builds; calling it in
-/// a release build rejects, so guard callers with `import.meta.env.DEV`.
-export interface SystemStats {
-  /// App process-tree CPU as a % of the whole machine (0–100).
-  cpu_percent: number;
-  /// Summed resident memory of the process tree, in bytes.
-  rss_bytes: number;
-  /// Processes in the tree (main + Electron/Chromium children + export Worker).
-  process_count: number;
-  /// Logical core count — context for the normalized cpu_percent.
-  logical_cores: number;
-}
-
-/// Returns `null` before the sampler's first tick (≈1 s after launch).
-export async function getSystemStats(): Promise<SystemStats | null> {
-  return invoke<SystemStats | null>("get_system_stats");
-}
+// Process-tree resource snapshot. Now an Electron-native main-process capability
+// (app.getAppMetrics()) rather than a Rust command — re-exported from the bridge
+// so existing `import { getSystemStats, type SystemStats } from "../ipc"` holds.
+export { getSystemStats, type SystemStats } from "@/bridge/metrics";
 
 export async function projectSummary(): Promise<ProjectSummary> {
   return invoke<ProjectSummary>("project_summary");

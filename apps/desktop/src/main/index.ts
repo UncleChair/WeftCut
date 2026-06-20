@@ -1,5 +1,6 @@
 import path from 'node:path'
 import fs from 'node:fs'
+import os from 'node:os'
 import { Readable } from 'node:stream'
 import { createRequire } from 'node:module'
 import { execFile } from 'node:child_process'
@@ -9,6 +10,7 @@ import { MOTIF_SCHEME_ENTRY, registerMotifProtocol } from './motif/protocol.js'
 import { setRuntimeSource, captureMotifFrameB64 } from './motif/capture.js'
 import { createSecondary, actOnSecondary, secondaryExists, hardenWindow } from './windows.js'
 import { broadcastEvent } from './broadcast.js'
+import { collectMetrics } from './metrics.js'
 import { isAllowed } from './fsGuard.js'
 
 protocol.registerSchemesAsPrivileged([
@@ -265,6 +267,12 @@ app.whenReady().then(async () => {
   ipcMain.handle('app:emit', (_e, { event, payload }: { event: string; payload?: unknown }) => {
     broadcastEvent(BrowserWindow.getAllWindows(), event, payload)
   })
+
+  // Process-tree resource snapshot for the PerfHUD. Electron tracks the whole
+  // app tree (Browser + renderers + GPU + utility) itself — no Rust round-trip,
+  // no system-info crate. Works in dev AND release (unlike the dropped Rust
+  // `get_system_stats`, which only ever errored).
+  ipcMain.handle('app:metrics', () => collectMetrics(app.getAppMetrics(), os.cpus().length))
 
   const { dialog } = require('electron') as typeof import('electron')
   ipcMain.handle('dialog:open', async (_e, opts) => {

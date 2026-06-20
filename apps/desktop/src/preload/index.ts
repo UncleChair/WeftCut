@@ -6,6 +6,7 @@ import type {
   DialogSaveOpts,
   DirEntry,
   NotificationOpts,
+  SystemStats,
   WinCreateOpts,
   WinAction,
 } from '../shared/ipc'
@@ -102,6 +103,9 @@ const api: WeftcutApi = {
   },
   notification: {
     send: (opts: NotificationOpts): Promise<void> => ipcRenderer.invoke('notification:send', opts) as Promise<void>,
+  },
+  metrics: {
+    get: (): Promise<SystemStats> => ipcRenderer.invoke('app:metrics') as Promise<SystemStats>,
   },
 
   // Event subscription: main relays core events via webContents.send →
