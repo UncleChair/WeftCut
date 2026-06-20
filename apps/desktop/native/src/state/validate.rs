@@ -188,9 +188,9 @@ fn validate_groups(
         }
     }
 
-    // Effect-class compatibility is not a commit-time invariant: the planner
-    // routes html-required effects to the html-capable path at effect-add
-    // time, so no overlap-style check is needed here.
+    // No effect-class compatibility check here: the per-layer effects subsystem
+    // isn't built yet (future `layer.effects`). When it lands, effect routing is
+    // an effect-add-time / planner concern, not a commit-time invariant.
 
     Ok(())
 }

@@ -3611,9 +3611,6 @@
         assert_eq!(snap.groups[0].label.as_deref(), Some("new"));
     }
 
-    // Group html-cap rendering is expressed via an `HtmlTransform` effect;
-    // there is no Native/Html mode toggle.
-
     #[tokio::test]
     async fn delete_layer_auto_removes_from_group_and_dissolves() {
         let (handle, _t, a, b, _c) = three_layers_on_video_track().await;

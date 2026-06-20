@@ -659,9 +659,9 @@ enum Command {
         actor: Actor,
         reply: oneshot::Sender<Result<(), CommandError>>,
     },
-    // No set-effects command exists: the Pixi renderer doesn't read `effects`
-    // in v1, so the mutation surface is intentionally absent. The `effects`
-    // field on Layer / Group is retained but cannot be written from UI / MCP.
+    // No set-effects command: the per-layer effects subsystem isn't built yet
+    // (per-sprite Pixi filter chains driven by a future `layer.effects` — see
+    // docs/roadmap.md), so neither the field nor a mutation surface exists.
     Undo {
         actor: Actor,
         reply: oneshot::Sender<Result<(), CommandError>>,
