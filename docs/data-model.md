@@ -618,9 +618,11 @@ The workspace folder *is* the project. Opening a workspace folder = opening the 
 │   ├── proxies/              ← per-source H.264: a 720p scrub proxy (preview) + a source-res export master
 │   ├── thumbnails/           ← per-source thumb strips
 │   ├── waveforms/            ← .peaks files for waveform display
+│   ├── audio/                ← canonical conformed PCM, 48 kHz f32le (see `audio.md`)
 │   ├── frames/               ← on-demand video frames (media://{id}/frame/{t})
-│   ├── raster/               ← persisted Motif frame captures (L2)
-│   ├── preview/              ← state-hashed preview MP4s (see `rendering.md`)
+│   ├── raster/               ← persisted Motif L2 pre-bake PNGs (opt-in; see `motifs.md`)
+│   ├── inline-subs/          ← materialized inline subtitle bodies (reserved for ffmpeg burn-in)
+│   ├── transcribe-audio/     ← mono 16 kHz WAV slices for cloud transcription
 │   └── voiceover/            ← TTS output
 ├── Backups/                  ← periodic project.json snapshots (rolling 20)
 └── Renders/                  ← export outputs default here
