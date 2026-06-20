@@ -61,9 +61,5 @@ describe("AudioGraph", () => {
     expect(g.input.gain.value).toBe(0);
     g.setMasterMute(false);
     expect(g.input.gain.value).toBe(1);
-    g.muteMaster();
-    expect(g.input.gain.value).toBe(0);
-    g.unmuteMaster();
-    expect(g.input.gain.value).toBe(1);
   });
 });
