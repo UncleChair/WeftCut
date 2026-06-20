@@ -70,15 +70,6 @@ export class AudioGraph {
     this.inputNode.gain.value = muted ? 0 : 1;
   }
 
-  // Boolean-free aliases for setMasterMute(true/false).
-  muteMaster(): void {
-    this.setMasterMute(true);
-  }
-
-  unmuteMaster(): void {
-    this.setMasterMute(false);
-  }
-
   /// One combined-channel RMS + peak read off the analyser. Per-channel
   /// splitting is future work.
   meterSnapshot(): MeterSnapshot {
