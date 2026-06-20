@@ -62,7 +62,21 @@ const LOWER_THIRD: BuiltinMotif = BuiltinMotif {
     ],
 };
 
-const BUILTINS: &[BuiltinMotif] = &[COUNTDOWN, LOWER_THIRD];
+const TEXT_FX: BuiltinMotif = BuiltinMotif {
+    id: "text-fx",
+    files: &[
+        BuiltinFile {
+            rel: "index.html",
+            bytes: include_bytes!("catalog/text-fx/index.html"),
+        },
+        BuiltinFile {
+            rel: "assets/Inter.woff2",
+            bytes: include_bytes!("catalog/text-fx/assets/Inter.woff2"),
+        },
+    ],
+};
+
+const BUILTINS: &[BuiltinMotif] = &[COUNTDOWN, LOWER_THIRD, TEXT_FX];
 
 /// Look up an embedded file by `(id, rel)`.
 fn lookup(id: &str, rel: &str) -> Option<&'static [u8]> {
@@ -130,6 +144,14 @@ mod tests {
             .expect("lower-third font embedded");
         assert!(!bytes.is_empty());
         assert_eq!(content_type_for("assets/Inter.woff2"), "font/woff2");
+    }
+
+    #[test]
+    fn serves_text_fx_index_and_font() {
+        let html = lookup("text-fx", "index.html").expect("text-fx index embedded");
+        assert!(std::str::from_utf8(html).unwrap().contains("motif.define"));
+        let font = lookup("text-fx", "assets/Inter.woff2").expect("text-fx font embedded");
+        assert!(!font.is_empty());
     }
 
     #[test]
