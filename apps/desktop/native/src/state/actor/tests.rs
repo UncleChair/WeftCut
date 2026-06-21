@@ -5293,6 +5293,52 @@
     }
 
     #[test]
+    fn update_param_track_lazily_creates_absent_effect_param_slot() {
+        use crate::state::actor::mutations::{
+            apply_add_effect, apply_add_layer, apply_update_layer_param_track,
+        };
+        use crate::state::effect::Effect;
+
+        let (mut project, track_id) = project_with_video_track();
+        let layer_id =
+            apply_add_layer(&mut project, track_id, color_layer(Rgba::WHITE), 0, 1_000_000).unwrap();
+        // Effect with EMPTY params — exactly what add_effect creates.
+        let effect_id = apply_add_effect(
+            &mut project,
+            layer_id,
+            Effect { id: new_id(), kind: "blur".into(), enabled: true, params: Default::default() },
+        )
+        .unwrap();
+
+        let key = format!("effects[{effect_id}].params[strength]");
+        // First write to the not-yet-present slot must succeed (lazy-insert).
+        apply_update_layer_param_track(&mut project, layer_id, &key, Animated::Static(20.0)).unwrap();
+
+        let e = project
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .find(|l| l.id == layer_id)
+            .unwrap()
+            .effects
+            .iter()
+            .find(|e| e.id == effect_id)
+            .unwrap();
+        assert!(matches!(e.params.get("strength"), Some(Animated::Static(v)) if *v == 20.0));
+    }
+
+    #[test]
+    fn update_param_track_still_rejects_non_effect_unknown_key() {
+        use crate::state::actor::mutations::{apply_add_layer, apply_update_layer_param_track};
+
+        let (mut project, track_id) = project_with_video_track();
+        let layer_id =
+            apply_add_layer(&mut project, track_id, color_layer(Rgba::WHITE), 0, 1_000_000).unwrap();
+        let err = apply_update_layer_param_track(&mut project, layer_id, "bogus", Animated::Static(1.0));
+        assert!(matches!(err, Err(CommandError::UnknownKeyframeParam { .. })));
+    }
+
+    #[test]
     fn effect_errors_on_missing_layer_and_effect() {
         use crate::state::actor::mutations::{
             apply_add_effect, apply_add_layer, apply_move_effect, apply_remove_effect,

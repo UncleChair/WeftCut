@@ -471,11 +471,20 @@ pub(crate) fn apply_update_layer_param_track(
         .enumerate()
         .find_map(|(ti, t)| t.layers.iter().position(|l| l.id == id).map(|li| (ti, li)))
         .ok_or(CommandError::LayerNotFound { layer: id })?;
-    let slot = crate::state::layer::resolve_animated_f64_mut_on_layer(
-        &mut project.tracks[ti].layers[li],
-        param_key,
-    )
-    .ok_or_else(|| CommandError::UnknownKeyframeParam { layer: id, param_key: param_key.to_string() })?;
+    let layer = &mut project.tracks[ti].layers[li];
+    // Effect params are created lazily: a freshly-added effect has an empty
+    // params map, so the first track write to a known effect-param path inserts
+    // the slot rather than rejecting (the placeholder is overwritten just below).
+    // Non-effect unknown keys (e.g. "bogus") still reject.
+    if crate::state::layer::resolve_animated_f64_mut_on_layer(layer, param_key).is_none() {
+        if let Some((effect_id, param)) = crate::state::layer::parse_effect_param_key(param_key) {
+            if let Some(e) = layer.effects.iter_mut().find(|e| e.id == effect_id) {
+                e.params.entry(param).or_insert(Animated::Static(0.0));
+            }
+        }
+    }
+    let slot = crate::state::layer::resolve_animated_f64_mut_on_layer(layer, param_key)
+        .ok_or_else(|| CommandError::UnknownKeyframeParam { layer: id, param_key: param_key.to_string() })?;
     *slot = track;
     // No `apply_duration_autofit`: writing a keyframe track to a param never
     // changes a layer's t_start/t_end, so composition duration can't shift.
