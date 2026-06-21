@@ -6,15 +6,16 @@
 //
 // See docs/render.md (color layers).
 
-import { Graphics } from "pixi.js";
+import { Graphics, type Container } from "pixi.js";
 
 import type { ResolvedColorView } from "../resolveView";
+import type { StageableSprite } from "./StageableSprite";
 
 export interface ColorSpriteInit {
   layerId: string;
 }
 
-export class ColorSprite {
+export class ColorSprite implements StageableSprite {
   readonly graphics: Graphics;
   readonly layerId: string;
   /// Cached signature of the most recently-drawn fill. Skips the
@@ -25,6 +26,15 @@ export class ColorSprite {
   constructor(init: ColorSpriteInit) {
     this.layerId = init.layerId;
     this.graphics = new Graphics();
+  }
+
+  get displayObject(): Container {
+    return this.graphics;
+  }
+
+  /// A Graphics fill has no EMPTY-placeholder phase — always ready.
+  get stageReady(): boolean {
+    return true;
   }
 
   update(view: ResolvedColorView): void {

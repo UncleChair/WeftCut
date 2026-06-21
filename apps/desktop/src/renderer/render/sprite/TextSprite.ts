@@ -11,15 +11,16 @@
 // (from outline), dropShadow (from shadow). Anchor is set every
 // frame (cheap — no atlas rebuild).
 
-import { Text, TextStyle, type TextStyleFontWeight } from "pixi.js";
+import { Text, TextStyle, type Container, type TextStyleFontWeight } from "pixi.js";
 
 import type { ResolvedTextView } from "../resolveView";
+import type { StageableSprite } from "./StageableSprite";
 
 export interface TextSpriteInit {
   layerId: string;
 }
 
-export class TextSprite {
+export class TextSprite implements StageableSprite {
   readonly text: Text;
   readonly layerId: string;
   /// Cached signature of the last-applied content + style. Skips
@@ -37,6 +38,15 @@ export class TextSprite {
         fill: 0xffffff,
       }),
     });
+  }
+
+  get displayObject(): Container {
+    return this.text;
+  }
+
+  /// A Text node has no EMPTY-placeholder phase — always ready.
+  get stageReady(): boolean {
+    return true;
   }
 
   update(view: ResolvedTextView): void {

@@ -6,10 +6,11 @@
 // createImageBitmap. The cache owns animated bitmaps; this sprite only wraps
 // them in its own Texture (mirrors MotifSprite ownership). See docs/render.md.
 
-import { ImageSource, Sprite, Texture } from "pixi.js";
+import { type Container, ImageSource, Sprite, Texture } from "pixi.js";
 
 import type { ResolvedImageOverlayView } from "../resolveView";
 import { gifFrameIndexAt } from "./gifTiming";
+import type { StageableSprite } from "./StageableSprite";
 import {
   sharedAnimatedImageCache,
   type DecodedAnimation,
@@ -24,7 +25,7 @@ export interface ImageOverlaySpriteInit {
   maxHeight: number;
 }
 
-export class ImageOverlaySprite {
+export class ImageOverlaySprite implements StageableSprite {
   readonly sprite: Sprite;
   readonly layerId: string;
   readonly mediaId: string;
@@ -47,6 +48,16 @@ export class ImageOverlaySprite {
     this.maxWidth = init.maxWidth;
     this.maxHeight = init.maxHeight;
     this.sprite = new Sprite(Texture.EMPTY);
+  }
+
+  get displayObject(): Container {
+    return this.sprite;
+  }
+
+  /// EMPTY until the first frame is decoded/bound; not staged before then
+  /// (PixiJS v8 batched renderer crashes on the EMPTY placeholder).
+  get stageReady(): boolean {
+    return this.sprite.texture !== Texture.EMPTY;
   }
 
   /// Load `assetUrl`. Tries the animated ImageDecoder cache first; on an

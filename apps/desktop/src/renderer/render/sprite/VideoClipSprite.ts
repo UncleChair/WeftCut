@@ -57,10 +57,11 @@
 // recover it AND honor the matrix is tracked in docs/roadmap.md
 // ("Zero-copy color-correct GPU frame upload").
 
-import { ImageSource, Sprite, Texture } from "pixi.js";
+import { type Container, ImageSource, Sprite, Texture } from "pixi.js";
 
 import type { DecodedFrame } from "../decoder/SourceDecoderPool";
 import { isTenBitFrame } from "../decoder/tenBitFrame";
+import type { StageableSprite } from "./StageableSprite";
 
 export interface VideoClipSpriteInit {
   layerId: string;
@@ -79,7 +80,7 @@ function decodedDims(frame: DecodedFrame): { width: number; height: number } {
   return { width: frame.width, height: frame.height };
 }
 
-export class VideoClipSprite {
+export class VideoClipSprite implements StageableSprite {
   readonly sprite: Sprite;
   readonly layerId: string;
   readonly mediaId: string;
@@ -104,6 +105,17 @@ export class VideoClipSprite {
     this.layerId = init.layerId;
     this.mediaId = init.mediaId;
     this.sprite = new Sprite(Texture.EMPTY);
+  }
+
+  get displayObject(): Container {
+    return this.sprite;
+  }
+
+  /// EMPTY-texture sprites are not staged: PixiJS v8's batched renderer
+  /// crashes on the EMPTY placeholder in some Chromium configs. Once the
+  /// first decoded frame lands, the texture swaps and stageReady flips true.
+  get stageReady(): boolean {
+    return this.sprite.texture !== Texture.EMPTY;
   }
 
   /// Push a decoded frame onto the GPU. No-op if the same frame is

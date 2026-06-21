@@ -15,7 +15,7 @@
 // wants that (cacheKey, frame). The export Worker (no `document`) never takes
 // this path — it binds pre-baked `injectedFrames` by index instead.
 
-import { ImageSource, Sprite, Texture } from "pixi.js";
+import { type Container, ImageSource, Sprite, Texture } from "pixi.js";
 
 import { frameIndexInLayer } from "../../frames";
 import type { ResolvedMotifView } from "../resolveView";
@@ -23,6 +23,7 @@ import { getMotif, type Motif } from "../motifs/catalog";
 import { resolveMotifFrame, sharedMotifFrameCache } from "../motifs/motifRasterCache";
 import { motifFrameDescriptor } from "../motifs/motifFrameDescriptor";
 import { motifDurationFrames } from "../motifs/motifFrames";
+import type { StageableSprite } from "./StageableSprite";
 
 // A faint neutral tile shown while a first-ever-cold Motif's frame 0 is still
 // in flight, so the layer reads as "warming" rather than vanishing. Built once
@@ -54,7 +55,7 @@ export interface MotifSpriteInit {
   onLoaded?: () => void;
 }
 
-export class MotifSprite {
+export class MotifSprite implements StageableSprite {
   readonly sprite: Sprite;
   readonly layerId: string;
   readonly motifId: string;
@@ -95,6 +96,16 @@ export class MotifSprite {
       );
     }
     this.sprite = new Sprite(Texture.EMPTY);
+  }
+
+  get displayObject(): Container {
+    return this.sprite;
+  }
+
+  /// EMPTY until the first raster (cache hit / capture) binds; not staged
+  /// before then (PixiJS v8 batched renderer crashes on the EMPTY placeholder).
+  get stageReady(): boolean {
+    return this.sprite.texture !== Texture.EMPTY;
   }
 
   /// Apply the layer's transform and bind the raster for the frame at
