@@ -126,7 +126,7 @@ pub struct TextPatch {
 /// Batch style patch applied to every Text layer on a caption track at once.
 /// Snake_case field names to match the codebase patch convention (no rename_all).
 /// Sent from the TS side via `restyleCaptionTrack(trackId, patch)`.
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 pub struct CaptionStylePatch {
     pub font_family: Option<String>,
     pub font_size_px: Option<f32>,

@@ -136,4 +136,26 @@ describe("CaptionsPanel", () => {
     await Promise.resolve();
     expect(restyleCaptionTrack).toHaveBeenCalledWith("t1", { font_size_px: 80 });
   });
+
+  it("calls restyleCaptionTrack with a color value after debounce on color change", async () => {
+    vi.useFakeTimers();
+    seed();
+    const onMutated = vi.fn().mockResolvedValue(undefined);
+    render(<CaptionsPanel onMutated={onMutated} />);
+    // AppColorField renders <input type="color">; query by its aria-label
+    const colorInput = screen.getByLabelText("Color");
+    fireEvent.change(colorInput, { target: { value: "#ff0000" } });
+    // restyleCaptionTrack is debounced at 250ms — not called yet
+    expect(restyleCaptionTrack).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(250);
+    // Now the debounced call fires; allow the promise chain to settle
+    await Promise.resolve();
+    expect(restyleCaptionTrack).toHaveBeenCalledOnce();
+    const call = (restyleCaptionTrack as ReturnType<typeof vi.fn>).mock.calls[0] as [string, { color: { r: number; g: number; b: number; a: number } }];
+    const [trackId, patch] = call;
+    expect(trackId).toBe("t1");
+    expect(patch.color).toMatchObject({ r: 255, g: 0, b: 0 });
+    expect(typeof patch.color.a).toBe("number");
+    vi.useRealTimers();
+  });
 });

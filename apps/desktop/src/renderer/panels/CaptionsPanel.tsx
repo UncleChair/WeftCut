@@ -5,7 +5,7 @@
 // transcribe / manual import). This panel flattens all caption tracks' Text
 // layers sorted by start time and exposes them as an editable cue list.
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useProjectSummary } from "../state/projectStore";
 import { transportSeek } from "../state/playbackStore";
@@ -45,6 +45,10 @@ export function CaptionsPanel({ onMutated }: { onMutated: () => Promise<void> })
 
   const [fontSize, setFontSize] = useState(seedSize);
   const [color, setColor] = useState(seedColor);
+  // Debounce slot for caption color commits — the native color picker fires
+  // onChange continuously; each IPC call creates a history entry, so we must
+  // coalesce bursts into one commit per gesture.
+  const colorDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Resync style controls when the first caption track changes (e.g. after undo).
   useEffect(() => {
@@ -52,6 +56,14 @@ export function CaptionsPanel({ onMutated }: { onMutated: () => Promise<void> })
     setColor(seedColor);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [captionTracks[0]?.id]);
+
+  // Clear any pending debounced color commit on unmount so a late call can't
+  // fire after the component is gone.
+  useEffect(() => {
+    return () => {
+      if (colorDebounceRef.current) clearTimeout(colorDebounceRef.current);
+    };
+  }, []);
 
   const primaryTrackId = captionTracks[0]?.id;
 
@@ -106,11 +118,14 @@ export function CaptionsPanel({ onMutated }: { onMutated: () => Promise<void> })
                 value={rgbaToHex(color)}
                 ariaLabel={t("property_panel.color")}
                 onValueChange={(hex) => {
-                  const next = hexToRgba(hex, color.a);
+                  const next = hexToRgba(hex, color);
                   setColor(next);
-                  restyleCaptionTrack(primaryTrackId, { color: next })
-                    .then(onMutated)
-                    .catch((e) => console.warn("restyle caption color failed:", e));
+                  if (colorDebounceRef.current) clearTimeout(colorDebounceRef.current);
+                  colorDebounceRef.current = setTimeout(() => {
+                    restyleCaptionTrack(primaryTrackId, { color: next })
+                      .then(onMutated)
+                      .catch((e) => console.warn("restyle caption color failed:", e));
+                  }, 250);
                 }}
               />
             </section>
@@ -131,9 +146,9 @@ function rgbaToHex(c: Rgba): string {
   return `#${[c.r, c.g, c.b].map((n) => n.toString(16).padStart(2, "0")).join("")}`;
 }
 
-function hexToRgba(hex: string, a: number): Rgba {
+function hexToRgba(hex: string, fallback: Rgba): Rgba {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
-  if (!m || !m[1]) return { r: 255, g: 255, b: 255, a };
+  if (!m || !m[1]) return fallback;
   const n = parseInt(m[1], 16);
-  return { r: (n >> 16) & 0xff, g: (n >> 8) & 0xff, b: n & 0xff, a };
+  return { r: (n >> 16) & 0xff, g: (n >> 8) & 0xff, b: n & 0xff, a: fallback.a };
 }
