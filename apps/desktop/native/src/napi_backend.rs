@@ -1184,8 +1184,9 @@ mod tests {
             .next().expect("a layer")["id"].as_str().unwrap().to_string();
 
         let args = format!(r#"{{"layerId":"{layer_id}","kind":"blur"}}"#);
-        let effect_id = b.dispatch("add_effect", &args).await.unwrap();
-        assert!(effect_id.contains('-'), "expected a uuid string, got {effect_id}");
+        let effect_id_json = b.dispatch("add_effect", &args).await.unwrap();
+        let effect_id: String = serde_json::from_str(&effect_id_json).unwrap();
+        assert!(uuid::Uuid::parse_str(&effect_id).is_ok(), "expected a uuid string, got {effect_id}");
 
         let after = b.dispatch("project_summary", "{}").await.unwrap();
         assert!(after.contains("\"kind\":\"blur\"") || after.contains("\"kind\": \"blur\""));
@@ -1196,6 +1197,7 @@ mod tests {
         let b = Backend::new_for_test(Arc::new(VecEventSink::new()));
         b.init().await.unwrap();
         let err = b.dispatch("add_effect", r#"{"layerId":"not-a-uuid","kind":"blur"}"#).await;
-        assert!(err.is_err());
+        let msg = err.unwrap_err();
+        assert!(msg.contains("layer_id"), "expected a layer_id parse error, got: {msg}");
     }
 }
