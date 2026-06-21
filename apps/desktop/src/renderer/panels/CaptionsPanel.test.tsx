@@ -97,7 +97,7 @@ describe("CaptionsPanel", () => {
   it("seeks to cue start when the seek button is clicked", () => {
     seed();
     render(<CaptionsPanel onMutated={async () => {}} />);
-    const seekBtn = screen.getByRole("button", { name: "seek 1000000" });
+    const seekBtn = screen.getByRole("button", { name: "seek 00:01" });
     fireEvent.click(seekBtn);
     expect(transportSeek).toHaveBeenCalledWith(1_000_000);
   });

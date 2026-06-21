@@ -38,7 +38,7 @@ export function CaptionsPanel({ onMutated }: { onMutated: () => Promise<void> })
                 type="button"
                 className="caption-seek"
                 onClick={() => transportSeek(c.t_start_us)}
-                aria-label={`seek ${c.t_start_us}`}
+                aria-label={`seek ${fmtTc(c.t_start_us)}`}
               >
                 {fmtTc(c.t_start_us)}
               </button>
