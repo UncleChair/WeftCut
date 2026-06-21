@@ -7,7 +7,13 @@ function hyphenate32(hex: string): string {
 }
 
 /** Deterministic generator: id #n = Uuid::from_u128(n). Byte-identical to the
- *  Rust replay driver's deterministic mode (native/src/state/ids.rs). */
+ *  Rust replay driver's deterministic mode (native/src/state/ids.rs).
+ *
+ *  `start` is the FIRST value yielded (default 1). The no-arg form is the
+ *  Rust-parity entry point: it matches the Rust `det` counter, which always
+ *  counts from 1. The Rust side has NO custom-start path — `seededGen(0)`
+ *  would yield the nil UUID first and diverge from Rust. Only use a custom
+ *  `start` for TS-local sequences, never to mirror a Rust id stream. */
 export function seededGen(start?: number): IdGen {
   let n = start !== undefined ? start - 1 : 0
   return () => {
