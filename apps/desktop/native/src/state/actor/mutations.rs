@@ -72,6 +72,7 @@ pub(crate) fn apply_add_layer(
         locked: false,
         metadata: imbl::HashMap::new(),
         params,
+        effects: vec![],
     };
     let track = project
         .tracks

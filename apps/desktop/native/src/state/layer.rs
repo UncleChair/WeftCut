@@ -10,6 +10,7 @@ use serde_json::Value;
 use super::animated::Animated;
 use super::audio_role::AudioRole;
 use super::color::Rgba;
+use super::effect::Effect;
 use super::ids::{LayerId, MediaId};
 use super::time::TimeUs;
 use super::transform::{BlendMode, Rect, Transform};
@@ -37,6 +38,8 @@ pub struct Layer {
     #[serde(default)]
     pub metadata: imbl::HashMap<String, Value>,
     pub params: LayerParams,
+    #[serde(default)]
+    pub effects: Vec<Effect>,
 }
 
 impl Layer {

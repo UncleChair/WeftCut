@@ -588,6 +588,7 @@ mod tests {
                 mute: false,
                 role: AudioRole::Dialogue,
             }),
+            effects: vec![],
         };
 
         let m1 = Uuid::parse_str("01900000-0000-7000-8000-0000000000d1").unwrap();

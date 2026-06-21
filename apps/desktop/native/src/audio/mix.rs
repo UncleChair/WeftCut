@@ -431,6 +431,7 @@ mod tests {
                     mute: false,
                     role,
                 }),
+                effects: vec![],
             }
         };
 

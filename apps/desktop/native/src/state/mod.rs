@@ -11,6 +11,7 @@ pub mod actor;
 pub mod animated;
 pub mod audio_role;
 pub mod color;
+pub mod effect;
 pub mod keyframe_edits;
 pub mod composition;
 pub mod group;
@@ -37,10 +38,11 @@ pub use validate::{ValidationError, validate as validate_project};
 
 pub use animated::{Animated, Interpolation, Keyframe};
 pub use color::{ColorSpace, Rgba};
+pub use effect::{Effect, EffectPatch};
 pub use composition::Composition;
 pub use group::{Group, index_groups};
 pub use ids::{
-    CheckpointId, GroupId, KeyframeId, LayerId, MarkerId, MediaId, OpId, TrackId,
+    CheckpointId, EffectId, GroupId, KeyframeId, LayerId, MarkerId, MediaId, OpId, TrackId,
     TransitionId, new_id,
 };
 pub use layer::{
@@ -135,6 +137,7 @@ mod tests {
                 fade_in_us: 0,
                 fade_out_us: 0,
             }),
+            effects: vec![],
         };
 
         let track = Track {

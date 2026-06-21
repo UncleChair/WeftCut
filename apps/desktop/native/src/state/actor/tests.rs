@@ -523,6 +523,7 @@
                 transform: crate::state::Transform::default(),
                 opacity: Animated::Static(1.0),
             }),
+            effects: vec![],
         };
         let id = layer.id;
         apply_params_patch(
@@ -875,6 +876,7 @@
             locked: false,
             metadata: imbl::HashMap::new(),
             params: motif_layer(imbl::HashMap::new()),
+            effects: vec![],
         };
         // No cap supplied → OUT max stays effectively infinite.
         // 30 fps is on-grid for whole-second caps/durations, so the snap is a

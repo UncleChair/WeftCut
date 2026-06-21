@@ -553,6 +553,7 @@ mod tests {
                 width: 1920,
                 height: 1080,
             }),
+            effects: vec![],
         }
     }
 
@@ -685,6 +686,7 @@ mod tests {
                 mute: false,
                 role: AudioRole::Dialogue,
             }),
+            effects: vec![],
         };
         track.layers.push_back(audio);
         p.tracks.push_back(track);
@@ -723,6 +725,7 @@ mod tests {
                 mute: false,
                 role: AudioRole::Dialogue,
             }),
+            effects: vec![],
         };
         track.layers.push_back(mk_audio(1, 0, 3_000_000));
         track.layers.push_back(mk_audio(2, 2_000_000, 4_000_000));
