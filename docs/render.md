@@ -11,7 +11,7 @@ final mux see [`rendering.md`](rendering.md).
 ## Boundaries
 
 - **In scope:** visual compositing — video clips, image overlays,
-  text, ASS/SRT subtitles, color fills, transforms, opacity, blend
+  text (including caption cues), color fills, transforms, opacity, blend
   modes, transitions.
 - **Out of scope:** audio (the buffer-scheduled Web Audio preview mixer
   + Rust export mixer; [`audio.md`](audio.md)), file muxing (handled by
@@ -40,12 +40,9 @@ apps/desktop/src/render/
     ImageOverlaySprite.ts
     TextSprite.ts
     MotifSprite.ts           — binds a Motif's captured PNG frame as a texture
-    SubtitlesSprite.ts       — owns JASSUB binding
     ColorSprite.ts
   motifs/                    — Motif raster cache + frame descriptor helpers
                                (capture/cache pipeline covered in motifs.md)
-  subtitles/
-    Jassub.ts                — libass-wasm canvas-mode binding
   worker/
     exportWorker.ts          — Worker entry; imports Compositor against OffscreenCanvas
     encoder.ts               — VideoEncoder config + mediabunny Output mux into video.mp4
@@ -279,9 +276,8 @@ drag works without churn.
 |---|---|---|
 | `VideoClipSprite` | `FrameRing` snapshot → `Texture` | Consumes the `DecodedFrame` returned by `FrameStore.frameAt` — `ImageBitmap` from preview's `FrameRing`, `VideoFrame` from export's `ExportFrameStore`. Both are snapshotted into a sprite-owned canvas before upload (see the snapshot rule below). |
 | `ImageOverlaySprite` | `createImageBitmap` / `ImageDecoder` → `Texture` | Two branches. **Still images:** one-shot `createImageBitmap` at sprite spawn; texture cached for the layer's lifetime. **Animated images (GIF, animated WebP, APNG, animated AVIF):** `decodeAnimatedImage` decodes all frames once via WebCodecs `ImageDecoder` (downscaled to composition size) and caches the resulting `DecodedAnimation` per `mediaId`. Each `render(tUs)` call selects the frame whose cumulative native delay covers `tInLayerUs mod totalDuration` (via `gifFrameIndexAt`) — looping at native speed to fill the layer. The same sprite class and the same `Compositor` run inside the export Worker, so export animation is inherent; the Worker awaits `preloadImages()` before starting the encode loop. |
-| `TextSprite` | PixiJS `Text` (native canvas) | Shadow via drop-shadow filter; outline via stroke option; intro / outro presets are sprite-side animation. |
+| `TextSprite` | PixiJS `Text` (native canvas) | Shadow via drop-shadow filter; outline via stroke option; intro / outro presets are sprite-side animation. Caption cues imported from SRT/VTT/ASS files are ordinary `Text` layers and render through this same sprite — no separate subtitle path exists. Bundled fonts (Liberation Sans, Noto Sans SC) are loaded into the export Worker before the encode loop so burned-in captions never tofu. |
 | `MotifSprite` | CDP-captured PNG frame → `Texture` | Binds the Motif's frame for the playhead's layer-relative time (on demand, RAM lookahead, or persisted PNG); frames come from the webcap CDP capture path, not an in-process raster; see [`motifs.md`](motifs.md). |
-| `SubtitlesSprite` | JASSUB canvas → `Texture` | libass-wasm renders into its own canvas; we copy as a texture each frame. |
 | `ColorSprite` | PixiJS `Graphics` rect | Animated fill color. |
 
 ### Frame upload: the snapshot rule
@@ -336,21 +332,6 @@ renderer via the `list_motifs` command and the MCP `list_motifs` tool.
 
 See [`motifs.md`](motifs.md) for the authoring contract, the capture harness,
 and the raster cache.
-
-## Subtitles
-
-`SubtitlesSprite` mounts a JASSUB (libass-wasm) renderer with the
-project's canvas dimensions. JASSUB renders into its own canvas; the
-sprite sets that canvas as a Pixi texture each frame. Because
-libass tracks its own animation state internally, the texture must
-be refreshed every render — there's no static-vs-animated short
-cut.
-
-For media-backed subtitles (`SubtitlesParams::Media(media_id)`), the
-sprite `fetch`es the file over its `weftcut-media://` URL (the same
-custom-protocol Range path the decoder pool uses) and passes the
-contents to JASSUB. For inline subtitles (`InlineSrt(body)`), the
-body is fed directly.
 
 ## Export Worker
 

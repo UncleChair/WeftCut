@@ -133,7 +133,7 @@ struct MediaItem {
     label: Option<String>,
     path_abs: PathBuf,                // computed at load = workspace.join(path_rel)
     path_rel: Option<PathBuf>,        // authoritative; relative to workspace root
-    kind: MediaKind,                  // Video | Audio | Image | Subtitle
+    kind: MediaKind,                  // Video | Audio | Image (subtitle files are consumed at import)
     metadata: MediaMetadata,
     proxy_path: Option<PathBuf>,      // export master: source-res (≤4K) H.264 in Cache/proxies/
     proxy_format_version: u32,        // a bump forces proxy regen on next load
@@ -227,7 +227,14 @@ extension fallback recognizes them plus `tif`/`tiff`:
 | Video | mp4, mov, mkv, webm, avi, m4v | Decode routing per the proxy axes above. |
 | Audio | wav, mp3, flac, aac, m4a, ogg, opus | Anything ffmpeg decodes conforms; the VCONF cache is the only contract (docs/audio.md). |
 | Image | png, jpg/jpeg, gif, webp, bmp, avif | Rendered from the ORIGINAL with no derivatives. Still images use `createImageBitmap` (single frame, 3 s default duration). Animated formats (GIF, animated WebP, APNG, animated AVIF) decode all frames once via WebCodecs `ImageDecoder` (downscaled to composition size, cached per media) and loop at native speed to fill the layer; a freshly-placed animated image defaults to one native loop. APNG files are named with the `.png` extension. |
-| Subtitle | srt, ass, vtt | Preview-only (JASSUB); not burned into exports. |
+
+**Subtitle files (srt, ass, vtt)** are consumed at import: `import_media` on a
+subtitle extension reads the body, parses it through `subtitles::parse`, and
+calls `add_caption_track` to build a caption-role track of `Text` layers. The
+file is never copied to `Media/`, never added to the media pool, and no
+`MediaItem` is created. The `MediaKind::Subtitle` enum variant exists in the
+Rust codebase but is unreachable through normal import; subtitle files are routed
+before the pool-entry path.
 
 TIFF classifies as `Image` when it arrives anyway (drag-drop / MCP take any
 path) but Electron/Chromium's `createImageBitmap` cannot decode it — the layer
@@ -236,7 +243,7 @@ unlisted extensions default to `Video` and won't produce a usable layer.
 
 Derivative jobs follow the kind: `Video` gets the proxy axes + waveform +
 conform + thumbnails; `Audio` gets waveform + conform only (ready as soon as
-the workspace copy lands — no proxy wait); `Image`/`Subtitle` get none.
+the workspace copy lands — no proxy wait); `Image` gets none.
 
 ## `Track`
 
@@ -325,7 +332,6 @@ enum LayerParams {
     Text(TextParams),
     Motif(MotifParams),
     Audio(AudioParams),
-    Subtitles(SubtitlesParams),
     Color(ColorParams),
 }
 ```
@@ -571,7 +577,7 @@ the UI uses the same actor via backend commands.
 | `add_color_layer(track_id, t_start_us, t_end_us, color, width?, height?)` → `LayerId` | rejects on overlap |
 | `add_video_layer(track_id, media_id, t_start_us, t_end_us, src_in_us, src_out_us)` → `LayerId` | rejects on overlap |
 | `add_motif(motif_id, t_start_us, t_end_us?, track_id?, props?)` → `LayerId` | `t_end_us` defaults to `default_duration_s`; `track_id` auto-creates an "Overlay" track when absent |
-| `apply_subtitles(body, format?, track_id?, t_start_us?, t_end_us)` | body inline; format sniffed from `[Script Info]` |
+| `apply_subtitles(body, format?, track_id?, t_start_us?, t_end_us?)` | Parses `body` (SRT/VTT/ASS) and builds a new caption-role track of editable `Text` layers. `format` is sniffed when omitted. `track_id`, `t_start_us`, and `t_end_us` are accepted on the wire for backward compatibility but are ignored — cue timings come from the body and each import always creates its own caption track. Advanced ASS tags (karaoke, drawings) are stripped; the tool notes when `simplified=true`. Returns the new caption track id. |
 | `duplicate_layer(layer_id, t_offset_us)` → `LayerId` | |
 | `update_layer(layer_id, patch)` | envelope-only patch (label, time range, enabled, locked) |
 | `update_layer_params(layer_id, patch)` | kind-specific params |
@@ -621,7 +627,7 @@ The workspace folder *is* the project. Opening a workspace folder = opening the 
 │   ├── audio/                ← canonical conformed PCM, 48 kHz f32le (see `audio.md`)
 │   ├── frames/               ← on-demand video frames (media://{id}/frame/{t})
 │   ├── raster/               ← persisted Motif L2 pre-bake PNGs (opt-in; see `motifs.md`)
-│   ├── inline-subs/          ← materialized inline subtitle bodies (reserved for ffmpeg burn-in)
+│   ├── inline-subs/          ← reserved; currently unused
 │   ├── transcribe-audio/     ← mono 16 kHz WAV slices for cloud transcription
 │   └── voiceover/            ← TTS output
 ├── Backups/                  ← periodic project.json snapshots (rolling 20)

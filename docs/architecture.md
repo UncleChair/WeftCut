@@ -217,7 +217,6 @@ weftcut/
                               ←   probeSourceDecodable, scrub
           sprite/             ←   per-layer-kind Sprite implementations
           motifs/             ←   motif raster cache + frame descriptor helpers
-          subtitles/          ←   JASSUB binding
           worker/             ←   exportWorker + encoder (OffscreenCanvas)
           audio/              ←   buffer-scheduled preview mixer:
                               ←   AudioGraph (master bus), AudioMixer,
@@ -268,7 +267,6 @@ weftcut/
 - **mediabunny** — renderer-side demuxer / muxer for the WebCodecs
   pipeline (MP4/MOV + Matroska/WebM), reading through a
   `weftcut-media://` Range `CustomSource`.
-- **libass-wasm** (JASSUB) — ASS/SRT subtitle rendering.
 - **i18next** + **react-i18next** — frontend i18n; bundled resources
   for `en-US` and `zh-CN`.
 - **tailwindcss** v4 (`@tailwindcss/vite`) — design-token carrier +

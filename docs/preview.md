@@ -21,7 +21,6 @@ covers the preview-side surface and transport.
             ├─ ImageOverlaySprite
             ├─ TextSprite
             ├─ MotifSprite
-            ├─ SubtitlesSprite
             └─ ColorSprite
 ```
 
@@ -140,13 +139,6 @@ used only at export time; preview ignores it in favor of the quick proxy.
 `MediaDerivativesPatch.proxy_path = Some(None)` (or a
 `proxy_format_version` bump) invalidates a stale proxy and triggers a
 re-encode on next open.
-
-## Subtitles
-
-`SubtitlesSprite` owns a JASSUB (libass-wasm) renderer. JASSUB writes
-into its own canvas; the sprite sets that canvas as a Pixi texture each
-frame. The texture is regenerated every render because libass tracks
-its own animation state internally.
 
 ## Motifs
 

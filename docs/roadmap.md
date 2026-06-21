@@ -67,15 +67,16 @@ the corresponding MCP tools follow. Filters break batching (one
 render-target switch per filtered sprite) — plan a preview-LOD flag
 from day one.
 
-### Subtitle import + export
+### Caption sidecar / soft-subtitle export
 
-Subtitles render in preview (JASSUB) but are omitted from export —
-the Worker has no DOM host and there is no burn-in path
-(`Compositor.ensureSubtitles`). Phased work, not a defect: the
-planned feature adds subtitle import plus an export surface in the
-export settings — burn-in via ffmpeg's `subtitles` filter at the
-transcode/mux stage, and/or a sidecar subtitle track for containers
-that carry one (mkv).
+Caption cues imported from SRT/VTT/ASS become `Text` layers on a
+caption-role track and burn into the video through the normal
+`TextSprite` compositor path — no separate ffmpeg stage required,
+and the export gap is closed. What remains as a small deferred
+follow-up: soft-subtitle tracks (stream-muxed SRT/ASS into MKV or
+MP4) and sidecar file export. The data is already in `Text` layers;
+the work is an ffmpeg subtitle-mux stage on top of the existing
+export pipeline.
 
 ### Export decode redundancy — resolved, nothing actionable left
 

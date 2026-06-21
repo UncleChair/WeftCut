@@ -17,8 +17,8 @@ server is left untouched, because HMR needs inline + eval + websockets.
 
 - `default-src 'self'`, `object-src 'none'`, `base-uri 'self'`, **`frame-src 'none'`** —
   no embedding, no `<base>` hijack, no iframes.
-- `script-src 'self' 'wasm-unsafe-eval' blob:` — **no `unsafe-eval`**. WASM (jassub,
-  mediabunny) needs the narrow `wasm-unsafe-eval` compile grant, not full `eval`.
+- `script-src 'self' 'wasm-unsafe-eval' blob:` — **no `unsafe-eval`**. WASM (the eval
+  leaf, mediabunny) needs the narrow `wasm-unsafe-eval` compile grant, not full `eval`.
   PixiJS's `new Function` requirement is met by importing the `pixi.js/unsafe-eval`
   polyfill (precompiled shaders) — *not* by loosening the CSP.
 - `img-/media-/connect-src` include the app's own privileged schemes (`weftcut-media:`,

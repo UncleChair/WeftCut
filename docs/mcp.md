@@ -132,7 +132,7 @@ Layers:
 - `add_color_layer { track_id, t_start_us, t_end_us, color, width?, height? }` → `LayerId`
 - `add_video_layer { track_id, media_id, t_start_us, t_end_us, src_in_us, src_out_us }` → `LayerId`
 - `add_motif { motif_id, t_start_us, t_end_us?, track_id?, props? }` → `LayerId` — `t_end_us` defaults to `default_duration_s`; `track_id` auto-creates an "Overlay" Video track when absent; `props` validates against the motif's `props_schema`. Frame capture is lazy at next render; the tool returns synchronously.
-- `apply_subtitles { body, format?, track_id?, t_start_us?, t_end_us }` — SRT/ASS body inline; format sniffed from `[Script Info]` when omitted. Auto-finds or creates a Subtitle track. Body is materialized to a content-addressed cache file before render.
+- `apply_subtitles { body, format?, track_id?, t_start_us?, t_end_us? }` — SRT/VTT/ASS body inline; format sniffed when omitted. Builds a new caption-role track of editable `Text` layers (one per cue). `track_id`, `t_start_us`, and `t_end_us` are accepted for wire stability but ignored — cue timings come from the body. Returns the new caption track id.
 - `update_layer { layer_id, patch }` — envelope-only (label, time range, enabled, locked).
 - `update_layer_params { layer_id, patch }` — kind-specific params.
 - `move_layer { layer_id, new_track_id, new_t_start_us, escape_group? }`
@@ -182,7 +182,7 @@ Motif authoring (see [motifs.md](motifs.md) "Agent surface"):
 - `undo()` / `redo()`
 - `lock_history { reason }` / `unlock_history()` — freeze undo while a tool batch runs; the UI shows the reason.
 - `begin_agent_session { reason }` — flips the human's UI into a simplified preview / scrub / record-only layout. Auto-checkpoints. The human ends the session via the UI; the agent has no symmetric tool.
-- `dry_run { operations }` — applies the batch against a clone, validates after each op (matching `commit()`), halts at the first error. Does not commit. Op variants: `add_color_layer`, `add_video_layer`, `update_layer`, `update_layer_params`, `move_layer`, `split_layer`, `delete_layer`. Returns `{ results: [{ index, status, output? | error? }, ...], halted_at: number | null }`. Other tools (motifs, subtitles, media import, undo/redo) are not dry-runnable.
+- `dry_run { operations }` — applies the batch against a clone, validates after each op (matching `commit()`), halts at the first error. Does not commit. Op variants: `add_color_layer`, `add_video_layer`, `update_layer`, `update_layer_params`, `move_layer`, `split_layer`, `delete_layer`. Returns `{ results: [{ index, status, output? | error? }, ...], halted_at: number | null }`. Other tools (motifs, caption import, media import, undo/redo) are not dry-runnable.
 
 ### Render
 

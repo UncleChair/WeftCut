@@ -73,9 +73,8 @@ VPNs), the download will fail with `Connection refused`. Workarounds:
 
 ## Webview-side dependencies
 
-The PixiJS renderer pulls `pixi.js`, `@pixi/react`, `mediabunny`, and
-`jassub` (libass-wasm subtitle rendering) from npm. These install
-automatically via `npm install`; no separate native step. The WebCodecs
+The PixiJS renderer pulls `pixi.js`, `@pixi/react`, and `mediabunny`
+from npm. These install automatically via `npm install`; no separate native step. The WebCodecs
 APIs the renderer relies on ship with Electron's bundled Chromium, so
 they are available identically on every platform — there is no per-OS
 webview runtime to provision.
