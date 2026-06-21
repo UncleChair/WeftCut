@@ -16,8 +16,8 @@ interface Props {
 }
 
 /// Per-layer effect chain editor. Data-driven off the effect catalog
-/// (`listEffects`): the add picker, the row names, and (Task 6) the param rows
-/// all come from the registry, so a new filter is zero UI change. Rendered by
+/// (`listEffects`): the add picker, the row names, and the param rows all come
+/// from the registry, so a new filter is zero UI change. Rendered by
 /// PropertyPanel for visual layer kinds only.
 export function EffectsSection({ layer, tInLayerUs, playheadInSpan, onMutated }: Props) {
   const { t } = useTranslation();
