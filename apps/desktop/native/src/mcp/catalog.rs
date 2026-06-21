@@ -210,8 +210,8 @@ tool_table! {
     "transcribe_clip" => ("Transcribe a VideoClip or Audio layer through the configured cloud transcription \
                           provider (OpenAI Whisper today) and return the SRT body with timestamps already \
                           shifted to timeline-absolute microseconds. Pipe the returned body straight into \
-                          `apply_subtitles` (omit `t_start_us` so the layer activates from 0 — the cues \
-                          self-position via their internal timestamps). Optional `t_start_us`/`t_end_us` \
+                          `apply_subtitles` (the cues self-position into a new caption track via their \
+                          internal timestamps — `apply_subtitles` takes no start/end). Optional `t_start_us`/`t_end_us` \
                           narrow the transcription window inside the layer's time range; both default to \
                           the layer endpoints. VideoClip layers with speed != 1.0 are rejected — split off \
                           a speed-1 segment first. Errors with structured messages if no API key is \
