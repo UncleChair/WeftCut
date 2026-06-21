@@ -69,6 +69,18 @@ export interface MediaSummary {
   conform_path?: string | null;
 }
 
+/// One effect in a layer's effect chain. `kind` is the join key into the
+/// TS effect catalog (`effectRegistry.ts`); Rust does not validate it.
+/// `params` mirrors `BTreeMap<String, Animated<f64>>` — each value is a
+/// raw `AnimTrack<number>` resolved per-frame by the renderer, exactly
+/// like animated fields on `VideoClipView`.
+export interface EffectView {
+  id: string;
+  kind: string;
+  enabled: boolean;
+  params: Record<string, AnimTrack<number>>;
+}
+
 export interface LayerSummary {
   id: string;
   label: string | null;
@@ -91,6 +103,10 @@ export interface LayerSummary {
   enabled: boolean;
   locked: boolean;
   params: LayerParamsView;
+  /// Ordered effect chain for this layer. Each entry is resolved per-frame
+  /// by the renderer using `params` as raw `AnimTrack<number>` tracks.
+  /// Empty when no effects are applied.
+  effects: EffectView[];
 }
 
 export type LayerParamsView =

@@ -26,6 +26,7 @@ function layer(partial: Partial<LayerSummary>): LayerSummary {
     locked: false,
     color_hint: "#888",
     params: { kind: "VideoClip" } as LayerSummary["params"],
+    effects: [],
     ...partial,
   };
 }

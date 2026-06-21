@@ -74,6 +74,7 @@ function seed() {
               outline: null,
               shadow: null,
             },
+            effects: [],
           },
         ],
       },

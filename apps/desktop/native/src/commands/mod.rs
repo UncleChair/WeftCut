@@ -10,6 +10,7 @@ use serde::Serialize;
 
 use crate::state::{
     self, Animated, LayerParams, Rgba,
+    effect::Effect,
     track::TrackRole,
 };
 
@@ -128,6 +129,11 @@ pub struct LayerSummary {
     /// panel; mutates flow back through `update_layer_params` with the
     /// matching `LayerParamsPatch` variant.
     pub params: LayerParamsView,
+    /// Ordered effect chain. Each `Effect` serializes directly as
+    /// `{ id, kind, enabled, params }` where `params` is
+    /// `BTreeMap<String, Animated<f64>>` — the TS renderer resolves
+    /// each param per-frame via `AnimTrack<number>`.
+    pub effects: Vec<Effect>,
 }
 
 #[derive(Serialize, Clone)]
@@ -407,6 +413,7 @@ pub(crate) fn build_project_summary(
                     enabled: l.enabled,
                     locked: l.locked,
                     params: layer_params_view(&l.params, &snap.media_pool),
+                    effects: l.effects.clone(),
                 })
                 .collect(),
         })

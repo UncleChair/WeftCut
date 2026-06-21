@@ -37,6 +37,7 @@ const layer: LayerSummary = {
   enabled: true,
   locked: false,
   params: { kind: "Color", color: { mode: "Static", value: { r: 0, g: 0, b: 0, a: 1 } }, width: 1920, height: 1080 },
+  effects: [],
 };
 
 const track: TrackSummary = {

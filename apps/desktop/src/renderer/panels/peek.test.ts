@@ -14,6 +14,7 @@ function item(id: string, kind: string): PeekItem {
       locked: false,
       color_hint: "#888",
       params: { kind } as LayerSummary["params"],
+      effects: [],
     },
     trackId: `track-${id}`,
     trackLabel: id,
