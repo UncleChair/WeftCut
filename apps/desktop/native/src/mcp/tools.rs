@@ -1044,6 +1044,74 @@ pub(super) async fn set_param_track(
 }
 
 // ============================================================
+// Effect-chain tools
+// ============================================================
+
+/// Append an effect to a layer's chain and return the new effect id.
+pub(super) async fn add_effect(
+    b: &Backend,
+    args: super::effects::AddEffectArgs,
+) -> Result<ToolResult, McpToolError> {
+    let layer_id = parse_uuid(&args.layer_id, "layer_id")?;
+    let effect = crate::state::effect::Effect {
+        id: crate::state::ids::new_id(),
+        kind: args.kind,
+        enabled: true,
+        params: std::collections::BTreeMap::new(),
+    };
+    let id = b
+        .project()?
+        .add_effect(agent_actor(), layer_id, effect)
+        .await
+        .map_err(map_command_error)?;
+    Ok(ToolResult::text(id.to_string()))
+}
+
+/// Apply a partial update (`enabled?`, `params?`) to an existing effect.
+pub(super) async fn update_effect(
+    b: &Backend,
+    args: super::effects::UpdateEffectArgs,
+) -> Result<ToolResult, McpToolError> {
+    let layer_id = parse_uuid(&args.layer_id, "layer_id")?;
+    let effect_id = parse_uuid(&args.effect_id, "effect_id")?;
+    let patch: crate::state::effect::EffectPatch = serde_json::from_value(args.patch)
+        .map_err(|e| McpToolError::invalid_params(format!("invalid patch: {e}"), None))?;
+    b.project()?
+        .update_effect(agent_actor(), layer_id, effect_id, patch)
+        .await
+        .map_err(map_command_error)?;
+    Ok(ToolResult::empty())
+}
+
+/// Reorder an effect within its layer's chain.
+pub(super) async fn move_effect(
+    b: &Backend,
+    args: super::effects::MoveEffectArgs,
+) -> Result<ToolResult, McpToolError> {
+    let layer_id = parse_uuid(&args.layer_id, "layer_id")?;
+    let effect_id = parse_uuid(&args.effect_id, "effect_id")?;
+    b.project()?
+        .move_effect(agent_actor(), layer_id, effect_id, args.new_index)
+        .await
+        .map_err(map_command_error)?;
+    Ok(ToolResult::empty())
+}
+
+/// Remove an effect from a layer's chain by id.
+pub(super) async fn remove_effect(
+    b: &Backend,
+    args: super::effects::RemoveEffectArgs,
+) -> Result<ToolResult, McpToolError> {
+    let layer_id = parse_uuid(&args.layer_id, "layer_id")?;
+    let effect_id = parse_uuid(&args.effect_id, "effect_id")?;
+    b.project()?
+        .remove_effect(agent_actor(), layer_id, effect_id)
+        .await
+        .map_err(map_command_error)?;
+    Ok(ToolResult::empty())
+}
+
+// ============================================================
 // Composition tools
 // ============================================================
 

@@ -141,6 +141,13 @@ Layers:
 - `delete_layer { layer_id }`
 - `duplicate_layer { layer_id, t_offset_us }` → `LayerId`
 
+Effects (per-layer Pixi filter chains; v1 catalog: `blur`):
+- `add_effect { layer_id, kind }` → `EffectId`. Append an effect (top of stack).
+- `update_effect { layer_id, effect_id, patch }` — patch is `{ enabled?, params? }`; v1 params are scalar `{ "mode": "Static", "value": <number> }`.
+- `move_effect { layer_id, effect_id, new_index }` — reorder (0 = first applied).
+- `remove_effect { layer_id, effect_id }` — delete.
+- Keyframe an effect param via `set_keyframe { layer_id, param_key: "effects[<effect_id>].params[<key>]", t_us, value, interp? }`.
+
 Keyframes (animate `Animated<f64>` params; times are timeline-absolute µs):
 - `get_param_track { layer_id, param_key }` → `{ mode, value }` (Static) or `{ mode, keyframes: [{ id, t_us, t_local_us, value, interp }] }` (Keyframed). Read this to discover keyframe ids before editing.
 - `set_keyframe { layer_id, param_key, t_us, value, interp? }` — insert-or-update. Lifts a Static track; updates in place at the same frame; `interp` omitted inherits the preceding key's easing (or Linear).

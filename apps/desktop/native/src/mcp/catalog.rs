@@ -148,6 +148,10 @@ tool_table! {
                           {\"mode\":\"Keyframed\",\"value\":[{id, t_us, value, interp}]} with keyframe \
                           `t_us` timeline-absolute. Use the granular tools (set_keyframe etc.) unless you \
                           need bulk authoring.", super::keyframes::SetParamTrackArgs, tools::set_param_track),
+    "add_effect" => ("Add an effect to a layer's chain (appended to the top of the stack). `kind` is the catalog key (v1: \"blur\"). Returns the new effect id. Set params afterward with update_effect / set_keyframe.", super::effects::AddEffectArgs, tools::add_effect),
+    "update_effect" => ("Update an effect: patch is `{ enabled?, params? }` where params is `{ paramKey: { \"mode\": \"Static\", \"value\": <number> } }` (v1 params are scalar). For keyframed params use set_keyframe with param_key \"effects[<effect_id>].params[<key>]\".", super::effects::UpdateEffectArgs, tools::update_effect),
+    "move_effect" => ("Reorder an effect within its layer's chain. new_index is 0-based; 0 = first applied. Must be < effect count.", super::effects::MoveEffectArgs, tools::move_effect),
+    "remove_effect" => ("Remove an effect from a layer by id.", super::effects::RemoveEffectArgs, tools::remove_effect),
     "set_composition" => ("Update composition envelope (canvas size, fps, sample rate, channels, color space, background, duration). \
                           Only fields you set are applied. Width/height must be positive; fps denominator must be non-zero. \
                           Setting `duration_us` pins the composition duration — subsequent layer edits will no longer \
@@ -317,6 +321,42 @@ mod tests {
         assert!(cat.tools.iter().any(|t| t.name == "add_track"));
         assert!(cat.resources.iter().any(|r| r.uri == "project://current"));
         assert!(cat.prompts.iter().any(|p| p.name == "cut-silences"));
+    }
+
+    /// Seed one color layer on a fresh project; return the layer id as a string.
+    async fn seed_layer(b: &Backend) -> String {
+        use crate::state::{Actor, Animated, ColorParams, LayerParams, Rgba};
+        let actor = Actor::Agent { client: "mcp".into() };
+        let project = b.project().unwrap();
+        let track_id = project.add_track(actor.clone(), None).await.unwrap();
+        let layer_id = project
+            .add_layer(
+                actor,
+                track_id,
+                LayerParams::Color(ColorParams {
+                    color: Animated::Static(Rgba::WHITE),
+                    width: 1920,
+                    height: 1080,
+                }),
+                0,
+                1_000_000,
+            )
+            .await
+            .unwrap();
+        layer_id.to_string()
+    }
+
+    /// `add_effect` must register the effect and return a non-empty UUID string.
+    #[tokio::test]
+    async fn add_effect_tool_creates_effect() {
+        use std::sync::Arc;
+        let b = Backend::new_for_test(Arc::new(crate::events::VecEventSink::new()));
+        b.init().await.unwrap();
+        let layer_id = seed_layer(&b).await;
+        let args = format!(r#"{{"layer_id":"{layer_id}","kind":"blur"}}"#);
+        let r = dispatch_tool(&b, "add_effect", &args).await.unwrap();
+        let v = serde_json::to_value(&r).unwrap();
+        assert!(v["content"][0]["text"].as_str().unwrap().len() > 0);
     }
 
     #[cfg(feature = "cloud")]

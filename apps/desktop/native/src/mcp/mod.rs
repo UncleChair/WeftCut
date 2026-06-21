@@ -17,6 +17,7 @@
 //! Design: `docs/mcp.md`.
 
 mod catalog;
+mod effects;
 mod keyframes;
 mod prompts;
 mod resources;
