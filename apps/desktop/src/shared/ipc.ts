@@ -110,6 +110,9 @@ export interface WeftcutApi {
   notification: { send(opts: NotificationOpts): Promise<void> }
   /// Process-tree resource snapshot (app.getAppMetrics(), main-side).
   metrics: { get(): Promise<SystemStats> }
+  /// Best-effort OS font-file lookup by family name (main-side scan); null when
+  /// not found, so the renderer falls back to the bundled font chain.
+  font: { resolve(family: string): Promise<Uint8Array | null> }
   on(event: string, cb: (payload: unknown) => void): () => void
   off(event: string): void
   /// Broadcast an event to every app window (delivered to `on()` subscribers as

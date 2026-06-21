@@ -107,6 +107,10 @@ const api: WeftcutApi = {
   metrics: {
     get: (): Promise<SystemStats> => ipcRenderer.invoke('app:metrics') as Promise<SystemStats>,
   },
+  font: {
+    resolve: (family: string): Promise<Uint8Array | null> =>
+      ipcRenderer.invoke('font:resolve', { family }) as Promise<Uint8Array | null>,
+  },
 
   // Event subscription: main relays core events via webContents.send →
   // `evt:<event>` → here.
