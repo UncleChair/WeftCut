@@ -539,8 +539,6 @@ const zhCN: Resources = {
     pan: "声像",
     role: "角色",
     mute: "静音",
-    subtitles: "字幕",
-    subtitles_source: "来源",
     motif: "Motif",
     transform: "变换",
     props: "参数",
@@ -663,7 +661,6 @@ const zhCN: Resources = {
     imageoverlay: "图片叠加",
     text: "文本",
     motif: "Motif",
-    subtitles: "字幕",
     color: "颜色",
   },
 };

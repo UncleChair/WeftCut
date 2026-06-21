@@ -18,7 +18,8 @@ use super::transition::Transition;
 /// `Project` shape. Pre-release: `io::load_from_dir` rejects anything below
 /// `SCHEMA_VERSION` with a clear error rather than migrating — older `.vproj`
 /// folders must be re-created. Per-version history lives in git / the ADRs.
-pub const SCHEMA_VERSION: u32 = 8;
+// Bumped for captions-as-Text-layers: pre-bump projects with Subtitles layers are unsupported (hard break).
+pub const SCHEMA_VERSION: u32 = 9;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Project {

@@ -61,7 +61,6 @@ pub enum LayerParams {
     Text(TextParams),
     Motif(MotifParams),
     Audio(AudioParams),
-    Subtitles(SubtitlesParams),
     Color(ColorParams),
 }
 
@@ -211,30 +210,6 @@ pub struct AudioParams {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SubtitlesParams {
-    pub source: SubtitlesSource,
-}
-
-/// Source of subtitle text for a `SubtitlesParams` layer.
-///
-/// Inline variants carry the body in-state so projects round-trip cleanly
-/// through `.vproj` and so MCP tools (auto-caption, agent-authored cues)
-/// don't need to invent file paths. At render time the inline body is fed
-/// directly to the JASSUB (libass-wasm) renderer (`SubtitlesSprite` /
-/// `render/subtitles/assBody.ts`): SRT is converted to ASS, ASS passes
-/// through verbatim, and nothing is written to disk.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "kind", content = "value")]
-pub enum SubtitlesSource {
-    /// Reference an imported `MediaItem` of `MediaKind::Subtitle`.
-    Media(MediaId),
-    /// Inline ASS document — what auto-caption returns.
-    InlineAss(String),
-    /// Inline SRT document.
-    InlineSrt(String),
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ColorParams {
     pub color: Animated<Rgba>,
     pub width: u32,
@@ -244,7 +219,7 @@ pub struct ColorParams {
 /// Apply `f` to every `Animated<f64>` track on these params (transform x/y/
 /// scale_x/scale_y/rotation_deg + opacity for visual kinds; gain_db/pan for
 /// Audio). The Rust mirror of the frontend `animatableParams(kind)` descriptor.
-/// Used by trim/split keyframe transforms. Color/Subtitles have no f64 track.
+/// Used by trim/split keyframe transforms. Color has no f64 track.
 pub(crate) fn for_each_animated_f64(
     params: &mut LayerParams,
     mut f: impl FnMut(&mut Animated<f64>),
@@ -270,7 +245,7 @@ pub(crate) fn for_each_animated_f64(
             f(&mut p.gain_db);
             f(&mut p.pan);
         }
-        LayerParams::Subtitles(_) | LayerParams::Color(_) => {}
+        LayerParams::Color(_) => {}
     }
 }
 
@@ -299,8 +274,7 @@ pub(crate) fn for_each_animated_rgba(
         LayerParams::VideoClip(_)
         | LayerParams::ImageOverlay(_)
         | LayerParams::Motif(_)
-        | LayerParams::Audio(_)
-        | LayerParams::Subtitles(_) => {}
+        | LayerParams::Audio(_) => {}
     }
 }
 
@@ -320,7 +294,7 @@ pub(crate) fn resolve_animated_f64<'a>(
             "pan" => Some(&p.pan),
             _ => None,
         },
-        LayerParams::Subtitles(_) | LayerParams::Color(_) => None,
+        LayerParams::Color(_) => None,
     }
 }
 
@@ -356,7 +330,7 @@ pub(crate) fn resolve_animated_f64_mut<'a>(
             "pan" => Some(&mut p.pan),
             _ => None,
         },
-        LayerParams::Subtitles(_) | LayerParams::Color(_) => None,
+        LayerParams::Color(_) => None,
     }
 }
 

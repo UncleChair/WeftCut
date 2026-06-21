@@ -879,18 +879,6 @@ export async function updateLayerParamTracks(
   return invoke<void>("update_layer_param_tracks", { layerId, entries });
 }
 
-export async function addSubtitlesLayer(
-  mediaId: string,
-  tStartUs: number,
-  durationUs: number,
-): Promise<string> {
-  return invoke<string>("add_subtitles_layer", {
-    mediaId,
-    tStartUs,
-    durationUs,
-  });
-}
-
 export async function moveLayer(
   layerId: string,
   newTrackId: string,

@@ -41,7 +41,7 @@ export function animatableParams(kind: string): ParamDescriptor[] {
     case "Audio":
       return [GAIN_DB, PAN];
     default:
-      return []; // Color (Rgba only), Subtitles
+      return []; // Color (Rgba only)
   }
 }
 

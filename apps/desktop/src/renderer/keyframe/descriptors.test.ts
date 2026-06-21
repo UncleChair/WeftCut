@@ -15,9 +15,8 @@ describe("animatableParams", () => {
   it("Audio exposes gain_db + pan", () => {
     expect(animatableParams("Audio").map((d) => d.paramKey)).toEqual(["gain_db", "pan"]);
   });
-  it("Color and Subtitles have no animatable params", () => {
+  it("Color has no animatable params", () => {
     expect(animatableParams("Color")).toEqual([]);
-    expect(animatableParams("Subtitles")).toEqual([]);
   });
 });
 

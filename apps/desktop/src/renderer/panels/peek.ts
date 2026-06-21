@@ -65,7 +65,7 @@ export function buildPeekItems(
 }
 
 /// Peek filter / section buckets. Coarser than `layerOverlapClass`
-/// (which is visual-vs-audio) because the user wants Text/Subtitles
+/// (which is visual-vs-audio) because the user wants Text layers
 /// split out from picture for fast scanning.
 export type PeekCategory = "video" | "audio" | "text";
 
@@ -74,7 +74,7 @@ export const PEEK_CATEGORY_ORDER: PeekCategory[] = ["video", "audio", "text"];
 
 export function peekCategory(layerKind: string): PeekCategory {
   if (layerKind === "Audio") return "audio";
-  if (layerKind === "Text" || layerKind === "Subtitles") return "text";
+  if (layerKind === "Text") return "text";
   // VideoClip | ImageOverlay | Color | Motif
   return "video";
 }

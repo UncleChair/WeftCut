@@ -6,8 +6,7 @@ use uuid::Uuid;
 
 use crate::napi_backend::Backend;
 use crate::state::{
-    self, Actor, ColorParams, CommandError, LayerParams, MediaKind, Rgba,
-    SubtitlesParams, SubtitlesSource, TrackFlagsPatch,
+    self, Actor, ColorParams, CommandError, LayerParams, MediaKind, Rgba, TrackFlagsPatch,
     actor::{CompositionPatch, LayerParamsPatch, LayerPatch},
     animated::Animated,
     audio_role::AudioRole,
@@ -99,12 +98,9 @@ pub async fn add_media_layer(
             }),
             image_layer_span_us(&media_item.metadata),
         ),
-        MediaKind::Subtitle => (
-            LayerParams::Subtitles(SubtitlesParams {
-                source: SubtitlesSource::Media(media),
-            }),
-            10_000_000,
-        ),
+        // MediaKind::Subtitle files are consumed at import via import_media →
+        // import_subtitles and never reach add_media_layer.
+        MediaKind::Subtitle => return Err("subtitle files are imported via import_media, not add_media_layer".to_string()),
     };
 
     let t_end_us = t_start_us + span_us;
@@ -369,43 +365,6 @@ pub async fn add_color_layer(
 ) -> Result<String, String> {
     let handle = backend.project()?;
     add_color_layer_impl(handle, track_id, color, width, height, t_start_us, duration_us).await
-}
-
-pub async fn add_subtitles_layer(
-    backend: &Backend,
-    media_id: String,
-    t_start_us: TimeUs,
-    duration_us: TimeUs,
-) -> Result<String, String> {
-    let handle = backend.project()?;
-    let media = Uuid::parse_str(&media_id).map_err(|e| format!("media_id: {e}"))?;
-    let snap = handle.snapshot().await;
-    let media_item = snap
-        .media_pool
-        .get(&media)
-        .ok_or_else(|| "media not found in pool".to_string())?;
-    if !matches!(media_item.kind, MediaKind::Subtitle) {
-        return Err(format!(
-            "media {media_id} is {:?}, expected Subtitle",
-            media_item.kind
-        ));
-    }
-    let track_id = match snap.tracks.last() {
-        Some(t) => t.id,
-        None => handle
-            .add_track(Actor::User, Some("Overlay".into()))
-            .await
-            .map_err(|e: CommandError| e.to_string())?,
-    };
-    let span = duration_us.max(100_000);
-    let params = LayerParams::Subtitles(SubtitlesParams {
-        source: SubtitlesSource::Media(media),
-    });
-    handle
-        .add_layer(Actor::User, track_id, params, t_start_us, t_start_us + span)
-        .await
-        .map(|id| id.to_string())
-        .map_err(|e: CommandError| e.to_string())
 }
 
 pub async fn update_layer(

@@ -9,7 +9,7 @@
 use serde::Serialize;
 
 use crate::state::{
-    self, Animated, LayerParams, Rgba, SubtitlesSource,
+    self, Animated, LayerParams, Rgba,
     track::TrackRole,
 };
 
@@ -138,7 +138,6 @@ pub enum LayerParamsView {
     Text(TextView),
     Color(ColorView),
     Audio(AudioView),
-    Subtitles(SubtitlesView),
     Motif(MotifView),
 }
 
@@ -238,12 +237,6 @@ pub struct RoleMixView {
     pub gain_db: f64,
     pub muted: bool,
     pub solo: bool,
-}
-
-#[derive(Serialize, Clone)]
-pub struct SubtitlesView {
-    pub source_kind: String,
-    pub source_value: String,
 }
 
 #[derive(Serialize, Clone)]
@@ -561,17 +554,6 @@ fn layer_params_view(
             mute: p.mute,
             role: p.role.as_str().to_string(),
         }),
-        LayerParams::Subtitles(p) => {
-            let (kind, value) = match &p.source {
-                SubtitlesSource::Media(id) => ("Media".to_string(), id.to_string()),
-                SubtitlesSource::InlineAss(s) => ("InlineAss".to_string(), s.clone()),
-                SubtitlesSource::InlineSrt(s) => ("InlineSrt".to_string(), s.clone()),
-            };
-            LayerParamsView::Subtitles(SubtitlesView {
-                source_kind: kind,
-                source_value: value,
-            })
-        }
         LayerParams::Motif(p) => {
             // imbl::HashMap<String, Value> → serde_json::Map. The values
             // are already serde_json::Value; we just need to materialize
@@ -601,7 +583,6 @@ fn layer_kind(params: &LayerParams) -> String {
         LayerParams::Text(_) => "Text",
         LayerParams::Motif(_) => "Motif",
         LayerParams::Audio(_) => "Audio",
-        LayerParams::Subtitles(_) => "Subtitles",
         LayerParams::Color(_) => "Color",
     }
     .to_string()
@@ -627,14 +608,6 @@ fn derive_track_kind_label(track: &crate::state::Track) -> String {
             | LayerParams::Color(_)
             | LayerParams::Motif(_)
             | LayerParams::Text(_) => has_visual = true,
-            LayerParams::Subtitles(_) => {
-                // Subtitle-only tracks should style as Subtitle so the
-                // existing `.kind-subtitle` CSS still applies. If the
-                // track also has video, video wins.
-                if !has_visual {
-                    return "Subtitle".to_string();
-                }
-            }
         }
     }
     if has_visual {
@@ -719,14 +692,6 @@ pub struct AddTextLayerArgs {
     pub content: Option<String>,
     pub t_start_us: crate::state::time::TimeUs,
     pub duration_us: Option<crate::state::time::TimeUs>,
-}
-
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AddSubtitlesLayerArgs {
-    pub media_id: String,
-    pub t_start_us: crate::state::time::TimeUs,
-    pub duration_us: crate::state::time::TimeUs,
 }
 
 #[derive(serde::Deserialize)]

@@ -403,8 +403,7 @@ fn layer_overlap_class(params: &super::layer::LayerParams) -> OverlapClass {
         | LayerParams::ImageOverlay(_)
         | LayerParams::Color(_)
         | LayerParams::Motif(_)
-        | LayerParams::Text(_)
-        | LayerParams::Subtitles(_) => OverlapClass::Visual,
+        | LayerParams::Text(_) => OverlapClass::Visual,
     }
 }
 
@@ -446,8 +445,8 @@ fn validate_layer(project: &Project, layer: &Layer) -> Result<(), ValidationErro
             check_animated(layer.id, &p.gain_db, duration)?;
             check_animated(layer.id, &p.pan, duration)?;
         }
-        LayerParams::Subtitles(_) | LayerParams::Color(_) => {
-            // No referenced ranges or animated props yet.
+        LayerParams::Color(_) => {
+            // No referenced ranges or animated props.
         }
     }
     Ok(())

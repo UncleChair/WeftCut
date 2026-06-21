@@ -83,13 +83,10 @@ impl CacheLayout {
         self.current_root().join("frames")
     }
 
-    /// Reserved scaffolding for materializing inline-subtitle bodies
-    /// (`SubtitlesSource::InlineSrt` / `InlineAss`) to a blake3-addressed file
-    /// when a code path needs a real on-disk path. Currently UNUSED: the live
-    /// subtitle renderer (JASSUB / `SubtitlesSprite`) feeds inline bodies
-    /// directly and never reads from here, so nothing writes this tree.
-    /// `ensure_dirs` creates the directory; kept for a future ffmpeg
-    /// subtitle burn-in export path, where `subtitles=<file>` needs a filename.
+    /// Reserved scaffolding for materializing caption text bodies to a
+    /// blake3-addressed file when a code path needs a real on-disk path.
+    /// Currently UNUSED: kept for a future ffmpeg subtitle burn-in export path,
+    /// where `subtitles=<file>` needs a filename.
     pub fn inline_subs_dir(&self) -> PathBuf {
         self.current_root().join("inline-subs")
     }

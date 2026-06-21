@@ -25,9 +25,8 @@ function item(id: string, kind: string): PeekItem {
 
 describe("peekCategory", () => {
   it("maps Audio to audio", () => expect(peekCategory("Audio")).toBe("audio"));
-  it("maps Text + Subtitles to text", () => {
+  it("maps Text to text", () => {
     expect(peekCategory("Text")).toBe("text");
-    expect(peekCategory("Subtitles")).toBe("text");
   });
   it("maps every visual kind to video", () => {
     for (const k of ["VideoClip", "ImageOverlay", "Color", "Motif"]) {
@@ -37,7 +36,7 @@ describe("peekCategory", () => {
 });
 
 describe("groupPeekItems", () => {
-  const items = [item("v", "VideoClip"), item("a", "Audio"), item("s", "Subtitles")];
+  const items = [item("v", "VideoClip"), item("a", "Audio"), item("s", "Text")];
 
   it("filter=all returns sections in video/audio/text order", () => {
     const sections = groupPeekItems(items, "all");

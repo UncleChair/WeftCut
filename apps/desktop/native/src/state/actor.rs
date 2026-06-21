@@ -3144,10 +3144,6 @@ impl ProjectActor {
                 LayerParams::VideoClip(p) => p.media == id,
                 LayerParams::Audio(p) => p.media == id,
                 LayerParams::ImageOverlay(p) => p.media == id,
-                LayerParams::Subtitles(p) => matches!(
-                    &p.source,
-                    super::layer::SubtitlesSource::Media(m) if *m == id
-                ),
                 _ => false,
             })
             .map(|l| l.id)

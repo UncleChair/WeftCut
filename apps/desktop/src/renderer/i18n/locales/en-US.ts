@@ -554,8 +554,6 @@ const enUS = {
     pan: "Pan",
     role: "Role",
     mute: "Mute",
-    subtitles: "Subtitles",
-    subtitles_source: "Source",
     motif: "Motif",
     transform: "Transform",
     props: "Props",
@@ -682,7 +680,6 @@ const enUS = {
     imageoverlay: "Image overlay",
     text: "Text",
     motif: "Motif",
-    subtitles: "Subtitles",
     color: "Color",
   },
 };

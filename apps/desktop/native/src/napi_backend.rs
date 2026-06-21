@@ -406,10 +406,6 @@ impl Backend {
                 ser(crate::commands::mutations::add_text_layer(self, a.track_id, a.content, a.t_start_us, a.duration_us).await)
             }
             "add_demo_text_layer" => ser(crate::commands::mutations::add_demo_text_layer(self).await),
-            "add_subtitles_layer" => {
-                let a: crate::commands::AddSubtitlesLayerArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::mutations::add_subtitles_layer(self, a.media_id, a.t_start_us, a.duration_us).await)
-            }
             "update_layer" => {
                 let a: crate::commands::UpdateLayerArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
                 ser(crate::commands::mutations::update_layer(self, a.layer_id, a.patch).await)

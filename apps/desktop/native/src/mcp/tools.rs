@@ -26,7 +26,7 @@ use crate::state::audio_role::AudioRole;
 use crate::state::{
     Actor, Animated, AudioParams, BlendMode, CheckpointId, ColorParams, CommandError,
     DryRunOp, DryRunOutput, LayerId, LayerParams, LayerParamsPatch, LayerPatch, MarkerPatch,
-    Rgba, SubtitlesParams, SubtitlesSource, TrackId, Transform, ValidationError,
+    Rgba, TrackId, Transform, ValidationError,
     VideoClipParams,
 };
 
@@ -63,25 +63,6 @@ pub(super) fn parse_layer_edge(s: &str) -> Result<LayerEdge, McpToolError> {
             format!("unknown layer edge '{other}' (expected 'in' or 'out')"),
             None,
         )),
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(super) enum SubFormat {
-    Srt,
-    Ass,
-}
-
-/// Best-effort SRT/ASS sniffer. ASS scripts begin with the `[Script Info]`
-/// section header (even minimal SSA files); SRT cues begin with a digit
-/// (cue index 1). When neither pattern matches we default to SRT — Whisper's
-/// `response_format=srt` is the common case.
-pub(super) fn sniff_subtitle_format(body: &str) -> SubFormat {
-    let trimmed = body.trim_start_matches('\u{feff}').trim_start();
-    if trimmed.starts_with('[') || trimmed.to_ascii_lowercase().starts_with("[script info]") {
-        SubFormat::Ass
-    } else {
-        SubFormat::Srt
     }
 }
 
@@ -2052,33 +2033,6 @@ pub(super) async fn add_motif(
 mod tests {
     use super::*;
     use crate::state::Project;
-
-    #[test]
-    fn sniff_format_picks_ass_for_script_info_header() {
-        assert!(matches!(
-            sniff_subtitle_format("[Script Info]\nTitle: t\n"),
-            SubFormat::Ass
-        ));
-    }
-
-    #[test]
-    fn sniff_format_picks_srt_for_cue_index() {
-        assert!(matches!(
-            sniff_subtitle_format("1\n00:00:00,000 --> 00:00:01,000\nhi\n"),
-            SubFormat::Srt
-        ));
-    }
-
-    #[test]
-    fn sniff_format_skips_bom_and_whitespace() {
-        let with_bom = "\u{feff}  \n[Script Info]\n";
-        assert!(matches!(sniff_subtitle_format(with_bom), SubFormat::Ass));
-    }
-
-    #[test]
-    fn sniff_format_defaults_to_srt_when_unclear() {
-        assert!(matches!(sniff_subtitle_format("hello\nworld\n"), SubFormat::Srt));
-    }
 
     // ============================================================
     // detect_silences_in_peaks — silence-cut helper

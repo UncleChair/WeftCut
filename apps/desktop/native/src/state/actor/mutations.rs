@@ -1427,7 +1427,6 @@ fn layer_params_kind(params: &LayerParams) -> &'static str {
         LayerParams::Text(_) => "Text",
         LayerParams::Motif(_) => "Motif",
         LayerParams::Audio(_) => "Audio",
-        LayerParams::Subtitles(_) => "Subtitles",
         LayerParams::Color(_) => "Color",
     }
 }

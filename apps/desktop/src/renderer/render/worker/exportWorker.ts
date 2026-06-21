@@ -1,4 +1,4 @@
-﻿// Web Worker entry point for export. Receives an ExportRequest,
+// Web Worker entry point for export. Receives an ExportRequest,
 // constructs a Compositor against an OffscreenCanvas, runs the
 // chunked decode → composite → encode loop, posts progress, posts
 // fMP4 chunks with backpressure, posts final counters, and exits.
