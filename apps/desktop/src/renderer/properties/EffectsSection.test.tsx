@@ -16,6 +16,7 @@ vi.mock("react-i18next", () => ({
 vi.mock("../render/effects/effectRegistry", () => ({
   listEffects: () => [{ kind: "blur", nameI18nKey: "effects.blur.name" }],
 }));
+vi.mock("./EffectParamField", () => ({ EffectParamFields: () => null }));
 // Mock AppSwitch to a plain button so jsdom never hits Base UI's PointerEvent
 // constructor (which jsdom doesn't implement). EffectsSection tests cover the
 // wiring, not the switch widget itself.

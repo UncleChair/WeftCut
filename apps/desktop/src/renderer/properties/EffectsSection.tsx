@@ -5,6 +5,7 @@ import { AppSwitch } from "../components/AppSwitch";
 import { Button } from "@/components/ui/button";
 import { addEffect, updateEffect, moveEffect, removeEffect, type EffectView, type LayerSummary } from "../ipc";
 import { listEffects } from "../render/effects/effectRegistry";
+import { EffectParamFields } from "./EffectParamField";
 
 interface Props {
   layer: LayerSummary;
@@ -80,10 +81,6 @@ function EffectRow({
   const { t } = useTranslation();
   const [err, setErr] = useState<string | null>(null);
   const name = t(`effects.${effect.kind}.name`, { defaultValue: effect.kind });
-  // tInLayerUs / playheadInSpan are threaded through for Task 6's param rows.
-  void tInLayerUs;
-  void playheadInSpan;
-
   const run = (fn: () => Promise<unknown>) => () => {
     setErr(null);
     fn().then(onMutated).catch((e) => setErr(String(e)));
@@ -126,6 +123,13 @@ function EffectRow({
           ✕
         </Button>
       </div>
+      <EffectParamFields
+        layer={layer}
+        effect={effect}
+        tInLayerUs={tInLayerUs}
+        playheadInSpan={playheadInSpan}
+        onMutated={onMutated}
+      />
       {err && <p className="settings-error">{err}</p>}
     </div>
   );
