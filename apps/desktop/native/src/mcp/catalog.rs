@@ -201,7 +201,7 @@ tool_table! {
                           | error? }, ...] }`. \
                           Supports add_color_layer, add_video_layer, update_layer, \
                           update_layer_params, move_layer, split_layer, delete_layer. Other tools \
-                          (motifs, subtitles, media import, undo/redo) are not dry-runnable in v1.", tools::DryRunArgs, tools::dry_run),
+                          (motifs, caption import, media import, undo/redo) are not dry-runnable in v1.", tools::DryRunArgs, tools::dry_run),
     "set_role_gain" => ("Set an audio role's mix gain (dB). role ∈ {dialogue,music,sfx,voiceover}. \
                           Recorded (undoable). Folds into every layer of that role at mix time.", tools::SetRoleGainArgs, tools::set_role_gain),
     "set_role_flags" => ("Mute/solo an audio role. role ∈ {dialogue,music,sfx,voiceover}. \

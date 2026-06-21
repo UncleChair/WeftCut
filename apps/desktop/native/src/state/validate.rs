@@ -386,9 +386,9 @@ fn validate_track(
 
 /// Class used for the within-track overlap rule (V.2). Visual covers
 /// every layer kind that contributes to the video output frame
-/// (VideoClip, ImageOverlay, Color, Motif, Text, Subtitles). Audio
-/// is the only audio-class. New layer kinds added later default to
-/// Visual unless they're audio-only.
+/// (VideoClip, ImageOverlay, Color, Motif, Text). Audio is the only
+/// audio-class. New layer kinds added later default to Visual unless
+/// they're audio-only.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum OverlapClass {
     Visual,

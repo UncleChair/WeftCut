@@ -33,16 +33,15 @@ export const HEADER_COL_PX = 160;
 export interface VisualTrack {
   track: TrackSummary;
   /// True when this is the first lane of its kind group — the renderer adds
-  /// a divider line above it. Today the boundaries are: between the video
-  /// stack and subtitles, and between subtitles and the audio stack.
+  /// a divider line above it. Today the boundary is between the video stack
+  /// and the audio stack.
   isGroupStart: boolean;
 }
 
 /// Layer-overlap class. Visual-class layers (VideoClip,
-/// ImageOverlay, Color, Motif, Text, Subtitles) can't overlap each
-/// other on a track; Audio can't overlap Audio. Visual + Audio CAN
-/// coexist at the same time — that's the AE-style "combined row"
-/// trigger.
+/// ImageOverlay, Color, Motif, Text) can't overlap each other on a
+/// track; Audio can't overlap Audio. Visual + Audio CAN coexist at
+/// the same time — that's the AE-style "combined row" trigger.
 export type LayerOverlapClass = "visual" | "audio";
 
 export function layerOverlapClass(layer: LayerSummary): LayerOverlapClass {

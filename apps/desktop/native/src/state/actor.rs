@@ -2349,6 +2349,9 @@ impl ProjectActor {
 
         // Return the primary (first) track id.  If cues was empty we still need
         // to create at least one track so the caller can return a TrackId.
+        // Safety net only: real callers (import_subtitles / apply_subtitles) reject
+        // empty cue lists upstream; this branch is reachable only via the raw
+        // add_caption_track([]) contract (e.g. tests or future direct callers).
         let primary_id = if let Some(&id) = track_ids.first() {
             id
         } else {

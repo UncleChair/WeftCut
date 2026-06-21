@@ -201,7 +201,7 @@ fn expand_auto_caption(
 Steps:
 1. Call `transcribe_clip` with `layer_id: \"{layer_id}\"`{language_clause}. The tool extracts the layer's audio (mono 16 kHz WAV), uploads it to Whisper, and returns SRT with cue timestamps already shifted to timeline-absolute microseconds.
 2. Inspect the returned SRT. Fix obvious mistakes you can spot — proper nouns, technical terms, on-screen text that should match exactly. Don't rewrite the prose.
-3. Call `apply_subtitles` with the (possibly edited) body. **Omit `t_start_us`** so the Subtitles layer activates from timeline 0; the cues self-position via their internal timestamps. Set `t_end_us` to the composition's `duration_us` (read from `project://composition`) so the layer covers the whole timeline.
+3. Call `apply_subtitles` with the (possibly edited) SRT body. The cues self-position into a new caption track of editable Text layers via their internal timestamps — you do not pass start/end times (any `t_start_us`/`t_end_us` are ignored). The tool returns the new caption track id.
 
 If `transcribe_clip` errors with `MissingKey` or `InvalidKey`, tell the user to configure their OpenAI API key under Settings → API keys. If `PayloadTooLarge`, narrow the window with `t_start_us`/`t_end_us` and call again — Whisper's per-request cap is ~13 minutes of mono 16 kHz audio."
     );

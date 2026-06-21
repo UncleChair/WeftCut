@@ -79,10 +79,15 @@ The font pipeline resolves these families before compositing begins, so
 burned-in captions never tofu on any supported platform regardless of the OS
 font state.
 
-For user-chosen font families not in the bundled set, `font:resolve` is a
-synchronous IPC channel from the Worker back to the main process; the main
-process queries `systemFonts.getAllFonts()` and returns matching font bytes.
-This is best-effort — a font present on the author's machine may be absent on a
+For user-chosen font families not in the bundled set, the main-thread renderer
+calls `window.api.font.resolve(family)` via `resolveFontsForFamilies` — this
+happens before the export Worker is started. The resolved font bytes are merged
+into the export request alongside the bundled bytes; the Worker only consumes
+pre-resolved bytes and never calls `font:resolve` itself (that is the
+determinism boundary). On the main process side, `resolveSystemFont` resolves a
+family name by doing a hand-rolled sfnt `name`-table scan of the platform font
+directories — no external font-enumeration API is used. Resolution is
+best-effort — a font present on the author's machine may be absent on a
 collaborator's, so it carries no determinism guarantee. The bundled chain is the
 fallback and is always present.
 
