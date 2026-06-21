@@ -522,6 +522,18 @@ const enUS = {
     reset_blocked:
       "Can't reset: {{chord}} is bound to {{action}}. Unset it there first.",
   },
+  effects: {
+    heading: "Effects",
+    add: "Add effect",
+    enable: "Toggle {{name}}",
+    move_up: "Move up",
+    move_down: "Move down",
+    remove: "Remove {{name}}",
+    blur: {
+      name: "Blur",
+      params: { strength: "Strength" },
+    },
+  },
   property_panel: {
     heading: "Properties",
     empty: "Select a layer to edit its properties.",

@@ -1,0 +1,144 @@
+import { useState } from "react";
+import { useTranslation } from "react-i18next";
+import { AppSelect } from "../components/AppSelect";
+import { AppSwitch } from "../components/AppSwitch";
+import { Button } from "@/components/ui/button";
+import { addEffect, updateEffect, moveEffect, removeEffect, type EffectView, type LayerSummary } from "../ipc";
+import { listEffects } from "../render/effects/effectRegistry";
+
+interface Props {
+  layer: LayerSummary;
+  /// Playhead relative to the layer's t_start; forwarded to the keyframe rows.
+  tInLayerUs: number;
+  playheadInSpan: boolean;
+  onMutated: () => Promise<void>;
+}
+
+/// Per-layer effect chain editor. Data-driven off the effect catalog
+/// (`listEffects`): the add picker, the row names, and (Task 6) the param rows
+/// all come from the registry, so a new filter is zero UI change. Rendered by
+/// PropertyPanel for visual layer kinds only.
+export function EffectsSection({ layer, tInLayerUs, playheadInSpan, onMutated }: Props) {
+  const { t } = useTranslation();
+  const catalog = listEffects();
+  const [pendingKind, setPendingKind] = useState(catalog[0]?.kind ?? "");
+  const [err, setErr] = useState<string | null>(null);
+
+  const add = () => {
+    setErr(null);
+    addEffect(layer.id, pendingKind).then(onMutated).catch((e) => setErr(String(e)));
+  };
+
+  return (
+    <section className="prop-section">
+      <h3>{t("effects.heading")}</h3>
+      {layer.effects.map((eff, i) => (
+        <EffectRow
+          key={eff.id}
+          layer={layer}
+          effect={eff}
+          index={i}
+          count={layer.effects.length}
+          tInLayerUs={tInLayerUs}
+          playheadInSpan={playheadInSpan}
+          onMutated={onMutated}
+        />
+      ))}
+      <div className="prop-effect-add">
+        <AppSelect
+          value={pendingKind}
+          ariaLabel={t("effects.add")}
+          onValueChange={setPendingKind}
+          options={catalog.map((d) => ({ value: d.kind, label: t(d.nameI18nKey) }))}
+        />
+        <Button size="sm" data-testid="effect-add" disabled={!pendingKind} onClick={add}>
+          {t("effects.add")}
+        </Button>
+      </div>
+      {err && <p className="settings-error">{err}</p>}
+    </section>
+  );
+}
+
+function EffectRow({
+  layer,
+  effect,
+  index,
+  count,
+  tInLayerUs,
+  playheadInSpan,
+  onMutated,
+}: {
+  layer: LayerSummary;
+  effect: EffectView;
+  index: number;
+  count: number;
+  tInLayerUs: number;
+  playheadInSpan: boolean;
+  onMutated: () => Promise<void>;
+}) {
+  const { t } = useTranslation();
+  const [err, setErr] = useState<string | null>(null);
+  const name = t(`effects.${effect.kind}.name`, { defaultValue: effect.kind });
+  // tInLayerUs / playheadInSpan are threaded through for Task 6's param rows.
+  void tInLayerUs;
+  void playheadInSpan;
+
+  const run = (fn: () => Promise<unknown>) => () => {
+    setErr(null);
+    fn().then(onMutated).catch((e) => setErr(String(e)));
+  };
+
+  return (
+    <div className="prop-effect-row" data-testid={`effect-row-${index}`}>
+      <div className="prop-effect-head">
+        <span className="prop-effect-name">{name}</span>
+        {/* AppSwitch doesn't spread unknown props — wrap so the testid
+            reaches a real DOM node (Task 8 e2e depends on it). The span
+            onClick only fires when the span itself (not a child switch
+            button) is the direct click target, preventing double-dispatch
+            when the inner button is clicked directly by the real user. */}
+        <span
+          data-testid={`effect-enable-${index}`}
+          onClick={(e) => {
+            if (e.target === e.currentTarget)
+              run(() => updateEffect(layer.id, effect.id, { enabled: !effect.enabled }))();
+          }}
+        >
+          <AppSwitch
+            checked={effect.enabled}
+            ariaLabel={t("effects.enable", { name })}
+            onCheckedChange={(next) => run(() => updateEffect(layer.id, effect.id, { enabled: next }))()}
+          />
+        </span>
+        <Button
+          size="sm"
+          data-testid={`effect-up-${index}`}
+          aria-label={t("effects.move_up")}
+          disabled={index === 0}
+          onClick={run(() => moveEffect(layer.id, effect.id, index - 1))}
+        >
+          ↑
+        </Button>
+        <Button
+          size="sm"
+          data-testid={`effect-down-${index}`}
+          aria-label={t("effects.move_down")}
+          disabled={index === count - 1}
+          onClick={run(() => moveEffect(layer.id, effect.id, index + 1))}
+        >
+          ↓
+        </Button>
+        <Button
+          size="sm"
+          data-testid={`effect-remove-${index}`}
+          aria-label={t("effects.remove", { name })}
+          onClick={run(() => removeEffect(layer.id, effect.id))}
+        >
+          ✕
+        </Button>
+      </div>
+      {err && <p className="settings-error">{err}</p>}
+    </div>
+  );
+}

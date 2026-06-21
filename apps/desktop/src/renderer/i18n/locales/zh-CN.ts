@@ -507,6 +507,18 @@ const zhCN: Resources = {
     reset_blocked:
       "无法重置：{{chord}} 已绑定到「{{action}}」，请先在该操作中取消。",
   },
+  effects: {
+    heading: "效果",
+    add: "添加效果",
+    enable: "切换 {{name}}",
+    move_up: "上移",
+    move_down: "下移",
+    remove: "移除 {{name}}",
+    blur: {
+      name: "模糊",
+      params: { strength: "强度" },
+    },
+  },
   property_panel: {
     heading: "属性",
     empty: "选择一个图层以编辑其属性。",
