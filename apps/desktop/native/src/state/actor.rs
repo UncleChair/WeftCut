@@ -18,8 +18,10 @@ use super::color::{ColorSpace, Rgba};
 use super::animated::Animated;
 use super::history::{History, HistoryEntry, HistoryView, NamedCheckpoint};
 use super::group::Group;
+use super::effect::{Effect, EffectPatch};
 use super::ids::{
-    CheckpointId, GroupId, LayerId, MarkerId, MediaId, OpId, TrackId, TransitionId, new_id,
+    CheckpointId, EffectId, GroupId, LayerId, MarkerId, MediaId, OpId, TrackId, TransitionId,
+    new_id,
 };
 use super::layer::{Layer, LayerParams};
 use super::marker::Marker;
@@ -691,9 +693,32 @@ enum Command {
         actor: Actor,
         reply: oneshot::Sender<Result<(), CommandError>>,
     },
-    // No set-effects command: the per-layer effects subsystem isn't built yet
-    // (per-sprite Pixi filter chains driven by a future `layer.effects` — see
-    // docs/roadmap.md), so neither the field nor a mutation surface exists.
+    AddEffect {
+        layer_id: LayerId,
+        effect: Effect,
+        actor: Actor,
+        reply: oneshot::Sender<Result<EffectId, CommandError>>,
+    },
+    UpdateEffect {
+        layer_id: LayerId,
+        effect_id: EffectId,
+        patch: EffectPatch,
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
+    MoveEffect {
+        layer_id: LayerId,
+        effect_id: EffectId,
+        new_index: usize,
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
+    RemoveEffect {
+        layer_id: LayerId,
+        effect_id: EffectId,
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
     Undo {
         actor: Actor,
         reply: oneshot::Sender<Result<(), CommandError>>,
@@ -1242,6 +1267,64 @@ impl ProjectHandle {
                 actor,
                 reply,
             })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    pub async fn add_effect(
+        &self,
+        actor: Actor,
+        layer_id: LayerId,
+        effect: Effect,
+    ) -> Result<EffectId, CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::AddEffect { layer_id, effect, actor, reply })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    pub async fn update_effect(
+        &self,
+        actor: Actor,
+        layer_id: LayerId,
+        effect_id: EffectId,
+        patch: EffectPatch,
+    ) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::UpdateEffect { layer_id, effect_id, patch, actor, reply })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    pub async fn move_effect(
+        &self,
+        actor: Actor,
+        layer_id: LayerId,
+        effect_id: EffectId,
+        new_index: usize,
+    ) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::MoveEffect { layer_id, effect_id, new_index, actor, reply })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    pub async fn remove_effect(
+        &self,
+        actor: Actor,
+        layer_id: LayerId,
+        effect_id: EffectId,
+    ) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::RemoveEffect { layer_id, effect_id, actor, reply })
             .await
             .expect("project actor terminated");
         rx.await.expect("project actor terminated")
@@ -1892,6 +1975,40 @@ impl ProjectActor {
                 let result =
                     self.do_move_layer(id, new_track_id, new_t_start_us, escape_group, actor);
                 let _ = reply.send(result);
+            }
+            Command::AddEffect {
+                layer_id,
+                effect,
+                actor,
+                reply,
+            } => {
+                let _ = reply.send(self.do_add_effect(layer_id, effect, actor));
+            }
+            Command::UpdateEffect {
+                layer_id,
+                effect_id,
+                patch,
+                actor,
+                reply,
+            } => {
+                let _ = reply.send(self.do_update_effect(layer_id, effect_id, patch, actor));
+            }
+            Command::MoveEffect {
+                layer_id,
+                effect_id,
+                new_index,
+                actor,
+                reply,
+            } => {
+                let _ = reply.send(self.do_move_effect(layer_id, effect_id, new_index, actor));
+            }
+            Command::RemoveEffect {
+                layer_id,
+                effect_id,
+                actor,
+                reply,
+            } => {
+                let _ = reply.send(self.do_remove_effect(layer_id, effect_id, actor));
             }
             Command::DuplicateLayer {
                 id,
@@ -2675,6 +2792,80 @@ impl ProjectActor {
             actor,
             format!("Moved layer {id}"),
             vec![EntityRef::Layer(id), EntityRef::Track(new_track_id)],
+            DiffHint::Coarse,
+        )?;
+        Ok(())
+    }
+
+    fn do_add_effect(
+        &mut self,
+        layer_id: LayerId,
+        effect: Effect,
+        actor: Actor,
+    ) -> Result<EffectId, CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+        let id = apply_add_effect(&mut next, layer_id, effect)?;
+        self.commit(
+            next,
+            actor,
+            format!("Added effect to layer {layer_id}"),
+            vec![EntityRef::Layer(layer_id)],
+            DiffHint::Coarse,
+        )?;
+        Ok(id)
+    }
+
+    fn do_update_effect(
+        &mut self,
+        layer_id: LayerId,
+        effect_id: EffectId,
+        patch: EffectPatch,
+        actor: Actor,
+    ) -> Result<(), CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+        apply_update_effect(&mut next, layer_id, effect_id, patch)?;
+        self.commit(
+            next,
+            actor,
+            format!("Updated effect {effect_id}"),
+            vec![EntityRef::Layer(layer_id)],
+            DiffHint::Coarse,
+        )?;
+        Ok(())
+    }
+
+    fn do_move_effect(
+        &mut self,
+        layer_id: LayerId,
+        effect_id: EffectId,
+        new_index: usize,
+        actor: Actor,
+    ) -> Result<(), CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+        apply_move_effect(&mut next, layer_id, effect_id, new_index)?;
+        self.commit(
+            next,
+            actor,
+            format!("Reordered effect {effect_id}"),
+            vec![EntityRef::Layer(layer_id)],
+            DiffHint::Coarse,
+        )?;
+        Ok(())
+    }
+
+    fn do_remove_effect(
+        &mut self,
+        layer_id: LayerId,
+        effect_id: EffectId,
+        actor: Actor,
+    ) -> Result<(), CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+        apply_remove_effect(&mut next, layer_id, effect_id)?;
+        self.commit(
+            next,
+            actor,
+            format!("Removed effect {effect_id}"),
+            vec![EntityRef::Layer(layer_id)],
             DiffHint::Coarse,
         )?;
         Ok(())

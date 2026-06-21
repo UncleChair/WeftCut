@@ -5346,3 +5346,38 @@
             Err(CommandError::EffectNotFound { .. })
         ));
     }
+
+    #[tokio::test]
+    async fn effect_lifecycle_through_actor_records_undo() {
+        let h = spawn(Project::new_blank("test"));
+        let track_id = h.add_track(Actor::User, Some("overlay".into())).await.unwrap();
+        let layer_id = h
+            .add_layer(Actor::User, track_id, color_layer(Rgba::WHITE), 0, 1_000_000)
+            .await
+            .unwrap();
+
+        let effect_id = h.add_effect(Actor::User, layer_id, blur_effect(6.0)).await.unwrap();
+
+        let snap = h.snapshot().await;
+        let effects_len = snap
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .find(|l| l.id == layer_id)
+            .map(|l| l.effects.len())
+            .unwrap_or(0);
+        assert_eq!(effects_len, 1);
+
+        // undo removes the effect
+        h.undo(Actor::User).await.unwrap();
+        let snap = h.snapshot().await;
+        let effects_len_after_undo = snap
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .find(|l| l.id == layer_id)
+            .map(|l| l.effects.len())
+            .unwrap_or(0);
+        assert_eq!(effects_len_after_undo, 0);
+        let _ = effect_id;
+    }
