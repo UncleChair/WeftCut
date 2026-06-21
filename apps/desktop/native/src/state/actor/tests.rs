@@ -5195,3 +5195,154 @@
             assert_eq!(tp.font.size_px, 54.0);
         }
     }
+
+    // ============================================================
+    // Effect mutation helpers (Task 2)
+    // ============================================================
+
+    fn blur_effect(strength: f64) -> crate::state::Effect {
+        let mut params = std::collections::BTreeMap::new();
+        params.insert("strength".to_string(), Animated::Static(strength));
+        crate::state::Effect {
+            id: new_id(),
+            kind: "blur".into(),
+            enabled: true,
+            params,
+        }
+    }
+
+    fn layer_effects_count(project: &Project, layer_id: LayerId) -> usize {
+        project
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .find(|l| l.id == layer_id)
+            .map(|l| l.effects.len())
+            .unwrap_or(0)
+    }
+
+    fn layer_effect_ids(project: &Project, layer_id: LayerId) -> Vec<crate::state::EffectId> {
+        project
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .find(|l| l.id == layer_id)
+            .map(|l| l.effects.iter().map(|e| e.id).collect())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn add_then_move_then_remove_effect() {
+        use crate::state::actor::mutations::{
+            apply_add_effect, apply_add_layer, apply_move_effect, apply_remove_effect,
+            apply_update_effect,
+        };
+        use crate::state::effect::EffectPatch;
+
+        // Build a project with one layer using the existing helpers.
+        let (mut project, track_id) = project_with_video_track();
+        let layer_id = apply_add_layer(
+            &mut project,
+            track_id,
+            color_layer(Rgba::WHITE),
+            0,
+            1_000_000,
+        )
+        .unwrap();
+
+        // Add two effects.
+        let id1 = apply_add_effect(&mut project, layer_id, blur_effect(4.0)).unwrap();
+        let id2 = apply_add_effect(&mut project, layer_id, blur_effect(8.0)).unwrap();
+        assert_eq!(layer_effects_count(&project, layer_id), 2);
+        assert_eq!(layer_effect_ids(&project, layer_id)[0], id1);
+        assert_eq!(layer_effect_ids(&project, layer_id)[1], id2);
+
+        // Move id2 to index 0 (it becomes first).
+        apply_move_effect(&mut project, layer_id, id2, 0).unwrap();
+        assert_eq!(layer_effect_ids(&project, layer_id)[0], id2);
+        assert_eq!(layer_effect_ids(&project, layer_id)[1], id1);
+
+        // Update id1 via patch.
+        let mut patch_params = std::collections::BTreeMap::new();
+        patch_params.insert("strength".to_string(), Animated::Static(16.0));
+        apply_update_effect(
+            &mut project,
+            layer_id,
+            id1,
+            EffectPatch {
+                enabled: Some(false),
+                params: Some(patch_params),
+            },
+        )
+        .unwrap();
+        let effects = project
+            .tracks
+            .iter()
+            .flat_map(|t| t.layers.iter())
+            .find(|l| l.id == layer_id)
+            .map(|l| &l.effects)
+            .unwrap();
+        let e1 = effects.iter().find(|e| e.id == id1).unwrap();
+        assert!(!e1.enabled);
+        assert!(matches!(e1.params.get("strength"), Some(Animated::Static(v)) if *v == 16.0));
+
+        // Remove id1 — only id2 remains.
+        apply_remove_effect(&mut project, layer_id, id1).unwrap();
+        assert_eq!(layer_effects_count(&project, layer_id), 1);
+        assert_eq!(layer_effect_ids(&project, layer_id)[0], id2);
+    }
+
+    #[test]
+    fn effect_errors_on_missing_layer_and_effect() {
+        use crate::state::actor::mutations::{
+            apply_add_effect, apply_add_layer, apply_move_effect, apply_remove_effect,
+            apply_update_effect,
+        };
+        use crate::state::effect::EffectPatch;
+        use crate::state::actor::CommandError;
+
+        let (mut project, track_id) = project_with_video_track();
+        let layer_id = apply_add_layer(
+            &mut project,
+            track_id,
+            color_layer(Rgba::WHITE),
+            0,
+            1_000_000,
+        )
+        .unwrap();
+        let bad_layer: LayerId = new_id();
+        let bad_effect: crate::state::EffectId = new_id();
+
+        // Missing layer.
+        assert!(matches!(
+            apply_add_effect(&mut project, bad_layer, blur_effect(1.0)),
+            Err(CommandError::LayerNotFound { .. })
+        ));
+
+        // Add a real effect to test missing-effect paths.
+        let eid = apply_add_effect(&mut project, layer_id, blur_effect(1.0)).unwrap();
+
+        // Missing effect: update.
+        assert!(matches!(
+            apply_update_effect(&mut project, layer_id, bad_effect, EffectPatch::default()),
+            Err(CommandError::EffectNotFound { .. })
+        ));
+
+        // Missing effect: move.
+        assert!(matches!(
+            apply_move_effect(&mut project, layer_id, bad_effect, 0),
+            Err(CommandError::EffectNotFound { .. })
+        ));
+
+        // Out-of-range index: move.
+        assert!(matches!(
+            apply_move_effect(&mut project, layer_id, eid, 5),
+            Err(CommandError::EffectIndexOutOfRange { .. })
+        ));
+
+        // Missing effect: remove.
+        assert!(matches!(
+            apply_remove_effect(&mut project, layer_id, bad_effect),
+            Err(CommandError::EffectNotFound { .. })
+        ));
+    }

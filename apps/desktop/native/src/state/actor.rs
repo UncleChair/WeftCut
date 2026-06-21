@@ -424,6 +424,10 @@ pub enum CommandError {
     EmptyKeyframeTrack { layer: LayerId, param_key: String },
     #[error("param `{param_key}` is not animatable on layer {layer}")]
     UnknownKeyframeParam { layer: LayerId, param_key: String },
+    #[error("effect {effect} not found")]
+    EffectNotFound { effect: super::ids::EffectId },
+    #[error("effect index {index} out of range for effect count {len}")]
+    EffectIndexOutOfRange { index: usize, len: usize },
 }
 
 impl From<ValidationError> for CommandError {

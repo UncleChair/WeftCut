@@ -1442,3 +1442,108 @@ fn layer_params_patch_kind(patch: &LayerParamsPatch) -> &'static str {
         LayerParamsPatch::Audio(_) => "Audio",
     }
 }
+
+// ============================================================
+// Per-layer effect mutation helpers (Task 2)
+// ============================================================
+
+/// Append `effect` to `layer_id`'s effect chain. Returns the newly-added
+/// effect's id (carried inside `effect.id`). Errors with `LayerNotFound`
+/// if `layer_id` does not exist in the project.
+pub(crate) fn apply_add_effect(
+    project: &mut Project,
+    layer_id: LayerId,
+    effect: crate::state::effect::Effect,
+) -> Result<crate::state::ids::EffectId, CommandError> {
+    let id = effect.id;
+    for track in project.tracks.iter_mut() {
+        if let Some(idx) = track.layers.iter().position(|l| l.id == layer_id) {
+            let layer = track.layers.get_mut(idx).expect("index just verified");
+            layer.effects.push(effect);
+            return Ok(id);
+        }
+    }
+    Err(CommandError::LayerNotFound { layer: layer_id })
+}
+
+/// Apply `patch` to the effect identified by `effect_id` on `layer_id`.
+/// `patch.enabled` replaces the flag; `patch.params` is merged key-by-key
+/// into the effect's params map (insert/overwrite per key, no deletions).
+/// Errors with `LayerNotFound` or `EffectNotFound` if either is absent.
+pub(crate) fn apply_update_effect(
+    project: &mut Project,
+    layer_id: LayerId,
+    effect_id: crate::state::ids::EffectId,
+    patch: crate::state::effect::EffectPatch,
+) -> Result<(), CommandError> {
+    for track in project.tracks.iter_mut() {
+        if let Some(idx) = track.layers.iter().position(|l| l.id == layer_id) {
+            let layer = track.layers.get_mut(idx).expect("index just verified");
+            let e = layer
+                .effects
+                .iter_mut()
+                .find(|e| e.id == effect_id)
+                .ok_or(CommandError::EffectNotFound { effect: effect_id })?;
+            if let Some(enabled) = patch.enabled {
+                e.enabled = enabled;
+            }
+            if let Some(params) = patch.params {
+                for (k, v) in params {
+                    e.params.insert(k, v);
+                }
+            }
+            return Ok(());
+        }
+    }
+    Err(CommandError::LayerNotFound { layer: layer_id })
+}
+
+/// Move the effect identified by `effect_id` to `new_index` within
+/// `layer_id`'s effect chain (0 = first/topmost). Errors with `LayerNotFound`,
+/// `EffectNotFound`, or `EffectIndexOutOfRange` (when `new_index >= len`).
+pub(crate) fn apply_move_effect(
+    project: &mut Project,
+    layer_id: LayerId,
+    effect_id: crate::state::ids::EffectId,
+    new_index: usize,
+) -> Result<(), CommandError> {
+    for track in project.tracks.iter_mut() {
+        if let Some(idx) = track.layers.iter().position(|l| l.id == layer_id) {
+            let layer = track.layers.get_mut(idx).expect("index just verified");
+            let from = layer
+                .effects
+                .iter()
+                .position(|e| e.id == effect_id)
+                .ok_or(CommandError::EffectNotFound { effect: effect_id })?;
+            let len = layer.effects.len();
+            if new_index >= len {
+                return Err(CommandError::EffectIndexOutOfRange { index: new_index, len });
+            }
+            let e = layer.effects.remove(from);
+            layer.effects.insert(new_index, e);
+            return Ok(());
+        }
+    }
+    Err(CommandError::LayerNotFound { layer: layer_id })
+}
+
+/// Remove the effect identified by `effect_id` from `layer_id`'s effect
+/// chain. Errors with `LayerNotFound` or `EffectNotFound` if either is absent.
+pub(crate) fn apply_remove_effect(
+    project: &mut Project,
+    layer_id: LayerId,
+    effect_id: crate::state::ids::EffectId,
+) -> Result<(), CommandError> {
+    for track in project.tracks.iter_mut() {
+        if let Some(idx) = track.layers.iter().position(|l| l.id == layer_id) {
+            let layer = track.layers.get_mut(idx).expect("index just verified");
+            let before = layer.effects.len();
+            layer.effects.retain(|e| e.id != effect_id);
+            if layer.effects.len() == before {
+                return Err(CommandError::EffectNotFound { effect: effect_id });
+            }
+            return Ok(());
+        }
+    }
+    Err(CommandError::LayerNotFound { layer: layer_id })
+}
