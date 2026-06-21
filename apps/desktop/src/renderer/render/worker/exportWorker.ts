@@ -29,7 +29,7 @@
 //     installs them and `MotifSprite` binds by comp-frame index.
 //     VideoClip / ImageOverlay / Color / Text render fine.
 
-import { Application, Container, DOMAdapter, RenderTexture, WebWorkerAdapter } from "pixi.js";
+import { Application, Container, DOMAdapter, RenderTexture, TexturePool, WebWorkerAdapter } from "pixi.js";
 import type { WebGLRenderer } from "pixi.js";
 
 import type { MediaSummary, ProjectSummary } from "../../ipc";
@@ -153,6 +153,16 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
         throw new Error(`10-bit export: float16 render targets unsupported (glError ${err})`);
       }
     }
+  }
+
+  if (tenBit) {
+    // Pixi's FilterSystem allocates filter intermediates from this global
+    // TexturePool; its default 8-bit format would band the 10-bit signal at the
+    // first filter. Set it to rgba16float ONCE, here at init, before any
+    // filtering. NEVER TexturePool.clear(true) on a live FilterSystem — it
+    // destroys pooled textures the persistent filter bind group references
+    // (null-resources crash); the pool is empty at init so no clear is needed.
+    TexturePool.textureOptions = { ...TexturePool.textureOptions, format: "rgba16float" };
   }
 
   // 2. Dedicated export decoder pool — bypasses the preview-tuned
