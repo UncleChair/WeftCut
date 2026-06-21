@@ -96,18 +96,24 @@ pub enum TrackRole {
     BRoll,
     AudioA,
     AudioB,
+    /// Subtitle / caption track. Hidden from AB display-mode filtering like
+    /// audio tracks; has no audio pair. Created by subtitle import (Task 3.x).
+    Caption,
 }
 
 impl TrackRole {
     /// The audio role paired with a video role, and vice versa. Used by the
     /// group-fanout path when a layer is dragged across the V/A boundary
     /// onto an A or B track.
+    /// Caption has no audio pair; it maps to itself so callers that always
+    /// call `paired()` don't have to special-case it.
     pub fn paired(self) -> Self {
         match self {
             TrackRole::ARoll => TrackRole::AudioA,
             TrackRole::BRoll => TrackRole::AudioB,
             TrackRole::AudioA => TrackRole::ARoll,
             TrackRole::AudioB => TrackRole::BRoll,
+            TrackRole::Caption => TrackRole::Caption,
         }
     }
 
@@ -116,11 +122,24 @@ impl TrackRole {
     pub fn is_video(self) -> bool {
         matches!(self, TrackRole::ARoll | TrackRole::BRoll)
     }
+
+    /// True only for `Caption` tracks. Keyed on by the subtitle import path
+    /// and any UI / MCP surface that needs to locate the caption lane.
+    pub fn is_caption(self) -> bool {
+        matches!(self, TrackRole::Caption)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn caption_role_is_not_video_and_reports_caption() {
+        assert!(TrackRole::Caption.is_caption());
+        assert!(!TrackRole::Caption.is_video());
+        assert!(!TrackRole::ARoll.is_caption());
+    }
 
     /// Old `.vproj` JSON (written before muted/solo existed) must load
     /// with both flags defaulting to false.

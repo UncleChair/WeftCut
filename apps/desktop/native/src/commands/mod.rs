@@ -398,6 +398,7 @@ pub(crate) fn build_project_summary(
                 TrackRole::BRoll => "b-roll".to_string(),
                 TrackRole::AudioA => "audio-a".to_string(),
                 TrackRole::AudioB => "audio-b".to_string(),
+                TrackRole::Caption => "caption".to_string(),
             }),
             transient: t.transient,
             layers: t
