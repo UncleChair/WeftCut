@@ -1,0 +1,5 @@
+{ "name": "duplicate-multiple", "commands": [
+  { "op": "add_layer", "track": "@B", "kind": "color", "t_start_us": 0, "t_end_us": 1000000, "ref": "L1" },
+  { "op": "duplicate_layer", "layer": "@L1", "t_offset_us": 2000000 },
+  { "op": "duplicate_layer", "layer": "@L1", "t_offset_us": 4000000 }
+] }

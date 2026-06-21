@@ -1,0 +1,5 @@
+{ "name": "undo-redo-marker", "commands": [
+  { "op": "add_marker", "t_us": 3000000, "label": "chapter" },
+  { "op": "undo" },
+  { "op": "redo" }
+] }

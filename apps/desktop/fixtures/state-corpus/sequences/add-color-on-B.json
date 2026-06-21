@@ -1,0 +1,3 @@
+{ "name": "add-color-on-B", "commands": [
+  { "op": "add_layer", "track": "@B", "kind": "color", "t_start_us": 0, "t_end_us": 3000000, "ref": "L1" }
+] }

@@ -1,0 +1,3 @@
+{ "name": "add-text-on-B", "commands": [
+  { "op": "add_layer", "track": "@B", "kind": "text", "t_start_us": 500000, "t_end_us": 4000000, "ref": "T1" }
+] }

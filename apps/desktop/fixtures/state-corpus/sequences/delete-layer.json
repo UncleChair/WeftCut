@@ -1,0 +1,4 @@
+{ "name": "delete-layer", "commands": [
+  { "op": "add_layer", "track": "@A", "kind": "color", "t_start_us": 0, "t_end_us": 5000000, "ref": "L1" },
+  { "op": "delete_layer", "layer": "@L1" }
+] }

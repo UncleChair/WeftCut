@@ -1,0 +1,3 @@
+{ "name": "add-track-label", "commands": [
+  { "op": "add_track", "label": "Voiceover" }
+] }
