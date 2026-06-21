@@ -581,6 +581,11 @@ const enUS = {
     motif_source_applying: "Applying…",
     motif_source_hint: "Edit the Motif's HTML + manifest island, then Apply to update the preview.",
   },
+  captions: {
+    title: "Captions",
+    empty: "Import a subtitle file or auto-caption to create captions.",
+    style_heading: "Caption style",
+  },
   audio_roles: { dialogue: "Dialogue", music: "Music", sfx: "SFX", voiceover: "Voiceover" },
   mixer: {
     title: "Mixer",

@@ -566,6 +566,11 @@ const zhCN: Resources = {
     motif_source_applying: "应用中…",
     motif_source_hint: "编辑 Motif 的 HTML 与清单岛，然后点击「应用」更新预览。",
   },
+  captions: {
+    title: "字幕",
+    empty: "导入字幕文件或自动字幕以创建字幕。",
+    style_heading: "字幕样式",
+  },
   audio_roles: { dialogue: "对白", music: "音乐", sfx: "音效", voiceover: "旁白" },
   mixer: {
     title: "混音",
