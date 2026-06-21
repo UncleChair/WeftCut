@@ -659,6 +659,16 @@ enum Command {
         actor: Actor,
         reply: oneshot::Sender<Result<(), CommandError>>,
     },
+    /// Atomically create a `role: Caption` track + one Text layer per cue in
+    /// a single history entry, so a 200-cue import is ONE undo step.
+    AddCaptionTrack {
+        cues: Vec<crate::subtitles::Cue>,
+        comp_w: u32,
+        comp_h: u32,
+        label: Option<String>,
+        actor: Actor,
+        reply: oneshot::Sender<Result<TrackId, CommandError>>,
+    },
     // No set-effects command: the per-layer effects subsystem isn't built yet
     // (per-sprite Pixi filter chains driven by a future `layer.effects` — see
     // docs/roadmap.md), so neither the field nor a mutation surface exists.
@@ -893,6 +903,33 @@ impl ProjectHandle {
                 params,
                 t_start_us,
                 t_end_us,
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    /// Create a `role: Caption` track populated with one Text layer per cue in
+    /// a single history commit — so an N-cue subtitle import is ONE undo step.
+    /// `comp_w`/`comp_h` are the composition dimensions used by
+    /// `subtitles::layout::cue_to_text_params` to derive font size and position.
+    pub async fn add_caption_track(
+        &self,
+        actor: Actor,
+        cues: Vec<crate::subtitles::Cue>,
+        comp_w: u32,
+        comp_h: u32,
+        label: Option<String>,
+    ) -> Result<TrackId, CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::AddCaptionTrack {
+                cues,
+                comp_w,
+                comp_h,
+                label,
                 actor,
                 reply,
             })
@@ -2000,6 +2037,17 @@ impl ProjectActor {
                 let result = self.do_groups_rename(id, label, actor);
                 let _ = reply.send(result);
             }
+            Command::AddCaptionTrack {
+                cues,
+                comp_w,
+                comp_h,
+                label,
+                actor,
+                reply,
+            } => {
+                let result = self.do_add_caption_track(cues, comp_w, comp_h, label, actor);
+                let _ = reply.send(result);
+            }
             Command::Undo { actor, reply } => {
                 let result = self.do_undo(actor);
                 let _ = reply.send(result);
@@ -2170,6 +2218,53 @@ impl ProjectActor {
             DiffHint::Layer(layer_id),
         )?;
         Ok(layer_id)
+    }
+
+    /// Create a `role: Caption` track and one Text layer per cue in ONE commit.
+    /// All cue layers land on the new track before validation so the whole
+    /// import is a single undo entry.
+    fn do_add_caption_track(
+        &mut self,
+        cues: Vec<crate::subtitles::Cue>,
+        comp_w: u32,
+        comp_h: u32,
+        label: Option<String>,
+        actor: Actor,
+    ) -> Result<TrackId, CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+        let mut track = Track::new();
+        track.role = Some(TrackRole::Caption);
+        track.transient = false;
+        track.label = label;
+        let track_id = track.id;
+        next.tracks.push_back(track);
+        let mut affected: Vec<EntityRef> = vec![EntityRef::Track(track_id)];
+        for cue in &cues {
+            let params = LayerParams::Text(
+                crate::subtitles::layout::cue_to_text_params(cue, comp_w, comp_h),
+            );
+            // Cue timestamps may not be on a composition frame boundary; snap
+            // them via apply_add_layer (which calls snap_frame_round internally).
+            let layer_id = apply_add_layer(
+                &mut next,
+                track_id,
+                params,
+                cue.start_us,
+                cue.end_us,
+            )?;
+            affected.push(EntityRef::Layer(layer_id));
+        }
+        self.commit(
+            next,
+            actor,
+            format!(
+                "Added caption track {track_id} with {} cues",
+                cues.len()
+            ),
+            affected,
+            DiffHint::Coarse,
+        )?;
+        Ok(track_id)
     }
 
     /// A/B-roll v2 V.7: lift an Audio layer onto a freshly-created

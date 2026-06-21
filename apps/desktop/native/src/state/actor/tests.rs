@@ -5073,3 +5073,26 @@
             "empty right half must collapse to Static at the last key value 0.8, got {slot:?}"
         );
     }
+
+    #[tokio::test]
+    async fn add_caption_track_creates_role_track_with_one_layer_per_cue() {
+        use crate::subtitles::Cue;
+        use crate::subtitles::CueStyle;
+        let h = spawn(Project::new_blank("test"));
+        let cues = vec![
+            Cue { start_us: 0, end_us: 1_000_000, text: "a".into(), style: CueStyle::default() },
+            Cue { start_us: 1_000_000, end_us: 2_000_000, text: "b".into(), style: CueStyle::default() },
+        ];
+        let track_id = h.add_caption_track(Actor::User, cues, 1920, 1080, Some("Captions".into()))
+            .await.expect("add_caption_track");
+        let snap = h.snapshot().await;
+        let track = snap.tracks.iter().find(|t| t.id == track_id).expect("track");
+        assert_eq!(track.role, Some(crate::state::track::TrackRole::Caption));
+        assert_eq!(track.layers.len(), 2);
+        assert!(matches!(track.layers[0].params, crate::state::layer::LayerParams::Text(_)));
+
+        // ONE undo removes the whole caption track.
+        h.undo(Actor::User).await.expect("undo");
+        let snap = h.snapshot().await;
+        assert!(snap.tracks.iter().all(|t| t.id != track_id));
+    }
