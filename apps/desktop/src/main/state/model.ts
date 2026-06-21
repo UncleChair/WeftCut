@@ -9,7 +9,7 @@ export interface Rational { num: number; den: number }
 export interface Rgba { r: number; g: number; b: number; a: number }
 export type ColorSpace = 'Bt709' | 'Bt601' | 'Bt2020' | 'SRgb'
 export type AudioRole = 'dialogue' | 'music' | 'sfx' | 'voiceover'
-export type TrackRole = 'a-roll' | 'b-roll' | 'audio-a' | 'audio-b' | 'caption'
+export type TrackRole = 'ARoll' | 'BRoll' | 'AudioA' | 'AudioB' | 'Caption'
 export type BlendMode =
   | 'Normal' | 'Multiply' | 'Screen' | 'Overlay' | 'Darken' | 'Lighten' | 'Add' | 'Difference'
 
@@ -118,8 +118,8 @@ function defaultSettings(): ProjectSettings {
 
 /** Mirror of Rust `Project::new_blank`. Id order: A-roll, B-roll, project_id. */
 export function blankProject(idGen: IdGen, name: string): Project {
-  const aRoll = newTrack(idGen(), 'A roll', 'a-roll')
-  const bRoll = newTrack(idGen(), 'B roll', 'b-roll')
+  const aRoll = newTrack(idGen(), 'A roll', 'ARoll')
+  const bRoll = newTrack(idGen(), 'B roll', 'BRoll')
   const projectId = idGen()
   return {
     schema_version: SCHEMA_VERSION, project_id: projectId,
