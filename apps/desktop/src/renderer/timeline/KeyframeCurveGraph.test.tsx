@@ -82,4 +82,21 @@ describe("KeyframeCurveGraph", () => {
     // the test track has keys k0 (owns the only segment) -> k1
     expect(onOpenMenu).toHaveBeenCalledWith(5, 6, "k0");
   });
+  it("commits a tangent-handle drag as a single deferred onSetInterp (one undo step)", () => {
+    const onSetInterp = vi.fn();
+    const { container } = renderGraph({ onSetInterp });
+    const handle = container.querySelector('[data-testid="kf-handle"]')!;
+    fireEvent.pointerDown(handle, { button: 0, clientX: 20, clientY: 40 });
+    fireEvent.pointerMove(window, { clientX: 30, clientY: 35 });
+    fireEvent.pointerMove(window, { clientX: 40, clientY: 30 });
+    fireEvent.pointerMove(window, { clientX: 50, clientY: 25 });
+    // No commit mid-drag: a per-move commit spams the actor (async IPC round
+    // trip per move) and floods the undo stack with one entry per pointermove.
+    expect(onSetInterp).not.toHaveBeenCalled();
+    fireEvent.pointerUp(window);
+    // Exactly one commit on release → one undo step, carrying the final coeffs.
+    expect(onSetInterp).toHaveBeenCalledTimes(1);
+    expect(onSetInterp.mock.calls[0]![0]).toBe("k0");
+    expect(onSetInterp.mock.calls[0]![1].kind).toBe("Bezier");
+  });
 });

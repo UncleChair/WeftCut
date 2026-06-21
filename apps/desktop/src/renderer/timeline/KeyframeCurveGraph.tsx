@@ -2,7 +2,7 @@
 // keyframed property of one layer. Curve + handles live in an SVG overlay
 // (absolute, ruler-px coordinates); keyframe dots are HTML spans on top so
 // they keep the `.kf-sublane-diamond` contract the e2e suite asserts.
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { AnimTrack, Interpolation } from "../ipc";
 import { interpToCoeffs } from "../keyframe/curve";
 import {
@@ -48,22 +48,46 @@ export function KeyframeCurveGraph({
 
   const keys = track.value;
 
+  // In-flight tangent-handle drag: holds the dragged segment's interp locally so
+  // the curve previews live WITHOUT committing per pointermove. A per-move commit
+  // would fire one async actor round-trip and one undo entry per move (60+ for a
+  // single gesture). We commit once on pointerup; this preview survives until the
+  // committed track catches up (see the clear effect below), so there's no
+  // flicker back to the pre-drag curve while the async commit is in flight.
+  const [preview, setPreview] = useState<{ owner: string; interp: Interpolation } | null>(null);
+
+  // Keys as rendered: the dragged segment shows its preview interp; everything
+  // else is the committed track. Drives geom + segments so the value-range and
+  // handle positions track the drag live.
+  const renderKeys = useMemo(() => {
+    if (!preview) return keys;
+    return keys.map((k) => (k.id === preview.owner ? { ...k, interp: preview.interp } : k));
+  }, [keys, preview]);
+
+  // Drop the preview once the committed track reflects it (or the owner key is
+  // gone). Until then the preview stands in for the not-yet-arrived commit.
+  useEffect(() => {
+    if (!preview) return;
+    const k = keys.find((x) => x.id === preview.owner);
+    if (!k || JSON.stringify(k.interp) === JSON.stringify(preview.interp)) setPreview(null);
+  }, [keys, preview]);
+
   const geom: CurveGeom = useMemo(() => {
-    const { vmin, vmax } = computeValueRange(keys);
+    const { vmin, vmax } = computeValueRange(renderKeys);
     return { pxPerSec, layerTStartUs, height, vmin, vmax };
-  }, [keys, pxPerSec, layerTStartUs, height]);
+  }, [renderKeys, pxPerSec, layerTStartUs, height]);
 
   // Keep the latest geom reachable from drag closures created at pointerdown
   // (the timeline can zoom/rescale mid-drag → captured geom would go stale).
   const geomRef = useRef(geom);
   geomRef.current = geom;
 
-  // Segments: each owns keys[i].interp (p1 near keys[i], p2 near keys[i+1]).
+  // Segments: each owns renderKeys[i].interp (p1 near keys[i], p2 near keys[i+1]).
   const segments = useMemo(() => {
     const out: { owner: string; seg: Seg; interp: Interpolation }[] = [];
-    for (let i = 0; i < keys.length - 1; i++) {
-      const a = keys[i]!;
-      const b = keys[i + 1]!;
+    for (let i = 0; i < renderKeys.length - 1; i++) {
+      const a = renderKeys[i]!;
+      const b = renderKeys[i + 1]!;
       out.push({
         owner: a.id,
         seg: { aTUs: a.t_us, aVal: a.value, bTUs: b.t_us, bVal: b.value },
@@ -71,7 +95,7 @@ export function KeyframeCurveGraph({
       });
     }
     return out;
-  }, [keys]);
+  }, [renderKeys]);
 
   function svgPoint(e: PointerEvent | React.PointerEvent): { x: number; y: number } {
     const r = svgRef.current!.getBoundingClientRect();
@@ -82,18 +106,25 @@ export function KeyframeCurveGraph({
     if (!editable) return;
     e.stopPropagation();
     e.preventDefault();
+    // Start from what's on screen (preview if a prior commit is still in flight,
+    // else the committed interp), so the math is single-valued from the grab.
     const current = interpToCoeffs(
-      keys.find((k) => k.id === owner)!.interp,
+      renderKeys.find((k) => k.id === owner)!.interp,
     ) as [number, number, number, number];
+    let nextInterp: Interpolation | null = null;
     const move = (me: PointerEvent) => {
       const p = svgPoint(me);
       const [c0, c1, c2, c3] = handleDragToCoeff(which, p.x, p.y, seg, geomRef.current, current);
-      onSetInterp(owner, { kind: "Bezier", p1: [c0, c1], p2: [c2, c3] });
+      nextInterp = { kind: "Bezier", p1: [c0, c1], p2: [c2, c3] };
+      setPreview({ owner, interp: nextInterp });
     };
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       teardownRef.current = null;
+      // One commit for the whole gesture → one undo step. Preview holds until
+      // the committed track arrives (clear effect), so no flicker on release.
+      if (nextInterp) onSetInterp(owner, nextInterp);
     };
     teardownRef.current = up;
     window.addEventListener("pointermove", move);
