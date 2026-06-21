@@ -42,7 +42,7 @@ const BLACK: Rgba = { r: 0, g: 0, b: 0, a: 255 };
 import { getMotif, subscribeMotifCatalog, motifCatalogRevision, type PropSpec } from "../render/motifs/catalog";
 import { useProjectStore } from "../state/projectStore";
 import { useLayerBakeStatus } from "../timeline/motifBakeStatusStore";
-// No EffectsSection here — effect editing isn't part of this panel.
+import { EffectsSection } from "./EffectsSection";
 
 interface Props {
   tracks: TrackSummary[];
@@ -108,6 +108,19 @@ function findLayer(
   return null;
 }
 
+/// Effects render on visual sprite kinds only (not Audio), so the EffectsSection
+/// shows for exactly these. An allowlist (not `!== "Audio"`) keeps a future
+/// non-visual kind from wrongly getting effects.
+export function isVisualKind(kind: string): boolean {
+  return (
+    kind === "Text" ||
+    kind === "VideoClip" ||
+    kind === "ImageOverlay" ||
+    kind === "Color" ||
+    kind === "Motif"
+  );
+}
+
 function KindFields({
   layer,
   onMutated,
@@ -131,22 +144,32 @@ function KindFields({
   };
   const tInLayerUs = currentTimeUs - layer.t_start_us;
   const playheadInSpan = currentTimeUs >= layer.t_start_us && currentTimeUs < layer.t_end_us;
-  switch (layer.params.kind) {
-    case "Text":
-      return <TextFields layer={layer} v={layer.params} commit={commit} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />;
-    case "VideoClip":
-      return <VideoClipFields layer={layer} v={layer.params} commit={commit} fpsNum={fpsNum} fpsDen={fpsDen} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />;
-    case "ImageOverlay":
-      return (
-        <ImageOverlayFields layer={layer} v={layer.params} commit={commit} fpsNum={fpsNum} fpsDen={fpsDen} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
-      );
-    case "Color":
-      return <ColorFields v={layer.params} commit={commit} />;
-    case "Audio":
-      return <AudioFields layer={layer} v={layer.params} commit={commit} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />;
-    case "Motif":
-      return <MotifFields layer={layer} v={layer.params} commit={commit} onMutated={onMutated} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} />;
-  }
+
+  const body = ((): React.ReactNode => {
+    switch (layer.params.kind) {
+      case "Text":
+        return <TextFields layer={layer} v={layer.params} commit={commit} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />;
+      case "VideoClip":
+        return <VideoClipFields layer={layer} v={layer.params} commit={commit} fpsNum={fpsNum} fpsDen={fpsDen} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />;
+      case "ImageOverlay":
+        return <ImageOverlayFields layer={layer} v={layer.params} commit={commit} fpsNum={fpsNum} fpsDen={fpsDen} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />;
+      case "Color":
+        return <ColorFields v={layer.params} commit={commit} />;
+      case "Audio":
+        return <AudioFields layer={layer} v={layer.params} commit={commit} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />;
+      case "Motif":
+        return <MotifFields layer={layer} v={layer.params} commit={commit} onMutated={onMutated} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} />;
+    }
+  })();
+
+  return (
+    <>
+      {body}
+      {isVisualKind(layer.params.kind) && (
+        <EffectsSection layer={layer} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />
+      )}
+    </>
+  );
 }
 
 type Commit = (patch: LayerParamsPatch) => Promise<void>;
