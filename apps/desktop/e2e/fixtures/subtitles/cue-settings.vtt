@@ -1,0 +1,11 @@
+WEBVTT
+
+NOTE
+This comment block must be skipped, not emitted as a cue.
+
+intro
+00:00:00.000 --> 00:00:02.000 line:90% position:50%
+First VTT cue (settings dropped)
+
+00:00:02.000 --> 00:00:04.000
+Second VTT cue

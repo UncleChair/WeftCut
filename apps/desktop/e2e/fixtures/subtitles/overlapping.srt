@@ -1,0 +1,11 @@
+1
+00:00:00,000 --> 00:00:03,000
+Speaker A talking
+
+2
+00:00:01,000 --> 00:00:04,000
+Speaker B interjecting
+
+3
+00:00:03,000 --> 00:00:05,000
+Back on the first track
