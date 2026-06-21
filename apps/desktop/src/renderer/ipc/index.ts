@@ -206,7 +206,8 @@ export interface SubtitlesView {
 
 /// A/B-roll role stamp (`docs/data-model.md`). Serialized from the Rust
 /// `TrackRole` enum as kebab-case. Null for additional / legacy tracks.
-export type TrackRole = "a-roll" | "b-roll" | "audio-a" | "audio-b";
+/// Roles: a-roll, b-roll, audio-a, audio-b, caption.
+export type TrackRole = "a-roll" | "b-roll" | "audio-a" | "audio-b" | "caption";
 
 export interface TrackSummary {
   id: string;
