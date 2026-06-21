@@ -301,6 +301,8 @@ test('effects UI: add/edit/reorder/remove a blur from the inspector panel', asyn
 
   // Select the layer so the inspector renders its EffectsSection.
   await page.evaluate((id) => (window as any).__weftcutTest.revealLayer({ layerId: id }), layerId)
+  // Wait for the panel to render before clicking Add (guards the selection→render race).
+  await page.getByTestId('effect-add').waitFor({ state: 'visible' })
 
   // Add a blur via the panel button.
   await page.getByTestId('effect-add').click()
@@ -308,6 +310,27 @@ test('effects UI: add/edit/reorder/remove a blur from the inspector panel', asyn
   let fx = effectsOf((await summary(page)) as any, layerId) as Array<{ kind: string; id: string; enabled: boolean; params: any }>
   expect(fx[0]!.kind).toBe('blur')
   const effectId = fx[0]!.id
+
+  // Reorder via the panel: add a second blur, move the first down, confirm the
+  // summary order swapped, then drop the extra so the rest of the test operates
+  // on the original effect.
+  await page.getByTestId('effect-add').click()
+  await expect.poll(async () => (effectsOf((await summary(page)) as any, layerId) as unknown[]).length).toBe(2)
+  const order = effectsOf((await summary(page)) as any, layerId) as Array<{ id: string }>
+  expect(order[0]!.id).toBe(effectId) // original blur is first
+  const secondId = order[1]!.id
+  await page.getByTestId('effect-down-0').click()
+  await expect.poll(async () => {
+    const f = effectsOf((await summary(page)) as any, layerId) as Array<{ id: string }>
+    return f[0]?.id
+  }).toBe(secondId) // moving row 0 down puts the second effect first
+  // Drop the extra (now at row 0); the original effectId returns to row 0.
+  await page.getByTestId('effect-remove-0').click()
+  await expect.poll(async () => (effectsOf((await summary(page)) as any, layerId) as unknown[]).length).toBe(1)
+  await expect.poll(async () => {
+    const f = effectsOf((await summary(page)) as any, layerId) as Array<{ id: string }>
+    return f[0]?.id
+  }).toBe(effectId) // back to a single original blur at row 0
 
   // Edit strength through the param field (commits on blur → nested track key).
   // The param wrapper contains two <input>s: the visible text input and a hidden type=number;
@@ -317,7 +340,7 @@ test('effects UI: add/edit/reorder/remove a blur from the inspector panel', asyn
   // Use triple-click to select all existing text, then type the new value.
   const strength = page.getByTestId(`effect-param-${effectId}-strength`).locator('input').first()
   await strength.click({ clickCount: 3 })
-  await strength.type('30')
+  await strength.pressSequentially('30')
   await strength.blur()
   await expect.poll(async () => {
     const f = effectsOf((await summary(page)) as any, layerId) as Array<{ params: any }>
