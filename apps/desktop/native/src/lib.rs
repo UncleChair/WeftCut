@@ -52,5 +52,6 @@ mod preview;
 mod agent_session;
 mod recents;
 mod state;
+pub mod subtitles;
 mod view_state;
 mod workspace;
