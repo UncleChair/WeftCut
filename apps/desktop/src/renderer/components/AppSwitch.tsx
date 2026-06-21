@@ -7,6 +7,7 @@ interface AppSwitchProps {
   disabled?: boolean;
   ariaLabel?: string;
   className?: string;
+  "data-testid"?: string;
 }
 
 /// The one on/off control for every WeftCut form. Use for immediate-effect
@@ -20,6 +21,7 @@ export function AppSwitch({
   disabled,
   ariaLabel,
   className,
+  "data-testid": testId,
 }: AppSwitchProps) {
   return (
     <Switch.Root
@@ -27,6 +29,7 @@ export function AppSwitch({
       checked={checked}
       disabled={disabled ?? false}
       aria-label={ariaLabel}
+      data-testid={testId}
       onCheckedChange={(next) => onCheckedChange(next)}
     >
       <Switch.Thumb className="app-switch-thumb" />

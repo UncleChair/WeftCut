@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const { addEffect, updateEffect, moveEffect, removeEffect } = vi.hoisted(() => ({
@@ -15,6 +15,23 @@ vi.mock("react-i18next", () => ({
 }));
 vi.mock("../render/effects/effectRegistry", () => ({
   listEffects: () => [{ kind: "blur", nameI18nKey: "effects.blur.name" }],
+}));
+// Mock AppSwitch to a plain button so jsdom never hits Base UI's PointerEvent
+// constructor (which jsdom doesn't implement). EffectsSection tests cover the
+// wiring, not the switch widget itself.
+vi.mock("../components/AppSwitch", () => ({
+  AppSwitch: ({ checked, onCheckedChange, "data-testid": testId }: {
+    checked: boolean;
+    onCheckedChange: (v: boolean) => void;
+    "data-testid"?: string;
+  }) => (
+    <button
+      role="switch"
+      aria-checked={checked}
+      data-testid={testId}
+      onClick={() => onCheckedChange(!checked)}
+    />
+  ),
 }));
 
 import { EffectsSection } from "./EffectsSection";
@@ -40,7 +57,8 @@ describe("EffectsSection", () => {
   it("renders one row per effect, named from the catalog", () => {
     render(<EffectsSection layer={layerWith([blur("E1")])} tInLayerUs={0} playheadInSpan onMutated={onMutated} />);
     // effects.blur.name has no translation in the mock → falls back to defaultValue "blur".
-    expect(screen.getByText("blur")).toBeTruthy();
+    // Scope to the row so we don't accidentally match the select trigger's label.
+    expect(within(screen.getByTestId("effect-row-0")).getByText("blur")).toBeTruthy();
   });
 
   it("clicking Add calls addEffect with the selected (default) kind", async () => {

@@ -49,7 +49,7 @@ export function EffectsSection({ layer, tInLayerUs, playheadInSpan, onMutated }:
           value={pendingKind}
           ariaLabel={t("effects.add")}
           onValueChange={setPendingKind}
-          options={catalog.map((d) => ({ value: d.kind, label: t(d.nameI18nKey) }))}
+          options={catalog.map((d) => ({ value: d.kind, label: t(d.nameI18nKey, { defaultValue: d.kind }) }))}
         />
         <Button size="sm" data-testid="effect-add" disabled={!pendingKind} onClick={add}>
           {t("effects.add")}
@@ -93,24 +93,12 @@ function EffectRow({
     <div className="prop-effect-row" data-testid={`effect-row-${index}`}>
       <div className="prop-effect-head">
         <span className="prop-effect-name">{name}</span>
-        {/* AppSwitch doesn't spread unknown props — wrap so the testid
-            reaches a real DOM node (Task 8 e2e depends on it). The span
-            onClick only fires when the span itself (not a child switch
-            button) is the direct click target, preventing double-dispatch
-            when the inner button is clicked directly by the real user. */}
-        <span
+        <AppSwitch
           data-testid={`effect-enable-${index}`}
-          onClick={(e) => {
-            if (e.target === e.currentTarget)
-              run(() => updateEffect(layer.id, effect.id, { enabled: !effect.enabled }))();
-          }}
-        >
-          <AppSwitch
-            checked={effect.enabled}
-            ariaLabel={t("effects.enable", { name })}
-            onCheckedChange={(next) => run(() => updateEffect(layer.id, effect.id, { enabled: next }))()}
-          />
-        </span>
+          checked={effect.enabled}
+          ariaLabel={t("effects.enable", { name })}
+          onCheckedChange={(next) => run(() => updateEffect(layer.id, effect.id, { enabled: next }))()}
+        />
         <Button
           size="sm"
           data-testid={`effect-up-${index}`}
