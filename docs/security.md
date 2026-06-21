@@ -17,10 +17,16 @@ server is left untouched, because HMR needs inline + eval + websockets.
 
 - `default-src 'self'`, `object-src 'none'`, `base-uri 'self'`, **`frame-src 'none'`** —
   no embedding, no `<base>` hijack, no iframes.
-- `script-src 'self' 'wasm-unsafe-eval' blob:` — **no `unsafe-eval`**. WASM (the eval
-  leaf, mediabunny) needs the narrow `wasm-unsafe-eval` compile grant, not full `eval`.
-  PixiJS's `new Function` requirement is met by importing the `pixi.js/unsafe-eval`
-  polyfill (precompiled shaders) — *not* by loosening the CSP.
+- `script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval' blob:`. WASM (the eval leaf,
+  mediabunny) needs the narrow `wasm-unsafe-eval` compile grant. `'unsafe-eval'` is
+  granted for PixiJS's `new Function` shader/uniform codegen: the no-eval
+  `pixi.js/unsafe-eval` polyfill we previously used to *avoid* this grant renders
+  every **filtered** object EMPTY on the **WebGPU** backend (filters work on WebGL
+  either way), which kills the per-layer effects subsystem in the WebGPU-preferring
+  preview and export. Real codegen + `'unsafe-eval'` is the accepted trade. The grant
+  widens the eval surface but not the *content* surface — the renderer still loads no
+  remote or inline `<script>`, so the practical XSS vector (the thing CSP exists to
+  block here) stays closed.
 - `img-/media-/connect-src` include the app's own privileged schemes (`weftcut-media:`,
   `motif:`) plus `blob:`/`data:` — the editor legitimately fetches imported media and
   Motif assets.

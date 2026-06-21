@@ -13,9 +13,18 @@ const HERE = path.dirname(fileURLToPath(import.meta.url))
 // the real XSS vector (inline / remote <script>) while still allowing wasm
 // (jassub, mediabunny), blob workers (export/jassub), data: fonts/images, and
 // the app's own privileged schemes (weftcut-media:, motif:).
+//
+// `'unsafe-eval'` is allowed because PixiJS generates shader/uniform code with
+// `new Function()`, and that codegen is REQUIRED for filters on the WebGPU
+// backend: the `pixi.js/unsafe-eval` no-eval polyfill (which let us drop
+// `'unsafe-eval'`) renders every filtered object EMPTY on WebGPU (filters work
+// on WebGL either way). Since the per-layer effects subsystem needs filters and
+// the preview/export prefer WebGPU, we keep WebGPU + real codegen and accept
+// `'unsafe-eval'`. The renderer still loads no remote/inline script, so the XSS
+// surface stays narrow. See docs/security.md.
 const CSP = [
   "default-src 'self'",
-  "script-src 'self' 'wasm-unsafe-eval' blob:",
+  "script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval' blob:",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: weftcut-media: motif:",
   "font-src 'self' data:",

@@ -1,10 +1,8 @@
-// MUST be first: PixiJS uses `new Function()` for shader/uniform codegen, which
-// the packaged renderer's Content-Security-Policy (no `unsafe-eval`; see
-// electron.vite.config.ts) blocks — the live Pixi preview would fail to init.
-// This side-effect import installs static no-eval polyfills and must run before
-// any renderer is created (@pixi/react Application). The export worker isn't
-// under the document CSP, so it doesn't need this.
-import "pixi.js/unsafe-eval";
+// NOTE: do NOT import "pixi.js/unsafe-eval" here. Its no-eval shader polyfill
+// renders every filtered object EMPTY on the WebGPU backend (the per-layer
+// effects subsystem would be dead on the preview). We instead let PixiJS use
+// its real `new Function()` codegen and allow `'unsafe-eval'` in the packaged
+// CSP (see electron.vite.config.ts). Filters then work on WebGPU + WebGL alike.
 import React, { useCallback, useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { invoke } from "@/bridge/ipc";
