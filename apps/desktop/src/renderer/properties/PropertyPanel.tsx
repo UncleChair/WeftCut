@@ -1196,6 +1196,8 @@ function InspectorAnimField({
 }
 
 const FONT_FAMILIES = [
+  "Noto Sans SC",
+  "Liberation Sans",
   "Arial",
   "Times New Roman",
   "Courier New",
