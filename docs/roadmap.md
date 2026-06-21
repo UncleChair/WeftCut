@@ -71,10 +71,10 @@ from day one.
 
 Caption cues imported from SRT/VTT/ASS become `Text` layers on a
 caption-role track and burn into the video through the normal
-`TextSprite` compositor path — no separate ffmpeg stage required,
-and the export gap is closed. What remains as a small deferred
-follow-up: soft-subtitle tracks (stream-muxed SRT/ASS into MKV or
-MP4) and sidecar file export. The data is already in `Text` layers;
+`TextSprite` compositor path — no separate ffmpeg stage required.
+What remains as a deferred follow-up: soft-subtitle tracks
+(stream-muxed SRT/ASS into MKV or MP4) and sidecar file export for
+containers that carry a subtitle stream. The data is already in `Text` layers;
 the work is an ffmpeg subtitle-mux stage on top of the existing
 export pipeline.
 
