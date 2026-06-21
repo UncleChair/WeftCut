@@ -1,0 +1,105 @@
+<!doctype html>
+<html>
+  <head><meta charset="utf-8" /><title>f16 filter pool PoC</title></head>
+  <body>
+    <script>
+      const { ipcRenderer } = require("electron");
+      const F16 = process.env.POOL_F16 === "1"; // condition selector
+
+      function halfToFloat(h) {
+        const s = (h & 0x8000) >> 15, e = (h & 0x7c00) >> 10, f = h & 0x03ff;
+        if (e === 0) return (s ? -1 : 1) * Math.pow(2, -14) * (f / 1024);
+        if (e === 0x1f) return f ? NaN : (s ? -1 : 1) * Infinity;
+        return (s ? -1 : 1) * Math.pow(2, e - 15) * (1 + f / 1024);
+      }
+
+      (async () => {
+        const out = { condition: F16 ? "f16-pool" : "default-pool", phases: {} };
+        const phase = (name, fn) => {
+          try { out.phases[name] = fn(); } catch (e) { out.phases[name] = { error: String((e && e.stack) || e) }; }
+        };
+        try {
+          const PIXI = require("pixi.js");
+          const { autoDetectRenderer, RenderTexture, Sprite, Mesh, MeshGeometry,
+            Shader, ColorMatrixFilter, BlurFilter, TexturePool, Container } = PIXI;
+
+          // *** The real-design move: set the filter pool format ONCE, at init,
+          //     before the renderer does any filtering. No clear() ever. ***
+          if (F16) {
+            TexturePool.textureOptions = { ...TexturePool.textureOptions, format: "rgba16float" };
+          }
+
+          const W = 1024, H = 4;
+          const renderer = await autoDetectRenderer({ preference: "webgl", width: W, height: H, antialias: false });
+          const gl = renderer.gl;
+          out.diag = {
+            pixi: PIXI.VERSION,
+            glRenderer: gl.getParameter(gl.RENDERER),
+            colorBufferFloat: !!gl.getExtension("EXT_color_buffer_float"),
+          };
+
+          function readRed(rt, label) {
+            renderer.renderTarget.bind(rt, false);
+            const type = gl.getParameter(gl.IMPLEMENTATION_COLOR_READ_TYPE);
+            const y = H >> 1, reds = [];
+            if (type === gl.FLOAT) {
+              const buf = new Float32Array(W * 4);
+              gl.readPixels(0, y, W, 1, gl.RGBA, gl.FLOAT, buf);
+              for (let i = 0; i < W; i++) reds.push(buf[i * 4]);
+            } else {
+              const buf = new Uint16Array(W * 4);
+              gl.readPixels(0, y, W, 1, gl.RGBA, gl.HALF_FLOAT, buf);
+              for (let i = 0; i < W; i++) reds.push(halfToFloat(buf[i * 4]));
+            }
+            return { label, distinct: new Set(reds.map((v) => Math.round(v * 100000))).size, glError: gl.getError() };
+          }
+
+          const VERT = `#version 300 es
+precision highp float;
+in vec2 aPosition; in vec2 aUV; out vec2 vUV;
+uniform mat3 uProjectionMatrix; uniform mat3 uWorldTransformMatrix;
+void main(){ mat3 mvp=uProjectionMatrix*uWorldTransformMatrix;
+gl_Position=vec4((mvp*vec3(aPosition,1.0)).xy,0.0,1.0); vUV=aUV; }`;
+          const FRAG = `#version 300 es
+precision highp float; in vec2 vUV; out vec4 finalColor;
+void main(){ finalColor=vec4(vUV.x,vUV.x,vUV.x,1.0); }`;
+
+          const srcRT = RenderTexture.create({ width: W, height: H, format: "rgba16float" });
+          const mesh = new Mesh({
+            geometry: new MeshGeometry({
+              positions: new Float32Array([0, 0, W, 0, W, H, 0, H]),
+              uvs: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
+              indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
+            }),
+            shader: Shader.from({ gl: { vertex: VERT, fragment: FRAG }, resources: {} }),
+          });
+          renderer.render({ container: mesh, target: srcRT });
+          phase("source", () => readRed(srcRT, "source-f16-gradient"));
+
+          phase("poolFormat", () => {
+            const t = TexturePool.getOptimalTexture(W, H, 1, false);
+            const fmt = t.source.format; TexturePool.returnTexture(t);
+            return { filterPoolTextureFormat: fmt };
+          });
+
+          const runFilter = (label, f) => {
+            const outRT = RenderTexture.create({ width: W, height: H, format: "rgba16float" });
+            const stage = new Container();
+            const sp = new Sprite(srcRT);
+            sp.filters = [f];
+            stage.addChild(sp);
+            renderer.render({ container: stage, target: outRT });
+            return readRed(outRT, label);
+          };
+          phase("colormatrix", () => runFilter("colormatrix-identity", new ColorMatrixFilter()));
+          phase("blur", () => runFilter("blur-strength2", new BlurFilter({ strength: 2 })));
+
+          ipcRenderer.send("poc-result", out);
+        } catch (err) {
+          out.fatal = String((err && err.stack) || err);
+          ipcRenderer.send("poc-error", out);
+        }
+      })();
+    </script>
+  </body>
+</html>
