@@ -741,8 +741,15 @@ export class Compositor {
       }
     }
 
+    // Export ignores the preview-only LOD toggle — effects are always
+    // applied at full quality during export regardless of the user's
+    // preview performance setting. The export worker realm never
+    // hydrates the settings store, but this guard is structural so
+    // correctness doesn't depend on that implementation detail.
     const previewEffectsEnabled =
-      useAppSettingsStore.getState().settings.preview_effects_enabled;
+      this.mode === "export"
+        ? true
+        : useAppSettingsStore.getState().settings.preview_effects_enabled;
     const effectOpts = { previewEffectsEnabled };
 
     let z = 0;

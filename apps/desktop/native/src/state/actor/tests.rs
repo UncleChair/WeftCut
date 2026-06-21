@@ -895,7 +895,7 @@
         // timeline_min (-t_start = -4s) — but source-windowing adds a tighter
         // constraint: src_in_us = 0 means no content before frame 0, so the
         // IN edge can't move earlier (src_min = -src_in_us = 0 binds harder).
-        // This changed when Task 5 added per-motif src_in floor enforcement.
+        // This changed when per-motif src_in floor enforcement was added.
         let layer_4_to_7 = Layer {
             t_start_us: 4_000_000,
             t_end_us: 7_000_000,
@@ -4669,7 +4669,7 @@
     }
 
     // ============================================================
-    // Task 10: locked tracks reject layer mutations.
+    // Locked tracks reject layer mutations.
     // ============================================================
 
     #[tokio::test]
@@ -5197,7 +5197,7 @@
     }
 
     // ============================================================
-    // Effect mutation helpers (Task 2)
+    // Effect mutation helpers
     // ============================================================
 
     fn blur_effect(strength: f64) -> crate::state::Effect {

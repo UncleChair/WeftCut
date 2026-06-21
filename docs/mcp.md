@@ -142,11 +142,12 @@ Layers:
 - `duplicate_layer { layer_id, t_offset_us }` → `LayerId`
 
 Effects (per-layer Pixi filter chains; v1 catalog: `blur`):
-- `add_effect { layer_id, kind }` → `EffectId`. Append an effect (top of stack).
+- In v1, effects render on VideoClip, ImageOverlay, Color, and Text layers. Motif layers accept effects in the data model but do not yet render them (deferred).
+- `add_effect { layer_id, kind }` → `EffectId`. Append an effect to the end of the chain (applied last). Creates the effect with no params set; use `update_effect` to set a static value or `set_keyframe` to keyframe a param.
 - `update_effect { layer_id, effect_id, patch }` — patch is `{ enabled?, params? }`; v1 params are scalar `{ "mode": "Static", "value": <number> }`.
 - `move_effect { layer_id, effect_id, new_index }` — reorder (0 = first applied).
 - `remove_effect { layer_id, effect_id }` — delete.
-- Keyframe an effect param via `set_keyframe { layer_id, param_key: "effects[<effect_id>].params[<key>]", t_us, value, interp? }`.
+- Keyframe an effect param via `set_keyframe { layer_id, param_key: "effects[<effect_id>].params[<key>]", t_us, value, interp? }`. **Ordering:** `add_effect` creates an effect with no params; set a static value first with `update_effect` (so the param key exists), then use `set_keyframe` to lift it to keyframed. Calling `set_keyframe` on a param key that has never been set returns `UnknownKeyframeParam`.
 
 Keyframes (animate `Animated<f64>` params; times are timeline-absolute µs):
 - `get_param_track { layer_id, param_key }` → `{ mode, value }` (Static) or `{ mode, keyframes: [{ id, t_us, t_local_us, value, interp }] }` (Keyframed). Read this to discover keyframe ids before editing.

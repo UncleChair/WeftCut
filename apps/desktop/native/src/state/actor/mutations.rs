@@ -1444,7 +1444,7 @@ fn layer_params_patch_kind(patch: &LayerParamsPatch) -> &'static str {
 }
 
 // ============================================================
-// Per-layer effect mutation helpers (Task 2)
+// Per-layer effect mutation helpers
 // ============================================================
 
 /// Append `effect` to `layer_id`'s effect chain. Returns the newly-added

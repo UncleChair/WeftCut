@@ -35,7 +35,6 @@ pub struct EffectPatch {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::animated::Animated;
 
     #[test]
     fn effect_serde_roundtrip_static_param() {

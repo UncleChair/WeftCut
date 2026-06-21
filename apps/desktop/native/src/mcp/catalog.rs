@@ -148,7 +148,7 @@ tool_table! {
                           {\"mode\":\"Keyframed\",\"value\":[{id, t_us, value, interp}]} with keyframe \
                           `t_us` timeline-absolute. Use the granular tools (set_keyframe etc.) unless you \
                           need bulk authoring.", super::keyframes::SetParamTrackArgs, tools::set_param_track),
-    "add_effect" => ("Add an effect to a layer's chain (appended to the top of the stack). `kind` is the catalog key (v1: \"blur\"). Returns the new effect id. Set params afterward with update_effect / set_keyframe.", super::effects::AddEffectArgs, tools::add_effect),
+    "add_effect" => ("Add an effect to a layer's chain (appended to the end of the chain, applied last). `kind` is the catalog key (v1: \"blur\"). Returns the new effect id. The effect is created with no params set; use update_effect to set a static value first, then set_keyframe to keyframe it.", super::effects::AddEffectArgs, tools::add_effect),
     "update_effect" => ("Update an effect: patch is `{ enabled?, params? }` where params is `{ paramKey: { \"mode\": \"Static\", \"value\": <number> } }` (v1 params are scalar). For keyframed params use set_keyframe with param_key \"effects[<effect_id>].params[<key>]\".", super::effects::UpdateEffectArgs, tools::update_effect),
     "move_effect" => ("Reorder an effect within its layer's chain. new_index is 0-based; 0 = first applied. Must be < effect count.", super::effects::MoveEffectArgs, tools::move_effect),
     "remove_effect" => ("Remove an effect from a layer by id.", super::effects::RemoveEffectArgs, tools::remove_effect),
