@@ -1,0 +1,116 @@
+<!doctype html>
+<html>
+  <head><meta charset="utf-8" /><title>f16 filter-pool parity gate</title></head>
+  <body>
+    <script>
+      // Renderer side of the f16 filter-pool parity gate.
+      //
+      // Env var POOL_F16=1  → bump TexturePool to rgba16float before init
+      // Env var POOL_F16=0  → leave default (8-bit pool)
+      //
+      // Builds a 1024-step rgba16float gradient, runs it through a BlurFilter,
+      // reads back float pixels, and reports distinct-value counts via IPC.
+      //
+      // Validated technique: set TexturePool.textureOptions.format once at init,
+      // before any FilterSystem allocates intermediates. Never call
+      // TexturePool.clear(true) on a live FilterSystem — it destroys pooled
+      // textures that persistent filter bind groups still reference (null crash).
+      const { ipcRenderer } = require("electron");
+      const F16 = process.env.POOL_F16 === "1";
+
+      function halfToFloat(h) {
+        const s = (h & 0x8000) >> 15, e = (h & 0x7c00) >> 10, f = h & 0x03ff;
+        if (e === 0) return (s ? -1 : 1) * Math.pow(2, -14) * (f / 1024);
+        if (e === 0x1f) return f ? NaN : (s ? -1 : 1) * Infinity;
+        return (s ? -1 : 1) * Math.pow(2, e - 15) * (1 + f / 1024);
+      }
+
+      (async () => {
+        const out = { condition: F16 ? "f16-pool" : "default-pool", phases: {} };
+        const phase = (name, fn) => {
+          try { out.phases[name] = fn(); } catch (e) { out.phases[name] = { error: String((e && e.stack) || e) }; }
+        };
+        try {
+          const PIXI = require("pixi.js");
+          const { autoDetectRenderer, RenderTexture, Sprite, Mesh, MeshGeometry,
+            Shader, BlurFilter, TexturePool, Container } = PIXI;
+
+          // Pool-bump: must happen before autoDetectRenderer so the FilterSystem
+          // never sees an empty-pool miss that materialises as bgra8unorm.
+          if (F16) {
+            TexturePool.textureOptions = { ...TexturePool.textureOptions, format: "rgba16float" };
+          }
+
+          const W = 1024, H = 4;
+          const renderer = await autoDetectRenderer({ preference: "webgl", width: W, height: H, antialias: false });
+          const gl = renderer.gl;
+          out.diag = {
+            pixi: PIXI.VERSION,
+            glRenderer: gl.getParameter(gl.RENDERER),
+            colorBufferFloat: !!gl.getExtension("EXT_color_buffer_float"),
+          };
+
+          function readRed(rt, label) {
+            renderer.renderTarget.bind(rt, false);
+            const type = gl.getParameter(gl.IMPLEMENTATION_COLOR_READ_TYPE);
+            const y = H >> 1, reds = [];
+            if (type === gl.FLOAT) {
+              const buf = new Float32Array(W * 4);
+              gl.readPixels(0, y, W, 1, gl.RGBA, gl.FLOAT, buf);
+              for (let i = 0; i < W; i++) reds.push(buf[i * 4]);
+            } else {
+              const buf = new Uint16Array(W * 4);
+              gl.readPixels(0, y, W, 1, gl.RGBA, gl.HALF_FLOAT, buf);
+              for (let i = 0; i < W; i++) reds.push(halfToFloat(buf[i * 4]));
+            }
+            return { label, distinct: new Set(reds.map((v) => Math.round(v * 100000))).size, glError: gl.getError() };
+          }
+
+          // Build a 1024-step [0,1] gradient in an rgba16float source texture.
+          const VERT = `#version 300 es
+precision highp float;
+in vec2 aPosition; in vec2 aUV; out vec2 vUV;
+uniform mat3 uProjectionMatrix; uniform mat3 uWorldTransformMatrix;
+void main(){ mat3 mvp=uProjectionMatrix*uWorldTransformMatrix;
+gl_Position=vec4((mvp*vec3(aPosition,1.0)).xy,0.0,1.0); vUV=aUV; }`;
+          const FRAG = `#version 300 es
+precision highp float; in vec2 vUV; out vec4 finalColor;
+void main(){ finalColor=vec4(vUV.x,vUV.x,vUV.x,1.0); }`;
+
+          const srcRT = RenderTexture.create({ width: W, height: H, format: "rgba16float" });
+          const mesh = new Mesh({
+            geometry: new MeshGeometry({
+              positions: new Float32Array([0, 0, W, 0, W, H, 0, H]),
+              uvs: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
+              indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
+            }),
+            shader: Shader.from({ gl: { vertex: VERT, fragment: FRAG }, resources: {} }),
+          });
+          renderer.render({ container: mesh, target: srcRT });
+          phase("source", () => readRed(srcRT, "source-f16-gradient"));
+
+          // Report which format the pool actually allocates.
+          phase("poolFormat", () => {
+            const t = TexturePool.getOptimalTexture(W, H, 1, false);
+            const fmt = t.source.format; TexturePool.returnTexture(t);
+            return { filterPoolTextureFormat: fmt };
+          });
+
+          // Pass the gradient through a BlurFilter (WeftCut's Tier-A v1 filter).
+          const outRT = RenderTexture.create({ width: W, height: H, format: "rgba16float" });
+          const stage = new Container();
+          const sp = new Sprite(srcRT);
+          sp.filters = [new BlurFilter({ strength: 2 })];
+          stage.addChild(sp);
+          renderer.render({ container: stage, target: outRT });
+          phase("blur", () => readRed(outRT, "blur-strength2"));
+
+          ipcRenderer.send("gate-result", out);
+        } catch (err) {
+          out.fatal = String((err && err.stack) || err);
+          ipcRenderer.send("gate-error", out);
+        }
+      })();
+    </script>
+  </body>
+</html>

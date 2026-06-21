@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "fixtures": "node fixtures/generate-fixtures.mjs"
+    "fixtures": "node fixtures/generate-fixtures.mjs",
+    "gate:effects-f16-parity": "node effects-f16-parity/run.mjs"
   }
 }

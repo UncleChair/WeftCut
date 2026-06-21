@@ -1,0 +1,115 @@
+#!/usr/bin/env node
+// LOCAL-ONLY parity gate — skipped in CI (no GPU, no Electron binary).
+//
+// Proves that setting TexturePool.textureOptions.format = "rgba16float" at
+// export-worker init preserves filter precision on the 10-bit path and guards
+// against a Pixi upgrade silently breaking the invariant.
+//
+// Run from any directory:
+//   node apps/desktop/e2e/effects-f16-parity/run.mjs
+//
+// Or from apps/desktop:
+//   npm run gate:effects-f16-parity
+//
+// Override the Electron binary path:
+//   ELECTRON_BIN=/path/to/electron node run.mjs
+//
+// What it checks:
+//   default-pool: BlurFilter through an 8-bit pool intermediate
+//                 → gradient collapses to ~256 distinct values (banding)
+//   f16-pool:     BlurFilter through an rgba16float pool intermediate
+//                 → gradient preserves ~1024 distinct values (full precision)
+//
+// Assertions:
+//   distinctDefaultPool <= 260   (bands to ~256)
+//   distinctF16Pool     >  900   (preserves ~1024)
+//
+// Future elevation: a full-pipeline e2e (run an actual filtered 10-bit export
+// end-to-end and verify the output file's pixel precision) is out of scope here.
+// This gate validates the pool technique and regression-guards Pixi upgrades.
+
+import { execFileSync } from "child_process";
+import { existsSync } from "fs";
+import { fileURLToPath } from "url";
+import path from "path";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Primary checkout's Electron binary — this repo (wt2) has no Electron binary
+// of its own; it shares the one from the primary checkout.
+const DEFAULT_ELECTRON =
+  "C:/Users/jonny/Desktop/learning/videtor/node_modules/electron/dist/electron.exe";
+const ELECTRON_BIN = process.env.ELECTRON_BIN ?? DEFAULT_ELECTRON;
+
+if (!existsSync(ELECTRON_BIN)) {
+  console.error(
+    `[f16-parity] BLOCKED: Electron binary not found at ${ELECTRON_BIN}\n` +
+    `  Set ELECTRON_BIN env var to the correct path and retry.`,
+  );
+  process.exit(2);
+}
+
+const MAIN = path.join(__dirname, "main.cjs");
+
+function runCondition(f16) {
+  const label = f16 ? "f16-pool" : "default-pool";
+  console.log(`[f16-parity] running condition: ${label} ...`);
+  let stdout;
+  try {
+    stdout = execFileSync(ELECTRON_BIN, [MAIN], {
+      env: { ...process.env, POOL_F16: f16 ? "1" : "0" },
+      timeout: 35_000,
+      encoding: "utf8",
+    });
+  } catch (err) {
+    const output = err.stdout ?? "";
+    console.error(`[f16-parity] Electron exited with error for ${label}:\n${output}`);
+    throw new Error(`Electron run failed for ${label}: ${err.message}`);
+  }
+
+  // Find the GATE_RESULT / GATE_ERROR line.
+  const resultLine = stdout.split("\n").find((l) => l.startsWith("GATE_RESULT ") || l.startsWith("GATE_ERROR "));
+  if (!resultLine) {
+    console.error(`[f16-parity] No GATE_RESULT line in output:\n${stdout}`);
+    throw new Error(`No GATE_RESULT line for ${label}`);
+  }
+  if (resultLine.startsWith("GATE_ERROR ")) {
+    const data = JSON.parse(resultLine.slice("GATE_ERROR ".length));
+    throw new Error(`Gate reported error for ${label}: ${JSON.stringify(data)}`);
+  }
+  const data = JSON.parse(resultLine.slice("GATE_RESULT ".length));
+  console.log(`[f16-parity] ${label} result:`, JSON.stringify(data, null, 2));
+  return data;
+}
+
+let failed = false;
+
+// --- Condition A: default pool ---
+const defaultResult = runCondition(false);
+const distinctDefault = defaultResult.phases?.blur?.distinct ?? -1;
+const DEFAULT_THRESHOLD = 260;
+if (distinctDefault <= DEFAULT_THRESHOLD) {
+  console.log(`[f16-parity] PASS default-pool: distinct=${distinctDefault} <= ${DEFAULT_THRESHOLD} (bands as expected)`);
+} else {
+  console.error(`[f16-parity] FAIL default-pool: distinct=${distinctDefault} > ${DEFAULT_THRESHOLD} — expected banding; Pixi may have changed pool behaviour`);
+  failed = true;
+}
+
+// --- Condition B: f16 pool ---
+const f16Result = runCondition(true);
+const distinctF16 = f16Result.phases?.blur?.distinct ?? -1;
+const F16_THRESHOLD = 900;
+if (distinctF16 > F16_THRESHOLD) {
+  console.log(`[f16-parity] PASS f16-pool: distinct=${distinctF16} > ${F16_THRESHOLD} (precision preserved)`);
+} else {
+  console.error(`[f16-parity] FAIL f16-pool: distinct=${distinctF16} <= ${F16_THRESHOLD} — pool bump not preserving precision`);
+  failed = true;
+}
+
+if (failed) {
+  console.error("\n[f16-parity] GATE FAILED");
+  process.exit(1);
+} else {
+  console.log("\n[f16-parity] GATE PASSED");
+  process.exit(0);
+}
