@@ -422,6 +422,22 @@ impl Backend {
                 let a: crate::commands::UpdateLayerParamTracksArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
                 ser(crate::commands::mutations::update_layer_param_tracks(self, a.layer_id, a.entries).await)
             }
+            "add_effect" => {
+                let a: crate::commands::AddEffectArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::mutations::add_effect(self, a.layer_id, a.kind).await)
+            }
+            "update_effect" => {
+                let a: crate::commands::UpdateEffectArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::mutations::update_effect(self, a.layer_id, a.effect_id, a.patch).await)
+            }
+            "move_effect" => {
+                let a: crate::commands::MoveEffectArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::mutations::move_effect(self, a.layer_id, a.effect_id, a.new_index).await)
+            }
+            "remove_effect" => {
+                let a: crate::commands::RemoveEffectArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::mutations::remove_effect(self, a.layer_id, a.effect_id).await)
+            }
             "move_layer" => {
                 let a: crate::commands::MoveLayerArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
                 ser(crate::commands::mutations::move_layer(self, a.layer_id, a.new_track_id, a.new_t_start_us, a.escape_group).await)
@@ -1151,5 +1167,35 @@ mod tests {
         )
         .unwrap();
         assert_eq!(reply["ok"], false);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn add_effect_command_appends_blur_to_layer() {
+        let sink = VecEventSink::new();
+        let b = Backend::new_for_test(Arc::new(sink.clone()));
+        b.init().await.unwrap();
+        // Create a layer via an existing demo command, then read its id from the summary.
+        b.dispatch("add_demo_color_layer", "{}").await.unwrap();
+        let summary = b.dispatch("project_summary", "{}").await.unwrap();
+        let v: serde_json::Value = serde_json::from_str(&summary).unwrap();
+        let layer_id = v["tracks"]
+            .as_array().unwrap().iter()
+            .flat_map(|t| t["layers"].as_array().unwrap().clone())
+            .next().expect("a layer")["id"].as_str().unwrap().to_string();
+
+        let args = format!(r#"{{"layerId":"{layer_id}","kind":"blur"}}"#);
+        let effect_id = b.dispatch("add_effect", &args).await.unwrap();
+        assert!(effect_id.contains('-'), "expected a uuid string, got {effect_id}");
+
+        let after = b.dispatch("project_summary", "{}").await.unwrap();
+        assert!(after.contains("\"kind\":\"blur\"") || after.contains("\"kind\": \"blur\""));
+    }
+
+    #[tokio::test]
+    async fn add_effect_command_rejects_bad_layer_id() {
+        let b = Backend::new_for_test(Arc::new(VecEventSink::new()));
+        b.init().await.unwrap();
+        let err = b.dispatch("add_effect", r#"{"layerId":"not-a-uuid","kind":"blur"}"#).await;
+        assert!(err.is_err());
     }
 }

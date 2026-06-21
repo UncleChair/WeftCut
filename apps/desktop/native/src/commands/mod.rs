@@ -741,6 +741,36 @@ pub struct UpdateLayerParamTracksArgs {
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AddEffectArgs {
+    pub layer_id: String,
+    pub kind: String,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateEffectArgs {
+    pub layer_id: String,
+    pub effect_id: String,
+    pub patch: crate::state::effect::EffectPatch,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MoveEffectArgs {
+    pub layer_id: String,
+    pub effect_id: String,
+    pub new_index: usize,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoveEffectArgs {
+    pub layer_id: String,
+    pub effect_id: String,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MoveLayerArgs {
     pub layer_id: String,
     pub new_track_id: String,

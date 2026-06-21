@@ -420,6 +420,70 @@ pub async fn update_layer_param_tracks(
         .map_err(|e: CommandError| e.to_string())
 }
 
+/// Append an effect (catalog `kind`) to a layer's chain. The effect starts with
+/// empty params; the renderer seeds defaults lazily on first param edit
+/// (apply_update_layer_param_track). Returns the new effect id. Mirrors the
+/// `add_effect` MCP tool but for the renderer's invoke() path.
+pub async fn add_effect(backend: &Backend, layer_id: String, kind: String) -> Result<String, String> {
+    let handle = backend.project()?;
+    let id = Uuid::parse_str(&layer_id).map_err(|e| format!("layer_id: {e}"))?;
+    let effect = crate::state::effect::Effect {
+        id: crate::state::ids::new_id(),
+        kind,
+        enabled: true,
+        params: std::collections::BTreeMap::new(),
+    };
+    handle
+        .add_effect(Actor::User, id, effect)
+        .await
+        .map(|eid| eid.to_string())
+        .map_err(|e: CommandError| e.to_string())
+}
+
+/// Patch an effect (`{ enabled?, params? }`). The UI uses only `enabled`; param
+/// edits go through update_layer_param_track.
+pub async fn update_effect(
+    backend: &Backend,
+    layer_id: String,
+    effect_id: String,
+    patch: crate::state::effect::EffectPatch,
+) -> Result<(), String> {
+    let handle = backend.project()?;
+    let lid = Uuid::parse_str(&layer_id).map_err(|e| format!("layer_id: {e}"))?;
+    let eid = Uuid::parse_str(&effect_id).map_err(|e| format!("effect_id: {e}"))?;
+    handle
+        .update_effect(Actor::User, lid, eid, patch)
+        .await
+        .map_err(|e: CommandError| e.to_string())
+}
+
+/// Reorder an effect within its layer's chain (0 = applied first).
+pub async fn move_effect(
+    backend: &Backend,
+    layer_id: String,
+    effect_id: String,
+    new_index: usize,
+) -> Result<(), String> {
+    let handle = backend.project()?;
+    let lid = Uuid::parse_str(&layer_id).map_err(|e| format!("layer_id: {e}"))?;
+    let eid = Uuid::parse_str(&effect_id).map_err(|e| format!("effect_id: {e}"))?;
+    handle
+        .move_effect(Actor::User, lid, eid, new_index)
+        .await
+        .map_err(|e: CommandError| e.to_string())
+}
+
+/// Remove an effect from a layer's chain by id.
+pub async fn remove_effect(backend: &Backend, layer_id: String, effect_id: String) -> Result<(), String> {
+    let handle = backend.project()?;
+    let lid = Uuid::parse_str(&layer_id).map_err(|e| format!("layer_id: {e}"))?;
+    let eid = Uuid::parse_str(&effect_id).map_err(|e| format!("effect_id: {e}"))?;
+    handle
+        .remove_effect(Actor::User, lid, eid)
+        .await
+        .map_err(|e: CommandError| e.to_string())
+}
+
 pub async fn move_layer(
     backend: &Backend,
     layer_id: String,
