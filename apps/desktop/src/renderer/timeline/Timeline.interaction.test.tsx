@@ -32,16 +32,16 @@ const layer: LayerSummary = {
   label: "Clip A",
   t_start_us: 0,
   t_end_us: 2_000_000,
-  kind: "Subtitles",
+  kind: "Color",
   color_hint: "#4488cc",
   enabled: true,
   locked: false,
-  params: { kind: "Subtitles", source_kind: "InlineSrt", source_value: "" },
+  params: { kind: "Color", color: { mode: "Static", value: { r: 0, g: 0, b: 0, a: 1 } }, width: 1920, height: 1080 },
 };
 
 const track: TrackSummary = {
   id: "track-1",
-  kind: "Subtitle",
+  kind: "Video",
   label: "S1",
   enabled: true,
   locked: false,

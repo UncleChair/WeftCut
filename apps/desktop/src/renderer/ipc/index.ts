@@ -99,7 +99,6 @@ export type LayerParamsView =
   | ({ kind: "Text" } & TextView)
   | ({ kind: "Color" } & ColorView)
   | ({ kind: "Audio" } & AudioView)
-  | ({ kind: "Subtitles" } & SubtitlesView)
   | ({ kind: "Motif" } & MotifView);
 
 export interface MotifView {
@@ -197,11 +196,6 @@ export interface RoleMixView {
   gain_db: number;
   muted: boolean;
   solo: boolean;
-}
-
-export interface SubtitlesView {
-  source_kind: "Media" | "InlineAss" | "InlineSrt";
-  source_value: string;
 }
 
 /// A/B-roll role stamp (`docs/data-model.md`). Serialized from the Rust

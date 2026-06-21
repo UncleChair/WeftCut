@@ -144,8 +144,6 @@ function KindFields({
       return <ColorFields v={layer.params} commit={commit} />;
     case "Audio":
       return <AudioFields layer={layer} v={layer.params} commit={commit} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} onMutated={onMutated} />;
-    case "Subtitles":
-      return <SubtitlesFields v={layer.params} />;
     case "Motif":
       return <MotifFields layer={layer} v={layer.params} commit={commit} onMutated={onMutated} tInLayerUs={tInLayerUs} playheadInSpan={playheadInSpan} />;
   }
@@ -1074,25 +1072,6 @@ function AudioFields({
           onCheckedChange={(next) => commit({ kind: "Audio", mute: next })}
         />
       </Field>
-    </section>
-  );
-}
-
-function SubtitlesFields({
-  v,
-}: {
-  v: Extract<LayerSummary["params"], { kind: "Subtitles" }>;
-}) {
-  const { t } = useTranslation();
-  return (
-    <section className="prop-section">
-      <h3>{t("property_panel.subtitles")}</h3>
-      <p className="meta">
-        {t("property_panel.subtitles_source")}: {v.source_kind}
-      </p>
-      <p className="meta truncate" title={v.source_value}>
-        {v.source_value}
-      </p>
     </section>
   );
 }

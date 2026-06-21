@@ -1,4 +1,4 @@
-// Web Worker entry point for export. Receives an ExportRequest,
+﻿// Web Worker entry point for export. Receives an ExportRequest,
 // constructs a Compositor against an OffscreenCanvas, runs the
 // chunked decode → composite → encode loop, posts progress, posts
 // fMP4 chunks with backpressure, posts final counters, and exits.
@@ -20,9 +20,8 @@
 //   - Audio is OUT. The Worker has no DOM and audio export rides
 //     the existing Rust ffmpeg compositor. Final mux/transcode combines
 //     this temp video with an optional temp audio file (.m4a/.mka).
-//   - Subtitles are omitted. JASSUB needs a DOM canvas; the export Worker
-//     has none, and Rust export has no subtitle burn-in or sidecar path —
-//     Subtitles layers are skipped silently (see Compositor.ensureSubtitles).
+//   - Subtitles (legacy JASSUB kind) are gone; captions now render as Text
+//     layers and export through the normal Text path.
 //   - Motifs DO render: the SVG capture harness can't run in the
 //     Worker (no `document`), so the main thread pre-rasterizes each
 //     Motif layer's frames (`exportBake.ts`) and transfers them in

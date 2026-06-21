@@ -31,7 +31,6 @@ import {
 import { exportHandleKey } from "./decoder/ExportDecoderPool";
 import { ColorSprite } from "./sprite/ColorSprite";
 import { ImageOverlaySprite } from "./sprite/ImageOverlaySprite";
-import { SubtitlesSprite } from "./sprite/SubtitlesSprite";
 import { MotifSprite } from "./sprite/MotifSprite";
 import { TextSprite } from "./sprite/TextSprite";
 import { VideoClipSprite } from "./sprite/VideoClipSprite";
@@ -216,11 +215,6 @@ interface ActiveMotif {
   sprite: MotifSprite;
 }
 
-interface ActiveSubtitles {
-  layerId: string;
-  sprite: SubtitlesSprite;
-}
-
 interface ActiveAudio {
   layerId: string;
   mediaId: string;
@@ -277,7 +271,6 @@ export class Compositor {
   /// which binds by index synchronously (no DOM harness — the Worker has none).
   /// Empty in preview mode; the sprite's harness/cache path runs instead.
   private motifFrames = new Map<string, readonly ImageBitmap[]>();
-  private subtitles = new Map<string, ActiveSubtitles>();
   private audios = new Map<string, ActiveAudio>();
   /// In-flight no-flash source-swaps, keyed by the clip's real layerId.
   /// Preview-only; empty in export mode (export URLs are fixed per run).
@@ -436,8 +429,8 @@ export class Compositor {
     this.app.stage.addChild(this.stage);
     // Hidden DOM host element. The buffer-scheduled audio mixer no longer
     // mounts `<audio>` elements, but the host remains the "am I in a real
-    // DOM context" gate for JASSUB (see `ensureSubtitles`) — the export
-    // Worker has neither `document` nor preview audio.
+    // DOM context" gate — the export Worker has neither `document` nor
+    // preview audio.
     if (this.mode === "preview" && typeof document !== "undefined") {
       // Bundled fonts: same set as the export Worker, so preview matches the
       // burned-in output. Awaited off the constructor; the first post-load
@@ -602,12 +595,6 @@ export class Compositor {
       if (!livingLayerIds.has(layerId)) {
         t.sprite.dispose();
         this.activeMotifs.delete(layerId);
-      }
-    }
-    for (const [layerId, s] of this.subtitles) {
-      if (!livingLayerIds.has(layerId)) {
-        s.sprite.dispose();
-        this.subtitles.delete(layerId);
       }
     }
     for (const [layerId, a] of this.audios) {
@@ -787,13 +774,6 @@ export class Compositor {
           this.updateMotif(tmpl, layer, z++, tUsSnapped);
           if (tmpl.sprite.sprite.texture !== Texture.EMPTY) {
             this.stage.addChild(tmpl.sprite.sprite);
-          }
-        } else if (kind === "Subtitles") {
-          const subs = this.ensureSubtitles(layer);
-          if (!subs) continue;
-          this.updateSubtitles(subs, layer, tUsSnapped, z++);
-          if (subs.sprite.sprite.texture !== Texture.EMPTY) {
-            this.stage.addChild(subs.sprite.sprite);
           }
         }
       }
@@ -1033,8 +1013,6 @@ export class Compositor {
     // `setMotifFrames`, which clears without closing — so we clear (no
     // `.close()`) to avoid double-freeing the caller's bitmaps.
     this.motifFrames.clear();
-    for (const s of this.subtitles.values()) s.sprite.dispose();
-    this.subtitles.clear();
     for (const a of this.audios.values()) a.mixer.dispose();
     this.audios.clear();
     this.audioGraph?.dispose();
@@ -1775,49 +1753,6 @@ export class Compositor {
       sprite.refreshMotif();
     }
     this.scheduleRepaint();
-  }
-
-  // ============================================================
-  // Subtitles
-  // ============================================================
-
-  private ensureSubtitles(layer: LayerSummary): ActiveSubtitles | null {
-    if (layer.params.kind !== "Subtitles") return null;
-    // JASSUB needs a real DOM canvas (`audioHost`). The export Worker has
-    // no DOM host, and there is no ffmpeg subtitle burn-in — omit the layer.
-    if (this.audioHost === null) return null;
-    const existing = this.subtitles.get(layer.id);
-    if (existing) return existing;
-    const sprite = new SubtitlesSprite({
-      layerId: layer.id,
-      width: this.compositionWidth,
-      height: this.compositionHeight,
-      host: this.audioHost,
-      resolveMedia: (mediaId) => {
-        const media = this.mediaById(mediaId);
-        if (!media) return null;
-        const url = this.originalAssetUrl(mediaId);
-        if (!url) return null;
-        return { path: media.path, assetUrl: url };
-      },
-    });
-    const subs: ActiveSubtitles = { layerId: layer.id, sprite };
-    this.subtitles.set(layer.id, subs);
-    // eslint-disable-next-line no-console
-    console.log(`[weftcut/pixi] subtitles ${layer.id} attached`);
-    return subs;
-  }
-
-  private updateSubtitles(
-    subs: ActiveSubtitles,
-    layer: LayerSummary,
-    tUs: number,
-    z: number,
-  ): void {
-    if (layer.params.kind !== "Subtitles") return;
-    const tInLayerUs = tUs - layer.t_start_us;
-    subs.sprite.update(layer.params, tInLayerUs);
-    subs.sprite.sprite.zIndex = z;
   }
 
   // ============================================================
