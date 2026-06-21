@@ -28,3 +28,26 @@ export async function loadBundledFontBytes(): Promise<Record<string, ArrayBuffer
   }
   return out;
 }
+
+/// Resolve OS fonts for non-bundled families used in a project (best-effort).
+/// Bundled families are skipped (already loaded). Unresolved families are
+/// omitted so the renderer falls back to the bundled default chain (no tofu).
+/// MAIN-THREAD ONLY: touches window.api — never call from the export Worker
+/// (which has no window; the Worker only consumes the already-resolved bytes).
+export async function resolveFontsForFamilies(families: string[]): Promise<Record<string, ArrayBuffer>> {
+  const bundled = new Set(BUNDLED_FONT_FAMILIES as readonly string[]);
+  const out: Record<string, ArrayBuffer> = {};
+  const seen = new Set<string>();
+  for (const family of families) {
+    // A family field may be a comma fallback chain; resolve each leaf.
+    for (const leaf of family.split(",").map((s) => s.trim()).filter(Boolean)) {
+      if (bundled.has(leaf) || seen.has(leaf)) continue;
+      seen.add(leaf);
+      const bytes = await window.api.font.resolve(leaf);
+      if (bytes && bytes.byteLength > 0) {
+        out[leaf] = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+      }
+    }
+  }
+  return out;
+}

@@ -10,7 +10,7 @@
 // this resolves.
 
 import { convertFileSrc } from "@/bridge/ipc";
-import { loadBundledFontBytes } from "../fonts/registry";
+import { loadBundledFontBytes, resolveFontsForFamilies } from "../fonts/registry";
 
 import type { MediaSummary, ProjectSummary } from "../../ipc";
 import { exportPlaybackPathFor } from "../../state/projectStore";
@@ -173,7 +173,9 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
 
   // 6. Wait for ready, then post start.
   const motifFrames = init.motifFrames ?? {};
-  const fontBytes = await loadBundledFontBytes();
+  const userFamilies = collectTextFontFamilies(summary);
+  const userBytes = await resolveFontsForFamilies(userFamilies);
+  const fontBytes = { ...(await loadBundledFontBytes()), ...userBytes };
   const startReq: Extract<ExportRequest, { type: "start" }> = {
     type: "start",
     project: snapshot,
@@ -257,4 +259,19 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
       }
     };
   });
+}
+
+/// Collect distinct font_family strings from all Text layers in the project.
+/// Feeds `resolveFontsForFamilies` so the export Worker receives any
+/// user-chosen OS fonts pre-resolved as bytes (main-thread IPC only).
+function collectTextFontFamilies(summary: ProjectSummary): string[] {
+  const families: string[] = [];
+  for (const track of summary.tracks) {
+    for (const layer of track.layers) {
+      if (layer.params.kind === "Text" && layer.params.font_family) {
+        families.push(layer.params.font_family);
+      }
+    }
+  }
+  return [...new Set(families)];
 }
