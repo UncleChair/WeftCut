@@ -741,6 +741,10 @@ export class Compositor {
       }
     }
 
+    const previewEffectsEnabled =
+      useAppSettingsStore.getState().settings.preview_effects_enabled;
+    const effectOpts = { previewEffectsEnabled };
+
     let z = 0;
     for (const track of this.projectSummary.tracks) {
       if (!track.enabled) continue;
@@ -754,7 +758,7 @@ export class Compositor {
           const clip = this.ensureClip(layer);
           if (!clip) continue;
           this.updateClip(clip, layer, tUsSnapped, z++);
-          clip.sprite.sprite.filters = effectsFor(clip.effects, layer, tUsSnapped - layer.t_start_us);
+          clip.sprite.sprite.filters = effectsFor(clip.effects, layer, tUsSnapped - layer.t_start_us, effectOpts);
           // Skip empty-texture sprites — PixiJS v8's batched
           // renderer crashes on the placeholder in some Chromium
           // configs. Once the first VideoFrame lands, updateClip
@@ -766,7 +770,7 @@ export class Compositor {
           const image = this.ensureImage(layer);
           if (!image) continue;
           this.updateImage(image, layer, tUsSnapped, z++);
-          image.sprite.sprite.filters = effectsFor(image.effects, layer, tUsSnapped - layer.t_start_us);
+          image.sprite.sprite.filters = effectsFor(image.effects, layer, tUsSnapped - layer.t_start_us, effectOpts);
           if (image.sprite.sprite.texture !== Texture.EMPTY) {
             this.stage.addChild(image.sprite.sprite);
           }
@@ -774,13 +778,13 @@ export class Compositor {
           const color = this.ensureColor(layer);
           if (!color) continue;
           this.updateColor(color, layer, z++);
-          color.sprite.graphics.filters = effectsFor(color.effects, layer, tUsSnapped - layer.t_start_us);
+          color.sprite.graphics.filters = effectsFor(color.effects, layer, tUsSnapped - layer.t_start_us, effectOpts);
           this.stage.addChild(color.sprite.graphics);
         } else if (kind === "Text") {
           const text = this.ensureText(layer);
           if (!text) continue;
           this.updateText(text, layer, z++, tUsSnapped);
-          text.sprite.text.filters = effectsFor(text.effects, layer, tUsSnapped - layer.t_start_us);
+          text.sprite.text.filters = effectsFor(text.effects, layer, tUsSnapped - layer.t_start_us, effectOpts);
           this.stage.addChild(text.sprite.text);
         } else if (kind === "Motif") {
           const tmpl = this.ensureMotif(layer);

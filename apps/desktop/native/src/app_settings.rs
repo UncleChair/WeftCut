@@ -15,6 +15,8 @@
 //!   - `tail_snap_strength_px`: pixel threshold for that boundary snap.
 //!   - `prebake_motifs`: when true, motif layers pre-bake their frames
 //!     to disk (L2). False by default.
+//!   - `preview_effects_enabled`: when false, the preview compositor skips
+//!     all effect filters (LOD toggle for scrub performance). True by default.
 //!
 //! File layout (`<app_config_dir>/app_settings.json`):
 //!
@@ -25,7 +27,8 @@
 //!   "media_pool_drawer_open": false,
 //!   "tail_snap_enabled": true,
 //!   "tail_snap_strength_px": 12,
-//!   "prebake_motifs": false
+//!   "prebake_motifs": false,
+//!   "preview_effects_enabled": true
 //! }
 //! ```
 //!
@@ -76,6 +79,8 @@ pub struct AppSettings {
     pub tail_snap_strength_px: u32,
     #[serde(default)]
     pub prebake_motifs: bool,
+    #[serde(default = "default_preview_effects_enabled")]
+    pub preview_effects_enabled: bool,
 }
 
 fn default_delta_window_us() -> i64 {
@@ -90,6 +95,10 @@ fn default_tail_snap_strength_px() -> u32 {
     12
 }
 
+fn default_preview_effects_enabled() -> bool {
+    true
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -99,6 +108,7 @@ impl Default for AppSettings {
             tail_snap_enabled: default_tail_snap_enabled(),
             tail_snap_strength_px: default_tail_snap_strength_px(),
             prebake_motifs: false,
+            preview_effects_enabled: default_preview_effects_enabled(),
         }
     }
 }
@@ -113,6 +123,7 @@ pub struct AppSettingsPatch {
     pub tail_snap_enabled: Option<bool>,
     pub tail_snap_strength_px: Option<u32>,
     pub prebake_motifs: Option<bool>,
+    pub preview_effects_enabled: Option<bool>,
 }
 
 /// napi-managed store. JSON-backed, lock-protected path. Loosely
@@ -200,6 +211,9 @@ impl AppSettingsStore {
         if let Some(v) = patch.prebake_motifs {
             current.prebake_motifs = v;
         }
+        if let Some(v) = patch.preview_effects_enabled {
+            current.preview_effects_enabled = v;
+        }
         self.write(&current)?;
         Ok(current)
     }
@@ -224,6 +238,7 @@ mod tests {
         assert!(s.tail_snap_enabled);
         assert_eq!(s.tail_snap_strength_px, 12);
         assert!(!s.prebake_motifs);
+        assert!(s.preview_effects_enabled);
     }
 
     #[test]
@@ -238,6 +253,7 @@ mod tests {
                 tail_snap_enabled: Some(false),
                 tail_snap_strength_px: Some(24),
                 prebake_motifs: None,
+                preview_effects_enabled: None,
             })
             .unwrap();
         assert_eq!(after.display_mode, DisplayMode::ShowAll);
@@ -268,6 +284,7 @@ mod tests {
         assert!(s.tail_snap_enabled);
         assert_eq!(s.tail_snap_strength_px, 12);
         assert!(!s.prebake_motifs);
+        assert!(s.preview_effects_enabled);
     }
 
     #[test]
@@ -337,5 +354,21 @@ mod tests {
         assert!(after.prebake_motifs);
         // Independent reader sees it persisted.
         assert!(AppSettingsStore::new(tmp.path().to_path_buf()).get().prebake_motifs);
+    }
+
+    #[test]
+    fn preview_effects_enabled_defaults_on_and_round_trips() {
+        let tmp = TempDir::new().unwrap();
+        let store = fresh(&tmp);
+        assert!(store.get().preview_effects_enabled); // default ON
+        let after = store
+            .apply(AppSettingsPatch {
+                preview_effects_enabled: Some(false),
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(!after.preview_effects_enabled);
+        // Independent reader sees it persisted.
+        assert!(!AppSettingsStore::new(tmp.path().to_path_buf()).get().preview_effects_enabled);
     }
 }

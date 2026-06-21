@@ -43,6 +43,7 @@ const FALLBACK: AppSettings = {
   tail_snap_enabled: true,
   tail_snap_strength_px: 12,
   prebake_motifs: false,
+  preview_effects_enabled: true,
 };
 
 export const useAppSettingsStore = create<AppSettingsState & AppSettingsActions>(

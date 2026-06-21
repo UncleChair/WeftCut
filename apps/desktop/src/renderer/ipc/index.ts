@@ -662,6 +662,9 @@ export interface AppSettings {
   /// When true, every motif layer's full frame sequence is pre-baked
   /// to disk in the background (L2). Default false. See docs/motifs.md.
   prebake_motifs: boolean;
+  /// When false, the preview compositor skips all effect filters (LOD
+  /// toggle for scrub performance). Default true.
+  preview_effects_enabled: boolean;
 }
 
 /// Patch shape — every field optional. The backend merges into the
@@ -675,6 +678,7 @@ export interface AppSettingsPatch {
   tail_snap_enabled?: boolean;
   tail_snap_strength_px?: number;
   prebake_motifs?: boolean;
+  preview_effects_enabled?: boolean;
 }
 
 export async function appSettingsGet(): Promise<AppSettings> {
