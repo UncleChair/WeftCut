@@ -2220,9 +2220,16 @@ impl ProjectActor {
         Ok(layer_id)
     }
 
-    /// Create a `role: Caption` track and one Text layer per cue in ONE commit.
-    /// All cue layers land on the new track before validation so the whole
-    /// import is a single undo entry.
+    /// Create 1..N `role: Caption` tracks populated with Text layers for every
+    /// cue in ONE commit (single undo entry). Overlapping cues are fanned onto
+    /// additional caption tracks using a greedy interval-assignment algorithm so
+    /// each individual track stays non-overlapping and passes validation.
+    ///
+    /// Algorithm: sort cues by start_us (stable), then for each cue assign it to
+    /// the first open track whose last_end_us <= cue.start_us (half-open: a cue
+    /// starting exactly when the previous one ends does NOT overlap). If no such
+    /// track exists open a new caption track. All tracks + layers are written into
+    /// a single `next` Project clone and committed at once.
     fn do_add_caption_track(
         &mut self,
         cues: Vec<crate::subtitles::Cue>,
@@ -2232,14 +2239,46 @@ impl ProjectActor {
         actor: Actor,
     ) -> Result<TrackId, CommandError> {
         let mut next: Project = (*self.history.current()).clone();
-        let mut track = Track::new();
-        track.role = Some(TrackRole::Caption);
-        track.transient = false;
-        track.label = label;
-        let track_id = track.id;
-        next.tracks.push_back(track);
-        let mut affected: Vec<EntityRef> = vec![EntityRef::Track(track_id)];
-        for cue in &cues {
+
+        // Sort cues by start time (stable preserves input order for equal starts).
+        let mut sorted_cues = cues.clone();
+        sorted_cues.sort_by_key(|c| c.start_us);
+
+        // Greedy interval assignment: track_ids[i] is the TrackId of slot i;
+        // track_ends[i] is the snapped t_end_us of the last layer placed on it.
+        let fps = next.composition.fps;
+        let mut track_ids: Vec<TrackId> = Vec::new();
+        let mut track_ends: Vec<TimeUs> = Vec::new();
+
+        let mut affected: Vec<EntityRef> = Vec::new();
+
+        for cue in &sorted_cues {
+            // Snap the cue boundaries the same way apply_add_layer would, so the
+            // greedy `<=` comparison is against the same snapped values used for
+            // actual layer placement.
+            let snapped_start = crate::state::time::snap_frame_round(cue.start_us, fps);
+
+            // Find the first slot whose last layer ends at or before this start.
+            let slot = track_ends.iter().position(|&end| end <= snapped_start);
+
+            let track_id = if let Some(i) = slot {
+                track_ids[i]
+            } else {
+                // Open a new caption track.
+                let mut track = Track::new();
+                track.role = Some(TrackRole::Caption);
+                track.transient = false;
+                // All tracks share the same label; the primary track gets the
+                // caller-supplied label, additional tracks reuse it.
+                track.label = label.clone();
+                let tid = track.id;
+                next.tracks.push_back(track);
+                affected.push(EntityRef::Track(tid));
+                track_ids.push(tid);
+                track_ends.push(0);
+                tid
+            };
+
             let params = LayerParams::Text(
                 crate::subtitles::layout::cue_to_text_params(cue, comp_w, comp_h),
             );
@@ -2253,18 +2292,45 @@ impl ProjectActor {
                 cue.end_us,
             )?;
             affected.push(EntityRef::Layer(layer_id));
+
+            // Update the slot's tracked end with the snapped end used by
+            // apply_add_layer.
+            let snapped_end = crate::state::time::snap_frame_round(cue.end_us, fps);
+            let slot_idx = track_ids.iter().position(|&id| id == track_id).expect("slot just inserted");
+            track_ends[slot_idx] = snapped_end;
         }
+
+        // Return the primary (first) track id.  If cues was empty we still need
+        // to create at least one track so the caller can return a TrackId.
+        let primary_id = if let Some(&id) = track_ids.first() {
+            id
+        } else {
+            let mut track = Track::new();
+            track.role = Some(TrackRole::Caption);
+            track.transient = false;
+            track.label = label;
+            let tid = track.id;
+            next.tracks.push_back(track);
+            affected.push(EntityRef::Track(tid));
+            tid
+        };
+
         self.commit(
             next,
             actor,
             format!(
-                "Added caption track {track_id} with {} cues",
-                cues.len()
+                "Added caption track{} with {} cues",
+                if track_ids.len() > 1 {
+                    format!("s ({})", track_ids.len())
+                } else {
+                    String::new()
+                },
+                sorted_cues.len()
             ),
             affected,
             DiffHint::Coarse,
         )?;
-        Ok(track_id)
+        Ok(primary_id)
     }
 
     /// A/B-roll v2 V.7: lift an Audio layer onto a freshly-created

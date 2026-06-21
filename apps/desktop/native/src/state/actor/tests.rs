@@ -5096,3 +5096,71 @@
         let snap = h.snapshot().await;
         assert!(snap.tracks.iter().all(|t| t.id != track_id));
     }
+
+    /// Overlapping cues must fan onto additional caption tracks so every
+    /// individual track remains non-overlapping (validator-clean), and the
+    /// entire import is still ONE undo entry.
+    ///
+    /// Fixture: A [0, 2s), B [1s, 3s), C [2s, 3s)
+    ///   A and B overlap → B goes to track 2.
+    ///   C starts exactly when A ends (t=2s) → half-open interval, C fits track 1.
+    /// Expected layout: track 1 = [A, C], track 2 = [B].
+    #[tokio::test]
+    async fn overlapping_cues_fan_to_additional_caption_tracks() {
+        use crate::subtitles::Cue;
+        use crate::subtitles::CueStyle;
+        let h = spawn(Project::new_blank("test"));
+        let cues = vec![
+            Cue { start_us: 0, end_us: 2_000_000, text: "A".into(), style: CueStyle::default() },
+            Cue { start_us: 1_000_000, end_us: 3_000_000, text: "B".into(), style: CueStyle::default() },
+            Cue { start_us: 2_000_000, end_us: 3_000_000, text: "C".into(), style: CueStyle::default() },
+        ];
+        let primary_id = h
+            .add_caption_track(Actor::User, cues, 1920, 1080, Some("Captions".into()))
+            .await
+            .expect("add_caption_track must not fail — validator must see clean tracks");
+
+        let snap = h.snapshot().await;
+
+        // Exactly 2 caption tracks created.
+        let caption_tracks: Vec<_> = snap
+            .tracks
+            .iter()
+            .filter(|t| t.role == Some(crate::state::track::TrackRole::Caption))
+            .collect();
+        assert_eq!(caption_tracks.len(), 2, "expected 2 caption tracks, got {}", caption_tracks.len());
+
+        // Both are role Caption.
+        for t in &caption_tracks {
+            assert_eq!(t.role, Some(crate::state::track::TrackRole::Caption));
+        }
+
+        // Primary track (returned id) holds A and C; overflow track holds B.
+        let primary = snap.tracks.iter().find(|t| t.id == primary_id).expect("primary track");
+        assert_eq!(primary.layers.len(), 2, "primary track must have A + C");
+
+        let overflow = caption_tracks
+            .iter()
+            .find(|t| t.id != primary_id)
+            .expect("overflow track");
+        assert_eq!(overflow.layers.len(), 1, "overflow track must have B only");
+
+        // Verify layer text content to confirm correct assignment.
+        let text_of = |layer: &crate::state::layer::Layer| match &layer.params {
+            crate::state::layer::LayerParams::Text(p) => p.content.clone(),
+            _ => panic!("expected Text layer"),
+        };
+        let primary_texts: Vec<_> = primary.layers.iter().map(text_of).collect();
+        assert!(primary_texts.contains(&"A".to_string()), "primary must have cue A");
+        assert!(primary_texts.contains(&"C".to_string()), "primary must have cue C");
+        let overflow_text = text_of(&overflow.layers[0]);
+        assert_eq!(overflow_text, "B", "overflow must have cue B");
+
+        // ONE undo removes ALL caption tracks (single-commit invariant).
+        h.undo(Actor::User).await.expect("undo");
+        let snap_after = h.snapshot().await;
+        assert!(
+            snap_after.tracks.iter().all(|t| t.role != Some(crate::state::track::TrackRole::Caption)),
+            "undo must remove all caption tracks in one step"
+        );
+    }
