@@ -81,6 +81,14 @@ export interface EffectView {
   params: Record<string, AnimTrack<number>>;
 }
 
+/// Partial update for an effect — mirrors Rust `EffectPatch`. The UI uses only
+/// `enabled` through this path; param edits (incl. keyframes) go through
+/// `updateLayerParamTrack` with key `effects[<id>].params[<key>]`.
+export interface EffectPatch {
+  enabled?: boolean;
+  params?: Record<string, AnimTrack<number>>;
+}
+
 export interface LayerSummary {
   id: string;
   label: string | null;
@@ -858,6 +866,30 @@ export async function updateLayerParams(
   patch: LayerParamsPatch,
 ): Promise<void> {
   return invoke<void>("update_layer_params", { layerId, patch });
+}
+
+/// Append a catalog effect (`kind`) to a layer's chain; returns the new effect id.
+export async function addEffect(layerId: string, kind: string): Promise<string> {
+  return invoke<string>("add_effect", { layerId, kind });
+}
+
+/// Patch an effect (enabled flag and/or scalar params).
+export async function updateEffect(
+  layerId: string,
+  effectId: string,
+  patch: EffectPatch,
+): Promise<void> {
+  return invoke<void>("update_effect", { layerId, effectId, patch });
+}
+
+/// Reorder an effect within its layer's chain (0 = applied first).
+export async function moveEffect(layerId: string, effectId: string, newIndex: number): Promise<void> {
+  return invoke<void>("move_effect", { layerId, effectId, newIndex });
+}
+
+/// Remove an effect from a layer's chain by id.
+export async function removeEffect(layerId: string, effectId: string): Promise<void> {
+  return invoke<void>("remove_effect", { layerId, effectId });
 }
 
 /// Set the project-level gain (dB) for one audio role. Unlike the flag
