@@ -73,8 +73,6 @@ See [ADR 0027](adr/0027-per-layer-effects-pixi-filter-chains.md) and
 - **Effects UI** — a property-panel effect list + filter picker +
   per-param editor, and a control for the `preview_effects_enabled`
   toggle; v1 is MCP-only.
-- **Effects on Motif layers** — v1 wires clip / image / color / text
-  sprites only; Motif sprites are CDP-baked and need their own path.
 - **End-to-end filtered-10-bit-export gate** — the parity gate proves the
   f16 filter-pool technique (ADR 0022), not a full filtered 10-bit export.
 - **`Speed`** is time remapping, not a filter — it stays out of

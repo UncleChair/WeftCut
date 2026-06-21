@@ -68,16 +68,19 @@ Supporting decisions:
 ## Consequences
 
 - The effects subsystem ships v1 with a single filter (Blur), wired on
-  clip / image / color / text sprites, drivable from MCP and undoable, and
-  rendering correctly in preview (WebGPU) and export.
+  every visual sprite kind (clip / image / color / text / Motif), drivable
+  from MCP and undoable, and rendering correctly in preview (WebGPU) and
+  export. (All five kinds join the per-frame `Compositor.stageVisual` seam —
+  a Motif's filter sits on its Pixi `Sprite`, compositing on top of the
+  CDP-baked frame just like any other texture.)
 - The catalog grows filter-by-filter with no engine churn; each new filter is
   gated by the parity gate before it is advertised as `f16-verified`.
 - Granting `'unsafe-eval'` is an accepted, documented security trade made to
   keep the WebGPU backend.
 - **Deferred:** more filters; `ParamValue` / animated color; an effects UI
-  (v1 is MCP-only); effects on Motif sprites; a full filtered-10-bit-export
-  e2e; a linear/HDR working space. `Speed` is time remapping, not a filter,
-  and is out of `layer.effects`. Tracked in [`roadmap.md`](../roadmap.md).
+  (v1 is MCP-only); a full filtered-10-bit-export e2e; a linear/HDR working
+  space. `Speed` is time remapping, not a filter, and is out of
+  `layer.effects`. Tracked in [`roadmap.md`](../roadmap.md).
 
 ## References
 
