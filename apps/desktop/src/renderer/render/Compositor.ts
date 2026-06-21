@@ -57,6 +57,8 @@ import { isTenBitFrame } from "./decoder/tenBitFrame";
 import { TenBitIngest } from "./tenbit/TenBitIngest";
 import { loadBundledFontBytes } from "./fonts/registry";
 import { loadFontsIntoFaceSet } from "./fonts/loadFontsIntoFaceSet";
+import { EffectChain } from "./effects/EffectChain";
+import { effectsFor } from "./effects/effectsFor";
 
 /// Match the preview ring's default lookahead window. We only use
 /// this to warm the next clip boundary; the play() warm-up gate stays
@@ -165,6 +167,7 @@ interface ActiveClip {
   mediaId: string;
   source: DecoderHandle;
   sprite: VideoClipSprite;
+  effects: EffectChain;
   /// The `proxyAssetUrl` the current `source` was built from. When the
   /// resolver later returns a different URL for this media — the instant
   /// original (decodable-bridge path) being replaced by a freshly-built proxy —
@@ -197,16 +200,19 @@ interface ActiveImage {
   layerId: string;
   mediaId: string;
   sprite: ImageOverlaySprite;
+  effects: EffectChain;
 }
 
 interface ActiveColor {
   layerId: string;
   sprite: ColorSprite;
+  effects: EffectChain;
 }
 
 interface ActiveText {
   layerId: string;
   sprite: TextSprite;
+  effects: EffectChain;
 }
 
 interface ActiveMotif {
@@ -570,24 +576,28 @@ export class Compositor {
         this.abandonSwap(layerId);
         this.tenBitIngest?.release(layerId);
         c.sprite.dispose();
+        c.effects.dispose();
         this.clips.delete(layerId);
       }
     }
     for (const [layerId, i] of this.images) {
       if (!livingLayerIds.has(layerId)) {
         i.sprite.dispose();
+        i.effects.dispose();
         this.images.delete(layerId);
       }
     }
     for (const [layerId, c] of this.colors) {
       if (!livingLayerIds.has(layerId)) {
         c.sprite.dispose();
+        c.effects.dispose();
         this.colors.delete(layerId);
       }
     }
     for (const [layerId, t] of this.texts) {
       if (!livingLayerIds.has(layerId)) {
         t.sprite.dispose();
+        t.effects.dispose();
         this.texts.delete(layerId);
       }
     }
@@ -744,6 +754,7 @@ export class Compositor {
           const clip = this.ensureClip(layer);
           if (!clip) continue;
           this.updateClip(clip, layer, tUsSnapped, z++);
+          clip.sprite.sprite.filters = effectsFor(clip.effects, layer, tUsSnapped - layer.t_start_us);
           // Skip empty-texture sprites — PixiJS v8's batched
           // renderer crashes on the placeholder in some Chromium
           // configs. Once the first VideoFrame lands, updateClip
@@ -755,6 +766,7 @@ export class Compositor {
           const image = this.ensureImage(layer);
           if (!image) continue;
           this.updateImage(image, layer, tUsSnapped, z++);
+          image.sprite.sprite.filters = effectsFor(image.effects, layer, tUsSnapped - layer.t_start_us);
           if (image.sprite.sprite.texture !== Texture.EMPTY) {
             this.stage.addChild(image.sprite.sprite);
           }
@@ -762,11 +774,13 @@ export class Compositor {
           const color = this.ensureColor(layer);
           if (!color) continue;
           this.updateColor(color, layer, z++);
+          color.sprite.graphics.filters = effectsFor(color.effects, layer, tUsSnapped - layer.t_start_us);
           this.stage.addChild(color.sprite.graphics);
         } else if (kind === "Text") {
           const text = this.ensureText(layer);
           if (!text) continue;
           this.updateText(text, layer, z++, tUsSnapped);
+          text.sprite.text.filters = effectsFor(text.effects, layer, tUsSnapped - layer.t_start_us);
           this.stage.addChild(text.sprite.text);
         } else if (kind === "Motif") {
           const tmpl = this.ensureMotif(layer);
@@ -987,13 +1001,13 @@ export class Compositor {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    for (const c of this.clips.values()) c.sprite.dispose();
+    for (const c of this.clips.values()) { c.sprite.dispose(); c.effects.dispose(); }
     this.clips.clear();
-    for (const i of this.images.values()) i.sprite.dispose();
+    for (const i of this.images.values()) { i.sprite.dispose(); i.effects.dispose(); }
     this.images.clear();
-    for (const c of this.colors.values()) c.sprite.dispose();
+    for (const c of this.colors.values()) { c.sprite.dispose(); c.effects.dispose(); }
     this.colors.clear();
-    for (const t of this.texts.values()) t.sprite.dispose();
+    for (const t of this.texts.values()) { t.sprite.dispose(); t.effects.dispose(); }
     this.texts.clear();
     for (const t of this.activeMotifs.values()) t.sprite.dispose();
     this.activeMotifs.clear();
@@ -1374,6 +1388,7 @@ export class Compositor {
       mediaId,
       source,
       sprite,
+      effects: new EffectChain(),
       builtFromUrl: proxyUrl,
       loggedNull: false,
     };
@@ -1596,7 +1611,7 @@ export class Compositor {
     });
     this.imageLoadPromises.set(layer.id, loadPromise);
     void loadPromise;
-    const image: ActiveImage = { layerId: layer.id, mediaId, sprite };
+    const image: ActiveImage = { layerId: layer.id, mediaId, sprite, effects: new EffectChain() };
     this.images.set(layer.id, image);
     // eslint-disable-next-line no-console
     console.log(
@@ -1654,7 +1669,7 @@ export class Compositor {
     const existing = this.colors.get(layer.id);
     if (existing) return existing;
     const sprite = new ColorSprite({ layerId: layer.id });
-    const color: ActiveColor = { layerId: layer.id, sprite };
+    const color: ActiveColor = { layerId: layer.id, sprite, effects: new EffectChain() };
     this.colors.set(layer.id, color);
     // eslint-disable-next-line no-console
     console.log(`[weftcut/pixi] color ${layer.id} attached`);
@@ -1676,7 +1691,7 @@ export class Compositor {
     const existing = this.texts.get(layer.id);
     if (existing) return existing;
     const sprite = new TextSprite({ layerId: layer.id });
-    const text: ActiveText = { layerId: layer.id, sprite };
+    const text: ActiveText = { layerId: layer.id, sprite, effects: new EffectChain() };
     this.texts.set(layer.id, text);
     // eslint-disable-next-line no-console
     console.log(`[weftcut/pixi] text ${layer.id} attached`);
