@@ -648,6 +648,33 @@ fn demo_color(idx: usize) -> Rgba {
     PALETTE[idx % PALETTE.len()]
 }
 
+/// THE chokepoint: parse a subtitle body and build a caption track. Shared by
+/// file import (commands::media), MCP apply_subtitles, and transcribe. Returns
+/// the new track id and whether any ASS styling was simplified (lossy).
+pub async fn import_subtitles(
+    backend: &Backend,
+    body: String,
+    format: Option<crate::subtitles::SubFormat>,
+    label: Option<String>,
+) -> Result<(String, bool), String> {
+    if body.trim().is_empty() {
+        return Err("subtitle body is empty".into());
+    }
+    let fmt = format.unwrap_or_else(|| crate::subtitles::sniff(&body));
+    let parsed = crate::subtitles::parse(&body, fmt);
+    if parsed.cues.is_empty() {
+        return Err("no cues parsed from subtitle body".into());
+    }
+    let handle = backend.project()?;
+    let snap = handle.snapshot().await;
+    let (w, h) = (snap.composition.width, snap.composition.height);
+    let track_id = handle
+        .add_caption_track(Actor::User, parsed.cues, w, h, label)
+        .await
+        .map_err(|e: CommandError| e.to_string())?;
+    Ok((track_id.to_string(), parsed.simplified))
+}
+
 #[cfg(test)]
 mod image_span_tests {
     use super::image_layer_span_us;
@@ -714,5 +741,31 @@ mod image_span_tests {
             container_format: Some("avif".into()),
         };
         assert_eq!(image_layer_span_us(&meta), 600_000);
+    }
+}
+
+#[cfg(test)]
+mod import_subtitles_tests {
+    use super::import_subtitles;
+    use std::sync::Arc;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn import_subtitles_builds_caption_track_from_srt() {
+        let b = crate::napi_backend::Backend::new_for_test(Arc::new(
+            crate::events::VecEventSink::new(),
+        ));
+        b.init().await.unwrap();
+        let srt = "1\n00:00:01,000 --> 00:00:02,000\nHello\n";
+        let (track_id, simplified) = import_subtitles(&b, srt.into(), None, Some("Captions".into()))
+            .await
+            .expect("import_subtitles");
+        assert!(!simplified);
+        let snap = b.project().unwrap().snapshot().await;
+        let track = snap
+            .tracks
+            .iter()
+            .find(|t| t.id.to_string() == track_id)
+            .expect("track");
+        assert_eq!(track.layers.len(), 1);
     }
 }
