@@ -58,6 +58,7 @@ import { TenBitIngest } from "./tenbit/TenBitIngest";
 import { loadBundledFontBytes } from "./fonts/registry";
 import { loadFontsIntoFaceSet } from "./fonts/loadFontsIntoFaceSet";
 import { EffectChain } from "./effects/EffectChain";
+import type { StageableSprite } from "./sprite/StageableSprite";
 import { effectsFor } from "./effects/effectsFor";
 
 /// Match the preview ring's default lookahead window. We only use
@@ -633,6 +634,31 @@ export class Compositor {
     void this.hydrateBakedIndexAndGc();
   }
 
+  /// Per-frame "filter + addChild" tail for every visual layer kind. Applies
+  /// the layer's resolved filters when it carries an effect chain, then stages
+  /// the node once it's ready. `effects` is omitted for kinds without a chain
+  /// (Motif today) → they stage unfiltered. That omission is the single seam a
+  /// future "Motif effects" change plugs into: give ActiveMotif an EffectChain
+  /// and pass it here.
+  private stageVisual(
+    sprite: StageableSprite,
+    effects: EffectChain | undefined,
+    layer: LayerSummary,
+    tInLayerUs: number,
+    effectOpts: { previewEffectsEnabled: boolean },
+  ): void {
+    if (effects) {
+      sprite.displayObject.filters = effectsFor(effects, layer, tInLayerUs, effectOpts);
+    }
+    // Skip not-yet-ready sprites. Sprite-backed kinds report stageReady false
+    // while their texture is still the EMPTY placeholder — PixiJS v8's batched
+    // renderer crashes on that placeholder in some Chromium configs. Once the
+    // first frame lands, the texture swaps and the sprite stages.
+    if (sprite.stageReady) {
+      this.stage.addChild(sprite.displayObject);
+    }
+  }
+
   /// Composite one frame at composition-time `tUs`.
   ///
   /// We do NOT call `app.renderer.render()` here. PixiJS v8's
@@ -761,45 +787,32 @@ export class Compositor {
           continue;
 
         const kind = layer.params.kind;
+        const tInLayerUs = tUsSnapped - layer.t_start_us;
         if (kind === "VideoClip") {
           const clip = this.ensureClip(layer);
           if (!clip) continue;
           this.updateClip(clip, layer, tUsSnapped, z++);
-          clip.sprite.sprite.filters = effectsFor(clip.effects, layer, tUsSnapped - layer.t_start_us, effectOpts);
-          // Skip empty-texture sprites — PixiJS v8's batched
-          // renderer crashes on the placeholder in some Chromium
-          // configs. Once the first VideoFrame lands, updateClip
-          // swaps to a real texture and the sprite pops in.
-          if (clip.sprite.sprite.texture !== Texture.EMPTY) {
-            this.stage.addChild(clip.sprite.sprite);
-          }
+          this.stageVisual(clip.sprite, clip.effects, layer, tInLayerUs, effectOpts);
         } else if (kind === "ImageOverlay") {
           const image = this.ensureImage(layer);
           if (!image) continue;
           this.updateImage(image, layer, tUsSnapped, z++);
-          image.sprite.sprite.filters = effectsFor(image.effects, layer, tUsSnapped - layer.t_start_us, effectOpts);
-          if (image.sprite.sprite.texture !== Texture.EMPTY) {
-            this.stage.addChild(image.sprite.sprite);
-          }
+          this.stageVisual(image.sprite, image.effects, layer, tInLayerUs, effectOpts);
         } else if (kind === "Color") {
           const color = this.ensureColor(layer);
           if (!color) continue;
           this.updateColor(color, layer, z++);
-          color.sprite.graphics.filters = effectsFor(color.effects, layer, tUsSnapped - layer.t_start_us, effectOpts);
-          this.stage.addChild(color.sprite.graphics);
+          this.stageVisual(color.sprite, color.effects, layer, tInLayerUs, effectOpts);
         } else if (kind === "Text") {
           const text = this.ensureText(layer);
           if (!text) continue;
           this.updateText(text, layer, z++, tUsSnapped);
-          text.sprite.text.filters = effectsFor(text.effects, layer, tUsSnapped - layer.t_start_us, effectOpts);
-          this.stage.addChild(text.sprite.text);
+          this.stageVisual(text.sprite, text.effects, layer, tInLayerUs, effectOpts);
         } else if (kind === "Motif") {
           const tmpl = this.ensureMotif(layer);
           if (!tmpl) continue;
           this.updateMotif(tmpl, layer, z++, tUsSnapped);
-          if (tmpl.sprite.sprite.texture !== Texture.EMPTY) {
-            this.stage.addChild(tmpl.sprite.sprite);
-          }
+          this.stageVisual(tmpl.sprite, undefined, layer, tInLayerUs, effectOpts);
         }
       }
     }
