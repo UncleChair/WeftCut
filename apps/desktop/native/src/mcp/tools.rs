@@ -135,19 +135,6 @@ pub(super) fn map_command_error(e: CommandError) -> McpToolError {
     }
 }
 
-/// Find an existing track or create one labeled "Overlay" for subtitles.
-/// V.5: tracks are kind-agnostic. Subtitle layers land on the topmost track.
-async fn ensure_subtitle_track(b: &Backend) -> Result<TrackId, McpToolError> {
-    let snap = b.project()?.snapshot().await;
-    if let Some(t) = snap.tracks.last() {
-        return Ok(t.id);
-    }
-    b.project()?
-        .add_track(agent_actor(), Some("Overlay".into()))
-        .await
-        .map_err(map_command_error)
-}
-
 /// V.5: tracks are kind-agnostic. Pick the topmost track or spawn a
 /// "Voiceover" track when none exists. Used for the auto-paired audio layer
 /// in `add_video_layer`.
@@ -449,16 +436,18 @@ pub(super) async fn add_video_layer(
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(super) struct ApplySubtitlesArgs {
-    /// Subtitle document body (SRT or ASS).
+    /// Subtitle document body (SRT, ASS, or VTT).
     pub body: String,
-    /// 'srt' or 'ass'. Sniffed from body when omitted.
+    /// 'srt', 'ass', or 'vtt'. Sniffed from body when omitted.
     pub format: Option<String>,
-    /// Target Subtitle track id. If omitted, the first existing Subtitle
-    /// track is used, or a new one is created.
+    /// IGNORED — a caption import always creates its own Caption-role track.
+    /// Kept for wire-schema stability; do not remove.
     pub track_id: Option<String>,
-    /// Layer start in timeline microseconds. Defaults to 0.
+    /// IGNORED — cue timings come from the body, not the timeline envelope.
+    /// Kept for wire-schema stability; do not remove.
     pub t_start_us: Option<i64>,
-    /// Layer end in timeline microseconds. Required.
+    /// IGNORED — cue timings come from the body, not the timeline envelope.
+    /// Kept for wire-schema stability; do not remove.
     pub t_end_us: i64,
 }
 
@@ -472,44 +461,28 @@ pub(super) async fn apply_subtitles(
             None,
         ));
     }
-    if args.t_end_us <= args.t_start_us.unwrap_or(0) {
-        return Err(McpToolError::invalid_params(
-            "t_end_us must be greater than t_start_us",
-            None,
-        ));
-    }
     let format = match args.format.as_deref() {
-        Some("srt") | Some("SRT") => SubFormat::Srt,
-        Some("ass") | Some("ASS") => SubFormat::Ass,
-        None => sniff_subtitle_format(&args.body),
+        Some("srt") | Some("SRT") => Some(crate::subtitles::SubFormat::Srt),
+        Some("ass") | Some("ASS") => Some(crate::subtitles::SubFormat::Ass),
+        Some("vtt") | Some("VTT") => Some(crate::subtitles::SubFormat::Vtt),
+        None => None,
         Some(other) => {
             return Err(McpToolError::invalid_params(
-                format!("unknown subtitle format '{other}' — expected 'srt' or 'ass'"),
+                format!("unknown subtitle format '{other}' — expected 'srt', 'ass', or 'vtt'"),
                 None,
             ));
         }
     };
-    let source = match format {
-        SubFormat::Srt => SubtitlesSource::InlineSrt(args.body),
-        SubFormat::Ass => SubtitlesSource::InlineAss(args.body),
+    let (track_id, simplified) =
+        crate::commands::mutations::import_subtitles(b, args.body, format, Some("Captions".into()))
+            .await
+            .map_err(|e| McpToolError::internal_error(e, None))?;
+    let msg = if simplified {
+        format!("{track_id} (some ASS styling was simplified)")
+    } else {
+        track_id
     };
-    let track_id = match args.track_id.as_deref() {
-        Some(s) => parse_uuid(s, "track_id")?,
-        None => ensure_subtitle_track(b).await?,
-    };
-    let params = LayerParams::Subtitles(SubtitlesParams { source });
-    let id = b
-        .project()?
-        .add_layer(
-            agent_actor(),
-            track_id,
-            params,
-            args.t_start_us.unwrap_or(0),
-            args.t_end_us,
-        )
-        .await
-        .map_err(map_command_error)?;
-    Ok(ToolResult::text(id.to_string()))
+    Ok(ToolResult::text(msg))
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

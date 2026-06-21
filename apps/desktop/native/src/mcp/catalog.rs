@@ -65,12 +65,10 @@ tool_table! {
                           two so they move/trim/split together. Returns either the video layer id \
                           (legacy mode) or `{ video_layer_id, audio_layer_id, group_id }` when a pair \
                           was created.", tools::AddVideoLayerArgs, tools::add_video_layer),
-    "apply_subtitles" => ("Add a Subtitles layer that renders an inline SRT or ASS body onto the timeline. \
-                          The body is stored in the project (so it round-trips through .vproj) and \
-                          rendered directly by the subtitle renderer (no separate cache file). \
-                          `format` is 'srt' or 'ass'; if omitted it sniffs from the body. \
-                          `track_id` is optional — if omitted, picks the first existing Subtitle track \
-                          or creates one named 'Subtitles'. Returns the new layer id.", tools::ApplySubtitlesArgs, tools::apply_subtitles),
+    "apply_subtitles" => ("Import a subtitle document (SRT/VTT/ASS) as a caption track of editable Text layers. \
+                          Cue timings come from the body. `format` is sniffed when omitted. \
+                          Advanced ASS styling (karaoke, drawings) is simplified. \
+                          Returns the new caption track id.", tools::ApplySubtitlesArgs, tools::apply_subtitles),
     #[cfg(feature = "jobs")]
     "detect_silences" => ("Find silent regions in a VideoClip or Audio layer using the pre-computed \
                           waveform. Walks the layer's peaks file (binary VPEAKS at 100 peaks/sec) and \
@@ -331,5 +329,22 @@ mod tests {
         for t in &cat.tools {
             assert!(t.input_schema.is_object(), "{} schema not an object", t.name);
         }
+    }
+
+    /// apply_subtitles must build a Caption-role track (not a Subtitles layer).
+    #[tokio::test]
+    async fn apply_subtitles_builds_caption_track() {
+        use std::sync::Arc;
+        let b = Backend::new_for_test(Arc::new(crate::events::VecEventSink::new()));
+        b.init().await.unwrap();
+        let args = serde_json::json!({
+            "body": "1\n00:00:01,000 --> 00:00:02,000\nHi\n", "t_end_us": 2_000_000
+        }).to_string();
+        let r = dispatch_tool(&b, "apply_subtitles", &args).await.unwrap();
+        let v = serde_json::to_value(&r).unwrap();
+        let track_id = v["content"][0]["text"].as_str().unwrap();
+        let snap = b.project().unwrap().snapshot().await;
+        assert!(snap.tracks.iter().any(|t| t.id.to_string() == track_id
+            && t.role == Some(crate::state::TrackRole::Caption)));
     }
 }
