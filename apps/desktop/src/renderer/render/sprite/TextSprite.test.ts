@@ -21,4 +21,22 @@ describe("TextSprite", () => {
     expect(s.text.style.align).toBe("center");
     expect(s.text.anchor.y).toBe(1.0);
   });
+
+  it("does not throw when Phase-2 fields are absent (stale backend view)", () => {
+    const minimal = {
+      kind: "Text" as const,
+      content: "hello",
+      font_family: "Arial",
+      font_size_px: 32,
+      color: { r: 255, g: 255, b: 255, a: 255 },
+      x: 0,
+      y: 0,
+      opacity: 1,
+    } as unknown as import("../resolveView").ResolvedTextView;
+
+    const s = new TextSprite({ layerId: "L2" });
+    expect(() => s.update(minimal)).not.toThrow();
+    expect(s.text.style.align).toBe("center");
+    expect(s.text.anchor.x).toBe(0.5);
+  });
 });

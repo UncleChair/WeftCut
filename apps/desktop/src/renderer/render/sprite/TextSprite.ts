@@ -41,8 +41,10 @@ export class TextSprite {
 
   update(view: ResolvedTextView): void {
     const o = view.outline, sh = view.shadow;
+    // Default align when field is absent (stale backend / old serialised view).
+    const align = ((view.align ?? "Center") as string).toLowerCase() as "left" | "center" | "right";
     const sig =
-      `${view.content}|${view.font_family}|${view.font_size_px}|${view.weight}|${view.italic}|${view.align}|` +
+      `${view.content}|${view.font_family}|${view.font_size_px}|${view.weight}|${view.italic}|${align}|` +
       `${view.color.r},${view.color.g},${view.color.b},${view.color.a}|` +
       `${o ? `${o.width}:${o.color.r},${o.color.g},${o.color.b}` : "-"}|` +
       `${sh ? `${sh.offset_x},${sh.offset_y},${sh.blur}:${sh.color.r},${sh.color.g},${sh.color.b},${sh.color.a}` : "-"}`;
@@ -50,7 +52,6 @@ export class TextSprite {
     if (sig !== this.appliedSig) {
       this.appliedSig = sig;
       const fill = (view.color.r << 16) | (view.color.g << 8) | view.color.b;
-      const align = view.align.toLowerCase() as "left" | "center" | "right";
       // Re-create the style (TextStyle is mutable but Pixi recommends
       // re-assignment for predictable atlas invalidation).
       this.text.text = view.content;
@@ -77,7 +78,7 @@ export class TextSprite {
     }
 
     // Per-frame: anchor + position + alpha (cheap — no atlas rebuild).
-    this.text.anchor.set(view.anchor_x, view.anchor_y);
+    this.text.anchor.set(view.anchor_x ?? 0.5, view.anchor_y ?? 0.5);
     this.text.position.set(view.x, view.y);
     // Color alpha (Rgba.a) multiplies the layer's `opacity` field.
     this.text.alpha = view.opacity * (view.color.a / 255);
