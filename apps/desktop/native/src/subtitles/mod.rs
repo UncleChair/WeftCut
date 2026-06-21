@@ -3,9 +3,9 @@
 // all flow through `parse`. Cues are then laid out into Text layers by `layout`.
 use crate::state::color::Rgba;
 
+pub mod ass;
 pub mod srt;
 pub mod vtt;
-// pub mod ass;    — wired in Task 3.4
 // pub mod layout; — wired in Task 3.5
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -55,6 +55,6 @@ pub fn parse(body: &str, format: SubFormat) -> ParsedSubtitles {
     match format {
         SubFormat::Srt => ParsedSubtitles { cues: srt::parse(body), simplified: false },
         SubFormat::Vtt => ParsedSubtitles { cues: vtt::parse(body), simplified: false },
-        SubFormat::Ass => unimplemented!("wired in Task 3.4"),
+        SubFormat::Ass => ass::parse(body),
     }
 }
