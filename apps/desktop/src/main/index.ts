@@ -378,8 +378,7 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle('fs:readFile', async (_e, { path: p }: { path: string }) => fs.readFileSync(await guardFsPath(p)))
   ipcMain.handle('font:resolve', async (_e, { family }: { family: string }) => {
-    const buf = await resolveSystemFont(family)
-    return buf ?? null
+    return resolveSystemFont(family)
   })
 
   // PoC: native IPC video-sink write. Binary frame in (ArrayBuffer/typed array),

@@ -73,41 +73,46 @@ function walk(dir: string): string[] {
 
 /// Read the family name (nameID 1) from an sfnt `name` table. Handles the
 /// single-font sfnt header; `.ttc` collections read the first font's offset.
+/// Returns null for any malformed / truncated buffer — never throws.
 export function readFamilyName(buf: Buffer): string | null {
-  let base = 0;
-  const tag = buf.toString("ascii", 0, 4);
-  if (tag === "ttcf") base = buf.readUInt32BE(12); // first font in the collection
-  const numTables = buf.readUInt16BE(base + 4);
-  let nameOff = 0;
-  for (let i = 0; i < numTables; i++) {
-    const rec = base + 12 + i * 16;
-    if (buf.toString("ascii", rec, rec + 4) === "name") {
-      nameOff = buf.readUInt32BE(rec + 8);
-      break;
+  try {
+    let base = 0;
+    const tag = buf.toString("ascii", 0, 4);
+    if (tag === "ttcf") base = buf.readUInt32BE(12); // first font in the collection
+    const numTables = buf.readUInt16BE(base + 4);
+    let nameOff = 0;
+    for (let i = 0; i < numTables; i++) {
+      const rec = base + 12 + i * 16;
+      if (buf.toString("ascii", rec, rec + 4) === "name") {
+        nameOff = buf.readUInt32BE(rec + 8);
+        break;
+      }
     }
-  }
-  if (!nameOff) return null;
-  const count = buf.readUInt16BE(nameOff + 2);
-  const storage = nameOff + buf.readUInt16BE(nameOff + 4);
-  let fallback: string | null = null;
-  for (let i = 0; i < count; i++) {
-    const rec = nameOff + 6 + i * 12;
-    const platformId = buf.readUInt16BE(rec);
-    const nameId = buf.readUInt16BE(rec + 6);
-    const len = buf.readUInt16BE(rec + 8);
-    const off = storage + buf.readUInt16BE(rec + 10);
-    if (nameId !== 1) continue;
-    // platform 3 (Windows) / 0 (Unicode) → UTF-16BE; platform 1 (Mac) → ascii.
-    const cleaned =
-      platformId === 1
-        ? buf.toString("ascii", off, off + len).trim()
-        : swap16(buf.subarray(off, off + len)).trim();
-    if (cleaned) {
-      if (platformId === 3) return cleaned;
-      fallback ??= cleaned;
+    if (!nameOff) return null;
+    const count = buf.readUInt16BE(nameOff + 2);
+    const storage = nameOff + buf.readUInt16BE(nameOff + 4);
+    let fallback: string | null = null;
+    for (let i = 0; i < count; i++) {
+      const rec = nameOff + 6 + i * 12;
+      const platformId = buf.readUInt16BE(rec);
+      const nameId = buf.readUInt16BE(rec + 6);
+      const len = buf.readUInt16BE(rec + 8);
+      const off = storage + buf.readUInt16BE(rec + 10);
+      if (nameId !== 1) continue;
+      // platform 3 (Windows) / 0 (Unicode) → UTF-16BE; platform 1 (Mac) → ascii.
+      const cleaned =
+        platformId === 1
+          ? buf.toString("ascii", off, off + len).trim()
+          : swap16(buf.subarray(off, off + len)).trim();
+      if (cleaned) {
+        if (platformId === 3) return cleaned;
+        fallback ??= cleaned;
+      }
     }
+    return fallback;
+  } catch {
+    return null;
   }
-  return fallback;
 }
 
 function swap16(b: Buffer): string {
