@@ -325,6 +325,7 @@ struct Layer {
     locked: bool,
     metadata: imbl::HashMap<String, Value>,   // extension point
     params: LayerParams,
+    effects: Vec<Effect>,                     // ordered Pixi-filter chain (v1: Blur)
 }
 
 enum LayerParams {
@@ -334,6 +335,18 @@ enum LayerParams {
     Motif(MotifParams),
     Audio(AudioParams),
     Color(ColorParams),
+}
+
+// A per-layer effect instance. Rust stores the ordered instances + their
+// animatable params; the renderer (effectRegistry.ts) owns the catalog of
+// which filters exist and how to build them. The two join on `kind`, which
+// Rust does not validate (an unknown kind is skipped + warned renderer-side).
+// v1 params are scalar `Animated<f64>` only. See render.md, ADR 0027.
+struct Effect {
+    id: EffectId,
+    kind: String,                             // catalog key, e.g. "blur"
+    enabled: bool,
+    params: BTreeMap<String, Animated<f64>>,
 }
 ```
 

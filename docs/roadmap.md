@@ -53,19 +53,32 @@ What remains:
 
 See [`data-model.md`](data-model.md).
 
-### Effect subsystem on the PixiJS path
+### Effect subsystem — beyond v1
 
-The IR-driven per-layer effects subsystem was deleted with the PixiJS
-migration. The redesign is per-sprite Pixi filter chains driven by a
-`layer.effects` field, (re)added when the subsystem is rebuilt.
-Animated effect parameters ride the keyframe
-work above (keyframes first, then effects). Schema cleanup on the way
-in: `Speed` is time remapping, not a filter, and needs its own
-design. Actor surface
-(`add_effect`, `update_effect`, `move_effect`, `remove_effect`) and
-the corresponding MCP tools follow. Filters break batching (one
-render-target switch per filtered sprite) — plan a preview-LOD flag
-from day one.
+The per-layer effects subsystem ships v1: per-sprite Pixi filter chains
+driven by a `layer.effects` field — a single Blur filter, scalar
+(`Animated<f64>`) params, the `add_effect`/`update_effect`/`move_effect`/
+`remove_effect` actor + MCP surface, keyframe support via the param key
+`effects[<id>].params[<key>]`, and a `preview_effects_enabled` LOD toggle.
+See [ADR 0027](adr/0027-per-layer-effects-pixi-filter-chains.md) and
+[`render.md`](render.md). Remaining:
+
+- **Grow the filter catalog** beyond Blur (brightness / contrast /
+  saturation, then the wider pixi-filters set). Each filter is one
+  `effectRegistry.ts` entry, classified `f16-verified` or
+  `precision-reduced` by the GL-parity gate.
+- **Non-scalar params** — a `ParamValue` sum type (color / bool / enum);
+  v1 is scalar-only. Animated color params additionally need
+  `Animated<Rgba>` (its Rust `value_at` twin first).
+- **Effects UI** — a property-panel effect list + filter picker +
+  per-param editor, and a control for the `preview_effects_enabled`
+  toggle; v1 is MCP-only.
+- **Effects on Motif layers** — v1 wires clip / image / color / text
+  sprites only; Motif sprites are CDP-baked and need their own path.
+- **End-to-end filtered-10-bit-export gate** — the parity gate proves the
+  f16 filter-pool technique (ADR 0022), not a full filtered 10-bit export.
+- **`Speed`** is time remapping, not a filter — it stays out of
+  `layer.effects` and needs its own design.
 
 ### Caption sidecar / soft-subtitle export
 

@@ -17,9 +17,12 @@ final mux see [`rendering.md`](rendering.md).
   + Rust export mixer; [`audio.md`](audio.md)), file muxing (handled by
   ffmpeg `-c copy`), source probing / proxy generation / waveforms /
   thumbnails (all Rust-side).
-- **Out of scope explicitly:** per-layer effects. The effects
-  subsystem was deleted with the renderer migration; a future
-  redesign may reintroduce it on the PixiJS path.
+- **Per-layer effects:** each layer carries an ordered `effects` chain of
+  Pixi filters (v1: Blur). The compositor attaches them to the layer's
+  sprite per frame; the renderer owns the filter *catalog*
+  (`render/effects/effectRegistry.ts`) while Rust owns the *instances* and
+  their keyframeable params. See
+  [ADR 0027](adr/0027-per-layer-effects-pixi-filter-chains.md).
 
 ## Directory layout
 
