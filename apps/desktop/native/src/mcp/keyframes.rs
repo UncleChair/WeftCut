@@ -24,7 +24,7 @@ pub(crate) fn any_object_schema(_gen: &mut schemars::gen::SchemaGenerator) -> sc
 use crate::state::animated::{Animated, Keyframe};
 use crate::state::ids::KeyframeId;
 use crate::state::keyframe_edits;
-use crate::state::layer::resolve_animated_f64;
+use crate::state::layer::resolve_animated_f64_on_layer;
 use crate::state::{Actor, CommandError, LayerId, ProjectHandle};
 
 // ---- arg structs ----------------------------------------------------------
@@ -135,7 +135,7 @@ async fn read_track(
         .flat_map(|t| t.layers.iter())
         .find(|l| l.id == layer_id)
         .ok_or(KfError::Command(CommandError::LayerNotFound { layer: layer_id }))?;
-    let track = resolve_animated_f64(&layer.params, param_key)
+    let track = resolve_animated_f64_on_layer(layer, param_key)
         .ok_or_else(|| {
             KfError::Command(CommandError::UnknownKeyframeParam {
                 layer: layer_id,
@@ -450,5 +450,29 @@ mod tests {
         assert_eq!(kfs[0]["t_us"], 2_000_000);
         assert_eq!(kfs[1]["t_local_us"], 3_000_000);
         assert_eq!(kfs[1]["t_us"], 5_000_000);
+    }
+
+    #[tokio::test]
+    async fn keyframe_on_effect_param_addresses_nested_path() {
+        let (handle, layer_id) = motif_project().await;
+        let mut params = std::collections::BTreeMap::new();
+        params.insert(
+            "strength".to_string(),
+            crate::state::animated::Animated::Static(0.0),
+        );
+        let eff = crate::state::effect::Effect {
+            id: crate::state::ids::new_id(),
+            kind: "blur".into(),
+            enabled: true,
+            params,
+        };
+        let effect_id = handle.add_effect(Actor::User, layer_id, eff).await.unwrap();
+
+        let key = format!("effects[{effect_id}].params[strength]");
+        set_keyframe(&handle, Actor::User, layer_id, &key, 1_000_000, 10.0, None)
+            .await
+            .unwrap();
+        let v = get_param_track(&handle, layer_id, &key).await.unwrap();
+        assert_eq!(v["mode"], "Keyframed");
     }
 }

@@ -353,6 +353,34 @@ fn transform_or_opacity<'a>(
     }
 }
 
+/// Parse `effects[<uuid>].params[<key>]` → (effect_id, param_key). None if the
+/// key isn't an effect-param path.
+pub(crate) fn parse_effect_param_key(key: &str) -> Option<(crate::state::ids::EffectId, String)> {
+    let rest = key.strip_prefix("effects[")?;
+    let (id_str, rest) = rest.split_once("].params[")?;
+    let param = rest.strip_suffix(']')?;
+    let id = id_str.parse().ok()?;
+    Some((id, param.to_string()))
+}
+
+/// Layer-level read resolver: effect-param paths look in `layer.effects`,
+/// everything else delegates to the params-level resolver. Same key vocabulary
+/// plus `effects[<id>].params[<key>]`.
+pub(crate) fn resolve_animated_f64_on_layer<'a>(layer: &'a Layer, key: &str) -> Option<&'a Animated<f64>> {
+    if let Some((effect_id, param)) = parse_effect_param_key(key) {
+        return layer.effects.iter().find(|e| e.id == effect_id)?.params.get(&param);
+    }
+    resolve_animated_f64(&layer.params, key)
+}
+
+/// Layer-level write resolver (mutable sibling of `resolve_animated_f64_on_layer`).
+pub(crate) fn resolve_animated_f64_mut_on_layer<'a>(layer: &'a mut Layer, key: &str) -> Option<&'a mut Animated<f64>> {
+    if let Some((effect_id, param)) = parse_effect_param_key(key) {
+        return layer.effects.iter_mut().find(|e| e.id == effect_id)?.params.get_mut(&param);
+    }
+    resolve_animated_f64_mut(&mut layer.params, key)
+}
+
 #[cfg(test)]
 mod kf_fields_tests {
     use super::*;

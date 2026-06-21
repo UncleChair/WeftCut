@@ -471,8 +471,8 @@ pub(crate) fn apply_update_layer_param_track(
         .enumerate()
         .find_map(|(ti, t)| t.layers.iter().position(|l| l.id == id).map(|li| (ti, li)))
         .ok_or(CommandError::LayerNotFound { layer: id })?;
-    let slot = crate::state::layer::resolve_animated_f64_mut(
-        &mut project.tracks[ti].layers[li].params,
+    let slot = crate::state::layer::resolve_animated_f64_mut_on_layer(
+        &mut project.tracks[ti].layers[li],
         param_key,
     )
     .ok_or_else(|| CommandError::UnknownKeyframeParam { layer: id, param_key: param_key.to_string() })?;
