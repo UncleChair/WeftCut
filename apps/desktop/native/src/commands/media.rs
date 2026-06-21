@@ -9,12 +9,37 @@ use crate::jobs::import::ImportEntry;
 use crate::napi_backend::Backend;
 use crate::state::{self, Actor, MediaItem, MediaKind};
 
+/// True for subtitle file extensions (.srt / .ass / .vtt), case-insensitive.
+/// Used as a routing gate at the top of `import_media` to bypass the media
+/// pool entirely — subtitles are CONSUMED into caption tracks, not pooled.
+fn is_subtitle_ext(p: &std::path::Path) -> bool {
+    matches!(
+        p.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref(),
+        Some("srt") | Some("ass") | Some("vtt")
+    )
+}
+
 /// Probe + hash a source file, insert a `MediaItem`, fan out derivative jobs,
 /// and queue the background workspace copy. Returns the media id.
 pub async fn import_media(backend: &Backend, path: String) -> Result<String, String> {
     let handle = backend.project()?;
-    let cache = backend.cache.clone();
     let source_buf = PathBuf::from(&path);
+
+    // Subtitles are CONSUMED at import: parsed into a caption track of Text
+    // layers, never pooled as media. (Q13 — MediaKind::Subtitle is no longer a
+    // pool kind; the extension is only a routing signal here.)
+    if is_subtitle_ext(&source_buf) {
+        let body = std::fs::read_to_string(&source_buf)
+            .map_err(|e| format!("read subtitle: {e}"))?;
+        let label = source_buf.file_name().map(|n| n.to_string_lossy().to_string());
+        let (track_id, _simplified) =
+            crate::commands::mutations::import_subtitles(backend, body, None, label).await?;
+        // _simplified is surfaced via the apply path; file import just returns the
+        // track id (the renderer refreshes off project:changed).
+        return Ok(track_id);
+    }
+
+    let cache = backend.cache.clone();
     let media_id = uuid::Uuid::new_v4();
     let workspace_root = backend.workspace.current();
     let has_workspace = workspace_root.is_some();

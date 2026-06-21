@@ -1122,6 +1122,21 @@ mod tests {
         assert!(sink.names().iter().any(|n| n == "motifs:changed"));
     }
 
+    #[cfg(feature = "jobs")]
+    #[tokio::test]
+    async fn import_srt_makes_caption_track_not_pool_item() {
+        let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
+        b.init().await.unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let srt = dir.path().join("c.srt");
+        std::fs::write(&srt, "1\n00:00:01,000 --> 00:00:02,000\nHi\n").unwrap();
+        let args = serde_json::json!({ "path": srt.to_string_lossy() }).to_string();
+        let _ = b.dispatch("import_media", &args).await.unwrap();
+        let snap = b.project().unwrap().snapshot().await;
+        assert!(snap.media_pool.is_empty(), "subtitle must NOT enter the media pool");
+        assert!(snap.tracks.iter().any(|t| t.role == Some(crate::state::track::TrackRole::Caption)));
+    }
+
     #[cfg(feature = "cloud")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn transcribe_clip_without_key_is_clean_error() {
