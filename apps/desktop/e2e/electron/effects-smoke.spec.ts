@@ -267,3 +267,85 @@ test('effects: blur on a Motif layer renders + exports + undo', async () => {
   await mcp.close()
   await app.close()
 })
+
+test('effects UI: add/edit/reorder/remove a blur from the inspector panel', async () => {
+  test.setTimeout(120_000)
+  const { app, page } = await launchApp()
+
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'weftcut-effects-ui-'))
+  await newProject(page, {
+    parentFolder: parent,
+    name: 'effects-ui',
+    canvas: { width: 640, height: 360, fpsNum: 30, fpsDen: 1 },
+  })
+
+  const trackId = await invokeCmd<string>(page, 'add_track', {})
+  const layerId = await invokeCmd<string>(page, 'add_text_layer', {
+    trackId,
+    content: 'BLUR UI TEST',
+    tStartUs: 0,
+    durationUs: 2_000_000,
+  })
+
+  // Warm the sharp baseline (text composited, no effect yet).
+  let sharp: Sample | null = null
+  {
+    const deadline = Date.now() + 20_000
+    while (Date.now() < deadline) {
+      const s0 = await sampleAt(page, 500_000, 320, 180)
+      if (s0.nonTransparent > 100) { sharp = s0; break }
+      await page.waitForTimeout(400)
+    }
+  }
+  if (!sharp) throw new Error('text never composited (warmup failed)')
+
+  // Select the layer so the inspector renders its EffectsSection.
+  await page.evaluate((id) => (window as any).__weftcutTest.revealLayer({ layerId: id }), layerId)
+
+  // Add a blur via the panel button.
+  await page.getByTestId('effect-add').click()
+  await expect.poll(async () => (effectsOf((await summary(page)) as any, layerId) as Array<{ kind: string }>).length).toBe(1)
+  let fx = effectsOf((await summary(page)) as any, layerId) as Array<{ kind: string; id: string; enabled: boolean; params: any }>
+  expect(fx[0]!.kind).toBe('blur')
+  const effectId = fx[0]!.id
+
+  // Edit strength through the param field (commits on blur → nested track key).
+  // The param wrapper contains two <input>s: the visible text input and a hidden type=number;
+  // target the first (visible) one explicitly.
+  // Base UI NumberField treats Enter as a navigation key (no commit); blur() fires onBlur
+  // which triggers onValueCommitted synchronously.
+  // Use triple-click to select all existing text, then type the new value.
+  const strength = page.getByTestId(`effect-param-${effectId}-strength`).locator('input').first()
+  await strength.click({ clickCount: 3 })
+  await strength.type('30')
+  await strength.blur()
+  await expect.poll(async () => {
+    const f = effectsOf((await summary(page)) as any, layerId) as Array<{ params: any }>
+    return f[0]?.params?.strength?.value ?? null
+  }).toBe(30)
+
+  // The blur measurably changes the composite vs the sharp baseline.
+  await page.waitForTimeout(800)
+  let blur = await sampleAt(page, 500_000, 320, 180)
+  {
+    const deadline = Date.now() + 6_000
+    while (blur.nonTransparent === sharp.nonTransparent && Date.now() < deadline) {
+      await page.waitForTimeout(400)
+      blur = await sampleAt(page, 500_000, 320, 180)
+    }
+  }
+  expect(blur.nonTransparent).not.toBe(sharp.nonTransparent)
+
+  // Disable via the toggle → enabled:false in state.
+  await page.getByTestId('effect-enable-0').click()
+  await expect.poll(async () => {
+    const f = effectsOf((await summary(page)) as any, layerId) as Array<{ enabled: boolean }>
+    return f[0]?.enabled
+  }).toBe(false)
+
+  // Remove via the panel → chain empties.
+  await page.getByTestId('effect-remove-0').click()
+  await expect.poll(async () => (effectsOf((await summary(page)) as any, layerId) as unknown[]).length).toBe(0)
+
+  await app.close()
+})
