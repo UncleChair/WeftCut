@@ -89,6 +89,9 @@ struct Effect {
 - Param values reuse the existing `Animated<T>` → every param is keyframeable
   for free, and **no new cross-language twin** is introduced (`value_at` already
   lives in the `weftcut-eval` leaf crate, shared native + wasm).
+- The concrete `ParamValue` representation (the Rust sum type spanning scalar /
+  color / bool / enum, and its IPC encoding) is **deferred to the implementation
+  plan**; the design only requires that it is a typed, animatable bag.
 - **v1 param types:** `Animated<f64>` scalars + static `bool`/`enum`. Color
   params land static now; **animated color params gate on `Animated<Rgba>`**
   (an existing roadmap item).
@@ -200,10 +203,11 @@ or skip them entirely while scrubbing**; export is always full quality.
 
 ## J. Scope
 
-- **v1:** data model; registry seeded with a small set of f16-verified Tier-A
-  filters (Blur; brightness/contrast/saturation as ColorMatrix adjustments);
-  f16-pool reconciliation; GL-parity gate; actor + MCP commands; scalar-param
-  keyframes; preview-LOD skip toggle.
+- **v1:** data model; registry seeded with a **single** f16-verified Tier-A
+  filter (Blur); f16-pool reconciliation; GL-parity gate; actor + MCP commands;
+  scalar-param keyframes; preview-LOD skip toggle. (One filter proves the whole
+  vertical slice end-to-end; the catalog grows filter-by-filter afterward,
+  gated by F.)
 - **Deferred:** animated color params (need `Animated<Rgba>`); a large
   pixi-filters catalog; linear/HDR colorspace bracketing; a rich
   property-panel UI (start minimal).
