@@ -2292,6 +2292,39 @@ mod tests {
         let after = b.project().unwrap().snapshot().await.tracks.len();
         assert_eq!(after, before + 1);
     }
+
+    // ============================================================
+    // Regression: shift_srt(offset=5s) → apply_subtitles → caption
+    // track with first layer at t_start_us == 5_000_000.
+    //
+    // Offset choice: 5_000_000µs × 30fps = 150 whole frames — exactly
+    // frame-aligned at the default 30fps composition, so snap_frame_round
+    // is a no-op and the assertion can be exact without a tolerance band.
+    // ============================================================
+
+    #[cfg(feature = "cloud")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn shifted_srt_applies_as_caption_track() {
+        use std::sync::Arc;
+        let b = Backend::new_for_test(Arc::new(crate::events::VecEventSink::new()));
+        b.init().await.unwrap();
+        let slice_relative = "1\n00:00:00,000 --> 00:00:01,000\nHi\n";
+        let shifted = crate::cloud::srt::shift_srt(slice_relative, 5_000_000);
+        let args = serde_json::json!({ "body": shifted, "t_end_us": 1 }).to_string();
+        let _ = crate::mcp::catalog::dispatch_tool(&b, "apply_subtitles", &args)
+            .await
+            .unwrap();
+        let snap = b.project().unwrap().snapshot().await;
+        let track = snap
+            .tracks
+            .iter()
+            .find(|t| t.role == Some(crate::state::TrackRole::Caption))
+            .expect("a Caption-role track must exist after apply_subtitles");
+        assert_eq!(
+            track.layers[0].t_start_us, 5_000_000,
+            "shifted cue must land at t=5s on the timeline"
+        );
+    }
 }
 
 // ============================================================
