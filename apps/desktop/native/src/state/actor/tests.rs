@@ -5164,3 +5164,32 @@
             "undo must remove all caption tracks in one step"
         );
     }
+
+    #[tokio::test]
+    async fn restyle_caption_track_patches_all_layers_in_one_undo() {
+        use crate::subtitles::{Cue, CueStyle};
+        let h = spawn(Project::new_blank("test"));
+        let cues = vec![
+            Cue { start_us: 0, end_us: 1_000_000, text: "a".into(), style: CueStyle::default() },
+            Cue { start_us: 1_000_000, end_us: 2_000_000, text: "b".into(), style: CueStyle::default() },
+        ];
+        let tid = h.add_caption_track(Actor::User, cues, 1920, 1080, None).await.unwrap();
+        h.restyle_caption_track(Actor::User, tid, crate::state::actor::CaptionStylePatch {
+            font_size_px: Some(120.0),
+            ..Default::default()
+        })
+            .await.unwrap();
+        let snap = h.snapshot().await;
+        let tr = snap.tracks.iter().find(|t| t.id == tid).unwrap();
+        for l in &tr.layers {
+            if let crate::state::layer::LayerParams::Text(tp) = &l.params {
+                assert_eq!(tp.font.size_px, 120.0);
+            }
+        }
+        h.undo(Actor::User).await.unwrap(); // ONE undo reverts all
+        let snap = h.snapshot().await;
+        let tr = snap.tracks.iter().find(|t| t.id == tid).unwrap();
+        if let crate::state::layer::LayerParams::Text(tp) = &tr.layers[0].params {
+            assert_eq!(tp.font.size_px, 54.0);
+        }
+    }

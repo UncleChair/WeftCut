@@ -690,6 +690,10 @@ impl Backend {
             "motif_staleness_report" => ser(crate::commands::motif_authoring::motif_staleness_report(self).await),
             #[cfg(feature = "motifs")]
             "acknowledge_motif_staleness" => ser(crate::commands::motif_authoring::acknowledge_motif_staleness(self).await),
+            "restyle_caption_track" => {
+                let a: crate::commands::RestyleCaptionTrackArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
+                ser(crate::commands::mutations::restyle_caption_track(self, a.track_id, a.patch).await)
+            }
             other => Err(format!("unknown command: '{other}'")),
         }
     }

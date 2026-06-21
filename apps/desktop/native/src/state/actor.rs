@@ -123,6 +123,17 @@ pub struct TextPatch {
     pub opacity: Option<f64>,
 }
 
+/// Batch style patch applied to every Text layer on a caption track at once.
+/// Snake_case field names to match the codebase patch convention (no rename_all).
+/// Sent from the TS side via `restyleCaptionTrack(trackId, patch)`.
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct CaptionStylePatch {
+    pub font_family: Option<String>,
+    pub font_size_px: Option<f32>,
+    pub color: Option<Rgba>,
+    pub outline_width: Option<f32>,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct VideoClipPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -669,6 +680,13 @@ enum Command {
         actor: Actor,
         reply: oneshot::Sender<Result<TrackId, CommandError>>,
     },
+    /// Restyle every Text layer on a caption track in one commit (one undo step).
+    RestyleCaptionTrack {
+        track_id: TrackId,
+        patch: CaptionStylePatch,
+        actor: Actor,
+        reply: oneshot::Sender<Result<(), CommandError>>,
+    },
     // No set-effects command: the per-layer effects subsystem isn't built yet
     // (per-sprite Pixi filter chains driven by a future `layer.effects` — see
     // docs/roadmap.md), so neither the field nor a mutation surface exists.
@@ -930,6 +948,26 @@ impl ProjectHandle {
                 comp_w,
                 comp_h,
                 label,
+                actor,
+                reply,
+            })
+            .await
+            .expect("project actor terminated");
+        rx.await.expect("project actor terminated")
+    }
+
+    /// Restyle every Text layer on the named caption track in one undo entry.
+    pub async fn restyle_caption_track(
+        &self,
+        actor: Actor,
+        track_id: TrackId,
+        patch: CaptionStylePatch,
+    ) -> Result<(), CommandError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::RestyleCaptionTrack {
+                track_id,
+                patch,
                 actor,
                 reply,
             })
@@ -2048,6 +2086,15 @@ impl ProjectActor {
                 let result = self.do_add_caption_track(cues, comp_w, comp_h, label, actor);
                 let _ = reply.send(result);
             }
+            Command::RestyleCaptionTrack {
+                track_id,
+                patch,
+                actor,
+                reply,
+            } => {
+                let result = self.do_restyle_caption_track(track_id, patch, actor);
+                let _ = reply.send(result);
+            }
             Command::Undo { actor, reply } => {
                 let result = self.do_undo(actor);
                 let _ = reply.send(result);
@@ -2331,6 +2378,51 @@ impl ProjectActor {
             DiffHint::Coarse,
         )?;
         Ok(primary_id)
+    }
+
+    /// Restyle every Text layer on the named caption track in one commit (one undo).
+    /// Applies font_family / font_size_px / color / outline_width from the patch
+    /// to all Text layers; non-Text layers are skipped silently.
+    fn do_restyle_caption_track(
+        &mut self,
+        track_id: TrackId,
+        patch: CaptionStylePatch,
+        actor: Actor,
+    ) -> Result<(), CommandError> {
+        let mut next: Project = (*self.history.current()).clone();
+
+        let track = next
+            .tracks
+            .iter_mut()
+            .find(|t| t.id == track_id)
+            .ok_or(CommandError::TrackNotFound { track: track_id })?;
+
+        let mut affected: Vec<EntityRef> = Vec::new();
+        for layer in track.layers.iter_mut() {
+            if let crate::state::layer::LayerParams::Text(tp) = &mut layer.params {
+                if let Some(ref f) = patch.font_family {
+                    tp.font.family = f.clone();
+                }
+                if let Some(s) = patch.font_size_px {
+                    tp.font.size_px = s;
+                }
+                if let Some(c) = patch.color {
+                    tp.color = Animated::Static(c);
+                }
+                if let Some(w) = patch.outline_width {
+                    let existing_color = tp.outline.as_ref().map(|o| o.color).unwrap_or(Rgba::BLACK);
+                    tp.outline = Some(crate::state::layer::Outline {
+                        color: existing_color,
+                        width: w,
+                    });
+                }
+                affected.push(EntityRef::Layer(layer.id));
+            }
+        }
+        affected.push(EntityRef::Track(track_id));
+
+        self.commit(next, actor, "Restyled caption track".into(), affected, DiffHint::Coarse)?;
+        Ok(())
     }
 
     /// A/B-roll v2 V.7: lift an Audio layer onto a freshly-created

@@ -607,6 +607,20 @@ fn demo_color(idx: usize) -> Rgba {
     PALETTE[idx % PALETTE.len()]
 }
 
+/// Batch-restyle all Text layers on the named caption track in one undo entry.
+pub async fn restyle_caption_track(
+    backend: &Backend,
+    track_id: String,
+    patch: crate::state::actor::CaptionStylePatch,
+) -> Result<(), String> {
+    let handle = backend.project()?;
+    let id = Uuid::parse_str(&track_id).map_err(|e| format!("track_id: {e}"))?;
+    handle
+        .restyle_caption_track(Actor::User, id, patch)
+        .await
+        .map_err(|e: CommandError| e.to_string())
+}
+
 /// THE chokepoint: parse a subtitle body and build a caption track. Shared by
 /// file import (commands::media), MCP apply_subtitles, and transcribe. Returns
 /// the new track id and whether any ASS styling was simplified (lossy).

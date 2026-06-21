@@ -8,11 +8,15 @@ import { useProjectStore } from "../state/projectStore";
 vi.mock("../state/playbackStore", () => ({ transportSeek: vi.fn() }));
 vi.mock("../ipc", async (importActual) => {
   const actual = await importActual<typeof import("../ipc")>();
-  return { ...actual, updateLayerParams: vi.fn().mockResolvedValue(undefined) };
+  return {
+    ...actual,
+    updateLayerParams: vi.fn().mockResolvedValue(undefined),
+    restyleCaptionTrack: vi.fn().mockResolvedValue(undefined),
+  };
 });
 
 import { transportSeek } from "../state/playbackStore";
-import { updateLayerParams } from "../ipc";
+import { updateLayerParams, restyleCaptionTrack } from "../ipc";
 
 afterEach(() => {
   cleanup();
@@ -112,5 +116,24 @@ describe("CaptionsPanel", () => {
     // Allow the promise chain to settle
     await Promise.resolve();
     expect(updateLayerParams).toHaveBeenCalledWith("L1", { kind: "Text", content: "World" });
+  });
+
+  it("renders a style section with font-size and color controls", () => {
+    seed();
+    render(<CaptionsPanel onMutated={async () => {}} />);
+    // Style heading visible
+    expect(screen.getByText("Caption style")).toBeTruthy();
+  });
+
+  it("calls restyleCaptionTrack with font_size_px on commit", async () => {
+    seed();
+    const onMutated = vi.fn().mockResolvedValue(undefined);
+    render(<CaptionsPanel onMutated={onMutated} />);
+    // AppNumberField renders <input type="number"> with aria-label from property_panel.font_size_px
+    const sizeInput = screen.getByLabelText("Font size (px)");
+    fireEvent.change(sizeInput, { target: { value: "80" } });
+    fireEvent.blur(sizeInput);
+    await Promise.resolve();
+    expect(restyleCaptionTrack).toHaveBeenCalledWith("t1", { font_size_px: 80 });
   });
 });

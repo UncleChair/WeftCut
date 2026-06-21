@@ -666,6 +666,15 @@ pub struct SeparateAudioToNewTrackArgs {
     pub layer_id: String,
 }
 
+/// Batch restyle all Text layers on a caption track; `patch` fields are
+/// snake_case (matching `CaptionStylePatch`), `track_id` arrives as camelCase.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RestyleCaptionTrackArgs {
+    pub track_id: String,
+    pub patch: crate::state::actor::CaptionStylePatch,
+}
+
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AddColorLayerArgs {
