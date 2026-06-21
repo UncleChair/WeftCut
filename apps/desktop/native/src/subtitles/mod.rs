@@ -4,7 +4,7 @@
 use crate::state::color::Rgba;
 
 pub mod srt;
-// pub mod vtt;    — wired in Task 3.3
+pub mod vtt;
 // pub mod ass;    — wired in Task 3.4
 // pub mod layout; — wired in Task 3.5
 
@@ -54,7 +54,7 @@ pub fn sniff(body: &str) -> SubFormat {
 pub fn parse(body: &str, format: SubFormat) -> ParsedSubtitles {
     match format {
         SubFormat::Srt => ParsedSubtitles { cues: srt::parse(body), simplified: false },
-        SubFormat::Vtt => unimplemented!("wired in Task 3.3"),
+        SubFormat::Vtt => ParsedSubtitles { cues: vtt::parse(body), simplified: false },
         SubFormat::Ass => unimplemented!("wired in Task 3.4"),
     }
 }
