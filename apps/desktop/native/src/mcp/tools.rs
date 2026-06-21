@@ -21,7 +21,6 @@ use crate::cache::cached_ok;
 #[cfg(feature = "jobs")]
 use crate::jobs;
 use crate::napi_backend::Backend;
-use crate::state::actor::LayerEdge;
 use crate::state::audio_role::AudioRole;
 use crate::state::{
     Actor, Animated, AudioParams, BlendMode, CheckpointId, ColorParams, CommandError,
@@ -55,22 +54,24 @@ pub(super) fn parse_uuid(s: &str, field: &str) -> Result<Uuid, McpToolError> {
         .map_err(|e| McpToolError::invalid_params(format!("{field} not a UUID: {e}"), None))
 }
 
-pub(super) fn parse_layer_edge(s: &str) -> Result<LayerEdge, McpToolError> {
-    match s.to_ascii_lowercase().as_str() {
-        "in" | "start" | "t_start" | "t_start_us" => Ok(LayerEdge::In),
-        "out" | "end" | "t_end" | "t_end_us" => Ok(LayerEdge::Out),
-        other => Err(McpToolError::invalid_params(
-            format!("unknown layer edge '{other}' (expected 'in' or 'out')"),
-            None,
-        )),
-    }
-}
-
 /// Map an actor `CommandError` to an MCP error. Validation failures with
 /// agent-actionable alternatives (LayerOverlap) carry a structured `options[]`
 /// list per the docs/mcp.md error model so the agent can pick a recovery
 /// rather than bouncing off a brick wall.
 pub(super) fn map_command_error(e: CommandError) -> McpToolError {
+    // Step 1a: errors the shared command layer raises while parsing args map to
+    // the same MCP shapes the per-tool handlers produced directly before
+    // delegation — bad input → invalid_params, missing backend → internal_error
+    // (the latter matching the old `From<String> for McpToolError`).
+    match &e {
+        CommandError::InvalidArgument { field, detail } => {
+            return McpToolError::invalid_params(format!("{field}: {detail}"), None);
+        }
+        CommandError::Backend(msg) => {
+            return McpToolError::internal_error(msg.clone(), None);
+        }
+        _ => {}
+    }
     let message = e.to_string();
     let detail = match &e {
         CommandError::ValidationFailed(ValidationError::LayerOverlap {
@@ -618,18 +619,19 @@ pub(super) async fn move_layer(
     b: &Backend,
     args: MoveLayerArgs,
 ) -> Result<ToolResult, McpToolError> {
-    let layer_id = parse_uuid(&args.layer_id, "layer_id")?;
-    let new_track_id = parse_uuid(&args.new_track_id, "new_track_id")?;
-    b.project()?
-        .move_layer(
-            agent_actor(),
-            layer_id,
-            new_track_id,
-            args.new_t_start_us,
-            args.escape_group.unwrap_or(false),
-        )
-        .await
-        .map_err(map_command_error)?;
+    // Step 1a: delegate to the single shared command (see
+    // `commands::mutations::move_layer`); this layer only supplies the agent
+    // actor and renders the error.
+    crate::commands::mutations::move_layer(
+        b,
+        agent_actor(),
+        args.layer_id,
+        args.new_track_id,
+        args.new_t_start_us,
+        args.escape_group,
+    )
+    .await
+    .map_err(map_command_error)?;
     Ok(ToolResult::empty())
 }
 
@@ -681,9 +683,7 @@ pub(super) async fn delete_layer(
     b: &Backend,
     args: LayerIdArgs,
 ) -> Result<ToolResult, McpToolError> {
-    let id = parse_uuid(&args.layer_id, "layer_id")?;
-    b.project()?
-        .delete_layer(agent_actor(), id)
+    crate::commands::mutations::delete_layer(b, agent_actor(), args.layer_id)
         .await
         .map_err(map_command_error)?;
     Ok(ToolResult::empty())
@@ -707,18 +707,16 @@ pub(super) async fn trim_layer(
     b: &Backend,
     args: TrimLayerArgs,
 ) -> Result<ToolResult, McpToolError> {
-    let id = parse_uuid(&args.layer_id, "layer_id")?;
-    let edge = parse_layer_edge(&args.edge)?;
-    b.project()?
-        .trim_layer(
-            agent_actor(),
-            id,
-            edge,
-            args.new_t_us,
-            args.escape_group.unwrap_or(false),
-        )
-        .await
-        .map_err(map_command_error)?;
+    crate::commands::mutations::trim_layer(
+        b,
+        agent_actor(),
+        args.layer_id,
+        args.edge,
+        args.new_t_us,
+        args.escape_group,
+    )
+    .await
+    .map_err(map_command_error)?;
     Ok(ToolResult::empty())
 }
 
@@ -901,12 +899,14 @@ pub(super) async fn duplicate_layer(
     b: &Backend,
     args: DuplicateLayerArgs,
 ) -> Result<ToolResult, McpToolError> {
-    let id = parse_uuid(&args.layer_id, "layer_id")?;
-    let dup = b
-        .project()?
-        .duplicate_layer(agent_actor(), id, args.t_offset_us)
-        .await
-        .map_err(map_command_error)?;
+    let dup = crate::commands::mutations::duplicate_layer(
+        b,
+        agent_actor(),
+        args.layer_id,
+        args.t_offset_us,
+    )
+    .await
+    .map_err(map_command_error)?;
     Ok(ToolResult::text(dup.to_string()))
 }
 

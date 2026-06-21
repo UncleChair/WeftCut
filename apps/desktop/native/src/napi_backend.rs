@@ -440,11 +440,11 @@ impl Backend {
             }
             "move_layer" => {
                 let a: crate::commands::MoveLayerArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::mutations::move_layer(self, a.layer_id, a.new_track_id, a.new_t_start_us, a.escape_group).await)
+                ser(crate::commands::mutations::move_layer(self, crate::state::Actor::User, a.layer_id, a.new_track_id, a.new_t_start_us, a.escape_group).await.map_err(|e| e.to_string()))
             }
             "trim_layer" => {
                 let a: crate::commands::TrimLayerArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::mutations::trim_layer(self, a.layer_id, a.edge, a.new_t_us, a.escape_group).await)
+                ser(crate::commands::mutations::trim_layer(self, crate::state::Actor::User, a.layer_id, a.edge, a.new_t_us, a.escape_group).await.map_err(|e| e.to_string()))
             }
             "split_layer_grouped" => {
                 let a: crate::commands::SplitLayerGroupedArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
@@ -460,11 +460,11 @@ impl Backend {
             }
             "duplicate_layer" => {
                 let a: crate::commands::DuplicateLayerArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::mutations::duplicate_layer(self, a.layer_id, a.t_offset_us).await)
+                ser(crate::commands::mutations::duplicate_layer(self, crate::state::Actor::User, a.layer_id, a.t_offset_us).await.map(|id| id.to_string()).map_err(|e| e.to_string()))
             }
             "delete_layer" => {
                 let a: crate::commands::DeleteLayerArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;
-                ser(crate::commands::mutations::delete_layer(self, a.layer_id).await)
+                ser(crate::commands::mutations::delete_layer(self, crate::state::Actor::User, a.layer_id).await.map_err(|e| e.to_string()))
             }
             "set_composition" => {
                 let a: crate::commands::SetCompositionArgs = serde_json::from_str(args).map_err(|e| e.to_string())?;

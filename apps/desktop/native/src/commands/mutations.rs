@@ -1,17 +1,50 @@
-//! Layer/track/composition mutation commands invoked over IPC. Each parses
-//! its string args, resolves the project handle from the napi `Backend`, and
-//! delegates to the actor with `Actor::User`.
+//! Layer/track/composition mutation commands. Each parses its string args,
+//! resolves the project handle from the napi `Backend`, and calls the actor.
+//!
+//! Step 1a (command-surface unification — see
+//! `docs/superpowers/plans/2026-06-22-pipeline-seam-abstractions.md`): commands
+//! are being migrated to take an explicit `actor: Actor` and return
+//! `CommandError`, so the MCP tool layer can delegate here instead of
+//! re-implementing each mutation. A converted command is the single
+//! implementation shared by the napi UI dispatch (which passes `Actor::User`
+//! and flattens the error to a string) and the MCP adapter (which passes
+//! `Actor::Agent` and renders the error via `map_command_error`). Unconverted
+//! commands still hardcode `Actor::User` and return `String`.
 
 use uuid::Uuid;
 
 use crate::napi_backend::Backend;
 use crate::state::{
     self, Actor, ColorParams, CommandError, LayerParams, MediaKind, Rgba, TrackFlagsPatch,
-    actor::{CompositionPatch, LayerParamsPatch, LayerPatch},
+    actor::{CompositionPatch, LayerEdge, LayerParamsPatch, LayerPatch},
     animated::Animated,
     audio_role::AudioRole,
     time::TimeUs,
 };
+
+/// Step 1a: parse a UUID argument into a `CommandError`, so the shared command
+/// layer can return one structured error type that both the napi UI dispatch
+/// and the MCP adapter render to their own wire shape. Replaces the per-site
+/// `Uuid::parse_str(..).map_err(|e| format!(..))`.
+fn parse_uuid(s: &str, field: &str) -> Result<Uuid, CommandError> {
+    Uuid::parse_str(s).map_err(|e| CommandError::InvalidArgument {
+        field: field.to_string(),
+        detail: e.to_string(),
+    })
+}
+
+/// Step 1a: parse a layer-edge name. Accepts the union of the spellings the UI
+/// and MCP historically allowed (the MCP set was the superset).
+fn parse_layer_edge(s: &str) -> Result<LayerEdge, CommandError> {
+    match s.to_ascii_lowercase().as_str() {
+        "in" | "start" | "t_start" | "t_start_us" => Ok(LayerEdge::In),
+        "out" | "end" | "t_end" | "t_end_us" => Ok(LayerEdge::Out),
+        other => Err(CommandError::InvalidArgument {
+            field: "edge".to_string(),
+            detail: format!("unknown edge '{other}' (expected 'in' or 'out')"),
+        }),
+    }
+}
 
 /// Right-click "Separate audio to new track": moves the layer's audio onto a
 /// fresh track. See docs/groups.md / the A/B-roll redesign note.
@@ -486,50 +519,40 @@ pub async fn remove_effect(backend: &Backend, layer_id: String, effect_id: Strin
 
 pub async fn move_layer(
     backend: &Backend,
+    actor: Actor,
     layer_id: String,
     new_track_id: String,
     new_t_start_us: TimeUs,
     escape_group: Option<bool>,
-) -> Result<(), String> {
-    let handle = backend.project()?;
-    let lid = Uuid::parse_str(&layer_id).map_err(|e| format!("layer_id: {e}"))?;
-    let tid = Uuid::parse_str(&new_track_id).map_err(|e| format!("new_track_id: {e}"))?;
+) -> Result<(), CommandError> {
+    let handle = backend.project().map_err(CommandError::Backend)?;
+    let lid = parse_uuid(&layer_id, "layer_id")?;
+    let tid = parse_uuid(&new_track_id, "new_track_id")?;
     handle
-        .move_layer(
-            Actor::User,
-            lid,
-            tid,
-            new_t_start_us,
-            escape_group.unwrap_or(false),
-        )
+        .move_layer(actor, lid, tid, new_t_start_us, escape_group.unwrap_or(false))
         .await
-        .map_err(|e: CommandError| e.to_string())
 }
 
 pub async fn trim_layer(
     backend: &Backend,
+    actor: Actor,
     layer_id: String,
     edge: String,
     new_t_us: TimeUs,
     escape_group: Option<bool>,
-) -> Result<(), String> {
-    let handle = backend.project()?;
-    let lid = Uuid::parse_str(&layer_id).map_err(|e| format!("layer_id: {e}"))?;
-    let parsed_edge = match edge.to_ascii_lowercase().as_str() {
-        "in" | "start" => crate::state::actor::LayerEdge::In,
-        "out" | "end" => crate::state::actor::LayerEdge::Out,
-        other => return Err(format!("unknown edge '{other}' (expected 'in' or 'out')")),
-    };
+) -> Result<(), CommandError> {
+    let handle = backend.project().map_err(CommandError::Backend)?;
+    let lid = parse_uuid(&layer_id, "layer_id")?;
+    let parsed_edge = parse_layer_edge(&edge)?;
     handle
         .trim_layer(
-            Actor::User,
+            actor,
             lid,
             parsed_edge,
             new_t_us,
             escape_group.unwrap_or(false),
         )
         .await
-        .map_err(|e: CommandError| e.to_string())
 }
 
 pub async fn split_layer_grouped(
@@ -579,28 +602,23 @@ pub async fn groups_dissolve(
 
 pub async fn duplicate_layer(
     backend: &Backend,
+    actor: Actor,
     layer_id: String,
     t_offset_us: TimeUs,
-) -> Result<String, String> {
-    let handle = backend.project()?;
-    let id = Uuid::parse_str(&layer_id).map_err(|e| format!("layer_id: {e}"))?;
-    handle
-        .duplicate_layer(Actor::User, id, t_offset_us)
-        .await
-        .map(|id| id.to_string())
-        .map_err(|e: CommandError| e.to_string())
+) -> Result<state::LayerId, CommandError> {
+    let handle = backend.project().map_err(CommandError::Backend)?;
+    let id = parse_uuid(&layer_id, "layer_id")?;
+    handle.duplicate_layer(actor, id, t_offset_us).await
 }
 
 pub async fn delete_layer(
     backend: &Backend,
+    actor: Actor,
     layer_id: String,
-) -> Result<(), String> {
-    let handle = backend.project()?;
-    let id = Uuid::parse_str(&layer_id).map_err(|e| format!("layer_id: {e}"))?;
-    handle
-        .delete_layer(Actor::User, id)
-        .await
-        .map_err(|e: CommandError| e.to_string())
+) -> Result<(), CommandError> {
+    let handle = backend.project().map_err(CommandError::Backend)?;
+    let id = parse_uuid(&layer_id, "layer_id")?;
+    handle.delete_layer(actor, id).await
 }
 
 pub async fn set_composition(
@@ -804,5 +822,56 @@ mod import_subtitles_tests {
             .find(|t| t.id.to_string() == track_id)
             .expect("track");
         assert_eq!(track.layers.len(), 1);
+    }
+}
+
+/// Step 1a: the shared command layer now parses raw args into
+/// `CommandError::InvalidArgument` (replacing the per-surface `String` /
+/// `McpToolError` parse errors). Lock that contract — it is the one new code
+/// path the delegation introduced and has no other coverage. Behavior of the
+/// commands themselves is covered by `state::actor::tests`.
+#[cfg(test)]
+mod arg_parsing_tests {
+    use crate::state::{Actor, CommandError};
+    use std::sync::Arc;
+
+    fn test_backend() -> crate::napi_backend::Backend {
+        crate::napi_backend::Backend::new_for_test(Arc::new(crate::events::VecEventSink::new()))
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn move_layer_rejects_bad_layer_uuid() {
+        let b = test_backend();
+        b.init().await.unwrap();
+        let err = super::move_layer(
+            &b,
+            Actor::User,
+            "not-a-uuid".into(),
+            "also-not-a-uuid".into(),
+            0,
+            None,
+        )
+        .await
+        .expect_err("a malformed layer_id must be rejected before the actor call");
+        assert!(
+            matches!(&err, CommandError::InvalidArgument { field, .. } if field == "layer_id"),
+            "expected InvalidArgument{{ field: \"layer_id\" }}, got {err:?}",
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn trim_layer_rejects_bad_edge() {
+        let b = test_backend();
+        b.init().await.unwrap();
+        // Valid-format (but nonexistent) layer_id so parsing reaches the edge;
+        // the bad edge must fail before any actor call.
+        let layer_id = uuid::Uuid::now_v7().to_string();
+        let err = super::trim_layer(&b, Actor::User, layer_id, "sideways".into(), 0, None)
+            .await
+            .expect_err("an unknown edge must be rejected");
+        assert!(
+            matches!(&err, CommandError::InvalidArgument { field, .. } if field == "edge"),
+            "expected InvalidArgument{{ field: \"edge\" }}, got {err:?}",
+        );
     }
 }

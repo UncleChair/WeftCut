@@ -430,6 +430,17 @@ pub enum CommandError {
     EffectNotFound { effect: super::ids::EffectId },
     #[error("effect index {index} out of range for effect count {len}")]
     EffectIndexOutOfRange { index: usize, len: usize },
+    /// Step 1a (command-surface unification): a raw argument failed to parse at
+    /// the shared command layer — a UUID string, an edge name, etc. Carries the
+    /// field so adapters render a precise message. The UI flattens it to a
+    /// string; MCP maps it to `invalid_params`.
+    #[error("invalid argument `{field}`: {detail}")]
+    InvalidArgument { field: String, detail: String },
+    /// Step 1a: the napi `Backend` had no project handle (uninitialized). Kept
+    /// distinct from validation failures; MCP maps it to `internal_error`,
+    /// matching the prior `From<String> for McpToolError` behavior.
+    #[error("{0}")]
+    Backend(String),
 }
 
 impl From<ValidationError> for CommandError {
