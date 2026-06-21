@@ -4,9 +4,9 @@
 use crate::state::color::Rgba;
 
 pub mod ass;
+pub mod layout;
 pub mod srt;
 pub mod vtt;
-// pub mod layout; — wired in Task 3.5
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SubFormat { Srt, Vtt, Ass }
