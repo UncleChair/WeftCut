@@ -234,7 +234,8 @@ calls `add_caption_track` to build a caption-role track of `Text` layers. The
 file is never copied to `Media/`, never added to the media pool, and no
 `MediaItem` is created. The `MediaKind::Subtitle` enum variant exists in the
 Rust codebase but is unreachable through normal import; subtitle files are routed
-before the pool-entry path.
+before the pool-entry path. See [captions.md](captions.md) for the full caption
+model (parser, fonts, panel).
 
 TIFF classifies as `Image` when it arrives anyway (drag-drop / MCP take any
 path) but Electron/Chromium's `createImageBitmap` cannot decode it — the layer
