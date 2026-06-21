@@ -12,6 +12,9 @@ import { BlurFilter, type Filter } from "pixi.js";
 export interface EffectParamSpec {
   default: number;
   range?: [number, number];
+  /// Number-field / slider step. Absent ⇒ the UI derives one from the range
+  /// width (≤10 → 0.1, else 1).
+  step?: number;
   apply(filter: Filter, value: number): void;
 }
 
@@ -27,12 +30,13 @@ export interface EffectDescriptor {
 const REGISTRY: Record<string, EffectDescriptor> = {
   blur: {
     kind: "blur",
-    nameI18nKey: "effects.blur",
+    nameI18nKey: "effects.blur.name",
     create: () => new BlurFilter({ strength: 8 }),
     params: {
       strength: {
         default: 8,
         range: [0, 100],
+        step: 1,
         apply: (f, v) => {
           (f as BlurFilter).strength = v;
         },
@@ -45,4 +49,11 @@ const REGISTRY: Record<string, EffectDescriptor> = {
 
 export function getDescriptor(kind: string): EffectDescriptor | null {
   return REGISTRY[kind] ?? null;
+}
+
+/// All catalog entries, for the add-effect picker and the param-row generator.
+/// The UI is fully data-driven off this — a new filter is one REGISTRY entry,
+/// zero UI change.
+export function listEffects(): EffectDescriptor[] {
+  return Object.values(REGISTRY);
 }
