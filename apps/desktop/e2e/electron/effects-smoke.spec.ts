@@ -169,3 +169,101 @@ test('effects: add a blur via MCP renders + persists, undo removes it', async ()
   await mcp.close()
   await app.close()
 })
+
+test('effects: blur on a Motif layer renders + exports + undo', async () => {
+  test.setTimeout(180_000)
+  const { app, page } = await launchApp()
+
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'weftcut-motif-effects-'))
+  await newProject(page, {
+    parentFolder: parent,
+    name: 'motif-effects',
+    canvas: { width: 640, height: 360, fpsNum: 30, fpsDen: 1 },
+  })
+
+  // add_motif with no trackId spawns its own Overlay track and returns the
+  // layer id. The built-in "countdown" motif is 480x480 / 5s, so it leaves
+  // transparent margins on a 640x360 canvas — a blur measurably spreads its
+  // alpha footprint. Sample at 0.5s, well inside [0, 5s].
+  const layerId = await invokeCmd<string>(page, 'add_motif', {
+    motifId: 'countdown',
+    tStartUs: 0,
+  })
+  expect(typeof layerId).toBe('string')
+
+  // WARM UP until the REAL captured frame has landed AND settled. Motif frame
+  // capture is async (CDP); the first sample after a seek can show the cold
+  // placeholder, which would poison the baseline. Require two consecutive
+  // equal non-transparent readings above threshold before trusting it.
+  let sharpSample: Sample | null = null
+  {
+    const deadline = Date.now() + 60_000
+    let prev = -1
+    while (Date.now() < deadline) {
+      const s0 = await sampleAt(page, 500_000, 320, 180)
+      if (s0.nonTransparent > 100 && s0.nonTransparent === prev) {
+        sharpSample = s0
+        break
+      }
+      prev = s0.nonTransparent
+      await page.waitForTimeout(500)
+    }
+  }
+  if (!sharpSample) throw new Error('motif layer never composited+settled (warmup failed)')
+  console.log('MOTIF_EFFECTS sharp(baseline, warm, no effect) =', JSON.stringify(sharpSample))
+
+  // Add a blur through the REAL MCP server (the path an external agent uses).
+  const info = (await page.evaluate(() => (window as any).api.mcp.getInfo())) as McpInfo
+  const mcp = await connectMcp(info)
+  const tools = (await mcp.listTools()).tools.map((t) => t.name)
+  expect(tools).toContain('add_effect')
+  const addRes = await mcp.callTool({ name: 'add_effect', arguments: { layer_id: layerId, kind: 'blur' } })
+  const effectId = JSON.parse(JSON.stringify(addRes.content))[0].text as string
+  expect(effectId.length).toBeGreaterThan(0)
+
+  // The effect persisted into the project view the renderer reads.
+  let s = await summary(page)
+  let fx = effectsOf(s as any, layerId) as Array<{ kind: string }>
+  expect(fx).toHaveLength(1)
+  expect(fx[0]!.kind).toBe('blur')
+
+  // Sample the blurred render. Poll so the project:changed -> setProject event
+  // applies the new filter chain to the Motif sprite.
+  await page.waitForTimeout(800)
+  let blurSample = await sampleAt(page, 500_000, 320, 180)
+  {
+    const deadline = Date.now() + 8_000
+    while (blurSample.nonTransparent === sharpSample.nonTransparent && Date.now() < deadline) {
+      await page.waitForTimeout(400)
+      blurSample = await sampleAt(page, 500_000, 320, 180)
+    }
+  }
+  console.log('MOTIF_EFFECTS blur(warm, effect on) =', JSON.stringify(blurSample))
+
+  // EXPORT with the blur ON (8-bit). Confirms the rewritten loop filters the
+  // Motif sprite in the export Worker too (it binds baked frames to the same
+  // Pixi Sprite). driveExport throwing is logged, not fatal, mirroring the
+  // sibling test.
+  const exportOut = path.join(parent, 'export-motif-blur.mp4')
+  try {
+    const exp = await driveExport(page, { outputAbsPath: exportOut }, { hook: 'exportTimeline', timeout: 150_000 })
+    console.log('MOTIF_EFFECTS export =', JSON.stringify(exp), '->', exportOut)
+  } catch (e) {
+    console.log('MOTIF_EFFECTS export ERR =', String(e), '->', exportOut)
+  }
+
+  // Undo removes the effect from state.
+  await mcp.callTool({ name: 'undo', arguments: {} })
+  await page.waitForTimeout(800)
+  s = await summary(page)
+  fx = effectsOf(s as any, layerId) as Array<{ kind: string }>
+  expect(fx).toHaveLength(0)
+
+  // The blur measurably changes the rendered composite vs the sharp baseline
+  // (it spreads the motif's alpha footprint into the transparent margins).
+  expect(blurSample.nonTransparent).not.toBe(sharpSample.nonTransparent)
+  expect(blurSample.nonTransparent).toBeGreaterThan(0)
+
+  await mcp.close()
+  await app.close()
+})

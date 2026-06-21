@@ -220,6 +220,7 @@ interface ActiveMotif {
   layerId: string;
   motifId: string;
   sprite: MotifSprite;
+  effects: EffectChain;
 }
 
 interface ActiveAudio {
@@ -605,6 +606,7 @@ export class Compositor {
     for (const [layerId, t] of this.activeMotifs) {
       if (!livingLayerIds.has(layerId)) {
         t.sprite.dispose();
+        t.effects.dispose();
         this.activeMotifs.delete(layerId);
       }
     }
@@ -812,7 +814,7 @@ export class Compositor {
           const tmpl = this.ensureMotif(layer);
           if (!tmpl) continue;
           this.updateMotif(tmpl, layer, z++, tUsSnapped);
-          this.stageVisual(tmpl.sprite, undefined, layer, tInLayerUs, effectOpts);
+          this.stageVisual(tmpl.sprite, tmpl.effects, layer, tInLayerUs, effectOpts);
         }
       }
     }
@@ -1033,7 +1035,7 @@ export class Compositor {
     this.colors.clear();
     for (const t of this.texts.values()) { t.sprite.dispose(); t.effects.dispose(); }
     this.texts.clear();
-    for (const t of this.activeMotifs.values()) t.sprite.dispose();
+    for (const t of this.activeMotifs.values()) { t.sprite.dispose(); t.effects.dispose(); }
     this.activeMotifs.clear();
     this.prewarmer?.dispose();
     this.prewarmer = null;
@@ -1744,6 +1746,7 @@ export class Compositor {
       // getMotif(motifId) and re-captures. Keyed by layer.id, so the map slot
       // is replaced below.
       existing.sprite.dispose();
+      existing.effects.dispose();
       this.activeMotifs.delete(layer.id);
     }
     const sprite = new MotifSprite({
@@ -1753,7 +1756,7 @@ export class Compositor {
       fpsDen: this.fpsDen,
       onLoaded: () => this.scheduleRepaint(),
     });
-    const tmpl: ActiveMotif = { layerId: layer.id, motifId, sprite };
+    const tmpl: ActiveMotif = { layerId: layer.id, motifId, sprite, effects: new EffectChain() };
     this.activeMotifs.set(layer.id, tmpl);
     // eslint-disable-next-line no-console
     console.log(
