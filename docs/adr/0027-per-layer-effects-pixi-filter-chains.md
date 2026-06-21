@@ -77,8 +77,9 @@ Supporting decisions:
   gated by the parity gate before it is advertised as `f16-verified`.
 - Granting `'unsafe-eval'` is an accepted, documented security trade made to
   keep the WebGPU backend.
-- **Deferred:** more filters; `ParamValue` / animated color; an effects UI
-  (v1 is MCP-only); a full filtered-10-bit-export e2e; a linear/HDR working
+- **Deferred:** more filters; `ParamValue` / animated color; surfacing the
+  `preview_effects_enabled` LOD toggle in the UI (the inspector effect editor
+  itself ships); a full filtered-10-bit-export e2e; a linear/HDR working
   space. `Speed` is time remapping, not a filter, and is out of
   `layer.effects`. Tracked in [`roadmap.md`](../roadmap.md).
 

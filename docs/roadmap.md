@@ -59,8 +59,10 @@ The per-layer effects subsystem ships v1: per-sprite Pixi filter chains
 driven by a `layer.effects` field — a single Blur filter, scalar
 (`Animated<f64>`) params, the `add_effect`/`update_effect`/`move_effect`/
 `remove_effect` actor + MCP surface, keyframe support via the param key
-`effects[<id>].params[<key>]`, and a `preview_effects_enabled` LOD toggle.
-See [ADR 0027](adr/0027-per-layer-effects-pixi-filter-chains.md) and
+`effects[<id>].params[<key>]`, a `preview_effects_enabled` LOD toggle, and an
+inspector effect editor (chain list / filter picker / per-param keyframable
+rows on every visual kind). See
+[ADR 0027](adr/0027-per-layer-effects-pixi-filter-chains.md) and
 [`render.md`](render.md). Remaining:
 
 - **Grow the filter catalog** beyond Blur (brightness / contrast /
@@ -70,9 +72,10 @@ See [ADR 0027](adr/0027-per-layer-effects-pixi-filter-chains.md) and
 - **Non-scalar params** — a `ParamValue` sum type (color / bool / enum);
   v1 is scalar-only. Animated color params additionally need
   `Animated<Rgba>` (its Rust `value_at` twin first).
-- **Effects UI** — a property-panel effect list + filter picker +
-  per-param editor, and a control for the `preview_effects_enabled`
-  toggle; v1 is MCP-only.
+- **Preview-effects LOD toggle UI** — the inspector effect editor (chain
+  list / filter picker / per-param keyframable rows) ships; what remains is a
+  UI control for the `preview_effects_enabled` toggle (still AppSetting /
+  MCP-only).
 - **End-to-end filtered-10-bit-export gate** — the parity gate proves the
   f16 filter-pool technique (ADR 0022), not a full filtered 10-bit export.
 - **`Speed`** is time remapping, not a filter — it stays out of
