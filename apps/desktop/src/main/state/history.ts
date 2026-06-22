@@ -1,5 +1,5 @@
 // apps/desktop/src/main/state/history.ts
-import type { Project, ProjectSettings, Uuid } from './model'
+import type { Composition, Project, ProjectSettings, Uuid } from './model'
 
 export type Actor = { kind: 'User' } | { kind: 'Agent'; client: string }
 export type EntityRef =
@@ -100,6 +100,23 @@ export class History {
     }
     for (const e of this.snapshots) e.snapshot = patchTrack(e.snapshot)
     for (const cp of this.checkpoints.values()) cp.snapshot = patchTrack(cp.snapshot)
+  }
+
+  /** native/src/state/history.rs:246 — copy the 7 canvas fields (width/height/
+   *  fps/sample_rate/channels/color_space/background) into EVERY snapshot +
+   *  checkpoint. Composition canvas is preference-shaped, so the change must
+   *  survive undo/redo (cursor unchanged; never recorded). duration_us /
+   *  duration_pinned are NOT canvas fields and are left untouched. */
+  replaceCompositionCanvasEverywhere(canvas: Composition): void {
+    const patch = (p: Project): Project => ({
+      ...p,
+      composition: { ...p.composition,
+        width: canvas.width, height: canvas.height, fps: canvas.fps,
+        sample_rate: canvas.sample_rate, channels: canvas.channels,
+        color_space: canvas.color_space, background: canvas.background },
+    })
+    for (const e of this.snapshots) e.snapshot = patch(e.snapshot)
+    for (const cp of this.checkpoints.values()) cp.snapshot = patch(cp.snapshot)
   }
 
   view(limit: number): HistoryView {

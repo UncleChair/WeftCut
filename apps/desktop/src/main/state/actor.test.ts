@@ -251,6 +251,42 @@ describe('dispatch: transitions', () => {
   })
 })
 
+describe('dispatch: set_composition full', () => {
+  function withTwoLayers() {
+    const idGen = seededGen(); const initial = blankProject(idGen, 'sc')
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    actor.dispatch('add_layer', { track: initial.tracks[0].id, kind: 'color', t_start_us: 0, t_end_us: 2_000_000 })
+    actor.dispatch('add_layer', { track: initial.tracks[1].id, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })
+    return actor
+  }
+  it('fps change re-snaps layers + autofits duration (recorded; undoable)', () => {
+    const actor = withTwoLayers()
+    const before = JSON.stringify(actor.snapshot())
+    expect(actor.dispatch('set_composition', { fps: { num: 24, den: 1 } }).ok).toBe(true)
+    expect(actor.snapshot().composition.fps).toEqual({ num: 24, den: 1 })
+    // unpinned: duration follows the (re-snapped) layer high-water mark
+    expect(actor.snapshot().composition.duration_us).toBe(2_000_000)
+    expect(actor.dispatch('undo', {}).ok).toBe(true) // recorded → undoable
+    expect(JSON.stringify(actor.snapshot())).toBe(before)
+  })
+  it('canvas-only change is unrecorded and survives undo of a prior edit', () => {
+    const idGen = seededGen(); const initial = blankProject(idGen, 'sc2')
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    actor.dispatch('add_layer', { track: initial.tracks[0].id, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })
+    expect(actor.dispatch('set_composition', { width: 1280, height: 720 }).ok).toBe(true)
+    expect(actor.snapshot().composition.width).toBe(1280)
+    actor.dispatch('undo', {}) // back to Initial — canvas must persist (replace-everywhere)
+    expect(actor.snapshot().composition.width).toBe(1280)
+    expect(actor.snapshot().tracks[0].layers).toHaveLength(0)
+  })
+  it('pins duration on explicit duration write; autofit overflow guard holds', () => {
+    const actor = withTwoLayers()
+    expect(actor.dispatch('set_composition', { duration_us: 10_000_000 }).ok).toBe(true)
+    expect(actor.snapshot().composition.duration_us).toBe(10_000_000)
+    expect(actor.snapshot().composition.duration_pinned).toBe(true)
+  })
+})
+
 describe('dispatch: delete_track + move_track', () => {
   it('move_track no-op does NOT record (later entity ids unshifted)', () => {
     const idGenA = seededGen(); const a1 = createActor({ initial: blankProject(idGenA, 't'), idGen: idGenA, clock: () => '<TS>' })

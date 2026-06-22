@@ -1,6 +1,6 @@
 // apps/desktop/src/main/state/actor.ts
 import { produce, setAutoFreeze } from 'immer'
-import type { LayerParams, Project, Rgba, Uuid } from './model'
+import type { Composition, LayerParams, Project, Rational, Uuid } from './model'
 import type { IdGen } from './ids'
 import { History, type Actor, type EntityRef, type TrackFlagsPatch } from './history'
 import { CommandFailure, ValidationFailure, type CommandError } from './errors'
@@ -15,6 +15,7 @@ import { applySplitLayer } from './mutations/split'
 import { applyGroupsCreate, applyGroupsDissolve, applyGroupsAddMembers, applyGroupsRemoveMembers, applyGroupsRename } from './mutations/groups'
 import { applyUpdateLayer, type LayerPatch } from './mutations/update'
 import { applyFitComposition } from './mutations/composition'
+import { applyDurationAutofit } from './mutations/helpers'
 import { applyUpdateMarker, applyRemoveMarker, type MarkerPatch } from './mutations/markers'
 import { applyDeleteTrack, applyMoveTrack } from './mutations/tracks'
 import { applyAddEffect, applyUpdateEffect, applyMoveEffect, applyRemoveEffect, type EffectPatch } from './mutations/effects'
@@ -56,6 +57,15 @@ export function createActor(opts: ActorOptions): ActorHandle {
 
   function current(): Project { return history.current() }
 
+  /** validate(next) → throw CommandFailure(ValidationFailed) on a rule failure.
+   *  Shared by commit and set_composition's atomic combined-probe pre-check. */
+  function runValidate(next: Project): void {
+    try { validate(next) } catch (e) {
+      if (e instanceof ValidationFailure) throw new CommandFailure({ error: 'ValidationFailed', detail: e.err })
+      throw e
+    }
+  }
+
   /** Run a draft mutation, then validate, record, emit. Mirrors actor.rs commit:
    *  validate FIRST, op_id AFTER validate. Returns the recipe's value. Throws
    *  CommandFailure on a mutation error or a validation failure. */
@@ -64,10 +74,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
     // produce: a throw inside the recipe aborts and discards the draft (Rust:
     // the clone is dropped on error → authoritative state untouched).
     const next = produce(current(), (draft) => { value = recipe(draft) })
-    try { validate(next) } catch (e) {
-      if (e instanceof ValidationFailure) throw new CommandFailure({ error: 'ValidationFailed', detail: e.err })
-      throw e
-    }
+    runValidate(next)
     const opId = idGen() // AFTER validate — failed validate consumes no op_id
     const ts = clock()
     history.record({ op_id: opId, actor, timestamp: ts, summary, affected, snapshot: next })
@@ -82,50 +89,70 @@ export function createActor(opts: ActorOptions): ActorHandle {
     emit({ op_id: opId, actor, timestamp: clock(), summary, affected: [], new_snapshot: snapshot, diff_hint: { kind: 'Coarse' } })
   }
 
-  // ── set_composition (actor.rs:2929-3077) — Phase-1 duration path + canvas/fps ──
+  // ── set_composition (do_set_composition actor.rs:2929-3077) — atomic combined
+  //    probe validate; fps re-snaps every layer + Motif src_in_us + duration; the
+  //    non-fps canvas path replaces canvas in EVERY snapshot (survives undo). ──
   function setComposition(patch: Record<string, unknown>): void {
     const cur = current()
-    const fps = (patch.fps as { num: number; den: number } | undefined)
-    const fpsChanged = !!fps && (fps.num !== cur.composition.fps.num || fps.den !== cur.composition.fps.den)
-    if (fpsChanged) {
-      commit('Set composition (fps)', [], { kind: 'Composition' }, (d) => {
-        d.composition.fps = fps!
+    const CANVAS_KEYS = ['width', 'height', 'fps', 'sample_rate', 'channels', 'color_space', 'background']
+    const canvasChanges = CANVAS_KEYS.some((k) => patch[k] !== undefined)
+    const newFps = (patch.fps as Rational | undefined) ?? cur.composition.fps
+    const fpsChanged = patch.fps !== undefined && (newFps.num !== cur.composition.fps.num || newFps.den !== cur.composition.fps.den)
+    const durationChange = typeof patch.duration_us === 'number'
+      ? snapFrameRound(patch.duration_us, newFps.num, newFps.den) : undefined
+
+    // Build the combined probe (canvas + duration + fps re-snap + autofit).
+    const buildProbe = (d: Project): void => {
+      applyCanvasFields(d.composition, patch)
+      if (durationChange !== undefined) { d.composition.duration_us = durationChange; d.composition.duration_pinned = true }
+      if (fpsChanged) {
+        const nf = d.composition.fps
         for (const t of d.tracks) for (const l of t.layers) {
-          l.t_start_us = snapFrameRound(l.t_start_us, fps!.num, fps!.den)
-          l.t_end_us = snapFrameRound(l.t_end_us, fps!.num, fps!.den)
+          l.t_start_us = snapFrameRound(l.t_start_us, nf.num, nf.den)
+          l.t_end_us = snapFrameRound(l.t_end_us, nf.num, nf.den)
+          // Motif src_in_us lives on the COMPOSITION grid (re-snap); VideoClip/
+          // Audio src_in_us is on the source-PTS grid (left untouched).
+          if (l.params.kind === 'Motif') l.params.src_in_us = snapFrameRound(l.params.src_in_us, nf.num, nf.den)
         }
-        d.composition.duration_us = snapFrameRound(d.composition.duration_us, fps!.num, fps!.den)
-        applyCanvasPatch(d, patch)
-        if (typeof patch.duration_us === 'number') { d.composition.duration_us = snapFrameRound(patch.duration_us, fps!.num, fps!.den); d.composition.duration_pinned = true }
-      })
+        d.composition.duration_us = snapFrameRound(d.composition.duration_us, nf.num, nf.den)
+      }
+      applyDurationAutofit(d)
+    }
+
+    if (fpsChanged) {
+      // Layer geometry changed → one recorded commit of the probe.
+      commit('Updated composition fps + re-snapped layers', [], { kind: 'Composition' }, buildProbe)
       return
     }
-    // Canvas-only fields → unrecorded replace-everywhere (preference-shaped).
-    const hasCanvas = ['width', 'height', 'sample_rate', 'channels', 'color_space', 'background'].some((k) => patch[k] !== undefined)
-    if (hasCanvas) {
-      // Phase 1 corpus never exercises this; apply canvas to all snapshots unrecorded.
-      // (Full replace_composition_canvas_everywhere lands in Phase 3; here we keep
-      //  parity for the rare patch by re-committing canvas as an unrecorded broadcast.)
-      const next = produce(current(), (d) => applyCanvasPatch(d, patch))
-      // No history record; broadcast the new head as the visible state.
-      broadcastUnrecorded('Set composition (canvas)', next)
+
+    // Non-fps: validate the combined probe FIRST (atomicity — never apply canvas
+    // everywhere and then fail on the duration commit).
+    const probe = produce(cur, buildProbe)
+    runValidate(probe)
+
+    if (canvasChanges) {
+      const newCanvas = produce(cur.composition, (c: Composition) => applyCanvasFields(c, patch))
+      history.replaceCompositionCanvasEverywhere(newCanvas)
+      broadcastUnrecorded('Updated composition canvas', current())
     }
-    if (typeof patch.duration_us === 'number') {
-      const n = current()
-      commit('Set composition (duration)', [], { kind: 'Composition' }, (d) => {
-        d.composition.duration_us = snapFrameRound(patch.duration_us as number, n.composition.fps.num, n.composition.fps.den)
+    if (durationChange !== undefined) {
+      commit('Updated composition duration', [], { kind: 'Composition' }, (d) => {
+        d.composition.duration_us = durationChange
         d.composition.duration_pinned = true
+        applyDurationAutofit(d)
       })
     }
   }
-  function applyCanvasPatch(d: Project, patch: Record<string, unknown>): void {
-    const c = d.composition
+  /** Copy the present canvas fields of `patch` into a composition draft
+   *  (history.rs:391 apply_canvas_fields covers exactly these 7). */
+  function applyCanvasFields(c: Composition, patch: Record<string, unknown>): void {
     if (typeof patch.width === 'number') c.width = patch.width
     if (typeof patch.height === 'number') c.height = patch.height
+    if (patch.fps) c.fps = patch.fps as Rational
     if (typeof patch.sample_rate === 'number') c.sample_rate = patch.sample_rate
     if (typeof patch.channels === 'number') c.channels = patch.channels
-    if (patch.color_space) c.color_space = patch.color_space as Project['composition']['color_space']
-    if (patch.background) c.background = patch.background as Rgba
+    if (patch.color_space) c.color_space = patch.color_space as Composition['color_space']
+    if (patch.background) c.background = patch.background as Project['composition']['background']
   }
 
   // ── meta ──

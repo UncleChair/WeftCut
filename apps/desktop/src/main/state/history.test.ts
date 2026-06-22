@@ -1,7 +1,7 @@
 // apps/desktop/src/main/state/history.test.ts
 import { describe, it, expect } from 'vitest'
 import { seededGen } from './ids'
-import { blankProject, type Project } from './model'
+import { blankProject, type Composition, type Project } from './model'
 import { History, type HistoryEntry } from './history'
 
 const U = { kind: 'User' as const }
@@ -77,6 +77,28 @@ describe('History', () => {
     expect(v.len).toBe(2); expect(v.cursor).toBe(1); expect(v.ops.length).toBe(2)
     const s = h.status()
     expect(s).toMatchObject({ cursor: 1, len: 2, can_undo: true, can_redo: false })
+  })
+})
+
+describe('replaceCompositionCanvasEverywhere', () => {
+  it('patches the 7 canvas fields into every snapshot, leaving duration + cursor untouched', () => {
+    const gen = seededGen()
+    const p0 = blankProject(gen, 'h')
+    const h = new History(p0, { kind: 'User' }, gen())
+    // record a second snapshot that differs (a duration change)
+    const p1 = { ...p0, composition: { ...p0.composition, duration_us: 5_000_000, duration_pinned: true } }
+    h.record({ op_id: gen(), actor: { kind: 'User' }, timestamp: '<TS>', summary: 's', affected: [], snapshot: p1 })
+    const newCanvas: Composition = { ...p0.composition, width: 1280, height: 720, fps: { num: 24, den: 1 }, background: { r: 10, g: 20, b: 30, a: 255 } }
+    h.replaceCompositionCanvasEverywhere(newCanvas)
+    // head (p1): canvas patched, duration preserved (canvas-replace copies only the 7 canvas fields)
+    expect(h.current().composition.width).toBe(1280)
+    expect(h.current().composition.fps).toEqual({ num: 24, den: 1 })
+    expect(h.current().composition.duration_us).toBe(5_000_000)
+    expect(h.current().composition.duration_pinned).toBe(true)
+    // earlier snapshot (Initial) also patched
+    const initial = h.undo()!
+    expect(initial.composition.width).toBe(1280)
+    expect(initial.composition.duration_us).toBe(0)
   })
 })
 
