@@ -77,8 +77,8 @@ export class History {
   }
 
   /** Preference patch applied to ALL snapshots + checkpoints; cursor unchanged
-   *  (project_settings_patch_convention). Phase 1 needs only settings; track/role
-   *  flag variants land in Phase 3. */
+   *  (project_settings_patch_convention). The track-flag variant is
+   *  replaceTrackFlagsEverywhere; the audio-role-flag variant is not yet ported. */
   replaceSettingsEverywhere(settings: ProjectSettings): void {
     for (const e of this.snapshots) e.snapshot = { ...e.snapshot, settings: { ...settings } }
     for (const cp of this.checkpoints.values()) cp.snapshot = { ...cp.snapshot, settings: { ...settings } }
