@@ -15,6 +15,8 @@ mod app_settings;
 mod audio;
 mod cache;
 mod commands;
+// pub: build_project_summary consumed by the replay_driver differential-harness bin
+pub use commands::build_project_summary;
 mod events;
 mod napi_backend;
 

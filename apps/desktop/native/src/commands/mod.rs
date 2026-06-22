@@ -319,7 +319,7 @@ pub struct HistoryView {
 
 /// Pure builder for the project IPC view. Kept separate from the async
 /// `project_summary` command so it can be unit-tested without a live actor.
-pub(crate) fn build_project_summary(
+pub fn build_project_summary(
     snap: &state::Project,
     history: &state::HistoryStatus,
 ) -> ProjectSummary {

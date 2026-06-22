@@ -18,6 +18,7 @@ async fn main() {
     let path = std::env::args().nth(1).expect("usage: replay_driver <sequence.json>");
     let seq: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     let name = seq["name"].as_str().unwrap_or("unnamed").to_string();
+    let emit_summary = std::env::var("REPLAY_EMIT").as_deref() == Ok("summary");
 
     det::reset();
     det::enable();
@@ -39,10 +40,22 @@ async fn main() {
             if let Some(rf) = cmd["ref"].as_str() { refs.insert(rf.to_string(), id.clone()); }
         }
         let snap = h.snapshot().await;
-        steps.push(json!({ "op": op, "ok": ok, "error": error, "state": canonical_state(&snap) }));
+        let step = if emit_summary {
+            let status = h.history_status().await;
+            json!({ "op": op, "ok": ok, "error": error, "summary": canonical_summary(&snap, &status) })
+        } else {
+            json!({ "op": op, "ok": ok, "error": error, "state": canonical_state(&snap) })
+        };
+        steps.push(step);
     }
     det::disable();
     println!("{}", serde_json::to_string_pretty(&json!({ "name": name, "steps": steps })).unwrap());
+}
+
+/// The renderer IPC read-view (commands::build_project_summary). No wall-clock
+/// fields in the view, so no <TS> normalization is needed (unlike canonical_state).
+fn canonical_summary(p: &state::Project, status: &state::HistoryStatus) -> Value {
+    serde_json::to_value(weftcut_lib::build_project_summary(p, status)).unwrap()
 }
 
 /// Serialize via serde_json::Value (BTreeMap => keys sorted; preserve_order is

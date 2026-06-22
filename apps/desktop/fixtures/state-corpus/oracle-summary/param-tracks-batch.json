@@ -1,0 +1,417 @@
+{
+  "name": "param-tracks-batch",
+  "steps": [
+    {
+      "error": null,
+      "ok": true,
+      "op": "add_layer",
+      "summary": {
+        "audio_roles": [
+          {
+            "gain_db": 0.0,
+            "muted": false,
+            "role": "dialogue",
+            "solo": false
+          },
+          {
+            "gain_db": 0.0,
+            "muted": false,
+            "role": "music",
+            "solo": false
+          },
+          {
+            "gain_db": 0.0,
+            "muted": false,
+            "role": "sfx",
+            "solo": false
+          },
+          {
+            "gain_db": 0.0,
+            "muted": false,
+            "role": "voiceover",
+            "solo": false
+          }
+        ],
+        "composition": {
+          "duration_pinned": false,
+          "fps_den": 1,
+          "fps_num": 30,
+          "height": 1080,
+          "width": 1920
+        },
+        "duration_us": 2000000,
+        "groups": [],
+        "history": {
+          "can_redo": false,
+          "can_undo": true,
+          "cursor": 1,
+          "len": 2
+        },
+        "layer_count": 1,
+        "markers": [],
+        "media": [],
+        "name": "replay",
+        "project_id": "00000000-0000-0000-0000-000000000003",
+        "track_count": 2,
+        "tracks": [
+          {
+            "enabled": true,
+            "id": "00000000-0000-0000-0000-000000000001",
+            "kind": "Video",
+            "label": "A roll",
+            "layers": [],
+            "locked": false,
+            "muted": false,
+            "role": "a-roll",
+            "solo": false,
+            "transient": false
+          },
+          {
+            "enabled": true,
+            "id": "00000000-0000-0000-0000-000000000002",
+            "kind": "Video",
+            "label": "B roll",
+            "layers": [
+              {
+                "color_hint": "#cb4d4d",
+                "effects": [],
+                "enabled": true,
+                "id": "00000000-0000-0000-0000-000000000005",
+                "kind": "Text",
+                "label": null,
+                "locked": false,
+                "params": {
+                  "align": "Center",
+                  "anchor_x": 0.5,
+                  "anchor_y": 0.5,
+                  "color": {
+                    "mode": "Static",
+                    "value": {
+                      "a": 255,
+                      "b": 255,
+                      "g": 255,
+                      "r": 255
+                    }
+                  },
+                  "content": "hello",
+                  "font_family": "Inter",
+                  "font_size_px": 48.0,
+                  "italic": false,
+                  "kind": "Text",
+                  "opacity": {
+                    "mode": "Static",
+                    "value": 1.0
+                  },
+                  "outline": null,
+                  "shadow": null,
+                  "weight": 400,
+                  "x": {
+                    "mode": "Static",
+                    "value": 0.0
+                  },
+                  "y": {
+                    "mode": "Static",
+                    "value": 0.0
+                  }
+                },
+                "t_end_us": 2000000,
+                "t_start_us": 0
+              }
+            ],
+            "locked": false,
+            "muted": false,
+            "role": "b-roll",
+            "solo": false,
+            "transient": false
+          }
+        ]
+      }
+    },
+    {
+      "error": null,
+      "ok": true,
+      "op": "update_layer_param_tracks",
+      "summary": {
+        "audio_roles": [
+          {
+            "gain_db": 0.0,
+            "muted": false,
+            "role": "dialogue",
+            "solo": false
+          },
+          {
+            "gain_db": 0.0,
+            "muted": false,
+            "role": "music",
+            "solo": false
+          },
+          {
+            "gain_db": 0.0,
+            "muted": false,
+            "role": "sfx",
+            "solo": false
+          },
+          {
+            "gain_db": 0.0,
+            "muted": false,
+            "role": "voiceover",
+            "solo": false
+          }
+        ],
+        "composition": {
+          "duration_pinned": false,
+          "fps_den": 1,
+          "fps_num": 30,
+          "height": 1080,
+          "width": 1920
+        },
+        "duration_us": 2000000,
+        "groups": [],
+        "history": {
+          "can_redo": false,
+          "can_undo": true,
+          "cursor": 2,
+          "len": 3
+        },
+        "layer_count": 1,
+        "markers": [],
+        "media": [],
+        "name": "replay",
+        "project_id": "00000000-0000-0000-0000-000000000003",
+        "track_count": 2,
+        "tracks": [
+          {
+            "enabled": true,
+            "id": "00000000-0000-0000-0000-000000000001",
+            "kind": "Video",
+            "label": "A roll",
+            "layers": [],
+            "locked": false,
+            "muted": false,
+            "role": "a-roll",
+            "solo": false,
+            "transient": false
+          },
+          {
+            "enabled": true,
+            "id": "00000000-0000-0000-0000-000000000002",
+            "kind": "Video",
+            "label": "B roll",
+            "layers": [
+              {
+                "color_hint": "#cb4d4d",
+                "effects": [],
+                "enabled": true,
+                "id": "00000000-0000-0000-0000-000000000005",
+                "kind": "Text",
+                "label": null,
+                "locked": false,
+                "params": {
+                  "align": "Center",
+                  "anchor_x": 0.5,
+                  "anchor_y": 0.5,
+                  "color": {
+                    "mode": "Static",
+                    "value": {
+                      "a": 255,
+                      "b": 255,
+                      "g": 255,
+                      "r": 255
+                    }
+                  },
+                  "content": "hello",
+                  "font_family": "Inter",
+                  "font_size_px": 48.0,
+                  "italic": false,
+                  "kind": "Text",
+                  "opacity": {
+                    "mode": "Keyframed",
+                    "value": [
+                      {
+                        "id": "00000000-0000-0000-0000-0000000000f3",
+                        "interp": {
+                          "kind": "Linear"
+                        },
+                        "t_us": 0,
+                        "value": 1.0
+                      },
+                      {
+                        "id": "00000000-0000-0000-0000-0000000000f4",
+                        "interp": {
+                          "kind": "Linear"
+                        },
+                        "t_us": 1000000,
+                        "value": 0.0
+                      }
+                    ]
+                  },
+                  "outline": null,
+                  "shadow": null,
+                  "weight": 400,
+                  "x": {
+                    "mode": "Keyframed",
+                    "value": [
+                      {
+                        "id": "00000000-0000-0000-0000-0000000000f1",
+                        "interp": {
+                          "kind": "Linear"
+                        },
+                        "t_us": 0,
+                        "value": 0.0
+                      },
+                      {
+                        "id": "00000000-0000-0000-0000-0000000000f2",
+                        "interp": {
+                          "kind": "Linear"
+                        },
+                        "t_us": 1000000,
+                        "value": 100.0
+                      }
+                    ]
+                  },
+                  "y": {
+                    "mode": "Static",
+                    "value": 0.0
+                  }
+                },
+                "t_end_us": 2000000,
+                "t_start_us": 0
+              }
+            ],
+            "locked": false,
+            "muted": false,
+            "role": "b-roll",
+            "solo": false,
+            "transient": false
+          }
+        ]
+      }
+    },
+    {
+      "error": null,
+      "ok": true,
+      "op": "undo",
+      "summary": {
+        "audio_roles": [
+          {
+            "gain_db": 0.0,
+            "muted": false,
+            "role": "dialogue",
+            "solo": false
+          },
+          {
+            "gain_db": 0.0,
+            "muted": false,
+            "role": "music",
+            "solo": false
+          },
+          {
+            "gain_db": 0.0,
+            "muted": false,
+            "role": "sfx",
+            "solo": false
+          },
+          {
+            "gain_db": 0.0,
+            "muted": false,
+            "role": "voiceover",
+            "solo": false
+          }
+        ],
+        "composition": {
+          "duration_pinned": false,
+          "fps_den": 1,
+          "fps_num": 30,
+          "height": 1080,
+          "width": 1920
+        },
+        "duration_us": 2000000,
+        "groups": [],
+        "history": {
+          "can_redo": true,
+          "can_undo": true,
+          "cursor": 1,
+          "len": 3
+        },
+        "layer_count": 1,
+        "markers": [],
+        "media": [],
+        "name": "replay",
+        "project_id": "00000000-0000-0000-0000-000000000003",
+        "track_count": 2,
+        "tracks": [
+          {
+            "enabled": true,
+            "id": "00000000-0000-0000-0000-000000000001",
+            "kind": "Video",
+            "label": "A roll",
+            "layers": [],
+            "locked": false,
+            "muted": false,
+            "role": "a-roll",
+            "solo": false,
+            "transient": false
+          },
+          {
+            "enabled": true,
+            "id": "00000000-0000-0000-0000-000000000002",
+            "kind": "Video",
+            "label": "B roll",
+            "layers": [
+              {
+                "color_hint": "#cb4d4d",
+                "effects": [],
+                "enabled": true,
+                "id": "00000000-0000-0000-0000-000000000005",
+                "kind": "Text",
+                "label": null,
+                "locked": false,
+                "params": {
+                  "align": "Center",
+                  "anchor_x": 0.5,
+                  "anchor_y": 0.5,
+                  "color": {
+                    "mode": "Static",
+                    "value": {
+                      "a": 255,
+                      "b": 255,
+                      "g": 255,
+                      "r": 255
+                    }
+                  },
+                  "content": "hello",
+                  "font_family": "Inter",
+                  "font_size_px": 48.0,
+                  "italic": false,
+                  "kind": "Text",
+                  "opacity": {
+                    "mode": "Static",
+                    "value": 1.0
+                  },
+                  "outline": null,
+                  "shadow": null,
+                  "weight": 400,
+                  "x": {
+                    "mode": "Static",
+                    "value": 0.0
+                  },
+                  "y": {
+                    "mode": "Static",
+                    "value": 0.0
+                  }
+                },
+                "t_end_us": 2000000,
+                "t_start_us": 0
+              }
+            ],
+            "locked": false,
+            "muted": false,
+            "role": "b-roll",
+            "solo": false,
+            "transient": false
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,250 @@
+{
+  "name": "add-image-layer",
+  "steps": [
+    {
+      "error": null,
+      "ok": true,
+      "op": "add_media",
+      "summary": {
+        "audio_roles": [
+          {
+            "gain_db": 0.0,
+            "muted": false,
+            "role": "dialogue",
+            "solo": false
+          },
+          {
+            "gain_db": 0.0,
+            "muted": false,
+            "role": "music",
+            "solo": false
+          },
+          {
+            "gain_db": 0.0,
+            "muted": false,
+            "role": "sfx",
+            "solo": false
+          },
+          {
+            "gain_db": 0.0,
+            "muted": false,
+            "role": "voiceover",
+            "solo": false
+          }
+        ],
+        "composition": {
+          "duration_pinned": false,
+          "fps_den": 1,
+          "fps_num": 30,
+          "height": 1080,
+          "width": 1920
+        },
+        "duration_us": 0,
+        "groups": [],
+        "history": {
+          "can_redo": false,
+          "can_undo": false,
+          "cursor": 0,
+          "len": 1
+        },
+        "layer_count": 0,
+        "markers": [],
+        "media": [
+          {
+            "available": false,
+            "codec": null,
+            "color_matrix": null,
+            "color_primaries": null,
+            "color_range": null,
+            "color_transfer": null,
+            "conform_path": null,
+            "duration_us": null,
+            "export_uses_original": false,
+            "height": null,
+            "id": "00000000-0000-0000-0000-0000000000cc",
+            "kind": "Image",
+            "label": "clip.bin",
+            "path": "media/clip.bin",
+            "pix_fmt": null,
+            "proxy_bypassed": false,
+            "proxy_path": null,
+            "quick_proxy_path": null,
+            "size_bytes": 0,
+            "width": null
+          }
+        ],
+        "name": "replay",
+        "project_id": "00000000-0000-0000-0000-000000000003",
+        "track_count": 2,
+        "tracks": [
+          {
+            "enabled": true,
+            "id": "00000000-0000-0000-0000-000000000001",
+            "kind": "Video",
+            "label": "A roll",
+            "layers": [],
+            "locked": false,
+            "muted": false,
+            "role": "a-roll",
+            "solo": false,
+            "transient": false
+          },
+          {
+            "enabled": true,
+            "id": "00000000-0000-0000-0000-000000000002",
+            "kind": "Video",
+            "label": "B roll",
+            "layers": [],
+            "locked": false,
+            "muted": false,
+            "role": "b-roll",
+            "solo": false,
+            "transient": false
+          }
+        ]
+      }
+    },
+    {
+      "error": null,
+      "ok": true,
+      "op": "add_layer",
+      "summary": {
+        "audio_roles": [
+          {
+            "gain_db": 0.0,
+            "muted": false,
+            "role": "dialogue",
+            "solo": false
+          },
+          {
+            "gain_db": 0.0,
+            "muted": false,
+            "role": "music",
+            "solo": false
+          },
+          {
+            "gain_db": 0.0,
+            "muted": false,
+            "role": "sfx",
+            "solo": false
+          },
+          {
+            "gain_db": 0.0,
+            "muted": false,
+            "role": "voiceover",
+            "solo": false
+          }
+        ],
+        "composition": {
+          "duration_pinned": false,
+          "fps_den": 1,
+          "fps_num": 30,
+          "height": 1080,
+          "width": 1920
+        },
+        "duration_us": 3000000,
+        "groups": [],
+        "history": {
+          "can_redo": false,
+          "can_undo": true,
+          "cursor": 1,
+          "len": 2
+        },
+        "layer_count": 1,
+        "markers": [],
+        "media": [
+          {
+            "available": false,
+            "codec": null,
+            "color_matrix": null,
+            "color_primaries": null,
+            "color_range": null,
+            "color_transfer": null,
+            "conform_path": null,
+            "duration_us": null,
+            "export_uses_original": false,
+            "height": null,
+            "id": "00000000-0000-0000-0000-0000000000cc",
+            "kind": "Image",
+            "label": "clip.bin",
+            "path": "media/clip.bin",
+            "pix_fmt": null,
+            "proxy_bypassed": false,
+            "proxy_path": null,
+            "quick_proxy_path": null,
+            "size_bytes": 0,
+            "width": null
+          }
+        ],
+        "name": "replay",
+        "project_id": "00000000-0000-0000-0000-000000000003",
+        "track_count": 2,
+        "tracks": [
+          {
+            "enabled": true,
+            "id": "00000000-0000-0000-0000-000000000001",
+            "kind": "Video",
+            "label": "A roll",
+            "layers": [
+              {
+                "color_hint": "#cb4d4d",
+                "effects": [],
+                "enabled": true,
+                "id": "00000000-0000-0000-0000-000000000006",
+                "kind": "ImageOverlay",
+                "label": null,
+                "locked": false,
+                "params": {
+                  "fade_in_us": 0,
+                  "fade_out_us": 0,
+                  "kind": "ImageOverlay",
+                  "media_id": "00000000-0000-0000-0000-0000000000cc",
+                  "media_label": "clip.bin",
+                  "opacity": {
+                    "mode": "Static",
+                    "value": 1.0
+                  },
+                  "scale_x": {
+                    "mode": "Static",
+                    "value": 1.0
+                  },
+                  "scale_y": {
+                    "mode": "Static",
+                    "value": 1.0
+                  },
+                  "x": {
+                    "mode": "Static",
+                    "value": 0.0
+                  },
+                  "y": {
+                    "mode": "Static",
+                    "value": 0.0
+                  }
+                },
+                "t_end_us": 3000000,
+                "t_start_us": 0
+              }
+            ],
+            "locked": false,
+            "muted": false,
+            "role": "a-roll",
+            "solo": false,
+            "transient": false
+          },
+          {
+            "enabled": true,
+            "id": "00000000-0000-0000-0000-000000000002",
+            "kind": "Video",
+            "label": "B roll",
+            "layers": [],
+            "locked": false,
+            "muted": false,
+            "role": "b-roll",
+            "solo": false,
+            "transient": false
+          }
+        ]
+      }
+    }
+  ]
+}
