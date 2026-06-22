@@ -1,0 +1,4 @@
+{ "name": "update-layer-params-text", "commands": [
+  { "op": "add_layer", "track": "@B", "kind": "text", "t_start_us": 0, "t_end_us": 2000000, "ref": "L1" },
+  { "op": "update_layer_params", "layer": "@L1", "patch": { "kind": "Text", "content": "world", "opacity": 0.5, "x": 10 } }
+] }

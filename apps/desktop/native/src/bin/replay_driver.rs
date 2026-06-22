@@ -61,6 +61,19 @@ fn resolve_id(refs: &HashMap<String, String>, token: &str) -> uuid::Uuid {
     uuid::Uuid::parse_str(refs.get(key).unwrap_or(&key.to_string())).unwrap()
 }
 
+/// Substitute a single @ref token inside an effect-param key (mirrors the TS resolveParamKey).
+fn resolve_param_key(refs: &HashMap<String, String>, key: &str) -> String {
+    if let Some(at) = key.find('@') {
+        let tail = &key[at + 1..];
+        let end = tail.find(|c: char| !(c.is_alphanumeric() || c == '_')).unwrap_or(tail.len());
+        let name = &tail[..end];
+        if let Some(v) = refs.get(name) {
+            return format!("{}{}{}", &key[..at], v, &tail[end..]);
+        }
+    }
+    key.to_string()
+}
+
 async fn apply(h: &ProjectHandle, cmd: &Value, refs: &HashMap<String, String>) -> Result<Option<String>, String> {
     let op = cmd["op"].as_str().unwrap();
     let u = Actor::User;
@@ -208,6 +221,23 @@ async fn apply(h: &ProjectHandle, cmd: &Value, refs: &HashMap<String, String>) -
             .map(|mid| Some(mid.to_string())).map_err(|e| format!("{e:?}")),
         "separate_audio" => h.separate_audio_to_new_track(u, resolve_id(refs, cmd["layer"].as_str().unwrap())).await
             .map(|tid| Some(tid.to_string())).map_err(|e| format!("{e:?}")),
+        "update_layer_params" => {
+            let patch: weftcut_lib::state::actor::LayerParamsPatch =
+                serde_json::from_value(cmd["patch"].clone()).map_err(|e| e.to_string())?;
+            h.update_layer_params(u, resolve_id(refs, cmd["layer"].as_str().unwrap()), patch).await
+                .map(|_| None).map_err(|e| format!("{e:?}"))
+        }
+        "update_layer_param_track" => {
+            let track: Animated<f64> = serde_json::from_value(cmd["track"].clone()).map_err(|e| e.to_string())?;
+            let key = resolve_param_key(refs, cmd["param_key"].as_str().unwrap());
+            h.update_layer_param_track(u, resolve_id(refs, cmd["layer"].as_str().unwrap()), key, track).await
+                .map(|_| None).map_err(|e| format!("{e:?}"))
+        }
+        "update_layer_param_tracks" => {
+            let entries: Vec<(String, Animated<f64>)> = serde_json::from_value(cmd["entries"].clone()).map_err(|e| e.to_string())?;
+            h.update_layer_param_tracks(u, resolve_id(refs, cmd["layer"].as_str().unwrap()), entries).await
+                .map(|_| None).map_err(|e| format!("{e:?}"))
+        }
         other => Err(format!("driver: unsupported op {other}")),
     }
 }

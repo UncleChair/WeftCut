@@ -1,0 +1,4 @@
+{ "name": "update-layer-params-color", "commands": [
+  { "op": "add_layer", "track": "@A", "kind": "color", "t_start_us": 0, "t_end_us": 1000000, "ref": "L1" },
+  { "op": "update_layer_params", "layer": "@L1", "patch": { "kind": "Color", "color": { "r": 1, "g": 2, "b": 3, "a": 255 }, "width": 640 } }
+] }

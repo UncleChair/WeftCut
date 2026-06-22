@@ -18,6 +18,7 @@ export const SUPPORTED_OPS = new Set<string>([
   'add_effect', 'update_effect', 'move_effect', 'remove_effect',
   'add_transition', 'remove_transition',
   'add_media', 'separate_audio',
+  'update_layer_params', 'update_layer_param_track', 'update_layer_param_tracks',
 ])
 const SUPPORTED_ADD_KINDS = new Set<string>(['color', 'text', 'video', 'audio', 'image'])
 
@@ -39,6 +40,11 @@ function resolve(refs: Map<string, string>, token: unknown): string {
   const s = String(token)
   const key = s.startsWith('@') ? s.slice(1) : s
   return refs.get(key) ?? key
+}
+
+/** Substitute a single @ref token inside an effect-param key string. */
+function resolveParamKey(refs: Map<string, string>, key: string): string {
+  return key.replace(/@([A-Za-z0-9_]+)/, (_, r) => refs.get(r) ?? r)
 }
 
 /** TS twin of native/src/bin/replay_driver.rs. Starts from a blank project with
@@ -101,6 +107,9 @@ function buildArgs(cmd: Cmd, refs: Map<string, string>): Record<string, unknown>
     case 'remove_transition': return { transition: resolve(refs, cmd.transition) }
     case 'add_media': return { id: cmd.id, kind: cmd.kind, duration_us: cmd.duration_us ?? null }
     case 'separate_audio': return { layer: resolve(refs, cmd.layer) }
+    case 'update_layer_params': return { layer: resolve(refs, cmd.layer), patch: cmd.patch }
+    case 'update_layer_param_track': return { layer: resolve(refs, cmd.layer), param_key: resolveParamKey(refs, cmd.param_key as string), track: cmd.track }
+    case 'update_layer_param_tracks': return { layer: resolve(refs, cmd.layer), entries: cmd.entries }
     case 'undo': case 'redo': return {}
     default: return {}
   }

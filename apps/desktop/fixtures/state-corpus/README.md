@@ -31,8 +31,10 @@ Duplicate with a negative `t_offset_us` that would produce a negative start time
 ### 3. Marker `color` patch
 `update_marker`'s `color` field is unit-tested (`mutations/markers.test.ts`) but NOT differential-gated — the driver builds `MarkerPatch { color: None }` and the corpus omits color.
 
-### 4. Caption tracks, params
+### 4. Caption tracks
 These mutation categories require corpus extensions and Rust replay-driver support; deferred to later slices.
+
+Motif `update_layer_params` content-window clamp (motif_cap_us) — deferred (needs motif-catalog support in the harness; no Motif layers in the corpus).
 
 ---
 
@@ -168,6 +170,19 @@ These mutation categories require corpus extensions and Rust replay-driver suppo
 | separate_audio (audio layer → new track before source) | separate-audio.json |
 | separate_audio on non-audio → WrongLayerKind (no id burned) | separate-audio-wrong-kind.json |
 | separate_audio missing layer → LayerNotFound | separate-audio-missing.json |
+| **— layer params (field merge) —** | |
+| update_layer_params Text / Color / VideoClip / Audio | update-layer-params-text.json, update-layer-params-color.json, update-layer-params-video.json, update-layer-params-audio.json |
+| update_layer_params kind mismatch → LayerParamsKindMismatch | update-layer-params-kind-mismatch.json |
+| update_layer_params on a locked track → TrackLocked | update-layer-params-locked.json |
+| update_layer_params missing layer → LayerNotFound | update-layer-params-missing.json |
+| update_layer_params undo | update-layer-params-undo.json |
+| **— keyframe param tracks —** | |
+| update_layer_param_track opacity (keyframed) | param-track-opacity.json |
+| update_layer_param_track empty → EmptyKeyframeTrack | param-track-empty.json |
+| update_layer_param_track unknown key → UnknownKeyframeParam | param-track-unknown.json |
+| update_layer_param_track effect-param (lazy slot insert) | param-track-effect.json |
+| update_layer_param_tracks batch (one commit) | param-tracks-batch.json |
+| update_layer_param_track undo | param-track-undo.json |
 | **DEFERRED** | |
 | History cap >200 | deferred |
 | Marker color patch | unit-tested only (driver builds color:None) |
