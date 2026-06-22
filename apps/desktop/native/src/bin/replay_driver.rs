@@ -31,8 +31,11 @@ async fn main() {
     let mut steps = Vec::new();
     for cmd in seq["commands"].as_array().unwrap() {
         let op = cmd["op"].as_str().unwrap().to_string();
-        let outcome = apply(&h, cmd, &mut refs).await;
+        let outcome = apply(&h, cmd, &refs).await;
         let (ok, error) = match &outcome { Ok(_) => (true, None), Err(e) => (false, Some(e.clone())) };
+        if let Ok(Some(id)) = &outcome {
+            if let Some(rf) = cmd["ref"].as_str() { refs.insert(rf.to_string(), id.clone()); }
+        }
         let snap = h.snapshot().await;
         steps.push(json!({ "op": op, "ok": ok, "error": error, "state": canonical_state(&snap) }));
     }
@@ -56,7 +59,7 @@ fn resolve_id(refs: &HashMap<String, String>, token: &str) -> uuid::Uuid {
     uuid::Uuid::parse_str(refs.get(key).unwrap_or(&key.to_string())).unwrap()
 }
 
-async fn apply(h: &ProjectHandle, cmd: &Value, refs: &mut HashMap<String, String>) -> Result<(), String> {
+async fn apply(h: &ProjectHandle, cmd: &Value, refs: &HashMap<String, String>) -> Result<Option<String>, String> {
     let op = cmd["op"].as_str().unwrap();
     let u = Actor::User;
     let r = |c: &Value, k: &str| c[k].as_i64().unwrap();
@@ -71,30 +74,31 @@ async fn apply(h: &ProjectHandle, cmd: &Value, refs: &mut HashMap<String, String
                 "text" => default_text_params(),
                 other => return Err(format!("unknown kind {other}")),
             };
-            let res = h.add_layer(u, track, params, r(cmd, "t_start_us"), r(cmd, "t_end_us")).await;
-            match res {
-                Ok(lid) => { if let Some(rf) = cmd["ref"].as_str() { refs.insert(rf.into(), lid.to_string()); } Ok(()) }
-                Err(e) => Err(format!("{e:?}")),
-            }
+            h.add_layer(u, track, params, r(cmd, "t_start_us"), r(cmd, "t_end_us")).await
+                .map(|lid| Some(lid.to_string())).map_err(|e| format!("{e:?}"))
         }
-        "add_track" => h.add_track(u, cmd["label"].as_str().map(str::to_string)).await.map(|_| ()).map_err(|e| format!("{e:?}")),
-        "move_layer" => h.move_layer(u, resolve_id(refs, cmd["layer"].as_str().unwrap()), resolve_id(refs, cmd["to_track"].as_str().unwrap()), r(cmd, "t_start_us"), cmd["escape_group"].as_bool().unwrap_or(false)).await.map_err(|e| format!("{e:?}")),
+        "add_track" => h.add_track(u, cmd["label"].as_str().map(str::to_string)).await
+            .map(|tid| Some(tid.to_string())).map_err(|e| format!("{e:?}")),
+        "move_layer" => h.move_layer(u, resolve_id(refs, cmd["layer"].as_str().unwrap()), resolve_id(refs, cmd["to_track"].as_str().unwrap()), r(cmd, "t_start_us"), cmd["escape_group"].as_bool().unwrap_or(false)).await.map(|_| None).map_err(|e| format!("{e:?}")),
         "trim_layer" => {
             let edge = if cmd["edge"].as_str() == Some("out") { LayerEdge::Out } else { LayerEdge::In };
-            h.trim_layer(u, resolve_id(refs, cmd["layer"].as_str().unwrap()), edge, r(cmd, "new_t_us"), cmd["escape_group"].as_bool().unwrap_or(false)).await.map_err(|e| format!("{e:?}"))
+            h.trim_layer(u, resolve_id(refs, cmd["layer"].as_str().unwrap()), edge, r(cmd, "new_t_us"), cmd["escape_group"].as_bool().unwrap_or(false)).await.map(|_| None).map_err(|e| format!("{e:?}"))
         }
-        "delete_layer" => h.delete_layer(u, resolve_id(refs, cmd["layer"].as_str().unwrap())).await.map_err(|e| format!("{e:?}")),
-        "duplicate_layer" => h.duplicate_layer(u, resolve_id(refs, cmd["layer"].as_str().unwrap()), r(cmd, "t_offset_us")).await.map(|_| ()).map_err(|e| format!("{e:?}")),
-        "split_layer" => h.split_layer(u, resolve_id(refs, cmd["layer"].as_str().unwrap()), r(cmd, "at_t_us"), cmd["escape_group"].as_bool().unwrap_or(false)).await.map(|_| ()).map_err(|e| format!("{e:?}")),
+        "delete_layer" => h.delete_layer(u, resolve_id(refs, cmd["layer"].as_str().unwrap())).await.map(|_| None).map_err(|e| format!("{e:?}")),
+        "duplicate_layer" => h.duplicate_layer(u, resolve_id(refs, cmd["layer"].as_str().unwrap()), r(cmd, "t_offset_us")).await
+            .map(|nid| Some(nid.to_string())).map_err(|e| format!("{e:?}")),
+        "split_layer" => h.split_layer(u, resolve_id(refs, cmd["layer"].as_str().unwrap()), r(cmd, "at_t_us"), cmd["escape_group"].as_bool().unwrap_or(false)).await.map(|_| None).map_err(|e| format!("{e:?}")),
         "groups_create" => {
             let ids: Vec<_> = cmd["layers"].as_array().unwrap().iter().map(|t| resolve_id(refs, t.as_str().unwrap())).collect();
-            h.groups_create(u, ids, cmd["label"].as_str().map(str::to_string), cmd["reassign"].as_bool().unwrap_or(false)).await.map(|_| ()).map_err(|e| format!("{e:?}"))
+            h.groups_create(u, ids, cmd["label"].as_str().map(str::to_string), cmd["reassign"].as_bool().unwrap_or(false)).await
+                .map(|gid| Some(gid.to_string())).map_err(|e| format!("{e:?}"))
         }
-        "groups_dissolve" => h.groups_dissolve(u, resolve_id(refs, cmd["group"].as_str().unwrap())).await.map_err(|e| format!("{e:?}")),
-        "add_marker" => h.add_marker(u, r(cmd, "t_us"), cmd["end_t_us"].as_i64(), cmd["label"].as_str().unwrap_or("m"), Rgba { r: 0, g: 128, b: 255, a: 255 }).await.map(|_| ()).map_err(|e| format!("{e:?}")),
+        "groups_dissolve" => h.groups_dissolve(u, resolve_id(refs, cmd["group"].as_str().unwrap())).await.map(|_| None).map_err(|e| format!("{e:?}")),
+        "add_marker" => h.add_marker(u, r(cmd, "t_us"), cmd["end_t_us"].as_i64(), cmd["label"].as_str().unwrap_or("m"), Rgba { r: 0, g: 128, b: 255, a: 255 }).await
+            .map(|mid| Some(mid.to_string())).map_err(|e| format!("{e:?}")),
         "set_composition" => {
             let patch = CompositionPatch { duration_us: cmd["duration_us"].as_i64(), ..Default::default() };
-            h.set_composition(u, patch).await.map_err(|e| format!("{e:?}"))
+            h.set_composition(u, patch).await.map(|_| None).map_err(|e| format!("{e:?}"))
         }
         "update_layer" => {
             let patch = LayerPatch {
@@ -104,11 +108,11 @@ async fn apply(h: &ProjectHandle, cmd: &Value, refs: &mut HashMap<String, String
                 enabled: cmd["enabled"].as_bool(),
                 locked: cmd["locked"].as_bool(),
             };
-            h.update_layer(u, resolve_id(refs, cmd["layer"].as_str().unwrap()), patch).await.map_err(|e| format!("{e:?}"))
+            h.update_layer(u, resolve_id(refs, cmd["layer"].as_str().unwrap()), patch).await.map(|_| None).map_err(|e| format!("{e:?}"))
         }
-        "fit_composition_to_layers" => h.fit_composition_to_layers(u).await.map_err(|e| format!("{e:?}")),
-        "undo" => h.undo(u).await.map_err(|e| format!("{e:?}")),
-        "redo" => h.redo(u).await.map_err(|e| format!("{e:?}")),
+        "fit_composition_to_layers" => h.fit_composition_to_layers(u).await.map(|_| None).map_err(|e| format!("{e:?}")),
+        "undo" => h.undo(u).await.map(|_| None).map_err(|e| format!("{e:?}")),
+        "redo" => h.redo(u).await.map(|_| None).map_err(|e| format!("{e:?}")),
         other => Err(format!("driver: unsupported op {other}")),
     }
 }
