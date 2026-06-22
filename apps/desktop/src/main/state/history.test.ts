@@ -79,3 +79,27 @@ describe('History', () => {
     expect(s).toMatchObject({ cursor: 1, len: 2, can_undo: true, can_redo: false })
   })
 })
+
+describe('History.replaceTrackFlagsEverywhere', () => {
+  it('patches all snapshots + persists across undo, unrecorded', () => {
+    const gen = seededGen(); const p0 = blankProject(gen, 't'); const tid = p0.tracks[0].id
+    const h = new History(p0, { kind: 'User' }, gen())
+    // record a second snapshot so there's something to undo to
+    const p1 = { ...h.current(), markers: [...h.current().markers] }
+    h.record({ op_id: gen(), actor: { kind: 'User' }, timestamp: '<TS>', summary: 'edit', affected: [], snapshot: p1 })
+    h.replaceTrackFlagsEverywhere(tid, { locked: true })
+    expect(h.current().tracks.find((t) => t.id === tid)!.locked).toBe(true)
+    expect(h.len()).toBe(2) // not recorded
+    const prev = h.undo()!
+    expect(prev.tracks.find((t) => t.id === tid)!.locked).toBe(true) // persists across undo
+  })
+  it('only typeof-defined fields apply; absent track is skipped', () => {
+    const gen = seededGen(); const p0 = blankProject(gen, 't'); const tid = p0.tracks[0].id
+    const h = new History(p0, { kind: 'User' }, gen())
+    h.replaceTrackFlagsEverywhere(tid, { muted: true })
+    const t = h.current().tracks.find((x) => x.id === tid)!
+    expect(t.muted).toBe(true); expect(t.locked).toBe(false) // untouched
+    h.replaceTrackFlagsEverywhere('ghost', { locked: true }) // no such track → no-op, no throw
+    expect(h.current().tracks.every((x) => !x.locked)).toBe(true)
+  })
+})

@@ -5,6 +5,10 @@ export type Actor = { kind: 'User' } | { kind: 'Agent'; client: string }
 export type EntityRef =
   | { kind: 'Track'; id: Uuid } | { kind: 'Layer'; id: Uuid } | { kind: 'Marker'; id: Uuid }
 
+/** native/src/state/project.rs:151-162 TrackFlagsPatch — preference-shaped track
+ *  toggles. null/absent = "don't touch". */
+export interface TrackFlagsPatch { enabled?: boolean | null; muted?: boolean | null; solo?: boolean | null; locked?: boolean | null }
+
 export interface HistoryEntry {
   op_id: Uuid; actor: Actor; timestamp: string; summary: string
   affected: EntityRef[]; snapshot: Project
@@ -78,6 +82,24 @@ export class History {
   replaceSettingsEverywhere(settings: ProjectSettings): void {
     for (const e of this.snapshots) e.snapshot = { ...e.snapshot, settings: { ...settings } }
     for (const cp of this.checkpoints.values()) cp.snapshot = { ...cp.snapshot, settings: { ...settings } }
+  }
+
+  /** native/src/state/history.rs:281-292 — patch one track's flags into EVERY
+   *  snapshot + checkpoint where the track exists; skip snapshots that lack it;
+   *  cursor unchanged; never recorded (project_settings_patch_convention). */
+  replaceTrackFlagsEverywhere(trackId: Uuid, patch: TrackFlagsPatch): void {
+    const patchTrack = (p: Project): Project => {
+      const ti = p.tracks.findIndex((t) => t.id === trackId)
+      if (ti < 0) return p
+      const nt = { ...p.tracks[ti] }
+      if (typeof patch.enabled === 'boolean') nt.enabled = patch.enabled
+      if (typeof patch.muted === 'boolean') nt.muted = patch.muted
+      if (typeof patch.solo === 'boolean') nt.solo = patch.solo
+      if (typeof patch.locked === 'boolean') nt.locked = patch.locked
+      return { ...p, tracks: p.tracks.map((t, i) => (i === ti ? nt : t)) }
+    }
+    for (const e of this.snapshots) e.snapshot = patchTrack(e.snapshot)
+    for (const cp of this.checkpoints.values()) cp.snapshot = patchTrack(cp.snapshot)
   }
 
   view(limit: number): HistoryView {
