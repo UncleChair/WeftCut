@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest'
 import { readdirSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { canonicalize } from '../canonical'
+import { parseOracleErrorVariant } from '../errors'
 import { replaySummaries, sequenceIsSupported } from '../replay'
 
 const ROOT = join(__dirname, '../../../../fixtures/state-corpus')
@@ -25,6 +26,10 @@ describe('Phase 3a differential: TS buildProjectSummary === Rust oracle (FULL co
         const ts = trace.steps[i], or = oracle.steps[i]
         const where = `${f} @ step ${i} (op=${ts.op})`
         expect(JSON.stringify(ts.summary), `summary ${where}`).toBe(JSON.stringify(canonicalize(or.summary)))
+        expect(ts.ok, `ok ${where}`).toBe(or.ok)
+        if (!ts.ok) {
+          expect(parseOracleErrorVariant(String(ts.error)), `error ${where}`).toEqual(parseOracleErrorVariant(String(or.error)))
+        }
       }
     })
   }
