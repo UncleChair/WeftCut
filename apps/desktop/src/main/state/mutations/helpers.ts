@@ -1,5 +1,6 @@
-import type { Animated, Keyframe, LayerParams, Project, Uuid } from '../model'
+import type { LayerParams, Project, Uuid } from '../model'
 import { CommandFailure } from '../errors'
+import { forEachAnimatedF64, forEachAnimatedRgba, shiftKeyframes } from './animated'
 
 /** mutations.rs:651-658 */
 export function locateLayer(p: Project, id: Uuid): [number, number] | null {
@@ -55,23 +56,10 @@ export function checkTrackLock(p: Project, id: Uuid): void {
   if (track.locked) throw new CommandFailure({ error: 'TrackLocked', track: track.id })
 }
 
-function shiftAnimated<T>(a: Animated<T>, deltaUs: number): void {
-  if (a.mode === 'Keyframed') for (const k of a.value as Keyframe<T>[]) k.t_us += deltaUs
-}
 /** Shift every animated track's keyframes by deltaUs (trim IN glues keyframes to
- *  content). All-Static in Phase 1, so this is a no-op there; written for fidelity. */
+ *  content). All-Static in the Phase-2a corpus, so this is a no-op there; written
+ *  for fidelity with mutations.rs. */
 export function shiftLayerKeyframes(params: LayerParams, deltaUs: number): void {
-  switch (params.kind) {
-    case 'Color': shiftAnimated(params.color, deltaUs); break
-    case 'Text':
-      shiftAnimated(params.color, deltaUs); shiftAnimated(params.opacity, deltaUs)
-      shiftTransform(params.transform, deltaUs); break
-    case 'VideoClip': shiftAnimated(params.opacity, deltaUs); shiftTransform(params.transform, deltaUs); break
-    case 'ImageOverlay': shiftAnimated(params.opacity, deltaUs); shiftTransform(params.transform, deltaUs); break
-    case 'Motif': shiftAnimated(params.opacity, deltaUs); shiftTransform(params.transform, deltaUs); break
-    case 'Audio': shiftAnimated(params.gain_db, deltaUs); shiftAnimated(params.pan, deltaUs); break
-  }
-}
-function shiftTransform(t: { x: Animated<number>; y: Animated<number>; scale_x: Animated<number>; scale_y: Animated<number>; rotation_deg: Animated<number> }, d: number): void {
-  shiftAnimated(t.x, d); shiftAnimated(t.y, d); shiftAnimated(t.scale_x, d); shiftAnimated(t.scale_y, d); shiftAnimated(t.rotation_deg, d)
+  forEachAnimatedF64(params, (a) => shiftKeyframes(a, deltaUs))
+  forEachAnimatedRgba(params, (a) => shiftKeyframes(a, deltaUs))
 }
