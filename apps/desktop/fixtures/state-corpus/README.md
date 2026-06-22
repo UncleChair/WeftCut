@@ -28,16 +28,13 @@ The corpus is intentionally media-free; the driver only accepts `kind: "color"` 
 ### 2. History cap >200 ops
 Authoring a sequence of >200 commands to exercise the history ring cap would produce large JSON files and long runtimes with marginal differential value. Deferred unless a specific cap-boundary bug surfaces.
 
-### 3. `set_composition` fps/canvas path
-The `duration_us` path is gated. The remaining `set_composition` gap is the fps/canvas patch fields — the driver only maps `duration_us`, so frame-rate (incl. the fps frame re-snap) and canvas-size changes are not yet exercised.
-
-### 4. Duplicate with negative / zero offset edge cases
+### 3. Duplicate with negative / zero offset edge cases
 Duplicate with a negative `t_offset_us` that would produce a negative start time is not tested (driver behaviour on this path is unspecified).
 
-### 5. Marker `color` patch
+### 4. Marker `color` patch
 `update_marker`'s `color` field is unit-tested (`mutations/markers.test.ts`) but NOT differential-gated — the driver builds `MarkerPatch { color: None }` and the corpus omits color.
 
-### 6. Caption tracks, transitions, params
+### 5. Caption tracks, params
 These mutation categories require corpus extensions and Rust replay-driver support; deferred to later slices.
 
 ---
@@ -148,9 +145,23 @@ These mutation categories require corpus extensions and Rust replay-driver suppo
 | remove_effect | remove-effect.json |
 | remove_effect → EffectNotFound (double remove) | remove-effect-not-found.json |
 | add_effect missing layer → LayerNotFound burns the effect id | add-effect-missing-layer-burns-id.json |
+| **— transitions (same-track authorized overlap) —** | |
+| add_transition adjacent (auto-extend from_layer) | add-transition.json |
+| add_transition same-track gap → TransitionLayersNotAdjacent | add-transition-not-adjacent.json |
+| add_transition cross-track to-layer → LayerNotFound | add-transition-layer-missing.json |
+| add_transition validate-fail (2nd on same from) burns the transition id | add-transition-validate-fail-burns-id.json |
+| remove_transition (shrinks from_layer back) | remove-transition.json |
+| remove_transition → TransitionNotFound (double remove) | remove-transition-not-found.json |
+| add_transition undo (un-extends + drops the transition) | add-transition-undo.json |
+| **— set_composition fps + canvas —** | |
+| set_composition fps re-snap (unpinned autofit) | set-composition-fps.json |
+| set_composition fps + duration (snapped to new grid) | set-composition-fps-and-duration.json |
+| set_composition fps re-snap (pinned + overflow guard) | set-composition-fps-pinned.json |
+| set_composition canvas (unrecorded) | set-composition-canvas.json |
+| set_composition canvas survives undo (replace-everywhere) | set-composition-canvas-survives-undo.json |
+| set_composition mixed canvas + duration | set-composition-mixed-canvas-duration.json |
 | **DEFERRED** | |
 | Media-bearing layers | deferred — media-free corpus |
 | History cap >200 | deferred |
-| set_composition fps/canvas | deferred — driver maps duration_us only |
 | Marker color patch | unit-tested only (driver builds color:None) |
-| Caption tracks / transitions / params | deferred — later slices |
+| Caption tracks / params | deferred — later slices |
