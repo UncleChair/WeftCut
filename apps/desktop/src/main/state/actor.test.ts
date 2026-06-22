@@ -285,6 +285,33 @@ describe('dispatch: set_composition full', () => {
     expect(actor.snapshot().composition.duration_us).toBe(10_000_000)
     expect(actor.snapshot().composition.duration_pinned).toBe(true)
   })
+  it('valid mixed canvas + duration', () => {
+    const actor = withTwoLayers()
+    const r = actor.dispatch('set_composition', { width: 1280, height: 720, duration_us: 5_000_000 })
+    expect(r.ok).toBe(true)
+    expect(actor.snapshot().composition.width).toBe(1280)
+    expect(actor.snapshot().composition.height).toBe(720)
+    expect(actor.snapshot().composition.duration_us).toBe(5_000_000)
+    expect(actor.snapshot().composition.duration_pinned).toBe(true)
+  })
+  it('atomicity rollback: invalid canvas blocks duration from being applied', () => {
+    const actor = withTwoLayers()
+    const preDuration = actor.snapshot().composition.duration_us
+    const r = actor.dispatch('set_composition', { width: 0, duration_us: 5_000_000 })
+    expect(r.ok).toBe(false)
+    expect((r as { ok: false; error: { error: string } }).error.error).toBe('ValidationFailed')
+    expect(actor.snapshot().composition.width).toBe(1920)
+    expect(actor.snapshot().composition.duration_us).toBe(preDuration)
+    expect(actor.snapshot().composition.duration_pinned).toBe(false)
+  })
+  it('fps + duration combined pins duration at the frame-snapped value', () => {
+    const actor = withTwoLayers()
+    const r = actor.dispatch('set_composition', { fps: { num: 24, den: 1 }, duration_us: 3_000_000 })
+    expect(r.ok).toBe(true)
+    expect(actor.snapshot().composition.fps).toEqual({ num: 24, den: 1 })
+    expect(actor.snapshot().composition.duration_pinned).toBe(true)
+    expect(actor.snapshot().composition.duration_us).toBe(3_000_000)
+  })
 })
 
 describe('dispatch: delete_track + move_track', () => {

@@ -202,10 +202,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
             case 'TrimLayer': applyTrimLayer(d, op.id, op.edge, op.new_t_us, op.escape_group); break
           }
         })
-        try { validate(next) } catch (e) {
-          if (e instanceof ValidationFailure) throw new CommandFailure({ error: 'ValidationFailed', detail: e.err })
-          throw e
-        }
+        runValidate(next)
         scratch = next
         results.push({ ok: true, value })
       } catch (e) {
