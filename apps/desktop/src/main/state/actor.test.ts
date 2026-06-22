@@ -237,7 +237,7 @@ describe('dispatch: transitions', () => {
     expect(fromEnd(actor, a1)).toBe(2_000_000)
     expect(actor.snapshot().transitions).toEqual([])
   })
-  it('add_transition with a gap fails TransitionLayersNotAdjacent (no id burned)', () => {
+  it('add_transition with cross-track to-layer fails LayerNotFound (no id burned)', () => {
     const { actor, a1 } = setup()
     const far = (actor.dispatch('add_layer', { track: actor.snapshot().tracks[1].id, kind: 'color', t_start_us: 9_000_000, t_end_us: 10_000_000 }) as { ok: true; value: string }).value
     const r = actor.dispatch('add_transition', { from: a1, to: far, duration_us: 1_000_000 })
