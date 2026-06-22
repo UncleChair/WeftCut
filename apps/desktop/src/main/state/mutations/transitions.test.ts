@@ -27,11 +27,25 @@ function layerOf(p: Project, id: string): Layer {
 
 describe('extendLayerTEnd / shrinkLayerTEnd', () => {
   it('extend color layer touches only t_end_us', () => {
-    const l: Layer = layerOf(twoAdjacent().p, twoAdjacent().a1)
+    const { p, a1 } = twoAdjacent()
+    const l: Layer = layerOf(p, a1)
     const before = l.t_end_us
     extendLayerTEnd(l, 1_000_000)
     expect(l.t_end_us).toBe(before + 1_000_000)
     expect(l.params.kind).toBe('Color') // no src_out_us on color
+  })
+  it('extend then shrink an Audio layer touches t_end_us AND src_out_us (saturating at 0)', () => {
+    const l: Layer = {
+      id: 'y', label: null, t_start_us: 0, t_end_us: 2_000_000, enabled: true, locked: false,
+      metadata: {}, effects: [],
+      params: { kind: 'Audio', media: 'm', src_in_us: 0, src_out_us: 2_000_000,
+        gain_db: { mode: 'Static', value: 0 }, pan: { mode: 'Static', value: 0 },
+        fade_in_us: 0, fade_out_us: 0, mute: false, role: 'dialogue' },
+    }
+    extendLayerTEnd(l, 500_000)
+    expect([l.t_end_us, (l.params as { src_out_us: number }).src_out_us]).toEqual([2_500_000, 2_500_000])
+    shrinkLayerTEnd(l, 5_000_000) // over-shrink saturates at 0
+    expect([l.t_end_us, (l.params as { src_out_us: number }).src_out_us]).toEqual([0, 0])
   })
   it('extend then shrink a VideoClip touches t_end_us AND src_out_us (saturating at 0)', () => {
     const l: Layer = {
