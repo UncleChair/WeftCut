@@ -1,0 +1,5 @@
+{ "name": "remove-marker", "commands": [
+  { "op": "add_marker", "t_us": 1000000, "ref": "M1" },
+  { "op": "add_marker", "t_us": 2000000, "ref": "M2" },
+  { "op": "remove_marker", "marker": "@M1" }
+] }

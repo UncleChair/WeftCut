@@ -1,0 +1,6 @@
+{ "name": "update-marker-time-resort", "commands": [
+  { "op": "add_marker", "t_us": 1000000, "ref": "M1" },
+  { "op": "add_marker", "t_us": 2000000, "ref": "M2" },
+  { "op": "add_marker", "t_us": 3000000, "ref": "M3" },
+  { "op": "update_marker", "marker": "@M1", "t_us": 5000000 }
+] }

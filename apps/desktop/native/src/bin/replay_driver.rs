@@ -122,6 +122,16 @@ async fn apply(h: &ProjectHandle, cmd: &Value, refs: &HashMap<String, String>) -
         "fit_composition_to_layers" => h.fit_composition_to_layers(u).await.map(|_| None).map_err(|e| format!("{e:?}")),
         "undo" => h.undo(u).await.map(|_| None).map_err(|e| format!("{e:?}")),
         "redo" => h.redo(u).await.map(|_| None).map_err(|e| format!("{e:?}")),
+        "update_marker" => {
+            let patch = weftcut_lib::state::actor::MarkerPatch {
+                t_us: cmd["t_us"].as_i64(),
+                end_t_us: cmd["end_t_us"].as_i64(),
+                label: cmd["label"].as_str().map(str::to_string),
+                color: None,
+            };
+            h.update_marker(u, resolve_id(refs, cmd["marker"].as_str().unwrap()), patch).await.map(|_| None).map_err(|e| format!("{e:?}"))
+        }
+        "remove_marker" => h.remove_marker(u, resolve_id(refs, cmd["marker"].as_str().unwrap())).await.map(|_| None).map_err(|e| format!("{e:?}")),
         other => Err(format!("driver: unsupported op {other}")),
     }
 }

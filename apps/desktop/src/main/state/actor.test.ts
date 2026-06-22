@@ -126,6 +126,19 @@ describe('dispatch: group-membership family', () => {
   })
 })
 
+describe('dispatch: update_marker + remove_marker', () => {
+  it('updates then removes a marker', () => {
+    const idGen = seededGen(); const initial = blankProject(idGen, 'm')
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    const m = (actor.dispatch('add_marker', { t_us: 1_000_000 }) as { ok: true; value: string }).value
+    expect(actor.dispatch('update_marker', { marker: m, patch: { label: 'chapter', end_t_us: 2_000_000 } }).ok).toBe(true)
+    const snap = actor.snapshot()
+    expect(snap.markers[0].label).toBe('chapter'); expect(snap.markers[0].end_t_us).toBe(2_000_000)
+    expect(actor.dispatch('remove_marker', { marker: m }).ok).toBe(true)
+    expect(actor.snapshot().markers.length).toBe(0)
+  })
+})
+
 describe('dispatch: update_layer + fit_composition_to_layers', () => {
   it('update_layer patches the envelope; fit refits duration', () => {
     const idGen = seededGen(); const initial = blankProject(idGen, 'd'); const a = initial.tracks[0].id

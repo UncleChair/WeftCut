@@ -1,0 +1,4 @@
+{ "name": "update-marker-region", "commands": [
+  { "op": "add_marker", "t_us": 1000000, "ref": "M1" },
+  { "op": "update_marker", "marker": "@M1", "end_t_us": 2000000 }
+] }
