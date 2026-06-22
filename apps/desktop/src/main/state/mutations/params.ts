@@ -1,6 +1,8 @@
 import type { Animated, AudioParams, AudioRole, ColorParams, ImageOverlayParams, Layer, MotifParams, Project, Rgba, TextParams, Uuid, VideoClipParams } from '../model'
 import { CommandFailure } from '../errors'
+import { snapFrameRound } from '../snap'
 import { checkTrackLock, locateLayer } from './helpers'
+import { normalizeKeyframes } from './animated'
 
 /** native/src/state/actor.rs:99-255 — internally-tagged ("kind") param patch.
  *  Every field optional bar kind; absent = "don't touch". */
@@ -105,4 +107,62 @@ export function applyUpdateLayerParams(p: Project, id: Uuid, patch: LayerParamsP
   checkTrackLock(p, id) // LayerNotFound / TrackLocked
   const loc = locateLayer(p, id)! // existence guaranteed by checkTrackLock
   applyParamsPatch(p.tracks[loc[0]].layers[loc[1]], patch)
+}
+
+/** native/src/state/layer.rs:358 — parse "effects[<uuid>].params[<key>]" →
+ *  [effectId, paramKey]; null otherwise. (A non-UUID id still parses here but the
+ *  subsequent effect lookup fails → resolves to null, matching the Rust outcome.) */
+export function parseEffectParamKey(key: string): [Uuid, string] | null {
+  const m = /^effects\[([^\]]+)\]\.params\[(.+)\]$/.exec(key)
+  return m ? [m[1], m[2]] : null
+}
+
+const TRANSFORM_F64_KEYS = ['x', 'y', 'scale_x', 'scale_y', 'rotation_deg']
+
+/** layer.rs:322/377 — resolve a param-key to a setter for its Animated<f64> slot,
+ *  or null if the key is unknown / invalid on this kind. Effect-param paths look
+ *  in layer.effects (and require the param slot to already exist). */
+function f64Lens(layer: Layer, key: string): { set(v: Animated<number>): void } | null {
+  const eff = parseEffectParamKey(key)
+  if (eff) {
+    const e = layer.effects.find((x) => x.id === eff[0])
+    if (!e || !(eff[1] in e.params)) return null
+    return { set: (v) => { e.params[eff[1]] = v } }
+  }
+  const p = layer.params
+  if (p.kind === 'Color') return null
+  if (p.kind === 'Audio') {
+    if (key === 'gain_db') return { set: (v) => { p.gain_db = v } }
+    if (key === 'pan') return { set: (v) => { p.pan = v } }
+    return null
+  }
+  // VideoClip | ImageOverlay | Text | Motif — transform + opacity
+  if (key === 'opacity') return { set: (v) => { p.opacity = v } }
+  if (TRANSFORM_F64_KEYS.includes(key)) return { set: (v) => { (p.transform as unknown as Record<string, Animated<number>>)[key] = v } }
+  return null
+}
+
+/** actor.rs:2752 do_update_layer_param_track (mutation half): lock-check →
+ *  normalize (EmptyKeyframeTrack on empty) → locate → resolve, lazily inserting
+ *  Static(0) for a missing slot of an EXISTING effect → re-resolve
+ *  (UnknownKeyframeParam) → assign. NO autofit (a keyframe write never moves
+ *  t_start/t_end). Keyframe param-tracks are Animated<f64> only. */
+export function applyUpdateLayerParamTrack(p: Project, id: Uuid, paramKey: string, track: Animated<number>): void {
+  checkTrackLock(p, id) // LayerNotFound / TrackLocked — BEFORE normalize
+  const fps = p.composition.fps
+  if (!normalizeKeyframes(track, (t) => snapFrameRound(t, fps.num, fps.den))) {
+    throw new CommandFailure({ error: 'EmptyKeyframeTrack', layer: id, param_key: paramKey })
+  }
+  const loc = locateLayer(p, id)! // existence guaranteed by checkTrackLock
+  const layer = p.tracks[loc[0]].layers[loc[1]]
+  if (f64Lens(layer, paramKey) === null) {
+    const eff = parseEffectParamKey(paramKey)
+    if (eff) {
+      const e = layer.effects.find((x) => x.id === eff[0])
+      if (e && !(eff[1] in e.params)) e.params[eff[1]] = { mode: 'Static', value: 0 }
+    }
+  }
+  const lens = f64Lens(layer, paramKey)
+  if (!lens) throw new CommandFailure({ error: 'UnknownKeyframeParam', layer: id, param_key: paramKey })
+  lens.set(track)
 }

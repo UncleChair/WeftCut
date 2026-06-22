@@ -50,3 +50,24 @@ export function collapseToStatic<T>(a: Animated<T>, value: T): void {
   const m = a as { mode: 'Static'; value: T }
   m.mode = 'Static'; m.value = value
 }
+
+/** native/src/state/animated.rs:118 — canonicalize a Keyframed track: snap each
+ *  t_us, stable-sort by t_us, dedupe same-snapped-time KEEPING THE LAST (JS
+ *  Array.sort is stable on Node 22; the write path appends the edited key last →
+ *  last-write-wins on a collision). Returns false for an EMPTY Keyframed track
+ *  (→ EmptyKeyframeTrack); Static is unchanged and always true. */
+export function normalizeKeyframes<T>(a: Animated<T>, snap: (t: number) => number): boolean {
+  if (a.mode !== 'Keyframed') return true
+  const kfs = a.value as Keyframe<T>[]
+  if (kfs.length === 0) return false
+  const snapped = kfs.map((k) => ({ ...k, t_us: snap(k.t_us) }))
+  snapped.sort((x, y) => x.t_us - y.t_us)
+  const out: Keyframe<T>[] = []
+  for (const k of snapped) {
+    const last = out[out.length - 1]
+    if (last && last.t_us === k.t_us) out[out.length - 1] = k
+    else out.push(k)
+  }
+  a.value = out
+  return true
+}

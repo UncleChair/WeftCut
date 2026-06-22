@@ -4,7 +4,7 @@ import { blankProject, type Layer, type MotifParams, type Project } from '../mod
 import { applyAddLayer, colorParams, textParamsDefault } from './add'
 import { videoClipParams, audioParams } from './media'
 import { isCommandFailure } from '../errors'
-import { applyUpdateLayerParams } from './params'
+import { applyUpdateLayerParams, applyUpdateLayerParamTrack } from './params'
 
 const MID = '00000000-0000-0000-0000-0000000000aa'
 function expectCmd(fn: () => void, code: string) {
@@ -64,6 +64,45 @@ describe('applyUpdateLayerParams (field merge)', () => {
     p.tracks[0].locked = true
     expectCmd(() => applyUpdateLayerParams(p, id, { kind: 'Color', width: 1 }), 'TrackLocked')
     expectCmd(() => applyUpdateLayerParams(p, 'ghost', { kind: 'Color', width: 1 }), 'LayerNotFound')
+  })
+})
+
+describe('applyUpdateLayerParamTrack', () => {
+  const kfTrack = () => ({ mode: 'Keyframed' as const, value: [
+    { id: '00000000-0000-0000-0000-0000000000f1', t_us: 0, value: 0, interp: { kind: 'Linear' as const } },
+    { id: '00000000-0000-0000-0000-0000000000f2', t_us: 1_000_000, value: 1, interp: { kind: 'Linear' as const } },
+  ] })
+  function textLayer(): { p: Project; id: string } {
+    const g = seededGen(); const p = blankProject(g, 'kf')
+    const id = applyAddLayer(p, g, p.tracks[1].id, textParamsDefault('t'), 0, 2_000_000)
+    return { p, id }
+  }
+  it('writes a keyframed track to opacity', () => {
+    const { p, id } = textLayer()
+    applyUpdateLayerParamTrack(p, id, 'opacity', kfTrack())
+    const t = layerOf(p, id).params as Extract<Layer['params'], { kind: 'Text' }>
+    expect(t.opacity.mode).toBe('Keyframed')
+    expect((t.opacity.value as { t_us: number }[]).map((k) => k.t_us)).toEqual([0, 1_000_000])
+  })
+  it('empty Keyframed track → EmptyKeyframeTrack', () => {
+    const { p, id } = textLayer()
+    expectCmd(() => applyUpdateLayerParamTrack(p, id, 'opacity', { mode: 'Keyframed', value: [] }), 'EmptyKeyframeTrack')
+  })
+  it('unknown param key → UnknownKeyframeParam', () => {
+    const { p, id } = textLayer()
+    expectCmd(() => applyUpdateLayerParamTrack(p, id, 'bogus', kfTrack()), 'UnknownKeyframeParam')
+  })
+  it('effect-param path lazily inserts the slot for an existing effect, then writes', () => {
+    const { p, id } = textLayer()
+    const layer = layerOf(p, id)
+    layer.effects.push({ id: '00000000-0000-0000-0000-0000000000e1', kind: 'blur', enabled: true, params: {} })
+    applyUpdateLayerParamTrack(p, id, 'effects[00000000-0000-0000-0000-0000000000e1].params[intensity]', kfTrack())
+    expect(layerOf(p, id).effects[0].params.intensity.mode).toBe('Keyframed')
+  })
+  it('locked track → TrackLocked (checked before normalize)', () => {
+    const { p, id } = textLayer()
+    p.tracks[1].locked = true
+    expectCmd(() => applyUpdateLayerParamTrack(p, id, 'opacity', { mode: 'Keyframed', value: [] }), 'TrackLocked')
   })
 })
 

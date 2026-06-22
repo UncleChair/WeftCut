@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import type { Animated, LayerParams } from '../model'
 import {
   forEachAnimatedF64, forEachAnimatedRgba, shiftKeyframes, retainKeyframes,
-  firstKeyframeValue, lastKeyframeValue, collapseToStatic,
+  firstKeyframeValue, lastKeyframeValue, collapseToStatic, normalizeKeyframes,
 } from './animated'
 
 function kf<T>(id: string, t: number, v: T): { id: string; t_us: number; value: T; interp: { kind: 'Linear' } } {
@@ -57,5 +57,24 @@ describe('animated traversal', () => {
     let n = 0; forEachAnimatedRgba(color, () => { n++ }); expect(n).toBe(1)
     const audio: LayerParams = { kind: 'Audio', media: 'm', src_in_us: 0, src_out_us: 1, gain_db: { mode: 'Static', value: 0 }, pan: { mode: 'Static', value: 0 }, fade_in_us: 0, fade_out_us: 0, mute: false, role: 'music' } as any
     let z = 0; forEachAnimatedRgba(audio, () => { z++ }); expect(z).toBe(0)
+  })
+})
+
+describe('normalizeKeyframes', () => {
+  const id = (n: number) => `00000000-0000-0000-0000-0000000000${n.toString(16).padStart(2, '0')}`
+  const kf = (n: number, t: number, v: number) => ({ id: id(n), t_us: t, value: v, interp: { kind: 'Linear' as const } })
+  it('Static is unchanged and returns true', () => {
+    const a = { mode: 'Static' as const, value: 5 }
+    expect(normalizeKeyframes(a, (t) => t)).toBe(true)
+    expect(a).toEqual({ mode: 'Static', value: 5 })
+  })
+  it('empty Keyframed returns false', () => {
+    expect(normalizeKeyframes({ mode: 'Keyframed' as const, value: [] }, (t) => t)).toBe(false)
+  })
+  it('snaps + stable-sorts + dedupes same-snapped-time keeping the last', () => {
+    const a: Animated<number> = { mode: 'Keyframed', value: [kf(2, 2_000_000, 20), kf(1, 0, 10), kf(3, 10, 99)] }
+    // snap-to-0 collapses kf1(t=0) and kf3(t=10→0); stable order keeps kf3 (last in input among equal times)
+    expect(normalizeKeyframes(a, (t) => (t < 1_000_000 ? 0 : t))).toBe(true)
+    expect((a.value as { t_us: number; value: number }[]).map((k) => [k.t_us, k.value])).toEqual([[0, 99], [2_000_000, 20]])
   })
 })
