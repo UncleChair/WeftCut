@@ -98,3 +98,20 @@ describe('dispatch: split + groups', () => {
     expect(g.ok === false && g.error.error).toBe('GroupCreateNeedsTwoLayers')
   })
 })
+
+describe('dispatch: update_layer + fit_composition_to_layers', () => {
+  it('update_layer patches the envelope; fit refits duration', () => {
+    const idGen = seededGen(); const initial = blankProject(idGen, 'd'); const a = initial.tracks[0].id
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    const l = actor.dispatch('add_layer', { track: a, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })
+    expect(l.ok).toBe(true)
+    const lid = (l as { ok: true; value: unknown }).value as string
+    expect(actor.dispatch('update_layer', { layer: lid, patch: { t_end_us: 4_000_000, label: 'x' } }).ok).toBe(true)
+    const snap = actor.snapshot()
+    const layer = snap.tracks.flatMap((t) => t.layers).find((x) => x.id === lid)!
+    expect(layer.t_end_us).toBe(4_000_000); expect(layer.label).toBe('x')
+    expect(snap.composition.duration_us).toBe(1_000_000) // update_layer did NOT autofit (stayed at add_layer end)
+    expect(actor.dispatch('fit_composition_to_layers', {}).ok).toBe(true)
+    expect(actor.snapshot().composition.duration_us).toBe(4_000_000) // fit refit to layer end
+  })
+})
