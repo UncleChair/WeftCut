@@ -1,0 +1,5 @@
+{ "name": "delete-track-force", "commands": [
+  { "op": "add_track", "label": "extra", "ref": "T1" },
+  { "op": "add_layer", "track": "@T1", "kind": "color", "t_start_us": 0, "t_end_us": 1000000, "ref": "L1" },
+  { "op": "delete_track", "track": "@T1", "force": true }
+] }

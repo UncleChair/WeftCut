@@ -16,6 +16,7 @@ import { applyGroupsCreate, applyGroupsDissolve, applyGroupsAddMembers, applyGro
 import { applyUpdateLayer, type LayerPatch } from './mutations/update'
 import { applyFitComposition } from './mutations/composition'
 import { applyUpdateMarker, applyRemoveMarker, type MarkerPatch } from './mutations/markers'
+import { applyDeleteTrack, applyMoveTrack } from './mutations/tracks'
 
 setAutoFreeze(true) // snapshots are frozen — accidental mutation throws.
 
@@ -141,6 +142,14 @@ export function createActor(opts: ActorOptions): ActorHandle {
     broadcastUnrecorded('Redo', snap)
   }
 
+  // ── move_track (do_move_track:3394-3426) — the cur===new no-op must skip
+  //    commit; recording it would burn an op_id and drift every later id. ──
+  function moveTrack(id: Uuid, newPosition: number): void {
+    const curIdx = current().tracks.findIndex((t) => t.id === id)
+    if (curIdx >= 0 && curIdx === newPosition) return // no-op: no record, no broadcast
+    commit('Moved track', [{ kind: 'Track', id }], { kind: 'Coarse' }, (d) => applyMoveTrack(d, id, newPosition))
+  }
+
   function dryRun(ops: DryRunOp[]): Array<{ ok: true; value: DryRunOutput } | { ok: false; error: CommandError }> {
     const results: Array<{ ok: true; value: DryRunOutput } | { ok: false; error: CommandError }> = []
     let scratch = current()
@@ -198,6 +207,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'fit_composition_to_layers': commit('Fit composition duration to layers', [], { kind: 'Composition' }, (d) => applyFitComposition(d)); return { ok: true, value: null }
         case 'update_marker': commit('Updated marker', [{ kind: 'Marker', id: a.marker as Uuid }], { kind: 'Coarse' }, (d) => applyUpdateMarker(d, a.marker as Uuid, a.patch as MarkerPatch)); return { ok: true, value: null }
         case 'remove_marker': commit('Removed marker', [{ kind: 'Marker', id: a.marker as Uuid }], { kind: 'Coarse' }, (d) => applyRemoveMarker(d, a.marker as Uuid)); return { ok: true, value: null }
+        case 'delete_track': commit('Deleted track', [{ kind: 'Track', id: a.track as Uuid }], { kind: 'Coarse' }, (d) => applyDeleteTrack(d, a.track as Uuid, (a.force as boolean) ?? false)); return { ok: true, value: null }
+        case 'move_track': moveTrack(a.track as Uuid, a.new_position as number); return { ok: true, value: null }
         default: return { ok: false, error: { error: 'InvalidArgument', field: 'op', detail: `unsupported op ${channel}` } }
       }
     } catch (e) {

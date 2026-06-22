@@ -1,0 +1,3 @@
+{ "name": "move-track-out-of-range", "commands": [
+  { "op": "move_track", "track": "@A", "new_position": 9 }
+] }

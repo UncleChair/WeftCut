@@ -13,6 +13,7 @@ export const SUPPORTED_OPS = new Set<string>([
   'groups_dissolve', 'groups_add_members', 'groups_remove_members', 'groups_rename',
   'update_layer', 'fit_composition_to_layers',
   'update_marker', 'remove_marker',
+  'delete_track', 'move_track',
 ])
 const SUPPORTED_ADD_KINDS = new Set<string>(['color', 'text'])
 
@@ -84,6 +85,8 @@ function buildArgs(cmd: Cmd, refs: Map<string, string>): Record<string, unknown>
     case 'fit_composition_to_layers': return {}
     case 'update_marker': return { marker: resolve(refs, cmd.marker), patch: { t_us: cmd.t_us, end_t_us: cmd.end_t_us, label: cmd.label, color: cmd.color } }
     case 'remove_marker': return { marker: resolve(refs, cmd.marker) }
+    case 'delete_track': return { track: resolve(refs, cmd.track), force: cmd.force ?? false }
+    case 'move_track': return { track: resolve(refs, cmd.track), new_position: cmd.new_position }
     case 'undo': case 'redo': return {}
     default: return {}
   }

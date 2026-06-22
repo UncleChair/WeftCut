@@ -132,6 +132,8 @@ async fn apply(h: &ProjectHandle, cmd: &Value, refs: &HashMap<String, String>) -
             h.update_marker(u, resolve_id(refs, cmd["marker"].as_str().unwrap()), patch).await.map(|_| None).map_err(|e| format!("{e:?}"))
         }
         "remove_marker" => h.remove_marker(u, resolve_id(refs, cmd["marker"].as_str().unwrap())).await.map(|_| None).map_err(|e| format!("{e:?}")),
+        "delete_track" => h.delete_track(u, resolve_id(refs, cmd["track"].as_str().unwrap()), cmd["force"].as_bool().unwrap_or(false)).await.map(|_| None).map_err(|e| format!("{e:?}")),
+        "move_track" => h.move_track(u, resolve_id(refs, cmd["track"].as_str().unwrap()), cmd["new_position"].as_u64().unwrap() as usize).await.map(|_| None).map_err(|e| format!("{e:?}")),
         other => Err(format!("driver: unsupported op {other}")),
     }
 }

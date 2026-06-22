@@ -1,0 +1,4 @@
+{ "name": "delete-track-custom", "commands": [
+  { "op": "add_track", "label": "extra", "ref": "T1" },
+  { "op": "delete_track", "track": "@T1" }
+] }

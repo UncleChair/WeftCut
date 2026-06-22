@@ -155,3 +155,23 @@ describe('dispatch: update_layer + fit_composition_to_layers', () => {
     expect(actor.snapshot().composition.duration_us).toBe(4_000_000) // fit refit to layer end
   })
 })
+
+describe('dispatch: delete_track + move_track', () => {
+  it('move_track no-op does NOT record (later entity ids unshifted)', () => {
+    const idGenA = seededGen(); const a1 = createActor({ initial: blankProject(idGenA, 't'), idGen: idGenA, clock: () => '<TS>' })
+    a1.dispatch('move_track', { track: a1.snapshot().tracks[0].id, new_position: 0 }) // no-op
+    const idA = (a1.dispatch('add_layer', { track: a1.snapshot().tracks[0].id, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 }) as { ok: true; value: string }).value
+    // A control actor that skips the no-op entirely must allocate the SAME layer id.
+    const idGenB = seededGen(); const a2 = createActor({ initial: blankProject(idGenB, 't'), idGen: idGenB, clock: () => '<TS>' })
+    const idB = (a2.dispatch('add_layer', { track: a2.snapshot().tracks[0].id, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 }) as { ok: true; value: string }).value
+    expect(idA).toBe(idB) // no-op move burned no op_id
+  })
+  it('delete_track removes a custom track; move_track reorders', () => {
+    const idGen = seededGen(); const actor = createActor({ initial: blankProject(idGen, 't'), idGen, clock: () => '<TS>' })
+    const t = (actor.dispatch('add_track', { label: 'x' }) as { ok: true; value: string }).value
+    expect(actor.dispatch('move_track', { track: t, new_position: 0 }).ok).toBe(true)
+    expect(actor.snapshot().tracks[0].id).toBe(t)
+    expect(actor.dispatch('delete_track', { track: t, force: false }).ok).toBe(true)
+    expect(actor.snapshot().tracks.find((x) => x.id === t)).toBeUndefined()
+  })
+})
