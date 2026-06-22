@@ -2,7 +2,7 @@
 import { produce, setAutoFreeze } from 'immer'
 import type { Animated, Composition, LayerParams, Project, Rational, Uuid } from './model'
 import type { IdGen } from './ids'
-import { History, type Actor, type EntityRef, type TrackFlagsPatch } from './history'
+import { History, type Actor, type EntityRef, type TrackFlagsPatch, type RoleFlagsPatch } from './history'
 import { CommandFailure, ValidationFailure, type CommandError } from './errors'
 import { validate } from './validate'
 import { snapFrameRound } from './snap'
@@ -204,6 +204,33 @@ export function createActor(opts: ActorOptions): ActorHandle {
     return item.id
   }
 
+  // ── set_role_gain (do_set_role_gain:3657) — RECORDED (undoable). Read the
+  //    role's mix bus (default-filled when absent), override ONLY gain_db
+  //    (muted/solo preserved), reinsert. No affected entities, Coarse hint. ──
+  function setRoleGain(role: string, gainDb: number): void {
+    commit(`Set ${role} role gain`, [], { kind: 'Coarse' }, (d) => {
+      const cur = d.audio_roles[role]
+      d.audio_roles[role] = { gain_db: gainDb, muted: cur?.muted ?? false, solo: cur?.solo ?? false }
+    })
+  }
+
+  // ── update_role_flags (do_update_role_flags:3681) — UNRECORDED (mirrors
+  //    updateTrackFlags). Patch mute/solo into EVERY snapshot + broadcast (burns
+  //    one id). Roles always exist (default-filled), so no not-found branch. ──
+  function updateRoleFlags(role: string, patch: RoleFlagsPatch): void {
+    history.replaceRoleFlagsEverywhere(role, patch)
+    broadcastUnrecorded('Updated role flags', current())
+  }
+
+  // ── update_project_settings (do_update_project_settings:3619) — UNRECORDED.
+  //    Clone settings, apply the present fields, replace-everywhere + broadcast. ──
+  function updateProjectSettings(patch: { auto_delete_empty_tracks?: boolean | null }): void {
+    const next = { ...current().settings }
+    if (typeof patch.auto_delete_empty_tracks === 'boolean') next.auto_delete_empty_tracks = patch.auto_delete_empty_tracks
+    history.replaceSettingsEverywhere(next)
+    broadcastUnrecorded('Updated project settings', current())
+  }
+
   function dryRun(ops: DryRunOp[]): Array<{ ok: true; value: DryRunOutput } | { ok: false; error: CommandError }> {
     const results: Array<{ ok: true; value: DryRunOutput } | { ok: false; error: CommandError }> = []
     let scratch = current()
@@ -280,6 +307,9 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'remove_transition': commit('Removed transition', [], { kind: 'Coarse' }, (d) => applyRemoveTransition(d, a.transition as Uuid)); return { ok: true, value: null }
         case 'add_media': return { ok: true, value: addMediaItem(mediaItemTemplate(a.id as Uuid, a.kind as MediaItem['kind'], (a.duration_us as number | null) ?? null)) }
         case 'separate_audio': return { ok: true, value: commit('Separated audio', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applySeparateAudio(d, idGen, a.layer as Uuid)) }
+        case 'set_role_gain': setRoleGain(a.role as string, a.gain_db as number); return { ok: true, value: null }
+        case 'update_role_flags': updateRoleFlags(a.role as string, a.patch as RoleFlagsPatch); return { ok: true, value: null }
+        case 'update_project_settings': updateProjectSettings(a.patch as { auto_delete_empty_tracks?: boolean | null }); return { ok: true, value: null }
         default: return { ok: false, error: { error: 'InvalidArgument', field: 'op', detail: `unsupported op ${channel}` } }
       }
     } catch (e) {

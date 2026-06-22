@@ -420,6 +420,44 @@ describe('dispatch: params', () => {
   })
 })
 
+describe('dispatch: role gain + flags + project settings', () => {
+  function setup() {
+    const idGen = seededGen(); const initial = blankProject(idGen, 'r'); const a = initial.tracks[0].id
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    return { actor, a }
+  }
+  it('set_role_gain inserts a role bus and is undoable (recorded)', () => {
+    const { actor } = setup()
+    expect(actor.dispatch('set_role_gain', { role: 'music', gain_db: 6 }).ok).toBe(true)
+    expect(actor.snapshot().audio_roles.music).toEqual({ gain_db: 6, muted: false, solo: false })
+    actor.dispatch('undo', {})
+    expect(actor.snapshot().audio_roles).toEqual({}) // recorded → undo clears the bus
+  })
+  it('set_role_gain then update_role_flags: flags preserve the gain', () => {
+    const { actor } = setup()
+    actor.dispatch('set_role_gain', { role: 'music', gain_db: 6 })
+    actor.dispatch('update_role_flags', { role: 'music', patch: { muted: true } })
+    expect(actor.snapshot().audio_roles.music).toEqual({ gain_db: 6, muted: true, solo: false })
+  })
+  it('update_role_flags toggles mute (unrecorded) and survives undo of a later edit', () => {
+    const { actor, a } = setup()
+    actor.dispatch('update_role_flags', { role: 'dialogue', patch: { muted: true } })
+    expect(actor.snapshot().audio_roles.dialogue).toEqual({ gain_db: 0, muted: true, solo: false })
+    actor.dispatch('add_layer', { track: a, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })
+    actor.dispatch('undo', {})
+    expect(actor.snapshot().tracks[0].layers).toHaveLength(0) // edit undone
+    expect(actor.snapshot().audio_roles.dialogue).toEqual({ gain_db: 0, muted: true, solo: false }) // flag persists
+  })
+  it('update_project_settings flips auto_delete_empty_tracks (unrecorded, survives undo)', () => {
+    const { actor, a } = setup()
+    actor.dispatch('update_project_settings', { patch: { auto_delete_empty_tracks: false } })
+    expect(actor.snapshot().settings.auto_delete_empty_tracks).toBe(false)
+    actor.dispatch('add_layer', { track: a, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })
+    actor.dispatch('undo', {})
+    expect(actor.snapshot().settings.auto_delete_empty_tracks).toBe(false) // preference persists across undo
+  })
+})
+
 describe('dispatch: delete_track + move_track', () => {
   it('move_track no-op does NOT record (later entity ids unshifted)', () => {
     const idGenA = seededGen(); const a1 = createActor({ initial: blankProject(idGenA, 't'), idGen: idGenA, clock: () => '<TS>' })
