@@ -1,0 +1,4 @@
+{ "name": "update-layer-flags", "commands": [
+  { "op": "add_layer", "track": "@A", "kind": "color", "t_start_us": 0, "t_end_us": 1000000, "ref": "L1" },
+  { "op": "update_layer", "layer": "@L1", "enabled": false, "locked": true }
+] }

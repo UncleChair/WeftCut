@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use serde_json::{json, Value};
 use weftcut_lib::state::{self, Actor, LayerParams, ColorParams, Rgba, ProjectHandle};
-use weftcut_lib::state::actor::{LayerEdge, CompositionPatch};
+use weftcut_lib::state::actor::{LayerEdge, CompositionPatch, LayerPatch};
 use weftcut_lib::state::animated::Animated;
 use weftcut_lib::state::ids::det;
 
@@ -96,6 +96,17 @@ async fn apply(h: &ProjectHandle, cmd: &Value, refs: &mut HashMap<String, String
             let patch = CompositionPatch { duration_us: cmd["duration_us"].as_i64(), ..Default::default() };
             h.set_composition(u, patch).await.map_err(|e| format!("{e:?}"))
         }
+        "update_layer" => {
+            let patch = LayerPatch {
+                label: cmd["label"].as_str().map(str::to_string),
+                t_start_us: cmd["t_start_us"].as_i64(),
+                t_end_us: cmd["t_end_us"].as_i64(),
+                enabled: cmd["enabled"].as_bool(),
+                locked: cmd["locked"].as_bool(),
+            };
+            h.update_layer(u, resolve_id(refs, cmd["layer"].as_str().unwrap()), patch).await.map_err(|e| format!("{e:?}"))
+        }
+        "fit_composition_to_layers" => h.fit_composition_to_layers(u).await.map_err(|e| format!("{e:?}")),
         "undo" => h.undo(u).await.map_err(|e| format!("{e:?}")),
         "redo" => h.redo(u).await.map_err(|e| format!("{e:?}")),
         other => Err(format!("driver: unsupported op {other}")),

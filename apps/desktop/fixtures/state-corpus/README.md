@@ -43,8 +43,8 @@ The corpus is intentionally media-free; the driver only accepts `kind: "color"` 
 ### 6. History cap >200 ops
 Authoring a sequence of >200 commands to exercise the history ring cap would produce large JSON files and long runtimes with marginal differential value at this phase. Deferred unless a specific cap-boundary bug surfaces.
 
-### 7. `set_composition` fit (duration_pinned:false / fit_to_layers)
-The `set_composition` driver handler only maps `duration_us`; there is no `fit` patch field or `fit_composition_to_layers` op exposed. Only the duration-pin path is exercised.
+### 7. `set_composition` fps/canvas path
+`update_layer` and `fit_composition_to_layers` are now gated (Phase 2b-i). The remaining `set_composition` gap is the fps/canvas patch fields — the driver only maps `duration_us` and the corpus does not exercise frame-rate or canvas-size changes. Deferred to a later 2b slice.
 
 ### 8. Duplicate with negative offset / zero offset edge cases
 Duplicate with a negative `t_offset_us` that would produce a negative start time is not tested (driver behaviour on this path is unspecified at Phase 0).
@@ -99,6 +99,13 @@ These mutation categories require corpus extensions and Rust replay-driver suppo
 | Marker region | marker-region.json |
 | Multiple markers | markers-multiple.json |
 | set_composition duration pin | set-composition-duration.json |
+| update_layer label | update-layer-label.json |
+| update_layer times (no autofit) | update-layer-times.json |
+| update_layer flags (enabled/locked) | update-layer-flags.json |
+| update_layer overlap reject | update-layer-overlap-reject.json |
+| update_layer undo | update-layer-undo.json |
+| fit_composition_to_layers shrink | fit-composition-shrink.json |
+| fit_composition_to_layers undo | fit-composition-undo.json |
 | add_track (label) | add-track-label.json |
 | add multiple tracks | add-multiple-tracks.json |
 | Undo add | undo-add.json |
@@ -121,7 +128,6 @@ These mutation categories require corpus extensions and Rust replay-driver suppo
 | Group add/remove members | GAP — unsupported op |
 | Media-bearing layers | GAP — Phase 0 media-free |
 | History cap >200 | GAP — deferred |
-| Composition fit (autofit) | GAP — no fit op |
 | Caption tracks | GAP — Phase 2b corpus extension |
 | Effects | GAP — Phase 2b corpus extension |
 | Transitions | GAP — Phase 2b corpus extension |

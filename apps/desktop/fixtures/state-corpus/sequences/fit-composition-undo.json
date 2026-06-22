@@ -1,0 +1,6 @@
+{ "name": "fit-composition-undo", "commands": [
+  { "op": "add_layer", "track": "@A", "kind": "color", "t_start_us": 0, "t_end_us": 2000000, "ref": "L1" },
+  { "op": "set_composition", "duration_us": 9000000 },
+  { "op": "fit_composition_to_layers" },
+  { "op": "undo" }
+] }
