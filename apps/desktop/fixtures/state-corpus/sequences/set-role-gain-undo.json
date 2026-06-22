@@ -1,0 +1,4 @@
+{ "name": "set-role-gain-undo", "commands": [
+  { "op": "set_role_gain", "role": "dialogue", "gain_db": -2.5 },
+  { "op": "undo" }
+] }

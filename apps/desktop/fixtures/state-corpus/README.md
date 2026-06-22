@@ -183,6 +183,11 @@ Motif `update_layer_params` content-window clamp (motif_cap_us) — deferred (ne
 | update_layer_param_track effect-param (lazy slot insert) | param-track-effect.json |
 | update_layer_param_tracks batch (one commit) | param-tracks-batch.json |
 | update_layer_param_track undo | param-track-undo.json |
+| **— role gain / flags / project settings —** | |
+| set_role_gain (recorded, undoable) | set-role-gain-music.json, set-role-gain-undo.json |
+| role gain + flags orthogonality | set-role-gain-then-flags.json |
+| update_role_flags (unrecorded, survives undo) | update-role-flags-mute.json, update-role-flags-survives-undo.json |
+| update_project_settings (unrecorded, survives undo) | update-project-settings.json, update-project-settings-survives-undo.json |
 | **DEFERRED** | |
 | History cap >200 | deferred |
 | Marker color patch | unit-tested only (driver builds color:None) |

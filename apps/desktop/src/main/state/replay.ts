@@ -19,6 +19,7 @@ export const SUPPORTED_OPS = new Set<string>([
   'add_transition', 'remove_transition',
   'add_media', 'separate_audio',
   'update_layer_params', 'update_layer_param_track', 'update_layer_param_tracks',
+  'set_role_gain', 'update_role_flags', 'update_project_settings',
 ])
 const SUPPORTED_ADD_KINDS = new Set<string>(['color', 'text', 'video', 'audio', 'image'])
 
@@ -110,6 +111,9 @@ function buildArgs(cmd: Cmd, refs: Map<string, string>): Record<string, unknown>
     case 'update_layer_params': return { layer: resolve(refs, cmd.layer), patch: cmd.patch }
     case 'update_layer_param_track': return { layer: resolve(refs, cmd.layer), param_key: resolveParamKey(refs, cmd.param_key as string), track: cmd.track }
     case 'update_layer_param_tracks': return { layer: resolve(refs, cmd.layer), entries: cmd.entries }
+    case 'set_role_gain': return { role: cmd.role, gain_db: cmd.gain_db }
+    case 'update_role_flags': return { role: cmd.role, patch: { muted: cmd.muted, solo: cmd.solo } }
+    case 'update_project_settings': return { patch: { auto_delete_empty_tracks: cmd.auto_delete_empty_tracks } }
     case 'undo': case 'redo': return {}
     default: return {}
   }

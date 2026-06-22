@@ -11,15 +11,18 @@ const smoke = {
 }
 
 describe('TS replay driver', () => {
-  it('supports the smoke + split + groups_create vocabulary; rejects a Phase-2b op', () => {
+  it('supports the full Phase-2b-vi vocabulary; rejects an unknown op', () => {
     expect(sequenceIsSupported(smoke)).toBe(true)
     expect(sequenceIsSupported({ name: 's', commands: [{ op: 'split_layer', layer: '@L1', at_t_us: 1 }] })).toBe(true)
     expect(sequenceIsSupported({ name: 'g', commands: [{ op: 'groups_create', layers: ['@L1', '@L2'] }] })).toBe(true)
-    expect(sequenceIsSupported({ name: 'u', commands: [{ op: 'update_layer_params', layer: '@L1' }] })).toBe(false)
+    expect(sequenceIsSupported({ name: 'x', commands: [{ op: 'unknown_future_op' }] })).toBe(false)
     expect(SUPPORTED_OPS.has('move_layer')).toBe(true)
     expect(SUPPORTED_OPS.has('split_layer')).toBe(true)
     expect(SUPPORTED_OPS.has('groups_create')).toBe(true)
-    expect(SUPPORTED_OPS.has('update_layer_params')).toBe(false)
+    expect(SUPPORTED_OPS.has('update_layer_params')).toBe(true)
+    expect(SUPPORTED_OPS.has('set_role_gain')).toBe(true)
+    expect(SUPPORTED_OPS.has('update_role_flags')).toBe(true)
+    expect(SUPPORTED_OPS.has('update_project_settings')).toBe(true)
   })
   it('produces a 2-step trace and is deterministic (run twice identical)', () => {
     const a = JSON.stringify(replaySequence(smoke))

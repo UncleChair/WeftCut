@@ -238,6 +238,19 @@ async fn apply(h: &ProjectHandle, cmd: &Value, refs: &HashMap<String, String>) -
             h.update_layer_param_tracks(u, resolve_id(refs, cmd["layer"].as_str().unwrap()), entries).await
                 .map(|_| None).map_err(|e| format!("{e:?}"))
         }
+        "set_role_gain" => {
+            let role: state::AudioRole = serde_json::from_value(cmd["role"].clone()).map_err(|e| e.to_string())?;
+            h.set_role_gain(u, role, cmd["gain_db"].as_f64().unwrap()).await.map(|_| None).map_err(|e| format!("{e:?}"))
+        }
+        "update_role_flags" => {
+            let role: state::AudioRole = serde_json::from_value(cmd["role"].clone()).map_err(|e| e.to_string())?;
+            let patch = state::RoleFlagsPatch { muted: cmd["muted"].as_bool(), solo: cmd["solo"].as_bool() };
+            h.update_role_flags(u, role, patch).await.map(|_| None).map_err(|e| format!("{e:?}"))
+        }
+        "update_project_settings" => {
+            let patch = state::ProjectSettingsPatch { auto_delete_empty_tracks: cmd["auto_delete_empty_tracks"].as_bool() };
+            h.update_project_settings(u, patch).await.map(|_| None).map_err(|e| format!("{e:?}"))
+        }
         other => Err(format!("driver: unsupported op {other}")),
     }
 }

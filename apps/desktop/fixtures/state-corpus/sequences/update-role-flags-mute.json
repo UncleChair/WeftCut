@@ -1,0 +1,4 @@
+{ "name": "update-role-flags-mute", "commands": [
+  { "op": "update_role_flags", "role": "music", "muted": true },
+  { "op": "add_layer", "track": "@A", "kind": "color", "t_start_us": 0, "t_end_us": 1000000 }
+] }
