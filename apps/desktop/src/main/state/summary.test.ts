@@ -2,7 +2,11 @@ import { describe, it, expect } from 'vitest'
 import type { Layer, LayerParams, MediaItem, Rgba, Track } from './model'
 import {
   layerKind, deriveTrackKindLabel, layerColorHint, hslToHex, markerColorHint, mediaLabel, layerParamsView,
+  buildProjectSummary,
 } from './summary'
+import { seededGen } from './ids'
+import { blankProject } from './model'
+import { createActor } from './actor'
 
 const stat = <T>(value: T) => ({ mode: 'Static' as const, value })
 const xf = () => ({ x: stat(0), y: stat(0), scale_x: stat(1), scale_y: stat(1), rotation_deg: stat(0), anchor: [0.5, 0.5] as [number, number] })
@@ -84,11 +88,6 @@ describe('layerParamsView Text arm (mirror text_view_tests)', () => {
   })
 })
 
-import { seededGen } from './ids'
-import { blankProject } from './model'
-import { createActor } from './actor'
-import { buildProjectSummary } from './summary'
-
 const NEVER = () => false // gate/test fileExists predicate
 
 describe('buildProjectSummary (mirror commands/mod.rs:322 build_project_summary)', () => {
@@ -124,6 +123,14 @@ describe('buildProjectSummary (mirror commands/mod.rs:322 build_project_summary)
     expect(t0.layers[0].kind).toBe('Color')
     expect(t0.layers[0].color_hint).toBe('#ff0000') // default add_layer color is red (255,0,0)
     expect(s.layer_count).toBe(1)
+  })
+  it('track roles emit kebab wire form (ARoll→a-roll, BRoll→b-roll)', () => {
+    // blankProject reserves two tracks: A roll (ARoll) and B roll (BRoll)
+    const gen = seededGen()
+    const initial = blankProject(gen, 'demo')
+    const actor = createActor({ initial, idGen: gen, clock: () => '<TS>' })
+    const s = buildProjectSummary(actor.snapshot(), actor.historyStatus(), NEVER)
+    expect(s.tracks.map((t) => t.role)).toEqual(['a-roll', 'b-roll'])
   })
 })
 

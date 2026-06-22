@@ -169,6 +169,9 @@ export interface ProjectSummary {
   media: MediaSummary[]; tracks: TrackSummary[]; markers: MarkerSummary[]; groups: GroupSummary[]; audio_roles: RoleMixView[]
 }
 
+// commands/mod.rs:395-401 — TrackRole kebab wire form (matches Rust match arms verbatim).
+const TRACK_ROLE_WIRE: Record<string, string> = { ARoll: 'a-roll', BRoll: 'b-roll', AudioA: 'audio-a', AudioB: 'audio-b', Caption: 'caption' }
+
 // commands/mod.rs:446 — AudioRole::ALL order; default-filled per role.
 const ROLE_ORDER = ['dialogue', 'music', 'sfx', 'voiceover'] as const
 const DEFAULT_ROLE: RoleMixSettings = { gain_db: 0, muted: false, solo: false }
@@ -197,7 +200,7 @@ export function buildProjectSummary(p: Project, history: HistoryStatus, fileExis
 
   const tracks: TrackSummary[] = p.tracks.map((t: Track) => ({
     id: t.id, kind: deriveTrackKindLabel(t), label: t.label, enabled: t.enabled, locked: t.locked,
-    muted: t.muted, solo: t.solo, role: t.role ?? null, transient: t.transient,
+    muted: t.muted, solo: t.solo, role: t.role != null ? TRACK_ROLE_WIRE[t.role] : null, transient: t.transient,
     layers: t.layers.map((l: Layer): LayerSummary => ({
       id: l.id, label: l.label, t_start_us: l.t_start_us, t_end_us: l.t_end_us, kind: layerKind(l.params),
       color_hint: layerColorHint(l), enabled: l.enabled, locked: l.locked,
