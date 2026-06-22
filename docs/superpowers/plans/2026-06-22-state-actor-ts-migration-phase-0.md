@@ -16,7 +16,7 @@
   - `Animated<T>` internal tag: `{"mode":"Static","value":0.5}` / `{"mode":"Keyframed","value":[…]}`
   - `Interpolation` external tag on `kind`: `{"kind":"Linear"}` / `{"kind":"Bezier","p1":[x,y],"p2":[x,y]}`
   - `TransitionKind` external tag on `kind`: `{"kind":"Crossfade"}`
-  - `AudioRole` kebab-case: `"voiceover"`; `TrackRole` kebab-case: `"a-roll"`
+  - `AudioRole` kebab-case: `"voiceover"`; `TrackRole` has NO rename_all → PascalCase variant names: `"ARoll"`/`"BRoll"`/`"AudioA"`/`"AudioB"`/`"Caption"` (the kebab `"a-roll"` form is the IPC summary view only, NOT the `.vproj` serde — `track.rs:93-102`)
   - Plain enums serialize as the bare variant name: `TextAlign`→`"Center"`, `TextAnimPreset`→`"FadeIn"`, `TextBackend`→`"Auto"`, `BlendMode`→`"Normal"`, `MediaKind`→`"Video"`, `ColorSpace`→`"Bt709"`
   - all ids = UUID strings; `TimeUs` = `number`; `Rational` = `{num,den}`; `Rgba` = `{r,g,b,a}` (0–255)
   - `Option::None` serializes as explicit `null` (key present) EXCEPT `Group.label` which uses `skip_serializing_if` (omitted when absent)
@@ -256,10 +256,10 @@ describe('blankProject', () => {
     expect(p.schema_version).toBe(SCHEMA_VERSION)
     expect(p.tracks).toHaveLength(2)
     expect(p.tracks[0].id).toBe('00000000-0000-0000-0000-000000000001')
-    expect(p.tracks[0].role).toBe('a-roll')
+    expect(p.tracks[0].role).toBe('ARoll')
     expect(p.tracks[0].removable).toBe(false)
     expect(p.tracks[1].id).toBe('00000000-0000-0000-0000-000000000002')
-    expect(p.tracks[1].role).toBe('b-roll')
+    expect(p.tracks[1].role).toBe('BRoll')
     expect(p.project_id).toBe('00000000-0000-0000-0000-000000000003')
     expect(p.media_pool).toEqual({})
     expect(p.settings.history_capacity).toBe(200)
@@ -288,7 +288,7 @@ export interface Rational { num: number; den: number }
 export interface Rgba { r: number; g: number; b: number; a: number }
 export type ColorSpace = 'Bt709' | 'Bt601' | 'Bt2020' | 'SRgb'
 export type AudioRole = 'dialogue' | 'music' | 'sfx' | 'voiceover'
-export type TrackRole = 'a-roll' | 'b-roll' | 'audio-a' | 'audio-b' | 'caption'
+export type TrackRole = 'ARoll' | 'BRoll' | 'AudioA' | 'AudioB' | 'Caption'
 export type BlendMode =
   | 'Normal' | 'Multiply' | 'Screen' | 'Overlay' | 'Darken' | 'Lighten' | 'Add' | 'Difference'
 
@@ -397,8 +397,8 @@ function defaultSettings(): ProjectSettings {
 
 /** Mirror of Rust `Project::new_blank`. Id order: A-roll, B-roll, project_id. */
 export function blankProject(idGen: IdGen, name: string): Project {
-  const aRoll = newTrack(idGen(), 'A roll', 'a-roll')
-  const bRoll = newTrack(idGen(), 'B roll', 'b-roll')
+  const aRoll = newTrack(idGen(), 'A roll', 'ARoll')
+  const bRoll = newTrack(idGen(), 'B roll', 'BRoll')
   const projectId = idGen()
   return {
     schema_version: SCHEMA_VERSION, project_id: projectId,
@@ -799,7 +799,10 @@ mkdirSync(OUT, { recursive: true })
 
 const run = (file) => execFileSync('cargo', [
   'run', '--quiet', '--manifest-path', 'native/Cargo.toml',
-  '--bin', 'replay_driver', '--features', 'replay', '--', join(SEQ, file),
+  // NOTE: bare `--features replay` does not compile (pre-existing napi_backend.rs
+  // error at default features); the bin compiles the whole crate, so use the
+  // feature set that builds (confirmed in Task 6).
+  '--bin', 'replay_driver', '--features', 'replay,jobs,export,mcp,cloud,motifs', '--', join(SEQ, file),
 ], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
 
 let fail = 0
