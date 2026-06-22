@@ -3,6 +3,7 @@ import type { Layer, Project, Uuid } from '../model'
 import { snapFrameRound } from '../snap'
 import { applyDurationAutofit, locateLayer, shiftLayerKeyframes } from './helpers'
 import { CommandFailure } from '../errors'
+import { groupSiblingsExcluding, checkGroupLock } from './groups'
 
 export type LayerEdge = 'In' | 'Out'
 const INF = Math.floor(Number.MAX_SAFE_INTEGER / 4)
@@ -43,9 +44,18 @@ export function applyTrimLayer(p: Project, id: Uuid, edge: LayerEdge, newTUs: nu
   const curStart = target.t_start_us, curEnd = target.t_end_us
   const curEdgeT = edge === 'In' ? curStart : curEnd
 
-  // Aligned set: just the target in Phase 1 (groups deferred). escapeGroup is a no-op here.
+  // Aligned set: the target + every group sibling whose MATCHING edge sits at the
+  // same t as the target's pre-trim edge (mutations.rs:906-928).
   const aligned: Uuid[] = [id]
-  void escapeGroup
+  if (!escapeGroup) {
+    for (const sid of groupSiblingsExcluding(p, id)) {
+      const sl = locateLayer(p, sid); if (!sl) continue
+      const s = p.tracks[sl[0]].layers[sl[1]]
+      const sEdgeT = edge === 'In' ? s.t_start_us : s.t_end_us
+      if (sEdgeT === curEdgeT) aligned.push(sid)
+    }
+    checkGroupLock(p, id, aligned)
+  }
 
   const requestedDelta = snapped - curEdgeT
   if (requestedDelta === 0) return // no-op early return (mutations.rs:931-933)
