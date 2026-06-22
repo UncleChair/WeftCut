@@ -16,6 +16,7 @@ export const SUPPORTED_OPS = new Set<string>([
   'delete_track', 'move_track',
   'update_track_flags',
   'add_effect', 'update_effect', 'move_effect', 'remove_effect',
+  'add_transition', 'remove_transition',
 ])
 const SUPPORTED_ADD_KINDS = new Set<string>(['color', 'text'])
 
@@ -94,6 +95,8 @@ function buildArgs(cmd: Cmd, refs: Map<string, string>): Record<string, unknown>
     case 'update_effect': return { layer: resolve(refs, cmd.layer), effect: resolve(refs, cmd.effect), patch: { enabled: cmd.enabled, params: cmd.params } }
     case 'move_effect': return { layer: resolve(refs, cmd.layer), effect: resolve(refs, cmd.effect), new_index: cmd.new_index }
     case 'remove_effect': return { layer: resolve(refs, cmd.layer), effect: resolve(refs, cmd.effect) }
+    case 'add_transition': return { from: resolve(refs, cmd.from), to: resolve(refs, cmd.to), duration_us: cmd.duration_us }
+    case 'remove_transition': return { transition: resolve(refs, cmd.transition) }
     case 'undo': case 'redo': return {}
     default: return {}
   }

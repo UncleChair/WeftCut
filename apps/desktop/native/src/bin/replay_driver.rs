@@ -6,6 +6,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use weftcut_lib::state::effect::{Effect, EffectPatch};
+use weftcut_lib::state::transition::TransitionKind;
 use serde_json::{json, Value};
 use weftcut_lib::state::{self, Actor, LayerParams, ColorParams, Rgba, ProjectHandle};
 use weftcut_lib::state::actor::{LayerEdge, CompositionPatch, LayerPatch};
@@ -165,6 +166,9 @@ async fn apply(h: &ProjectHandle, cmd: &Value, refs: &HashMap<String, String>) -
         }
         "move_effect" => h.move_effect(u, resolve_id(refs, cmd["layer"].as_str().unwrap()), resolve_id(refs, cmd["effect"].as_str().unwrap()), cmd["new_index"].as_u64().unwrap() as usize).await.map(|_| None).map_err(|e| format!("{e:?}")),
         "remove_effect" => h.remove_effect(u, resolve_id(refs, cmd["layer"].as_str().unwrap()), resolve_id(refs, cmd["effect"].as_str().unwrap())).await.map(|_| None).map_err(|e| format!("{e:?}")),
+        "add_transition" => h.add_transition(u, resolve_id(refs, cmd["from"].as_str().unwrap()), resolve_id(refs, cmd["to"].as_str().unwrap()), r(cmd, "duration_us"), TransitionKind::Crossfade).await
+            .map(|tid| Some(tid.to_string())).map_err(|e| format!("{e:?}")),
+        "remove_transition" => h.remove_transition(u, resolve_id(refs, cmd["transition"].as_str().unwrap())).await.map(|_| None).map_err(|e| format!("{e:?}")),
         other => Err(format!("driver: unsupported op {other}")),
     }
 }

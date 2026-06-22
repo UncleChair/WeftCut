@@ -18,6 +18,7 @@ import { applyFitComposition } from './mutations/composition'
 import { applyUpdateMarker, applyRemoveMarker, type MarkerPatch } from './mutations/markers'
 import { applyDeleteTrack, applyMoveTrack } from './mutations/tracks'
 import { applyAddEffect, applyUpdateEffect, applyMoveEffect, applyRemoveEffect, type EffectPatch } from './mutations/effects'
+import { applyAddTransition, applyRemoveTransition } from './mutations/transitions'
 
 setAutoFreeze(true) // snapshots are frozen — accidental mutation throws.
 
@@ -224,6 +225,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'update_effect': commit('Updated effect', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applyUpdateEffect(d, a.layer as Uuid, a.effect as Uuid, a.patch as EffectPatch)); return { ok: true, value: null }
         case 'move_effect': commit('Reordered effect', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applyMoveEffect(d, a.layer as Uuid, a.effect as Uuid, a.new_index as number)); return { ok: true, value: null }
         case 'remove_effect': commit('Removed effect', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applyRemoveEffect(d, a.layer as Uuid, a.effect as Uuid)); return { ok: true, value: null }
+        case 'add_transition': return { ok: true, value: commit('Added transition', [], { kind: 'Coarse' }, (d) => applyAddTransition(d, idGen, a.from as Uuid, a.to as Uuid, a.duration_us as number, { kind: 'Crossfade' })) }
+        case 'remove_transition': commit('Removed transition', [], { kind: 'Coarse' }, (d) => applyRemoveTransition(d, a.transition as Uuid)); return { ok: true, value: null }
         default: return { ok: false, error: { error: 'InvalidArgument', field: 'op', detail: `unsupported op ${channel}` } }
       }
     } catch (e) {

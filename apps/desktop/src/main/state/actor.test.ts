@@ -215,6 +215,42 @@ describe('dispatch: effect chain', () => {
   })
 })
 
+describe('dispatch: transitions', () => {
+  function setup() {
+    const idGen = seededGen(); const initial = blankProject(idGen, 'tr'); const a = initial.tracks[0].id
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    const a1 = (actor.dispatch('add_layer', { track: a, kind: 'color', t_start_us: 0, t_end_us: 2_000_000 }) as { ok: true; value: string }).value
+    const a2 = (actor.dispatch('add_layer', { track: a, kind: 'color', t_start_us: 2_000_000, t_end_us: 4_000_000 }) as { ok: true; value: string }).value
+    return { actor, a1, a2 }
+  }
+  const fromEnd = (actor: ReturnType<typeof createActor>, id: string) =>
+    actor.snapshot().tracks[0].layers.find((l) => l.id === id)!.t_end_us
+
+  it('add_transition extends from_layer + records it; remove_transition shrinks back', () => {
+    const { actor, a1, a2 } = setup()
+    const t = actor.dispatch('add_transition', { from: a1, to: a2, duration_us: 1_000_000 })
+    expect(t.ok).toBe(true)
+    const tid = (t as { ok: true; value: string }).value
+    expect(fromEnd(actor, a1)).toBe(3_000_000)
+    expect(actor.snapshot().transitions.map((x) => x.id)).toEqual([tid])
+    expect(actor.dispatch('remove_transition', { transition: tid }).ok).toBe(true)
+    expect(fromEnd(actor, a1)).toBe(2_000_000)
+    expect(actor.snapshot().transitions).toEqual([])
+  })
+  it('add_transition with a gap fails TransitionLayersNotAdjacent (no id burned)', () => {
+    const { actor, a1 } = setup()
+    const far = (actor.dispatch('add_layer', { track: actor.snapshot().tracks[1].id, kind: 'color', t_start_us: 9_000_000, t_end_us: 10_000_000 }) as { ok: true; value: string }).value
+    const r = actor.dispatch('add_transition', { from: a1, to: far, duration_us: 1_000_000 })
+    expect(r.ok).toBe(false)
+    expect((r as { ok: false; error: { error: string } }).error.error).toBe('LayerNotFound') // far is on a different track → not found on a1's track
+  })
+  it('remove_transition unknown id → TransitionNotFound', () => {
+    const { actor } = setup()
+    const r = actor.dispatch('remove_transition', { transition: '00000000-0000-0000-0000-000000000000' })
+    expect(r.ok).toBe(false); expect((r as { ok: false; error: { error: string } }).error.error).toBe('TransitionNotFound')
+  })
+})
+
 describe('dispatch: delete_track + move_track', () => {
   it('move_track no-op does NOT record (later entity ids unshifted)', () => {
     const idGenA = seededGen(); const a1 = createActor({ initial: blankProject(idGenA, 't'), idGen: idGenA, clock: () => '<TS>' })
