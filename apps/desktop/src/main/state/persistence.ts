@@ -6,7 +6,7 @@
 // stay in Rust until Phase 3c wires this module's pure functions into the
 // project_open/save_as/new_workspace cutover. Filesystem/platform impurities are
 // injected (`join` for path reconcile) or returned (quick-proxy files to delete).
-import { SCHEMA_VERSION, type Project } from './model'
+import { SCHEMA_VERSION, type MediaItem, type Project } from './model'
 import { serializeProject, parseProject } from './serialize'
 
 /** io/mod.rs:25 — serde_json::to_string_pretty (2-space indent, NO trailing
@@ -41,4 +41,42 @@ export function parseProjectJson(text: string): Project {
   const json: unknown = JSON.parse(text)
   schemaGate(json)
   return parseProject(json)
+}
+
+/** io/mod.rs:73-86 — on load, an item whose `path_rel` is populated has its
+ *  in-memory `path_abs` recomputed as join(dir, path_rel), reconciling the saved
+ *  absolute path with the current (possibly-moved) workspace location. Items with
+ *  `path_rel === null` (import-worker copy pending, or synthesized Cache/ media)
+ *  keep their serialized `path_abs` verbatim. `join` is injected (platform-native
+ *  in 3c via node:path; a posix joiner in tests) — see the plan's path landmine. */
+export function reconcileMediaPaths(p: Project, dir: string, join: (...parts: string[]) => string): Project {
+  const media_pool: Record<string, MediaItem> = {}
+  for (const [id, item] of Object.entries(p.media_pool)) {
+    media_pool[id] = item.path_rel ? { ...item, path_abs: join(dir, item.path_rel) } : item
+  }
+  return { ...p, media_pool }
+}
+
+/** io/mod.rs:112 — quick proxies are session-scoped preview accelerators; never
+ *  trust serialized paths across launches. Null every `quick_proxy_path` and
+ *  return the files for the caller (Phase 3c) to delete best-effort — staying
+ *  pure (no node:fs), the way 3a injected `fileExists`. */
+export function clearSessionQuickProxies(p: Project): { project: Project; quickProxiesToDelete: string[] } {
+  const quickProxiesToDelete: string[] = []
+  const media_pool: Record<string, MediaItem> = {}
+  for (const [id, item] of Object.entries(p.media_pool)) {
+    if (item.quick_proxy_path) { quickProxiesToDelete.push(item.quick_proxy_path); media_pool[id] = { ...item, quick_proxy_path: null } }
+    else media_pool[id] = item
+  }
+  return { project: { ...p, media_pool }, quickProxiesToDelete }
+}
+
+/** io/mod.rs:49 load_from_dir — the pure half: parse + schema-gate + media path
+ *  reconcile + quick-proxy clear. NOTE: stale-proxy (proxy_format_version)
+ *  invalidation is `#[cfg(feature = "jobs")]` in Rust and rides the Phase-3c
+ *  jobs-callback re-point; it is deliberately NOT done here. */
+export function loadProjectFromJson(text: string, opts: { dir: string; join: (...parts: string[]) => string }): { project: Project; quickProxiesToDelete: string[] } {
+  const parsed = parseProjectJson(text)
+  const reconciled = reconcileMediaPaths(parsed, opts.dir, opts.join)
+  return clearSessionQuickProxies(reconciled)
 }
