@@ -38,6 +38,17 @@ export class History {
     this.cursor = 0
   }
 
+  /** native/src/state/history.rs:318 reset — discard the stack + checkpoints +
+   *  lock, seed a fresh single 'Initial' entry. Used by replace_state on a
+   *  project swap: the prior project's snapshots/checkpoints reference a
+   *  different project_id and are incoherent against the new state. */
+  reset(initial: Project, actor: Actor, opId: Uuid, timestamp = '<TS>'): void {
+    this.snapshots = [{ op_id: opId, actor, timestamp, summary: 'Initial', affected: [], snapshot: initial }]
+    this.cursor = 0
+    this.checkpoints.clear()
+    this.lockReasonStr = null
+  }
+
   current(): Project { return this.snapshots[this.cursor].snapshot }
 
   record(entry: HistoryEntry): void {

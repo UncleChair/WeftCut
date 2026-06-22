@@ -2,6 +2,7 @@
 import { describe, it, expect } from 'vitest'
 import { seededGen } from './ids'
 import { blankProject } from './model'
+import type { Project } from './model'
 import { colorParams } from './mutations/add'
 import { createActor } from './actor'
 
@@ -512,5 +513,39 @@ describe('dispatch: delete_track + move_track', () => {
     expect(actor.snapshot().tracks[0].id).toBe(t)
     expect(actor.dispatch('delete_track', { track: t, force: false }).ok).toBe(true)
     expect(actor.snapshot().tracks.find((x) => x.id === t)).toBeUndefined()
+  })
+})
+
+describe('replace_state (mirror do_replace_state actor.rs:3581 + History::reset)', () => {
+  it('resets history to a fresh single-entry stack and clears redo/checkpoints/lock', () => {
+    const gen = seededGen()
+    const actor = createActor({ initial: blankProject(gen, 'orig'), idGen: gen, clock: () => '<TS>' })
+    actor.dispatch('add_track', { label: 'x' })            // cursor 1, len 2
+    actor.lockHistory('busy')
+    actor.replaceState(blankProject(gen, 'replaced'))
+    const s = actor.historyStatus()
+    expect([s.cursor, s.len, s.can_undo, s.can_redo]).toEqual([0, 1, false, false])
+    expect(s.lock_reason).toBeUndefined()                  // reset clears the lock
+    expect(actor.snapshot().metadata.name).toBe('replaced')
+  })
+  it('a validate-failure leaves history untouched (validate runs first, mints no id)', () => {
+    const gen = seededGen()
+    const actor = createActor({ initial: blankProject(gen, 'orig'), idGen: gen, clock: () => '<TS>' })
+    actor.dispatch('add_track', { label: 'x' })
+    const before = actor.snapshot()
+    // A group with <2 members violates the group-size invariant (§2.4) → the
+    // simplest deterministic ValidationFailed without constructing layer params.
+    const bad: Project = blankProject(seededGen(), 'bad')
+    bad.groups = [{ id: '00000000-0000-0000-0000-0000000000b1', members: ['00000000-0000-0000-0000-0000000000a1'] }]
+    expect(() => actor.replaceState(bad)).toThrow()
+    expect(actor.snapshot()).toEqual(before)               // history + state unchanged
+  })
+  it('does not touch modified_at (loading a project is not a dirty edit)', () => {
+    const gen = seededGen()
+    const actor = createActor({ initial: blankProject(gen, 'orig'), idGen: gen, clock: () => '<TS>' })
+    const next = blankProject(gen, 'on-disk')
+    next.metadata.modified_at = '2026-01-02T03:04:05Z'
+    actor.replaceState(next)
+    expect(actor.snapshot().metadata.modified_at).toBe('2026-01-02T03:04:05Z')
   })
 })

@@ -1,6 +1,7 @@
 // apps/desktop/src/main/state/actor.ts
 import { produce, setAutoFreeze } from 'immer'
 import type { Animated, Composition, LayerParams, Project, Rational, Uuid } from './model'
+import { blankProject } from './model'
 import type { IdGen } from './ids'
 import { History, type Actor, type EntityRef, type TrackFlagsPatch, type RoleFlagsPatch } from './history'
 import { CommandFailure, ValidationFailure, type CommandError } from './errors'
@@ -44,6 +45,7 @@ export type DispatchResult = { ok: true; value: unknown } | { ok: false; error: 
 export interface ActorHandle {
   snapshot(): Project
   dispatch(channel: string, args: Record<string, unknown>): DispatchResult
+  replaceState(next: Project): void
   subscribe(cb: (e: ChangeEvent) => void): () => void
   historyView(limit: number): ReturnType<History['view']>
   historyStatus(): ReturnType<History['status']>
@@ -232,6 +234,19 @@ export function createActor(opts: ActorOptions): ActorHandle {
     broadcastUnrecorded('Updated project settings', current())
   }
 
+  // ── replace_state (do_replace_state:3581) — wholesale project swap. validate
+  //    FIRST (a failure mints NO id and leaves history intact); on success reset
+  //    history to a single 'Initial' entry (drops the old project's snapshots +
+  //    checkpoints + lock — they reference a different project_id) then broadcast
+  //    unrecorded. modified_at is NOT touched. Mints exactly 2 ids on success
+  //    (reset op_id + broadcast event id); a caller that built `next` via
+  //    blankProject already spent its 3 ids → 5 total (see the plan's id contract). ──
+  function replaceState(next: Project): void {
+    runValidate(next)                              // throws CommandFailure(ValidationFailed); no id spent
+    history.reset(next, actor, idGen(), clock())   // +1 id (the 'Initial' op_id)
+    broadcastUnrecorded('Replaced project state', current())  // +1 id (the event op_id)
+  }
+
   function dryRun(ops: DryRunOp[]): Array<{ ok: true; value: DryRunOutput } | { ok: false; error: CommandError }> {
     const results: Array<{ ok: true; value: DryRunOutput } | { ok: false; error: CommandError }> = []
     let scratch = current()
@@ -313,6 +328,18 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'update_project_settings': updateProjectSettings(a.patch as { auto_delete_empty_tracks?: boolean | null }); return { ok: true, value: null }
         case 'add_caption_track': return { ok: true, value: commit('Added caption track', [], { kind: 'Coarse' }, (d) => applyAddCaptionTrack(d, idGen, a.cues as Cue[], a.comp_w as number, a.comp_h as number, (a.label as string) ?? null)) }
         case 'restyle_caption_track': commit('Restyled caption track', [{ kind: 'Track', id: a.track as Uuid }], { kind: 'Coarse' }, (d) => applyRestyleCaptionTrack(d, a.track as Uuid, a.patch as CaptionStylePatch)); return { ok: true, value: null }
+        case 'replace_state': {
+          // Differential-corpus vehicle: build a blank from the args (mirrors
+          // Project::new_blank + project_new_workspace's canvas override) so both
+          // engines mint the same 3 blank ids before the swap. Production callers
+          // (Phase 3c project_open) call replaceState(loadedProject) directly.
+          const next = blankProject(idGen, (a.name as string) ?? 'untitled')
+          if (typeof a.width === 'number') next.composition.width = a.width
+          if (typeof a.height === 'number') next.composition.height = a.height
+          if (typeof a.fps_num === 'number' && typeof a.fps_den === 'number') next.composition.fps = { num: a.fps_num, den: a.fps_den }
+          replaceState(next)
+          return { ok: true, value: null }
+        }
         default: return { ok: false, error: { error: 'InvalidArgument', field: 'op', detail: `unsupported op ${channel}` } }
       }
     } catch (e) {
@@ -324,6 +351,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
   return {
     snapshot: current,
     dispatch,
+    replaceState,
     subscribe(cb) { subs.add(cb); return () => subs.delete(cb) },
     historyView: (n) => history.view(n),
     historyStatus: () => history.status(),
