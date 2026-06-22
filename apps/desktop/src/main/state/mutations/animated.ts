@@ -7,10 +7,10 @@ import type { Animated, Keyframe, LayerParams, Rgba } from '../model'
 export function forEachAnimatedF64(p: LayerParams, fn: (a: Animated<number>) => void): void {
   switch (p.kind) {
     case 'Color': break
-    case 'Text': fn(p.opacity); forEachTransformF64(p.transform, fn); break
-    case 'VideoClip': fn(p.opacity); forEachTransformF64(p.transform, fn); break
-    case 'ImageOverlay': fn(p.opacity); forEachTransformF64(p.transform, fn); break
-    case 'Motif': fn(p.opacity); forEachTransformF64(p.transform, fn); break
+    case 'Text': forEachTransformF64(p.transform, fn); fn(p.opacity); break
+    case 'VideoClip': forEachTransformF64(p.transform, fn); fn(p.opacity); break
+    case 'ImageOverlay': forEachTransformF64(p.transform, fn); fn(p.opacity); break
+    case 'Motif': forEachTransformF64(p.transform, fn); fn(p.opacity); break
     case 'Audio': fn(p.gain_db); fn(p.pan); break
   }
 }

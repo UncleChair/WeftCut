@@ -32,7 +32,7 @@ export function trimDeltaBounds(layer: Layer, edge: LayerEdge, _motifMaxDurUs: n
   }
 }
 
-/** Port of mutations.rs:881-1062 (Phase-1 scope: aligned = [id], no motif cap). */
+/** Port of mutations.rs:881-1062 (motif cap deferred to Phase 2b). */
 export function applyTrimLayer(p: Project, id: Uuid, edge: LayerEdge, newTUs: number, escapeGroup: boolean): void {
   const fpsN = p.composition.fps.num, fpsD = p.composition.fps.den
   const snapped = snapFrameRound(newTUs, fpsN, fpsD)
@@ -60,7 +60,7 @@ export function applyTrimLayer(p: Project, id: Uuid, edge: LayerEdge, newTUs: nu
   const requestedDelta = snapped - curEdgeT
   if (requestedDelta === 0) return // no-op early return (mutations.rs:931-933)
 
-  // Clamp against every aligned member (just the target in P1).
+  // Clamp against every aligned member.
   let clamped = requestedDelta
   for (const mid of aligned) {
     const ml = locateLayer(p, mid)!
