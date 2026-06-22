@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { cueToTextParams, type Cue, type CueStyle } from './captions'
+import { cueToTextParams, applyAddCaptionTrack, applyRestyleCaptionTrack, type Cue, type CueStyle } from './captions'
+import { seededGen } from '../ids'
+import { blankProject } from '../model'
+import type { TextParams } from '../model'
 
 const cue = (style: CueStyle = {}): Cue => ({ start_us: 0, end_us: 1, text: 'hi', style })
 
@@ -33,5 +36,55 @@ describe('cueToTextParams (mirror subtitles/layout.rs)', () => {
     expect([p.font.size_px, p.font.weight, p.font.italic]).toEqual([54, 700, true])
     expect((p.outline as { width: number }).width).toBe(3)
     expect((p.shadow as { blur: number }).blur).toBe(2)
+  })
+})
+
+const CLEAN: CueStyle = { size_px: 54, outline_px: 3, shadow_px: 2 } // explicit ⇒ no f32 multiply
+
+describe('applyAddCaptionTrack', () => {
+  // blankProject consumes #1 A-roll, #2 B-roll, #3 project (no actor/History here).
+  function blank() { const gen = seededGen(); return { p: blankProject(gen, 'c'), gen } }
+  it('one cue → a Caption track appended after B-roll with one Text layer, returns the primary id', () => {
+    const { p, gen } = blank()
+    const tid = applyAddCaptionTrack(p, gen, [{ start_us: 0, end_us: 1_000_000, text: 'a', style: CLEAN }], 1920, 1080, 'Captions')
+    expect(tid).toBe('00000000-0000-0000-0000-000000000004') // track id #4 (Track::new first), layer #5
+    expect(p.tracks.map((t) => t.id).slice(2)).toEqual([tid]) // appended after [A, B]
+    const ct = p.tracks[2]
+    expect([ct.role, ct.label, ct.removable, ct.transient]).toEqual(['Caption', 'Captions', true, false])
+    expect(ct.layers).toHaveLength(1)
+    expect(ct.layers[0].params.kind).toBe('Text')
+  })
+  it('two overlapping cues open two lanes; a third non-overlapping cue reuses lane 1', () => {
+    const { p, gen } = blank()
+    applyAddCaptionTrack(p, gen, [
+      { start_us: 0, end_us: 2_000_000, text: 'a', style: CLEAN },        // lane1: end 2s
+      { start_us: 1_000_000, end_us: 3_000_000, text: 'b', style: CLEAN }, // overlaps lane1 (2s>1s) → lane2
+      { start_us: 2_000_000, end_us: 3_000_000, text: 'c', style: CLEAN }, // lane1 end 2s <= 2s → reuse lane1
+    ], 1920, 1080, null)
+    const caps = p.tracks.filter((t) => t.role === 'Caption')
+    expect(caps).toHaveLength(2)
+    expect(caps[0].layers.map((l) => (l.params as { content: string }).content)).toEqual(['a', 'c'])
+    expect(caps[1].layers.map((l) => (l.params as { content: string }).content)).toEqual(['b'])
+  })
+  it('empty cues → one empty Caption track (raw-contract safety net)', () => {
+    const { p, gen } = blank()
+    const tid = applyAddCaptionTrack(p, gen, [], 1920, 1080, 'X')
+    expect(p.tracks[2].id).toBe(tid)
+    expect([p.tracks[2].role, p.tracks[2].layers.length]).toEqual(['Caption', 0])
+  })
+})
+
+describe('applyRestyleCaptionTrack', () => {
+  it('patches every Text layer; outline_width keeps the existing outline color', () => {
+    const gen = seededGen(); const p = blankProject(gen, 'c')
+    const tid = applyAddCaptionTrack(p, gen, [{ start_us: 0, end_us: 1_000_000, text: 'a', style: CLEAN }], 1920, 1080, null)
+    applyRestyleCaptionTrack(p, tid, { font_family: 'Arial', font_size_px: 60, outline_width: 4 })
+    const tp = p.tracks[2].layers[0].params as TextParams
+    expect([tp.font.family, tp.font.size_px]).toEqual(['Arial', 60])
+    expect(tp.outline).toEqual({ color: { r: 0, g: 0, b: 0, a: 255 }, width: 4 }) // BLACK kept from the original outline
+  })
+  it('TrackNotFound on a missing track', () => {
+    const gen = seededGen(); const p = blankProject(gen, 'c')
+    expect(() => applyRestyleCaptionTrack(p, '00000000-0000-0000-0000-0000000000ff', { font_size_px: 60 })).toThrow()
   })
 })

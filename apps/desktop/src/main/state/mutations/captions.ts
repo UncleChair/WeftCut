@@ -1,5 +1,8 @@
-import type { Rgba, TextAlign, TextParams } from '../model'
-import { defaultTransform } from './add'
+import type { Project, Rgba, TextAlign, TextParams, Uuid } from '../model'
+import type { IdGen } from '../ids'
+import { snapFrameRound } from '../snap'
+import { applyAddLayer, defaultTransform } from './add'
+import { CommandFailure } from '../errors'
 
 /** subtitles/mod.rs:27 CueStyle — per-cue style hints (all optional; absent ⇒
  *  the default caption look applies). `align` is the ASS 9-grid (1..9). */
@@ -70,4 +73,70 @@ function alignFor(an: number): TextAlign {
   if (an === 1 || an === 4 || an === 7) return 'Left'
   if (an === 3 || an === 6 || an === 9) return 'Right'
   return 'Center'
+}
+
+/** actor.rs:131 CaptionStylePatch — batch style applied to a caption track's
+ *  Text layers. null/absent = "don't touch". */
+export interface CaptionStylePatch {
+  font_family?: string | null
+  font_size_px?: number | null
+  color?: Rgba | null
+  outline_width?: number | null
+}
+
+/** actor.rs:2412 do_add_caption_track — greedy lane-pack the cues into Caption
+ *  tracks (one Text layer per cue). Cues stable-sorted by start_us; each cue goes
+ *  to the FIRST lane whose last layer's snapped end <= this cue's snapped start,
+ *  else a new Caption track is opened (appended after the existing tracks).
+ *  Returns the primary (first-opened) track id. Empty cues still create one empty
+ *  Caption track. ★ ID ORDER: opening a lane mints the track id (newCaptionTrack
+ *  → idGen) BEFORE the layer id (applyAddLayer → idGen) — mirror Track::new()
+ *  then apply_add_layer exactly. No explicit autofit (applyAddLayer autofits per
+ *  layer). */
+export function applyAddCaptionTrack(p: Project, idGen: IdGen, cues: Cue[], compW: number, compH: number, label: string | null): Uuid {
+  const fps = p.composition.fps
+  const sorted = cues.slice().sort((a, b) => (a.start_us < b.start_us ? -1 : a.start_us > b.start_us ? 1 : 0)) // stable by start_us
+  const trackIds: Uuid[] = []
+  const trackEnds: number[] = []
+  for (const cue of sorted) {
+    const snappedStart = snapFrameRound(cue.start_us, fps.num, fps.den)
+    const slot = trackEnds.findIndex((end) => end <= snappedStart)
+    let trackId: Uuid
+    if (slot >= 0) { trackId = trackIds[slot] }
+    else { trackId = newCaptionTrack(p, idGen, label); trackIds.push(trackId); trackEnds.push(0) }
+    applyAddLayer(p, idGen, trackId, cueToTextParams(cue, compW, compH), cue.start_us, cue.end_us)
+    trackEnds[trackIds.indexOf(trackId)] = snapFrameRound(cue.end_us, fps.num, fps.den)
+  }
+  if (trackIds.length > 0) return trackIds[0]
+  return newCaptionTrack(p, idGen, label) // empty-cues safety net (Track::new after the loop)
+}
+
+/** Track::new() defaults (track.rs:65) + role=Caption, transient=false; appended
+ *  to the END of the track list (push_back). removable=true (Track::new default,
+ *  == applyAddTrack). */
+function newCaptionTrack(p: Project, idGen: IdGen, label: string | null): Uuid {
+  const id = idGen()
+  p.tracks.push({ id, label, enabled: true, locked: false, muted: false, solo: false,
+    removable: true, role: 'Caption', transient: false, height_px: 64, layers: [] })
+  return id
+}
+
+/** actor.rs:2521 do_restyle_caption_track — patch font_family/font_size_px/color/
+ *  outline_width onto every Text layer of the track in one commit; non-Text layers
+ *  skipped. TrackNotFound when the track is absent (raised in the recipe → no
+ *  op_id). outline_width keeps the existing outline color (or BLACK if none). */
+export function applyRestyleCaptionTrack(p: Project, trackId: Uuid, patch: CaptionStylePatch): void {
+  const track = p.tracks.find((t) => t.id === trackId)
+  if (!track) throw new CommandFailure({ error: 'TrackNotFound', track: trackId })
+  for (const layer of track.layers) {
+    if (layer.params.kind !== 'Text') continue
+    const tp = layer.params
+    if (patch.font_family !== undefined && patch.font_family !== null) tp.font.family = patch.font_family
+    if (patch.font_size_px !== undefined && patch.font_size_px !== null) tp.font.size_px = patch.font_size_px
+    if (patch.color !== undefined && patch.color !== null) tp.color = { mode: 'Static', value: patch.color }
+    if (patch.outline_width !== undefined && patch.outline_width !== null) {
+      const existingColor = tp.outline ? tp.outline.color : BLACK
+      tp.outline = { color: existingColor, width: patch.outline_width }
+    }
+  }
 }
