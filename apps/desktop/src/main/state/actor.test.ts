@@ -183,6 +183,38 @@ describe('dispatch: update_track_flags (unrecorded)', () => {
   })
 })
 
+describe('dispatch: effect chain', () => {
+  function setup() {
+    const idGen = seededGen(); const initial = blankProject(idGen, 'fx'); const a = initial.tracks[0].id
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    const l = (actor.dispatch('add_layer', { track: a, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 }) as { ok: true; value: string }).value
+    return { actor, l }
+  }
+  const fx = (actor: ReturnType<typeof createActor>, l: string) =>
+    actor.snapshot().tracks[0].layers.find((x) => x.id === l)!.effects
+
+  it('add → update(enabled) → move → remove', () => {
+    const { actor, l } = setup()
+    const e1 = (actor.dispatch('add_effect', { layer: l, kind: 'blur' }) as { ok: true; value: string }).value
+    const e2 = (actor.dispatch('add_effect', { layer: l, kind: 'brightness' }) as { ok: true; value: string }).value
+    expect(fx(actor, l).map((e) => e.id)).toEqual([e1, e2])
+    expect(actor.dispatch('update_effect', { layer: l, effect: e1, patch: { enabled: false } }).ok).toBe(true)
+    expect(fx(actor, l)[0].enabled).toBe(false)
+    expect(actor.dispatch('move_effect', { layer: l, effect: e2, new_index: 0 }).ok).toBe(true)
+    expect(fx(actor, l).map((e) => e.id)).toEqual([e2, e1])
+    expect(actor.dispatch('remove_effect', { layer: l, effect: e1 }).ok).toBe(true)
+    expect(fx(actor, l).map((e) => e.id)).toEqual([e2])
+  })
+  it('add_effect on a missing layer fails LayerNotFound but burns the id', () => {
+    const { actor, l } = setup()
+    const r = actor.dispatch('add_effect', { layer: '00000000-0000-0000-0000-000000000000', kind: 'blur' })
+    expect(r.ok).toBe(false); expect((r as { ok: false; error: { error: string } }).error.error).toBe('LayerNotFound')
+    // the burned id shifts the next add_effect's id forward by one.
+    const eAfter = (actor.dispatch('add_effect', { layer: l, kind: 'blur' }) as { ok: true; value: string }).value
+    expect(fx(actor, l)).toHaveLength(1); expect(fx(actor, l)[0].id).toBe(eAfter)
+  })
+})
+
 describe('dispatch: delete_track + move_track', () => {
   it('move_track no-op does NOT record (later entity ids unshifted)', () => {
     const idGenA = seededGen(); const a1 = createActor({ initial: blankProject(idGenA, 't'), idGen: idGenA, clock: () => '<TS>' })

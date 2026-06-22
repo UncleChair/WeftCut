@@ -4,7 +4,8 @@
 //! `--features replay`. NOT compiled into the production addon.
 // pub: consumed by the replay_driver differential-harness bin
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use weftcut_lib::state::effect::{Effect, EffectPatch};
 use serde_json::{json, Value};
 use weftcut_lib::state::{self, Actor, LayerParams, ColorParams, Rgba, ProjectHandle};
 use weftcut_lib::state::actor::{LayerEdge, CompositionPatch, LayerPatch};
@@ -143,6 +144,27 @@ async fn apply(h: &ProjectHandle, cmd: &Value, refs: &HashMap<String, String>) -
             };
             h.update_track_flags(u, resolve_id(refs, cmd["track"].as_str().unwrap()), patch).await.map(|_| None).map_err(|e| format!("{e:?}"))
         }
+        "add_effect" => {
+            // commands/mutations.rs:460-474: mint the effect id UNCONDITIONALLY,
+            // before the handle — a LayerNotFound still burns it.
+            let effect = Effect {
+                id: weftcut_lib::state::ids::new_id(),
+                kind: cmd["kind"].as_str().unwrap().to_string(),
+                enabled: true,
+                params: BTreeMap::new(),
+            };
+            h.add_effect(u, resolve_id(refs, cmd["layer"].as_str().unwrap()), effect).await
+                .map(|eid| Some(eid.to_string())).map_err(|e| format!("{e:?}"))
+        }
+        "update_effect" => {
+            let params = cmd.get("params").filter(|v| !v.is_null())
+                .map(|v| serde_json::from_value::<BTreeMap<String, Animated<f64>>>(v.clone()).unwrap());
+            let patch = EffectPatch { enabled: cmd["enabled"].as_bool(), params };
+            h.update_effect(u, resolve_id(refs, cmd["layer"].as_str().unwrap()), resolve_id(refs, cmd["effect"].as_str().unwrap()), patch).await
+                .map(|_| None).map_err(|e| format!("{e:?}"))
+        }
+        "move_effect" => h.move_effect(u, resolve_id(refs, cmd["layer"].as_str().unwrap()), resolve_id(refs, cmd["effect"].as_str().unwrap()), cmd["new_index"].as_u64().unwrap() as usize).await.map(|_| None).map_err(|e| format!("{e:?}")),
+        "remove_effect" => h.remove_effect(u, resolve_id(refs, cmd["layer"].as_str().unwrap()), resolve_id(refs, cmd["effect"].as_str().unwrap())).await.map(|_| None).map_err(|e| format!("{e:?}")),
         other => Err(format!("driver: unsupported op {other}")),
     }
 }
