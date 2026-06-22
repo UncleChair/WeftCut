@@ -72,10 +72,11 @@ describe('group mutations', () => {
     applyGroupsRemoveMembers(p, gid, ['b']) // drops to 1 → dissolve
     expect(p.groups.length).toBe(0)
   })
-  it('rename: sets label, errors when missing', () => {
+  it('rename: sets label, clears on null, errors when missing', () => {
     const p = withLayers(['a', 'b'])
     const gid = applyGroupsCreate(p, seededGen(), ['a', 'b'], null, false)
     applyGroupsRename(p, gid, 'Scene 1'); expect(p.groups[0].label).toBe('Scene 1')
+    applyGroupsRename(p, gid, null); expect('label' in p.groups[0]).toBe(false) // null clears the field (serde None parity)
     expectCmd(() => applyGroupsRename(p, 'nope', 'x'), 'GroupNotFound')
   })
 })

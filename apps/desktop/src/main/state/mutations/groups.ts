@@ -83,19 +83,20 @@ export function applyGroupsDissolve(p: Project, id: Uuid): void {
  *  layer-existence → already-grouped scan → reassign-drops → GroupNotFound → insert sorted.
  *  Order matches Rust exactly: already-grouped check runs before the target-group lookup. */
 export function applyGroupsAddMembers(p: Project, id: Uuid, layerIds: Uuid[], reassign: boolean): void {
-  const unique = sortedUnique(layerIds)
+  // Scan the RAW input (Rust iterates layer_ids unmodified — first error follows input order).
   const known = layerIdSet(p)
-  for (const m of unique) if (!known.has(m)) throw new CommandFailure({ error: 'LayerNotFound', layer: m })
+  for (const m of layerIds) if (!known.has(m)) throw new CommandFailure({ error: 'LayerNotFound', layer: m })
   const idx = indexGroups(p.groups)
-  for (const m of unique) {
+  for (const m of layerIds) {
     const existing = idx.get(m)
     if (existing !== undefined && existing !== id && !reassign) throw new CommandFailure({ error: 'LayerAlreadyGrouped', layer: m, existing })
   }
-  if (reassign) for (const m of unique) { if (idx.get(m) !== id) dropLayerFromGroups(p, m) }
-  // GroupNotFound is checked AFTER the already-grouped scan + reassign drop (mutations.rs:234-277).
+  if (reassign) for (const m of layerIds) { if (idx.get(m) !== id) dropLayerFromGroups(p, m) }
+  // GroupNotFound is checked AFTER the scans (mutations.rs:234-277).
   const target = p.groups.find((g) => g.id === id)
   if (!target) throw new CommandFailure({ error: 'GroupNotFound', group: id })
-  target.members = sortedUnique([...target.members, ...unique])
+  // Final member set is an OrdSet: dedup + sort (mirrors group.members.insert).
+  target.members = [...new Set([...target.members, ...layerIds])].sort()
 }
 
 /** mutations.rs:279-305 — remove members; auto-dissolve below 2. */
