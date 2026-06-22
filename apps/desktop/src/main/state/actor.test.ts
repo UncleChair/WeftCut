@@ -156,6 +156,33 @@ describe('dispatch: update_layer + fit_composition_to_layers', () => {
   })
 })
 
+describe('dispatch: update_track_flags (unrecorded)', () => {
+  it('locks a track; later update_layer on it is TrackLocked', () => {
+    const idGen = seededGen(); const initial = blankProject(idGen, 't'); const a = initial.tracks[0].id
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    const l = (actor.dispatch('add_layer', { track: a, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 }) as { ok: true; value: string }).value
+    expect(actor.dispatch('update_track_flags', { track: a, patch: { locked: true } }).ok).toBe(true)
+    expect(actor.snapshot().tracks[0].locked).toBe(true)
+    const r = actor.dispatch('update_layer', { layer: l, patch: { label: 'x' } })
+    expect(r.ok).toBe(false); expect((r as { ok: false; error: { error: string } }).error.error).toBe('TrackLocked')
+  })
+  it('mute persists across undo (unrecorded)', () => {
+    const idGen = seededGen(); const initial = blankProject(idGen, 't'); const a = initial.tracks[0].id
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    actor.dispatch('add_layer', { track: a, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })
+    actor.dispatch('add_layer', { track: a, kind: 'color', t_start_us: 2_000_000, t_end_us: 3_000_000 })
+    actor.dispatch('update_track_flags', { track: a, patch: { muted: true } })
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    expect(actor.snapshot().tracks[0].muted).toBe(true) // unrecorded → survives undo
+  })
+  it('TrackNotFound for a missing track', () => {
+    const idGen = seededGen(); const initial = blankProject(idGen, 't')
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    const r = actor.dispatch('update_track_flags', { track: '00000000-0000-0000-0000-000000000000', patch: { locked: true } })
+    expect(r.ok).toBe(false); expect((r as { ok: false; error: { error: string } }).error.error).toBe('TrackNotFound')
+  })
+})
+
 describe('dispatch: delete_track + move_track', () => {
   it('move_track no-op does NOT record (later entity ids unshifted)', () => {
     const idGenA = seededGen(); const a1 = createActor({ initial: blankProject(idGenA, 't'), idGen: idGenA, clock: () => '<TS>' })

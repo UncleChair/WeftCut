@@ -2,7 +2,7 @@
 import { produce, setAutoFreeze } from 'immer'
 import type { LayerParams, Project, Rgba, Uuid } from './model'
 import type { IdGen } from './ids'
-import { History, type Actor, type EntityRef } from './history'
+import { History, type Actor, type EntityRef, type TrackFlagsPatch } from './history'
 import { CommandFailure, ValidationFailure, type CommandError } from './errors'
 import { validate } from './validate'
 import { snapFrameRound } from './snap'
@@ -150,6 +150,15 @@ export function createActor(opts: ActorOptions): ActorHandle {
     commit('Moved track', [{ kind: 'Track', id }], { kind: 'Coarse' }, (d) => applyMoveTrack(d, id, newPosition))
   }
 
+  // ── update_track_flags (do_update_track_flags:3637-3650) — UNRECORDED.
+  //    TrackNotFound first; then replace-everywhere + broadcast (burns one id,
+  //    matching broadcast_unrecorded so the det counter stays aligned). ──
+  function updateTrackFlags(id: Uuid, patch: TrackFlagsPatch): void {
+    if (!current().tracks.some((t) => t.id === id)) throw new CommandFailure({ error: 'TrackNotFound', track: id })
+    history.replaceTrackFlagsEverywhere(id, patch)
+    broadcastUnrecorded('Updated track flags', current())
+  }
+
   function dryRun(ops: DryRunOp[]): Array<{ ok: true; value: DryRunOutput } | { ok: false; error: CommandError }> {
     const results: Array<{ ok: true; value: DryRunOutput } | { ok: false; error: CommandError }> = []
     let scratch = current()
@@ -209,6 +218,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'remove_marker': commit('Removed marker', [{ kind: 'Marker', id: a.marker as Uuid }], { kind: 'Coarse' }, (d) => applyRemoveMarker(d, a.marker as Uuid)); return { ok: true, value: null }
         case 'delete_track': commit('Deleted track', [{ kind: 'Track', id: a.track as Uuid }], { kind: 'Coarse' }, (d) => applyDeleteTrack(d, a.track as Uuid, (a.force as boolean) ?? false)); return { ok: true, value: null }
         case 'move_track': moveTrack(a.track as Uuid, a.new_position as number); return { ok: true, value: null }
+        case 'update_track_flags': updateTrackFlags(a.track as Uuid, a.patch as TrackFlagsPatch); return { ok: true, value: null }
         default: return { ok: false, error: { error: 'InvalidArgument', field: 'op', detail: `unsupported op ${channel}` } }
       }
     } catch (e) {

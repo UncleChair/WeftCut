@@ -134,6 +134,15 @@ async fn apply(h: &ProjectHandle, cmd: &Value, refs: &HashMap<String, String>) -
         "remove_marker" => h.remove_marker(u, resolve_id(refs, cmd["marker"].as_str().unwrap())).await.map(|_| None).map_err(|e| format!("{e:?}")),
         "delete_track" => h.delete_track(u, resolve_id(refs, cmd["track"].as_str().unwrap()), cmd["force"].as_bool().unwrap_or(false)).await.map(|_| None).map_err(|e| format!("{e:?}")),
         "move_track" => h.move_track(u, resolve_id(refs, cmd["track"].as_str().unwrap()), cmd["new_position"].as_u64().unwrap() as usize).await.map(|_| None).map_err(|e| format!("{e:?}")),
+        "update_track_flags" => {
+            let patch = weftcut_lib::state::TrackFlagsPatch {
+                enabled: cmd["enabled"].as_bool(),
+                muted: cmd["muted"].as_bool(),
+                solo: cmd["solo"].as_bool(),
+                locked: cmd["locked"].as_bool(),
+            };
+            h.update_track_flags(u, resolve_id(refs, cmd["track"].as_str().unwrap()), patch).await.map(|_| None).map_err(|e| format!("{e:?}"))
+        }
         other => Err(format!("driver: unsupported op {other}")),
     }
 }
