@@ -2,15 +2,8 @@
 import type { Layer, Project, Uuid } from '../model'
 import { snapFrameRound } from '../snap'
 import { applyDurationAutofit, locateLayer, pruneEmptyHiddenTracks } from './helpers'
+import { groupSiblingsExcluding, checkGroupLock } from './groups'
 import { CommandFailure } from '../errors'
-
-/** All other members of `id`'s group (empty when ungrouped). Phase 1 never
- *  creates groups, so this is always []; the fan-out below is dead code kept
- *  for the Phase-2 wiring (mutations.rs:661-669). */
-function groupSiblingsExcluding(p: Project, id: Uuid): Uuid[] {
-  for (const g of p.groups) if (g.members.includes(id)) return g.members.filter((m) => m !== id)
-  return []
-}
 
 /** Port of mutations.rs:502-635. */
 export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStartUs: number, escapeGroup: boolean): void {
@@ -28,7 +21,9 @@ export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStart
   const delta = snapped - curStart
 
   const siblings = escapeGroup ? [] : groupSiblingsExcluding(p, id)
-  // (group lock check omitted in P1: siblings always empty; ported in Phase 2)
+  // Reject up-front if any member (incl. target) is locked / on a locked track
+  // (mutations.rs:535-545). Only fires for a coupled move with real siblings.
+  if (!escapeGroup && siblings.length > 0) checkGroupLock(p, id, [id, ...siblings])
 
   // Remove the target layer.
   let moved: Layer | undefined
