@@ -188,7 +188,7 @@ Motif `update_layer_params` content-window clamp (motif_cap_us) — deferred (ne
 | role gain + flags orthogonality | set-role-gain-then-flags.json |
 | update_role_flags (unrecorded, survives undo) | update-role-flags-mute.json, update-role-flags-survives-undo.json |
 | update_project_settings (unrecorded, survives undo) | update-project-settings.json, update-project-settings-survives-undo.json |
-| **— caption tracks —** | |
+| **— caption tracks —** (cue-style colors use the `{r,g,b,a}` OBJECT form, matching the TS `Rgba`/`CueStyle`; the driver `rgba_obj` parses it — do NOT use the `[r,g,b,a]` array form) | |
 | add_caption_track single cue | add-caption-track-single.json |
 | add_caption_track greedy lane-packing (overlap → 2 lanes, reuse) | add-caption-track-multi-lane.json |
 | add_caption_track ASS align anchors (an8/an1) | add-caption-track-align.json |
