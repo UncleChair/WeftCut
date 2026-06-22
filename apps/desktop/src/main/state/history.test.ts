@@ -127,6 +127,28 @@ describe('History.replaceTrackFlagsEverywhere', () => {
   })
 })
 
+describe('History.replaceRoleFlagsEverywhere', () => {
+  it('sets the role flags on every snapshot (default-filled), surviving undo', () => {
+    const gen = seededGen()
+    const p0 = blankProject(gen, 'h')
+    const h = new History(p0, { kind: 'User' }, gen())
+    const p1 = { ...p0, composition: { ...p0.composition, duration_us: 5_000_000 } }
+    h.record({ op_id: gen(), actor: { kind: 'User' }, timestamp: '<TS>', summary: 's', affected: [], snapshot: p1 })
+    h.replaceRoleFlagsEverywhere('music', { muted: true })
+    expect(h.current().audio_roles.music).toEqual({ gain_db: 0, muted: true, solo: false }) // head patched, defaults filled
+    const earlier = h.undo()! // back to the Initial snapshot
+    expect(earlier.audio_roles.music).toEqual({ gain_db: 0, muted: true, solo: false }) // earlier patched too
+    expect(earlier.composition.duration_us).toBe(0) // role-only patch leaves the rest intact
+  })
+  it('preserves an existing gain_db while toggling solo', () => {
+    const gen = seededGen()
+    const p0 = { ...blankProject(gen, 'h'), audio_roles: { dialogue: { gain_db: 6, muted: false, solo: false } } }
+    const h = new History(p0, { kind: 'User' }, gen())
+    h.replaceRoleFlagsEverywhere('dialogue', { solo: true })
+    expect(h.current().audio_roles.dialogue).toEqual({ gain_db: 6, muted: false, solo: true })
+  })
+})
+
 describe('History.replaceMediaPoolEverywhere', () => {
   const mediaItem = (id: string): MediaItem => ({
     id, label: null, path_abs: 'media/clip.bin', path_rel: null, kind: 'Video',

@@ -1,5 +1,5 @@
 // apps/desktop/src/main/state/history.ts
-import type { Composition, MediaItem, Project, ProjectSettings, Uuid } from './model'
+import type { Composition, MediaItem, Project, ProjectSettings, RoleMixSettings, Uuid } from './model'
 
 export type Actor = { kind: 'User' } | { kind: 'Agent'; client: string }
 export type EntityRef =
@@ -8,6 +8,10 @@ export type EntityRef =
 /** native/src/state/project.rs:151-162 TrackFlagsPatch — preference-shaped track
  *  toggles. null/absent = "don't touch". */
 export interface TrackFlagsPatch { enabled?: boolean | null; muted?: boolean | null; solo?: boolean | null; locked?: boolean | null }
+
+/** native/src/state/audio_role.rs:67 RoleFlagsPatch — the Mixer panel's M/S
+ *  toggles. null/absent = "don't touch". Unrecorded (preference-shaped). */
+export interface RoleFlagsPatch { muted?: boolean | null; solo?: boolean | null }
 
 export interface HistoryEntry {
   op_id: Uuid; actor: Actor; timestamp: string; summary: string
@@ -100,6 +104,24 @@ export class History {
     }
     for (const e of this.snapshots) e.snapshot = patchTrack(e.snapshot)
     for (const cp of this.checkpoints.values()) cp.snapshot = patchTrack(cp.snapshot)
+  }
+
+  /** native/src/state/history.rs:300 replace_role_flags_everywhere (via apply_role_flags
+   *  history.rs:370) — patch one audio role's mute/solo into EVERY snapshot + checkpoint.
+   *  Roles ALWAYS exist (absent → RoleMixSettings default {gain_db:0,muted:false,solo:false}),
+   *  so unlike tracks there is NO skip-when-absent branch: the patch applies unconditionally.
+   *  gain_db is preserved (only mute/solo are preference-shaped). cursor unchanged; never
+   *  recorded (project_settings_patch_convention). */
+  replaceRoleFlagsEverywhere(role: string, patch: RoleFlagsPatch): void {
+    const apply = (p: Project): Project => {
+      const cur = p.audio_roles[role]
+      const s: RoleMixSettings = { gain_db: cur?.gain_db ?? 0, muted: cur?.muted ?? false, solo: cur?.solo ?? false }
+      if (typeof patch.muted === 'boolean') s.muted = patch.muted
+      if (typeof patch.solo === 'boolean') s.solo = patch.solo
+      return { ...p, audio_roles: { ...p.audio_roles, [role]: s } }
+    }
+    for (const e of this.snapshots) e.snapshot = apply(e.snapshot)
+    for (const cp of this.checkpoints.values()) cp.snapshot = apply(cp.snapshot)
   }
 
   /** native/src/state/history.rs:225 — set `media_pool` on EVERY snapshot +
