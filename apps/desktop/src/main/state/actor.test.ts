@@ -381,6 +381,45 @@ describe('dispatch: separate_audio', () => {
   })
 })
 
+describe('dispatch: params', () => {
+  function textActor() {
+    const idGen = seededGen(); const initial = blankProject(idGen, 'pp')
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    const id = (actor.dispatch('add_layer', { track: initial.tracks[1].id, kind: 'text', t_start_us: 0, t_end_us: 2_000_000 }) as { ok: true; value: string }).value
+    return { actor, id }
+  }
+  it('update_layer_params merges fields (recorded; undoable)', () => {
+    const { actor, id } = textActor()
+    const before = JSON.stringify(actor.snapshot())
+    expect(actor.dispatch('update_layer_params', { layer: id, patch: { kind: 'Text', opacity: 0.25, content: 'z' } }).ok).toBe(true)
+    const t = actor.snapshot().tracks[1].layers[0].params as Extract<ReturnType<typeof actor.snapshot>['tracks'][0]['layers'][0]['params'], { kind: 'Text' }>
+    expect([t.opacity, t.content]).toEqual([{ mode: 'Static', value: 0.25 }, 'z'])
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    expect(JSON.stringify(actor.snapshot())).toBe(before)
+  })
+  it('update_layer_params kind mismatch → LayerParamsKindMismatch', () => {
+    const { actor, id } = textActor()
+    const r = actor.dispatch('update_layer_params', { layer: id, patch: { kind: 'Color', width: 1 } })
+    expect((r as { ok: false; error: { error: string } }).error.error).toBe('LayerParamsKindMismatch')
+  })
+  it('update_layer_param_track writes opacity keyframes', () => {
+    const { actor, id } = textActor()
+    const track = { mode: 'Keyframed', value: [
+      { id: '00000000-0000-0000-0000-0000000000f1', t_us: 0, value: 0, interp: { kind: 'Linear' } },
+      { id: '00000000-0000-0000-0000-0000000000f2', t_us: 1_000_000, value: 1, interp: { kind: 'Linear' } }] }
+    expect(actor.dispatch('update_layer_param_track', { layer: id, param_key: 'opacity', track }).ok).toBe(true)
+    expect((actor.snapshot().tracks[1].layers[0].params as { opacity: { mode: string } }).opacity.mode).toBe('Keyframed')
+  })
+  it('update_layer_param_tracks applies a batch in one commit (one undo reverts all)', () => {
+    const { actor, id } = textActor()
+    const before = JSON.stringify(actor.snapshot())
+    const kf = (v: number) => ({ mode: 'Keyframed', value: [{ id: '00000000-0000-0000-0000-0000000000f1', t_us: 0, value: v, interp: { kind: 'Linear' } }, { id: '00000000-0000-0000-0000-0000000000f2', t_us: 1_000_000, value: v, interp: { kind: 'Linear' } }] })
+    expect(actor.dispatch('update_layer_param_tracks', { layer: id, entries: [['x', kf(0)], ['opacity', kf(1)]] }).ok).toBe(true)
+    expect(actor.dispatch('undo', {}).ok).toBe(true) // single commit → one undo
+    expect(JSON.stringify(actor.snapshot())).toBe(before)
+  })
+})
+
 describe('dispatch: delete_track + move_track', () => {
   it('move_track no-op does NOT record (later entity ids unshifted)', () => {
     const idGenA = seededGen(); const a1 = createActor({ initial: blankProject(idGenA, 't'), idGen: idGenA, clock: () => '<TS>' })

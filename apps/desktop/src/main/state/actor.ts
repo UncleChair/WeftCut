@@ -1,6 +1,6 @@
 // apps/desktop/src/main/state/actor.ts
 import { produce, setAutoFreeze } from 'immer'
-import type { Composition, LayerParams, Project, Rational, Uuid } from './model'
+import type { Animated, Composition, LayerParams, Project, Rational, Uuid } from './model'
 import type { IdGen } from './ids'
 import { History, type Actor, type EntityRef, type TrackFlagsPatch } from './history'
 import { CommandFailure, ValidationFailure, type CommandError } from './errors'
@@ -22,6 +22,7 @@ import { applyAddEffect, applyUpdateEffect, applyMoveEffect, applyRemoveEffect, 
 import { applyAddTransition, applyRemoveTransition } from './mutations/transitions'
 import { videoClipParams, audioParams, imageOverlayParams, applySeparateAudio, mediaItemTemplate } from './mutations/media'
 import type { MediaItem } from './model'
+import { applyUpdateLayerParams, applyUpdateLayerParamTrack, type LayerParamsPatch } from './mutations/params'
 
 setAutoFreeze(true) // snapshots are frozen — accidental mutation throws.
 
@@ -262,6 +263,9 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'groups_remove_members': commit('Removed group members', [], { kind: 'Coarse' }, (d) => applyGroupsRemoveMembers(d, a.group as Uuid, a.layers as Uuid[])); return { ok: true, value: null }
         case 'groups_rename': commit('Renamed group', [], { kind: 'Coarse' }, (d) => applyGroupsRename(d, a.group as Uuid, (a.label as string) ?? null)); return { ok: true, value: null }
         case 'update_layer': commit('Updated layer', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => applyUpdateLayer(d, a.layer as Uuid, a.patch as LayerPatch)); return { ok: true, value: null }
+        case 'update_layer_params': commit('Updated layer params', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => applyUpdateLayerParams(d, a.layer as Uuid, a.patch as LayerParamsPatch)); return { ok: true, value: null }
+        case 'update_layer_param_track': commit('Keyframed layer param', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => applyUpdateLayerParamTrack(d, a.layer as Uuid, a.param_key as string, a.track as Animated<number>)); return { ok: true, value: null }
+        case 'update_layer_param_tracks': commit('Keyframed layer params', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => { for (const [k, t] of a.entries as [string, Animated<number>][]) applyUpdateLayerParamTrack(d, a.layer as Uuid, k, t) }); return { ok: true, value: null }
         case 'fit_composition_to_layers': commit('Fit composition duration to layers', [], { kind: 'Composition' }, (d) => applyFitComposition(d)); return { ok: true, value: null }
         case 'update_marker': commit('Updated marker', [{ kind: 'Marker', id: a.marker as Uuid }], { kind: 'Coarse' }, (d) => applyUpdateMarker(d, a.marker as Uuid, a.patch as MarkerPatch)); return { ok: true, value: null }
         case 'remove_marker': commit('Removed marker', [{ kind: 'Marker', id: a.marker as Uuid }], { kind: 'Coarse' }, (d) => applyRemoveMarker(d, a.marker as Uuid)); return { ok: true, value: null }
