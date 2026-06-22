@@ -66,3 +66,35 @@ describe('actor commit pipeline', () => {
     expect(actor.dispatch('undo', {})).toEqual({ ok: false, error: { error: 'HistoryLocked', reason: 'agent' } })
   })
 })
+
+describe('dispatch: split + groups', () => {
+  it('groups_create then split_layer through dispatch produce ok results', () => {
+    const idGen = seededGen()
+    const initial = blankProject(idGen, 'd')
+    const a = initial.tracks[0].id
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    const l1 = actor.dispatch('add_layer', { track: a, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })
+    expect(l1.ok).toBe(true)
+    const l2 = actor.dispatch('add_layer', { track: a, kind: 'color', t_start_us: 2_000_000, t_end_us: 3_000_000 })
+    expect(l2.ok).toBe(true)
+    // l1.ok/l2.ok asserted true above; cast to narrow for test fixture access
+    const l1v = (l1 as { ok: true; value: unknown }).value
+    const l2v = (l2 as { ok: true; value: unknown }).value
+    const g = actor.dispatch('groups_create', { layers: [l1v, l2v], reassign: false })
+    expect(g.ok).toBe(true)
+    expect(actor.snapshot().groups.length).toBe(1)
+    const s = actor.dispatch('split_layer', { layer: l1v, at_t_us: 400_000, escape_group: false })
+    expect(s.ok).toBe(true)
+  })
+  it('groups_create with < 2 layers returns a GroupCreateNeedsTwoLayers error', () => {
+    const idGen = seededGen()
+    const initial = blankProject(idGen, 'd')
+    const a = initial.tracks[0].id
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    const l1 = actor.dispatch('add_layer', { track: a, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })
+    const l1v = (l1 as { ok: true; value: unknown }).value
+    const g = actor.dispatch('groups_create', { layers: [l1v], reassign: false })
+    expect(g.ok).toBe(false)
+    expect(g.ok === false && g.error.error).toBe('GroupCreateNeedsTwoLayers')
+  })
+})
