@@ -1,0 +1,8 @@
+{ "name": "restyle-caption-track", "commands": [
+  { "op": "add_caption_track", "ref": "ct", "comp_w": 1920, "comp_h": 1080, "label": "Captions",
+    "cues": [
+      { "start_us": 0, "end_us": 1000000, "text": "a", "style": { "size_px": 54, "outline_px": 3, "shadow_px": 2 } },
+      { "start_us": 1000000, "end_us": 2000000, "text": "b", "style": { "size_px": 54, "outline_px": 3, "shadow_px": 2 } }
+    ] },
+  { "op": "restyle_caption_track", "track": "@ct", "patch": { "font_family": "Arial", "font_size_px": 60, "color": { "r": 255, "g": 255, "b": 0, "a": 255 }, "outline_width": 4 } }
+] }

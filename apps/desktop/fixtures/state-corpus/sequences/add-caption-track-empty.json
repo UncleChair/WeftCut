@@ -1,0 +1,3 @@
+{ "name": "add-caption-track-empty", "commands": [
+  { "op": "add_caption_track", "comp_w": 1920, "comp_h": 1080, "label": "Empty", "cues": [] }
+] }

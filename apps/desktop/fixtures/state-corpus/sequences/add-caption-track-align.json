@@ -1,0 +1,7 @@
+{ "name": "add-caption-track-align", "commands": [
+  { "op": "add_caption_track", "comp_w": 1920, "comp_h": 1080, "label": "Captions",
+    "cues": [
+      { "start_us": 0, "end_us": 1000000, "text": "top", "style": { "size_px": 54, "outline_px": 3, "shadow_px": 2, "align": 8 } },
+      { "start_us": 1000000, "end_us": 2000000, "text": "botleft", "style": { "size_px": 54, "outline_px": 3, "shadow_px": 2, "align": 1 } }
+    ] }
+] }

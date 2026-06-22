@@ -251,6 +251,19 @@ async fn apply(h: &ProjectHandle, cmd: &Value, refs: &HashMap<String, String>) -
             let patch = state::ProjectSettingsPatch { auto_delete_empty_tracks: cmd["auto_delete_empty_tracks"].as_bool() };
             h.update_project_settings(u, patch).await.map(|_| None).map_err(|e| format!("{e:?}"))
         }
+        "add_caption_track" => {
+            let cues: Vec<_> = cmd["cues"].as_array().unwrap().iter().map(parse_cue).collect();
+            let comp_w = cmd["comp_w"].as_u64().unwrap() as u32;
+            let comp_h = cmd["comp_h"].as_u64().unwrap() as u32;
+            h.add_caption_track(u, cues, comp_w, comp_h, cmd["label"].as_str().map(str::to_string)).await
+                .map(|tid| Some(tid.to_string())).map_err(|e| format!("{e:?}"))
+        }
+        "restyle_caption_track" => {
+            let patch: weftcut_lib::state::actor::CaptionStylePatch =
+                serde_json::from_value(cmd["patch"].clone()).map_err(|e| e.to_string())?;
+            h.restyle_caption_track(u, resolve_id(refs, cmd["track"].as_str().unwrap()), patch).await
+                .map(|_| None).map_err(|e| format!("{e:?}"))
+        }
         other => Err(format!("driver: unsupported op {other}")),
     }
 }
@@ -266,6 +279,40 @@ fn default_text_params() -> LayerParams {
         opacity: Animated::Static(1.0), shadow: None, outline: None,
         intro: None, outro: None, backend_hint: TextBackend::Auto,
     })
+}
+
+/// Rgba from a {r,g,b,a} JSON object (u8 components; matches TS Rgba interface).
+fn rgba_obj(v: &Value) -> Rgba {
+    Rgba {
+        r: v["r"].as_u64().unwrap() as u8,
+        g: v["g"].as_u64().unwrap() as u8,
+        b: v["b"].as_u64().unwrap() as u8,
+        a: v["a"].as_u64().unwrap() as u8,
+    }
+}
+
+/// Build a subtitles::Cue from the corpus cue JSON ({start_us,end_us,text,style?}).
+/// style fields mirror CueStyle; colors are {r,g,b,a} objects (matching TS Rgba);
+/// pos is [x,y].
+fn parse_cue(v: &Value) -> weftcut_lib::subtitles::Cue {
+    use weftcut_lib::subtitles::{Cue, CueStyle};
+    let style = match v.get("style") {
+        Some(s) if !s.is_null() => CueStyle {
+            font_family: s.get("font_family").and_then(|v| v.as_str()).map(str::to_string),
+            size_px: s.get("size_px").and_then(|v| v.as_f64()).map(|n| n as f32),
+            primary: s.get("primary").map(rgba_obj),
+            bold: s.get("bold").and_then(|v| v.as_bool()).unwrap_or(false),
+            italic: s.get("italic").and_then(|v| v.as_bool()).unwrap_or(false),
+            outline_px: s.get("outline_px").and_then(|v| v.as_f64()).map(|n| n as f32),
+            outline_color: s.get("outline_color").map(rgba_obj),
+            shadow_px: s.get("shadow_px").and_then(|v| v.as_f64()).map(|n| n as f32),
+            align: s.get("align").and_then(|v| v.as_u64()).map(|n| n as u8),
+            pos: s.get("pos").map(|p| { let a = p.as_array().unwrap(); (a[0].as_f64().unwrap(), a[1].as_f64().unwrap()) }),
+        },
+        _ => CueStyle::default(),
+    };
+    Cue { start_us: v["start_us"].as_i64().unwrap(), end_us: v["end_us"].as_i64().unwrap(),
+          text: v["text"].as_str().unwrap().to_string(), style }
 }
 
 /// Byte-identical twin of the TS mediaItemTemplate. Fixed defaults for every

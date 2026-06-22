@@ -188,7 +188,19 @@ Motif `update_layer_params` content-window clamp (motif_cap_us) — deferred (ne
 | role gain + flags orthogonality | set-role-gain-then-flags.json |
 | update_role_flags (unrecorded, survives undo) | update-role-flags-mute.json, update-role-flags-survives-undo.json |
 | update_project_settings (unrecorded, survives undo) | update-project-settings.json, update-project-settings-survives-undo.json |
+| **— caption tracks —** | |
+| add_caption_track single cue | add-caption-track-single.json |
+| add_caption_track greedy lane-packing (overlap → 2 lanes, reuse) | add-caption-track-multi-lane.json |
+| add_caption_track ASS align anchors (an8/an1) | add-caption-track-align.json |
+| add_caption_track \pos override | add-caption-track-pos.json |
+| add_caption_track styled cue (font/colors/bold/italic) | add-caption-track-styled.json |
+| add_caption_track empty-cue safety net | add-caption-track-empty.json |
+| add_caption_track recorded → undo | add-caption-track-undo.json |
+| restyle_caption_track happy path | restyle-caption-track.json |
+| restyle_caption_track TrackNotFound (no id burn) | restyle-caption-track-not-found.json |
 | **DEFERRED** | |
 | History cap >200 | deferred |
 | Marker color patch | unit-tested only (driver builds color:None) |
-| Caption tracks / params | deferred — later slices |
+| Default-style auto-`size*0.06` layout path | f32×f64-fragile — unit-tested only (`captions.test.ts`) |
+| rebind_motif, remove_media, set_media_derivatives, add_transient_track, replace_state, set_media_workspace_paths | deferred |
+| Motif update_layer_params clamp (motif_cap_us) | deferred — needs motif-catalog support in harness |
