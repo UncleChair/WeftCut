@@ -18,7 +18,7 @@ export function textParamsDefault(content: string): LayerParams {
     shadow: null, outline: null, intro: null, outro: null, backend_hint: 'Auto',
   }
 }
-function defaultTransform() {
+export function defaultTransform() {
   const s = (v: number) => ({ mode: 'Static' as const, value: v })
   return { x: s(0), y: s(0), scale_x: s(1), scale_y: s(1), rotation_deg: s(0), anchor: [0.5, 0.5] as [number, number] }
 }

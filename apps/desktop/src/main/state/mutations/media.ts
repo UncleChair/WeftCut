@@ -1,0 +1,66 @@
+import type { LayerParams, MediaItem, Project, Track, Uuid } from '../model'
+import type { IdGen } from '../ids'
+import { CommandFailure } from '../errors'
+import { defaultTransform } from './add'
+
+/** commands/mutations.rs:91 — the canonical VideoClip layer shape. blend_mode
+ *  default = Normal, transform default per defaultTransform. */
+export function videoClipParams(media: Uuid, srcInUs: number, srcOutUs: number): LayerParams {
+  return { kind: 'VideoClip', media, src_in_us: srcInUs, src_out_us: srcOutUs,
+    transform: defaultTransform(), opacity: { mode: 'Static', value: 1 }, crop: null,
+    flip_h: false, flip_v: false, blend_mode: 'Normal', speed: 1, fade_in_us: 0, fade_out_us: 0 }
+}
+/** commands/mutations.rs:109 — standalone Audio layer. AudioRole is
+ *  #[serde(rename_all="kebab-case")] (audio_role.rs:14), so Rust AudioRole::Music
+ *  serializes to the lowercase wire form "music" — the TS model's AudioRole. */
+export function audioParams(media: Uuid, srcInUs: number, srcOutUs: number): LayerParams {
+  return { kind: 'Audio', media, src_in_us: srcInUs, src_out_us: srcOutUs,
+    gain_db: { mode: 'Static', value: 0 }, pan: { mode: 'Static', value: 0 },
+    fade_in_us: 0, fade_out_us: 0, mute: false, role: 'music' }
+}
+/** commands/mutations.rs:123 — Image overlay (no src range; validator checks
+ *  only the media ref). */
+export function imageOverlayParams(media: Uuid): LayerParams {
+  return { kind: 'ImageOverlay', media, transform: defaultTransform(),
+    opacity: { mode: 'Static', value: 1 }, blend_mode: 'Normal', fade_in_us: 0, fade_out_us: 0 }
+}
+
+/** Fixed-defaults media-pool item; the byte-identical twin of the driver's
+ *  media_item helper. imported_at is reconciled against the regenerated oracle
+ *  (the only Rust-DateTime-fragile field). path_abs uses forward slashes so
+ *  Rust PathBuf serialization is platform-stable. */
+export function mediaItemTemplate(id: Uuid, kind: MediaItem['kind'], durationUs: number | null): MediaItem {
+  return {
+    id, label: null, path_abs: 'media/clip.bin', path_rel: null, kind,
+    metadata: { duration_us: durationUs, video: null, audio: null, container_format: null },
+    file_hash_blake3: '0', file_size: 0, file_mtime: 0, imported_at: '2026-01-01T00:00:00Z',
+    proxy_path: null, quick_proxy_path: null, proxy_bypassed: false, export_uses_original: false,
+    proxy_format_version: 0, conform_path: null, waveform_path: null, thumbnails_dir: null,
+  }
+}
+
+/** actor.rs:2573 do_separate_audio — lift an Audio layer onto a fresh
+ *  non-reserved track inserted directly BEFORE its source. The new-track id is
+ *  minted AFTER the locate + kind checks (so LayerNotFound/WrongLayerKind burn
+ *  no id) but BEFORE commit's op_id (the keystone). Track defaults mirror
+ *  Track::new() (== applyAddTrack). No autofit (no time change). */
+export function applySeparateAudio(p: Project, idGen: IdGen, layerId: Uuid): Uuid {
+  let ti = -1, li = -1
+  for (let t = 0; t < p.tracks.length; t++) {
+    const idx = p.tracks[t].layers.findIndex((l) => l.id === layerId)
+    if (idx >= 0) { ti = t; li = idx; break }
+  }
+  if (ti < 0) throw new CommandFailure({ error: 'LayerNotFound', layer: layerId })
+  const source = p.tracks[ti]
+  const layer = source.layers[li]
+  if (layer.params.kind !== 'Audio') throw new CommandFailure({ error: 'WrongLayerKind', layer: layerId, expected: 'Audio' })
+
+  const newId = idGen() // after the checks, before commit's op_id (keystone)
+  const srcLabel = source.label
+  const label = srcLabel && srcLabel.length > 0 ? `${srcLabel} (audio)` : 'Audio'
+  source.layers.splice(li, 1)
+  const newTrack: Track = { id: newId, label, enabled: true, locked: false, muted: false, solo: false,
+    removable: true, role: null, transient: false, height_px: 64, layers: [layer] }
+  p.tracks.splice(ti, 0, newTrack)
+  return newId
+}

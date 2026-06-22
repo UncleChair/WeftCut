@@ -35,7 +35,7 @@ describe('validate', () => {
 
   it('allows a visual + an audio layer to coexist on one track', () => {
     const p = blankProject(seededGen(), 't')
-    p.media_pool['m'] = { id: 'm', path_abs: '/x', path_rel: null, kind: 'Audio', metadata: { duration_us: 2_000_000 }, file_hash_blake3: '', file_size: 0, file_mtime: 0, imported_at: '<TS>', proxy_path: null, quick_proxy_path: null, proxy_bypassed: false, export_uses_original: false, proxy_format_version: 0, conform_path: null, waveform_path: null, thumbnails_dir: null }
+    p.media_pool['m'] = { id: 'm', label: null, path_abs: '/x', path_rel: null, kind: 'Audio', metadata: { duration_us: 2_000_000 }, file_hash_blake3: '', file_size: 0, file_mtime: 0, imported_at: '<TS>', proxy_path: null, quick_proxy_path: null, proxy_bypassed: false, export_uses_original: false, proxy_format_version: 0, conform_path: null, waveform_path: null, thumbnails_dir: null }
     p.tracks[0].layers = [colorLayer('a', 0, 1_000_000), audioLayer('b', 'm', 0, 1_000_000)]
     expect(() => validate(p)).not.toThrow()
   })
@@ -64,7 +64,7 @@ describe('validate', () => {
     const p = blankProject(seededGen(), 't'); p.tracks[0].layers = [audioLayer('a', 'nope', 0, 100)]
     expectRule(p, 'MissingMedia')
     const q = blankProject(seededGen(), 't')
-    q.media_pool['m'] = { id: 'm', path_abs: '/x', path_rel: null, kind: 'Audio', metadata: { duration_us: null }, file_hash_blake3: '', file_size: 0, file_mtime: 0, imported_at: '<TS>', proxy_path: null, quick_proxy_path: null, proxy_bypassed: false, export_uses_original: false, proxy_format_version: 0, conform_path: null, waveform_path: null, thumbnails_dir: null }
+    q.media_pool['m'] = { id: 'm', label: null, path_abs: '/x', path_rel: null, kind: 'Audio', metadata: { duration_us: null }, file_hash_blake3: '', file_size: 0, file_mtime: 0, imported_at: '<TS>', proxy_path: null, quick_proxy_path: null, proxy_bypassed: false, export_uses_original: false, proxy_format_version: 0, conform_path: null, waveform_path: null, thumbnails_dir: null }
     const al = audioLayer('a', 'm', 0, 100); (al.params as any).src_in_us = 100; (al.params as any).src_out_us = 50
     q.tracks[0].layers = [al]; expectRule(q, 'InvalidSrcRange')
   })

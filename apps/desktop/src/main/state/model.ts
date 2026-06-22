@@ -84,7 +84,7 @@ export interface Group { id: Uuid; label?: string; members: Uuid[] }
 export interface RoleMixSettings { gain_db: number; muted: boolean; solo: boolean }
 export interface MediaMetadata { duration_us: TimeUs | null; [k: string]: unknown }
 export interface MediaItem {
-  id: Uuid; path_abs: string; path_rel: string | null; kind: 'Video' | 'Audio' | 'Image' | 'Subtitle'
+  id: Uuid; label: string | null; path_abs: string; path_rel: string | null; kind: 'Video' | 'Audio' | 'Image' | 'Subtitle'
   metadata: MediaMetadata; file_hash_blake3: string; file_size: number; file_mtime: number
   imported_at: string; proxy_path: string | null; quick_proxy_path: string | null
   proxy_bypassed: boolean; export_uses_original: boolean; proxy_format_version: number
