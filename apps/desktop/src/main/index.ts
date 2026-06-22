@@ -14,6 +14,7 @@ import { broadcastEvent } from './broadcast.js'
 import { resolveSystemFont } from './fonts/resolveSystemFont.js'
 import { collectMetrics } from './metrics.js'
 import { isAllowed } from './fsGuard.js'
+import { tsActorHandles } from './state/shadow.js'
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -214,6 +215,21 @@ app.whenReady().then(async () => {
       clearKey(provider)
       backend!.clearCloudKey(provider)
       return null
+    }
+    // Dev-only shadow: log when the Phase-1 TS actor vocabulary covers this command.
+    // Rust stays authoritative; this flag is OFF by default.
+    // Full live divergence check is deferred to a future phase — the Task-12
+    // differential harness (replay_driver) is the Phase-1 correctness gate.
+    if (process.env['WEFTCUT_TS_ACTOR_SHADOW'] === '1') {
+      try {
+        if (tsActorHandles(channel)) {
+          console.log(`[ts-actor-shadow] shadow enabled — ${channel} is in Phase-1 vocabulary`)
+        } else {
+          console.log(`[ts-actor-shadow] shadow enabled — ${channel} is out-of-vocabulary (skipped)`)
+        }
+      } catch (e) {
+        console.warn('[ts-actor-shadow] shadow hook threw', e)
+      }
     }
     const json = await backend!.invoke(channel, JSON.stringify(args ?? {}))
     return JSON.parse(json)
