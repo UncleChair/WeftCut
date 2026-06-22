@@ -20,37 +20,25 @@ The script runs each sequence through the Rust `replay_driver` bin **twice** and
 
 ## Known gaps — invariants NOT covered by this corpus
 
-Phase 2a (group system + split) is now gated by `differential.phase2.test.ts`; the items below are deferred to Phase 2b (they need Rust replay-driver + corpus extensions).
+The driver's ref-capture is generalized: every id-returning op (`add_layer`, `add_track`, `add_marker`, `duplicate_layer`, `groups_create`) captures its result under a command `ref`, so groups, custom tracks, and markers are all addressable and differential-gated. The items below remain deferred.
 
-### 1. `groups_dissolve` (groups_create drops its return value)
-The driver's `groups_create` handler calls `h.groups_create(...)` and discards the returned group id (maps the result to `()`). There is no `ref` capture path for a group id, so a subsequent `groups_dissolve` command has no way to address the newly created group. A test for explicit dissolution requires either:
-- A driver extension that captures the group id into `refs` (later phase), or
-- Predictable group-id injection (not safe to assume about det IDs).
-Workaround used: `undo-groups-create.json` tests dissolution via undo instead of explicit dissolve.
+### 1. Media-bearing layers
+The corpus is intentionally media-free; the driver only accepts `kind: "color"` and `kind: "text"`. Visual+audio coexistence, proxy handling, and media-kind–specific overlap rules are deferred.
 
-### 2. Custom tracks as move/trim/split targets (add_track drops its return value)
-The driver's `add_track` handler similarly discards the new track id. Only the two reserved tracks `@A` / `@B` can be addressed in `move_layer` and similar ops. Tests that exercise moving a layer to a user-created third track require a driver extension.
+### 2. History cap >200 ops
+Authoring a sequence of >200 commands to exercise the history ring cap would produce large JSON files and long runtimes with marginal differential value. Deferred unless a specific cap-boundary bug surfaces.
 
-### 3. Lock-member rejection (no lock/unlock op)
-The driver has no `lock_layer` or `lock_track` op, so locked-member rejection in group fan-out cannot be tested. Needs driver extension.
+### 3. `set_composition` fps/canvas path
+The `duration_us` path is gated. The remaining `set_composition` gap is the fps/canvas patch fields — the driver only maps `duration_us`, so frame-rate (incl. the fps frame re-snap) and canvas-size changes are not yet exercised.
 
-### 4. Groups add/remove-members (unsupported op)
-The driver supports `groups_create` and `groups_dissolve` (indirectly via undo) but has no `group_add_member` or `group_remove_member` ops. Post-creation membership mutation cannot be exercised.
+### 4. Duplicate with negative / zero offset edge cases
+Duplicate with a negative `t_offset_us` that would produce a negative start time is not tested (driver behaviour on this path is unspecified).
 
-### 5. Media-bearing layers (Phase 0 media-free cap)
-The corpus is intentionally media-free; the driver only accepts `kind: "color"` and `kind: "text"`. Visual+audio coexistence, proxy handling, and media-kind–specific overlap rules are deferred to Phase 2b.
+### 5. Marker `color` patch
+`update_marker`'s `color` field is unit-tested (`mutations/markers.test.ts`) but NOT differential-gated — the driver builds `MarkerPatch { color: None }` and the corpus omits color.
 
-### 6. History cap >200 ops
-Authoring a sequence of >200 commands to exercise the history ring cap would produce large JSON files and long runtimes with marginal differential value at this phase. Deferred unless a specific cap-boundary bug surfaces.
-
-### 7. `set_composition` fps/canvas path
-`update_layer` and `fit_composition_to_layers` are now gated (Phase 2b-i). The remaining `set_composition` gap is the fps/canvas patch fields — the driver only maps `duration_us` and the corpus does not exercise frame-rate or canvas-size changes. Deferred to a later 2b slice.
-
-### 8. Duplicate with negative offset / zero offset edge cases
-Duplicate with a negative `t_offset_us` that would produce a negative start time is not tested (driver behaviour on this path is unspecified at Phase 0).
-
-### 9. Caption tracks, effects, transitions, params (Phase 2b)
-These mutation categories require corpus extensions and Rust replay-driver support; deferred to Phase 2b.
+### 6. Caption tracks, effects, transitions, params
+These mutation categories require corpus extensions and Rust replay-driver support; deferred to later slices.
 
 ---
 
@@ -121,14 +109,38 @@ These mutation categories require corpus extensions and Rust replay-driver suppo
 | Redo-tail truncation | redo-tail-truncate.json |
 | Multi-undo | multi-undo.json |
 | Complex realistic edit | complex-edit-sequence.json |
-| **PHASE-2B GAPS** | |
-| groups_dissolve (explicit) | GAP — driver drops group id ref |
-| Move to custom track | GAP — driver drops track id ref |
-| Lock-member rejection | GAP — no lock op |
-| Group add/remove members | GAP — unsupported op |
-| Media-bearing layers | GAP — Phase 0 media-free |
-| History cap >200 | GAP — deferred |
-| Caption tracks | GAP — Phase 2b corpus extension |
-| Effects | GAP — Phase 2b corpus extension |
-| Transitions | GAP — Phase 2b corpus extension |
-| Params | GAP — Phase 2b corpus extension |
+| **— group membership (addressable via captured group ref) —** | |
+| groups_dissolve (explicit) | groups-dissolve-explicit.json |
+| groups_add_members | groups-add-members.json |
+| groups_remove_members (stays group) | groups-remove-members-stays.json |
+| groups_remove_members (auto-dissolve <2) | groups-remove-members-auto-dissolve.json |
+| groups_rename | groups-rename.json |
+| groups_rename clear (label omitted) | groups-rename-clear.json |
+| Group locked-member reject (layer lock) | group-locked-member-reject.json |
+| **— markers —** | |
+| update_marker label | update-marker-label.json |
+| update_marker region (end_t_us set) | update-marker-region.json |
+| update_marker time + re-sort | update-marker-time-resort.json |
+| remove_marker | remove-marker.json |
+| remove then update → MarkerNotFound | marker-remove-then-update-notfound.json |
+| **— custom tracks —** | |
+| delete_track (custom, empty) | delete-track-custom.json |
+| delete_track reserved → TrackNotRemovable | delete-track-reserved-reject.json |
+| delete_track non-empty → TrackNotEmpty | delete-track-not-empty-reject.json |
+| delete_track force (non-empty) | delete-track-force.json |
+| move_track reorder | move-track-reorder.json |
+| move_track out of range → TrackPositionOutOfRange | move-track-out-of-range.json |
+| move_track no-op (no commit; later id unshifted) | move-track-noop.json |
+| Move layer to custom track | move-track-to-custom-target.json |
+| **— track flags (unrecorded) —** | |
+| update_track_flags lock → TrackLocked on edit | update-track-flags-lock.json |
+| update_track_flags mute | update-track-flags-mute.json |
+| update_track_flags unrecorded (survives undo) | update-track-flags-unrecorded-undo.json |
+| update_track_flags not found (deleted track) | update-track-flags-not-found.json |
+| Group fan-out across locked track → TrackLocked | group-fanout-track-locked-reject.json |
+| **DEFERRED** | |
+| Media-bearing layers | deferred — media-free corpus |
+| History cap >200 | deferred |
+| set_composition fps/canvas | deferred — driver maps duration_us only |
+| Marker color patch | unit-tested only (driver builds color:None) |
+| Caption tracks / effects / transitions / params | deferred — later slices |
