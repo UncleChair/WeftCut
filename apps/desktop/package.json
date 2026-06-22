@@ -3,10 +3,7 @@
   "version": "0.0.0",
   "description": "WeftCut video editor desktop app",
   "homepage": "https://github.com/UncleChair/WeftCut",
-  "author": {
-    "name": "UncleChair",
-    "email": "voidgun1998@gmail.com"
-  },
+  "author": { "name": "UncleChair", "email": "voidgun1998@gmail.com" },
   "private": true,
   "type": "module",
   "main": "out/main/index.js",

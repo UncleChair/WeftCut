@@ -5,10 +5,15 @@
   // its own tsconfig.preload.json). Web-platform globals the main process does
   // use legitimately (Response/ReadableStream/URL for the weftcut-media
   // protocol) come from @types/node, not DOM.
+  //
+  // `references: tsconfig.web.json` + `disableSourceOfProjectReferenceRedirect`
+  // lets the import of src/renderer/eval resolve to web's emitted .d.ts (which
+  // has no WebAssembly/atob uses) instead of re-type-checking renderer source
+  // under main's lib set.
   "compilerOptions": {
     "composite": true,
     "target": "ES2022",
-    "lib": ["ES2023", "WebWorker"],
+    "lib": ["ES2023"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "skipLibCheck": true,
@@ -20,7 +25,11 @@
     // composite requires emit; redirect .d.ts out of source (TS6310).
     "emitDeclarationOnly": true,
     "declarationDir": "node_modules/.cache/tsc/main",
-    "types": ["node"]
+    "types": ["node"],
+    // Resolve cross-project imports (renderer/eval) to web's emitted .d.ts,
+    // not the renderer source — avoids pulling web-platform types into main.
+    "disableSourceOfProjectReferenceRedirect": true
   },
-  "include": ["electron.vite.config.ts", "src/main/**/*.ts", "src/renderer/eval/**/*.ts"]
+  "include": ["electron.vite.config.ts", "src/main/**/*.ts"],
+  "references": [{ "path": "./tsconfig.web.json" }]
 }
