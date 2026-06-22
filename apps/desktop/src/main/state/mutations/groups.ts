@@ -44,3 +44,78 @@ export function checkGroupLock(p: Project, anchor: Uuid, touched: Iterable<Uuid>
     if (layer.locked) throw new CommandFailure({ error: 'GroupLockedMember', group: gid, locked_layer: id, touched: anchor })
   }
 }
+
+// ── Write-side group mutations ────────────────────────────────────────────────
+
+import type { IdGen } from '../ids'
+import { dropLayerFromGroups } from './helpers'
+
+function sortedUnique(ids: Uuid[]): Uuid[] { return [...new Set(ids)].sort() }
+
+/** mutations.rs:180-219 — create a new group from the given layer ids.
+ *  Dedup → existence → already-grouped → reassign-drops → id alloc → push.
+ *  `label === null` → field omitted (serde None parity: `'label' in group === false`). */
+export function applyGroupsCreate(p: Project, idGen: IdGen, layerIds: Uuid[], label: string | null, reassign: boolean): Uuid {
+  const unique = sortedUnique(layerIds)
+  if (unique.length < 2) throw new CommandFailure({ error: 'GroupCreateNeedsTwoLayers', got: unique.length })
+  const known = layerIdSet(p)
+  for (const m of unique) if (!known.has(m)) throw new CommandFailure({ error: 'LayerNotFound', layer: m })
+  const idx = indexGroups(p.groups)
+  for (const m of unique) {
+    const existing = idx.get(m)
+    if (existing !== undefined && !reassign) throw new CommandFailure({ error: 'LayerAlreadyGrouped', layer: m, existing })
+  }
+  if (reassign) for (const m of unique) dropLayerFromGroups(p, m)
+  const id = idGen()
+  const group: Group = label === null ? { id, members: unique } : { id, label, members: unique }
+  p.groups.push(group)
+  return id
+}
+
+/** mutations.rs:221-232 */
+export function applyGroupsDissolve(p: Project, id: Uuid): void {
+  const i = p.groups.findIndex((g) => g.id === id)
+  if (i < 0) throw new CommandFailure({ error: 'GroupNotFound', group: id })
+  p.groups.splice(i, 1)
+}
+
+/** mutations.rs:234-277 — add members to an existing group.
+ *  existence → GroupNotFound (eager; deviation from Rust which checks post-drops,
+ *  but matches the canonical test expectation for the non-existent-group case)
+ *  → already-grouped check (skip if already in target) → reassign-drops → insert sorted. */
+export function applyGroupsAddMembers(p: Project, id: Uuid, layerIds: Uuid[], reassign: boolean): void {
+  const known = layerIdSet(p)
+  for (const m of layerIds) if (!known.has(m)) throw new CommandFailure({ error: 'LayerNotFound', layer: m })
+  // Eagerly verify the target group exists before the already-grouped scan.
+  // NOTE: Rust checks GroupNotFound after reassign drops; we check it earlier so
+  // GroupNotFound takes priority over LayerAlreadyGrouped on a bogus group id.
+  if (!p.groups.find((g) => g.id === id)) throw new CommandFailure({ error: 'GroupNotFound', group: id })
+  const idxMap = indexGroups(p.groups)
+  for (const m of layerIds) {
+    const existing = idxMap.get(m)
+    if (existing === id) continue // already a member of the target group — skip
+    if (existing !== undefined && !reassign) throw new CommandFailure({ error: 'LayerAlreadyGrouped', layer: m, existing })
+  }
+  if (reassign) for (const m of layerIds) { if (idxMap.get(m) !== id) dropLayerFromGroups(p, m) }
+  // Re-find target after potential reassign drops (drops never remove the target group).
+  const target = p.groups.find((g) => g.id === id)!
+  target.members = sortedUnique([...target.members, ...layerIds])
+}
+
+/** mutations.rs:279-305 — remove members; auto-dissolve below 2. */
+export function applyGroupsRemoveMembers(p: Project, id: Uuid, layerIds: Uuid[]): void {
+  const i = p.groups.findIndex((g) => g.id === id)
+  if (i < 0) throw new CommandFailure({ error: 'GroupNotFound', group: id })
+  const g = p.groups[i]
+  for (const m of layerIds) if (!g.members.includes(m)) throw new CommandFailure({ error: 'LayerNotInGroup', group: id, layer: m })
+  g.members = g.members.filter((m) => !layerIds.includes(m))
+  if (g.members.length < 2) p.groups.splice(i, 1)
+}
+
+/** mutations.rs:307-319 — rename a group; null → delete label field (serde None parity). */
+export function applyGroupsRename(p: Project, id: Uuid, label: string | null): void {
+  const g = p.groups.find((x) => x.id === id)
+  if (!g) throw new CommandFailure({ error: 'GroupNotFound', group: id })
+  if (label === null) delete g.label
+  else g.label = label
+}
