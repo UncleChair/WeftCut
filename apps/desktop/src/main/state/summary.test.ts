@@ -84,6 +84,49 @@ describe('layerParamsView Text arm (mirror text_view_tests)', () => {
   })
 })
 
+import { seededGen } from './ids'
+import { blankProject } from './model'
+import { createActor } from './actor'
+import { buildProjectSummary } from './summary'
+
+const NEVER = () => false // gate/test fileExists predicate
+
+describe('buildProjectSummary (mirror commands/mod.rs:322 build_project_summary)', () => {
+  it('blank project: counts, composition, canonical roles, history', () => {
+    const gen = seededGen()
+    const initial = blankProject(gen, 'demo')
+    const actor = createActor({ initial, idGen: gen, clock: () => '<TS>' })
+    const s = buildProjectSummary(actor.snapshot(), actor.historyStatus(), NEVER)
+    expect(s.name).toBe('demo')
+    expect([s.track_count, s.layer_count]).toEqual([2, 0]) // A-roll + B-roll, no layers
+    expect(s.composition).toEqual({ width: 1920, height: 1080, fps_num: 30, fps_den: 1, duration_pinned: false })
+    expect(s.audio_roles.map((r) => r.role)).toEqual(['dialogue', 'music', 'sfx', 'voiceover']) // ALL order
+    expect(s.audio_roles[0]).toEqual({ role: 'dialogue', gain_db: 0, muted: false, solo: false }) // defaults filled
+    expect([s.history.cursor, s.history.len, s.history.can_undo, s.history.can_redo]).toEqual([0, 1, false, false])
+    expect(s.history.lock_reason).toBeUndefined() // skip_serializing_if=Option::is_none → absent
+    expect([s.media, s.markers, s.groups]).toEqual([[], [], []])
+  })
+  it('a built project: track kind, layer kind/color_hint, media sorted desc + label', () => {
+    const gen = seededGen()
+    const initial = blankProject(gen, 'demo')
+    const a = initial.tracks[0].id
+    const actor = createActor({ initial, idGen: gen, clock: () => '<TS>' })
+    actor.dispatch('add_media', { id: '00000000-0000-0000-0000-0000000000aa', kind: 'Video', duration_us: 5_000_000 })
+    actor.dispatch('add_media', { id: '00000000-0000-0000-0000-0000000000bb', kind: 'Audio', duration_us: 3_000_000 })
+    actor.dispatch('add_layer', { track: a, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })
+    const s = buildProjectSummary(actor.snapshot(), actor.historyStatus(), NEVER)
+    expect(s.media.map((m) => m.id)).toEqual([ // descending by id string
+      '00000000-0000-0000-0000-0000000000bb', '00000000-0000-0000-0000-0000000000aa',
+    ])
+    expect(s.media[0]).toMatchObject({ label: 'clip.bin', kind: 'Audio', available: false, proxy_path: null })
+    const t0 = s.tracks[0]
+    expect(t0.kind).toBe('Video')
+    expect(t0.layers[0].kind).toBe('Color')
+    expect(t0.layers[0].color_hint).toBe('#ff0000') // default add_layer color is red (255,0,0)
+    expect(s.layer_count).toBe(1)
+  })
+})
+
 // minimal Text params for the color-hint test above
 function textParamsLite(): Omit<Extract<LayerParams, { kind: 'Text' }>, 'kind'> {
   return {

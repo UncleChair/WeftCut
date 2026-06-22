@@ -1,5 +1,6 @@
 // apps/desktop/src/main/state/summary.ts
-import type { Animated, Layer, LayerParams, MediaItem, Outline, Rgba, Shadow, TextAlign, Track, Uuid } from './model'
+import type { Animated, Effect, Group, Layer, LayerParams, Marker, MediaItem, Outline, Project, Rgba, RoleMixSettings, Shadow, TextAlign, Track, Uuid } from './model'
+import type { HistoryStatus } from './history'
 
 // ── per-kind view structs (mirror commands/mod.rs:150-238; field names verbatim) ──
 export interface VideoClipView {
@@ -77,6 +78,7 @@ export function layerColorHint(layer: Layer): string {
     const rgba = a.mode === 'Static' ? a.value : (a.value[0]?.value ?? { r: 0, g: 0, b: 0, a: 255 })
     return rgbaHex(rgba)
   }
+  // Uuid::as_bytes() returns the 16 RAW bytes (NOT the string's ASCII); the canonical UUID string's hex-pairs reproduce them — parseInt("3f",16)=0x3f matches Rust bytes[0].
   const hex = layer.id.replace(/-/g, '')
   const b0 = parseInt(hex.slice(0, 2), 16), b1 = parseInt(hex.slice(2, 4), 16)
   const hue = ((b0 << 8) | b1) % 360
@@ -89,7 +91,7 @@ export function markerColorHint(c: Rgba): string { return rgbaHex(c) }
 /** commands/mod.rs:333 media label — explicit label, else path basename, else the
  *  whole path. Mirrors the `or_else`/`unwrap_or_else` chain. */
 export function mediaLabel(item: MediaItem): string {
-  if (item.label) return item.label
+  if (item.label != null) return item.label
   const p = item.path_abs
   const slash = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'))
   const base = slash >= 0 ? p.slice(slash + 1) : p
@@ -137,4 +139,89 @@ export function layerParamsView(params: LayerParams, pool: Record<Uuid, MediaIte
         opacity: params.opacity, src_in_us: params.src_in_us, props: params.props }
     }
   }
+}
+
+// ── top-level view types (mirror commands/mod.rs:150-238 + build_project_summary) ──
+
+export interface CompositionSummary { width: number; height: number; fps_num: number; fps_den: number; duration_pinned: boolean }
+export interface HistoryView { cursor: number; len: number; can_undo: boolean; can_redo: boolean; lock_reason?: string }
+export interface RoleMixView { role: string; gain_db: number; muted: boolean; solo: boolean }
+export interface GroupSummary { id: string; label: string | null; layer_ids: string[] }
+export interface MarkerSummary { id: string; t_us: number; end_t_us: number | null; label: string; color_hint: string }
+export interface MediaSummary {
+  id: string; label: string; path: string; kind: string; duration_us: number | null
+  width: number | null; height: number | null; size_bytes: number; available: boolean
+  proxy_path: string | null; quick_proxy_path: string | null; proxy_bypassed: boolean; export_uses_original: boolean
+  codec: string | null; pix_fmt: string | null; color_matrix: string | null; color_range: string | null
+  color_primaries: string | null; color_transfer: string | null; conform_path: string | null
+}
+export interface LayerSummary {
+  id: string; label: string | null; t_start_us: number; t_end_us: number; kind: string; color_hint: string
+  enabled: boolean; locked: boolean; params: LayerParamsView; effects: Effect[]
+}
+export interface TrackSummary {
+  id: string; kind: string; label: string | null; enabled: boolean; locked: boolean; muted: boolean; solo: boolean
+  role: string | null; transient: boolean; layers: LayerSummary[]
+}
+export interface ProjectSummary {
+  project_id: string; name: string; composition: CompositionSummary
+  track_count: number; layer_count: number; duration_us: number; history: HistoryView
+  media: MediaSummary[]; tracks: TrackSummary[]; markers: MarkerSummary[]; groups: GroupSummary[]; audio_roles: RoleMixView[]
+}
+
+// commands/mod.rs:446 — AudioRole::ALL order; default-filled per role.
+const ROLE_ORDER = ['dialogue', 'music', 'sfx', 'voiceover'] as const
+const DEFAULT_ROLE: RoleMixSettings = { gain_db: 0, muted: false, solo: false }
+
+/** commands/mod.rs:322 build_project_summary — the read-only IPC view the renderer
+ *  pulls on project:changed. Pure; `fileExists` is injected (filesystem fields). */
+export function buildProjectSummary(p: Project, history: HistoryStatus, fileExists: (absPath: string) => boolean): ProjectSummary {
+  const layer_count = p.tracks.reduce((n, t) => n + t.layers.length, 0)
+
+  const fileOrNull = (path: string | null | undefined): string | null => (path && fileExists(path) ? path : null)
+  const media: MediaSummary[] = Object.values(p.media_pool).map((m: MediaItem) => {
+    const video = m.metadata.video as Record<string, unknown> | null | undefined
+    return {
+      id: m.id, label: mediaLabel(m), path: m.path_abs, kind: m.kind, duration_us: m.metadata.duration_us,
+      width: (video?.width as number | undefined) ?? null, height: (video?.height as number | undefined) ?? null,
+      size_bytes: m.file_size, available: fileExists(m.path_abs),
+      proxy_path: fileOrNull(m.proxy_path), quick_proxy_path: fileOrNull(m.quick_proxy_path),
+      proxy_bypassed: m.proxy_bypassed, export_uses_original: m.export_uses_original,
+      codec: (video?.codec as string | undefined) ?? null, pix_fmt: (video?.pix_fmt as string | undefined) ?? null,
+      color_matrix: (video?.color_matrix as string | undefined) ?? null, color_range: (video?.color_range as string | undefined) ?? null,
+      color_primaries: (video?.color_primaries as string | undefined) ?? null, color_transfer: (video?.color_transfer as string | undefined) ?? null,
+      conform_path: fileOrNull(m.conform_path),
+    }
+  })
+  media.sort((x, y) => (x.id < y.id ? 1 : x.id > y.id ? -1 : 0)) // b.id.cmp(&a.id) — descending
+
+  const tracks: TrackSummary[] = p.tracks.map((t: Track) => ({
+    id: t.id, kind: deriveTrackKindLabel(t), label: t.label, enabled: t.enabled, locked: t.locked,
+    muted: t.muted, solo: t.solo, role: t.role ?? null, transient: t.transient,
+    layers: t.layers.map((l: Layer): LayerSummary => ({
+      id: l.id, label: l.label, t_start_us: l.t_start_us, t_end_us: l.t_end_us, kind: layerKind(l.params),
+      color_hint: layerColorHint(l), enabled: l.enabled, locked: l.locked,
+      params: layerParamsView(l.params, p.media_pool), effects: l.effects,
+    })),
+  }))
+
+  const markers: MarkerSummary[] = p.markers.map((m: Marker) => ({
+    id: m.id, t_us: m.t_us, end_t_us: m.end_t_us, label: m.label, color_hint: markerColorHint(m.color),
+  }))
+  const groups: GroupSummary[] = p.groups.map((g: Group) => ({ id: g.id, label: g.label ?? null, layer_ids: g.members }))
+  const audio_roles: RoleMixView[] = ROLE_ORDER.map((role) => {
+    const s = p.audio_roles[role] ?? DEFAULT_ROLE
+    return { role, gain_db: s.gain_db, muted: s.muted, solo: s.solo }
+  })
+
+  const view: ProjectSummary = {
+    project_id: p.project_id, name: p.metadata.name,
+    composition: { width: p.composition.width, height: p.composition.height, fps_num: p.composition.fps.num,
+      fps_den: p.composition.fps.den, duration_pinned: p.composition.duration_pinned },
+    track_count: p.tracks.length, layer_count, duration_us: p.composition.duration_us,
+    history: { cursor: history.cursor, len: history.len, can_undo: history.can_undo, can_redo: history.can_redo },
+    media, tracks, markers, groups, audio_roles,
+  }
+  if (history.lock_reason !== undefined) view.history.lock_reason = history.lock_reason
+  return view
 }
