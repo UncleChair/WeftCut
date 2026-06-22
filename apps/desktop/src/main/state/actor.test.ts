@@ -458,6 +458,43 @@ describe('dispatch: role gain + flags + project settings', () => {
   })
 })
 
+describe('dispatch: caption tracks', () => {
+  const CLEAN = { size_px: 54, outline_px: 3, shadow_px: 2 }
+  function setup() {
+    const idGen = seededGen(); const initial = blankProject(idGen, 'cap')
+    const actor = createActor({ idGen, initial, clock: () => '<TS>' })
+    return { actor, a: initial.tracks[0].id }
+  }
+  it('add_caption_track creates a Caption track and returns its id', () => {
+    const { actor } = setup()
+    const r = actor.dispatch('add_caption_track', { cues: [{ start_us: 0, end_us: 1_000_000, text: 'a', style: CLEAN }], comp_w: 1920, comp_h: 1080, label: 'Captions' })
+    expect(r.ok).toBe(true)
+    const tid = (r as { ok: true; value: string }).value
+    const ct = actor.snapshot().tracks.find((t) => t.id === tid)!
+    expect([ct.role, ct.layers[0].params.kind]).toEqual(['Caption', 'Text'])
+  })
+  it('add_caption_track is recorded → undo removes it', () => {
+    const { actor } = setup()
+    actor.dispatch('add_caption_track', { cues: [{ start_us: 0, end_us: 1_000_000, text: 'a', style: CLEAN }], comp_w: 1920, comp_h: 1080, label: null })
+    expect(actor.snapshot().tracks.some((t) => t.role === 'Caption')).toBe(true)
+    actor.dispatch('undo', {})
+    expect(actor.snapshot().tracks.some((t) => t.role === 'Caption')).toBe(false)
+  })
+  it('restyle_caption_track patches the Text layers', () => {
+    const { actor } = setup()
+    const tid = (actor.dispatch('add_caption_track', { cues: [{ start_us: 0, end_us: 1_000_000, text: 'a', style: CLEAN }], comp_w: 1920, comp_h: 1080, label: null }) as { ok: true; value: string }).value
+    const r = actor.dispatch('restyle_caption_track', { track: tid, patch: { font_size_px: 60 } })
+    expect(r.ok).toBe(true)
+    const ct = actor.snapshot().tracks.find((t) => t.id === tid)!
+    expect((ct.layers[0].params as { font: { size_px: number } }).font.size_px).toBe(60)
+  })
+  it('restyle_caption_track on a missing track → TrackNotFound', () => {
+    const { actor } = setup()
+    const r = actor.dispatch('restyle_caption_track', { track: '00000000-0000-0000-0000-0000000000ff', patch: { font_size_px: 60 } })
+    expect((r as { ok: false; error: { error: string } }).error.error).toBe('TrackNotFound')
+  })
+})
+
 describe('dispatch: delete_track + move_track', () => {
   it('move_track no-op does NOT record (later entity ids unshifted)', () => {
     const idGenA = seededGen(); const a1 = createActor({ initial: blankProject(idGenA, 't'), idGen: idGenA, clock: () => '<TS>' })
