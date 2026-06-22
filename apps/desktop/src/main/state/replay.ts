@@ -77,7 +77,7 @@ function buildArgs(cmd: Cmd, refs: Map<string, string>): Record<string, unknown>
     case 'trim_layer': return { layer: resolve(refs, cmd.layer), edge: cmd.edge, new_t_us: cmd.new_t_us, escape_group: cmd.escape_group ?? false }
     case 'delete_layer': return { layer: resolve(refs, cmd.layer) }
     case 'duplicate_layer': return { layer: resolve(refs, cmd.layer), t_offset_us: cmd.t_offset_us }
-    case 'set_composition': return { duration_us: cmd.duration_us }
+    case 'set_composition': return { duration_us: cmd.duration_us, fps: cmd.fps, width: cmd.width, height: cmd.height, sample_rate: cmd.sample_rate, channels: cmd.channels, color_space: cmd.color_space, background: cmd.background }
     case 'split_layer': return { layer: resolve(refs, cmd.layer), at_t_us: cmd.at_t_us, escape_group: cmd.escape_group ?? false }
     case 'groups_create': return { layers: (cmd.layers as unknown[]).map((t) => resolve(refs, t)), label: cmd.label ?? null, reassign: cmd.reassign ?? false }
     case 'groups_dissolve': return { group: resolve(refs, cmd.group) }

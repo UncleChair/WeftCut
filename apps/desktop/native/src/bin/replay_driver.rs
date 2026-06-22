@@ -108,7 +108,23 @@ async fn apply(h: &ProjectHandle, cmd: &Value, refs: &HashMap<String, String>) -
         "add_marker" => h.add_marker(u, r(cmd, "t_us"), cmd["end_t_us"].as_i64(), cmd["label"].as_str().unwrap_or("m"), Rgba { r: 0, g: 128, b: 255, a: 255 }).await
             .map(|mid| Some(mid.to_string())).map_err(|e| format!("{e:?}")),
         "set_composition" => {
-            let patch = CompositionPatch { duration_us: cmd["duration_us"].as_i64(), ..Default::default() };
+            let rat = |v: &Value| -> Option<weftcut_lib::state::time::Rational> {
+                v.as_object().map(|o| weftcut_lib::state::time::Rational {
+                    num: o["num"].as_i64().unwrap() as u32, den: o["den"].as_i64().unwrap() as u32,
+                })
+            };
+            let patch = CompositionPatch {
+                duration_us: cmd["duration_us"].as_i64(),
+                fps: cmd.get("fps").filter(|v| !v.is_null()).and_then(|v| rat(v)),
+                width: cmd["width"].as_u64().map(|n| n as u32),
+                height: cmd["height"].as_u64().map(|n| n as u32),
+                sample_rate: cmd["sample_rate"].as_u64().map(|n| n as u32),
+                channels: cmd["channels"].as_u64().map(|n| n as u8),
+                color_space: cmd.get("color_space").filter(|v| !v.is_null())
+                    .map(|v| serde_json::from_value(v.clone()).unwrap()),
+                background: cmd.get("background").filter(|v| !v.is_null())
+                    .map(|v| serde_json::from_value(v.clone()).unwrap()),
+            };
             h.set_composition(u, patch).await.map(|_| None).map_err(|e| format!("{e:?}"))
         }
         "update_layer" => {
