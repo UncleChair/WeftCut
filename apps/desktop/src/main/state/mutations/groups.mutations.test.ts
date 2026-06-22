@@ -52,12 +52,16 @@ describe('group mutations', () => {
     applyGroupsDissolve(p, gid); expect(p.groups.length).toBe(0)
     expectCmd(() => applyGroupsDissolve(p, gid), 'GroupNotFound')
   })
-  it('addMembers: adds, rejects already-grouped unless reassign', () => {
-    const p = withLayers(['a', 'b', 'c'])
+  it('addMembers: adds; already-grouped→LayerAlreadyGrouped (before group existence); missing group→GroupNotFound', () => {
+    const p = withLayers(['a', 'b', 'c', 'd'])
     const gid = applyGroupsCreate(p, seededGen(), ['a', 'b'], null, false)
     applyGroupsAddMembers(p, gid, ['c'], false)
     expect([...p.groups[0].members].sort()).toEqual(['a', 'b', 'c'])
-    expectCmd(() => applyGroupsAddMembers(p, 'nope', ['a'], false), 'GroupNotFound')
+    // Rust checks already-grouped BEFORE group existence (mutations.rs:234-277):
+    // 'a' is grouped, target 'nope' missing, reassign=false → LayerAlreadyGrouped.
+    expectCmd(() => applyGroupsAddMembers(p, 'nope', ['a'], false), 'LayerAlreadyGrouped')
+    // 'd' is ungrouped → passes the already-grouped scan → reaches the missing-group check.
+    expectCmd(() => applyGroupsAddMembers(p, 'nope', ['d'], false), 'GroupNotFound')
   })
   it('removeMembers: removes, auto-dissolves below 2, errors on non-member', () => {
     const p = withLayers(['a', 'b', 'c'])

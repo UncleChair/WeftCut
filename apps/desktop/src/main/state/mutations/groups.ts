@@ -80,26 +80,22 @@ export function applyGroupsDissolve(p: Project, id: Uuid): void {
 }
 
 /** mutations.rs:234-277 — add members to an existing group.
- *  existence → GroupNotFound (eager; deviation from Rust which checks post-drops,
- *  but matches the canonical test expectation for the non-existent-group case)
- *  → already-grouped check (skip if already in target) → reassign-drops → insert sorted. */
+ *  layer-existence → already-grouped scan → reassign-drops → GroupNotFound → insert sorted.
+ *  Order matches Rust exactly: already-grouped check runs before the target-group lookup. */
 export function applyGroupsAddMembers(p: Project, id: Uuid, layerIds: Uuid[], reassign: boolean): void {
+  const unique = sortedUnique(layerIds)
   const known = layerIdSet(p)
-  for (const m of layerIds) if (!known.has(m)) throw new CommandFailure({ error: 'LayerNotFound', layer: m })
-  // Eagerly verify the target group exists before the already-grouped scan.
-  // NOTE: Rust checks GroupNotFound after reassign drops; we check it earlier so
-  // GroupNotFound takes priority over LayerAlreadyGrouped on a bogus group id.
-  if (!p.groups.find((g) => g.id === id)) throw new CommandFailure({ error: 'GroupNotFound', group: id })
-  const idxMap = indexGroups(p.groups)
-  for (const m of layerIds) {
-    const existing = idxMap.get(m)
-    if (existing === id) continue // already a member of the target group — skip
-    if (existing !== undefined && !reassign) throw new CommandFailure({ error: 'LayerAlreadyGrouped', layer: m, existing })
+  for (const m of unique) if (!known.has(m)) throw new CommandFailure({ error: 'LayerNotFound', layer: m })
+  const idx = indexGroups(p.groups)
+  for (const m of unique) {
+    const existing = idx.get(m)
+    if (existing !== undefined && existing !== id && !reassign) throw new CommandFailure({ error: 'LayerAlreadyGrouped', layer: m, existing })
   }
-  if (reassign) for (const m of layerIds) { if (idxMap.get(m) !== id) dropLayerFromGroups(p, m) }
-  // Re-find target after potential reassign drops (drops never remove the target group).
-  const target = p.groups.find((g) => g.id === id)!
-  target.members = sortedUnique([...target.members, ...layerIds])
+  if (reassign) for (const m of unique) { if (idx.get(m) !== id) dropLayerFromGroups(p, m) }
+  // GroupNotFound is checked AFTER the already-grouped scan + reassign drop (mutations.rs:234-277).
+  const target = p.groups.find((g) => g.id === id)
+  if (!target) throw new CommandFailure({ error: 'GroupNotFound', group: id })
+  target.members = sortedUnique([...target.members, ...unique])
 }
 
 /** mutations.rs:279-305 — remove members; auto-dissolve below 2. */
