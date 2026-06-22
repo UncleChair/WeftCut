@@ -3,7 +3,10 @@
   "version": "0.0.0",
   "description": "WeftCut video editor desktop app",
   "homepage": "https://github.com/UncleChair/WeftCut",
-  "author": { "name": "UncleChair", "email": "voidgun1998@gmail.com" },
+  "author": {
+    "name": "UncleChair",
+    "email": "voidgun1998@gmail.com"
+  },
   "private": true,
   "type": "module",
   "main": "out/main/index.js",
@@ -34,6 +37,7 @@
     "express": "^5.2.1",
     "i18next": "^26.2.0",
     "i18next-browser-languagedetector": "^8.2.1",
+    "immer": "^11.1.8",
     "lucide-react": "^1.17.0",
     "mediabunny": "^1.45.4",
     "pixi.js": "^8.18.1",

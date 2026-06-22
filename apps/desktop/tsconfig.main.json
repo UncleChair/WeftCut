@@ -8,7 +8,7 @@
   "compilerOptions": {
     "composite": true,
     "target": "ES2022",
-    "lib": ["ES2023"],
+    "lib": ["ES2023", "WebWorker"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "skipLibCheck": true,
@@ -22,5 +22,5 @@
     "declarationDir": "node_modules/.cache/tsc/main",
     "types": ["node"]
   },
-  "include": ["electron.vite.config.ts", "src/main/**/*.ts"]
+  "include": ["electron.vite.config.ts", "src/main/**/*.ts", "src/renderer/eval/**/*.ts"]
 }
