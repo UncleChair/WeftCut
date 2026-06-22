@@ -52,7 +52,7 @@ describe('applySplitLayer', () => {
   })
   it('group spanning split: both halves stay in the group; non-spanning members untouched', () => {
     const p = blankProject(seededGen(), 't')
-    // a:[0,1s] and b:[0,1s] on track A grouped; both span t=400k
+    // a:[0,1s] and b:[0,1s] on track B grouped; both span t=400k
     p.tracks[0].layers = [color('a', 0, 1_000_000)]
     p.tracks[1].layers = [color('b', 0, 1_000_000)]
     const gid = applyGroupsCreate(p, seededGen(), ['a', 'b'], null, false)
@@ -74,5 +74,24 @@ describe('applySplitLayer', () => {
     expect(group.members.length).toBe(3) // target stays grouped; its right-half joins (mutations.rs:779-787)
     expect(group.members).toContain(r.right)
     expect(group.members).toContain('b')
+  })
+  it('splitTrackHalf retains left keyframes and collapses an emptied right half to Static at the boundary value', () => {
+    const p = blankProject(seededGen(), 't')
+    const c: Layer = {
+      id: 'c', label: null, t_start_us: 0, t_end_us: 1_000_000, enabled: true, locked: false, metadata: {},
+      params: { kind: 'Color', width: 1, height: 1, color: { mode: 'Keyframed', value: [
+        { id: 'k0', t_us: 0, value: { r: 10, g: 0, b: 0, a: 255 }, interp: { kind: 'Linear' } },
+        { id: 'k1', t_us: 100_000, value: { r: 20, g: 0, b: 0, a: 255 }, interp: { kind: 'Linear' } },
+      ] } }, effects: [],
+    }
+    p.tracks[0].layers = [c]
+    applySplitLayer(p, seededGen(), 'c', 400_000, false) // offset = 400_000
+    const left = p.tracks[0].layers[0].params
+    const right = p.tracks[0].layers[1].params
+    // LEFT keeps keyframes with t <= 400_000 → both retained, still Keyframed.
+    expect(left.kind === 'Color' && left.color.mode).toBe('Keyframed')
+    expect(left.kind === 'Color' && (left.color.mode === 'Keyframed' ? left.color.value.length : -1)).toBe(2)
+    // RIGHT keeps t > 400_000 → none → collapses to Static at the LAST keyframe value (r:20).
+    expect(right.kind === 'Color' && JSON.stringify(right.color)).toBe(JSON.stringify({ mode: 'Static', value: { r: 20, g: 0, b: 0, a: 255 } }))
   })
 })

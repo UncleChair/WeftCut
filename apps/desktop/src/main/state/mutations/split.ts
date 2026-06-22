@@ -1,5 +1,5 @@
 // apps/desktop/src/main/state/mutations/split.ts
-import type { Animated, Layer, Project, Uuid } from '../model'
+import type { Animated, Keyframe, Layer, Project, Uuid } from '../model'
 import type { IdGen } from '../ids'
 import { snapFrameRound } from '../snap'
 import { CommandFailure } from '../errors'
@@ -15,7 +15,7 @@ function splitTrackHalf<T>(a: Animated<T>, splitOffset: number, right: boolean):
   const boundary = right ? lastKeyframeValue(a) : firstKeyframeValue(a)
   if (right) { retainKeyframes(a, (t) => t > splitOffset); shiftKeyframes(a, -splitOffset) }
   else { retainKeyframes(a, (t) => t <= splitOffset) }
-  if (a.mode === 'Keyframed' && (a.value as unknown[]).length === 0 && boundary !== null) collapseToStatic(a, boundary)
+  if (a.mode === 'Keyframed' && (a.value as Keyframe<T>[]).length === 0 && boundary !== null) collapseToStatic(a, boundary)
 }
 
 /** mutations.rs:815-874 — single-layer split (group-unaware). Returns {left,right};
