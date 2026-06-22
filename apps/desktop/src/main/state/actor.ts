@@ -20,6 +20,8 @@ import { applyUpdateMarker, applyRemoveMarker, type MarkerPatch } from './mutati
 import { applyDeleteTrack, applyMoveTrack } from './mutations/tracks'
 import { applyAddEffect, applyUpdateEffect, applyMoveEffect, applyRemoveEffect, type EffectPatch } from './mutations/effects'
 import { applyAddTransition, applyRemoveTransition } from './mutations/transitions'
+import { videoClipParams, audioParams, imageOverlayParams, applySeparateAudio, mediaItemTemplate } from './mutations/media'
+import type { MediaItem } from './model'
 
 setAutoFreeze(true) // snapshots are frozen — accidental mutation throws.
 
@@ -188,6 +190,19 @@ export function createActor(opts: ActorOptions): ActorHandle {
     broadcastUnrecorded('Updated track flags', current())
   }
 
+  // ── add_media_item (do_add_media_item:2690) — UNRECORDED. Insert into the
+  //    pool (media id is the caller's, NOT counter-minted), validate the probe,
+  //    then replace the pool EVERYWHERE (durable across undo) + broadcast (burns
+  //    one id). No HistoryEntry. ──
+  function addMediaItem(item: MediaItem): Uuid {
+    const cur = current()
+    const nextPool = { ...cur.media_pool, [item.id]: item }
+    runValidate({ ...cur, media_pool: nextPool })
+    history.replaceMediaPoolEverywhere(nextPool)
+    broadcastUnrecorded('Imported media', current())
+    return item.id
+  }
+
   function dryRun(ops: DryRunOp[]): Array<{ ok: true; value: DryRunOutput } | { ok: false; error: CommandError }> {
     const results: Array<{ ok: true; value: DryRunOutput } | { ok: false; error: CommandError }> = []
     let scratch = current()
@@ -219,7 +234,15 @@ export function createActor(opts: ActorOptions): ActorHandle {
       switch (channel) {
         case 'add_layer': {
           const kind = a.kind as string
-          const params: LayerParams = kind === 'text' ? textParamsDefault('hello') : colorParams({ r: 255, g: 0, b: 0, a: 255 }, 1920, 1080)
+          let params: LayerParams
+          switch (kind) {
+            case 'text': params = textParamsDefault('hello'); break
+            case 'color': params = colorParams({ r: 255, g: 0, b: 0, a: 255 }, 1920, 1080); break
+            case 'video': params = videoClipParams(a.media as Uuid, a.src_in_us as number, a.src_out_us as number); break
+            case 'audio': params = audioParams(a.media as Uuid, a.src_in_us as number, a.src_out_us as number); break
+            case 'image': params = imageOverlayParams(a.media as Uuid); break
+            default: return { ok: false, error: { error: 'InvalidArgument', field: 'kind', detail: `unknown kind ${kind}` } }
+          }
           const id = commit('Added layer', [], { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, a.track as Uuid, params, a.t_start_us as number, a.t_end_us as number))
           return { ok: true, value: id }
         }
@@ -251,6 +274,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'remove_effect': commit('Removed effect', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applyRemoveEffect(d, a.layer as Uuid, a.effect as Uuid)); return { ok: true, value: null }
         case 'add_transition': return { ok: true, value: commit('Added transition', [], { kind: 'Coarse' }, (d) => applyAddTransition(d, idGen, a.from as Uuid, a.to as Uuid, a.duration_us as number, { kind: 'Crossfade' })) }
         case 'remove_transition': commit('Removed transition', [], { kind: 'Coarse' }, (d) => applyRemoveTransition(d, a.transition as Uuid)); return { ok: true, value: null }
+        case 'add_media': return { ok: true, value: addMediaItem(mediaItemTemplate(a.id as Uuid, a.kind as MediaItem['kind'], (a.duration_us as number | null) ?? null)) }
+        case 'separate_audio': return { ok: true, value: commit('Separated audio', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applySeparateAudio(d, idGen, a.layer as Uuid)) }
         default: return { ok: false, error: { error: 'InvalidArgument', field: 'op', detail: `unsupported op ${channel}` } }
       }
     } catch (e) {

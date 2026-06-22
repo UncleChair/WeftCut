@@ -314,6 +314,73 @@ describe('dispatch: set_composition full', () => {
   })
 })
 
+describe('dispatch: media pool + media layers', () => {
+  const VID = '00000000-0000-0000-0000-0000000000aa'
+  function setup() {
+    const idGen = seededGen(); const initial = blankProject(idGen, 'm'); const a = initial.tracks[0].id
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    return { actor, a }
+  }
+  it('add_media inserts into the pool (unrecorded) and survives undo of a later edit', () => {
+    const { actor, a } = setup()
+    expect(actor.dispatch('add_media', { id: VID, kind: 'Video', duration_us: 4_000_000 }).ok).toBe(true)
+    expect(Object.keys(actor.snapshot().media_pool)).toEqual([VID])
+    actor.dispatch('add_layer', { track: a, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 }) // recorded
+    actor.dispatch('undo', {})
+    expect(actor.snapshot().tracks[0].layers).toHaveLength(0) // edit undone
+    expect(Object.keys(actor.snapshot().media_pool)).toEqual([VID]) // pool persists (replace-everywhere)
+  })
+  it('add_layer video referencing pooled media succeeds', () => {
+    const { actor, a } = setup()
+    actor.dispatch('add_media', { id: VID, kind: 'Video', duration_us: 4_000_000 })
+    const r = actor.dispatch('add_layer', { track: a, kind: 'video', media: VID, src_in_us: 0, src_out_us: 4_000_000, t_start_us: 0, t_end_us: 4_000_000 })
+    expect(r.ok).toBe(true)
+    expect(actor.snapshot().tracks[0].layers[0].params.kind).toBe('VideoClip')
+  })
+  it('add_layer video with media NOT in the pool → ValidationFailed(MissingMedia)', () => {
+    const { actor, a } = setup()
+    const r = actor.dispatch('add_layer', { track: a, kind: 'video', media: VID, src_in_us: 0, src_out_us: 4_000_000, t_start_us: 0, t_end_us: 4_000_000 })
+    expect(r.ok).toBe(false)
+    const err = (r as { ok: false; error: { error: string; detail?: { rule: string } } }).error
+    expect([err.error, err.detail?.rule]).toEqual(['ValidationFailed', 'MissingMedia'])
+  })
+  it('add_layer video whose src_out exceeds the media duration → SrcRangeExceedsMedia', () => {
+    const { actor, a } = setup()
+    actor.dispatch('add_media', { id: VID, kind: 'Video', duration_us: 2_000_000 })
+    const r = actor.dispatch('add_layer', { track: a, kind: 'video', media: VID, src_in_us: 0, src_out_us: 5_000_000, t_start_us: 0, t_end_us: 5_000_000 })
+    expect((r as { ok: false; error: { detail?: { rule: string } } }).error.detail?.rule).toBe('SrcRangeExceedsMedia')
+  })
+})
+
+describe('dispatch: separate_audio', () => {
+  const AID = '00000000-0000-0000-0000-0000000000bb'
+  it('separate_audio lifts the audio layer onto a new track', () => {
+    const idGen = seededGen(); const initial = blankProject(idGen, 'sa'); const a = initial.tracks[0].id
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    actor.dispatch('add_media', { id: AID, kind: 'Audio', duration_us: 3_000_000 })
+    const l = (actor.dispatch('add_layer', { track: a, kind: 'audio', media: AID, src_in_us: 0, src_out_us: 3_000_000, t_start_us: 0, t_end_us: 3_000_000 }) as { ok: true; value: string }).value
+    const r = actor.dispatch('separate_audio', { layer: l })
+    expect(r.ok).toBe(true)
+    const tracks = actor.snapshot().tracks
+    expect(tracks[0].id).toBe((r as { ok: true; value: string }).value) // new track inserted before A
+    expect(tracks[0].layers.map((x) => x.id)).toEqual([l])
+    expect(tracks[0].label).toBe('A roll (audio)')
+  })
+  it('separate_audio on a color layer → WrongLayerKind', () => {
+    const idGen = seededGen(); const initial = blankProject(idGen, 'sa2'); const a = initial.tracks[0].id
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    const l = (actor.dispatch('add_layer', { track: a, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 }) as { ok: true; value: string }).value
+    const r = actor.dispatch('separate_audio', { layer: l })
+    expect((r as { ok: false; error: { error: string } }).error.error).toBe('WrongLayerKind')
+  })
+  it('separate_audio on a missing layer → LayerNotFound', () => {
+    const idGen = seededGen(); const initial = blankProject(idGen, 'sa3')
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    const r = actor.dispatch('separate_audio', { layer: '00000000-0000-0000-0000-000000000000' })
+    expect((r as { ok: false; error: { error: string } }).error.error).toBe('LayerNotFound')
+  })
+})
+
 describe('dispatch: delete_track + move_track', () => {
   it('move_track no-op does NOT record (later entity ids unshifted)', () => {
     const idGenA = seededGen(); const a1 = createActor({ initial: blankProject(idGenA, 't'), idGen: idGenA, clock: () => '<TS>' })
