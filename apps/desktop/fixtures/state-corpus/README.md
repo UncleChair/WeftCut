@@ -37,7 +37,7 @@ Duplicate with a negative `t_offset_us` that would produce a negative start time
 ### 5. Marker `color` patch
 `update_marker`'s `color` field is unit-tested (`mutations/markers.test.ts`) but NOT differential-gated — the driver builds `MarkerPatch { color: None }` and the corpus omits color.
 
-### 6. Caption tracks, effects, transitions, params
+### 6. Caption tracks, transitions, params
 These mutation categories require corpus extensions and Rust replay-driver support; deferred to later slices.
 
 ---
@@ -138,9 +138,19 @@ These mutation categories require corpus extensions and Rust replay-driver suppo
 | update_track_flags unrecorded (survives undo) | update-track-flags-unrecorded-undo.json |
 | update_track_flags not found (deleted track) | update-track-flags-not-found.json |
 | Group fan-out across locked track → TrackLocked | group-fanout-track-locked-reject.json |
+| **— per-layer effects —** | |
+| add_effect (append, enabled:true, empty params) | add-effect.json |
+| update_effect enabled | update-effect-enabled.json |
+| update_effect params merge (insert + overwrite) | update-effect-params.json |
+| update_effect → EffectNotFound (removed) | update-effect-not-found.json |
+| move_effect reorder (0 = first) | move-effect-reorder.json |
+| move_effect → EffectIndexOutOfRange | move-effect-out-of-range.json |
+| remove_effect | remove-effect.json |
+| remove_effect → EffectNotFound (double remove) | remove-effect-not-found.json |
+| add_effect missing layer → LayerNotFound burns the effect id | add-effect-missing-layer-burns-id.json |
 | **DEFERRED** | |
 | Media-bearing layers | deferred — media-free corpus |
 | History cap >200 | deferred |
 | set_composition fps/canvas | deferred — driver maps duration_us only |
 | Marker color patch | unit-tested only (driver builds color:None) |
-| Caption tracks / effects / transitions / params | deferred — later slices |
+| Caption tracks / transitions / params | deferred — later slices |
