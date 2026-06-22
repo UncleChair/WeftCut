@@ -215,3 +215,21 @@ Motif `update_layer_params` content-window clamp (motif_cap_us) — deferred (ne
 | Default-style auto-`size*0.06` layout path | f32×f64-fragile — unit-tested only (`captions.test.ts`) |
 | rebind_motif, remove_media, set_media_derivatives, add_transient_track, replace_state, set_media_workspace_paths | deferred |
 | Motif update_layer_params clamp (motif_cap_us) | deferred — needs motif-catalog support in harness |
+
+### replace_state sequences
+
+`replace-state-*.json` exercise the wholesale project swap (`do_replace_state` →
+`History::reset`). They ride the existing `differential.phase2` (state) and
+`summary.differential` (history reset: cursor 0 / len 1 / can_undo false) gates;
+the trailing `add_track` proves the 5-id contract (3 blank ids + reset op_id +
+broadcast id). `replace-state-clears-redo`/`-then-undo` prove the redo/undo stacks
+are dropped (NothingToRedo / NothingToUndo).
+
+### persistence round-trip gate
+
+`__tests__/persistence.differential.test.ts` feeds each oracle's final-step `state`
+(Rust's serde output) through the TS loader (`persistence.ts loadProjectFromJson`)
+and asserts it re-serializes canonical-identically — gating the "Rust writes
+project.json, TS reads it" invariant over the full corpus. Media reconcile +
+quick-proxy clear are no-ops here (corpus media have null path_rel/quick_proxy_path)
+and are unit-gated in `persistence.test.ts`.
