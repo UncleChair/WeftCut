@@ -5,6 +5,7 @@ import { canonicalize } from './canonical'
 import { serializeProject } from './serialize'
 import { createActor } from './actor'
 import { tsErrorVariant } from './errors'
+import { buildProjectSummary } from './summary'
 
 export const SUPPORTED_OPS = new Set<string>([
   'add_layer', 'add_track', 'add_marker', 'set_composition',
@@ -26,6 +27,8 @@ const SUPPORTED_ADD_KINDS = new Set<string>(['color', 'text', 'video', 'audio', 
 
 export interface TraceStep { op: string; ok: boolean; error: string | null; state: unknown }
 export interface Trace { name: string; steps: TraceStep[] }
+export interface SummaryStep { op: string; ok: boolean; error: string | null; summary: unknown }
+export interface SummaryTrace { name: string; steps: SummaryStep[] }
 interface Cmd { op: string; ref?: string; [k: string]: unknown }
 interface Sequence { name: string; commands: Cmd[] }
 
@@ -49,9 +52,12 @@ function resolveParamKey(refs: Map<string, string>, key: string): string {
   return key.replace(/@([A-Za-z0-9_]+)/, (_, r) => refs.get(r) ?? r)
 }
 
-/** TS twin of native/src/bin/replay_driver.rs. Starts from a blank project with
- *  seeded ids (#1 A-roll, #2 B-roll, #3 project), then applies each command. */
-export function replaySequence(seq: Sequence): Trace {
+/** Shared dispatch loop. `capture` receives the actor + cmd metadata after each
+ *  step and returns the value to record in the step. */
+function runSequence<S>(
+  seq: Sequence,
+  capture: (actor: ReturnType<typeof createActor>, cmd: Cmd, ok: boolean, error: string | null) => S,
+): { name: string; steps: Array<{ op: string; ok: boolean; error: string | null } & S> } {
   const idGen = seededGen()
   const initial = blankProject(idGen, 'replay')
   const aRoll = initial.tracks[0].id
@@ -59,7 +65,7 @@ export function replaySequence(seq: Sequence): Trace {
   const actor = createActor({ initial, idGen, clock: () => '<TS>' })
 
   const refs = new Map<string, string>([['A', aRoll], ['B', bRoll]])
-  const steps: TraceStep[] = []
+  const steps: Array<{ op: string; ok: boolean; error: string | null } & S> = []
   for (const cmd of seq.commands) {
     const args = buildArgs(cmd, refs)
     const r = actor.dispatch(cmd.op, args)
@@ -71,10 +77,27 @@ export function replaySequence(seq: Sequence): Trace {
       const v = tsErrorVariant(r.error)
       error = v.inner ? `${v.top}(${v.inner})` : v.top
     }
-    const state = canonicalize(serializeProject(actor.snapshot()))
-    steps.push({ op: cmd.op, ok: r.ok, error, state })
+    const extra = capture(actor, cmd, r.ok, error)
+    steps.push({ op: cmd.op, ok: r.ok, error, ...extra })
   }
   return { name: seq.name, steps }
+}
+
+/** TS twin of native/src/bin/replay_driver.rs. Starts from a blank project with
+ *  seeded ids (#1 A-roll, #2 B-roll, #3 project), then applies each command. */
+export function replaySequence(seq: Sequence): Trace {
+  return runSequence(seq, (actor) => ({
+    state: canonicalize(serializeProject(actor.snapshot())),
+  })) as Trace
+}
+
+/** Replay a sequence and capture the summary view at each step (for the
+ *  oracle-summary differential gate). `fileExists` is () => false because the
+ *  corpus has no real media files on disk. */
+export function replaySummaries(seq: Sequence): SummaryTrace {
+  return runSequence(seq, (actor) => ({
+    summary: canonicalize(buildProjectSummary(actor.snapshot(), actor.historyStatus(), () => false)),
+  })) as SummaryTrace
 }
 
 function buildArgs(cmd: Cmd, refs: Map<string, string>): Record<string, unknown> {
