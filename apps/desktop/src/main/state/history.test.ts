@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest'
 import { seededGen } from './ids'
 import { blankProject, type Composition, type Project } from './model'
 import { History, type HistoryEntry } from './history'
+import type { MediaItem } from './model'
 
 const U = { kind: 'User' as const }
 function entry(p: Project, op: string): HistoryEntry {
@@ -123,5 +124,29 @@ describe('History.replaceTrackFlagsEverywhere', () => {
     expect(t.muted).toBe(true); expect(t.locked).toBe(false) // untouched
     h.replaceTrackFlagsEverywhere('ghost', { locked: true }) // no such track → no-op, no throw
     expect(h.current().tracks.every((x) => !x.locked)).toBe(true)
+  })
+})
+
+describe('History.replaceMediaPoolEverywhere', () => {
+  const mediaItem = (id: string): MediaItem => ({
+    id, path_abs: 'media/clip.bin', path_rel: null, kind: 'Video',
+    metadata: { duration_us: 4_000_000, video: null, audio: null, container_format: null },
+    file_hash_blake3: '0', file_size: 0, file_mtime: 0, imported_at: '2026-01-01T00:00:00Z',
+    proxy_path: null, quick_proxy_path: null, proxy_bypassed: false, export_uses_original: false,
+    proxy_format_version: 0, conform_path: null, waveform_path: null, thumbnails_dir: null,
+  })
+  it('sets the pool on every snapshot, leaving the cursor put and surviving undo', () => {
+    const gen = seededGen()
+    const p0 = blankProject(gen, 'h')
+    const h = new History(p0, { kind: 'User' }, gen())
+    // record a second snapshot (an unrelated edit) so there are two entries to patch
+    const p1 = { ...p0, composition: { ...p0.composition, duration_us: 5_000_000 } }
+    h.record({ op_id: gen(), actor: { kind: 'User' }, timestamp: '<TS>', summary: 's', affected: [], snapshot: p1 })
+    const id = '00000000-0000-0000-0000-0000000000aa'
+    h.replaceMediaPoolEverywhere({ [id]: mediaItem(id) })
+    expect(Object.keys(h.current().media_pool)).toEqual([id]) // head patched
+    const earlier = h.undo()! // back to the Initial snapshot
+    expect(Object.keys(earlier.media_pool)).toEqual([id])       // earlier snapshot patched too (durable across undo)
+    expect(earlier.composition.duration_us).toBe(0)             // pool-only patch leaves the rest intact
   })
 })

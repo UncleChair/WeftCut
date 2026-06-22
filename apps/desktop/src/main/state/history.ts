@@ -1,5 +1,5 @@
 // apps/desktop/src/main/state/history.ts
-import type { Composition, Project, ProjectSettings, Uuid } from './model'
+import type { Composition, MediaItem, Project, ProjectSettings, Uuid } from './model'
 
 export type Actor = { kind: 'User' } | { kind: 'Agent'; client: string }
 export type EntityRef =
@@ -100,6 +100,15 @@ export class History {
     }
     for (const e of this.snapshots) e.snapshot = patchTrack(e.snapshot)
     for (const cp of this.checkpoints.values()) cp.snapshot = patchTrack(cp.snapshot)
+  }
+
+  /** native/src/state/history.rs:225 — set `media_pool` on EVERY snapshot +
+   *  checkpoint. Media imports live OUTSIDE the editing undo/redo stack, so the
+   *  pool must be durable across undos/redos through unrelated edits (cursor
+   *  unchanged; never recorded — project_settings_patch_convention). */
+  replaceMediaPoolEverywhere(pool: Record<string, MediaItem>): void {
+    for (const e of this.snapshots) e.snapshot = { ...e.snapshot, media_pool: pool }
+    for (const cp of this.checkpoints.values()) cp.snapshot = { ...cp.snapshot, media_pool: pool }
   }
 
   /** native/src/state/history.rs:246 — copy the 7 canvas fields (width/height/
