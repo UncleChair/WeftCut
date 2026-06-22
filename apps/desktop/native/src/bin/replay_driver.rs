@@ -94,6 +94,15 @@ async fn apply(h: &ProjectHandle, cmd: &Value, refs: &HashMap<String, String>) -
                 .map(|gid| Some(gid.to_string())).map_err(|e| format!("{e:?}"))
         }
         "groups_dissolve" => h.groups_dissolve(u, resolve_id(refs, cmd["group"].as_str().unwrap())).await.map(|_| None).map_err(|e| format!("{e:?}")),
+        "groups_add_members" => {
+            let ids: Vec<_> = cmd["layers"].as_array().unwrap().iter().map(|t| resolve_id(refs, t.as_str().unwrap())).collect();
+            h.groups_add_members(u, resolve_id(refs, cmd["group"].as_str().unwrap()), ids, cmd["reassign"].as_bool().unwrap_or(false)).await.map(|_| None).map_err(|e| format!("{e:?}"))
+        }
+        "groups_remove_members" => {
+            let ids: Vec<_> = cmd["layers"].as_array().unwrap().iter().map(|t| resolve_id(refs, t.as_str().unwrap())).collect();
+            h.groups_remove_members(u, resolve_id(refs, cmd["group"].as_str().unwrap()), ids).await.map(|_| None).map_err(|e| format!("{e:?}"))
+        }
+        "groups_rename" => h.groups_rename(u, resolve_id(refs, cmd["group"].as_str().unwrap()), cmd["label"].as_str().map(str::to_string)).await.map(|_| None).map_err(|e| format!("{e:?}")),
         "add_marker" => h.add_marker(u, r(cmd, "t_us"), cmd["end_t_us"].as_i64(), cmd["label"].as_str().unwrap_or("m"), Rgba { r: 0, g: 128, b: 255, a: 255 }).await
             .map(|mid| Some(mid.to_string())).map_err(|e| format!("{e:?}")),
         "set_composition" => {

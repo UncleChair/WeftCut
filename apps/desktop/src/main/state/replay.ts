@@ -10,6 +10,7 @@ export const SUPPORTED_OPS = new Set<string>([
   'add_layer', 'add_track', 'add_marker', 'set_composition',
   'move_layer', 'trim_layer', 'delete_layer', 'duplicate_layer', 'undo', 'redo',
   'split_layer', 'groups_create',
+  'groups_dissolve', 'groups_add_members', 'groups_remove_members', 'groups_rename',
   'update_layer', 'fit_composition_to_layers',
 ])
 const SUPPORTED_ADD_KINDS = new Set<string>(['color', 'text'])
@@ -74,6 +75,10 @@ function buildArgs(cmd: Cmd, refs: Map<string, string>): Record<string, unknown>
     case 'set_composition': return { duration_us: cmd.duration_us }
     case 'split_layer': return { layer: resolve(refs, cmd.layer), at_t_us: cmd.at_t_us, escape_group: cmd.escape_group ?? false }
     case 'groups_create': return { layers: (cmd.layers as unknown[]).map((t) => resolve(refs, t)), label: cmd.label ?? null, reassign: cmd.reassign ?? false }
+    case 'groups_dissolve': return { group: resolve(refs, cmd.group) }
+    case 'groups_add_members': return { group: resolve(refs, cmd.group), layers: (cmd.layers as unknown[]).map((t) => resolve(refs, t)), reassign: cmd.reassign ?? false }
+    case 'groups_remove_members': return { group: resolve(refs, cmd.group), layers: (cmd.layers as unknown[]).map((t) => resolve(refs, t)) }
+    case 'groups_rename': return { group: resolve(refs, cmd.group), label: cmd.label ?? null }
     case 'update_layer': return { layer: resolve(refs, cmd.layer), patch: { label: cmd.label, t_start_us: cmd.t_start_us, t_end_us: cmd.t_end_us, enabled: cmd.enabled, locked: cmd.locked } }
     case 'fit_composition_to_layers': return {}
     case 'undo': case 'redo': return {}

@@ -99,6 +99,33 @@ describe('dispatch: split + groups', () => {
   })
 })
 
+describe('dispatch: group-membership family', () => {
+  function setup() {
+    const idGen = seededGen(); const initial = blankProject(idGen, 'g'); const a = initial.tracks[0].id
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    const mk = (t0: number, t1: number) => (actor.dispatch('add_layer', { track: a, kind: 'color', t_start_us: t0, t_end_us: t1 }) as { ok: true; value: string }).value
+    return { actor, mk }
+  }
+  it('add_members then remove_members (auto-dissolve below 2)', () => {
+    const { actor, mk } = setup()
+    const l1 = mk(0, 1_000_000), l2 = mk(2_000_000, 3_000_000), l3 = mk(4_000_000, 5_000_000)
+    const g = (actor.dispatch('groups_create', { layers: [l1, l2] }) as { ok: true; value: string }).value
+    expect(actor.dispatch('groups_add_members', { group: g, layers: [l3] }).ok).toBe(true)
+    expect(actor.snapshot().groups[0].members).toEqual([l1, l2, l3].sort())
+    expect(actor.dispatch('groups_remove_members', { group: g, layers: [l2, l3] }).ok).toBe(true)
+    expect(actor.snapshot().groups.length).toBe(0) // dropped below 2 → auto-dissolved
+  })
+  it('rename then dissolve', () => {
+    const { actor, mk } = setup()
+    const l1 = mk(0, 1_000_000), l2 = mk(2_000_000, 3_000_000)
+    const g = (actor.dispatch('groups_create', { layers: [l1, l2] }) as { ok: true; value: string }).value
+    expect(actor.dispatch('groups_rename', { group: g, label: 'scene' }).ok).toBe(true)
+    expect(actor.snapshot().groups[0].label).toBe('scene')
+    expect(actor.dispatch('groups_dissolve', { group: g }).ok).toBe(true)
+    expect(actor.snapshot().groups.length).toBe(0)
+  })
+})
+
 describe('dispatch: update_layer + fit_composition_to_layers', () => {
   it('update_layer patches the envelope; fit refits duration', () => {
     const idGen = seededGen(); const initial = blankProject(idGen, 'd'); const a = initial.tracks[0].id
