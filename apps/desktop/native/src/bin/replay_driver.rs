@@ -277,6 +277,21 @@ async fn apply(h: &ProjectHandle, cmd: &Value, refs: &HashMap<String, String>) -
             h.restyle_caption_track(u, resolve_id(refs, cmd["track"].as_str().unwrap()), patch).await
                 .map(|_| None).map_err(|e| format!("{e:?}"))
         }
+        "replace_state" => {
+            // Build a blank from the args (mirrors Project::new_blank +
+            // project_new_workspace's canvas override). new_blank mints ids
+            // #(A,B,project); the subsequent replace_state mints reset's op_id +
+            // broadcast_unrecorded's event id → 5 ids total (see the plan).
+            let mut project = state::Project::new_blank(cmd["name"].as_str().unwrap_or("untitled"));
+            if let Some(w) = cmd["width"].as_u64() { project.composition.width = w as u32; }
+            if let Some(hh) = cmd["height"].as_u64() { project.composition.height = hh as u32; }
+            if let (Some(n), Some(d)) = (cmd["fps_num"].as_u64(), cmd["fps_den"].as_u64()) {
+                // fps inputs MUST be pre-reduced (den=1 in the corpus) so this
+                // matches the TS `{num,den}` literal regardless of any reduction.
+                project.composition.fps = weftcut_lib::state::time::Rational { num: n as u32, den: d as u32 };
+            }
+            h.replace_state(u, project).await.map(|_| None).map_err(|e| format!("{e:?}"))
+        }
         other => Err(format!("driver: unsupported op {other}")),
     }
 }

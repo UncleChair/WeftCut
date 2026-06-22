@@ -1,0 +1,9 @@
+{
+  "name": "replace-state-then-undo",
+  "commands": [
+    { "op": "add_track", "label": "extra" },
+    { "op": "replace_state", "name": "y" },
+    { "op": "undo" },
+    { "op": "add_track", "label": "after" }
+  ]
+}
