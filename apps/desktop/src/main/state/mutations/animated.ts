@@ -24,7 +24,7 @@ export function forEachAnimatedRgba(p: LayerParams, fn: (a: Animated<Rgba>) => v
   switch (p.kind) {
     case 'Color': fn(p.color); break
     case 'Text': fn(p.color); break
-    default: break
+    case 'VideoClip': case 'ImageOverlay': case 'Motif': case 'Audio': break
   }
 }
 
