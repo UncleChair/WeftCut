@@ -77,9 +77,9 @@
       }
     },
     {
-      "error": "TrackNotFound { track: 00000000-0000-0000-0000-000000000001 }",
-      "ok": false,
-      "op": "add_layer",
+      "error": null,
+      "ok": true,
+      "op": "add_track",
       "state": {
         "audio_roles": {},
         "composition": {
@@ -144,6 +144,19 @@
             "muted": false,
             "removable": false,
             "role": "BRoll",
+            "solo": false,
+            "transient": false
+          },
+          {
+            "enabled": true,
+            "height_px": 64,
+            "id": "00000000-0000-0000-0000-00000000000a",
+            "label": "after",
+            "layers": [],
+            "locked": false,
+            "muted": false,
+            "removable": true,
+            "role": null,
             "solo": false,
             "transient": false
           }

@@ -82,9 +82,9 @@
       }
     },
     {
-      "error": "TrackNotFound { track: 00000000-0000-0000-0000-000000000001 }",
-      "ok": false,
-      "op": "add_layer",
+      "error": null,
+      "ok": true,
+      "op": "add_track",
       "summary": {
         "audio_roles": [
           {
@@ -123,16 +123,16 @@
         "groups": [],
         "history": {
           "can_redo": false,
-          "can_undo": false,
-          "cursor": 0,
-          "len": 1
+          "can_undo": true,
+          "cursor": 1,
+          "len": 2
         },
         "layer_count": 0,
         "markers": [],
         "media": [],
         "name": "hd",
         "project_id": "00000000-0000-0000-0000-000000000007",
-        "track_count": 2,
+        "track_count": 3,
         "tracks": [
           {
             "enabled": true,
@@ -155,6 +155,18 @@
             "locked": false,
             "muted": false,
             "role": "b-roll",
+            "solo": false,
+            "transient": false
+          },
+          {
+            "enabled": true,
+            "id": "00000000-0000-0000-0000-00000000000a",
+            "kind": "Video",
+            "label": "after",
+            "layers": [],
+            "locked": false,
+            "muted": false,
+            "role": null,
             "solo": false,
             "transient": false
           }
