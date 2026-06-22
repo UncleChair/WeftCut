@@ -20,7 +20,7 @@ The script runs each sequence through the Rust `replay_driver` bin **twice** and
 
 ## Known gaps — invariants NOT covered by this corpus
 
-The following checklist items from the task-7 brief cannot be covered with the current Phase 0 driver command set. They are intentional gaps, documented here rather than silently omitted.
+Phase 2a (group system + split) is now gated by `differential.phase2.test.ts`; the items below are deferred to Phase 2b (they need Rust replay-driver + corpus extensions).
 
 ### 1. `groups_dissolve` (groups_create drops its return value)
 The driver's `groups_create` handler calls `h.groups_create(...)` and discards the returned group id (maps the result to `()`). There is no `ref` capture path for a group id, so a subsequent `groups_dissolve` command has no way to address the newly created group. A test for explicit dissolution requires either:
@@ -38,7 +38,7 @@ The driver has no `lock_layer` or `lock_track` op, so locked-member rejection in
 The driver supports `groups_create` and `groups_dissolve` (indirectly via undo) but has no `group_add_member` or `group_remove_member` ops. Post-creation membership mutation cannot be exercised.
 
 ### 5. Media-bearing layers (Phase 0 media-free cap)
-The corpus is intentionally media-free; the driver only accepts `kind: "color"` and `kind: "text"`. Visual+audio coexistence, proxy handling, and media-kind–specific overlap rules are deferred to Phase 2.
+The corpus is intentionally media-free; the driver only accepts `kind: "color"` and `kind: "text"`. Visual+audio coexistence, proxy handling, and media-kind–specific overlap rules are deferred to Phase 2b.
 
 ### 6. History cap >200 ops
 Authoring a sequence of >200 commands to exercise the history ring cap would produce large JSON files and long runtimes with marginal differential value at this phase. Deferred unless a specific cap-boundary bug surfaces.
@@ -48,6 +48,9 @@ The `set_composition` driver handler only maps `duration_us`; there is no `fit` 
 
 ### 8. Duplicate with negative offset / zero offset edge cases
 Duplicate with a negative `t_offset_us` that would produce a negative start time is not tested (driver behaviour on this path is unspecified at Phase 0).
+
+### 9. Caption tracks, effects, transitions, params (Phase 2b)
+These mutation categories require corpus extensions and Rust replay-driver support; deferred to Phase 2b.
 
 ---
 
@@ -111,7 +114,7 @@ Duplicate with a negative `t_offset_us` that would produce a negative start time
 | Redo-tail truncation | redo-tail-truncate.json |
 | Multi-undo | multi-undo.json |
 | Complex realistic edit | complex-edit-sequence.json |
-| **GAPS** | |
+| **PHASE-2B GAPS** | |
 | groups_dissolve (explicit) | GAP — driver drops group id ref |
 | Move to custom track | GAP — driver drops track id ref |
 | Lock-member rejection | GAP — no lock op |
@@ -119,3 +122,7 @@ Duplicate with a negative `t_offset_us` that would produce a negative start time
 | Media-bearing layers | GAP — Phase 0 media-free |
 | History cap >200 | GAP — deferred |
 | Composition fit (autofit) | GAP — no fit op |
+| Caption tracks | GAP — Phase 2b corpus extension |
+| Effects | GAP — Phase 2b corpus extension |
+| Transitions | GAP — Phase 2b corpus extension |
+| Params | GAP — Phase 2b corpus extension |
