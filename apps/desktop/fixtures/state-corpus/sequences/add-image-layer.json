@@ -1,0 +1,4 @@
+{ "name": "add-image-layer", "commands": [
+  { "op": "add_media", "id": "00000000-0000-0000-0000-0000000000cc", "kind": "Image", "duration_us": null, "ref": "M1" },
+  { "op": "add_layer", "track": "@A", "kind": "image", "media": "@M1", "t_start_us": 0, "t_end_us": 3000000, "ref": "L1" }
+] }

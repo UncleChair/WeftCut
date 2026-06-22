@@ -17,8 +17,9 @@ export const SUPPORTED_OPS = new Set<string>([
   'update_track_flags',
   'add_effect', 'update_effect', 'move_effect', 'remove_effect',
   'add_transition', 'remove_transition',
+  'add_media', 'separate_audio',
 ])
-const SUPPORTED_ADD_KINDS = new Set<string>(['color', 'text'])
+const SUPPORTED_ADD_KINDS = new Set<string>(['color', 'text', 'video', 'audio', 'image'])
 
 export interface TraceStep { op: string; ok: boolean; error: string | null; state: unknown }
 export interface Trace { name: string; steps: TraceStep[] }
@@ -70,7 +71,8 @@ export function replaySequence(seq: Sequence): Trace {
 
 function buildArgs(cmd: Cmd, refs: Map<string, string>): Record<string, unknown> {
   switch (cmd.op) {
-    case 'add_layer': return { track: resolve(refs, cmd.track), kind: cmd.kind, t_start_us: cmd.t_start_us, t_end_us: cmd.t_end_us }
+    case 'add_layer': return { track: resolve(refs, cmd.track), kind: cmd.kind, t_start_us: cmd.t_start_us, t_end_us: cmd.t_end_us,
+      media: cmd.media !== undefined ? resolve(refs, cmd.media) : undefined, src_in_us: cmd.src_in_us, src_out_us: cmd.src_out_us }
     case 'add_track': return { label: cmd.label ?? null }
     case 'add_marker': return { t_us: cmd.t_us, end_t_us: cmd.end_t_us ?? null, label: cmd.label ?? 'm' }
     case 'move_layer': return { layer: resolve(refs, cmd.layer), to_track: resolve(refs, cmd.to_track), t_start_us: cmd.t_start_us, escape_group: cmd.escape_group ?? false }
@@ -97,6 +99,8 @@ function buildArgs(cmd: Cmd, refs: Map<string, string>): Record<string, unknown>
     case 'remove_effect': return { layer: resolve(refs, cmd.layer), effect: resolve(refs, cmd.effect) }
     case 'add_transition': return { from: resolve(refs, cmd.from), to: resolve(refs, cmd.to), duration_us: cmd.duration_us }
     case 'remove_transition': return { transition: resolve(refs, cmd.transition) }
+    case 'add_media': return { id: cmd.id, kind: cmd.kind, duration_us: cmd.duration_us ?? null }
+    case 'separate_audio': return { layer: resolve(refs, cmd.layer) }
     case 'undo': case 'redo': return {}
     default: return {}
   }

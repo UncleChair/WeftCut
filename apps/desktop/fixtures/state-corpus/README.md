@@ -22,19 +22,16 @@ The script runs each sequence through the Rust `replay_driver` bin **twice** and
 
 The driver's ref-capture is generalized: every id-returning op (`add_layer`, `add_track`, `add_marker`, `duplicate_layer`, `groups_create`) captures its result under a command `ref`, so groups, custom tracks, and markers are all addressable and differential-gated. The items below remain deferred.
 
-### 1. Media-bearing layers
-The corpus is intentionally media-free; the driver only accepts `kind: "color"` and `kind: "text"`. Visual+audio coexistence, proxy handling, and media-kind–specific overlap rules are deferred.
-
-### 2. History cap >200 ops
+### 1. History cap >200 ops
 Authoring a sequence of >200 commands to exercise the history ring cap would produce large JSON files and long runtimes with marginal differential value. Deferred unless a specific cap-boundary bug surfaces.
 
-### 3. Duplicate with negative / zero offset edge cases
+### 2. Duplicate with negative / zero offset edge cases
 Duplicate with a negative `t_offset_us` that would produce a negative start time is not tested (driver behaviour on this path is unspecified).
 
-### 4. Marker `color` patch
+### 3. Marker `color` patch
 `update_marker`'s `color` field is unit-tested (`mutations/markers.test.ts`) but NOT differential-gated — the driver builds `MarkerPatch { color: None }` and the corpus omits color.
 
-### 5. Caption tracks, params
+### 4. Caption tracks, params
 These mutation categories require corpus extensions and Rust replay-driver support; deferred to later slices.
 
 ---
@@ -160,8 +157,18 @@ These mutation categories require corpus extensions and Rust replay-driver suppo
 | set_composition canvas (unrecorded) | set-composition-canvas.json |
 | set_composition canvas survives undo (replace-everywhere) | set-composition-canvas-survives-undo.json |
 | set_composition mixed canvas + duration | set-composition-mixed-canvas-duration.json |
+| **— media pool + media-bearing layers —** | |
+| add_media (pool insert, unrecorded) | add-media-item.json |
+| add_layer video / audio / image | add-video-layer.json, add-audio-layer.json, add-image-layer.json |
+| add_layer media missing from pool → ValidationFailed(MissingMedia) (burns layer id) | add-media-layer-missing-media.json |
+| add_layer src_out > media duration → SrcRangeExceedsMedia | add-media-layer-src-exceeds.json |
+| add_media pool survives undo (replace-everywhere) | add-media-survives-undo.json |
+| add_layer video undo | add-video-layer-undo.json |
+| **— separate audio —** | |
+| separate_audio (audio layer → new track before source) | separate-audio.json |
+| separate_audio on non-audio → WrongLayerKind (no id burned) | separate-audio-wrong-kind.json |
+| separate_audio missing layer → LayerNotFound | separate-audio-missing.json |
 | **DEFERRED** | |
-| Media-bearing layers | deferred — media-free corpus |
 | History cap >200 | deferred |
 | Marker color patch | unit-tested only (driver builds color:None) |
 | Caption tracks / params | deferred — later slices |

@@ -74,6 +74,25 @@ async fn apply(h: &ProjectHandle, cmd: &Value, refs: &HashMap<String, String>) -
                     width: 1920, height: 1080,
                 }),
                 "text" => default_text_params(),
+                "video" => LayerParams::VideoClip(state::layer::VideoClipParams {
+                    media: resolve_id(refs, cmd["media"].as_str().unwrap()),
+                    src_in_us: r(cmd, "src_in_us"), src_out_us: r(cmd, "src_out_us"),
+                    transform: Default::default(), opacity: Animated::Static(1.0), crop: None,
+                    flip_h: false, flip_v: false, blend_mode: Default::default(), speed: 1.0,
+                    fade_in_us: 0, fade_out_us: 0,
+                }),
+                "audio" => LayerParams::Audio(state::layer::AudioParams {
+                    media: resolve_id(refs, cmd["media"].as_str().unwrap()),
+                    src_in_us: r(cmd, "src_in_us"), src_out_us: r(cmd, "src_out_us"),
+                    gain_db: Animated::Static(0.0), pan: Animated::Static(0.0),
+                    fade_in_us: 0, fade_out_us: 0, mute: false,
+                    role: state::audio_role::AudioRole::Music,
+                }),
+                "image" => LayerParams::ImageOverlay(state::layer::ImageOverlayParams {
+                    media: resolve_id(refs, cmd["media"].as_str().unwrap()),
+                    transform: Default::default(), opacity: Animated::Static(1.0),
+                    blend_mode: Default::default(), fade_in_us: 0, fade_out_us: 0,
+                }),
                 other => return Err(format!("unknown kind {other}")),
             };
             h.add_layer(u, track, params, r(cmd, "t_start_us"), r(cmd, "t_end_us")).await
@@ -185,6 +204,10 @@ async fn apply(h: &ProjectHandle, cmd: &Value, refs: &HashMap<String, String>) -
         "add_transition" => h.add_transition(u, resolve_id(refs, cmd["from"].as_str().unwrap()), resolve_id(refs, cmd["to"].as_str().unwrap()), r(cmd, "duration_us"), TransitionKind::Crossfade).await
             .map(|tid| Some(tid.to_string())).map_err(|e| format!("{e:?}")),
         "remove_transition" => h.remove_transition(u, resolve_id(refs, cmd["transition"].as_str().unwrap())).await.map(|_| None).map_err(|e| format!("{e:?}")),
+        "add_media" => h.add_media_item(u, media_item(cmd)).await
+            .map(|mid| Some(mid.to_string())).map_err(|e| format!("{e:?}")),
+        "separate_audio" => h.separate_audio_to_new_track(u, resolve_id(refs, cmd["layer"].as_str().unwrap())).await
+            .map(|tid| Some(tid.to_string())).map_err(|e| format!("{e:?}")),
         other => Err(format!("driver: unsupported op {other}")),
     }
 }
@@ -200,4 +223,26 @@ fn default_text_params() -> LayerParams {
         opacity: Animated::Static(1.0), shadow: None, outline: None,
         intro: None, outro: None, backend_hint: TextBackend::Auto,
     })
+}
+
+/// Byte-identical twin of the TS mediaItemTemplate. Fixed defaults for every
+/// field bar id/kind/duration_us; path uses forward slashes for stable PathBuf
+/// serialization; imported_at is a fixed instant (the TS literal must match its
+/// serialized form — see the regen step).
+fn media_item(cmd: &Value) -> state::media::MediaItem {
+    use state::media::{MediaItem, MediaKind, MediaMetadata};
+    let kind = match cmd["kind"].as_str().unwrap() {
+        "Video" => MediaKind::Video, "Audio" => MediaKind::Audio, "Image" => MediaKind::Image,
+        other => panic!("bad media kind {other}"),
+    };
+    MediaItem {
+        id: uuid::Uuid::parse_str(cmd["id"].as_str().unwrap()).unwrap(),
+        label: None, path_abs: "media/clip.bin".into(), path_rel: None, kind,
+        metadata: MediaMetadata { duration_us: cmd["duration_us"].as_i64(), video: None, audio: None, container_format: None },
+        proxy_path: None, proxy_format_version: 0, quick_proxy_path: None,
+        proxy_bypassed: false, export_uses_original: false, waveform_path: None,
+        conform_path: None, thumbnails_dir: None,
+        file_hash_blake3: "0".into(), file_size: 0, file_mtime: 0,
+        imported_at: "2026-01-01T00:00:00Z".parse::<chrono::DateTime<chrono::Utc>>().unwrap(),
+    }
 }
