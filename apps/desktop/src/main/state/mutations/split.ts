@@ -85,15 +85,11 @@ export function applySplitLayer(p: Project, idGen: IdGen, id: Uuid, atTUsRaw: nu
       if (g) { g.members = [...g.members, rightId].sort() }
     }
   }
-  // Add the target's right-half to its group, if any — but only when not
-  // escaping the group (escape_group severs the new half from the group).
-  if (!escapeGroup) {
-    const tgid = indexGroups(p.groups).get(targetHalves.left)
-    if (tgid !== undefined) {
-      const g = p.groups.find((x) => x.id === tgid)
-      if (g) { g.members = [...g.members, targetHalves.right].sort() }
-    }
-  }
+  // Add the target's right-half to its group, if any. UNCONDITIONAL (mutations.rs:779-787):
+  // even with escape_group, the target's left half keeps the original id and stays grouped,
+  // so its right half joins too (verified against the group-split-escape oracle: 3 members).
+  const tgid = indexGroups(p.groups).get(targetHalves.left)
+  if (tgid !== undefined) { const g = p.groups.find((x) => x.id === tgid); if (g) { g.members = [...g.members, targetHalves.right].sort() } }
 
   return targetHalves
 }

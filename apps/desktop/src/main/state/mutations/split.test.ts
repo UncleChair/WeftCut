@@ -63,13 +63,16 @@ describe('applySplitLayer', () => {
     expect(group.members).toContain(r.right)
     expect(p.tracks[1].layers.length).toBe(2) // b was spanning → split too
   })
-  it('escape_group splits only the target, leaves siblings whole', () => {
+  it('escape_group splits only the target (sibling not split), but the target stays grouped so its right-half joins', () => {
     const p = blankProject(seededGen(), 't')
     p.tracks[0].layers = [color('a', 0, 1_000_000)]
     p.tracks[1].layers = [color('b', 0, 1_000_000)]
     const gid = applyGroupsCreate(p, seededGen(), ['a', 'b'], null, false)
-    applySplitLayer(p, seededGen(), 'a', 400_000, true)
-    expect(p.tracks[1].layers.length).toBe(1) // b untouched
-    expect(p.groups.find((g) => g.id === gid)!.members.length).toBe(2) // unchanged
+    const r = applySplitLayer(p, seededGen(), 'a', 400_000, true)
+    expect(p.tracks[1].layers.length).toBe(1) // sibling b NOT split (escape → no spanning fan-out)
+    const group = p.groups.find((g) => g.id === gid)!
+    expect(group.members.length).toBe(3) // target stays grouped; its right-half joins (mutations.rs:779-787)
+    expect(group.members).toContain(r.right)
+    expect(group.members).toContain('b')
   })
 })
