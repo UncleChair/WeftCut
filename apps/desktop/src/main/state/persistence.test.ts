@@ -10,7 +10,7 @@ describe('serializeProjectToJson (mirror io/mod.rs:25 to_string_pretty)', () => 
   it('pretty-prints with 2-space indent and no trailing newline', () => {
     const p = blankProject(seededGen(), 'doc')
     const json = serializeProjectToJson(p)
-    expect(json.startsWith('{\n  "schema_version": 9')).toBe(true)
+    expect(json.startsWith(`{\n  "schema_version": ${SCHEMA_VERSION}`)).toBe(true)
     expect(json.endsWith('\n')).toBe(false)
     expect(json.includes('\n    ')).toBe(true) // nested 4-space level exists
   })

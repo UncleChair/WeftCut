@@ -213,7 +213,7 @@ Motif `update_layer_params` content-window clamp (motif_cap_us) — deferred (ne
 | History cap >200 | deferred |
 | Marker color patch | unit-tested only (driver builds color:None) |
 | Default-style auto-`size*0.06` layout path | f32×f64-fragile — unit-tested only (`captions.test.ts`) |
-| rebind_motif, remove_media, set_media_derivatives, add_transient_track, replace_state, set_media_workspace_paths | deferred |
+| rebind_motif, remove_media, set_media_derivatives, add_transient_track, set_media_workspace_paths | deferred |
 | Motif update_layer_params clamp (motif_cap_us) | deferred — needs motif-catalog support in harness |
 
 ### replace_state sequences
