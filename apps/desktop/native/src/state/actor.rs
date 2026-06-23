@@ -279,6 +279,7 @@ pub struct MediaDerivativesPatch {
     /// matches the current `jobs::proxy::PROXY_FORMAT_VERSION`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub proxy_format_version: Option<u32>,
+    /// Same tri-state contract as `proxy_path`.
     /// `Some(Some(path))` sets a fast preview proxy; `Some(None)` clears it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quick_proxy_path: Option<Option<std::path::PathBuf>>,

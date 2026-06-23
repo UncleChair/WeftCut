@@ -2,10 +2,11 @@
 //!
 //! Each `enqueue_*` spawns a tokio task that runs ffmpeg under a global
 //! semaphore (default 2 concurrent ffmpeg children — importing 10 files at
-//! once shouldn't fork-bomb the host). On completion, the task patches the
-//! `MediaItem`'s derivative path through the actor's
-//! `set_media_derivatives` so subscribers (UI, hot-reload, MCP change feed)
-//! re-fetch.
+//! once shouldn't fork-bomb the host). On completion, the task routes the
+//! `MediaItem`'s derivative patch through `commit_media_derivatives` — the
+//! Rust actor's `set_media_derivatives` when it's authoritative, or a
+//! `media:derivatives` event to the TS actor when it is — so subscribers
+//! (UI, hot-reload, MCP change feed) re-fetch.
 //!
 //! Atomicity: all writes go through `cache::temp_path` + `promote_temp`. A
 //! killed ffmpeg leaves a `<dest>.tmp` that the next run discards, never a
@@ -46,14 +47,14 @@ use crate::cache::CacheLayout;
 use crate::state::{Actor, CommandError, MediaDerivativesPatch, MediaId, MediaItem, MediaKind, ProjectHandle};
 
 /// Which engine owns the project state's media-pool, for job-completion
-/// write-back. `false` (default) = the Rust actor is authoritative (today's
-/// behavior: jobs call `set_media_derivatives` directly). `true` = the TS
-/// actor in Electron main is authoritative; completion emits a
-/// `media:derivatives` event the main process applies to the TS actor (spec
-/// 3c-ii / D5). 3c-ii-d sets this at `Backend::init` from `WEFTCUT_TS_ACTOR`;
-/// in 3c-ii-c only tests flip it. Process-global by the same rationale as the
-/// det-id toggle (`state/ids.rs`): jobs spawn from many sites and a global
-/// avoids threading an engine handle through every signature.
+/// write-back. `false` (default) = the Rust actor is authoritative (jobs
+/// call `set_media_derivatives` directly). `true` = the TS actor in Electron
+/// main is authoritative; completion emits a `media:derivatives` event the
+/// main process applies to the TS actor. `Backend::init` sets this from the
+/// `WEFTCUT_TS_ACTOR` env flag; otherwise only tests flip it. Process-global
+/// by the same rationale as the det-id toggle (`state/ids.rs`): jobs spawn
+/// from many sites and a global avoids threading an engine handle through
+/// every signature.
 static TS_DERIVATIVE_AUTHORITY: AtomicBool = AtomicBool::new(false);
 
 /// Set the derivative write-back authority (see `TS_DERIVATIVE_AUTHORITY`).
@@ -71,8 +72,8 @@ pub(crate) fn ts_derivative_authority() -> bool {
 /// absent/null/string tri-state for the `Option<Option<PathBuf>>` proxy fields
 /// (mutations/media.ts:67). Returns `Ok` in TS mode (fire-and-forget; the TS
 /// actor's `set_media_derivatives` is `MediaNotFound`-tolerant and the caller
-/// only logs failures). `pub(crate)` so the open re-fan-out napi (Task 4) can
-/// reuse the same seam for stale-proxy clearing.
+/// only logs failures). `pub(crate)` so the napi open-time derivative
+/// fan-out can reuse the same seam for stale-proxy clearing.
 pub(crate) async fn commit_media_derivatives(
     events: &Arc<dyn EventSink>,
     project: &ProjectHandle,
