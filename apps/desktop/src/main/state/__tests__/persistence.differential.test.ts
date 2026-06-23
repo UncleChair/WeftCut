@@ -10,7 +10,7 @@ const ROOT = join(__dirname, '../../../../fixtures/state-corpus')
 const ORACLE = join(ROOT, 'oracle')
 const posixJoin = (...parts: string[]) => parts.join('/').replace(/\/+/g, '/')
 
-describe('Phase 3b persistence: Rust-serialized project.json round-trips through the TS loader (FULL corpus)', () => {
+describe('persistence: Rust-serialized project.json round-trips through the TS loader (FULL corpus)', () => {
   const files = readdirSync(ORACLE).filter((f) => f.endsWith('.json'))
   // loadProjectFromJson INTENTIONALLY transforms two media fields: clearSessionQuickProxies
   // nulls quick_proxy_path, and reconcileMediaPaths recomputes path_abs from path_rel. The

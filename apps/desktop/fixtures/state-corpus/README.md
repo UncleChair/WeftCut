@@ -243,7 +243,7 @@ are dropped (NothingToRedo / NothingToUndo).
 (Rust's serde output) through the TS loader (`persistence.ts loadProjectFromJson`)
 and asserts it re-serializes canonical-identically — gating the "Rust writes
 project.json, TS reads it" invariant over the full corpus. Media reconcile +
-quick-proxy clear are no-ops here (corpus media have null path_rel/quick_proxy_path)
+quick-proxy clear are no-ops here (eligible corpus media have null path_rel/quick_proxy_path)
 and are unit-gated in `persistence.test.ts`. The `set-media-derivatives-set` and
 `set-media-workspace-paths` sequences set quick_proxy_path / path_rel respectively,
 so they exercise `loadProjectFromJson`'s transforms and are excluded from this
