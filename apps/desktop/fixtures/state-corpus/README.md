@@ -213,8 +213,20 @@ Motif `update_layer_params` content-window clamp (motif_cap_us) — deferred (ne
 | History cap >200 | deferred |
 | Marker color patch | unit-tested only (driver builds color:None) |
 | Default-style auto-`size*0.06` layout path | f32×f64-fragile — unit-tested only (`captions.test.ts`) |
-| rebind_motif, remove_media, set_media_derivatives, add_transient_track, set_media_workspace_paths | deferred |
+| rebind_motif, add_transient_track | deferred (motif-catalog / zero-caller) |
 | Motif update_layer_params clamp (motif_cap_us) | deferred — needs motif-catalog support in harness |
+
+### media-pool mutations (Phase 3c-i)
+
+`set-media-derivatives-*` exercise the tri-state derivative patch
+(`Option<Option<PathBuf>>`: set/clear/leave) + plain-Option fields + MediaNotFound.
+`set-media-workspace-paths*` set the workspace path/fingerprint (+ MediaNotFound).
+`remove-media-*` cover the HYBRID command: `-unused` (unrecorded, +1 broadcast id,
+durable across undo via `-unused-undo`), `-in-use-no-force` (MediaInUse, no id),
+`-force-cascade` (recorded raw inline layer delete, +1 op_id), `-force-undo`
+(undo restores layers + media), `-force-leaves-empty-track` (no auto-prune — the
+force path bypasses `do_delete_layer`), and `-missing` (MediaNotFound, no id). Every
+success seq ends with a trailing `add_track` proving the id-burn count.
 
 ### replace_state sequences
 
@@ -232,4 +244,7 @@ are dropped (NothingToRedo / NothingToUndo).
 and asserts it re-serializes canonical-identically — gating the "Rust writes
 project.json, TS reads it" invariant over the full corpus. Media reconcile +
 quick-proxy clear are no-ops here (corpus media have null path_rel/quick_proxy_path)
-and are unit-gated in `persistence.test.ts`.
+and are unit-gated in `persistence.test.ts`. The `set-media-derivatives-set` and
+`set-media-workspace-paths` sequences set quick_proxy_path / path_rel respectively,
+so they exercise `loadProjectFromJson`'s transforms and are excluded from this
+identity gate (unit-gated in `persistence.test.ts`).
