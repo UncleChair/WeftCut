@@ -24,4 +24,19 @@ for (const file of readdirSync(SEQ).filter((f) => f.endsWith('.json'))) {
   }
   console.log(`ok  ${file}`)
 }
+// Production-channel oracles: real Backend.dispatch under det ids.
+const SEQ_PROD = 'fixtures/state-corpus/sequences-prod'
+const OUT_PROD = 'fixtures/state-corpus/oracle-prod'
+mkdirSync(OUT_PROD, { recursive: true })
+const runProd = (file) => execFileSync('cargo', [
+  'run', '--quiet', '--manifest-path', 'native/Cargo.toml',
+  '--bin', 'prod_driver', '--features', 'replay,jobs,export,mcp,cloud,motifs', '--', join(SEQ_PROD, file),
+], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+for (const file of readdirSync(SEQ_PROD).filter((f) => f.endsWith('.json'))) {
+  const a = runProd(file), b = runProd(file)
+  if (a !== b) { console.error(`NONDETERMINISTIC (prod): ${file}`); fail++; continue }
+  writeFileSync(join(OUT_PROD, file), a)
+  console.log(`ok  prod/${file}`)
+}
+
 process.exit(fail ? 1 : 0)

@@ -1,0 +1,7 @@
+{
+  "name": "_smoke-prod",
+  "commands": [
+    { "op": "add_track" },
+    { "op": "add_color_layer", "trackId": "@A", "tStartUs": 0, "durationUs": 1000000 }
+  ]
+}

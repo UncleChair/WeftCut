@@ -383,6 +383,25 @@ impl Backend {
         build_backend(events, config_dir, cache_dir)
     }
 
+    /// Replay-harness constructor: a Backend with a no-op event sink and on-disk
+    /// temp dirs, for the differential `prod_driver` bin. Mirrors `new_for_test`
+    /// but is available under the `replay` feature (bins are not `cfg(test)`).
+    #[cfg(feature = "replay")]
+    pub fn new_for_replay(events: std::sync::Arc<dyn EventSink>, config_dir: String, cache_dir: String) -> Self {
+        build_backend(events, config_dir, cache_dir)
+    }
+
+    /// Slim init for the replay harness: spawn the actor and store the handle,
+    /// WITHOUT the event-bridge / autosave / motif-watcher / ffmpeg tasks that
+    /// `init()` starts (none are part of command→state evolution). Returns the
+    /// handle so the bin can snapshot between commands.
+    #[cfg(feature = "replay")]
+    pub async fn init_for_replay(&self) -> crate::state::ProjectHandle {
+        let handle = crate::state::spawn(crate::state::Project::new_blank("replay"));
+        self.project.set(handle.clone()).ok();
+        handle
+    }
+
     pub async fn dispatch(&self, cmd: &str, args: &str) -> std::result::Result<String, String> {
         match cmd {
             "ping" => Ok(serde_json::to_string(crate::commands::prefs::ping()).unwrap()),

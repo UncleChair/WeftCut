@@ -18,7 +18,13 @@ mod commands;
 // pub: build_project_summary consumed by the replay_driver differential-harness bin
 pub use commands::build_project_summary;
 mod events;
+// pub: Backend + NullEventSink consumed by the prod_driver differential-harness bin
+#[cfg(feature = "replay")]
+pub use events::NullEventSink;
 mod napi_backend;
+// pub: Backend consumed by the prod_driver differential-harness bin
+#[cfg(feature = "replay")]
+pub use napi_backend::Backend;
 
 #[cfg(any(feature = "jobs", feature = "export"))]
 mod ffmpeg;
