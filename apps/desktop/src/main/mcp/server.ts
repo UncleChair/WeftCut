@@ -9,6 +9,7 @@ import {
   type ServerResult,
 } from '@modelcontextprotocol/sdk/types.js'
 import { captureMotifFrameB64 } from '../motif/capture.js'
+import { isPausedUnderTsActor } from './mutationTools.js'
 
 type Backend = import('@weftcut/core').Backend
 
@@ -47,6 +48,11 @@ export function buildMcpServer(backend: Backend): Server {
     return { tools: cat.tools } as unknown as ServerResult
   })
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
+    if (isPausedUnderTsActor(req.params.name)) {
+      const e = new Error('Editing is paused while the TS state actor is active (WEFTCUT_TS_ACTOR). Agent mutations resume after the Phase 3d MCP port.') as Error & { code?: number }
+      e.code = -32600 // invalid_request
+      throw e
+    }
     if (req.params.name === 'preview_motif_draft') {
       const a = (req.params.arguments ?? {}) as {
         id?: string
