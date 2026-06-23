@@ -1,0 +1,4 @@
+{ "name": "remove-media-missing", "commands": [
+  { "op": "remove_media", "media": "00000000-0000-0000-0000-0000000000ff" },
+  { "op": "add_track", "ref": "T" }
+] }

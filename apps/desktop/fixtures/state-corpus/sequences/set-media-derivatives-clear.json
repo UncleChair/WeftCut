@@ -1,0 +1,6 @@
+{ "name": "set-media-derivatives-clear", "commands": [
+  { "op": "add_media", "id": "00000000-0000-0000-0000-0000000000aa", "kind": "Video", "duration_us": 4000000 },
+  { "op": "set_media_derivatives", "media": "00000000-0000-0000-0000-0000000000aa", "patch": { "proxy_path": "media/proxy.mp4", "quick_proxy_path": "media/quick.mp4" } },
+  { "op": "set_media_derivatives", "media": "00000000-0000-0000-0000-0000000000aa", "patch": { "proxy_path": null, "quick_proxy_path": null } },
+  { "op": "add_track", "ref": "T" }
+] }

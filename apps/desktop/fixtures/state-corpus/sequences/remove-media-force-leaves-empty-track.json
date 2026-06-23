@@ -1,0 +1,7 @@
+{ "name": "remove-media-force-leaves-empty-track", "commands": [
+  { "op": "add_media", "id": "00000000-0000-0000-0000-0000000000aa", "kind": "Video", "duration_us": 4000000, "ref": "M" },
+  { "op": "add_track", "label": "T2", "ref": "T2" },
+  { "op": "add_layer", "track": "@T2", "kind": "video", "media": "@M", "src_in_us": 0, "src_out_us": 4000000, "t_start_us": 0, "t_end_us": 4000000, "ref": "L" },
+  { "op": "remove_media", "media": "@M", "force": true },
+  { "op": "add_track", "ref": "T3" }
+] }

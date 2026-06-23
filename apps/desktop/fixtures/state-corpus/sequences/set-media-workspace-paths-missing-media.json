@@ -1,0 +1,4 @@
+{ "name": "set-media-workspace-paths-missing-media", "commands": [
+  { "op": "set_media_workspace_paths", "media": "00000000-0000-0000-0000-0000000000ff", "paths": { "path_abs": "ws/x.bin", "path_rel": "x.bin", "file_hash_blake3": "h", "file_size": 1, "file_mtime": 1 } },
+  { "op": "add_track", "ref": "T" }
+] }

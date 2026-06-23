@@ -1,0 +1,6 @@
+{ "name": "remove-media-in-use-no-force", "commands": [
+  { "op": "add_media", "id": "00000000-0000-0000-0000-0000000000aa", "kind": "Video", "duration_us": 4000000, "ref": "M" },
+  { "op": "add_layer", "track": "@A", "kind": "video", "media": "@M", "src_in_us": 0, "src_out_us": 4000000, "t_start_us": 0, "t_end_us": 4000000, "ref": "L" },
+  { "op": "remove_media", "media": "@M", "force": false },
+  { "op": "add_track", "ref": "T" }
+] }
