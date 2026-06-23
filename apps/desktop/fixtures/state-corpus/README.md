@@ -293,3 +293,24 @@ and are unit-gated in `persistence.test.ts`. The `set-media-derivatives-set` and
 `set-media-workspace-paths` sequences set quick_proxy_path / path_rel respectively,
 so they exercise `loadProjectFromJson`'s transforms and are excluded from this
 identity gate (unit-gated in `persistence.test.ts`).
+
+### workspace orchestration (Phase 3c-ii-b)
+
+Phase 3c-ii-b re-homes `project_open`/`save_as`/`new_workspace` orchestration into
+`src/main/state/workspace-orchestrator.ts` (unit-tested + round-trip tested via
+`__tests__/workspace-orchestrator.test.ts` and `__tests__/serialize.test.ts`).
+**No corpus dimension** — orchestration is behavioral (file I/O, recent-list
+management, actor handoff) and does not produce new oracle traces.
+
+**S1 — load path stays fully TS:** `migrate.rs` only gates on `SCHEMA_VERSION=9`
+with no version transforms; `save_to_dir` is a plain `to_string_pretty` + `fs::write`
+(no atomic-rename, no sidecar, no trailing-newline normalization). The TS side writes
+`project.json` directly without a Rust round-trip.
+
+**S2 — open-time derivative re-fan-out deferred to 3c-ii-c:** the jobs write-back
+shares a `ProjectHandle`/event-seam entanglement with the autosave port; `openProject`
+carries an injected `enqueueDerivatives` no-op seam until that slice fills it.
+
+New napi methods `commit_workspace`/`push_recent`/`set_last_new_project_parent` are
+wired on the Rust side but dormant in the live `backend:invoke` path until the
+3c-ii-d authority flip.
