@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import { seededGen, type IdGen } from '../ids'
-import { blankProject, type Project } from '../model'
+import { blankProject, type Project, type MediaItem } from '../model'
 import { applyAddLayer } from './add'
 import { isCommandFailure } from '../errors'
-import { videoClipParams, audioParams, imageOverlayParams, applySeparateAudio, mediaItemTemplate } from './media'
+import { videoClipParams, audioParams, imageOverlayParams, applySeparateAudio, mediaItemTemplate, applySetMediaDerivatives, applySetMediaWorkspacePaths, referencingLayers } from './media'
 
 const MID = '00000000-0000-0000-0000-0000000000aa'
 function expectCmd(fn: () => void, code: string) {
@@ -69,5 +69,56 @@ describe('applySeparateAudio', () => {
     const c1 = applyAddLayer(p, gen, p.tracks[0].id, videoClipParams('00000000-0000-0000-0000-0000000000aa', 0, 2_000_000), 0, 2_000_000) // #4 (video, not audio)
     expectCmd(() => applySeparateAudio(p, gen, c1), 'WrongLayerKind')
     expect(applyAddLayer(p, gen, p.tracks[1].id, audioParams('00000000-0000-0000-0000-0000000000aa', 0, 1_000_000), 0, 1_000_000)).toBe('00000000-0000-0000-0000-000000000005') // no burn
+  })
+})
+
+function pool1(): Record<string, MediaItem> {
+  return { [MID]: mediaItemTemplate(MID, 'Video', 4_000_000) }
+}
+
+describe('applySetMediaDerivatives', () => {
+  it('MediaNotFound when id absent (throws CommandFailure)', () => {
+    expectCmd(() => applySetMediaDerivatives({}, MID, { proxy_path: 'media/p.mp4' }), 'MediaNotFound')
+  })
+  it('sets every field; tri-state proxy keys set when string', () => {
+    const out = applySetMediaDerivatives(pool1(), MID, {
+      proxy_path: 'media/p.mp4', quick_proxy_path: 'media/q.mp4', proxy_format_version: 3,
+      proxy_bypassed: true, export_uses_original: true,
+      waveform_path: 'media/w.bin', conform_path: 'media/c.wav', thumbnails_dir: 'media/t' })[MID]
+    expect([out.proxy_path, out.quick_proxy_path, out.proxy_format_version, out.proxy_bypassed,
+      out.export_uses_original, out.waveform_path, out.conform_path, out.thumbnails_dir])
+      .toEqual(['media/p.mp4', 'media/q.mp4', 3, true, true, 'media/w.bin', 'media/c.wav', 'media/t'])
+  })
+  it('null clears the tri-state proxy fields', () => {
+    const set = applySetMediaDerivatives(pool1(), MID, { proxy_path: 'media/p.mp4', quick_proxy_path: 'media/q.mp4' })
+    const out = applySetMediaDerivatives(set, MID, { proxy_path: null, quick_proxy_path: null })[MID]
+    expect([out.proxy_path, out.quick_proxy_path]).toEqual([null, null])
+  })
+  it('absent proxy key leaves the existing value (does not clear)', () => {
+    const set = applySetMediaDerivatives(pool1(), MID, { proxy_path: 'media/p.mp4' })
+    const out = applySetMediaDerivatives(set, MID, { proxy_format_version: 5 })[MID]
+    expect([out.proxy_path, out.proxy_format_version]).toEqual(['media/p.mp4', 5])
+  })
+})
+
+describe('applySetMediaWorkspacePaths', () => {
+  it('MediaNotFound when id absent', () => {
+    expectCmd(() => applySetMediaWorkspacePaths({}, MID, { path_abs: 'a', path_rel: 'r', file_hash_blake3: 'h', file_size: 1, file_mtime: 2 }), 'MediaNotFound')
+  })
+  it('sets all five workspace fields', () => {
+    const out = applySetMediaWorkspacePaths(pool1(), MID, { path_abs: 'ws/clip.bin', path_rel: 'media/clip.bin', file_hash_blake3: 'abc', file_size: 1024, file_mtime: 1700000000 })[MID]
+    expect([out.path_abs, out.path_rel, out.file_hash_blake3, out.file_size, out.file_mtime])
+      .toEqual(['ws/clip.bin', 'media/clip.bin', 'abc', 1024, 1700000000])
+  })
+})
+
+describe('referencingLayers', () => {
+  it('finds VideoClip/Audio/ImageOverlay layers that reference the media id; ignores others', () => {
+    const gen = seededGen()
+    const p = blankProject(gen, 'r')
+    const tA = p.tracks[0].id
+    const v = applyAddLayer(p, gen, tA, videoClipParams(MID, 0, 4_000_000), 0, 4_000_000)
+    applyAddLayer(p, gen, tA, videoClipParams('00000000-0000-0000-0000-0000000000bb', 0, 1), 5_000_000, 6_000_000)
+    expect(referencingLayers(p, MID)).toEqual([v])
   })
 })

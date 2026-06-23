@@ -39,6 +39,63 @@ export function mediaItemTemplate(id: Uuid, kind: MediaItem['kind'], durationUs:
   }
 }
 
+/** actor.rs:269-286 MediaDerivativesPatch. proxy_path/quick_proxy_path are
+ *  Option<Option<PathBuf>> — tri-state: key absent = leave, null = clear, string
+ *  = set. The rest are plain Option<T> (set-or-leave; never cleared here). */
+export interface MediaDerivativesPatch {
+  proxy_path?: string | null
+  quick_proxy_path?: string | null
+  proxy_format_version?: number
+  proxy_bypassed?: boolean
+  export_uses_original?: boolean
+  waveform_path?: string | null
+  conform_path?: string | null
+  thumbnails_dir?: string | null
+}
+export interface WorkspacePaths {
+  path_abs: string; path_rel: string; file_hash_blake3: string; file_size: number; file_mtime: number
+}
+
+/** do_set_media_derivatives (actor.rs:3534) — patch one pool item's derivative
+ *  fields, returning a new pool. MediaNotFound if absent. No validation (mirrors
+ *  Rust). The caller replaces the pool everywhere + broadcasts unrecorded. */
+export function applySetMediaDerivatives(pool: Record<string, MediaItem>, id: Uuid, patch: MediaDerivativesPatch): Record<string, MediaItem> {
+  const item = pool[id]
+  if (!item) throw new CommandFailure({ error: 'MediaNotFound', media: id })
+  const next: MediaItem = { ...item }
+  // tri-state (Option<Option<PathBuf>>): presence distinguishes leave from clear.
+  if ('proxy_path' in patch) next.proxy_path = patch.proxy_path ?? null
+  if ('quick_proxy_path' in patch) next.quick_proxy_path = patch.quick_proxy_path ?? null
+  if (patch.proxy_format_version !== undefined) next.proxy_format_version = patch.proxy_format_version
+  if (patch.proxy_bypassed !== undefined) next.proxy_bypassed = patch.proxy_bypassed
+  if (patch.export_uses_original !== undefined) next.export_uses_original = patch.export_uses_original
+  // plain Option<PathBuf> (Rust `if let Some(p)`): set only when present-and-non-null.
+  if (patch.waveform_path != null) next.waveform_path = patch.waveform_path
+  if (patch.conform_path != null) next.conform_path = patch.conform_path
+  if (patch.thumbnails_dir != null) next.thumbnails_dir = patch.thumbnails_dir
+  return { ...pool, [id]: next }
+}
+
+/** do_set_media_workspace_paths (actor.rs:3500) — set the workspace-relative
+ *  path + file fingerprint after the import copy. path_rel is always set. */
+export function applySetMediaWorkspacePaths(pool: Record<string, MediaItem>, id: Uuid, paths: WorkspacePaths): Record<string, MediaItem> {
+  const item = pool[id]
+  if (!item) throw new CommandFailure({ error: 'MediaNotFound', media: id })
+  return { ...pool, [id]: { ...item, path_abs: paths.path_abs, path_rel: paths.path_rel,
+    file_hash_blake3: paths.file_hash_blake3, file_size: paths.file_size, file_mtime: paths.file_mtime } }
+}
+
+/** do_remove_media (actor.rs:3439-3451) — layer ids referencing this media,
+ *  scanned in track-then-layer order. VideoClip/Audio/ImageOverlay only. */
+export function referencingLayers(p: Project, id: Uuid): Uuid[] {
+  const out: Uuid[] = []
+  for (const t of p.tracks) for (const l of t.layers) {
+    const k = l.params.kind
+    if ((k === 'VideoClip' || k === 'Audio' || k === 'ImageOverlay') && l.params.media === id) out.push(l.id)
+  }
+  return out
+}
+
 /** actor.rs:2573 do_separate_audio — lift an Audio layer onto a fresh
  *  non-reserved track inserted directly BEFORE its source. The new-track id is
  *  minted AFTER the locate + kind checks (so LayerNotFound/WrongLayerKind burn
