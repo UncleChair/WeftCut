@@ -25,7 +25,7 @@ export interface TsActorHostDeps {
   workspaceDir: () => string | null
 }
 
-export interface PersistenceHandlers {
+interface PersistenceHandlers {
   open: (dir: string) => Promise<void>
   saveAs: (dir: string) => Promise<void>
   newWorkspace: (args: { parentFolder: string; name: string; width: number; height: number; fpsNum: number; fpsDen: number }) => Promise<string>

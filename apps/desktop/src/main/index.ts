@@ -165,8 +165,8 @@ app.whenReady().then(async () => {
       // the derivative patch to the TS actor instead of forwarding to the renderer.
       // tsHost is module-scoped (set later); the closure captures it by reference.
       if (event === 'media:derivatives') {
-        if (tsHost) { void import('./state/jobs-writeback.js').then(({ applyDerivativesEvent }) => applyDerivativesEvent(tsHost!.actor, payload as never)) }
-        return
+        if (tsHost) { void import('./state/jobs-writeback.js').then(({ applyDerivativesEvent }) => applyDerivativesEvent(tsHost!.actor, payload as never)); return }
+        // flag-off: Rust is authoritative and never emits this event — fall through is defensive
       }
       mainWindow?.webContents.send('evt:' + event, payload)
     },
