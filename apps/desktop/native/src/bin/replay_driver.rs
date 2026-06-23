@@ -234,6 +234,35 @@ async fn apply(h: &ProjectHandle, cmd: &Value, refs: &HashMap<String, String>) -
             .map(|mid| Some(mid.to_string())).map_err(|e| format!("{e:?}")),
         "separate_audio" => h.separate_audio_to_new_track(u, resolve_id(refs, cmd["layer"].as_str().unwrap())).await
             .map(|tid| Some(tid.to_string())).map_err(|e| format!("{e:?}")),
+        "set_media_derivatives" => {
+            let p = &cmd["patch"];
+            let patch = weftcut_lib::state::actor::MediaDerivativesPatch {
+                proxy_path: opt_opt_path(p, "proxy_path"),
+                proxy_format_version: p.get("proxy_format_version").and_then(|v| v.as_u64()).map(|n| n as u32),
+                quick_proxy_path: opt_opt_path(p, "quick_proxy_path"),
+                proxy_bypassed: p.get("proxy_bypassed").and_then(|v| v.as_bool()),
+                export_uses_original: p.get("export_uses_original").and_then(|v| v.as_bool()),
+                waveform_path: opt_path(p, "waveform_path"),
+                conform_path: opt_path(p, "conform_path"),
+                thumbnails_dir: opt_path(p, "thumbnails_dir"),
+            };
+            h.set_media_derivatives(u, resolve_id(refs, cmd["media"].as_str().unwrap()), patch).await
+                .map(|_| None).map_err(|e| format!("{e:?}"))
+        }
+        "set_media_workspace_paths" => {
+            let p = &cmd["paths"];
+            h.set_media_workspace_paths(
+                u,
+                resolve_id(refs, cmd["media"].as_str().unwrap()),
+                std::path::PathBuf::from(p["path_abs"].as_str().unwrap()),
+                std::path::PathBuf::from(p["path_rel"].as_str().unwrap()),
+                p["file_hash_blake3"].as_str().unwrap().to_string(),
+                p["file_size"].as_u64().unwrap(),
+                p["file_mtime"].as_u64().unwrap(),
+            ).await.map(|_| None).map_err(|e| format!("{e:?}"))
+        }
+        "remove_media" => h.remove_media(u, resolve_id(refs, cmd["media"].as_str().unwrap()), cmd["force"].as_bool().unwrap_or(false)).await
+            .map(|_| None).map_err(|e| format!("{e:?}")),
         "update_layer_params" => {
             let patch: weftcut_lib::state::actor::LayerParamsPatch =
                 serde_json::from_value(cmd["patch"].clone()).map_err(|e| e.to_string())?;
@@ -307,6 +336,21 @@ fn default_text_params() -> LayerParams {
         opacity: Animated::Static(1.0), shadow: None, outline: None,
         intro: None, outro: None, backend_hint: TextBackend::Auto,
     })
+}
+
+/// `Option<Option<PathBuf>>` from a patch object: key absent → None (leave);
+/// JSON null → Some(None) (clear); string → Some(Some(path)). Mirrors the TS
+/// `'key' in patch` tri-state for set_media_derivatives' proxy fields.
+fn opt_opt_path(p: &Value, key: &str) -> Option<Option<std::path::PathBuf>> {
+    match p.get(key) {
+        None => None,
+        Some(Value::Null) => Some(None),
+        Some(v) => Some(Some(std::path::PathBuf::from(v.as_str().unwrap()))),
+    }
+}
+/// Plain `Option<PathBuf>`: present-and-string → Some; absent or null → None.
+fn opt_path(p: &Value, key: &str) -> Option<std::path::PathBuf> {
+    p.get(key).and_then(|v| v.as_str()).map(std::path::PathBuf::from)
 }
 
 /// Rgba from a {r,g,b,a} JSON object (u8 components; matches TS Rgba interface).
