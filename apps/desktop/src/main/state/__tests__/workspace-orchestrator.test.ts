@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
-import { openProject, type OrchestratorDeps, type OrchestratorFs, type WorkspaceNapi } from '../workspace-orchestrator'
+import { openProject, saveProjectAs, newWorkspace, type OrchestratorDeps, type OrchestratorFs, type WorkspaceNapi } from '../workspace-orchestrator'
 import { serializeProjectToJson, PROJECT_FILE } from '../persistence'
+import { canonicalize } from '../canonical'
+import { serializeProject } from '../serialize'
 import { blankProject } from '../model'
 import type { MediaItem } from '../model'
 import { seededGen } from '../ids'
@@ -73,5 +75,59 @@ describe('openProject', () => {
     const d = deps({ fs })
     await openProject(d, '/ws')
     expect(fs.rm).toHaveBeenCalledWith(quickProxyPath)
+  })
+})
+
+describe('saveProjectAs', () => {
+  it('snapshots, writes project.json under the dir, commits workspace, pushes recent', async () => {
+    const d = deps()
+    await saveProjectAs(d, '/out')
+    expect((d.fs as any).dirs.has('/out')).toBe(true)
+    expect((d.fs as any).files.get(`/out/${PROJECT_FILE}`)).toContain('"schema_version"')
+    expect(d.calls).toEqual(['commit:/out', 'recent:/out:snap']) // snapshot() name is 'snap'
+    expect(d.actor.replaceState).not.toHaveBeenCalled()           // save-as never swaps state
+  })
+})
+
+describe('newWorkspace', () => {
+  const args = { parentFolder: '/parent', name: 'Fresh', width: 1280, height: 720, fpsNum: 24, fpsDen: 1 }
+
+  it('rejects an empty name', async () => {
+    await expect(newWorkspace(deps(), { ...args, name: '  ' })).rejects.toThrow(/name is required/)
+  })
+  it('rejects a zero canvas/fps', async () => {
+    await expect(newWorkspace(deps(), { ...args, width: 0 })).rejects.toThrow(/canvas preset/)
+    await expect(newWorkspace(deps(), { ...args, fpsDen: 0 })).rejects.toThrow(/canvas preset/)
+  })
+  it('rejects an existing target folder', async () => {
+    const fs = memFs(); fs.dirs.add('/parent/Fresh')
+    await expect(newWorkspace(deps({ fs }), args)).rejects.toThrow(/already exists/)
+  })
+  it('writes a blank project with the canvas preset, commits, swaps, pushes recent + parent', async () => {
+    const d = deps()
+    const out = await newWorkspace(d, args)
+    expect(out).toBe('/parent/Fresh')
+    const written = JSON.parse((d.fs as any).files.get(`/parent/Fresh/${PROJECT_FILE}`))
+    expect(written.composition).toMatchObject({ width: 1280, height: 720, fps: { num: 24, den: 1 } })
+    expect(d.calls).toEqual(['commit:/parent/Fresh', 'replaceState', 'recent:/parent/Fresh:Fresh', 'parent:/parent'])
+  })
+})
+
+describe('round-trip: new → save → open is state-identical', () => {
+  it('reopens to the same serialized project', async () => {
+    // shared in-memory fs so save writes and open reads the same map
+    const fs = memFs()
+    // capture what newWorkspace replaceState'd, and what openProject replaceState's
+    let created: any, reopened: any
+    const dNew = deps({ fs }); dNew.actor.replaceState = vi.fn((p) => { created = p })
+    const out = await newWorkspace(dNew, { parentFolder: '/p', name: 'RT', width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 })
+    // save the created project to its own folder (snapshot returns it)
+    const dSave = deps({ fs }); dSave.actor.snapshot = vi.fn(() => created)
+    await saveProjectAs(dSave, out)
+    // reopen
+    const dOpen = deps({ fs }); dOpen.actor.replaceState = vi.fn((p) => { reopened = p })
+    await openProject(dOpen, out)
+    expect(JSON.stringify(canonicalize(serializeProject(reopened))))
+      .toBe(JSON.stringify(canonicalize(serializeProject(created))))
   })
 })
