@@ -33,6 +33,7 @@ pub use thumbnails::run as run_thumbnails;
 pub use waveform::{read_peaks_file, run as run_waveform};
 
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::Serialize;
 use std::sync::Arc;
@@ -42,7 +43,52 @@ use tokio::sync::Semaphore;
 use tracing::{info, warn};
 
 use crate::cache::CacheLayout;
-use crate::state::{Actor, MediaDerivativesPatch, MediaId, MediaItem, MediaKind, ProjectHandle};
+use crate::state::{Actor, CommandError, MediaDerivativesPatch, MediaId, MediaItem, MediaKind, ProjectHandle};
+
+/// Which engine owns the project state's media-pool, for job-completion
+/// write-back. `false` (default) = the Rust actor is authoritative (today's
+/// behavior: jobs call `set_media_derivatives` directly). `true` = the TS
+/// actor in Electron main is authoritative; completion emits a
+/// `media:derivatives` event the main process applies to the TS actor (spec
+/// 3c-ii / D5). 3c-ii-d sets this at `Backend::init` from `WEFTCUT_TS_ACTOR`;
+/// in 3c-ii-c only tests flip it. Process-global by the same rationale as the
+/// det-id toggle (`state/ids.rs`): jobs spawn from many sites and a global
+/// avoids threading an engine handle through every signature.
+static TS_DERIVATIVE_AUTHORITY: AtomicBool = AtomicBool::new(false);
+
+/// Set the derivative write-back authority (see `TS_DERIVATIVE_AUTHORITY`).
+pub fn set_ts_derivative_authority(on: bool) {
+    TS_DERIVATIVE_AUTHORITY.store(on, Ordering::SeqCst);
+}
+
+pub(crate) fn ts_derivative_authority() -> bool {
+    TS_DERIVATIVE_AUTHORITY.load(Ordering::SeqCst)
+}
+
+/// Apply a completed job's derivative patch to whichever engine is
+/// authoritative. Rust mode: the actor command (unchanged). TS mode: emit
+/// `media:derivatives {media_id, patch}` — the patch serializes with the
+/// absent/null/string tri-state for the `Option<Option<PathBuf>>` proxy fields
+/// (mutations/media.ts:67). Returns `Ok` in TS mode (fire-and-forget; the TS
+/// actor's `set_media_derivatives` is `MediaNotFound`-tolerant and the caller
+/// only logs failures). `pub(crate)` so the open re-fan-out napi (Task 4) can
+/// reuse the same seam for stale-proxy clearing.
+pub(crate) async fn commit_media_derivatives(
+    events: &Arc<dyn EventSink>,
+    project: &ProjectHandle,
+    media_id: MediaId,
+    patch: MediaDerivativesPatch,
+) -> Result<(), CommandError> {
+    if ts_derivative_authority() {
+        events.emit(
+            "media:derivatives",
+            serde_json::json!({ "media_id": media_id.to_string(), "patch": patch }),
+        );
+        Ok(())
+    } else {
+        project.set_media_derivatives(actor_for_jobs(), media_id, patch).await
+    }
+}
 
 pub const EVENT_STARTED: &str = "media:job_started";
 pub const EVENT_COMPLETE: &str = "media:job_complete";
@@ -223,10 +269,7 @@ fn spawn_conform(events: Arc<dyn EventSink>, cache: CacheLayout, project: Projec
                     conform_path: Some(conform_path),
                     ..Default::default()
                 };
-                if let Err(e) = project
-                    .set_media_derivatives(actor_for_jobs(), media_id, patch)
-                    .await
-                {
+                if let Err(e) = commit_media_derivatives(&events, &project, media_id, patch).await {
                     warn!("conform commit failed for {media_id}: {e}");
                     emit(
                         &events,
@@ -303,10 +346,7 @@ fn spawn_proxy_decision(
                     proxy_bypassed: Some(true),
                     ..Default::default()
                 };
-                if let Err(e) = project
-                    .set_media_derivatives(actor_for_jobs(), media_id, patch)
-                    .await
-                {
+                if let Err(e) = commit_media_derivatives(&events, &project, media_id, patch).await {
                     warn!("proxy bypass commit failed for {media_id}: {e}");
                     emit(
                         &events,
@@ -346,10 +386,7 @@ fn spawn_proxy_decision(
                     export_uses_original: Some(true),
                     ..Default::default()
                 };
-                if let Err(e) = project
-                    .set_media_derivatives(actor_for_jobs(), media_id, patch)
-                    .await
-                {
+                if let Err(e) = commit_media_derivatives(&events, &project, media_id, patch).await {
                     warn!("direct-export commit failed for {media_id}: {e}");
                     emit(
                         &events,
@@ -411,10 +448,7 @@ fn spawn_thumbnails(events: Arc<dyn EventSink>, cache: CacheLayout, project: Pro
                     thumbnails_dir: Some(thumbs_dir),
                     ..Default::default()
                 };
-                if let Err(e) = project
-                    .set_media_derivatives(actor_for_jobs(), media_id, patch)
-                    .await
-                {
+                if let Err(e) = commit_media_derivatives(&events, &project, media_id, patch).await {
                     warn!("thumbnail commit failed for {media_id}: {e}");
                     emit(
                         &events,
@@ -490,10 +524,7 @@ fn spawn_quick_proxy(
                     proxy_bypassed: Some(false),
                     ..Default::default()
                 };
-                if let Err(e) = project
-                    .set_media_derivatives(actor_for_jobs(), media_id, patch)
-                    .await
-                {
+                if let Err(e) = commit_media_derivatives(&events, &project, media_id, patch).await {
                     warn!("quick proxy commit failed for {media_id}: {e}");
                     emit(
                         &events,
@@ -578,10 +609,7 @@ fn spawn_proxy(events: Arc<dyn EventSink>, cache: CacheLayout, project: ProjectH
                     proxy_bypassed: Some(false),
                     ..Default::default()
                 };
-                if let Err(e) = project
-                    .set_media_derivatives(actor_for_jobs(), media_id, patch)
-                    .await
-                {
+                if let Err(e) = commit_media_derivatives(&events, &project, media_id, patch).await {
                     warn!("proxy commit failed for {media_id}: {e}");
                     emit(
                         &events,
@@ -649,10 +677,7 @@ fn spawn_waveform(events: Arc<dyn EventSink>, cache: CacheLayout, project: Proje
                     waveform_path: Some(waveform_path),
                     ..Default::default()
                 };
-                if let Err(e) = project
-                    .set_media_derivatives(actor_for_jobs(), media_id, patch)
-                    .await
-                {
+                if let Err(e) = commit_media_derivatives(&events, &project, media_id, patch).await {
                     warn!("waveform commit failed for {media_id}: {e}");
                     emit(
                         &events,
@@ -734,5 +759,58 @@ mod tests {
         end_conform(id);
         assert!(try_begin_conform(id), "free again after end");
         end_conform(id);
+    }
+
+    #[test]
+    fn derivatives_patch_serializes_tristate() {
+        use crate::state::MediaDerivativesPatch;
+        use serde_json::json;
+
+        // absent: outer None → key omitted entirely.
+        let p = MediaDerivativesPatch { conform_path: Some("c.bin".into()), ..Default::default() };
+        let v = serde_json::to_value(&p).unwrap();
+        assert!(v.get("proxy_path").is_none(), "absent proxy_path must be omitted");
+        assert_eq!(v.get("conform_path").unwrap(), &json!("c.bin"));
+
+        // clear: Some(None) → null.
+        let p = MediaDerivativesPatch { proxy_path: Some(None), ..Default::default() };
+        let v = serde_json::to_value(&p).unwrap();
+        assert_eq!(v.get("proxy_path").unwrap(), &serde_json::Value::Null);
+
+        // set: Some(Some(path)) → string.
+        let p = MediaDerivativesPatch { quick_proxy_path: Some(Some("q.mp4".into())), ..Default::default() };
+        let v = serde_json::to_value(&p).unwrap();
+        assert_eq!(v.get("quick_proxy_path").unwrap(), &json!("q.mp4"));
+
+        // plain bool field skips when None, emits when Some.
+        let p = MediaDerivativesPatch { proxy_bypassed: Some(true), ..Default::default() };
+        let v = serde_json::to_value(&p).unwrap();
+        assert_eq!(v.get("proxy_bypassed").unwrap(), &json!(true));
+    }
+
+    #[tokio::test]
+    async fn commit_derivatives_emits_event_when_ts_authoritative() {
+        use crate::events::VecEventSink;
+        use crate::state::{spawn, MediaDerivativesPatch, Project};
+        use std::sync::Arc;
+
+        let sink = Arc::new(VecEventSink::new());
+        let events: Arc<dyn crate::events::EventSink> = sink.clone();
+        let handle = spawn(Project::new_blank("ts-auth"));
+        let media_id = uuid::Uuid::now_v7();
+
+        set_ts_derivative_authority(true);
+        let patch = MediaDerivativesPatch { proxy_path: Some(None), conform_path: Some("c.bin".into()), ..Default::default() };
+        commit_media_derivatives(&events, &handle, media_id, patch).await.unwrap();
+        set_ts_derivative_authority(false); // reset the global for other tests
+
+        let recorded = sink.events.lock().unwrap().clone();
+        let (name, payload) = recorded.iter().find(|(n, _)| n == "media:derivatives")
+            .expect("a media:derivatives event must be emitted in TS mode");
+        assert_eq!(name, "media:derivatives");
+        assert_eq!(payload.get("media_id").unwrap(), &serde_json::json!(media_id.to_string()));
+        let patch_v = payload.get("patch").unwrap();
+        assert_eq!(patch_v.get("proxy_path").unwrap(), &serde_json::Value::Null); // cleared
+        assert_eq!(patch_v.get("conform_path").unwrap(), &serde_json::json!("c.bin"));
     }
 }

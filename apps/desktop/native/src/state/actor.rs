@@ -266,22 +266,34 @@ pub struct AudioPatch {
 /// `proxy_format_version`); `None` leaves it alone (the common path for
 /// fresh-generation patches that don't touch proxies). See
 /// `docs/preview.md`.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize)]
 pub struct MediaDerivativesPatch {
+    /// Tri-state (Option<Option<PathBuf>>): outer None = absent (leave), Some(None)
+    /// = null (clear), Some(Some(p)) = string (set). `skip_serializing_if` on the
+    /// OUTER Option is what produces the absent/null/string the TS `'key' in patch`
+    /// contract reads (mutations/media.ts:67). DO NOT change to a plain Option.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub proxy_path: Option<Option<std::path::PathBuf>>,
     /// Set when the proxy job completes successfully; the workspace-open
     /// invalidation pass uses it to decide whether the cached proxy
     /// matches the current `jobs::proxy::PROXY_FORMAT_VERSION`.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub proxy_format_version: Option<u32>,
     /// `Some(Some(path))` sets a fast preview proxy; `Some(None)` clears it.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub quick_proxy_path: Option<Option<std::path::PathBuf>>,
     /// Marks the original workspace copy as safe for direct WebCodecs use.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub proxy_bypassed: Option<bool>,
     /// Marks the original as the export decode source (preview still uses a
     /// generated proxy). `None` leaves the flag unchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub export_uses_original: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub waveform_path: Option<std::path::PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub conform_path: Option<std::path::PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub thumbnails_dir: Option<std::path::PathBuf>,
 }
 
