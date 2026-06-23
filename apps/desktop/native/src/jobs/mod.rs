@@ -748,6 +748,33 @@ fn actor_for_jobs() -> Actor {
     }
 }
 
+/// Serializes the process-global `TS_DERIVATIVE_AUTHORITY` toggle tests and
+/// resets the flag to `false` on drop (panic-safe). Two tests flipping the global
+/// in parallel — or a panic between `set(true)` and a manual reset — would leak
+/// `true` into other jobs tests in this binary. `pub(crate)` so the napi_backend
+/// test can share the same lock.
+#[cfg(test)]
+pub(crate) static AUTHORITY_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
+pub(crate) struct AuthorityTestGuard(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
+
+#[cfg(test)]
+impl AuthorityTestGuard {
+    pub(crate) fn acquire() -> Self {
+        let g = AUTHORITY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        set_ts_derivative_authority(false); // clean start regardless of any prior leak
+        AuthorityTestGuard(g)
+    }
+}
+
+#[cfg(test)]
+impl Drop for AuthorityTestGuard {
+    fn drop(&mut self) {
+        set_ts_derivative_authority(false);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -795,6 +822,8 @@ mod tests {
         use crate::state::{spawn, MediaDerivativesPatch, Project};
         use std::sync::Arc;
 
+        let _authority = AuthorityTestGuard::acquire();
+
         let sink = Arc::new(VecEventSink::new());
         let events: Arc<dyn crate::events::EventSink> = sink.clone();
         let handle = spawn(Project::new_blank("ts-auth"));
@@ -803,7 +832,6 @@ mod tests {
         set_ts_derivative_authority(true);
         let patch = MediaDerivativesPatch { proxy_path: Some(None), conform_path: Some("c.bin".into()), ..Default::default() };
         commit_media_derivatives(&events, &handle, media_id, patch).await.unwrap();
-        set_ts_derivative_authority(false); // reset the global for other tests
 
         let recorded = sink.events.lock().unwrap().clone();
         let (name, payload) = recorded.iter().find(|(n, _)| n == "media:derivatives")

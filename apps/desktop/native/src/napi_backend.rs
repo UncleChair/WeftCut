@@ -1360,6 +1360,8 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn enqueue_jobs_for_media_invalidates_stale_proxy() {
         use std::sync::Arc;
+        let _authority = crate::jobs::AuthorityTestGuard::acquire();
+
         let sink = Arc::new(crate::events::VecEventSink::new());
         let backend = Backend::new_for_test(sink.clone());
         // Install a project handle so self.project() succeeds (new_for_test does
@@ -1381,7 +1383,6 @@ mod tests {
             .enqueue_jobs_for_media(serde_json::to_string(&serde_json::json!([item])).unwrap())
             .await
             .unwrap(); // commit_media_derivatives is awaited inline — no sleep needed
-        crate::jobs::set_ts_derivative_authority(false); // reset the global for other tests
 
         let names = sink.names();
         assert!(
