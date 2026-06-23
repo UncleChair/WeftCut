@@ -94,6 +94,8 @@ export function createAutosave(deps: AutosaveDeps): AutosaveController {
     const ws = deps.workspaceDir()
     if (ws === null) return // no workspace yet — edits stay dirty for the next cycle
     persist(ws)
+    // One per debounce CYCLE (a flurry coalesced into one quiet-window write),
+    // NOT per raw actor commit — faithful to io/autosave.rs:156.
     commitsSinceSnapshot += 1
     if (commitsSinceSnapshot >= SNAPSHOT_EVERY_COMMITS || now().getTime() - lastSnapshotAtMs >= SNAPSHOT_EVERY_MS) {
       takeSnapshot(ws)

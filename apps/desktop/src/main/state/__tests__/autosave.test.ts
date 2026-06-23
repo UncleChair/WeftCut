@@ -69,6 +69,9 @@ describe('autosave debounce', () => {
 })
 
 describe('Backups gc + snapshot interval', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
   it('caps retained snapshots at 20 (oldest dropped)', async () => {
     const fs = memFs()
     // 25 pre-existing snapshots with sortable names.
@@ -77,13 +80,13 @@ describe('Backups gc + snapshot interval', () => {
     // step `now` forward so each forceFlush mints a distinct backup name.
     let t = Date.parse('2026-06-23T12:00:00.000Z')
     const { ctl } = setup({ fs, now: () => new Date((t += 1000)) })
+    // 25 pre-seeded + 1 minted by forceFlush = 26 total → gc keeps the newest 20.
     ctl.start(); await ctl.forceFlush(); ctl.stop()
     const remaining = [...fs.files.keys()].filter((k) => k.startsWith(`/ws/${BACKUPS_DIR}/`) && k.endsWith('.json'))
     expect(remaining).toHaveLength(20)
   })
 
   it('debounced writes snapshot only every 50 commits or 5 minutes', async () => {
-    vi.useFakeTimers()
     let t = Date.parse('2026-06-23T12:00:00.000Z')
     const { fs, actor, ctl } = setup({ now: () => new Date(t) })
     ctl.start()
@@ -95,6 +98,6 @@ describe('Backups gc + snapshot interval', () => {
     t += 5 * 60_000 + 1
     actor.dispatch('add_track', {}); await vi.advanceTimersByTimeAsync(500)
     expect([...fs.files.keys()].some((k) => k.startsWith(`/ws/${BACKUPS_DIR}/`))).toBe(true)
-    ctl.stop(); vi.useRealTimers()
+    ctl.stop()
   })
 })
