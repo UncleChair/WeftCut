@@ -216,6 +216,51 @@ Motif `update_layer_params` content-window clamp (motif_cap_us) — deferred (ne
 | rebind_motif, add_transient_track | deferred (motif-catalog / zero-caller) |
 | Motif update_layer_params clamp (motif_cap_us) | deferred — needs motif-catalog support in harness |
 
+### production-channel differential gate (Phase 3c-ii-a)
+
+`sequences-prod/` + `oracle-prod/` form a second corpus dimension. Each sequence
+uses real renderer category-A channel names and camelCase wire args (exactly as the
+renderer IPC sends them); the `prod_driver` Rust bin routes every command through
+the real `Backend::dispatch` production channel parser under deterministic ids,
+producing the same `state`/`summary` oracle format as the existing `replay_driver`.
+The TS side drives `actor.command` (the production adapter in `commands.ts`) instead
+of `actor.dispatch` (the internal mutation core). The gate is
+`__tests__/commands.differential.test.ts`.
+
+**In-scope renderer channels (31 total — pinned by the `PRODUCTION_OPS` coverage assertion in `commands.test.ts`):**
+
+`add_color_layer`, `add_demo_color_layer`, `add_demo_text_layer`, `add_effect`,
+`add_media_layer`, `add_text_layer`, `add_track`, `delete_layer`, `duplicate_layer`,
+`fit_composition_to_layers`, `groups_create`, `groups_dissolve`, `move_effect`,
+`move_layer`, `project_redo`, `project_undo`, `remove_effect`, `restyle_caption_track`,
+`separate_audio_to_new_track`, `set_composition`, `set_role_gain`, `split_layer_grouped`,
+`trim_layer`, `update_effect`, `update_layer`, `update_layer_param_track`,
+`update_layer_param_tracks`, `update_layer_params`, `update_project_settings`,
+`update_role_flags`, `update_track_flags`.
+
+**Channels explicitly deferred to Phase 3d** (no `sequences-prod/` entries today):
+
+| Channel | Reason deferred |
+|---|---|
+| `add_marker`, `update_marker`, `remove_marker` | Marker channels have no production dispatch surface in the renderer (MCP-only); no TS adapter infra. |
+| `delete_track`, `move_track` | Track mutation channels are not exposed on the renderer production surface in the current UI. |
+| `groups_add_members`, `groups_remove_members`, `groups_rename` | Group membership mutation channels are not exposed on the renderer production surface in the current UI. |
+| `add_transition`, `remove_transition` | Transition channels are not exposed on the renderer production surface in the current UI. |
+| `add_caption_track` | No TS caption-track infra; caption channels require a dedicated adapter slice. |
+| `project_restore_checkpoint` | MCP-only — not in the production dispatch; no TS checkpoint infra. |
+
+**Partially deferred within in-scope channels:**
+
+- `restyle_caption_track` — wired and differential-gated in `sequences-prod/`, but its
+  corpus exercise is thin: the gate only covers the adapter mapping, not rich behavioral
+  invariants. A full behavioral corpus (seeding caption tracks via `add_caption_track`
+  then restyling) is deferred to Phase 3d when `add_caption_track` lands.
+- `add_media_layer` auto-pair — the adapter defers the auto-pair branch (video +
+  `metadata.audio` present + `auto_pair_audio_on_import` true). The corpus media
+  template sets `audio: null`, so the predicate is false for all sequences. A corpus
+  entry exercising the full auto-pair path (video-layer + audio-layer + `groups_create`
+  in allocation order) is deferred to when a corpus item carries audio metadata.
+
 ### media-pool mutations (Phase 3c-i)
 
 `set-media-derivatives-*` exercise the tri-state derivative patch

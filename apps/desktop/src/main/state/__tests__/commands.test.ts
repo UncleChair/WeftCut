@@ -2,8 +2,28 @@
 // Unit tests for production param builders in commands.ts.
 // TDD: written to fail before the exports exist; green after Step 3 impl.
 import { describe, it, expect } from 'vitest'
-import { prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, demoColor, pickFreeOverlayTrack } from '../commands'
+import { prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, demoColor, pickFreeOverlayTrack, PRODUCTION_OPS } from '../commands'
 import type { Project } from '../model'
+
+// ── PRODUCTION_OPS coverage assertion ────────────────────────────────────────
+// Pins the exact set of renderer channels the production adapter handles.
+// If this fails, a channel was added or removed unintentionally — do NOT
+// silently update the expected list; investigate first.
+describe('PRODUCTION_OPS', () => {
+  it('contains exactly the 31 in-scope renderer channels', () => {
+    const expected = [
+      'add_color_layer', 'add_demo_color_layer', 'add_demo_text_layer', 'add_effect',
+      'add_media_layer', 'add_text_layer', 'add_track', 'delete_layer', 'duplicate_layer',
+      'fit_composition_to_layers', 'groups_create', 'groups_dissolve', 'move_effect',
+      'move_layer', 'project_redo', 'project_undo', 'remove_effect', 'restyle_caption_track',
+      'separate_audio_to_new_track', 'set_composition', 'set_role_gain', 'split_layer_grouped',
+      'trim_layer', 'update_effect', 'update_layer', 'update_layer_param_track',
+      'update_layer_param_tracks', 'update_layer_params', 'update_project_settings',
+      'update_role_flags', 'update_track_flags',
+    ].sort()
+    expect([...PRODUCTION_OPS].sort()).toEqual(expected)
+  })
+})
 
 // ── prodColorParams ───────────────────────────────────────────────────────
 describe('prodColorParams', () => {
