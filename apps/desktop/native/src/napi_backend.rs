@@ -250,6 +250,47 @@ impl Backend {
         self.cloud_keys.lock().expect("cloud_keys poisoned").remove(&provider);
     }
 
+    /// Re-point cache + workspace, end any in-flight agent session, and rotate
+    /// the per-workspace LogBus — the pre-broadcast workspace bundle shared by
+    /// open / save-as / new-workspace. This is the verbatim head of
+    /// `commands::persistence` (cache.set_workspace → workspace.set →
+    /// agent_session::end_and_emit → log_slot.install). The TS persistence
+    /// orchestrator (Phase 3c-ii-b) calls this BEFORE `replace_state` so any
+    /// `project:changed` consumer sees the new workspace first.
+    ///
+    /// Async: `LogBus::spawn` starts background tasks via `tokio::spawn`, which
+    /// needs napi's tokio runtime — a sync `#[napi]` runs on the JS thread with
+    /// no runtime and would panic.
+    #[napi]
+    pub async fn commit_workspace(&self, path: String) -> napi::Result<()> {
+        let path = std::path::PathBuf::from(path);
+        self.cache
+            .set_workspace(&path)
+            .map_err(|e| Error::from_reason(format!("cache set_workspace: {e:#}")))?;
+        self.workspace.set(path.clone());
+        let _ = crate::agent_session::end_and_emit(&*self.events, &self.agent_session);
+        self.log_slot
+            .install(crate::logs::LogBus::spawn(&path, self.events.clone()));
+        Ok(())
+    }
+
+    /// `recents.push` — record the workspace in recents.json. The TS orchestrator
+    /// calls this AFTER a successful `replace_state` (open / new) or write
+    /// (save-as), matching the Rust handler order: a project that fails to load
+    /// is never recorded. Best-effort inside the store (failures are logged).
+    #[napi]
+    pub fn push_recent(&self, path: String, display_name: String) {
+        self.recents.push(std::path::PathBuf::from(path), display_name);
+    }
+
+    /// `recents.set_last_new_project_parent` — only the new-workspace flow, so the
+    /// next "+ New project" form opens pre-filled at the same parent. Best-effort.
+    #[napi]
+    pub fn set_last_new_project_parent(&self, parent: String) {
+        self.recents
+            .set_last_new_project_parent(std::path::PathBuf::from(parent));
+    }
+
     /// Stream one raw encoded frame to the active 10-bit video sink over native
     /// IPC (PoC: the Electron-native alternative to the loopback WebSocket).
     /// Binary in, no JSON — bypasses the `invoke` dispatcher.
@@ -1218,5 +1259,51 @@ mod tests {
         let err = b.dispatch("add_effect", r#"{"layerId":"not-a-uuid","kind":"blur"}"#).await;
         let msg = err.unwrap_err();
         assert!(msg.contains("layer_id"), "expected a layer_id parse error, got: {msg}");
+    }
+
+    /// Phase 3c-ii-b: `commit_workspace` re-points cache + workspace slot; `push_recent`
+    /// records the entry in recents. Both are observable via the existing dispatch arms.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn commit_workspace_sets_workspace_cache_and_recents() {
+        use std::sync::Arc;
+        let backend = Backend::new_for_test(Arc::new(crate::events::VecEventSink::new()));
+        let dir = std::env::temp_dir().join(format!("weftcut-3cb-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.to_string_lossy().to_string();
+
+        backend.commit_workspace(path.clone()).await.unwrap();
+
+        // workspace slot now reports the committed path — workspace_dir returns
+        // Option<String> serialized as a JSON string (Some("...")) or null.
+        let ws_json = backend.dispatch("workspace_dir", "{}").await.unwrap();
+        // Deserialize the JSON-encoded Option<String> and compare as PathBuf to
+        // avoid brittle backslash-escaping assertions on Windows.
+        let ws_str: Option<String> = serde_json::from_str(&ws_json)
+            .expect("workspace_dir must deserialize to Option<String>");
+        let ws_path = std::path::PathBuf::from(ws_str.expect("workspace must be Some after commit_workspace"));
+        assert_eq!(
+            ws_path.canonicalize().unwrap_or(ws_path.clone()),
+            dir.canonicalize().unwrap_or(dir.clone()),
+            "workspace slot must point at the committed dir"
+        );
+
+        // cache.set_workspace creates <dir>/Cache synchronously.
+        assert!(dir.join("Cache").exists(), "cache dir not created by commit_workspace");
+
+        // push_recent then verify via recents_list.
+        backend.push_recent(path.clone(), "Demo".to_string());
+        let recents_json = backend.dispatch("recents_list", "{}").await.unwrap();
+        // recents_list serializes as a JSON array of RecentEntry objects with a
+        // "path" field. Assert the committed path's filename appears somewhere.
+        let dir_name = dir.file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        assert!(
+            recents_json.contains(&dir_name),
+            "recents_list did not include the pushed path (looking for {dir_name:?}): {recents_json}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
