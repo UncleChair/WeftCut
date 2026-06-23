@@ -9,6 +9,7 @@ import {
   type ServerResult,
 } from '@modelcontextprotocol/sdk/types.js'
 import { captureMotifFrameB64 } from '../motif/capture.js'
+import { callFrameRecognitionTool, frameRecognitionTools } from './frameRecognition.js'
 
 type Backend = import('@weftcut/core').Backend
 
@@ -44,9 +45,12 @@ export function buildMcpServer(backend: Backend): Server {
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     const cat = JSON.parse(await backend.mcpCatalog()) as { tools: unknown[] }
-    return { tools: cat.tools } as unknown as ServerResult
+    return { tools: [...cat.tools, ...frameRecognitionTools] } as unknown as ServerResult
   })
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
+    if (req.params.name === 'recognize_frame') {
+      return (await callFrameRecognitionTool(backend, req.params.arguments ?? {})) as ServerResult
+    }
     if (req.params.name === 'preview_motif_draft') {
       const a = (req.params.arguments ?? {}) as {
         id?: string
