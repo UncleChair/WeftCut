@@ -4,6 +4,7 @@ import { seededGen } from './ids'
 import { blankProject } from './model'
 import type { Project } from './model'
 import { colorParams } from './mutations/add'
+import { videoClipParams } from './mutations/media'
 import { createActor } from './actor'
 
 function fresh() {
@@ -547,5 +548,58 @@ describe('replace_state (mirror do_replace_state actor.rs:3581 + History::reset)
     next.metadata.modified_at = '2026-01-02T03:04:05Z'
     actor.replaceState(next)
     expect(actor.snapshot().metadata.modified_at).toBe('2026-01-02T03:04:05Z')
+  })
+})
+
+describe('media-pool mutations dispatch (Phase 3c-i)', () => {
+  const MID = '00000000-0000-0000-0000-0000000000aa'
+  function actorWithMedia() {
+    const gen = seededGen()
+    const a = createActor({ initial: blankProject(gen, 'm'), idGen: gen, clock: () => '<TS>' })
+    a.dispatch('add_media', { id: MID, kind: 'Video', duration_us: 4_000_000 })
+    return a
+  }
+
+  it('set_media_derivatives: MediaNotFound on bad id', () => {
+    const r = actorWithMedia().dispatch('set_media_derivatives', { media: '00000000-0000-0000-0000-0000000000ff', patch: { proxy_path: 'media/p.mp4' } })
+    expect(r.ok).toBe(false)
+    expect(!r.ok && r.error.error).toBe('MediaNotFound')
+  })
+  it('set_media_derivatives: success patches the pool item', () => {
+    const a = actorWithMedia()
+    expect(a.dispatch('set_media_derivatives', { media: MID, patch: { proxy_path: 'media/p.mp4', proxy_bypassed: true } }).ok).toBe(true)
+    expect(a.snapshot().media_pool[MID].proxy_path).toBe('media/p.mp4')
+    expect(a.snapshot().media_pool[MID].proxy_bypassed).toBe(true)
+  })
+  it('set_media_workspace_paths: success sets path_rel + hash', () => {
+    const a = actorWithMedia()
+    expect(a.dispatch('set_media_workspace_paths', { media: MID, paths: { path_abs: 'ws/c.bin', path_rel: 'media/c.bin', file_hash_blake3: 'abc', file_size: 9, file_mtime: 7 } }).ok).toBe(true)
+    expect(a.snapshot().media_pool[MID].path_rel).toBe('media/c.bin')
+  })
+  it('remove_media: MediaInUse when referenced and !force; lists the layer', () => {
+    const a = actorWithMedia()
+    const lid = a.dispatch('add_layer', { track: a.snapshot().tracks[0].id, kind: 'video', media: MID, src_in_us: 0, src_out_us: 4_000_000, t_start_us: 0, t_end_us: 4_000_000 }).value as string
+    const r = a.dispatch('remove_media', { media: MID, force: false })
+    expect(!r.ok && r.error.error).toBe('MediaInUse')
+    expect(!r.ok && r.error.error === 'MediaInUse' && r.error.referenced_by).toEqual([lid])
+  })
+  it('remove_media unused: removes from pool, durable across undo', () => {
+    const a = actorWithMedia()
+    expect(a.dispatch('remove_media', { media: MID, force: false }).ok).toBe(true)
+    expect(a.snapshot().media_pool[MID]).toBeUndefined()
+    a.dispatch('add_track', {})           // a recorded op to have something to undo
+    a.dispatch('undo', {})
+    expect(a.snapshot().media_pool[MID], 'unrecorded remove is durable across undo').toBeUndefined()
+  })
+  it('remove_media force: cascade-deletes referencing layers, recorded (undoable)', () => {
+    const a = actorWithMedia()
+    const tA = a.snapshot().tracks[0].id
+    a.dispatch('add_layer', { track: tA, kind: 'video', media: MID, src_in_us: 0, src_out_us: 4_000_000, t_start_us: 0, t_end_us: 4_000_000 })
+    expect(a.dispatch('remove_media', { media: MID, force: true }).ok).toBe(true)
+    expect(a.snapshot().tracks[0].layers.length).toBe(0)
+    expect(a.snapshot().media_pool[MID]).toBeUndefined()
+    a.dispatch('undo', {})
+    expect(a.snapshot().tracks[0].layers.length, 'force cascade is undoable').toBe(1)
+    expect(a.snapshot().media_pool[MID], 'undo restores media').toBeDefined()
   })
 })

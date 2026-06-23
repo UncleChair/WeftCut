@@ -19,6 +19,7 @@ export const SUPPORTED_OPS = new Set<string>([
   'add_effect', 'update_effect', 'move_effect', 'remove_effect',
   'add_transition', 'remove_transition',
   'add_media', 'separate_audio',
+  'set_media_derivatives', 'set_media_workspace_paths', 'remove_media',
   'update_layer_params', 'update_layer_param_track', 'update_layer_param_tracks',
   'set_role_gain', 'update_role_flags', 'update_project_settings',
   'add_caption_track', 'restyle_caption_track',
@@ -142,6 +143,9 @@ function buildArgs(cmd: Cmd, refs: Map<string, string>): Record<string, unknown>
     case 'add_caption_track': return { cues: cmd.cues, comp_w: cmd.comp_w, comp_h: cmd.comp_h, label: cmd.label ?? null }
     case 'restyle_caption_track': return { track: resolve(refs, cmd.track), patch: cmd.patch }
     case 'replace_state': return { name: cmd.name ?? 'untitled', width: cmd.width, height: cmd.height, fps_num: cmd.fps_num, fps_den: cmd.fps_den }
+    case 'set_media_derivatives': return { media: resolve(refs, cmd.media), patch: cmd.patch }
+    case 'set_media_workspace_paths': return { media: resolve(refs, cmd.media), paths: cmd.paths }
+    case 'remove_media': return { media: resolve(refs, cmd.media), force: cmd.force ?? false }
     case 'undo': case 'redo': return {}
     default: return {}
   }

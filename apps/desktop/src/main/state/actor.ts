@@ -21,7 +21,9 @@ import { applyUpdateMarker, applyRemoveMarker, type MarkerPatch } from './mutati
 import { applyDeleteTrack, applyMoveTrack } from './mutations/tracks'
 import { applyAddEffect, applyUpdateEffect, applyMoveEffect, applyRemoveEffect, type EffectPatch } from './mutations/effects'
 import { applyAddTransition, applyRemoveTransition } from './mutations/transitions'
-import { videoClipParams, audioParams, imageOverlayParams, applySeparateAudio, mediaItemTemplate } from './mutations/media'
+import { videoClipParams, audioParams, imageOverlayParams, applySeparateAudio, mediaItemTemplate,
+  applySetMediaDerivatives, applySetMediaWorkspacePaths, referencingLayers,
+  type MediaDerivativesPatch, type WorkspacePaths } from './mutations/media'
 import type { MediaItem } from './model'
 import { applyUpdateLayerParams, applyUpdateLayerParamTrack, type LayerParamsPatch } from './mutations/params'
 import { applyAddCaptionTrack, applyRestyleCaptionTrack, type Cue, type CaptionStylePatch } from './mutations/captions'
@@ -207,6 +209,50 @@ export function createActor(opts: ActorOptions): ActorHandle {
     return item.id
   }
 
+  // ── set_media_derivatives (do_set_media_derivatives:3534) — UNRECORDED, NO
+  //    validate. MediaNotFound first (no id); else patch the pool item, replace
+  //    EVERYWHERE (durable across undo) + broadcast (1 id). ──
+  function setMediaDerivatives(id: Uuid, patch: MediaDerivativesPatch): void {
+    const nextPool = applySetMediaDerivatives(current().media_pool, id, patch) // throws MediaNotFound
+    history.replaceMediaPoolEverywhere(nextPool)
+    broadcastUnrecorded('Updated media derivatives', current())
+  }
+  // ── set_media_workspace_paths (do_set_media_workspace_paths:3500) — UNRECORDED. ──
+  function setMediaWorkspacePaths(id: Uuid, paths: WorkspacePaths): void {
+    const nextPool = applySetMediaWorkspacePaths(current().media_pool, id, paths) // throws MediaNotFound
+    history.replaceMediaPoolEverywhere(nextPool)
+    broadcastUnrecorded('Updated media workspace paths', current())
+  }
+  // ── remove_media (do_remove_media:3428) — HYBRID. MediaNotFound → MediaInUse
+  //    (when referenced && !force) → unused path (validate probe BEFORE broadcast,
+  //    durable, 1 broadcast id) | force-cascade (RAW inline layer removal +
+  //    commit, 1 op_id, undoable). The force path must NOT reuse applyDeleteLayer
+  //    (no empty-track prune / no group cleanup — actor.rs:3479-3488). ──
+  function removeMedia(id: Uuid, force: boolean): void {
+    const cur = current()
+    if (!(id in cur.media_pool)) throw new CommandFailure({ error: 'MediaNotFound', media: id })
+    const referencing = referencingLayers(cur, id)
+    if (referencing.length > 0 && !force) throw new CommandFailure({ error: 'MediaInUse', media: id, referenced_by: referencing })
+    if (referencing.length === 0) {
+      const nextPool = { ...cur.media_pool }
+      delete nextPool[id]
+      runValidate({ ...cur, media_pool: nextPool }) // validate-before-broadcast (actor.rs:3470)
+      history.replaceMediaPoolEverywhere(nextPool)
+      broadcastUnrecorded(`Removed media ${id}`, current())
+      return
+    }
+    const affected: EntityRef[] = referencing.map((l) => ({ kind: 'Layer', id: l }))
+    commit(`Removed media ${id} and ${referencing.length} referencing layer(s)`, affected, { kind: 'Coarse' }, (d) => {
+      for (const layerId of referencing) {
+        for (const t of d.tracks) {
+          const idx = t.layers.findIndex((l) => l.id === layerId)
+          if (idx >= 0) { t.layers.splice(idx, 1); break }
+        }
+      }
+      delete d.media_pool[id]
+    })
+  }
+
   // ── set_role_gain (do_set_role_gain:3657) — RECORDED (undoable). Read the
   //    role's mix bus (default-filled when absent), override ONLY gain_db
   //    (muted/solo preserved), reinsert. No affected entities, Coarse hint. ──
@@ -323,6 +369,9 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'remove_transition': commit('Removed transition', [], { kind: 'Coarse' }, (d) => applyRemoveTransition(d, a.transition as Uuid)); return { ok: true, value: null }
         case 'add_media': return { ok: true, value: addMediaItem(mediaItemTemplate(a.id as Uuid, a.kind as MediaItem['kind'], (a.duration_us as number | null) ?? null)) }
         case 'separate_audio': return { ok: true, value: commit('Separated audio', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applySeparateAudio(d, idGen, a.layer as Uuid)) }
+        case 'set_media_derivatives': setMediaDerivatives(a.media as Uuid, a.patch as MediaDerivativesPatch); return { ok: true, value: null }
+        case 'set_media_workspace_paths': setMediaWorkspacePaths(a.media as Uuid, a.paths as WorkspacePaths); return { ok: true, value: null }
+        case 'remove_media': removeMedia(a.media as Uuid, (a.force as boolean) ?? false); return { ok: true, value: null }
         case 'set_role_gain': setRoleGain(a.role as string, a.gain_db as number); return { ok: true, value: null }
         case 'update_role_flags': updateRoleFlags(a.role as string, a.patch as RoleFlagsPatch); return { ok: true, value: null }
         case 'update_project_settings': updateProjectSettings(a.patch as { auto_delete_empty_tracks?: boolean | null }); return { ok: true, value: null }
