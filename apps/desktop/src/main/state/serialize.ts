@@ -13,11 +13,38 @@ export function serializeProject(p: Project): unknown {
   return { ...p, groups: p.groups.map(serializeGroup) }
 }
 
-/** Validate + type a wire object as a Project. Near-identity for the JSON-native
- *  model; the load guard is the schema version (project.rs:17-22 rejects others). */
+/** Validate + type a wire object as a Project. The load guard is the schema
+ *  version (project.rs:17-22 rejects others); beyond that, a shallow structural
+ *  check rejects a truncated/corrupt project.json (right version, missing/wrong
+ *  required fields) with a clear error rather than letting `undefined` reach the
+ *  actor. Shallow by design — field-level fidelity is proven by the differential
+ *  + round-trip gates, and an undeclared NEW Rust field is carried through by the
+ *  spread (acceptable; it can only be lost on the next save, never corrupts). */
 export function parseProject(json: unknown): Project {
   if (json === null || typeof json !== 'object') throw new Error('parseProject: not an object')
-  const v = (json as { schema_version?: unknown }).schema_version
-  if (v !== SCHEMA_VERSION) throw new Error(`parseProject: unsupported schema_version ${String(v)} (expected ${SCHEMA_VERSION})`)
+  const o = json as Record<string, unknown>
+  if (o.schema_version !== SCHEMA_VERSION) {
+    throw new Error(`parseProject: unsupported schema_version ${String(o.schema_version)} (expected ${SCHEMA_VERSION})`)
+  }
+  const requireObject = (k: string) => {
+    if (o[k] === null || typeof o[k] !== 'object' || Array.isArray(o[k])) throw new Error(`parseProject: ${k} must be an object`)
+  }
+  const requireArray = (k: string) => {
+    if (!Array.isArray(o[k])) throw new Error(`parseProject: ${k} must be an array`)
+  }
+  const requireString = (k: string) => {
+    if (typeof o[k] !== 'string') throw new Error(`parseProject: ${k} must be a string`)
+  }
+  // Top-level shape of Project (model.ts:98-101). Shallow presence/kind only.
+  requireString('project_id')
+  requireObject('metadata')
+  requireObject('composition')
+  requireObject('media_pool')
+  requireArray('tracks')
+  requireArray('markers')
+  requireArray('transitions')
+  requireArray('groups')
+  requireObject('audio_roles')
+  requireObject('settings')
   return json as Project
 }
