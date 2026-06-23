@@ -9,6 +9,9 @@
 import { SCHEMA_VERSION, type MediaItem, type Project } from './model'
 import { serializeProject, parseProject } from './serialize'
 
+/** io/mod.rs:19 — the on-disk project file name inside a workspace folder. */
+export const PROJECT_FILE = 'project.json'
+
 /** io/mod.rs:25 — serde_json::to_string_pretty (2-space indent, NO trailing
  *  newline; fs::write writes the string verbatim). Round-trip fidelity, not
  *  byte-identical key order vs Rust, is the contract (see Task 5). */
