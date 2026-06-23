@@ -329,14 +329,17 @@ not state-evolution paths.
 in `jobs/mod.rs`, flipped only by tests in this slice. It is NOT the
 `WEFTCUT_TS_ACTOR` launch flag — that wiring lands in 3c-ii-d at `Backend::init`.
 
-**S2 — gated dispatch arm:** the TS `jobs-writeback` handler reuses the existing
-`set_media_derivatives` dispatch arm; it calls through only when the authority
-toggle is set, keeping the Rust path live in production until the flag flip.
+**S2 — gated dispatch arm:** the TS `jobs-writeback` handler applies the patch
+through the existing `set_media_derivatives` dispatch arm (no new mutation logic).
+The toggle gates the *Rust* side: jobs emit the `media:derivatives` event (vs
+writing the Rust actor directly) only when the authority toggle is set, so the
+Rust path stays live in production until the flag flip.
 
 **S3 — open re-fan-out folds here:** the open-time stale-proxy invalidation
-(deferred from 3c-ii-b S2) is implemented via `makeEnqueueDerivatives` injected
-into `openProject`; it reuses the write-back seam so the Rust `enqueue_jobs_for_media`
-call drives the same `set_media_derivatives` path as a live `media:derivatives` event.
+(deferred from 3c-ii-b S2) is built as `makeEnqueueDerivatives`, the factory that
+fills `openProject`'s dormant `enqueueDerivatives` seam (injected live in 3c-ii-d).
+It reuses the write-back seam so the Rust `enqueue_jobs_for_media` call drives the
+same `set_media_derivatives` path as a live `media:derivatives` event.
 
 **3c-ii-d carry-forwards:** the live `onEvent`/`project_save`/`enqueueDerivatives`
 wiring; the authority-toggle → `WEFTCUT_TS_ACTOR` flag connection at `Backend::init`;
