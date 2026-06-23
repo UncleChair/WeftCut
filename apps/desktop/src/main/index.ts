@@ -34,6 +34,7 @@ let mainWindow: BrowserWindow | null = null
 // BEFORE the host exists. Hold it module-scoped and set it right after
 // `startMcpHost` resolves.
 let mcpHostRef: import('./mcp/index.js').McpHost | null = null
+let tsHost: import('./state/ts-actor-host.js').TsActorHost | null = null
 
 const isDev = !!process.env['ELECTRON_RENDERER_URL']
 
@@ -183,6 +184,22 @@ app.whenReady().then(async () => {
   const { startMcpHost } = await import('./mcp/index.js')
   const mcpHost = await startMcpHost(backend)
   mcpHostRef = mcpHost
+
+  // TS-actor host: construct after mcpHostRef is set (emitChange relays via mcpNotify).
+  // DORMANT unless WEFTCUT_TS_ACTOR=1 — flag-off leaves existing behavior 100% unchanged.
+  const tsActorOn = process.env['WEFTCUT_TS_ACTOR'] === '1'
+  if (tsActorOn) {
+    const { createTsActorHost } = await import('./state/ts-actor-host.js')
+    tsHost = createTsActorHost({
+      send: (event, payload) => mainWindow?.webContents.send('evt:' + event, payload),
+      mcpNotify: (payload) => mcpHostRef?.notifyChange(payload),
+      fileExists: (p) => fs.existsSync(p),
+      // persistence injected in Task 5
+    })
+    tsHost.start()
+    console.log('[main] WEFTCUT_TS_ACTOR on — TS state actor authoritative')
+  }
+
   ipcMain.handle('get_mcp_info', () => mcpHost.getInfo())
   ipcMain.handle('reset_mcp_token', () => mcpHost.resetToken())
   ipcMain.handle('app:notices', () => startupNotices)
@@ -215,6 +232,13 @@ app.whenReady().then(async () => {
       clearKey(provider)
       backend!.clearCloudKey(provider)
       return null
+    }
+    // TS-actor splitter: when the flag is on, route non-Rust channels into the TS
+    // host. Consulted AFTER main-only intercepts above, BEFORE the Rust fallthrough.
+    // Flag-off: tsHost is null, block is skipped, behavior unchanged.
+    if (tsHost) {
+      const route = (await import('./state/router.js')).routeChannel(channel)
+      if (route.kind !== 'rust') return await tsHost.handleInvoke(channel, (args ?? {}) as Record<string, unknown>)
     }
     // Dev-only shadow: log when the Phase-1 TS actor vocabulary covers this command.
     // Rust stays authoritative; this flag is OFF by default.
