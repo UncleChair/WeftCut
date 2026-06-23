@@ -4,6 +4,9 @@ import { uuidV7Gen } from './ids'
 import { blankProject } from './model'
 import { buildProjectSummary } from './summary'
 import { routeChannel } from './router'
+import { createAutosave, type AutosaveController, type AutosaveFs } from './autosave'
+import { openProject, saveProjectAs, newWorkspace, makeEnqueueDerivatives, type WorkspaceNapi, type OrchestratorFs } from './workspace-orchestrator'
+import { serializeProjectToJson } from './persistence'
 
 export interface TsActorHostDeps {
   /** mainWindow.webContents.send('evt:'+event, payload) */
@@ -12,8 +15,14 @@ export interface TsActorHostDeps {
   mcpNotify: (payload: unknown) => void
   /** fs.existsSync, for buildProjectSummary's media-availability checks. */
   fileExists: (absPath: string) => boolean
-  // Task 5 injects: openProject/saveProjectAs/newWorkspace/save handlers + autosave.
-  persistence?: PersistenceHandlers
+  /** Combined OrchestratorFs & AutosaveFs adapter — node:fs in production, in-memory in tests. */
+  fs: OrchestratorFs & AutosaveFs
+  /** node:path.join — injected for testability. */
+  join: (...parts: string[]) => string
+  /** Backend napi facade for workspace bookkeeping. */
+  napi: WorkspaceNapi
+  /** Current workspace directory (cached from backend). Null before first open/newWorkspace. */
+  workspaceDir: () => string | null
 }
 
 export interface PersistenceHandlers {
@@ -38,8 +47,28 @@ export function mapChangeEvent(e: ChangeEvent): { op_id: string; actor_kind: 'us
 }
 
 export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
-  const actor = createActor({ initial: blankProject(uuidV7Gen(), 'untitled'), idGen: uuidV7Gen(), clock: () => new Date().toISOString() })
+  // Single shared idGen: used for blankProject, createActor, and orchestratorDeps.
+  const idGen = uuidV7Gen()
+  const actor = createActor({ initial: blankProject(idGen, 'untitled'), idGen, clock: () => new Date().toISOString() })
   let unsub: (() => void) | null = null
+
+  const autosave: AutosaveController = createAutosave({
+    actor,
+    fs: deps.fs,
+    workspaceDir: deps.workspaceDir,
+    join: deps.join,
+    serialize: serializeProjectToJson,
+  })
+
+  const enqueueDerivatives = makeEnqueueDerivatives(deps.napi)
+  const orchestratorDeps = { actor, napi: deps.napi, fs: deps.fs, join: deps.join, idGen, enqueueDerivatives }
+
+  const persistence: PersistenceHandlers = {
+    open: (dir) => openProject(orchestratorDeps, dir),
+    saveAs: (dir) => saveProjectAs(orchestratorDeps, dir),
+    newWorkspace: (a) => newWorkspace(orchestratorDeps, a),
+    save: () => autosave.forceFlush(),
+  }
 
   function emitChange(e: ChangeEvent): void {
     const payload = mapChangeEvent(e)
@@ -66,10 +95,10 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         return buildProjectSummary(actor.snapshot(), actor.historyStatus(), deps.fileExists)
       case 'projectSettings':
         return actor.snapshot().settings
-      case 'open': return deps.persistence!.open((args as { path: string }).path)
-      case 'saveAs': return deps.persistence!.saveAs((args as { path: string }).path)
-      case 'newWorkspace': return deps.persistence!.newWorkspace(args as never)
-      case 'save': return deps.persistence!.save()
+      case 'open': return persistence.open((args as { path: string }).path)
+      case 'saveAs': return persistence.saveAs((args as { path: string }).path)
+      case 'newWorkspace': return persistence.newWorkspace(args as never)
+      case 'save': return persistence.save()
       case 'reject': return reject(route.reason)
       case 'rust': return reject(`router bug: ${channel} reached the TS host but is a Rust channel`)
     }
@@ -78,7 +107,13 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   return {
     actor,
     handleInvoke,
-    start() { if (!unsub) unsub = actor.subscribe(emitChange) },
-    stop() { if (unsub) { unsub(); unsub = null } },
+    start() {
+      if (!unsub) unsub = actor.subscribe(emitChange)
+      autosave.start()
+    },
+    stop() {
+      autosave.stop()
+      if (unsub) { unsub(); unsub = null }
+    },
   }
 }

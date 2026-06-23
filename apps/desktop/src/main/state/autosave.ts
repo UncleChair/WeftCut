@@ -75,9 +75,11 @@ export function createAutosave(deps: AutosaveDeps): AutosaveController {
     const src = deps.join(ws, PROJECT_FILE)
     if (!deps.fs.exists(src)) return // defensive: nothing to copy yet
     const backups = deps.join(ws, BACKUPS_DIR)
-    deps.fs.mkdirp(backups)
-    deps.fs.copyFile(src, deps.join(backups, `${stamp()}.json`))
-    gcSnapshots(backups)
+    try {
+      deps.fs.mkdirp(backups)
+      deps.fs.copyFile(src, deps.join(backups, `${stamp()}.json`))
+      gcSnapshots(backups)
+    } catch { /* best-effort, matches Rust warn-and-continue; a setTimeout-callback throw would be an unhandled rejection */ }
   }
 
   function gcSnapshots(backups: string): void {

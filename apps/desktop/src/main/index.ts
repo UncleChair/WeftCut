@@ -161,6 +161,13 @@ app.whenReady().then(async () => {
         mcpHostRef?.notifyChange(payload)
         return
       }
+      // `media:derivatives` write-back: when the TS actor is authoritative, apply
+      // the derivative patch to the TS actor instead of forwarding to the renderer.
+      // tsHost is module-scoped (set later); the closure captures it by reference.
+      if (event === 'media:derivatives') {
+        if (tsHost) { void import('./state/jobs-writeback.js').then(({ applyDerivativesEvent }) => applyDerivativesEvent(tsHost!.actor, payload as never)) }
+        return
+      }
       mainWindow?.webContents.send('evt:' + event, payload)
     },
   )
@@ -190,13 +197,58 @@ app.whenReady().then(async () => {
   const tsActorOn = process.env['WEFTCUT_TS_ACTOR'] === '1'
   if (tsActorOn) {
     const { createTsActorHost } = await import('./state/ts-actor-host.js')
+
+    // Node fs adapter — satisfies both OrchestratorFs and AutosaveFs.
+    const nodeFs = {
+      exists: (p: string) => fs.existsSync(p),
+      readFile: (p: string) => fs.readFileSync(p, 'utf8'),
+      writeFile: (p: string, t: string) => fs.writeFileSync(p, t, 'utf8'),
+      mkdirp: (d: string) => { fs.mkdirSync(d, { recursive: true }) },
+      copyFile: (s: string, d: string) => fs.copyFileSync(s, d),
+      readdir: (d: string) => fs.readdirSync(d) as string[],
+      rm: (p: string) => { fs.rmSync(p, { force: true }) },
+    }
+
+    // Napi facade for workspace bookkeeping — delegates to the Backend instance.
+    const napiFacade = {
+      commitWorkspace: (p: string) => backend!.commitWorkspace(p),
+      pushRecent: (p: string, n: string) => backend!.pushRecent(p, n),
+      setLastNewProjectParent: (p: string) => backend!.setLastNewProjectParent(p),
+      enqueueJobsForMedia: (j: string) => backend!.enqueueJobsForMedia(j),
+    }
+
+    // Workspace dir cache — seeded once at boot; refreshed after each persistence call
+    // (the orchestrator calls commitWorkspace itself before replaceState, so by the time
+    // open/saveAs/newWorkspace resolves wsCache must reflect the NEW workspace so that
+    // buildProjectSummary's fileExists + autosave see the right dir).
+    let wsCache: string | null = null
+    try {
+      wsCache = JSON.parse(await backend!.invoke('workspace_dir', '{}')) as string | null
+    } catch { /* no workspace at cold boot */ }
+
+    // Wrap napiFacade.commitWorkspace to also refresh wsCache as a side effect —
+    // the orchestrator calls it before replaceState, so by the time any post-open
+    // handler runs, wsCache already holds the new path.
+    const napiFacadeWithCache = {
+      ...napiFacade,
+      commitWorkspace: async (p: string) => {
+        await napiFacade.commitWorkspace(p)
+        wsCache = p
+      },
+    }
+
     tsHost = createTsActorHost({
       send: (event, payload) => mainWindow?.webContents.send('evt:' + event, payload),
       mcpNotify: (payload) => mcpHostRef?.notifyChange(payload),
       fileExists: (p) => fs.existsSync(p),
-      // persistence injected in Task 5
+      fs: nodeFs,
+      join: path.join,
+      napi: napiFacadeWithCache,
+      workspaceDir: () => wsCache,
     })
     tsHost.start()
+    // Tell the jobs subsystem the TS actor is now authoritative for derivative write-back.
+    backend!.setTsDerivativeAuthority(true)
     console.log('[main] WEFTCUT_TS_ACTOR on — TS state actor authoritative')
   }
 
