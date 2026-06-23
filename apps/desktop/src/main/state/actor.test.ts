@@ -4,7 +4,6 @@ import { seededGen } from './ids'
 import { blankProject } from './model'
 import type { Project } from './model'
 import { colorParams } from './mutations/add'
-import { videoClipParams } from './mutations/media'
 import { createActor } from './actor'
 
 function fresh() {
