@@ -12,6 +12,7 @@ import type { IdGen } from './ids'
 import type { Project } from './model'
 import { blankProject } from './model'
 import { loadProjectFromJson, serializeProjectToJson, PROJECT_FILE } from './persistence'
+import { serializeProject } from './serialize'
 
 /** The Rust-native workspace bookkeeping, exposed over napi (Backend methods
  *  commit_workspace / push_recent / set_last_new_project_parent). */
@@ -22,6 +23,11 @@ export interface WorkspaceNapi {
   pushRecent(path: string, displayName: string): Promise<void> | void
   /** recents.set_last_new_project_parent — new-workspace flow only. */
   setLastNewProjectParent(parent: string): Promise<void> | void
+  /** jobs::enqueue_for_media per media item (open-time derivative re-fan-out +
+   *  stale-proxy invalidation). Built in 3c-ii-c; injected as enqueueDerivatives
+   *  by the 3c-ii-d flip. mediaItemsJson = JSON array of serialized MediaItem.
+   *  Async napi binding → Promise; the factory fire-and-forgets it. */
+  enqueueJobsForMedia(mediaItemsJson: string): Promise<void> | void
 }
 
 /** Filesystem shell, injected so the orchestrator stays unit-testable. */
@@ -87,6 +93,17 @@ export async function saveProjectAs(deps: OrchestratorDeps, dir: string): Promis
 export interface NewWorkspaceArgs {
   parentFolder: string; name: string
   width: number; height: number; fpsNum: number; fpsDen: number
+}
+
+/** Build the `enqueueDerivatives` seam from the napi facade: serialize the
+ *  project's media-pool values and hand them to the Rust open-time job re-fan-out
+ *  (workspace-orchestrator's `enqueueDerivatives?` hook). Fire-and-forget (the
+ *  Rust enqueue returns immediately; jobs run on tokio). 3c-ii-d injects this into
+ *  the live OrchestratorDeps. Dormant in 3c-ii-c. */
+export function makeEnqueueDerivatives(
+  napi: Pick<WorkspaceNapi, 'enqueueJobsForMedia'>,
+): (project: Project) => void {
+  return (project) => { void napi.enqueueJobsForMedia(JSON.stringify(Object.values((serializeProject(project) as { media_pool: Record<string, unknown> }).media_pool))) }
 }
 
 /** project_new_workspace (persistence.rs:116-171). Validate → blank project with

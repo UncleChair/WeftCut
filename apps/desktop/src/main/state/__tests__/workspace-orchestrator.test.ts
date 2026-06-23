@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { openProject, saveProjectAs, newWorkspace, type OrchestratorDeps, type OrchestratorFs, type WorkspaceNapi } from '../workspace-orchestrator'
+import { openProject, saveProjectAs, newWorkspace, makeEnqueueDerivatives, type OrchestratorDeps, type OrchestratorFs, type WorkspaceNapi } from '../workspace-orchestrator'
 import { serializeProjectToJson, PROJECT_FILE } from '../persistence'
 import { canonicalize } from '../canonical'
 import { serializeProject } from '../serialize'
@@ -29,6 +29,7 @@ function deps(over: Partial<OrchestratorDeps> = {}): OrchestratorDeps & { calls:
     commitWorkspace: vi.fn(async (p) => { calls.push(`commit:${p}`) }),
     pushRecent: vi.fn((p, n) => { calls.push(`recent:${p}:${n}`) }),
     setLastNewProjectParent: vi.fn((p) => { calls.push(`parent:${p}`) }),
+    enqueueJobsForMedia: vi.fn((_json) => {}),
   }
   const actor = {
     replaceState: vi.fn((_p: unknown) => { calls.push('replaceState') }),
@@ -118,6 +119,25 @@ describe('newWorkspace', () => {
     const written = JSON.parse((d.fs as any).files.get(`/parent/Fresh/${PROJECT_FILE}`))
     expect(written.composition).toMatchObject({ width: 1280, height: 720, fps: { num: 24, den: 1 } })
     expect(d.calls).toEqual(['commit:/parent/Fresh', 'replaceState', 'recent:/parent/Fresh:Fresh', 'parent:/parent'])
+  })
+})
+
+describe('makeEnqueueDerivatives', () => {
+  it('serializes the media pool values and calls the napi once', () => {
+    const calls: string[] = []
+    const enqueue = makeEnqueueDerivatives({ enqueueJobsForMedia: (json) => { calls.push(json) } })
+    const project = blankProject(seededGen(), 'D') // empty pool → "[]"
+    enqueue(project)
+    expect(calls).toHaveLength(1)
+    expect(JSON.parse(calls[0])).toEqual([])
+  })
+
+  it('openProject runs the injected enqueueDerivatives after replaceState', async () => {
+    const fs = memFs({ [`/ws/${PROJECT_FILE}`]: serializeProjectToJson(blankProject(seededGen(), 'Demo')) }); fs.dirs.add('/ws')
+    const seen: unknown[] = []
+    const d = deps({ fs, enqueueDerivatives: (p) => seen.push(p) })
+    await openProject(d, '/ws')
+    expect(seen).toHaveLength(1)
   })
 })
 

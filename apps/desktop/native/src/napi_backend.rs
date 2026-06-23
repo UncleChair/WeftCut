@@ -283,6 +283,41 @@ impl Backend {
         self.recents.push(std::path::PathBuf::from(path), display_name);
     }
 
+    /// Re-fan-out background derivative jobs for a media list (open-time
+    /// regeneration of proxies / thumbnails / waveforms) — the TS-orchestrated
+    /// analogue of `commands::persistence::project_open`'s post-load enqueue loop
+    /// (persistence.rs:92-105). First invalidates stale-format proxies (the
+    /// `load_from_dir` `invalidate_stale_proxies` pass, io/mod.rs:151): a proxy
+    /// whose `proxy_format_version` predates the encoder's current version is
+    /// cleared (through the derivative write-back seam, so the authoritative
+    /// engine's pool drops it) and its cached file best-effort deleted, so the
+    /// enqueue below doesn't see a stale file as "ready". `media_items_json` is a
+    /// JSON array of serialized `MediaItem` (the TS actor's pool values).
+    #[napi]
+    #[cfg(feature = "jobs")]
+    pub async fn enqueue_jobs_for_media(&self, media_items_json: String) -> napi::Result<()> {
+        use crate::jobs::proxy::PROXY_FORMAT_VERSION;
+        let items: Vec<crate::state::MediaItem> = serde_json::from_str(&media_items_json)
+            .map_err(|e| Error::from_reason(format!("parse media list: {e}")))?;
+        let handle = self.project().map_err(Error::from_reason)?;
+        for mut item in items {
+            let stale = item.proxy_path.is_some() && item.proxy_format_version < PROXY_FORMAT_VERSION;
+            if stale {
+                if let Some(path) = item.proxy_path.take() {
+                    let _ = std::fs::remove_file(&path); // best-effort; logged-only in prod
+                }
+                // Clear the stale proxy through the same seam as job completion, so
+                // the authoritative engine's pool drops it (TS mode emits the event;
+                // Rust mode writes the actor). We're in an async napi → tokio runtime
+                // is present, so `.await` directly. `item` carries the cleared copy on.
+                let patch = crate::state::MediaDerivativesPatch { proxy_path: Some(None), ..Default::default() };
+                let _ = crate::jobs::commit_media_derivatives(&self.events, handle, item.id, patch).await;
+            }
+            crate::jobs::enqueue_for_media(self.events.clone(), self.cache.clone(), handle.clone(), item);
+        }
+        Ok(())
+    }
+
     /// `recents.set_last_new_project_parent` — only the new-workspace flow, so the
     /// next "+ New project" form opens pre-filled at the same parent. Best-effort.
     #[napi]
@@ -1305,5 +1340,42 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Phase 3c-ii-c: `enqueue_jobs_for_media` must emit a `media:derivatives`
+    /// clearing event for any item whose `proxy_format_version` is below the
+    /// current encoder version — the stale-proxy invalidation seam.
+    #[cfg(feature = "jobs")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn enqueue_jobs_for_media_invalidates_stale_proxy() {
+        use std::sync::Arc;
+        let sink = Arc::new(crate::events::VecEventSink::new());
+        let backend = Backend::new_for_test(sink.clone());
+        // Install a project handle so self.project() succeeds (new_for_test does
+        // NOT call init(); set the private field directly from inside the test mod).
+        backend.project.set(crate::state::spawn(crate::state::Project::new_blank("t"))).ok();
+        crate::jobs::set_ts_derivative_authority(true);
+
+        // A media item with proxy at format version 0 — stale vs PROXY_FORMAT_VERSION (7).
+        let item = serde_json::json!({
+            "id": uuid::Uuid::now_v7().to_string(), "label": null,
+            "path_abs": "/x/clip.mp4", "path_rel": null, "kind": "Video",
+            "metadata": {}, "proxy_path": "/x/stale.mp4", "proxy_format_version": 0,
+            "quick_proxy_path": null, "proxy_bypassed": false, "export_uses_original": false,
+            "waveform_path": null, "conform_path": null, "thumbnails_dir": null,
+            "file_hash_blake3": "h", "file_size": 0, "file_mtime": 0,
+            "imported_at": "2026-01-01T00:00:00Z"
+        });
+        backend
+            .enqueue_jobs_for_media(serde_json::to_string(&serde_json::json!([item])).unwrap())
+            .await
+            .unwrap(); // commit_media_derivatives is awaited inline — no sleep needed
+        crate::jobs::set_ts_derivative_authority(false); // reset the global for other tests
+
+        let names = sink.names();
+        assert!(
+            names.iter().any(|n| n == "media:derivatives"),
+            "stale proxy must emit a clearing event; saw {names:?}"
+        );
     }
 }
