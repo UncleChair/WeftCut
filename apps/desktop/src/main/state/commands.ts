@@ -35,7 +35,7 @@
 //             DEFERRED: corpus mediaItemTemplate sets audio:null so the predicate
 //             is false for all corpus seqs; implement when a corpus item carries
 //             audio metadata. When implemented: single commit containing
-//             video-layer-add, audio-layer-add (role=Dialogue), groups_create
+//             video-layer-add, audio-layer-add (role=dialogue), groups_create
 //             in that id-allocation order.
 //
 // add_demo_color_layer (mutations.rs:185-214):

@@ -1,0 +1,6 @@
+{ "name": "add-color-no-track-creates-overlay", "commands": [
+  { "op": "add_track", "ref": "T1" },
+  { "op": "add_color_layer", "trackId": "@T1", "tStartUs": 0 },
+  { "op": "add_color_layer", "tStartUs": 0, "ref": "L1" },
+  { "op": "add_track" }
+] }

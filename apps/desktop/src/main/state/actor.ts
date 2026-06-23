@@ -421,14 +421,15 @@ export function createActor(opts: ActorOptions): ActorHandle {
               applyAddLayer(d, idGen, trackId, params, t0, t1))
             return { ok: true, value: id }
           }
-          // No free track — create "Overlay" then add layer inside a single commit.
-          // Mirrors the Rust two-step (add_track then add_layer), but TS commit is
-          // synchronous so we must create the track and add the layer in one draft.
+          // No free track — create "Overlay" in its OWN commit (matching Rust's
+          // resolve_overlay_track which calls handle.add_track — a SEPARATE committed
+          // op with its own op_id), THEN add the layer in a second commit. Two op_ids,
+          // matching mutations.rs:254-267 + add_color_layer_impl:362-388.
+          const newTrackId = commit('Added track', [], { kind: 'Coarse' }, (d) =>
+            applyAddTrack(d, idGen, 'Overlay'))
           const params = prodColorParams(wireArgs, current().composition)
-          const id = commit('Added layer', [], { kind: 'Coarse' }, (d) => {
-            const newTrackId = applyAddTrack(d, idGen, 'Overlay')
-            return applyAddLayer(d, idGen, newTrackId, params, t0, t1)
-          })
+          const id = commit('Added layer', [], { kind: 'Coarse' }, (d) =>
+            applyAddLayer(d, idGen, newTrackId, params, t0, t1))
           return { ok: true, value: id }
         }
         case 'add_text_layer': {
@@ -443,10 +444,11 @@ export function createActor(opts: ActorOptions): ActorHandle {
               applyAddLayer(d, idGen, trackId, params, t0, t1))
             return { ok: true, value: id }
           }
-          const id = commit('Added layer', [], { kind: 'Coarse' }, (d) => {
-            const newTrackId = applyAddTrack(d, idGen, 'Overlay')
-            return applyAddLayer(d, idGen, newTrackId, params, t0, t1)
-          })
+          // No free track — same two-commit pattern as add_color_layer above.
+          const newTrackId = commit('Added track', [], { kind: 'Coarse' }, (d) =>
+            applyAddTrack(d, idGen, 'Overlay'))
+          const id = commit('Added layer', [], { kind: 'Coarse' }, (d) =>
+            applyAddLayer(d, idGen, newTrackId, params, t0, t1))
           return { ok: true, value: id }
         }
         case 'add_media_layer': {
