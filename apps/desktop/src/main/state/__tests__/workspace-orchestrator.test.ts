@@ -59,6 +59,14 @@ describe('openProject', () => {
     expect(d.actor.replaceState).toHaveBeenCalledOnce()
   })
 
+  it('does not push recent and propagates the error when replaceState throws', async () => {
+    const fs = memFs({ [`/ws/${PROJECT_FILE}`]: projectJson }); fs.dirs.add('/ws')
+    const d = deps({ fs })
+    d.actor.replaceState = vi.fn(() => { throw new Error('ValidationFailed') })
+    await expect(openProject(d, '/ws')).rejects.toThrow('ValidationFailed')
+    expect(d.napi.pushRecent).not.toHaveBeenCalled()
+  })
+
   it('deletes stale quick proxies returned by the loader', async () => {
     const quickProxyPath = '/ws/Cache/quick/m1.mp4'
     const item: MediaItem = {

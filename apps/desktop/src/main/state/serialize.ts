@@ -35,7 +35,7 @@ export function parseProject(json: unknown): Project {
   const requireString = (k: string) => {
     if (typeof o[k] !== 'string') throw new Error(`parseProject: ${k} must be a string`)
   }
-  // Top-level shape of Project (model.ts:98-101). Shallow presence/kind only.
+  // Top-level shape of Project (model.ts:98-102). Shallow presence/kind only.
   requireString('project_id')
   requireObject('metadata')
   requireObject('composition')
