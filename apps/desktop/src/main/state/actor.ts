@@ -27,7 +27,7 @@ import { videoClipParams, audioParams, imageOverlayParams, applySeparateAudio, m
 import type { MediaItem } from './model'
 import { applyUpdateLayerParams, applyUpdateLayerParamTrack, type LayerParamsPatch } from './mutations/params'
 import { applyAddCaptionTrack, applyRestyleCaptionTrack, type Cue, type CaptionStylePatch } from './mutations/captions'
-import { parseMechanical } from './commands'
+import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, pickFreeOverlayTrack, demoColor } from './commands'
 
 setAutoFreeze(true) // snapshots are frozen — accidental mutation throws.
 
@@ -402,12 +402,138 @@ export function createActor(opts: ActorOptions): ActorHandle {
   // ── production command adapter (actor.command) ──
   // Routes the renderer's real category-A channels (camelCase wire args) into
   // the gated mutation core. Mechanical channels delegate to dispatch() after
-  // arg parsing; rich channels (add_*_layer) are added in Task 3.
+  // arg parsing; rich channels are handled inline below.
   function command(channel: string, wireArgs: Record<string, unknown>): DispatchResult {
     const mech = parseMechanical(channel, wireArgs)
     if (mech) return dispatch(mech.op, mech.args)
-    // Rich channels (add_*_layer, demo) handled in Task 3; meta in Task 4.
-    return { ok: false, error: { error: 'InvalidArgument', field: 'op', detail: `unsupported production op ${channel}` } }
+    try {
+      switch (channel) {
+        case 'add_color_layer': {
+          // add_color_layer_impl (mutations.rs:362-388): resolve overlay track when
+          // trackId absent (reverse-scan non-reserved; create "Overlay" if none free).
+          const t0 = wireArgs.tStartUs as number
+          const dur = resolveDurationUs(wireArgs.durationUs as number | undefined)
+          const t1 = t0 + dur
+          const trackId = (wireArgs.trackId as string | undefined) ?? pickFreeOverlayTrack(current(), t0, t1)
+          if (trackId !== null) {
+            const params = prodColorParams(wireArgs, current().composition)
+            const id = commit('Added layer', [], { kind: 'Coarse' }, (d) =>
+              applyAddLayer(d, idGen, trackId, params, t0, t1))
+            return { ok: true, value: id }
+          }
+          // No free track — create "Overlay" then add layer inside a single commit.
+          // Mirrors the Rust two-step (add_track then add_layer), but TS commit is
+          // synchronous so we must create the track and add the layer in one draft.
+          const params = prodColorParams(wireArgs, current().composition)
+          const id = commit('Added layer', [], { kind: 'Coarse' }, (d) => {
+            const newTrackId = applyAddTrack(d, idGen, 'Overlay')
+            return applyAddLayer(d, idGen, newTrackId, params, t0, t1)
+          })
+          return { ok: true, value: id }
+        }
+        case 'add_text_layer': {
+          // add_text_layer_impl (mutations.rs:269-305): same overlay-track logic.
+          const t0 = wireArgs.tStartUs as number
+          const dur = resolveDurationUs(wireArgs.durationUs as number | undefined)
+          const t1 = t0 + dur
+          const trackId = (wireArgs.trackId as string | undefined) ?? pickFreeOverlayTrack(current(), t0, t1)
+          const params = prodTextParams(wireArgs)
+          if (trackId !== null) {
+            const id = commit('Added layer', [], { kind: 'Coarse' }, (d) =>
+              applyAddLayer(d, idGen, trackId, params, t0, t1))
+            return { ok: true, value: id }
+          }
+          const id = commit('Added layer', [], { kind: 'Coarse' }, (d) => {
+            const newTrackId = applyAddTrack(d, idGen, 'Overlay')
+            return applyAddLayer(d, idGen, newTrackId, params, t0, t1)
+          })
+          return { ok: true, value: id }
+        }
+        case 'add_media_layer': {
+          // add_media_layer (mutations.rs:73-183): track_id required, kind-matched
+          // params, auto-pair deferred (corpus audio metadata is null).
+          const trackId = wireArgs.trackId as string
+          const t0 = wireArgs.tStartUs as number
+          const { params, durationUs } = prodMediaLayer(wireArgs, current())
+          const t1 = t0 + durationUs
+          const id = commit('Added layer', [], { kind: 'Coarse' }, (d) =>
+            applyAddLayer(d, idGen, trackId, params, t0, t1))
+          return { ok: true, value: id }
+        }
+        case 'add_demo_color_layer': {
+          // add_demo_color_layer (mutations.rs:185-214):
+          //   track=tracks.front() (create "Track" if empty),
+          //   t_start=track.last_layer.t_end ?? 0, duration=2s,
+          //   color=demo_color(track.layers.len()), w/h=composition size.
+          const snap = current()
+          const firstTrack = snap.tracks[0]
+          if (firstTrack) {
+            const t0 = firstTrack.layers.at(-1)?.t_end_us ?? 0
+            const t1 = t0 + 2_000_000
+            const params = prodColorParams(
+              { color: demoColor(firstTrack.layers.length) },
+              snap.composition,
+            )
+            const id = commit('Added layer', [], { kind: 'Coarse' }, (d) =>
+              applyAddLayer(d, idGen, firstTrack.id, params, t0, t1))
+            return { ok: true, value: id }
+          }
+          // No tracks at all — create "Track" then add layer inside one commit.
+          const id = commit('Added layer', [], { kind: 'Coarse' }, (d) => {
+            const newTrackId = applyAddTrack(d, idGen, 'Track')
+            const t0 = 0
+            const t1 = 2_000_000
+            const params = prodColorParams({ color: demoColor(0) }, d.composition)
+            return applyAddLayer(d, idGen, newTrackId, params, t0, t1)
+          })
+          return { ok: true, value: id }
+        }
+        case 'add_demo_text_layer': {
+          // add_demo_text_layer (mutations.rs:318-360):
+          //   track=tracks.last() (create "Overlay" if empty),
+          //   t_start=track.last_layer.t_end ?? 0, duration=3s,
+          //   content="TEXT", Arial 96 weight:700.
+          const snap = current()
+          const lastTrack = snap.tracks.at(-1)
+          if (lastTrack) {
+            const t0 = lastTrack.layers.at(-1)?.t_end_us ?? 0
+            const t1 = t0 + 3_000_000
+            const params: LayerParams = {
+              kind: 'Text', content: 'TEXT',
+              font: { family: 'Arial', size_px: 96, weight: 700, italic: false },
+              color: { mode: 'Static', value: { r: 255, g: 255, b: 255, a: 255 } },
+              align: 'Center', transform: { x: { mode: 'Static', value: 0 }, y: { mode: 'Static', value: 0 }, scale_x: { mode: 'Static', value: 1 }, scale_y: { mode: 'Static', value: 1 }, rotation_deg: { mode: 'Static', value: 0 }, anchor: [0.5, 0.5] },
+              opacity: { mode: 'Static', value: 1 },
+              shadow: null, outline: null, intro: null, outro: null,
+              backend_hint: 'DrawText',
+            }
+            const id = commit('Added layer', [], { kind: 'Coarse' }, (d) =>
+              applyAddLayer(d, idGen, lastTrack.id, params, t0, t1))
+            return { ok: true, value: id }
+          }
+          const id = commit('Added layer', [], { kind: 'Coarse' }, (d) => {
+            const newTrackId = applyAddTrack(d, idGen, 'Overlay')
+            const params: LayerParams = {
+              kind: 'Text', content: 'TEXT',
+              font: { family: 'Arial', size_px: 96, weight: 700, italic: false },
+              color: { mode: 'Static', value: { r: 255, g: 255, b: 255, a: 255 } },
+              align: 'Center', transform: { x: { mode: 'Static', value: 0 }, y: { mode: 'Static', value: 0 }, scale_x: { mode: 'Static', value: 1 }, scale_y: { mode: 'Static', value: 1 }, rotation_deg: { mode: 'Static', value: 0 }, anchor: [0.5, 0.5] },
+              opacity: { mode: 'Static', value: 1 },
+              shadow: null, outline: null, intro: null, outro: null,
+              backend_hint: 'DrawText',
+            }
+            return applyAddLayer(d, idGen, newTrackId, params, 0, 3_000_000)
+          })
+          return { ok: true, value: id }
+        }
+        default:
+          // (meta channels added in Task 4)
+          return { ok: false, error: { error: 'InvalidArgument', field: 'op', detail: `unsupported production op ${channel}` } }
+      }
+    } catch (e) {
+      if (e instanceof CommandFailure) return { ok: false, error: e.err }
+      throw e
+    }
   }
 
   return {

@@ -1,0 +1,4 @@
+{ "name": "update-layer-on-prod-color", "commands": [
+  { "op": "add_color_layer", "trackId": "@A", "tStartUs": 0, "ref": "L1" },
+  { "op": "update_layer", "layerId": "@L1", "patch": { "label": "bg" } }
+] }

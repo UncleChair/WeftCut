@@ -1,0 +1,3 @@
+{ "name": "add-demo-color", "commands": [
+  { "op": "add_demo_color_layer", "ref": "L1" }
+] }

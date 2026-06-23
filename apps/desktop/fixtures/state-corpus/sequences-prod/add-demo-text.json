@@ -1,0 +1,3 @@
+{ "name": "add-demo-text", "commands": [
+  { "op": "add_demo_text_layer", "ref": "L1" }
+] }

@@ -1,0 +1,4 @@
+{ "name": "add-media-audio", "commands": [
+  { "op": "add_media", "id": "00000000-0000-0000-0000-0000000000bb", "kind": "Audio", "duration_us": 4000000 },
+  { "op": "add_media_layer", "trackId": "@A", "mediaId": "00000000-0000-0000-0000-0000000000bb", "tStartUs": 0, "ref": "L1" }
+] }

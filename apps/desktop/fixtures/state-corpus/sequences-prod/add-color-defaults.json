@@ -1,0 +1,3 @@
+{ "name": "add-color-defaults", "commands": [
+  { "op": "add_color_layer", "trackId": "@A", "tStartUs": 0 }
+] }
