@@ -314,3 +314,31 @@ carries an injected `enqueueDerivatives` no-op seam until that slice fills it.
 New napi methods `commit_workspace`/`push_recent`/`set_last_new_project_parent` are
 wired on the Rust side but dormant in the live `backend:invoke` path until the
 3c-ii-d authority flip.
+
+### autosave, jobs write-back, and open-time re-fan-out (Phase 3c-ii-c)
+
+Phase 3c-ii-c ports three behavioral seams into `src/main/state/`: autosave
+(`autosave.ts`), the jobs derivative write-back (`media:derivatives` event →
+`jobs-writeback.ts`), and the open-time derivative re-fan-out
+(`Backend::enqueue_jobs_for_media` + orchestrator `makeEnqueueDerivatives`).
+All three are unit-tested (vitest) and the two Rust-side seams are `cargo`-tested.
+**No corpus dimension** — these are behavioral (I/O, event routing, job dispatch),
+not state-evolution paths.
+
+**S1 — internal authority toggle:** `TS_DERIVATIVE_AUTHORITY` is an `AtomicBool`
+in `jobs/mod.rs`, flipped only by tests in this slice. It is NOT the
+`WEFTCUT_TS_ACTOR` launch flag — that wiring lands in 3c-ii-d at `Backend::init`.
+
+**S2 — gated dispatch arm:** the TS `jobs-writeback` handler reuses the existing
+`set_media_derivatives` dispatch arm; it calls through only when the authority
+toggle is set, keeping the Rust path live in production until the flag flip.
+
+**S3 — open re-fan-out folds here:** the open-time stale-proxy invalidation
+(deferred from 3c-ii-b S2) is implemented via `makeEnqueueDerivatives` injected
+into `openProject`; it reuses the write-back seam so the Rust `enqueue_jobs_for_media`
+call drives the same `set_media_derivatives` path as a live `media:derivatives` event.
+
+**3c-ii-d carry-forwards:** the live `onEvent`/`project_save`/`enqueueDerivatives`
+wiring; the authority-toggle → `WEFTCUT_TS_ACTOR` flag connection at `Backend::init`;
+jobs-driven actor attribution (distinguishing Agent vs the TS actor's default actor);
+and `fresh_media_item`'s stale Rust-actor read (Phase-4 cleanup).
