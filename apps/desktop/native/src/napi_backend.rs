@@ -326,6 +326,17 @@ impl Backend {
             .set_last_new_project_parent(std::path::PathBuf::from(parent));
     }
 
+    /// Tell the jobs subsystem the TS state actor is authoritative for derivative
+    /// write-back: when on, a completed job emits `media:derivatives` (applied to
+    /// the TS actor by Electron main) instead of writing the Rust actor. Electron
+    /// main sets this from the `WEFTCUT_TS_ACTOR` launch flag at boot. Jobs-gated —
+    /// the authority flag lives in the jobs module.
+    #[napi]
+    #[cfg(feature = "jobs")]
+    pub fn set_ts_derivative_authority(&self, on: bool) {
+        crate::jobs::set_ts_derivative_authority(on);
+    }
+
     /// Stream one raw encoded frame to the active 10-bit video sink over native
     /// IPC (PoC: the Electron-native alternative to the loopback WebSocket).
     /// Binary in, no JSON — bypasses the `invoke` dispatcher.
