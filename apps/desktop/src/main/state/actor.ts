@@ -481,6 +481,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
             return { ok: true, value: id }
           }
           // No tracks at all — create "Track" then add layer inside one commit.
+          // Unreachable in prod (reserved A/B-roll tracks are non-removable, so tracks is never empty); single-commit is fine. Do NOT mirror this onto the reachable no-trackId overlay path — that one matches Rust's two-commit resolve_overlay_track.
           const id = commit('Added layer', [], { kind: 'Coarse' }, (d) => {
             const newTrackId = applyAddTrack(d, idGen, 'Track')
             const t0 = 0
@@ -513,6 +514,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
               applyAddLayer(d, idGen, lastTrack.id, params, t0, t1))
             return { ok: true, value: id }
           }
+          // Unreachable in prod (reserved A/B-roll tracks are non-removable, so tracks is never empty); single-commit is fine. Do NOT mirror this onto the reachable no-trackId overlay path — that one matches Rust's two-commit resolve_overlay_track.
           const id = commit('Added layer', [], { kind: 'Coarse' }, (d) => {
             const newTrackId = applyAddTrack(d, idGen, 'Overlay')
             const params: LayerParams = {

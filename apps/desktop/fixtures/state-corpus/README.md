@@ -247,7 +247,7 @@ of `actor.dispatch` (the internal mutation core). The gate is
 | `groups_add_members`, `groups_remove_members`, `groups_rename` | Group membership mutation channels are not exposed on the renderer production surface in the current UI. |
 | `add_transition`, `remove_transition` | Transition channels are not exposed on the renderer production surface in the current UI. |
 | `add_caption_track` | No TS caption-track infra; caption channels require a dedicated adapter slice. |
-| `project_restore_checkpoint` | MCP-only — not in the production dispatch; no TS checkpoint infra. |
+| `project_restore_checkpoint` | No category-A renderer channel creates a checkpoint, so the restore precondition is unreachable from the renderer surface; `restore_checkpoint` is not yet on the TS actor's `command`/`dispatch` surface. Deferred to 3d. |
 
 **Partially deferred within in-scope channels:**
 
