@@ -577,7 +577,7 @@ describe('media-pool mutations dispatch (Phase 3c-i)', () => {
   })
   it('remove_media: MediaInUse when referenced and !force; lists the layer', () => {
     const a = actorWithMedia()
-    const lid = a.dispatch('add_layer', { track: a.snapshot().tracks[0].id, kind: 'video', media: MID, src_in_us: 0, src_out_us: 4_000_000, t_start_us: 0, t_end_us: 4_000_000 }).value as string
+    const lid = (a.dispatch('add_layer', { track: a.snapshot().tracks[0].id, kind: 'video', media: MID, src_in_us: 0, src_out_us: 4_000_000, t_start_us: 0, t_end_us: 4_000_000 }) as { ok: true; value: unknown }).value as string
     const r = a.dispatch('remove_media', { media: MID, force: false })
     expect(!r.ok && r.error.error).toBe('MediaInUse')
     expect(!r.ok && r.error.error === 'MediaInUse' && r.error.referenced_by).toEqual([lid])
