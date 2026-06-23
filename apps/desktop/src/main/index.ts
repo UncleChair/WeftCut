@@ -198,6 +198,12 @@ app.whenReady().then(async () => {
   if (tsActorOn) {
     const { createTsActorHost } = await import('./state/ts-actor-host.js')
 
+    // The TS actor snaps frame edges via the wasm eval leaf (snap.ts → renderer/eval).
+    // Main MUST initialize it once at boot before the actor handles any command
+    // (snap.ts contract) — the Rust actor used the native leaf, so this is flip-only.
+    const { initEval } = await import('./state/snap.js')
+    await initEval()
+
     // Node fs adapter — satisfies both OrchestratorFs and AutosaveFs.
     const nodeFs = {
       exists: (p: string) => fs.existsSync(p),
