@@ -1,0 +1,5 @@
+{ "name": "update-layer-params", "commands": [
+  { "op": "add_color_layer", "trackId": "@A", "tStartUs": 0, "durationUs": 2000000, "ref": "L1" },
+  { "op": "update_layer_params", "layerId": "@L1", "patch": { "kind": "Color", "color": { "r": 0, "g": 255, "b": 0, "a": 255 } } },
+  { "op": "add_track" }
+] }

@@ -1,0 +1,4 @@
+{ "name": "update-project-settings", "commands": [
+  { "op": "update_project_settings", "patch": { "auto_delete_empty_tracks": false } },
+  { "op": "add_track" }
+] }

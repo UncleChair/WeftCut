@@ -1,0 +1,7 @@
+{ "name": "move-effect", "commands": [
+  { "op": "add_color_layer", "trackId": "@A", "tStartUs": 0, "durationUs": 2000000, "ref": "L1" },
+  { "op": "add_effect", "layerId": "@L1", "kind": "Blur", "ref": "E1" },
+  { "op": "add_effect", "layerId": "@L1", "kind": "Blur", "ref": "E2" },
+  { "op": "move_effect", "layerId": "@L1", "effectId": "@E1", "newIndex": 1 },
+  { "op": "add_track" }
+] }

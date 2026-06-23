@@ -1,0 +1,4 @@
+{ "name": "update-role-flags", "commands": [
+  { "op": "update_role_flags", "role": "dialogue", "patch": { "muted": true } },
+  { "op": "add_track" }
+] }

@@ -1,0 +1,5 @@
+{ "name": "trim-layer", "commands": [
+  { "op": "add_color_layer", "trackId": "@A", "tStartUs": 0, "durationUs": 4000000, "ref": "L1" },
+  { "op": "trim_layer", "layerId": "@L1", "edge": "out", "newTUs": 2000000 },
+  { "op": "add_track" }
+] }

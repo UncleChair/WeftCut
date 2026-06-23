@@ -1,0 +1,6 @@
+{ "name": "separate-audio-to-new-track", "commands": [
+  { "op": "add_media", "id": "00000000-0000-0000-0000-000000000010", "kind": "Audio", "duration_us": 4000000, "ref": "M1" },
+  { "op": "add_media_layer", "trackId": "@A", "mediaId": "@M1", "tStartUs": 0, "ref": "L1" },
+  { "op": "separate_audio_to_new_track", "layerId": "@L1", "ref": "T1" },
+  { "op": "add_track" }
+] }

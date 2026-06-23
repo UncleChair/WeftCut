@@ -166,7 +166,32 @@ export function pickFreeOverlayTrack(project: Project, t0: number, t1: number): 
 const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; args: Record<string, unknown> }> = {
   add_track: () => ({ op: 'add_track', args: { label: 'Track' } }),
   update_layer: (a) => ({ op: 'update_layer', args: { layer: a.layerId, patch: a.patch } }),
-  // (more added in Task 4)
+  // Task 4: remaining mechanical + meta channels
+  move_layer: (a) => ({ op: 'move_layer', args: { layer: a.layerId, to_track: a.newTrackId, t_start_us: a.newTStartUs, escape_group: a.escapeGroup ?? false } }),
+  trim_layer: (a) => ({ op: 'trim_layer', args: { layer: a.layerId, edge: a.edge, new_t_us: a.newTUs, escape_group: a.escapeGroup ?? false } }),
+  delete_layer: (a) => ({ op: 'delete_layer', args: { layer: a.layerId } }),
+  duplicate_layer: (a) => ({ op: 'duplicate_layer', args: { layer: a.layerId, t_offset_us: a.tOffsetUs } }),
+  split_layer_grouped: (a) => ({ op: 'split_layer', args: { layer: a.layerId, at_t_us: a.atTUs, escape_group: a.escapeGroup ?? false } }),
+  groups_create: (a) => ({ op: 'groups_create', args: { layers: a.layerIds, label: a.label ?? null, reassign: a.reassign ?? false } }),
+  groups_dissolve: (a) => ({ op: 'groups_dissolve', args: { group: a.groupId } }),
+  update_layer_params: (a) => ({ op: 'update_layer_params', args: { layer: a.layerId, patch: a.patch } }),
+  update_layer_param_track: (a) => ({ op: 'update_layer_param_track', args: { layer: a.layerId, param_key: a.paramKey, track: a.track } }),
+  update_layer_param_tracks: (a) => ({ op: 'update_layer_param_tracks', args: { layer: a.layerId, entries: a.entries } }),
+  add_effect: (a) => ({ op: 'add_effect', args: { layer: a.layerId, kind: a.kind } }),
+  update_effect: (a) => ({ op: 'update_effect', args: { layer: a.layerId, effect: a.effectId, patch: a.patch } }),
+  move_effect: (a) => ({ op: 'move_effect', args: { layer: a.layerId, effect: a.effectId, new_index: a.newIndex } }),
+  remove_effect: (a) => ({ op: 'remove_effect', args: { layer: a.layerId, effect: a.effectId } }),
+  // set_composition: renderer sends { patch: {...} }; dispatch receives the patch directly as its args.
+  set_composition: (a) => ({ op: 'set_composition', args: a.patch as Record<string, unknown> }),
+  fit_composition_to_layers: () => ({ op: 'fit_composition_to_layers', args: {} }),
+  update_track_flags: (a) => ({ op: 'update_track_flags', args: { track: a.trackId, patch: a.patch } }),
+  set_role_gain: (a) => ({ op: 'set_role_gain', args: { role: a.role, gain_db: a.gainDb } }),
+  update_role_flags: (a) => ({ op: 'update_role_flags', args: { role: a.role, patch: a.patch } }),
+  separate_audio_to_new_track: (a) => ({ op: 'separate_audio', args: { layer: a.layerId } }),
+  restyle_caption_track: (a) => ({ op: 'restyle_caption_track', args: { track: a.trackId, patch: a.patch } }),
+  update_project_settings: (a) => ({ op: 'update_project_settings', args: { patch: a.patch } }),
+  project_undo: () => ({ op: 'undo', args: {} }),
+  project_redo: () => ({ op: 'redo', args: {} }),
 }
 
 /** All production channels this adapter handles (mechanical + rich + meta). */
@@ -174,6 +199,15 @@ export const PRODUCTION_OPS = new Set<string>([
   'add_track', 'update_layer',
   'add_color_layer', 'add_text_layer', 'add_media_layer',
   'add_demo_color_layer', 'add_demo_text_layer',
+  // Task 4: remaining mechanical + meta channels
+  'move_layer', 'trim_layer', 'delete_layer', 'duplicate_layer', 'split_layer_grouped',
+  'groups_create', 'groups_dissolve',
+  'update_layer_params', 'update_layer_param_track', 'update_layer_param_tracks',
+  'add_effect', 'update_effect', 'move_effect', 'remove_effect',
+  'set_composition', 'fit_composition_to_layers',
+  'update_track_flags', 'set_role_gain', 'update_role_flags',
+  'separate_audio_to_new_track', 'restyle_caption_track',
+  'update_project_settings', 'project_undo', 'project_redo',
 ])
 
 export function parseMechanical(channel: string, a: Record<string, unknown>): { op: string; args: Record<string, unknown> } | null {

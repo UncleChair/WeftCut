@@ -1,0 +1,4 @@
+{ "name": "update-track-flags", "commands": [
+  { "op": "update_track_flags", "trackId": "@A", "patch": { "muted": true } },
+  { "op": "add_track" }
+] }

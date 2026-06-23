@@ -156,13 +156,28 @@ export function productionSequenceIsSupported(seq: Sequence): boolean {
   return seq.commands.every((c) => c.op === 'add_media' || PRODUCTION_OPS.has(c.op))
 }
 
-/** Shallow copy of cmd without op/ref, resolving @ref-token string values.
- *  Used by replayProductionSequence to pass wire args to actor.command. */
+/** Recursively resolve @ref tokens in a value — mirrors prod_driver.rs
+ *  `resolve_value`. Strings starting with '@' are resolved; arrays and plain
+ *  objects recurse; all other values pass through unchanged. */
+function resolveValue(v: unknown, refs: Map<string, string>): unknown {
+  if (typeof v === 'string' && v.startsWith('@')) return refs.get(v.slice(1)) ?? v
+  if (Array.isArray(v)) return v.map((x) => resolveValue(x, refs))
+  if (v !== null && typeof v === 'object') {
+    const out: Record<string, unknown> = {}
+    for (const [k, val] of Object.entries(v as Record<string, unknown>)) out[k] = resolveValue(val, refs)
+    return out
+  }
+  return v
+}
+
+/** Shallow copy of cmd without op/ref, recursively resolving @ref tokens.
+ *  Used by replayProductionSequence to pass wire args to actor.command.
+ *  Mirrors prod_driver.rs `build_wire_args` + `resolve_value`. */
 function resolveWire(cmd: Cmd, refs: Map<string, string>): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const [k, v] of Object.entries(cmd)) {
     if (k === 'op' || k === 'ref') continue
-    out[k] = typeof v === 'string' && v.startsWith('@') ? (refs.get(v.slice(1)) ?? v) : v
+    out[k] = resolveValue(v, refs)
   }
   return out
 }

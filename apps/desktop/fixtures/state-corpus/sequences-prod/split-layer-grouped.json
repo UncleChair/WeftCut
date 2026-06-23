@@ -1,0 +1,5 @@
+{ "name": "split-layer-grouped", "commands": [
+  { "op": "add_color_layer", "trackId": "@A", "tStartUs": 0, "durationUs": 4000000, "ref": "L1" },
+  { "op": "split_layer_grouped", "layerId": "@L1", "atTUs": 2000000, "ref": "LS" },
+  { "op": "add_track" }
+] }
