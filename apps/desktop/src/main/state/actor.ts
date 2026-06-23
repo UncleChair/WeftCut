@@ -369,7 +369,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'remove_effect': commit('Removed effect', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applyRemoveEffect(d, a.layer as Uuid, a.effect as Uuid)); return { ok: true, value: null }
         case 'add_transition': return { ok: true, value: commit('Added transition', [], { kind: 'Coarse' }, (d) => applyAddTransition(d, idGen, a.from as Uuid, a.to as Uuid, a.duration_us as number, { kind: 'Crossfade' })) }
         case 'remove_transition': commit('Removed transition', [], { kind: 'Coarse' }, (d) => applyRemoveTransition(d, a.transition as Uuid)); return { ok: true, value: null }
-        case 'add_media': return { ok: true, value: addMediaItem(mediaItemTemplate(a.id as Uuid, a.kind as MediaItem['kind'], (a.duration_us as number | null) ?? null)) }
+        case 'add_media': return { ok: true, value: addMediaItem(mediaItemTemplate(a.id as Uuid, a.kind as MediaItem['kind'], (a.duration_us as number | null) ?? null, (a.with_audio as boolean | undefined) ?? false)) }
         case 'separate_audio': return { ok: true, value: commit('Separated audio', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applySeparateAudio(d, idGen, a.layer as Uuid)) }
         case 'set_media_derivatives': setMediaDerivatives(a.media as Uuid, a.patch as MediaDerivativesPatch); return { ok: true, value: null }
         case 'set_media_workspace_paths': setMediaWorkspacePaths(a.media as Uuid, a.paths as WorkspacePaths); return { ok: true, value: null }
@@ -453,14 +453,25 @@ export function createActor(opts: ActorOptions): ActorHandle {
         }
         case 'add_media_layer': {
           // add_media_layer (mutations.rs:73-183): track_id required, kind-matched
-          // params, auto-pair deferred (corpus audio metadata is null).
+          // params. When auto-pair fires (Video + audio.is_some() + setting on):
+          // THREE separate commits (three op_ids), mirroring Rust's three handle
+          // calls — add video layer, add audio layer (role=dialogue), groups_create.
           const trackId = wireArgs.trackId as string
           const t0 = wireArgs.tStartUs as number
-          const { params, durationUs } = prodMediaLayer(wireArgs, current())
+          const { params, durationUs, autoPairAudio } = prodMediaLayer(wireArgs, current())
           const t1 = t0 + durationUs
-          const id = commit('Added layer', [], { kind: 'Coarse' }, (d) =>
+          const videoId = commit('Added layer', [], { kind: 'Coarse' }, (d) =>
             applyAddLayer(d, idGen, trackId, params, t0, t1))
-          return { ok: true, value: id }
+          if (autoPairAudio !== null) {
+            // mutations.rs:161-179: paired Audio layer (role dialogue) on the SAME track,
+            // same span, then groups_create([video, audio]). THREE separate commits ⇒ three
+            // op_ids, matching Rust's three handle calls (the id-allocation keystone).
+            const audioId = commit('Added layer', [], { kind: 'Coarse' }, (d) =>
+              applyAddLayer(d, idGen, trackId, autoPairAudio, t0, t1))
+            commit('Created group', [], { kind: 'Coarse' }, (d) =>
+              applyGroupsCreate(d, idGen, [videoId, audioId], null, false))
+          }
+          return { ok: true, value: videoId }
         }
         case 'add_demo_color_layer': {
           // add_demo_color_layer (mutations.rs:185-214):

@@ -4,6 +4,9 @@
 import { describe, it, expect } from 'vitest'
 import { prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, demoColor, pickFreeOverlayTrack, PRODUCTION_OPS } from '../commands'
 import type { Project } from '../model'
+import { createActor } from '../actor'
+import { blankProject } from '../model'
+import { seededGen } from '../ids'
 
 // ── PRODUCTION_OPS coverage assertion ────────────────────────────────────────
 // Pins the exact set of renderer channels the production adapter handles.
@@ -174,5 +177,121 @@ describe('pickFreeOverlayTrack', () => {
         removable: true, role: null, transient: false, height_px: 64, layers: [] },
     ] })
     expect(pickFreeOverlayTrack(p, 0, 5_000_000)).toBe('t1')
+  })
+})
+
+// ── add_media_layer auto-pair (mutations.rs:146-180) ─────────────────────
+// TDD: written to fail before Step 6 implementation. Verifies:
+//   1. A Video+audio media item produces Video layer + Audio (role=dialogue)
+//      layer on the SAME track with the SAME span.
+//   2. Exactly one group contains both layer ids (3-commit fan-out).
+//   3. Video-only media produces no pair (autoPairAudio=null).
+//   4. auto_pair_audio_on_import=false suppresses the pair.
+describe('add_media_layer auto-pair', () => {
+  function makeActorWithMedia(withAudio: boolean, autoPairSetting = true) {
+    const idGen = seededGen()
+    const initial = blankProject(idGen, 'test')
+    // Override setting if needed (blankProject defaults auto_pair_audio_on_import: true)
+    if (!autoPairSetting) initial.settings.auto_pair_audio_on_import = false
+    const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+    // Use a fixed media id separate from idGen chain; template produces audio block when withAudio=true
+    const mediaId = '11111111-1111-1111-1111-111111111111' as const
+    actor.dispatch('add_media', { id: mediaId, kind: 'Video', duration_us: 4_000_000, with_audio: withAudio })
+    return { actor, mediaId, aRollId: initial.tracks[0].id }
+  }
+
+  it('video+audio: track has a VideoClip and Audio(role=dialogue) layer at same span', () => {
+    const { actor, mediaId, aRollId } = makeActorWithMedia(true)
+    const r = actor.command('add_media_layer', { trackId: aRollId, mediaId, tStartUs: 0 })
+    expect(r.ok).toBe(true)
+    const snap = actor.snapshot()
+    const track = snap.tracks.find((t) => t.id === aRollId)!
+    expect(track.layers).toHaveLength(2)
+    const vid = track.layers.find((l) => l.params.kind === 'VideoClip')!
+    const aud = track.layers.find((l) => l.params.kind === 'Audio')!
+    expect(vid).toBeDefined()
+    expect(aud).toBeDefined()
+    // Both layers span the full media duration
+    expect(vid.t_start_us).toBe(0)
+    expect(vid.t_end_us).toBe(4_000_000)
+    expect(aud.t_start_us).toBe(0)
+    expect(aud.t_end_us).toBe(4_000_000)
+    // Paired audio has role=dialogue (kebab-case, mutations.rs:159)
+    if (aud.params.kind === 'Audio') expect(aud.params.role).toBe('dialogue')
+  })
+
+  it('video+audio: exactly one group contains both the video and audio layer ids', () => {
+    const { actor, mediaId, aRollId } = makeActorWithMedia(true)
+    const r = actor.command('add_media_layer', { trackId: aRollId, mediaId, tStartUs: 0 })
+    expect(r.ok).toBe(true)
+    const snap = actor.snapshot()
+    const track = snap.tracks.find((t) => t.id === aRollId)!
+    const vidId = track.layers.find((l) => l.params.kind === 'VideoClip')!.id
+    const audId = track.layers.find((l) => l.params.kind === 'Audio')!.id
+    // groups_create([videoId, audioId]) produces exactly one group with both members
+    const groups = snap.groups.filter((g) => g.members.includes(vidId) && g.members.includes(audId))
+    expect(groups).toHaveLength(1)
+    // snapshot is immer-frozen: spread before sorting to avoid mutation error
+    expect([...groups[0].members].sort()).toEqual([vidId, audId].sort())
+  })
+
+  it('video-only media (no audio): no pair, single layer, no group', () => {
+    const { actor, mediaId, aRollId } = makeActorWithMedia(false)
+    const r = actor.command('add_media_layer', { trackId: aRollId, mediaId, tStartUs: 0 })
+    expect(r.ok).toBe(true)
+    const snap = actor.snapshot()
+    const track = snap.tracks.find((t) => t.id === aRollId)!
+    expect(track.layers).toHaveLength(1)
+    expect(track.layers[0].params.kind).toBe('VideoClip')
+    expect(snap.groups).toHaveLength(0)
+  })
+
+  it('auto_pair_audio_on_import=false: no pair even when media has audio', () => {
+    const { actor, mediaId, aRollId } = makeActorWithMedia(true, false)
+    const r = actor.command('add_media_layer', { trackId: aRollId, mediaId, tStartUs: 0 })
+    expect(r.ok).toBe(true)
+    const snap = actor.snapshot()
+    const track = snap.tracks.find((t) => t.id === aRollId)!
+    expect(track.layers).toHaveLength(1)
+    expect(snap.groups).toHaveLength(0)
+  })
+
+  it('prodMediaLayer: autoPairAudio is non-null only when media has audio and setting on', () => {
+    // Video with audio metadata + setting on → autoPairAudio populated
+    const p1 = makeProject({ media_pool: { 'vid': { id: 'vid', label: null, path_abs: '', path_rel: null,
+      kind: 'Video', metadata: { duration_us: 4_000_000, video: null,
+        audio: { sample_rate: 0, channels: 0, codec: '' }, container_format: null },
+      file_hash_blake3: '0', file_size: 0, file_mtime: 0, imported_at: '',
+      proxy_path: null, quick_proxy_path: null, proxy_bypassed: false,
+      export_uses_original: false, proxy_format_version: 0, conform_path: null,
+      waveform_path: null, thumbnails_dir: null } } })
+    const r1 = prodMediaLayer({ mediaId: 'vid' }, p1)
+    expect(r1.autoPairAudio).not.toBeNull()
+    if (r1.autoPairAudio && r1.autoPairAudio.kind === 'Audio') {
+      expect(r1.autoPairAudio.role).toBe('dialogue')
+    }
+
+    // Video without audio metadata → autoPairAudio null
+    const p2 = makeProject({ media_pool: { 'vid': { id: 'vid', label: null, path_abs: '', path_rel: null,
+      kind: 'Video', metadata: { duration_us: 4_000_000, video: null, audio: null, container_format: null },
+      file_hash_blake3: '0', file_size: 0, file_mtime: 0, imported_at: '',
+      proxy_path: null, quick_proxy_path: null, proxy_bypassed: false,
+      export_uses_original: false, proxy_format_version: 0, conform_path: null,
+      waveform_path: null, thumbnails_dir: null } } })
+    const r2 = prodMediaLayer({ mediaId: 'vid' }, p2)
+    expect(r2.autoPairAudio).toBeNull()
+
+    // Video with audio but setting off → autoPairAudio null
+    const p3 = makeProject({ media_pool: { 'vid': { id: 'vid', label: null, path_abs: '', path_rel: null,
+      kind: 'Video', metadata: { duration_us: 4_000_000, video: null,
+        audio: { sample_rate: 0, channels: 0, codec: '' }, container_format: null },
+      file_hash_blake3: '0', file_size: 0, file_mtime: 0, imported_at: '',
+      proxy_path: null, quick_proxy_path: null, proxy_bypassed: false,
+      export_uses_original: false, proxy_format_version: 0, conform_path: null,
+      waveform_path: null, thumbnails_dir: null } },
+      settings: { preview_width: 1280, preview_height: 720, autosave_interval_secs: 60,
+        history_capacity: 200, auto_pair_audio_on_import: false, auto_delete_empty_tracks: true } })
+    const r3 = prodMediaLayer({ mediaId: 'vid' }, p3)
+    expect(r3.autoPairAudio).toBeNull()
   })
 })

@@ -28,11 +28,15 @@ export function imageOverlayParams(media: Uuid): LayerParams {
 /** Fixed-defaults media-pool item; the byte-identical twin of the driver's
  *  media_item helper. imported_at is reconciled against the regenerated oracle
  *  (the only Rust-DateTime-fragile field). path_abs uses forward slashes so
- *  Rust PathBuf serialization is platform-stable. */
-export function mediaItemTemplate(id: Uuid, kind: MediaItem['kind'], durationUs: number | null): MediaItem {
+ *  Rust PathBuf serialization is platform-stable.
+ *  withAudio mirrors prod_driver.rs AudioStreamMeta { sample_rate:0, channels:0, codec:"" }
+ *  — the auto-pair predicate checks audio.is_some(), not the field values. */
+export function mediaItemTemplate(id: Uuid, kind: MediaItem['kind'], durationUs: number | null, withAudio = false): MediaItem {
   return {
     id, label: null, path_abs: 'media/clip.bin', path_rel: null, kind,
-    metadata: { duration_us: durationUs, video: null, audio: null, container_format: null },
+    metadata: { duration_us: durationUs, video: null,
+      audio: withAudio ? { sample_rate: 0, channels: 0, codec: '' } : null,
+      container_format: null },
     file_hash_blake3: '0', file_size: 0, file_mtime: 0, imported_at: '2026-01-01T00:00:00Z',
     proxy_path: null, quick_proxy_path: null, proxy_bypassed: false, export_uses_original: false,
     proxy_format_version: 0, conform_path: null, waveform_path: null, thumbnails_dir: null,

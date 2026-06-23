@@ -147,7 +147,14 @@ fn media_item(cmd: &Value) -> state::media::MediaItem {
     MediaItem {
         id: uuid::Uuid::parse_str(cmd["id"].as_str().unwrap()).unwrap(),
         label: None, path_abs: "media/clip.bin".into(), path_rel: None, kind,
-        metadata: MediaMetadata { duration_us: cmd["duration_us"].as_i64(), video: None, audio: None, container_format: None },
+        metadata: MediaMetadata {
+            duration_us: cmd["duration_us"].as_i64(),
+            video: None,
+            audio: if cmd["with_audio"].as_bool().unwrap_or(false) {
+                Some(state::media::AudioStreamMeta { sample_rate: 0, channels: 0, codec: "".into() })
+            } else { None },
+            container_format: None,
+        },
         proxy_path: None, proxy_format_version: 0, quick_proxy_path: None,
         proxy_bypassed: false, export_uses_original: false, waveform_path: None,
         conform_path: None, thumbnails_dir: None,

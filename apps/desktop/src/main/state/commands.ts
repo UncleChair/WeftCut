@@ -114,10 +114,9 @@ function imageLayerSpanUs(metadata: { duration_us: number | null; video?: { nb_f
 export interface MediaLayerResult {
   params: LayerParams
   durationUs: number
-  // autoPair not populated: corpus mediaItemTemplate sets audio:null so the
-  // predicate media.metadata.audio.is_some() is always false for corpus seqs.
-  // When a future corpus item carries audio metadata, implement the single-commit
-  // path here (video-layer-add + audio-layer-add(role=dialogue) + groups_create).
+  /** When the source is a video carrying audio AND auto_pair_audio_on_import is on,
+   *  the paired Audio layer params (role=dialogue). Else null. mutations.rs:146-180. */
+  autoPairAudio: LayerParams | null
 }
 
 /** add_media_layer (mutations.rs:73-183): kind-dispatch on the pool item. */
@@ -130,13 +129,17 @@ export function prodMediaLayer(
   if (!item) throw new Error(`media not found in pool: ${mediaId}`)
   const totalSrc = (item.metadata.duration_us as number | null | undefined) ?? 2_000_000
   switch (item.kind) {
-    case 'Video':
-      return { params: videoClipParams(mediaId, 0, totalSrc), durationUs: totalSrc }
+    case 'Video': {
+      const autoPair = item.metadata.audio != null && project.settings.auto_pair_audio_on_import
+        ? { ...audioParams(mediaId, 0, totalSrc), role: 'dialogue' as const }
+        : null
+      return { params: videoClipParams(mediaId, 0, totalSrc), durationUs: totalSrc, autoPairAudio: autoPair }
+    }
     case 'Audio':
-      return { params: audioParams(mediaId, 0, totalSrc), durationUs: totalSrc }
+      return { params: audioParams(mediaId, 0, totalSrc), durationUs: totalSrc, autoPairAudio: null }
     case 'Image': {
       const span = imageLayerSpanUs(item.metadata as { duration_us: number | null; video?: { nb_frames?: number | null } | null })
-      return { params: imageOverlayParams(mediaId), durationUs: span }
+      return { params: imageOverlayParams(mediaId), durationUs: span, autoPairAudio: null }
     }
     default:
       throw new Error(`unsupported media kind for add_media_layer: ${item.kind}`)

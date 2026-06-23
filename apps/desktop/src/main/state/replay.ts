@@ -194,7 +194,7 @@ export function replayProductionSequence(seq: Sequence): Trace {
   for (const cmd of seq.commands) {
     const wire = resolveWire(cmd, refs)
     const r = cmd.op === 'add_media'
-      ? actor.dispatch('add_media', { id: cmd.id, kind: cmd.kind, duration_us: cmd.duration_us ?? null })
+      ? actor.dispatch('add_media', { id: cmd.id, kind: cmd.kind, duration_us: cmd.duration_us ?? null, with_audio: cmd.with_audio ?? false })
       : actor.command(cmd.op, wire)
     let error: string | null = null
     if (r.ok) { if (cmd.ref && typeof r.value === 'string') refs.set(cmd.ref, r.value) }
