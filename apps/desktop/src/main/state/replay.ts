@@ -6,6 +6,7 @@ import { serializeProject } from './serialize'
 import { createActor } from './actor'
 import { tsErrorVariant } from './errors'
 import { buildProjectSummary } from './summary'
+import { PRODUCTION_OPS } from './commands'
 
 export const SUPPORTED_OPS = new Set<string>([
   'add_layer', 'add_track', 'add_marker', 'set_composition',
@@ -149,4 +150,41 @@ function buildArgs(cmd: Cmd, refs: Map<string, string>): Record<string, unknown>
     case 'undo': case 'redo': return {}
     default: return {}
   }
+}
+
+export function productionSequenceIsSupported(seq: Sequence): boolean {
+  return seq.commands.every((c) => c.op === 'add_media' || PRODUCTION_OPS.has(c.op))
+}
+
+/** Shallow copy of cmd without op/ref, resolving @ref-token string values.
+ *  Used by replayProductionSequence to pass wire args to actor.command. */
+function resolveWire(cmd: Cmd, refs: Map<string, string>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(cmd)) {
+    if (k === 'op' || k === 'ref') continue
+    out[k] = typeof v === 'string' && v.startsWith('@') ? (refs.get(v.slice(1)) ?? v) : v
+  }
+  return out
+}
+
+/** Drives the production adapter (actor.command) over a production-channel
+ *  sequence. `add_media` is a pool seed via the existing dispatch path. */
+export function replayProductionSequence(seq: Sequence): Trace {
+  const idGen = seededGen()
+  const initial = blankProject(idGen, 'replay')
+  const aRoll = initial.tracks[0].id, bRoll = initial.tracks[1].id
+  const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+  const refs = new Map<string, string>([['A', aRoll], ['B', bRoll]])
+  const steps: TraceStep[] = []
+  for (const cmd of seq.commands) {
+    const wire = resolveWire(cmd, refs)
+    const r = cmd.op === 'add_media'
+      ? actor.dispatch('add_media', { id: cmd.id, kind: cmd.kind, duration_us: cmd.duration_us ?? null })
+      : actor.command(cmd.op, wire)
+    let error: string | null = null
+    if (r.ok) { if (cmd.ref && typeof r.value === 'string') refs.set(cmd.ref, r.value) }
+    else { const v = tsErrorVariant(r.error); error = v.inner ? `${v.top}(${v.inner})` : v.top }
+    steps.push({ op: cmd.op, ok: r.ok, error, state: canonicalize(serializeProject(actor.snapshot())) })
+  }
+  return { name: seq.name, steps }
 }

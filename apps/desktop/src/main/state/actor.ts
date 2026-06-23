@@ -27,6 +27,7 @@ import { videoClipParams, audioParams, imageOverlayParams, applySeparateAudio, m
 import type { MediaItem } from './model'
 import { applyUpdateLayerParams, applyUpdateLayerParamTrack, type LayerParamsPatch } from './mutations/params'
 import { applyAddCaptionTrack, applyRestyleCaptionTrack, type Cue, type CaptionStylePatch } from './mutations/captions'
+import { parseMechanical } from './commands'
 
 setAutoFreeze(true) // snapshots are frozen — accidental mutation throws.
 
@@ -47,6 +48,7 @@ export type DispatchResult = { ok: true; value: unknown } | { ok: false; error: 
 export interface ActorHandle {
   snapshot(): Project
   dispatch(channel: string, args: Record<string, unknown>): DispatchResult
+  command(channel: string, wireArgs: Record<string, unknown>): DispatchResult
   replaceState(next: Project): void
   subscribe(cb: (e: ChangeEvent) => void): () => void
   historyView(limit: number): ReturnType<History['view']>
@@ -397,9 +399,21 @@ export function createActor(opts: ActorOptions): ActorHandle {
     }
   }
 
+  // ── production command adapter (actor.command) ──
+  // Routes the renderer's real category-A channels (camelCase wire args) into
+  // the gated mutation core. Mechanical channels delegate to dispatch() after
+  // arg parsing; rich channels (add_*_layer) are added in Task 3.
+  function command(channel: string, wireArgs: Record<string, unknown>): DispatchResult {
+    const mech = parseMechanical(channel, wireArgs)
+    if (mech) return dispatch(mech.op, mech.args)
+    // Rich channels (add_*_layer, demo) handled in Task 3; meta in Task 4.
+    return { ok: false, error: { error: 'InvalidArgument', field: 'op', detail: `unsupported production op ${channel}` } }
+  }
+
   return {
     snapshot: current,
     dispatch,
+    command,
     replaceState,
     subscribe(cb) { subs.add(cb); return () => subs.delete(cb) },
     historyView: (n) => history.view(n),
