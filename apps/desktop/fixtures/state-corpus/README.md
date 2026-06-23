@@ -345,3 +345,54 @@ same `set_media_derivatives` path as a live `media:derivatives` event.
 wiring; the authority-toggle → `WEFTCUT_TS_ACTOR` flag connection at `Backend::init`;
 jobs-driven actor attribution (distinguishing Agent vs the TS actor's default actor);
 and `fresh_media_item`'s stale Rust-actor read (Phase-4 cleanup).
+
+## Phase 3c-ii-d — THE FLIP (authority cutover)
+
+`WEFTCUT_TS_ACTOR=1` makes the TS state actor authoritative for the renderer +
+main path; the Rust actor is a fallback until Phase 4. Flag default-off ⇒ behavior
+is byte-for-byte unchanged. The cutover is atomic: mutations, reads
+(`project_summary`/`get_project_settings`), persistence (`project_open`/`save_as`/
+`new_workspace`/`save`), autosave, and jobs derivative write-back all switch behind
+the one flag. A pure `routeChannel` (`src/main/state/router.ts`) classifies every
+`backend:invoke` channel; the **single-writer invariant** is that no category-A
+state mutation/read ever routes to the stale Rust actor while the flag is on
+(unit-asserted in `router.test.ts`). Agent (MCP) category-A mutations are paused
+during the flip (`mcp/mutationTools.ts`).
+
+**New prod-corpus seqs (auto-pair — the only corpus change this slice):**
+
+- `add-media-layer-auto-pairs` — a Video media item carrying audio metadata
+  (`with_audio: true`) flows through `add_media_layer`; the adapter fans out
+  THREE commits (video layer → Audio layer role `dialogue`, same track + span →
+  `groups_create([video, audio])`), mirroring `mutations.rs:141-180`. The trailing
+  `add_text_layer` pins the id counter (its id reveals the three allocations).
+- `add-media-layer-no-audio-no-pair` — the control: `with_audio: false` ⇒ a single
+  video-layer commit, no pair.
+
+The `with_audio` flag threads additively through `mediaItemTemplate` (4th param,
+default `false`) + the `add_media` dispatch arm + `replayProductionSequence`'s seed.
+The state/summary `buildArgs` `add_media` path is untouched, so the 175 state + 174
+summary oracles regenerate byte-identical. The auto-pair audio block mirrors
+`AudioStreamMeta::default()` (`{sample_rate:0, channels:0, codec:""}`) byte-for-byte
+on both engines. The setting-off variant (auto-pair disabled) is unit-tested only —
+`ProjectSettingsPatch` has no `auto_pair_audio_on_import` field, so no corpus seq can
+toggle it.
+
+**Blocked under the flag (deferred to 3d):** `add_motif` (Motif-layer insert — needs
+the motif catalog in TS) and `project_restore_checkpoint` (no TS command-surface
+checkpoint-create path; no checkpoint can exist during a single-writer soak) are the
+only renderer-reachable category-A channels with no TS path. The router returns a
+`reject` route for them (never forwarded to Rust).
+
+**Main-process wasm init:** the TS actor snaps frame edges via the shared wasm eval
+leaf (`snap.ts` → `renderer/eval`); main must `await initEval()` once at flip
+bring-up before serving any command (the Rust actor used the native leaf, so this is
+flip-only). Gated by the flag-on `_electron` e2e (`e2e/electron/ts-actor-flip.spec.ts`).
+
+**3d carry-forwards:** port the full MCP category-A surface onto the TS actor and
+un-pause (`mutationTools.ts` `MUTATION_TOOLS` is the set); port `add_motif` +
+`project_restore_checkpoint`; re-point `project://` resources + MCP read tools to the
+TS actor (they read the stale Rust actor during the soak); the `agent_session_end`
+history-unlock seam → TS. **Phase 4:** delete the Rust state actor + the kept-fallback
+`invoke` state arms + the now-dead Rust autosave/jobs-in-Rust paths; `fresh_media_item`
+(jobs/mod.rs) still reads the stale Rust actor.
