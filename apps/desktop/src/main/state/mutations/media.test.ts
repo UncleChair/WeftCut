@@ -117,8 +117,12 @@ describe('referencingLayers', () => {
     const gen = seededGen()
     const p = blankProject(gen, 'r')
     const tA = p.tracks[0].id
+    // Three non-overlapping layers referencing MID (VideoClip, Audio, ImageOverlay)
     const v = applyAddLayer(p, gen, tA, videoClipParams(MID, 0, 4_000_000), 0, 4_000_000)
-    applyAddLayer(p, gen, tA, videoClipParams('00000000-0000-0000-0000-0000000000bb', 0, 1), 5_000_000, 6_000_000)
-    expect(referencingLayers(p, MID)).toEqual([v])
+    const a = applyAddLayer(p, gen, tA, audioParams(MID, 0, 3_000_000), 5_000_000, 8_000_000)
+    const img = applyAddLayer(p, gen, tA, imageOverlayParams(MID), 9_000_000, 12_000_000)
+    // Decoy: VideoClip referencing a different media id — must NOT appear in results
+    applyAddLayer(p, gen, tA, videoClipParams('00000000-0000-0000-0000-0000000000bb', 0, 1_000_000), 13_000_000, 14_000_000)
+    expect(referencingLayers(p, MID)).toEqual([v, a, img])
   })
 })
