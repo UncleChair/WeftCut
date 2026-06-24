@@ -28,8 +28,8 @@ import type { MediaItem } from './model'
 import { applyUpdateLayerParams, applyUpdateLayerParamTrack, type LayerParamsPatch } from './mutations/params'
 import { applyAddCaptionTrack, applyRestyleCaptionTrack, type Cue, type CaptionStylePatch } from './mutations/captions'
 import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, pickFreeOverlayTrack, demoColor } from './commands'
-import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, toolText, toolJson, parseUuid, McpArgError, shapeGetParamTrack, type McpCallResult } from './mcp-commands'
-import { upsertKeyframe } from './keyframeEdits'
+import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, toolText, toolJson, parseUuid, McpArgError, shapeGetParamTrack, keyframePresent, type McpCallResult } from './mcp-commands'
+import { upsertKeyframe, removeKeyframe, retimeKeyframe, setKeyframeInterp, smoothKeyframe, smoothTrack } from './keyframeEdits'
 import { readLayerTrack } from './mutations/params'
 
 setAutoFreeze(true) // snapshots are frozen — accidental mutation throws.
@@ -619,6 +619,78 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const paramKey = a.param_key as string
           const { tStartUs, track } = readLayerTrack(current(), layer, paramKey)
           return { ok: true, result: toolJson(shapeGetParamTrack(track, tStartUs)) }
+        }
+        case 'remove_keyframe': {
+          const layer = parseUuid(a.layer_id, 'layer_id')
+          const keyframeId = parseUuid(a.keyframe_id, 'keyframe_id')
+          const paramKey = a.param_key as string
+          const { track } = readLayerTrack(current(), layer, paramKey)
+          if (!keyframePresent(track, keyframeId)) throw new McpArgError(`keyframe ${keyframeId} not found on layer ${layer} param '${paramKey}'`)
+          const fallback = track.mode === 'Static' ? track.value : (track.value[0]?.value ?? 0)
+          const next = removeKeyframe(track, keyframeId, fallback)
+          const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: next })
+          if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
+          return { ok: true, result: toolEmpty() }
+        }
+        case 'retime_keyframe': {
+          const layer = parseUuid(a.layer_id, 'layer_id')
+          const keyframeId = parseUuid(a.keyframe_id, 'keyframe_id')
+          const paramKey = a.param_key as string
+          const { tStartUs, track } = readLayerTrack(current(), layer, paramKey)
+          if (!keyframePresent(track, keyframeId)) throw new McpArgError(`keyframe ${keyframeId} not found on layer ${layer} param '${paramKey}'`)
+          const next = retimeKeyframe(track, keyframeId, (a.t_us as number) - tStartUs)
+          const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: next })
+          if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
+          return { ok: true, result: toolEmpty() }
+        }
+        case 'set_keyframe_easing': {
+          const layer = parseUuid(a.layer_id, 'layer_id')
+          const keyframeId = parseUuid(a.keyframe_id, 'keyframe_id')
+          const paramKey = a.param_key as string
+          const { track } = readLayerTrack(current(), layer, paramKey)
+          if (!keyframePresent(track, keyframeId)) throw new McpArgError(`keyframe ${keyframeId} not found on layer ${layer} param '${paramKey}'`)
+          const next = setKeyframeInterp(track, keyframeId, a.interp as Interpolation)
+          const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: next })
+          if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
+          return { ok: true, result: toolEmpty() }
+        }
+        case 'smooth_keyframes': {
+          const layer = parseUuid(a.layer_id, 'layer_id')
+          const paramKey = a.param_key as string
+          const { track } = readLayerTrack(current(), layer, paramKey)
+          const keyframeId = a.keyframe_id != null ? parseUuid(a.keyframe_id, 'keyframe_id') : null
+          let next
+          if (keyframeId !== null) {
+            if (!keyframePresent(track, keyframeId)) throw new McpArgError(`keyframe ${keyframeId} not found on layer ${layer} param '${paramKey}'`)
+            next = smoothKeyframe(track, keyframeId)
+          } else {
+            next = smoothTrack(track)
+          }
+          const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: next })
+          if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
+          return { ok: true, result: toolEmpty() }
+        }
+        case 'clear_keyframes': {
+          const layer = parseUuid(a.layer_id, 'layer_id')
+          const paramKey = a.param_key as string
+          const { track } = readLayerTrack(current(), layer, paramKey)
+          if (track.mode === 'Static') return { ok: true, result: toolEmpty() } // no-op, no commit (keyframes.rs:294)
+          const value = (a.value as number | undefined) ?? track.value[0]?.value ?? 0
+          const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: { mode: 'Static', value } })
+          if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
+          return { ok: true, result: toolEmpty() }
+        }
+        case 'set_param_track': {
+          const layer = parseUuid(a.layer_id, 'layer_id')
+          const paramKey = a.param_key as string
+          const { tStartUs } = readLayerTrack(current(), layer, paramKey) // validate layer+param; current discarded
+          const input = a.track as Animated<number>
+          const shifted: Animated<number> = input.mode === 'Keyframed'
+            ? { mode: 'Keyframed', value: input.value.map((k) => ({ ...k, t_us: k.t_us - tStartUs })) }
+            : input
+          const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: shifted })
+          if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
+          return { ok: true, result: toolEmpty() }
         }
       }
       const parse = MCP_ARG_PARSERS[name]

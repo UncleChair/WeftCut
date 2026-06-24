@@ -73,6 +73,12 @@ export function mapCommandError(e: CommandError): McpToolErrorJson {
   return { code: 'invalid_params', message: e.error }
 }
 
+// keyframes.rs:149 require_key presence check (the caller throws McpArgError on false).
+export function keyframePresent(track: { mode: string; value: unknown }, id: string): boolean {
+  return track.mode === 'Keyframed' && Array.isArray((track as { value: Array<{ id: string }> }).value)
+    && (track as { value: Array<{ id: string }> }).value.some((k) => k.id === id)
+}
+
 /** MCP tool → internal dispatch op + renamed args. Throws McpArgError on bad
  *  UUIDs. Explicit-param tools (add_color_layer/add_video_layer/add_marker/
  *  split_layer) are NOT here — they have dedicated arms in actor.mcpCall. */
