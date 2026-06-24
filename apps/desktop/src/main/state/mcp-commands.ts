@@ -66,6 +66,7 @@ export function mapCommandError(e: CommandError): McpToolErrorJson {
  *  split_layer) are NOT here — they have dedicated arms in actor.mcpCall. */
 export const MCP_ARG_PARSERS: Record<string, (a: Record<string, unknown>) => { op: string; args: Record<string, unknown> }> = {
   add_track: (a) => ({ op: 'add_track', args: { label: (a.label as string | undefined) ?? null } }),
+  remove_track: (a) => ({ op: 'delete_track', args: { track: parseUuid(a.track_id, 'track_id'), force: (a.force as boolean) ?? false } }),
 }
 
 /** MCP tool → ToolResult from the dispatch value. Tools absent here → toolEmpty. */
@@ -74,4 +75,4 @@ export const MCP_RESULT_SHAPERS: Record<string, (value: unknown) => ToolResultJs
 }
 
 /** All MCP tools this adapter handles (parsers + the dedicated arms). Grows per task. */
-export const MCP_TOOLS: ReadonlySet<string> = new Set<string>(['add_track', 'add_color_layer'])
+export const MCP_TOOLS: ReadonlySet<string> = new Set<string>(['add_track', 'add_color_layer', 'remove_track'])
