@@ -7,6 +7,7 @@ import { createActor } from './actor'
 import { tsErrorVariant } from './errors'
 import { buildProjectSummary } from './summary'
 import { PRODUCTION_OPS } from './commands'
+import { MCP_TOOLS } from './mcp-commands'
 
 export const SUPPORTED_OPS = new Set<string>([
   'add_layer', 'add_track', 'add_marker', 'set_composition',
@@ -28,7 +29,7 @@ export const SUPPORTED_OPS = new Set<string>([
 ])
 const SUPPORTED_ADD_KINDS = new Set<string>(['color', 'text', 'video', 'audio', 'image'])
 
-export interface TraceStep { op: string; ok: boolean; error: string | null; state: unknown }
+export interface TraceStep { op: string; ok: boolean; error?: string | null; env?: unknown; state: unknown }
 export interface Trace { name: string; steps: TraceStep[] }
 export interface SummaryStep { op: string; ok: boolean; error: string | null; summary: unknown }
 export interface SummaryTrace { name: string; steps: SummaryStep[] }
@@ -180,6 +181,51 @@ function resolveWire(cmd: Cmd, refs: Map<string, string>): Record<string, unknow
     out[k] = resolveValue(v, refs)
   }
   return out
+}
+
+export function mcpSequenceIsSupported(seq: Sequence): boolean {
+  return seq.commands.every((c) => c.op === 'add_media' || MCP_TOOLS.has(c.op))
+}
+
+/** Drives the MCP adapter (actor.mcpCall) over an MCP-channel sequence, capturing
+ *  the reply-envelope + canonical state per step. `add_media` is a pool seed via
+ *  the existing dispatch path (MCP import_media is jobs/3d-d). */
+export function replayMcpSequence(seq: Sequence): Trace {
+  const idGen = seededGen()
+  const initial = blankProject(idGen, 'replay')
+  const aRoll = initial.tracks[0].id, bRoll = initial.tracks[1].id
+  const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+  const refs = new Map<string, string>([['A', aRoll], ['B', bRoll]])
+  const steps: TraceStep[] = []
+  for (const cmd of seq.commands) {
+    let env: unknown, ok: boolean, ret: string | null = null
+    if (cmd.op === 'add_media') {
+      const r = actor.dispatch('add_media', { id: cmd.id, kind: cmd.kind, duration_us: cmd.duration_us ?? null, with_audio: cmd.with_audio ?? false })
+      ok = r.ok
+      env = r.ok ? { ok: true, result: { content: [] } } : { ok: false, error: { code: 'internal', message: 'add_media failed' } }
+      if (r.ok && typeof r.value === 'string') ret = r.value
+    } else {
+      const wire = resolveWire(cmd, refs)
+      const r = actor.mcpCall(cmd.op, JSON.stringify(wire))
+      ok = r.ok
+      env = r
+      if (r.ok) ret = mcpRefId(cmd.op, r.result)
+    }
+    if (ok && cmd.ref && ret) refs.set(cmd.ref, ret)
+    steps.push({ op: cmd.op, ok, env, state: canonicalize(serializeProject(actor.snapshot())) } as TraceStep)
+  }
+  return { name: seq.name, steps }
+}
+
+/** @ref extraction mirroring mcp_driver::extract_ref_id. */
+function mcpRefId(op: string, result: { content: Array<{ type: 'text'; text: string }> }): string | null {
+  const text = result.content[0]?.text
+  if (text == null) return null
+  if (['add_track', 'add_color_layer', 'duplicate_layer', 'groups_create', 'add_effect', 'add_marker'].includes(op)) return text
+  if (op === 'add_video_layer') {
+    try { const v = JSON.parse(text) as { video_layer_id?: string }; return v.video_layer_id ?? text } catch { return text }
+  }
+  return null
 }
 
 /** Drives the production adapter (actor.command) over a production-channel

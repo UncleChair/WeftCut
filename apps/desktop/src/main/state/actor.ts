@@ -28,6 +28,7 @@ import type { MediaItem } from './model'
 import { applyUpdateLayerParams, applyUpdateLayerParamTrack, type LayerParamsPatch } from './mutations/params'
 import { applyAddCaptionTrack, applyRestyleCaptionTrack, type Cue, type CaptionStylePatch } from './mutations/captions'
 import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, pickFreeOverlayTrack, demoColor } from './commands'
+import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, McpArgError, type McpCallResult } from './mcp-commands'
 
 setAutoFreeze(true) // snapshots are frozen — accidental mutation throws.
 
@@ -56,6 +57,7 @@ export interface ActorHandle {
   lockHistory(reason: string): void
   unlockHistory(): void
   dryRun(ops: DryRunOp[]): Array<{ ok: true; value: DryRunOutput } | { ok: false; error: CommandError }>
+  mcpCall(name: string, argsJson: string): McpCallResult
 }
 
 export function createActor(opts: ActorOptions): ActorHandle {
@@ -551,10 +553,31 @@ export function createActor(opts: ActorOptions): ActorHandle {
     }
   }
 
+  function mcpCall(name: string, argsJson: string): McpCallResult {
+    let a: Record<string, unknown>
+    try { a = JSON.parse(argsJson) as Record<string, unknown> }
+    catch (e) { return { ok: false, error: { code: 'invalid_params', message: `invalid args for ${name}: ${String(e)}` } } }
+    try {
+      // Dedicated arms for explicit-param tools land in Tasks 4. Until then, the
+      // table path handles the mechanical tools.
+      const parse = MCP_ARG_PARSERS[name]
+      if (!parse) return { ok: false, error: { code: 'not_found', message: `unknown tool '${name}'` } }
+      const { op, args } = parse(a)
+      const r = dispatch(op, args)
+      if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
+      const shape = MCP_RESULT_SHAPERS[name] ?? (() => toolEmpty())
+      return { ok: true, result: shape(r.value) }
+    } catch (e) {
+      if (e instanceof McpArgError) return { ok: false, error: e.toJson() }
+      throw e
+    }
+  }
+
   return {
     snapshot: current,
     dispatch,
     command,
+    mcpCall,
     replaceState,
     subscribe(cb) { subs.add(cb); return () => subs.delete(cb) },
     historyView: (n) => history.view(n),
