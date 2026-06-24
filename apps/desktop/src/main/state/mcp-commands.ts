@@ -67,12 +67,14 @@ export function mapCommandError(e: CommandError): McpToolErrorJson {
 export const MCP_ARG_PARSERS: Record<string, (a: Record<string, unknown>) => { op: string; args: Record<string, unknown> }> = {
   add_track: (a) => ({ op: 'add_track', args: { label: (a.label as string | undefined) ?? null } }),
   remove_track: (a) => ({ op: 'delete_track', args: { track: parseUuid(a.track_id, 'track_id'), force: (a.force as boolean) ?? false } }),
+  duplicate_layer: (a) => ({ op: 'duplicate_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), t_offset_us: a.t_offset_us } }),
 }
 
 /** MCP tool → ToolResult from the dispatch value. Tools absent here → toolEmpty. */
 export const MCP_RESULT_SHAPERS: Record<string, (value: unknown) => ToolResultJson> = {
   add_track: (v) => toolText(v as string),
+  duplicate_layer: (v) => toolText(v as string),
 }
 
 /** All MCP tools this adapter handles (parsers + the dedicated arms). Grows per task. */
-export const MCP_TOOLS: ReadonlySet<string> = new Set<string>(['add_track', 'add_color_layer', 'remove_track'])
+export const MCP_TOOLS: ReadonlySet<string> = new Set<string>(['add_track', 'add_color_layer', 'add_video_layer', 'add_marker', 'split_layer', 'duplicate_layer', 'remove_track'])

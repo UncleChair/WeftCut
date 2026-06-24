@@ -1,6 +1,6 @@
 // apps/desktop/src/main/state/actor.ts
 import { produce, setAutoFreeze } from 'immer'
-import type { Animated, Composition, LayerParams, Project, Rational, Uuid } from './model'
+import type { Animated, Composition, LayerParams, Project, Rational, Rgba, Uuid } from './model'
 import { blankProject } from './model'
 import type { IdGen } from './ids'
 import { History, type Actor, type EntityRef, type TrackFlagsPatch, type RoleFlagsPatch } from './history'
@@ -28,7 +28,7 @@ import type { MediaItem } from './model'
 import { applyUpdateLayerParams, applyUpdateLayerParamTrack, type LayerParamsPatch } from './mutations/params'
 import { applyAddCaptionTrack, applyRestyleCaptionTrack, type Cue, type CaptionStylePatch } from './mutations/captions'
 import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, pickFreeOverlayTrack, demoColor } from './commands'
-import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, McpArgError, type McpCallResult } from './mcp-commands'
+import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, toolText, toolJson, parseUuid, McpArgError, type McpCallResult } from './mcp-commands'
 
 setAutoFreeze(true) // snapshots are frozen — accidental mutation throws.
 
@@ -558,8 +558,49 @@ export function createActor(opts: ActorOptions): ActorHandle {
     try { a = JSON.parse(argsJson) as Record<string, unknown> }
     catch (e) { return { ok: false, error: { code: 'invalid_params', message: `invalid args for ${name}: ${String(e)}` } } }
     try {
-      // Dedicated arms for explicit-param tools land in Tasks 4. Until then, the
-      // table path handles the mechanical tools.
+      // Dedicated arms for explicit-param tools (Task 4). Fall through to the
+      // table path for mechanical tools.
+      switch (name) {
+        case 'add_color_layer': {
+          const track = parseUuid(a.track_id, 'track_id')
+          const params = colorParams(a.color as Rgba, (a.width as number | undefined) ?? 1920, (a.height as number | undefined) ?? 1080)
+          const id = commit('Added layer', [], { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, params, a.t_start_us as number, a.t_end_us as number))
+          return { ok: true, result: toolText(id) }
+        }
+        case 'add_video_layer': {
+          const track = parseUuid(a.track_id, 'track_id')
+          const media = parseUuid(a.media_id, 'media_id')
+          const snap = current()
+          const item = snap.media_pool[media]
+          const vParams = videoClipParams(media, a.src_in_us as number, a.src_out_us as number)
+          const videoId = commit('Added layer', [], { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, vParams, a.t_start_us as number, a.t_end_us as number))
+          const shouldPair = (snap.settings.auto_pair_audio_on_import === true) && (item?.metadata.audio != null)
+          if (shouldPair) {
+            // ensure_audio_track (tools.rs:123-132): topmost track, or a new "Voiceover".
+            const tracks = current().tracks
+            const audioTrack = tracks.length ? tracks[tracks.length - 1].id
+              : commit('Added track', [], { kind: 'Coarse' }, (d) => applyAddTrack(d, idGen, 'Voiceover'))
+            const aParams = { ...audioParams(media, a.src_in_us as number, a.src_out_us as number), role: 'dialogue' as const }
+            const audioId = commit('Added layer', [], { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, audioTrack, aParams, a.t_start_us as number, a.t_end_us as number))
+            const groupId = commit('Created group', [], { kind: 'Coarse' }, (d) => applyGroupsCreate(d, idGen, [videoId, audioId], null, false))
+            return { ok: true, result: toolJson({ video_layer_id: videoId, audio_layer_id: audioId, group_id: groupId }) }
+          }
+          return { ok: true, result: toolText(videoId) }
+        }
+        case 'add_marker': {
+          const id = commit('Added marker', [], { kind: 'Coarse' }, (d) => applyAddMarker(d, idGen, a.t_us as number, (a.end_t_us as number | undefined) ?? null, a.label as string, a.color as Rgba))
+          return { ok: true, result: toolText(id) }
+        }
+        case 'split_layer': {
+          const layer = parseUuid(a.layer_id, 'layer_id')
+          const r = dispatch('split_layer', { layer, at_t_us: a.at_t_us, escape_group: (a.escape_group as boolean) ?? false })
+          if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
+          // dispatch('split_layer') (applySplitLayer) already returns the
+          // SplitLayerResult `{left, right}` (left = original layer, right = new) —
+          // mirror Rust's `ToolResult::json(&SplitLayerResult)` by returning it verbatim.
+          return { ok: true, result: toolJson(r.value) }
+        }
+      }
       const parse = MCP_ARG_PARSERS[name]
       if (!parse) return { ok: false, error: { code: 'not_found', message: `unknown tool '${name}'` } }
       const { op, args } = parse(a)
@@ -569,6 +610,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
       return { ok: true, result: shape(r.value) }
     } catch (e) {
       if (e instanceof McpArgError) return { ok: false, error: e.toJson() }
+      if (e instanceof CommandFailure) return { ok: false, error: mapCommandError(e.err) }
       throw e
     }
   }
