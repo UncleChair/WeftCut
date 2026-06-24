@@ -460,3 +460,59 @@ The gate is `__tests__/mcp.differential.test.ts`.
 **DORMANT** — the live `server.ts` routing flip and `mutationTools.ts` un-pause are
 Phase 3d-d. This slice only adds the corpus dimension and the differential gate;
 `index.ts`, `server.ts`, and `mutationTools.ts` are untouched.
+
+**Keyframe tools and `dry_run` (Phase 3d-b):**
+
+Eight keyframe tools and `dry_run` are added to the MCP corpus dimension and are
+differential-gated via the same `mcp.differential.test.ts`. They are DORMANT —
+`server.ts`, `mutationTools.ts`, and `index.ts` are untouched.
+
+| MCP tool | Sequence file(s) |
+|---|---|
+| `set_keyframe` | set-keyframe.json, plus all keyframe sequences as setup step |
+| `get_param_track` | set-keyframe.json, retime-keyframe.json, smooth-keyframes.json, clear-keyframes.json, set-param-track.json |
+| `remove_keyframe` | remove-keyframe.json, err-keyframe-not-found.json |
+| `retime_keyframe` | retime-keyframe.json |
+| `set_keyframe_easing` | set-keyframe-easing.json |
+| `smooth_keyframes` | smooth-keyframes.json, smooth-keyframes-one.json |
+| `clear_keyframes` | clear-keyframes.json, clear-keyframes-noop.json |
+| `set_param_track` | set-param-track.json |
+| `dry_run` | dry-run-add.json, dry-run-split.json, dry-run-void.json |
+
+**Keyframe algorithm reuse.** The keyframe tools reuse `renderer/keyframe/edits.ts`
+(imported via the main-process re-export `keyframeEdits.ts`, following the same
+boundary pattern as `summary.ts` and `snap.ts`). The actor's deterministic `idGen`
+is injected into each algorithm so newly minted keyframe ids follow the same
+`new_id()` order as the Rust actor, keeping state oracle output byte-identical.
+
+**`kf_index` capture convention.** A sequence command can name a server-minted
+keyframe id for later reference. A `get_param_track` step (or any keyframe-returning
+step) carries a `ref` field plus a `kf_index` integer; the driver reads
+`result.keyframes[kf_index].id` from the response and stores it under `ref`. Later
+command args can then reference `$ref` to address that keyframe by id. Resolution
+is symmetric: `mcp_driver.rs` (`build_args` / `extract_ref_id`) and `replay.ts`
+(`resolveWire` / `mcpRefId`) apply identical substitution logic.
+
+**`set_param_track` vs `get_param_track` shapes.**
+- `set_param_track` input is the raw `Animated` serde (timeline-absolute `t_us`,
+  caller-supplied keyframe ids). Ids supplied here survive verbatim into state, so
+  corpus sequences can set up predictable keyframe ids for subsequent steps.
+- `get_param_track` output is a custom shape: `{ mode, keyframes: [{ id, t_us,
+  t_local_us, value, interp }] }` where `t_us` is timeline-absolute and
+  `t_local_us` is layer-local. The TS actor computes `t_local_us` as
+  `t_us − layer.t_start_us`; the Rust actor returns the same value. The gate
+  JSON-parses result text-blocks before comparing, so non-semantic float formatting
+  differences (Rust ryu `0.0` vs JS `0`) normalize out while real value differences
+  still fail.
+
+**`dry_run` gating scope.** `dry_run` corpus sequences cover only SUCCEEDING
+operations (`halted_at: null` in the response). The halt/error path — where a
+batched op triggers a `CommandError` and the run stops early — is unit-tested in
+`mcp.dryrun.test.ts` and is NOT differential-gated, avoiding twinning of Rust
+`CommandError` Display strings across both engines.
+
+**Animatable param vocabulary.** The keyframe tools operate on a layer's animatable
+params: `x`, `y`, `scale_x`, `scale_y`, `rotation_deg`, `opacity` (Video / Image /
+Text / Motif layers) and `gain_db`, `pan` (Audio layers). Color layers have no
+animatable params. Corpus keyframe sequences therefore use VideoClip layers (not
+Color or Audio layers) to exercise `x`/`y`/`opacity`/scale/rotation paths.
