@@ -168,6 +168,14 @@ TS-in-main owns the `project_open`/`save_as`/`new_workspace` sequence:
 
 ## Carry-forwards into 3d / Phase 4
 
+- **⚠️ 3d-e (NEW; 2026-06-24 audit) — gates flag-default-on:** D7's "flag-on after soak"
+  has an unstated prerequisite. The renderer-side native-compute channels left on Rust
+  (`export_project_audio_only`/`ensure_export_audio_conform`/`import_media`/`ensure_full_proxy`/
+  `ensure_conform`/`get_media_thumbnail`/`get_waveform_peaks`/`motif_staleness_report`/
+  `acknowledge_motif_staleness`) read/write `backend.project()` → blank/stale under the flag.
+  They MUST be re-pointed to take TS-snapshot/explicit-args input **before
+  `WEFTCUT_TS_ACTOR` goes default-on**. Full record + the 3d-e slice + gates:
+  `specs/2026-06-24-state-actor-phase-3d-design.md` §"Post-flip audit".
 - **3d (MCP handler port):** re-point the 44 category-A tools to the TS actor (thin re-points +
   the rich MCP-only logic: 8 keyframe algos, checkpoints, `apply_subtitles`, `dry_run`,
   `project://` resources, `begin_agent_session`); un-pause agent mutations.

@@ -219,8 +219,90 @@ corpus-README update + typecheck/full-suite verification.
 - **3d-d — hybrids + reads + the flip.** `apply_subtitles` (Rust parse → TS caption
   track, already ported), `import_media`/`synthesize_speech` state-writes (Rust
   compute → TS write); **re-point `project://` resources + read tools to the TS actor**
-  (mandatory — under the flag the Rust actor is stale; final-review O1); then the
-  single live `server.ts` routing flip + `MUTATION_TOOLS` un-pause.
+  (mandatory — under the flag the Rust actor is stale; final-review O1). The read
+  re-point set is: resources `project://current|composition|media|tracks|markers|
+  compiled|layers/{id}` (`resources.rs:66,93,147`) + tools `groups_list`/`groups_get`
+  (`tools.rs:776,794`), `get_param_track` (`tools.rs:923`), `dry_run` (`tools.rs:1671`),
+  **`detect_silences` (`tools.rs:494`)** and **`transcribe_clip` (`tools.rs:2631`)** —
+  the last two read `b.project()?.snapshot()` to resolve a layer's source window (F8
+  below). Then the single live `server.ts` routing flip + `MUTATION_TOOLS` un-pause.
+
+# Post-flip audit (2026-06-24): native-compute stale-actor gap + Phase 3d-e
+
+A correctness audit (prompted by the question "after 3d, does any Rust fallback still
+read/write the stale Rust actor?") found a **whole class of renderer-side
+`backend.invoke` channels that the 3c-ii-d plan listed as "stays on Rust, unchanged"
+(plan §"Findings recap", line 40) and rationalized as "independent of the migrated
+Project" (line 42) — but which actually READ or WRITE the project actor.** Under the
+flag the Rust actor is frozen at blank init (mutations only reach `tsHost`;
+`index.ts:316` falls through to `backend.invoke`), so these operate on blank/stale
+state. This violates the 3c-ii-d plan's own single-writer invariant (line 14) and is
+**NOT covered by 3d** (MCP-only). Deferring to Phase 4 is unsafe: the flag can go
+default-on after the 3d soak (D7) — before Phase 4 deletes Rust state.
+
+**Principle:** Rust may keep native compute, but its project/media INPUT must come from
+the TS actor snapshot or explicit args — never `backend.project()`.
+
+**Findings (severity-ranked; file:line):**
+
+- 🔴 **F1 `export_project_audio_only`** `commands/export.rs:34-36` — clones the whole
+  stale project and exports its audio → silent wrong/empty audio in every export.
+- 🔴 **F2 `ensure_export_audio_conform`** `commands/export.rs:107-113` — export-readiness
+  gate computed from stale audio layers.
+- 🔴 **F3 `import_media` (renderer)** `commands/media.rs:25,88` — `add_media_item` writes
+  the stale Rust pool; media never reaches TS → split-brain, `add_media_layer` fails
+  `MissingMedia`. (3d-d covers only the *MCP* `import_media`.)
+- 🟠 **F4 `ensure_full_proxy`** `commands/media.rs:167-168,176` — reads stale AND writes
+  `set_media_derivatives` **directly**, bypassing the 3c-ii-c `commit_media_derivatives`
+  event seam (cached-proxy fast path → TS never learns the proxy path).
+- 🟠 **F5 `ensure_conform`** `commands/media.rs:189-190` — resolves the media item from
+  stale state.
+- 🟠 **F6 `get_media_thumbnail` / `get_waveform_peaks`** `commands/media.rs:142-143,154-155`
+  — resolve media paths from the stale pool.
+- 🟠 **F7 `motif_staleness_report` (read) / `acknowledge_motif_staleness` (write
+  `rebind_motif`)** `napi_backend.rs:812,814` — route to `rust`, read/write the actor for
+  motif-bearing projects.
+- 🟠 **F8 MCP `project://` resources + read tools** — stale reads served to agents;
+  **already in plan (3d-d)**, but must enumerate `detect_silences`/`transcribe_clip`
+  (done above).
+- 🟡 **F9 jobs `fresh_media_item`** `jobs/mod.rs` — stale freshness source; Phase-4
+  cleanup (already documented), acceptable once F3/F4 land.
+
+**Not at risk:** MCP `import_media`/`synthesize_speech` (paused via `MUTATION_TOOLS`);
+`add_motif`/`project_restore_checkpoint` (`BLOCKED_UNDER_FLAG`); pure prefs/persistence/
+motif-store/video-sink/`mux_export` (no actor access).
+
+## Phase 3d-e — native-compute input re-point (NEW; gates flag-default-on)
+
+A new slice (independent of 3d-a..d) that MUST land before `WEFTCUT_TS_ACTOR` goes
+default-on. For F1–F7: Rust keeps the ffmpeg/audio/export compute, but its project/media
+input comes from the TS actor — preferred shape = **explicit args** (e.g.
+`export_project_audio_only` already takes `output_path`/`audio`/window; extend it to take
+the serialized project / compiled-audio plan from the TS actor), or a `Backend` napi
+read-mirror setter the TS host pushes the current serialized project into before each
+compute call. `import_media` becomes a hybrid: Rust ffprobe/blake3 → returns the
+`MediaItem` → TS `add_media_item`. `motif_staleness_*`: re-point or `reject` under the
+flag like `add_motif`.
+
+**Gates for 3d-e (and a durable guard):**
+1. **Architectural gate (high value):** a test enumerating every channel routed to
+   `{kind:'rust'}` (`router.ts`) and asserting each is on a vetted `PURE_NATIVE`/
+   `PERSISTENCE` allowlist — fails CI if any project-actor-touching channel routes to
+   Rust. Would have caught F1–F7 mechanically; prevents regression. (Cross-check via
+   `rg "backend.project()"` against the rust-route set, or handler tags.)
+2. **Flag-on e2e:** (a) import media → assert it appears in TS `project_summary`;
+   (b) export audio under the flag → assert the rendered audio matches the TS project
+   (catches F1/F2 silent-wrong-output).
+3. **3d-e build is differential/unit-gated** like prior slices where state-bearing.
+
+**Impact on other plans (recorded):** master plan §1.3 / Phase 4 — the kept
+media/export/jobs compute arms need their INPUT re-pointed (they can't read
+`backend.project()` once `state/` is deleted), and the flag must not go default-on
+before 3d-e; 3c-ii design spec D7 — flag-on-after-soak gains a 3d-e prerequisite;
+3c-ii-d plan lines 40/42 — corrected (the "unchanged Rust" list mis-classified
+actor-touching channels). The merged phase-0..3c-ii-c plans and the non-migration
+plans (effects-ui, keyframe-opt, pipeline-seam, subtitle) are NOT affected (historical;
+their `backend.project()` refs were valid when Rust was authoritative).
 
 ## Constraints (carried)
 

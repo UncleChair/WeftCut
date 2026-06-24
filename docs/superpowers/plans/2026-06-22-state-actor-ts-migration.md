@@ -408,6 +408,17 @@ now-redundant view mirror in `src/renderer/ipc/index.ts` (renderer imports
 swap `project:changed` signal+pull for patch-push over IPC (Immer inverse patches),
 eliminating the per-mutation full-view re-serialize.
 
+**⚠️ Prerequisite (2026-06-24 audit):** the §1.3 "stays in Rust" compute arms
+(import/proxy/conform/thumbnail/waveform, the audio-only export gate, motif staleness)
+currently read/write the project actor for their INPUTS (`commands/export.rs:34`,
+`commands/media.rs:25/88/143/155/168/176/190`, `napi_backend.rs:812/814`). Once `state/`
+is deleted they have no actor to read — so Phase 4 must **re-point their input to the TS
+actor** (explicit args or a serialized-project read-mirror), not merely delete the
+project arms. Crucially this re-point is **NOT** Phase-4-only: under `WEFTCUT_TS_ACTOR`
+these read stale/blank state, so the re-point (tracked as **Phase 3d-e** in
+`specs/2026-06-24-state-actor-phase-3d-design.md`) MUST land before the flag goes
+default-on. See also Risk Register row "stale native-compute reads/writes".
+
 **Exit criteria:** Rust builds without the `state` module; 3-OS CI green; the worktree
 bootstrap simplifies (`reference_worktree_bootstrap`); the Rust napi surface is the
 "small, coarse, heavy-call" shape napi-rs is good at.
@@ -426,6 +437,7 @@ bootstrap simplifies (`reference_worktree_bootstrap`); the Rust napi surface is 
 | MCP handler port volume (~2600 LOC) | Med | Med | Step-1a makes them thin adapters; port family-by-family with harness gate |
 | Undo memory blow-up | Low | Med | Full-snapshot via Immer = structural sharing (parity with imbl); cap 200 unchanged |
 | Long-lived dual maintenance during migration | Med | Low | Flag + shadow mode keeps both correct; phases are short and mergeable |
+| Stale native-compute reads/writes (export/import/proxy/conform/thumbnail/waveform/motif-staleness read `backend.project()` → blank under the flag; silent wrong export, split-brain media pool) | High (if flag→default-on pre-fix) | High | **Phase 3d-e** re-points their input to the TS actor; flag must not go default-on before it; durable allowlist gate asserting no `{kind:'rust'}` channel touches the actor (2026-06-24 audit) |
 
 ---
 
