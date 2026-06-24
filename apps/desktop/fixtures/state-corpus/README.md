@@ -396,3 +396,67 @@ TS actor (they read the stale Rust actor during the soak); the `agent_session_en
 history-unlock seam → TS. **Phase 4:** delete the Rust state actor + the kept-fallback
 `invoke` state arms + the now-dead Rust autosave/jobs-in-Rust paths; `fresh_media_item`
 (jobs/mod.rs) still reads the stale Rust actor.
+
+### sequences-mcp / oracle-mcp (Phase 3d-a)
+
+`sequences-mcp/` + `oracle-mcp/` form the MCP corpus dimension. Each sequence drives
+the real Rust `dispatch_tool` via the `mcp_driver` bin under deterministic ids
+(same det-id oracle as `replay_driver`). The driver captures per step:
+
+```
+{ op, ok, env, state }
+```
+
+where `env` is the full MCP `reply()` envelope (`{ content: [...] }` on success,
+or `{ isError: true, content: [...] }` on error). The gate is
+`__tests__/mcp.differential.test.ts`.
+
+**What the gate asserts (byte-exact):**
+
+- `state` — canonical `.vproj` snapshot, identical on Rust and TS sides.
+- `env.result` — the success envelope (content array), byte-identical.
+- Error `code` + structured `data` — `LayerOverlap` and `MediaInUse` structured
+  payloads are byte-exact; prose `message` text is **not** asserted (Rust and TS
+  may word errors differently).
+
+**Tools covered (33 category-A MCP tools, Phase 3d-a):**
+
+| MCP tool | Sequence file(s) |
+|---|---|
+| `add_track` | add-track.json, tracks.json |
+| `remove_track` | tracks.json, err-bad-uuid.json |
+| `move_track` | tracks.json |
+| `add_color_layer` | add-color-layer.json, split-layer.json, duplicate-layer.json, layer-edits.json, groups.json, effects.json, history.json, err-layer-overlap.json |
+| `add_video_layer` | add-video-layer-no-pair.json, add-video-layer-auto-pair.json, err-media-in-use.json |
+| `update_layer` | layer-edits.json |
+| `update_layer_params` | layer-edits.json |
+| `move_layer` | layer-edits.json |
+| `split_layer` | split-layer.json |
+| `delete_layer` | layer-edits.json |
+| `trim_layer` | layer-edits.json |
+| `duplicate_layer` | duplicate-layer.json |
+| `groups_create` | groups.json |
+| `groups_dissolve` | groups.json |
+| `groups_add_members` | groups.json |
+| `groups_remove_members` | groups.json |
+| `groups_rename` | groups.json |
+| `add_effect` | effects.json |
+| `update_effect` | effects.json |
+| `move_effect` | effects.json |
+| `remove_effect` | effects.json |
+| `set_composition` | composition.json |
+| `fit_composition_to_layers` | composition.json |
+| `add_marker` | markers.json |
+| `update_marker` | markers.json |
+| `remove_marker` | markers.json |
+| `remove_media` | err-media-in-use.json |
+| `undo` | history.json, undo-empty.json |
+| `redo` | history.json |
+| `lock_history` | lock.json |
+| `unlock_history` | lock.json |
+| `set_role_gain` | roles.json |
+| `set_role_flags` | roles.json |
+
+**DORMANT** — the live `server.ts` routing flip and `mutationTools.ts` un-pause are
+Phase 3d-d. This slice only adds the corpus dimension and the differential gate;
+`index.ts`, `server.ts`, and `mutationTools.ts` are untouched.
