@@ -600,6 +600,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
           // mirror Rust's `ToolResult::json(&SplitLayerResult)` by returning it verbatim.
           return { ok: true, result: toolJson(r.value) }
         }
+        case 'lock_history': history.lock(a.reason as string); return { ok: true, result: toolEmpty() }
+        case 'unlock_history': history.unlock(); return { ok: true, result: toolEmpty() }
       }
       const parse = MCP_ARG_PARSERS[name]
       if (!parse) return { ok: false, error: { code: 'not_found', message: `unknown tool '${name}'` } }

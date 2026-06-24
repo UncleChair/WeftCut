@@ -1,0 +1,5 @@
+{ "name": "markers", "commands": [
+  { "op": "add_marker", "t_us": 0, "label": "m", "color": { "r": 0, "g": 128, "b": 255, "a": 255 }, "ref": "MK" },
+  { "op": "update_marker", "marker_id": "@MK", "patch": { "t_us": 1000000 } },
+  { "op": "remove_marker", "marker_id": "@MK" }
+] }

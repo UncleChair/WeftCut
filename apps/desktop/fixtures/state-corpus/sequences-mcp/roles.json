@@ -1,0 +1,4 @@
+{ "name": "roles", "commands": [
+  { "op": "set_role_gain", "role": "music", "gain_db": -6 },
+  { "op": "set_role_flags", "role": "music", "muted": true }
+] }

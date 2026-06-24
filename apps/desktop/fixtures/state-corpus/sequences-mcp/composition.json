@@ -1,0 +1,4 @@
+{ "name": "composition", "commands": [
+  { "op": "set_composition", "patch": { "width": 1280, "height": 720 } },
+  { "op": "fit_composition_to_layers" }
+] }

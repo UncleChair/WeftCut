@@ -68,13 +68,49 @@ export const MCP_ARG_PARSERS: Record<string, (a: Record<string, unknown>) => { o
   add_track: (a) => ({ op: 'add_track', args: { label: (a.label as string | undefined) ?? null } }),
   remove_track: (a) => ({ op: 'delete_track', args: { track: parseUuid(a.track_id, 'track_id'), force: (a.force as boolean) ?? false } }),
   duplicate_layer: (a) => ({ op: 'duplicate_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), t_offset_us: a.t_offset_us } }),
+  move_track: (a) => ({ op: 'move_track', args: { track: parseUuid(a.track_id, 'track_id'), new_position: a.new_position } }),
+  update_layer: (a) => ({ op: 'update_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), patch: a.patch } }),
+  update_layer_params: (a) => ({ op: 'update_layer_params', args: { layer: parseUuid(a.layer_id, 'layer_id'), patch: a.patch } }),
+  move_layer: (a) => ({ op: 'move_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), to_track: parseUuid(a.new_track_id, 'new_track_id'), t_start_us: a.new_t_start_us, escape_group: (a.escape_group as boolean) ?? false } }),
+  trim_layer: (a) => ({ op: 'trim_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), edge: a.edge, new_t_us: a.new_t_us, escape_group: (a.escape_group as boolean) ?? false } }),
+  delete_layer: (a) => ({ op: 'delete_layer', args: { layer: parseUuid(a.layer_id, 'layer_id') } }),
+  groups_create: (a) => ({ op: 'groups_create', args: { layers: (a.layer_ids as string[]).map((s) => parseUuid(s, 'layer_ids')), label: (a.label as string | undefined) ?? null, reassign: (a.reassign as boolean) ?? false } }),
+  groups_dissolve: (a) => ({ op: 'groups_dissolve', args: { group: parseUuid(a.group_id, 'group_id') } }),
+  groups_add_members: (a) => ({ op: 'groups_add_members', args: { group: parseUuid(a.group_id, 'group_id'), layers: (a.layer_ids as string[]).map((s) => parseUuid(s, 'layer_ids')), reassign: (a.reassign as boolean) ?? false } }),
+  groups_remove_members: (a) => ({ op: 'groups_remove_members', args: { group: parseUuid(a.group_id, 'group_id'), layers: (a.layer_ids as string[]).map((s) => parseUuid(s, 'layer_ids')) } }),
+  groups_rename: (a) => ({ op: 'groups_rename', args: { group: parseUuid(a.group_id, 'group_id'), label: (a.label as string | undefined) ?? null } }),
+  add_effect: (a) => ({ op: 'add_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), kind: a.kind } }),
+  update_effect: (a) => ({ op: 'update_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), effect: parseUuid(a.effect_id, 'effect_id'), patch: a.patch } }),
+  move_effect: (a) => ({ op: 'move_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), effect: parseUuid(a.effect_id, 'effect_id'), new_index: a.new_index } }),
+  remove_effect: (a) => ({ op: 'remove_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), effect: parseUuid(a.effect_id, 'effect_id') } }),
+  set_composition: (a) => ({ op: 'set_composition', args: a.patch as Record<string, unknown> }),
+  fit_composition_to_layers: () => ({ op: 'fit_composition_to_layers', args: {} }),
+  update_marker: (a) => ({ op: 'update_marker', args: { marker: parseUuid(a.marker_id, 'marker_id'), patch: a.patch } }),
+  remove_marker: (a) => ({ op: 'remove_marker', args: { marker: parseUuid(a.marker_id, 'marker_id') } }),
+  remove_media: (a) => ({ op: 'remove_media', args: { media: parseUuid(a.media_id, 'media_id'), force: (a.force as boolean) ?? false } }),
+  undo: () => ({ op: 'undo', args: {} }),
+  redo: () => ({ op: 'redo', args: {} }),
+  set_role_gain: (a) => ({ op: 'set_role_gain', args: { role: a.role, gain_db: a.gain_db } }),
+  set_role_flags: (a) => ({ op: 'update_role_flags', args: { role: a.role, patch: { muted: a.muted ?? null, solo: a.solo ?? null } } }),
 }
 
 /** MCP tool → ToolResult from the dispatch value. Tools absent here → toolEmpty. */
 export const MCP_RESULT_SHAPERS: Record<string, (value: unknown) => ToolResultJson> = {
   add_track: (v) => toolText(v as string),
   duplicate_layer: (v) => toolText(v as string),
+  add_effect: (v) => toolText(v as string),
+  groups_create: (v) => toolText(v as string),
 }
 
 /** All MCP tools this adapter handles (parsers + the dedicated arms). Grows per task. */
-export const MCP_TOOLS: ReadonlySet<string> = new Set<string>(['add_track', 'add_color_layer', 'add_video_layer', 'add_marker', 'split_layer', 'duplicate_layer', 'remove_track'])
+export const MCP_TOOLS: ReadonlySet<string> = new Set<string>([
+  'add_track', 'remove_track', 'move_track',
+  'add_color_layer', 'add_video_layer', 'update_layer', 'update_layer_params',
+  'move_layer', 'split_layer', 'delete_layer', 'trim_layer', 'duplicate_layer',
+  'groups_create', 'groups_dissolve', 'groups_add_members', 'groups_remove_members', 'groups_rename',
+  'add_effect', 'update_effect', 'move_effect', 'remove_effect',
+  'set_composition', 'fit_composition_to_layers',
+  'add_marker', 'update_marker', 'remove_marker',
+  'remove_media', 'undo', 'redo', 'lock_history', 'unlock_history',
+  'set_role_gain', 'set_role_flags',
+])
