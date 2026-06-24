@@ -43,6 +43,38 @@ export function shapeGetParamTrack(track: { mode: 'Static'; value: number } | { 
   }
 }
 
+/** Reasonable, NON-asserted prose for a failed dry-run op (the differential
+ *  gate uses succeeding-ops-only sequences, so this string is never gated;
+ *  the halt/error shape is unit-tested in mcp.dryrun.test.ts). */
+export function dryRunErrorString(e: CommandError): string {
+  if (e.error === 'InvalidArgument') return `${e.field}: ${e.detail}`
+  if (e.error === 'Backend') return e.detail
+  if (e.error === 'ValidationFailed') return `validation failed: ${e.detail.rule}`
+  return e.error
+}
+
+/** tools.rs:1512 DryRunResponse: per-op {index, status, output|error} flattened,
+ *  plus halted_at (the first failing index, or null). DryRunOutput serde is
+ *  tag="kind" rename_all=snake_case: add_layer{layer_id} / split_layer{left_id,
+ *  right_id} / void. Wrapped in toolJson (sorted keys). */
+export function shapeDryRunResponse(
+  results: Array<{ ok: true; value: { kind: 'AddLayer'; layer_id: string } | { kind: 'SplitLayer'; left_id: string; right_id: string } | { kind: 'Void' } } | { ok: false; error: CommandError }>,
+): ToolResultJson {
+  let haltedAt: number | null = null
+  const entries = results.map((r, index) => {
+    if (r.ok) {
+      const o = r.value
+      const output = o.kind === 'AddLayer' ? { kind: 'add_layer', layer_id: o.layer_id }
+        : o.kind === 'SplitLayer' ? { kind: 'split_layer', left_id: o.left_id, right_id: o.right_id }
+        : { kind: 'void' }
+      return { index, status: 'ok', output }
+    }
+    if (haltedAt === null) haltedAt = index
+    return { index, status: 'error', error: dryRunErrorString(r.error) }
+  })
+  return toolJson({ results: entries, halted_at: haltedAt })
+}
+
 /** map_command_error (tools.rs:61-118): CommandError → MCP error JSON. Only the
  *  structured `data` (LayerOverlap/MediaInUse) + InvalidArgument message are
  *  gated byte-exact; other prose messages are reasonable-but-ungated. */

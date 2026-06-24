@@ -28,7 +28,7 @@ import type { MediaItem } from './model'
 import { applyUpdateLayerParams, applyUpdateLayerParamTrack, type LayerParamsPatch } from './mutations/params'
 import { applyAddCaptionTrack, applyRestyleCaptionTrack, type Cue, type CaptionStylePatch } from './mutations/captions'
 import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, pickFreeOverlayTrack, demoColor } from './commands'
-import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, toolText, toolJson, parseUuid, McpArgError, shapeGetParamTrack, keyframePresent, type McpCallResult } from './mcp-commands'
+import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, toolText, toolJson, parseUuid, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, type McpCallResult } from './mcp-commands'
 import { upsertKeyframe, removeKeyframe, retimeKeyframe, setKeyframeInterp, smoothKeyframe, smoothTrack } from './keyframeEdits'
 import { readLayerTrack } from './mutations/params'
 
@@ -41,9 +41,15 @@ export interface ChangeEvent { op_id: Uuid; actor: Actor; timestamp: string; sum
 export type DryRunOp =
   | { kind: 'AddLayer'; track_id: Uuid; params: LayerParams; t_start_us: number; t_end_us: number }
   | { kind: 'DeleteLayer'; id: Uuid }
+  | { kind: 'UpdateLayer'; id: Uuid; patch: LayerPatch }
+  | { kind: 'UpdateLayerParams'; id: Uuid; patch: LayerParamsPatch }
   | { kind: 'MoveLayer'; id: Uuid; new_track_id: Uuid; new_t_start_us: number; escape_group: boolean }
+  | { kind: 'SplitLayer'; id: Uuid; at_t_us: number; escape_group: boolean }
   | { kind: 'TrimLayer'; id: Uuid; edge: LayerEdge; new_t_us: number; escape_group: boolean }
-export type DryRunOutput = { kind: 'AddLayer'; layer_id: Uuid } | { kind: 'Void' }
+export type DryRunOutput =
+  | { kind: 'AddLayer'; layer_id: Uuid }
+  | { kind: 'SplitLayer'; left_id: Uuid; right_id: Uuid }
+  | { kind: 'Void' }
 
 export interface ActorOptions { initial: Project; idGen: IdGen; clock?: Clock; actor?: Actor }
 export type DispatchResult = { ok: true; value: unknown } | { ok: false; error: CommandError }
@@ -309,7 +315,10 @@ export function createActor(opts: ActorOptions): ActorHandle {
           switch (op.kind) {
             case 'AddLayer': value = { kind: 'AddLayer', layer_id: applyAddLayer(d, idGen, op.track_id, op.params, op.t_start_us, op.t_end_us) }; break
             case 'DeleteLayer': applyDeleteLayer(d, op.id); break
+            case 'UpdateLayer': applyUpdateLayer(d, op.id, op.patch); break
+            case 'UpdateLayerParams': applyUpdateLayerParams(d, op.id, op.patch); break
             case 'MoveLayer': applyMoveLayer(d, op.id, op.new_track_id, op.new_t_start_us, op.escape_group); break
+            case 'SplitLayer': { const s = applySplitLayer(d, idGen, op.id, op.at_t_us, op.escape_group); value = { kind: 'SplitLayer', left_id: s.left, right_id: s.right }; break }
             case 'TrimLayer': applyTrimLayer(d, op.id, op.edge, op.new_t_us, op.escape_group); break
           }
         })
@@ -555,6 +564,33 @@ export function createActor(opts: ActorOptions): ActorHandle {
     }
   }
 
+  // tools.rs:1563 spec_to_op — MCP OperationSpec (tagged "kind", snake_case) → DryRunOp.
+  function specToDryRunOp(spec: Record<string, unknown>): DryRunOp {
+    const kind = spec.kind as string
+    switch (kind) {
+      case 'add_color_layer':
+        return { kind: 'AddLayer', track_id: parseUuid(spec.track_id, 'track_id'),
+          params: colorParams(spec.color as Rgba, (spec.width as number | undefined) ?? 1920, (spec.height as number | undefined) ?? 1080),
+          t_start_us: spec.t_start_us as number, t_end_us: spec.t_end_us as number }
+      case 'add_video_layer':
+        return { kind: 'AddLayer', track_id: parseUuid(spec.track_id, 'track_id'),
+          params: videoClipParams(parseUuid(spec.media_id, 'media_id'), spec.src_in_us as number, spec.src_out_us as number),
+          t_start_us: spec.t_start_us as number, t_end_us: spec.t_end_us as number }
+      case 'update_layer':
+        return { kind: 'UpdateLayer', id: parseUuid(spec.layer_id, 'layer_id'), patch: spec.patch as LayerPatch }
+      case 'update_layer_params':
+        return { kind: 'UpdateLayerParams', id: parseUuid(spec.layer_id, 'layer_id'), patch: spec.patch as LayerParamsPatch }
+      case 'move_layer':
+        return { kind: 'MoveLayer', id: parseUuid(spec.layer_id, 'layer_id'), new_track_id: parseUuid(spec.new_track_id, 'new_track_id'), new_t_start_us: spec.new_t_start_us as number, escape_group: (spec.escape_group as boolean) ?? false }
+      case 'split_layer':
+        return { kind: 'SplitLayer', id: parseUuid(spec.layer_id, 'layer_id'), at_t_us: spec.at_t_us as number, escape_group: (spec.escape_group as boolean) ?? false }
+      case 'delete_layer':
+        return { kind: 'DeleteLayer', id: parseUuid(spec.layer_id, 'layer_id') }
+      default:
+        throw new McpArgError(`unknown operation kind '${kind}'`)
+    }
+  }
+
   function mcpCall(name: string, argsJson: string): McpCallResult {
     let a: Record<string, unknown>
     try { a = JSON.parse(argsJson) as Record<string, unknown> }
@@ -691,6 +727,18 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: shifted })
           if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
           return { ok: true, result: toolEmpty() }
+        }
+        case 'dry_run': {
+          const specs = (a.operations as Array<Record<string, unknown>>) ?? []
+          const ops: DryRunOp[] = []
+          for (let i = 0; i < specs.length; i++) {
+            try { ops.push(specToDryRunOp(specs[i])) }
+            catch (e) {
+              if (e instanceof McpArgError) return { ok: false, error: { code: 'invalid_params', message: `operations[${i}]: ${e.mcpMessage}` } }
+              throw e
+            }
+          }
+          return { ok: true, result: shapeDryRunResponse(dryRun(ops)) }
         }
       }
       const parse = MCP_ARG_PARSERS[name]
