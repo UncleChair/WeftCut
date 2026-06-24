@@ -141,8 +141,16 @@ read tools + un-pause (3d-d); `add_motif`/`project_restore_checkpoint` (Phase 4)
     `data = {error:"MediaInUse", media, referenced_by, options:[{action:"force_remove",
     note:"…"},{action:"delete_layers_first",layer_ids}]}`;
   - else → `invalid_params(message)` where `message` = the `CommandError` Display
-    string. **The Display strings must match Rust byte-for-byte** — a real porting
-    item; the differential gate is what enforces it.
+    string.
+- **Error-gating refinement (decided at plan time, 2026-06-24):** the differential
+  gate asserts the MCP error `code` + structured `data` (the agent-actionable
+  recovery options) byte-identically **+ the error variant**, but treats the prose
+  `message` as non-asserted (the TS adapter generates a reasonable message;
+  `InvalidArgument`'s `"{field}: {detail}"` is reproduced exactly since it is
+  structured, not prose). This matches the existing prod gate's variant-only error
+  comparison and avoids porting Rust's ~30 `CommandError`/`ValidationError` Display
+  strings into a TS twin (which Phase 4 would only delete). Supersedes the literal
+  "message byte-identical" wording above.
 
 ## Differential gate (det-id MCP differential)
 
