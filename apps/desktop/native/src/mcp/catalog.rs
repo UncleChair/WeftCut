@@ -20,7 +20,7 @@ macro_rules! tool_table {
                 }
             ),* ]
         }
-        pub(crate) async fn dispatch_tool(b: &Backend, name: &str, args_json: &str)
+        pub async fn dispatch_tool(b: &Backend, name: &str, args_json: &str)
             -> Result<ToolResult, McpToolError>
         {
             match name {

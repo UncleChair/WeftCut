@@ -25,6 +25,9 @@ mod napi_backend;
 // pub: Backend consumed by the prod_driver differential-harness bin
 #[cfg(feature = "replay")]
 pub use napi_backend::Backend;
+// pub: dispatch_tool + reply consumed by the mcp_driver differential-harness bin
+#[cfg(all(feature = "replay", feature = "mcp"))]
+pub use mcp::{dispatch_tool, reply};
 
 #[cfg(any(feature = "jobs", feature = "export"))]
 mod ffmpeg;

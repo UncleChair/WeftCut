@@ -27,8 +27,14 @@ mod wire;
 pub(crate) use wire::*;
 
 pub(crate) use catalog::{
-    catalog, dispatch_tool, prompt_catalog, resource_catalog, tool_catalog,
+    catalog, prompt_catalog, resource_catalog, tool_catalog,
 };
+// `dispatch_tool` is `pub` (catalog.rs macro) so lib.rs can re-export it for the
+// mcp_driver differential bin; the `mcp` mod itself is private so this is not a
+// production API-surface widening. napi_backend uses `crate::mcp::dispatch_tool`.
+pub use catalog::dispatch_tool;
+#[cfg(feature = "replay")]
+pub use wire::reply;
 pub(crate) use prompts::{catalog as list_prompts, expand as get_prompt};
 pub(crate) use resources::read_resource;
 

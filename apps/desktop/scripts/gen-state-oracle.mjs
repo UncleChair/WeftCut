@@ -39,4 +39,19 @@ for (const file of readdirSync(SEQ_PROD).filter((f) => f.endsWith('.json'))) {
   console.log(`ok  prod/${file}`)
 }
 
+// MCP-channel oracles: real dispatch_tool under det ids, captured via reply().
+const SEQ_MCP = 'fixtures/state-corpus/sequences-mcp'
+const OUT_MCP = 'fixtures/state-corpus/oracle-mcp'
+mkdirSync(OUT_MCP, { recursive: true })
+const runMcp = (file) => execFileSync('cargo', [
+  'run', '--quiet', '--manifest-path', 'native/Cargo.toml',
+  '--bin', 'mcp_driver', '--features', 'replay,jobs,export,mcp,cloud,motifs', '--', join(SEQ_MCP, file),
+], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+for (const file of readdirSync(SEQ_MCP).filter((f) => f.endsWith('.json'))) {
+  const a = runMcp(file), b = runMcp(file)
+  if (a !== b) { console.error(`NONDETERMINISTIC (mcp): ${file}`); fail++; continue }
+  writeFileSync(join(OUT_MCP, file), a)
+  console.log(`ok  mcp/${file}`)
+}
+
 process.exit(fail ? 1 : 0)
