@@ -39,7 +39,7 @@ async fn main() {
             let env_str = reply(dispatch_tool(&backend, &op, &serde_json::to_string(&args).unwrap()).await);
             let env: Value = serde_json::from_str(&env_str).unwrap();
             let ok = env["ok"].as_bool().unwrap();
-            let ret = if ok { extract_ref_id(&op, &env["result"]) } else { None };
+            let ret = if ok { extract_ref_id(&op, &env["result"], cmd) } else { None };
             (ok, env, ret)
         };
         if let (true, Some(id)) = (ok, &ret) {
@@ -58,7 +58,7 @@ fn build_args(cmd: &Value, refs: &HashMap<String, String>) -> Value {
     let mut obj = serde_json::Map::new();
     if let Some(map) = cmd.as_object() {
         for (k, v) in map {
-            if k == "op" || k == "ref" { continue; }
+            if k == "op" || k == "ref" || k == "kf_index" { continue; }
             obj.insert(k.clone(), resolve_value(v, refs));
         }
     }
@@ -77,17 +77,22 @@ fn resolve_value(v: &Value, refs: &HashMap<String, String>) -> Value {
 
 /// Extract the @ref id from an MCP result envelope's `result` value, by tool.
 /// id tools → result.content[0].text is the raw UUID. add_video_layer → the
-/// inner JSON's "video_layer_id". Others → None.
-fn extract_ref_id(op: &str, result: &Value) -> Option<String> {
+/// inner JSON's "video_layer_id". get_param_track → keyframes[cmd.kf_index].id
+/// (so a sequence can name a server-minted keyframe id). Others → None.
+fn extract_ref_id(op: &str, result: &Value, cmd: &Value) -> Option<String> {
     let text = result.get("content")?.get(0)?.get("text")?.as_str()?;
     match op {
         "add_track" | "add_color_layer" | "duplicate_layer" | "groups_create"
         | "add_effect" | "add_marker" => Some(text.to_string()),
         "add_video_layer" => {
-            // Either a raw uuid (no pair) or JSON {audio_layer_id, group_id, video_layer_id}.
             serde_json::from_str::<Value>(text).ok()
                 .and_then(|v| v.get("video_layer_id").and_then(Value::as_str).map(str::to_string))
                 .or_else(|| Some(text.to_string()))
+        }
+        "get_param_track" => {
+            let idx = cmd.get("kf_index")?.as_u64()? as usize;
+            let v: Value = serde_json::from_str(text).ok()?;
+            v.get("keyframes")?.get(idx)?.get("id")?.as_str().map(str::to_string)
         }
         _ => None,
     }

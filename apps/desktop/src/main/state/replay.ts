@@ -177,7 +177,7 @@ function resolveValue(v: unknown, refs: Map<string, string>): unknown {
 function resolveWire(cmd: Cmd, refs: Map<string, string>): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const [k, v] of Object.entries(cmd)) {
-    if (k === 'op' || k === 'ref') continue
+    if (k === 'op' || k === 'ref' || k === 'kf_index') continue
     out[k] = resolveValue(v, refs)
   }
   return out
@@ -209,7 +209,7 @@ export function replayMcpSequence(seq: Sequence): Trace {
       const r = actor.mcpCall(cmd.op, JSON.stringify(wire))
       ok = r.ok
       env = r
-      if (r.ok) ret = mcpRefId(cmd.op, r.result)
+      if (r.ok) ret = mcpRefId(cmd.op, r.result, cmd)
     }
     if (ok && cmd.ref && ret) refs.set(cmd.ref, ret)
     steps.push({ op: cmd.op, ok, env, state: canonicalize(serializeProject(actor.snapshot())) } as TraceStep)
@@ -217,10 +217,16 @@ export function replayMcpSequence(seq: Sequence): Trace {
   return { name: seq.name, steps }
 }
 
-/** @ref extraction mirroring mcp_driver::extract_ref_id. */
-function mcpRefId(op: string, result: { content: Array<{ type: 'text'; text: string }> }): string | null {
+/** @ref extraction mirroring mcp_driver::extract_ref_id. get_param_track captures
+ *  keyframes[cmd.kf_index].id so a sequence can name a server-minted keyframe. */
+function mcpRefId(op: string, result: { content: Array<{ type: 'text'; text: string }> }, cmd: Cmd): string | null {
   const text = result.content[0]?.text
   if (text == null) return null
+  if (op === 'get_param_track') {
+    const idx = cmd.kf_index as number | undefined
+    if (idx == null) return null
+    try { const v = JSON.parse(text) as { keyframes?: Array<{ id?: string }> }; return v.keyframes?.[idx]?.id ?? null } catch { return null }
+  }
   if (['add_track', 'add_color_layer', 'duplicate_layer', 'groups_create', 'add_effect', 'add_marker'].includes(op)) return text
   if (op === 'add_video_layer') {
     try { const v = JSON.parse(text) as { video_layer_id?: string }; return v.video_layer_id ?? text } catch { return text }

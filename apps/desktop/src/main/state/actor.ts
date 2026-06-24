@@ -1,6 +1,6 @@
 // apps/desktop/src/main/state/actor.ts
 import { produce, setAutoFreeze } from 'immer'
-import type { Animated, Composition, LayerParams, Project, Rational, Rgba, Uuid } from './model'
+import type { Animated, Composition, Interpolation, LayerParams, Project, Rational, Rgba, Uuid } from './model'
 import { blankProject } from './model'
 import type { IdGen } from './ids'
 import { History, type Actor, type EntityRef, type TrackFlagsPatch, type RoleFlagsPatch } from './history'
@@ -28,7 +28,9 @@ import type { MediaItem } from './model'
 import { applyUpdateLayerParams, applyUpdateLayerParamTrack, type LayerParamsPatch } from './mutations/params'
 import { applyAddCaptionTrack, applyRestyleCaptionTrack, type Cue, type CaptionStylePatch } from './mutations/captions'
 import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, pickFreeOverlayTrack, demoColor } from './commands'
-import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, toolText, toolJson, parseUuid, McpArgError, type McpCallResult } from './mcp-commands'
+import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, toolText, toolJson, parseUuid, McpArgError, shapeGetParamTrack, type McpCallResult } from './mcp-commands'
+import { upsertKeyframe } from './keyframeEdits'
+import { readLayerTrack } from './mutations/params'
 
 setAutoFreeze(true) // snapshots are frozen — accidental mutation throws.
 
@@ -602,6 +604,22 @@ export function createActor(opts: ActorOptions): ActorHandle {
         }
         case 'lock_history': history.lock(a.reason as string); return { ok: true, result: toolEmpty() }
         case 'unlock_history': history.unlock(); return { ok: true, result: toolEmpty() }
+        case 'set_keyframe': {
+          const layer = parseUuid(a.layer_id, 'layer_id')
+          const paramKey = a.param_key as string
+          const { tStartUs, track } = readLayerTrack(current(), layer, paramKey)
+          const interp = a.interp as Interpolation | undefined
+          const next = upsertKeyframe(track, (a.t_us as number) - tStartUs, a.value as number, interp, idGen)
+          const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: next })
+          if (!r.ok) return { ok: false, error: mapCommandError(r.error) }
+          return { ok: true, result: toolEmpty() }
+        }
+        case 'get_param_track': {
+          const layer = parseUuid(a.layer_id, 'layer_id')
+          const paramKey = a.param_key as string
+          const { tStartUs, track } = readLayerTrack(current(), layer, paramKey)
+          return { ok: true, result: toolJson(shapeGetParamTrack(track, tStartUs)) }
+        }
       }
       const parse = MCP_ARG_PARSERS[name]
       if (!parse) return { ok: false, error: { code: 'not_found', message: `unknown tool '${name}'` } }

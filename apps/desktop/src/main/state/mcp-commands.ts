@@ -31,6 +31,18 @@ export function toolEmpty(): ToolResultJson { return { content: [] } }
  *  alpha-sorted keys (Rust serde_json preserve_order OFF → BTreeMap). */
 export function toolJson(v: unknown): ToolResultJson { return { content: [{ type: 'text', text: JSON.stringify(canonicalize(v)) }] } }
 
+/** native/src/mcp/keyframes.rs:165 get_param_track result shape (NOT the raw
+ *  Animated serde): Static → {mode,value}; Keyframed → {mode, keyframes:[{id,
+ *  t_us (timeline-absolute = local + t_start), t_local_us (stored base), value,
+ *  interp}]}. Caller wraps in toolJson (sorted keys, mirrors Rust json!/BTreeMap). */
+export function shapeGetParamTrack(track: { mode: 'Static'; value: number } | { mode: 'Keyframed'; value: Array<{ id: string; t_us: number; value: number; interp: unknown }> }, tStartUs: number): unknown {
+  if (track.mode === 'Static') return { mode: 'Static', value: track.value }
+  return {
+    mode: 'Keyframed',
+    keyframes: track.value.map((k) => ({ id: k.id, t_us: k.t_us + tStartUs, t_local_us: k.t_us, value: k.value, interp: k.interp })),
+  }
+}
+
 /** map_command_error (tools.rs:61-118): CommandError → MCP error JSON. Only the
  *  structured `data` (LayerOverlap/MediaInUse) + InvalidArgument message are
  *  gated byte-exact; other prose messages are reasonable-but-ungated. */
@@ -113,4 +125,7 @@ export const MCP_TOOLS: ReadonlySet<string> = new Set<string>([
   'add_marker', 'update_marker', 'remove_marker',
   'remove_media', 'undo', 'redo', 'lock_history', 'unlock_history',
   'set_role_gain', 'set_role_flags',
+  // Phase 3d-b: keyframes + dry_run
+  'set_keyframe', 'get_param_track', 'remove_keyframe', 'retime_keyframe',
+  'set_keyframe_easing', 'smooth_keyframes', 'clear_keyframes', 'set_param_track', 'dry_run',
 ])
