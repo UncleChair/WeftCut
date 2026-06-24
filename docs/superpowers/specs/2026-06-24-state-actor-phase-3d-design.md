@@ -11,8 +11,10 @@ lifts that pause by porting the MCP category-A tool surface onto the TS actor.
 
 Make the MCP tool surface work against the TS state actor so that, under
 `WEFTCUT_TS_ACTOR`, external agents can mutate and read project state through MCP
-exactly as they do today against the Rust actor — byte-identical results and errors —
-and the mutation pause can be removed.
+exactly as they do today against the Rust actor — byte-identical results, and errors
+matching in `code` + structured `data` + variant (the prose `message` is generated
+reasonably but not asserted byte-equal; see the error-gating refinement below) — and the
+mutation pause can be removed.
 
 ## Topology recap (verified vs code)
 
@@ -259,9 +261,17 @@ the TS actor snapshot or explicit args — never `backend.project()`.
   stale state.
 - 🟠 **F6 `get_media_thumbnail` / `get_waveform_peaks`** `commands/media.rs:142-143,154-155`
   — resolve media paths from the stale pool.
-- 🟠 **F7 `motif_staleness_report` (read) / `acknowledge_motif_staleness` (write
-  `rebind_motif`)** `napi_backend.rs:812,814` — route to `rust`, read/write the actor for
-  motif-bearing projects.
+- 🟠 **F7 motif actor-touching family** — route to `rust`, read/write the project actor
+  for motif-bearing projects: `install_motif` **(update mode rebinds current-project
+  layers via `rebind_motif`)** `commands/motif_authoring.rs:46` → `install_motif_core`
+  (`motifs/authoring_commands.rs:173,255`); `acknowledge_motif_staleness` (write
+  `rebind_motif`) and `motif_staleness_report` (read) `napi_backend.rs:812,814`.
+  `add_motif` is already `BLOCKED_UNDER_FLAG`; **`install_motif` and
+  `acknowledge_motif_staleness` are NOT** — interim-safe option is to add them (and
+  `motif_staleness_report`) to `BLOCKED_UNDER_FLAG` until 3d-e re-points them. NOTE the
+  "pure motif-store" set is narrower than first stated: only `list_motifs`/
+  `get_motif_source`/`write_motif_draft`/`amend_motif_draft`/`create_edit_draft`/
+  `import_motif`/`delete_motif` touch only `b.motif_store` (no project actor).
 - 🟠 **F8 MCP `project://` resources + read tools** — stale reads served to agents;
   **already in plan (3d-d)**, but must enumerate `detect_silences`/`transcribe_clip`
   (done above).
@@ -270,7 +280,10 @@ the TS actor snapshot or explicit args — never `backend.project()`.
 
 **Not at risk:** MCP `import_media`/`synthesize_speech` (paused via `MUTATION_TOOLS`);
 `add_motif`/`project_restore_checkpoint` (`BLOCKED_UNDER_FLAG`); pure prefs/persistence/
-motif-store/video-sink/`mux_export` (no actor access).
+video-sink/`mux_export` + the motif-store-only commands (`list_motifs`/`get_motif_source`/
+`write_motif_draft`/`amend_motif_draft`/`create_edit_draft`/`import_motif`/`delete_motif`)
+(no project-actor access). NOTE: `install_motif`/`acknowledge_motif_staleness`/
+`motif_staleness_report` do NOT belong here — see F7.
 
 ## Phase 3d-e — native-compute input re-point (NEW; gates flag-default-on)
 
@@ -281,8 +294,9 @@ input comes from the TS actor — preferred shape = **explicit args** (e.g.
 the serialized project / compiled-audio plan from the TS actor), or a `Backend` napi
 read-mirror setter the TS host pushes the current serialized project into before each
 compute call. `import_media` becomes a hybrid: Rust ffprobe/blake3 → returns the
-`MediaItem` → TS `add_media_item`. `motif_staleness_*`: re-point or `reject` under the
-flag like `add_motif`.
+`MediaItem` → TS `add_media_item`. `install_motif` (update-mode rebind),
+`acknowledge_motif_staleness`, `motif_staleness_report`: re-point the `rebind_motif`/
+layer-read onto the TS actor, or `reject`/pause under the flag like `add_motif`.
 
 **Gates for 3d-e (and a durable guard):**
 1. **Architectural gate (high value):** a test enumerating every channel routed to

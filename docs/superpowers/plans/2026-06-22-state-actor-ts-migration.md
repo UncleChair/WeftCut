@@ -398,6 +398,17 @@ match the JS SDK); re-point autosave at the TS actor's change stream.
 via MCP and via UI is byte-canonical-identical to the Rust baseline; autosave + backups
 work; persistence round-trips real workspaces.
 
+**⚠️ Default-on gate (2026-06-24 audit) — NOT a Phase-4-only item:** before
+`WEFTCUT_TS_ACTOR` may flip to default-on, **Phase 3d-e (native-compute input re-point)**
+must land. The renderer-side compute channels left on Rust read/write `backend.project()`
+→ blank/stale under the flag (export audio, `import_media`, proxy/conform/thumbnail/
+waveform, `install_motif` update-mode rebind, `acknowledge_motif_staleness`,
+`motif_staleness_report`). 3d-e re-points their input to the TS actor (explicit args /
+read-mirror) or `reject`s them under the flag; the durable allowlist gate (no
+`{kind:'rust'}` channel touches the actor) backstops it. Full record:
+`specs/2026-06-24-state-actor-phase-3d-design.md` §"Post-flip audit". Do NOT treat 3d-e
+as Phase-4 cleanup — the flip exposes the gap the moment the flag is on.
+
 ## Phase 4 — Decommission Rust state + narrow the boundary
 
 **Scope:** delete `state/`, the project `commands/*`, the Rust `mcp/` handlers,
@@ -437,7 +448,7 @@ bootstrap simplifies (`reference_worktree_bootstrap`); the Rust napi surface is 
 | MCP handler port volume (~2600 LOC) | Med | Med | Step-1a makes them thin adapters; port family-by-family with harness gate |
 | Undo memory blow-up | Low | Med | Full-snapshot via Immer = structural sharing (parity with imbl); cap 200 unchanged |
 | Long-lived dual maintenance during migration | Med | Low | Flag + shadow mode keeps both correct; phases are short and mergeable |
-| Stale native-compute reads/writes (export/import/proxy/conform/thumbnail/waveform/motif-staleness read `backend.project()` → blank under the flag; silent wrong export, split-brain media pool) | High (if flag→default-on pre-fix) | High | **Phase 3d-e** re-points their input to the TS actor; flag must not go default-on before it; durable allowlist gate asserting no `{kind:'rust'}` channel touches the actor (2026-06-24 audit) |
+| Stale native-compute reads/writes (export/import/proxy/conform/thumbnail/waveform read `backend.project()` + `install_motif` update-mode / `acknowledge_motif_staleness` / `motif_staleness_report` rebind/read the actor → blank under the flag; silent wrong export, split-brain media pool, wrong motif rebind) | High (if flag→default-on pre-fix) | High | **Phase 3d-e** re-points their input to the TS actor (or rejects under flag); flag must not go default-on before it; durable allowlist gate asserting no `{kind:'rust'}` channel touches the actor (2026-06-24 audit) |
 
 ---
 
