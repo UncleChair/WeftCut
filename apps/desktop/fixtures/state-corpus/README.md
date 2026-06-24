@@ -407,9 +407,9 @@ the real Rust `dispatch_tool` via the `mcp_driver` bin under deterministic ids
 { op, ok, env, state }
 ```
 
-where `env` is the full MCP `reply()` envelope (`{ content: [...] }` on success,
-or `{ isError: true, content: [...] }` on error). The gate is
-`__tests__/mcp.differential.test.ts`.
+where `env` is the full MCP `reply()` envelope: `{ ok: true, result: { content:
+[...] } }` on success, or `{ ok: false, error: { code, message, data? } }` on error.
+The gate is `__tests__/mcp.differential.test.ts`.
 
 **What the gate asserts (byte-exact):**
 
