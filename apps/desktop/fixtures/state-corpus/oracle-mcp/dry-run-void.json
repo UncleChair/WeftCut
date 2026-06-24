@@ -1,0 +1,359 @@
+{
+  "name": "dry-run-void",
+  "steps": [
+    {
+      "env": {
+        "ok": true,
+        "result": {
+          "content": [
+            {
+              "text": "00000000-0000-0000-0000-000000000005",
+              "type": "text"
+            }
+          ]
+        }
+      },
+      "ok": true,
+      "op": "add_color_layer",
+      "state": {
+        "audio_roles": {},
+        "composition": {
+          "background": {
+            "a": 255,
+            "b": 0,
+            "g": 0,
+            "r": 0
+          },
+          "channels": 2,
+          "color_space": "Bt709",
+          "duration_pinned": false,
+          "duration_us": 1000000,
+          "fps": {
+            "den": 1,
+            "num": 30
+          },
+          "height": 1080,
+          "sample_rate": 48000,
+          "width": 1920
+        },
+        "groups": [],
+        "markers": [],
+        "media_pool": {},
+        "metadata": {
+          "created_at": "<TS>",
+          "description": null,
+          "modified_at": "<TS>",
+          "name": "replay"
+        },
+        "project_id": "00000000-0000-0000-0000-000000000003",
+        "schema_version": 9,
+        "settings": {
+          "auto_delete_empty_tracks": true,
+          "auto_pair_audio_on_import": true,
+          "autosave_interval_secs": 60,
+          "history_capacity": 200,
+          "preview_height": 720,
+          "preview_width": 1280
+        },
+        "tracks": [
+          {
+            "enabled": true,
+            "height_px": 64,
+            "id": "00000000-0000-0000-0000-000000000001",
+            "label": "A roll",
+            "layers": [
+              {
+                "effects": [],
+                "enabled": true,
+                "id": "00000000-0000-0000-0000-000000000005",
+                "label": null,
+                "locked": false,
+                "metadata": {},
+                "params": {
+                  "color": {
+                    "mode": "Static",
+                    "value": {
+                      "a": 255,
+                      "b": 0,
+                      "g": 0,
+                      "r": 0
+                    }
+                  },
+                  "height": 1080,
+                  "kind": "Color",
+                  "width": 1920
+                },
+                "t_end_us": 1000000,
+                "t_start_us": 0
+              }
+            ],
+            "locked": false,
+            "muted": false,
+            "removable": false,
+            "role": "ARoll",
+            "solo": false,
+            "transient": false
+          },
+          {
+            "enabled": true,
+            "height_px": 64,
+            "id": "00000000-0000-0000-0000-000000000002",
+            "label": "B roll",
+            "layers": [],
+            "locked": false,
+            "muted": false,
+            "removable": false,
+            "role": "BRoll",
+            "solo": false,
+            "transient": false
+          }
+        ],
+        "transitions": []
+      }
+    },
+    {
+      "env": {
+        "ok": true,
+        "result": {
+          "content": [
+            {
+              "text": "{\"results\":[{\"index\":0,\"status\":\"ok\",\"output\":{\"kind\":\"void\"}},{\"index\":1,\"status\":\"ok\",\"output\":{\"kind\":\"void\"}},{\"index\":2,\"status\":\"ok\",\"output\":{\"kind\":\"void\"}},{\"index\":3,\"status\":\"ok\",\"output\":{\"kind\":\"void\"}}],\"halted_at\":null}",
+              "type": "text"
+            }
+          ]
+        }
+      },
+      "ok": true,
+      "op": "dry_run",
+      "state": {
+        "audio_roles": {},
+        "composition": {
+          "background": {
+            "a": 255,
+            "b": 0,
+            "g": 0,
+            "r": 0
+          },
+          "channels": 2,
+          "color_space": "Bt709",
+          "duration_pinned": false,
+          "duration_us": 1000000,
+          "fps": {
+            "den": 1,
+            "num": 30
+          },
+          "height": 1080,
+          "sample_rate": 48000,
+          "width": 1920
+        },
+        "groups": [],
+        "markers": [],
+        "media_pool": {},
+        "metadata": {
+          "created_at": "<TS>",
+          "description": null,
+          "modified_at": "<TS>",
+          "name": "replay"
+        },
+        "project_id": "00000000-0000-0000-0000-000000000003",
+        "schema_version": 9,
+        "settings": {
+          "auto_delete_empty_tracks": true,
+          "auto_pair_audio_on_import": true,
+          "autosave_interval_secs": 60,
+          "history_capacity": 200,
+          "preview_height": 720,
+          "preview_width": 1280
+        },
+        "tracks": [
+          {
+            "enabled": true,
+            "height_px": 64,
+            "id": "00000000-0000-0000-0000-000000000001",
+            "label": "A roll",
+            "layers": [
+              {
+                "effects": [],
+                "enabled": true,
+                "id": "00000000-0000-0000-0000-000000000005",
+                "label": null,
+                "locked": false,
+                "metadata": {},
+                "params": {
+                  "color": {
+                    "mode": "Static",
+                    "value": {
+                      "a": 255,
+                      "b": 0,
+                      "g": 0,
+                      "r": 0
+                    }
+                  },
+                  "height": 1080,
+                  "kind": "Color",
+                  "width": 1920
+                },
+                "t_end_us": 1000000,
+                "t_start_us": 0
+              }
+            ],
+            "locked": false,
+            "muted": false,
+            "removable": false,
+            "role": "ARoll",
+            "solo": false,
+            "transient": false
+          },
+          {
+            "enabled": true,
+            "height_px": 64,
+            "id": "00000000-0000-0000-0000-000000000002",
+            "label": "B roll",
+            "layers": [],
+            "locked": false,
+            "muted": false,
+            "removable": false,
+            "role": "BRoll",
+            "solo": false,
+            "transient": false
+          }
+        ],
+        "transitions": []
+      }
+    },
+    {
+      "env": {
+        "ok": true,
+        "result": {
+          "content": [
+            {
+              "text": "00000000-0000-0000-0000-000000000007",
+              "type": "text"
+            }
+          ]
+        }
+      },
+      "ok": true,
+      "op": "add_color_layer",
+      "state": {
+        "audio_roles": {},
+        "composition": {
+          "background": {
+            "a": 255,
+            "b": 0,
+            "g": 0,
+            "r": 0
+          },
+          "channels": 2,
+          "color_space": "Bt709",
+          "duration_pinned": false,
+          "duration_us": 3000000,
+          "fps": {
+            "den": 1,
+            "num": 30
+          },
+          "height": 1080,
+          "sample_rate": 48000,
+          "width": 1920
+        },
+        "groups": [],
+        "markers": [],
+        "media_pool": {},
+        "metadata": {
+          "created_at": "<TS>",
+          "description": null,
+          "modified_at": "<TS>",
+          "name": "replay"
+        },
+        "project_id": "00000000-0000-0000-0000-000000000003",
+        "schema_version": 9,
+        "settings": {
+          "auto_delete_empty_tracks": true,
+          "auto_pair_audio_on_import": true,
+          "autosave_interval_secs": 60,
+          "history_capacity": 200,
+          "preview_height": 720,
+          "preview_width": 1280
+        },
+        "tracks": [
+          {
+            "enabled": true,
+            "height_px": 64,
+            "id": "00000000-0000-0000-0000-000000000001",
+            "label": "A roll",
+            "layers": [
+              {
+                "effects": [],
+                "enabled": true,
+                "id": "00000000-0000-0000-0000-000000000005",
+                "label": null,
+                "locked": false,
+                "metadata": {},
+                "params": {
+                  "color": {
+                    "mode": "Static",
+                    "value": {
+                      "a": 255,
+                      "b": 0,
+                      "g": 0,
+                      "r": 0
+                    }
+                  },
+                  "height": 1080,
+                  "kind": "Color",
+                  "width": 1920
+                },
+                "t_end_us": 1000000,
+                "t_start_us": 0
+              },
+              {
+                "effects": [],
+                "enabled": true,
+                "id": "00000000-0000-0000-0000-000000000007",
+                "label": null,
+                "locked": false,
+                "metadata": {},
+                "params": {
+                  "color": {
+                    "mode": "Static",
+                    "value": {
+                      "a": 255,
+                      "b": 0,
+                      "g": 0,
+                      "r": 0
+                    }
+                  },
+                  "height": 1080,
+                  "kind": "Color",
+                  "width": 1920
+                },
+                "t_end_us": 3000000,
+                "t_start_us": 2000000
+              }
+            ],
+            "locked": false,
+            "muted": false,
+            "removable": false,
+            "role": "ARoll",
+            "solo": false,
+            "transient": false
+          },
+          {
+            "enabled": true,
+            "height_px": 64,
+            "id": "00000000-0000-0000-0000-000000000002",
+            "label": "B roll",
+            "layers": [],
+            "locked": false,
+            "muted": false,
+            "removable": false,
+            "role": "BRoll",
+            "solo": false,
+            "transient": false
+          }
+        ],
+        "transitions": []
+      }
+    }
+  ]
+}
