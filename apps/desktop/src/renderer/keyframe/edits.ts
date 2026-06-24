@@ -12,8 +12,13 @@ function newId(): string {
 
 const DEFAULT_INTERP: Interpolation = { kind: "Linear" };
 
-export function liftToKeyframed(value: number, tUs: number): AnimTrack<number> {
-  return { mode: "Keyframed", value: [{ id: newId(), t_us: tUs, value, interp: DEFAULT_INTERP }] };
+export function liftToKeyframed(
+  value: number,
+  tUs: number,
+  interp: Interpolation = DEFAULT_INTERP,
+  mkId: () => string = newId,
+): AnimTrack<number> {
+  return { mode: "Keyframed", value: [{ id: mkId(), t_us: tUs, value, interp }] };
 }
 
 export function collapseToStatic(
@@ -26,23 +31,29 @@ export function collapseToStatic(
 }
 
 /// Insert-or-update a key at `tUs`. A Static track is lifted (the new key is
-/// the only key). An existing key at exactly `tUs` is updated in place; else a
-/// new key is inserted (interp copied from the preceding key, or Linear).
+/// the only key). An existing key at exactly `tUs` is updated in place (value
+/// always; interp only when `interp` is given); else a new key is inserted
+/// (interp = given, else copied from the preceding key, else Linear). `mkId`
+/// is injected so the main-process MCP path can mint deterministic keyframe
+/// ids from the actor's seeded id generator (matching Rust `new_id()` order);
+/// the renderer keeps the `crypto.randomUUID` default.
 export function upsertKeyframe(
   track: AnimTrack<number>,
   tUs: number,
   value: number,
+  interp?: Interpolation,
+  mkId: () => string = newId,
 ): AnimTrack<number> {
-  if (track.mode === "Static") return liftToKeyframed(value, tUs);
+  if (track.mode === "Static") return liftToKeyframed(value, tUs, interp ?? DEFAULT_INTERP, mkId);
   const keys = track.value.slice();
   const at = keys.findIndex((k) => k.t_us === tUs);
   if (at >= 0) {
-    keys[at] = { ...keys[at]!, value };
+    keys[at] = { ...keys[at]!, value, ...(interp !== undefined ? { interp } : {}) };
     return { mode: "Keyframed", value: keys };
   }
   const prev = keys.filter((k) => k.t_us < tUs).pop();
-  const interp = prev?.interp ?? DEFAULT_INTERP;
-  keys.push({ id: newId(), t_us: tUs, value, interp });
+  const resolved = interp ?? prev?.interp ?? DEFAULT_INTERP;
+  keys.push({ id: mkId(), t_us: tUs, value, interp: resolved });
   keys.sort((a, b) => a.t_us - b.t_us);
   return { mode: "Keyframed", value: keys };
 }

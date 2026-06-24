@@ -117,7 +117,7 @@ export function parseEffectParamKey(key: string): [Uuid, string] | null {
   return m ? [m[1], m[2]] : null
 }
 
-const TRANSFORM_F64_KEYS = ['x', 'y', 'scale_x', 'scale_y', 'rotation_deg']
+export const TRANSFORM_F64_KEYS = ['x', 'y', 'scale_x', 'scale_y', 'rotation_deg']
 
 /** layer.rs:322/377 — resolve a param-key to a setter for its Animated<f64> slot,
  *  or null if the key is unknown / invalid on this kind. Effect-param paths look
@@ -140,6 +140,42 @@ function f64Lens(layer: Layer, key: string): { set(v: Animated<number>): void } 
   if (key === 'opacity') return { set: (v) => { p.opacity = v } }
   if (TRANSFORM_F64_KEYS.includes(key)) return { set: (v) => { (p.transform as unknown as Record<string, Animated<number>>)[key] = v } }
   return null
+}
+
+/** layer.rs:286-374 read sibling of f64Lens — resolve a param-key to its CURRENT
+ *  Animated<f64> (a reference into the layer), or null if unknown/invalid on this
+ *  kind. Effect-param paths read layer.effects (None when the param slot is
+ *  absent → caller maps to UnknownKeyframeParam). Read-only: never inserts. */
+export function resolveAnimatedF64(layer: Layer, key: string): Animated<number> | null {
+  const eff = parseEffectParamKey(key)
+  if (eff) {
+    const e = layer.effects.find((x) => x.id === eff[0])
+    return e ? (e.params[eff[1]] ?? null) : null
+  }
+  const p = layer.params
+  if (p.kind === 'Color') return null
+  if (p.kind === 'Audio') {
+    if (key === 'gain_db') return p.gain_db
+    if (key === 'pan') return p.pan
+    return null
+  }
+  // VideoClip | ImageOverlay | Text | Motif — transform + opacity
+  if (key === 'opacity') return p.opacity
+  if (TRANSFORM_F64_KEYS.includes(key)) return (p.transform as unknown as Record<string, Animated<number>>)[key] ?? null
+  return null
+}
+
+/** native/src/mcp/keyframes.rs:126 read_track — locate the layer (LayerNotFound),
+ *  resolve the param key (UnknownKeyframeParam), return its t_start_us + current
+ *  track. Used by the MCP keyframe tools for timeline-absolute↔layer-local
+ *  conversion. Read-only (no commit, no id mint). */
+export function readLayerTrack(p: Project, id: Uuid, paramKey: string): { tStartUs: number; track: Animated<number> } {
+  const loc = locateLayer(p, id)
+  if (!loc) throw new CommandFailure({ error: 'LayerNotFound', layer: id })
+  const layer = p.tracks[loc[0]].layers[loc[1]]
+  const track = resolveAnimatedF64(layer, paramKey)
+  if (track === null) throw new CommandFailure({ error: 'UnknownKeyframeParam', layer: id, param_key: paramKey })
+  return { tStartUs: layer.t_start_us, track }
 }
 
 /** actor.rs:2752 do_update_layer_param_track (mutation half): lock-check →
