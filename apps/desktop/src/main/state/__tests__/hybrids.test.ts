@@ -136,6 +136,7 @@ describe('runHybrid: install_motif (motif hybrid)', () => {
       props: {}, t_start_us: 0, t_end_us: 1_000_000,
     })
     expect(addR.ok).toBe(true)
+    if (!addR.ok) throw new Error(JSON.stringify(addR.error))
     const layerId = addR.value as string
 
     const deps = makeDeps(actor)
@@ -212,6 +213,7 @@ describe('runHybrid: acknowledge_motif_staleness (motif hybrid)', () => {
       props: {}, t_start_us: 0, t_end_us: 1_000_000,
     })
     expect(addR.ok).toBe(true)
+    if (!addR.ok) throw new Error(JSON.stringify(addR.error))
     const layerId = addR.value as string
 
     const deps = makeDeps(actor)
