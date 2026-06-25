@@ -426,7 +426,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'restyle_caption_track': commit('Restyled caption track', [{ kind: 'Track', id: a.track as Uuid }], { kind: 'Coarse' }, (d) => applyRestyleCaptionTrack(d, a.track as Uuid, a.patch as CaptionStylePatch)); return { ok: true, value: null }
         case 'rebind_motif': {
           const updates = a.updates as MotifRebindEntry[]
-          const affected = updates.map((u) => u.layer_id)
+          const affected: EntityRef[] = updates.map((u) => ({ kind: 'Layer', id: u.layer_id }))
           return { ok: true, value: commit('Rebound motif layers', affected, { kind: 'Coarse' }, (d) => applyRebindMotif(d, updates)) }
         }
         case 'replace_state': {

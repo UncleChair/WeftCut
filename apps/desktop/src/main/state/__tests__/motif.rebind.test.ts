@@ -22,6 +22,7 @@ describe('rebind_motif dispatch', () => {
       props: { a: 1 }, t_start_us: 0, t_end_us: 1_000_000,
     })
     expect(addR.ok, 'add_layer Motif should succeed').toBe(true)
+    if (!addR.ok) throw new Error(JSON.stringify(addR.error))
     const layerId = addR.value as string
 
     // rebind it
@@ -53,6 +54,7 @@ describe('rebind_motif dispatch', () => {
     const colorR = actor.dispatch('add_layer', {
       track: aRoll, kind: 'color', t_start_us: 0, t_end_us: 1_000_000,
     })
+    if (!colorR.ok) throw new Error(JSON.stringify(colorR.error))
     const colorId = colorR.value as string
 
     // rebind pointing at a color layer — should succeed (skip silently)
@@ -78,6 +80,8 @@ describe('rebind_motif dispatch', () => {
       track: aRoll, kind: 'Motif', motif_id: 'mx', motif_version: 1,
       props: {}, t_start_us: 2_000_000, t_end_us: 3_000_000,
     })
+    if (!r1.ok) throw new Error(JSON.stringify(r1.error))
+    if (!r2.ok) throw new Error(JSON.stringify(r2.error))
     const id1 = r1.value as string
     const id2 = r2.value as string
 
