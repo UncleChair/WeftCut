@@ -117,6 +117,27 @@ export function parseStr(v: unknown, field: string): string {
   return v
 }
 
+/** Validate a required boolean wire arg → invalid_params. */
+export function parseBool(v: unknown, field: string): boolean {
+  if (typeof v !== 'boolean') throw new McpArgError(`${field} must be a boolean`)
+  return v
+}
+
+/** Optional boolean variant: undefined/null → dflt. */
+export function parseBoolOpt(v: unknown, field: string, dflt: boolean): boolean {
+  return v === undefined || v === null ? dflt : parseBool(v, field)
+}
+
+/** Optional string variant: undefined/null → null, else validates string. */
+export function parseStrOpt(v: unknown): string | null {
+  return v === undefined || v === null ? null : (typeof v === 'string' ? v : (() => { throw new McpArgError('label must be a string') })())
+}
+
+function asArray(v: unknown, field: string): string[] {
+  if (!Array.isArray(v)) throw new McpArgError(`${field} must be an array`)
+  return v as string[]
+}
+
 // ── ToolResult shapers (wire.rs:81-93) ──
 export function toolText(s: string): ToolResultJson { return { content: [{ type: 'text', text: s }] } }
 export function toolEmpty(): ToolResultJson { return { content: [] } }
@@ -204,61 +225,129 @@ export function keyframePresent(track: { mode: string; value: unknown }, id: str
     && (track as { value: Array<{ id: string }> }).value.some((k) => k.id === id)
 }
 
-/** MCP tool → internal dispatch op + renamed args. Throws McpArgError on bad
- *  UUIDs. Explicit-param tools (add_color_layer/add_video_layer/add_marker/
- *  split_layer) are NOT here — they have dedicated arms in actor.mcpCall. */
-export const MCP_ARG_PARSERS: Record<string, (a: Record<string, unknown>) => { op: string; args: Record<string, unknown> }> = {
-  add_track: (a) => ({ op: 'add_track', args: { label: (a.label as string | undefined) ?? null } }),
-  remove_track: (a) => ({ op: 'delete_track', args: { track: parseUuid(a.track_id, 'track_id'), force: (a.force as boolean) ?? false } }),
-  duplicate_layer: (a) => ({ op: 'duplicate_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), t_offset_us: a.t_offset_us } }),
-  move_track: (a) => ({ op: 'move_track', args: { track: parseUuid(a.track_id, 'track_id'), new_position: a.new_position } }),
-  update_layer: (a) => ({ op: 'update_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), patch: a.patch } }),
-  update_layer_params: (a) => ({ op: 'update_layer_params', args: { layer: parseUuid(a.layer_id, 'layer_id'), patch: a.patch } }),
-  move_layer: (a) => ({ op: 'move_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), to_track: parseUuid(a.new_track_id, 'new_track_id'), t_start_us: a.new_t_start_us, escape_group: (a.escape_group as boolean) ?? false } }),
-  trim_layer: (a) => ({ op: 'trim_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), edge: a.edge, new_t_us: a.new_t_us, escape_group: (a.escape_group as boolean) ?? false } }),
-  delete_layer: (a) => ({ op: 'delete_layer', args: { layer: parseUuid(a.layer_id, 'layer_id') } }),
-  groups_create: (a) => ({ op: 'groups_create', args: { layers: (a.layer_ids as string[]).map((s) => parseUuid(s, 'layer_ids')), label: (a.label as string | undefined) ?? null, reassign: (a.reassign as boolean) ?? false } }),
-  groups_dissolve: (a) => ({ op: 'groups_dissolve', args: { group: parseUuid(a.group_id, 'group_id') } }),
-  groups_add_members: (a) => ({ op: 'groups_add_members', args: { group: parseUuid(a.group_id, 'group_id'), layers: (a.layer_ids as string[]).map((s) => parseUuid(s, 'layer_ids')), reassign: (a.reassign as boolean) ?? false } }),
-  groups_remove_members: (a) => ({ op: 'groups_remove_members', args: { group: parseUuid(a.group_id, 'group_id'), layers: (a.layer_ids as string[]).map((s) => parseUuid(s, 'layer_ids')) } }),
-  groups_rename: (a) => ({ op: 'groups_rename', args: { group: parseUuid(a.group_id, 'group_id'), label: (a.label as string | undefined) ?? null } }),
-  add_effect: (a) => ({ op: 'add_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), kind: a.kind } }),
-  update_effect: (a) => ({ op: 'update_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), effect: parseUuid(a.effect_id, 'effect_id'), patch: a.patch } }),
-  move_effect: (a) => ({ op: 'move_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), effect: parseUuid(a.effect_id, 'effect_id'), new_index: a.new_index } }),
-  remove_effect: (a) => ({ op: 'remove_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), effect: parseUuid(a.effect_id, 'effect_id') } }),
-  set_composition: (a) => ({ op: 'set_composition', args: a.patch as Record<string, unknown> }),
-  fit_composition_to_layers: () => ({ op: 'fit_composition_to_layers', args: {} }),
-  update_marker: (a) => ({ op: 'update_marker', args: { marker: parseUuid(a.marker_id, 'marker_id'), patch: a.patch } }),
-  remove_marker: (a) => ({ op: 'remove_marker', args: { marker: parseUuid(a.marker_id, 'marker_id') } }),
-  remove_media: (a) => ({ op: 'remove_media', args: { media: parseUuid(a.media_id, 'media_id'), force: (a.force as boolean) ?? false } }),
-  undo: () => ({ op: 'undo', args: {} }),
-  redo: () => ({ op: 'redo', args: {} }),
-  set_role_gain: (a) => ({ op: 'set_role_gain', args: { role: parseRole(a.role), gain_db: a.gain_db } }),
-  set_role_flags: (a) => ({ op: 'update_role_flags', args: { role: parseRole(a.role), patch: { muted: a.muted ?? null, solo: a.solo ?? null } } }),
+/** Single-source record per MCP tool. Table-exec tools carry parseArgs (+ optional
+ *  shapeResult). Dedicated-exec tools carry stub records only — their parseDedicated
+ *  arms are attached in Task 5. description/inputSchema seeded '' / {} here;
+ *  // FILLED IN TASK 6 */
+export interface McpToolDef {
+  name: string
+  description: string                   // FILLED IN TASK 6
+  inputSchema: Record<string, unknown>  // FILLED IN TASK 6
+  exec: 'table' | 'dedicated'
+  parseArgs?: (a: Record<string, unknown>) => { op: string; args: Record<string, unknown> }  // table-exec only
+  shapeResult?: (value: unknown) => ToolResultJson                                             // table-exec only (default toolEmpty)
+  parseDedicated?: (a: Record<string, unknown>) => Record<string, unknown>                    // dedicated-exec only (Task 5)
 }
 
-/** MCP tool → ToolResult from the dispatch value. Tools absent here → toolEmpty. */
-export const MCP_RESULT_SHAPERS: Record<string, (value: unknown) => ToolResultJson> = {
-  add_track: (v) => toolText(v as string),
-  duplicate_layer: (v) => toolText(v as string),
-  add_effect: (v) => toolText(v as string),
-  groups_create: (v) => toolText(v as string),
-}
+// ── Single-source MCP tool table ─────────────────────────────────────────────
+// Each table-exec entry folds §2.5 hardening into parseArgs: every former
+// `a.x as T` cast → parseX(a.x,'x'); optional booleans → parseBoolOpt; patch/
+// flags objects stay structural (validated by the downstream mutation), but all
+// uuid/number/enum scalars are parser-gated. The 19 dedicated stubs exist only
+// so MCP_TOOLS projection stays complete; their behavior lives in actor.ts arms.
+// FILLED IN TASK 6: description/inputSchema on every entry.
+export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
+  // ── table-exec: tracks ───────────────────────────────────────────────────
+  { name: 'add_track', exec: 'table', description: '', inputSchema: {},
+    parseArgs: (a) => ({ op: 'add_track', args: { label: parseStrOpt(a.label) } }),
+    shapeResult: (v) => toolText(v as string) },
+  { name: 'remove_track', exec: 'table', description: '', inputSchema: {},
+    parseArgs: (a) => ({ op: 'delete_track', args: { track: parseUuid(a.track_id, 'track_id'), force: parseBoolOpt(a.force, 'force', false) } }) },
+  { name: 'move_track', exec: 'table', description: '', inputSchema: {},
+    parseArgs: (a) => ({ op: 'move_track', args: { track: parseUuid(a.track_id, 'track_id'), new_position: a.new_position } }) },
+  // ── table-exec: layers ───────────────────────────────────────────────────
+  { name: 'duplicate_layer', exec: 'table', description: '', inputSchema: {},
+    parseArgs: (a) => ({ op: 'duplicate_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), t_offset_us: a.t_offset_us } }),
+    shapeResult: (v) => toolText(v as string) },
+  { name: 'update_layer', exec: 'table', description: '', inputSchema: {},
+    parseArgs: (a) => ({ op: 'update_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), patch: a.patch } }) },
+  { name: 'update_layer_params', exec: 'table', description: '', inputSchema: {},
+    parseArgs: (a) => ({ op: 'update_layer_params', args: { layer: parseUuid(a.layer_id, 'layer_id'), patch: a.patch } }) },
+  { name: 'move_layer', exec: 'table', description: '', inputSchema: {},
+    parseArgs: (a) => ({ op: 'move_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), to_track: parseUuid(a.new_track_id, 'new_track_id'), t_start_us: a.new_t_start_us, escape_group: parseBoolOpt(a.escape_group, 'escape_group', false) } }) },
+  { name: 'trim_layer', exec: 'table', description: '', inputSchema: {},
+    parseArgs: (a) => ({ op: 'trim_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), edge: a.edge, new_t_us: a.new_t_us, escape_group: parseBoolOpt(a.escape_group, 'escape_group', false) } }) },
+  { name: 'delete_layer', exec: 'table', description: '', inputSchema: {},
+    parseArgs: (a) => ({ op: 'delete_layer', args: { layer: parseUuid(a.layer_id, 'layer_id') } }) },
+  // ── table-exec: groups ───────────────────────────────────────────────────
+  { name: 'groups_create', exec: 'table', description: '', inputSchema: {},
+    parseArgs: (a) => ({ op: 'groups_create', args: { layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')), label: parseStrOpt(a.label), reassign: parseBoolOpt(a.reassign, 'reassign', false) } }),
+    shapeResult: (v) => toolText(v as string) },
+  { name: 'groups_dissolve', exec: 'table', description: '', inputSchema: {},
+    parseArgs: (a) => ({ op: 'groups_dissolve', args: { group: parseUuid(a.group_id, 'group_id') } }) },
+  { name: 'groups_add_members', exec: 'table', description: '', inputSchema: {},
+    parseArgs: (a) => ({ op: 'groups_add_members', args: { group: parseUuid(a.group_id, 'group_id'), layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')), reassign: parseBoolOpt(a.reassign, 'reassign', false) } }) },
+  { name: 'groups_remove_members', exec: 'table', description: '', inputSchema: {},
+    parseArgs: (a) => ({ op: 'groups_remove_members', args: { group: parseUuid(a.group_id, 'group_id'), layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')) } }) },
+  { name: 'groups_rename', exec: 'table', description: '', inputSchema: {},
+    parseArgs: (a) => ({ op: 'groups_rename', args: { group: parseUuid(a.group_id, 'group_id'), label: parseStrOpt(a.label) } }) },
+  // ── table-exec: effects ──────────────────────────────────────────────────
+  { name: 'add_effect', exec: 'table', description: '', inputSchema: {},
+    parseArgs: (a) => ({ op: 'add_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), kind: a.kind } }),
+    shapeResult: (v) => toolText(v as string) },
+  { name: 'update_effect', exec: 'table', description: '', inputSchema: {},
+    parseArgs: (a) => ({ op: 'update_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), effect: parseUuid(a.effect_id, 'effect_id'), patch: a.patch } }) },
+  { name: 'move_effect', exec: 'table', description: '', inputSchema: {},
+    parseArgs: (a) => ({ op: 'move_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), effect: parseUuid(a.effect_id, 'effect_id'), new_index: a.new_index } }) },
+  { name: 'remove_effect', exec: 'table', description: '', inputSchema: {},
+    parseArgs: (a) => ({ op: 'remove_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), effect: parseUuid(a.effect_id, 'effect_id') } }) },
+  // ── table-exec: composition ──────────────────────────────────────────────
+  { name: 'set_composition', exec: 'table', description: '', inputSchema: {},
+    parseArgs: (a) => ({ op: 'set_composition', args: a.patch as Record<string, unknown> }) },
+  { name: 'fit_composition_to_layers', exec: 'table', description: '', inputSchema: {},
+    parseArgs: () => ({ op: 'fit_composition_to_layers', args: {} }) },
+  // ── table-exec: markers ──────────────────────────────────────────────────
+  { name: 'update_marker', exec: 'table', description: '', inputSchema: {},
+    parseArgs: (a) => ({ op: 'update_marker', args: { marker: parseUuid(a.marker_id, 'marker_id'), patch: a.patch } }) },
+  { name: 'remove_marker', exec: 'table', description: '', inputSchema: {},
+    parseArgs: (a) => ({ op: 'remove_marker', args: { marker: parseUuid(a.marker_id, 'marker_id') } }) },
+  // ── table-exec: media ────────────────────────────────────────────────────
+  { name: 'remove_media', exec: 'table', description: '', inputSchema: {},
+    parseArgs: (a) => ({ op: 'remove_media', args: { media: parseUuid(a.media_id, 'media_id'), force: parseBoolOpt(a.force, 'force', false) } }) },
+  // ── table-exec: history ──────────────────────────────────────────────────
+  { name: 'undo', exec: 'table', description: '', inputSchema: {},
+    parseArgs: () => ({ op: 'undo', args: {} }) },
+  { name: 'redo', exec: 'table', description: '', inputSchema: {},
+    parseArgs: () => ({ op: 'redo', args: {} }) },
+  // ── table-exec: audio roles ──────────────────────────────────────────────
+  { name: 'set_role_gain', exec: 'table', description: '', inputSchema: {},
+    parseArgs: (a) => ({ op: 'set_role_gain', args: { role: parseRole(a.role), gain_db: parseNum(a.gain_db, 'gain_db') } }) },
+  // set_role_flags: patch stays structural (muted/solo are nullable booleans validated by the mutation)
+  { name: 'set_role_flags', exec: 'table', description: '', inputSchema: {},
+    parseArgs: (a) => ({ op: 'update_role_flags', args: { role: parseRole(a.role), patch: { muted: a.muted ?? null, solo: a.solo ?? null } } }) },
+  // ── dedicated-exec stubs (19) — behavior lives in actor.ts dedicated arms ──
+  // Task 5 attaches parseDedicated to each; here they exist only to keep MCP_TOOLS complete.
+  { name: 'add_color_layer', exec: 'dedicated', description: '', inputSchema: {} },
+  { name: 'add_video_layer', exec: 'dedicated', description: '', inputSchema: {} },
+  { name: 'split_layer', exec: 'dedicated', description: '', inputSchema: {} },
+  { name: 'add_marker', exec: 'dedicated', description: '', inputSchema: {} },
+  { name: 'lock_history', exec: 'dedicated', description: '', inputSchema: {} },
+  { name: 'unlock_history', exec: 'dedicated', description: '', inputSchema: {} },
+  { name: 'set_keyframe', exec: 'dedicated', description: '', inputSchema: {} },
+  { name: 'get_param_track', exec: 'dedicated', description: '', inputSchema: {} },
+  { name: 'remove_keyframe', exec: 'dedicated', description: '', inputSchema: {} },
+  { name: 'retime_keyframe', exec: 'dedicated', description: '', inputSchema: {} },
+  { name: 'set_keyframe_easing', exec: 'dedicated', description: '', inputSchema: {} },
+  { name: 'smooth_keyframes', exec: 'dedicated', description: '', inputSchema: {} },
+  { name: 'clear_keyframes', exec: 'dedicated', description: '', inputSchema: {} },
+  { name: 'set_param_track', exec: 'dedicated', description: '', inputSchema: {} },
+  { name: 'dry_run', exec: 'dedicated', description: '', inputSchema: {} },
+  { name: 'checkpoint', exec: 'dedicated', description: '', inputSchema: {} },
+  { name: 'list_checkpoints', exec: 'dedicated', description: '', inputSchema: {} },
+  { name: 'restore_checkpoint', exec: 'dedicated', description: '', inputSchema: {} },
+  { name: 'begin_agent_session', exec: 'dedicated', description: '', inputSchema: {} },
+]
 
-/** All MCP tools this adapter handles (parsers + the dedicated arms). Grows per task. */
-export const MCP_TOOLS: ReadonlySet<string> = new Set<string>([
-  'add_track', 'remove_track', 'move_track',
-  'add_color_layer', 'add_video_layer', 'update_layer', 'update_layer_params',
-  'move_layer', 'split_layer', 'delete_layer', 'trim_layer', 'duplicate_layer',
-  'groups_create', 'groups_dissolve', 'groups_add_members', 'groups_remove_members', 'groups_rename',
-  'add_effect', 'update_effect', 'move_effect', 'remove_effect',
-  'set_composition', 'fit_composition_to_layers',
-  'add_marker', 'update_marker', 'remove_marker',
-  'remove_media', 'undo', 'redo', 'lock_history', 'unlock_history',
-  'set_role_gain', 'set_role_flags',
-  // Phase 3d-b: keyframes + dry_run
-  'set_keyframe', 'get_param_track', 'remove_keyframe', 'retime_keyframe',
-  'set_keyframe_easing', 'smooth_keyframes', 'clear_keyframes', 'set_param_track', 'dry_run',
-  // Phase 3d-c: checkpoints + agent session
-  'checkpoint', 'list_checkpoints', 'restore_checkpoint', 'begin_agent_session',
-])
+/** MCP tool → internal dispatch op + renamed args. Projection of MCP_TOOL_DEFS.
+ *  Explicit-param tools (add_color_layer/add_video_layer/add_marker/split_layer
+ *  etc.) are NOT here — they have dedicated arms in actor.mcpCall. */
+export const MCP_ARG_PARSERS: Record<string, (a: Record<string, unknown>) => { op: string; args: Record<string, unknown> }> =
+  Object.fromEntries(MCP_TOOL_DEFS.filter((d) => d.parseArgs).map((d) => [d.name, d.parseArgs!]))
+
+/** MCP tool → ToolResult from the dispatch value. Projection of MCP_TOOL_DEFS.
+ *  Tools absent here → toolEmpty. */
+export const MCP_RESULT_SHAPERS: Record<string, (value: unknown) => ToolResultJson> =
+  Object.fromEntries(MCP_TOOL_DEFS.filter((d) => d.shapeResult).map((d) => [d.name, d.shapeResult!]))
+
+/** All MCP tools this adapter handles (parsers + the dedicated arms). Projection of MCP_TOOL_DEFS. */
+export const MCP_TOOLS: ReadonlySet<string> = new Set(MCP_TOOL_DEFS.map((d) => d.name))
