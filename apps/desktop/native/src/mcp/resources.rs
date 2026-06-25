@@ -63,7 +63,7 @@ pub(crate) async fn read_resource(
     b: &Backend,
     uri: &str,
 ) -> Result<ResourceResult, McpToolError> {
-    let snap = b.project()?.snapshot().await;
+    let snap = b.snapshot_for_read().await?;
 
     // media://* paths return binary content (image bytes, peaks file). We
     // peel them off here so the rest of `read_resource` can stay
@@ -78,10 +78,10 @@ pub(crate) async fn read_resource(
         URI_MEDIA => serde_json::to_value(&snap.media_pool).map_err(serialize_err)?,
         URI_TRACKS => serde_json::to_value(&snap.tracks).map_err(serialize_err)?,
         URI_MARKERS => serde_json::to_value(&snap.markers).map_err(serialize_err)?,
-        URI_HISTORY => {
-            let view = b.project()?.history_view(HISTORY_LIMIT).await;
-            serde_json::to_value(&view).map_err(serialize_err)?
-        }
+        URI_HISTORY => match b.mirror_history_view() {
+            Some(v) => v,
+            None => serde_json::to_value(&b.project()?.history_view(HISTORY_LIMIT).await).map_err(serialize_err)?,
+        },
         URI_METER => meter_payload(b),
         URI_COMPILED => {
             // The audio mix plan IS the compiled view of the export
@@ -406,4 +406,29 @@ pub(super) fn static_resources() -> Vec<ResourceDef> {
         mime_type: APP_JSON.to_string(),
     });
     out
+}
+
+#[cfg(test)]
+mod read_mirror_tests {
+    use super::*;
+    use crate::napi_backend::Backend;
+
+    #[tokio::test]
+    async fn read_resource_serves_the_mirror_when_set() {
+        // new_for_test: see napi_backend.rs:457 for the exact constructor args.
+        let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
+        let p = crate::state::Project::new_blank("mirror-test");
+        let original_id = p.project_id.to_string();
+        let project_json = serde_json::to_string(&p).unwrap();
+        let history_json = r#"{"ops":[],"cursor":0,"len":1,"checkpoints":[]}"#.to_string();
+        b.set_project_mirror(project_json, history_json).unwrap();
+
+        let r = read_resource(&b, "project://current").await.unwrap();
+        let text = match &r.contents[0] {
+            ResourceContent::Text { text, .. } => text.clone(),
+            _ => panic!("expected text"),
+        };
+        let body: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(body["project_id"].as_str().unwrap(), original_id, "served the mirrored project");
+    }
 }

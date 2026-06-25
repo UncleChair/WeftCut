@@ -491,7 +491,7 @@ pub(super) async fn detect_silences(
     args: DetectSilencesArgs,
 ) -> Result<ToolResult, McpToolError> {
     let layer_id = parse_uuid(&args.layer_id, "layer_id")?;
-    let snap = b.project()?.snapshot().await;
+    let snap = b.snapshot_for_read().await?;
     let layer = snap
         .tracks
         .iter()
@@ -2628,7 +2628,7 @@ async fn transcribe_clip_inner(
     args: TranscribeClipArgs,
 ) -> Result<ToolResult, McpToolError> {
     let layer_id = parse_uuid(&args.layer_id, "layer_id")?;
-    let snap = b.project()?.snapshot().await;
+    let snap = b.snapshot_for_read().await?;
     let resolved = resolve_clip_audio_source(
         &snap,
         layer_id,

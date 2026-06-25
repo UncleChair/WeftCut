@@ -23,6 +23,15 @@ use crate::recents::RecentsStore;
 use crate::state::{self, ProjectHandle};
 use crate::workspace::WorkspaceSlot;
 
+/// A TS-fed read-replica of the project, used under WEFTCUT_TS_ACTOR so the Rust
+/// read paths (resources, detect_silences, transcribe_clip, + Phase-3d-e compute)
+/// serve fresh state while the Rust actor is frozen. Set only from TS; never
+/// mutated by Rust handlers. `None` = flag-off → fall through to the actor.
+struct ReadMirror {
+    project: std::sync::Arc<crate::state::Project>,
+    history_view: serde_json::Value,
+}
+
 #[napi]
 pub struct Backend {
     pub(crate) events: Arc<dyn EventSink>,
@@ -51,6 +60,8 @@ pub struct Backend {
     /// Always compiled (cache is feature-independent) so main can push keys
     /// regardless of the addon's feature set.
     pub(crate) cloud_keys: std::sync::Mutex<std::collections::HashMap<String, String>>,
+    /// See ReadMirror. Behind a Mutex like cloud_keys; None until the TS host pushes.
+    read_mirror: std::sync::Mutex<Option<ReadMirror>>,
     #[cfg(feature = "motifs")]
     pub(crate) motif_store: crate::motifs::store::UserMotifStore,
     #[cfg(feature = "motifs")]
@@ -110,6 +121,7 @@ fn build_backend(events: Arc<dyn EventSink>, config_dir: String, cache_dir: Stri
         config_dir,
         cache_dir,
         cloud_keys: std::sync::Mutex::new(std::collections::HashMap::new()),
+        read_mirror: std::sync::Mutex::new(None),
         #[cfg(feature = "motifs")]
         motif_store,
         #[cfg(feature = "motifs")]
@@ -248,6 +260,19 @@ impl Backend {
     #[napi]
     pub fn clear_cloud_key(&self, provider: String) {
         self.cloud_keys.lock().expect("cloud_keys poisoned").remove(&provider);
+    }
+
+    /// Replace the read-mirror with a TS-serialized project + history view.
+    /// Called by the TS host on every project:changed under WEFTCUT_TS_ACTOR.
+    #[napi]
+    pub fn set_project_mirror(&self, project_json: String, history_view_json: String) -> napi::Result<()> {
+        let project: crate::state::Project = serde_json::from_str(&project_json)
+            .map_err(|e| Error::from_reason(format!("set_project_mirror: invalid project json: {e}")))?;
+        let history_view: serde_json::Value = serde_json::from_str(&history_view_json)
+            .map_err(|e| Error::from_reason(format!("set_project_mirror: invalid history json: {e}")))?;
+        *self.read_mirror.lock().expect("read_mirror poisoned") =
+            Some(ReadMirror { project: std::sync::Arc::new(project), history_view });
+        Ok(())
     }
 
     /// Re-point cache + workspace, end any in-flight agent session, and rotate
@@ -437,6 +462,20 @@ impl Backend {
 impl Backend {
     pub(crate) fn project(&self) -> std::result::Result<&ProjectHandle, String> {
         self.project.get().ok_or_else(|| "backend not initialized".to_string())
+    }
+
+    /// Project snapshot for READ-ONLY consumers (resources, detect_silences,
+    /// transcribe_clip). Returns the TS read-mirror when set, else the actor.
+    pub(crate) async fn snapshot_for_read(&self) -> std::result::Result<std::sync::Arc<crate::state::Project>, String> {
+        if let Some(m) = self.read_mirror.lock().expect("read_mirror poisoned").as_ref() {
+            return Ok(m.project.clone());
+        }
+        Ok(self.project()?.snapshot().await)
+    }
+
+    /// The mirrored history view (project://history under the flag), or None.
+    pub(crate) fn mirror_history_view(&self) -> Option<serde_json::Value> {
+        self.read_mirror.lock().expect("read_mirror poisoned").as_ref().map(|m| m.history_view.clone())
     }
 
     /// The autosave controller installed by `init`. `project_save` force-flushes
