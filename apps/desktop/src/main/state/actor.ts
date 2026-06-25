@@ -1,6 +1,6 @@
 // apps/desktop/src/main/state/actor.ts
 import { produce, setAutoFreeze } from 'immer'
-import type { Animated, Composition, LayerParams, Project, Rational, Rgba, Uuid } from './model'
+import type { Animated, Composition, LayerParams, MotifRebindEntry, Project, Rational, Rgba, Uuid } from './model'
 import { blankProject } from './model'
 import type { IdGen } from './ids'
 import { History, type Actor, type EntityRef, type TrackFlagsPatch, type RoleFlagsPatch } from './history'
@@ -27,6 +27,7 @@ import { videoClipParams, audioParams, imageOverlayParams, applySeparateAudio, m
 import type { MediaItem } from './model'
 import { applyUpdateLayerParams, applyUpdateLayerParamTrack, type LayerParamsPatch } from './mutations/params'
 import { applyAddCaptionTrack, applyRestyleCaptionTrack, type Cue, type CaptionStylePatch } from './mutations/captions'
+import { applyRebindMotif } from './mutations/motif'
 import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, pickFreeOverlayTrack, demoColor } from './commands'
 import { mapCommandError, MCP_ARG_PARSERS, MCP_RESULT_SHAPERS, toolEmpty, toolText, toolJson, parseUuid, McpArgError, shapeGetParamTrack, keyframePresent, shapeDryRunResponse, parseInterp, parseInterpOpt, parseAnimatedF64, type McpCallResult } from './mcp-commands'
 import { upsertKeyframe, removeKeyframe, retimeKeyframe, setKeyframeInterp, smoothKeyframe, smoothTrack } from './keyframeEdits'
@@ -376,6 +377,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
             case 'video': params = videoClipParams(a.media as Uuid, a.src_in_us as number, a.src_out_us as number); break
             case 'audio': params = audioParams(a.media as Uuid, a.src_in_us as number, a.src_out_us as number); break
             case 'image': params = imageOverlayParams(a.media as Uuid); break
+            case 'Motif': params = { kind: 'Motif', motif_id: a.motif_id as string, motif_version: a.motif_version as number, props: (a.props ?? {}) as Record<string, unknown>, src_in_us: 0, transform: { x: { mode: 'Static', value: 0 }, y: { mode: 'Static', value: 0 }, scale_x: { mode: 'Static', value: 1 }, scale_y: { mode: 'Static', value: 1 }, rotation_deg: { mode: 'Static', value: 0 }, anchor: [0.5, 0.5] }, opacity: { mode: 'Static', value: 1 } }; break
             default: return { ok: false, error: { error: 'InvalidArgument', field: 'kind', detail: `unknown kind ${kind}` } }
           }
           const id = commit('Added layer', [], { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, a.track as Uuid, params, a.t_start_us as number, a.t_end_us as number))
@@ -422,6 +424,11 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'update_project_settings': updateProjectSettings(a.patch as { auto_delete_empty_tracks?: boolean | null }); return { ok: true, value: null }
         case 'add_caption_track': return { ok: true, value: commit('Added caption track', [], { kind: 'Coarse' }, (d) => applyAddCaptionTrack(d, idGen, a.cues as Cue[], a.comp_w as number, a.comp_h as number, (a.label as string) ?? null)) }
         case 'restyle_caption_track': commit('Restyled caption track', [{ kind: 'Track', id: a.track as Uuid }], { kind: 'Coarse' }, (d) => applyRestyleCaptionTrack(d, a.track as Uuid, a.patch as CaptionStylePatch)); return { ok: true, value: null }
+        case 'rebind_motif': {
+          const updates = a.updates as MotifRebindEntry[]
+          const affected = updates.map((u) => u.layer_id)
+          return { ok: true, value: commit('Rebound motif layers', affected, { kind: 'Coarse' }, (d) => applyRebindMotif(d, updates)) }
+        }
         case 'replace_state': {
           // Differential-corpus vehicle: build a blank from the args (mirrors
           // Project::new_blank + project_new_workspace's canvas override) so both

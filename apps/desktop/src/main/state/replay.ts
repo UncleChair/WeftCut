@@ -26,8 +26,9 @@ export const SUPPORTED_OPS = new Set<string>([
   'set_role_gain', 'update_role_flags', 'update_project_settings',
   'add_caption_track', 'restyle_caption_track',
   'replace_state',
+  'rebind_motif',
 ])
-const SUPPORTED_ADD_KINDS = new Set<string>(['color', 'text', 'video', 'audio', 'image'])
+const SUPPORTED_ADD_KINDS = new Set<string>(['color', 'text', 'video', 'audio', 'image', 'Motif'])
 
 export interface TraceStep { op: string; ok: boolean; error?: string | null; env?: unknown; state: unknown }
 export interface Trace { name: string; steps: TraceStep[] }
@@ -107,7 +108,8 @@ export function replaySummaries(seq: Sequence): SummaryTrace {
 function buildArgs(cmd: Cmd, refs: Map<string, string>): Record<string, unknown> {
   switch (cmd.op) {
     case 'add_layer': return { track: resolve(refs, cmd.track), kind: cmd.kind, t_start_us: cmd.t_start_us, t_end_us: cmd.t_end_us,
-      media: cmd.media !== undefined ? resolve(refs, cmd.media) : undefined, src_in_us: cmd.src_in_us, src_out_us: cmd.src_out_us }
+      media: cmd.media !== undefined ? resolve(refs, cmd.media) : undefined, src_in_us: cmd.src_in_us, src_out_us: cmd.src_out_us,
+      motif_id: cmd.motif_id, motif_version: cmd.motif_version, props: cmd.props }
     case 'add_track': return { label: cmd.label ?? null }
     case 'add_marker': return { t_us: cmd.t_us, end_t_us: cmd.end_t_us ?? null, label: cmd.label ?? 'm' }
     case 'move_layer': return { layer: resolve(refs, cmd.layer), to_track: resolve(refs, cmd.to_track), t_start_us: cmd.t_start_us, escape_group: cmd.escape_group ?? false }
@@ -148,6 +150,14 @@ function buildArgs(cmd: Cmd, refs: Map<string, string>): Record<string, unknown>
     case 'set_media_derivatives': return { media: resolve(refs, cmd.media), patch: cmd.patch }
     case 'set_media_workspace_paths': return { media: resolve(refs, cmd.media), paths: cmd.paths }
     case 'remove_media': return { media: resolve(refs, cmd.media), force: cmd.force ?? false }
+    case 'rebind_motif': return {
+      updates: (cmd.updates as Array<{ layer_id: string; motif_id: string; motif_version: number; props: Record<string, unknown> }>).map((u) => ({
+        layer_id: resolve(refs, u.layer_id),
+        motif_id: u.motif_id,
+        motif_version: u.motif_version,
+        props: u.props,
+      })),
+    }
     case 'undo': case 'redo': return {}
     default: return {}
   }

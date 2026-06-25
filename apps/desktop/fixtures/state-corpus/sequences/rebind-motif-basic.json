@@ -1,0 +1,6 @@
+{ "name": "rebind-motif-basic", "commands": [
+  { "op": "add_track", "ref": "T" },
+  { "op": "add_layer", "track": "@T", "kind": "Motif", "motif_id": "motif-a", "motif_version": 1, "props": { "x": 10 }, "t_start_us": 0, "t_end_us": 2000000, "ref": "M" },
+  { "op": "rebind_motif", "updates": [ { "layer_id": "@M", "motif_id": "motif-b", "motif_version": 2, "props": { "x": 20 } } ] },
+  { "op": "add_track" }
+] }

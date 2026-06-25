@@ -119,6 +119,19 @@ async fn apply(h: &ProjectHandle, cmd: &Value, refs: &HashMap<String, String>) -
                     transform: Default::default(), opacity: Animated::Static(1.0),
                     blend_mode: Default::default(), fade_in_us: 0, fade_out_us: 0,
                 }),
+                "Motif" => {
+                    let props: imbl::HashMap<String, Value> = cmd["props"].as_object()
+                        .map(|o| o.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                        .unwrap_or_default();
+                    LayerParams::Motif(state::layer::MotifParams {
+                        motif_id: cmd["motif_id"].as_str().unwrap().to_string(),
+                        motif_version: cmd["motif_version"].as_u64().unwrap() as u32,
+                        props,
+                        src_in_us: 0,
+                        transform: Default::default(),
+                        opacity: Animated::Static(1.0),
+                    })
+                }
                 other => return Err(format!("unknown kind {other}")),
             };
             h.add_layer(u, track, params, r(cmd, "t_start_us"), r(cmd, "t_end_us")).await
@@ -305,6 +318,21 @@ async fn apply(h: &ProjectHandle, cmd: &Value, refs: &HashMap<String, String>) -
                 serde_json::from_value(cmd["patch"].clone()).map_err(|e| e.to_string())?;
             h.restyle_caption_track(u, resolve_id(refs, cmd["track"].as_str().unwrap()), patch).await
                 .map(|_| None).map_err(|e| format!("{e:?}"))
+        }
+        "rebind_motif" => {
+            let updates: Vec<weftcut_lib::state::actor::MotifRebindEntry> = cmd["updates"]
+                .as_array().unwrap().iter().map(|u| {
+                    let props: imbl::HashMap<String, Value> = u["props"].as_object()
+                        .map(|o| o.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                        .unwrap_or_default();
+                    weftcut_lib::state::actor::MotifRebindEntry {
+                        layer_id: resolve_id(refs, u["layer_id"].as_str().unwrap()),
+                        motif_id: u["motif_id"].as_str().unwrap().to_string(),
+                        motif_version: u["motif_version"].as_u64().unwrap() as u32,
+                        props,
+                    }
+                }).collect();
+            h.rebind_motif(u, updates).await.map(|_| None).map_err(|e| format!("{e:?}"))
         }
         "replace_state" => {
             // Build a blank from the args (mirrors Project::new_blank +

@@ -53,6 +53,9 @@ export interface MotifParams {
   kind: 'Motif'; motif_id: string; motif_version: number; props: Record<string, unknown>
   src_in_us: TimeUs; transform: Transform; opacity: Animated<number>
 }
+export interface MotifRebindEntry {
+  layer_id: string; motif_id: string; motif_version: number; props: Record<string, unknown>
+}
 export interface AudioParams {
   kind: 'Audio'; media: Uuid; src_in_us: TimeUs; src_out_us: TimeUs
   gain_db: Animated<number>; pan: Animated<number>
