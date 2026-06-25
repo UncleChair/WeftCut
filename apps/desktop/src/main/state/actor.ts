@@ -110,7 +110,17 @@ export function createActor(opts: ActorOptions): ActorHandle {
     return value
   }
 
-  function emit(e: ChangeEvent): void { for (const cb of subs) cb(e) }
+  function emit(e: ChangeEvent): void {
+    for (const cb of subs) {
+      try { cb(e) }
+      catch (err) {
+        // A throwing subscriber (e.g. pushMirror on a transient Rust-deserialize
+        // error) must not starve later subscribers (autosave / mcpNotify). Warn
+        // and continue — cf. feedback_ui_actor_bridge, feedback_async_block_on_in_async.
+        console.warn('[actor] change subscriber threw; continuing', err)
+      }
+    }
+  }
 
   function broadcastUnrecorded(summary: string, snapshot: Project): void {
     const opId = idGen() // matches broadcast_unrecorded's new_id (actor.rs:3815)
