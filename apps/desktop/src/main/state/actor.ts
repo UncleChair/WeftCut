@@ -1,6 +1,6 @@
 // apps/desktop/src/main/state/actor.ts
 import { produce, setAutoFreeze } from 'immer'
-import type { Animated, Composition, LayerParams, MotifRebindEntry, Project, Rational, Rgba, Uuid } from './model'
+import type { Animated, AudioRole, Composition, LayerParams, MotifRebindEntry, Project, Rational, Rgba, Uuid } from './model'
 import { blankProject } from './model'
 import type { IdGen } from './ids'
 import { History, type Actor, type EntityRef, type TrackFlagsPatch, type RoleFlagsPatch } from './history'
@@ -375,7 +375,13 @@ export function createActor(opts: ActorOptions): ActorHandle {
             case 'text': params = textParamsDefault('hello'); break
             case 'color': params = colorParams({ r: 255, g: 0, b: 0, a: 255 }, 1920, 1080); break
             case 'video': params = videoClipParams(a.media as Uuid, a.src_in_us as number, a.src_out_us as number); break
-            case 'audio': params = audioParams(a.media as Uuid, a.src_in_us as number, a.src_out_us as number); break
+            // Optional `role` override (default 'music'): mirrors the add-layer-site
+            // role stamp at actor.ts add_media_layer auto-pair (role:'dialogue') and the
+            // synthesize_speech hybrid (role:'voiceover'). ADDITIVE — corpus add_layer
+            // 'audio' seqs pass no role, so the default-'music' path is byte-unchanged.
+            case 'audio': params = a.role
+              ? { ...audioParams(a.media as Uuid, a.src_in_us as number, a.src_out_us as number), role: a.role as AudioRole }
+              : audioParams(a.media as Uuid, a.src_in_us as number, a.src_out_us as number); break
             case 'image': params = imageOverlayParams(a.media as Uuid); break
             case 'Motif': params = { kind: 'Motif', motif_id: a.motif_id as string, motif_version: a.motif_version as number, props: (a.props ?? {}) as Record<string, unknown>, src_in_us: 0, transform: { x: { mode: 'Static', value: 0 }, y: { mode: 'Static', value: 0 }, scale_x: { mode: 'Static', value: 1 }, scale_y: { mode: 'Static', value: 1 }, rotation_deg: { mode: 'Static', value: 0 }, anchor: [0.5, 0.5] }, opacity: { mode: 'Static', value: 1 } }; break
             default: return { ok: false, error: { error: 'InvalidArgument', field: 'kind', detail: `unknown kind ${kind}` } }

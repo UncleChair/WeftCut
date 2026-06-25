@@ -33,6 +33,11 @@ pub(crate) use catalog::{
 // mcp_driver differential bin; the `mcp` mod itself is private so this is not a
 // production API-surface widening. napi_backend uses `crate::mcp::dispatch_tool`.
 pub use catalog::dispatch_tool;
+// synthesize_speech hybrid (Phase 3d-e): napi_backend's `synthesize_speech_compute`
+// calls the TTS compute half + needs the args type. Re-exported here (the `tools`
+// mod is private) — same precedent as `dispatch_tool` above; not a public widening.
+#[cfg(feature = "cloud")]
+pub(crate) use tools::{SynthesizeSpeechArgs, synthesize_speech_audio};
 #[cfg(feature = "replay")]
 pub use wire::reply;
 pub(crate) use prompts::{catalog as list_prompts, expand as get_prompt};

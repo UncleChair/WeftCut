@@ -431,10 +431,10 @@ impl Backend {
     #[napi]
     #[cfg(feature = "cloud")]
     pub async fn synthesize_speech_compute(&self, args_json: String) -> napi::Result<String> {
-        let args: crate::mcp::tools::SynthesizeSpeechArgs =
+        let args: crate::mcp::SynthesizeSpeechArgs =
             serde_json::from_str(&args_json).map_err(|e| Error::from_reason(e.to_string()))?;
         let (media_item, cached) =
-            crate::mcp::tools::synthesize_speech_audio(self, &args)
+            crate::mcp::synthesize_speech_audio(self, &args)
                 .await
                 .map_err(|e| Error::from_reason(e.message))?;
         let duration_us = media_item.metadata.duration_us.unwrap_or(0);

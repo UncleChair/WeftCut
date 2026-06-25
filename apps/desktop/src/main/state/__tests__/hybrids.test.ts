@@ -396,7 +396,15 @@ describe('runHybrid: synthesize_speech (MCP hybrid)', () => {
     const trackId = addTrackR.value as string
     const deps = makeDeps(actor)
     deps.compute.synthesizeSpeechCompute = vi.fn(async () => fakeSpeechComputePayload())
+    // History granularity: the synth write-tail's layer add must be a SINGLE
+    // commit (no extra update_layer_params op) — matching Rust's one
+    // add_layer(AudioParams{role:Voiceover}). add_media_item is UNRECORDED (no
+    // history entry), and target_track_id is given (no ensureAudioTrack commit),
+    // so the only recorded entry from the write-tail is the layer add.
+    const lenBefore = actor.historyStatus().len
     await runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', speed: 1, target_track_id: trackId }, deps)
+    const lenAfter = actor.historyStatus().len
+    expect(lenAfter - lenBefore).toBe(1)
     const snap = actor.snapshot()
     const track = snap.tracks.find((t) => t.id === trackId)!
     const layer = track.layers[0]

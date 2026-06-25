@@ -162,8 +162,8 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
       // synthesize+write → spawn_blocking probe → build MediaItem). Returns
       // {media_item, duration_us, cached}. The TS host applies the WRITES:
       // add_media_item + enqueueDerivatives + resolve track + add Audio layer
-      // (Voiceover role) + update_layer_params (role patch). Mirrors
-      // synthesize_speech (tools.rs:2673) flag-off write tail.
+      // (Voiceover role, single commit). Mirrors synthesize_speech (tools.rs:2673)
+      // flag-off write tail.
       const { media_item, duration_us, cached } = JSON.parse(
         await deps.compute.synthesizeSpeechCompute(JSON.stringify(args)),
       ) as { media_item: { id: string }; duration_us: number; cached: boolean }
@@ -178,27 +178,23 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
 
       const trackId = (args.target_track_id as string | undefined) ?? ensureAudioTrack(deps)
 
-      // Add an Audio layer with the standard audioParams (role defaults to
-      // 'music'); then patch the role to 'voiceover' — mirrors
-      // AudioParams{role:Voiceover} in synthesize_speech (tools.rs:2813).
+      // Add the Audio layer in a SINGLE commit with role:'voiceover' — mirrors
+      // synthesize_speech's one `add_layer(AudioParams{role:Voiceover})`
+      // (tools.rs:2803-2819). The add_layer 'audio' arm accepts the optional
+      // `role` override (actor.ts), so no separate update_layer_params commit —
+      // matching the Rust history granularity (one entry for the layer add).
       const layerR = deps.actor.dispatch('add_layer', {
         kind: 'audio',
         track: trackId,
         media: media_item.id,
         src_in_us: 0,
         src_out_us: duration_us,
+        role: 'voiceover',
         t_start_us: tStart,
         t_end_us: tEnd,
       })
       if (!layerR.ok) throw new Error(JSON.stringify(layerR.error))
       const layerId = layerR.value as string
-
-      // Patch role to 'voiceover' — audioParams defaults to 'music'.
-      const patchR = deps.actor.dispatch('update_layer_params', {
-        layer: layerId,
-        patch: { kind: 'Audio', role: 'voiceover' },
-      })
-      if (!patchR.ok) throw new Error(JSON.stringify(patchR.error))
 
       // Return a JSON STRING — server.ts wraps via String(result), so returning
       // an object would surface as "[object Object]" (the Task-4 apply_subtitles
