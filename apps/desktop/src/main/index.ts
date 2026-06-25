@@ -189,7 +189,7 @@ app.whenReady().then(async () => {
 
   // Start the MCP host (streamable HTTP + bearer) and expose its info IPC.
   const { startMcpHost } = await import('./mcp/index.js')
-  const mcpHost = await startMcpHost(backend)
+  const mcpHost = await startMcpHost(backend, () => tsHost)
   mcpHostRef = mcpHost
 
   // TS-actor host: construct after mcpHostRef is set (emitChange relays via mcpNotify).
