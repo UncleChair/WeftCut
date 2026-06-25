@@ -256,7 +256,7 @@ app.whenReady().then(async () => {
     // hybrids land (Tasks 4-6).
     const computeFacade = {
       probeMedia: (p: string) => backend!.probeMedia(p),
-      parseSubtitles: (_body: string, _format: string | null) => { throw new Error('parseSubtitles: not wired until Task 4') },
+      parseSubtitles: (body: string, format: string | null) => backend!.parseSubtitles(body, format),
       computeMotifRebind: (_argsJson: string) => { throw new Error('computeMotifRebind: not wired until Task 5') },
       computeAckMotifRebind: () => { throw new Error('computeAckMotifRebind: not wired until Task 5') },
       synthesizeSpeechCompute: (_argsJson: string) => { throw new Error('synthesizeSpeechCompute: not wired until Task 6') },

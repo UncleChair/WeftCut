@@ -363,6 +363,25 @@ impl Backend {
         serde_json::to_string(&item).map_err(|e| Error::from_reason(e.to_string()))
     }
 
+    /// Pure parse half of the `apply_subtitles` hybrid (Phase 3d-e). Validates
+    /// the body, sniffs/applies the format, runs the parser, and returns a JSON
+    /// string `{ cues: Cue[], simplified: boolean }`. NO actor write — the TS
+    /// host applies the caption-track write via `actor.dispatch('add_caption_track',
+    /// { cues, comp_w, comp_h, label })`. `format` is one of "srt"/"ass"/"vtt"
+    /// (case-insensitive) or null to auto-sniff.
+    #[napi]
+    pub fn parse_subtitles(&self, body: String, format: Option<String>) -> napi::Result<String> {
+        let fmt = format
+            .map(|f| crate::subtitles::SubFormat::from_str(&f))
+            .transpose()
+            .map_err(Error::from_reason)?;
+        let (cues, simplified) =
+            crate::commands::mutations::parse_subtitle_cues(&body, fmt)
+                .map_err(Error::from_reason)?;
+        serde_json::to_string(&serde_json::json!({ "cues": cues, "simplified": simplified }))
+            .map_err(|e| Error::from_reason(e.to_string()))
+    }
+
     /// Queue the background workspace-copy job for an already-inserted media item
     /// (the write half of the `import_media` hybrid is the COPY's path/hash result,
     /// re-routed through the `media:workspace_paths` seam in `import.rs`). Reads the

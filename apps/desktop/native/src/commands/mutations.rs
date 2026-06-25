@@ -703,6 +703,24 @@ pub async fn restyle_caption_track(
         .map_err(|e: CommandError| e.to_string())
 }
 
+/// Pure parse half of the subtitle chokepoint: validate the body, sniff/apply
+/// the format, run the parser, and return the cues + simplified flag. No actor
+/// write — the caller (import_subtitles or the TS hybrid) applies the write.
+pub fn parse_subtitle_cues(
+    body: &str,
+    format: Option<crate::subtitles::SubFormat>,
+) -> Result<(Vec<crate::subtitles::Cue>, bool), String> {
+    if body.trim().is_empty() {
+        return Err("subtitle body is empty".into());
+    }
+    let fmt = format.unwrap_or_else(|| crate::subtitles::sniff(body));
+    let parsed = crate::subtitles::parse(body, fmt);
+    if parsed.cues.is_empty() {
+        return Err("no cues parsed from subtitle body".into());
+    }
+    Ok((parsed.cues, parsed.simplified))
+}
+
 /// THE chokepoint: parse a subtitle body and build a caption track. Shared by
 /// file import (commands::media), MCP apply_subtitles, and transcribe. Returns
 /// the new track id and whether any ASS styling was simplified (lossy).
@@ -712,22 +730,15 @@ pub async fn import_subtitles(
     format: Option<crate::subtitles::SubFormat>,
     label: Option<String>,
 ) -> Result<(String, bool), String> {
-    if body.trim().is_empty() {
-        return Err("subtitle body is empty".into());
-    }
-    let fmt = format.unwrap_or_else(|| crate::subtitles::sniff(&body));
-    let parsed = crate::subtitles::parse(&body, fmt);
-    if parsed.cues.is_empty() {
-        return Err("no cues parsed from subtitle body".into());
-    }
+    let (cues, simplified) = parse_subtitle_cues(&body, format)?;
     let handle = backend.project()?;
     let snap = handle.snapshot().await;
     let (w, h) = (snap.composition.width, snap.composition.height);
     let track_id = handle
-        .add_caption_track(Actor::User, parsed.cues, w, h, label)
+        .add_caption_track(Actor::User, cues, w, h, label)
         .await
         .map_err(|e: CommandError| e.to_string())?;
-    Ok((track_id.to_string(), parsed.simplified))
+    Ok((track_id.to_string(), simplified))
 }
 
 #[cfg(test)]
