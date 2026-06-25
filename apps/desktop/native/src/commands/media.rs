@@ -19,6 +19,46 @@ fn is_subtitle_ext(p: &std::path::Path) -> bool {
     )
 }
 
+/// Probe + hash a source file into a `MediaItem` (no actor write). Pure compute:
+/// stat (+ deferred `pending-{id}` hash when a workspace will copy the file in,
+/// or full blake3 hash otherwise), metadata probe, kind detection. Mints the
+/// media id internally. Extracted from `import_media`'s `spawn_blocking` body so
+/// the `probe_media` napi (Phase 3d-e hybrid: Rust computes, the TS host writes)
+/// reuses the EXACT same probe; `import_media` (flag-off path) calls it unchanged.
+pub fn probe_media_item(source_buf: PathBuf, has_workspace: bool) -> Result<MediaItem, String> {
+    let media_id = uuid::Uuid::new_v4();
+    let (file_size, file_mtime, file_hash_blake3) = if has_workspace {
+        let (size, mtime) = io::probe::stat_file(&source_buf).map_err(|e| format!("{e:#}"))?;
+        (size, mtime, format!("pending-{media_id}"))
+    } else {
+        let facts = io::probe::hash_and_stat(&source_buf).map_err(|e| format!("{e:#}"))?;
+        (facts.size, facts.mtime_secs, facts.blake3_hex)
+    };
+    let metadata = io::probe::probe_metadata(&source_buf);
+    let kind: MediaKind = io::probe::detect_kind(&source_buf, &metadata);
+    let label = source_buf.file_name().map(|n| n.to_string_lossy().to_string());
+    Ok(MediaItem {
+        id: media_id,
+        label,
+        path_abs: source_buf,
+        path_rel: None,
+        kind,
+        metadata,
+        proxy_path: None,
+        proxy_format_version: 0,
+        quick_proxy_path: None,
+        proxy_bypassed: false,
+        export_uses_original: false,
+        waveform_path: None,
+        conform_path: None,
+        thumbnails_dir: None,
+        file_hash_blake3,
+        file_size,
+        file_mtime,
+        imported_at: Utc::now(),
+    })
+}
+
 /// Probe + hash a source file, insert a `MediaItem`, fan out derivative jobs,
 /// and queue the background workspace copy. Returns the media id.
 pub async fn import_media(backend: &Backend, path: String) -> Result<String, String> {
@@ -40,44 +80,12 @@ pub async fn import_media(backend: &Backend, path: String) -> Result<String, Str
     }
 
     let cache = backend.cache.clone();
-    let media_id = uuid::Uuid::new_v4();
     let workspace_root = backend.workspace.current();
     let has_workspace = workspace_root.is_some();
 
     let item = tokio::task::spawn_blocking({
         let source_buf = source_buf.clone();
-        move || -> Result<MediaItem, String> {
-            let (file_size, file_mtime, file_hash_blake3) = if has_workspace {
-                let (size, mtime) = io::probe::stat_file(&source_buf).map_err(|e| format!("{e:#}"))?;
-                (size, mtime, format!("pending-{media_id}"))
-            } else {
-                let facts = io::probe::hash_and_stat(&source_buf).map_err(|e| format!("{e:#}"))?;
-                (facts.size, facts.mtime_secs, facts.blake3_hex)
-            };
-            let metadata = io::probe::probe_metadata(&source_buf);
-            let kind: MediaKind = io::probe::detect_kind(&source_buf, &metadata);
-            let label = source_buf.file_name().map(|n| n.to_string_lossy().to_string());
-            Ok(MediaItem {
-                id: media_id,
-                label,
-                path_abs: source_buf,
-                path_rel: None,
-                kind,
-                metadata,
-                proxy_path: None,
-                proxy_format_version: 0,
-                quick_proxy_path: None,
-                proxy_bypassed: false,
-                export_uses_original: false,
-                waveform_path: None,
-                conform_path: None,
-                thumbnails_dir: None,
-                file_hash_blake3,
-                file_size,
-                file_mtime,
-                imported_at: Utc::now(),
-            })
-        }
+        move || probe_media_item(source_buf, has_workspace)
     })
     .await
     .map_err(|e| format!("import join: {e}"))??;

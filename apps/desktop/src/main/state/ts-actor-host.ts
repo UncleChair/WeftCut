@@ -8,6 +8,7 @@ import { createAutosave, type AutosaveController, type AutosaveFs } from './auto
 import { openProject, saveProjectAs, newWorkspace, makeEnqueueDerivatives, type WorkspaceNapi, type OrchestratorFs } from './workspace-orchestrator'
 import { serializeProjectToJson } from './persistence'
 import { agentSessionEnd } from './agent-session-seam'
+import { runHybrid, type ComputeNapi, type HybridDeps } from './hybrids'
 
 export interface TsActorHostDeps {
   /** mainWindow.webContents.send('evt:'+event, payload) */
@@ -22,6 +23,12 @@ export interface TsActorHostDeps {
   join: (...parts: string[]) => string
   /** Backend napi facade for workspace bookkeeping. */
   napi: WorkspaceNapi
+  /** Rust compute facade for the native-compute → TS-write hybrids (Phase 3d-e). */
+  compute: ComputeNapi
+  /** Queue the background workspace-copy job (Backend.enqueueWorkspaceCopy). */
+  enqueueWorkspaceCopy: (mediaId: string, sourcePath: string) => Promise<void>
+  /** node:fs readFile (utf8) — for the subtitle hybrid (Task 4). */
+  readFile: (p: string) => string
   /** Current workspace directory (cached from backend). Null before first open/newWorkspace. */
   workspaceDir: () => string | null
   /** Push the TS-serialized project + history view into the Rust read-mirror
@@ -42,6 +49,9 @@ interface PersistenceHandlers {
 export interface TsActorHost {
   actor: ActorHandle
   handleInvoke: (channel: string, args: Record<string, unknown>) => Promise<unknown>
+  /** Hybrid deps (native-compute → TS-write). Exposed so the MCP host's hybrid
+   *  branch can `runHybrid(name, args, tsHost.hybridDeps)` (server.ts). */
+  hybridDeps: HybridDeps
   beginAgentSessionSlot: (reason: string) => void
   start: () => void
   stop: () => void
@@ -70,6 +80,19 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
 
   const enqueueDerivatives = makeEnqueueDerivatives(deps.napi)
   const orchestratorDeps = { actor, napi: deps.napi, fs: deps.fs, join: deps.join, idGen, enqueueDerivatives }
+
+  // Hybrid orchestrator deps (native-compute → TS-write). enqueueDerivatives here
+  // takes the inserted ITEMS (vs the orchestrator's whole-Project variant) and
+  // hands them straight to the Backend's open-time job re-fan-out napi.
+  const hybridDeps: HybridDeps = {
+    actor,
+    compute: deps.compute,
+    enqueueDerivatives: async (items) => { await deps.napi.enqueueJobsForMedia(JSON.stringify(items)) },
+    enqueueWorkspaceCopy: deps.enqueueWorkspaceCopy,
+    workspaceDir: deps.workspaceDir,
+    readFile: deps.readFile,
+    snapshotComposition: () => actor.snapshot().composition,
+  }
 
   const persistence: PersistenceHandlers = {
     open: (dir) => openProject(orchestratorDeps, dir),
@@ -119,6 +142,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
           unlockHistory: () => actor.unlockHistory(),
         })
         return null
+      case 'hybrid': return runHybrid(route.tool, args, hybridDeps)
       case 'reject': return reject(route.reason)
       case 'rust': return reject(`router bug: ${channel} reached the TS host but is a Rust channel`)
     }
@@ -127,6 +151,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   return {
     actor,
     handleInvoke,
+    hybridDeps,
     beginAgentSessionSlot(reason: string) { deps.beginAgentSessionSlot?.(reason) },
     start() {
       if (!unsub) unsub = actor.subscribe(emitChange)

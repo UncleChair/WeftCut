@@ -168,6 +168,13 @@ app.whenReady().then(async () => {
         if (tsHost) { void import('./state/jobs-writeback.js').then(({ applyDerivativesEvent }) => applyDerivativesEvent(tsHost!.actor, payload as never)); return }
         // flag-off: Rust is authoritative and never emits this event — fall through is defensive
       }
+      // `media:workspace_paths` write-back: the background import-copy job's
+      // path/hash result. Same seam shape as media:derivatives (Phase 3d-e) —
+      // apply to the TS actor under the flag instead of forwarding to the renderer.
+      if (event === 'media:workspace_paths') {
+        if (tsHost) { void import('./state/jobs-writeback.js').then(({ applyWorkspacePathsEvent }) => applyWorkspacePathsEvent(tsHost!.actor, payload as never)); return }
+        // flag-off: Rust is authoritative and never emits this event — fall through is defensive
+      }
       mainWindow?.webContents.send('evt:' + event, payload)
     },
   )
@@ -243,6 +250,18 @@ app.whenReady().then(async () => {
       },
     }
 
+    // Rust compute facade for the native-compute → TS-write hybrids (Phase 3d-e):
+    // Rust probes/hashes/parses (no actor write); the TS host applies the write.
+    // Later-task methods (parseSubtitles/computeMotifRebind/… ) are wired as their
+    // hybrids land (Tasks 4-6).
+    const computeFacade = {
+      probeMedia: (p: string) => backend!.probeMedia(p),
+      parseSubtitles: (_body: string, _format: string | null) => { throw new Error('parseSubtitles: not wired until Task 4') },
+      computeMotifRebind: (_argsJson: string) => { throw new Error('computeMotifRebind: not wired until Task 5') },
+      computeAckMotifRebind: () => { throw new Error('computeAckMotifRebind: not wired until Task 5') },
+      synthesizeSpeechCompute: (_argsJson: string) => { throw new Error('synthesizeSpeechCompute: not wired until Task 6') },
+    }
+
     tsHost = createTsActorHost({
       send: (event, payload) => mainWindow?.webContents.send('evt:' + event, payload),
       mcpNotify: (payload) => mcpHostRef?.notifyChange(payload),
@@ -250,6 +269,9 @@ app.whenReady().then(async () => {
       fs: nodeFs,
       join: path.join,
       napi: napiFacadeWithCache,
+      compute: computeFacade,
+      enqueueWorkspaceCopy: (id, p) => backend!.enqueueWorkspaceCopy(id, p),
+      readFile: (p) => fs.readFileSync(p, 'utf8'),
       workspaceDir: () => wsCache,
       setProjectMirror: (pj, hv) => backend!.setProjectMirror(pj, hv),
       beginAgentSessionSlot: (reason) => backend!.beginAgentSessionSlot(reason),

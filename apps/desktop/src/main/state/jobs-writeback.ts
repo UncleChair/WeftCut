@@ -31,3 +31,42 @@ export function applyDerivativesEvent(
   }
   return r
 }
+
+/** `media:workspace_paths` event payload (native/src/jobs/mod.rs
+ *  commit_media_workspace_paths): the result of the background workspace-copy
+ *  job. Carries the full 5-field WorkspacePaths so the TS actor's
+ *  set_media_workspace_paths dispatch is fully populated. */
+export interface MediaWorkspacePathsEvent {
+  media_id: string
+  path_abs: string
+  path_rel: string
+  file_hash_blake3: string
+  file_size: number
+  file_mtime: number
+}
+
+/** Apply a `media:workspace_paths` event to the TS actor (sibling of
+ *  applyDerivativesEvent; the workspace-copy job's path/hash write-back under
+ *  WEFTCUT_TS_ACTOR). The dispatch arg shape is `{ media, paths }` (actor.ts
+ *  set_media_workspace_paths arm, ported 3c-i — `paths` is the 5-field
+ *  WorkspacePaths). MediaNotFound is benign (the media may have been removed
+ *  between import and copy-completion) — logged, not thrown. */
+export function applyWorkspacePathsEvent(
+  actor: Pick<ActorHandle, 'dispatch'>,
+  payload: MediaWorkspacePathsEvent,
+): DispatchResult {
+  const r = actor.dispatch('set_media_workspace_paths', {
+    media: payload.media_id,
+    paths: {
+      path_abs: payload.path_abs,
+      path_rel: payload.path_rel,
+      file_hash_blake3: payload.file_hash_blake3,
+      file_size: payload.file_size,
+      file_mtime: payload.file_mtime,
+    },
+  })
+  if (!r.ok) {
+    console.warn(`[jobs-writeback] set_media_workspace_paths failed for ${payload.media_id}: ${r.error.error}`)
+  }
+  return r
+}

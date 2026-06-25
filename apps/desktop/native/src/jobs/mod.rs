@@ -91,6 +91,51 @@ pub(crate) async fn commit_media_derivatives(
     }
 }
 
+/// Apply the workspace-copy job's path/hash result to whichever engine is
+/// authoritative (same `TS_DERIVATIVE_AUTHORITY` flag as derivatives). TS mode:
+/// emit `media:workspace_paths` → the TS host applies `set_media_workspace_paths`.
+/// Carries `file_size`/`file_mtime` so the TS `WorkspacePaths` is fully populated
+/// (mirrors the Rust actor's 7-arg `set_media_workspace_paths`, actor.rs:1720).
+/// `pub(crate)`, mirroring `commit_media_derivatives`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn commit_media_workspace_paths(
+    events: &Arc<dyn EventSink>,
+    project: &ProjectHandle,
+    media_id: MediaId,
+    path_abs: std::path::PathBuf,
+    path_rel: std::path::PathBuf,
+    file_hash_blake3: String,
+    file_size: u64,
+    file_mtime: u64,
+) -> Result<(), CommandError> {
+    if ts_derivative_authority() {
+        events.emit(
+            "media:workspace_paths",
+            serde_json::json!({
+                "media_id": media_id.to_string(),
+                "path_abs": path_abs,
+                "path_rel": path_rel,
+                "file_hash_blake3": file_hash_blake3,
+                "file_size": file_size,
+                "file_mtime": file_mtime,
+            }),
+        );
+        Ok(())
+    } else {
+        project
+            .set_media_workspace_paths(
+                actor_for_jobs(),
+                media_id,
+                path_abs,
+                path_rel,
+                file_hash_blake3,
+                file_size,
+                file_mtime,
+            )
+            .await
+    }
+}
+
 pub const EVENT_STARTED: &str = "media:job_started";
 pub const EVENT_COMPLETE: &str = "media:job_complete";
 pub const EVENT_ERROR: &str = "media:job_error";

@@ -10,6 +10,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js'
 import { captureMotifFrameB64 } from '../motif/capture.js'
 import { routeMcpTool } from './mutationTools.js'
+import { runHybrid } from '../state/hybrids.js'
 import type { TsActorHost } from '../state/ts-actor-host.js'
 
 type Backend = import('@weftcut/core').Backend
@@ -55,6 +56,12 @@ export async function handleCallTool(
       const out = unwrapEnvelope(tsHost.actor.mcpCall(name, JSON.stringify(args)))
       if (name === 'begin_agent_session') tsHost.beginAgentSessionSlot(((args.reason as string | undefined) ?? '').trim())
       return out as ServerResult
+    }
+    if (route === 'hybrid') {
+      // Native-compute → TS-write (Phase 3d-e). import_media returns the new media
+      // id; shape it as the Rust tool does (ToolResult::text(id) → text content).
+      const result = await runHybrid(name, args, tsHost.hybridDeps)
+      return { content: [{ type: 'text', text: String(result) }] } as unknown as ServerResult
     }
     // route === 'rust' → fall through (reads are mirror-backed).
   }

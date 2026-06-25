@@ -271,18 +271,22 @@ impl ImportQueue {
                     {
                         warn!("import: cache migrate failed for {media_id}: {e:#}");
                     }
-                    if let Err(e) = next
-                        .handle
-                        .set_media_workspace_paths(
-                            Actor::User,
-                            media_id,
-                            dest_abs.clone(),
-                            copy.dest_rel.clone(),
-                            copy.facts.blake3_hex.clone(),
-                            copy.facts.size,
-                            copy.facts.mtime_secs,
-                        )
-                        .await
+                    // Route the path/hash write-back through the shared seam: under
+                    // WEFTCUT_TS_ACTOR it emits `media:workspace_paths` (the TS host
+                    // applies the write) instead of touching the frozen Rust actor;
+                    // flag-off it falls back to the direct `set_media_workspace_paths`
+                    // call. Mirrors the `commit_media_derivatives` derivative seam.
+                    if let Err(e) = crate::jobs::commit_media_workspace_paths(
+                        &self.events,
+                        &next.handle,
+                        media_id,
+                        dest_abs.clone(),
+                        copy.dest_rel.clone(),
+                        copy.facts.blake3_hex.clone(),
+                        copy.facts.size,
+                        copy.facts.mtime_secs,
+                    )
+                    .await
                     {
                         warn!("import: actor update failed: {e}");
                         self.finalize(media_id, ImportStatus::Failed {

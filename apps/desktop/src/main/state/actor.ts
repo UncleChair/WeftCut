@@ -415,6 +415,10 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'add_transition': return { ok: true, value: commit('Added transition', [], { kind: 'Coarse' }, (d) => applyAddTransition(d, idGen, a.from as Uuid, a.to as Uuid, a.duration_us as number, { kind: 'Crossfade' })) }
         case 'remove_transition': commit('Removed transition', [], { kind: 'Coarse' }, (d) => applyRemoveTransition(d, a.transition as Uuid)); return { ok: true, value: null }
         case 'add_media': return { ok: true, value: addMediaItem(mediaItemTemplate(a.id as Uuid, a.kind as MediaItem['kind'], (a.duration_us as number | null) ?? null, (a.with_audio as boolean | undefined) ?? false)) }
+        // add_media_item — insert a FULL probed MediaItem (Phase 3d-e import_media
+        // hybrid: Rust probes/hashes, the TS host applies the write). Distinct from
+        // `add_media` (template-only); the caller passes the serialized MediaItem.
+        case 'add_media_item': return { ok: true, value: addMediaItem(a.media as MediaItem) }
         case 'separate_audio': return { ok: true, value: commit('Separated audio', [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applySeparateAudio(d, idGen, a.layer as Uuid)) }
         case 'set_media_derivatives': setMediaDerivatives(a.media as Uuid, a.patch as MediaDerivativesPatch); return { ok: true, value: null }
         case 'set_media_workspace_paths': setMediaWorkspacePaths(a.media as Uuid, a.paths as WorkspacePaths); return { ok: true, value: null }

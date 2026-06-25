@@ -345,6 +345,41 @@ impl Backend {
         Ok(())
     }
 
+    /// Probe + hash a source file into a serialized `MediaItem` — the compute half
+    /// of the `import_media` hybrid (Phase 3d-e). NO actor write: the TS host
+    /// applies the insert (`actor.dispatch('add_media_item', { media })`). Reuses
+    /// the EXACT probe body `import_media` uses, so the hybrid and the flag-off
+    /// path produce identical items. (Subtitles route through the subtitle hybrid;
+    /// `probe_media` is for non-subtitle media — the orchestrator branches by ext.)
+    #[napi]
+    #[cfg(feature = "jobs")]
+    pub async fn probe_media(&self, path: String) -> napi::Result<String> {
+        let buf = std::path::PathBuf::from(&path);
+        let has_workspace = self.workspace.current().is_some();
+        let item = tokio::task::spawn_blocking(move || crate::commands::media::probe_media_item(buf, has_workspace))
+            .await
+            .map_err(|e| Error::from_reason(format!("probe join: {e}")))?
+            .map_err(Error::from_reason)?;
+        serde_json::to_string(&item).map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    /// Queue the background workspace-copy job for an already-inserted media item
+    /// (the write half of the `import_media` hybrid is the COPY's path/hash result,
+    /// re-routed through the `media:workspace_paths` seam in `import.rs`). Reads the
+    /// workspace internally; no-op when none is set (the item keeps referencing the
+    /// original source, matching `import_media`'s no-workspace branch). The
+    /// `project()` handle is inert under the flag — the copy job's write-back is
+    /// seam-routed, not a direct actor write.
+    #[napi]
+    #[cfg(feature = "jobs")]
+    pub async fn enqueue_workspace_copy(&self, media_id: String, source_path: String) -> napi::Result<()> {
+        let id = uuid::Uuid::parse_str(&media_id).map_err(|e| Error::from_reason(format!("media_id: {e}")))?;
+        let Some(ws) = self.workspace.current() else { return Ok(()); };
+        let handle = self.project().map_err(Error::from_reason)?;
+        self.import_queue.enqueue(handle.clone(), self.cache.clone(), id, std::path::PathBuf::from(source_path), ws);
+        Ok(())
+    }
+
     /// `recents.set_last_new_project_parent` — only the new-workspace flow, so the
     /// next "+ New project" form opens pre-filled at the same parent. Best-effort.
     #[napi]
