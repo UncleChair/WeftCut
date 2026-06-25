@@ -43,9 +43,22 @@ pub async fn import_motif(b: &Backend, path: String) -> Result<String, String> {
 }
 
 pub async fn install_motif(b: &Backend, args: ac::InstallArgs) -> Result<String, String> {
-    let id = ac::install_motif_core(&b.motif_store, b.project()?, &args).await?;
+    // Flag-off path delegates to the shared compute fn (no duplication of the
+    // draft-publish + Update-rebind body). Byte-identical to the prior
+    // `install_motif_core` call: the snapshot is project LAYERS
+    // (motif_id/version/props), independent of the store publish, so taking
+    // `snap` before compute publishes yields the same layers the prior code saw
+    // (it snapshotted after publish); `build_rebind_updates` reads the published
+    // `target_manifest` from the store INSIDE compute (post-publish), as before.
+    // Same store ops, same layers, same updates, same rebind. `emit_changed`
+    // stays here (the napi hybrid emits separately).
+    let snap = b.project()?.snapshot().await;
+    let (final_id, updates) = install_motif_compute(&b.motif_store, &snap, &args).await?;
+    if !updates.is_empty() {
+        b.project()?.rebind_motif(Actor::User, updates).await.map_err(|e| e.to_string())?;
+    }
     emit_changed(b);
-    Ok(id)
+    Ok(final_id)
 }
 
 pub async fn delete_motif(b: &Backend, id: String) -> Result<(), String> {
@@ -81,33 +94,34 @@ pub async fn motif_staleness_report(b: &Backend) -> Result<Vec<st::MotifStaleEnt
 }
 
 pub async fn acknowledge_motif_staleness(b: &Backend) -> Result<usize, String> {
-    let current = st::current_versions(&b.motif_store);
+    // Flag-off path delegates to the shared compute fn. Byte-identical:
+    // `n == updates.len()`, so `Ok(0)` on empty matches the prior early-return,
+    // and the rebind is skipped on empty exactly as before.
     let snap = b.project()?.snapshot().await;
-    let layers: Vec<(LayerId, String, u32, imbl::HashMap<String, serde_json::Value>)> = snap.tracks.iter()
-        .flat_map(|t| t.layers.iter())
-        .filter_map(|l| match &l.params {
-            LayerParams::Motif(p) => Some((l.id, p.motif_id.clone(), p.motif_version, p.props.clone())),
-            _ => None,
-        }).collect();
-    let updates = st::build_ack_entries(&layers, &current);
+    let (n, updates) = acknowledge_motif_compute(&b.motif_store, &snap).await?;
     if updates.is_empty() { return Ok(0); }
-    let n = updates.len();
     b.project()?.rebind_motif(Actor::User, updates).await.map_err(|e| e.to_string())?;
     Ok(n)
 }
 
-// ---- hybrid compute helpers (Phase 3d-e): store ops without actor write ----
+// ---- shared compute helpers (Phase 3d-e): store ops without actor write ----
 //
-// The flag-off `install_motif` / `acknowledge_motif_staleness` above remain
-// byte-identical. These compute fns are ADDITIONAL entry points used by the
-// napi hybrids: they do the same Rust compute (store publish + snapshot read +
-// build_rebind_updates / build_ack_entries) but RETURN the updates instead of
-// calling `rebind_motif` — the TS actor host applies the write.
+// The ONE home of the install-publish + Update-rebind / ack-entry logic. Both
+// the flag-off command wrappers above (`install_motif` /
+// `acknowledge_motif_staleness`, which apply the rebind to the live actor) and
+// the napi hybrids (`compute_motif_rebind` / `compute_ack_motif_rebind`, which
+// return the updates for the TS actor host to apply against the read-mirror)
+// call these. The compute does the Rust-side store publish + snapshot read +
+// build_rebind_updates / build_ack_entries and RETURNS the updates; it never
+// writes the actor itself.
 
-/// install_motif hybrid compute: publish the draft (store side), extract motif
-/// layers from the MIRROR snapshot, and return `(published_id, updates)`.
-/// For a New install, updates is empty (no rebind needed — id is stable).
-/// Reads `snapshot_for_read()` (the mirror) NOT the frozen Rust actor snapshot.
+/// install_motif compute: publish the draft (store side), extract motif layers
+/// from the caller-provided `snap`, and return `(published_id, updates)`. For a
+/// New install, updates is empty (no rebind needed — id is stable). The single
+/// source of the draft-publish + Update-rebind logic: the napi hybrid passes the
+/// READ-MIRROR snapshot (`snapshot_for_read()`); the flag-off `install_motif`
+/// wrapper passes the live actor snapshot. NO actor write here — the caller
+/// applies the rebind.
 pub async fn install_motif_compute(
     store: &crate::motifs::store::UserMotifStore,
     snap: &std::sync::Arc<crate::state::Project>,
@@ -176,9 +190,11 @@ pub async fn install_motif_compute(
     Ok((final_id, updates))
 }
 
-/// acknowledge_motif_staleness hybrid compute: extract motif layers from the
-/// MIRROR snapshot and return `(count, updates)`.
-/// Reads `snapshot_for_read()` (the mirror) NOT the frozen Rust actor snapshot.
+/// acknowledge_motif_staleness compute: extract motif layers from the
+/// caller-provided `snap` and return `(count, updates)`. The single source of
+/// the ack-entry logic: the napi hybrid passes the READ-MIRROR snapshot
+/// (`snapshot_for_read()`); the flag-off wrapper passes the live actor snapshot.
+/// NO actor write here — the caller applies the rebind.
 pub async fn acknowledge_motif_compute(
     store: &crate::motifs::store::UserMotifStore,
     snap: &std::sync::Arc<crate::state::Project>,
