@@ -51,6 +51,9 @@ describe('createTsActorHost — persistence-route integration', () => {
       fs: memFs,
       join: (...parts: string[]) => parts.join('/').replace(/\/+/g, '/'),
       napi: memNapi,
+      compute: { probeMedia: async () => '{}', parseSubtitles: async () => '{}', computeMotifRebind: async () => '{}', computeAckMotifRebind: async () => '{}', synthesizeSpeechCompute: async () => '{}' },
+      enqueueWorkspaceCopy: async () => {},
+      readFile: (p: string) => memFs.readFile(p),
       workspaceDir: () => wsDir,
     }
 
